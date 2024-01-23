@@ -25,7 +25,7 @@
 		{#each tracks as { name, volume }}
 			<div class="instrument">
 				<strong>{name}</strong>
-				<Knob min="0" max="100" bind:value={volume} />
+				<Knob min={0} max={100} bind:value={volume} />
 			</div>
 		{/each}
 	</div>
