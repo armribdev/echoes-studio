@@ -1,4 +1,4 @@
-<script>
+<script lang="ts">
 	import Knob from './Knob.svelte';
 	let tracks = [
 		{
@@ -18,9 +18,12 @@
 			]
 		}
 	];
+
+	let scale: number = 2.0;
 </script>
 
 <div class="container">
+	<input type="range" bind:value={scale} min={0.1} max={10} step={0.01} class="scale" />
 	<div class="instruments">
 		{#each tracks as { name, volume }}
 			<div class="instrument">
@@ -34,7 +37,7 @@
 		{#each tracks as { clips }}
 			<div class="track">
 				{#each clips as { start, end }}
-					<div class="clip" style="left: {start}px; width:{end - start}px"></div>
+					<div class="clip" style="left: {start * scale}px; width:{(end - start) * scale}px"></div>
 				{/each}
 			</div>
 		{/each}
@@ -47,11 +50,25 @@
 		display: flex;
 		align-items: stretch;
 		height: 100%;
+		position: relative;
+		overflow-y: auto;
+		overflow-x: hidden;
+	}
+
+	.scale {
+		position: absolute;
+		right: 5px;
+		bottom: 5px;
 	}
 
 	.instruments {
 		border-right: 1px solid #ccc;
 		background-color: $pannel-background-color;
+	}
+
+	.tracks {
+		flex-grow: 1;
+		overflow-y: auto;
 	}
 
 	.instrument,
@@ -65,6 +82,8 @@
 
 	.track {
 		position: relative;
+		// flex: 1;
+		// overflow-y: auto;
 	}
 
 	.clip {
