@@ -1,14 +1,10 @@
 <script lang="ts">
 	import Knob from './Knob.svelte';
+	import Track from './Track.svelte';
+	import type { Track as TrackType } from '../types/global';
 	import { invoke } from '@tauri-apps/api/tauri';
 
-	interface Track {
-		name: string;
-		volume: number;
-		clips: { start: number; end: number }[];
-	}
-
-	let tracks: Track[] = [
+	let tracks: TrackType[] = [
 		{
 			name: 'Piano',
 			volume: 60,
@@ -61,11 +57,7 @@
 
 	<div class="tracks">
 		{#each tracks as { clips }}
-			<div class="track">
-				{#each clips as { start, end }}
-					<div class="clip" style="left: {start * scale}px; width:{(end - start) * scale}px"></div>
-				{/each}
-			</div>
+			<svelte:component this={Track} {clips} {scale} />
 		{/each}
 		<button on:click={onClick}>Test</button>
 	</div>
@@ -98,25 +90,11 @@
 		overflow-y: auto;
 	}
 
-	.instrument,
-	.track {
+	.instrument {
 		height: 100px;
 	}
 
 	.instrument {
 		padding: 10px;
-	}
-
-	.track {
-		position: relative;
-		// flex: 1;
-		// overflow-y: auto;
-	}
-
-	.clip {
-		position: absolute;
-		height: 100%;
-		background-color: pink;
-		border-radius: 5px;
 	}
 </style>
