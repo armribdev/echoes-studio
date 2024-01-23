@@ -1,7 +1,25 @@
 <script>
-	import Test from '../components/Test.svelte';
+	import MenuBar from '../components/MenuBar.svelte';
+	import MainPannel from '../components/MainPannel.svelte';
+	import StatusBar from '../components/StatusBar.svelte';
 </script>
 
-<h1>Welcome to SvelteKit</h1>
-<p>Visit <a href="https://kit.svelte.dev">kit.svelte.dev</a> to read the documentation</p>
-<Test />
+<div class="app">
+	<MenuBar />
+	<div class="content">
+		<MainPannel />
+	</div>
+	<StatusBar />
+</div>
+
+<style>
+	.app {
+		display: flex;
+		flex-direction: column;
+		/* height: 100vh; */
+	}
+
+	.content {
+		flex: 1;
+	}
+</style>
