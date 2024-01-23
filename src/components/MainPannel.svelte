@@ -1,12 +1,20 @@
 <script lang="ts">
 	import Knob from './Knob.svelte';
-	let tracks = [
+	import { invoke } from '@tauri-apps/api/tauri';
+
+	interface Track {
+		name: string;
+		volume: number;
+		clips: { start: number; end: number }[];
+	}
+
+	let tracks: Track[] = [
 		{
 			name: 'Piano',
 			volume: 60,
 			clips: [
-				{ start: 65, end: 89 },
-				{ start: 0, end: 65 }
+				// { start: 65, end: 89 },
+				// { start: 0, end: 65 }
 			]
 		},
 		{
@@ -20,6 +28,24 @@
 	];
 
 	let scale: number = 2.0;
+
+	function createNewAudioClip(filePath: string): Promise<[number[], number]> {
+		return invoke('create_new_audio_clip', {
+			filePath: filePath
+		});
+	}
+
+	function onClick() {
+		const filePath = '/home/armand/dev/echoes-studio/sample_44100.wav';
+		createNewAudioClip(filePath)
+			.then((result) => {
+				console.log('Rsultat: ', result);
+				tracks[0].clips.push({ start: 0, end: 100 });
+			})
+			.catch((error) => {
+				console.error('Erreur:', error);
+			});
+	}
 </script>
 
 <div class="container">
@@ -41,6 +67,7 @@
 				{/each}
 			</div>
 		{/each}
+		<button on:click={onClick}>Test</button>
 	</div>
 </div>
 
