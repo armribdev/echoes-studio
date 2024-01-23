@@ -1,4 +1,3 @@
-<!-- Clip.svelte -->
 <script lang="ts">
 	export let start: number;
 	export let end: number;
@@ -10,8 +9,10 @@
 <style lang="scss">
 	.clip {
 		position: absolute;
-		height: 100%;
+		display: block;
 		background-color: pink;
 		border-radius: 5px;
+		top: 0;
+		bottom: 0;
 	}
 </style>

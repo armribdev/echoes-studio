@@ -15,8 +15,6 @@
 <style lang="scss">
 	.track {
 		position: relative;
-		// flex: 1;
-		// overflow-y: auto;
 		height: 100px;
 	}
 </style>
