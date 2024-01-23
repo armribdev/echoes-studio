@@ -1,23 +1,23 @@
-<script>
-	export let value, min, max;
-	export let rotRange = 2 * Math.PI * 0.83;
-	export let pixelRange = 200;
-	export let startRotation = -Math.PI * 0.83;
+<script lang="ts">
+	export let value: number, min: number, max: number;
+	export let rotRange: number = 2 * Math.PI * 0.83;
+	export let pixelRange: number = 200;
+	export let startRotation: number = -Math.PI * 0.83;
 
-	let startY, startValue;
+	let startY: number, startValue: number;
 	$: valueRange = max - min;
 	$: rotation = startRotation + ((value - min) / valueRange) * rotRange;
 
-	function clamp(num, min, max) {
+	function clamp(num: number, min: number, max: number): number {
 		return Math.max(min, Math.min(num, max));
 	}
 
-	function pointerMove({ clientY }) {
-		const valueDiff = (valueRange * (clientY - startY)) / pixelRange;
+	function pointerMove({ clientY }: { clientY: number }): void {
+		const valueDiff: number = (valueRange * (clientY - startY)) / pixelRange;
 		value = clamp(startValue - valueDiff, min, max);
 	}
 
-	function pointerDown({ clientY }) {
+	function pointerDown({ clientY }: { clientY: number }): void {
 		console.log({ clientY });
 		startY = clientY;
 		startValue = value;
@@ -25,7 +25,7 @@
 		window.addEventListener('pointerup', pointerUp);
 	}
 
-	function pointerUp() {
+	function pointerUp(): void {
 		window.removeEventListener('pointermove', pointerMove);
 		window.removeEventListener('pointerup', pointerUp);
 	}
