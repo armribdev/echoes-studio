@@ -17,8 +17,13 @@
 			name: 'Guitare',
 			volume: 80,
 			clips: [
-				{ start: 12, end: 50 },
-				{ start: 56, end: 87 }
+				{ start: 12, end: 50, raw_samples: [0.5, 0.4, -1, -0.1], sample_rate: 0.5 },
+				{
+					start: 56,
+					end: 87,
+					raw_samples: [0.5, 0.4, -1, -0.1, 0.5, 0.4, -1, -0.1, 0.5, 0.4, -1, -0.1],
+					sample_rate: 1
+				}
 			]
 		}
 	];
@@ -35,8 +40,14 @@
 		const filePath = '/home/armand/dev/echoes-studio/sample_44100.wav';
 		createNewAudioClip(filePath)
 			.then((result) => {
-				console.log('Rsultat: ', result);
-				tracks[0].clips.push({ start: 0, end: 100 });
+				console.log('Résultat: ', result);
+				let new_clip = {
+					start: 0,
+					end: result[0].length / result[1],
+					raw_samples: result[0],
+					sample_rate: result[1]
+				};
+				tracks[0].clips = [...tracks[0].clips, new_clip];
 			})
 			.catch((error) => {
 				console.error('Erreur:', error);
