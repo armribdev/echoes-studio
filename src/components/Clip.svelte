@@ -9,11 +9,30 @@
 	let canvas: HTMLCanvasElement;
 	let context: CanvasRenderingContext2D | null;
 
-	import { onMount } from 'svelte';
+	import { onMount, onDestroy } from 'svelte';
+
+	let worker: Worker | null;
 
 	onMount(() => {
-		// drawWaveform();
+		if (window.Worker) {
+			worker = new Worker('./waveform-worker.js');
+			worker.onmessage = handleWorkerMessage;
+			worker.postMessage({ start, end, scale, raw_samples, sample_rate });
+		} else {
+			// Si les Web Workers ne sont pas pris en charge, exécutez la fonction directement
+			drawWaveform();
+		}
 	});
+
+	onDestroy(() => {
+		if (worker) {
+			worker.terminate();
+		}
+	});
+
+	function handleWorkerMessage(event: MessageEvent) {
+		drawWaveform();
+	}
 
 	function drawWaveform() {
 		if (!canvas) return;
