@@ -7,4 +7,7 @@ export interface Track {
 export interface Clip {
     start: number,
     end: number,
+	raw_samples: number[], 
+	sample_rate: number,
+
 }

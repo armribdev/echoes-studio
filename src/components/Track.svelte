@@ -7,8 +7,8 @@
 </script>
 
 <div class="track">
-	{#each clips as { start, end }}
-		<Clip {start} {end} {scale} />
+	{#each clips as { start, end, raw_samples, sample_rate }}
+		<Clip {start} {end} {scale} {raw_samples} {sample_rate} />
 	{/each}
 </div>
 
