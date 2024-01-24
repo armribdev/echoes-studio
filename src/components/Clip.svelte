@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { onDestroy, onMount } from 'svelte';
+
 	export let start: number;
 	export let end: number;
 	export let scale: number;
@@ -9,32 +11,44 @@
 	let canvas: HTMLCanvasElement;
 	let context: CanvasRenderingContext2D | null;
 
-	import { onMount, onDestroy } from 'svelte';
-
 	let worker: Worker | null;
 
-	onMount(() => {
-		if (window.Worker) {
-			worker = new Worker('./waveform-worker.js');
-			worker.onmessage = handleWorkerMessage;
-			worker.postMessage({ start, end, scale, raw_samples, sample_rate });
-		} else {
-			// Si les Web Workers ne sont pas pris en charge, exécutez la fonction directement
-			drawWaveform();
-		}
-	});
+	// onMount(() => {
+	// if (window.Worker) {
+	// 	const workerCode = `
+	//   onmessage = function (e) {
+	// 	const { start, end, scale, raw_samples, sample_rate } = e.data;
+	// 	const points = [];
+	// 	// Effectuez ici le traitement lourd
+	// 	for (let i = start; i < end; i++) {
+	// 	  const x = (i * scale) / sample_rate;
+	// 	  const y = (0.5 - raw_samples[i] / 2);
+	// 	  points.push({ x, y });
+	// 	}
+	// 	postMessage(points);
+	//   };
+	// `;
+	// 	const blob = new Blob([workerCode], { type: 'application/javascript' });
+	// 	worker = new Worker(URL.createObjectURL(blob));
+	// 	worker.onmessage = handleWorkerMessage;
+	// 	worker.postMessage({ start, end, scale, raw_samples, sample_rate });
+	// } else {
+	// drawWaveform();
+	// }
+	// });
 
-	onDestroy(() => {
-		if (worker) {
-			worker.terminate();
-		}
-	});
+	// onDestroy(() => {
+	// 	if (worker) {
+	// 		worker.terminate();
+	// 	}
+	// });
 
-	function handleWorkerMessage(event: MessageEvent) {
-		drawWaveform();
-	}
+	// function handleWorkerMessage(event: MessageEvent) {
+	// 	const points = event.data;
+	// 	drawWaveform(points);
+	// }
 
-	function drawWaveform() {
+	function drawWaveform(points: { x: number; y: number }[] | null = null) {
 		if (!canvas) return;
 		context = canvas.getContext('2d');
 		if (!context) return;
@@ -52,7 +66,6 @@
 		const startX = 0;
 		const startY = (0.5 - raw_samples[0] / 2) * context.canvas.height;
 		context.moveTo(startX, startY);
-		console.log(startX, startY);
 
 		for (let i = 1; i < raw_samples.length; i++) {
 			const x = (i * scale) / sample_rate;
