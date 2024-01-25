@@ -9,8 +9,7 @@
 			name: 'Piano',
 			volume: 60,
 			clips: [
-				// { start: 65, end: 89 },
-				// { start: 0, end: 65 }
+				// { start: 109, end: 169 },
 			]
 		},
 		{
@@ -53,6 +52,24 @@
 				console.error('Erreur:', error);
 			});
 	}
+
+	function makeEditable(this: HTMLElement, event: MouseEvent) {
+		this.contentEditable = 'true';
+		this.focus();
+
+		// Ajoutez un gestionnaire d'événements pour arrêter l'édition lorsqu'on appuie sur la touche "Enter"
+		this.addEventListener('keydown', function (event) {
+			if (event.key === 'Enter') {
+				event.preventDefault();
+				this.blur(); // Permet de quitter le mode édition
+			}
+		});
+
+		// Ajoutez un gestionnaire d'événements pour arrêter l'édition lorsqu'on perd le focus
+		this.addEventListener('blur', function () {
+			this.contentEditable = 'false';
+		});
+	}
 </script>
 
 <div class="container">
@@ -60,7 +77,7 @@
 	<div class="instruments">
 		{#each tracks as { name, volume }}
 			<div class="instrument">
-				<strong>{name}</strong>
+				<strong on:dblclick={makeEditable}>{name}</strong>
 				<Knob min={0} max={100} bind:value={volume} />
 			</div>
 		{/each}
