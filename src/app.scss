@@ -23,3 +23,27 @@ body {
 .app {
 	height: 100vh;
 }
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6,
+p,
+div,
+span,
+button {
+	-webkit-user-select: none;
+	user-select: none;
+}
+
+button,
+input[type='range'] {
+	cursor: pointer;
+}
+
+span,
+div {
+	cursor: default;
+}
