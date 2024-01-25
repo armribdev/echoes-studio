@@ -18,14 +18,19 @@
 	}
 
 	function pointerDown({ clientY }: { clientY: number }): void {
-		console.log({ clientY });
+		document
+			.querySelectorAll('*')
+			.forEach((el: Element) => ((el as HTMLElement).style.cursor = 'grabbing'));
 		startY = clientY;
 		startValue = value;
 		window.addEventListener('pointermove', pointerMove);
 		window.addEventListener('pointerup', pointerUp);
 	}
 
-	function pointerUp(): void {
+	async function pointerUp() {
+		document
+			.querySelectorAll('*')
+			.forEach((el: Element) => ((el as HTMLElement).style.cursor = ''));
 		window.removeEventListener('pointermove', pointerMove);
 		window.removeEventListener('pointerup', pointerUp);
 	}
