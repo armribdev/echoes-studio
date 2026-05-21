@@ -12,10 +12,12 @@ impl AudioClip {
         let file = File::open(file_path)?;
         let mut reader = WavReader::new(file)?;
 
-        let raw_samples: Vec<f32> = match reader.spec().sample_format {
+        let spec = reader.spec();
+        let raw_samples: Vec<f32> = match spec.sample_format {
             hound::SampleFormat::Float => reader.samples::<f32>().map(|s| s.unwrap()).collect(),
             hound::SampleFormat::Int => {
-                reader.samples::<i32>().map(|s| s.unwrap() as f32).collect()
+                let max = (1i32 << (spec.bits_per_sample - 1)) as f32;
+                reader.samples::<i32>().map(|s| s.unwrap() as f32 / max).collect()
             }
         };
         let raw_sample_rate = reader.spec().sample_rate;

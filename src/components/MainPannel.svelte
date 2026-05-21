@@ -1,58 +1,96 @@
 <script lang="ts">
 	import Knob from './Knob.svelte';
 	import Track from './Track.svelte';
-	import type { Track as TrackType } from '../types/global';
+	import type { Track as TrackType, Clip } from '../types/global';
 	import { invoke } from '@tauri-apps/api/tauri';
+	import { open } from '@tauri-apps/api/dialog';
 	import { onMount } from 'svelte';
 	import { transport } from '../stores/transport';
 
-	let hoveringAudio: HTMLAudioElement;
-
 	let tracks: TrackType[] = [
-		{
-			name: 'Piano',
-			volume: 60,
-			clips: [
-				// { start: 109, end: 169 },
-			]
-		},
-		{
-			name: 'Guitare',
-			volume: 80,
-			clips: [
-				{ start: 12, end: 50, raw_samples: [0.5, 0.4, -1, -0.1], sample_rate: 0.5 },
-				{
-					start: 56,
-					end: 87,
-					raw_samples: [0.5, 0.4, -1, -0.1, 0.5, 0.4, -1, -0.1, 0.5, 0.4, -1, -0.1],
-					sample_rate: 1
-				}
-			]
-		}
+		{ name: 'Piano', volume: 60, clips: [] },
+		{ name: 'Guitare', volume: 80, clips: [] }
 	];
 
 	let scale: number = 2.0;
 
-	// Playhead animation
-	let animFrameId: number;
-	let lastTs: number | null = null;
+	// ── Audio engine ──────────────────────────────────────────────────────────
+	let audioCtx: AudioContext | null = null;
+	let activeSources: AudioBufferSourceNode[] = [];
+	let audioStartTime = 0;
+	let playbackStartPos = 0;
 
-	function loop(ts: number) {
-		if ($transport.isPlaying) {
-			if (lastTs !== null) {
-				const delta = (ts - lastTs) / 1000;
-				transport.update((t) => ({ ...t, position: t.position + delta }));
-			}
-			lastTs = ts;
+	function getAudioCtx(): AudioContext {
+		if (!audioCtx) audioCtx = new AudioContext();
+		return audioCtx;
+	}
+
+	function scheduleClip(ctx: AudioContext, clip: Clip, currentPos: number) {
+		if (currentPos >= clip.end || clip.sample_rate < 3000) return;
+
+		const samples = new Float32Array(clip.raw_samples);
+		const buffer = ctx.createBuffer(1, samples.length, clip.sample_rate);
+		buffer.copyToChannel(samples, 0);
+
+		const source = ctx.createBufferSource();
+		source.buffer = buffer;
+		source.connect(ctx.destination);
+
+		if (currentPos < clip.start) {
+			source.start(ctx.currentTime + (clip.start - currentPos));
 		} else {
-			lastTs = null;
+			source.start(0, currentPos - clip.start);
+		}
+
+		activeSources.push(source);
+	}
+
+	function stopAllClips() {
+		for (const source of activeSources) {
+			try { source.stop(); } catch { /* already ended */ }
+		}
+		activeSources = [];
+	}
+
+	// ── Playhead (position driven by audioCtx.currentTime when playing) ──────
+	let animFrameId: number;
+
+	function loop() {
+		if ($transport.isPlaying && audioCtx) {
+			transport.update((t) => ({
+				...t,
+				position: playbackStartPos + (audioCtx!.currentTime - audioStartTime)
+			}));
 		}
 		animFrameId = requestAnimationFrame(loop);
 	}
 
 	onMount(() => {
 		animFrameId = requestAnimationFrame(loop);
-		return () => cancelAnimationFrame(animFrameId);
+
+		let wasPlaying = false;
+		const unsub = transport.subscribe((state) => {
+			if (state.isPlaying && !wasPlaying) {
+				const ctx = getAudioCtx();
+				if (ctx.state === 'suspended') ctx.resume();
+				playbackStartPos = state.position;
+				audioStartTime = ctx.currentTime;
+				for (const track of tracks) {
+					for (const clip of track.clips) {
+						scheduleClip(ctx, clip, state.position);
+					}
+				}
+			} else if (!state.isPlaying && wasPlaying) {
+				stopAllClips();
+			}
+			wasPlaying = state.isPlaying;
+		});
+
+		return () => {
+			cancelAnimationFrame(animFrameId);
+			unsub();
+			stopAllClips();
+		};
 	});
 
 	$: playheadX = $transport.position * scale;
@@ -63,62 +101,34 @@
 		transport.update((t) => ({ ...t, position: x / scale }));
 	}
 
-	function handleDrop(event: DragEvent) {
-		event.preventDefault();
-		console.log('Drop');
-	}
-
-	function handleDragOver(event: DragEvent) {
-		event.preventDefault();
-		console.log('Drag over');
-	}
-
-	function handleDragEnter(event: DragEvent) {
-		event.preventDefault();
-		console.log('Drag enter');
-		let files = event.dataTransfer?.files;
-		console.log('Data', event.dataTransfer);
-		console.log(files?.length);
-		if (files?.length) {
-			console.log(files?.length > 0);
-			if (files?.length > 0) {
-				console.log(files[0].type.startsWith('audio/'));
-			}
-		}
-
-		if (files?.length && files?.length > 0 && files[0].type.startsWith('audio/')) {
-			console.log('Filename : ', files[0].name);
-			hoveringAudio = new Audio(files[0].name);
-		} else {
-			console.log('Non');
-		}
-	}
+	function handleDrop(event: DragEvent) { event.preventDefault(); }
+	function handleDragOver(event: DragEvent) { event.preventDefault(); }
+	function handleDragEnter(event: DragEvent) { event.preventDefault(); }
 
 	function createNewAudioClip(filePath: string): Promise<[number[], number]> {
-		return invoke('create_new_audio_clip', {
-			filePath: filePath
+		return invoke('create_new_audio_clip', { filePath });
+	}
+
+	async function onClick() {
+		const filePath = await open({
+			filters: [{ name: 'Audio', extensions: ['wav'] }]
 		});
-	}
+		if (!filePath || Array.isArray(filePath)) return;
 
-	function onClick() {
-		const filePath = '/home/armand/dev/echoes-studio/sample_44100.wav';
-		createNewAudioClip(filePath)
-			.then((result) => {
-				console.log('Résultat: ', result);
-				let new_clip = {
+		createNewAudioClip(filePath as string)
+			.then(([samples, sampleRate]) => {
+				const clip: Clip = {
 					start: 0,
-					end: result[0].length / result[1],
-					raw_samples: result[0],
-					sample_rate: result[1]
+					end: samples.length / sampleRate,
+					raw_samples: samples,
+					sample_rate: sampleRate
 				};
-				tracks[0].clips = [...tracks[0].clips, new_clip];
+				tracks[0].clips = [...tracks[0].clips, clip];
 			})
-			.catch((error) => {
-				console.error('Erreur:', error);
-			});
+			.catch((error) => console.error('Erreur:', error));
 	}
 
-	function makeEditable(this: HTMLElement, event: MouseEvent) {
+	function makeEditable(this: HTMLElement) {
 		this.contentEditable = 'true';
 		this.focus();
 

@@ -43,17 +43,9 @@ fn main() -> Result<(), Box<dyn Error>> {
 
 #[tauri::command]
 async fn create_new_audio_clip(file_path: &str) -> Result<(Vec<f32>, u32), String> {
-    match AudioClip::from_wav_file(file_path) {
-        Ok(audio_clip) => {
-            let normalized_samples: Vec<f32> = audio_clip
-                .raw_samples
-                .into_iter()
-                .map(|sample| sample / i16::MAX as f32)
-                .collect();
-            Ok((normalized_samples, audio_clip.raw_sample_rate))
-        }
-        Err(err) => Err(err.to_string()),
-    }
+    AudioClip::from_wav_file(file_path)
+        .map(|clip| (clip.raw_samples, clip.raw_sample_rate))
+        .map_err(|e| e.to_string())
 }
 
 pub fn run(
