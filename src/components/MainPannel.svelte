@@ -187,7 +187,7 @@
 	.tracks {
 		flex-grow: 1;
 		overflow-y: auto;
-		background-color: blue;
+		// background-color: blue;
 		position: relative;
 		cursor: crosshair;
 	}
