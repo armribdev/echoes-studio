@@ -1,11 +1,11 @@
 [package]
-name = "app"
+name = "echoes-studio"
 version = "0.1.0"
-description = "A Tauri App"
-authors = ["you"]
-license = ""
-repository = ""
-default-run = "app"
+description = "A radically simple open-source DAW"
+authors = ["Armand Ribault"]
+license = "MIT"
+repository = "https://github.com/echoes-studio/echoes-studio"
+default-run = "echoes-studio"
 edition = "2021"
 rust-version = "1.60"
 
