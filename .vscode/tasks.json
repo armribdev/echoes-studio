@@ -1,0 +1,34 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Start Vite Dev Server",
+      "type": "shell",
+      "command": "pnpm",
+      "args": ["run", "dev"],
+      "options": {
+        "cwd": "${workspaceFolder}",
+        "env": {
+          "NO_COLOR": "1"
+        }
+      },
+      "isBackground": true,
+      "presentation": {
+        "reveal": "silent",
+        "panel": "dedicated",
+        "label": "Vite dev server"
+      },
+      "problemMatcher": {
+        "owner": "vite-dev",
+        "pattern": {
+          "regexp": "^\\s"
+        },
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": "VITE",
+          "endsPattern": "localhost"
+        }
+      }
+    }
+  ]
+}
