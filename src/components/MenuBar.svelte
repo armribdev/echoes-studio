@@ -1,24 +1,23 @@
 <script lang="ts">
-	let isPlaying = false;
+	import { transport } from '../stores/transport';
+
 	let isRecording = false;
 
 	function togglePlayPause() {
-		isPlaying = !isPlaying;
-		// Logique de lecture/pause ici
+		transport.update((t) => ({ ...t, isPlaying: !t.isPlaying }));
 	}
 
 	function rewindToStart() {
-		// Logique de retour au début ici
+		transport.update((t) => ({ ...t, position: 0, isPlaying: false }));
 	}
 
 	function toggleRecord() {
 		isRecording = !isRecording;
-		// Logique d'enregistrement ici
 	}
 </script>
 
 <div class="menu-bar">
-	<button on:click={togglePlayPause}>{isPlaying ? 'Pause' : 'Play'}</button>
+	<button on:click={togglePlayPause}>{$transport.isPlaying ? 'Pause' : 'Play'}</button>
 	<button on:click={rewindToStart}>Rewind</button>
 	<button on:click={toggleRecord}>{isRecording ? 'Stop Recording' : 'Record'}</button>
 </div>

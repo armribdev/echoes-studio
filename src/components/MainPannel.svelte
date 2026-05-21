@@ -3,6 +3,10 @@
 	import Track from './Track.svelte';
 	import type { Track as TrackType } from '../types/global';
 	import { invoke } from '@tauri-apps/api/tauri';
+	import { onMount } from 'svelte';
+	import { transport } from '../stores/transport';
+
+	let hoveringAudio: HTMLAudioElement;
 
 	let tracks: TrackType[] = [
 		{
@@ -28,6 +32,67 @@
 	];
 
 	let scale: number = 2.0;
+
+	// Playhead animation
+	let animFrameId: number;
+	let lastTs: number | null = null;
+
+	function loop(ts: number) {
+		if ($transport.isPlaying) {
+			if (lastTs !== null) {
+				const delta = (ts - lastTs) / 1000;
+				transport.update((t) => ({ ...t, position: t.position + delta }));
+			}
+			lastTs = ts;
+		} else {
+			lastTs = null;
+		}
+		animFrameId = requestAnimationFrame(loop);
+	}
+
+	onMount(() => {
+		animFrameId = requestAnimationFrame(loop);
+		return () => cancelAnimationFrame(animFrameId);
+	});
+
+	$: playheadX = $transport.position * scale;
+
+	function handleTracksClick(event: MouseEvent) {
+		const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
+		const x = event.clientX - rect.left;
+		transport.update((t) => ({ ...t, position: x / scale }));
+	}
+
+	function handleDrop(event: DragEvent) {
+		event.preventDefault();
+		console.log('Drop');
+	}
+
+	function handleDragOver(event: DragEvent) {
+		event.preventDefault();
+		console.log('Drag over');
+	}
+
+	function handleDragEnter(event: DragEvent) {
+		event.preventDefault();
+		console.log('Drag enter');
+		let files = event.dataTransfer?.files;
+		console.log('Data', event.dataTransfer);
+		console.log(files?.length);
+		if (files?.length) {
+			console.log(files?.length > 0);
+			if (files?.length > 0) {
+				console.log(files[0].type.startsWith('audio/'));
+			}
+		}
+
+		if (files?.length && files?.length > 0 && files[0].type.startsWith('audio/')) {
+			console.log('Filename : ', files[0].name);
+			hoveringAudio = new Audio(files[0].name);
+		} else {
+			console.log('Non');
+		}
+	}
 
 	function createNewAudioClip(filePath: string): Promise<[number[], number]> {
 		return invoke('create_new_audio_clip', {
@@ -57,15 +122,13 @@
 		this.contentEditable = 'true';
 		this.focus();
 
-		// Ajoutez un gestionnaire d'événements pour arrêter l'édition lorsqu'on appuie sur la touche "Enter"
 		this.addEventListener('keydown', function (event) {
 			if (event.key === 'Enter') {
 				event.preventDefault();
-				this.blur(); // Permet de quitter le mode édition
+				this.blur();
 			}
 		});
 
-		// Ajoutez un gestionnaire d'événements pour arrêter l'édition lorsqu'on perd le focus
 		this.addEventListener('blur', function () {
 			this.contentEditable = 'false';
 		});
@@ -83,11 +146,19 @@
 		{/each}
 	</div>
 
-	<div class="tracks">
+	<!-- svelte-ignore a11y-no-static-element-interactions -->
+	<div
+		class="tracks"
+		on:drop={handleDrop}
+		on:dragover={handleDragOver}
+		on:dragenter={handleDragEnter}
+		on:click={handleTracksClick}
+	>
+		<div class="playhead" style="transform: translateX({playheadX}px)"></div>
 		{#each tracks as { clips }}
-			<svelte:component this={Track} {clips} {scale} />
+			<Track {clips} {scale} />
 		{/each}
-		<button on:click={onClick}>Test</button>
+		<button on:click|stopPropagation={onClick}>Test</button>
 	</div>
 </div>
 
@@ -109,20 +180,48 @@
 	}
 
 	.instruments {
-		border-right: 1px solid #ccc;
 		background-color: $pannel-background-color;
+		width: 200px;
 	}
 
 	.tracks {
 		flex-grow: 1;
 		overflow-y: auto;
+		background-color: blue;
+		position: relative;
+		cursor: crosshair;
 	}
 
 	.instrument {
 		height: 100px;
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		padding: 10px;
+		box-sizing: border-box;
 	}
 
-	.instrument {
-		padding: 10px;
+	.playhead {
+		position: absolute;
+		top: 0;
+		left: 0;
+		width: 2px;
+		height: 100%;
+		background-color: #fff;
+		pointer-events: none;
+		z-index: 10;
+		will-change: transform;
+
+		&::before {
+			content: '';
+			position: absolute;
+			top: 0;
+			left: -5px;
+			width: 0;
+			height: 0;
+			border-left: 6px solid transparent;
+			border-right: 6px solid transparent;
+			border-top: 8px solid #fff;
+		}
 	}
 </style>
