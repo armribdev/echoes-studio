@@ -6,20 +6,25 @@
 		"dev": "vite dev",
 		"build": "vite build",
 		"preview": "vite preview",
+		"predev:tauri": "node scripts/check-env.mjs --quiet",
 		"tauri:dev": "tauri dev",
+		"prebuild:tauri": "node scripts/check-env.mjs --quiet",
 		"tauri:build": "tauri build",
 		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
 		"check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
 		"lint": "prettier --check . && eslint .",
 		"format": "prettier --write .",
-		"check-env": "node scripts/check-env.mjs"
+		"check-env": "node scripts/check-env.mjs",
+		"clean": "node scripts/clean.mjs",
+		"clean:deep": "node scripts/clean.mjs --deep",
+		"test": "node scripts/test-all.mjs"
 	},
 	"engines": {
 		"node": ">=18.0.0",
 		"pnpm": ">=8.0.0"
 	},
 	"devDependencies": {
-		"@sveltejs/adapter-auto": "^3.0.0",
+		"@sveltejs/adapter-static": "^3.0.0",
 		"@sveltejs/kit": "^2.0.0",
 		"@sveltejs/vite-plugin-svelte": "^3.0.0",
 		"@tauri-apps/cli": "^1.5.9",

@@ -40,20 +40,31 @@ Merci de votre intérêt pour Echoes Studio ! Toutes les formes de contribution 
 git clone https://github.com/[TODO:org]/echoes-studio.git
 cd echoes-studio
 pnpm install
-pnpm tauri dev
+pnpm check-env      # vérifie l'environnement (optionnel — lancé auto par tauri:dev)
+pnpm tauri:dev
 ```
+
+Pour les détails par OS, voir [docs/BUILD.md](docs/BUILD.md).
 
 ### Vérifications avant de contribuer
 
-```bash
-pnpm check          # Vérification TypeScript + Svelte
-pnpm lint           # ESLint + Prettier
-pnpm format         # Auto-formatage
+Une seule commande lance la suite complète :
 
-# Côté Rust
+```bash
+pnpm test           # check + lint + cargo fmt + cargo clippy + cargo test
+```
+
+Ou les étapes individuellement :
+
+```bash
+pnpm check          # TypeScript + Svelte
+pnpm lint           # ESLint + Prettier
+pnpm format         # auto-formatage
+
+# Côté Rust (équivalent à ce que `pnpm test` exécute)
 cd src-tauri
-cargo check
-cargo clippy
+cargo fmt --check
+cargo clippy -- -D warnings
 cargo test
 ```
 
@@ -174,8 +185,7 @@ chore(deps): upgrade tauri to 1.6.0
 3. **Tests** : ajouter des tests pour les nouvelles fonctionnalités
 4. **Vérifications** :
    ```bash
-   pnpm check && pnpm lint
-   cd src-tauri && cargo fmt && cargo clippy && cargo test
+   pnpm test
    ```
 
 ### Template de PR

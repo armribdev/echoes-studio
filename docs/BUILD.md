@@ -1,77 +1,96 @@
 # Build Guide — Echoes Studio
 
-This document is the single source of truth for building and running Echoes Studio on any platform. If something is missing or outdated, please open a PR.
+This document is the single source of truth for building and running Echoes Studio on any platform. The same three commands work on Windows, macOS and Linux — no platform-specific instructions to remember.
 
 ---
 
 ## Table of contents
 
-1. [Prerequisites](#prerequisites)
-2. [Installation per OS](#installation-per-os)
-3. [Quick start](#quick-start)
+1. [TL;DR](#tldr)
+2. [Prerequisites](#prerequisites)
+3. [Installation per OS](#installation-per-os)
 4. [Available commands](#available-commands)
 5. [Environment checker](#environment-checker)
-6. [How the build pipeline works](#how-the-build-pipeline-works)
-7. [Troubleshooting](#troubleshooting)
+6. [Debugging](#debugging)
+7. [How the build pipeline works](#how-the-build-pipeline-works)
+8. [Troubleshooting](#troubleshooting)
+
+---
+
+## TL;DR
+
+```bash
+git clone https://github.com/echoes-studio/echoes-studio.git
+cd echoes-studio
+pnpm install        # installs JS deps; rustup auto-installs Rust toolchain on first cargo run
+pnpm tauri:dev      # starts dev build (Vite + Tauri, hot-reload)
+```
+
+That's it. If something fails, run `pnpm check-env` for a structured diagnosis.
 
 ---
 
 ## Prerequisites
 
-All three layers of the stack must be present before you can build.
+Five tools must be present before the first build. Every other dependency is fetched automatically by `pnpm install`, `cargo build`, or `rustup` (driven by `rust-toolchain.toml`).
 
-| Tool | Minimum version | What it's for |
-|---|---|---|
-| **Node.js** | 18.0.0 | Runs the frontend toolchain (Vite, SvelteKit) |
-| **pnpm** | 8.0.0 | Package manager (replaces npm/yarn in this project) |
-| **Rust** (via rustup) | 1.60.0 | Compiles the Tauri backend |
-| **cargo** | ships with Rust | Rust build tool |
-| **Tauri CLI** | 1.5.x | Orchestrates the full dev/build cycle (installed locally via pnpm) |
+| Tool | Minimum version | Purpose | How `pnpm tauri:dev` notices if missing |
+|---|---|---|---|
+| **Node.js** | 18.0.0 | Runs Vite + SvelteKit | `engine-strict=true` blocks `pnpm install` |
+| **pnpm** | 8.0.0 | Package manager (do not use npm/yarn) | Engine check fails |
+| **Rust** (via rustup) | 1.60.0 | Compiles the Tauri backend | `cargo` is unavailable, build aborts |
+| **cargo** | bundled with Rust | Rust build tool | as above |
+| **Tauri CLI** | 1.5.x | Orchestrates dev/build | Installed locally with `pnpm install` (`@tauri-apps/cli`) |
+
+The Tauri CLI is **not** installed globally — it lives in `node_modules` and is invoked via `pnpm tauri ...`, which means the version is pinned per-checkout.
 
 ### Platform-specific additions
 
 | OS | Extra requirement | Why |
 |---|---|---|
 | **Windows** | WebView2 Runtime (pre-installed on Win 11) | Tauri renders the UI inside a WebView2 window |
-| **Windows** | MSVC Build Tools 2019+ | Compiles C dependencies (e.g. `cpal` for audio) |
+| **Windows** | MSVC Build Tools 2019+ ("Desktop development with C++" workload) | Compiles C dependencies (e.g. `cpal`) |
 | **macOS** | Xcode Command Line Tools | Provides the linker and macOS SDK |
-| **Linux** | `libwebkit2gtk-4.0-dev` + `libgtk-3-dev` | Tauri requires GTK + WebKit on Linux |
+| **Linux** | `libwebkit2gtk-4.0-dev`, `libgtk-3-dev`, `librsvg2-dev`, `libayatana-appindicator3-dev` | Tauri requires GTK + WebKit on Linux |
+
+`pnpm check-env` verifies every line of these tables on your machine.
 
 ---
 
 ## Installation per OS
 
-### Windows
+### Windows (PowerShell)
 
 ```powershell
-# 1. Node.js — download the LTS installer from https://nodejs.org
-#    Or use winget:
+# 1. Node.js LTS
 winget install OpenJS.NodeJS.LTS
 
-# 2. pnpm
+# 2. pnpm — pick ONE of:
 npm install -g pnpm@latest
+# or:
+corepack enable
+corepack prepare pnpm@latest --activate
 
-# 3. Rust
-# Download and run rustup-init.exe from https://rustup.rs
-# Accept the defaults (stable toolchain, MSVC host)
-rustup toolchain install stable
+# 3. Rust — download rustup-init.exe from https://rustup.rs and run it.
+#    Accept the defaults (stable toolchain, MSVC host).
+#    rust-toolchain.toml in this repo will auto-install the right components.
 
-# 4. Visual Studio Build Tools
-# Download from https://visualstudio.microsoft.com/visual-cpp-build-tools/
-# Select the "Desktop development with C++" workload
+# 4. Visual Studio Build Tools — download and run:
+#    https://visualstudio.microsoft.com/visual-cpp-build-tools/
+#    Select the "Desktop development with C++" workload.
 
-# WebView2 is pre-installed on Windows 11.
-# On Windows 10, download the Evergreen Bootstrapper from:
-# https://developer.microsoft.com/en-us/microsoft-edge/webview2/
+# 5. WebView2 (only Windows 10 — Windows 11 has it pre-installed):
+#    https://developer.microsoft.com/en-us/microsoft-edge/webview2/
+#    Download the Evergreen Bootstrapper and run it.
 ```
 
 ### macOS
 
 ```bash
-# 1. Xcode Command Line Tools (if not already installed)
+# 1. Xcode Command Line Tools
 xcode-select --install
 
-# 2. Node.js — via Homebrew or the official installer
+# 2. Node.js
 brew install node@20
 # or download from https://nodejs.org
 
@@ -86,29 +105,24 @@ source "$HOME/.cargo/env"
 ### Linux (Debian / Ubuntu)
 
 ```bash
-# 1. System dependencies for Tauri
 sudo apt update
 sudo apt install -y \
   libwebkit2gtk-4.0-dev \
-  build-essential \
-  curl \
-  wget \
-  libssl-dev \
   libgtk-3-dev \
   libayatana-appindicator3-dev \
   librsvg2-dev \
-  patchelf
+  build-essential \
+  curl wget libssl-dev patchelf
 
-# 2. Node.js (use nvm to avoid permission issues)
+# Node.js via nvm (avoids root-owned npm):
 curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash
 source ~/.bashrc
 nvm install 20
-nvm use 20
 
-# 3. pnpm
+# pnpm
 npm install -g pnpm@latest
 
-# 4. Rust
+# Rust
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 source "$HOME/.cargo/env"
 ```
@@ -116,78 +130,62 @@ source "$HOME/.cargo/env"
 ### Linux (Fedora / RHEL)
 
 ```bash
-# 1. System dependencies
 sudo dnf install -y \
   webkit2gtk3-devel \
-  openssl-devel \
-  curl \
-  wget \
   gtk3-devel \
   libappindicator-gtk3-devel \
-  librsvg2-devel
+  librsvg2-devel \
+  openssl-devel \
+  curl wget patchelf
 
-# 2–4. Node.js, pnpm, and Rust: same as Debian instructions above
+# Node, pnpm and Rust: identical to the Debian instructions above.
 ```
-
----
-
-## Quick start
-
-These four commands get you from a fresh clone to a running dev build on any OS:
-
-```bash
-# 1. Install JS dependencies (reads pnpm-lock.yaml — fully reproducible)
-pnpm install
-
-# 2. (Optional but recommended) Verify your environment before building
-pnpm check-env
-
-# 3. Launch the full dev build — Vite + Rust compiled together
-pnpm tauri:dev
-```
-
-The first `tauri:dev` takes several minutes while Cargo compiles dependencies. Subsequent runs are much faster thanks to the Cargo incremental build cache.
 
 ---
 
 ## Available commands
 
+Every command below is identical on Windows, macOS and Linux.
+
 | Command | What it does |
 |---|---|
-| `pnpm install` | Install all JS dependencies from the lock file |
-| `pnpm check-env` | Verify all required tools are present and at the right version |
-| `pnpm tauri:dev` | **Start the app in dev mode** — hot-reload for Svelte, incremental rebuild for Rust |
-| `pnpm tauri:build` | Compile a release build and create platform installers |
-| `pnpm dev` | Start the Vite dev server only (frontend, no Tauri desktop shell) |
-| `pnpm build` | Build the frontend only (SvelteKit → `build/`) |
-| `pnpm check` | TypeScript type-check + Svelte validation |
-| `pnpm check:watch` | Same as above, in watch mode |
-| `pnpm lint` | Check formatting (Prettier) and linting (ESLint) |
-| `pnpm format` | Auto-format all files in-place |
+| `pnpm install` | Install all JS dependencies from `pnpm-lock.yaml` |
+| `pnpm check-env` | Verify every required tool is present and at the right version |
+| `pnpm tauri:dev` | **Start the dev build** — Vite hot-reload for the UI, incremental cargo rebuild for Rust. Runs `check-env` automatically first. |
+| `pnpm tauri:build` | Compile a release build and create platform installers. Runs `check-env` first. |
+| `pnpm dev` | Vite dev server only (frontend, no Tauri window) |
+| `pnpm build` | SvelteKit build only (`build/`) |
+| `pnpm test` | Run the full validation suite: `pnpm check` + `pnpm lint` + `cargo fmt --check` + `cargo clippy` + `cargo test` |
+| `pnpm check` | TypeScript + Svelte validation |
+| `pnpm check:watch` | Same, in watch mode |
+| `pnpm lint` | Prettier + ESLint check |
+| `pnpm format` | Prettier auto-format |
+| `pnpm clean` | Remove `build/`, `.svelte-kit/`, `src-tauri/target/` |
+| `pnpm clean:deep` | Same as above + `node_modules/` (re-run `pnpm install` afterwards) |
 
-### Rust-specific commands
+### Rust-only commands
 
-Run these from inside `src-tauri/`:
+These still work for fine-grained workflows. Run them from `src-tauri/`:
 
 ```bash
 cd src-tauri
-
-cargo check           # Fast type-check without compiling binaries
-cargo clippy          # Lint (catches common Rust mistakes)
-cargo test            # Run unit tests
-cargo fmt             # Auto-format Rust code
+cargo check           # fast type-check without producing binaries
+cargo clippy          # lint
+cargo test            # unit tests
+cargo fmt             # auto-format
 ```
 
 ---
 
 ## Environment checker
 
-`pnpm check-env` (or `node scripts/check-env.mjs`) prints a structured report of every required tool:
+`pnpm check-env` reads — never writes — and prints a structured report:
 
 ```
 Echoes Studio — Environment Check
 Platform : win32 x64
-Date     : 2026-05-21
+Node     : v20.11.0
+Date     : 2026-05-26
 
 Node.js
 ────────────────────────────────────────────────────
@@ -202,22 +200,59 @@ Rust toolchain
   ✓ OK  rustc ≥ 1.60.0  found 1.79.0
   ✓ OK  cargo  found 1.79.0
 
-Node dependencies
+Project state
 ────────────────────────────────────────────────────
+  ✓ OK  pnpm-lock.yaml present  found
   ✓ OK  node_modules installed  found
+  ✓ OK  node_modules up to date  in sync with lock file
   ✓ OK  @tauri-apps/cli (local)  found 1.6.3
 
 Platform-specific requirements
 ────────────────────────────────────────────────────
   ✓ OK  Microsoft WebView2 Runtime  found in registry
-  ✓ OK  MSVC Build Tools (cl.exe)  found at C:\Program Files\...
+  ✓ OK  MSVC Build Tools (C++ workload)  found VS Build Tools 17.9.34622.214
 
 ────────────────────────────────────────────────────
 All checks passed — ready to build!
-Run: pnpm tauri:dev
 ```
 
-The script exits with code `1` when any error is found, making it CI-friendly.
+Flags:
+
+- `--quiet` — print only failures (used internally by `predev:tauri` / `prebuild:tauri`)
+
+The script exits with code `1` if any required tool is missing, making it safe to chain in CI or pre-commit hooks.
+
+### What gets checked
+
+| Category | Check |
+|---|---|
+| Node.js | version ≥ 18.0.0 |
+| pnpm | installed, version ≥ 8.0.0 |
+| Rust | `rustc` ≥ 1.60.0 |
+| Cargo | present |
+| Project | `pnpm-lock.yaml` exists, `node_modules` present and not older than lockfile |
+| Tauri CLI | installed locally in `node_modules` |
+| **Windows** | WebView2 runtime, MSVC C++ workload (via `vswhere.exe` or `cl.exe` fallback) |
+| **macOS** | Xcode CLI Tools, macOS SDK path |
+| **Linux** | `webkit2gtk-4.0`, `gtk+-3.0`, `librsvg-2.0`, `ayatana-appindicator3`, `patchelf` (via `pkg-config`) |
+
+---
+
+## Debugging
+
+**F5** dans VS Code exécute `pnpm tauri:dev` dans un terminal intégré — pas d'extension de debug requise. La configuration est dans `.vscode/launch.json` (type `node-terminal`).
+
+Pour poser des breakpoints Rust, la voie la plus simple reste d'utiliser `pnpm tauri:dev` en ligne de commande avec les logs Rust activés :
+
+```powershell
+$env:RUST_LOG="debug"; pnpm tauri:dev
+```
+
+### Debug tips
+
+- The frontend is debugged separately with the **DevTools** panel — right-click inside the Tauri window → **Inspect Element**. Source-map support is on by default (`sourceMap: true` in `tsconfig.json`).
+- For more verbose Rust logs, run `pnpm tauri:dev` with `RUST_LOG=debug` (PowerShell: `$env:RUST_LOG="debug"; pnpm tauri:dev`).
+- To debug the audio engine in isolation, run `cargo run --manifest-path src-tauri/Cargo.toml` — this skips Tauri entirely.
 
 ---
 
@@ -226,6 +261,9 @@ The script exits with code `1` when any error is found, making it CI-friendly.
 ```
 pnpm tauri:dev
 │
+├── predev:tauri hook runs `node scripts/check-env.mjs --quiet`
+│   └── aborts the build if a required tool is missing
+│
 ├── tauri CLI reads src-tauri/tauri.conf.json
 │   ├── runs beforeDevCommand: "pnpm run dev"  →  Vite dev server (port 5173)
 │   └── compiles src-tauri/ with cargo (debug profile)
@@ -233,12 +271,14 @@ pnpm tauri:dev
 ├── Tauri opens a native window pointed at http://localhost:5173
 │
 └── File watchers run in parallel:
-    ├── Vite  →  hot-module replacement for .svelte / .ts changes (instant)
+    ├── Vite  →  HMR for .svelte / .ts changes (instant)
     └── cargo →  incremental recompile for .rs changes (seconds)
 ```
 
 ```
 pnpm tauri:build
+│
+├── prebuild:tauri hook runs `node scripts/check-env.mjs --quiet`
 │
 ├── runs beforeBuildCommand: "pnpm run build"  →  SvelteKit → build/
 │
@@ -258,21 +298,35 @@ pnpm tauri:build
 | Rust release binary | `src-tauri/target/release/echoes-studio[.exe]` |
 | Platform bundles | `src-tauri/target/release/bundle/` |
 
+### Why these specific design choices
+
+- **Vite port is pinned (`strictPort: true`).** Vite refuses to fall back to 5174 if 5173 is taken. Without this, `tauri.conf.json#devPath` (which hardcodes `http://localhost:5173`) would point at nothing and the window would open empty.
+- **`rust-toolchain.toml` pins the channel.** Rustup respects this file silently — first `cargo` invocation installs the right channel + components.
+- **`adapter-static` instead of `adapter-auto`.** Tauri serves files via a custom protocol; SvelteKit doesn't need a server adapter. `adapter-auto` worked but emitted a noisy warning at every dev launch.
+- **No global Tauri CLI.** The CLI is in `devDependencies`, so the version is pinned per checkout and `pnpm install` is the only setup step.
+
 ---
 
 ## Troubleshooting
 
-### `pnpm tauri:dev` fails with "npm not found" or "pnpm not found"
+### `Port 5173 is already in use`
 
-Tauri reads `beforeDevCommand` from `tauri.conf.json`. Make sure your shell has `pnpm` in its PATH. After installing pnpm, open a **new** terminal session so the PATH is refreshed.
+The Vite config sets `strictPort: true` on purpose — it surfaces the conflict instead of silently picking a different port (which would leave the Tauri window blank). Either kill the other process or change the port in **two places**:
+
+1. `vite.config.ts` → `server.port`
+2. `src-tauri/tauri.conf.json` → `build.devPath`
+
+### `Environment check failed: MSVC Build Tools` on Windows
+
+`pnpm check-env` looks for the C++ workload via `vswhere.exe` (shipped by every VS 2017+ installer) rather than relying on `cl.exe` being on the PATH (which only happens inside a Developer Command Prompt). If the check fails, install the **"Desktop development with C++"** workload from https://visualstudio.microsoft.com/visual-cpp-build-tools/.
 
 ### First `cargo build` is very slow
 
-Normal — Cargo compiles the full dependency tree from scratch. The `target/` directory caches compiled artifacts; subsequent builds are incremental and much faster. Do **not** delete `target/` unless debugging a stale-cache issue.
+Normal — Cargo compiles the full dependency tree from scratch. The `target/` directory caches compiled artefacts; subsequent builds are incremental. Do **not** delete `target/` unless debugging a stale-cache issue (`pnpm clean` does it correctly).
 
 ### `error: linking with cc failed` on Linux
 
-Missing C toolchain. Run:
+Missing C toolchain:
 ```bash
 sudo apt install build-essential    # Debian/Ubuntu
 sudo dnf install gcc                # Fedora
@@ -289,38 +343,29 @@ sudo dnf install webkit2gtk3-devel        # Fedora
 
 Download the Evergreen Bootstrapper from [Microsoft's WebView2 page](https://developer.microsoft.com/en-us/microsoft-edge/webview2/) and run it. Windows 11 has it pre-installed.
 
-### `error[E0463]: can't find crate for std` (wrong Rust target)
+### F5 ne fait rien ou erreur de type inconnu
 
-Run:
+La configuration F5 utilise `node-terminal`, intégré à VS Code sans extension. Si ça échoue, vérifier que `.vscode/launch.json` contient bien `"type": "node-terminal"` et non une ancienne config `lldb` ou `cppvsdbg`.
+
+### Stale dependencies after `git pull`
+
+`pnpm check-env` detects when `pnpm-lock.yaml` is newer than the last install and prints a warning. Run `pnpm install` to resync.
+
+### TypeScript errors after switching branches
+
 ```bash
-rustup target add x86_64-pc-windows-msvc   # Windows
-rustup target add x86_64-apple-darwin      # macOS (Intel)
-rustup target add aarch64-apple-darwin     # macOS (Apple Silicon)
-rustup target add x86_64-unknown-linux-gnu # Linux
+pnpm install        # update node_modules
+pnpm check          # confirm the error is in your code, not generated types
 ```
 
-### SvelteKit `adapter-auto` warning in dev
+### Rust binary not found after package rename
 
-This is expected in a local Tauri context — adapter-auto emits a warning because it cannot detect the deployment platform. The build still works correctly; the Tauri Vite plugin overrides the adapter behaviour.
+If you have a `target/` directory from before the package was renamed to `echoes-studio`, run:
 
-### TypeScript errors after `git pull`
-
-Run `pnpm install` first — a package update may have changed the types. Then `pnpm check` to confirm the error is in your code and not in stale generated types.
-
-### Port 5173 already in use
-
-Either stop the other process or change the dev port in `vite.config.ts`:
-```ts
-server: {
-  port: 5174,   // pick any free port
-  strictPort: true
-}
-```
-Then update `devPath` in `src-tauri/tauri.conf.json` to match.
-
-### Rust binary not found after rename
-
-The Cargo package was renamed from `app` to `echoes-studio`. If you have an old `target/` directory from before this rename, run `cargo clean` inside `src-tauri/` to clear stale artifacts:
 ```bash
-cd src-tauri && cargo clean
+pnpm clean          # removes src-tauri/target/ cleanly on every OS
 ```
+
+### `pnpm tauri:dev` runs the env check every time — can I skip it?
+
+Yes — the check is wired as a `predev:tauri` hook, so `pnpm run tauri:dev --ignore-scripts` bypasses it. Alternatively, invoke the Tauri CLI directly: `pnpm exec tauri dev`. Run a full `pnpm check-env` whenever something feels off.

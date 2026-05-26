@@ -1,0 +1,15 @@
+# Pins the Rust toolchain used to compile the Tauri backend.
+#
+# Why: without this file, the version of rustc/cargo depends on each
+# contributor's global default toolchain — which makes "works on my machine"
+# bugs harder to reproduce. Pinning to `stable` keeps everyone in sync while
+# still picking up patch releases of the stable channel automatically.
+#
+# `rustup` reads this file on its own; no manual action is required after
+# checking out the repository — the first `cargo` invocation in this tree
+# installs the listed components if they are missing.
+
+[toolchain]
+channel = "stable"
+components = ["rustfmt", "clippy"]
+profile = "minimal"

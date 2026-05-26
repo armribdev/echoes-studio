@@ -2,18 +2,13 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "type": "lldb",
+      // F5 → lance `pnpm tauri:dev` dans un terminal intégré.
+      // node-terminal est intégré à VS Code (pas d'extension requise).
+      "type": "node-terminal",
       "request": "launch",
-      "name": "Debug Tauri App",
-      "cargo": {
-        "args": [
-          "build",
-          "--manifest-path=./src-tauri/Cargo.toml"
-        ]
-      },
-      "args": [],
-      "cwd": "${workspaceFolder}",
-      "preLaunchTask": "Start Vite Dev Server"
+      "name": "Echoes Studio — dev",
+      "command": "pnpm tauri:dev",
+      "cwd": "${workspaceFolder}"
     }
   ]
 }

@@ -55,11 +55,13 @@ Echoes Studio part d'un postulat inverse : **chaque interaction doit être évid
 
 - [Node.js](https://nodejs.org) ≥ 18
 - [pnpm](https://pnpm.io) ≥ 8
-- [Rust](https://rustup.rs) stable (≥ 1.60)
+- [Rust](https://rustup.rs) stable (≥ 1.60 — installé automatiquement via `rust-toolchain.toml`)
 - Dépendances système Tauri :
   - **Linux** : `libwebkit2gtk-4.0-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev`
   - **macOS** : Xcode Command Line Tools
   - **Windows** : Microsoft C++ Build Tools + WebView2 Runtime
+
+Guide détaillé d'installation par OS : [docs/BUILD.md](docs/BUILD.md).
 
 ```bash
 # Cloner le dépôt
@@ -69,14 +71,19 @@ cd echoes-studio
 # Installer les dépendances frontend
 pnpm install
 
+# (Optionnel mais recommandé) Vérifier l'environnement
+pnpm check-env
+
 # Lancer en mode développement (Tauri + Vite hot-reload)
-pnpm tauri dev
+pnpm tauri:dev
 ```
+
+`pnpm tauri:dev` lance automatiquement `check-env` en mode silencieux avant le build — il échoue tôt avec un message clair si un outil manque.
 
 ### Build de production
 
 ```bash
-pnpm tauri build
+pnpm tauri:build
 # Bundles générés dans src-tauri/target/release/bundle/
 ```
 
@@ -84,7 +91,7 @@ pnpm tauri build
 
 ## Premiers pas
 
-1. **Lancer Echoes Studio** via `pnpm tauri dev`
+1. **Lancer Echoes Studio** via `pnpm tauri:dev`
 2. **Charger un fichier audio** — glisser-déposer un `.wav` dans la zone de pistes *(à venir)*
 3. **Lire le projet** — `Espace` pour play/pause *(à venir)*
 4. **Enregistrer** — `R` pour armer l'enregistrement *(à venir)*
