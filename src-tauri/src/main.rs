@@ -1,4 +1,4 @@
-use audio_clip::AudioClip;
+use audio_clip::{AudioClip, AudioClipData};
 use cpal::{
     traits::{DeviceTrait, HostTrait, StreamTrait},
     SampleFormat, SampleRate,
@@ -34,7 +34,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     //run(&device, &config.into(), audio_clip)?;
 
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![create_new_audio_clip])
+        .plugin(tauri_plugin_dialog::init())
+        .invoke_handler(tauri::generate_handler![create_new_audio_clip, get_audio_clip_duration])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 
@@ -42,9 +43,17 @@ fn main() -> Result<(), Box<dyn Error>> {
 }
 
 #[tauri::command]
-async fn create_new_audio_clip(file_path: &str) -> Result<(Vec<f32>, u32), String> {
+async fn get_audio_clip_duration(file_path: &str) -> Result<f64, String> {
+    let file = std::fs::File::open(file_path).map_err(|e| e.to_string())?;
+    let reader = hound::WavReader::new(file).map_err(|e| e.to_string())?;
+    let spec = reader.spec();
+    Ok(reader.duration() as f64 / spec.sample_rate as f64)
+}
+
+#[tauri::command]
+async fn create_new_audio_clip(file_path: &str) -> Result<AudioClipData, String> {
     AudioClip::from_wav_file(file_path)
-        .map(|clip| (clip.raw_samples, clip.raw_sample_rate))
+        .map(|clip| clip.into_clip_data())
         .map_err(|e| e.to_string())
 }
 
