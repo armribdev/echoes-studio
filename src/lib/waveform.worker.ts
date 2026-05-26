@@ -1,41 +1,79 @@
-onmessage = function (event) {
-	const { raw_samples, sample_rate, scale } = event.data;
+type Peaks = [number, number][];
 
-	const offScreenCanvas = new OffscreenCanvas(100, 100);
-	const ctx = offScreenCanvas.getContext('2d');
-	if (!ctx) return;
+interface RenderMessage {
+	peaks_64: Peaks;
+	peaks_512: Peaks;
+	peaks_4096: Peaks;
+	sample_rate: number;
+	scale: number;
+	width: number;
+	height: number;
+	bucket: number;
+}
 
-	drawWaveform(ctx, raw_samples, sample_rate, scale);
+onmessage = function (event: MessageEvent<RenderMessage>) {
+	const { peaks_64, peaks_512, peaks_4096, sample_rate, scale, width, height, bucket } =
+		event.data;
 
-	postMessage({
-		imageData: ctx.getImageData(0, 0, offScreenCanvas.width, offScreenCanvas.height).data
-	});
+	const canvas = new OffscreenCanvas(width, height);
+	const ctx = canvas.getContext('2d')!;
+
+	drawWaveform(ctx, peaks_64, peaks_512, peaks_4096, sample_rate, scale);
+
+	const bitmap = canvas.transferToImageBitmap();
+	postMessage({ bitmap, bucket }, [bitmap] as unknown as Transferable[]);
 };
 
+function selectPeaks(
+	peaks_64: Peaks,
+	peaks_512: Peaks,
+	peaks_4096: Peaks,
+	sample_rate: number,
+	scale: number
+): { peaks: Peaks; chunkSize: number } {
+	const samplesPerPixel = sample_rate / scale;
+	if (samplesPerPixel < 512) return { peaks: peaks_64, chunkSize: 64 };
+	if (samplesPerPixel < 4096) return { peaks: peaks_512, chunkSize: 512 };
+	return { peaks: peaks_4096, chunkSize: 4096 };
+}
+
 function drawWaveform(
-	context: OffscreenCanvasRenderingContext2D,
-	raw_samples: number[],
+	ctx: OffscreenCanvasRenderingContext2D,
+	peaks_64: Peaks,
+	peaks_512: Peaks,
+	peaks_4096: Peaks,
 	sample_rate: number,
 	scale: number
 ) {
-	if (!context) {
-		return;
+	const W = ctx.canvas.width;
+	const H = ctx.canvas.height;
+
+	ctx.clearRect(0, 0, W, H);
+	ctx.fillStyle = 'rgba(71, 171, 255, 0.85)';
+
+	const { peaks, chunkSize } = selectPeaks(peaks_64, peaks_512, peaks_4096, sample_rate, scale);
+	const secPerChunk = chunkSize / sample_rate;
+
+	for (let px = 0; px < W; px++) {
+		const timeStart = px / scale;
+		const timeEnd = (px + 1) / scale;
+
+		const chunkStart = Math.floor(timeStart / secPerChunk);
+		const chunkEnd = Math.floor(timeEnd / secPerChunk);
+
+		// Always include at least one chunk even when zoomed in past peak resolution
+		const limit = Math.min(Math.max(chunkStart + 1, chunkEnd + 1), peaks.length);
+
+		let pMin = 0;
+		let pMax = 0;
+		for (let c = chunkStart; c < limit; c++) {
+			const [lo, hi] = peaks[c];
+			if (lo < pMin) pMin = lo;
+			if (hi > pMax) pMax = hi;
+		}
+
+		const yTop = (0.5 - pMax * 0.5) * H;
+		const yBot = (0.5 - pMin * 0.5) * H;
+		ctx.fillRect(px, yTop, 1, Math.max(1, yBot - yTop));
 	}
-	context.clearRect(0, 0, context.canvas.width, context.canvas.height);
-	context.strokeStyle = 'red';
-	context.lineWidth = 1;
-
-	context.beginPath();
-
-	const startX = 0;
-	const startY = (0.5 - raw_samples[0] / 2) * context.canvas.height;
-	context.moveTo(startX, startY);
-
-	for (let i = 1; i < raw_samples.length; i++) {
-		const x = (i * scale) / sample_rate;
-		const y = (0.5 - raw_samples[i] / 2) * context.canvas.height;
-		context.lineTo(x, y);
-	}
-
-	context.stroke();
 }
