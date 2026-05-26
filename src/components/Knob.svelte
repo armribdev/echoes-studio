@@ -41,7 +41,7 @@
 </div>
 
 <style lang="scss">
-	@import '../variables.scss';
+	@use '../variables.scss' as *;
 	.knob {
 		display: block;
 		width: 20px;

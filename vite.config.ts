@@ -3,6 +3,13 @@ import { defineConfig } from 'vite';
 
 export default defineConfig({
 	plugins: [sveltekit()],
+	css: {
+		preprocessorOptions: {
+			scss: {
+				api: 'modern-compiler'
+			}
+		}
+	},
 	server: {
 		// Pinning the port and refusing to fall back keeps Vite and Tauri in
 		// sync. tauri.conf.json#devPath hardcodes 5173; if Vite ever shifted to
