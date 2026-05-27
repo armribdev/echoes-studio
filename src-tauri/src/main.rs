@@ -89,6 +89,8 @@ fn main() {
             get_snapshot,
             undo,
             redo,
+            // ── Keyboard shortcut bridge ──────────────────────────────────────
+            menu_action,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -248,7 +250,21 @@ fn handle_menu_event(app: &tauri::AppHandle, menu_id: &str) {
     }
 }
 
-// ── Read-only Tauri commands ───────────────────────────────────────────────────
+// ── Tauri commands ────────────────────────────────────────────────────────────
+
+/// Keyboard shortcut bridge — mirrors every native menu accelerator so the
+/// frontend keymap module can invoke the exact same logic.
+///
+/// File dialogs block the calling thread, so we spawn a dedicated thread the
+/// same way `on_menu_event` does.  The command returns immediately; results
+/// are communicated back to the frontend via the existing Tauri event channel
+/// ("project-loaded", "project-saved", …).
+#[tauri::command]
+fn menu_action(app: tauri::AppHandle, action: String) {
+    std::thread::spawn(move || {
+        handle_menu_event(&app, &action);
+    });
+}
 
 /// Duration of a WAV file in seconds — used for drag-and-drop preview.
 #[tauri::command]

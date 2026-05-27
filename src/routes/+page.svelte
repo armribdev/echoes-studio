@@ -1,4 +1,5 @@
-<script>
+<script lang="ts">
+	import { onMount } from 'svelte';
 	import MenuBar from '../components/MenuBar.svelte';
 	import MainPannel from '../components/MainPannel.svelte';
 	import StatusBar from '../components/StatusBar.svelte';
@@ -6,6 +7,11 @@
 	// which starts listening to "engine-event" and "project-loaded" channels.
 	// The store then stays alive for the entire app lifetime.
 	import { engineProject } from '../frontend/store/engineStore';
+	import { registerShortcuts } from '../frontend/shortcuts/keymap';
+
+	// Register keyboard shortcuts once for the entire app lifetime.
+	// registerShortcuts() returns its own cleanup — Svelte calls it on destroy.
+	onMount(() => registerShortcuts());
 </script>
 
 <!--
