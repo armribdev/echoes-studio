@@ -22,18 +22,19 @@
 
 ---
 
-## Phase 1 — MVP : Lecture & Chargement *(en cours)*
+## Phase 1 — MVP : Lecture & Chargement ✅ *complète*
 
 **Objectif :** Un utilisateur peut charger des fichiers audio, les placer sur la timeline, et les lire.
 
 **Critère de passage :** Charger un WAV, le placer sur une piste, appuyer sur Play → le son sort.
 
 ### Réalisé
-- [x] **Lecture audio** via Web Audio API (Web Audio, en attendant `cpal`)
+- [x] **Lecture audio** via Web Audio API (en attendant `cpal`)
   - Transport : Play / Pause / Stop / Rewind unifié via dispatcher
   - Tête de lecture animée sur la timeline
   - Raccourci Espace pour play/pause
 - [x] **Drag & drop fichiers** — glisser un `.wav` depuis l'explorateur vers une piste
+- [x] **File picker natif** — menu « Importer audio… » (Ctrl+Shift+I) via `tauri-plugin-dialog`
 - [x] **Positionnement des clips** — placer et déplacer un clip sur la timeline
 - [x] **Règle temporelle** — affichage mesures + temps (BPM configurable, signature rythmique)
 - [x] **Snap to grid** — accrochage à la grille temporelle (Alt pour désactiver)
@@ -44,24 +45,30 @@
 - [x] **Gestion d'erreur IPC** — erreurs d'import et d'undo/redo visibles dans l'UI
 
 ### Restant
-- [ ] **File picker natif** — menu « Importer audio… » (Ctrl+Shift+I) en plus du drag & drop
 - [ ] **Moteur audio Rust** (`cpal`) — remplacement du chemin Web Audio par le moteur natif
+  - Architecture préparée (`audio_engine/engine.rs`, `graph.rs`, `snapshot.rs`), `cpal 0.15.2` dans `Cargo.toml`
+  - Lecture réelle encore assurée par Web Audio côté frontend
+- [ ] **UI « Ajouter une piste »** — commande `CREATE_TRACK` disponible côté Rust, sans bouton dans l'interface
 
 ---
 
-## Phase 2 — v0.3 : Timeline Pro & Mixage basique
+## Phase 2 — v0.3 : Timeline Pro & Mixage basique *(en cours)*
 
 **Objectif :** Une timeline exploitable avec gestion basique du mix.
 
 **Critère de passage :** Composer un arrangement multi-piste, ajuster les volumes, exporter.
 
-### Fonctionnalités
-- [ ] **Multi-format audio** — support MP3, FLAC, OGG en plus de WAV (`symphonia`)
-- [ ] **Pan par piste** — panoramique stéréo
-- [ ] **Mute / Solo** par piste
-- [ ] **Couper / Copier / Coller des clips**
-- [ ] **Export audio** — mixdown stéréo vers WAV/MP3
-- [ ] **Zoom vertical** de la timeline
+### Réalisé
+- [x] **Pan par piste** — `StereoPannerNode` Web Audio, Knob UI, persistance via `UPDATE_TRACK`
+- [x] **Mute / Solo** par piste — boutons M/S, commands `MUTE_TRACK` / `SOLO_TRACK`, solo exclusif côté Rust
+- [x] **Export audio WAV** — `OfflineAudioContext` mixdown + `export_wav` Rust, bouton « ↓ WAV » (Ctrl+Shift+E)
+
+### Restant
+- [ ] **Multi-format audio** — support MP3, FLAC, OGG en plus de WAV (via `symphonia`)
+- [ ] **Export MP3** — encodage après mixdown WAV
+- [ ] **Couper / Copier / Coller des clips** — sélection et suppression OK, clipboard absent
+- [ ] **Zoom vertical** de la timeline — hauteur de piste fixe (100 px)
+- [ ] **Mute / Solo undoable** — non intégré à l'event sourcing pour l'instant
 
 ---
 
