@@ -1,73 +1,106 @@
-//! `AudioEngine` — owns the audio output stream and the current graph snapshot.
+//! `AudioEngine` — owns the CPAL stream and the current `GraphScheduler`.
 //!
-//! Real-time safety contract:
-//! - The audio callback reads only through `Arc<AudioGraphSnapshot>`.
-//! - `update_snapshot` swaps in a new Arc on the command thread and is the
-//!   ONLY mutation path.
-//! - The callback uses `try_lock` (never blocking `lock`) so it degrades
-//!   gracefully when a snapshot update races with a callback.
+//! ## Architecture
 //!
-//! CPAL integration notes:
-//! - The CPAL stream is stored as `Option<cpal::Stream>` because `cpal::Stream`
-//!   is `!Send` on some platforms; the stream must be built on the same thread
-//!   that calls `play`.
-//! - Audio initialisation is deferred until `AudioEngine::start` is explicitly
-//!   called. During development the Web Audio path in the frontend handles
-//!   playback; the Rust engine is the production path.
+//! ```text
+//! Command thread                    Audio thread
+//! ──────────────                    ────────────
+//! AudioGraphCompiler::compile()
+//! GraphScheduler::new(compiled)
+//! AudioEngine::update_scheduler()
+//!   → snapshot.enqueue(scheduler)  ──► audio_callback:
+//!                                         snapshot.try_take() → swap in
+//!                                         scheduler.process_block()
+//!                                         write to CPAL output buffer
+//! ```
+//!
+//! ## Real-time safety contract
+//!
+//! The audio callback:
+//!   ✓ Never allocates
+//!   ✓ Never acquires a blocking lock (uses `try_lock` / `try_take`)
+//!   ✓ Never performs I/O
+//!   ✓ Never calls `async`/`await`
+//!   ✓ Only reads from `GraphScheduler` (owned exclusively during callback)
+//!
+//! ## CPAL integration
+//!
+//! CPAL stream creation is intentionally deferred.  During development the
+//! Web Audio path in the frontend handles playback.  To activate native audio,
+//! implement `start_stream` and uncomment the CPAL callback below.
 
 use std::sync::{Arc, Mutex};
-use super::snapshot::AudioGraphSnapshot;
 
-/// The audio engine. Held in `AppState` behind a `Mutex`.
+use crate::audio_graph::{
+    CompileConfig, GraphScheduler, RuntimeSnapshot, TransportInfo,
+};
+use crate::audio_engine::graph::AudioGraphCompiler;
+use crate::project::AppProject;
+
+// ── AudioEngine ───────────────────────────────────────────────────────────────
+
+/// The audio engine.  Held behind `Mutex<AudioEngine>` in `AppState`.
 pub struct AudioEngine {
-    /// Current immutable graph snapshot shared with the audio callback.
-    snapshot: Arc<Mutex<Arc<AudioGraphSnapshot>>>,
-    /// Playback state.
+    // ── Real-time state ───────────────────────────────────────────────────────
+
+    /// Pending scheduler waiting to be picked up by the audio callback.
+    snapshot: Arc<RuntimeSnapshot>,
+
+    /// The scheduler currently in use on the audio thread.
+    /// Swapped at block boundaries via `snapshot.try_take()`.
+    ///
+    /// Wrapped in `Mutex` so the non-RT thread can hand it off at startup.
+    /// During normal streaming the audio thread owns it exclusively through
+    /// CPAL's callback closure.
+    current_scheduler: Mutex<GraphScheduler>,
+
+    // ── Transport ─────────────────────────────────────────────────────────────
     pub is_playing: bool,
-    /// Current playback position in seconds.
-    pub position: f64,
-    // Future: cpal::Stream stored here once audio is started
+    pub position_samples: u64,
+    pub sample_rate: f32,
+    pub bpm: f32,
+
+    // ── Device config ─────────────────────────────────────────────────────────
+    /// Audio device block size.
+    pub block_size: usize,
+
+    // Future: cpal::Stream stored here once native audio is started
     // _stream: Option<Box<dyn std::any::Any + Send>>,
 }
 
 impl AudioEngine {
     pub fn new() -> Self {
-        let initial = Arc::new(AudioGraphSnapshot::empty(48_000));
+        let sample_rate = 48_000.0_f32;
         AudioEngine {
-            snapshot: Arc::new(Mutex::new(initial)),
+            snapshot: Arc::new(RuntimeSnapshot::new()),
+            current_scheduler: Mutex::new(GraphScheduler::empty(sample_rate)),
             is_playing: false,
-            position: 0.0,
+            position_samples: 0,
+            sample_rate,
+            bpm: 120.0,
+            block_size: 512,
         }
     }
 
-    // ── Snapshot management ───────────────────────────────────────────────────
+    // ── Scheduler update ──────────────────────────────────────────────────────
 
-    /// Replace the current graph snapshot. Called by the gateway after any
-    /// structural change (new track, clip move, etc.).
+    /// Compile a new scheduler from `project` and enqueue it for atomic swap.
     ///
-    /// This is O(1): we only swap the `Arc` pointer inside the mutex.
-    /// The audio callback can continue reading the old snapshot until the
-    /// next block boundary.
-    pub fn update_snapshot(&mut self, new_snapshot: AudioGraphSnapshot) {
-        if let Ok(mut guard) = self.snapshot.lock() {
-            *guard = Arc::new(new_snapshot);
-        }
+    /// Called by the gateway after any structural change.
+    /// Never called from the audio thread.
+    pub fn update_from_project(&mut self, project: &AppProject) {
+        let config = CompileConfig {
+            sample_rate: self.sample_rate,
+            max_block_size: self.block_size,
+            num_channels: 2,
+        };
+        let scheduler = AudioGraphCompiler::compile_scheduler(project, config);
+        self.snapshot.enqueue(scheduler);
     }
 
-    /// Clone the current snapshot pointer for use in the audio callback.
-    /// The callback holds the Arc for the duration of the block, keeping the
-    /// snapshot alive even if `update_snapshot` is called concurrently.
-    pub fn current_snapshot(&self) -> Arc<AudioGraphSnapshot> {
-        // `try_lock` so we never block; if the lock is contended we return
-        // a clone of whatever we had last time (acceptable: the gateway only
-        // updates snapshots at structural change boundaries, not per-frame).
-        match self.snapshot.try_lock() {
-            Ok(guard) => Arc::clone(&guard),
-            Err(_) => {
-                // Extremely rare: return an empty snapshot rather than blocking
-                Arc::new(AudioGraphSnapshot::empty(48_000))
-            }
-        }
+    /// Directly enqueue a pre-built scheduler (used in tests / advanced cases).
+    pub fn update_scheduler(&self, scheduler: GraphScheduler) {
+        self.snapshot.enqueue(scheduler);
     }
 
     // ── Transport ─────────────────────────────────────────────────────────────
@@ -78,49 +111,89 @@ impl AudioEngine {
 
     pub fn stop(&mut self) {
         self.is_playing = false;
-        self.position = 0.0;
+        self.position_samples = 0;
+        // Reset DSP state on next block (via scheduler.reset in callback)
     }
 
     pub fn pause(&mut self) {
         self.is_playing = false;
     }
 
-    pub fn seek(&mut self, position: f64) {
-        self.position = position;
+    pub fn seek(&mut self, position_seconds: f64) {
+        self.position_samples = (position_seconds * self.sample_rate as f64) as u64;
     }
 
-    // ── Audio callback (called by CPAL on the audio thread) ───────────────────
+    pub fn position_seconds(&self) -> f64 {
+        self.position_samples as f64 / self.sample_rate as f64
+    }
+
+    // ── Audio callback (CPAL) ─────────────────────────────────────────────────
     //
-    // Real-time rules enforced here:
+    // This is the shape of the audio callback when native CPAL streaming is
+    // active.  Currently commented out — activate by:
+    //   1. Implementing `start_stream` below.
+    //   2. Moving `snapshot` and transport into an `Arc<Mutex<_>>` shared with
+    //      the closure.
+    //
+    // The callback must satisfy the real-time contract:
     //   ✓ No heap allocation
-    //   ✓ No async await
     //   ✓ No blocking lock (try_lock only)
-    //   ✓ Reads only from Arc<AudioGraphSnapshot>
+    //   ✓ No I/O
+    //   ✓ Reads only from GraphScheduler (owned for the callback's duration)
     //
-    // NOTE: CPAL initialisation and stream creation are intentionally deferred.
-    //       The Web Audio API in the frontend handles playback during development.
-    //       When activating native audio, call `start_stream` and store the
-    //       cpal::Stream here. The callback signature below shows the intended
-    //       shape.
+    // fn audio_callback(
+    //     scheduler:  &mut GraphScheduler,
+    //     snapshot:   &Arc<RuntimeSnapshot>,
+    //     transport:  &mut TransportInfo,
+    //     output:     &mut [f32],
+    //     block_size: usize,
+    // ) {
+    //     // Atomically swap in a new scheduler if one is pending
+    //     if let Some(new_sched) = snapshot.try_take() {
+    //         *scheduler = new_sched;
+    //     }
     //
-    // fn audio_callback(snapshot: &AudioGraphSnapshot, position: f64, output: &mut [f32]) {
-    //     let n = output.len();
-    //     output.fill(0.0);
-    //
-    //     for track in &snapshot.tracks {
-    //         let gain = track.volume;
-    //         for clip in &track.clips {
-    //             if let Some(offset) = clip.sample_offset(position) {
-    //                 for (i, sample) in output.iter_mut().enumerate() {
-    //                     let idx = offset + i;
-    //                     if idx < clip.samples.len() {
-    //                         *sample += clip.samples[idx] * gain;
-    //                     }
-    //                 }
-    //             }
-    //         }
+    //     if transport.is_playing {
+    //         scheduler.process_block(transport, output);
+    //         transport.position_samples += block_size as u64;
+    //     } else {
+    //         output.fill(0.0);
     //     }
     // }
+
+    // ── Synchronous render (for offline / export use) ─────────────────────────
+
+    /// Render one block synchronously and return the interleaved f32 output.
+    ///
+    /// Used for WAV export and testing.  Acquires the scheduler mutex for the
+    /// duration of the call — safe on non-RT threads.
+    pub fn render_block(&mut self, output: &mut [f32]) {
+        // Drain any pending scheduler
+        if let Some(new_sched) = self.snapshot.try_take() {
+            if let Ok(mut guard) = self.current_scheduler.lock() {
+                *guard = new_sched;
+            }
+        }
+
+        let transport = TransportInfo {
+            is_playing: self.is_playing,
+            position_samples: self.position_samples,
+            position_seconds: self.position_seconds(),
+            bpm: self.bpm,
+            sample_rate: self.sample_rate,
+            block_size: self.block_size,
+        };
+
+        if let Ok(mut sched) = self.current_scheduler.lock() {
+            sched.process_block(&transport, output);
+        } else {
+            output.fill(0.0);
+        }
+
+        if self.is_playing {
+            self.position_samples += self.block_size as u64;
+        }
+    }
 }
 
 impl Default for AudioEngine {

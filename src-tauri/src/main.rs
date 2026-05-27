@@ -1,6 +1,9 @@
 mod audio_clip;
 mod audio_engine;
+mod audio_graph;
 mod engine_gateway;
+mod plugin_formats;
+mod plugin_system;
 mod project;
 mod windows_theme;
 

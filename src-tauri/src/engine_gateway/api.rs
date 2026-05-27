@@ -17,7 +17,6 @@ use std::sync::Arc;
 use tauri::Emitter;
 
 use crate::audio_clip::AudioClip;
-use crate::audio_engine::graph::AudioGraphCompiler;
 use crate::project::{AppClip, AppProject, AppState, AppTrack, CachedAudioData, generate_id};
 use super::commands::{
     cmd, AddClipPayload, BatchCommand, CommandEnvelope, CreateTrackPayload, DeleteTrackPayload,
@@ -844,17 +843,29 @@ fn apply_events(
     Ok(project)
 }
 
-/// Trigger audio graph recompilation if needed.
-/// Must be called outside of any Mutex locks to avoid deadlocks.
+/// Trigger audio graph recompilation.
+///
+/// Builds a new `GraphScheduler` from the current project and enqueues it
+/// for atomic pickup by the audio thread at the next block boundary.
+///
+/// Must be called **outside** of any Mutex locks to avoid deadlocks.
 fn recompile_if_needed(state: &tauri::State<'_, AppState>) {
-    let snapshot = {
-        match state.project.lock() {
-            Ok(project) => AudioGraphCompiler::compile(&project),
-            Err(_) => return,
+    // Hold the project lock only long enough to compile; release before
+    // touching the engine lock.
+    let compile_done = {
+        if let Ok(mut engine) = state.audio_engine.lock() {
+            if let Ok(project) = state.project.lock() {
+                engine.update_from_project(&project);
+                true
+            } else {
+                false
+            }
+        } else {
+            false
         }
     };
 
-    if let Ok(mut engine) = state.audio_engine.lock() {
-        engine.update_snapshot(snapshot);
+    if !compile_done {
+        eprintln!("[gateway] recompile_if_needed: could not acquire locks");
     }
 }

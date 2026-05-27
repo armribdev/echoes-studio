@@ -1,17 +1,32 @@
 //! Real-time audio engine.
 //!
-//! Architecture invariants (must never be violated):
-//! - The audio thread reads ONLY from `AudioGraphSnapshot` (immutable, Arc-wrapped).
-//! - The audio callback never acquires a Mutex; it uses `try_lock` to avoid
-//!   blocking. If the lock is contended (graph recompile in progress) the
-//!   callback silently continues with the previous snapshot.
+//! ## Architecture (updated)
+//!
+//! The engine is now backed by the `audio_graph` subsystem:
+//!
+//! ```text
+//! AppProject
+//!   → AudioGraphCompiler::compile_scheduler()   (engine/graph.rs bridge)
+//!       → AudioGraph::from_project()            (audio_graph::graph)
+//!       → GraphCompiler::compile()              (audio_graph::compiler)
+//!       → GraphScheduler::new()                 (audio_graph::scheduler)
+//!   → RuntimeSnapshot::enqueue()                (audio_graph::snapshot)
+//!   → AudioEngine::render_block() / CPAL CB     (engine/engine.rs)
+//! ```
+//!
+//! ## Invariants (must never be violated)
+//!
+//! - The audio callback reads ONLY from `GraphScheduler` (immutable plan +
+//!   owned mutable DSP state).
+//! - The callback never acquires a blocking `Mutex`; it uses `try_take()`.
 //! - No heap allocation inside the audio callback.
 //! - No async runtime interaction from the audio thread.
 //!
-//! The `AudioEngine` struct owns the CPAL stream and the current snapshot
-//! pointer. Graph recompilation happens on the command thread via
-//! `AudioGraphCompiler::compile`, which produces a new `AudioGraphSnapshot`.
-//! The engine swaps in the new snapshot atomically before the next callback.
+//! ## Legacy types
+//!
+//! `snapshot.rs` retains `AudioGraphSnapshot` / `TrackSnapshot` / `ClipSnapshot`
+//! for backward compatibility during the migration.  They will be removed once
+//! all references are updated.
 
 pub mod engine;
 pub mod graph;
