@@ -2,8 +2,13 @@
 	import { transport } from '../stores/transport';
 	import { tempo } from '../stores/tempo';
 	import { updateTempo, play, pause, stop, seek } from '../frontend/commands/dispatcher';
+	import { exportTrigger } from '../stores/exportBus';
 
 	let isRecording = false;
+
+	function handleExport() {
+		exportTrigger.update((n) => n + 1);
+	}
 
 	function togglePlayPause() {
 		if ($transport.isPlaying) {
@@ -76,6 +81,12 @@
 			title="Enregistrer"
 		>⏺</button>
 	</div>
+
+	<div class="sep"></div>
+
+	<button class="btn btn--export" on:click={handleExport} title="Exporter mixdown… (Ctrl+Shift+E)">
+		↓ WAV
+	</button>
 
 	<div class="sep"></div>
 
@@ -178,6 +189,13 @@
 			&:hover {
 				color: #ff7366;
 			}
+		}
+
+		&--export {
+			font-size: 11px;
+			width: auto;
+			padding: 0 8px;
+			letter-spacing: 0.3px;
 		}
 	}
 

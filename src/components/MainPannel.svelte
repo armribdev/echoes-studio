@@ -13,6 +13,8 @@
 	import { projectEventStore } from '../shared/project/eventStore';
 	import { addClip, moveClip, removeClip, updateTrack, muteTrack, soloTrack, seek } from '../frontend/commands/dispatcher';
 	import { notify } from '../stores/status';
+	import { exportTrigger } from '../stores/exportBus';
+	import { save } from '@tauri-apps/plugin-dialog';
 
 	// Live sync from the engine event store.
 	// Local mutations (optimistic UI during drag/import) are reconciled by the
@@ -24,6 +26,15 @@
 		tempo.set({ bpm: state.bpm, numerator: state.numerator, denominator: state.denominator });
 	});
 	onDestroy(unsubStore);
+
+	// ── Export trigger ────────────────────────────────────────────────────────
+	const unsubExport = exportTrigger.subscribe((n) => {
+		if (n === 0) return;
+		exportMixdown().catch((e: unknown) =>
+			notify(`Erreur export : ${(e as Error)?.message ?? String(e)}`, 'error')
+		);
+	});
+	onDestroy(unsubExport);
 
 	let logScale: number = Math.log(80);
 	$: scale = Math.exp(logScale);
@@ -531,6 +542,99 @@
 			tracks = tracks;
 			updateTrack(tracks[trackIndex].id, { name: newName, volume: tracks[trackIndex].volume }).catch(console.error);
 		}, { once: true });
+	}
+
+	// ── Export mixdown ────────────────────────────────────────────────────────
+
+	async function exportMixdown(): Promise<void> {
+		// 1. Calculate total project duration
+		let totalDuration = 0;
+		for (const track of tracks) {
+			for (const clip of track.clips) {
+				totalDuration = Math.max(totalDuration, clip.end);
+			}
+		}
+		if (totalDuration <= 0) {
+			notify('Aucun clip à exporter', 'error');
+			return;
+		}
+
+		// 2. Save dialog (before the expensive render)
+		const filePath = await save({
+			filters: [{ name: 'Fichier WAV', extensions: ['wav'] }],
+			defaultPath: 'mixdown.wav',
+		});
+		if (!filePath) return;
+
+		notify('Export en cours…', 'info');
+
+		// 3. Offline render — same graph as live: GainNode → StereoPannerNode
+		const sampleRate = audioCtx?.sampleRate ?? 44100;
+		const length = Math.ceil(totalDuration * sampleRate);
+		const offCtx = new OfflineAudioContext(2, length, sampleRate);
+
+		const anySolo = tracks.some((t) => t.solo);
+
+		for (const track of tracks) {
+			let effectiveGain = track.volume / 100;
+			if (track.muted || (anySolo && !track.solo)) effectiveGain = 0;
+
+			const gainNode = offCtx.createGain();
+			gainNode.gain.value = effectiveGain;
+			const panNode = offCtx.createStereoPanner();
+			panNode.pan.value = track.pan / 100;
+			gainNode.connect(panNode);
+			panNode.connect(offCtx.destination);
+
+			for (const clip of track.clips) {
+				if (clip.raw_samples.length === 0) continue;
+
+				const samples = new Float32Array(clip.raw_samples);
+				let clipBuffer: AudioBuffer;
+
+				if (clip.sample_rate === sampleRate) {
+					clipBuffer = offCtx.createBuffer(1, samples.length, clip.sample_rate);
+					clipBuffer.copyToChannel(samples, 0);
+				} else {
+					// Resample to offCtx sample rate via a nested OfflineAudioContext
+					const duration = samples.length / clip.sample_rate;
+					const resCtx = new OfflineAudioContext(
+						1,
+						Math.ceil(duration * sampleRate),
+						sampleRate
+					);
+					const srcBuf = resCtx.createBuffer(1, samples.length, clip.sample_rate);
+					srcBuf.copyToChannel(samples, 0);
+					const srcNode = resCtx.createBufferSource();
+					srcNode.buffer = srcBuf;
+					srcNode.connect(resCtx.destination);
+					srcNode.start();
+					clipBuffer = await resCtx.startRendering();
+				}
+
+				const source = offCtx.createBufferSource();
+				source.buffer = clipBuffer;
+				source.connect(gainNode);
+				source.start(clip.start);
+			}
+		}
+
+		const rendered = await offCtx.startRendering();
+		const samplesLeft = Array.from(rendered.getChannelData(0));
+		const samplesRight = rendered.numberOfChannels > 1
+			? Array.from(rendered.getChannelData(1))
+			: samplesLeft;
+
+		// 4. Send to Rust for WAV writing
+		await invoke('export_wav', {
+			path: filePath,
+			samplesLeft,
+			samplesRight,
+			sampleRate,
+		});
+
+		const filename = (filePath as string).split(/[\\/]/).pop() ?? 'mixdown.wav';
+		notify(`Exporté : ${filename}`, 'success');
 	}
 
 

@@ -17,6 +17,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { undoCommand, redoCommand, play, pause } from '../commands/dispatcher';
 import { transport } from '../../stores/transport';
 import { notify } from '../../stores/status';
+import { exportTrigger } from '../../stores/exportBus';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -86,12 +87,18 @@ const SHORTCUTS: Shortcut[] = [
     action: () => redoCommand().catch((e) => notify(`Rétablir : ${e?.message ?? e}`, 'error')),
   },
 
-  // ── Import ────────────────────────────────────────────────────────────────
+  // ── Import / Export ───────────────────────────────────────────────────────
   {
     key: 'i',
     modifiers: ['ctrl', 'shift'],
     description: 'Importer audio…',
     action: menuAction('import-audio'),
+  },
+  {
+    key: 'e',
+    modifiers: ['ctrl', 'shift'],
+    description: 'Exporter mixdown…',
+    action: () => exportTrigger.update((n) => n + 1),
   },
 
   // ── Transport ─────────────────────────────────────────────────────────────

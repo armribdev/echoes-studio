@@ -93,6 +93,8 @@ fn main() {
             redo,
             // ── Keyboard shortcut bridge ──────────────────────────────────────
             menu_action,
+            // ── Export ────────────────────────────────────────────────────────
+            export_wav,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -298,4 +300,38 @@ fn get_audio_clip_duration(file_path: &str) -> Result<f64, String> {
 fn get_project(state: tauri::State<'_, AppState>) -> Result<ProjectDto, String> {
     let project = state.project.lock().map_err(|e| e.to_string())?;
     Ok(project.to_dto())
+}
+
+/// Write a stereo mixdown as a 32-bit float WAV file.
+///
+/// Called by the frontend after rendering the project offline via
+/// `OfflineAudioContext`. The path is chosen by the user via the JS save
+/// dialog before this command is invoked.
+#[tauri::command]
+fn export_wav(
+    path: String,
+    samples_left: Vec<f32>,
+    samples_right: Vec<f32>,
+    sample_rate: u32,
+) -> Result<(), String> {
+    let path = std::path::PathBuf::from(&path);
+    let path = if path.extension().map_or(true, |e| e != "wav") {
+        path.with_extension("wav")
+    } else {
+        path
+    };
+
+    let spec = hound::WavSpec {
+        channels: 2,
+        sample_rate,
+        bits_per_sample: 32,
+        sample_format: hound::SampleFormat::Float,
+    };
+
+    let mut writer = hound::WavWriter::create(&path, spec).map_err(|e| e.to_string())?;
+    for (l, r) in samples_left.iter().zip(samples_right.iter()) {
+        writer.write_sample(*l).map_err(|e| e.to_string())?;
+        writer.write_sample(*r).map_err(|e| e.to_string())?;
+    }
+    writer.finalize().map_err(|e| e.to_string())
 }
