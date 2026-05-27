@@ -390,6 +390,25 @@
 	let scrubOriginLeft = 0;
 	let scrubPosition = 0;
 
+	// Returns the finest musical subdivision (in seconds) that still spans
+	// at least MIN_SNAP_PX pixels at the current zoom level.
+	function getSnapSubdivisionSec(): number {
+		const MIN_SNAP_PX = 8;
+		const beatSec = 60 / $tempo.bpm;
+		const barSec = $tempo.numerator * beatSec;
+
+		// Finer than a beat: 1/2, 1/4, 1/8, 1/16, 1/32
+		for (const denom of [32, 16, 8, 4, 2, 1]) {
+			const subSec = beatSec / denom;
+			if (subSec * scale >= MIN_SNAP_PX) return subSec;
+		}
+
+		// Coarser than a beat: whole bars, then every 2, 4, 8 … bars
+		let multiple = 1;
+		while (barSec * multiple * scale < MIN_SNAP_PX) multiple *= 2;
+		return barSec * multiple;
+	}
+
 	function snapPosition(
 		positionSec: number,
 		altKey: boolean,
@@ -400,9 +419,9 @@
 
 		const candidates: number[] = [];
 
-		// Beat grid
-		const beatSec = 60 / $tempo.bpm;
-		candidates.push(Math.round(positionSec / beatSec) * beatSec);
+		// Adaptive beat grid
+		const subdivSec = getSnapSubdivisionSec();
+		candidates.push(Math.round(positionSec / subdivSec) * subdivSec);
 
 		// Edges of other clips
 		for (let ti = 0; ti < tracks.length; ti++) {
