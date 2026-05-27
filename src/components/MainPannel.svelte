@@ -468,7 +468,8 @@
 	function onDragMove(e: MouseEvent) {
 		if (!dragging || !tracksEl) return;
 		const rect = tracksEl.getBoundingClientRect();
-		const newStart = Math.max(0, (e.clientX - rect.left - dragging.offsetPx) / scale);
+		const rawStart = Math.max(0, (e.clientX - rect.left - dragging.offsetPx) / scale);
+		const newStart = snapPosition(rawStart, e.altKey);
 		const { trackIndex, clipIndex } = dragging;
 		const clip = tracks[trackIndex].clips[clipIndex];
 		const duration = clip.end - clip.start;
