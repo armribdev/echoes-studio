@@ -61,10 +61,22 @@
 		}
 	}
 
-	function handleDenominator(e: Event) {
-		const v = parseInt((e.target as HTMLSelectElement).value);
-		tempo.update((t) => ({ ...t, denominator: v }));
-		updateTempo($tempo.bpm, $tempo.numerator, v).catch(console.error);
+	const denominatorOptions = [2, 4, 8, 16];
+
+	function cycleDenominator() {
+		const idx = denominatorOptions.indexOf($tempo.denominator);
+		const next = denominatorOptions[(idx + 1) % denominatorOptions.length];
+		tempo.update((t) => ({ ...t, denominator: next }));
+		updateTempo($tempo.bpm, $tempo.numerator, next).catch(console.error);
+	}
+
+	function handleDenominatorScroll(e: WheelEvent) {
+		e.preventDefault();
+		const idx = denominatorOptions.indexOf($tempo.denominator);
+		const dir = e.deltaY > 0 ? 1 : -1;
+		const next = denominatorOptions[(idx + dir + denominatorOptions.length) % denominatorOptions.length];
+		tempo.update((t) => ({ ...t, denominator: next }));
+		updateTempo($tempo.bpm, $tempo.numerator, next).catch(console.error);
 	}
 </script>
 
@@ -81,12 +93,6 @@
 			title="Enregistrer"
 		>⏺</button>
 	</div>
-
-	<div class="sep"></div>
-
-	<button class="btn btn--export" on:click={handleExport} title="Exporter mixdown… (Ctrl+Shift+E)">
-		↓ WAV
-	</button>
 
 	<div class="sep"></div>
 
@@ -132,13 +138,20 @@
 				on:change={handleNumerator}
 			/>
 			<span class="ctrl-slash">/</span>
-			<select class="num-input sel-input" value={$tempo.denominator} on:change={handleDenominator}>
-				<option value={2}>2</option>
-				<option value={4}>4</option>
-				<option value={8}>8</option>
-				<option value={16}>16</option>
-			</select>
+			<button
+				class="denom-cycle"
+				on:click={cycleDenominator}
+				on:wheel={handleDenominatorScroll}
+				title="Dénominateur — clic ou molette pour changer"
+				aria-label="Dénominateur : {$tempo.denominator}"
+			>{$tempo.denominator}</button>
 		</div>
+	</div>
+
+	<div style="margin-left: auto;">
+		<button class="btn btn--export" on:click={handleExport} title="Exporter mixdown… (Ctrl+Shift+E)">
+			↓ WAV
+		</button>
 	</div>
 </div>
 
@@ -299,10 +312,34 @@
 		}
 	}
 
-	.sel-input {
-		appearance: none;
-		-webkit-appearance: none;
+	// ── Denominator cycle button ───────────────────────────────────────────────
+	.denom-cycle {
+		background: rgba(255, 255, 255, 0.05);
+		border: 1px solid rgba(255, 255, 255, 0.1);
+		border-radius: 3px;
+		color: $text-color;
+		font-family: 'SF Mono', 'Fira Code', ui-monospace, monospace;
+		font-size: 14px;
+		font-weight: 500;
+		width: 28px;
+		height: 22px;
+		padding: 0;
 		cursor: pointer;
-		width: 32px;
+		line-height: 1;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		transition: background 0.1s, color 0.1s, border-color 0.1s;
+
+		&:hover {
+			background: rgba(255, 255, 255, 0.1);
+			border-color: rgba(255, 255, 255, 0.2);
+		}
+
+		&:active {
+			background: rgba(21, 113, 255, 0.15);
+			border-color: $accent-color;
+			color: $accent-color;
+		}
 	}
 </style>
