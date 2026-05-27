@@ -214,10 +214,15 @@ pub struct AppState {
 
 impl AppState {
     pub fn new() -> Self {
+        // Seed the event store with the initial empty project so that the
+        // first undo always has a valid snapshot to return to instead of
+        // falling back to AppProject::new() on a None snapshot.
+        let mut event_store = crate::engine_gateway::store::EventStore::new();
+        event_store.init_from_project(AppProject::new());
         AppState {
             project: Mutex::new(AppProject::new()),
             project_path: Mutex::new(None),
-            event_store: Mutex::new(crate::engine_gateway::store::EventStore::new()),
+            event_store: Mutex::new(event_store),
             audio_cache: AudioDataCache::new(),
             audio_engine: Mutex::new(crate::audio_engine::engine::AudioEngine::new()),
         }

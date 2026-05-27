@@ -25,15 +25,27 @@ fn main() {
                     match load_project_from_file(&path) {
                         Ok(project) => {
                             initial_title = project.name.clone();
+                            // Seed the event store so undo can return to the
+                            // loaded state instead of wiping back to empty.
                             {
                                 let state = app.state::<AppState>();
-                                let mut p = state.project.lock().unwrap();
-                                *p = project;
+                                if let Ok(mut store) = state.event_store.lock() {
+                                    store.init_from_project(
+                                        engine_gateway::api::snapshot_project_for_store(&project),
+                                    );
+                                };
                             }
                             {
                                 let state = app.state::<AppState>();
-                                let mut p = state.project_path.lock().unwrap();
-                                *p = Some(path);
+                                if let Ok(mut p) = state.project.lock() {
+                                    *p = project;
+                                };
+                            }
+                            {
+                                let state = app.state::<AppState>();
+                                if let Ok(mut p) = state.project_path.lock() {
+                                    *p = Some(path);
+                                };
                             }
                         }
                         Err(e) => eprintln!("[debug] Échec chargement {path_str}: {e}"),
