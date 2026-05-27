@@ -1,0 +1,5 @@
+[env]
+# Projet chargé automatiquement au démarrage en mode debug (cargo dev).
+# Le chemin est résolu relativement à ce fichier par Cargo.
+# Mettre en commentaire pour démarrer avec un projet vide.
+ECHOES_DEBUG_PROJECT = { value = "test.echoes", relative = true }
