@@ -592,6 +592,35 @@
 		}, { once: true });
 	}
 
+	// ── Zoom controls ─────────────────────────────────────────────────────────
+	const LOG_MIN = Math.log(10);
+	const LOG_MAX = Math.log(2000);
+	const ZOOM_STEP = 0.12;
+
+	function zoomIn() {
+		logScale = Math.min(LOG_MAX, logScale + ZOOM_STEP);
+	}
+
+	function zoomOut() {
+		logScale = Math.max(LOG_MIN, logScale - ZOOM_STEP);
+	}
+
+	function handleZoomWidgetWheel(e: WheelEvent) {
+		e.preventDefault();
+		const delta = e.deltaY < 0 ? ZOOM_STEP : -ZOOM_STEP;
+		logScale = Math.min(Math.max(LOG_MIN, logScale + delta), LOG_MAX);
+	}
+
+	function handleTracksWheel(e: WheelEvent) {
+		if (e.ctrlKey || e.altKey) {
+			e.preventDefault();
+			const delta = e.deltaY < 0 ? ZOOM_STEP : -ZOOM_STEP;
+			logScale = Math.min(Math.max(LOG_MIN, logScale + delta), LOG_MAX);
+		}
+	}
+
+	$: zoomPercent = Math.round((logScale - LOG_MIN) / (LOG_MAX - LOG_MIN) * 100);
+
 	// ── Export mixdown ────────────────────────────────────────────────────────
 
 	async function exportMixdown(): Promise<void> {
@@ -691,7 +720,20 @@
 <svelte:window on:keydown={handleKeyDown} />
 
 <div class="container">
-	<input type="range" bind:value={logScale} min={Math.log(10)} max={Math.log(2000)} step={0.01} class="scale" />
+	<!-- svelte-ignore a11y-no-static-element-interactions -->
+	<div class="zoom-ctrl" on:wheel={handleZoomWidgetWheel}>
+		<button class="zoom-btn" on:click={zoomOut} title="Dézoomer">−</button>
+		<input
+			type="range"
+			class="zoom-slider"
+			bind:value={logScale}
+			min={LOG_MIN}
+			max={LOG_MAX}
+			step={0.01}
+		/>
+		<button class="zoom-btn" on:click={zoomIn} title="Zoomer">+</button>
+		<span class="zoom-value">{Math.round(scale)}</span>
+	</div>
 
 	<div class="left-panel">
 		<div class="ruler-spacer"></div>
@@ -754,6 +796,7 @@
 			on:dragenter={handleDragEnter}
 			on:dragleave={handleDragLeave}
 			on:mousedown={handleTracksMouseDown}
+			on:wheel={handleTracksWheel}
 		>
 			{#if fileDragPreview}
 				<div
@@ -778,11 +821,101 @@
 		overflow: hidden;
 	}
 
-	.scale {
+	// ── Zoom control widget ───────────────────────────────────────────────────
+	.zoom-ctrl {
 		position: absolute;
-		right: 5px;
-		bottom: 5px;
+		right: 8px;
+		bottom: 8px;
 		z-index: 20;
+		display: flex;
+		align-items: center;
+		gap: 4px;
+		user-select: none;
+		opacity: 0.4;
+		transition: opacity 0.2s;
+
+		&:hover {
+			opacity: 1;
+		}
+	}
+
+	.zoom-btn {
+		background: none;
+		border: none;
+		color: rgba(247, 247, 249, 0.7);
+		font-size: 13px;
+		font-family: monospace;
+		width: 14px;
+		height: 14px;
+		padding: 0;
+		cursor: pointer;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		flex-shrink: 0;
+		line-height: 1;
+		transition: color 0.1s;
+
+		&:hover { color: $text-color; }
+		&:active { color: $accent-color; }
+	}
+
+	.zoom-slider {
+		width: 90px;
+		flex-shrink: 0;
+		-webkit-appearance: none;
+		appearance: none;
+		height: 11px;
+		background: transparent;
+		outline: none;
+		cursor: pointer;
+
+		&::-webkit-slider-runnable-track {
+			height: 2px;
+			border-radius: 1px;
+			background: rgba(255, 255, 255, 0.15);
+		}
+
+		&::-webkit-slider-thumb {
+			-webkit-appearance: none;
+			appearance: none;
+			margin-top: -4px;
+			width: 10px;
+			height: 10px;
+			border-radius: 50%;
+			background: rgba(247, 247, 249, 0.6);
+			cursor: pointer;
+			transition: background 0.1s, transform 0.1s;
+
+			&:hover {
+				background: $accent-color;
+				transform: scale(1.2);
+			}
+		}
+
+		&::-moz-range-track {
+			height: 2px;
+			border-radius: 1px;
+			background: rgba(255, 255, 255, 0.15);
+		}
+
+		&::-moz-range-thumb {
+			width: 10px;
+			height: 10px;
+			border-radius: 50%;
+			background: rgba(247, 247, 249, 0.6);
+			border: none;
+			cursor: pointer;
+		}
+	}
+
+	.zoom-value {
+		font-size: 9px;
+		color: rgba(247, 247, 249, 0.4);
+		font-family: 'SF Mono', 'Fira Code', ui-monospace, monospace;
+		line-height: 1;
+		min-width: 26px;
+		text-align: right;
 	}
 
 	// ── Left panel ────────────────────────────────────────────────────────────

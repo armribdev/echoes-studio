@@ -3,6 +3,10 @@
 	import { tempo } from '../stores/tempo';
 	import { updateTempo, play, pause, stop, seek } from '../frontend/commands/dispatcher';
 	import { exportTrigger } from '../stores/exportBus';
+	import { settingsPanelOpen } from '../stores/preferences';
+	import NumberInput from './NumberInput.svelte';
+	import CustomSelect from './CustomSelect.svelte';
+	import Icon from './Icon.svelte';
 
 	let isRecording = false;
 
@@ -41,57 +45,64 @@
 		beatStr = String(beat);
 	}
 
-	function handleBpm(e: Event) {
-		const v = parseFloat((e.target as HTMLInputElement).value);
-		if (v >= 20 && v <= 400) {
-			tempo.update((t) => ({ ...t, bpm: v }));
-			updateTempo(v, $tempo.numerator, $tempo.denominator).catch(console.error);
-		} else {
-			(e.target as HTMLInputElement).value = String($tempo.bpm);
-		}
+	function handleBpm(v: number) {
+		tempo.update((t) => ({ ...t, bpm: v }));
+		updateTempo(v, $tempo.numerator, $tempo.denominator).catch(console.error);
 	}
 
-	function handleNumerator(e: Event) {
-		const v = parseInt((e.target as HTMLInputElement).value);
-		if (v >= 1 && v <= 16) {
-			tempo.update((t) => ({ ...t, numerator: v }));
-			updateTempo($tempo.bpm, v, $tempo.denominator).catch(console.error);
-		} else {
-			(e.target as HTMLInputElement).value = String($tempo.numerator);
-		}
+	function handleNumerator(v: number) {
+		tempo.update((t) => ({ ...t, numerator: v }));
+		updateTempo($tempo.bpm, v, $tempo.denominator).catch(console.error);
 	}
 
-	const denominatorOptions = [2, 4, 8, 16];
+	const denominatorOptions = [
+		{ value: 2,  label: '2'  },
+		{ value: 4,  label: '4'  },
+		{ value: 8,  label: '8'  },
+		{ value: 16, label: '16' }
+	];
 
-	function cycleDenominator() {
-		const idx = denominatorOptions.indexOf($tempo.denominator);
-		const next = denominatorOptions[(idx + 1) % denominatorOptions.length];
-		tempo.update((t) => ({ ...t, denominator: next }));
-		updateTempo($tempo.bpm, $tempo.numerator, next).catch(console.error);
-	}
-
-	function handleDenominatorScroll(e: WheelEvent) {
-		e.preventDefault();
-		const idx = denominatorOptions.indexOf($tempo.denominator);
-		const dir = e.deltaY > 0 ? 1 : -1;
-		const next = denominatorOptions[(idx + dir + denominatorOptions.length) % denominatorOptions.length];
-		tempo.update((t) => ({ ...t, denominator: next }));
-		updateTempo($tempo.bpm, $tempo.numerator, next).catch(console.error);
+	function handleDenominator(v: number | string) {
+		if (typeof v === 'string') return;
+		tempo.update((t) => ({ ...t, denominator: v }));
+		updateTempo($tempo.bpm, $tempo.numerator, v).catch(console.error);
 	}
 </script>
 
 <div class="menu-bar">
 	<div class="transport">
-		<button class="btn" on:click={rewindToStart} title="Revenir au début">⏮</button>
+		<button class="btn" on:click={rewindToStart} title="Revenir au début">
+			<!-- Skip to start -->
+			<svg width="13" height="13" viewBox="0 0 13 13" fill="none" xmlns="http://www.w3.org/2000/svg">
+				<rect x="1" y="1.5" width="1.6" height="10" rx="0.8" fill="currentColor"/>
+				<path d="M11.5 2L4.5 6.5L11.5 11V2Z" fill="currentColor"/>
+			</svg>
+		</button>
 		<button class="btn btn--play" on:click={togglePlayPause} title={$transport.isPlaying ? 'Pause' : 'Lecture'}>
-			{$transport.isPlaying ? '⏸' : '▶'}
+			{#if $transport.isPlaying}
+				<!-- Pause -->
+				<svg width="11" height="13" viewBox="0 0 11 13" fill="none" xmlns="http://www.w3.org/2000/svg">
+					<rect x="1" y="1" width="3" height="11" rx="1" fill="currentColor"/>
+					<rect x="7" y="1" width="3" height="11" rx="1" fill="currentColor"/>
+				</svg>
+			{:else}
+				<!-- Play -->
+				<svg width="12" height="13" viewBox="0 0 12 13" fill="none" xmlns="http://www.w3.org/2000/svg">
+					<path d="M2 1.5L11 6.5L2 11.5V1.5Z" fill="currentColor"/>
+				</svg>
+			{/if}
 		</button>
 		<button
 			class="btn btn--record"
 			class:active={isRecording}
 			on:click={toggleRecord}
 			title="Enregistrer"
-		>⏺</button>
+		>
+			<!-- Record dot -->
+			<svg width="12" height="12" viewBox="0 0 12 12" fill="none" xmlns="http://www.w3.org/2000/svg">
+				<circle cx="6" cy="6" r="5" fill="currentColor"/>
+			</svg>
+		</button>
 	</div>
 
 	<div class="sep"></div>
@@ -110,47 +121,52 @@
 	<div class="ctrl">
 		<span class="ctrl-label">TEMPO</span>
 		<div class="ctrl-row">
-			<input
-				class="num-input"
-				style="width:48px"
-				type="number"
-				min="20"
-				max="400"
-				step="1"
+			<NumberInput
 				value={$tempo.bpm}
-				on:change={handleBpm}
+				min={20}
+				max={400}
+				step={1}
+				width="48px"
+				unit="BPM"
+				size="sm"
+				on:change={(e) => handleBpm(e.detail)}
 			/>
-			<span class="ctrl-unit">BPM</span>
 		</div>
 	</div>
 
 	<div class="ctrl">
 		<span class="ctrl-label">MESURE</span>
 		<div class="ctrl-row">
-			<input
-				class="num-input"
-				
-				type="number"
-				min="1"
-				max="16"
-				step="1"
+			<NumberInput
 				value={$tempo.numerator}
-				on:change={handleNumerator}
+				min={1}
+				max={16}
+				step={1}
+				width="30px"
+				size="sm"
+				on:change={(e) => handleNumerator(e.detail)}
 			/>
 			<span class="ctrl-slash">/</span>
-			<button
-				class="denom-cycle"
-				on:click={cycleDenominator}
-				on:wheel={handleDenominatorScroll}
-				title="Dénominateur — clic ou molette pour changer"
-				aria-label="Dénominateur : {$tempo.denominator}"
-			>{$tempo.denominator}</button>
+			<CustomSelect
+				small
+				value={$tempo.denominator}
+				options={denominatorOptions}
+				on:change={(e) => handleDenominator(e.detail)}
+			/>
 		</div>
 	</div>
 
-	<div style="margin-left: auto;">
+	<div class="right-actions">
 		<button class="btn btn--export" on:click={handleExport} title="Exporter mixdown… (Ctrl+Shift+E)">
-			↓ WAV
+			<svg width="10" height="11" viewBox="0 0 10 11" fill="none" xmlns="http://www.w3.org/2000/svg">
+				<path d="M5 1V7M5 7L2.5 4.5M5 7L7.5 4.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+				<path d="M1 9H9" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+			</svg>
+			WAV
+		</button>
+		<div class="sep"></div>
+		<button class="btn btn--settings" on:click={() => settingsPanelOpen.set(true)} title="Préférences (Ctrl+,)">
+			<Icon name="settings" size={14} />
 		</button>
 	</div>
 </div>
@@ -197,19 +213,37 @@
 
 		&--record {
 			&.active {
-				color: #ff4136;
+				color: $color-error;
 			}
 			&:hover {
-				color: #ff7366;
+				color: #ff6b5f;
 			}
 		}
 
 		&--export {
 			font-size: 11px;
 			width: auto;
-			padding: 0 8px;
-			letter-spacing: 0.3px;
+			padding: 0 9px;
+			letter-spacing: 0.4px;
+			gap: 5px;
+			display: flex;
+			align-items: center;
 		}
+
+		&--settings {
+			font-size: 15px;
+			opacity: 0.6;
+			transition: opacity 0.15s, background 0.1s;
+
+			&:hover { opacity: 1; }
+		}
+	}
+
+	.right-actions {
+		margin-left: auto;
+		display: flex;
+		align-items: center;
+		gap: 6px;
 	}
 
 	// ── Separator ─────────────────────────────────────────────────────────────
@@ -230,7 +264,7 @@
 	.position-display {
 		display: flex;
 		align-items: baseline;
-		font-family: 'SF Mono', 'Fira Code', ui-monospace, monospace;
+		font-family: $font-mono;
 		line-height: 1;
 	}
 
@@ -274,12 +308,6 @@
 		gap: 4px;
 	}
 
-	.ctrl-unit {
-		font-size: 10px;
-		color: rgba(247, 247, 249, 0.35);
-		font-family: sans-serif;
-	}
-
 	.ctrl-slash {
 		font-size: 15px;
 		color: rgba(247, 247, 249, 0.3);
@@ -287,63 +315,4 @@
 		line-height: 1;
 	}
 
-	// ── Number inputs & select ────────────────────────────────────────────────
-	.num-input {
-		background: rgba(255, 255, 255, 0.05);
-		border: 1px solid rgba(255, 255, 255, 0.1);
-		border-radius: 3px;
-		color: $text-color;
-		font-family: 'SF Mono', 'Fira Code', ui-monospace, monospace;
-		font-size: 14px;
-		padding: 2px 4px;
-		height: 26px;
-		width: 30px;
-		box-sizing: border-box;
-		text-align: center;
-		outline: none;
-		-moz-appearance: textfield;
-		line-height: 1;
-
-		&::-webkit-inner-spin-button,
-		&::-webkit-outer-spin-button {
-			-webkit-appearance: none;
-		}
-
-		&:focus {
-			border-color: $accent-color;
-			background: rgba(21, 113, 255, 0.08);
-		}
-	}
-
-	// ── Denominator cycle button ───────────────────────────────────────────────
-	.denom-cycle {
-		background: rgba(255, 255, 255, 0.05);
-		border: 1px solid rgba(255, 255, 255, 0.1);
-		border-radius: 3px;
-		color: $text-color;
-		font-family: 'SF Mono', 'Fira Code', ui-monospace, monospace;
-		font-size: 14px;
-		font-weight: 500;
-		width: 30px;
-		height: 26px;
-		padding: 2px 4px;
-		box-sizing: border-box;
-		cursor: pointer;
-		line-height: 1;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		transition: background 0.1s, color 0.1s, border-color 0.1s;
-
-		&:hover {
-			background: rgba(255, 255, 255, 0.1);
-			border-color: rgba(255, 255, 255, 0.2);
-		}
-
-		&:active {
-			background: rgba(21, 113, 255, 0.15);
-			border-color: $accent-color;
-			color: $accent-color;
-		}
-	}
 </style>
