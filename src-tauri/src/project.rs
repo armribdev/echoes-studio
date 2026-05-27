@@ -208,8 +208,11 @@ pub struct AppState {
     /// In-memory audio data cache — survives undo/redo so replaying events
     /// never re-reads audio files unnecessarily.
     pub audio_cache: AudioDataCache,
-    /// Real-time audio engine — reads immutable snapshots only.
+    /// Real-time audio engine — compiles the graph and owns the CPAL stream.
     pub audio_engine: Mutex<crate::audio_engine::engine::AudioEngine>,
+    /// Atomic transport state shared with the CPAL callback.
+    /// Accessed directly (no lock) for PLAY / STOP / SEEK commands.
+    pub transport: std::sync::Arc<crate::audio_engine::transport::SharedTransport>,
 }
 
 impl AppState {
@@ -219,12 +222,19 @@ impl AppState {
         // falling back to AppProject::new() on a None snapshot.
         let mut event_store = crate::engine_gateway::store::EventStore::new();
         event_store.init_from_project(AppProject::new());
+
+        // Create the shared transport; the AudioEngine gets a clone of the Arc.
+        let transport = crate::audio_engine::transport::SharedTransport::new(48_000.0, 120.0);
+
         AppState {
             project: Mutex::new(AppProject::new()),
             project_path: Mutex::new(None),
             event_store: Mutex::new(event_store),
             audio_cache: AudioDataCache::new(),
-            audio_engine: Mutex::new(crate::audio_engine::engine::AudioEngine::new()),
+            audio_engine: Mutex::new(crate::audio_engine::engine::AudioEngine::new(
+                std::sync::Arc::clone(&transport),
+            )),
+            transport,
         }
     }
 }

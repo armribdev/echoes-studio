@@ -3,201 +3,310 @@
 //! ## Architecture
 //!
 //! ```text
-//! Command thread                    Audio thread
-//! ──────────────                    ────────────
+//! Command thread                      Audio thread (CPAL callback)
+//! ──────────────                      ────────────────────────────
 //! AudioGraphCompiler::compile()
 //! GraphScheduler::new(compiled)
-//! AudioEngine::update_scheduler()
-//!   → snapshot.enqueue(scheduler)  ──► audio_callback:
-//!                                         snapshot.try_take() → swap in
-//!                                         scheduler.process_block()
-//!                                         write to CPAL output buffer
+//! RuntimeSnapshot::enqueue(sched)  ──► try_take() → swap in
+//!
+//! SharedTransport::play()          ──► transport.snapshot() → TransportInfo
+//!                                       scheduler.process_block()
+//!                                       write to CPAL output buffer
+//!                                       position_samples.fetch_add(block)
 //! ```
 //!
 //! ## Real-time safety contract
 //!
 //! The audio callback:
-//!   ✓ Never allocates
-//!   ✓ Never acquires a blocking lock (uses `try_lock` / `try_take`)
+//!   ✓ Never allocates (mix_buf pre-allocated before stream start)
+//!   ✓ Never acquires a blocking lock (`try_take` uses `try_lock`)
 //!   ✓ Never performs I/O
 //!   ✓ Never calls `async`/`await`
-//!   ✓ Only reads from `GraphScheduler` (owned exclusively during callback)
-//!
-//! ## CPAL integration
-//!
-//! CPAL stream creation is intentionally deferred.  During development the
-//! Web Audio path in the frontend handles playback.  To activate native audio,
-//! implement `start_stream` and uncomment the CPAL callback below.
+//!   ✓ Only reads from `GraphScheduler` (owned for the callback's duration)
 
-use std::sync::{Arc, Mutex};
+use std::sync::{atomic::Ordering, Arc};
 
-use crate::audio_graph::{
-    CompileConfig, GraphScheduler, RuntimeSnapshot, TransportInfo,
+use cpal::{
+    traits::{DeviceTrait, HostTrait, StreamTrait},
+    FromSample, SizedSample,
 };
+use serde_json::json;
+use tauri::Emitter;
+
+use crate::audio_graph::{CompileConfig, GraphScheduler, RuntimeSnapshot};
 use crate::audio_engine::graph::AudioGraphCompiler;
+use crate::audio_engine::transport::SharedTransport;
 use crate::project::AppProject;
+
+// ── SendStream wrapper ────────────────────────────────────────────────────────
+
+/// Wraps `cpal::Stream` to implement `Send`.
+///
+/// On Windows, CPAL marks `Stream` as `!Send` via `PhantomData<*mut ()>`.
+/// This is a conservative platform annotation. In practice the stream is safe
+/// to move between threads because:
+///   - It is exclusively accessed behind `Mutex<AudioEngine>` (single owner).
+///   - CPAL's audio callback runs on CPAL's own internal thread, not through
+///     Rust's `Send` boundary.
+///
+/// All mainstream CPAL applications use this pattern; see also
+/// https://github.com/RustAudio/cpal/issues/818.
+struct SendStream(cpal::Stream);
+// SAFETY: see doc comment above.
+unsafe impl Send for SendStream {}
+
+// ── Constants ─────────────────────────────────────────────────────────────────
+
+/// Maximum number of frames per audio block.
+///
+/// Pre-allocates the mix buffer.  Must be ≥ the device's actual block size.
+/// 4096 frames @ 48 kHz = ~85 ms — well above any typical WASAPI buffer.
+const MAX_BLOCK_FRAMES: usize = 4096;
+
+/// Position-reporter poll interval in milliseconds.
+const REPORTER_INTERVAL_MS: u64 = 33;
 
 // ── AudioEngine ───────────────────────────────────────────────────────────────
 
-/// The audio engine.  Held behind `Mutex<AudioEngine>` in `AppState`.
+/// The real-time audio engine.  Held behind `Mutex<AudioEngine>` in `AppState`.
 pub struct AudioEngine {
-    // ── Real-time state ───────────────────────────────────────────────────────
-
-    /// Pending scheduler waiting to be picked up by the audio callback.
+    /// Pending scheduler waiting to be picked up atomically by the audio callback.
     snapshot: Arc<RuntimeSnapshot>,
 
-    /// The scheduler currently in use on the audio thread.
-    /// Swapped at block boundaries via `snapshot.try_take()`.
-    ///
-    /// Wrapped in `Mutex` so the non-RT thread can hand it off at startup.
-    /// During normal streaming the audio thread owns it exclusively through
-    /// CPAL's callback closure.
-    current_scheduler: Mutex<GraphScheduler>,
+    /// Shared atomic transport state (also held by the callback closure and the
+    /// position reporter thread).
+    pub transport: Arc<SharedTransport>,
 
-    // ── Transport ─────────────────────────────────────────────────────────────
-    pub is_playing: bool,
-    pub position_samples: u64,
-    pub sample_rate: f32,
-    pub bpm: f32,
-
-    // ── Device config ─────────────────────────────────────────────────────────
-    /// Audio device block size.
-    pub block_size: usize,
-
-    // Future: cpal::Stream stored here once native audio is started
-    // _stream: Option<Box<dyn std::any::Any + Send>>,
+    /// Keeps the CPAL stream alive for the lifetime of the engine.
+    /// Dropping this would stop the audio.
+    _stream: Option<SendStream>,
 }
 
 impl AudioEngine {
-    pub fn new() -> Self {
-        let sample_rate = 48_000.0_f32;
+    pub fn new(transport: Arc<SharedTransport>) -> Self {
         AudioEngine {
             snapshot: Arc::new(RuntimeSnapshot::new()),
-            current_scheduler: Mutex::new(GraphScheduler::empty(sample_rate)),
-            is_playing: false,
-            position_samples: 0,
-            sample_rate,
-            bpm: 120.0,
-            block_size: 512,
+            transport,
+            _stream: None,
         }
     }
 
-    // ── Scheduler update ──────────────────────────────────────────────────────
+    // ── Graph compilation ─────────────────────────────────────────────────────
 
-    /// Compile a new scheduler from `project` and enqueue it for atomic swap.
+    /// Compile a new `GraphScheduler` from `project` and enqueue it for atomic
+    /// pickup by the audio callback.
     ///
-    /// Called by the gateway after any structural change.
-    /// Never called from the audio thread.
+    /// **Never call from the audio thread.**
     pub fn update_from_project(&mut self, project: &AppProject) {
         let config = CompileConfig {
-            sample_rate: self.sample_rate,
-            max_block_size: self.block_size,
+            sample_rate: self.transport.sample_rate(),
+            // Use a generous max to handle any CPAL block size
+            max_block_size: MAX_BLOCK_FRAMES,
             num_channels: 2,
         };
         let scheduler = AudioGraphCompiler::compile_scheduler(project, config);
         self.snapshot.enqueue(scheduler);
     }
 
-    /// Directly enqueue a pre-built scheduler (used in tests / advanced cases).
-    pub fn update_scheduler(&self, scheduler: GraphScheduler) {
-        self.snapshot.enqueue(scheduler);
-    }
+    // ── Stream lifecycle ──────────────────────────────────────────────────────
 
-    // ── Transport ─────────────────────────────────────────────────────────────
-
-    pub fn play(&mut self) {
-        self.is_playing = true;
-    }
-
-    pub fn stop(&mut self) {
-        self.is_playing = false;
-        self.position_samples = 0;
-        // Reset DSP state on next block (via scheduler.reset in callback)
-    }
-
-    pub fn pause(&mut self) {
-        self.is_playing = false;
-    }
-
-    pub fn seek(&mut self, position_seconds: f64) {
-        self.position_samples = (position_seconds * self.sample_rate as f64) as u64;
-    }
-
-    pub fn position_seconds(&self) -> f64 {
-        self.position_samples as f64 / self.sample_rate as f64
-    }
-
-    // ── Audio callback (CPAL) ─────────────────────────────────────────────────
-    //
-    // This is the shape of the audio callback when native CPAL streaming is
-    // active.  Currently commented out — activate by:
-    //   1. Implementing `start_stream` below.
-    //   2. Moving `snapshot` and transport into an `Arc<Mutex<_>>` shared with
-    //      the closure.
-    //
-    // The callback must satisfy the real-time contract:
-    //   ✓ No heap allocation
-    //   ✓ No blocking lock (try_lock only)
-    //   ✓ No I/O
-    //   ✓ Reads only from GraphScheduler (owned for the callback's duration)
-    //
-    // fn audio_callback(
-    //     scheduler:  &mut GraphScheduler,
-    //     snapshot:   &Arc<RuntimeSnapshot>,
-    //     transport:  &mut TransportInfo,
-    //     output:     &mut [f32],
-    //     block_size: usize,
-    // ) {
-    //     // Atomically swap in a new scheduler if one is pending
-    //     if let Some(new_sched) = snapshot.try_take() {
-    //         *scheduler = new_sched;
-    //     }
-    //
-    //     if transport.is_playing {
-    //         scheduler.process_block(transport, output);
-    //         transport.position_samples += block_size as u64;
-    //     } else {
-    //         output.fill(0.0);
-    //     }
-    // }
-
-    // ── Synchronous render (for offline / export use) ─────────────────────────
-
-    /// Render one block synchronously and return the interleaved f32 output.
+    /// Open the default audio output device, start the CPAL stream, and spawn
+    /// the position-reporter background thread.
     ///
-    /// Used for WAV export and testing.  Acquires the scheduler mutex for the
-    /// duration of the call — safe on non-RT threads.
-    pub fn render_block(&mut self, output: &mut [f32]) {
-        // Drain any pending scheduler
-        if let Some(new_sched) = self.snapshot.try_take() {
-            if let Ok(mut guard) = self.current_scheduler.lock() {
-                *guard = new_sched;
-            }
-        }
+    /// Call once during application setup, **after** the Tauri `AppHandle` is
+    /// available.  On failure the engine falls back to silence (no crash).
+    pub fn start_stream(
+        &mut self,
+        project: &AppProject,
+        app: tauri::AppHandle,
+    ) -> Result<(), String> {
+        let host = cpal::default_host();
 
-        let transport = TransportInfo {
-            is_playing: self.is_playing,
-            position_samples: self.position_samples,
-            position_seconds: self.position_seconds(),
-            bpm: self.bpm,
-            sample_rate: self.sample_rate,
-            block_size: self.block_size,
+        let device = host
+            .default_output_device()
+            .ok_or_else(|| "Aucun périphérique de sortie audio trouvé".to_string())?;
+
+        let supported = device
+            .default_output_config()
+            .map_err(|e| format!("Impossible d'obtenir la configuration audio : {e}"))?;
+
+        let sample_rate = supported.sample_rate().0 as f32;
+        let channels = supported.channels() as usize;
+        let fmt = supported.sample_format();
+
+        eprintln!(
+            "[audio] {} — {} Hz, {} ch, {:?}",
+            device.name().unwrap_or_else(|_| "Périphérique inconnu".to_string()),
+            sample_rate as u32,
+            channels,
+            fmt,
+        );
+
+        // Propagate the real sample rate so future graph compilations are correct
+        self.transport.set_sample_rate(sample_rate);
+
+        // Compile the initial graph at the correct sample rate
+        let compile_cfg = CompileConfig {
+            sample_rate,
+            max_block_size: MAX_BLOCK_FRAMES,
+            num_channels: 2,
         };
+        let initial_sched = AudioGraphCompiler::compile_scheduler(project, compile_cfg);
+        self.snapshot.enqueue(initial_sched);
 
-        if let Ok(mut sched) = self.current_scheduler.lock() {
-            sched.process_block(&transport, output);
-        } else {
-            output.fill(0.0);
-        }
+        let stream_config: cpal::StreamConfig = supported.into();
 
-        if self.is_playing {
-            self.position_samples += self.block_size as u64;
-        }
+        // Build a type-dispatched output stream
+        let snapshot = Arc::clone(&self.snapshot);
+        let transport = Arc::clone(&self.transport);
+
+        let stream = match fmt {
+            cpal::SampleFormat::F32 => {
+                build_stream::<f32>(&device, &stream_config, snapshot, transport, channels)
+            }
+            cpal::SampleFormat::I16 => {
+                build_stream::<i16>(&device, &stream_config, snapshot, transport, channels)
+            }
+            cpal::SampleFormat::U16 => {
+                build_stream::<u16>(&device, &stream_config, snapshot, transport, channels)
+            }
+            other => {
+                // Best-effort: try f32 — most WASAPI shared-mode devices accept it
+                eprintln!("[audio] Format {other:?} non géré nativement, tentative F32");
+                build_stream::<f32>(&device, &stream_config, snapshot, transport, channels)
+            }
+        }?;
+
+        stream
+            .play()
+            .map_err(|e| format!("Impossible de démarrer le flux audio : {e}"))?;
+
+        // Spawn lightweight position reporter (~30 fps)
+        let reporter_transport = Arc::clone(&self.transport);
+        std::thread::Builder::new()
+            .name("cpal-pos-reporter".into())
+            .spawn(move || position_reporter(reporter_transport, app))
+            .map_err(|e| format!("Impossible de démarrer le reporter de position : {e}"))?;
+
+        self._stream = Some(SendStream(stream));
+        eprintln!("[audio] Moteur démarré.");
+        Ok(())
     }
 }
 
 impl Default for AudioEngine {
     fn default() -> Self {
-        Self::new()
+        Self::new(SharedTransport::new(48_000.0, 120.0))
+    }
+}
+
+// ── Stream builder ────────────────────────────────────────────────────────────
+
+/// Build a CPAL output stream for sample type `T`.
+///
+/// The closure captures pre-allocated state so the callback never allocates.
+fn build_stream<T>(
+    device: &cpal::Device,
+    config: &cpal::StreamConfig,
+    snapshot: Arc<RuntimeSnapshot>,
+    transport: Arc<SharedTransport>,
+    device_channels: usize,
+) -> Result<cpal::Stream, String>
+where
+    T: SizedSample + FromSample<f32> + Send + 'static,
+{
+    // Pre-allocate the stereo mix buffer once — reused for every block.
+    let mut mix_buf = vec![0.0_f32; MAX_BLOCK_FRAMES * 2];
+    let mut scheduler = GraphScheduler::empty(transport.sample_rate());
+
+    let stream = device
+        .build_output_stream(
+            config,
+            // ── Audio callback (real-time thread) ─────────────────────────────
+            move |data: &mut [T], _info: &cpal::OutputCallbackInfo| {
+                let total_samples = data.len();
+                let frames = if device_channels > 0 {
+                    total_samples / device_channels
+                } else {
+                    return;
+                };
+
+                if frames > MAX_BLOCK_FRAMES {
+                    // Block exceeds our pre-allocated buffer — fill with silence.
+                    // Should never happen with typical WASAPI buffer sizes.
+                    for s in data.iter_mut() {
+                        *s = T::from_sample_(0.0_f32);
+                    }
+                    return;
+                }
+
+                // Atomically swap in a new scheduler if one is pending.
+                if let Some(new_sched) = snapshot.try_take() {
+                    scheduler = new_sched;
+                }
+
+                let info = transport.snapshot(frames);
+
+                // Render the graph into the stereo mix buffer [L0, R0, L1, R1, …]
+                let mix = &mut mix_buf[..frames * 2];
+                scheduler.process_block(&info, mix);
+
+                // Advance the transport cursor after rendering.
+                if info.is_playing {
+                    transport
+                        .position_samples
+                        .fetch_add(frames as u64, Ordering::Relaxed);
+                }
+
+                // Write the stereo mix to the device buffer, spreading L/R to
+                // any number of device channels (mono, stereo, surround…).
+                for frame in 0..frames {
+                    let mix_l = mix[frame * 2];
+                    let mix_r = mix[frame * 2 + 1];
+                    for ch in 0..device_channels {
+                        let idx = frame * device_channels + ch;
+                        if idx < total_samples {
+                            let s = if ch % 2 == 0 { mix_l } else { mix_r };
+                            data[idx] = T::from_sample_(s);
+                        }
+                    }
+                }
+            },
+            // ── Error callback ─────────────────────────────────────────────────
+            move |err| eprintln!("[audio] Erreur de flux : {err}"),
+            None,
+        )
+        .map_err(|e| e.to_string())?;
+
+    Ok(stream)
+}
+
+// ── Position reporter ─────────────────────────────────────────────────────────
+
+/// Background thread: emits `POSITION_UPDATED` engine events at ~30 fps.
+///
+/// Only emits while playing to avoid flooding the frontend with events.
+fn position_reporter(transport: Arc<SharedTransport>, app: tauri::AppHandle) {
+    let interval = std::time::Duration::from_millis(REPORTER_INTERVAL_MS);
+    loop {
+        std::thread::sleep(interval);
+        if transport.is_playing.load(Ordering::Relaxed) {
+            let sr = transport.sample_rate();
+            let pos = transport.position_samples.load(Ordering::Relaxed);
+            let pos_secs = pos as f64 / sr as f64;
+
+            // Construct an EngineEvent-compatible payload so the frontend
+            // transport bridge handles it through the existing code path.
+            let _ = app.emit(
+                "engine-event",
+                json!({
+                    "id": "pos",
+                    "projectId": "",
+                    "type": "POSITION_UPDATED",
+                    "timestamp": 0,
+                    "payload": { "position": pos_secs }
+                }),
+            );
+        }
     }
 }

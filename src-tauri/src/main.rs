@@ -18,6 +18,12 @@ fn main() {
         .plugin(tauri_plugin_dialog::init())
         .manage(AppState::new())
         .setup(|app| {
+            // ── Native audio engine ───────────────────────────────────────────
+            // Start the CPAL output stream as early as possible so the engine
+            // is ready before any project is loaded.  Failure is logged but
+            // non-fatal: the app continues and export (via OfflineAudioContext) still works.
+            start_native_audio(app);
+
             // ── Debug auto-load ───────────────────────────────────────────────
             let mut initial_title = "Sans titre".to_string();
 
@@ -49,6 +55,13 @@ fn main() {
                                 if let Ok(mut p) = state.project_path.lock() {
                                     *p = Some(path);
                                 };
+                            }
+                            // Recompile the audio graph so CPAL knows about the
+                            // clips in the loaded project (fixes silent playback
+                            // after ECHOES_DEBUG_PROJECT auto-load).
+                            {
+                                let state = app.state::<AppState>();
+                                recompile_audio_graph(&state);
                             }
                         }
                         Err(e) => eprintln!("[debug] Échec chargement {path_str}: {e}"),
@@ -162,6 +175,11 @@ fn apply_loaded_project(
         *p = Some(file_path);
     }
 
+    // Recompile the audio graph so the engine knows about the loaded clips.
+    // Without this the scheduler stays at the empty-project state and produces
+    // silence even though the UI shows the correct tracks and clips.
+    recompile_audio_graph(state);
+
     set_window_title(app, &name);
     let _ = app.emit("project-loaded", dto);
 }
@@ -184,6 +202,7 @@ fn handle_menu_event(app: &tauri::AppHandle, menu_id: &str) {
             if let Ok(mut p) = state.project_path.lock() {
                 *p = None;
             }
+            recompile_audio_graph(&state);
             set_window_title(app, "Sans titre");
             let _ = app.emit("project-loaded", dto);
         }
@@ -198,7 +217,7 @@ fn handle_menu_event(app: &tauri::AppHandle, menu_id: &str) {
             if let Some(FilePath::Path(file_path)) = picked {
                 match load_project_from_file(&file_path) {
                     Ok(project) => apply_loaded_project(app, &state, project, file_path),
-                    Err(e) => eprintln!("Erreur ouverture projet: {}", e),
+                    Err(e) => eprintln!("[projet] Échec ouverture : {e}"),
                 }
             }
         }
@@ -206,8 +225,8 @@ fn handle_menu_event(app: &tauri::AppHandle, menu_id: &str) {
         "undo" => {
             let result = undo(app.clone(), state.clone());
             match result {
-                Ok(_snapshot) => {} // UI update via engine-event PROJECT_RESET
-                Err(e) => eprintln!("Undo error: {e}"),
+                Ok(_snapshot) => {}
+                Err(e) => eprintln!("[projet] Undo échoué : {e}"),
             }
         }
 
@@ -215,7 +234,7 @@ fn handle_menu_event(app: &tauri::AppHandle, menu_id: &str) {
             let result = redo(app.clone(), state.clone());
             match result {
                 Ok(_snapshot) => {}
-                Err(e) => eprintln!("Redo error: {e}"),
+                Err(e) => eprintln!("[projet] Redo échoué : {e}"),
             }
         }
 
@@ -261,7 +280,7 @@ fn handle_menu_event(app: &tauri::AppHandle, menu_id: &str) {
                 }
                 let _ = app.emit("project-saved", save_path.to_string_lossy().to_string());
             } else if let Err(e) = write_result {
-                eprintln!("Erreur sauvegarde: {}", e);
+                eprintln!("[projet] Échec sauvegarde : {e}");
             }
         }
 
@@ -278,9 +297,7 @@ fn handle_menu_event(app: &tauri::AppHandle, menu_id: &str) {
             }
         }
 
-        _ => {
-            eprintln!("[keymap] action inconnue : {menu_id:?}");
-        }
+        _ => {} // actions inconnues ignorées silencieusement
     }
 }
 
@@ -349,4 +366,56 @@ fn export_wav(
         writer.write_sample(*r).map_err(|e| e.to_string())?;
     }
     writer.finalize().map_err(|e| e.to_string())
+}
+
+// ── Native audio bootstrap ────────────────────────────────────────────────────
+
+/// Start the CPAL audio engine during Tauri `setup`.
+///
+/// Uses a dedicated function so the compiler can clearly track the lifetime of
+/// the temporary `tauri::State` (avoids the "does not live long enough" error
+/// that occurs when the match arm's `MutexGuard<PoisonError<…>>` outlives the
+/// `State` in an anonymous block).
+fn start_native_audio(app: &mut tauri::App) {
+    let app_handle = app.handle().clone();
+    let state = app.state::<AppState>();
+
+    // Build a minimal snapshot of the initial project (empty tracks) so the
+    // graph compiler can determine the sample rate before any file is loaded.
+    let project_snapshot = state
+        .project
+        .lock()
+        .map(|p| AppProject {
+            name: p.name.clone(),
+            bpm: p.bpm,
+            numerator: p.numerator,
+            denominator: p.denominator,
+            tracks: vec![], // no clips yet — recompile follows on first load
+        })
+        .unwrap_or_else(|_| AppProject::new());
+
+    if let Ok(mut engine) = state.audio_engine.lock() {
+        if let Err(e) = engine.start_stream(&project_snapshot, app_handle) {
+            eprintln!("[audio] Impossible d'activer le moteur natif : {e}");
+        }
+    };
+    // Note: the semicolon above is intentional.  It forces the MutexGuard
+    // temporary (inside the Result returned by .lock()) to drop before `state`
+    // is dropped at function exit, satisfying the borrow checker.
+}
+
+// ── Audio graph recompilation helper ─────────────────────────────────────────
+
+/// Recompile the audio graph from the current project state and push the new
+/// scheduler to the CPAL audio thread.
+///
+/// Must be called **outside** any held Mutex locks to avoid deadlocks.
+/// Mirrors the logic in `engine_gateway::api::recompile_if_needed` but is
+/// accessible from `main.rs` (where that private function is not visible).
+fn recompile_audio_graph(state: &tauri::State<'_, AppState>) {
+    if let Ok(mut engine) = state.audio_engine.lock() {
+        if let Ok(project) = state.project.lock() {
+            engine.update_from_project(&project);
+        }
+    }
 }

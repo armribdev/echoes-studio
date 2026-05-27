@@ -175,7 +175,7 @@ impl GraphCompiler {
 
         for &node_id in &order {
             let graph_node = &graph.nodes[&node_id];
-            let mut node = Self::build_node(node_id, &graph_node.kind, project, &plan);
+            let mut node = Self::build_node(node_id, &graph_node.kind, project, &plan, config.sample_rate);
             node.prepare(prepare_ctx);
             processors.push(node);
         }
@@ -243,17 +243,18 @@ impl GraphCompiler {
 
     fn num_inputs_for_kind(kind: &NodeKind) -> usize {
         match kind {
-            NodeKind::Track { .. }     => 0, // source node
-            NodeKind::TrackGain { .. } => 1,
-            NodeKind::Bus              => 8, // up to 8 mix inputs
-            NodeKind::Send { .. }      => 1,
-            NodeKind::Return { .. }    => 0, // collects from sends internally
-            NodeKind::Gain { .. }      => 1,
-            NodeKind::Pan { .. }       => 1,
-            NodeKind::Plugin { .. }    => 2, // default stereo in
-            NodeKind::Modulator { .. } => 0, // modulator = source
-            NodeKind::Meter { .. }     => 1,
-            NodeKind::Master           => 8, // up to 8 track inputs
+            NodeKind::Track { .. }              => 0, // source node
+            NodeKind::TrackGain { .. }          => 1,
+            NodeKind::Bus                       => 8, // up to 8 mix inputs
+            NodeKind::Send { .. }               => 1,
+            NodeKind::Return { .. }             => 0, // collects from sends internally
+            NodeKind::Gain { .. }               => 1,
+            NodeKind::Pan { .. }                => 1,
+            NodeKind::Plugin { .. }             => 2, // default stereo in
+            NodeKind::Modulator { .. }          => 0, // modulator = source
+            NodeKind::Meter { .. }              => 1,
+            // num_inputs is set per-project so every track gets its own port.
+            NodeKind::Master { num_inputs }     => *num_inputs,
         }
     }
 
@@ -269,33 +270,43 @@ impl GraphCompiler {
             NodeKind::Plugin { .. }    => 2, // default stereo out
             NodeKind::Modulator { .. } => 1, // one modulation output
             NodeKind::Meter { .. }     => 1, // pass-through
-            NodeKind::Master           => 0, // sink
+            // Master produces one mixed stereo output that the scheduler reads
+            // directly.  Declaring it as 1 (instead of 0) means the scheduler
+            // pre-allocates the buffer and `write_master_output` can read it.
+            NodeKind::Master { .. }    => 1,
         }
     }
 
     // ── Node factory ─────────────────────────────────────────────────────────
 
     /// Instantiate the concrete `AudioNode` for a given graph node kind.
+    ///
+    /// `engine_sample_rate` is passed so clip positions are computed in the
+    /// correct sample-rate space (avoids the old hardcoded-48 kHz bug).
     fn build_node(
         id: NodeId,
         kind: &NodeKind,
         project: &AppProject,
         _plan: &Arc<ExecutionPlan>,
+        engine_sample_rate: f32,
     ) -> Box<dyn AudioNode> {
         use crate::audio_graph::nodes;
         use std::sync::Arc as StdArc;
 
         match kind {
             NodeKind::Track { track_id } => {
-                // Gather clip data from the project for this track
+                // Gather clip data from the project for this track.
+                // Clip positions are in seconds; convert to engine-sample-rate
+                // frames so the TrackNode can compare them directly against the
+                // atomic `position_samples` counter (which is also in frames).
                 let clips = project
                     .tracks
                     .iter()
                     .find(|t| &t.id == track_id)
                     .map(|track| {
                         track.clips.iter().map(|c| nodes::track::ClipData {
-                            start_sample: (c.start * 48_000.0) as u64,
-                            end_sample: (c.end * 48_000.0) as u64,
+                            start_sample: (c.start * engine_sample_rate as f64) as u64,
+                            end_sample:   (c.end   * engine_sample_rate as f64) as u64,
                             samples: StdArc::new(c.raw_samples.clone()),
                             native_sample_rate: c.sample_rate,
                         }).collect::<Vec<_>>()
@@ -321,11 +332,8 @@ impl GraphCompiler {
                 Box::new(nodes::bus::BusNode::new(id, Self::num_inputs_for_kind(kind)))
             }
 
-            NodeKind::Master => {
-                Box::new(nodes::master::MasterNode::new(
-                    id,
-                    Self::num_inputs_for_kind(kind),
-                ))
+            NodeKind::Master { num_inputs } => {
+                Box::new(nodes::master::MasterNode::new(id, *num_inputs))
             }
 
             NodeKind::Meter { meter_id } => {
@@ -345,7 +353,7 @@ impl GraphCompiler {
                 // Plugin nodes are opaque DSP nodes — format resolved at runtime
                 // For now, emit a pass-through gain node as a placeholder.
                 // The real PluginHost will supply the concrete wrapper here.
-                eprintln!("[compiler] Plugin '{}' not yet loaded — using pass-through", device_id);
+                eprintln!("[audio] Plugin '{device_id}' non chargé — pass-through utilisé");
                 Box::new(nodes::gain::GainNode::new(id, 1.0))
             }
 

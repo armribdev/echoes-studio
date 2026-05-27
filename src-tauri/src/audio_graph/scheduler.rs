@@ -102,6 +102,11 @@ impl GraphScheduler {
         }
     }
 
+    /// Number of nodes in the current execution plan (0 = empty graph).
+    pub fn num_steps(&self) -> usize {
+        self.plan.steps.len()
+    }
+
     /// An empty scheduler that produces silence.
     pub fn empty(sample_rate: f32) -> Self {
         let plan = Arc::new(ExecutionPlan::empty(sample_rate));
@@ -209,8 +214,9 @@ impl GraphScheduler {
 
     /// Read the final stereo signal and write to `interleaved_output`.
     ///
-    /// The master node is a sink (writes nothing to output_buffers).
-    /// We instead read from the output of the step that feeds port 0 of master.
+    /// `MasterNode::process` already sums all track inputs, applies soft-clip,
+    /// and writes the result to `output_buffers[master_step_idx][0]`.  We read
+    /// that buffer directly — no need to re-sum upstream nodes here.
     fn write_master_output(
         &self,
         master_step_idx: usize,
@@ -222,27 +228,26 @@ impl GraphScheduler {
 
         interleaved_output.fill(0.0);
 
-        let master_step = &self.plan.steps[master_step_idx];
+        // output_buffers[master_step_idx][0] was written by MasterNode::process
+        // during run_steps (it declared num_outputs = 1 so the scheduler
+        // pre-allocated exactly this slot).
+        let master_bufs = &self.output_buffers[master_step_idx];
+        if master_bufs.is_empty() {
+            return; // safety guard — should never happen
+        }
+        let master_buf = &master_bufs[0];
 
-        // Sum all connected upstream signals into the interleaved output.
-        for conn_opt in &master_step.input_connections {
-            let Some(conn) = conn_opt else { continue };
-            let src_bufs = &self.output_buffers[conn.src_step];
-            let src_port = conn.src_port.min(src_bufs.len().saturating_sub(1));
-            let src_buf = &src_bufs[src_port];
+        for ch in 0..num_channels {
+            let ch_slice = if ch < master_buf.num_channels {
+                master_buf.channel(ch)
+            } else {
+                master_buf.channel(0) // fold extra channels to L
+            };
 
-            for ch in 0..num_channels {
-                let ch_slice = if ch < src_buf.num_channels {
-                    src_buf.channel(ch)
-                } else {
-                    src_buf.channel(0) // fold extra channels to L
-                };
-
-                for (frame, &sample) in ch_slice.iter().take(block_size).enumerate() {
-                    let idx = frame * num_channels + ch;
-                    if idx < interleaved_output.len() {
-                        interleaved_output[idx] += sample;
-                    }
+            for (frame, &sample) in ch_slice.iter().take(block_size).enumerate() {
+                let idx = frame * num_channels + ch;
+                if idx < interleaved_output.len() {
+                    interleaved_output[idx] = sample;
                 }
             }
         }

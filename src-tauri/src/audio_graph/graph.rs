@@ -90,7 +90,10 @@ pub enum NodeKind {
     },
 
     /// The master output node — final stereo sum before device output.
-    Master,
+    ///
+    /// `num_inputs` equals the number of tracks so each track gets its own
+    /// dedicated input port.  This avoids the "all-to-port-0 overwrite" bug.
+    Master { num_inputs: usize },
 }
 
 // ── Graph node ────────────────────────────────────────────────────────────────
@@ -136,7 +139,7 @@ impl AudioGraph {
 
     pub fn add_node(&mut self, kind: NodeKind, label: impl Into<String>) -> NodeId {
         let id = alloc_node_id();
-        let is_master = matches!(kind, NodeKind::Master);
+        let is_master = matches!(kind, NodeKind::Master { .. });
         self.nodes.insert(id, GraphNode { id, kind, label: label.into() });
         if is_master {
             self.master_id = Some(id);
@@ -210,26 +213,44 @@ impl AudioGraph {
     pub fn from_project(project: &AppProject) -> Self {
         let mut graph = AudioGraph::new();
 
-        // ── Master node ────────────────────────────────────────────────────────
-        let master_id = graph.add_node(NodeKind::Master, "Master");
+        // ── Master node ─────────────────────────────────────────────────────────
+        // num_inputs = one port per track so the master can sum all of them.
+        // Using a BusNode would be cleaner long-term; for now each track gets its
+        // own dedicated port (port 0 = track 0, port 1 = track 1, …).
+        let num_track_inputs = project.tracks.len().max(1);
+        let master_id = graph.add_node(
+            NodeKind::Master { num_inputs: num_track_inputs },
+            "Master",
+        );
 
-        // ── Per-track chain ────────────────────────────────────────────────────
-        for track in &project.tracks {
+        // Solo logic: if any track is soloed, mute all non-solo tracks.
+        let any_solo = project.tracks.iter().any(|t| t.solo);
+
+        // ── Per-track chain ─────────────────────────────────────────────────────
+        for (port_idx, track) in project.tracks.iter().enumerate() {
             let track_node = graph.add_node(
                 NodeKind::Track { track_id: track.id.clone() },
                 format!("{} [clips]", track.name),
             );
 
-            // Volume is stored as 0–100 in AppTrack; normalise to 0.0–1.0.
-            let gain_linear = (track.volume / 100.0).clamp(0.0, 1.0);
+            // Volume 0–100 → 0.0–1.0; honour mute and exclusive solo.
+            let effectively_muted = track.muted || (any_solo && !track.solo);
+            let gain_linear = if effectively_muted {
+                0.0
+            } else {
+                (track.volume / 100.0).clamp(0.0, 1.0)
+            };
+
             let gain_node = graph.add_node(
                 NodeKind::TrackGain { track_id: track.id.clone(), gain: gain_linear },
                 format!("{} [vol]", track.name),
             );
 
-            // track → gain → master
+            // track → gain → master[port_idx]
+            // Each track gets its OWN master input port so they are summed,
+            // not overwritten (all-to-port-0 would only keep the last track).
             graph.connect(track_node, 0, gain_node, 0);
-            graph.connect(gain_node, 0, master_id, 0);
+            graph.connect(gain_node, 0, master_id, port_idx as u32);
         }
 
         graph

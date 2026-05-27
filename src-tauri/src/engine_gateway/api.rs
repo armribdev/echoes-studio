@@ -167,18 +167,33 @@ fn process_command(
     match command.command_type.as_str() {
         // ── Transport (runtime, not persisted) ────────────────────────────────
         cmd::PLAY => {
+            // Update the CPAL engine atomically — no lock needed
+            state.transport.play();
             let ev = EngineEvent::new(ev::PLAY_STARTED, &project_id, json!({}));
             let _ = app.emit("engine-event", &ev);
             Ok(CommandResult::ok(command_id, vec![serde_json::to_value(&ev).unwrap_or_default()]))
         }
 
         cmd::STOP => {
-            let ev = EngineEvent::new(ev::PLAY_STOPPED, &project_id, json!({}));
-            let _ = app.emit("engine-event", &ev);
-            Ok(CommandResult::ok(command_id, vec![serde_json::to_value(&ev).unwrap_or_default()]))
+            // Reset position to 0 and stop playback atomically
+            state.transport.stop();
+            // Emit the current position (0) so the frontend playhead snaps back
+            let ev_stop = EngineEvent::new(ev::PLAY_STOPPED, &project_id, json!({}));
+            let ev_pos = EngineEvent::new(
+                ev::POSITION_UPDATED,
+                &project_id,
+                json!({ "position": 0.0 }),
+            );
+            let _ = app.emit("engine-event", &ev_stop);
+            let _ = app.emit("engine-event", &ev_pos);
+            Ok(CommandResult::ok(command_id, vec![
+                serde_json::to_value(&ev_stop).unwrap_or_default(),
+                serde_json::to_value(&ev_pos).unwrap_or_default(),
+            ]))
         }
 
         cmd::PAUSE => {
+            state.transport.pause();
             let ev = EngineEvent::new(ev::PLAY_STOPPED, &project_id, json!({ "pause": true }));
             let _ = app.emit("engine-event", &ev);
             Ok(CommandResult::ok(command_id, vec![serde_json::to_value(&ev).unwrap_or_default()]))
@@ -187,6 +202,8 @@ fn process_command(
         cmd::SEEK => {
             let p: SeekPayload = serde_json::from_value(command.payload)
                 .map_err(|e| format!("SEEK payload invalid: {e}"))?;
+            // Update the CPAL engine cursor atomically
+            state.transport.seek(p.position);
             let ev = EngineEvent::new(
                 ev::POSITION_UPDATED,
                 &project_id,
@@ -523,6 +540,10 @@ fn process_command(
             let p: UpdateTempoPayload = serde_json::from_value(command.payload)
                 .map_err(|e| format!("UPDATE_TEMPO payload invalid: {e}"))?;
 
+            // Keep the CPAL transport BPM in sync (used by nodes for bar-aligned
+            // operations such as looping — currently informational).
+            state.transport.set_bpm(p.bpm);
+
             {
                 let mut project = state.project.lock().map_err(|e| e.to_string())?;
                 project.bpm = p.bpm;
@@ -774,7 +795,7 @@ fn apply_events(
                                 Some(cached)
                             }
                             Err(e) => {
-                                eprintln!("Warning: could not load '{}': {e}", file_path);
+                                eprintln!("[audio] Clip introuvable '{}': {e}", file_path);
                                 None
                             }
                         }
@@ -866,6 +887,6 @@ fn recompile_if_needed(state: &tauri::State<'_, AppState>) {
     };
 
     if !compile_done {
-        eprintln!("[gateway] recompile_if_needed: could not acquire locks");
+        eprintln!("[audio] Recompilation ignorée : verrous non disponibles");
     }
 }

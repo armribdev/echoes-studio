@@ -1,7 +1,7 @@
 <script lang="ts">
 	import Knob from './Knob.svelte';
 	import Track from './Track.svelte';
-	import type { Track as TrackType, Clip, Project } from '../types/global';
+	import type { Track as TrackType, Project } from '../types/global';
 	import { invoke } from '@tauri-apps/api/core';
 	import { listen } from '@tauri-apps/api/event';
 	import { getCurrentWindow } from '@tauri-apps/api/window';
@@ -39,144 +39,19 @@
 	let logScale: number = Math.log(80);
 	$: scale = Math.exp(logScale);
 
-	// ── Audio engine ──────────────────────────────────────────────────────────
-	let audioCtx: AudioContext | null = null;
-	let activeSources: AudioBufferSourceNode[] = [];
-	let audioStartTime = 0;
-	let playbackStartPos = 0;
-
-	// Keyed by clip.id — stable across undo/redo and object recreation by the reducer.
-	// (WeakMap keyed by raw_samples breaks when the reducer spreads new objects.)
-	const clipBuffers = new Map<string, AudioBuffer>();
-
-	// One GainNode + StereoPannerNode per track — persists across play/stop cycles.
-	const trackGains = new Map<string, GainNode>();
-	const trackPanners = new Map<string, StereoPannerNode>();
-
-	function panToAudioValue(pan: number): number {
-		return pan / 100;
-	}
-
-	function getEffectiveGain(track: TrackType): number {
-		const anySolo = tracks.some((t) => t.solo);
-		if (track.muted) return 0;
-		if (anySolo && !track.solo) return 0;
-		return track.volume / 100;
-	}
-
-	// Reactive: keep gain/pan in sync with controls (even during playback).
-	$: if (audioCtx) {
-		for (const track of tracks) {
-			const gain = trackGains.get(track.id);
-			if (gain) gain.gain.value = getEffectiveGain(track);
-			const panner = trackPanners.get(track.id);
-			if (panner) panner.pan.value = panToAudioValue(track.pan);
-		}
-	}
-
-	// Reactive: auto-prepare AudioBuffers for every clip in `tracks`.
-	// Fires on project load, gateway imports, and undo/redo restores.
-	// prepareClipBuffer is idempotent — no-ops if the buffer is already cached.
-	$: for (const track of tracks) {
-		for (const clip of track.clips) {
-			if (!clipBuffers.has(clip.id) && clip.raw_samples.length > 0) {
-				prepareClipBuffer(clip).catch(console.error);
-			}
-		}
-	}
-
-	function getAudioCtx(): AudioContext {
-		if (!audioCtx) audioCtx = new AudioContext();
-		return audioCtx;
-	}
-
-	async function prepareClipBuffer(clip: Clip): Promise<void> {
-		if (clipBuffers.has(clip.id) || clip.sample_rate < 3000) return;
-
-		const ctx = getAudioCtx();
-		const samples = new Float32Array(clip.raw_samples);
-
-		let buffer: AudioBuffer;
-		if (clip.sample_rate === ctx.sampleRate) {
-			buffer = ctx.createBuffer(1, samples.length, clip.sample_rate);
-			buffer.copyToChannel(samples, 0);
-		} else {
-			// Resample to AudioContext native rate via OfflineAudioContext
-			const duration = samples.length / clip.sample_rate;
-			const offCtx = new OfflineAudioContext(1, Math.ceil(duration * ctx.sampleRate), ctx.sampleRate);
-			const srcBuf = offCtx.createBuffer(1, samples.length, clip.sample_rate);
-			srcBuf.copyToChannel(samples, 0);
-			const srcNode = offCtx.createBufferSource();
-			srcNode.buffer = srcBuf;
-			srcNode.connect(offCtx.destination);
-			srcNode.start();
-			buffer = await offCtx.startRendering();
-		}
-
-		clipBuffers.set(clip.id, buffer);
-	}
-
-	function getOrCreateTrackGain(ctx: AudioContext, trackId: string, gainValue: number, pan: number): GainNode {
-		let gain = trackGains.get(trackId);
-		let panner = trackPanners.get(trackId);
-		if (!gain) {
-			gain = ctx.createGain();
-			panner = ctx.createStereoPanner();
-			gain.connect(panner);
-			panner.connect(ctx.destination);
-			trackGains.set(trackId, gain);
-			trackPanners.set(trackId, panner);
-		}
-		gain.gain.value = gainValue;
-		panner!.pan.value = panToAudioValue(pan);
-		return gain;
-	}
-
-	function scheduleClip(ctx: AudioContext, clip: Clip, trackId: string, gainValue: number, pan: number, currentPos: number) {
-		const buffer = clipBuffers.get(clip.id);
-		if (!buffer || currentPos >= clip.end) return;
-
-		const gain = getOrCreateTrackGain(ctx, trackId, gainValue, pan);
-		const source = ctx.createBufferSource();
-		source.buffer = buffer;
-		source.connect(gain);
-
-		if (currentPos < clip.start) {
-			source.start(ctx.currentTime + (clip.start - currentPos));
-		} else {
-			source.start(0, currentPos - clip.start);
-		}
-
-		activeSources.push(source);
-	}
-
-	function scheduleAllClips(ctx: AudioContext, currentPos: number) {
-		for (const track of tracks) {
-			const gainValue = getEffectiveGain(track);
-			for (const clip of track.clips) {
-				scheduleClip(ctx, clip, track.id, gainValue, track.pan, currentPos);
-			}
-		}
-	}
-
-	function startPlaybackAt(ctx: AudioContext, position: number) {
-		if (ctx.state === 'suspended') ctx.resume();
-		playbackStartPos = position;
-		audioStartTime = ctx.currentTime;
-		scheduleAllClips(ctx, position);
-	}
-
-	function stopAllClips() {
-		for (const source of activeSources) {
-			try { source.stop(); } catch { /* already ended */ }
-		}
-		activeSources = [];
-	}
+	// ── Audio engine (native CPAL) ────────────────────────────────────────────
+	//
+	// Live audio playback is handled entirely by the Rust CPAL engine.
+	// The frontend no longer creates an AudioContext for playback; it only
+	// uses OfflineAudioContext for the offline WAV export path below.
+	//
+	// Position updates arrive via `POSITION_UPDATED` engine events pushed by
+	// the Rust position-reporter thread (~30 fps) and are applied by the
+	// transport bridge (src/frontend/transport/bridge.ts).
 
 	// ── Project loading ───────────────────────────────────────────────────────
 
 	async function loadProject(dto: Project) {
-		stopAllClips();
 		transport.update((t) => ({ ...t, isPlaying: false, position: 0 }));
 
 		projectName.set(dto.name);
@@ -190,17 +65,13 @@
 		getCurrentWindow().setTitle(`${dto.name} — Echoes Studio`).catch(console.error);
 	}
 
-	// ── Playhead (position driven by audioCtx.currentTime when playing) ──────
+	// ── Playhead ──────────────────────────────────────────────────────────────
+	// Position is pushed by the CPAL engine via POSITION_UPDATED events (~30 fps).
+	// The animFrame loop is kept for future per-frame UI work (e.g. VU meters).
 	let animFrameId: number;
 	let isScrubbing = false;
 
 	function loop() {
-		if ($transport.isPlaying && audioCtx && !isScrubbing) {
-			transport.update((t) => ({
-				...t,
-				position: playbackStartPos + (audioCtx!.currentTime - audioStartTime)
-			}));
-		}
 		animFrameId = requestAnimationFrame(loop);
 	}
 
@@ -211,13 +82,10 @@
 
 		animFrameId = requestAnimationFrame(loop);
 
+		// The transport store is updated by the engine-event bridge.
+		// No Web Audio wiring needed here.
 		let wasPlaying = false;
 		const unsub = transport.subscribe((state) => {
-			if (state.isPlaying && !wasPlaying) {
-				startPlaybackAt(getAudioCtx(), state.position);
-			} else if (!state.isPlaying && wasPlaying) {
-				stopAllClips();
-			}
 			wasPlaying = state.isPlaying;
 		});
 
@@ -325,7 +193,6 @@
 		return () => {
 			cancelAnimationFrame(animFrameId);
 			unsub();
-			stopAllClips();
 			unlisteners.forEach((fn) => fn());
 		};
 	});
@@ -455,10 +322,7 @@
 		window.removeEventListener('mousemove', onScrubMove);
 		window.removeEventListener('mouseup', onScrubEnd);
 		isScrubbing = false;
-		if ($transport.isPlaying) {
-			stopAllClips();
-			startPlaybackAt(getAudioCtx(), scrubPosition);
-		}
+		// CPAL engine picks up the new position from the atomic — no Web Audio restart needed.
 		seek(scrubPosition).catch(console.error);
 	}
 
