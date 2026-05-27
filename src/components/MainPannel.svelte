@@ -261,7 +261,7 @@
 			}),
 		]).then((fns) => unlisteners.push(...fns));
 
-		// ── Native menu events (project-loaded / project-saved) ──────────────
+		// ── Native menu events (project-loaded / project-saved / audio import) ─
 		Promise.all([
 			listen<Project>('project-loaded', async ({ payload }) => {
 				await loadProject(payload);
@@ -271,6 +271,23 @@
 				projectPath.set(payload);
 				const filename = payload.split(/[\\/]/).pop() ?? payload;
 				notify(`Enregistré : ${filename}`, 'success');
+			}),
+			listen<string>('audio-file-picked', async ({ payload: filePath }) => {
+				const targetTrack = tracks[0];
+				if (!targetTrack) {
+					notify('Créez d\'abord une piste avant d\'importer.', 'error');
+					return;
+				}
+				try {
+					const dur = await invoke<number>('get_audio_clip_duration', { filePath });
+					const startSec = $transport.position;
+					await addClip(targetTrack.id, filePath, startSec, startSec + dur);
+					const filename = filePath.split(/[\\/]/).pop() ?? filePath;
+					notify(`Importé : ${filename}`, 'success');
+				} catch (err: unknown) {
+					const msg = err instanceof Error ? err.message : String(err);
+					notify(`Erreur import : ${msg}`, 'error');
+				}
 			}),
 		]).then((fns) => unlisteners.push(...fns));
 

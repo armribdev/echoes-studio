@@ -86,6 +86,14 @@ const SHORTCUTS: Shortcut[] = [
     action: () => redoCommand().catch((e) => notify(`Rétablir : ${e?.message ?? e}`, 'error')),
   },
 
+  // ── Import ────────────────────────────────────────────────────────────────
+  {
+    key: 'i',
+    modifiers: ['ctrl', 'shift'],
+    description: 'Importer audio…',
+    action: menuAction('import-audio'),
+  },
+
   // ── Transport ─────────────────────────────────────────────────────────────
   {
     key: ' ',

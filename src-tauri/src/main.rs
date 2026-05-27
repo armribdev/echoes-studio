@@ -55,6 +55,8 @@ fn main() {
                     &MenuItem::with_id(app, "new", "Nouveau projet", true, Some("CmdOrCtrl+N"))?,
                     &MenuItem::with_id(app, "open", "Ouvrir...", true, Some("CmdOrCtrl+O"))?,
                     &PredefinedMenuItem::separator(app)?,
+                    &MenuItem::with_id(app, "import-audio", "Importer audio...", true, None::<&str>)?,
+                    &PredefinedMenuItem::separator(app)?,
                     &MenuItem::with_id(app, "save", "Enregistrer", true, Some("CmdOrCtrl+S"))?,
                     &MenuItem::with_id(app, "save-as", "Enregistrer sous...", true, None::<&str>)?,
                     &PredefinedMenuItem::separator(app)?,
@@ -243,6 +245,19 @@ fn handle_menu_event(app: &tauri::AppHandle, menu_id: &str) {
                 let _ = app.emit("project-saved", save_path.to_string_lossy().to_string());
             } else if let Err(e) = write_result {
                 eprintln!("Erreur sauvegarde: {}", e);
+            }
+        }
+
+        "import-audio" => {
+            let picked = app
+                .dialog()
+                .file()
+                .add_filter("Fichiers audio", &["wav"])
+                .blocking_pick_file();
+
+            if let Some(FilePath::Path(file_path)) = picked {
+                let path_str = file_path.to_string_lossy().to_string();
+                let _ = app.emit("audio-file-picked", path_str);
             }
         }
 
