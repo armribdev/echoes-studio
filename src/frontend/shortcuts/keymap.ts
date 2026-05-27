@@ -32,7 +32,6 @@ interface Shortcut {
 // ── Shortcut table ────────────────────────────────────────────────────────────
 //
 // Mirror every accelerator defined in main.rs ↔ Submenu::with_items.
-// On macOS `ctrl` maps to Cmd (via e.metaKey) — see `matches()` below.
 
 const menuAction = (action: string) => () =>
   invoke('menu_action', { action }).catch(console.error);
@@ -77,6 +76,12 @@ const SHORTCUTS: Shortcut[] = [
     description: 'Rétablir',
     action: () => redoCommand().catch(console.error),
   },
+  {
+    key: 'y',
+    modifiers: ['ctrl'],
+    description: 'Rétablir (Windows)',
+    action: () => redoCommand().catch(console.error),
+  },
 ];
 
 // ── Matching logic ────────────────────────────────────────────────────────────
@@ -93,7 +98,12 @@ function isEditingText(target: EventTarget | null): boolean {
   );
 }
 
-/** True when the event exactly satisfies a shortcut's key + modifiers. */
+/**
+ * True when the event exactly satisfies a shortcut's key + modifiers.
+ *
+ * Note: `ctrl` in the modifier list maps to Cmd on macOS (e.metaKey) and
+ * Ctrl on Windows/Linux (e.ctrlKey) — both are accepted via `ctrlHeld`.
+ */
 function matches(e: KeyboardEvent, shortcut: Shortcut): boolean {
   if (e.key.toLowerCase() !== shortcut.key.toLowerCase()) return false;
 
@@ -121,6 +131,7 @@ function matches(e: KeyboardEvent, shortcut: Shortcut): boolean {
  */
 export function registerShortcuts(): () => void {
   const handler = (e: KeyboardEvent): void => {
+    if (e.repeat) return; // ignore key-repeat to avoid spawning multiple Rust threads
     if (isEditingText(e.target)) return;
 
     for (const shortcut of SHORTCUTS) {

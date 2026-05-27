@@ -246,7 +246,9 @@ fn handle_menu_event(app: &tauri::AppHandle, menu_id: &str) {
             }
         }
 
-        _ => {}
+        _ => {
+            eprintln!("[keymap] action inconnue : {menu_id:?}");
+        }
     }
 }
 
