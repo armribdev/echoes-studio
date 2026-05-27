@@ -390,12 +390,40 @@
 	let scrubOriginLeft = 0;
 	let scrubPosition = 0;
 
-	function snapPosition(positionSec: number, altKey: boolean): number {
+	function snapPosition(
+		positionSec: number,
+		altKey: boolean,
+		excludeClip?: { trackIndex: number; clipIndex: number }
+	): number {
 		if (altKey) return positionSec;
-		const beatSec = 60 / $tempo.bpm;
 		const thresholdSec = 10 / scale;
-		const nearest = Math.round(positionSec / beatSec) * beatSec;
-		return Math.abs(nearest - positionSec) <= thresholdSec ? nearest : positionSec;
+
+		const candidates: number[] = [];
+
+		// Beat grid
+		const beatSec = 60 / $tempo.bpm;
+		candidates.push(Math.round(positionSec / beatSec) * beatSec);
+
+		// Edges of other clips
+		for (let ti = 0; ti < tracks.length; ti++) {
+			const clips = tracks[ti].clips;
+			for (let ci = 0; ci < clips.length; ci++) {
+				if (excludeClip && ti === excludeClip.trackIndex && ci === excludeClip.clipIndex) continue;
+				candidates.push(clips[ci].start);
+				candidates.push(clips[ci].end);
+			}
+		}
+
+		let best = positionSec;
+		let bestDist = thresholdSec;
+		for (const c of candidates) {
+			const d = Math.abs(c - positionSec);
+			if (d < bestDist) {
+				bestDist = d;
+				best = c;
+			}
+		}
+		return best;
 	}
 
 	function onScrubMove(e: MouseEvent) {
@@ -468,9 +496,9 @@
 	function onDragMove(e: MouseEvent) {
 		if (!dragging || !tracksEl) return;
 		const rect = tracksEl.getBoundingClientRect();
-		const rawStart = Math.max(0, (e.clientX - rect.left - dragging.offsetPx) / scale);
-		const newStart = snapPosition(rawStart, e.altKey);
 		const { trackIndex, clipIndex } = dragging;
+		const rawStart = Math.max(0, (e.clientX - rect.left - dragging.offsetPx) / scale);
+		const newStart = snapPosition(rawStart, e.altKey, { trackIndex, clipIndex });
 		const clip = tracks[trackIndex].clips[clipIndex];
 		const duration = clip.end - clip.start;
 		tracks[trackIndex].clips[clipIndex] = { ...clip, start: newStart, end: newStart + duration };
