@@ -5,13 +5,24 @@
 	import { invoke } from '@tauri-apps/api/core';
 	import { listen } from '@tauri-apps/api/event';
 	import { getCurrentWindow } from '@tauri-apps/api/window';
-	import { onMount } from 'svelte';
+	import { onMount, onDestroy } from 'svelte';
 	import { transport } from '../stores/transport';
 	import { selection } from '../stores/selection';
 	import { tempo } from '../stores/tempo';
 	import { projectName, projectPath } from '../stores/project';
+	import { projectEventStore } from '../shared/project/eventStore';
+	import { addClip, moveClip, removeClip, updateTrack } from '../frontend/commands/dispatcher';
 
+	// Live sync from the engine event store.
+	// Local mutations (optimistic UI during drag/import) are reconciled by the
+	// next store event — the reducer is idempotent so there's never a double-apply.
 	let tracks: TrackType[] = [];
+	const unsubStore = projectEventStore.subscribe((state) => {
+		tracks = state.tracks;
+		// Keep the tempo store in sync so MenuBar reflects undo/redo correctly.
+		tempo.set({ bpm: state.bpm, numerator: state.numerator, denominator: state.denominator });
+	});
+	onDestroy(unsubStore);
 
 	let logScale: number = Math.log(80);
 	$: scale = Math.exp(logScale);
@@ -22,8 +33,20 @@
 	let audioStartTime = 0;
 	let playbackStartPos = 0;
 
-	// Keyed by raw_samples reference — stable even when clip.start/end change (drag)
-	const clipBuffers = new WeakMap<number[], AudioBuffer>();
+	// Keyed by clip.id — stable across undo/redo and object recreation by the reducer.
+	// (WeakMap keyed by raw_samples breaks when the reducer spreads new objects.)
+	const clipBuffers = new Map<string, AudioBuffer>();
+
+	// Reactive: auto-prepare AudioBuffers for every clip in `tracks`.
+	// Fires on project load, gateway imports, and undo/redo restores.
+	// prepareClipBuffer is idempotent — no-ops if the buffer is already cached.
+	$: for (const track of tracks) {
+		for (const clip of track.clips) {
+			if (!clipBuffers.has(clip.id) && clip.raw_samples.length > 0) {
+				prepareClipBuffer(clip).catch(console.error);
+			}
+		}
+	}
 
 	function getAudioCtx(): AudioContext {
 		if (!audioCtx) audioCtx = new AudioContext();
@@ -31,7 +54,7 @@
 	}
 
 	async function prepareClipBuffer(clip: Clip): Promise<void> {
-		if (clipBuffers.has(clip.raw_samples) || clip.sample_rate < 3000) return;
+		if (clipBuffers.has(clip.id) || clip.sample_rate < 3000) return;
 
 		const ctx = getAudioCtx();
 		const samples = new Float32Array(clip.raw_samples);
@@ -53,11 +76,11 @@
 			buffer = await offCtx.startRendering();
 		}
 
-		clipBuffers.set(clip.raw_samples, buffer);
+		clipBuffers.set(clip.id, buffer);
 	}
 
 	function scheduleClip(ctx: AudioContext, clip: Clip, currentPos: number) {
-		const buffer = clipBuffers.get(clip.raw_samples);
+		const buffer = clipBuffers.get(clip.id);
 		if (!buffer || currentPos >= clip.end) return;
 
 		const source = ctx.createBufferSource();
@@ -88,16 +111,13 @@
 
 		projectName.set(dto.name);
 		tempo.set({ bpm: dto.bpm, numerator: dto.numerator, denominator: dto.denominator });
-		tracks = dto.tracks;
+
+		// Seed the engine store — the subscription above will update `tracks` reactively,
+		// which in turn triggers the $: buffer-preparation block for all clips.
+		projectEventStore.seedFromSnapshot(dto);
 
 		// Window title — set from frontend so the window is guaranteed to exist
 		getCurrentWindow().setTitle(`${dto.name} — Echoes Studio`).catch(console.error);
-
-		for (const track of tracks) {
-			for (const clip of track.clips) {
-				prepareClipBuffer(clip).catch(console.error);
-			}
-		}
 	}
 
 	// ── Playhead (position driven by audioCtx.currentTime when playing) ──────
@@ -184,13 +204,14 @@
 				const startSec = preview?.startSec ?? 0;
 
 				const doImport = (dur: number) => {
-					invoke<Clip>('import_clip', { trackIndex, filePath, start: startSec, end: startSec + dur })
-						.then(async (clip) => {
-							await prepareClipBuffer(clip);
-							tracks[trackIndex].clips = [...tracks[trackIndex].clips, clip];
-							tracks = tracks;
-							fileDragPreview = null;
-						})
+					const trackId = tracks[trackIndex]?.id;
+					if (!trackId) { fileDragPreview = null; return; }
+
+					// Dispatch through the gateway — Rust loads the WAV, emits CLIP_ADDED,
+					// the store subscription updates `tracks`, and the $: reactive block
+					// prepares the AudioBuffer automatically.
+					addClip(trackId, filePath, startSec, startSec + dur)
+						.then(() => { fileDragPreview = null; })
 						.catch((err) => { console.error('Erreur import fichier audio :', err); fileDragPreview = null; });
 				};
 
@@ -324,10 +345,12 @@
 	}
 
 	function deleteSelected() {
-		tracks.forEach((track, trackIndex) => {
+		// Optimistic: remove from local state immediately for instant feedback.
+		// The CLIP_REMOVED events will confirm via store subscription.
+		tracks.forEach((track) => {
 			const toDelete = track.clips.filter((c) => $selection.has(c.id));
 			for (const clip of toDelete) {
-				invoke('remove_clip', { trackIndex, clipId: clip.id }).catch(console.error);
+				removeClip(track.id, clip.id).catch(console.error);
 			}
 		});
 		tracks = tracks.map((track) => ({
@@ -364,8 +387,11 @@
 	function onDragEnd() {
 		if (dragging) {
 			const { trackIndex, clipIndex } = dragging;
-			const clip = tracks[trackIndex].clips[clipIndex];
-			invoke('move_clip', { trackIndex, clipId: clip.id, start: clip.start, end: clip.end }).catch(console.error);
+			const track = tracks[trackIndex];
+			const clip = track?.clips[clipIndex];
+			if (track && clip) {
+				moveClip(track.id, clip.id, clip.start, clip.end).catch(console.error);
+			}
 		}
 		dragging = null;
 		window.removeEventListener('mousemove', onDragMove);
@@ -382,7 +408,7 @@
 	function handleVolumeRelease(trackIndex: number) {
 		const track = tracks[trackIndex];
 		if (!track) return;
-		invoke('update_track', { trackIndex, name: track.name, volume: track.volume }).catch(console.error);
+		updateTrack(track.id, { name: track.name, volume: track.volume }).catch(console.error);
 	}
 
 	function makeEditable(e: MouseEvent, trackIndex: number) {
@@ -404,7 +430,7 @@
 			const newName = el.textContent?.trim() || tracks[trackIndex].name;
 			tracks[trackIndex] = { ...tracks[trackIndex], name: newName };
 			tracks = tracks;
-			invoke('update_track', { trackIndex, name: newName, volume: tracks[trackIndex].volume }).catch(console.error);
+			updateTrack(tracks[trackIndex].id, { name: newName, volume: tracks[trackIndex].volume }).catch(console.error);
 		}, { once: true });
 	}
 

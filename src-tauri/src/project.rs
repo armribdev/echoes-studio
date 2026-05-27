@@ -1,8 +1,9 @@
 use crate::audio_clip::AudioClip;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 static ID_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -31,6 +32,8 @@ pub struct AppClip {
 }
 
 pub struct AppTrack {
+    /// Stable identifier used by the event sourcing system.
+    pub id: String,
     pub name: String,
     pub volume: f32,
     pub clips: Vec<AppClip>,
@@ -73,6 +76,7 @@ impl AppProject {
             numerator: self.numerator,
             denominator: self.denominator,
             tracks: self.tracks.iter().map(|t| TrackFile {
+                id: Some(t.id.clone()),
                 name: t.name.clone(),
                 volume: t.volume,
                 clips: t.clips.iter().map(|c| ClipFile {
@@ -105,7 +109,9 @@ impl AppProject {
                     peaks_4096: data.peaks_4096,
                 });
             }
-            tracks.push(AppTrack { name: tf.name, volume: tf.volume, clips });
+            // Migrate: generate id if not present in file
+            let track_id = tf.id.unwrap_or_else(generate_id);
+            tracks.push(AppTrack { id: track_id, name: tf.name, volume: tf.volume, clips });
         }
         Ok(AppProject {
             name: pf.name,
@@ -120,6 +126,7 @@ impl AppProject {
 impl AppTrack {
     pub fn to_dto(&self) -> TrackDto {
         TrackDto {
+            id: self.id.clone(),
             name: self.name.clone(),
             volume: self.volume,
             clips: self.clips.iter().map(|c| c.to_dto()).collect(),
@@ -143,11 +150,49 @@ impl AppClip {
     }
 }
 
+// ── Audio data cache ─────────────────────────────────────────────────────────
+//
+// Keyed by clip_id. Persists audio data across undo/redo so events can be
+// replayed without re-reading audio files from disk.
+
+pub struct AudioDataCache(pub Mutex<HashMap<String, Arc<CachedAudioData>>>);
+
+pub struct CachedAudioData {
+    pub raw_samples: Vec<f32>,
+    pub sample_rate: u32,
+    pub peaks_64: Vec<[f32; 2]>,
+    pub peaks_512: Vec<[f32; 2]>,
+    pub peaks_4096: Vec<[f32; 2]>,
+}
+
+impl AudioDataCache {
+    pub fn new() -> Self {
+        AudioDataCache(Mutex::new(HashMap::new()))
+    }
+
+    pub fn get(&self, clip_id: &str) -> Option<Arc<CachedAudioData>> {
+        self.0.lock().ok()?.get(clip_id).cloned()
+    }
+
+    pub fn insert(&self, clip_id: String, data: Arc<CachedAudioData>) {
+        if let Ok(mut map) = self.0.lock() {
+            map.insert(clip_id, data);
+        }
+    }
+}
+
 // ── Application state ────────────────────────────────────────────────────────
 
 pub struct AppState {
     pub project: Mutex<AppProject>,
     pub project_path: Mutex<Option<PathBuf>>,
+    /// Event store — sole source of truth for project structure changes.
+    pub event_store: Mutex<crate::engine_gateway::store::EventStore>,
+    /// In-memory audio data cache — survives undo/redo so replaying events
+    /// never re-reads audio files unnecessarily.
+    pub audio_cache: AudioDataCache,
+    /// Real-time audio engine — reads immutable snapshots only.
+    pub audio_engine: Mutex<crate::audio_engine::engine::AudioEngine>,
 }
 
 impl AppState {
@@ -155,6 +200,9 @@ impl AppState {
         AppState {
             project: Mutex::new(AppProject::new()),
             project_path: Mutex::new(None),
+            event_store: Mutex::new(crate::engine_gateway::store::EventStore::new()),
+            audio_cache: AudioDataCache::new(),
+            audio_engine: Mutex::new(crate::audio_engine::engine::AudioEngine::new()),
         }
     }
 }
@@ -173,6 +221,9 @@ pub struct ProjectFile {
 
 #[derive(Serialize, Deserialize)]
 pub struct TrackFile {
+    /// Optional for backward-compat: older saves without track IDs are migrated.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
     pub name: String,
     pub volume: f32,
     pub clips: Vec<ClipFile>,
@@ -199,6 +250,7 @@ pub struct ProjectDto {
 
 #[derive(Serialize, Clone)]
 pub struct TrackDto {
+    pub id: String,
     pub name: String,
     pub volume: f32,
     pub clips: Vec<ClipDto>,

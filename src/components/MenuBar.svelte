@@ -1,7 +1,7 @@
 <script lang="ts">
-	import { invoke } from '@tauri-apps/api/core';
 	import { transport } from '../stores/transport';
 	import { tempo } from '../stores/tempo';
+	import { updateTempo } from '../frontend/commands/dispatcher';
 
 	let isRecording = false;
 
@@ -34,7 +34,7 @@
 		const v = parseFloat((e.target as HTMLInputElement).value);
 		if (v >= 20 && v <= 400) {
 			tempo.update((t) => ({ ...t, bpm: v }));
-			invoke('update_tempo', { bpm: v, numerator: $tempo.numerator, denominator: $tempo.denominator }).catch(console.error);
+			updateTempo(v, $tempo.numerator, $tempo.denominator).catch(console.error);
 		} else {
 			(e.target as HTMLInputElement).value = String($tempo.bpm);
 		}
@@ -44,7 +44,7 @@
 		const v = parseInt((e.target as HTMLInputElement).value);
 		if (v >= 1 && v <= 16) {
 			tempo.update((t) => ({ ...t, numerator: v }));
-			invoke('update_tempo', { bpm: $tempo.bpm, numerator: v, denominator: $tempo.denominator }).catch(console.error);
+			updateTempo($tempo.bpm, v, $tempo.denominator).catch(console.error);
 		} else {
 			(e.target as HTMLInputElement).value = String($tempo.numerator);
 		}
@@ -53,7 +53,7 @@
 	function handleDenominator(e: Event) {
 		const v = parseInt((e.target as HTMLSelectElement).value);
 		tempo.update((t) => ({ ...t, denominator: v }));
-		invoke('update_tempo', { bpm: $tempo.bpm, numerator: $tempo.numerator, denominator: v }).catch(console.error);
+		updateTempo($tempo.bpm, $tempo.numerator, v).catch(console.error);
 	}
 </script>
 

@@ -2,8 +2,18 @@
 	import MenuBar from '../components/MenuBar.svelte';
 	import MainPannel from '../components/MainPannel.svelte';
 	import StatusBar from '../components/StatusBar.svelte';
+	// Subscribing to engineProject here triggers connect() on the event store,
+	// which starts listening to "engine-event" and "project-loaded" channels.
+	// The store then stays alive for the entire app lifetime.
+	import { engineProject } from '../frontend/store/engineStore';
 </script>
 
+<!--
+  engineProject is subscribed via $engineProject so Svelte keeps the store
+  alive (and the Tauri listener active) for the full app lifetime.
+  The value is not used here directly — components that need it import it.
+-->
+{#if $engineProject !== undefined}
 <div class="app">
 	<MenuBar />
 	<div class="content">
@@ -11,6 +21,7 @@
 	</div>
 	<StatusBar />
 </div>
+{/if}
 
 <style>
 	.app {

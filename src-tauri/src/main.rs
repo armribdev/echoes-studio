@@ -1,12 +1,11 @@
 mod audio_clip;
+mod audio_engine;
+mod engine_gateway;
 mod project;
 mod windows_theme;
 
-use audio_clip::AudioClip;
-use project::{
-    AppClip, AppProject, AppState, AppTrack, ClipDto, ProjectDto, ProjectFile, TrackDto,
-    generate_id,
-};
+use engine_gateway::api::{get_snapshot, redo, send_batch, send_command, undo};
+use project::{AppProject, AppState, ProjectDto, ProjectFile};
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::{Emitter, Manager, Theme};
 use tauri_plugin_dialog::{DialogExt, FilePath};
@@ -17,9 +16,6 @@ fn main() {
         .manage(AppState::new())
         .setup(|app| {
             // ── Debug auto-load ───────────────────────────────────────────────
-            // Configured via .cargo/config.toml → ECHOES_DEBUG_PROJECT env var.
-            // State is populated before the window loads; the frontend's initial
-            // invoke('get_project') picks it up without needing an extra event.
             let mut initial_title = "Sans titre".to_string();
 
             #[cfg(debug_assertions)]
@@ -29,10 +25,14 @@ fn main() {
                     match load_project_from_file(&path) {
                         Ok(project) => {
                             initial_title = project.name.clone();
-                            if let Ok(mut p) = app.state::<AppState>().project.lock() {
+                            {
+                                let state = app.state::<AppState>();
+                                let mut p = state.project.lock().unwrap();
                                 *p = project;
                             }
-                            if let Ok(mut p) = app.state::<AppState>().project_path.lock() {
+                            {
+                                let state = app.state::<AppState>();
+                                let mut p = state.project_path.lock().unwrap();
                                 *p = Some(path);
                             }
                         }
@@ -45,7 +45,6 @@ fn main() {
 
             set_window_title(app.handle(), &initial_title);
 
-            // Popups « Fichier » etc. : ForceDark via uxtheme (AllowDark ne suffit pas si Windows est clair).
             windows_theme::force_dark_popups();
 
             let file_menu = Submenu::with_items(
@@ -58,6 +57,9 @@ fn main() {
                     &PredefinedMenuItem::separator(app)?,
                     &MenuItem::with_id(app, "save", "Enregistrer", true, Some("CmdOrCtrl+S"))?,
                     &MenuItem::with_id(app, "save-as", "Enregistrer sous...", true, None::<&str>)?,
+                    &PredefinedMenuItem::separator(app)?,
+                    &MenuItem::with_id(app, "undo", "Annuler", true, Some("CmdOrCtrl+Z"))?,
+                    &MenuItem::with_id(app, "redo", "Rétablir", true, Some("CmdOrCtrl+Shift+Z"))?,
                     &PredefinedMenuItem::separator(app)?,
                     &PredefinedMenuItem::quit(app, None)?,
                 ],
@@ -78,17 +80,15 @@ fn main() {
             });
         })
         .invoke_handler(tauri::generate_handler![
+            // ── Read-only helpers ─────────────────────────────────────────────
             get_audio_clip_duration,
             get_project,
-            update_project_name,
-            update_tempo,
-            add_track,
-            remove_track,
-            update_track,
-            import_clip,
-            remove_clip,
-            move_clip,
-            save_project,
+            // ── Gateway commands (all mutations go here) ──────────────────────
+            send_command,
+            send_batch,
+            get_snapshot,
+            undo,
+            redo,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -112,7 +112,7 @@ fn set_window_title(app: &tauri::AppHandle, project_name: &str) {
     }
 }
 
-// ── Project file loading (shared by menu handler and debug auto-load) ─────────
+// ── Project file loading ──────────────────────────────────────────────────────
 
 fn load_project_from_file(path: &std::path::Path) -> Result<AppProject, String> {
     let json = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
@@ -128,8 +128,19 @@ fn apply_loaded_project(
 ) {
     let name = project.name.clone();
     let dto = project.to_dto();
-    if let Ok(mut p) = state.project.lock() { *p = project; }
-    if let Ok(mut p) = state.project_path.lock() { *p = Some(file_path); }
+
+    // Seed event store from loaded project (snapshot-at-zero approach)
+    if let (Ok(mut store), Ok(mut p)) =
+        (state.event_store.lock(), state.project.lock())
+    {
+        store.init_from_project(engine_gateway::api::snapshot_project_for_store(&project));
+        *p = project;
+    }
+
+    if let Ok(mut p) = state.project_path.lock() {
+        *p = Some(file_path);
+    }
+
     set_window_title(app, &name);
     let _ = app.emit("project-loaded", dto);
 }
@@ -143,8 +154,15 @@ fn handle_menu_event(app: &tauri::AppHandle, menu_id: &str) {
         "new" => {
             let new_proj = AppProject::new();
             let dto = new_proj.to_dto();
-            if let Ok(mut p) = state.project.lock() { *p = new_proj; }
-            if let Ok(mut p) = state.project_path.lock() { *p = None; }
+            if let Ok(mut store) = state.event_store.lock() {
+                store.init_from_project(AppProject::new());
+            }
+            if let Ok(mut p) = state.project.lock() {
+                *p = new_proj;
+            }
+            if let Ok(mut p) = state.project_path.lock() {
+                *p = None;
+            }
             set_window_title(app, "Sans titre");
             let _ = app.emit("project-loaded", dto);
         }
@@ -161,6 +179,22 @@ fn handle_menu_event(app: &tauri::AppHandle, menu_id: &str) {
                     Ok(project) => apply_loaded_project(app, &state, project, file_path),
                     Err(e) => eprintln!("Erreur ouverture projet: {}", e),
                 }
+            }
+        }
+
+        "undo" => {
+            let result = undo(app.clone(), state.clone());
+            match result {
+                Ok(_snapshot) => {} // UI update via engine-event PROJECT_RESET
+                Err(e) => eprintln!("Undo error: {e}"),
+            }
+        }
+
+        "redo" => {
+            let result = redo(app.clone(), state.clone());
+            match result {
+                Ok(_snapshot) => {}
+                Err(e) => eprintln!("Redo error: {e}"),
             }
         }
 
@@ -197,9 +231,7 @@ fn handle_menu_event(app: &tauri::AppHandle, menu_id: &str) {
                 serde_json::to_string_pretty(&project.to_file())
             }
             .and_then(|json| {
-                std::fs::write(&save_path, json.as_bytes()).map_err(|e| {
-                    serde_json::Error::io(e)
-                })
+                std::fs::write(&save_path, json.as_bytes()).map_err(serde_json::Error::io)
             });
 
             if write_result.is_ok() {
@@ -216,8 +248,9 @@ fn handle_menu_event(app: &tauri::AppHandle, menu_id: &str) {
     }
 }
 
-// ── Utility commands ─────────────────────────────────────────────────────────
+// ── Read-only Tauri commands ───────────────────────────────────────────────────
 
+/// Duration of a WAV file in seconds — used for drag-and-drop preview.
 #[tauri::command]
 fn get_audio_clip_duration(file_path: &str) -> Result<f64, String> {
     let file = std::fs::File::open(file_path).map_err(|e| e.to_string())?;
@@ -226,174 +259,10 @@ fn get_audio_clip_duration(file_path: &str) -> Result<f64, String> {
     Ok(reader.duration() as f64 / spec.sample_rate as f64)
 }
 
-// ── Project state commands ────────────────────────────────────────────────────
-
+/// Full project snapshot for initial frontend hydration.
+/// All subsequent mutations go through `send_command`.
 #[tauri::command]
 fn get_project(state: tauri::State<'_, AppState>) -> Result<ProjectDto, String> {
     let project = state.project.lock().map_err(|e| e.to_string())?;
     Ok(project.to_dto())
-}
-
-#[tauri::command]
-fn update_project_name(
-    app: tauri::AppHandle,
-    state: tauri::State<'_, AppState>,
-    name: String,
-) -> Result<(), String> {
-    {
-        let mut project = state.project.lock().map_err(|e| e.to_string())?;
-        project.name = name.clone();
-    }
-    set_window_title(&app, &name);
-    Ok(())
-}
-
-#[tauri::command]
-fn update_tempo(
-    state: tauri::State<'_, AppState>,
-    bpm: f32,
-    numerator: u8,
-    denominator: u8,
-) -> Result<(), String> {
-    let mut project = state.project.lock().map_err(|e| e.to_string())?;
-    project.bpm = bpm;
-    project.numerator = numerator;
-    project.denominator = denominator;
-    Ok(())
-}
-
-#[tauri::command]
-fn add_track(state: tauri::State<'_, AppState>, name: String) -> Result<TrackDto, String> {
-    let mut project = state.project.lock().map_err(|e| e.to_string())?;
-    let track = AppTrack { name, volume: 80.0, clips: vec![] };
-    let dto = track.to_dto();
-    project.tracks.push(track);
-    Ok(dto)
-}
-
-#[tauri::command]
-fn remove_track(state: tauri::State<'_, AppState>, track_index: usize) -> Result<(), String> {
-    let mut project = state.project.lock().map_err(|e| e.to_string())?;
-    if track_index >= project.tracks.len() {
-        return Err("Index de piste invalide".to_string());
-    }
-    project.tracks.remove(track_index);
-    Ok(())
-}
-
-#[tauri::command]
-fn update_track(
-    state: tauri::State<'_, AppState>,
-    track_index: usize,
-    name: String,
-    volume: f32,
-) -> Result<(), String> {
-    let mut project = state.project.lock().map_err(|e| e.to_string())?;
-    let track = project.tracks.get_mut(track_index).ok_or("Index de piste invalide")?;
-    track.name = name;
-    track.volume = volume;
-    Ok(())
-}
-
-// ── Clip commands ────────────────────────────────────────────────────────────
-
-#[tauri::command]
-fn import_clip(
-    state: tauri::State<'_, AppState>,
-    track_index: usize,
-    file_path: String,
-    start: f64,
-    end: f64,
-) -> Result<ClipDto, String> {
-    let audio = AudioClip::from_wav_file(&file_path).map_err(|e| e.to_string())?;
-    let data = audio.into_clip_data();
-
-    let clip = AppClip {
-        id: generate_id(),
-        start,
-        end,
-        file_path,
-        raw_samples: data.raw_samples,
-        sample_rate: data.sample_rate,
-        peaks_64: data.peaks_64,
-        peaks_512: data.peaks_512,
-        peaks_4096: data.peaks_4096,
-    };
-
-    let dto = clip.to_dto();
-
-    let mut project = state.project.lock().map_err(|e| e.to_string())?;
-    let track = project.tracks.get_mut(track_index).ok_or("Index de piste invalide")?;
-    track.clips.push(clip);
-
-    Ok(dto)
-}
-
-#[tauri::command]
-fn remove_clip(
-    state: tauri::State<'_, AppState>,
-    track_index: usize,
-    clip_id: String,
-) -> Result<(), String> {
-    let mut project = state.project.lock().map_err(|e| e.to_string())?;
-    let track = project.tracks.get_mut(track_index).ok_or("Index de piste invalide")?;
-    track.clips.retain(|c| c.id != clip_id);
-    Ok(())
-}
-
-#[tauri::command]
-fn move_clip(
-    state: tauri::State<'_, AppState>,
-    track_index: usize,
-    clip_id: String,
-    start: f64,
-    end: f64,
-) -> Result<(), String> {
-    let mut project = state.project.lock().map_err(|e| e.to_string())?;
-    let track = project.tracks.get_mut(track_index).ok_or("Index de piste invalide")?;
-    let clip = track.clips.iter_mut().find(|c| c.id == clip_id).ok_or("Clip introuvable")?;
-    clip.start = start;
-    clip.end = end;
-    Ok(())
-}
-
-// ── Persistence command (programmatic save with optional path) ───────────────
-
-#[tauri::command]
-fn save_project(
-    app: tauri::AppHandle,
-    state: tauri::State<'_, AppState>,
-    path: Option<String>,
-) -> Result<String, String> {
-    let save_path = if let Some(p) = path {
-        std::path::PathBuf::from(p)
-    } else {
-        let picked = app
-            .dialog()
-            .file()
-            .add_filter("Echoes Studio Project", &["echoes"])
-            .blocking_save_file();
-        match picked {
-            Some(FilePath::Path(p)) => p,
-            _ => return Err("Annulé".to_string()),
-        }
-    };
-
-    let save_path = if save_path.extension().map_or(true, |e| e != "echoes") {
-        save_path.with_extension("echoes")
-    } else {
-        save_path
-    };
-
-    let project_file = {
-        let project = state.project.lock().map_err(|e| e.to_string())?;
-        project.to_file()
-    };
-
-    let json = serde_json::to_string_pretty(&project_file).map_err(|e| e.to_string())?;
-    std::fs::write(&save_path, json.as_bytes()).map_err(|e| e.to_string())?;
-
-    *state.project_path.lock().map_err(|e| e.to_string())? = Some(save_path.clone());
-
-    Ok(save_path.to_string_lossy().to_string())
 }

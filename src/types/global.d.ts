@@ -1,4 +1,6 @@
 export interface Track {
+	/** Stable ID used by the event-sourcing system. Added in architecture v2. */
+	id: string;
 	name: string;
 	volume: number;
 	clips: Clip[];
