@@ -9,14 +9,26 @@
 	import { engineProject } from '../frontend/store/engineStore';
 	import { registerShortcuts } from '../frontend/shortcuts/keymap';
 	import { connectTransportBridge } from '../frontend/transport/bridge';
+	import SettingsPanel from '../components/SettingsPanel.svelte';
+	import { settingsPanelOpen } from '../stores/preferences';
 
 	// Register keyboard shortcuts and transport bridge once for the app lifetime.
 	onMount(() => {
 		const disconnectBridge = connectTransportBridge();
 		const unregisterShortcuts = registerShortcuts();
+
+		function handleGlobalKey(e: KeyboardEvent) {
+			if ((e.ctrlKey || e.metaKey) && e.key === ',') {
+				e.preventDefault();
+				settingsPanelOpen.update((v) => !v);
+			}
+		}
+		window.addEventListener('keydown', handleGlobalKey);
+
 		return () => {
 			disconnectBridge();
 			unregisterShortcuts();
+			window.removeEventListener('keydown', handleGlobalKey);
 		};
 	});
 </script>
@@ -33,6 +45,7 @@
 		<MainPannel />
 	</div>
 	<StatusBar />
+	<SettingsPanel />
 </div>
 {/if}
 
