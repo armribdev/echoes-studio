@@ -5,9 +5,14 @@
 	import CustomSelect from './CustomSelect.svelte';
 	import Toggle from './Toggle.svelte';
 	import PillGroup from './PillGroup.svelte';
+	import StepSlider from './StepSlider.svelte';
 	import NumberInput from './NumberInput.svelte';
 	import Button from './Button.svelte';
 	import Icon from './Icon.svelte';
+	import { listAudioDevices, applyAudioSettings, getSupportedSampleRates, getDeviceChannels, setActiveOutputChannels } from '../lib/audioBackend';
+	import type { AudioDeviceInfo } from '../lib/audioBackend';
+	import { listen } from '@tauri-apps/api/event';
+	import type { UnlistenFn } from '@tauri-apps/api/event';
 
 	// Routing state (local, not persisted yet)
 	let masterRouting = 'out-1-2';
@@ -25,29 +30,286 @@
 
 	$: latencyMs = draft.audio.bufferSize / draft.audio.sampleRate * 1000;
 
-	function applyAndClose() {
+	// ── Device lists (fetched from Rust/CPAL on panel open) ──────────────────
+	const DEFAULT_DEVICE: AudioDeviceInfo = { id: 'default', name: 'Par défaut (système)' };
+	let outputDevices: AudioDeviceInfo[] = [DEFAULT_DEVICE];
+	let inputDevices:  AudioDeviceInfo[] = [DEFAULT_DEVICE];
+	let devicesLoading = false;
+	let applyError: string | null = null;
+
+	$: outputDeviceOptions = outputDevices.map(d => ({ value: d.id, label: d.name }));
+	$: inputDeviceOptions  = inputDevices.map(d =>  ({ value: d.id, label: d.name }));
+
+	async function loadDevices() {
+		devicesLoading = true;
+		try {
+			const list = await listAudioDevices();
+			outputDevices = list.outputs.length ? list.outputs : [DEFAULT_DEVICE];
+			inputDevices  = list.inputs.length  ? list.inputs  : [DEFAULT_DEVICE];
+		} finally {
+			devicesLoading = false;
+		}
+	}
+
+	// ── Supported sample rates for the selected output device ─────────────────
+	// All rates are available by default until the async check resolves.
+	let supportedSampleRates: Set<number> = new Set(SAMPLE_RATES);
+
+	// ── Real device channel counts ────────────────────────────────────────────
+	let realInputChannels  = $preferences.audio.inputChannels;
+	let realOutputChannels = $preferences.audio.outputChannels;
+	let channelsLoading = false;
+
+	async function refreshInputChannels(deviceId: string) {
+		realInputChannels = await getDeviceChannels(deviceId, true);
+	}
+
+	// Input device: only refresh channels (no stream restart needed yet).
+	$: refreshInputChannels(draft.audio.inputDevice);
+
+	// ── Live channel-routing preview ──────────────────────────────────────────
+	// No stream restart — just an atomic write in the CPAL callback (~5 ms).
+	$: void setActiveOutputChannels(
+		Math.min(draft.audio.outputChannels, realOutputChannels)
+	);
+
+	// ── Live preview: output device change ───────────────────────────────────
+	// Sequenced to avoid a double restart:
+	//   1. Fetch supported rates + channel count in parallel (IPC)
+	//   2. Auto-correct sample rate if not supported by new device
+	//   3. Update UI (slider options, channel count)
+	//   4. Single stream restart with all corrected values
+	//
+	// On Cancel the draft reverts → prevOutputDevice differs again →
+	// applyDeviceChange is called with the original device → reverts cleanly.
+	let prevOutputDevice = draft.audio.outputDevice;
+	$: if (draft.audio.outputDevice !== prevOutputDevice) {
+		const d = draft.audio.outputDevice;
+		prevOutputDevice = d;
+		void applyDeviceChange(d);
+	}
+
+	async function applyDeviceChange(deviceId: string) {
+		applyError = null;
+		channelsLoading = true;
+		try {
+			// Fetch rates and channel count in parallel.
+			const [rates, outCh] = await Promise.all([
+				getSupportedSampleRates(deviceId),
+				getDeviceChannels(deviceId, false),
+			]);
+
+			// Update UI options.
+			supportedSampleRates = new Set(rates.length ? rates : SAMPLE_RATES);
+			realOutputChannels   = outCh;
+
+			// Auto-correct sample rate if the current selection isn't supported.
+			let targetSR = draft.audio.sampleRate;
+			if (!supportedSampleRates.has(targetSR)) {
+				targetSR = ([...supportedSampleRates] as (typeof draft.audio.sampleRate)[])
+					.reduce((p, c) =>
+						Math.abs(c - draft.audio.sampleRate) < Math.abs(p - draft.audio.sampleRate)
+							? c : p
+					);
+				// Update prevSRBufKey BEFORE updating draft so the non-device
+				// streamKey reactive below doesn't fire a duplicate restart.
+				prevSRBufKey = `${targetSR}|${draft.audio.bufferSize}|${draft.audio.inputDevice}`;
+				draft = { ...draft, audio: { ...draft.audio, sampleRate: targetSR } };
+			}
+
+			// Single stream restart with the fully-corrected settings.
+			await applyAudioSettings({
+				outputDevice:   deviceId,
+				inputDevice:    draft.audio.inputDevice,
+				sampleRate:     targetSR,
+				bufferSize:     draft.audio.bufferSize,
+				outputChannels: Math.min(draft.audio.outputChannels, realOutputChannels),
+			});
+		} catch (err) {
+			applyError = typeof err === 'string' ? err : 'Impossible d\'appliquer les paramètres audio.';
+		} finally {
+			channelsLoading = false;
+		}
+	}
+
+	// ── Live preview: sample rate / buffer size / input device changes ─────────
+	// Device changes are handled above. This reactive only fires for the
+	// remaining stream-restart params so we never get a double restart.
+	let prevSRBufKey = `${draft.audio.sampleRate}|${draft.audio.bufferSize}|${draft.audio.inputDevice}`;
+	$: {
+		const key = `${draft.audio.sampleRate}|${draft.audio.bufferSize}|${draft.audio.inputDevice}`;
+		if (key !== prevSRBufKey) {
+			prevSRBufKey = key;
+			void liveApplyStreamSettings();
+		}
+	}
+
+	async function liveApplyStreamSettings() {
+		applyError = null;
+		try {
+			await applyAudioSettings({
+				outputDevice:   draft.audio.outputDevice,
+				inputDevice:    draft.audio.inputDevice,
+				sampleRate:     draft.audio.sampleRate,
+				bufferSize:     draft.audio.bufferSize,
+				outputChannels: Math.min(draft.audio.outputChannels, realOutputChannels),
+			});
+		} catch (err) {
+			applyError = typeof err === 'string' ? err : 'Impossible d\'appliquer les paramètres audio.';
+		}
+	}
+
+	// Slider options — only include rates the device actually supports.
+	// Unsupported rates are simply absent from the slider positions.
+	$: sampleRateSliderOptions = SAMPLE_RATES
+		.filter(sr => supportedSampleRates.has(sr))
+		.map(sr => ({
+			value: sr,
+			label: sr >= 1000 ? (sr / 1000) + ' kHz' : sr + ' Hz',
+		}));
+
+	// Buffer size slider options (always all 6 — fixed-buffer failures are
+	// handled at stream build time, not at enumeration time).
+	const bufferSliderOptions = BUFFER_SIZES.map(bs => ({
+		value: bs,
+		label: String(bs),
+	}));
+
+	// ── Persistence + backend application ────────────────────────────────────
+
+	async function applyAndClose() {
+		applyError = null;
+
+		// Push audio settings to CPAL engine (restarts stream if needed)
+		try {
+			await applyAudioSettings({
+				outputDevice:    draft.audio.outputDevice,
+				inputDevice:     draft.audio.inputDevice,
+				sampleRate:      draft.audio.sampleRate,
+				bufferSize:      draft.audio.bufferSize,
+				outputChannels:  Math.min(draft.audio.outputChannels, realOutputChannels),
+			});
+		} catch (err) {
+			applyError = typeof err === 'string' ? err : 'Impossible d\'appliquer les paramètres audio.';
+			// Still save preferences so settings survive restart
+		}
+
 		preferences.set(draft);
 		settingsPanelOpen.set(false);
 	}
 
 	function cancelAndClose() {
+		applyError = null;
 		draft = { ...$preferences, audio: { ...$preferences.audio }, project: { ...$preferences.project }, interface: { ...$preferences.interface } };
+		// Resetting prevOutputDevice to the current (not original) value means
+		// the $: device reactive sees a change from current → original and fires
+		// applyDeviceChange with the original device → clean revert.
+		// (prevSRBufKey is left as-is; liveApplyStreamSettings handles the rest.)
 		settingsPanelOpen.set(false);
 	}
 
 	function resetSection() {
-		if (activeSection === 'audio') draft.audio = { inputDevice: 'default', outputDevice: 'default', sampleRate: 48000, bufferSize: 256, bitDepth: 24, inputChannels: 2, outputChannels: 2 };
-		else if (activeSection === 'project') draft.project = { defaultFolder: '', autoSave: true, autoSaveIntervalSec: 60, autoSaveMaxBackups: 5, defaultBpm: 120, defaultNumerator: 4, defaultDenominator: 4 };
+		if (activeSection === 'audio') draft.audio = { inputDevice: 'default', outputDevice: 'default', sampleRate: 48000, bufferSize: 256, inputChannels: 2, outputChannels: 2 };
+		else if (activeSection === 'project') draft.project = { defaultFolder: '', autoSave: true, autoSaveIntervalSec: 60, autoSaveMaxBackups: 5, defaultBpm: 120, defaultNumerator: 4, defaultDenominator: 4, exportBitDepth: 32 };
 		else if (activeSection === 'interface') draft.interface = { showMinimap: false };
 		draft = { ...draft };
+	}
+
+	// ── Channel level meters ──────────────────────────────────────────────────
+	// Driven by LEVELS_UPDATED engine events emitted ~30 fps by the Rust reporter.
+	// `rawLevels` are updated instantly from events; `displayLevels` decay via rAF
+	// so the meter has a fast attack (immediate snap-up) and slow release (~400 ms).
+
+	let rawOutputLevels:     number[] = Array(16).fill(0);
+	let rawInputLevels:      number[] = Array(16).fill(0);
+	let displayOutputLevels: number[] = Array(16).fill(0);
+	let displayInputLevels:  number[] = Array(16).fill(0);
+
+	let unlistenLevels: UnlistenFn | null = null;
+	let rafId = 0;
+	let rafRunning = false;
+
+	// Decay factor per animation frame (~60 fps). 0.93^18 ≈ 0.27, so a full
+	// signal drops to ~27% in 300 ms — a typical VU release time.
+	const DECAY = 0.93;
+
+	function decayLoop() {
+		let changed = false;
+		for (let i = 0; i < 16; i++) {
+			// Attack: snap up instantly.
+			const newOut = rawOutputLevels[i] > displayOutputLevels[i]
+				? rawOutputLevels[i]
+				: displayOutputLevels[i] * DECAY;
+			const newIn  = rawInputLevels[i] > displayInputLevels[i]
+				? rawInputLevels[i]
+				: displayInputLevels[i] * DECAY;
+
+			if (Math.abs(newOut - displayOutputLevels[i]) > 0.0001) changed = true;
+			if (Math.abs(newIn  - displayInputLevels[i])  > 0.0001) changed = true;
+
+			displayOutputLevels[i] = newOut;
+			displayInputLevels[i]  = newIn;
+		}
+		// Only trigger Svelte reactivity when something actually changed.
+		if (changed) {
+			displayOutputLevels = displayOutputLevels;
+			displayInputLevels  = displayInputLevels;
+		}
+		// Continue only while the panel is open — stop to save CPU otherwise.
+		if (rafRunning) rafId = requestAnimationFrame(decayLoop);
+	}
+
+	// Start / stop the rAF loop in sync with panel visibility.
+	$: if ($settingsPanelOpen) {
+		if (!rafRunning) {
+			rafRunning = true;
+			rafId = requestAnimationFrame(decayLoop);
+		}
+	} else {
+		rafRunning = false;
+		cancelAnimationFrame(rafId);
+		// Reset display so meters open fresh next time.
+		displayOutputLevels = Array(16).fill(0);
+		displayInputLevels  = Array(16).fill(0);
+	}
+
+	/**
+	 * Map a linear amplitude peak to a CSS height percentage using a dB scale.
+	 * −60 dB → 0 %   |   0 dB → 100 %   |   above 0 dB is clamped to 100 %.
+	 */
+	function levelToHeight(amp: number): string {
+		if (amp <= 0) return '0%';
+		const db = 20 * Math.log10(amp);
+		const pct = Math.max(0, Math.min(100, (db + 60) / 60 * 100));
+		return `${pct.toFixed(1)}%`;
 	}
 
 	function handleKeydown(e: KeyboardEvent) {
 		if (e.key === 'Escape') cancelAndClose();
 	}
 
-	onMount(() => window.addEventListener('keydown', handleKeydown));
-	onDestroy(() => window.removeEventListener('keydown', handleKeydown));
+	onMount(async () => {
+		window.addEventListener('keydown', handleKeydown);
+		loadDevices();
+
+		unlistenLevels = await listen<{
+			type: string;
+			payload: { output: number[]; input: number[]; position?: number };
+		}>('engine-event', (event) => {
+			const ev = event.payload;
+			// Levels are piggybacked on POSITION_UPDATED while playing,
+			// and sent as a standalone LEVELS_UPDATED event when stopped.
+			if (ev?.type === 'LEVELS_UPDATED' || ev?.type === 'POSITION_UPDATED') {
+				if (ev.payload.output) rawOutputLevels = ev.payload.output;
+				if (ev.payload.input)  rawInputLevels  = ev.payload.input;
+			}
+		});
+	});
+	onDestroy(() => {
+		window.removeEventListener('keydown', handleKeydown);
+		cancelAnimationFrame(rafId);
+		unlistenLevels?.();
+	});
 
 	const SECTIONS: { id: Section; label: string }[] = [
 		{ id: 'audio',     label: 'Audio'     },
@@ -99,63 +361,154 @@
 			<!-- Content -->
 			<div class="content">
 
-				{#if activeSection === 'audio'}
-				<div class="section">
-					<h2 class="section-title">Périphériques Audio</h2>
+			{#if activeSection === 'audio'}
+			<div class="section">
+				<h2 class="section-title">Périphériques Audio</h2>
 
-					<div class="field-group">
-						<div class="field">
-							<span class="field-label">Entrée</span>
-							<div class="field-row">
-								<CustomSelect
-									bind:value={draft.audio.inputDevice}
-									options={[{ value: 'default', label: 'Par défaut (système)' }]}
-								/>
+				<!-- ── Deux colonnes IN / OUT ─────────────────────────────────── -->
+				<div class="io-grid">
+
+					<!-- Colonne Entrée -->
+					<div class="io-col">
+						<div class="io-device-row">
+							<span class="io-device-label">
+								Entrée
 								<span class="badge badge--in">IN</span>
-							</div>
-							<span class="field-hint">Interface audio, microphone, ou entrée virtuelle</span>
+								{#if devicesLoading}<span class="loading-dot">…</span>{/if}
+							</span>
+							<CustomSelect bind:value={draft.audio.inputDevice} options={inputDeviceOptions} />
+							<span class="field-hint">Microphone, interface, entrée virtuelle</span>
 						</div>
 
-						<div class="field">
-							<span class="field-label">Sortie</span>
-							<div class="field-row">
-								<CustomSelect
-									bind:value={draft.audio.outputDevice}
-									options={[{ value: 'default', label: 'Par défaut (système)' }]}
-								/>
-								<span class="badge badge--out">OUT</span>
+						<div class="channel-card channel-card--in">
+							<div class="channel-card-header">
+								<span class="channel-card-title">Canaux actifs</span>
+								<div class="channel-count-control">
+									<button class="count-btn"
+										disabled={draft.audio.inputChannels <= 1}
+										on:click={() => draft.audio.inputChannels = Math.max(1, draft.audio.inputChannels - 1)}>−</button>
+									<span class="count-value">{Math.min(draft.audio.inputChannels, realInputChannels)}</span>
+									<button class="count-btn"
+										disabled={draft.audio.inputChannels >= realInputChannels}
+										on:click={() => draft.audio.inputChannels = Math.min(realInputChannels, draft.audio.inputChannels + 1)}>+</button>
+								</div>
 							</div>
-							<span class="field-hint">Haut-parleurs, casque, ou interface de sortie</span>
+							<div class="channel-strips">
+								{#each Array(Math.min(realInputChannels, 16)) as _, i}
+									<div
+										class="channel-strip channel-strip--in"
+										class:channel-strip--inactive={i >= Math.min(draft.audio.inputChannels, realInputChannels)}
+										title="Entrée {i + 1}"
+									>
+										<span class="strip-num">{i + 1}</span>
+										<div class="strip-meter">
+											<div
+												class="strip-level strip-level--in"
+												style="height: {levelToHeight(displayInputLevels[i] ?? 0)}"
+											></div>
+										</div>
+									</div>
+								{/each}
+							</div>
 						</div>
 					</div>
 
-					<div class="divider"></div>
-					<h3 class="subsection-title">Qualité & Latence</h3>
+					<!-- Flèche centrale -->
+					<div class="channel-route-arrow">
+						<Icon name="arrow-right" size={14} />
+					</div>
+
+					<!-- Colonne Sortie -->
+					<div class="io-col">
+						<div class="io-device-row">
+							<span class="io-device-label">
+								Sortie
+								<span class="badge badge--out">OUT</span>
+								{#if devicesLoading}<span class="loading-dot">…</span>{/if}
+							</span>
+							<CustomSelect bind:value={draft.audio.outputDevice} options={outputDeviceOptions} />
+							<span class="field-hint">Haut-parleurs, casque, interface de sortie</span>
+						</div>
+
+						<div class="channel-card channel-card--out">
+							<div class="channel-card-header">
+								<span class="channel-card-title">Canaux actifs</span>
+								{#if channelsLoading}<span class="loading-dot">…</span>{/if}
+								<div class="channel-count-control">
+									<button class="count-btn"
+										disabled={draft.audio.outputChannels <= 1}
+										on:click={() => draft.audio.outputChannels = Math.max(1, draft.audio.outputChannels - 1)}>−</button>
+									<span class="count-value">{Math.min(draft.audio.outputChannels, realOutputChannels)}</span>
+									<button class="count-btn"
+										disabled={draft.audio.outputChannels >= realOutputChannels}
+										on:click={() => draft.audio.outputChannels = Math.min(realOutputChannels, draft.audio.outputChannels + 1)}>+</button>
+								</div>
+							</div>
+							<div class="channel-strips">
+								{#each Array(Math.min(realOutputChannels, 16)) as _, i}
+									<div
+										class="channel-strip channel-strip--out"
+										class:channel-strip--inactive={i >= Math.min(draft.audio.outputChannels, realOutputChannels)}
+										title="Sortie {i + 1}"
+									>
+										<span class="strip-num">{i + 1}</span>
+										<div class="strip-meter">
+											<div
+												class="strip-level strip-level--out"
+												style="height: {levelToHeight(displayOutputLevels[i] ?? 0)}"
+											></div>
+										</div>
+									</div>
+								{/each}
+							</div>
+						</div>
+					</div>
+
+				</div><!-- /io-grid -->
+
+				{#if applyError}
+				<div class="apply-error">
+					<Icon name="alert-triangle" size={13} />
+					<span>{applyError}</span>
+				</div>
+				{/if}
+
+				<div class="divider"></div>
+				<h3 class="subsection-title">Qualité & Latence</h3>
 
 					<div class="field-grid">
 						<div class="field">
 							<span class="field-label">Fréquence d'échantillonnage</span>
-							<PillGroup
-								bind:value={draft.audio.sampleRate}
-								options={SAMPLE_RATES.map(sr => ({ value: sr, label: sr >= 1000 ? (sr / 1000) + ' kHz' : sr + ' Hz' }))}
-							/>
+							{#if sampleRateSliderOptions.length <= 1}
+								<div class="single-value-display">
+									{sampleRateSliderOptions[0]?.label ?? (draft.audio.sampleRate >= 1000 ? draft.audio.sampleRate / 1000 + ' kHz' : draft.audio.sampleRate + ' Hz')}
+								</div>
+								<span class="field-hint">Seule fréquence supportée par ce périphérique</span>
+							{:else}
+								<StepSlider
+									bind:value={draft.audio.sampleRate}
+									options={sampleRateSliderOptions}
+								/>
+							{/if}
 						</div>
 
 						<div class="field">
 							<span class="field-label">Taille de buffer</span>
-							<PillGroup
+							<StepSlider
 								bind:value={draft.audio.bufferSize}
-								options={BUFFER_SIZES.map(bs => ({ value: bs, label: String(bs) }))}
+								options={bufferSliderOptions}
 							/>
 						</div>
 
 						<div class="field">
-							<span class="field-label">Profondeur de bits</span>
-							<PillGroup
-								bind:value={draft.audio.bitDepth}
-								options={BIT_DEPTHS.map(bd => ({ value: bd, label: bd + ' bit' }))}
-							/>
+							<span class="field-label">Bit depth</span>
+							<div class="single-value-display">
+								<Icon name="cpu" size={14} />
+								32-bit float
+							</div>
+							<span class="field-hint">Profondeur maximale sans conversion</span>
 						</div>
+
 					</div>
 
 					<div class="latency-bar">
@@ -177,65 +530,8 @@
 						</span>
 					</div>
 
-					<div class="divider"></div>
-					<h3 class="subsection-title">Canaux</h3>
-
-					<div class="channel-grid">
-						<div class="channel-card channel-card--in">
-							<div class="channel-card-header">
-								<span class="channel-card-badge badge--in">IN</span>
-								<span class="channel-card-title">Entrées</span>
-							</div>
-							<div class="channel-count-control">
-								<button class="count-btn" on:click={() => draft.audio.inputChannels = Math.max(1, draft.audio.inputChannels - 1)}>−</button>
-								<span class="count-value">{draft.audio.inputChannels}</span>
-								<button class="count-btn" on:click={() => draft.audio.inputChannels = Math.min(32, draft.audio.inputChannels + 1)}>+</button>
-							</div>
-							<span class="channel-card-hint">{draft.audio.inputChannels === 1 ? 'Mono' : draft.audio.inputChannels === 2 ? 'Stéréo' : `${draft.audio.inputChannels} canaux`}</span>
-							<div class="channel-strips">
-								{#each Array(Math.min(draft.audio.inputChannels, 16)) as _, i}
-									<div class="channel-strip channel-strip--in" title="Entrée {i + 1}">
-										<span class="strip-num">{i + 1}</span>
-										<div class="strip-meter"><div class="strip-level"></div></div>
-									</div>
-								{/each}
-								{#if draft.audio.inputChannels > 16}
-									<span class="strip-more">+{draft.audio.inputChannels - 16}</span>
-								{/if}
-							</div>
-						</div>
-
-					<div class="channel-route-arrow">
-						<Icon name="arrow-right" size={14} />
-					</div>
-
-						<div class="channel-card channel-card--out">
-							<div class="channel-card-header">
-								<span class="channel-card-badge badge--out">OUT</span>
-								<span class="channel-card-title">Sorties</span>
-							</div>
-							<div class="channel-count-control">
-								<button class="count-btn" on:click={() => draft.audio.outputChannels = Math.max(1, draft.audio.outputChannels - 1)}>−</button>
-								<span class="count-value">{draft.audio.outputChannels}</span>
-								<button class="count-btn" on:click={() => draft.audio.outputChannels = Math.min(32, draft.audio.outputChannels + 1)}>+</button>
-							</div>
-							<span class="channel-card-hint">{draft.audio.outputChannels === 1 ? 'Mono' : draft.audio.outputChannels === 2 ? 'Stéréo' : `${draft.audio.outputChannels} canaux`}</span>
-							<div class="channel-strips">
-								{#each Array(Math.min(draft.audio.outputChannels, 16)) as _, i}
-									<div class="channel-strip channel-strip--out" title="Sortie {i + 1}">
-										<span class="strip-num">{i + 1}</span>
-										<div class="strip-meter"><div class="strip-level"></div></div>
-									</div>
-								{/each}
-								{#if draft.audio.outputChannels > 16}
-									<span class="strip-more">+{draft.audio.outputChannels - 16}</span>
-								{/if}
-							</div>
-						</div>
-					</div>
-
-					<div class="divider"></div>
-					<h3 class="subsection-title">Routage Master</h3>
+				<div class="divider"></div>
+				<h3 class="subsection-title">Routage Master</h3>
 
 					<div class="routing-row">
 						<div class="routing-label">
@@ -246,11 +542,11 @@
 							<CustomSelect
 								small
 								bind:value={masterRouting}
-								options={[
-									{ value: 'out-1-2', label: 'Sorties 1–2' },
-									...(draft.audio.outputChannels >= 4 ? [{ value: 'out-3-4', label: 'Sorties 3–4' }] : []),
-									...(draft.audio.outputChannels >= 6 ? [{ value: 'out-5-6', label: 'Sorties 5–6' }] : [])
-								]}
+						options={[
+								{ value: 'out-1-2', label: 'Sorties 1–2' },
+								...(Math.min(draft.audio.outputChannels, realOutputChannels) >= 4 ? [{ value: 'out-3-4', label: 'Sorties 3–4' }] : []),
+								...(Math.min(draft.audio.outputChannels, realOutputChannels) >= 6 ? [{ value: 'out-5-6', label: 'Sorties 5–6' }] : [])
+							]}
 							/>
 						</div>
 					</div>
@@ -264,11 +560,11 @@
 							<CustomSelect
 								small
 								bind:value={headphoneRouting}
-								options={[
-									{ value: 'mirror', label: 'Miroir Master' },
-									...(draft.audio.outputChannels >= 4 ? [{ value: 'out-3-4', label: 'Sorties 3–4' }] : []),
-									...(draft.audio.outputChannels >= 6 ? [{ value: 'out-5-6', label: 'Sorties 5–6' }] : [])
-								]}
+						options={[
+								{ value: 'mirror', label: 'Miroir Master' },
+								...(Math.min(draft.audio.outputChannels, realOutputChannels) >= 4 ? [{ value: 'out-3-4', label: 'Sorties 3–4' }] : []),
+								...(Math.min(draft.audio.outputChannels, realOutputChannels) >= 6 ? [{ value: 'out-5-6', label: 'Sorties 5–6' }] : [])
+							]}
 							/>
 						</div>
 					</div>
@@ -307,6 +603,26 @@
 						</div>
 					</div>
 					{/if}
+
+					<div class="divider"></div>
+					<h3 class="subsection-title">Export Mixdown</h3>
+
+					<div class="field">
+						<span class="field-label">Profondeur de bits</span>
+						<PillGroup
+							bind:value={draft.project.exportBitDepth}
+							options={[
+								{ value: 16, label: '16 bit' },
+								{ value: 24, label: '24 bit' },
+								{ value: 32, label: '32-bit float' },
+							]}
+						/>
+						<span class="field-hint">
+							{#if draft.project.exportBitDepth === 16}CD / streaming — compatible partout, taille réduite
+							{:else if draft.project.exportBitDepth === 24}Standard pro — livraison mastering et plateformes
+							{:else}Archival / stems — préserve la plage dynamique float intacte{/if}
+						</span>
+					</div>
 
 					<div class="divider"></div>
 					<h3 class="subsection-title">Nouveau projet — Défauts</h3>
@@ -520,7 +836,7 @@
 	.section {
 		display: flex;
 		flex-direction: column;
-		gap: 16px;
+		gap: 8px;
 	}
 
 	.section-title {
@@ -543,7 +859,7 @@
 	.divider {
 		height: 1px;
 		background: $border-color;
-		margin: 2px 0;
+		margin: 8px 0;
 	}
 
 	// ── Field ─────────────────────────────────────────────────────────────────
@@ -553,11 +869,6 @@
 		gap: 5px;
 	}
 
-	.field-group {
-		display: flex;
-		flex-direction: column;
-		gap: 14px;
-	}
 
 	.field-grid {
 		display: grid;
@@ -567,6 +878,7 @@
 	}
 
 	.field-label {
+		line-height: 16px;
 		font-size: 11px;
 		color: rgba(247, 247, 249, 0.55);
 		font-weight: 500;
@@ -580,6 +892,7 @@
 	}
 
 	.field-hint {
+		line-height: 1.2;
 		font-size: 10px;
 		color: rgba(247, 247, 249, 0.28);
 	}
@@ -661,85 +974,109 @@
 		grid-row: 3;
 	}
 
-	// ── Channel cards ─────────────────────────────────────────────────────────
-	.channel-grid {
-		display: flex;
-		align-items: center;
-		gap: 12px;
+
+	// ── IO two-column grid ────────────────────────────────────────────────────
+	.io-grid {
+		display: grid;
+		grid-template-columns: 1fr auto 1fr;
+		gap: 10px;
+		align-items: start;
 	}
 
+	.io-col {
+		display: flex;
+		flex-direction: column;
+		gap: 8px;
+		min-width: 0;
+	}
+
+	.io-device-row {
+		display: flex;
+		flex-direction: column;
+		gap: 5px;
+	}
+
+	.io-device-label {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		font-size: 11px;
+		color: rgba(247, 247, 249, 0.55);
+		font-weight: 500;
+		letter-spacing: 0.3px;
+	}
+
+	// ── Channel cards ─────────────────────────────────────────────────────────
 	.channel-card {
-		flex: 1;
 		background: $surface-1;
 		border: 1px solid $border-faint;
 		border-radius: $radius-lg;
-		padding: 14px;
+		padding: 12px;
 		display: flex;
 		flex-direction: column;
 		gap: 10px;
 
-		&--in { border-top: 2px solid rgba(0, 200, 120, 0.35); }
+		&--in  { border-top: 2px solid rgba(0, 200, 120, 0.35); }
 		&--out { border-top: 2px solid rgba(21, 113, 255, 0.35); }
 	}
 
 	.channel-card-header {
 		display: flex;
 		align-items: center;
-		gap: 7px;
-	}
-
-	.channel-card-badge {
-		font-size: 9px;
-		font-weight: 700;
-		letter-spacing: 0.8px;
-		padding: 2px 5px;
-		border-radius: 3px;
+		gap: 12px;
 	}
 
 	.channel-card-title {
-		font-size: 12px;
-		font-weight: 600;
-		color: $text-color;
+		font-size: 11px;
+		font-weight: 500;
+		color: rgba(247, 247, 249, 0.45);
 	}
 
 	.channel-count-control {
 		display: flex;
-		align-items: center;
-		gap: 10px;
+		gap: 8px;
 	}
 
 	.count-btn {
-		width: 26px;
-		height: 26px;
+		width: 20px;
+		height: 20px;
 		border: 1px solid rgba(255, 255, 255, 0.12);
 		background: $surface-2;
 		border-radius: $radius-md;
 		color: $text-color;
-		font-size: 16px;
+		font-size: 12px;
 		cursor: pointer;
 		display: flex;
 		align-items: center;
 		justify-content: center;
 		transition: background 0.1s, border-color 0.1s;
 
-		&:hover {
+		&:hover:not(:disabled) {
 			background: rgba(255, 255, 255, 0.1);
 			border-color: rgba(255, 255, 255, 0.2);
+		}
+
+		&:disabled {
+			opacity: 0.3;
+			cursor: default;
 		}
 	}
 
 	.count-value {
-		font-size: 22px;
+		font-size: 16px;
 		font-weight: 600;
 		font-family: $font-mono;
 		color: $text-color;
-		min-width: 30px;
+		min-width: 22px;
 		text-align: center;
 	}
 
-	.channel-card-hint {
-		font-size: 11px;
-		color: rgba(247, 247, 249, 0.35);
+	.channel-route-arrow {
+		display: flex;
+		align-items: center;
+		color: rgba(247, 247, 249, 0.2);
+		flex-shrink: 0;
+		align-self: center;
 	}
 
 	.channel-strips {
@@ -764,6 +1101,11 @@
 
 		&--in { border-bottom: 2px solid rgba(0, 200, 120, 0.5); }
 		&--out { border-bottom: 2px solid rgba(21, 113, 255, 0.5); }
+
+		&--inactive {
+			opacity: 0.4;
+			filter: grayscale(1);
+		}
 	}
 
 	.strip-num {
@@ -784,22 +1126,13 @@
 
 	.strip-level {
 		width: 100%;
-		background: rgba(0, 200, 120, 0.5);
 		border-radius: 1px;
-		transition: height 0.1s;
+
+		&--in  { background: rgba(0, 200, 120, 0.65); }
+		&--out { background: rgba(21, 113, 255, 0.65); }
 	}
 
-	.strip-more {
-		font-size: 10px;
-		color: rgba(247, 247, 249, 0.3);
-		align-self: center;
-	}
 
-	.channel-route-arrow {
-		font-size: 20px;
-		color: rgba(247, 247, 249, 0.2);
-		flex-shrink: 0;
-	}
 
 	// ── Routing ───────────────────────────────────────────────────────────────
 	.routing-row {
@@ -832,6 +1165,42 @@
 
 	.routing-assign {
 		flex-shrink: 0;
+	}
+
+	// ── Single-value display (e.g. unique sample rate) ───────────────────────
+	.single-value-display {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		height: $ctrl-height;
+		padding: 0 10px;
+		background: $surface-1;
+		border: 1px solid $border-faint;
+		border-radius: $radius-md;
+		font-size: 12px;
+		font-weight: 600;
+		font-family: $font-mono;
+		color: $text-color;
+		cursor: default;
+	}
+
+	// ── Device loading / error states ────────────────────────────────────────
+	.loading-dot {
+		font-size: 10px;
+		color: rgba(247, 247, 249, 0.3);
+		margin-left: 2px;
+	}
+
+	.apply-error {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		padding: 8px 10px;
+		background: rgba(255, 60, 60, 0.08);
+		border: 1px solid rgba(255, 60, 60, 0.25);
+		border-radius: 6px;
+		color: #ff7070;
+		font-size: 11px;
 	}
 
 	// ── Inputs ────────────────────────────────────────────────────────────────

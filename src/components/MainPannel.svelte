@@ -14,6 +14,7 @@
 	import { addClip, moveClip, removeClip, updateTrack, muteTrack, soloTrack, seek } from '../frontend/commands/dispatcher';
 	import { notify } from '../stores/status';
 	import { exportTrigger } from '../stores/exportBus';
+	import { preferences } from '../stores/preferences';
 	import { save } from '@tauri-apps/plugin-dialog';
 
 	// Live sync from the engine event store.
@@ -572,6 +573,7 @@
 			samplesLeft,
 			samplesRight,
 			sampleRate,
+			bitDepth: $preferences.project.exportBitDepth,
 		});
 
 		const filename = (filePath as string).split(/[\\/]/).pop() ?? 'mixdown.wav';

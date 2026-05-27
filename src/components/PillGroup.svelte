@@ -4,7 +4,7 @@
 	/** Valeur sélectionnée (bindable). */
 	export let value: OptionValue;
 	/** Liste des options disponibles. */
-	export let options: Array<{ value: OptionValue; label: string }>;
+	export let options: Array<{ value: OptionValue; label: string; disabled?: boolean }>;
 </script>
 
 <div class="pill-group" role="group">
@@ -12,10 +12,13 @@
 		<button
 			class="pill"
 			class:selected={opt.value === value}
+			class:disabled={opt.disabled}
 			type="button"
 			role="radio"
 			aria-checked={opt.value === value}
-			on:click={() => { value = opt.value; }}
+			aria-disabled={opt.disabled}
+			disabled={opt.disabled}
+			on:click={() => { if (!opt.disabled) value = opt.value; }}
 		>
 			{opt.label}
 		</button>
@@ -41,9 +44,9 @@
 		color: rgba(247, 247, 249, 0.6);
 		cursor: pointer;
 		white-space: nowrap;
-		transition: background 0.1s, border-color 0.1s, color 0.1s;
+		transition: background 0.1s, border-color 0.1s, color 0.1s, opacity 0.1s;
 
-		&:hover {
+		&:hover:not(.disabled) {
 			background: rgba(255, 255, 255, 0.08);
 			color: $text-color;
 		}
@@ -52,6 +55,12 @@
 			background: rgba(21, 113, 255, 0.2);
 			border-color: $accent-color;
 			color: $text-color;
+		}
+
+		&.disabled {
+			opacity: 0.28;
+			cursor: not-allowed;
+			pointer-events: none;
 		}
 
 		&:focus-visible {

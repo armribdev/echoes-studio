@@ -5,7 +5,6 @@ export interface AudioPreferences {
 	outputDevice: string;
 	sampleRate: 44100 | 48000 | 88200 | 96000;
 	bufferSize: 64 | 128 | 256 | 512 | 1024 | 2048;
-	bitDepth: 16 | 24 | 32;
 	inputChannels: number;
 	outputChannels: number;
 }
@@ -18,6 +17,8 @@ export interface ProjectPreferences {
 	defaultBpm: number;
 	defaultNumerator: number;
 	defaultDenominator: number;
+	/** Bit depth used when rendering a WAV mixdown (16, 24, or 32-bit float). */
+	exportBitDepth: 16 | 24 | 32;
 }
 
 export interface InterfacePreferences {
@@ -39,7 +40,6 @@ function defaultPreferences(): Preferences {
 			outputDevice: 'default',
 			sampleRate: 48000,
 			bufferSize: 256,
-			bitDepth: 24,
 			inputChannels: 2,
 			outputChannels: 2
 		},
@@ -50,7 +50,8 @@ function defaultPreferences(): Preferences {
 			autoSaveMaxBackups: 5,
 			defaultBpm: 120,
 			defaultNumerator: 4,
-			defaultDenominator: 4
+			defaultDenominator: 4,
+			exportBitDepth: 32
 		},
 		interface: {
 			showMinimap: false

@@ -1,6 +1,7 @@
 mod audio_clip;
 mod audio_engine;
 mod audio_graph;
+mod audio_settings;
 mod engine_gateway;
 mod plugin_formats;
 mod plugin_system;
@@ -123,6 +124,12 @@ fn main() {
             menu_action,
             // ── Export ────────────────────────────────────────────────────────
             export_wav,
+            // ── Audio settings ────────────────────────────────────────────────
+            get_audio_devices,
+            get_device_sample_rates,
+            get_device_channels,
+            apply_audio_settings,
+            set_active_output_channels,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -334,7 +341,13 @@ fn get_project(state: tauri::State<'_, AppState>) -> Result<ProjectDto, String> 
     Ok(project.to_dto())
 }
 
-/// Write a stereo mixdown as a 32-bit float WAV file.
+/// Write a stereo mixdown as a WAV file at the requested bit depth.
+///
+/// | `bit_depth` | WAV format            | Notes                          |
+/// |-------------|-----------------------|--------------------------------|
+/// | 16          | 16-bit PCM (int)      | CD quality, widest compat      |
+/// | 24          | 24-bit PCM (int)      | Pro standard for delivery      |
+/// | 32          | 32-bit float          | Archival / stem exports        |
 ///
 /// Called by the frontend after rendering the project offline via
 /// `OfflineAudioContext`. The path is chosen by the user via the JS save
@@ -345,6 +358,7 @@ fn export_wav(
     samples_left: Vec<f32>,
     samples_right: Vec<f32>,
     sample_rate: u32,
+    bit_depth: u8,
 ) -> Result<(), String> {
     let path = std::path::PathBuf::from(&path);
     let path = if path.extension().map_or(true, |e| e != "wav") {
@@ -353,19 +367,56 @@ fn export_wav(
         path
     };
 
-    let spec = hound::WavSpec {
-        channels: 2,
-        sample_rate,
-        bits_per_sample: 32,
-        sample_format: hound::SampleFormat::Float,
-    };
-
-    let mut writer = hound::WavWriter::create(&path, spec).map_err(|e| e.to_string())?;
-    for (l, r) in samples_left.iter().zip(samples_right.iter()) {
-        writer.write_sample(*l).map_err(|e| e.to_string())?;
-        writer.write_sample(*r).map_err(|e| e.to_string())?;
+    match bit_depth {
+        32 => {
+            let spec = hound::WavSpec {
+                channels: 2,
+                sample_rate,
+                bits_per_sample: 32,
+                sample_format: hound::SampleFormat::Float,
+            };
+            let mut w = hound::WavWriter::create(&path, spec).map_err(|e| e.to_string())?;
+            for (l, r) in samples_left.iter().zip(samples_right.iter()) {
+                w.write_sample(*l).map_err(|e| e.to_string())?;
+                w.write_sample(*r).map_err(|e| e.to_string())?;
+            }
+            w.finalize().map_err(|e| e.to_string())
+        }
+        24 => {
+            let spec = hound::WavSpec {
+                channels: 2,
+                sample_rate,
+                bits_per_sample: 24,
+                sample_format: hound::SampleFormat::Int,
+            };
+            let mut w = hound::WavWriter::create(&path, spec).map_err(|e| e.to_string())?;
+            for (l, r) in samples_left.iter().zip(samples_right.iter()) {
+                // Scale to 24-bit signed integer range [-8 388 608, +8 388 607]
+                let l_i = (l.clamp(-1.0, 1.0) * 8_388_607.0) as i32;
+                let r_i = (r.clamp(-1.0, 1.0) * 8_388_607.0) as i32;
+                w.write_sample(l_i).map_err(|e| e.to_string())?;
+                w.write_sample(r_i).map_err(|e| e.to_string())?;
+            }
+            w.finalize().map_err(|e| e.to_string())
+        }
+        _ => {
+            // 16-bit or anything unrecognised
+            let spec = hound::WavSpec {
+                channels: 2,
+                sample_rate,
+                bits_per_sample: 16,
+                sample_format: hound::SampleFormat::Int,
+            };
+            let mut w = hound::WavWriter::create(&path, spec).map_err(|e| e.to_string())?;
+            for (l, r) in samples_left.iter().zip(samples_right.iter()) {
+                let l_i = (l.clamp(-1.0, 1.0) * 32_767.0) as i16;
+                let r_i = (r.clamp(-1.0, 1.0) * 32_767.0) as i16;
+                w.write_sample(l_i).map_err(|e| e.to_string())?;
+                w.write_sample(r_i).map_err(|e| e.to_string())?;
+            }
+            w.finalize().map_err(|e| e.to_string())
+        }
     }
-    writer.finalize().map_err(|e| e.to_string())
 }
 
 // ── Native audio bootstrap ────────────────────────────────────────────────────
@@ -380,28 +431,264 @@ fn start_native_audio(app: &mut tauri::App) {
     let app_handle = app.handle().clone();
     let state = app.state::<AppState>();
 
-    // Build a minimal snapshot of the initial project (empty tracks) so the
-    // graph compiler can determine the sample rate before any file is loaded.
-    let project_snapshot = state
-        .project
+    // Read stored settings (default on first launch, persisted after that).
+    let settings = state
+        .audio_settings
         .lock()
-        .map(|p| AppProject {
-            name: p.name.clone(),
-            bpm: p.bpm,
-            numerator: p.numerator,
-            denominator: p.denominator,
-            tracks: vec![], // no clips yet — recompile follows on first load
-        })
-        .unwrap_or_else(|_| AppProject::new());
+        .map(|s| s.clone())
+        .unwrap_or_default();
+
+    // Build a minimal initial project — the real graph is pushed by
+    // `recompile_audio_graph` once a project is loaded or created.
+    let init_project = AppProject::new();
 
     if let Ok(mut engine) = state.audio_engine.lock() {
-        if let Err(e) = engine.start_stream(&project_snapshot, app_handle) {
+        if let Err(e) = engine.start_stream_with_settings(&init_project, app_handle, &settings) {
             eprintln!("[audio] Impossible d'activer le moteur natif : {e}");
         }
     };
     // Note: the semicolon above is intentional.  It forces the MutexGuard
     // temporary (inside the Result returned by .lock()) to drop before `state`
     // is dropped at function exit, satisfying the borrow checker.
+}
+
+// ── Audio settings commands ───────────────────────────────────────────────────
+
+/// Return the list of available input and output audio devices.
+///
+/// The frontend uses this to populate the device pickers in the Settings panel.
+/// Device IDs are the CPAL device names; `"default"` is prepended as a
+/// special sentinel that always resolves to the system default.
+#[tauri::command]
+fn get_audio_devices() -> Result<audio_settings::AudioDeviceList, String> {
+    use cpal::traits::{DeviceTrait, HostTrait};
+
+    let host = cpal::default_host();
+
+    let mut outputs = vec![audio_settings::AudioDeviceInfo {
+        id: "default".to_string(),
+        name: "Par défaut (système)".to_string(),
+    }];
+    if let Ok(devices) = host.output_devices() {
+        for d in devices {
+            if let Ok(name) = d.name() {
+                outputs.push(audio_settings::AudioDeviceInfo {
+                    id: name.clone(),
+                    name,
+                });
+            }
+        }
+    }
+
+    let mut inputs = vec![audio_settings::AudioDeviceInfo {
+        id: "default".to_string(),
+        name: "Par défaut (système)".to_string(),
+    }];
+    if let Ok(devices) = host.input_devices() {
+        for d in devices {
+            if let Ok(name) = d.name() {
+                inputs.push(audio_settings::AudioDeviceInfo {
+                    id: name.clone(),
+                    name,
+                });
+            }
+        }
+    }
+
+    Ok(audio_settings::AudioDeviceList { inputs, outputs })
+}
+
+/// Return which of the four candidate sample rates are supported by a device.
+///
+/// Candidate list: 44 100, 48 000, 88 200, 96 000 Hz — the same values shown
+/// in the Settings panel.  The frontend uses the result to grey out unsupported
+/// pills so the user can only pick rates the device actually handles.
+///
+/// If the device cannot be queried (permissions, driver issue, etc.) all four
+/// candidates are returned so the UI stays fully enabled rather than crashing.
+#[tauri::command]
+fn get_device_sample_rates(device_id: String) -> Vec<u32> {
+    use cpal::traits::{DeviceTrait, HostTrait};
+
+    const CANDIDATES: [u32; 4] = [44_100, 48_000, 88_200, 96_000];
+
+    let host = cpal::default_host();
+
+    let device = if device_id == "default" {
+        host.default_output_device()
+    } else {
+        host.output_devices()
+            .ok()
+            .and_then(|mut it| {
+                it.find(|d| d.name().map(|n| n == device_id).unwrap_or(false))
+            })
+            .or_else(|| host.default_output_device())
+    };
+
+    let Some(device) = device else {
+        return CANDIDATES.to_vec();
+    };
+
+    let Ok(ranges) = device.supported_output_configs() else {
+        return CANDIDATES.to_vec();
+    };
+
+    // Collect ranges once — `supported_output_configs()` is an iterator.
+    let ranges: Vec<_> = ranges.collect();
+    if ranges.is_empty() {
+        return CANDIDATES.to_vec();
+    }
+
+    // Only count a sample rate as "supported" when it is available in F32 or
+    // I16 — the two formats the engine actually handles without quality loss.
+    // An exotic format (U8, U16 …) at a given SR would not produce usable audio,
+    // so we don't advertise it as a valid choice in the UI.
+    let supported: Vec<u32> = CANDIDATES
+        .iter()
+        .filter(|&&sr| {
+            let csr = cpal::SampleRate(sr);
+            ranges.iter().any(|r| {
+                matches!(
+                    r.sample_format(),
+                    cpal::SampleFormat::F32 | cpal::SampleFormat::I16
+                ) && r.min_sample_rate() <= csr
+                    && r.max_sample_rate() >= csr
+            })
+        })
+        .copied()
+        .collect();
+
+    // If nothing matched (very unusual device), return all candidates so the
+    // UI never shows a fully-greyed-out pill group.
+    if supported.is_empty() {
+        CANDIDATES.to_vec()
+    } else {
+        supported
+    }
+}
+
+/// Return the native channel count of a device.
+///
+/// For output devices the default output config is queried; for input devices
+/// the default input config.  Falls back to 2 (stereo) on any error so the UI
+/// always shows a sensible value.
+#[tauri::command]
+fn get_device_channels(device_id: String, is_input: bool) -> u16 {
+    use cpal::traits::{DeviceTrait, HostTrait};
+
+    let host = cpal::default_host();
+
+    if is_input {
+        let device = if device_id == "default" {
+            host.default_input_device()
+        } else {
+            host.input_devices()
+                .ok()
+                .and_then(|mut it| {
+                    it.find(|d| d.name().map(|n| n == device_id).unwrap_or(false))
+                })
+                .or_else(|| host.default_input_device())
+        };
+        device
+            .and_then(|d| d.default_input_config().ok())
+            .map(|c| c.channels())
+            .unwrap_or(2)
+    } else {
+        let device = if device_id == "default" {
+            host.default_output_device()
+        } else {
+            host.output_devices()
+                .ok()
+                .and_then(|mut it| {
+                    it.find(|d| d.name().map(|n| n == device_id).unwrap_or(false))
+                })
+                .or_else(|| host.default_output_device())
+        };
+        device
+            .and_then(|d| d.default_output_config().ok())
+            .map(|c| c.channels())
+            .unwrap_or(2)
+    }
+}
+
+/// Apply new audio settings: persist them and, only if necessary, restart the
+/// CPAL stream.
+///
+/// A stream restart (brief ~50 ms audio interruption) is triggered **only**
+/// when a parameter that cannot be changed atomically differs from the current
+/// value:
+///   - output or input device
+///   - sample rate
+///   - buffer size
+///
+/// `output_channels` is handled by an atomic inside the callback and was
+/// already applied by `set_active_output_channels` during the live-preview
+/// phase — so saving never causes a glitch when only the channel count changed.
+///
+/// Returns an error string if the device is unavailable or the stream cannot
+/// be opened; the UI should surface this as a notification.
+#[tauri::command]
+fn apply_audio_settings(
+    settings: audio_settings::AudioSettings,
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    // Read current settings before overwriting so we can diff them.
+    let current = state
+        .audio_settings
+        .lock()
+        .map(|s| s.clone())
+        .unwrap_or_default();
+
+    // Persist for future app launches / restarts.
+    if let Ok(mut s) = state.audio_settings.lock() {
+        *s = settings.clone();
+    }
+
+    // Determine whether a stream restart is actually needed.
+    let needs_restart = current.output_device != settings.output_device
+        || current.input_device  != settings.input_device
+        || current.sample_rate   != settings.sample_rate
+        || current.buffer_size   != settings.buffer_size;
+
+    if needs_restart {
+        // Full restart: device / sample rate / buffer changed.
+        // `start_stream_with_settings` also seeds the active-channels atomic,
+        // so output_channels is always consistent after a restart.
+        let init_project = AppProject::new();
+        if let Ok(mut engine) = state.audio_engine.lock() {
+            engine.start_stream_with_settings(&init_project, app, &settings)?;
+        }
+        recompile_audio_graph(&state);
+    } else {
+        // No restart needed: only `output_channels` (or no change at all).
+        // The live-preview already applied it atomically, but we set it again
+        // to guarantee consistency even if the preview path was skipped.
+        if let Ok(engine) = state.audio_engine.lock() {
+            engine.set_active_output_channels(settings.output_channels as usize);
+        }
+    }
+
+    Ok(())
+}
+
+/// Update the active output channel count without restarting the CPAL stream.
+///
+/// Changes take effect within one audio callback block (~5 ms at typical
+/// buffer sizes) — no stream interruption, no audio glitch.
+///
+/// Used by the Settings panel to give a live preview of mono/stereo routing
+/// as the user clicks +/−, and to revert instantly if they cancel.
+///
+/// `count = 0` restores the "use all hardware channels" default.
+#[tauri::command]
+fn set_active_output_channels(
+    count: u16,
+    state: tauri::State<'_, AppState>,
+) {
+    if let Ok(engine) = state.audio_engine.lock() {
+        engine.set_active_output_channels(count as usize);
+    }
 }
 
 // ── Audio graph recompilation helper ─────────────────────────────────────────

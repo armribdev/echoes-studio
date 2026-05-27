@@ -213,6 +213,10 @@ pub struct AppState {
     /// Atomic transport state shared with the CPAL callback.
     /// Accessed directly (no lock) for PLAY / STOP / SEEK commands.
     pub transport: std::sync::Arc<crate::audio_engine::transport::SharedTransport>,
+    /// Current audio I/O settings (device, sample rate, buffer size).
+    /// Updated by `apply_audio_settings`; read back by `start_native_audio`
+    /// so restarts always use the user's last chosen configuration.
+    pub audio_settings: Mutex<crate::audio_settings::AudioSettings>,
 }
 
 impl AppState {
@@ -235,6 +239,7 @@ impl AppState {
                 std::sync::Arc::clone(&transport),
             )),
             transport,
+            audio_settings: Mutex::new(crate::audio_settings::AudioSettings::default()),
         }
     }
 }
