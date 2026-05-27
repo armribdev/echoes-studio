@@ -3,6 +3,7 @@ export interface Track {
 	id: string;
 	name: string;
 	volume: number;
+	pan: number;
 	muted: boolean;
 	solo: boolean;
 	clips: Clip[];

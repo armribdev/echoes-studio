@@ -210,6 +210,7 @@ fn process_command(
                     id: track_id.clone(),
                     name: p.name.clone(),
                     volume: 80.0,
+                    pan: 0.0,
                     muted: false,
                     solo: false,
                     clips: vec![],
@@ -274,12 +275,16 @@ fn process_command(
                 if let Some(vol) = p.volume {
                     track.volume = vol;
                 }
+                if let Some(pan) = p.pan {
+                    track.pan = pan;
+                }
             }
 
             let event_payload = json!({
                 "id": p.track_id,
                 "name": p.name,
                 "volume": p.volume,
+                "pan": p.pan,
             });
             let project_event = ProjectEvent::new(ev::TRACK_UPDATED, event_payload.clone());
             append_and_maybe_snapshot(state, project_event)?;
@@ -591,6 +596,7 @@ fn snapshot_project(project: &AppProject) -> AppProject {
                 id: t.id.clone(),
                 name: t.name.clone(),
                 volume: t.volume,
+                pan: t.pan,
                 muted: t.muted,
                 solo: t.solo,
                 clips: t
@@ -690,6 +696,7 @@ fn apply_events(
                         id,
                         name,
                         volume: 80.0,
+                        pan: 0.0,
                         muted: false,
                         solo: false,
                         clips: vec![],
@@ -710,6 +717,9 @@ fn apply_events(
                     }
                     if let Some(vol) = event.payload["volume"].as_f64() {
                         track.volume = vol as f32;
+                    }
+                    if let Some(pan) = event.payload["pan"].as_f64() {
+                        track.pan = pan as f32;
                     }
                 }
             }

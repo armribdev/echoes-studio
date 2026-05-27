@@ -38,8 +38,13 @@
 	// (WeakMap keyed by raw_samples breaks when the reducer spreads new objects.)
 	const clipBuffers = new Map<string, AudioBuffer>();
 
-	// One GainNode per track — persists across play/stop cycles, updated in real time.
+	// One GainNode + StereoPannerNode per track — persists across play/stop cycles.
 	const trackGains = new Map<string, GainNode>();
+	const trackPanners = new Map<string, StereoPannerNode>();
+
+	function panToAudioValue(pan: number): number {
+		return pan / 100;
+	}
 
 	function getEffectiveGain(track: TrackType): number {
 		const anySolo = tracks.some((t) => t.solo);
@@ -48,11 +53,13 @@
 		return track.volume / 100;
 	}
 
-	// Reactive: keep gain values in sync with volume/mute/solo (even during playback).
+	// Reactive: keep gain/pan in sync with controls (even during playback).
 	$: if (audioCtx) {
 		for (const track of tracks) {
 			const gain = trackGains.get(track.id);
 			if (gain) gain.gain.value = getEffectiveGain(track);
+			const panner = trackPanners.get(track.id);
+			if (panner) panner.pan.value = panToAudioValue(track.pan);
 		}
 	}
 
@@ -98,22 +105,27 @@
 		clipBuffers.set(clip.id, buffer);
 	}
 
-	function getOrCreateTrackGain(ctx: AudioContext, trackId: string, gainValue: number): GainNode {
+	function getOrCreateTrackGain(ctx: AudioContext, trackId: string, gainValue: number, pan: number): GainNode {
 		let gain = trackGains.get(trackId);
+		let panner = trackPanners.get(trackId);
 		if (!gain) {
 			gain = ctx.createGain();
-			gain.connect(ctx.destination);
+			panner = ctx.createStereoPanner();
+			gain.connect(panner);
+			panner.connect(ctx.destination);
 			trackGains.set(trackId, gain);
+			trackPanners.set(trackId, panner);
 		}
 		gain.gain.value = gainValue;
+		panner!.pan.value = panToAudioValue(pan);
 		return gain;
 	}
 
-	function scheduleClip(ctx: AudioContext, clip: Clip, trackId: string, gainValue: number, currentPos: number) {
+	function scheduleClip(ctx: AudioContext, clip: Clip, trackId: string, gainValue: number, pan: number, currentPos: number) {
 		const buffer = clipBuffers.get(clip.id);
 		if (!buffer || currentPos >= clip.end) return;
 
-		const gain = getOrCreateTrackGain(ctx, trackId, gainValue);
+		const gain = getOrCreateTrackGain(ctx, trackId, gainValue, pan);
 		const source = ctx.createBufferSource();
 		source.buffer = buffer;
 		source.connect(gain);
@@ -131,7 +143,7 @@
 		for (const track of tracks) {
 			const gainValue = getEffectiveGain(track);
 			for (const clip of track.clips) {
-				scheduleClip(ctx, clip, track.id, gainValue, currentPos);
+				scheduleClip(ctx, clip, track.id, gainValue, track.pan, currentPos);
 			}
 		}
 	}
@@ -480,6 +492,12 @@
 		updateTrack(track.id, { name: track.name, volume: track.volume }).catch(console.error);
 	}
 
+	function handlePanRelease(trackIndex: number) {
+		const track = tracks[trackIndex];
+		if (!track) return;
+		updateTrack(track.id, { pan: track.pan }).catch(console.error);
+	}
+
 	function handleMuteToggle(trackIndex: number) {
 		const track = tracks[trackIndex];
 		if (!track) return;
@@ -546,6 +564,7 @@
 							on:click={() => handleSoloToggle(trackIndex)}
 						>S</button>
 						<Knob min={0} max={100} bind:value={tracks[trackIndex].volume} on:release={() => handleVolumeRelease(trackIndex)} />
+						<Knob min={-100} max={100} bind:value={tracks[trackIndex].pan} on:release={() => handlePanRelease(trackIndex)} />
 					</div>
 				</div>
 			{/each}

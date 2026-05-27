@@ -72,6 +72,7 @@ export interface TrackUpdatedPayload {
   id: string;
   name?: string;
   volume?: number;
+  pan?: number;
 }
 
 export interface TrackMutedPayload {

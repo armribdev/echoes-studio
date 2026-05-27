@@ -78,6 +78,7 @@ export interface UpdateTrackPayload {
   track_id: string;
   name?: string;
   volume?: number;
+  pan?: number;
 }
 
 export interface MuteTrackPayload {

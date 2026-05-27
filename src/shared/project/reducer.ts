@@ -41,6 +41,7 @@ export interface TrackState {
   id: string;
   name: string;
   volume: number;
+  pan: number;
   muted: boolean;
   solo: boolean;
   clips: ClipState[];
@@ -71,7 +72,7 @@ export function applyEvent(state: ProjectState, event: EngineEvent): ProjectStat
       if (state.tracks.some((t) => t.id === p.id)) return state; // idempotent
       return {
         ...state,
-        tracks: [...state.tracks, { id: p.id, name: p.name, volume: 80, muted: false, solo: false, clips: [] }],
+        tracks: [...state.tracks, { id: p.id, name: p.name, volume: 80, pan: 0, muted: false, solo: false, clips: [] }],
       };
     }
 
@@ -81,13 +82,18 @@ export function applyEvent(state: ProjectState, event: EngineEvent): ProjectStat
     }
 
     case ev.TRACK_UPDATED: {
-      const p = event.payload as { id: string; name?: string; volume?: number };
+      const p = event.payload as { id: string; name?: string; volume?: number; pan?: number };
       return {
         ...state,
         tracks: state.tracks.map((t) =>
           t.id !== p.id
             ? t
-            : { ...t, name: p.name ?? t.name, volume: p.volume ?? t.volume },
+            : {
+                ...t,
+                name: p.name ?? t.name,
+                volume: p.volume ?? t.volume,
+                pan: p.pan ?? t.pan,
+              },
         ),
       };
     }
@@ -212,6 +218,7 @@ export function projectFromSnapshot(dto: Project): ProjectState {
       id: t.id,
       name: t.name,
       volume: t.volume,
+      pan: t.pan ?? 0,
       muted: t.muted ?? false,
       solo: t.solo ?? false,
       clips: t.clips.map((c) => ({ ...c, trackId: t.id })),

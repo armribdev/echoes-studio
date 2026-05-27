@@ -105,7 +105,7 @@ export function deleteTrack(trackId: string): Promise<CommandResult> {
 
 export function updateTrack(
   trackId: string,
-  changes: { name?: string; volume?: number },
+  changes: { name?: string; volume?: number; pan?: number },
 ): Promise<CommandResult> {
   return dispatch<UpdateTrackPayload>(cmd.UPDATE_TRACK, {
     track_id: trackId,

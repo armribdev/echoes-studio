@@ -36,6 +36,7 @@ pub struct AppTrack {
     pub id: String,
     pub name: String,
     pub volume: f32,
+    pub pan: f32,
     pub muted: bool,
     pub solo: bool,
     pub clips: Vec<AppClip>,
@@ -81,6 +82,7 @@ impl AppProject {
                 id: Some(t.id.clone()),
                 name: t.name.clone(),
                 volume: t.volume,
+                pan: t.pan,
                 muted: t.muted,
                 solo: t.solo,
                 clips: t.clips.iter().map(|c| ClipFile {
@@ -119,6 +121,7 @@ impl AppProject {
                 id: track_id,
                 name: tf.name,
                 volume: tf.volume,
+                pan: tf.pan,
                 muted: tf.muted,
                 solo: tf.solo,
                 clips,
@@ -140,6 +143,7 @@ impl AppTrack {
             id: self.id.clone(),
             name: self.name.clone(),
             volume: self.volume,
+            pan: self.pan,
             muted: self.muted,
             solo: self.solo,
             clips: self.clips.iter().map(|c| c.to_dto()).collect(),
@@ -240,6 +244,8 @@ pub struct TrackFile {
     pub name: String,
     pub volume: f32,
     #[serde(default)]
+    pub pan: f32,
+    #[serde(default)]
     pub muted: bool,
     #[serde(default)]
     pub solo: bool,
@@ -270,6 +276,7 @@ pub struct TrackDto {
     pub id: String,
     pub name: String,
     pub volume: f32,
+    pub pan: f32,
     pub muted: bool,
     pub solo: bool,
     pub clips: Vec<ClipDto>,

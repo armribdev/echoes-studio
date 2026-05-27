@@ -83,6 +83,7 @@ pub struct UpdateTrackPayload {
     pub track_id: String,
     pub name: Option<String>,
     pub volume: Option<f32>,
+    pub pan: Option<f32>,
 }
 
 #[derive(Debug, Deserialize)]
