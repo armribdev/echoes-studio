@@ -37,6 +37,17 @@
 	// (WeakMap keyed by raw_samples breaks when the reducer spreads new objects.)
 	const clipBuffers = new Map<string, AudioBuffer>();
 
+	// One GainNode per track — persists across play/stop cycles, updated in real time.
+	const trackGains = new Map<string, GainNode>();
+
+	// Reactive: keep gain values in sync with the volume knob (even during playback).
+	$: if (audioCtx) {
+		for (const track of tracks) {
+			const gain = trackGains.get(track.id);
+			if (gain) gain.gain.value = track.volume / 100;
+		}
+	}
+
 	// Reactive: auto-prepare AudioBuffers for every clip in `tracks`.
 	// Fires on project load, gateway imports, and undo/redo restores.
 	// prepareClipBuffer is idempotent — no-ops if the buffer is already cached.
@@ -79,13 +90,25 @@
 		clipBuffers.set(clip.id, buffer);
 	}
 
-	function scheduleClip(ctx: AudioContext, clip: Clip, currentPos: number) {
+	function getOrCreateTrackGain(ctx: AudioContext, trackId: string, volume: number): GainNode {
+		let gain = trackGains.get(trackId);
+		if (!gain) {
+			gain = ctx.createGain();
+			gain.connect(ctx.destination);
+			trackGains.set(trackId, gain);
+		}
+		gain.gain.value = volume / 100;
+		return gain;
+	}
+
+	function scheduleClip(ctx: AudioContext, clip: Clip, trackId: string, volume: number, currentPos: number) {
 		const buffer = clipBuffers.get(clip.id);
 		if (!buffer || currentPos >= clip.end) return;
 
+		const gain = getOrCreateTrackGain(ctx, trackId, volume);
 		const source = ctx.createBufferSource();
 		source.buffer = buffer;
-		source.connect(ctx.destination);
+		source.connect(gain);
 
 		if (currentPos < clip.start) {
 			source.start(ctx.currentTime + (clip.start - currentPos));
@@ -99,7 +122,7 @@
 	function scheduleAllClips(ctx: AudioContext, currentPos: number) {
 		for (const track of tracks) {
 			for (const clip of track.clips) {
-				scheduleClip(ctx, clip, currentPos);
+				scheduleClip(ctx, clip, track.id, track.volume, currentPos);
 			}
 		}
 	}
