@@ -8,10 +8,17 @@
 	// The store then stays alive for the entire app lifetime.
 	import { engineProject } from '../frontend/store/engineStore';
 	import { registerShortcuts } from '../frontend/shortcuts/keymap';
+	import { connectTransportBridge } from '../frontend/transport/bridge';
 
-	// Register keyboard shortcuts once for the entire app lifetime.
-	// registerShortcuts() returns its own cleanup — Svelte calls it on destroy.
-	onMount(() => registerShortcuts());
+	// Register keyboard shortcuts and transport bridge once for the app lifetime.
+	onMount(() => {
+		const disconnectBridge = connectTransportBridge();
+		const unregisterShortcuts = registerShortcuts();
+		return () => {
+			disconnectBridge();
+			unregisterShortcuts();
+		};
+	});
 </script>
 
 <!--

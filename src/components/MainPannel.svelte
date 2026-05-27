@@ -11,7 +11,7 @@
 	import { tempo } from '../stores/tempo';
 	import { projectName, projectPath } from '../stores/project';
 	import { projectEventStore } from '../shared/project/eventStore';
-	import { addClip, moveClip, removeClip, updateTrack } from '../frontend/commands/dispatcher';
+	import { addClip, moveClip, removeClip, updateTrack, seek } from '../frontend/commands/dispatcher';
 
 	// Live sync from the engine event store.
 	// Local mutations (optimistic UI during drag/import) are reconciled by the
@@ -96,6 +96,21 @@
 		activeSources.push(source);
 	}
 
+	function scheduleAllClips(ctx: AudioContext, currentPos: number) {
+		for (const track of tracks) {
+			for (const clip of track.clips) {
+				scheduleClip(ctx, clip, currentPos);
+			}
+		}
+	}
+
+	function startPlaybackAt(ctx: AudioContext, position: number) {
+		if (ctx.state === 'suspended') ctx.resume();
+		playbackStartPos = position;
+		audioStartTime = ctx.currentTime;
+		scheduleAllClips(ctx, position);
+	}
+
 	function stopAllClips() {
 		for (const source of activeSources) {
 			try { source.stop(); } catch { /* already ended */ }
@@ -122,9 +137,10 @@
 
 	// ── Playhead (position driven by audioCtx.currentTime when playing) ──────
 	let animFrameId: number;
+	let isScrubbing = false;
 
 	function loop() {
-		if ($transport.isPlaying && audioCtx) {
+		if ($transport.isPlaying && audioCtx && !isScrubbing) {
 			transport.update((t) => ({
 				...t,
 				position: playbackStartPos + (audioCtx!.currentTime - audioStartTime)
@@ -143,15 +159,7 @@
 		let wasPlaying = false;
 		const unsub = transport.subscribe((state) => {
 			if (state.isPlaying && !wasPlaying) {
-				const ctx = getAudioCtx();
-				if (ctx.state === 'suspended') ctx.resume();
-				playbackStartPos = state.position;
-				audioStartTime = ctx.currentTime;
-				for (const track of tracks) {
-					for (const clip of track.clips) {
-						scheduleClip(ctx, clip, state.position);
-					}
-				}
+				startPlaybackAt(getAudioCtx(), state.position);
 			} else if (!state.isPlaying && wasPlaying) {
 				stopAllClips();
 			}
@@ -305,6 +313,7 @@
 	let pendingDragDuration: number | null = null;
 
 	let scrubOriginLeft = 0;
+	let scrubPosition = 0;
 
 	function snapPosition(positionSec: number, altKey: boolean): number {
 		if (altKey) return positionSec;
@@ -316,32 +325,40 @@
 
 	function onScrubMove(e: MouseEvent) {
 		const raw = Math.max(0, (e.clientX - scrubOriginLeft) / scale);
-		transport.update((t) => ({ ...t, position: snapPosition(raw, e.altKey) }));
+		scrubPosition = snapPosition(raw, e.altKey);
+		transport.update((t) => ({ ...t, position: scrubPosition }));
 	}
 
 	function onScrubEnd() {
 		window.removeEventListener('mousemove', onScrubMove);
 		window.removeEventListener('mouseup', onScrubEnd);
+		isScrubbing = false;
+		if ($transport.isPlaying) {
+			stopAllClips();
+			startPlaybackAt(getAudioCtx(), scrubPosition);
+		}
+		seek(scrubPosition).catch(console.error);
+	}
+
+	function beginScrub(event: MouseEvent, originEl: HTMLElement) {
+		const rect = originEl.getBoundingClientRect();
+		scrubOriginLeft = rect.left;
+		const raw = Math.max(0, (event.clientX - rect.left) / scale);
+		scrubPosition = snapPosition(raw, event.altKey);
+		isScrubbing = true;
+		transport.update((t) => ({ ...t, position: scrubPosition }));
+		window.addEventListener('mousemove', onScrubMove);
+		window.addEventListener('mouseup', onScrubEnd);
 	}
 
 	function handleRulerMouseDown(event: MouseEvent) {
-		const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
-		scrubOriginLeft = rect.left;
-		const raw = Math.max(0, (event.clientX - rect.left) / scale);
-		transport.update((t) => ({ ...t, position: snapPosition(raw, event.altKey) }));
-		window.addEventListener('mousemove', onScrubMove);
-		window.addEventListener('mouseup', onScrubEnd);
+		beginScrub(event, event.currentTarget as HTMLElement);
 	}
 
 	function handleTracksMouseDown(event: MouseEvent) {
 		if (dragging) return;
-		const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
-		scrubOriginLeft = rect.left;
-		const raw = Math.max(0, (event.clientX - rect.left) / scale);
-		transport.update((t) => ({ ...t, position: snapPosition(raw, event.altKey) }));
+		beginScrub(event, event.currentTarget as HTMLElement);
 		selection.set(new Set());
-		window.addEventListener('mousemove', onScrubMove);
-		window.addEventListener('mouseup', onScrubEnd);
 	}
 
 	function deleteSelected() {

@@ -12,8 +12,10 @@
  * To expose a new action: add a `#[tauri::command] fn menu_action` branch in main.rs.
  */
 
+import { get } from 'svelte/store';
 import { invoke } from '@tauri-apps/api/core';
-import { undoCommand, redoCommand } from '../commands/dispatcher';
+import { undoCommand, redoCommand, play, pause } from '../commands/dispatcher';
+import { transport } from '../../stores/transport';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -81,6 +83,17 @@ const SHORTCUTS: Shortcut[] = [
     modifiers: ['ctrl'],
     description: 'Rétablir (Windows)',
     action: () => redoCommand().catch(console.error),
+  },
+
+  // ── Transport ─────────────────────────────────────────────────────────────
+  {
+    key: ' ',
+    modifiers: [],
+    description: 'Lecture / Pause',
+    action: () => {
+      const { isPlaying } = get(transport);
+      (isPlaying ? pause() : play()).catch(console.error);
+    },
   },
 ];
 

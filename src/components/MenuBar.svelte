@@ -1,16 +1,22 @@
 <script lang="ts">
 	import { transport } from '../stores/transport';
 	import { tempo } from '../stores/tempo';
-	import { updateTempo } from '../frontend/commands/dispatcher';
+	import { updateTempo, play, pause, stop, seek } from '../frontend/commands/dispatcher';
 
 	let isRecording = false;
 
 	function togglePlayPause() {
-		transport.update((t) => ({ ...t, isPlaying: !t.isPlaying }));
+		if ($transport.isPlaying) {
+			pause().catch(console.error);
+		} else {
+			play().catch(console.error);
+		}
 	}
 
 	function rewindToStart() {
-		transport.update((t) => ({ ...t, position: 0, isPlaying: false }));
+		seek(0)
+			.then(() => stop())
+			.catch(console.error);
 	}
 
 	function toggleRecord() {
