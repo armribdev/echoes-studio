@@ -129,7 +129,7 @@
 		<div class="ctrl-row">
 			<input
 				class="num-input"
-				style="width:26px"
+				
 				type="number"
 				min="1"
 				max="16"
@@ -296,6 +296,9 @@
 		font-family: 'SF Mono', 'Fira Code', ui-monospace, monospace;
 		font-size: 14px;
 		padding: 2px 4px;
+		height: 26px;
+		width: 30px;
+		box-sizing: border-box;
 		text-align: center;
 		outline: none;
 		-moz-appearance: textfield;
@@ -321,9 +324,10 @@
 		font-family: 'SF Mono', 'Fira Code', ui-monospace, monospace;
 		font-size: 14px;
 		font-weight: 500;
-		width: 28px;
-		height: 22px;
-		padding: 0;
+		width: 30px;
+		height: 26px;
+		padding: 2px 4px;
+		box-sizing: border-box;
 		cursor: pointer;
 		line-height: 1;
 		display: flex;
