@@ -27,8 +27,10 @@ import {
   type CreateTrackPayload,
   type DeleteTrackPayload,
   type MoveClipPayload,
+  type MuteTrackPayload,
   type RemoveClipPayload,
   type SeekPayload,
+  type SoloTrackPayload,
   type UpdateProjectNamePayload,
   type UpdateTempoPayload,
   type UpdateTrackPayload,
@@ -109,6 +111,14 @@ export function updateTrack(
     track_id: trackId,
     ...changes,
   });
+}
+
+export function muteTrack(trackId: string, muted: boolean): Promise<CommandResult> {
+  return dispatch<MuteTrackPayload>(cmd.MUTE_TRACK, { track_id: trackId, muted });
+}
+
+export function soloTrack(trackId: string, solo: boolean): Promise<CommandResult> {
+  return dispatch<SoloTrackPayload>(cmd.SOLO_TRACK, { track_id: trackId, solo });
 }
 
 // ── Clip commands ─────────────────────────────────────────────────────────────

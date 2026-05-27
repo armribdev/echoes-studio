@@ -21,8 +21,8 @@ use crate::audio_engine::graph::AudioGraphCompiler;
 use crate::project::{AppClip, AppProject, AppState, AppTrack, CachedAudioData, generate_id};
 use super::commands::{
     cmd, AddClipPayload, BatchCommand, CommandEnvelope, CreateTrackPayload, DeleteTrackPayload,
-    MoveClipPayload, RemoveClipPayload, SeekPayload, UpdateProjectNamePayload, UpdateTempoPayload,
-    UpdateTrackPayload,
+    MoveClipPayload, MuteTrackPayload, RemoveClipPayload, SeekPayload, SoloTrackPayload,
+    UpdateProjectNamePayload, UpdateTempoPayload, UpdateTrackPayload,
 };
 use super::events::{ev, EngineEvent, ProjectEvent};
 
@@ -210,6 +210,8 @@ fn process_command(
                     id: track_id.clone(),
                     name: p.name.clone(),
                     volume: 80.0,
+                    muted: false,
+                    solo: false,
                     clips: vec![],
                 });
             }
@@ -285,6 +287,63 @@ fn process_command(
             let engine_ev = EngineEvent::new(ev::TRACK_UPDATED, &project_id, event_payload);
             let _ = app.emit("engine-event", &engine_ev);
             // Volume change → recompile for audio engine
+            recompile_if_needed(state);
+
+            Ok(CommandResult::ok(
+                command_id,
+                vec![serde_json::to_value(&engine_ev).unwrap_or_default()],
+            ))
+        }
+
+        cmd::MUTE_TRACK => {
+            let p: MuteTrackPayload = serde_json::from_value(command.payload)
+                .map_err(|e| format!("MUTE_TRACK payload invalid: {e}"))?;
+
+            {
+                let mut project = state.project.lock().map_err(|e| e.to_string())?;
+                let track = project
+                    .tracks
+                    .iter_mut()
+                    .find(|t| t.id == p.track_id)
+                    .ok_or_else(|| format!("Track {} not found", p.track_id))?;
+                track.muted = p.muted;
+            }
+
+            // Mixer state — not appended to the event store (no undo/redo step).
+            let event_payload = json!({ "id": p.track_id, "muted": p.muted });
+            let engine_ev = EngineEvent::new(ev::TRACK_MUTED, &project_id, event_payload);
+            let _ = app.emit("engine-event", &engine_ev);
+            recompile_if_needed(state);
+
+            Ok(CommandResult::ok(
+                command_id,
+                vec![serde_json::to_value(&engine_ev).unwrap_or_default()],
+            ))
+        }
+
+        cmd::SOLO_TRACK => {
+            let p: SoloTrackPayload = serde_json::from_value(command.payload)
+                .map_err(|e| format!("SOLO_TRACK payload invalid: {e}"))?;
+
+            {
+                let mut project = state.project.lock().map_err(|e| e.to_string())?;
+                if !project.tracks.iter().any(|t| t.id == p.track_id) {
+                    return Err(format!("Track {} not found", p.track_id));
+                }
+                // Exclusive solo: at most one track can be solo at a time.
+                if p.solo {
+                    for track in project.tracks.iter_mut() {
+                        track.solo = track.id == p.track_id;
+                    }
+                } else if let Some(track) = project.tracks.iter_mut().find(|t| t.id == p.track_id) {
+                    track.solo = false;
+                }
+            }
+
+            // Mixer state — not appended to the event store (no undo/redo step).
+            let event_payload = json!({ "id": p.track_id, "solo": p.solo });
+            let engine_ev = EngineEvent::new(ev::TRACK_SOLOED, &project_id, event_payload);
+            let _ = app.emit("engine-event", &engine_ev);
             recompile_if_needed(state);
 
             Ok(CommandResult::ok(
@@ -532,6 +591,8 @@ fn snapshot_project(project: &AppProject) -> AppProject {
                 id: t.id.clone(),
                 name: t.name.clone(),
                 volume: t.volume,
+                muted: t.muted,
+                solo: t.solo,
                 clips: t
                     .clips
                     .iter()
@@ -552,11 +613,38 @@ fn snapshot_project(project: &AppProject) -> AppProject {
     }
 }
 
+/// Snapshot mute/solo per track — mixer state is not event-sourced and must
+/// survive undo/redo rebuilds.
+fn extract_mixer_state(project: &AppProject) -> std::collections::HashMap<String, (bool, bool)> {
+    project
+        .tracks
+        .iter()
+        .map(|t| (t.id.clone(), (t.muted, t.solo)))
+        .collect()
+}
+
+fn restore_mixer_state(
+    project: &mut AppProject,
+    mixer: &std::collections::HashMap<String, (bool, bool)>,
+) {
+    for track in &mut project.tracks {
+        if let Some(&(muted, solo)) = mixer.get(&track.id) {
+            track.muted = muted;
+            track.solo = solo;
+        }
+    }
+}
+
 /// Rebuild `AppState::project` from the event store (snapshot + events).
 /// Called after undo/redo.
 pub fn rebuild_project_from_store(
     state: &tauri::State<'_, AppState>,
 ) -> Result<(), String> {
+    let mixer = {
+        let project = state.project.lock().map_err(|e| e.to_string())?;
+        extract_mixer_state(&project)
+    };
+
     // Collect what we need while holding the store lock
     let (base_project, events_to_replay): (AppProject, Vec<super::events::ProjectEvent>) = {
         let store = state.event_store.lock().map_err(|e| e.to_string())?;
@@ -571,7 +659,8 @@ pub fn rebuild_project_from_store(
     };
 
     // Apply events to the base project
-    let rebuilt = apply_events(state, base_project, &events_to_replay)?;
+    let mut rebuilt = apply_events(state, base_project, &events_to_replay)?;
+    restore_mixer_state(&mut rebuilt, &mixer);
 
     // Write back
     let mut project = state.project.lock().map_err(|e| e.to_string())?;
@@ -601,6 +690,8 @@ fn apply_events(
                         id,
                         name,
                         volume: 80.0,
+                        muted: false,
+                        solo: false,
                         clips: vec![],
                     });
                 }
@@ -620,6 +711,25 @@ fn apply_events(
                     if let Some(vol) = event.payload["volume"].as_f64() {
                         track.volume = vol as f32;
                     }
+                }
+            }
+
+            ev::TRACK_MUTED => {
+                let id = event.payload["id"].as_str().unwrap_or("");
+                if let Some(track) = project.tracks.iter_mut().find(|t| t.id == id) {
+                    track.muted = event.payload["muted"].as_bool().unwrap_or(false);
+                }
+            }
+
+            ev::TRACK_SOLOED => {
+                let id = event.payload["id"].as_str().unwrap_or("");
+                let solo = event.payload["solo"].as_bool().unwrap_or(false);
+                if solo {
+                    for track in project.tracks.iter_mut() {
+                        track.solo = track.id == id;
+                    }
+                } else if let Some(track) = project.tracks.iter_mut().find(|t| t.id == id) {
+                    track.solo = false;
                 }
             }
 

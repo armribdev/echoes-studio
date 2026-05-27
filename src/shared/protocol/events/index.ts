@@ -9,6 +9,10 @@
  * - **Runtime events** (transient) — transport, meters, latency warnings.
  *   Never persisted; carry no undo/redo semantics.
  *
+ * - **Mixer events** (`TRACK_MUTED`, `TRACK_SOLOED`) — update live mix state
+ *   and are saved with the project file, but are not appended to the event
+ *   store and therefore have no undo/redo step.
+ *
  * All events arrive via Tauri's event channel named `"engine-event"`.
  */
 
@@ -21,6 +25,8 @@ export const ev = {
   TRACK_CREATED: 'TRACK_CREATED',
   TRACK_DELETED: 'TRACK_DELETED',
   TRACK_UPDATED: 'TRACK_UPDATED',
+  TRACK_MUTED: 'TRACK_MUTED',
+  TRACK_SOLOED: 'TRACK_SOLOED',
   CLIP_ADDED: 'CLIP_ADDED',
   CLIP_MOVED: 'CLIP_MOVED',
   CLIP_REMOVED: 'CLIP_REMOVED',
@@ -66,6 +72,16 @@ export interface TrackUpdatedPayload {
   id: string;
   name?: string;
   volume?: number;
+}
+
+export interface TrackMutedPayload {
+  id: string;
+  muted: boolean;
+}
+
+export interface TrackSoloedPayload {
+  id: string;
+  solo: boolean;
 }
 
 export interface ClipAddedPayload {

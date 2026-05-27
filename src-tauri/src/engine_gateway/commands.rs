@@ -49,6 +49,8 @@ pub mod cmd {
     pub const CREATE_TRACK: &str = "CREATE_TRACK";
     pub const DELETE_TRACK: &str = "DELETE_TRACK";
     pub const UPDATE_TRACK: &str = "UPDATE_TRACK";
+    pub const MUTE_TRACK: &str = "MUTE_TRACK";
+    pub const SOLO_TRACK: &str = "SOLO_TRACK";
     pub const ADD_CLIP: &str = "ADD_CLIP";
     pub const MOVE_CLIP: &str = "MOVE_CLIP";
     pub const REMOVE_CLIP: &str = "REMOVE_CLIP";
@@ -81,6 +83,18 @@ pub struct UpdateTrackPayload {
     pub track_id: String,
     pub name: Option<String>,
     pub volume: Option<f32>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct MuteTrackPayload {
+    pub track_id: String,
+    pub muted: bool,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SoloTrackPayload {
+    pub track_id: String,
+    pub solo: bool,
 }
 
 #[derive(Debug, Deserialize)]

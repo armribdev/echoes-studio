@@ -36,6 +36,8 @@ pub struct AppTrack {
     pub id: String,
     pub name: String,
     pub volume: f32,
+    pub muted: bool,
+    pub solo: bool,
     pub clips: Vec<AppClip>,
 }
 
@@ -79,6 +81,8 @@ impl AppProject {
                 id: Some(t.id.clone()),
                 name: t.name.clone(),
                 volume: t.volume,
+                muted: t.muted,
+                solo: t.solo,
                 clips: t.clips.iter().map(|c| ClipFile {
                     id: c.id.clone(),
                     start: c.start,
@@ -111,7 +115,14 @@ impl AppProject {
             }
             // Migrate: generate id if not present in file
             let track_id = tf.id.unwrap_or_else(generate_id);
-            tracks.push(AppTrack { id: track_id, name: tf.name, volume: tf.volume, clips });
+            tracks.push(AppTrack {
+                id: track_id,
+                name: tf.name,
+                volume: tf.volume,
+                muted: tf.muted,
+                solo: tf.solo,
+                clips,
+            });
         }
         Ok(AppProject {
             name: pf.name,
@@ -129,6 +140,8 @@ impl AppTrack {
             id: self.id.clone(),
             name: self.name.clone(),
             volume: self.volume,
+            muted: self.muted,
+            solo: self.solo,
             clips: self.clips.iter().map(|c| c.to_dto()).collect(),
         }
     }
@@ -226,6 +239,10 @@ pub struct TrackFile {
     pub id: Option<String>,
     pub name: String,
     pub volume: f32,
+    #[serde(default)]
+    pub muted: bool,
+    #[serde(default)]
+    pub solo: bool,
     pub clips: Vec<ClipFile>,
 }
 
@@ -253,6 +270,8 @@ pub struct TrackDto {
     pub id: String,
     pub name: String,
     pub volume: f32,
+    pub muted: bool,
+    pub solo: bool,
     pub clips: Vec<ClipDto>,
 }
 

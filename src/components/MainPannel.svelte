@@ -11,7 +11,7 @@
 	import { tempo } from '../stores/tempo';
 	import { projectName, projectPath } from '../stores/project';
 	import { projectEventStore } from '../shared/project/eventStore';
-	import { addClip, moveClip, removeClip, updateTrack, seek } from '../frontend/commands/dispatcher';
+	import { addClip, moveClip, removeClip, updateTrack, muteTrack, soloTrack, seek } from '../frontend/commands/dispatcher';
 	import { notify } from '../stores/status';
 
 	// Live sync from the engine event store.
@@ -41,11 +41,18 @@
 	// One GainNode per track — persists across play/stop cycles, updated in real time.
 	const trackGains = new Map<string, GainNode>();
 
-	// Reactive: keep gain values in sync with the volume knob (even during playback).
+	function getEffectiveGain(track: TrackType): number {
+		const anySolo = tracks.some((t) => t.solo);
+		if (track.muted) return 0;
+		if (anySolo && !track.solo) return 0;
+		return track.volume / 100;
+	}
+
+	// Reactive: keep gain values in sync with volume/mute/solo (even during playback).
 	$: if (audioCtx) {
 		for (const track of tracks) {
 			const gain = trackGains.get(track.id);
-			if (gain) gain.gain.value = track.volume / 100;
+			if (gain) gain.gain.value = getEffectiveGain(track);
 		}
 	}
 
@@ -91,22 +98,22 @@
 		clipBuffers.set(clip.id, buffer);
 	}
 
-	function getOrCreateTrackGain(ctx: AudioContext, trackId: string, volume: number): GainNode {
+	function getOrCreateTrackGain(ctx: AudioContext, trackId: string, gainValue: number): GainNode {
 		let gain = trackGains.get(trackId);
 		if (!gain) {
 			gain = ctx.createGain();
 			gain.connect(ctx.destination);
 			trackGains.set(trackId, gain);
 		}
-		gain.gain.value = volume / 100;
+		gain.gain.value = gainValue;
 		return gain;
 	}
 
-	function scheduleClip(ctx: AudioContext, clip: Clip, trackId: string, volume: number, currentPos: number) {
+	function scheduleClip(ctx: AudioContext, clip: Clip, trackId: string, gainValue: number, currentPos: number) {
 		const buffer = clipBuffers.get(clip.id);
 		if (!buffer || currentPos >= clip.end) return;
 
-		const gain = getOrCreateTrackGain(ctx, trackId, volume);
+		const gain = getOrCreateTrackGain(ctx, trackId, gainValue);
 		const source = ctx.createBufferSource();
 		source.buffer = buffer;
 		source.connect(gain);
@@ -122,8 +129,9 @@
 
 	function scheduleAllClips(ctx: AudioContext, currentPos: number) {
 		for (const track of tracks) {
+			const gainValue = getEffectiveGain(track);
 			for (const clip of track.clips) {
-				scheduleClip(ctx, clip, track.id, track.volume, currentPos);
+				scheduleClip(ctx, clip, track.id, gainValue, currentPos);
 			}
 		}
 	}
@@ -472,6 +480,18 @@
 		updateTrack(track.id, { name: track.name, volume: track.volume }).catch(console.error);
 	}
 
+	function handleMuteToggle(trackIndex: number) {
+		const track = tracks[trackIndex];
+		if (!track) return;
+		muteTrack(track.id, !track.muted).catch(console.error);
+	}
+
+	function handleSoloToggle(trackIndex: number) {
+		const track = tracks[trackIndex];
+		if (!track) return;
+		soloTrack(track.id, !track.solo).catch(console.error);
+	}
+
 	function makeEditable(e: MouseEvent, trackIndex: number) {
 		const el = e.currentTarget;
 		if (!(el instanceof HTMLElement)) return;
@@ -510,7 +530,23 @@
 				<div class="instrument">
 					<!-- svelte-ignore a11y-no-static-element-interactions -->
 					<strong on:dblclick={(e) => makeEditable(e, trackIndex)}>{track.name}</strong>
-					<Knob min={0} max={100} bind:value={tracks[trackIndex].volume} on:release={() => handleVolumeRelease(trackIndex)} />
+					<div class="track-controls">
+						<button
+							type="button"
+							class="ms-btn"
+							class:active={track.muted}
+							title="Mute"
+							on:click={() => handleMuteToggle(trackIndex)}
+						>M</button>
+						<button
+							type="button"
+							class="ms-btn"
+							class:active={track.solo}
+							title="Solo"
+							on:click={() => handleSoloToggle(trackIndex)}
+						>S</button>
+						<Knob min={0} max={100} bind:value={tracks[trackIndex].volume} on:release={() => handleVolumeRelease(trackIndex)} />
+					</div>
 				</div>
 			{/each}
 		</div>
@@ -693,6 +729,37 @@
 		justify-content: space-between;
 		padding: 10px;
 		box-sizing: border-box;
+	}
+
+	.track-controls {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+	}
+
+	.ms-btn {
+		width: 22px;
+		height: 22px;
+		padding: 0;
+		border: 1px solid $border-color;
+		border-radius: 3px;
+		background: transparent;
+		color: rgba($text-color, 0.55);
+		font-size: 11px;
+		font-weight: 600;
+		line-height: 1;
+		cursor: pointer;
+
+		&:hover {
+			color: $text-color;
+			border-color: rgba($text-color, 0.4);
+		}
+
+		&.active {
+			background: $accent-color;
+			border-color: $accent-color;
+			color: $text-color;
+		}
 	}
 
 	// Playhead is positioned in right-panel so it spans ruler + tracks
