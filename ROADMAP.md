@@ -4,47 +4,48 @@
 
 ---
 
-## Phase 0 — Fondations *(état actuel)*
+## Phase 0 — Fondations ✅ *complète*
 
 **Objectif :** Scaffolding technique, architecture initiale, proof of concept UI.
 
 ### Réalisé
-- [x] Setup Tauri 1.x + SvelteKit 2 + Rust
+- [x] Setup Tauri 2.x + SvelteKit 2 + Rust
 - [x] Composants UI de base : Track, Clip, MenuBar, StatusBar, Knob
 - [x] Parsing WAV via `hound` (Rust)
 - [x] Bridge IPC Tauri : chargement de fichier audio
-- [x] Rendu waveform canvas via Web Worker
+- [x] Rendu waveform canvas via Web Worker (`waveform.worker.ts`)
 - [x] Zoom timeline
 - [x] Nom de piste éditable
 - [x] Thème sombre et système de couleurs
-
-### En cours
-- [ ] Nettoyage du scaffolding (suppression worker JS déprécié, chemins hardcodés)
-- [ ] Mise en place du state management (Svelte stores)
+- [x] State management : Svelte stores + event sourcing (gateway → reducer → engineStore)
+- [x] Nettoyage du scaffolding (worker JS déprécié supprimé, identifiant Tauri corrigé)
 
 ---
 
-## Phase 1 — MVP : Lecture & Chargement *(priorité absolue)*
+## Phase 1 — MVP : Lecture & Chargement *(en cours)*
 
 **Objectif :** Un utilisateur peut charger des fichiers audio, les placer sur la timeline, et les lire.
 
 **Critère de passage :** Charger un WAV, le placer sur une piste, appuyer sur Play → le son sort.
 
-### Fonctionnalités
-- [ ] **Lecture audio** — implémentation `cpal` playback (débloquant pour tout le reste)
-  - Transport : Play / Pause / Stop / Rewind
+### Réalisé
+- [x] **Lecture audio** via Web Audio API (Web Audio, en attendant `cpal`)
+  - Transport : Play / Pause / Stop / Rewind unifié via dispatcher
   - Tête de lecture animée sur la timeline
-- [ ] **File picker natif** — dialog Tauri pour sélectionner des fichiers `.wav`
-- [ ] **Règle temporelle** — affichage temps (secondes) et mesures (BPM configurable)
-- [ ] **State management** — migration vers Svelte stores (`tracks`, `playhead`, `transport`)
-- [ ] **Drag & drop fichiers** — glisser un fichier depuis l'explorateur vers une piste
-- [ ] **Positionnement des clips** — placer un clip à un instant précis sur la timeline
+  - Raccourci Espace pour play/pause
+- [x] **Drag & drop fichiers** — glisser un `.wav` depuis l'explorateur vers une piste
+- [x] **Positionnement des clips** — placer et déplacer un clip sur la timeline
+- [x] **Règle temporelle** — affichage mesures + temps (BPM configurable, signature rythmique)
+- [x] **Snap to grid** — accrochage à la grille temporelle (Alt pour désactiver)
+- [x] **Volume par piste** — GainNode Web Audio, mise à jour en temps réel
+- [x] **Save / Load projet** — format `.echoes` (JSON) via Ctrl+S / Ctrl+Shift+S / menu
+- [x] **Undo / Redo** — Ctrl+Z / Ctrl+Y / Ctrl+Shift+Z (event sourcing Rust)
+- [x] **Feedback utilisateur** — status bar pour erreurs, confirmations save/load
+- [x] **Gestion d'erreur IPC** — erreurs d'import et d'undo/redo visibles dans l'UI
 
-### Technique
-- [ ] Supprimer `waveform-worker.js` (remplacé par `waveform.worker.ts`)
-- [ ] Remplacer l'identifiant Tauri `com.tauri.dev` par `com.echoes-studio.app`
-- [ ] Corriger le rendu waveform (canvas trop petit, 100×100)
-- [ ] Gestion d'erreur IPC : feedback utilisateur sur les erreurs de chargement
+### Restant
+- [ ] **File picker natif** — menu « Importer audio… » (Ctrl+Shift+I) en plus du drag & drop
+- [ ] **Moteur audio Rust** (`cpal`) — remplacement du chemin Web Audio par le moteur natif
 
 ---
 
@@ -55,15 +56,12 @@
 **Critère de passage :** Composer un arrangement multi-piste, ajuster les volumes, exporter.
 
 ### Fonctionnalités
-- [ ] **Multi-format audio** — support MP3, FLAC, OGG en plus de WAV
-- [ ] **Volume & Pan par piste** — fader + panoramique
+- [ ] **Multi-format audio** — support MP3, FLAC, OGG en plus de WAV (`symphonia`)
+- [ ] **Pan par piste** — panoramique stéréo
 - [ ] **Mute / Solo** par piste
-- [ ] **Snap to grid** — alignement sur la grille temporelle
 - [ ] **Couper / Copier / Coller des clips**
-- [ ] **Undo / Redo** — historique d'actions (Ctrl+Z / Ctrl+Y)
 - [ ] **Export audio** — mixdown stéréo vers WAV/MP3
-- [ ] **Save / Load projet** — format JSON ou binaire custom
-- [ ] **Zoom horizontal et vertical** de la timeline
+- [ ] **Zoom vertical** de la timeline
 
 ---
 
@@ -135,4 +133,4 @@
 
 Les issues GitHub sont taguées avec le numéro de phase (`phase/1`, `phase/2`, etc.) et la nature (`feature`, `bug`, `tech-debt`, `design`).
 
-→ [Issues ouvertes](https://github.com/[TODO:org]/echoes-studio/issues)
+→ [Issues ouvertes](https://github.com/echoes-studio/echoes-studio/issues)

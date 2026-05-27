@@ -12,6 +12,7 @@
 	import { projectName, projectPath } from '../stores/project';
 	import { projectEventStore } from '../shared/project/eventStore';
 	import { addClip, moveClip, removeClip, updateTrack, seek } from '../frontend/commands/dispatcher';
+	import { notify } from '../stores/status';
 
 	// Live sync from the engine event store.
 	// Local mutations (optimistic UI during drag/import) are reconciled by the
@@ -243,7 +244,7 @@
 					// prepares the AudioBuffer automatically.
 					addClip(trackId, filePath, startSec, startSec + dur)
 						.then(() => { fileDragPreview = null; })
-						.catch((err) => { console.error('Erreur import fichier audio :', err); fileDragPreview = null; });
+						.catch((err) => { notify(`Erreur import : ${err?.message ?? err}`, 'error'); fileDragPreview = null; });
 				};
 
 				if (knownDuration !== null) {
@@ -255,7 +256,7 @@
 							if (fileDragPreview) fileDragPreview = { ...fileDragPreview, durationSec: dur };
 							doImport(dur);
 						})
-						.catch((err) => { console.error('Erreur import fichier audio :', err); fileDragPreview = null; });
+						.catch((err) => { notify(`Erreur import : ${err?.message ?? err}`, 'error'); fileDragPreview = null; });
 				}
 			}),
 		]).then((fns) => unlisteners.push(...fns));
@@ -264,9 +265,12 @@
 		Promise.all([
 			listen<Project>('project-loaded', async ({ payload }) => {
 				await loadProject(payload);
+				notify(`Projet « ${payload.name} » chargé`, 'success');
 			}),
 			listen<string>('project-saved', ({ payload }) => {
 				projectPath.set(payload);
+				const filename = payload.split(/[\\/]/).pop() ?? payload;
+				notify(`Enregistré : ${filename}`, 'success');
 			}),
 		]).then((fns) => unlisteners.push(...fns));
 

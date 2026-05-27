@@ -16,6 +16,7 @@ import { get } from 'svelte/store';
 import { invoke } from '@tauri-apps/api/core';
 import { undoCommand, redoCommand, play, pause } from '../commands/dispatcher';
 import { transport } from '../../stores/transport';
+import { notify } from '../../stores/status';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -70,19 +71,19 @@ const SHORTCUTS: Shortcut[] = [
     key: 'z',
     modifiers: ['ctrl'],
     description: 'Annuler',
-    action: () => undoCommand().catch(console.error),
+    action: () => undoCommand().catch((e) => notify(`Annuler : ${e?.message ?? e}`, 'error')),
   },
   {
     key: 'z',
     modifiers: ['ctrl', 'shift'],
     description: 'Rétablir',
-    action: () => redoCommand().catch(console.error),
+    action: () => redoCommand().catch((e) => notify(`Rétablir : ${e?.message ?? e}`, 'error')),
   },
   {
     key: 'y',
     modifiers: ['ctrl'],
     description: 'Rétablir (Windows)',
-    action: () => redoCommand().catch(console.error),
+    action: () => redoCommand().catch((e) => notify(`Rétablir : ${e?.message ?? e}`, 'error')),
   },
 
   // ── Transport ─────────────────────────────────────────────────────────────
