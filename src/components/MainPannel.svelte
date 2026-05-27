@@ -1,19 +1,17 @@
 <script lang="ts">
 	import Knob from './Knob.svelte';
 	import Track from './Track.svelte';
-	import type { Track as TrackType, Clip } from '../types/global';
+	import type { Track as TrackType, Clip, Project } from '../types/global';
 	import { invoke } from '@tauri-apps/api/core';
-	import { open } from '@tauri-apps/plugin-dialog';
 	import { listen } from '@tauri-apps/api/event';
+	import { getCurrentWindow } from '@tauri-apps/api/window';
 	import { onMount } from 'svelte';
 	import { transport } from '../stores/transport';
 	import { selection } from '../stores/selection';
 	import { tempo } from '../stores/tempo';
+	import { projectName, projectPath } from '../stores/project';
 
-	let tracks: TrackType[] = [
-		{ name: 'Piano', volume: 60, clips: [] },
-		{ name: 'Guitare', volume: 80, clips: [] }
-	];
+	let tracks: TrackType[] = [];
 
 	let logScale: number = Math.log(80);
 	$: scale = Math.exp(logScale);
@@ -82,6 +80,26 @@
 		activeSources = [];
 	}
 
+	// ── Project loading ───────────────────────────────────────────────────────
+
+	async function loadProject(dto: Project) {
+		stopAllClips();
+		transport.update((t) => ({ ...t, isPlaying: false, position: 0 }));
+
+		projectName.set(dto.name);
+		tempo.set({ bpm: dto.bpm, numerator: dto.numerator, denominator: dto.denominator });
+		tracks = dto.tracks;
+
+		// Window title — set from frontend so the window is guaranteed to exist
+		getCurrentWindow().setTitle(`${dto.name} — Echoes Studio`).catch(console.error);
+
+		for (const track of tracks) {
+			for (const clip of track.clips) {
+				prepareClipBuffer(clip).catch(console.error);
+			}
+		}
+	}
+
 	// ── Playhead (position driven by audioCtx.currentTime when playing) ──────
 	let animFrameId: number;
 
@@ -95,7 +113,11 @@
 		animFrameId = requestAnimationFrame(loop);
 	}
 
-	onMount(() => {
+	onMount(async () => {
+		// Hydrate from Rust state
+		const dto = await invoke<Project>('get_project');
+		await loadProject(dto);
+
 		animFrameId = requestAnimationFrame(loop);
 
 		let wasPlaying = false;
@@ -117,9 +139,6 @@
 		});
 
 		// ── File drag-and-drop via Tauri events ───────────────────────────────
-		// Tauri v2 drag-* events deliver PhysicalPosition (window-relative,
-		// physical px). Divide by devicePixelRatio to get CSS px, then offset
-		// against the tracks container's client rect.
 		function updateDragPreview(physX: number, physY: number) {
 			if (!tracksEl) return;
 			const dpr = window.devicePixelRatio || 1;
@@ -139,10 +158,9 @@
 			listen<DragPayload>('tauri://drag-enter', ({ payload }) => {
 				pendingDragDuration = null;
 				updateDragPreview(payload.position.x, payload.position.y);
-				// Fetch duration from WAV header immediately so ghost has correct width
 				const path = payload.paths[0];
 				if (path) {
-					invoke<number>('get_audio_clip_duration', { filePath: path as string })
+					invoke<number>('get_audio_clip_duration', { filePath: path })
 						.then((dur) => {
 							pendingDragDuration = dur;
 							if (fileDragPreview) fileDragPreview = { ...fileDragPreview, durationSec: dur };
@@ -158,31 +176,45 @@
 				updateDragPreview(payload.position.x, payload.position.y);
 				const preview = fileDragPreview;
 				const filePath = payload.paths[0];
+				const knownDuration = pendingDragDuration ?? preview?.durationSec ?? null;
 				pendingDragDuration = null;
 				if (!filePath) { fileDragPreview = null; return; }
-				createNewAudioClip(filePath)
-					.then(async (data) => {
-						const durationSec = data.raw_samples.length / data.sample_rate;
-						// Update ghost width to match actual clip — stays visible during buffer prep
-						if (fileDragPreview) fileDragPreview = { ...fileDragPreview, durationSec };
-						const clip: Clip = {
-							id: crypto.randomUUID(),
-							start: preview?.startSec ?? 0,
-							end: (preview?.startSec ?? 0) + durationSec,
-							raw_samples: data.raw_samples,
-							sample_rate: data.sample_rate,
-							peaks_64: data.peaks_64,
-							peaks_512: data.peaks_512,
-							peaks_4096: data.peaks_4096
-						};
-						await prepareClipBuffer(clip);
-						// Batch: clip appears + ghost disappears in the same DOM update
-						const trackIndex = preview?.trackIndex ?? 0;
-						tracks[trackIndex].clips = [...tracks[trackIndex].clips, clip];
-						tracks = tracks;
-						fileDragPreview = null;
-					})
-					.catch((err) => { console.error('Erreur import fichier audio :', err); fileDragPreview = null; });
+
+				const trackIndex = preview?.trackIndex ?? 0;
+				const startSec = preview?.startSec ?? 0;
+
+				const doImport = (dur: number) => {
+					invoke<Clip>('import_clip', { trackIndex, filePath, start: startSec, end: startSec + dur })
+						.then(async (clip) => {
+							await prepareClipBuffer(clip);
+							tracks[trackIndex].clips = [...tracks[trackIndex].clips, clip];
+							tracks = tracks;
+							fileDragPreview = null;
+						})
+						.catch((err) => { console.error('Erreur import fichier audio :', err); fileDragPreview = null; });
+				};
+
+				if (knownDuration !== null) {
+					if (fileDragPreview) fileDragPreview = { ...fileDragPreview, durationSec: knownDuration };
+					doImport(knownDuration);
+				} else {
+					invoke<number>('get_audio_clip_duration', { filePath })
+						.then((dur) => {
+							if (fileDragPreview) fileDragPreview = { ...fileDragPreview, durationSec: dur };
+							doImport(dur);
+						})
+						.catch((err) => { console.error('Erreur import fichier audio :', err); fileDragPreview = null; });
+				}
+			}),
+		]).then((fns) => unlisteners.push(...fns));
+
+		// ── Native menu events (project-loaded / project-saved) ──────────────
+		Promise.all([
+			listen<Project>('project-loaded', async ({ payload }) => {
+				await loadProject(payload);
+			}),
+			listen<string>('project-saved', ({ payload }) => {
+				projectPath.set(payload);
 			}),
 		]).then((fns) => unlisteners.push(...fns));
 
@@ -212,12 +244,9 @@
 		const beats: typeof rulerBeatTicks = [];
 		const minors: typeof rulerMinorTicks = [];
 
-		// Smallest power-of-2 N such that bar labels are ≥40 px apart
 		let barLabelEvery = 1;
 		while (barLabelEvery * pxPerBar < 40 && barLabelEvery < 4096) barLabelEvery *= 2;
 
-		// Show beat labels (e.g. "3.2") only when individual bars are labeled
-		// and each beat occupies ≥20 px
 		const showBeatLabels = barLabelEvery === 1 && pxPerBeat >= 20;
 
 		for (let bar = 1; bar <= maxBars; bar++) {
@@ -230,7 +259,6 @@
 				minors.push({ x: barX });
 			}
 
-			// Beat ticks within the bar
 			if (pxPerBeat >= 6) {
 				for (let beat = 2; beat <= numerator; beat++) {
 					const beatX = (barT + (beat - 1) * beatSec) * scale;
@@ -257,7 +285,6 @@
 
 	let scrubOriginLeft = 0;
 
-	// Snaps positionSec to the nearest beat if within 10px; Alt key bypasses snap.
 	function snapPosition(positionSec: number, altKey: boolean): number {
 		if (altKey) return positionSec;
 		const beatSec = 60 / $tempo.bpm;
@@ -286,8 +313,6 @@
 	}
 
 	function handleTracksMouseDown(event: MouseEvent) {
-		// onClipDragStart fires synchronously before this event bubbles here,
-		// so if dragging is set the click was on a clip — don't seek.
 		if (dragging) return;
 		const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
 		scrubOriginLeft = rect.left;
@@ -299,6 +324,12 @@
 	}
 
 	function deleteSelected() {
+		tracks.forEach((track, trackIndex) => {
+			const toDelete = track.clips.filter((c) => $selection.has(c.id));
+			for (const clip of toDelete) {
+				invoke('remove_clip', { trackIndex, clipId: clip.id }).catch(console.error);
+			}
+		});
 		tracks = tracks.map((track) => ({
 			...track,
 			clips: track.clips.filter((c) => !$selection.has(c.id))
@@ -331,6 +362,11 @@
 	}
 
 	function onDragEnd() {
+		if (dragging) {
+			const { trackIndex, clipIndex } = dragging;
+			const clip = tracks[trackIndex].clips[clipIndex];
+			invoke('move_clip', { trackIndex, clipId: clip.id, start: clip.start, end: clip.end }).catch(console.error);
+		}
 		dragging = null;
 		window.removeEventListener('mousemove', onDragMove);
 		window.removeEventListener('mouseup', onDragEnd);
@@ -343,57 +379,36 @@
 	function handleDragOver(event: DragEvent) { event.preventDefault(); }
 	function handleDrop(event: DragEvent) { event.preventDefault(); }
 
-	interface AudioClipData {
-		raw_samples: number[];
-		sample_rate: number;
-		peaks_64: [number, number][];
-		peaks_512: [number, number][];
-		peaks_4096: [number, number][];
+	function handleVolumeRelease(trackIndex: number) {
+		const track = tracks[trackIndex];
+		if (!track) return;
+		invoke('update_track', { trackIndex, name: track.name, volume: track.volume }).catch(console.error);
 	}
 
-	function createNewAudioClip(filePath: string): Promise<AudioClipData> {
-		return invoke('create_new_audio_clip', { filePath });
-	}
+	function makeEditable(e: MouseEvent, trackIndex: number) {
+		const el = e.currentTarget;
+		if (!(el instanceof HTMLElement)) return;
 
-	async function onClick() {
-		const filePath = await open({
-			filters: [{ name: 'Audio', extensions: ['wav'] }]
-		});
-		if (!filePath || Array.isArray(filePath)) return;
+		el.contentEditable = 'true';
+		el.focus();
 
-		createNewAudioClip(filePath as string)
-			.then(async (data) => {
-				const clip: Clip = {
-					id: crypto.randomUUID(),
-					start: 0,
-					end: data.raw_samples.length / data.sample_rate,
-					raw_samples: data.raw_samples,
-					sample_rate: data.sample_rate,
-					peaks_64: data.peaks_64,
-					peaks_512: data.peaks_512,
-					peaks_4096: data.peaks_4096
-				};
-				await prepareClipBuffer(clip);
-				tracks[0].clips = [...tracks[0].clips, clip];
-			})
-			.catch((error) => console.error('Erreur:', error));
-	}
-
-	function makeEditable(this: HTMLElement) {
-		this.contentEditable = 'true';
-		this.focus();
-
-		this.addEventListener('keydown', function (event) {
+		el.addEventListener('keydown', function (event) {
 			if (event.key === 'Enter') {
 				event.preventDefault();
-				this.blur();
+				el.blur();
 			}
 		});
 
-		this.addEventListener('blur', function () {
-			this.contentEditable = 'false';
-		});
+		el.addEventListener('blur', function () {
+			el.contentEditable = 'false';
+			const newName = el.textContent?.trim() || tracks[trackIndex].name;
+			tracks[trackIndex] = { ...tracks[trackIndex], name: newName };
+			tracks = tracks;
+			invoke('update_track', { trackIndex, name: newName, volume: tracks[trackIndex].volume }).catch(console.error);
+		}, { once: true });
 	}
+
+
 </script>
 
 <svelte:window on:keydown={handleKeyDown} />
@@ -404,10 +419,11 @@
 	<div class="left-panel">
 		<div class="ruler-spacer"></div>
 		<div class="instruments">
-			{#each tracks as { name, volume }}
+			{#each tracks as track, trackIndex}
 				<div class="instrument">
-					<strong on:dblclick={makeEditable}>{name}</strong>
-					<Knob min={0} max={100} bind:value={volume} />
+					<!-- svelte-ignore a11y-no-static-element-interactions -->
+					<strong on:dblclick={(e) => makeEditable(e, trackIndex)}>{track.name}</strong>
+					<Knob min={0} max={100} bind:value={tracks[trackIndex].volume} on:release={() => handleVolumeRelease(trackIndex)} />
 				</div>
 			{/each}
 		</div>

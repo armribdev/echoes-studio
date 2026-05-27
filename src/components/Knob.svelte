@@ -1,8 +1,12 @@
 <script lang="ts">
+	import { createEventDispatcher } from 'svelte';
+
 	export let value: number, min: number, max: number;
 	export let rotRange: number = 2 * Math.PI * 0.83;
 	export let pixelRange: number = 200;
 	export let startRotation: number = -Math.PI * 0.83;
+
+	const dispatch = createEventDispatcher<{ release: number }>();
 
 	let startY: number, startValue: number;
 	$: valueRange = max - min;
@@ -27,12 +31,13 @@
 		window.addEventListener('pointerup', pointerUp);
 	}
 
-	async function pointerUp() {
+	function pointerUp() {
 		document
 			.querySelectorAll('*')
 			.forEach((el: Element) => ((el as HTMLElement).style.cursor = ''));
 		window.removeEventListener('pointermove', pointerMove);
 		window.removeEventListener('pointerup', pointerUp);
+		dispatch('release', value);
 	}
 </script>
 
