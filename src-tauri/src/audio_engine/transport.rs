@@ -33,6 +33,10 @@ pub struct SharedTransport {
     /// project.  Incremented by the audio callback each block.
     pub position_samples: AtomicU64,
 
+    /// End of the last clip in samples.  `0` means no clips → no auto-stop.
+    /// Updated every time the graph is recompiled.
+    pub duration_samples: AtomicU64,
+
     /// BPM stored as the bit-pattern of an `f32`.
     bpm_bits: AtomicU32,
 
@@ -45,6 +49,7 @@ impl SharedTransport {
         Arc::new(SharedTransport {
             is_playing: AtomicBool::new(false),
             position_samples: AtomicU64::new(0),
+            duration_samples: AtomicU64::new(0),
             bpm_bits: AtomicU32::new(bpm.to_bits()),
             sample_rate_bits: AtomicU32::new(sample_rate.to_bits()),
         })
@@ -70,6 +75,11 @@ impl SharedTransport {
     #[inline]
     pub fn set_bpm(&self, bpm: f32) {
         self.bpm_bits.store(bpm.to_bits(), Ordering::Relaxed);
+    }
+
+    #[inline]
+    pub fn set_duration(&self, samples: u64) {
+        self.duration_samples.store(samples, Ordering::Relaxed);
     }
 
     // ── Transport commands ────────────────────────────────────────────────────

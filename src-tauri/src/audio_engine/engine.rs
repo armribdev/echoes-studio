@@ -186,7 +186,8 @@ impl AudioEngine {
             max_block_size: MAX_BLOCK_FRAMES,
             num_channels: 2,
         };
-        let (scheduler, cells) = AudioGraphCompiler::compile_scheduler(project, config);
+        let (scheduler, cells, duration_samples) = AudioGraphCompiler::compile_scheduler(project, config);
+        self.transport.set_duration(duration_samples);
         if let Ok(mut map) = self.meter_cells.lock() {
             *map = cells;
         }
@@ -255,8 +256,9 @@ impl AudioEngine {
             max_block_size: MAX_BLOCK_FRAMES,
             num_channels: 2,
         };
-        let (initial_scheduler, initial_cells) =
+        let (initial_scheduler, initial_cells, initial_duration) =
             AudioGraphCompiler::compile_scheduler(project, compile_cfg);
+        self.transport.set_duration(initial_duration);
         if let Ok(mut map) = self.meter_cells.lock() {
             *map = initial_cells;
         }
@@ -638,6 +640,30 @@ fn position_reporter(
         if transport.is_playing.load(Ordering::Relaxed) {
             let sr  = transport.sample_rate();
             let pos = transport.position_samples.load(Ordering::Relaxed);
+            let dur = transport.duration_samples.load(Ordering::Relaxed);
+
+            // Auto-stop when playhead reaches the end of the last clip.
+            if dur > 0 && pos >= dur {
+                transport.stop();
+                let _ = app.emit("engine-event", json!({
+                    "type": "PLAY_STOPPED",
+                    "payload": {}
+                }));
+                let _ = app.emit("engine-event", json!({
+                    "id": "pos",
+                    "projectId": "",
+                    "type": "POSITION_UPDATED",
+                    "timestamp": 0,
+                    "payload": {
+                        "position": 0.0_f64,
+                        "output":   out,
+                        "input":    inp,
+                        "tracks":   track_levels,
+                    }
+                }));
+                continue;
+            }
+
             let pos_secs = pos as f64 / sr as f64;
 
             let _ = app.emit(
