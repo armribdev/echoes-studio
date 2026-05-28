@@ -22,10 +22,12 @@ use crate::project::{
     TrackEffect, EffectParams, EqParams, CompressorParams, ReverbParams, DelayParams,
 };
 use super::commands::{
-    cmd, AddClipPayload, AddEffectPayload, BatchCommand, CommandEnvelope, CreateTrackPayload,
-    DeleteTrackPayload, MoveClipPayload, MuteTrackPayload, RemoveClipPayload,
-    RemoveEffectPayload, SeekPayload, SoloTrackPayload, UpdateEffectPayload,
-    UpdateProjectNamePayload, UpdateTempoPayload, UpdateTrackPayload,
+    cmd, AddClipPayload, AddEffectPayload, AddModulationRoutePayload, AddModulatorPayload,
+    BatchCommand, CommandEnvelope, CreateTrackPayload, DeleteTrackPayload, MoveClipPayload,
+    MuteTrackPayload, RemoveClipPayload, RemoveEffectPayload, RemoveModulationRoutePayload,
+    RemoveModulatorPayload, SeekPayload, SetModulationDepthPayload, SoloTrackPayload,
+    UpdateEffectPayload, UpdateModulatorPayload, UpdateProjectNamePayload, UpdateTempoPayload,
+    UpdateTrackPayload,
 };
 use super::events::{ev, EngineEvent, ProjectEvent};
 
@@ -243,6 +245,8 @@ fn process_command(
                     solo: false,
                     clips: vec![],
                     effects: vec![],
+                    modulators: vec![],
+                    mod_routes: vec![],
                 });
             }
 
@@ -661,6 +665,168 @@ fn process_command(
             Ok(CommandResult::ok(command_id, vec![serde_json::to_value(&engine_ev).unwrap_or_default()]))
         }
 
+        // ── Modulation commands ───────────────────────────────────────────────
+
+        cmd::ADD_MODULATOR => {
+            let p: AddModulatorPayload = serde_json::from_value(command.payload)
+                .map_err(|e| format!("ADD_MODULATOR payload invalid: {e}"))?;
+
+            let modulator = {
+                use crate::project::{LfoParams, ModulatorParams, ProjectModulator};
+                let params = match p.kind.as_str() {
+                    "lfo" => ModulatorParams::Lfo(LfoParams {
+                        rate_hz: p.rate_hz.unwrap_or(1.0),
+                        ..Default::default()
+                    }),
+                    other => return Err(format!("Unknown modulator kind: {other}")),
+                };
+                ProjectModulator { id: generate_id(), params }
+            };
+
+            let mod_value = serde_json::to_value(&modulator).unwrap_or_default();
+            {
+                let mut project = state.project.lock().map_err(|e| e.to_string())?;
+                let track = project.tracks.iter_mut()
+                    .find(|t| t.id == p.track_id)
+                    .ok_or_else(|| format!("Track {} not found", p.track_id))?;
+                track.modulators.push(modulator);
+            }
+
+            let event_payload = json!({ "track_id": p.track_id, "modulator": mod_value });
+            let project_event = ProjectEvent::new(ev::MODULATOR_ADDED, event_payload.clone());
+            append_and_maybe_snapshot(state, project_event)?;
+            recompile_if_needed(state);
+
+            let engine_ev = EngineEvent::new(ev::MODULATOR_ADDED, &project_id, event_payload);
+            let _ = app.emit("engine-event", &engine_ev);
+            Ok(CommandResult::ok(command_id, vec![serde_json::to_value(&engine_ev).unwrap_or_default()]))
+        }
+
+        cmd::REMOVE_MODULATOR => {
+            let p: RemoveModulatorPayload = serde_json::from_value(command.payload)
+                .map_err(|e| format!("REMOVE_MODULATOR payload invalid: {e}"))?;
+            {
+                let mut project = state.project.lock().map_err(|e| e.to_string())?;
+                let track = project.tracks.iter_mut()
+                    .find(|t| t.id == p.track_id)
+                    .ok_or_else(|| format!("Track {} not found", p.track_id))?;
+                track.modulators.retain(|m| m.id != p.modulator_id);
+                track.mod_routes.retain(|r| r.modulator_id != p.modulator_id);
+            }
+            let event_payload = json!({ "track_id": p.track_id, "modulator_id": p.modulator_id });
+            let project_event = ProjectEvent::new(ev::MODULATOR_REMOVED, event_payload.clone());
+            append_and_maybe_snapshot(state, project_event)?;
+            recompile_if_needed(state);
+            let engine_ev = EngineEvent::new(ev::MODULATOR_REMOVED, &project_id, event_payload);
+            let _ = app.emit("engine-event", &engine_ev);
+            Ok(CommandResult::ok(command_id, vec![serde_json::to_value(&engine_ev).unwrap_or_default()]))
+        }
+
+        cmd::UPDATE_MODULATOR => {
+            let p: UpdateModulatorPayload = serde_json::from_value(command.payload)
+                .map_err(|e| format!("UPDATE_MODULATOR payload invalid: {e}"))?;
+            {
+                let mut project = state.project.lock().map_err(|e| e.to_string())?;
+                let track = project.tracks.iter_mut()
+                    .find(|t| t.id == p.track_id)
+                    .ok_or_else(|| format!("Track {} not found", p.track_id))?;
+                if let Some(m) = track.modulators.iter_mut().find(|x| x.id == p.modulator_id) {
+                    if let Some(rate) = p.rate_hz {
+                        if let crate::project::ModulatorParams::Lfo(ref mut lp) = m.params {
+                            lp.rate_hz = rate;
+                        }
+                    }
+                }
+            }
+            let event_payload = json!({ "track_id": p.track_id, "modulator_id": p.modulator_id, "rate_hz": p.rate_hz });
+            let project_event = ProjectEvent::new(ev::MODULATOR_UPDATED, event_payload.clone());
+            append_and_maybe_snapshot(state, project_event)?;
+            recompile_if_needed(state);
+            let engine_ev = EngineEvent::new(ev::MODULATOR_UPDATED, &project_id, event_payload);
+            let _ = app.emit("engine-event", &engine_ev);
+            Ok(CommandResult::ok(command_id, vec![serde_json::to_value(&engine_ev).unwrap_or_default()]))
+        }
+
+        cmd::ADD_MODULATION_ROUTE => {
+            let p: AddModulationRoutePayload = serde_json::from_value(command.payload)
+                .map_err(|e| format!("ADD_MODULATION_ROUTE payload invalid: {e}"))?;
+
+            let route = {
+                use crate::project::{ModulationTargetRef, ProjectModulationRoute};
+                let target = match p.target_kind.as_str() {
+                    "track_gain" => ModulationTargetRef::TrackGain { track_id: p.track_id.clone() },
+                    "effect_param" => ModulationTargetRef::EffectParam {
+                        track_id: p.track_id.clone(),
+                        effect_id: p.effect_id.ok_or("effect_id required for effect_param target")?,
+                        param: p.param,
+                    },
+                    other => return Err(format!("Unknown target kind: {other}")),
+                };
+                ProjectModulationRoute {
+                    id: generate_id(),
+                    modulator_id: p.modulator_id,
+                    target,
+                    depth: p.depth,
+                }
+            };
+
+            let route_value = serde_json::to_value(&route).unwrap_or_default();
+            {
+                let mut project = state.project.lock().map_err(|e| e.to_string())?;
+                let track = project.tracks.iter_mut()
+                    .find(|t| t.id == p.track_id)
+                    .ok_or_else(|| format!("Track {} not found", p.track_id))?;
+                track.mod_routes.push(route);
+            }
+            let event_payload = json!({ "track_id": p.track_id, "route": route_value });
+            let project_event = ProjectEvent::new(ev::MODULATION_ROUTE_ADDED, event_payload.clone());
+            append_and_maybe_snapshot(state, project_event)?;
+            recompile_if_needed(state);
+            let engine_ev = EngineEvent::new(ev::MODULATION_ROUTE_ADDED, &project_id, event_payload);
+            let _ = app.emit("engine-event", &engine_ev);
+            Ok(CommandResult::ok(command_id, vec![serde_json::to_value(&engine_ev).unwrap_or_default()]))
+        }
+
+        cmd::REMOVE_MODULATION_ROUTE => {
+            let p: RemoveModulationRoutePayload = serde_json::from_value(command.payload)
+                .map_err(|e| format!("REMOVE_MODULATION_ROUTE payload invalid: {e}"))?;
+            {
+                let mut project = state.project.lock().map_err(|e| e.to_string())?;
+                let track = project.tracks.iter_mut()
+                    .find(|t| t.id == p.track_id)
+                    .ok_or_else(|| format!("Track {} not found", p.track_id))?;
+                track.mod_routes.retain(|r| r.id != p.route_id);
+            }
+            let event_payload = json!({ "track_id": p.track_id, "route_id": p.route_id });
+            let project_event = ProjectEvent::new(ev::MODULATION_ROUTE_REMOVED, event_payload.clone());
+            append_and_maybe_snapshot(state, project_event)?;
+            recompile_if_needed(state);
+            let engine_ev = EngineEvent::new(ev::MODULATION_ROUTE_REMOVED, &project_id, event_payload);
+            let _ = app.emit("engine-event", &engine_ev);
+            Ok(CommandResult::ok(command_id, vec![serde_json::to_value(&engine_ev).unwrap_or_default()]))
+        }
+
+        cmd::SET_MODULATION_DEPTH => {
+            let p: SetModulationDepthPayload = serde_json::from_value(command.payload)
+                .map_err(|e| format!("SET_MODULATION_DEPTH payload invalid: {e}"))?;
+            {
+                let mut project = state.project.lock().map_err(|e| e.to_string())?;
+                let track = project.tracks.iter_mut()
+                    .find(|t| t.id == p.track_id)
+                    .ok_or_else(|| format!("Track {} not found", p.track_id))?;
+                if let Some(route) = track.mod_routes.iter_mut().find(|r| r.id == p.route_id) {
+                    route.depth = p.depth;
+                }
+            }
+            let event_payload = json!({ "track_id": p.track_id, "route_id": p.route_id, "depth": p.depth });
+            let project_event = ProjectEvent::new(ev::MODULATION_DEPTH_CHANGED, event_payload.clone());
+            append_and_maybe_snapshot(state, project_event)?;
+            recompile_if_needed(state);
+            let engine_ev = EngineEvent::new(ev::MODULATION_DEPTH_CHANGED, &project_id, event_payload);
+            let _ = app.emit("engine-event", &engine_ev);
+            Ok(CommandResult::ok(command_id, vec![serde_json::to_value(&engine_ev).unwrap_or_default()]))
+        }
+
         other => Err(format!("Unknown command type: {other}")),
     }
 }
@@ -717,6 +883,8 @@ fn snapshot_project(project: &AppProject) -> AppProject {
                 muted: t.muted,
                 solo: t.solo,
                 effects: t.effects.clone(),
+                modulators: t.modulators.clone(),
+                mod_routes: t.mod_routes.clone(),
                 clips: t
                     .clips
                     .iter()
@@ -838,6 +1006,8 @@ fn apply_events(
                         solo: false,
                         clips: vec![],
                         effects: vec![],
+                        modulators: vec![],
+                        mod_routes: vec![],
                     });
                 }
             }
@@ -1006,6 +1176,77 @@ fn apply_events(
                                 effect.enabled = updated.enabled;
                                 effect.params = updated.params;
                             }
+                        }
+                    }
+                }
+            }
+
+            // ── Modulation ─────────────────────────────────────────────────────
+            ev::MODULATOR_ADDED => {
+                let track_id = event.payload["track_id"].as_str().unwrap_or("");
+                if let Some(raw) = event.payload.get("modulator") {
+                    if let Ok(m) = serde_json::from_value::<crate::project::ProjectModulator>(raw.clone()) {
+                        if let Some(track) = project.tracks.iter_mut().find(|t| t.id == track_id) {
+                            if !track.modulators.iter().any(|x| x.id == m.id) {
+                                track.modulators.push(m);
+                            }
+                        }
+                    }
+                }
+            }
+
+            ev::MODULATOR_REMOVED => {
+                let track_id = event.payload["track_id"].as_str().unwrap_or("");
+                let mod_id = event.payload["modulator_id"].as_str().unwrap_or("");
+                if let Some(track) = project.tracks.iter_mut().find(|t| t.id == track_id) {
+                    track.modulators.retain(|m| m.id != mod_id);
+                    // Remove orphaned routes
+                    track.mod_routes.retain(|r| r.modulator_id != mod_id);
+                }
+            }
+
+            ev::MODULATOR_UPDATED => {
+                let track_id = event.payload["track_id"].as_str().unwrap_or("");
+                let mod_id = event.payload["modulator_id"].as_str().unwrap_or("");
+                if let Some(track) = project.tracks.iter_mut().find(|t| t.id == track_id) {
+                    if let Some(m) = track.modulators.iter_mut().find(|x| x.id == mod_id) {
+                        if let Some(rate) = event.payload["rate_hz"].as_f64() {
+                            if let crate::project::ModulatorParams::Lfo(ref mut p) = m.params {
+                                p.rate_hz = rate as f32;
+                            }
+                        }
+                    }
+                }
+            }
+
+            ev::MODULATION_ROUTE_ADDED => {
+                let track_id = event.payload["track_id"].as_str().unwrap_or("");
+                if let Some(raw) = event.payload.get("route") {
+                    if let Ok(route) = serde_json::from_value::<crate::project::ProjectModulationRoute>(raw.clone()) {
+                        if let Some(track) = project.tracks.iter_mut().find(|t| t.id == track_id) {
+                            if !track.mod_routes.iter().any(|r| r.id == route.id) {
+                                track.mod_routes.push(route);
+                            }
+                        }
+                    }
+                }
+            }
+
+            ev::MODULATION_ROUTE_REMOVED => {
+                let track_id = event.payload["track_id"].as_str().unwrap_or("");
+                let route_id = event.payload["route_id"].as_str().unwrap_or("");
+                if let Some(track) = project.tracks.iter_mut().find(|t| t.id == track_id) {
+                    track.mod_routes.retain(|r| r.id != route_id);
+                }
+            }
+
+            ev::MODULATION_DEPTH_CHANGED => {
+                let track_id = event.payload["track_id"].as_str().unwrap_or("");
+                let route_id = event.payload["route_id"].as_str().unwrap_or("");
+                if let Some(depth) = event.payload["depth"].as_f64() {
+                    if let Some(track) = project.tracks.iter_mut().find(|t| t.id == track_id) {
+                        if let Some(route) = track.mod_routes.iter_mut().find(|r| r.id == route_id) {
+                            route.depth = depth as f32;
                         }
                     }
                 }

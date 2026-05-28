@@ -11,7 +11,7 @@
  */
 
 import { ev, type EngineEvent } from '../protocol/events';
-import type { Clip, Project, Track, TrackEffect } from '../../types/global';
+import type { Clip, Project, ProjectModulationRoute, ProjectModulator, Track, TrackEffect } from '../../types/global';
 
 // ── Project state ─────────────────────────────────────────────────────────────
 
@@ -46,6 +46,8 @@ export interface TrackState {
   solo: boolean;
   clips: ClipState[];
   effects: TrackEffect[];
+  modulators: ProjectModulator[];
+  mod_routes: ProjectModulationRoute[];
 }
 
 export function emptyProjectState(): ProjectState {
@@ -73,7 +75,7 @@ export function applyEvent(state: ProjectState, event: EngineEvent): ProjectStat
       if (state.tracks.some((t) => t.id === p.id)) return state; // idempotent
       return {
         ...state,
-        tracks: [...state.tracks, { id: p.id, name: p.name, volume: 80, pan: 0, muted: false, solo: false, clips: [], effects: [] }],
+        tracks: [...state.tracks, { id: p.id, name: p.name, volume: 80, pan: 0, muted: false, solo: false, clips: [], effects: [], modulators: [], mod_routes: [] }],
       };
     }
 
@@ -234,6 +236,106 @@ export function applyEvent(state: ProjectState, event: EngineEvent): ProjectStat
       };
     }
 
+    // ── Modulation ─────────────────────────────────────────────────────────────
+
+    case ev.MODULATOR_ADDED: {
+      const p = event.payload as { track_id: string; modulator: ProjectModulator };
+      return {
+        ...state,
+        tracks: state.tracks.map((t) =>
+          t.id !== p.track_id
+            ? t
+            : {
+                ...t,
+                modulators: t.modulators.some((m) => m.id === p.modulator.id)
+                  ? t.modulators
+                  : [...t.modulators, p.modulator],
+              },
+        ),
+      };
+    }
+
+    case ev.MODULATOR_REMOVED: {
+      const p = event.payload as { track_id: string; modulator_id: string };
+      return {
+        ...state,
+        tracks: state.tracks.map((t) =>
+          t.id !== p.track_id
+            ? t
+            : {
+                ...t,
+                modulators: t.modulators.filter((m) => m.id !== p.modulator_id),
+                mod_routes: t.mod_routes.filter((r) => r.modulator_id !== p.modulator_id),
+              },
+        ),
+      };
+    }
+
+    case ev.MODULATOR_UPDATED: {
+      const p = event.payload as { track_id: string; modulator_id: string; rate_hz?: number };
+      return {
+        ...state,
+        tracks: state.tracks.map((t) =>
+          t.id !== p.track_id
+            ? t
+            : {
+                ...t,
+                modulators: t.modulators.map((m) =>
+                  m.id !== p.modulator_id
+                    ? m
+                    : { ...m, ...(p.rate_hz != null ? { rate_hz: p.rate_hz } : {}) },
+                ),
+              },
+        ),
+      };
+    }
+
+    case ev.MODULATION_ROUTE_ADDED: {
+      const p = event.payload as { track_id: string; route: ProjectModulationRoute };
+      return {
+        ...state,
+        tracks: state.tracks.map((t) =>
+          t.id !== p.track_id
+            ? t
+            : {
+                ...t,
+                mod_routes: t.mod_routes.some((r) => r.id === p.route.id)
+                  ? t.mod_routes
+                  : [...t.mod_routes, p.route],
+              },
+        ),
+      };
+    }
+
+    case ev.MODULATION_ROUTE_REMOVED: {
+      const p = event.payload as { track_id: string; route_id: string };
+      return {
+        ...state,
+        tracks: state.tracks.map((t) =>
+          t.id !== p.track_id
+            ? t
+            : { ...t, mod_routes: t.mod_routes.filter((r) => r.id !== p.route_id) },
+        ),
+      };
+    }
+
+    case ev.MODULATION_DEPTH_CHANGED: {
+      const p = event.payload as { track_id: string; route_id: string; depth: number };
+      return {
+        ...state,
+        tracks: state.tracks.map((t) =>
+          t.id !== p.track_id
+            ? t
+            : {
+                ...t,
+                mod_routes: t.mod_routes.map((r) =>
+                  r.id !== p.route_id ? r : { ...r, depth: p.depth },
+                ),
+              },
+        ),
+      };
+    }
+
     default:
       return state; // forward-compat: unknown events ignored
   }
@@ -270,6 +372,8 @@ export function projectFromSnapshot(dto: Project): ProjectState {
       solo: t.solo ?? false,
       clips: t.clips.map((c) => ({ ...c, trackId: t.id })),
       effects: t.effects ?? [],
+      modulators: t.modulators ?? [],
+      mod_routes: t.mod_routes ?? [],
     })),
   };
 }

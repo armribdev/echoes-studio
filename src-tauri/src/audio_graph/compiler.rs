@@ -172,8 +172,8 @@ impl GraphCompiler {
             plan_builder.push_step(step);
         }
 
-        // Modulation (placeholder — no modulation edges yet)
-        plan_builder.set_modulation(ModulationMap::new());
+        // Carry the modulation routing table built by AudioGraph::from_project.
+        plan_builder.set_modulation(graph.modulation.clone());
 
         let plan = Arc::new(plan_builder.build());
 

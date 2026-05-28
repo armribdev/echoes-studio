@@ -81,6 +81,69 @@ pub struct TrackEffect {
     pub enabled: bool,
     pub params: EffectParams,
 }
+
+// ── Modulation types ──────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum LfoWaveform {
+    #[default]
+    Sine,
+    Triangle,
+    Saw,
+    Square,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LfoParams {
+    #[serde(default = "default_lfo_rate")]
+    pub rate_hz: f32,
+    #[serde(default)]
+    pub waveform: LfoWaveform,
+}
+
+fn default_lfo_rate() -> f32 { 1.0 }
+
+impl Default for LfoParams {
+    fn default() -> Self {
+        LfoParams { rate_hz: 1.0, waveform: LfoWaveform::Sine }
+    }
+}
+
+/// Per-track modulation source (LFO, Envelope, …).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ModulatorParams {
+    Lfo(LfoParams),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProjectModulator {
+    pub id: String,
+    #[serde(flatten)]
+    pub params: ModulatorParams,
+}
+
+/// Identifies the parameter that a modulation route targets.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ModulationTargetRef {
+    /// The track's main volume fader.
+    TrackGain { track_id: String },
+    /// A named parameter on a specific effect in the track's effect chain.
+    EffectParam { track_id: String, effect_id: String, param: String },
+}
+
+/// One modulation connection stored in the project.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProjectModulationRoute {
+    pub id: String,
+    /// ID of the source `ProjectModulator` on this track.
+    pub modulator_id: String,
+    pub target: ModulationTargetRef,
+    /// Modulation depth in the parameter's native range (signed).
+    pub depth: f32,
+}
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -122,6 +185,8 @@ pub struct AppTrack {
     pub solo: bool,
     pub clips: Vec<AppClip>,
     pub effects: Vec<TrackEffect>,
+    pub modulators: Vec<ProjectModulator>,
+    pub mod_routes: Vec<ProjectModulationRoute>,
 }
 
 pub struct AppProject {
@@ -174,6 +239,8 @@ impl AppProject {
                     file_path: c.file_path.clone(),
                 }).collect(),
                 effects: t.effects.clone(),
+                modulators: t.modulators.clone(),
+                mod_routes: t.mod_routes.clone(),
             }).collect(),
         }
     }
@@ -209,6 +276,8 @@ impl AppProject {
                 solo: tf.solo,
                 clips,
                 effects: tf.effects,
+                modulators: tf.modulators,
+                mod_routes: tf.mod_routes,
             });
         }
         Ok(AppProject {
@@ -232,6 +301,8 @@ impl AppTrack {
             solo: self.solo,
             clips: self.clips.iter().map(|c| c.to_dto()).collect(),
             effects: self.effects.clone(),
+            modulators: self.modulators.clone(),
+            mod_routes: self.mod_routes.clone(),
         }
     }
 }
@@ -361,6 +432,10 @@ pub struct TrackFile {
     pub clips: Vec<ClipFile>,
     #[serde(default)]
     pub effects: Vec<TrackEffect>,
+    #[serde(default)]
+    pub modulators: Vec<ProjectModulator>,
+    #[serde(default)]
+    pub mod_routes: Vec<ProjectModulationRoute>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -392,6 +467,8 @@ pub struct TrackDto {
     pub solo: bool,
     pub clips: Vec<ClipDto>,
     pub effects: Vec<TrackEffect>,
+    pub modulators: Vec<ProjectModulator>,
+    pub mod_routes: Vec<ProjectModulationRoute>,
 }
 
 #[derive(Serialize, Clone)]

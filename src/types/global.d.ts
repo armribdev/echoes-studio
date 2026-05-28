@@ -47,6 +47,24 @@ export interface TrackEffect {
 	params: EffectParamsUnion;
 }
 
+export interface ProjectModulator {
+	id: string;
+	kind: string;
+	rate_hz?: number;
+	waveform?: string;
+}
+
+export type ModulationTargetRef =
+	| { kind: 'track_gain'; track_id: string }
+	| { kind: 'effect_param'; track_id: string; effect_id: string; param: string };
+
+export interface ProjectModulationRoute {
+	id: string;
+	modulator_id: string;
+	target: ModulationTargetRef;
+	depth: number;
+}
+
 export interface Track {
 	/** Stable ID used by the event-sourcing system. Added in architecture v2. */
 	id: string;
@@ -57,6 +75,8 @@ export interface Track {
 	solo: boolean;
 	clips: Clip[];
 	effects: TrackEffect[];
+	modulators: ProjectModulator[];
+	mod_routes: ProjectModulationRoute[];
 }
 
 export interface Clip {

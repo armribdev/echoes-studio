@@ -31,9 +31,15 @@ import {
   type MuteTrackPayload,
   type RemoveClipPayload,
   type RemoveEffectPayload,
+  type RemoveModulationRoutePayload,
+  type RemoveModulatorPayload,
   type SeekPayload,
+  type SetModulationDepthPayload,
+  type AddModulationRoutePayload,
+  type AddModulatorPayload,
   type SoloTrackPayload,
   type UpdateEffectPayload,
+  type UpdateModulatorPayload,
   type UpdateProjectNamePayload,
   type UpdateTempoPayload,
   type UpdateTrackPayload,
@@ -221,6 +227,76 @@ export function updateEffect(
     track_id: trackId,
     effect_id: effectId,
     ...changes,
+  });
+}
+
+// ── Modulation commands ───────────────────────────────────────────────────────
+
+export function addModulator(
+  trackId: string,
+  kind: 'lfo',
+  rateHz = 1.0,
+): Promise<CommandResult> {
+  return dispatch<AddModulatorPayload>(cmd.ADD_MODULATOR, {
+    track_id: trackId,
+    kind,
+    rate_hz: rateHz,
+  });
+}
+
+export function removeModulator(trackId: string, modulatorId: string): Promise<CommandResult> {
+  return dispatch<RemoveModulatorPayload>(cmd.REMOVE_MODULATOR, {
+    track_id: trackId,
+    modulator_id: modulatorId,
+  });
+}
+
+export function updateModulator(
+  trackId: string,
+  modulatorId: string,
+  changes: { rate_hz?: number },
+): Promise<CommandResult> {
+  return dispatch<UpdateModulatorPayload>(cmd.UPDATE_MODULATOR, {
+    track_id: trackId,
+    modulator_id: modulatorId,
+    ...changes,
+  });
+}
+
+export function addModulationRoute(
+  trackId: string,
+  modulatorId: string,
+  targetKind: 'track_gain' | 'effect_param',
+  param: string,
+  depth: number,
+  effectId?: string,
+): Promise<CommandResult> {
+  return dispatch<AddModulationRoutePayload>(cmd.ADD_MODULATION_ROUTE, {
+    track_id: trackId,
+    modulator_id: modulatorId,
+    target_kind: targetKind,
+    param,
+    depth,
+    effect_id: effectId,
+  });
+}
+
+export function removeModulationRoute(trackId: string, routeId: string): Promise<CommandResult> {
+  return dispatch<RemoveModulationRoutePayload>(cmd.REMOVE_MODULATION_ROUTE, {
+    track_id: trackId,
+    route_id: routeId,
+  });
+}
+
+export function setModulationDepth(
+  trackId: string,
+  routeId: string,
+  depth: number,
+): Promise<CommandResult> {
+  return dispatch<SetModulationDepthPayload>(cmd.SET_MODULATION_DEPTH, {
+    track_id: trackId,
+    route_id: routeId,
+    depth,
   });
 }
 

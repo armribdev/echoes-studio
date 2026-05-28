@@ -42,6 +42,14 @@ export const cmd = {
   REMOVE_NODE: 'REMOVE_NODE',
   CONNECT_NODES: 'CONNECT_NODES',
 
+  // Modulation
+  ADD_MODULATOR: 'ADD_MODULATOR',
+  REMOVE_MODULATOR: 'REMOVE_MODULATOR',
+  UPDATE_MODULATOR: 'UPDATE_MODULATOR',
+  ADD_MODULATION_ROUTE: 'ADD_MODULATION_ROUTE',
+  REMOVE_MODULATION_ROUTE: 'REMOVE_MODULATION_ROUTE',
+  SET_MODULATION_DEPTH: 'SET_MODULATION_DEPTH',
+
   // Batch
   BATCH: 'BATCH',
 } as const;
@@ -144,6 +152,45 @@ export interface UpdateEffectPayload {
   effect_id: string;
   enabled?: boolean;
   params?: Record<string, unknown>;
+}
+
+// ── Modulation payloads ───────────────────────────────────────────────────────
+
+export interface AddModulatorPayload {
+  track_id: string;
+  kind: 'lfo';
+  rate_hz?: number;
+}
+
+export interface RemoveModulatorPayload {
+  track_id: string;
+  modulator_id: string;
+}
+
+export interface UpdateModulatorPayload {
+  track_id: string;
+  modulator_id: string;
+  rate_hz?: number;
+}
+
+export interface AddModulationRoutePayload {
+  track_id: string;
+  modulator_id: string;
+  target_kind: 'track_gain' | 'effect_param';
+  effect_id?: string;
+  param: string;
+  depth: number;
+}
+
+export interface RemoveModulationRoutePayload {
+  track_id: string;
+  route_id: string;
+}
+
+export interface SetModulationDepthPayload {
+  track_id: string;
+  route_id: string;
+  depth: number;
 }
 
 // ── Factory ───────────────────────────────────────────────────────────────────

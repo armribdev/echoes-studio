@@ -18,8 +18,11 @@
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use crate::audio_graph::modulation::{
+    ModulationMap, ModulationRoute, ModulationSource, ModulationTarget, ModulatorKind, ParamId,
+};
 use crate::audio_graph::node::{NodeId, PortId};
-use crate::project::{AppProject, EffectParams};
+use crate::project::{AppProject, EffectParams, ModulationTargetRef, ModulatorParams};
 
 // ── Node ID allocation ─────────────────────────────────────────────────────────
 
@@ -132,6 +135,8 @@ pub struct AudioGraph {
     pub(crate) edges: Vec<Edge>,
     /// The single master output node.
     pub master_id: Option<NodeId>,
+    /// Modulation routing table — built by `from_project`, consumed by the compiler.
+    pub(crate) modulation: ModulationMap,
 }
 
 impl AudioGraph {
@@ -140,6 +145,7 @@ impl AudioGraph {
             nodes: HashMap::new(),
             edges: Vec::new(),
             master_id: None,
+            modulation: ModulationMap::new(),
         }
     }
 
@@ -208,30 +214,25 @@ impl AudioGraph {
 
     // ── Project builder ────────────────────────────────────────────────────────
 
-    /// Construct a default signal-flow graph from an `AppProject`.
+    /// Construct a signal-flow graph from an `AppProject`.
     ///
     /// Signal flow per track:
     ///
     /// ```text
-    /// TrackNode ──► TrackGainNode ──► MasterNode
+    /// TrackNode ──► [FX chain] ──► TrackGainNode ──► MeterNode ──► MasterNode
+    ///                                   ▲
+    ///                              LFO/Env nodes (modulation edges, not audio edges)
     /// ```
-    ///
-    /// This mirrors the current flat-mixer layout.  Routing between buses,
-    /// send/returns, and plugins will be added as the project model grows.
     pub fn from_project(project: &AppProject) -> Self {
         let mut graph = AudioGraph::new();
 
         // ── Master node ─────────────────────────────────────────────────────────
-        // num_inputs = one port per track so the master can sum all of them.
-        // Using a BusNode would be cleaner long-term; for now each track gets its
-        // own dedicated port (port 0 = track 0, port 1 = track 1, …).
         let num_track_inputs = project.tracks.len().max(1);
         let master_id = graph.add_node(
             NodeKind::Master { num_inputs: num_track_inputs },
             "Master",
         );
 
-        // Solo logic: if any track is soloed, mute all non-solo tracks.
         let any_solo = project.tracks.iter().any(|t| t.solo);
 
         // ── Per-track chain ─────────────────────────────────────────────────────
@@ -241,7 +242,6 @@ impl AudioGraph {
                 format!("{} [clips]", track.name),
             );
 
-            // Volume 0–100 → 0.0–1.0; honour mute and exclusive solo.
             let effectively_muted = track.muted || (any_solo && !track.solo);
             let gain_linear = if effectively_muted {
                 0.0
@@ -249,17 +249,9 @@ impl AudioGraph {
                 (track.volume / 100.0).clamp(0.0, 1.0)
             };
 
-            let gain_node = graph.add_node(
-                NodeKind::TrackGain { track_id: track.id.clone(), gain: gain_linear },
-                format!("{} [vol]", track.name),
-            );
+            // Record effect_id → NodeId for modulation route resolution below.
+            let mut effect_node_ids: HashMap<String, NodeId> = HashMap::new();
 
-            let meter_node = graph.add_node(
-                NodeKind::Meter { meter_id: track.id.clone() },
-                format!("{} [meter]", track.name),
-            );
-
-            // Insert enabled effects between track and gain nodes
             let mut last_node = track_node;
             for effect in &track.effects {
                 if !effect.enabled { continue; }
@@ -270,14 +262,69 @@ impl AudioGraph {
                     EffectParams::Delay(p)      => NodeKind::Delay { params: p.clone() },
                 };
                 let fx_node = graph.add_node(kind, format!("{} [fx:{}]", track.name, effect.id));
+                effect_node_ids.insert(effect.id.clone(), fx_node);
                 graph.connect(last_node, 0, fx_node, 0);
                 last_node = fx_node;
             }
 
-            // [effects chain] → gain → meter → master[port_idx]
+            let gain_node = graph.add_node(
+                NodeKind::TrackGain { track_id: track.id.clone(), gain: gain_linear },
+                format!("{} [vol]", track.name),
+            );
+            let meter_node = graph.add_node(
+                NodeKind::Meter { meter_id: track.id.clone() },
+                format!("{} [meter]", track.name),
+            );
+
             graph.connect(last_node, 0, gain_node, 0);
             graph.connect(gain_node, 0, meter_node, 0);
             graph.connect(meter_node, 0, master_id, port_idx as u32);
+
+            // ── Modulator nodes (audio-graph sources, no audio edges) ────────────
+            // modulator_id (project) → NodeId (graph)
+            let mut mod_node_ids: HashMap<String, NodeId> = HashMap::new();
+
+            for modulator in &track.modulators {
+                let (kind, rate_hz) = match &modulator.params {
+                    ModulatorParams::Lfo(p) => (ModulatorKind::Lfo, p.rate_hz),
+                };
+                let node_id = graph.add_node(
+                    NodeKind::Modulator { kind, rate_hz },
+                    format!("{} [mod:{}]", track.name, modulator.id),
+                );
+                mod_node_ids.insert(modulator.id.clone(), node_id);
+            }
+
+            // ── Modulation routes ────────────────────────────────────────────────
+            for route in &track.mod_routes {
+                let source_node_id = match mod_node_ids.get(&route.modulator_id) {
+                    Some(&id) => id,
+                    None => continue, // dangling modulator reference — skip
+                };
+
+                let target_node_id = match &route.target {
+                    ModulationTargetRef::TrackGain { .. } => gain_node,
+                    ModulationTargetRef::EffectParam { effect_id, .. } => {
+                        match effect_node_ids.get(effect_id) {
+                            Some(&id) => id,
+                            None => continue, // effect not enabled or not found
+                        }
+                    }
+                };
+
+                let param_name = match &route.target {
+                    ModulationTargetRef::TrackGain { .. } => "gain".to_string(),
+                    ModulationTargetRef::EffectParam { param, .. } => param.clone(),
+                };
+
+                graph.modulation.add_route(ModulationRoute {
+                    source: ModulationSource { node: source_node_id, port: 0 },
+                    target: ModulationTarget {
+                        param: ParamId::new(target_node_id, param_name),
+                        depth: route.depth,
+                    },
+                });
+            }
         }
 
         graph

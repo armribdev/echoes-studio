@@ -37,6 +37,14 @@ export const ev = {
   EFFECT_REMOVED: 'EFFECT_REMOVED',
   EFFECT_UPDATED: 'EFFECT_UPDATED',
 
+  // Modulation — persisted
+  MODULATOR_ADDED: 'MODULATOR_ADDED',
+  MODULATOR_REMOVED: 'MODULATOR_REMOVED',
+  MODULATOR_UPDATED: 'MODULATOR_UPDATED',
+  MODULATION_ROUTE_ADDED: 'MODULATION_ROUTE_ADDED',
+  MODULATION_ROUTE_REMOVED: 'MODULATION_ROUTE_REMOVED',
+  MODULATION_DEPTH_CHANGED: 'MODULATION_DEPTH_CHANGED',
+
   // Transport — runtime only
   PLAY_STARTED: 'PLAY_STARTED',
   PLAY_STOPPED: 'PLAY_STOPPED',
@@ -134,6 +142,66 @@ export interface PeakMeterPayload {
   trackId: string;
   peak: number;
   rms: number;
+}
+
+// ── Modulation payload shapes ─────────────────────────────────────────────────
+
+export interface LfoParams {
+  rate_hz: number;
+  waveform: 'sine' | 'triangle' | 'saw' | 'square';
+}
+
+export type ModulatorParams =
+  | { kind: 'lfo' } & LfoParams;
+
+export interface ProjectModulator {
+  id: string;
+  kind: string;
+  rate_hz?: number;
+  waveform?: string;
+}
+
+export type ModulationTargetRef =
+  | { kind: 'track_gain'; track_id: string }
+  | { kind: 'effect_param'; track_id: string; effect_id: string; param: string };
+
+export interface ProjectModulationRoute {
+  id: string;
+  modulator_id: string;
+  target: ModulationTargetRef;
+  depth: number;
+}
+
+export interface ModulatorAddedPayload {
+  track_id: string;
+  modulator: ProjectModulator;
+}
+
+export interface ModulatorRemovedPayload {
+  track_id: string;
+  modulator_id: string;
+}
+
+export interface ModulatorUpdatedPayload {
+  track_id: string;
+  modulator_id: string;
+  rate_hz?: number;
+}
+
+export interface ModulationRouteAddedPayload {
+  track_id: string;
+  route: ProjectModulationRoute;
+}
+
+export interface ModulationRouteRemovedPayload {
+  track_id: string;
+  route_id: string;
+}
+
+export interface ModulationDepthChangedPayload {
+  track_id: string;
+  route_id: string;
+  depth: number;
 }
 
 // ── Type guards ───────────────────────────────────────────────────────────────

@@ -66,6 +66,14 @@ pub mod cmd {
     pub const ADD_NODE: &str = "ADD_NODE";
     pub const REMOVE_NODE: &str = "REMOVE_NODE";
     pub const CONNECT_NODES: &str = "CONNECT_NODES";
+
+    // ── Modulation ────────────────────────────────────────────────────────────
+    pub const ADD_MODULATOR: &str = "ADD_MODULATOR";
+    pub const REMOVE_MODULATOR: &str = "REMOVE_MODULATOR";
+    pub const UPDATE_MODULATOR: &str = "UPDATE_MODULATOR";
+    pub const ADD_MODULATION_ROUTE: &str = "ADD_MODULATION_ROUTE";
+    pub const REMOVE_MODULATION_ROUTE: &str = "REMOVE_MODULATION_ROUTE";
+    pub const SET_MODULATION_DEPTH: &str = "SET_MODULATION_DEPTH";
 }
 
 // ── Typed payload structs ─────────────────────────────────────────────────────
@@ -160,4 +168,53 @@ pub struct UpdateEffectPayload {
     pub effect_id: String,
     pub enabled: Option<bool>,
     pub params: Option<serde_json::Value>,
+}
+
+// ── Modulation payloads ───────────────────────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct AddModulatorPayload {
+    pub track_id: String,
+    /// `"lfo"` — only kind supported for now.
+    pub kind: String,
+    pub rate_hz: Option<f32>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct RemoveModulatorPayload {
+    pub track_id: String,
+    pub modulator_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateModulatorPayload {
+    pub track_id: String,
+    pub modulator_id: String,
+    pub rate_hz: Option<f32>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AddModulationRoutePayload {
+    pub track_id: String,
+    pub modulator_id: String,
+    /// `"track_gain"` | `"effect_param"`
+    pub target_kind: String,
+    /// Required when target_kind == "effect_param"
+    pub effect_id: Option<String>,
+    /// Parameter name (e.g. `"gain"`, `"cutoff"`, `"room_size"`)
+    pub param: String,
+    pub depth: f32,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct RemoveModulationRoutePayload {
+    pub track_id: String,
+    pub route_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SetModulationDepthPayload {
+    pub track_id: String,
+    pub route_id: String,
+    pub depth: f32,
 }

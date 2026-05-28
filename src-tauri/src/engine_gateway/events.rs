@@ -33,6 +33,14 @@ pub mod ev {
     pub const EFFECT_REMOVED: &str = "EFFECT_REMOVED";
     pub const EFFECT_UPDATED: &str = "EFFECT_UPDATED";
 
+    // Modulation — persisted
+    pub const MODULATOR_ADDED: &str = "MODULATOR_ADDED";
+    pub const MODULATOR_REMOVED: &str = "MODULATOR_REMOVED";
+    pub const MODULATOR_UPDATED: &str = "MODULATOR_UPDATED";
+    pub const MODULATION_ROUTE_ADDED: &str = "MODULATION_ROUTE_ADDED";
+    pub const MODULATION_ROUTE_REMOVED: &str = "MODULATION_ROUTE_REMOVED";
+    pub const MODULATION_DEPTH_CHANGED: &str = "MODULATION_DEPTH_CHANGED";
+
     // Transport runtime events — NOT persisted
     pub const PLAY_STARTED: &str = "PLAY_STARTED";
     pub const PLAY_STOPPED: &str = "PLAY_STOPPED";
