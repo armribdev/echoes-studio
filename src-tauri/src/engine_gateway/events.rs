@@ -29,6 +29,9 @@ pub mod ev {
     pub const PROJECT_NAME_UPDATED: &str = "PROJECT_NAME_UPDATED";
     pub const TEMPO_UPDATED: &str = "TEMPO_UPDATED";
     pub const PROJECT_RESET: &str = "PROJECT_RESET";
+    pub const EFFECT_ADDED: &str = "EFFECT_ADDED";
+    pub const EFFECT_REMOVED: &str = "EFFECT_REMOVED";
+    pub const EFFECT_UPDATED: &str = "EFFECT_UPDATED";
 
     // Transport runtime events — NOT persisted
     pub const PLAY_STARTED: &str = "PLAY_STARTED";

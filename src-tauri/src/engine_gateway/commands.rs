@@ -57,6 +57,11 @@ pub mod cmd {
     pub const UPDATE_PROJECT_NAME: &str = "UPDATE_PROJECT_NAME";
     pub const UPDATE_TEMPO: &str = "UPDATE_TEMPO";
 
+    // ── Effects ───────────────────────────────────────────────────────────────
+    pub const ADD_EFFECT: &str = "ADD_EFFECT";
+    pub const REMOVE_EFFECT: &str = "REMOVE_EFFECT";
+    pub const UPDATE_EFFECT: &str = "UPDATE_EFFECT";
+
     // ── Audio graph (structural routing) ──────────────────────────────────────
     pub const ADD_NODE: &str = "ADD_NODE";
     pub const REMOVE_NODE: &str = "REMOVE_NODE";
@@ -135,4 +140,24 @@ pub struct UpdateTempoPayload {
 #[derive(Debug, Deserialize)]
 pub struct SeekPayload {
     pub position: f64,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AddEffectPayload {
+    pub track_id: String,
+    pub kind: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct RemoveEffectPayload {
+    pub track_id: String,
+    pub effect_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateEffectPayload {
+    pub track_id: String,
+    pub effect_id: String,
+    pub enabled: Option<bool>,
+    pub params: Option<serde_json::Value>,
 }

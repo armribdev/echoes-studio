@@ -19,7 +19,7 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::audio_graph::node::{NodeId, PortId};
-use crate::project::AppProject;
+use crate::project::{AppProject, EffectParams};
 
 // ── Node ID allocation ─────────────────────────────────────────────────────────
 
@@ -82,6 +82,8 @@ pub enum NodeKind {
     /// Modulation source (LFO, envelope, macro, audio-rate).
     Modulator {
         kind: crate::audio_graph::modulation::ModulatorKind,
+        /// Oscillation rate in Hz (used by LFO kind; ignored by others).
+        rate_hz: f32,
     },
 
     /// Peak / RMS meter (side-effect: writes to a meter ring-buffer for the UI).
@@ -94,6 +96,12 @@ pub enum NodeKind {
     /// `num_inputs` equals the number of tracks so each track gets its own
     /// dedicated input port.  This avoids the "all-to-port-0 overwrite" bug.
     Master { num_inputs: usize },
+
+    // ── Insert effects ─────────────────────────────────────────────────────────
+    Eq        { params: crate::project::EqParams },
+    Compressor { params: crate::project::CompressorParams },
+    Reverb    { params: crate::project::ReverbParams },
+    Delay     { params: crate::project::DelayParams },
 }
 
 // ── Graph node ────────────────────────────────────────────────────────────────
@@ -251,8 +259,23 @@ impl AudioGraph {
                 format!("{} [meter]", track.name),
             );
 
-            // track → gain → meter → master[port_idx]
-            graph.connect(track_node, 0, gain_node, 0);
+            // Insert enabled effects between track and gain nodes
+            let mut last_node = track_node;
+            for effect in &track.effects {
+                if !effect.enabled { continue; }
+                let kind = match &effect.params {
+                    EffectParams::Eq(p)         => NodeKind::Eq { params: p.clone() },
+                    EffectParams::Compressor(p) => NodeKind::Compressor { params: p.clone() },
+                    EffectParams::Reverb(p)     => NodeKind::Reverb { params: p.clone() },
+                    EffectParams::Delay(p)      => NodeKind::Delay { params: p.clone() },
+                };
+                let fx_node = graph.add_node(kind, format!("{} [fx:{}]", track.name, effect.id));
+                graph.connect(last_node, 0, fx_node, 0);
+                last_node = fx_node;
+            }
+
+            // [effects chain] → gain → meter → master[port_idx]
+            graph.connect(last_node, 0, gain_node, 0);
             graph.connect(gain_node, 0, meter_node, 0);
             graph.connect(meter_node, 0, master_id, port_idx as u32);
         }

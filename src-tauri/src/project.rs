@@ -1,5 +1,86 @@
 use crate::audio_clip::AudioClip;
 use serde::{Deserialize, Serialize};
+
+// ── Effect parameter types ────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EqParams {
+    pub low_gain_db: f32,
+    pub low_freq: f32,
+    pub mid_gain_db: f32,
+    pub mid_freq: f32,
+    pub mid_q: f32,
+    pub high_gain_db: f32,
+    pub high_freq: f32,
+}
+
+impl Default for EqParams {
+    fn default() -> Self {
+        EqParams { low_gain_db: 0.0, low_freq: 250.0, mid_gain_db: 0.0, mid_freq: 1000.0, mid_q: 1.0, high_gain_db: 0.0, high_freq: 4000.0 }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CompressorParams {
+    pub threshold_db: f32,
+    pub ratio: f32,
+    pub attack_ms: f32,
+    pub release_ms: f32,
+    pub makeup_db: f32,
+    pub knee_db: f32,
+}
+
+impl Default for CompressorParams {
+    fn default() -> Self {
+        CompressorParams { threshold_db: -18.0, ratio: 4.0, attack_ms: 10.0, release_ms: 100.0, makeup_db: 0.0, knee_db: 6.0 }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReverbParams {
+    pub room_size: f32,
+    pub damping: f32,
+    pub wet: f32,
+    pub dry: f32,
+    pub width: f32,
+}
+
+impl Default for ReverbParams {
+    fn default() -> Self {
+        ReverbParams { room_size: 0.5, damping: 0.5, wet: 0.33, dry: 1.0, width: 1.0 }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DelayParams {
+    pub delay_ms: f32,
+    pub feedback: f32,
+    pub wet: f32,
+    pub dry: f32,
+    pub ping_pong: bool,
+}
+
+impl Default for DelayParams {
+    fn default() -> Self {
+        DelayParams { delay_ms: 250.0, feedback: 0.4, wet: 0.3, dry: 1.0, ping_pong: false }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", content = "params", rename_all = "snake_case")]
+pub enum EffectParams {
+    Eq(EqParams),
+    Compressor(CompressorParams),
+    Reverb(ReverbParams),
+    Delay(DelayParams),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TrackEffect {
+    pub id: String,
+    pub enabled: bool,
+    pub params: EffectParams,
+}
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -40,6 +121,7 @@ pub struct AppTrack {
     pub muted: bool,
     pub solo: bool,
     pub clips: Vec<AppClip>,
+    pub effects: Vec<TrackEffect>,
 }
 
 pub struct AppProject {
@@ -67,7 +149,7 @@ impl AppProject {
             bpm: self.bpm,
             numerator: self.numerator,
             denominator: self.denominator,
-            tracks: self.tracks.iter().map(|t| t.to_dto()).collect(),
+            tracks: self.tracks.iter().map(AppTrack::to_dto).collect(),
         }
     }
 
@@ -91,6 +173,7 @@ impl AppProject {
                     end: c.end,
                     file_path: c.file_path.clone(),
                 }).collect(),
+                effects: t.effects.clone(),
             }).collect(),
         }
     }
@@ -125,6 +208,7 @@ impl AppProject {
                 muted: tf.muted,
                 solo: tf.solo,
                 clips,
+                effects: tf.effects,
             });
         }
         Ok(AppProject {
@@ -147,6 +231,7 @@ impl AppTrack {
             muted: self.muted,
             solo: self.solo,
             clips: self.clips.iter().map(|c| c.to_dto()).collect(),
+            effects: self.effects.clone(),
         }
     }
 }
@@ -274,6 +359,8 @@ pub struct TrackFile {
     #[serde(default)]
     pub solo: bool,
     pub clips: Vec<ClipFile>,
+    #[serde(default)]
+    pub effects: Vec<TrackEffect>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -304,6 +391,7 @@ pub struct TrackDto {
     pub muted: bool,
     pub solo: bool,
     pub clips: Vec<ClipDto>,
+    pub effects: Vec<TrackEffect>,
 }
 
 #[derive(Serialize, Clone)]

@@ -277,6 +277,8 @@ impl GraphCompiler {
             NodeKind::Meter { .. }              => 1,
             // num_inputs is set per-project so every track gets its own port.
             NodeKind::Master { num_inputs }     => *num_inputs,
+            NodeKind::Eq { .. } | NodeKind::Compressor { .. }
+            | NodeKind::Reverb { .. } | NodeKind::Delay { .. } => 1,
         }
     }
 
@@ -296,6 +298,8 @@ impl GraphCompiler {
             // directly.  Declaring it as 1 (instead of 0) means the scheduler
             // pre-allocates the buffer and `write_master_output` can read it.
             NodeKind::Master { .. }    => 1,
+            NodeKind::Eq { .. } | NodeKind::Compressor { .. }
+            | NodeKind::Reverb { .. } | NodeKind::Delay { .. } => 1,
         }
     }
 
@@ -381,10 +385,27 @@ impl GraphCompiler {
                 Box::new(nodes::gain::GainNode::new(id, 1.0))
             }
 
-            NodeKind::Modulator { .. } => {
-                // Placeholder — modulation sources will have their own node type
-                Box::new(nodes::gain::GainNode::new(id, 1.0))
+            NodeKind::Modulator { kind, rate_hz } => {
+                use crate::audio_graph::modulation::ModulatorKind;
+                match kind {
+                    ModulatorKind::Lfo => {
+                        Box::new(nodes::modulator::LfoNode::new(id, *rate_hz))
+                    }
+                    _ => {
+                        // Other modulator kinds not yet implemented — silent source
+                        Box::new(nodes::modulator::LfoNode::new(id, 0.0))
+                    }
+                }
             }
+
+            NodeKind::Eq { params } =>
+                Box::new(nodes::eq::EqNode::new(id, params.clone())),
+            NodeKind::Compressor { params } =>
+                Box::new(nodes::compressor::CompressorNode::new(id, params.clone())),
+            NodeKind::Reverb { params } =>
+                Box::new(nodes::reverb::ReverbNode::new(id, params.clone())),
+            NodeKind::Delay { params } =>
+                Box::new(nodes::delay::DelayNode::new(id, params.clone())),
         }
     }
 }
