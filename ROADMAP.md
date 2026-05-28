@@ -129,10 +129,10 @@
 ### Fonctionnalités
 - [ ] **Enregistrement audio** — arm + record sur une piste via `cpal` input (device déjà sélectionnable dans les préférences)
 - [ ] **Monitoring** — écoute en temps réel pendant l'enregistrement
-- [ ] **Effets intégrés** : égaliseur, compresseur, réverbération, délai
+- [x] **Effets intégrés** : égaliseur, compresseur, réverbération, délai
   - Chaque effet = un `AudioNode` dans le graphe (graph-first, pas de chaîne d'inserts spéciale)
-- [ ] **Routing d'effets via le graphe** — `SendNode` (`audio_graph/nodes/send.rs`) scaffoldé
-- [ ] **Runtime de modulation** — application des `ModulationRoute` dans le scheduler (structures déjà prêtes)
+- [x] **Routing d'effets via le graphe** — chaîne d'inserts par piste, wired dans le graphe DSP
+- [x] **Runtime de modulation** — `ModulationRoute` dispatché dans le scheduler ; LFO sine/triangle/saw/square
 - [ ] **Automation** — courbes d'automation pour volume et paramètres d'effets
   - Mécanisme unifié avec la modulation : `ParameterBlock` par frame
 - [ ] **Marqueurs / Régions** — points de repère sur la timeline
@@ -149,7 +149,7 @@
 **Critère de passage :** Jouer un pattern MIDI sur un instrument virtuel intégré.
 
 ### Fonctionnalités
-- [ ] **Piano roll** — éditeur MIDI intégré
+- [x] **Piano roll** — éditeur MIDI intégré (canvas, optimistic UI, event-sourced via `SET_MIDI_NOTES`)
 - [ ] **Support MIDI** — entrée/sortie MIDI (clavier, contrôleur)
 - [ ] **Instruments virtuels natifs** : sampler simple, synthétiseur basique
 - [ ] **Support VST3** — `plugin_formats/vst3/` scaffoldé (`ffi.rs`, `host.rs`, `wrapper.rs`)
