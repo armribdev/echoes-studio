@@ -61,6 +61,7 @@ pub fn send_command(
 ) -> Result<CommandResult, String> {
     let result = process_command(&app, &state, command.clone())
         .unwrap_or_else(|e| CommandResult::err(command.id, e));
+    crate::menu_state::refresh_menu(&app, &state);
     Ok(result)
 }
 
@@ -83,6 +84,7 @@ pub fn send_batch(
 
     // After all commands, do a single graph recompile
     recompile_if_needed(&state);
+    crate::menu_state::refresh_menu(&app, &state);
 
     Ok(results)
 }
@@ -122,6 +124,9 @@ pub fn undo(
     let engine_event = EngineEvent::new(ev::PROJECT_RESET, "", snapshot_val.clone());
     let _ = app.emit("engine-event", &engine_event);
 
+    state.dirty.store(true, std::sync::atomic::Ordering::Relaxed);
+    crate::menu_state::refresh_menu(&app, &state);
+
     Ok(snapshot_val)
 }
 
@@ -150,6 +155,9 @@ pub fn redo(
 
     let engine_event = EngineEvent::new(ev::PROJECT_RESET, "", snapshot_val.clone());
     let _ = app.emit("engine-event", &engine_event);
+
+    state.dirty.store(true, std::sync::atomic::Ordering::Relaxed);
+    crate::menu_state::refresh_menu(&app, &state);
 
     Ok(snapshot_val)
 }
@@ -331,6 +339,7 @@ fn process_command(
             }
 
             // Mixer state — not appended to the event store (no undo/redo step).
+            state.dirty.store(true, std::sync::atomic::Ordering::Relaxed);
             let event_payload = json!({ "id": p.track_id, "muted": p.muted });
             let engine_ev = EngineEvent::new(ev::TRACK_MUTED, &project_id, event_payload);
             let _ = app.emit("engine-event", &engine_ev);
@@ -362,6 +371,7 @@ fn process_command(
             }
 
             // Mixer state — not appended to the event store (no undo/redo step).
+            state.dirty.store(true, std::sync::atomic::Ordering::Relaxed);
             let event_payload = json!({ "id": p.track_id, "solo": p.solo });
             let engine_ev = EngineEvent::new(ev::TRACK_SOLOED, &project_id, event_payload);
             let _ = app.emit("engine-event", &engine_ev);
@@ -575,6 +585,7 @@ fn append_and_maybe_snapshot(
     state: &tauri::State<'_, AppState>,
     event: ProjectEvent,
 ) -> Result<(), String> {
+    state.dirty.store(true, std::sync::atomic::Ordering::Relaxed);
     let mut store = state.event_store.lock().map_err(|e| e.to_string())?;
     store.append(event);
 

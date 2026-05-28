@@ -3,6 +3,7 @@ mod audio_engine;
 mod audio_graph;
 mod audio_settings;
 mod engine_gateway;
+mod menu_state;
 mod plugin_formats;
 mod plugin_system;
 mod project;
@@ -76,21 +77,37 @@ fn main() {
 
             windows_theme::force_dark_popups();
 
+            // Create the three controlled items disabled from the start.
+            let save_item  = MenuItem::with_id(app, "save",  "Enregistrer",            false, Some("CmdOrCtrl+S"))?;
+            let undo_item  = MenuItem::with_id(app, "undo",  "Annuler",                false, Some("CmdOrCtrl+Z"))?;
+            let redo_item  = MenuItem::with_id(app, "redo",  "Rétablir",               false, Some("CmdOrCtrl+Shift+Z"))?;
+
+            // Clone so the menu can own one copy while the closures own another.
+            let save_h = save_item.clone();
+            let undo_h = undo_item.clone();
+            let redo_h = redo_item.clone();
+
+            app.manage(menu_state::MenuHandles {
+                set_undo: Box::new(move |e| undo_h.set_enabled(e)),
+                set_redo: Box::new(move |e| redo_h.set_enabled(e)),
+                set_save: Box::new(move |e| save_h.set_enabled(e)),
+            });
+
             let file_menu = Submenu::with_items(
                 app,
                 "Fichier",
                 true,
                 &[
-                    &MenuItem::with_id(app, "new", "Nouveau projet", true, Some("CmdOrCtrl+N"))?,
-                    &MenuItem::with_id(app, "open", "Ouvrir...", true, Some("CmdOrCtrl+O"))?,
+                    &MenuItem::with_id(app, "new",          "Nouveau projet",                    true,  Some("CmdOrCtrl+N"))?,
+                    &MenuItem::with_id(app, "open",         "Ouvrir...",                          true,  Some("CmdOrCtrl+O"))?,
                     &PredefinedMenuItem::separator(app)?,
-                    &MenuItem::with_id(app, "import-audio", "Importer audio...", true, None::<&str>)?,
+                    &MenuItem::with_id(app, "import-audio", "Importer audio...",                  true,  None::<&str>)?,
                     &PredefinedMenuItem::separator(app)?,
-                    &MenuItem::with_id(app, "save", "Enregistrer", true, Some("CmdOrCtrl+S"))?,
-                    &MenuItem::with_id(app, "save-as", "Enregistrer sous...", true, None::<&str>)?,
+                    &save_item,
+                    &MenuItem::with_id(app, "save-as",      "Enregistrer sous...",                true,  None::<&str>)?,
                     &PredefinedMenuItem::separator(app)?,
-                    &MenuItem::with_id(app, "undo", "Annuler", true, Some("CmdOrCtrl+Z"))?,
-                    &MenuItem::with_id(app, "redo", "Rétablir", true, Some("CmdOrCtrl+Shift+Z"))?,
+                    &undo_item,
+                    &redo_item,
                     &PredefinedMenuItem::separator(app)?,
                     &PredefinedMenuItem::quit(app, None)?,
                 ],
@@ -101,8 +118,8 @@ fn main() {
                 "Piste",
                 true,
                 &[
-                    &MenuItem::with_id(app, "add-track", "Nouvelle piste", true, Some("CmdOrCtrl+Shift+T"))?,
-                    &MenuItem::with_id(app, "delete-track", "Supprimer la piste sélectionnée", true, None::<&str>)?,
+                    &MenuItem::with_id(app, "add-track",    "Nouvelle piste",                    true,  Some("CmdOrCtrl+Shift+T"))?,
+                    &MenuItem::with_id(app, "delete-track", "Supprimer la piste sélectionnée",   true,  None::<&str>)?,
                 ],
             )?;
 
@@ -197,8 +214,10 @@ fn apply_loaded_project(
     // silence even though the UI shows the correct tracks and clips.
     recompile_audio_graph(state);
 
+    state.dirty.store(false, std::sync::atomic::Ordering::Relaxed);
     set_window_title(app, &name);
     let _ = app.emit("project-loaded", dto);
+    menu_state::refresh_menu(app, state);
 }
 
 // ── Native menu event handler ─────────────────────────────────────────────────
@@ -220,8 +239,10 @@ fn handle_menu_event(app: &tauri::AppHandle, menu_id: &str) {
                 *p = None;
             }
             recompile_audio_graph(&state);
+            state.dirty.store(false, std::sync::atomic::Ordering::Relaxed);
             set_window_title(app, "Sans titre");
             let _ = app.emit("project-loaded", dto);
+            menu_state::refresh_menu(app, &state);
         }
 
         "open" => {
@@ -295,7 +316,9 @@ fn handle_menu_event(app: &tauri::AppHandle, menu_id: &str) {
                 if let Ok(mut p) = state.project_path.lock() {
                     *p = Some(save_path.clone());
                 }
+                state.dirty.store(false, std::sync::atomic::Ordering::Relaxed);
                 let _ = app.emit("project-saved", save_path.to_string_lossy().to_string());
+                menu_state::refresh_menu(app, &state);
             } else if let Err(e) = write_result {
                 eprintln!("[projet] Échec sauvegarde : {e}");
             }

@@ -2,7 +2,7 @@ use crate::audio_clip::AudioClip;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -217,6 +217,9 @@ pub struct AppState {
     /// Updated by `apply_audio_settings`; read back by `start_native_audio`
     /// so restarts always use the user's last chosen configuration.
     pub audio_settings: Mutex<crate::audio_settings::AudioSettings>,
+    /// True when the project has unsaved changes. Reset to false after save /
+    /// new / open; set to true after any structural mutation.
+    pub dirty: AtomicBool,
 }
 
 impl AppState {
@@ -240,6 +243,7 @@ impl AppState {
             )),
             transport,
             audio_settings: Mutex::new(crate::audio_settings::AudioSettings::default()),
+            dirty: AtomicBool::new(false),
         }
     }
 }
