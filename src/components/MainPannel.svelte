@@ -1,6 +1,7 @@
 <script lang="ts">
 	import Knob from './Knob.svelte';
 	import Track from './Track.svelte';
+	import TrackContextMenu from './TrackContextMenu.svelte';
 	import type { Track as TrackType, Project } from '../types/global';
 	import { invoke } from '@tauri-apps/api/core';
 	import { listen } from '@tauri-apps/api/event';
@@ -11,7 +12,12 @@
 	import { tempo } from '../stores/tempo';
 	import { projectName, projectPath } from '../stores/project';
 	import { projectEventStore } from '../shared/project/eventStore';
-	import { addClip, moveClip, removeClip, updateTrack, muteTrack, soloTrack, seek } from '../frontend/commands/dispatcher';
+	import { addClip, moveClip, removeClip, updateTrack, muteTrack, soloTrack, seek, createTrack, deleteTrack } from '../frontend/commands/dispatcher';
+
+	const TRACK_COLORS = [
+		'#4d96ff', '#ff6b6b', '#6bcb77', '#ffd93d',
+		'#c77dff', '#ff9a3c', '#00c9a7', '#ff6db6',
+	];
 	import { notify } from '../stores/status';
 	import { exportTrigger } from '../stores/exportBus';
 	import { preferences } from '../stores/preferences';
@@ -36,6 +42,9 @@
 		);
 	});
 	onDestroy(unsubExport);
+
+	let contextMenu: { x: number; y: number; trackId: string; trackName: string; trackIndex: number } | null = null;
+	let selectedTrackIndex: number | null = null;
 
 	let logScale: number = Math.log(80);
 	$: scale = Math.exp(logScale);
@@ -76,120 +85,141 @@
 		animFrameId = requestAnimationFrame(loop);
 	}
 
-	onMount(async () => {
-		// Hydrate from Rust state
-		const dto = await invoke<Project>('get_project');
-		await loadProject(dto);
-
-		animFrameId = requestAnimationFrame(loop);
-
-		// The transport store is updated by the engine-event bridge.
-		// No Web Audio wiring needed here.
-		let wasPlaying = false;
-		const unsub = transport.subscribe((state) => {
-			wasPlaying = state.isPlaying;
-		});
-
-		// ── File drag-and-drop via Tauri events ───────────────────────────────
-		function updateDragPreview(physX: number, physY: number) {
-			if (!tracksEl) return;
-			const dpr = window.devicePixelRatio || 1;
-			const winX = physX / dpr;
-			const winY = physY / dpr;
-			const rect = tracksEl.getBoundingClientRect();
-			const x = winX - rect.left;
-			const y = winY - rect.top + tracksEl.scrollTop;
-			if (x < 0 || x > rect.width || y < 0) { fileDragPreview = null; return; }
-			const trackIndex = Math.min(Math.max(0, Math.floor(y / 100)), tracks.length - 1);
-			fileDragPreview = { trackIndex, startSec: Math.max(0, x / scale), durationSec: pendingDragDuration ?? fileDragPreview?.durationSec ?? null };
-		}
-
-		type DragPayload = { paths: string[]; position: { x: number; y: number } };
+	onMount(() => {
+		// Cleanup handles declared up-front so the returned cleanup function can
+		// reference them even if the component is destroyed before the async
+		// initialization below completes.
 		const unlisteners: (() => void)[] = [];
-		Promise.all([
-			listen<DragPayload>('tauri://drag-enter', ({ payload }) => {
-				pendingDragDuration = null;
-				updateDragPreview(payload.position.x, payload.position.y);
-				const path = payload.paths[0];
-				if (path) {
-					invoke<number>('get_audio_clip_duration', { filePath: path })
-						.then((dur) => {
-							pendingDragDuration = dur;
-							if (fileDragPreview) fileDragPreview = { ...fileDragPreview, durationSec: dur };
-						})
-						.catch(() => {});
-				}
-			}),
-			listen<DragPayload>('tauri://drag-over', ({ payload }) => {
-				updateDragPreview(payload.position.x, payload.position.y);
-			}),
-			listen('tauri://drag-leave', () => { fileDragPreview = null; pendingDragDuration = null; }),
-			listen<DragPayload>('tauri://drag-drop', ({ payload }) => {
-				updateDragPreview(payload.position.x, payload.position.y);
-				const preview = fileDragPreview;
-				const filePath = payload.paths[0];
-				const knownDuration = pendingDragDuration ?? preview?.durationSec ?? null;
-				pendingDragDuration = null;
-				if (!filePath) { fileDragPreview = null; return; }
+		let unsub: () => void = () => {};
 
-				const trackIndex = preview?.trackIndex ?? 0;
-				const startSec = preview?.startSec ?? 0;
+		(async () => {
+			// Hydrate from Rust state
+			const dto = await invoke<Project>('get_project');
+			await loadProject(dto);
 
-				const doImport = (dur: number) => {
-					const trackId = tracks[trackIndex]?.id;
-					if (!trackId) { fileDragPreview = null; return; }
+			animFrameId = requestAnimationFrame(loop);
 
-					// Dispatch through the gateway — Rust loads the WAV, emits CLIP_ADDED,
-					// the store subscription updates `tracks`, and the $: reactive block
-					// prepares the AudioBuffer automatically.
-					addClip(trackId, filePath, startSec, startSec + dur)
-						.then(() => { fileDragPreview = null; })
-						.catch((err) => { notify(`Erreur import : ${err?.message ?? err}`, 'error'); fileDragPreview = null; });
-				};
+			// The transport store is updated by the engine-event bridge.
+			// No Web Audio wiring needed here.
+			let wasPlaying = false;
+			unsub = transport.subscribe((state) => {
+				wasPlaying = state.isPlaying;
+			});
 
-				if (knownDuration !== null) {
-					if (fileDragPreview) fileDragPreview = { ...fileDragPreview, durationSec: knownDuration };
-					doImport(knownDuration);
-				} else {
-					invoke<number>('get_audio_clip_duration', { filePath })
-						.then((dur) => {
-							if (fileDragPreview) fileDragPreview = { ...fileDragPreview, durationSec: dur };
-							doImport(dur);
-						})
-						.catch((err) => { notify(`Erreur import : ${err?.message ?? err}`, 'error'); fileDragPreview = null; });
-				}
-			}),
-		]).then((fns) => unlisteners.push(...fns));
+			// ── File drag-and-drop via Tauri events ───────────────────────────────
+			function updateDragPreview(physX: number, physY: number) {
+				if (!tracksEl) return;
+				const dpr = window.devicePixelRatio || 1;
+				const winX = physX / dpr;
+				const winY = physY / dpr;
+				const rect = tracksEl.getBoundingClientRect();
+				const x = winX - rect.left;
+				const y = winY - rect.top + tracksEl.scrollTop;
+				if (x < 0 || x > rect.width || y < 0) { fileDragPreview = null; return; }
+				const trackIndex = Math.min(Math.max(0, Math.floor(y / 100)), tracks.length - 1);
+				fileDragPreview = { trackIndex, startSec: Math.max(0, x / scale), durationSec: pendingDragDuration ?? fileDragPreview?.durationSec ?? null };
+			}
 
-		// ── Native menu events (project-loaded / project-saved / audio import) ─
-		Promise.all([
-			listen<Project>('project-loaded', async ({ payload }) => {
-				await loadProject(payload);
-				notify(`Projet « ${payload.name} » chargé`, 'success');
-			}),
-			listen<string>('project-saved', ({ payload }) => {
-				projectPath.set(payload);
-				const filename = payload.split(/[\\/]/).pop() ?? payload;
-				notify(`Enregistré : ${filename}`, 'success');
-			}),
-			listen<string>('audio-file-picked', async ({ payload: filePath }) => {
-				const targetTrack = tracks[0];
-				if (!targetTrack) {
-					notify('Créez d\'abord une piste avant d\'importer.', 'error');
-					return;
-				}
-				try {
-					const dur = await invoke<number>('get_audio_clip_duration', { filePath });
-					const startSec = $transport.position;
-					await addClip(targetTrack.id, filePath, startSec, startSec + dur);
-					const filename = filePath.split(/[\\/]/).pop() ?? filePath;
-					notify(`Importé : ${filename}`, 'success');
-				} catch (err: unknown) {
-					const msg = err instanceof Error ? err.message : String(err);
-					notify(`Erreur import : ${msg}`, 'error');
-				}
-			}),
-		]).then((fns) => unlisteners.push(...fns));
+			type DragPayload = { paths: string[]; position: { x: number; y: number } };
+			const dragFns = await Promise.all([
+				listen<DragPayload>('tauri://drag-enter', ({ payload }) => {
+					pendingDragDuration = null;
+					updateDragPreview(payload.position.x, payload.position.y);
+					const path = payload.paths[0];
+					if (path) {
+						invoke<number>('get_audio_clip_duration', { filePath: path })
+							.then((dur) => {
+								pendingDragDuration = dur;
+								if (fileDragPreview) fileDragPreview = { ...fileDragPreview, durationSec: dur };
+							})
+							.catch(() => {});
+					}
+				}),
+				listen<DragPayload>('tauri://drag-over', ({ payload }) => {
+					updateDragPreview(payload.position.x, payload.position.y);
+				}),
+				listen('tauri://drag-leave', () => { fileDragPreview = null; pendingDragDuration = null; }),
+				listen<DragPayload>('tauri://drag-drop', ({ payload }) => {
+					updateDragPreview(payload.position.x, payload.position.y);
+					const preview = fileDragPreview;
+					const filePath = payload.paths[0];
+					const knownDuration = pendingDragDuration ?? preview?.durationSec ?? null;
+					pendingDragDuration = null;
+					if (!filePath) { fileDragPreview = null; return; }
+
+					const trackIndex = preview?.trackIndex ?? 0;
+					const startSec = preview?.startSec ?? 0;
+
+					const doImport = (dur: number) => {
+						const trackId = tracks[trackIndex]?.id;
+						if (!trackId) { fileDragPreview = null; return; }
+
+						// Dispatch through the gateway — Rust loads the WAV, emits CLIP_ADDED,
+						// the store subscription updates `tracks`, and the $: reactive block
+						// prepares the AudioBuffer automatically.
+						addClip(trackId, filePath, startSec, startSec + dur)
+							.then(() => { fileDragPreview = null; })
+							.catch((err) => { notify(`Erreur import : ${err?.message ?? err}`, 'error'); fileDragPreview = null; });
+					};
+
+					if (knownDuration !== null) {
+						if (fileDragPreview) fileDragPreview = { ...fileDragPreview, durationSec: knownDuration };
+						doImport(knownDuration);
+					} else {
+						invoke<number>('get_audio_clip_duration', { filePath })
+							.then((dur) => {
+								if (fileDragPreview) fileDragPreview = { ...fileDragPreview, durationSec: dur };
+								doImport(dur);
+							})
+							.catch((err) => { notify(`Erreur import : ${err?.message ?? err}`, 'error'); fileDragPreview = null; });
+					}
+				}),
+			]);
+			unlisteners.push(...dragFns);
+
+			// ── Native menu events (project-loaded / project-saved / audio import) ─
+			const menuFns = await Promise.all([
+				listen<Project>('project-loaded', async ({ payload }) => {
+					await loadProject(payload);
+					notify(`Projet « ${payload.name} » chargé`, 'success');
+				}),
+				listen<string>('project-saved', ({ payload }) => {
+					projectPath.set(payload);
+					const filename = payload.split(/[\\/]/).pop() ?? payload;
+					notify(`Enregistré : ${filename}`, 'success');
+				}),
+				listen<string>('track-action', ({ payload }) => {
+					if (payload === 'add-track') {
+						handleCreateTrack();
+					} else if (payload === 'delete-track') {
+						const idx = selectedTrackIndex ?? (tracks.length > 0 ? tracks.length - 1 : null);
+						if (idx !== null && tracks[idx]) {
+							handleDeleteTrack(tracks[idx].id);
+						} else {
+							notify('Aucune piste sélectionnée', 'error');
+						}
+					}
+				}),
+				listen<string>('audio-file-picked', async ({ payload: filePath }) => {
+					const targetTrack = tracks[0];
+					if (!targetTrack) {
+						notify('Créez d\'abord une piste avant d\'importer.', 'error');
+						return;
+					}
+					try {
+						const dur = await invoke<number>('get_audio_clip_duration', { filePath });
+						const startSec = $transport.position;
+						await addClip(targetTrack.id, filePath, startSec, startSec + dur);
+						const filename = filePath.split(/[\\/]/).pop() ?? filePath;
+						notify(`Importé : ${filename}`, 'success');
+					} catch (err: unknown) {
+						const msg = err instanceof Error ? err.message : String(err);
+						notify(`Erreur import : ${msg}`, 'error');
+					}
+				}),
+			]);
+			unlisteners.push(...menuFns);
+		})().catch(console.error);
 
 		return () => {
 			cancelAnimationFrame(animFrameId);
@@ -434,6 +464,49 @@
 		soloTrack(track.id, !track.solo).catch(console.error);
 	}
 
+	function handleCreateTrack() {
+		createTrack(`Piste ${tracks.length + 1}`).catch((e: unknown) =>
+			notify(`Erreur création piste : ${(e as Error)?.message ?? String(e)}`, 'error')
+		);
+	}
+
+	function handleDeleteTrack(trackId: string) {
+		deleteTrack(trackId).catch((e: unknown) =>
+			notify(`Erreur suppression piste : ${(e as Error)?.message ?? String(e)}`, 'error')
+		);
+	}
+
+	function handleTrackContextMenu(e: MouseEvent, trackIndex: number) {
+		e.preventDefault();
+		e.stopPropagation();
+		const track = tracks[trackIndex];
+		if (!track) return;
+		contextMenu = { x: e.clientX, y: e.clientY, trackId: track.id, trackName: track.name, trackIndex };
+	}
+
+	function renameTrackByIndex(trackIndex: number) {
+		const nameEls = document.querySelectorAll<HTMLElement>('.track-name');
+		const el = nameEls[trackIndex];
+		if (!el) return;
+		el.contentEditable = 'true';
+		el.focus();
+		const range = document.createRange();
+		range.selectNodeContents(el);
+		const sel = window.getSelection();
+		sel?.removeAllRanges();
+		sel?.addRange(range);
+		el.addEventListener('keydown', function onKey(ev: KeyboardEvent) {
+			if (ev.key === 'Enter') { ev.preventDefault(); el.blur(); }
+		});
+		el.addEventListener('blur', function() {
+			el.contentEditable = 'false';
+			const newName = el.textContent?.trim() || tracks[trackIndex].name;
+			tracks[trackIndex] = { ...tracks[trackIndex], name: newName };
+			tracks = tracks;
+			updateTrack(tracks[trackIndex].id, { name: newName, volume: tracks[trackIndex].volume }).catch(console.error);
+		}, { once: true });
+	}
+
 	function makeEditable(e: MouseEvent, trackIndex: number) {
 		const el = e.currentTarget;
 		if (!(el instanceof HTMLElement)) return;
@@ -511,7 +584,7 @@
 		notify('Export en cours…', 'info');
 
 		// 3. Offline render — same graph as live: GainNode → StereoPannerNode
-		const sampleRate = audioCtx?.sampleRate ?? 44100;
+		const sampleRate = $preferences.audio.sampleRate;
 		const length = Math.ceil(totalDuration * sampleRate);
 		const offCtx = new OfflineAudioContext(2, length, sampleRate);
 
@@ -585,6 +658,19 @@
 
 <svelte:window on:keydown={handleKeyDown} />
 
+{#if contextMenu}
+	<TrackContextMenu
+		x={contextMenu.x}
+		y={contextMenu.y}
+		trackId={contextMenu.trackId}
+		trackName={contextMenu.trackName}
+		on:addtrack={handleCreateTrack}
+		on:rename={() => { if (contextMenu) renameTrackByIndex(contextMenu.trackIndex); }}
+		on:delete={(e) => handleDeleteTrack(e.detail.trackId)}
+		on:close={() => { contextMenu = null; }}
+	/>
+{/if}
+
 <div class="container">
 	<!-- svelte-ignore a11y-no-static-element-interactions -->
 	<div class="zoom-ctrl" on:wheel={handleZoomWidgetWheel}>
@@ -605,10 +691,19 @@
 		<div class="ruler-spacer"></div>
 		<div class="instruments">
 			{#each tracks as track, trackIndex}
-				<div class="instrument">
-					<!-- svelte-ignore a11y-no-static-element-interactions -->
-					<strong on:dblclick={(e) => makeEditable(e, trackIndex)}>{track.name}</strong>
-					<div class="track-controls">
+				<!-- svelte-ignore a11y-no-static-element-interactions -->
+				<div
+					class="instrument"
+					class:instrument--selected={selectedTrackIndex === trackIndex}
+					style="--track-color: {TRACK_COLORS[trackIndex % TRACK_COLORS.length]}"
+					on:mousedown={() => { selectedTrackIndex = trackIndex; }}
+					on:contextmenu={(e) => handleTrackContextMenu(e, trackIndex)}
+				>
+					<div class="instrument-header">
+						<!-- svelte-ignore a11y-no-static-element-interactions -->
+						<strong class="track-name" on:dblclick={(e) => makeEditable(e, trackIndex)}>{track.name}</strong>
+					</div>
+					<div class="instrument-controls">
 						<button
 							type="button"
 							class="ms-btn"
@@ -623,11 +718,22 @@
 							title="Solo"
 							on:click={() => handleSoloToggle(trackIndex)}
 						>S</button>
-						<Knob min={0} max={100} bind:value={tracks[trackIndex].volume} on:release={() => handleVolumeRelease(trackIndex)} />
-						<Knob min={-100} max={100} bind:value={tracks[trackIndex].pan} on:release={() => handlePanRelease(trackIndex)} />
+						<div class="knob-group">
+							<span class="knob-label">VOL</span>
+							<Knob min={0} max={100} bind:value={tracks[trackIndex].volume} on:release={() => handleVolumeRelease(trackIndex)} />
+						</div>
+						<div class="knob-group">
+							<span class="knob-label">PAN</span>
+							<Knob min={-100} max={100} bind:value={tracks[trackIndex].pan} on:release={() => handlePanRelease(trackIndex)} />
+						</div>
 					</div>
 				</div>
 			{/each}
+		</div>
+		<div class="left-panel-footer">
+			<button type="button" class="add-track-btn" on:click={handleCreateTrack}>
+				<span class="add-track-icon">+</span> Nouvelle piste
+			</button>
 		</div>
 	</div>
 
@@ -664,6 +770,21 @@
 			on:mousedown={handleTracksMouseDown}
 			on:wheel={handleTracksWheel}
 		>
+			{#if tracks.length === 0}
+				<div class="empty-tracks">
+					<svg class="empty-tracks-icon" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+						<path d="M9 18V5l12-2v13"/>
+						<circle cx="6" cy="18" r="3"/>
+						<circle cx="18" cy="16" r="3"/>
+					</svg>
+					<p class="empty-tracks-text">Aucune piste</p>
+					<p class="empty-tracks-hint">Créez une piste ou glissez un fichier audio</p>
+					<!-- svelte-ignore a11y-no-static-element-interactions a11y-click-events-have-key-events -->
+					<button type="button" class="empty-tracks-cta" on:click={handleCreateTrack}>
+						+ Nouvelle piste
+					</button>
+				</div>
+			{/if}
 			{#if fileDragPreview}
 				<div
 					class="clip-ghost"
@@ -791,6 +912,7 @@
 		display: flex;
 		flex-direction: column;
 		background-color: $pannel-background-color;
+		border-right: 1px solid $border-color;
 	}
 
 	.ruler-spacer {
@@ -798,12 +920,40 @@
 		flex-shrink: 0;
 		background-color: $background-color;
 		border-bottom: 1px solid $border-color;
-		border-right: 1px solid $border-color;
 	}
 
 	.instruments {
 		flex: 1;
 		overflow-y: auto;
+	}
+
+	.left-panel-footer {
+		flex-shrink: 0;
+		padding: 8px;
+		border-top: 1px solid $border-color;
+	}
+
+	.add-track-btn {
+		width: 100%;
+		height: $ctrl-height-sm;
+		background: $surface-1;
+		border: 1px dashed $border-subtle;
+		border-radius: $radius-sm;
+		color: $text-subtle;
+		font-size: 11px;
+		font-family: inherit;
+		cursor: pointer;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		gap: 4px;
+		transition: background 0.15s, color 0.15s, border-color 0.15s;
+
+		&:hover {
+			background: rgba(21, 113, 255, 0.1);
+			border-color: rgba(21, 113, 255, 0.4);
+			color: $text-color;
+		}
 	}
 
 	// ── Right panel (ruler + tracks, playhead spans both) ─────────────────────
@@ -895,16 +1045,73 @@
 	.instrument {
 		height: 100px;
 		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		padding: 10px;
+		flex-direction: column;
+		justify-content: center;
 		box-sizing: border-box;
+		border-bottom: 1px solid $border-color;
+		position: relative;
+		transition: background 0.1s;
+
+		&::before {
+			content: '';
+			position: absolute;
+			left: 0;
+			top: 14px;
+			bottom: 14px;
+			width: 3px;
+			border-radius: 0 2px 2px 0;
+			background: var(--track-color, #{$accent-color});
+		}
+
+		&--selected {
+			background: $surface-1;
+		}
 	}
 
-	.track-controls {
+	.instrument-header {
+		display: flex;
+		align-items: center;
+		gap: 4px;
+		padding: 8px 8px 4px 14px;
+	}
+
+	.track-name {
+		flex: 1;
+		font-size: 12px;
+		font-weight: 500;
+		color: $text-color;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		min-width: 0;
+
+		&:focus {
+			outline: none;
+		}
+	}
+
+	.instrument-controls {
 		display: flex;
 		align-items: center;
 		gap: 6px;
+		padding: 4px 8px 8px 14px;
+	}
+
+	.knob-group {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 2px;
+	}
+
+	.knob-label {
+		font-size: 8px;
+		font-family: $font-mono;
+		color: $text-faint;
+		letter-spacing: 0.06em;
+		text-transform: uppercase;
+		line-height: 1;
+		pointer-events: none;
 	}
 
 	.ms-btn {
@@ -929,6 +1136,54 @@
 			background: $accent-color;
 			border-color: $accent-color;
 			color: $text-color;
+		}
+	}
+
+	// ── Empty state ───────────────────────────────────────────────────────────
+	.empty-tracks {
+		position: absolute;
+		inset: 0;
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		justify-content: center;
+		gap: 8px;
+		pointer-events: none;
+
+		.empty-tracks-icon {
+			color: $text-faint;
+			margin-bottom: 4px;
+		}
+
+		.empty-tracks-text {
+			font-size: 13px;
+			font-weight: 500;
+			color: $text-muted;
+			margin: 0;
+		}
+
+		.empty-tracks-hint {
+			font-size: 11px;
+			color: $text-faint;
+			margin: 0;
+		}
+
+		.empty-tracks-cta {
+			pointer-events: all;
+			margin-top: 8px;
+			height: $ctrl-height;
+			padding: 0 18px;
+			background: $accent-color;
+			border: none;
+			border-radius: $radius-md;
+			color: #fff;
+			font-size: 12px;
+			font-weight: 600;
+			font-family: inherit;
+			cursor: pointer;
+			transition: background 0.1s;
+
+			&:hover { background: $accent-hover; }
 		}
 	}
 

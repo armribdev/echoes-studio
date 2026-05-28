@@ -96,7 +96,17 @@ fn main() {
                 ],
             )?;
 
-            let menu = Menu::with_items(app, &[&file_menu])?;
+            let track_menu = Submenu::with_items(
+                app,
+                "Piste",
+                true,
+                &[
+                    &MenuItem::with_id(app, "add-track", "Nouvelle piste", true, Some("CmdOrCtrl+Shift+T"))?,
+                    &MenuItem::with_id(app, "delete-track", "Supprimer la piste sélectionnée", true, None::<&str>)?,
+                ],
+            )?;
+
+            let menu = Menu::with_items(app, &[&file_menu, &track_menu])?;
             app.set_menu(menu)?;
 
             apply_native_dark_theme(app.handle());
@@ -302,6 +312,14 @@ fn handle_menu_event(app: &tauri::AppHandle, menu_id: &str) {
                 let path_str = file_path.to_string_lossy().to_string();
                 let _ = app.emit("audio-file-picked", path_str);
             }
+        }
+
+        "add-track" => {
+            let _ = app.emit("track-action", "add-track");
+        }
+
+        "delete-track" => {
+            let _ = app.emit("track-action", "delete-track");
         }
 
         _ => {} // actions inconnues ignorées silencieusement
