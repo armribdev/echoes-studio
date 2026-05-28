@@ -151,6 +151,7 @@ fn main() {
             menu_action,
             // ── Export ────────────────────────────────────────────────────────
             export_wav,
+            export_mp3,
             // ── Audio settings ────────────────────────────────────────────────
             get_audio_devices,
             get_device_sample_rates,
@@ -526,6 +527,89 @@ fn export_wav(
             w.finalize().map_err(|e| e.to_string())
         }
     }
+}
+
+/// Encode a stereo mixdown as an MP3 file using LAME.
+///
+/// | `bitrate_kbps` | Notes                                              |
+/// |----------------|----------------------------------------------------|
+/// | 128            | Standard streaming quality (~1 MB/min)             |
+/// | 192            | High quality — recommended for distribution        |
+/// | 320            | Maximum quality — archival / professional delivery |
+///
+/// The samples are the same f32 interleaved-channel data produced by the
+/// frontend `OfflineAudioContext`. Encoding is done entirely in Rust via
+/// LAME compiled from source (`mp3lame-encoder` crate) — no system library
+/// dependency required.
+#[tauri::command]
+fn export_mp3(
+    path: String,
+    samples_left: Vec<f32>,
+    samples_right: Vec<f32>,
+    sample_rate: u32,
+    bitrate_kbps: u32,
+) -> Result<(), String> {
+    use mp3lame_encoder::{Builder, DualPcm, FlushNoGap};
+
+    let path = std::path::PathBuf::from(&path);
+    let path = if path.extension().map_or(true, |e| e != "mp3") {
+        path.with_extension("mp3")
+    } else {
+        path
+    };
+
+    // Convert f32 [-1.0, 1.0] → i16 PCM
+    let left_i16: Vec<i16> = samples_left
+        .iter()
+        .map(|s| (s.clamp(-1.0, 1.0) * 32_767.0) as i16)
+        .collect();
+    let right_i16: Vec<i16> = samples_right
+        .iter()
+        .map(|s| (s.clamp(-1.0, 1.0) * 32_767.0) as i16)
+        .collect();
+
+    let mut builder = Builder::new().ok_or("Impossible de créer l'encodeur LAME")?;
+    builder
+        .set_num_channels(2)
+        .map_err(|e| format!("set_num_channels: {e:?}"))?;
+    builder
+        .set_sample_rate(sample_rate)
+        .map_err(|e| format!("set_sample_rate: {e:?}"))?;
+    builder
+        .set_brate(match bitrate_kbps {
+            128 => mp3lame_encoder::Birtate::Kbps128,
+            192 => mp3lame_encoder::Birtate::Kbps192,
+            _ => mp3lame_encoder::Birtate::Kbps320,
+        })
+        .map_err(|e| format!("set_brate: {e:?}"))?;
+    builder
+        .set_quality(mp3lame_encoder::Quality::Best)
+        .map_err(|e| format!("set_quality: {e:?}"))?;
+    let mut encoder = builder
+        .build()
+        .map_err(|e| format!("Impossible d'initialiser l'encodeur LAME : {e:?}"))?;
+
+    let input = DualPcm {
+        left: &left_i16,
+        right: &right_i16,
+    };
+
+    let mut mp3_out: Vec<u8> = Vec::new();
+    mp3_out.reserve(mp3lame_encoder::max_required_buffer_size(left_i16.len()));
+
+    let encoded_size = encoder
+        .encode(input, mp3_out.spare_capacity_mut())
+        .map_err(|e| format!("Erreur encodage MP3 : {e:?}"))?;
+    // SAFETY: `encode` filled exactly `encoded_size` bytes into the spare capacity.
+    unsafe { mp3_out.set_len(mp3_out.len() + encoded_size) };
+
+    let flush_size = encoder
+        .flush::<FlushNoGap>(mp3_out.spare_capacity_mut())
+        .map_err(|e| format!("Erreur flush MP3 : {e:?}"))?;
+    // SAFETY: `flush` filled exactly `flush_size` bytes.
+    unsafe { mp3_out.set_len(mp3_out.len() + flush_size) };
+
+    std::fs::write(&path, &mp3_out).map_err(|e| e.to_string())
 }
 
 // ── Native audio bootstrap ────────────────────────────────────────────────────

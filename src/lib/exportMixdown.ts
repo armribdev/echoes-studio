@@ -4,9 +4,12 @@ import type { Track } from '../types/global';
 import type { Preferences } from '../stores/preferences';
 import { notify } from '../stores/status';
 
+export type ExportFormat = 'wav' | 'mp3';
+
 export async function exportMixdown(
 	tracks: Track[],
-	preferences: Preferences
+	preferences: Preferences,
+	format: ExportFormat = 'wav'
 ): Promise<void> {
 	let totalDuration = 0;
 	for (const track of tracks) {
@@ -19,9 +22,12 @@ export async function exportMixdown(
 		return;
 	}
 
+	const isMp3 = format === 'mp3';
 	const filePath = await save({
-		filters: [{ name: 'Fichier WAV', extensions: ['wav'] }],
-		defaultPath: 'mixdown.wav',
+		filters: isMp3
+			? [{ name: 'Fichier MP3', extensions: ['mp3'] }]
+			: [{ name: 'Fichier WAV', extensions: ['wav'] }],
+		defaultPath: isMp3 ? 'mixdown.mp3' : 'mixdown.wav',
 	});
 	if (!filePath) return;
 
@@ -82,14 +88,24 @@ export async function exportMixdown(
 		? Array.from(rendered.getChannelData(1))
 		: samplesLeft;
 
-	await invoke('export_wav', {
-		path: filePath,
-		samplesLeft,
-		samplesRight,
-		sampleRate,
-		bitDepth: preferences.project.exportBitDepth,
-	});
+	if (isMp3) {
+		await invoke('export_mp3', {
+			path: filePath,
+			samplesLeft,
+			samplesRight,
+			sampleRate,
+			bitrateKbps: preferences.project.exportMp3Bitrate,
+		});
+	} else {
+		await invoke('export_wav', {
+			path: filePath,
+			samplesLeft,
+			samplesRight,
+			sampleRate,
+			bitDepth: preferences.project.exportBitDepth,
+		});
+	}
 
-	const filename = (filePath as string).split(/[\\/]/).pop() ?? 'mixdown.wav';
+	const filename = (filePath as string).split(/[\\/]/).pop() ?? `mixdown.${format}`;
 	notify(`Exporté : ${filename}`, 'success');
 }

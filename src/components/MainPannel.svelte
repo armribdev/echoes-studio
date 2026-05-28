@@ -18,6 +18,7 @@
 	import type { ClipboardEntry } from '../stores/clipboard';
 	import { get } from 'svelte/store';
 	import { exportMixdown } from '../lib/exportMixdown';
+	import type { ExportFormat } from '../lib/exportMixdown';
 	import { snapPosition, getSnapSubdivisionSec } from '../lib/snapUtils';
 
 	const TRACK_COLORS = [
@@ -25,7 +26,7 @@
 		'#c77dff', '#ff9a3c', '#00c9a7', '#ff6db6',
 	];
 	import { notify } from '../stores/status';
-	import { exportTrigger } from '../stores/exportBus';
+	import { exportTrigger, exportMp3Trigger } from '../stores/exportBus';
 	import { trackLevels } from '../stores/trackLevels';
 	import { preferences } from '../stores/preferences';
 
@@ -40,14 +41,24 @@
 	});
 	onDestroy(unsubStore);
 
-	// ── Export trigger ────────────────────────────────────────────────────────
-	const unsubExport = exportTrigger.subscribe((n) => {
-		if (n === 0) return;
-		exportMixdown(tracks, $preferences).catch((e: unknown) =>
+	// ── Export triggers ───────────────────────────────────────────────────────
+	function runExport(format: ExportFormat) {
+		exportMixdown(tracks, $preferences, format).catch((e: unknown) =>
 			notify(`Erreur export : ${(e as Error)?.message ?? String(e)}`, 'error')
 		);
+	}
+
+	const unsubExport = exportTrigger.subscribe((n) => {
+		if (n === 0) return;
+		runExport('wav');
 	});
 	onDestroy(unsubExport);
+
+	const unsubExportMp3 = exportMp3Trigger.subscribe((n) => {
+		if (n === 0) return;
+		runExport('mp3');
+	});
+	onDestroy(unsubExportMp3);
 
 	let contextMenu: { x: number; y: number; trackId: string; trackName: string; trackIndex: number } | null = null;
 	let clipContextMenu: { x: number; y: number } | null = null;

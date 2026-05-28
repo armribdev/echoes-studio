@@ -19,6 +19,8 @@ export interface ProjectPreferences {
 	defaultDenominator: number;
 	/** Bit depth used when rendering a WAV mixdown (16, 24, or 32-bit float). */
 	exportBitDepth: 16 | 24 | 32;
+	/** Bitrate used when encoding an MP3 mixdown (kbps). */
+	exportMp3Bitrate: 128 | 192 | 320;
 }
 
 export interface InterfacePreferences {
@@ -51,7 +53,8 @@ function defaultPreferences(): Preferences {
 			defaultBpm: 120,
 			defaultNumerator: 4,
 			defaultDenominator: 4,
-			exportBitDepth: 32
+			exportBitDepth: 32,
+			exportMp3Bitrate: 320
 		},
 		interface: {
 			showMinimap: false

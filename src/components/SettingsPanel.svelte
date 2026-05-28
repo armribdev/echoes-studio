@@ -210,7 +210,7 @@
 
 	function resetSection() {
 		if (activeSection === 'audio') draft.audio = { inputDevice: 'default', outputDevice: 'default', sampleRate: 48000, bufferSize: 256, inputChannels: 2, outputChannels: 2 };
-		else if (activeSection === 'project') draft.project = { defaultFolder: '', autoSave: true, autoSaveIntervalSec: 60, autoSaveMaxBackups: 5, defaultBpm: 120, defaultNumerator: 4, defaultDenominator: 4, exportBitDepth: 32 };
+		else if (activeSection === 'project') draft.project = { defaultFolder: '', autoSave: true, autoSaveIntervalSec: 60, autoSaveMaxBackups: 5, defaultBpm: 120, defaultNumerator: 4, defaultDenominator: 4, exportBitDepth: 32, exportMp3Bitrate: 320 };
 		else if (activeSection === 'interface') draft.interface = { showMinimap: false };
 		draft = { ...draft };
 	}
@@ -608,7 +608,7 @@
 					<h3 class="subsection-title">Export Mixdown</h3>
 
 					<div class="field">
-						<span class="field-label">Profondeur de bits</span>
+						<span class="field-label">Profondeur de bits WAV</span>
 						<PillGroup
 							bind:value={draft.project.exportBitDepth}
 							options={[
@@ -621,6 +621,23 @@
 							{#if draft.project.exportBitDepth === 16}CD / streaming — compatible partout, taille réduite
 							{:else if draft.project.exportBitDepth === 24}Standard pro — livraison mastering et plateformes
 							{:else}Archival / stems — préserve la plage dynamique float intacte{/if}
+						</span>
+					</div>
+
+					<div class="field">
+						<span class="field-label">Débit MP3</span>
+						<PillGroup
+							bind:value={draft.project.exportMp3Bitrate}
+							options={[
+								{ value: 128, label: '128 kbps' },
+								{ value: 192, label: '192 kbps' },
+								{ value: 320, label: '320 kbps' },
+							]}
+						/>
+						<span class="field-hint">
+							{#if draft.project.exportMp3Bitrate === 128}Streaming léger — ~1 Mo/min
+							{:else if draft.project.exportMp3Bitrate === 192}Haute qualité — distribution recommandée
+							{:else}Qualité maximale — archivage et livraison pro{/if}
 						</span>
 					</div>
 

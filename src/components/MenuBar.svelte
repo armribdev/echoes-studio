@@ -2,7 +2,7 @@
 	import { transport } from '../stores/transport';
 	import { tempo } from '../stores/tempo';
 	import { updateTempo, play, pause, stop, seek } from '../frontend/commands/dispatcher';
-	import { exportTrigger } from '../stores/exportBus';
+	import { exportTrigger, exportMp3Trigger } from '../stores/exportBus';
 	import { settingsPanelOpen } from '../stores/preferences';
 	import NumberInput from './NumberInput.svelte';
 
@@ -12,6 +12,10 @@
 
 	function handleExport() {
 		exportTrigger.update((n) => n + 1);
+	}
+
+	function handleExportMp3() {
+		exportMp3Trigger.update((n) => n + 1);
 	}
 
 	function togglePlayPause() {
@@ -148,12 +152,19 @@
 	</div>
 
 	<div class="right-actions">
-		<button class="btn btn--export" on:click={handleExport} title="Exporter mixdown… (Ctrl+Shift+E)">
+		<button class="btn btn--export" on:click={handleExport} title="Exporter mixdown WAV… (Ctrl+Shift+E)">
 			<svg width="10" height="11" viewBox="0 0 10 11" fill="none" xmlns="http://www.w3.org/2000/svg">
 				<path d="M5 1V7M5 7L2.5 4.5M5 7L7.5 4.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
 				<path d="M1 9H9" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
 			</svg>
 			WAV
+		</button>
+		<button class="btn btn--export btn--export-mp3" on:click={handleExportMp3} title="Exporter mixdown MP3… (Ctrl+Shift+M)">
+			<svg width="10" height="11" viewBox="0 0 10 11" fill="none" xmlns="http://www.w3.org/2000/svg">
+				<path d="M5 1V7M5 7L2.5 4.5M5 7L7.5 4.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+				<path d="M1 9H9" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+			</svg>
+			MP3
 		</button>
 		<div class="sep"></div>
 		<button class="btn btn--settings" on:click={() => settingsPanelOpen.set(true)} title="Préférences (Ctrl+,)">
@@ -219,6 +230,14 @@
 			gap: 5px;
 			display: flex;
 			align-items: center;
+
+			&-mp3 {
+				color: #ff9a3c;
+				&:hover {
+					color: #ffb46a;
+					background: rgba(255, 154, 60, 0.1);
+				}
+			}
 		}
 
 		&--settings {

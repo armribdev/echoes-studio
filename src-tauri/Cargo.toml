@@ -25,6 +25,7 @@ symphonia = { version = "0.5", default-features = false, features = [
     "wav", "mp3", "flac", "ogg",
     "pcm", "adpcm", "vorbis",
 ] }
+mp3lame-encoder = "0.1"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = ["Win32_System_LibraryLoader"] }
