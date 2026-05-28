@@ -11,7 +11,7 @@
  */
 
 import { ev, type EngineEvent } from '../protocol/events';
-import type { Clip, Project, Track } from '../../types/global';
+import type { Clip, Project, Track, TrackEffect } from '../../types/global';
 
 // ── Project state ─────────────────────────────────────────────────────────────
 
@@ -45,6 +45,7 @@ export interface TrackState {
   muted: boolean;
   solo: boolean;
   clips: ClipState[];
+  effects: TrackEffect[];
 }
 
 export function emptyProjectState(): ProjectState {
@@ -72,7 +73,7 @@ export function applyEvent(state: ProjectState, event: EngineEvent): ProjectStat
       if (state.tracks.some((t) => t.id === p.id)) return state; // idempotent
       return {
         ...state,
-        tracks: [...state.tracks, { id: p.id, name: p.name, volume: 80, pan: 0, muted: false, solo: false, clips: [] }],
+        tracks: [...state.tracks, { id: p.id, name: p.name, volume: 80, pan: 0, muted: false, solo: false, clips: [], effects: [] }],
       };
     }
 
@@ -187,6 +188,52 @@ export function applyEvent(state: ProjectState, event: EngineEvent): ProjectStat
       return projectFromSnapshot(event.payload as Project);
     }
 
+    case ev.EFFECT_ADDED: {
+      const p = event.payload as { track_id: string; effect: TrackEffect };
+      return {
+        ...state,
+        tracks: state.tracks.map((t) =>
+          t.id !== p.track_id
+            ? t
+            : {
+                ...t,
+                effects: t.effects.some((e) => e.id === p.effect.id)
+                  ? t.effects
+                  : [...t.effects, p.effect],
+              },
+        ),
+      };
+    }
+
+    case ev.EFFECT_REMOVED: {
+      const p = event.payload as { track_id: string; effect_id: string };
+      return {
+        ...state,
+        tracks: state.tracks.map((t) =>
+          t.id !== p.track_id
+            ? t
+            : { ...t, effects: t.effects.filter((e) => e.id !== p.effect_id) },
+        ),
+      };
+    }
+
+    case ev.EFFECT_UPDATED: {
+      const p = event.payload as { track_id: string; effect_id: string; effect: TrackEffect };
+      return {
+        ...state,
+        tracks: state.tracks.map((t) =>
+          t.id !== p.track_id
+            ? t
+            : {
+                ...t,
+                effects: t.effects.map((e) =>
+                  e.id !== p.effect_id ? e : { ...e, enabled: p.effect.enabled, params: p.effect.params },
+                ),
+              },
+        ),
+      };
+    }
+
     default:
       return state; // forward-compat: unknown events ignored
   }
@@ -222,6 +269,7 @@ export function projectFromSnapshot(dto: Project): ProjectState {
       muted: t.muted ?? false,
       solo: t.solo ?? false,
       clips: t.clips.map((c) => ({ ...c, trackId: t.id })),
+      effects: t.effects ?? [],
     })),
   };
 }

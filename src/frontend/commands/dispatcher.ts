@@ -21,6 +21,7 @@ import {
   cmd,
   makeCommand,
   type AddClipPayload,
+  type AddEffectPayload,
   type BatchCommand,
   type CommandEnvelope,
   type CommandResult,
@@ -29,8 +30,10 @@ import {
   type MoveClipPayload,
   type MuteTrackPayload,
   type RemoveClipPayload,
+  type RemoveEffectPayload,
   type SeekPayload,
   type SoloTrackPayload,
+  type UpdateEffectPayload,
   type UpdateProjectNamePayload,
   type UpdateTempoPayload,
   type UpdateTrackPayload,
@@ -197,6 +200,28 @@ export function pause(): Promise<CommandResult> {
 
 export function seek(position: number): Promise<CommandResult> {
   return dispatch<SeekPayload>(cmd.SEEK, { position });
+}
+
+// ── Effect commands ───────────────────────────────────────────────────────────
+
+export function addEffect(trackId: string, kind: string): Promise<CommandResult> {
+  return dispatch<AddEffectPayload>(cmd.ADD_EFFECT, { track_id: trackId, kind });
+}
+
+export function removeEffect(trackId: string, effectId: string): Promise<CommandResult> {
+  return dispatch<RemoveEffectPayload>(cmd.REMOVE_EFFECT, { track_id: trackId, effect_id: effectId });
+}
+
+export function updateEffect(
+  trackId: string,
+  effectId: string,
+  changes: { enabled?: boolean; params?: Record<string, unknown> },
+): Promise<CommandResult> {
+  return dispatch<UpdateEffectPayload>(cmd.UPDATE_EFFECT, {
+    track_id: trackId,
+    effect_id: effectId,
+    ...changes,
+  });
 }
 
 // ── History ───────────────────────────────────────────────────────────────────

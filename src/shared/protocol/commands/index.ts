@@ -32,6 +32,11 @@ export const cmd = {
   UPDATE_PROJECT_NAME: 'UPDATE_PROJECT_NAME',
   UPDATE_TEMPO: 'UPDATE_TEMPO',
 
+  // Effects
+  ADD_EFFECT: 'ADD_EFFECT',
+  REMOVE_EFFECT: 'REMOVE_EFFECT',
+  UPDATE_EFFECT: 'UPDATE_EFFECT',
+
   // Audio graph (structural routing — future)
   ADD_NODE: 'ADD_NODE',
   REMOVE_NODE: 'REMOVE_NODE',
@@ -122,6 +127,23 @@ export interface UpdateTempoPayload {
 
 export interface SeekPayload {
   position: number;
+}
+
+export interface AddEffectPayload {
+  track_id: string;
+  kind: string;
+}
+
+export interface RemoveEffectPayload {
+  track_id: string;
+  effect_id: string;
+}
+
+export interface UpdateEffectPayload {
+  track_id: string;
+  effect_id: string;
+  enabled?: boolean;
+  params?: Record<string, unknown>;
 }
 
 // ── Factory ───────────────────────────────────────────────────────────────────
