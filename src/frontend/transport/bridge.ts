@@ -8,7 +8,13 @@
 
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { transport } from '../../stores/transport';
-import { ev, type EngineEvent, type PositionUpdatedPayload } from '../../shared/protocol/events';
+import { trackLevels } from '../../stores/trackLevels';
+import {
+  ev,
+  type EngineEvent,
+  type PositionUpdatedPayload,
+  type LevelsUpdatedPayload,
+} from '../../shared/protocol/events';
 
 export function connectTransportBridge(): () => void {
   let unlisten: UnlistenFn | null = null;
@@ -22,9 +28,19 @@ export function connectTransportBridge(): () => void {
         transport.update((t) => ({ ...t, isPlaying: false }));
         break;
       case ev.POSITION_UPDATED: {
-        const { position } = payload.payload as PositionUpdatedPayload;
-        if (typeof position === 'number' && position >= 0) {
-          transport.update((t) => ({ ...t, position }));
+        const p = payload.payload as PositionUpdatedPayload;
+        if (typeof p.position === 'number' && p.position >= 0) {
+          transport.update((t) => ({ ...t, position: p.position }));
+        }
+        if (p.tracks) {
+          trackLevels.set(p.tracks);
+        }
+        break;
+      }
+      case ev.LEVELS_UPDATED: {
+        const p = payload.payload as LevelsUpdatedPayload;
+        if (p.tracks) {
+          trackLevels.set(p.tracks);
         }
         break;
       }

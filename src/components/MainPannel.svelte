@@ -2,6 +2,7 @@
 	import Knob from './Knob.svelte';
 	import Track from './Track.svelte';
 	import TrackContextMenu from './TrackContextMenu.svelte';
+	import VuMeter from './VuMeter.svelte';
 	import type { Track as TrackType, Project } from '../types/global';
 	import { invoke } from '@tauri-apps/api/core';
 	import { listen } from '@tauri-apps/api/event';
@@ -20,6 +21,7 @@
 	];
 	import { notify } from '../stores/status';
 	import { exportTrigger } from '../stores/exportBus';
+	import { trackLevels } from '../stores/trackLevels';
 	import { preferences } from '../stores/preferences';
 	import { save } from '@tauri-apps/plugin-dialog';
 
@@ -726,6 +728,10 @@
 							<span class="knob-label">PAN</span>
 							<Knob min={-100} max={100} bind:value={tracks[trackIndex].pan} on:release={() => handlePanRelease(trackIndex)} />
 						</div>
+						<VuMeter
+							peakL={($trackLevels[track.id]?.[0]) ?? 0}
+							peakR={($trackLevels[track.id]?.[1]) ?? 0}
+						/>
 					</div>
 				</div>
 			{/each}

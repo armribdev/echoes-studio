@@ -246,11 +246,15 @@ impl AudioGraph {
                 format!("{} [vol]", track.name),
             );
 
-            // track → gain → master[port_idx]
-            // Each track gets its OWN master input port so they are summed,
-            // not overwritten (all-to-port-0 would only keep the last track).
+            let meter_node = graph.add_node(
+                NodeKind::Meter { meter_id: track.id.clone() },
+                format!("{} [meter]", track.name),
+            );
+
+            // track → gain → meter → master[port_idx]
             graph.connect(track_node, 0, gain_node, 0);
-            graph.connect(gain_node, 0, master_id, port_idx as u32);
+            graph.connect(gain_node, 0, meter_node, 0);
+            graph.connect(meter_node, 0, master_id, port_idx as u32);
         }
 
         graph

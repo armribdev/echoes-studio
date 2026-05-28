@@ -41,7 +41,7 @@ pub mod snapshot;
 // ── Convenience re-exports ────────────────────────────────────────────────────
 
 pub use buffer::AudioBuffer;
-pub use compiler::{CompileConfig, CompileError, CompiledGraph, GraphCompiler};
+pub use compiler::{CompileConfig, CompileError, CompiledGraph, GraphCompiler, MeterCell};
 pub use execution_plan::ExecutionPlan;
 pub use graph::{AudioGraph, Edge, NodeKind};
 pub use node::{AudioNode, NodeId, PortId, PrepareContext, TransportInfo};

@@ -38,6 +38,7 @@ export const ev = {
   PLAY_STARTED: 'PLAY_STARTED',
   PLAY_STOPPED: 'PLAY_STOPPED',
   POSITION_UPDATED: 'POSITION_UPDATED',
+  LEVELS_UPDATED: 'LEVELS_UPDATED',
 
   // Audio feedback — UI only
   PEAK_METER: 'PEAK_METER',
@@ -112,8 +113,18 @@ export interface TempoUpdatedPayload {
   denominator: number;
 }
 
+/** Per-track peak levels: track_id → [peakL, peakR] in linear amplitude 0–1. */
+export type TrackLevelsMap = Record<string, [number, number]>;
+
 export interface PositionUpdatedPayload {
   position: number;
+  tracks?: TrackLevelsMap;
+}
+
+export interface LevelsUpdatedPayload {
+  output: number[];
+  input: number[];
+  tracks?: TrackLevelsMap;
 }
 
 export interface PeakMeterPayload {

@@ -24,13 +24,23 @@
 //! 7. **Return** `(ExecutionPlan, Vec<Box<dyn AudioNode>>)`.
 
 use std::collections::{HashMap, VecDeque};
-use std::sync::Arc;
+use std::sync::{
+    atomic::AtomicU32,
+    Arc,
+};
 
 use crate::audio_graph::execution_plan::{ExecutionPlan, ExecutionPlanBuilder, ExecutionStep, InputConnection};
 use crate::audio_graph::graph::{AudioGraph, NodeKind};
 use crate::audio_graph::node::{AudioNode, NodeId, PrepareContext};
 use crate::audio_graph::modulation::ModulationMap;
 use crate::project::AppProject;
+
+/// Shared peak cells for one track meter: (peak_L, peak_R).
+pub type MeterCell = (Arc<AtomicU32>, Arc<AtomicU32>);
+
+fn zero_cell() -> Arc<AtomicU32> {
+    Arc::new(AtomicU32::new(0.0_f32.to_bits()))
+}
 
 // ── Compile config ─────────────────────────────────────────────────────────────
 
@@ -86,6 +96,9 @@ pub struct CompiledGraph {
     pub plan: Arc<ExecutionPlan>,
     /// Node processors in the same order as `plan.steps`.
     pub processors: Vec<Box<dyn AudioNode>>,
+    /// Per-track peak cells: meter_id (= track id) → (peak_L, peak_R).
+    /// Written every block by `MeterNode`; read by the position-reporter thread.
+    pub meter_cells: HashMap<String, MeterCell>,
 }
 
 // ── GraphCompiler ─────────────────────────────────────────────────────────────
@@ -164,7 +177,7 @@ impl GraphCompiler {
 
         let plan = Arc::new(plan_builder.build());
 
-        // 5. Instantiate processors
+        // 5. Instantiate processors (Meter nodes get fresh atomic cells)
         let prepare_ctx = PrepareContext {
             sample_rate: config.sample_rate,
             max_block_size: config.max_block_size,
@@ -172,15 +185,24 @@ impl GraphCompiler {
         };
 
         let mut processors: Vec<Box<dyn AudioNode>> = Vec::with_capacity(order.len());
+        let mut meter_cells: HashMap<String, MeterCell> = HashMap::new();
 
         for &node_id in &order {
             let graph_node = &graph.nodes[&node_id];
-            let mut node = Self::build_node(node_id, &graph_node.kind, project, &plan, config.sample_rate);
+            let node: Box<dyn AudioNode> = if let NodeKind::Meter { meter_id } = &graph_node.kind {
+                let peak_l = zero_cell();
+                let peak_r = zero_cell();
+                meter_cells.insert(meter_id.clone(), (Arc::clone(&peak_l), Arc::clone(&peak_r)));
+                Box::new(crate::audio_graph::nodes::meter::MeterNode::new(node_id, peak_l, peak_r))
+            } else {
+                Self::build_node(node_id, &graph_node.kind, project, &plan, config.sample_rate)
+            };
+            let mut node = node;
             node.prepare(prepare_ctx);
             processors.push(node);
         }
 
-        Ok(CompiledGraph { plan, processors })
+        Ok(CompiledGraph { plan, processors, meter_cells })
     }
 
     // ── Topological sort (Kahn's BFS) ─────────────────────────────────────────
@@ -336,8 +358,10 @@ impl GraphCompiler {
                 Box::new(nodes::master::MasterNode::new(id, *num_inputs))
             }
 
-            NodeKind::Meter { meter_id } => {
-                Box::new(nodes::meter::MeterNode::new(id, meter_id.clone()))
+            NodeKind::Meter { .. } => {
+                // Handled before build_node is called (see compile loop above).
+                // Fallback: silence pass-through if reached unexpectedly.
+                Box::new(nodes::gain::GainNode::new(id, 1.0))
             }
 
             NodeKind::Send { send_gain, .. } => {

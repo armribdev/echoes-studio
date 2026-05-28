@@ -1,53 +1,29 @@
-//! Meter node — pass-through node that records peak/RMS levels for the UI.
+//! Meter node — pass-through node that records peak levels for the UI.
 //!
-//! The node is inserted after a track's gain stage.  Audio passes through
-//! unchanged; the side-effect is writing level data to a lock-free ring
-//! buffer that the UI polls via a Tauri command.
-//!
-//! Current implementation: pass-through only.  Level data is computed but
-//! not yet routed to the UI (future: write to `Arc<AtomicU32>` meter cells).
+//! Inserted after a track's gain stage.  Audio passes through unchanged;
+//! the side-effect is writing the block's peak amplitude to a pair of
+//! `Arc<AtomicU32>` cells (L, R) that the position-reporter thread reads
+//! every ~33 ms without blocking the audio thread.
+
+use std::sync::{
+    atomic::{AtomicU32, Ordering},
+    Arc,
+};
 
 use crate::audio_graph::buffer::AudioBuffer;
 use crate::audio_graph::node::{AudioNode, NodeId, PrepareContext, TransportInfo};
 
 pub struct MeterNode {
     id: NodeId,
-    meter_id: String,
-    peak_l: f32,
-    peak_r: f32,
-    rms_acc_l: f32,
-    rms_acc_r: f32,
-    frame_count: usize,
+    /// Shared cells written by this node and read by the reporter thread.
+    peak_l_out: Arc<AtomicU32>,
+    peak_r_out: Arc<AtomicU32>,
 }
 
 impl MeterNode {
-    pub fn new(id: NodeId, meter_id: String) -> Self {
-        MeterNode {
-            id,
-            meter_id,
-            peak_l: 0.0,
-            peak_r: 0.0,
-            rms_acc_l: 0.0,
-            rms_acc_r: 0.0,
-            frame_count: 0,
-        }
-    }
-
-    pub fn meter_id(&self) -> &str {
-        &self.meter_id
-    }
-
-    pub fn peak(&self) -> (f32, f32) {
-        (self.peak_l, self.peak_r)
-    }
-
-    pub fn rms(&self) -> (f32, f32) {
-        if self.frame_count == 0 {
-            return (0.0, 0.0);
-        }
-        let rms_l = (self.rms_acc_l / self.frame_count as f32).sqrt();
-        let rms_r = (self.rms_acc_r / self.frame_count as f32).sqrt();
-        (rms_l, rms_r)
+    /// Create a node that writes its per-block peak into the provided atomics.
+    pub fn new(id: NodeId, peak_l: Arc<AtomicU32>, peak_r: Arc<AtomicU32>) -> Self {
+        MeterNode { id, peak_l_out: peak_l, peak_r_out: peak_r }
     }
 }
 
@@ -68,36 +44,31 @@ impl AudioNode for MeterNode {
         let input = &inputs[0];
         let output = &mut outputs[0];
 
-        // Pass through
         output.copy_from(input);
 
-        // Measure
         let frames = input.num_frames;
+        let mut peak_l = 0.0_f32;
+        let mut peak_r = 0.0_f32;
+
         if input.num_channels >= 1 {
-            let ch_l = input.channel(0);
-            for &s in ch_l.iter().take(frames) {
-                self.peak_l = self.peak_l.max(s.abs());
-                self.rms_acc_l += s * s;
+            for &s in input.channel(0).iter().take(frames) {
+                peak_l = peak_l.max(s.abs());
             }
         }
         if input.num_channels >= 2 {
-            let ch_r = input.channel(1);
-            for &s in ch_r.iter().take(frames) {
-                self.peak_r = self.peak_r.max(s.abs());
-                self.rms_acc_r += s * s;
+            for &s in input.channel(1).iter().take(frames) {
+                peak_r = peak_r.max(s.abs());
             }
         } else {
-            self.peak_r = self.peak_l;
-            self.rms_acc_r = self.rms_acc_l;
+            peak_r = peak_l;
         }
-        self.frame_count += frames;
+
+        self.peak_l_out.store(peak_l.to_bits(), Ordering::Relaxed);
+        self.peak_r_out.store(peak_r.to_bits(), Ordering::Relaxed);
     }
 
     fn reset(&mut self) {
-        self.peak_l = 0.0;
-        self.peak_r = 0.0;
-        self.rms_acc_l = 0.0;
-        self.rms_acc_r = 0.0;
-        self.frame_count = 0;
+        self.peak_l_out.store(0, Ordering::Relaxed);
+        self.peak_r_out.store(0, Ordering::Relaxed);
     }
 }

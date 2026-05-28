@@ -24,9 +24,10 @@
 //!   ✓ Never calls `async`/`await`
 //!   ✓ Only reads from `GraphScheduler` (owned for the callback's duration)
 
+use std::collections::HashMap;
 use std::sync::{
     atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering},
-    Arc,
+    Arc, Mutex,
 };
 
 use cpal::{
@@ -36,7 +37,7 @@ use cpal::{
 use serde_json::json;
 use tauri::Emitter;
 
-use crate::audio_graph::{CompileConfig, GraphScheduler, RuntimeSnapshot};
+use crate::audio_graph::{CompileConfig, GraphScheduler, MeterCell, RuntimeSnapshot};
 use crate::audio_engine::graph::AudioGraphCompiler;
 use crate::audio_engine::transport::SharedTransport;
 use crate::audio_settings::AudioSettings;
@@ -137,6 +138,12 @@ pub struct AudioEngine {
     /// position reporter thread which emits them as `LEVELS_UPDATED` events.
     levels: Arc<ChannelLevels>,
 
+    /// Per-track peak cells from the last graph compile.
+    /// Written every block by `MeterNode` instances; read by the reporter thread.
+    /// Protected by a `Mutex` so the engine can swap the map on recompile while
+    /// the reporter thread holds a clone of this `Arc`.
+    pub meter_cells: Arc<Mutex<HashMap<String, MeterCell>>>,
+
     /// Active output channel count, readable and writable without restarting
     /// the stream.  `0` means "use all hardware channels".
     /// The audio callback reads this atomically every block, so changes
@@ -154,6 +161,7 @@ impl AudioEngine {
             // instance (if any) would see the stop signal.
             reporter_stop: Arc::new(AtomicBool::new(true)),
             levels: ChannelLevels::new(),
+            meter_cells: Arc::new(Mutex::new(HashMap::new())),
             active_output_channels: Arc::new(AtomicUsize::new(0)),
         }
     }
@@ -178,7 +186,10 @@ impl AudioEngine {
             max_block_size: MAX_BLOCK_FRAMES,
             num_channels: 2,
         };
-        let scheduler = AudioGraphCompiler::compile_scheduler(project, config);
+        let (scheduler, cells) = AudioGraphCompiler::compile_scheduler(project, config);
+        if let Ok(mut map) = self.meter_cells.lock() {
+            *map = cells;
+        }
         self.snapshot.enqueue(scheduler);
     }
 
@@ -244,8 +255,12 @@ impl AudioEngine {
             max_block_size: MAX_BLOCK_FRAMES,
             num_channels: 2,
         };
-        self.snapshot
-            .enqueue(AudioGraphCompiler::compile_scheduler(project, compile_cfg));
+        let (initial_scheduler, initial_cells) =
+            AudioGraphCompiler::compile_scheduler(project, compile_cfg);
+        if let Ok(mut map) = self.meter_cells.lock() {
+            *map = initial_cells;
+        }
+        self.snapshot.enqueue(initial_scheduler);
 
         // ── 5. Build the CPAL stream (try Fixed buffer, fall back to Default) ──
         // Seed the active-channels atomic with the value from settings so the
@@ -288,12 +303,13 @@ impl AudioEngine {
         // ── 6. Spawn position reporter ────────────────────────────────────────
         self.reporter_stop = Arc::new(AtomicBool::new(false));
         let stop = Arc::clone(&self.reporter_stop);
-        let reporter_transport = Arc::clone(&self.transport);
-        let reporter_levels    = Arc::clone(&self.levels);
+        let reporter_transport    = Arc::clone(&self.transport);
+        let reporter_levels       = Arc::clone(&self.levels);
+        let reporter_meter_cells  = Arc::clone(&self.meter_cells);
 
         std::thread::Builder::new()
             .name("cpal-pos-reporter".into())
-            .spawn(move || position_reporter(reporter_transport, reporter_levels, app, stop))
+            .spawn(move || position_reporter(reporter_transport, reporter_levels, reporter_meter_cells, app, stop))
             .map_err(|e| format!("Impossible de démarrer le reporter de position : {e}"))?;
 
         self._stream = Some(SendStream(stream));
@@ -583,12 +599,13 @@ where
 
 /// Background thread: emits engine events at ~30 fps.
 ///
-/// Always emits `LEVELS_UPDATED` (for the Settings panel meters).
+/// Always emits `LEVELS_UPDATED` (for the Settings panel meters + track meters).
 /// Only emits `POSITION_UPDATED` while playing.
 /// Exits as soon as `stop` is set to `true` (signalled by `stop_stream`).
 fn position_reporter(
     transport: Arc<SharedTransport>,
     levels: Arc<ChannelLevels>,
+    meter_cells: Arc<Mutex<HashMap<String, MeterCell>>>,
     app: tauri::AppHandle,
     stop: Arc<AtomicBool>,
 ) {
@@ -600,18 +617,29 @@ fn position_reporter(
             break;
         }
 
-        // Merge position + levels into a single IPC event per tick to halve
-        // the serialisation + inter-process roundtrip cost.
         let out = levels.read_outputs();
         let inp = levels.read_inputs();
+
+        // Read per-track peaks (non-blocking: try_lock, skip on contention)
+        let track_levels: serde_json::Value = if let Ok(cells) = meter_cells.try_lock() {
+            let map: serde_json::Map<String, serde_json::Value> = cells
+                .iter()
+                .map(|(id, (l, r))| {
+                    let peak_l = f32::from_bits(l.load(Ordering::Relaxed));
+                    let peak_r = f32::from_bits(r.load(Ordering::Relaxed));
+                    (id.clone(), json!([peak_l, peak_r]))
+                })
+                .collect();
+            serde_json::Value::Object(map)
+        } else {
+            serde_json::Value::Object(serde_json::Map::new())
+        };
 
         if transport.is_playing.load(Ordering::Relaxed) {
             let sr  = transport.sample_rate();
             let pos = transport.position_samples.load(Ordering::Relaxed);
             let pos_secs = pos as f64 / sr as f64;
 
-            // Piggyback levels onto the existing POSITION_UPDATED event so
-            // the frontend receives both in a single IPC roundtrip.
             let _ = app.emit(
                 "engine-event",
                 json!({
@@ -623,17 +651,20 @@ fn position_reporter(
                         "position": pos_secs,
                         "output":   out,
                         "input":    inp,
+                        "tracks":   track_levels,
                     }
                 }),
             );
         } else {
-            // Not playing — still report levels for the Settings panel,
-            // but omit the position field to keep the payload small.
             let _ = app.emit(
                 "engine-event",
                 json!({
                     "type": "LEVELS_UPDATED",
-                    "payload": { "output": out, "input": inp }
+                    "payload": {
+                        "output": out,
+                        "input":  inp,
+                        "tracks": track_levels,
+                    }
                 }),
             );
         }

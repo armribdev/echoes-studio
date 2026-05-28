@@ -16,35 +16,41 @@
 //! need changes during the migration.  The implementation is now fully
 //! delegated to the new `audio_graph` subsystem.
 
+use std::collections::HashMap;
+
 use crate::audio_graph::{
     AudioGraph,
     GraphCompiler,
     GraphScheduler,
     CompileConfig,
+    MeterCell,
 };
 use crate::project::AppProject;
 
-/// Bridges `AppProject` → `GraphScheduler`.
-///
-/// Replaces the previous flat snapshot compiler.
+/// Bridges `AppProject` → `GraphScheduler` + per-track meter cells.
 pub struct AudioGraphCompiler;
 
 impl AudioGraphCompiler {
-    /// Compile the current project state into a `GraphScheduler`.
+    /// Compile the current project state.
+    ///
+    /// Returns both the scheduler (sent to the audio thread via `RuntimeSnapshot`)
+    /// and the meter cells (held by `AudioEngine` and read by the reporter thread).
     ///
     /// Called on the command thread (never the audio thread).
-    /// May allocate freely.
     pub fn compile_scheduler(
         project: &AppProject,
         config: CompileConfig,
-    ) -> GraphScheduler {
+    ) -> (GraphScheduler, HashMap<String, MeterCell>) {
         let graph = AudioGraph::from_project(project);
 
         match GraphCompiler::compile(&graph, project, config) {
-            Ok(compiled) => GraphScheduler::new(compiled),
+            Ok(compiled) => {
+                let cells = compiled.meter_cells.clone();
+                (GraphScheduler::new(compiled), cells)
+            }
             Err(e) => {
                 eprintln!("[audio_graph] Compile error: {} — using empty graph", e);
-                GraphScheduler::empty(config.sample_rate)
+                (GraphScheduler::empty(config.sample_rate), HashMap::new())
             }
         }
     }
