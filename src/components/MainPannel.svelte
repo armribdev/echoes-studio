@@ -21,8 +21,8 @@
 	import type { ExportFormat } from '../lib/exportMixdown';
 	import { snapPosition, getSnapSubdivisionSec } from '../lib/snapUtils';
 	import { pianoRollStore } from '../stores/pianoRoll';
-	import EffectChain from './EffectChain.svelte';
-	import ModulationPanel from './ModulationPanel.svelte';
+	import { selectedTrack } from '../stores/selectedTrack';
+	import { bottomPanel } from '../stores/bottomPanel';
 
 	const TRACK_COLORS = [
 		'#4d96ff', '#ff6b6b', '#6bcb77', '#ffd93d',
@@ -37,8 +37,6 @@
 	// Local mutations (optimistic UI during drag/import) are reconciled by the
 	// next store event — the reducer is idempotent so there's never a double-apply.
 	let tracks: TrackType[] = [];
-	onDestroy(() => stopInspectorResize());
-
 	const unsubStore = projectEventStore.subscribe((state) => {
 		tracks = state.tracks;
 		// Keep the tempo store in sync so MenuBar reflects undo/redo correctly.
@@ -69,29 +67,20 @@
 	let clipContextMenu: { x: number; y: number } | null = null;
 	let selectedTrackIndex: number | null = null;
 
-	// ── Inspector panel ───────────────────────────────────────────────────────
-	let inspectorWidth = 240;
-	let isResizingInspector = false;
-	let resizeStartX = 0;
-	let resizeStartWidth = 0;
-
-	function startInspectorResize(e: MouseEvent) {
-		isResizingInspector = true;
-		resizeStartX = e.clientX;
-		resizeStartWidth = inspectorWidth;
-		window.addEventListener('mousemove', onInspectorResizeMove);
-		window.addEventListener('mouseup', stopInspectorResize);
-	}
-
-	function onInspectorResizeMove(e: MouseEvent) {
-		const delta = resizeStartX - e.clientX;
-		inspectorWidth = Math.max(180, Math.min(520, resizeStartWidth + delta));
-	}
-
-	function stopInspectorResize() {
-		isResizingInspector = false;
-		window.removeEventListener('mousemove', onInspectorResizeMove);
-		window.removeEventListener('mouseup', stopInspectorResize);
+	$: {
+		if (selectedTrackIndex !== null && tracks[selectedTrackIndex]) {
+			const t = tracks[selectedTrackIndex];
+			selectedTrack.set({
+				trackId: t.id,
+				trackName: t.name,
+				trackColor: TRACK_COLORS[selectedTrackIndex % TRACK_COLORS.length],
+				effects: t.effects ?? [],
+				modulators: t.modulators ?? [],
+				mod_routes: t.mod_routes ?? [],
+			});
+		} else {
+			selectedTrack.set({ trackId: null, trackName: '', trackColor: '#4d96ff', effects: [], modulators: [], mod_routes: [] });
+		}
 	}
 
 	let logScale: number = Math.log(80);
@@ -674,7 +663,7 @@
 					on:volumerelease={() => handleVolumeRelease(trackIndex)}
 					on:panrelease={() => handlePanRelease(trackIndex)}
 					on:rename={(e) => { tracks[trackIndex] = { ...tracks[trackIndex], name: e.detail.name }; tracks = tracks; updateTrack(tracks[trackIndex].id, { name: e.detail.name, volume: tracks[trackIndex].volume }).catch(console.error); }}
-				on:openpianoroll={() => pianoRollStore.openPianoRoll(track.id, track.name, TRACK_COLORS[trackIndex % TRACK_COLORS.length])}
+				on:openpianoroll={() => { pianoRollStore.openPianoRoll(track.id, track.name, TRACK_COLORS[trackIndex % TRACK_COLORS.length]); bottomPanel.openTab('pianoroll'); }}
 				/>
 			{/each}
 		</div>
@@ -745,33 +734,6 @@
 		</div>
 	</div>
 
-	<!-- svelte-ignore a11y-no-static-element-interactions -->
-	<div class="inspector" style="width: {inspectorWidth}px" class:resizing={isResizingInspector}>
-		<!-- svelte-ignore a11y-no-static-element-interactions -->
-		<div class="inspector-resize-handle" on:mousedown={startInspectorResize}></div>
-		<div class="inspector-header">
-			<span class="inspector-title">Inspecteur</span>
-			{#if selectedTrackIndex !== null && tracks[selectedTrackIndex]}
-				<span class="inspector-track-name">{tracks[selectedTrackIndex].name}</span>
-			{/if}
-		</div>
-		<div class="inspector-body">
-			{#if selectedTrackIndex !== null && tracks[selectedTrackIndex]}
-				<EffectChain
-					trackId={tracks[selectedTrackIndex].id}
-					effects={tracks[selectedTrackIndex].effects ?? []}
-				/>
-				<ModulationPanel
-					trackId={tracks[selectedTrackIndex].id}
-					modulators={tracks[selectedTrackIndex].modulators ?? []}
-					mod_routes={tracks[selectedTrackIndex].mod_routes ?? []}
-					effects={tracks[selectedTrackIndex].effects ?? []}
-				/>
-			{:else}
-				<p class="inspector-empty">Sélectionnez une piste pour voir ses effets</p>
-			{/if}
-		</div>
-	</div>
 </div>
 
 <style lang="scss">
@@ -779,7 +741,8 @@
 
 	.container {
 		display: flex;
-		height: 100%;
+		flex: 1;
+		min-height: 0;
 		position: relative;
 		overflow: hidden;
 	}
@@ -930,80 +893,6 @@
 			border-color: rgba(21, 113, 255, 0.4);
 			color: $text-color;
 		}
-	}
-
-	// ── Inspector panel ───────────────────────────────────────────────────────
-	.inspector {
-		flex-shrink: 0;
-		display: flex;
-		flex-direction: column;
-		background-color: $pannel-background-color;
-		border-left: 1px solid $border-color;
-		position: relative;
-		user-select: none;
-
-		&.resizing { cursor: ew-resize; }
-	}
-
-	.inspector-resize-handle {
-		position: absolute;
-		left: 0;
-		top: 0;
-		bottom: 0;
-		width: 4px;
-		cursor: ew-resize;
-		z-index: 10;
-
-		&:hover, &:active { background: rgba($accent-color, 0.4); }
-	}
-
-	.inspector-header {
-		height: 22px;
-		flex-shrink: 0;
-		display: flex;
-		align-items: center;
-		gap: 6px;
-		padding: 0 10px 0 14px;
-		background-color: $background-color;
-		border-bottom: 1px solid $border-color;
-	}
-
-	.inspector-title {
-		font-size: 10px;
-		font-weight: 700;
-		font-family: $font-mono;
-		letter-spacing: 0.08em;
-		color: $text-muted;
-		text-transform: uppercase;
-		flex-shrink: 0;
-	}
-
-	.inspector-track-name {
-		font-size: 10px;
-		color: $text-subtle;
-		font-family: $font-mono;
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
-		min-width: 0;
-
-		&::before { content: '—'; margin-right: 6px; color: $text-faint; }
-	}
-
-	.inspector-body {
-		flex: 1;
-		overflow-y: auto;
-		padding-left: 4px;
-	}
-
-	.inspector-empty {
-		font-size: 10px;
-		color: $text-faint;
-		text-align: center;
-		padding: 24px 12px;
-		margin: 0;
-		line-height: 1.5;
-		user-select: none;
 	}
 
 	// ── Right panel (ruler + tracks, playhead spans both) ─────────────────────

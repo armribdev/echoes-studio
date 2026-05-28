@@ -4,6 +4,8 @@
 	import { updateTempo, play, pause, stop, seek } from '../frontend/commands/dispatcher';
 	import { exportTrigger, exportMp3Trigger } from '../stores/exportBus';
 	import { settingsPanelOpen } from '../stores/preferences';
+	import { leftPanel } from '../stores/leftPanel';
+	import { rightPanel } from '../stores/rightPanel';
 	import NumberInput from './NumberInput.svelte';
 
 	import Icon from './Icon.svelte';
@@ -152,6 +154,19 @@
 	</div>
 
 	<div class="right-actions">
+		<button
+			class="btn btn--panel-toggle"
+			class:active={$leftPanel.open}
+			on:click={() => leftPanel.toggle()}
+			title="Inspecteur (I)"
+		>I</button>
+		<button
+			class="btn btn--panel-toggle"
+			class:active={$rightPanel.open}
+			on:click={() => rightPanel.toggle()}
+			title="Bibliothèque (L)"
+		>L</button>
+		<div class="sep"></div>
 		<button class="btn btn--export" on:click={handleExport} title="Exporter mixdown WAV… (Ctrl+Shift+E)">
 			<svg width="10" height="11" viewBox="0 0 10 11" fill="none" xmlns="http://www.w3.org/2000/svg">
 				<path d="M5 1V7M5 7L2.5 4.5M5 7L7.5 4.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
@@ -253,7 +268,30 @@
 		margin-left: auto;
 		display: flex;
 		align-items: center;
-		gap: 6px;
+		gap: 4px;
+	}
+
+	.btn--panel-toggle {
+		width: 26px;
+		height: 26px;
+		font-size: 11px;
+		font-weight: 700;
+		font-family: $font-mono;
+		letter-spacing: 0.05em;
+		border-radius: $radius-sm;
+		border: 1px solid transparent;
+		transition: background 0.12s, color 0.12s, border-color 0.12s;
+
+		&.active {
+			background: rgba(21, 113, 255, 0.15);
+			border-color: rgba(21, 113, 255, 0.35);
+			color: $accent-color;
+		}
+
+		&:not(.active):hover {
+			background: $surface-hover;
+			color: $text-color;
+		}
 	}
 
 	// ── Separator ─────────────────────────────────────────────────────────────

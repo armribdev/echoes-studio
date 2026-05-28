@@ -48,7 +48,7 @@
 </script>
 
 <div class="fx-panel">
-	<div class="fx-header">
+	<div class="fx-header" style:z-index={showAddMenu ? 10 : 1}>
 		<span class="fx-title">Effets</span>
 		<div class="add-wrap">
 			<!-- svelte-ignore a11y-no-static-element-interactions -->

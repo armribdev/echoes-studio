@@ -37,11 +37,6 @@
 	let scrollContainer: HTMLDivElement;
 	let keysContainer:   HTMLDivElement;
 
-	let panelHeight = 380;
-	let isResizingPanel  = false;
-	let panelResizeStartY = 0;
-	let panelResizeStartH = 0;
-
 	let scrollLeft = 0;
 	let scrollTop  = 0;
 
@@ -635,19 +630,7 @@
 		else if ((e.ctrlKey || e.metaKey) && e.key === 'y') { e.preventDefault(); pianoRollStore.redo(); }
 	}
 
-	// ── Resize du panneau ─────────────────────────────────────────────────────
-
-	function onPanelResizeStart(e: MouseEvent) {
-		isResizingPanel   = true;
-		panelResizeStartY = e.clientY;
-		panelResizeStartH = panelHeight;
-	}
-
 	function onWindowMousemove(e: MouseEvent) {
-		if (isResizingPanel) {
-			const delta = panelResizeStartY - e.clientY;
-			panelHeight = Math.max(200, Math.min(window.innerHeight - 100, panelResizeStartH + delta));
-		}
 		if (isPanning && scrollContainer) {
 			const dx = e.clientX - panStartX;
 			scrollContainer.scrollLeft = Math.max(0, panStartScrollLeft - dx);
@@ -655,8 +638,7 @@
 	}
 
 	function onWindowMouseup() {
-		if (isResizingPanel) { isResizingPanel = false; tick().then(resizeCanvases); }
-		if (isPanning)        isPanning = false;
+		if (isPanning) isPanning = false;
 		if (drag.type !== 'none') drag = { type: 'none' };
 		velDragActive = false;
 	}
@@ -809,19 +791,9 @@
 <!-- svelte-ignore a11y-no-static-element-interactions -->
 <div
 	class="piano-roll"
-	style="height: {panelHeight}px"
 	role="region"
 	aria-label="Piano Roll"
 >
-	<!-- Poignée de redimensionnement -->
-	<!-- svelte-ignore a11y-no-static-element-interactions -->
-	<div
-		class="resize-handle"
-		on:mousedown={onPanelResizeStart}
-		role="separator"
-		aria-orientation="horizontal"
-	></div>
-
 	<!-- Toolbar -->
 	<div class="toolbar">
 		<button class="toolbar-close" on:click={() => pianoRollStore.closePianoRoll()} title="Fermer (Échap)">
@@ -976,34 +948,12 @@
 
 <style lang="scss">
 	.piano-roll {
-		position: fixed;
-		bottom: 0; left: 0; right: 0;
-		z-index: 100;
 		display: flex;
 		flex-direction: column;
+		height: 100%;
 		background: #1a1a22;
-		border-top: 1px solid #32323e;
-		box-shadow: 0 -8px 40px rgba(0, 0, 0, 0.65), 0 -1px 0 rgba(255,255,255,0.04);
 		user-select: none;
-		animation: slideUp 0.22s cubic-bezier(0.16, 1, 0.3, 1);
-	}
-
-	@keyframes slideUp {
-		from { transform: translateY(100%); opacity: 0; }
-		to   { transform: translateY(0);    opacity: 1; }
-	}
-
-	// ── Resize handle ──────────────────────────────────────────────────────────
-
-	.resize-handle {
-		height: 4px;
-		cursor: ns-resize;
-		background: transparent;
-		flex-shrink: 0;
-		transition: background 0.15s;
-
-		&:hover  { background: rgba(21, 113, 255, 0.5); }
-		&:active { background: #1571ff; }
+		overflow: hidden;
 	}
 
 	// ── Toolbar ───────────────────────────────────────────────────────────────

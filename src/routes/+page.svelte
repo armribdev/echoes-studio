@@ -3,6 +3,9 @@
 	import MenuBar from '../components/MenuBar.svelte';
 	import MainPannel from '../components/MainPannel.svelte';
 	import StatusBar from '../components/StatusBar.svelte';
+	import LeftPanel from '../components/LeftPanel.svelte';
+	import RightPanel from '../components/RightPanel.svelte';
+	import BottomPanel from '../components/BottomPanel.svelte';
 	// Subscribing to engineProject here triggers connect() on the event store,
 	// which starts listening to "engine-event" and "project-loaded" channels.
 	// The store then stays alive for the entire app lifetime.
@@ -11,7 +14,8 @@
 	import { connectTransportBridge } from '../frontend/transport/bridge';
 	import SettingsPanel from '../components/SettingsPanel.svelte';
 	import { settingsPanelOpen } from '../stores/preferences';
-	import PianoRoll from '../components/PianoRoll.svelte';
+	import { leftPanel } from '../stores/leftPanel';
+	import { rightPanel } from '../stores/rightPanel';
 
 	// Register keyboard shortcuts and transport bridge once for the app lifetime.
 	onMount(() => {
@@ -19,9 +23,20 @@
 		const unregisterShortcuts = registerShortcuts();
 
 		function handleGlobalKey(e: KeyboardEvent) {
+			const target = e.target as HTMLElement;
+			if (target.isContentEditable || target.tagName === 'INPUT') return;
+
 			if ((e.ctrlKey || e.metaKey) && e.key === ',') {
 				e.preventDefault();
 				settingsPanelOpen.update((v) => !v);
+			} else if (!e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) {
+				if (e.key === 'i' || e.key === 'I') {
+					e.preventDefault();
+					leftPanel.toggle();
+				} else if (e.key === 'l' || e.key === 'L') {
+					e.preventDefault();
+					rightPanel.toggle();
+				}
 			}
 		}
 		window.addEventListener('keydown', handleGlobalKey);
@@ -42,12 +57,16 @@
 {#if $engineProject !== undefined}
 <div class="app">
 	<MenuBar />
-	<div class="content">
-		<MainPannel />
+	<div class="workspace">
+		<div class="center-area">
+			<LeftPanel />
+			<MainPannel />
+			<RightPanel />
+		</div>
+		<BottomPanel />
 	</div>
 	<StatusBar />
 	<SettingsPanel />
-	<PianoRoll />
 </div>
 {/if}
 
@@ -55,10 +74,23 @@
 	.app {
 		display: flex;
 		flex-direction: column;
-		/* height: 100vh; */
+		height: 100vh;
+		overflow: hidden;
 	}
 
-	.content {
+	.workspace {
 		flex: 1;
+		display: flex;
+		flex-direction: column;
+		overflow: hidden;
+		min-height: 0;
+	}
+
+	.center-area {
+		flex: 1;
+		display: flex;
+		flex-direction: row;
+		overflow: hidden;
+		min-height: 0;
 	}
 </style>
