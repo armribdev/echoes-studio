@@ -6,21 +6,46 @@
 
 use crate::audio_graph::buffer::AudioBuffer;
 use crate::audio_graph::node::{AudioNode, NodeId, PrepareContext, TransportInfo};
+use crate::project::LfoWaveform;
 
 // ── LFO ───────────────────────────────────────────────────────────────────────
 
-/// Sine-wave LFO.  Output is normalised to −1…+1.
+/// LFO with selectable waveform.  Output is normalised to −1…+1.
 ///
 /// Phase accumulates across blocks; `reset()` returns it to 0.
 pub struct LfoNode {
     id: NodeId,
     rate_hz: f32,
+    waveform: LfoWaveform,
     phase: f32,
 }
 
 impl LfoNode {
-    pub fn new(id: NodeId, rate_hz: f32) -> Self {
-        LfoNode { id, rate_hz, phase: 0.0 }
+    pub fn new(id: NodeId, rate_hz: f32, waveform: LfoWaveform) -> Self {
+        LfoNode { id, rate_hz, waveform, phase: 0.0 }
+    }
+
+    #[inline]
+    fn sample(phase: f32, waveform: &LfoWaveform) -> f32 {
+        match waveform {
+            LfoWaveform::Sine => (phase * std::f32::consts::TAU).sin(),
+            // Triangle: 0 → +1 → 0 → -1 → 0 over one cycle
+            LfoWaveform::Triangle => {
+                if phase < 0.25 {
+                    4.0 * phase
+                } else if phase < 0.75 {
+                    2.0 - 4.0 * phase
+                } else {
+                    4.0 * phase - 4.0
+                }
+            }
+            // Rising sawtooth: −1 → +1
+            LfoWaveform::Saw => 2.0 * phase - 1.0,
+            // Square: +1 for first half, −1 for second half
+            LfoWaveform::Square => {
+                if phase < 0.5 { 1.0 } else { -1.0 }
+            }
+        }
     }
 }
 
@@ -43,12 +68,12 @@ impl AudioNode for LfoNode {
         let block_size = transport.block_size.min(output.num_frames);
         let phase_inc = self.rate_hz / transport.sample_rate;
 
-        // Fill channel 0 with the sine curve, then broadcast to all channels.
+        // Fill channel 0, then broadcast to all channels.
         {
             let ch0 = output.channel_mut(0);
             let mut phase = self.phase;
             for i in 0..block_size {
-                ch0[i] = (phase * std::f32::consts::TAU).sin();
+                ch0[i] = Self::sample(phase, &self.waveform);
                 phase = (phase + phase_inc).fract();
             }
             self.phase = phase;

@@ -294,7 +294,11 @@ impl GraphScheduler {
                         if action.source_port < src_bufs.len()
                             && src_bufs[action.source_port].num_frames > 0
                         {
-                            // Block-rate: first sample of channel 0 (Phase 3)
+                            // PROVISIONAL (Phase 3): block-rate modulation — samples the first
+                        // sample of the modulator's output buffer per block.  This
+                        // introduces up to one block of latency and is not suitable for
+                        // audio-rate modulation (FM, ring-mod).  Replace with sample-accurate
+                        // interleaved dispatch when that requirement arises.
                             src_bufs[action.source_port].channel(0)[0]
                         } else {
                             0.0

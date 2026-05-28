@@ -87,6 +87,8 @@ pub enum NodeKind {
         kind: crate::audio_graph::modulation::ModulatorKind,
         /// Oscillation rate in Hz (used by LFO kind; ignored by others).
         rate_hz: f32,
+        /// Waveform shape (used by LFO kind; ignored by others).
+        waveform: crate::project::LfoWaveform,
     },
 
     /// Peak / RMS meter (side-effect: writes to a meter ring-buffer for the UI).
@@ -285,11 +287,11 @@ impl AudioGraph {
             let mut mod_node_ids: HashMap<String, NodeId> = HashMap::new();
 
             for modulator in &track.modulators {
-                let (kind, rate_hz) = match &modulator.params {
-                    ModulatorParams::Lfo(p) => (ModulatorKind::Lfo, p.rate_hz),
+                let (kind, rate_hz, waveform) = match &modulator.params {
+                    ModulatorParams::Lfo(p) => (ModulatorKind::Lfo, p.rate_hz, p.waveform.clone()),
                 };
                 let node_id = graph.add_node(
-                    NodeKind::Modulator { kind, rate_hz },
+                    NodeKind::Modulator { kind, rate_hz, waveform },
                     format!("{} [mod:{}]", track.name, modulator.id),
                 );
                 mod_node_ids.insert(modulator.id.clone(), node_id);

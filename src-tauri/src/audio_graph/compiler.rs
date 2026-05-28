@@ -385,15 +385,15 @@ impl GraphCompiler {
                 Box::new(nodes::gain::GainNode::new(id, 1.0))
             }
 
-            NodeKind::Modulator { kind, rate_hz } => {
+            NodeKind::Modulator { kind, rate_hz, waveform } => {
                 use crate::audio_graph::modulation::ModulatorKind;
                 match kind {
                     ModulatorKind::Lfo => {
-                        Box::new(nodes::modulator::LfoNode::new(id, *rate_hz))
+                        Box::new(nodes::modulator::LfoNode::new(id, *rate_hz, waveform.clone()))
                     }
                     _ => {
                         // Other modulator kinds not yet implemented — silent source
-                        Box::new(nodes::modulator::LfoNode::new(id, 0.0))
+                        Box::new(nodes::modulator::LfoNode::new(id, 0.0, crate::project::LfoWaveform::Sine))
                     }
                 }
             }
