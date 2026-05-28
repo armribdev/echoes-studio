@@ -29,7 +29,7 @@
 **Critère de passage :** Charger un WAV, le placer sur une piste, appuyer sur Play → le son sort.
 
 ### Réalisé
-- [x] **Lecture audio** via Web Audio API (en attendant `cpal`)
+- [x] **Lecture audio** via Web Audio API (chemin export uniquement depuis la migration CPAL)
   - Transport : Play / Pause / Stop / Rewind unifié via dispatcher
   - Tête de lecture animée sur la timeline
   - Raccourci Espace pour play/pause
@@ -43,12 +43,20 @@
 - [x] **Undo / Redo** — Ctrl+Z / Ctrl+Y / Ctrl+Shift+Z (event sourcing Rust)
 - [x] **Feedback utilisateur** — status bar pour erreurs, confirmations save/load
 - [x] **Gestion d'erreur IPC** — erreurs d'import et d'undo/redo visibles dans l'UI
-
-### Restant
-- [ ] **Moteur audio Rust** (`cpal`) — remplacement du chemin Web Audio par le moteur natif
-  - Architecture préparée (`audio_engine/engine.rs`, `graph.rs`, `snapshot.rs`), `cpal 0.15.2` dans `Cargo.toml`
-  - Lecture réelle encore assurée par Web Audio côté frontend
-- [ ] **UI « Ajouter une piste »** — commande `CREATE_TRACK` disponible côté Rust, sans bouton dans l'interface
+- [x] **Moteur audio natif CPAL** (`audio_engine/engine.rs`) — lecture temps-réel native
+  - `SharedTransport` : état de transport atomique (play/pause/seek, position en samples)
+  - `RuntimeSnapshot` : swap lock-free du `GraphScheduler` entre thread commande et callback
+  - Callback RT-safe : buffer pré-alloué (4096 frames max), aucune allocation, aucun verrou bloquant, aucun I/O
+  - Reporter de position (~30 fps) → événement `POSITION_UPDATED` → tête de lecture animée
+  - `AudioGraphCompiler` : compile le projet en `GraphScheduler` à la volée (topological sort, Kahn BFS)
+  - Sélection du périphérique de sortie CPAL, taux d'échantillonnage (44.1–96 kHz), taille de buffer
+  - Fallback automatique buffer fixé → buffer par défaut si le périphérique ne supporte pas la valeur demandée
+  - Web Audio API relégué au seul chemin d'export offline (`OfflineAudioContext`)
+- [x] **UI « Ajouter une piste »** — bouton dans le panneau gauche, menu natif et menu contextuel
+  - Bouton **"+ Nouvelle piste"** dans le footer du panneau gauche
+  - Sous-menu natif **Piste** : "Nouvelle piste" (`Ctrl+Shift+T`) + "Supprimer la piste sélectionnée"
+  - État vide de la timeline avec illustration, description et CTA "Nouvelle piste"
+  - Suppression de piste depuis le menu natif ou le menu contextuel
 
 ---
 
@@ -62,6 +70,22 @@
 - [x] **Pan par piste** — `StereoPannerNode` Web Audio, Knob UI, persistance via `UPDATE_TRACK`
 - [x] **Mute / Solo** par piste — boutons M/S, commands `MUTE_TRACK` / `SOLO_TRACK`, solo exclusif côté Rust
 - [x] **Export audio WAV** — `OfflineAudioContext` mixdown + `export_wav` Rust, bouton « ↓ WAV » (Ctrl+Shift+E)
+- [x] **Panneau Préférences** (`SettingsPanel.svelte`) — interface multi-sections complète *(livré en avance de Phase 5)*
+  - Section *Audio* : sélecteurs périphérique IN/OUT via CPAL (`listAudioDevices`), fréquence d'échantillonnage (44.1 / 48 / 88.2 / 96 kHz), taille de buffer (64–2048 frames), profondeur de bits (16/24/32), canaux IN/OUT configurables, routage Master L/R et Casque, jauge de latence estimée avec code couleur (vert < 10 ms / jaune < 25 ms / rouge ≥ 25 ms)
+  - Section *Projet* : dossier de projets par défaut, sauvegarde automatique (intervalle + nombre max de backups), BPM et signature rythmique pour les nouveaux projets
+  - Section *Interface* : mini-carte de timeline (toggle)
+  - Application à chaud : redémarre le flux CPAL + recompile et pousse le graphe audio sans interruption visible
+  - Bridge TypeScript `audioBackend.ts` : `listAudioDevices()` / `applyAudioSettings()`
+  - Commandes Rust : `get_audio_devices`, `apply_audio_settings` (persistance + redémarrage stream)
+- [x] **Menu contextuel piste** (`TrackContextMenu.svelte`) — clic droit sur une piste
+  - Actions : Nouvelle piste, Renommer, Supprimer
+  - Renommage inline via `contentEditable` directement sur le label de piste
+- [x] **Sélection de piste** — surlignage visuel de la piste active (clic), propagation aux commandes "Supprimer"
+- [x] **Couleurs par piste** — barre latérale colorée (palette de 8 couleurs cycliques)
+- [x] **Refonte composant `Knob`** — rendu SVG arc (piste grise + arc accent)
+  - Géométrie 298.8° (7:30 → 4:30 dans le sens horaire)
+  - Double-clic pour réinitialiser à `defaultValue`
+  - Labels `VOL` / `PAN` au-dessus des knobs
 
 ### Restant
 - [ ] **Multi-format audio** — support MP3, FLAC, OGG en plus de WAV (via `symphonia`)
@@ -79,7 +103,7 @@
 **Critère de passage :** Enregistrer une voix, ajouter une réverb, exporter.
 
 ### Fonctionnalités
-- [ ] **Enregistrement audio** — arm + record sur une piste via `cpal` input
+- [ ] **Enregistrement audio** — arm + record sur une piste via `cpal` input (device déjà sélectionnable dans les préférences)
 - [ ] **Monitoring** — écoute en temps réel pendant l'enregistrement
 - [ ] **Effets intégrés** : égaliseur, compresseur, réverbération, délai
 - [ ] **Insert chain** — chaîner plusieurs effets par piste
@@ -99,8 +123,9 @@
 - [ ] **Piano roll** — éditeur MIDI intégré
 - [ ] **Support MIDI** — entrée/sortie MIDI (clavier, contrôleur)
 - [ ] **Instruments virtuels natifs** : sampler simple, synthétiseur basique
-- [ ] **[TODO: Décision] Support VST3** — plugins tiers (implique gestion de dépendances lourdes)
-- [ ] **[TODO: Décision] Support LV2** (Linux) / **AU** (macOS)
+- [ ] **[TODO: Décision] Support VST3** — plugins tiers (architecture `plugin_formats/vst3/` scaffoldée, implique gestion de dépendances lourdes)
+- [ ] **[TODO: Décision] Support AU** (macOS) — architecture `plugin_formats/au/` scaffoldée
+- [ ] **[TODO: Décision] Support WASM interne** — `plugin_formats/internal/` avec runtime WASM scaffoldé
 - [ ] **Quantisation MIDI**
 - [ ] **Velocity, pitch bend, modulation**
 
@@ -114,7 +139,7 @@
 
 ### Fonctionnalités
 - [ ] **Onboarding interactif** — tutoriel en contexte au premier lancement
-- [ ] **Gestion des préférences** — fenêtre settings (audio device, buffer size, thème)
+- [x] **Gestion des préférences** — panneau Préférences complet (audio, projet, interface) *(implémenté dès la Phase 2)*
 - [ ] **Raccourcis clavier** configurables
 - [ ] **Thèmes UI** — clair / sombre / custom
 - [ ] **Performances** — profiling et optimisation audio engine
