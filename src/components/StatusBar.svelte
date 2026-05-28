@@ -13,7 +13,7 @@
 
 	.status-bar {
 		min-height: 24px;
-		background-color: $pannel-background-color;
+		background-color: $panel-background-color;
 		border-top: 1px solid $border-color;
 		display: flex;
 		align-items: center;

@@ -733,7 +733,7 @@
 		align-items: center;
 		padding: 14px 18px;
 		border-bottom: 1px solid $border-color;
-		background: $pannel-background-color;
+		background: $panel-background-color;
 		flex-shrink: 0;
 		gap: 9px;
 	}
@@ -1251,7 +1251,7 @@
 		align-items: center;
 		padding: 12px 18px;
 		border-top: 1px solid $border-color;
-		background: $pannel-background-color;
+		background: $panel-background-color;
 		flex-shrink: 0;
 	}
 

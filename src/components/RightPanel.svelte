@@ -212,7 +212,7 @@
 		min-width: 0;
 		display: flex;
 		flex-direction: column;
-		background: $pannel-background-color;
+		background: $panel-background-color;
 		overflow: hidden;
 		min-height: 0;
 	}

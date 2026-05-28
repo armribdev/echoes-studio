@@ -60,7 +60,7 @@
 	<div class="workspace">
 		<div class="center-area">
 			<LeftPanel />
-			<MainPannel />
+			<MainPanel />
 			<RightPanel />
 		</div>
 		<BottomPanel />

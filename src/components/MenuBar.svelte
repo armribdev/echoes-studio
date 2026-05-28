@@ -192,7 +192,7 @@
 	@use '../variables.scss' as *;
 
 	.menu-bar {
-		background-color: $pannel-background-color;
+		background-color: $panel-background-color;
 		height: 48px;
 		display: flex;
 		align-items: center;

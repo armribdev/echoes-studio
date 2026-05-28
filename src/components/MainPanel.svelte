@@ -850,7 +850,7 @@
 		flex-shrink: 0;
 		display: flex;
 		flex-direction: column;
-		background-color: $pannel-background-color;
+		background-color: $panel-background-color;
 		border-right: 1px solid $border-color;
 	}
 

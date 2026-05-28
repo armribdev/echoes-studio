@@ -107,7 +107,7 @@
 		display: flex;
 		align-items: center;
 		padding: 0 8px 0 10px;
-		background: $pannel-background-color;
+		background: $panel-background-color;
 		border-bottom: 1px solid $border-color;
 		gap: 8px;
 	}
