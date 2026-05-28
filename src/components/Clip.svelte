@@ -11,7 +11,10 @@
 	export let peaks_512: [number, number][];
 	export let peaks_4096: [number, number][];
 
-	const dispatch = createEventDispatcher<{ clipdragstart: { offsetPx: number } }>();
+	const dispatch = createEventDispatcher<{
+		clipdragstart: { offsetPx: number };
+		clipcontextmenu: { id: string; x: number; y: number };
+	}>();
 
 	let clipEl: HTMLElement;
 	let canvas: HTMLCanvasElement;
@@ -100,6 +103,12 @@
 		if (needsRender(w, bucket)) requestRender(w);
 	}
 
+	function onContextMenu(e: MouseEvent) {
+		e.preventDefault();
+		e.stopPropagation();
+		dispatch('clipcontextmenu', { id, x: e.clientX, y: e.clientY });
+	}
+
 	function onMouseDown(e: MouseEvent) {
 		e.stopPropagation();
 		e.preventDefault();
@@ -127,6 +136,7 @@
 	class:selected
 	style="transform: translateX({start * scale}px); width: {(end - start) * scale}px"
 	on:mousedown={onMouseDown}
+	on:contextmenu={onContextMenu}
 	on:click|stopPropagation
 >
 	<canvas bind:this={canvas}></canvas>

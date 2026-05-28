@@ -10,6 +10,7 @@
 
 	const dispatch = createEventDispatcher<{
 		clipdragstart: { offsetPx: number; trackIndex: number; clipIndex: number };
+		clipcontextmenu: { id: string; trackIndex: number; x: number; y: number };
 	}>();
 </script>
 
@@ -25,6 +26,7 @@
 			peaks_512={clip.peaks_512}
 			peaks_4096={clip.peaks_4096}
 			on:clipdragstart={(e) => dispatch('clipdragstart', { ...e.detail, trackIndex, clipIndex })}
+			on:clipcontextmenu={(e) => dispatch('clipcontextmenu', { ...e.detail, trackIndex })}
 		/>
 	{/each}
 </div>

@@ -1,6 +1,7 @@
 <script lang="ts">
 	import Track from './Track.svelte';
 	import TrackContextMenu from './TrackContextMenu.svelte';
+	import ClipContextMenu from './ClipContextMenu.svelte';
 	import FaderMeter from './FaderMeter.svelte';
 	import Knob from './Knob.svelte';
 	import type { Track as TrackType, Project } from '../types/global';
@@ -14,6 +15,9 @@
 	import { projectName, projectPath } from '../stores/project';
 	import { projectEventStore } from '../shared/project/eventStore';
 	import { addClip, moveClip, removeClip, updateTrack, muteTrack, soloTrack, seek, createTrack, deleteTrack } from '../frontend/commands/dispatcher';
+	import { clipboard } from '../stores/clipboard';
+	import type { ClipboardEntry } from '../stores/clipboard';
+	import { get } from 'svelte/store';
 
 	const TRACK_COLORS = [
 		'#4d96ff', '#ff6b6b', '#6bcb77', '#ffd93d',
@@ -46,6 +50,7 @@
 	onDestroy(unsubExport);
 
 	let contextMenu: { x: number; y: number; trackId: string; trackName: string; trackIndex: number } | null = null;
+	let clipContextMenu: { x: number; y: number } | null = null;
 	let selectedTrackIndex: number | null = null;
 
 	let logScale: number = Math.log(80);
@@ -396,11 +401,80 @@
 		selection.set(new Set());
 	}
 
+	function copySelected() {
+		const sel = $selection;
+		if (sel.size === 0) return;
+		let minStart = Infinity;
+		for (const track of tracks) {
+			for (const clip of track.clips) {
+				if (sel.has(clip.id)) minStart = Math.min(minStart, clip.start);
+			}
+		}
+		const entries: ClipboardEntry[] = [];
+		for (const track of tracks) {
+			for (const clip of track.clips) {
+				if (sel.has(clip.id)) {
+					entries.push({
+						trackId: track.id,
+						filePath: clip.file_path,
+						durationSec: clip.end - clip.start,
+						relativeStart: clip.start - minStart,
+					});
+				}
+			}
+		}
+		clipboard.set(entries);
+	}
+
+	function cutSelected() {
+		copySelected();
+		deleteSelected();
+	}
+
+	async function pasteClips() {
+		const entries = get(clipboard);
+		if (entries.length === 0) return;
+		const pastePos = $transport.position;
+		await Promise.all(
+			entries.map((entry) => {
+				const targetTrackId = tracks.find((t) => t.id === entry.trackId)?.id ?? tracks[0]?.id;
+				if (!targetTrackId) return Promise.resolve();
+				const start = pastePos + entry.relativeStart;
+				return addClip(targetTrackId, entry.filePath, start, start + entry.durationSec);
+			})
+		);
+	}
+
+	function handleClipContextMenu(e: CustomEvent<{ id: string; trackIndex: number; x: number; y: number }>) {
+		const { id, x, y } = e.detail;
+		// If the right-clicked clip is not in the selection, make it the sole selection.
+		if (!$selection.has(id)) {
+			selection.set(new Set([id]));
+		}
+		contextMenu = null;
+		clipContextMenu = { x, y };
+	}
+
 	function handleKeyDown(e: KeyboardEvent) {
-		if (e.key !== 'Delete' && e.key !== 'Backspace') return;
 		const target = e.target as HTMLElement;
 		if (target.isContentEditable || target.tagName === 'INPUT') return;
-		deleteSelected();
+
+		const ctrl = e.ctrlKey || e.metaKey;
+
+		if ((e.key === 'Delete' || e.key === 'Backspace') && !ctrl) {
+			deleteSelected();
+		} else if (ctrl && !e.shiftKey && !e.altKey) {
+			if (e.key === 'c') {
+				e.preventDefault();
+				copySelected();
+			} else if (e.key === 'x') {
+				e.preventDefault();
+				cutSelected();
+			} else if (e.key === 'v') {
+				e.preventDefault();
+				pasteClips().catch(console.error);
+			}
+		}
 	}
 
 	function onClipDragStart(e: CustomEvent<{ offsetPx: number; trackIndex: number; clipIndex: number }>) {
@@ -673,6 +747,20 @@
 	/>
 {/if}
 
+{#if clipContextMenu}
+	<ClipContextMenu
+		x={clipContextMenu.x}
+		y={clipContextMenu.y}
+		selectionCount={$selection.size}
+		canPaste={$clipboard.length > 0}
+		on:cut={() => cutSelected()}
+		on:copy={() => copySelected()}
+		on:paste={() => pasteClips().catch(console.error)}
+		on:delete={() => deleteSelected()}
+		on:close={() => { clipContextMenu = null; }}
+	/>
+{/if}
+
 <div class="container">
 	<!-- svelte-ignore a11y-no-static-element-interactions -->
 	<div class="zoom-ctrl" on:wheel={handleZoomWidgetWheel}>
@@ -813,7 +901,7 @@
 				></div>
 			{/if}
 			{#each tracks as { clips }, trackIndex}
-				<Track {clips} {scale} {trackIndex} on:clipdragstart={onClipDragStart} />
+				<Track {clips} {scale} {trackIndex} on:clipdragstart={onClipDragStart} on:clipcontextmenu={handleClipContextMenu} />
 			{/each}
 		</div>
 	</div>

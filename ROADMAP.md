@@ -113,7 +113,7 @@
 ### Restant
 - [ ] **Multi-format audio** — support MP3, FLAC, OGG en plus de WAV (via `symphonia`)
 - [ ] **Export MP3** — encodage après mixdown WAV
-- [ ] **Couper / Copier / Coller des clips** — sélection et suppression OK, clipboard absent
+- [x] **Couper / Copier / Coller des clips** — Ctrl+X / Ctrl+C / Ctrl+V + menu contextuel clic droit sur clip
 - [ ] **Zoom vertical** de la timeline — hauteur de piste fixe (100 px)
 - [ ] **Mute / Solo undoable** — non intégré à l'event sourcing pour l'instant
 - [ ] **Vumètres UI** — `MeterNode` Rust implémenté, affichage frontend absent
