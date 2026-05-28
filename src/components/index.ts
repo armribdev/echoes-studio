@@ -2,6 +2,7 @@ export { default as Button } from './Button.svelte';
 export { default as ModulationPanel } from './ModulationPanel.svelte';
 export { default as PianoRoll } from './PianoRoll.svelte';
 export { default as Clip } from './Clip.svelte';
+export { default as MidiClip } from './MidiClip.svelte';
 export { default as CustomSelect } from './CustomSelect.svelte';
 export { default as Icon } from './Icon.svelte';
 export { default as Knob } from './Knob.svelte';

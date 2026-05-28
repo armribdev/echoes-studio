@@ -8,6 +8,7 @@ export type PianoRollMode = 'draw' | 'select' | 'erase';
 export interface PianoRollState {
 	open: boolean;
 	trackId: string | null;
+	clipId: string | null;
 	trackName: string;
 	trackColor: string;
 	notes: MidiNote[];
@@ -20,6 +21,7 @@ export interface PianoRollState {
 const INITIAL: PianoRollState = {
 	open: false,
 	trackId: null,
+	clipId: null,
 	trackName: '',
 	trackColor: '#4d96ff',
 	notes: [],
@@ -39,11 +41,12 @@ function createPianoRollStore() {
 	return {
 		subscribe,
 
-		openPianoRoll(trackId: string, trackName: string, trackColor: string, initialNotes: MidiNote[] = []) {
+		openPianoRoll(trackId: string, clipId: string, trackName: string, trackColor: string, initialNotes: MidiNote[] = []) {
 			update((s) => ({
 				...s,
 				open: true,
 				trackId,
+				clipId,
 				trackName,
 				trackColor,
 				notes: initialNotes,
@@ -55,6 +58,7 @@ function createPianoRollStore() {
 			update((s) => ({
 				...s,
 				open: false,
+				clipId: null,
 				notes: [],
 				selectedNoteIds: new Set(),
 			}));

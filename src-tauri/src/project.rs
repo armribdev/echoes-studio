@@ -152,12 +152,23 @@ pub struct MidiNote {
     pub id: String,
     /// MIDI pitch 0-127 (60 = C4).
     pub pitch: u8,
-    /// Start position in beats.
+    /// Start position in beats, relative to the clip start.
     pub start: f32,
     /// Duration in beats (> 0).
     pub duration: f32,
     /// Velocity 0-127.
     pub velocity: u8,
+}
+
+/// A MIDI clip placed on the timeline.
+/// `start`/`end` are in seconds (same coordinate space as audio clips).
+/// Notes are beat-relative to the clip start.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AppMidiClip {
+    pub id: String,
+    pub start: f64,
+    pub end: f64,
+    pub notes: Vec<MidiNote>,
 }
 
 use std::collections::HashMap;
@@ -203,7 +214,10 @@ pub struct AppTrack {
     pub effects: Vec<TrackEffect>,
     pub modulators: Vec<ProjectModulator>,
     pub mod_routes: Vec<ProjectModulationRoute>,
+    /// Legacy track-level MIDI notes (kept for file backward-compat).
     pub midi_notes: Vec<MidiNote>,
+    /// MIDI clips placed on the timeline.
+    pub midi_clips: Vec<AppMidiClip>,
 }
 
 pub struct AppProject {
@@ -259,6 +273,12 @@ impl AppProject {
                 modulators: t.modulators.clone(),
                 mod_routes: t.mod_routes.clone(),
                 midi_notes: t.midi_notes.clone(),
+                midi_clips: t.midi_clips.iter().map(|mc| MidiClipFile {
+                    id: mc.id.clone(),
+                    start: mc.start,
+                    end: mc.end,
+                    notes: mc.notes.clone(),
+                }).collect(),
             }).collect(),
         }
     }
@@ -285,6 +305,12 @@ impl AppProject {
             }
             // Migrate: generate id if not present in file
             let track_id = tf.id.unwrap_or_else(generate_id);
+            let midi_clips = tf.midi_clips.into_iter().map(|mc| AppMidiClip {
+                id: mc.id,
+                start: mc.start,
+                end: mc.end,
+                notes: mc.notes,
+            }).collect();
             tracks.push(AppTrack {
                 id: track_id,
                 name: tf.name,
@@ -297,6 +323,7 @@ impl AppProject {
                 modulators: tf.modulators,
                 mod_routes: tf.mod_routes,
                 midi_notes: tf.midi_notes,
+                midi_clips,
             });
         }
         Ok(AppProject {
@@ -323,6 +350,12 @@ impl AppTrack {
             modulators: self.modulators.clone(),
             mod_routes: self.mod_routes.clone(),
             midi_notes: self.midi_notes.clone(),
+            midi_clips: self.midi_clips.iter().map(|mc| MidiClipDto {
+                id: mc.id.clone(),
+                start: mc.start,
+                end: mc.end,
+                notes: mc.notes.clone(),
+            }).collect(),
         }
     }
 }
@@ -458,6 +491,17 @@ pub struct TrackFile {
     pub mod_routes: Vec<ProjectModulationRoute>,
     #[serde(default)]
     pub midi_notes: Vec<MidiNote>,
+    #[serde(default)]
+    pub midi_clips: Vec<MidiClipFile>,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct MidiClipFile {
+    pub id: String,
+    pub start: f64,
+    pub end: f64,
+    #[serde(default)]
+    pub notes: Vec<MidiNote>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -480,6 +524,14 @@ pub struct ProjectDto {
 }
 
 #[derive(Serialize, Clone)]
+pub struct MidiClipDto {
+    pub id: String,
+    pub start: f64,
+    pub end: f64,
+    pub notes: Vec<MidiNote>,
+}
+
+#[derive(Serialize, Clone)]
 pub struct TrackDto {
     pub id: String,
     pub name: String,
@@ -492,6 +544,7 @@ pub struct TrackDto {
     pub modulators: Vec<ProjectModulator>,
     pub mod_routes: Vec<ProjectModulationRoute>,
     pub midi_notes: Vec<MidiNote>,
+    pub midi_clips: Vec<MidiClipDto>,
 }
 
 #[derive(Serialize, Clone)]

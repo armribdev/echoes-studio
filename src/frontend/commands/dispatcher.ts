@@ -44,6 +44,10 @@ import {
   type UpdateTempoPayload,
   type UpdateTrackPayload,
   type SetMidiNotesPayload,
+  type AddMidiClipPayload,
+  type RemoveMidiClipPayload,
+  type MoveMidiClipPayload,
+  type SetClipMidiNotesPayload,
 } from '../../shared/protocol/commands';
 
 // ── Active project ID ─────────────────────────────────────────────────────────
@@ -309,6 +313,39 @@ export function setMidiNotes(
 ): Promise<CommandResult> {
   return dispatch<SetMidiNotesPayload>(cmd.SET_MIDI_NOTES, {
     track_id: trackId,
+    notes,
+  });
+}
+
+export function addMidiClip(
+  trackId: string,
+  start: number,
+  end: number,
+): Promise<CommandResult> {
+  return dispatch<AddMidiClipPayload>(cmd.ADD_MIDI_CLIP, { track_id: trackId, start, end });
+}
+
+export function removeMidiClip(trackId: string, clipId: string): Promise<CommandResult> {
+  return dispatch<RemoveMidiClipPayload>(cmd.REMOVE_MIDI_CLIP, { track_id: trackId, clip_id: clipId });
+}
+
+export function moveMidiClip(
+  trackId: string,
+  clipId: string,
+  start: number,
+  end: number,
+): Promise<CommandResult> {
+  return dispatch<MoveMidiClipPayload>(cmd.MOVE_MIDI_CLIP, { track_id: trackId, clip_id: clipId, start, end });
+}
+
+export function setClipMidiNotes(
+  trackId: string,
+  clipId: string,
+  notes: SetClipMidiNotesPayload['notes'],
+): Promise<CommandResult> {
+  return dispatch<SetClipMidiNotesPayload>(cmd.SET_CLIP_MIDI_NOTES, {
+    track_id: trackId,
+    clip_id: clipId,
     notes,
   });
 }

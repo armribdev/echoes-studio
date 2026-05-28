@@ -18,9 +18,9 @@ use tauri::Emitter;
 
 use crate::audio_clip::AudioClip;
 use crate::project::{
-    AppClip, AppProject, AppState, AppTrack, CachedAudioData, generate_id,
+    AppClip, AppMidiClip, AppProject, AppState, AppTrack, CachedAudioData, generate_id,
     TrackEffect, EffectParams, EqParams, CompressorParams, ReverbParams, DelayParams,
-    MidiNote,
+    MidiNote, MidiClipDto,
 };
 use super::commands::{
     cmd, AddClipPayload, AddEffectPayload, AddModulationRoutePayload, AddModulatorPayload,
@@ -29,6 +29,7 @@ use super::commands::{
     RemoveModulatorPayload, SeekPayload, SetModulationDepthPayload, SetMidiNotesPayload,
     SoloTrackPayload, UpdateEffectPayload, UpdateModulatorPayload, UpdateProjectNamePayload,
     UpdateTempoPayload, UpdateTrackPayload,
+    AddMidiClipPayload, RemoveMidiClipPayload, MoveMidiClipPayload, SetClipMidiNotesPayload,
 };
 use super::events::{ev, EngineEvent, ProjectEvent};
 
@@ -249,6 +250,7 @@ fn process_command(
                     modulators: vec![],
                     mod_routes: vec![],
                     midi_notes: vec![],
+                    midi_clips: vec![],
                 });
             }
 
@@ -852,6 +854,105 @@ fn process_command(
             Ok(CommandResult::ok(command_id, vec![serde_json::to_value(&engine_ev).unwrap_or_default()]))
         }
 
+        cmd::ADD_MIDI_CLIP => {
+            let p: AddMidiClipPayload = serde_json::from_value(command.payload)
+                .map_err(|e| format!("ADD_MIDI_CLIP payload invalid: {e}"))?;
+            let clip_id = generate_id();
+            let clip = AppMidiClip { id: clip_id.clone(), start: p.start, end: p.end, notes: vec![] };
+            let clip_dto = MidiClipDto { id: clip.id.clone(), start: clip.start, end: clip.end, notes: vec![] };
+
+            {
+                let mut project = state.project.lock().map_err(|e| e.to_string())?;
+                let track = project.tracks.iter_mut()
+                    .find(|t| t.id == p.track_id)
+                    .ok_or_else(|| format!("Track {} not found", p.track_id))?;
+                track.midi_clips.push(clip);
+            }
+
+            let event_payload = json!({ "track_id": p.track_id, "clip": serde_json::to_value(&clip_dto).unwrap_or_default() });
+            let project_event = ProjectEvent::new(ev::MIDI_CLIP_ADDED, event_payload.clone());
+            append_and_maybe_snapshot(state, project_event)?;
+
+            let engine_ev = EngineEvent::new(ev::MIDI_CLIP_ADDED, &project_id, event_payload);
+            let _ = app.emit("engine-event", &engine_ev);
+
+            Ok(CommandResult::ok(command_id, vec![serde_json::to_value(&engine_ev).unwrap_or_default()]))
+        }
+
+        cmd::REMOVE_MIDI_CLIP => {
+            let p: RemoveMidiClipPayload = serde_json::from_value(command.payload)
+                .map_err(|e| format!("REMOVE_MIDI_CLIP payload invalid: {e}"))?;
+
+            {
+                let mut project = state.project.lock().map_err(|e| e.to_string())?;
+                let track = project.tracks.iter_mut()
+                    .find(|t| t.id == p.track_id)
+                    .ok_or_else(|| format!("Track {} not found", p.track_id))?;
+                track.midi_clips.retain(|c| c.id != p.clip_id);
+            }
+
+            let event_payload = json!({ "track_id": p.track_id, "clip_id": p.clip_id });
+            let project_event = ProjectEvent::new(ev::MIDI_CLIP_REMOVED, event_payload.clone());
+            append_and_maybe_snapshot(state, project_event)?;
+
+            let engine_ev = EngineEvent::new(ev::MIDI_CLIP_REMOVED, &project_id, event_payload);
+            let _ = app.emit("engine-event", &engine_ev);
+
+            Ok(CommandResult::ok(command_id, vec![serde_json::to_value(&engine_ev).unwrap_or_default()]))
+        }
+
+        cmd::MOVE_MIDI_CLIP => {
+            let p: MoveMidiClipPayload = serde_json::from_value(command.payload)
+                .map_err(|e| format!("MOVE_MIDI_CLIP payload invalid: {e}"))?;
+
+            {
+                let mut project = state.project.lock().map_err(|e| e.to_string())?;
+                let track = project.tracks.iter_mut()
+                    .find(|t| t.id == p.track_id)
+                    .ok_or_else(|| format!("Track {} not found", p.track_id))?;
+                let clip = track.midi_clips.iter_mut()
+                    .find(|c| c.id == p.clip_id)
+                    .ok_or_else(|| format!("MidiClip {} not found", p.clip_id))?;
+                clip.start = p.start;
+                clip.end = p.end;
+            }
+
+            let event_payload = json!({ "track_id": p.track_id, "clip_id": p.clip_id, "start": p.start, "end": p.end });
+            let project_event = ProjectEvent::new(ev::MIDI_CLIP_MOVED, event_payload.clone());
+            append_and_maybe_snapshot(state, project_event)?;
+
+            let engine_ev = EngineEvent::new(ev::MIDI_CLIP_MOVED, &project_id, event_payload);
+            let _ = app.emit("engine-event", &engine_ev);
+
+            Ok(CommandResult::ok(command_id, vec![serde_json::to_value(&engine_ev).unwrap_or_default()]))
+        }
+
+        cmd::SET_CLIP_MIDI_NOTES => {
+            let p: SetClipMidiNotesPayload = serde_json::from_value(command.payload)
+                .map_err(|e| format!("SET_CLIP_MIDI_NOTES payload invalid: {e}"))?;
+
+            {
+                let mut project = state.project.lock().map_err(|e| e.to_string())?;
+                let track = project.tracks.iter_mut()
+                    .find(|t| t.id == p.track_id)
+                    .ok_or_else(|| format!("Track {} not found", p.track_id))?;
+                let clip = track.midi_clips.iter_mut()
+                    .find(|c| c.id == p.clip_id)
+                    .ok_or_else(|| format!("MidiClip {} not found", p.clip_id))?;
+                clip.notes = p.notes.clone();
+            }
+
+            let notes_val = serde_json::to_value(&p.notes).unwrap_or_default();
+            let event_payload = json!({ "track_id": p.track_id, "clip_id": p.clip_id, "notes": notes_val });
+            let project_event = ProjectEvent::new(ev::MIDI_CLIP_NOTES_SET, event_payload.clone());
+            append_and_maybe_snapshot(state, project_event)?;
+
+            let engine_ev = EngineEvent::new(ev::MIDI_CLIP_NOTES_SET, &project_id, event_payload);
+            let _ = app.emit("engine-event", &engine_ev);
+
+            Ok(CommandResult::ok(command_id, vec![serde_json::to_value(&engine_ev).unwrap_or_default()]))
+        }
+
         other => Err(format!("Unknown command type: {other}")),
     }
 }
@@ -911,6 +1012,7 @@ fn snapshot_project(project: &AppProject) -> AppProject {
                 modulators: t.modulators.clone(),
                 mod_routes: t.mod_routes.clone(),
                 midi_notes: t.midi_notes.clone(),
+                midi_clips: t.midi_clips.clone(),
                 clips: t
                     .clips
                     .iter()
@@ -1035,6 +1137,7 @@ fn apply_events(
                         modulators: vec![],
                         mod_routes: vec![],
                         midi_notes: vec![],
+                        midi_clips: vec![],
                     });
                 }
             }
@@ -1285,6 +1388,58 @@ fn apply_events(
                     if let Ok(notes) = serde_json::from_value::<Vec<MidiNote>>(raw_notes.clone()) {
                         if let Some(track) = project.tracks.iter_mut().find(|t| t.id == track_id) {
                             track.midi_notes = notes;
+                        }
+                    }
+                }
+            }
+
+            ev::MIDI_CLIP_ADDED => {
+                let track_id = event.payload["track_id"].as_str().unwrap_or("");
+                if let Some(raw_clip) = event.payload.get("clip") {
+                    if let (Some(id), Some(start), Some(end)) = (
+                        raw_clip["id"].as_str().map(|s| s.to_string()),
+                        raw_clip["start"].as_f64(),
+                        raw_clip["end"].as_f64(),
+                    ) {
+                        if let Some(track) = project.tracks.iter_mut().find(|t| t.id == track_id) {
+                            if !track.midi_clips.iter().any(|c| c.id == id) {
+                                track.midi_clips.push(AppMidiClip { id, start, end, notes: vec![] });
+                            }
+                        }
+                    }
+                }
+            }
+
+            ev::MIDI_CLIP_REMOVED => {
+                let track_id = event.payload["track_id"].as_str().unwrap_or("");
+                let clip_id = event.payload["clip_id"].as_str().unwrap_or("");
+                if let Some(track) = project.tracks.iter_mut().find(|t| t.id == track_id) {
+                    track.midi_clips.retain(|c| c.id != clip_id);
+                }
+            }
+
+            ev::MIDI_CLIP_MOVED => {
+                let track_id = event.payload["track_id"].as_str().unwrap_or("");
+                let clip_id = event.payload["clip_id"].as_str().unwrap_or("");
+                let start = event.payload["start"].as_f64().unwrap_or(0.0);
+                let end = event.payload["end"].as_f64().unwrap_or(0.0);
+                if let Some(track) = project.tracks.iter_mut().find(|t| t.id == track_id) {
+                    if let Some(clip) = track.midi_clips.iter_mut().find(|c| c.id == clip_id) {
+                        clip.start = start;
+                        clip.end = end;
+                    }
+                }
+            }
+
+            ev::MIDI_CLIP_NOTES_SET => {
+                let track_id = event.payload["track_id"].as_str().unwrap_or("");
+                let clip_id = event.payload["clip_id"].as_str().unwrap_or("");
+                if let Some(raw_notes) = event.payload.get("notes") {
+                    if let Ok(notes) = serde_json::from_value::<Vec<MidiNote>>(raw_notes.clone()) {
+                        if let Some(track) = project.tracks.iter_mut().find(|t| t.id == track_id) {
+                            if let Some(clip) = track.midi_clips.iter_mut().find(|c| c.id == clip_id) {
+                                clip.notes = notes;
+                            }
                         }
                     }
                 }

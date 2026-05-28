@@ -7,7 +7,7 @@
 	import { tempo } from '../stores/tempo';
 	import type { MidiNote } from '../types/global';
 	import { engineProject } from '../frontend/store/engineStore';
-	import { setMidiNotes, undoCommand, redoCommand } from '../frontend/commands/dispatcher';
+	import { setClipMidiNotes, undoCommand, redoCommand } from '../frontend/commands/dispatcher';
 
 	// ── Constantes de rendu ────────────────────────────────────────────────────
 	const NOTE_H        = 16;
@@ -66,10 +66,10 @@
 	let isDragging = false;
 
 	async function commitNotes() {
-		const trackId = get(pianoRollStore).trackId;
-		if (!trackId) return;
+		const { trackId, clipId } = get(pianoRollStore);
+		if (!trackId || !clipId) return;
 		try {
-			await setMidiNotes(trackId, pianoRollStore.getNotes());
+			await setClipMidiNotes(trackId, clipId, pianoRollStore.getNotes());
 		} catch (e) {
 			console.error('commitNotes failed:', e);
 		}
@@ -103,13 +103,15 @@
 	});
 	onDestroy(unsubNotes);
 
-	// Sync notes from Rust state (after undo/redo or external MIDI_NOTES_SET) when not dragging.
+	// Sync notes from Rust state (after undo/redo or MIDI_CLIP_NOTES_SET) when not dragging.
 	const unsubEngine = engineProject.subscribe(($project) => {
 		if (isDragging) return;
-		const trackId = get(pianoRollStore).trackId;
-		if (!trackId) return;
+		const { trackId, clipId } = get(pianoRollStore);
+		if (!trackId || !clipId) return;
 		const track = $project.tracks.find((t) => t.id === trackId);
-		if (track) pianoRollStore.syncNotes(track.midi_notes);
+		if (!track) return;
+		const clip = track.midi_clips.find((c) => c.id === clipId);
+		if (clip) pianoRollStore.syncNotes(clip.notes);
 	});
 	onDestroy(unsubEngine);
 

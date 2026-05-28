@@ -43,6 +43,10 @@ pub mod ev {
 
     // MIDI — persisted
     pub const MIDI_NOTES_SET: &str = "MIDI_NOTES_SET";
+    pub const MIDI_CLIP_ADDED: &str = "MIDI_CLIP_ADDED";
+    pub const MIDI_CLIP_REMOVED: &str = "MIDI_CLIP_REMOVED";
+    pub const MIDI_CLIP_MOVED: &str = "MIDI_CLIP_MOVED";
+    pub const MIDI_CLIP_NOTES_SET: &str = "MIDI_CLIP_NOTES_SET";
 
     // Transport runtime events — NOT persisted
     pub const PLAY_STARTED: &str = "PLAY_STARTED";

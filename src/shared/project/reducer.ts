@@ -11,7 +11,7 @@
  */
 
 import { ev, type EngineEvent } from '../protocol/events';
-import type { Clip, MidiNote, Project, ProjectModulationRoute, ProjectModulator, Track, TrackEffect } from '../../types/global';
+import type { Clip, MidiClip, MidiNote, Project, ProjectModulationRoute, ProjectModulator, Track, TrackEffect } from '../../types/global';
 
 // ── Project state ─────────────────────────────────────────────────────────────
 
@@ -49,6 +49,7 @@ export interface TrackState {
   modulators: ProjectModulator[];
   mod_routes: ProjectModulationRoute[];
   midi_notes: MidiNote[];
+  midi_clips: MidiClip[];
 }
 
 export function emptyProjectState(): ProjectState {
@@ -76,7 +77,7 @@ export function applyEvent(state: ProjectState, event: EngineEvent): ProjectStat
       if (state.tracks.some((t) => t.id === p.id)) return state; // idempotent
       return {
         ...state,
-        tracks: [...state.tracks, { id: p.id, name: p.name, volume: 80, pan: 0, muted: false, solo: false, clips: [], effects: [], modulators: [], mod_routes: [], midi_notes: [] }],
+        tracks: [...state.tracks, { id: p.id, name: p.name, volume: 80, pan: 0, muted: false, solo: false, clips: [], effects: [], modulators: [], mod_routes: [], midi_notes: [], midi_clips: [] }],
       };
     }
 
@@ -330,6 +331,69 @@ export function applyEvent(state: ProjectState, event: EngineEvent): ProjectStat
       };
     }
 
+    case ev.MIDI_CLIP_ADDED: {
+      const p = event.payload as { track_id: string; clip: MidiClip };
+      return {
+        ...state,
+        tracks: state.tracks.map((t) =>
+          t.id !== p.track_id
+            ? t
+            : {
+                ...t,
+                midi_clips: t.midi_clips.some((c) => c.id === p.clip.id)
+                  ? t.midi_clips
+                  : [...t.midi_clips, p.clip],
+              },
+        ),
+      };
+    }
+
+    case ev.MIDI_CLIP_REMOVED: {
+      const p = event.payload as { track_id: string; clip_id: string };
+      return {
+        ...state,
+        tracks: state.tracks.map((t) =>
+          t.id !== p.track_id
+            ? t
+            : { ...t, midi_clips: t.midi_clips.filter((c) => c.id !== p.clip_id) },
+        ),
+      };
+    }
+
+    case ev.MIDI_CLIP_MOVED: {
+      const p = event.payload as { track_id: string; clip_id: string; start: number; end: number };
+      return {
+        ...state,
+        tracks: state.tracks.map((t) =>
+          t.id !== p.track_id
+            ? t
+            : {
+                ...t,
+                midi_clips: t.midi_clips.map((c) =>
+                  c.id !== p.clip_id ? c : { ...c, start: p.start, end: p.end },
+                ),
+              },
+        ),
+      };
+    }
+
+    case ev.MIDI_CLIP_NOTES_SET: {
+      const p = event.payload as { track_id: string; clip_id: string; notes: MidiNote[] };
+      return {
+        ...state,
+        tracks: state.tracks.map((t) =>
+          t.id !== p.track_id
+            ? t
+            : {
+                ...t,
+                midi_clips: t.midi_clips.map((c) =>
+                  c.id !== p.clip_id ? c : { ...c, notes: p.notes },
+                ),
+              },
+        ),
+      };
+    }
+
     case ev.MODULATION_DEPTH_CHANGED: {
       const p = event.payload as { track_id: string; route_id: string; depth: number };
       return {
@@ -386,6 +450,7 @@ export function projectFromSnapshot(dto: Project): ProjectState {
       modulators: t.modulators ?? [],
       mod_routes: t.mod_routes ?? [],
       midi_notes: t.midi_notes ?? [],
+      midi_clips: t.midi_clips ?? [],
     })),
   };
 }

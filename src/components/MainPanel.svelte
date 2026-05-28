@@ -13,7 +13,7 @@
 	import { tempo } from '../stores/tempo';
 	import { projectName, projectPath } from '../stores/project';
 	import { projectEventStore } from '../shared/project/eventStore';
-	import { addClip, moveClip, removeClip, updateTrack, muteTrack, soloTrack, seek, createTrack, deleteTrack } from '../frontend/commands/dispatcher';
+	import { addClip, moveClip, removeClip, updateTrack, muteTrack, soloTrack, seek, createTrack, deleteTrack, addMidiClip, moveMidiClip, removeMidiClip } from '../frontend/commands/dispatcher';
 	import { clipboard } from '../stores/clipboard';
 	import type { ClipboardEntry } from '../stores/clipboard';
 	import { get } from 'svelte/store';
@@ -327,6 +327,8 @@
 
 	let tracksEl: HTMLElement;
 	let dragging: { trackIndex: number; clipIndex: number; offsetPx: number } | null = null;
+	let midiDragging: { trackIndex: number; clipId: string; offsetPx: number; origStart: number; origEnd: number } | null = null;
+	let midiClipContextTarget: string | null = null;
 	let fileDragPreview: { trackIndex: number; startSec: number; durationSec: number | null } | null = null;
 	let pendingDragDuration: number | null = null;
 
@@ -378,17 +380,22 @@
 
 	function deleteSelected() {
 		// Optimistic: remove from local state immediately for instant feedback.
-		// The CLIP_REMOVED events will confirm via store subscription.
 		tracks.forEach((track) => {
-			const toDelete = track.clips.filter((c) => $selection.has(c.id));
-			for (const clip of toDelete) {
+			const toDeleteAudio = track.clips.filter((c) => $selection.has(c.id));
+			for (const clip of toDeleteAudio) {
 				removeClip(track.id, clip.id).catch(console.error);
+			}
+			const toDeleteMidi = (track.midi_clips ?? []).filter((c) => $selection.has(c.id));
+			for (const clip of toDeleteMidi) {
+				removeMidiClip(track.id, clip.id).catch(console.error);
 			}
 		});
 		tracks = tracks.map((track) => ({
 			...track,
-			clips: track.clips.filter((c) => !$selection.has(c.id))
+			clips: track.clips.filter((c) => !$selection.has(c.id)),
+			midi_clips: (track.midi_clips ?? []).filter((c) => !$selection.has(c.id)),
 		}));
+		midiClipContextTarget = null;
 		selection.set(new Set());
 	}
 
@@ -466,6 +473,83 @@
 				pasteClips().catch(console.error);
 			}
 		}
+	}
+
+	function onMidiClipDragStart(e: CustomEvent<{ offsetPx: number; trackIndex: number; clipId: string }>) {
+		const { trackIndex, clipId, offsetPx } = e.detail;
+		const track = tracks[trackIndex];
+		const clip = track?.midi_clips?.find((c) => c.id === clipId);
+		if (!clip) return;
+		midiDragging = { trackIndex, clipId, offsetPx, origStart: clip.start, origEnd: clip.end };
+		window.addEventListener('mousemove', onMidiDragMove);
+		window.addEventListener('mouseup', onMidiDragEnd);
+	}
+
+	function onMidiDragMove(e: MouseEvent) {
+		if (!midiDragging || !tracksEl) return;
+		const rect = tracksEl.getBoundingClientRect();
+		const { trackIndex, clipId, offsetPx, origEnd, origStart } = midiDragging;
+		const rawStart = Math.max(0, (e.clientX - rect.left - offsetPx) / scale);
+		const newStart = snap(rawStart, e.altKey);
+		const duration = origEnd - origStart;
+		const track = tracks[trackIndex];
+		if (!track) return;
+		tracks[trackIndex] = {
+			...track,
+			midi_clips: track.midi_clips.map((c) =>
+				c.id === clipId ? { ...c, start: newStart, end: newStart + duration } : c
+			),
+		};
+		tracks = tracks;
+	}
+
+	function onMidiDragEnd() {
+		if (midiDragging) {
+			const { trackIndex, clipId } = midiDragging;
+			const track = tracks[trackIndex];
+			const clip = track?.midi_clips?.find((c) => c.id === clipId);
+			if (track && clip) {
+				moveMidiClip(track.id, clipId, clip.start, clip.end).catch(console.error);
+			}
+		}
+		midiDragging = null;
+		window.removeEventListener('mousemove', onMidiDragMove);
+		window.removeEventListener('mouseup', onMidiDragEnd);
+	}
+
+	function onMidiClipDblClick(e: CustomEvent<{ id: string; trackIndex: number }>) {
+		const { id, trackIndex } = e.detail;
+		const track = tracks[trackIndex];
+		if (!track) return;
+		const clip = track.midi_clips?.find((c) => c.id === id);
+		if (!clip) return;
+		pianoRollStore.openPianoRoll(track.id, id, track.name, TRACK_COLORS[trackIndex % TRACK_COLORS.length], clip.notes ?? []);
+		bottomPanel.openTab('pianoroll');
+	}
+
+	function onMidiClipContextMenu(e: CustomEvent<{ id: string; trackIndex: number; x: number; y: number }>) {
+		const { id, x, y } = e.detail;
+		// Reuse clip context menu with a remove action handled via selection
+		selection.update((sel) => { const s = new Set(sel); s.clear(); s.add(id); return s; });
+		midiClipContextTarget = id;
+		contextMenu = null;
+		clipContextMenu = { x, y };
+	}
+
+	function handleTracksDoubleClick(event: MouseEvent) {
+		if (!tracksEl) return;
+		const rect = tracksEl.getBoundingClientRect();
+		const x = event.clientX - rect.left;
+		const y = event.clientY - rect.top + tracksEl.scrollTop;
+		if (x < 0 || y < 0) return;
+		const trackIndex = Math.min(Math.max(0, Math.floor(y / 100)), tracks.length - 1);
+		const track = tracks[trackIndex];
+		if (!track) return;
+
+		const startSec = Math.max(0, x / scale);
+		const bpm = $tempo.bpm;
+		const fourBeats = (4 / bpm) * 60;
+		addMidiClip(track.id, startSec, startSec + fourBeats).catch(console.error);
 	}
 
 	function onClipDragStart(e: CustomEvent<{ offsetPx: number; trackIndex: number; clipIndex: number }>) {
@@ -663,7 +747,18 @@
 					on:volumerelease={() => handleVolumeRelease(trackIndex)}
 					on:panrelease={() => handlePanRelease(trackIndex)}
 					on:rename={(e) => { tracks[trackIndex] = { ...tracks[trackIndex], name: e.detail.name }; tracks = tracks; updateTrack(tracks[trackIndex].id, { name: e.detail.name, volume: tracks[trackIndex].volume }).catch(console.error); }}
-				on:openpianoroll={() => { pianoRollStore.openPianoRoll(track.id, track.name, TRACK_COLORS[trackIndex % TRACK_COLORS.length], track.midi_notes ?? []); bottomPanel.openTab('pianoroll'); }}
+				on:openpianoroll={() => {
+					const firstClip = track.midi_clips?.[0];
+					if (firstClip) {
+						pianoRollStore.openPianoRoll(track.id, firstClip.id, track.name, TRACK_COLORS[trackIndex % TRACK_COLORS.length], firstClip.notes ?? []);
+						bottomPanel.openTab('pianoroll');
+					} else {
+						// No MIDI clips yet — hint to double-click on the track area
+						const bpm = $tempo.bpm;
+						const fourBeats = (4 / bpm) * 60;
+						addMidiClip(track.id, 0, fourBeats).catch(console.error);
+					}
+				}}
 				/>
 			{/each}
 		</div>
@@ -697,7 +792,7 @@
 		<!-- svelte-ignore a11y-no-static-element-interactions a11y-click-events-have-key-events -->
 		<div
 			class="tracks"
-			class:is-dragging={dragging}
+			class:is-dragging={dragging || midiDragging}
 			class:is-file-dragging={fileDragPreview}
 			bind:this={tracksEl}
 			on:drop={handleDrop}
@@ -705,6 +800,7 @@
 			on:dragenter={handleDragEnter}
 			on:dragleave={handleDragLeave}
 			on:mousedown={handleTracksMouseDown}
+			on:dblclick={handleTracksDoubleClick}
 			on:wheel={handleTracksWheel}
 		>
 			{#if tracks.length === 0}
@@ -728,8 +824,20 @@
 					style="top: {fileDragPreview.trackIndex * 100}px; left: {fileDragPreview.startSec * scale}px; width: {fileDragPreview.durationSec != null ? fileDragPreview.durationSec * scale : 150}px;"
 				></div>
 			{/if}
-			{#each tracks as { clips }, trackIndex}
-				<Track {clips} {scale} {trackIndex} on:clipdragstart={onClipDragStart} on:clipcontextmenu={handleClipContextMenu} />
+			{#each tracks as track, trackIndex}
+				<Track
+					clips={track.clips}
+					midiClips={track.midi_clips ?? []}
+					{scale}
+					{trackIndex}
+					bpm={$tempo.bpm}
+					trackColor={TRACK_COLORS[trackIndex % TRACK_COLORS.length]}
+					on:clipdragstart={onClipDragStart}
+					on:clipcontextmenu={handleClipContextMenu}
+					on:midiclip_dragstart={onMidiClipDragStart}
+					on:midiclip_dblclick={onMidiClipDblClick}
+					on:midiclip_contextmenu={onMidiClipContextMenu}
+				/>
 			{/each}
 		</div>
 	</div>

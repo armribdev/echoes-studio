@@ -68,9 +68,18 @@ export interface ProjectModulationRoute {
 export interface MidiNote {
 	id: string;
 	pitch: number;
+	/** Beat position relative to the clip start. */
 	start: number;
 	duration: number;
 	velocity: number;
+}
+
+export interface MidiClip {
+	id: string;
+	/** Position on the timeline in seconds. */
+	start: number;
+	end: number;
+	notes: MidiNote[];
 }
 
 export interface Track {
@@ -86,6 +95,7 @@ export interface Track {
 	modulators: ProjectModulator[];
 	mod_routes: ProjectModulationRoute[];
 	midi_notes: MidiNote[];
+	midi_clips: MidiClip[];
 }
 
 export interface Clip {

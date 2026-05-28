@@ -52,6 +52,10 @@ export const cmd = {
 
   // MIDI
   SET_MIDI_NOTES: 'SET_MIDI_NOTES',
+  ADD_MIDI_CLIP: 'ADD_MIDI_CLIP',
+  REMOVE_MIDI_CLIP: 'REMOVE_MIDI_CLIP',
+  MOVE_MIDI_CLIP: 'MOVE_MIDI_CLIP',
+  SET_CLIP_MIDI_NOTES: 'SET_CLIP_MIDI_NOTES',
 
   // Batch
   BATCH: 'BATCH',
@@ -198,6 +202,30 @@ export interface SetModulationDepthPayload {
 
 export interface SetMidiNotesPayload {
   track_id: string;
+  notes: { id: string; pitch: number; start: number; duration: number; velocity: number }[];
+}
+
+export interface AddMidiClipPayload {
+  track_id: string;
+  start: number;
+  end: number;
+}
+
+export interface RemoveMidiClipPayload {
+  track_id: string;
+  clip_id: string;
+}
+
+export interface MoveMidiClipPayload {
+  track_id: string;
+  clip_id: string;
+  start: number;
+  end: number;
+}
+
+export interface SetClipMidiNotesPayload {
+  track_id: string;
+  clip_id: string;
   notes: { id: string; pitch: number; start: number; duration: number; velocity: number }[];
 }
 

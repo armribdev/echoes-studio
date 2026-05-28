@@ -77,6 +77,10 @@ pub mod cmd {
 
     // ── MIDI ──────────────────────────────────────────────────────────────────
     pub const SET_MIDI_NOTES: &str = "SET_MIDI_NOTES";
+    pub const ADD_MIDI_CLIP: &str = "ADD_MIDI_CLIP";
+    pub const REMOVE_MIDI_CLIP: &str = "REMOVE_MIDI_CLIP";
+    pub const MOVE_MIDI_CLIP: &str = "MOVE_MIDI_CLIP";
+    pub const SET_CLIP_MIDI_NOTES: &str = "SET_CLIP_MIDI_NOTES";
 }
 
 // ── Typed payload structs ─────────────────────────────────────────────────────
@@ -225,5 +229,33 @@ pub struct SetModulationDepthPayload {
 #[derive(Debug, Deserialize)]
 pub struct SetMidiNotesPayload {
     pub track_id: String,
+    pub notes: Vec<crate::project::MidiNote>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AddMidiClipPayload {
+    pub track_id: String,
+    pub start: f64,
+    pub end: f64,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct RemoveMidiClipPayload {
+    pub track_id: String,
+    pub clip_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct MoveMidiClipPayload {
+    pub track_id: String,
+    pub clip_id: String,
+    pub start: f64,
+    pub end: f64,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SetClipMidiNotesPayload {
+    pub track_id: String,
+    pub clip_id: String,
     pub notes: Vec<crate::project::MidiNote>,
 }
