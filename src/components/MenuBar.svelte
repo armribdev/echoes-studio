@@ -5,7 +5,7 @@
 	import { exportTrigger } from '../stores/exportBus';
 	import { settingsPanelOpen } from '../stores/preferences';
 	import NumberInput from './NumberInput.svelte';
-	import CustomSelect from './CustomSelect.svelte';
+
 	import Icon from './Icon.svelte';
 
 	let isRecording = false;
@@ -55,17 +55,13 @@
 		updateTempo($tempo.bpm, v, $tempo.denominator).catch(console.error);
 	}
 
-	const denominatorOptions = [
-		{ value: 2,  label: '2'  },
-		{ value: 4,  label: '4'  },
-		{ value: 8,  label: '8'  },
-		{ value: 16, label: '16' }
-	];
+	const VALID_DENOMINATORS = [2, 4, 8, 16];
 
-	function handleDenominator(v: number | string) {
-		if (typeof v === 'string') return;
-		tempo.update((t) => ({ ...t, denominator: v }));
-		updateTempo($tempo.bpm, $tempo.numerator, v).catch(console.error);
+	function cycleDenominator() {
+		const idx = VALID_DENOMINATORS.indexOf($tempo.denominator);
+		const next = VALID_DENOMINATORS[(idx + 1) % VALID_DENOMINATORS.length];
+		tempo.update((t) => ({ ...t, denominator: next }));
+		updateTempo($tempo.bpm, $tempo.numerator, next).catch(console.error);
 	}
 </script>
 
@@ -147,12 +143,7 @@
 				on:change={(e) => handleNumerator(e.detail)}
 			/>
 			<span class="ctrl-slash">/</span>
-			<CustomSelect
-				small
-				value={$tempo.denominator}
-				options={denominatorOptions}
-				on:change={(e) => handleDenominator(e.detail)}
-			/>
+			<button class="denom-btn" on:click={cycleDenominator} title="Changer le dénominateur">{$tempo.denominator}</button>
 		</div>
 	</div>
 
@@ -313,6 +304,34 @@
 		color: rgba(247, 247, 249, 0.3);
 		font-family: monospace;
 		line-height: 1;
+	}
+
+	.denom-btn {
+		width: 30px;
+		height: 26px;
+		background: rgba(255, 255, 255, 0.05);
+		border: 1px solid rgba(255, 255, 255, 0.1);
+		border-radius: 3px;
+		color: $text-color;
+		font-family: 'SF Mono', 'Fira Code', ui-monospace, monospace;
+		font-size: 14px;
+		text-align: center;
+		cursor: pointer;
+		padding: 0;
+		box-sizing: border-box;
+		line-height: 1;
+		transition: border-color 0.12s, background 0.12s;
+
+		&:hover, &:focus-visible {
+			border-color: $accent-color;
+			background: rgba(21, 113, 255, 0.08);
+			outline: none;
+		}
+
+		&:active {
+			background: rgba(21, 113, 255, 0.14);
+			border-color: $accent-color;
+		}
 	}
 
 </style>
