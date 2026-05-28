@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import MenuBar from '../components/MenuBar.svelte';
-	import MainPannel from '../components/MainPannel.svelte';
+	import MainPanel from '../components/MainPanel.svelte';
 	import StatusBar from '../components/StatusBar.svelte';
 	import LeftPanel from '../components/LeftPanel.svelte';
 	import RightPanel from '../components/RightPanel.svelte';

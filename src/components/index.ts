@@ -5,7 +5,7 @@ export { default as Clip } from './Clip.svelte';
 export { default as CustomSelect } from './CustomSelect.svelte';
 export { default as Icon } from './Icon.svelte';
 export { default as Knob } from './Knob.svelte';
-export { default as MainPannel } from './MainPannel.svelte';
+export { default as MainPanel } from './MainPanel.svelte';
 export { default as MenuBar } from './MenuBar.svelte';
 export { default as NumberInput } from './NumberInput.svelte';
 export { default as PillGroup } from './PillGroup.svelte';
