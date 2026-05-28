@@ -29,16 +29,36 @@
 //! - We transmute the raw pointer scratch into `&[&AudioBuffer]` for the node
 //!   call — valid because the pointers were derived from live references.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::audio_graph::buffer::AudioBuffer;
 use crate::audio_graph::compiler::CompiledGraph;
 use crate::audio_graph::execution_plan::ExecutionPlan;
-use crate::audio_graph::node::{AudioNode, TransportInfo};
+use crate::audio_graph::node::{AudioNode, NodeId, TransportInfo};
 
 /// Maximum number of input ports any single node may declare.
 /// Sized conservatively; increase if needed.
 const MAX_NODE_INPUT_PORTS: usize = 32;
+
+// ── Modulation action (pre-compiled) ──────────────────────────────────────────
+
+/// One modulation connection, resolved to step indices at compile time.
+///
+/// Built from `ModulationMap` in `GraphScheduler::new`; read-only during
+/// `process_block`.  Grouped by target step index so the scheduler can apply
+/// modulation with a single indexed lookup per step.
+struct CompiledModAction {
+    /// Step that produced the modulation signal (always < target_step by
+    /// topological ordering — guaranteed by `GraphCompiler`).
+    source_step: usize,
+    /// Output port index on the source node (0 for LFO main output).
+    source_port: usize,
+    /// Parameter name on the target node (e.g. `"gain"`, `"cutoff"`).
+    param_name: String,
+    /// Modulation depth — the raw signal sample is multiplied by this.
+    depth: f32,
+}
 
 /// Drives one compiled audio graph in the real-time audio callback.
 pub struct GraphScheduler {
@@ -59,6 +79,13 @@ pub struct GraphScheduler {
     /// Pre-allocated raw pointer scratch for gathering input pointers.
     /// Capacity = `MAX_NODE_INPUT_PORTS`.  Never reallocated in the callback.
     input_ptr_scratch: Vec<*const AudioBuffer>,
+
+    /// Modulation actions grouped by target step index.
+    ///
+    /// `mod_actions_by_step[i]` lists all modulation routes whose target node
+    /// is at execution step `i`.  Built once at construction; never mutated
+    /// during the audio callback.
+    mod_actions_by_step: Vec<Vec<CompiledModAction>>,
 }
 
 // SAFETY:  GraphScheduler is only ever used on the audio thread.
@@ -93,12 +120,43 @@ impl GraphScheduler {
         // Pre-allocate input pointer scratch to avoid any allocation in the callback
         let input_ptr_scratch = vec![std::ptr::null(); MAX_NODE_INPUT_PORTS];
 
+        // ── Pre-compile modulation actions ────────────────────────────────────────
+        // NodeId → step index lookup (used only at construction — may allocate).
+        let node_to_step: HashMap<NodeId, usize> = plan
+            .steps
+            .iter()
+            .enumerate()
+            .map(|(i, s)| (s.node_id, i))
+            .collect();
+
+        let num_steps = plan.steps.len();
+        let mut mod_actions_by_step: Vec<Vec<CompiledModAction>> =
+            (0..num_steps).map(|_| Vec::new()).collect();
+
+        for route in plan.modulation.all_routes() {
+            let source_step = match node_to_step.get(&route.source.node) {
+                Some(&i) => i,
+                None => continue, // source not in plan — skip
+            };
+            let target_step = match node_to_step.get(&route.target.param.node) {
+                Some(&i) => i,
+                None => continue, // target not in plan — skip
+            };
+            mod_actions_by_step[target_step].push(CompiledModAction {
+                source_step,
+                source_port: route.source.port as usize,
+                param_name: route.target.param.name.clone(),
+                depth: route.target.depth,
+            });
+        }
+
         GraphScheduler {
             plan,
             processors,
             output_buffers,
             silence_buffer,
             input_ptr_scratch,
+            mod_actions_by_step,
         }
     }
 
@@ -116,6 +174,7 @@ impl GraphScheduler {
             output_buffers: Vec::new(),
             silence_buffer: AudioBuffer::new(2, 512),
             input_ptr_scratch: vec![std::ptr::null(); MAX_NODE_INPUT_PORTS],
+            mod_actions_by_step: Vec::new(),
         }
     }
 
@@ -207,6 +266,45 @@ impl GraphScheduler {
                 buf.clear();
             }
 
+            // ── Modulation dispatch ────────────────────────────────────────────
+            // Apply all modulation routes targeting this step before calling
+            // process.  Source buffers are already filled (src_step < step_idx
+            // by topological order — compiler invariant).
+            //
+            // SAFETY: `mod_actions_by_step` is never modified during
+            // `run_steps`.  We take a raw pointer to it so we can simultaneously
+            // hold a mutable borrow on `self.processors[step_idx]`.
+            // The two fields are disjoint; this mirrors the `pool_ptr` pattern.
+            let actions_ptr: *const Vec<Vec<CompiledModAction>> =
+                &self.mod_actions_by_step as *const _;
+            // SAFETY: `mod_actions_by_step` is never modified during `run_steps`.
+            // We first bind the raw pointer to a safe reference, then index —
+            // this avoids the implicit-autoref-through-raw-pointer lint.
+            let actions: &[CompiledModAction] = unsafe {
+                let outer: &Vec<Vec<CompiledModAction>> = &*actions_ptr;
+                &outer[step_idx]
+            };
+
+            if !actions.is_empty() {
+                self.processors[step_idx].reset_modulation();
+                for action in actions {
+                    let mod_signal: f32 = unsafe {
+                        let src_bufs: &Vec<AudioBuffer> =
+                            &*pool_ptr.add(action.source_step);
+                        if action.source_port < src_bufs.len()
+                            && src_bufs[action.source_port].num_frames > 0
+                        {
+                            // Block-rate: first sample of channel 0 (Phase 3)
+                            src_bufs[action.source_port].channel(0)[0]
+                        } else {
+                            0.0
+                        }
+                    };
+                    self.processors[step_idx]
+                        .apply_modulation(&action.param_name, mod_signal * action.depth);
+                }
+            }
+
             // ── Dispatch ───────────────────────────────────────────────────────
             self.processors[step_idx].process(inputs, outputs, transport);
         }
@@ -264,6 +362,7 @@ impl GraphScheduler {
     pub fn reset(&mut self) {
         for processor in &mut self.processors {
             processor.reset();
+            processor.reset_modulation();
         }
         for bufs in &mut self.output_buffers {
             for b in bufs.iter_mut() {

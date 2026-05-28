@@ -9,11 +9,13 @@ use crate::audio_graph::node::{AudioNode, NodeId, PrepareContext, TransportInfo}
 pub struct GainNode {
     id: NodeId,
     gain: f32,
+    /// Accumulated modulation delta for the current block (reset each block).
+    mod_delta: f32,
 }
 
 impl GainNode {
     pub fn new(id: NodeId, gain: f32) -> Self {
-        GainNode { id, gain }
+        GainNode { id, gain, mod_delta: 0.0 }
     }
 
     pub fn set_gain(&mut self, gain: f32) {
@@ -44,7 +46,7 @@ impl AudioNode for GainNode {
 
         let channels = output.num_channels.min(input.num_channels);
         let frames = output.num_frames.min(input.num_frames);
-        let gain = self.gain;
+        let gain = (self.gain + self.mod_delta).max(0.0);
 
         for ch in 0..channels {
             let in_ch = input.channel(ch);
@@ -55,5 +57,17 @@ impl AudioNode for GainNode {
         }
     }
 
-    fn reset(&mut self) {}
+    fn reset(&mut self) {
+        self.mod_delta = 0.0;
+    }
+
+    fn reset_modulation(&mut self) {
+        self.mod_delta = 0.0;
+    }
+
+    fn apply_modulation(&mut self, param: &str, delta: f32) {
+        if param == "gain" {
+            self.mod_delta += delta;
+        }
+    }
 }

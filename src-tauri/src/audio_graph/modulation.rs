@@ -103,6 +103,16 @@ impl ModulationMap {
         self.routes.iter().filter(move |r| &r.target.param == param)
     }
 
+    /// All routes targeting `node_id` (called by the scheduler at construction time).
+    pub fn routes_targeting_node(&self, node_id: NodeId) -> impl Iterator<Item = &ModulationRoute> {
+        self.routes.iter().filter(move |r| r.target.param.node == node_id)
+    }
+
+    /// Raw slice over all routes (used by the scheduler at construction time).
+    pub fn all_routes(&self) -> &[ModulationRoute] {
+        &self.routes
+    }
+
     pub fn is_empty(&self) -> bool {
         self.routes.is_empty()
     }

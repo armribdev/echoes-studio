@@ -142,6 +142,24 @@ pub trait AudioNode: Send + 'static {
     /// Called on transport stop or when the node is deactivated.
     fn reset(&mut self);
 
+    // ── Modulation hooks ───────────────────────────────────────────────────────
+
+    /// Reset per-block modulation accumulators to zero.
+    ///
+    /// Called by the scheduler before the first `apply_modulation` call for
+    /// each block.  Default: no-op (nodes without modulated parameters ignore
+    /// this call).
+    fn reset_modulation(&mut self) {}
+
+    /// Accumulate one modulation contribution onto a named parameter.
+    ///
+    /// `delta` is already scaled by the route's depth (i.e. `signal * depth`).
+    /// Multiple routes to the same parameter are summed across multiple calls.
+    /// The node applies `base_value + total_delta` during `process`.
+    ///
+    /// Default: no-op.
+    fn apply_modulation(&mut self, _param: &str, _delta: f32) {}
+
     // ── Optional metadata ──────────────────────────────────────────────────────
 
     /// Intrinsic processing latency in samples (default 0).
