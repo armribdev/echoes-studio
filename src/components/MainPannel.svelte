@@ -1,8 +1,8 @@
 <script lang="ts">
-	import Knob from './Knob.svelte';
 	import Track from './Track.svelte';
 	import TrackContextMenu from './TrackContextMenu.svelte';
-	import VuMeter from './VuMeter.svelte';
+	import FaderMeter from './FaderMeter.svelte';
+	import Knob from './Knob.svelte';
 	import type { Track as TrackType, Project } from '../types/global';
 	import { invoke } from '@tauri-apps/api/core';
 	import { listen } from '@tauri-apps/api/event';
@@ -694,6 +694,7 @@
 		<div class="instruments">
 			{#each tracks as track, trackIndex}
 				<!-- svelte-ignore a11y-no-static-element-interactions -->
+				<!-- svelte-ignore a11y-no-static-element-interactions -->
 				<div
 					class="instrument"
 					class:instrument--selected={selectedTrackIndex === trackIndex}
@@ -701,37 +702,51 @@
 					on:mousedown={() => { selectedTrackIndex = trackIndex; }}
 					on:contextmenu={(e) => handleTrackContextMenu(e, trackIndex)}
 				>
-					<div class="instrument-header">
+					<!-- Row 1 — identity + routing -->
+					<div class="track-head">
 						<!-- svelte-ignore a11y-no-static-element-interactions -->
 						<strong class="track-name" on:dblclick={(e) => makeEditable(e, trackIndex)}>{track.name}</strong>
-					</div>
-					<div class="instrument-controls">
 						<button
 							type="button"
 							class="ms-btn"
 							class:active={track.muted}
 							title="Mute"
-							on:click={() => handleMuteToggle(trackIndex)}
+							on:click|stopPropagation={() => handleMuteToggle(trackIndex)}
 						>M</button>
 						<button
 							type="button"
 							class="ms-btn"
 							class:active={track.solo}
 							title="Solo"
-							on:click={() => handleSoloToggle(trackIndex)}
+							on:click|stopPropagation={() => handleSoloToggle(trackIndex)}
 						>S</button>
-						<div class="knob-group">
-							<span class="knob-label">VOL</span>
-							<Knob min={0} max={100} bind:value={tracks[trackIndex].volume} on:release={() => handleVolumeRelease(trackIndex)} />
+					</div>
+
+					<!-- Row 2 — mix controls -->
+					<div class="track-controls">
+						<!-- Pan knob + Volume fader/meter -->
+						<div class="ctrl-row">
+							<div class="ctrl-pan">
+								<span class="ctrl-label">PAN</span>
+								<Knob
+									min={-100}
+									max={100}
+									defaultValue={0}
+									bind:value={tracks[trackIndex].pan}
+									on:release={() => handlePanRelease(trackIndex)}
+								/>
+							</div>
+							<div class="ctrl-vol">
+								<span class="ctrl-label">VOL</span>
+								<FaderMeter
+									bind:value={tracks[trackIndex].volume}
+									peakL={($trackLevels[track.id]?.[0]) ?? 0}
+									peakR={($trackLevels[track.id]?.[1]) ?? 0}
+									defaultValue={75}
+									on:release={() => handleVolumeRelease(trackIndex)}
+								/>
+							</div>
 						</div>
-						<div class="knob-group">
-							<span class="knob-label">PAN</span>
-							<Knob min={-100} max={100} bind:value={tracks[trackIndex].pan} on:release={() => handlePanRelease(trackIndex)} />
-						</div>
-						<VuMeter
-							peakL={($trackLevels[track.id]?.[0]) ?? 0}
-							peakR={($trackLevels[track.id]?.[1]) ?? 0}
-						/>
 					</div>
 				</div>
 			{/each}
@@ -1048,101 +1063,126 @@
 		z-index: 5;
 	}
 
+	// ── Track instrument strip ───────────────────────────────────────────────────
 	.instrument {
 		height: 100px;
 		display: flex;
 		flex-direction: column;
-		justify-content: center;
 		box-sizing: border-box;
 		border-bottom: 1px solid $border-color;
 		position: relative;
 		transition: background 0.1s;
 
+		// Color accent bar
 		&::before {
 			content: '';
 			position: absolute;
 			left: 0;
-			top: 14px;
-			bottom: 14px;
+			top: 10px;
+			bottom: 10px;
 			width: 3px;
 			border-radius: 0 2px 2px 0;
 			background: var(--track-color, #{$accent-color});
 		}
 
-		&--selected {
-			background: $surface-1;
-		}
+		&--selected { background: $surface-1; }
 	}
 
-	.instrument-header {
+	// Row 1 — name + M/S
+	.track-head {
+		height: 32px;
+		flex-shrink: 0;
 		display: flex;
 		align-items: center;
 		gap: 4px;
-		padding: 8px 8px 4px 14px;
+		padding: 0 6px 0 13px;
+		border-bottom: 1px solid rgba(255, 255, 255, 0.04);
 	}
 
 	.track-name {
 		flex: 1;
-		font-size: 12px;
+		font-size: 11px;
 		font-weight: 500;
 		color: $text-color;
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
 		min-width: 0;
+		cursor: default;
 
-		&:focus {
-			outline: none;
-		}
-	}
-
-	.instrument-controls {
-		display: flex;
-		align-items: center;
-		gap: 6px;
-		padding: 4px 8px 8px 14px;
-	}
-
-	.knob-group {
-		display: flex;
-		flex-direction: column;
-		align-items: center;
-		gap: 2px;
-	}
-
-	.knob-label {
-		font-size: 8px;
-		font-family: $font-mono;
-		color: $text-faint;
-		letter-spacing: 0.06em;
-		text-transform: uppercase;
-		line-height: 1;
-		pointer-events: none;
+		&:focus { outline: none; }
 	}
 
 	.ms-btn {
-		width: 22px;
-		height: 22px;
+		width: 20px;
+		height: 20px;
+		flex-shrink: 0;
 		padding: 0;
-		border: 1px solid $border-color;
+		border: 1px solid rgba(255, 255, 255, 0.1);
 		border-radius: 3px;
 		background: transparent;
-		color: rgba($text-color, 0.55);
-		font-size: 11px;
-		font-weight: 600;
+		color: rgba($text-color, 0.45);
+		font-size: 10px;
+		font-weight: 700;
 		line-height: 1;
 		cursor: pointer;
+		transition: background 0.1s, color 0.1s, border-color 0.1s;
 
 		&:hover {
 			color: $text-color;
-			border-color: rgba($text-color, 0.4);
+			border-color: rgba($text-color, 0.35);
 		}
 
 		&.active {
 			background: $accent-color;
 			border-color: $accent-color;
-			color: $text-color;
+			color: #fff;
 		}
+	}
+
+	// Row 2 — mix controls (pan knob + vol fader/meter)
+	.track-controls {
+		flex: 1;
+		display: flex;
+		align-items: center;
+		padding: 0 8px 4px 13px;
+		gap: 0;
+	}
+
+	.ctrl-row {
+		flex: 1;
+		display: flex;
+		align-items: center;
+		gap: 8px;
+	}
+
+	.ctrl-label {
+		font-size: 8px;
+		font-family: $font-mono;
+		color: $text-faint;
+		letter-spacing: 0.05em;
+		text-transform: uppercase;
+		line-height: 1;
+		user-select: none;
+	}
+
+	// Pan: label above knob, fixed width
+	.ctrl-pan {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 3px;
+		flex-shrink: 0;
+	}
+
+	// Vol: label above fader, takes remaining space
+	.ctrl-vol {
+		flex: 1;
+		display: flex;
+		flex-direction: column;
+		align-items: flex-start;
+		gap: 5px;
+		min-width: 0;
 	}
 
 	// ── Empty state ───────────────────────────────────────────────────────────

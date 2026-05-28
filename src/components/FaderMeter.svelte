@@ -1,0 +1,176 @@
+<!-- FaderMeter.svelte
+     Horizontal gain fader with dual-channel (L/R) post-fader level meters.
+     Two stacked bars show L and R independently; the thumb spans both and
+     sets the gain.  Software decay keeps display smooth between 33 ms ticks.
+-->
+<script lang="ts">
+	import { onMount, onDestroy, createEventDispatcher } from 'svelte';
+
+	/** Gain value, 0–100. */
+	export let value: number = 75;
+	/** Post-fader peak, left channel, linear 0–1. */
+	export let peakL: number = 0;
+	/** Post-fader peak, right channel, linear 0–1. */
+	export let peakR: number = 0;
+	/** Value snapped to on double-click. */
+	export let defaultValue: number = 75;
+
+	const dispatch = createEventDispatcher<{ change: number; release: number }>();
+
+	// ── dBFS helpers ─────────────────────────────────────────────────────────────
+
+	const DB_FLOOR = -60;
+
+	function linearToDb(v: number): number {
+		return v <= 0 ? DB_FLOOR : Math.max(DB_FLOOR, 20 * Math.log10(v));
+	}
+
+	function dbToPercent(db: number): number {
+		return Math.max(0, Math.min(100, (db - DB_FLOOR) / -DB_FLOOR * 100));
+	}
+
+	function meterColor(pct: number): string {
+		if (pct >= 95) return 'var(--meter-red,    #ff4444)';
+		if (pct >= 75) return 'var(--meter-yellow, #ffd93d)';
+		return                 'var(--meter-green,  #6bcb77)';
+	}
+
+	// ── Per-channel soft decay (60 fps) ──────────────────────────────────────────
+
+	let dispL = 0;
+	let dispR = 0;
+	let rafId: number;
+
+	function tick() {
+		dispL = peakL > dispL ? peakL : Math.max(0, dispL * 0.985);
+		dispR = peakR > dispR ? peakR : Math.max(0, dispR * 0.985);
+		rafId = requestAnimationFrame(tick);
+	}
+
+	onMount(() => { rafId = requestAnimationFrame(tick); });
+	onDestroy(() => cancelAnimationFrame(rafId));
+
+	// ── Derived display values ────────────────────────────────────────────────────
+
+	$: pctL = dbToPercent(linearToDb(dispL));
+	$: pctR = dbToPercent(linearToDb(dispR));
+	$: colorL = meterColor(pctL);
+	$: colorR = meterColor(pctR);
+	$: faderPct = Math.max(0, Math.min(100, value));
+
+	// ── Drag interaction ──────────────────────────────────────────────────────────
+
+	let rail: HTMLElement;
+	let dragging = false;
+
+	function clampedVal(clientX: number): number {
+		if (!rail) return value;
+		const r = rail.getBoundingClientRect();
+		return Math.max(0, Math.min(100, (clientX - r.left) / r.width * 100));
+	}
+
+	function onMouseDown(e: MouseEvent) {
+		e.preventDefault();
+		dragging = true;
+		value = clampedVal(e.clientX);
+		dispatch('change', value);
+		window.addEventListener('mousemove', onMouseMove);
+		window.addEventListener('mouseup', onMouseUp);
+	}
+
+	function onMouseMove(e: MouseEvent) {
+		if (!dragging) return;
+		value = clampedVal(e.clientX);
+		dispatch('change', value);
+	}
+
+	function onMouseUp(e: MouseEvent) {
+		dragging = false;
+		value = clampedVal(e.clientX);
+		dispatch('release', value);
+		window.removeEventListener('mousemove', onMouseMove);
+		window.removeEventListener('mouseup', onMouseUp);
+	}
+
+	function onDblClick() {
+		value = defaultValue;
+		dispatch('change', value);
+		dispatch('release', value);
+	}
+</script>
+
+<!-- svelte-ignore a11y-no-static-element-interactions -->
+<div
+	class="fader-meter"
+	class:fader-meter--dragging={dragging}
+	bind:this={rail}
+	on:mousedown={onMouseDown}
+	on:dblclick={onDblClick}
+	role="slider"
+	aria-valuemin={0}
+	aria-valuemax={100}
+	aria-valuenow={Math.round(value)}
+	tabindex="0"
+>
+	<!-- L channel bar -->
+	<div class="channel">
+		<div class="fill" style="width:{pctL}%; background:{colorL};"></div>
+	</div>
+
+	<!-- R channel bar -->
+	<div class="channel">
+		<div class="fill" style="width:{pctR}%; background:{colorR};"></div>
+	</div>
+
+	<!-- Gain thumb — spans both channels -->
+	<div class="thumb" style="left:{faderPct}%;"></div>
+</div>
+
+<style lang="scss">
+	.fader-meter {
+		position: relative;
+		width: 100%;
+		display: flex;
+		flex-direction: column;
+		gap: 2px;
+		cursor: ew-resize;
+		user-select: none;
+		outline: none;
+		padding: 1px 0;
+
+		&:focus-visible .channel {
+			outline: 1px solid rgba(21, 113, 255, 0.5);
+			outline-offset: 1px;
+		}
+	}
+
+	.channel {
+		height: 5px;
+		border-radius: 2px;
+		background: rgba(255, 255, 255, 0.07);
+		position: relative;
+		overflow: hidden;
+	}
+
+	.fill {
+		position: absolute;
+		inset: 0 auto 0 0;
+		border-radius: 2px;
+		opacity: 0.7;
+		pointer-events: none;
+		will-change: width;
+	}
+
+	.thumb {
+		position: absolute;
+		top: 50%;
+		transform: translate(-50%, -50%);
+		width: 3px;
+		height: 20px;
+		background: rgba(247, 247, 249, 0.9);
+		border-radius: 2px;
+		pointer-events: none;
+		box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
+		will-change: left;
+	}
+</style>
