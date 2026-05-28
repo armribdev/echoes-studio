@@ -66,12 +66,12 @@
 		return Math.max(lo, Math.min(hi, n));
 	}
 
-	function pointerMove({ clientY }: PointerEvent): void {
-		value = clamp(startValue - ((max - min) * (clientY - startY)) / pixelRange, min, max);
+	function pointerMove(e: PointerEvent): void {
+		value = clamp(startValue - ((max - min) * (e.clientY - startY)) / pixelRange, min, max);
 	}
 
 	function pointerUp(): void {
-		document.querySelectorAll('*').forEach((el) => ((el as HTMLElement).style.cursor = ''));
+		document.body.style.cursor = '';
 		window.removeEventListener('pointermove', pointerMove);
 		window.removeEventListener('pointerup', pointerUp);
 		dispatch('release', value);
@@ -83,9 +83,11 @@
 		dispatch('release', value);
 	}
 
-	function pointerDown({ clientY }: PointerEvent): void {
-		document.querySelectorAll('*').forEach((el) => ((el as HTMLElement).style.cursor = 'grabbing'));
-		startY = clientY;
+	function pointerDown(e: PointerEvent): void {
+		e.preventDefault();
+		(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+		document.body.style.cursor = 'ns-resize';
+		startY = e.clientY;
 		startValue = value;
 		window.addEventListener('pointermove', pointerMove);
 		window.addEventListener('pointerup', pointerUp);
@@ -111,7 +113,7 @@
 		display: inline-flex;
 		align-items: center;
 		justify-content: center;
-		cursor: pointer;
+		cursor: ns-resize;
 		border-radius: 50%;
 		transition: filter 0.1s;
 

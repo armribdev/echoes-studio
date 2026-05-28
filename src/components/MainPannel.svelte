@@ -22,6 +22,7 @@
 	import { snapPosition, getSnapSubdivisionSec } from '../lib/snapUtils';
 	import { pianoRollStore } from '../stores/pianoRoll';
 	import EffectChain from './EffectChain.svelte';
+	import ModulationPanel from './ModulationPanel.svelte';
 
 	const TRACK_COLORS = [
 		'#4d96ff', '#ff6b6b', '#6bcb77', '#ffd93d',
@@ -758,6 +759,12 @@
 			{#if selectedTrackIndex !== null && tracks[selectedTrackIndex]}
 				<EffectChain
 					trackId={tracks[selectedTrackIndex].id}
+					effects={tracks[selectedTrackIndex].effects ?? []}
+				/>
+				<ModulationPanel
+					trackId={tracks[selectedTrackIndex].id}
+					modulators={tracks[selectedTrackIndex].modulators ?? []}
+					mod_routes={tracks[selectedTrackIndex].mod_routes ?? []}
 					effects={tracks[selectedTrackIndex].effects ?? []}
 				/>
 			{:else}
