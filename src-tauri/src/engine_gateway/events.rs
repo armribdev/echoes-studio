@@ -41,6 +41,9 @@ pub mod ev {
     pub const MODULATION_ROUTE_REMOVED: &str = "MODULATION_ROUTE_REMOVED";
     pub const MODULATION_DEPTH_CHANGED: &str = "MODULATION_DEPTH_CHANGED";
 
+    // MIDI — persisted
+    pub const MIDI_NOTES_SET: &str = "MIDI_NOTES_SET";
+
     // Transport runtime events — NOT persisted
     pub const PLAY_STARTED: &str = "PLAY_STARTED";
     pub const PLAY_STOPPED: &str = "PLAY_STOPPED";

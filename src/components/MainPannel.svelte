@@ -663,7 +663,7 @@
 					on:volumerelease={() => handleVolumeRelease(trackIndex)}
 					on:panrelease={() => handlePanRelease(trackIndex)}
 					on:rename={(e) => { tracks[trackIndex] = { ...tracks[trackIndex], name: e.detail.name }; tracks = tracks; updateTrack(tracks[trackIndex].id, { name: e.detail.name, volume: tracks[trackIndex].volume }).catch(console.error); }}
-				on:openpianoroll={() => { pianoRollStore.openPianoRoll(track.id, track.name, TRACK_COLORS[trackIndex % TRACK_COLORS.length]); bottomPanel.openTab('pianoroll'); }}
+				on:openpianoroll={() => { pianoRollStore.openPianoRoll(track.id, track.name, TRACK_COLORS[trackIndex % TRACK_COLORS.length], track.midi_notes ?? []); bottomPanel.openTab('pianoroll'); }}
 				/>
 			{/each}
 		</div>

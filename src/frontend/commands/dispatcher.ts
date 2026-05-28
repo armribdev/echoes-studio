@@ -43,6 +43,7 @@ import {
   type UpdateProjectNamePayload,
   type UpdateTempoPayload,
   type UpdateTrackPayload,
+  type SetMidiNotesPayload,
 } from '../../shared/protocol/commands';
 
 // ── Active project ID ─────────────────────────────────────────────────────────
@@ -297,6 +298,18 @@ export function setModulationDepth(
     track_id: trackId,
     route_id: routeId,
     depth,
+  });
+}
+
+// ── MIDI commands ─────────────────────────────────────────────────────────────
+
+export function setMidiNotes(
+  trackId: string,
+  notes: SetMidiNotesPayload['notes'],
+): Promise<CommandResult> {
+  return dispatch<SetMidiNotesPayload>(cmd.SET_MIDI_NOTES, {
+    track_id: trackId,
+    notes,
   });
 }
 

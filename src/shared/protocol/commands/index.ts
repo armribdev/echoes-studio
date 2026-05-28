@@ -50,6 +50,9 @@ export const cmd = {
   REMOVE_MODULATION_ROUTE: 'REMOVE_MODULATION_ROUTE',
   SET_MODULATION_DEPTH: 'SET_MODULATION_DEPTH',
 
+  // MIDI
+  SET_MIDI_NOTES: 'SET_MIDI_NOTES',
+
   // Batch
   BATCH: 'BATCH',
 } as const;
@@ -191,6 +194,11 @@ export interface SetModulationDepthPayload {
   track_id: string;
   route_id: string;
   depth: number;
+}
+
+export interface SetMidiNotesPayload {
+  track_id: string;
+  notes: { id: string; pitch: number; start: number; duration: number; velocity: number }[];
 }
 
 // ── Factory ───────────────────────────────────────────────────────────────────

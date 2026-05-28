@@ -5,7 +5,9 @@
 	import { pianoRollStore, pianoRollNotes, type PianoRollMode } from '../stores/pianoRoll';
 	import { transport } from '../stores/transport';
 	import { tempo } from '../stores/tempo';
-	import type { MidiNote } from '../types/midi';
+	import type { MidiNote } from '../types/global';
+	import { engineProject } from '../frontend/store/engineStore';
+	import { setMidiNotes, undoCommand, redoCommand } from '../frontend/commands/dispatcher';
 
 	// ── Constantes de rendu ────────────────────────────────────────────────────
 	const NOTE_H        = 16;
@@ -61,6 +63,17 @@
 		| { type: 'selbox'; x0: number; y0: number; x1: number; y1: number };
 
 	let drag: DragState = { type: 'none' };
+	let isDragging = false;
+
+	async function commitNotes() {
+		const trackId = get(pianoRollStore).trackId;
+		if (!trackId) return;
+		try {
+			await setMidiNotes(trackId, pianoRollStore.getNotes());
+		} catch (e) {
+			console.error('commitNotes failed:', e);
+		}
+	}
 
 	let zoom: number;
 	let quantize: number;
@@ -89,6 +102,16 @@
 		scheduleRedraw();
 	});
 	onDestroy(unsubNotes);
+
+	// Sync notes from Rust state (after undo/redo or external MIDI_NOTES_SET) when not dragging.
+	const unsubEngine = engineProject.subscribe(($project) => {
+		if (isDragging) return;
+		const trackId = get(pianoRollStore).trackId;
+		if (!trackId) return;
+		const track = $project.tracks.find((t) => t.id === trackId);
+		if (track) pianoRollStore.syncNotes(track.midi_notes);
+	});
+	onDestroy(unsubEngine);
 
 	let playheadBeat = 0;
 	const unsubTransport = transport.subscribe((t) => {
@@ -440,6 +463,7 @@
 		}
 		if (e.button !== 0 && e.button !== 2) return;
 		e.preventDefault();
+		isDragging = true;
 		const { beat, pitch, rawX, rawY } = getGridCoords(e);
 		const hit = hitTest(beat, pitch);
 
@@ -530,7 +554,10 @@
 		if (drag.type === 'move' && !drag.isGroup) {
 			pianoRollStore.selectNote(drag.noteId, false);
 		}
+		const needsCommit = drag.type === 'create' || drag.type === 'move' || drag.type === 'resize' || drag.type === 'erase';
 		drag = { type: 'none' };
+		isDragging = false;
+		if (needsCommit) commitNotes();
 		updateCursor(e);
 	}
 
@@ -562,7 +589,7 @@
 		e.preventDefault();
 		const { beat, pitch } = getGridCoords(e);
 		const hit = hitTest(beat, pitch);
-		if (hit) pianoRollStore.deleteNote(hit.id);
+		if (hit) { pianoRollStore.deleteNote(hit.id); commitNotes(); }
 	}
 
 	// ── Velocity interactions ──────────────────────────────────────────────────
@@ -590,7 +617,7 @@
 		updateVelocity(e);
 	}
 
-	function onVelMouseup() { velDragActive = false; }
+	function onVelMouseup() { velDragActive = false; commitNotes(); }
 
 	// ── Scroll synchronisé ────────────────────────────────────────────────────
 
@@ -621,13 +648,14 @@
 		else if ((e.key === 'Delete' || e.key === 'Backspace') && tag !== 'INPUT') {
 			e.preventDefault();
 			pianoRollStore.deleteSelectedNotes();
+			commitNotes();
 		}
 		else if ((e.ctrlKey || e.metaKey) && e.key === 'a') { e.preventDefault(); pianoRollStore.selectAll(); }
 		else if ((e.ctrlKey || e.metaKey) && e.key === 'z') {
 			e.preventDefault();
-			if (e.shiftKey) pianoRollStore.redo(); else pianoRollStore.undo();
+			if (e.shiftKey) redoCommand(); else undoCommand();
 		}
-		else if ((e.ctrlKey || e.metaKey) && e.key === 'y') { e.preventDefault(); pianoRollStore.redo(); }
+		else if ((e.ctrlKey || e.metaKey) && e.key === 'y') { e.preventDefault(); redoCommand(); }
 	}
 
 	function onWindowMousemove(e: MouseEvent) {
@@ -639,8 +667,10 @@
 
 	function onWindowMouseup() {
 		if (isPanning) isPanning = false;
-		if (drag.type !== 'none') drag = { type: 'none' };
-		velDragActive = false;
+		const needsCommit = drag.type === 'create' || drag.type === 'move' || drag.type === 'resize' || drag.type === 'erase';
+		if (drag.type !== 'none') { drag = { type: 'none' }; isDragging = false; }
+		if (velDragActive) { velDragActive = false; commitNotes(); }
+		if (needsCommit) commitNotes();
 	}
 
 	onMount(() => {
@@ -858,12 +888,12 @@
 		<div class="toolbar-sep"></div>
 
 		<!-- Undo / Redo -->
-		<button class="icon-btn" on:click={() => pianoRollStore.undo()} title="Annuler (Ctrl+Z)">
+		<button class="icon-btn" on:click={undoCommand} title="Annuler (Ctrl+Z)">
 			<svg viewBox="0 0 16 16" width="13" height="13" fill="currentColor">
 				<path d="M4 4H2V1H1v4.5l.5.5H5V5H3.12A5 5 0 1 1 3 8H2a6 6 0 1 0 2-4z"/>
 			</svg>
 		</button>
-		<button class="icon-btn" on:click={() => pianoRollStore.redo()} title="Rétablir (Ctrl+Y)">
+		<button class="icon-btn" on:click={redoCommand} title="Rétablir (Ctrl+Y)">
 			<svg viewBox="0 0 16 16" width="13" height="13" fill="currentColor">
 				<path d="M12 4h2V1h1v4.5l-.5.5H11V5h1.88A5 5 0 1 1 13 8h1a6 6 0 1 0-2-4z"/>
 			</svg>

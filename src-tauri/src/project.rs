@@ -144,6 +144,22 @@ pub struct ProjectModulationRoute {
     /// Modulation depth in the parameter's native range (signed).
     pub depth: f32,
 }
+// ── MIDI types ────────────────────────────────────────────────────────────────
+
+/// One MIDI note stored in the project.  Coordinates are in beats (float).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MidiNote {
+    pub id: String,
+    /// MIDI pitch 0-127 (60 = C4).
+    pub pitch: u8,
+    /// Start position in beats.
+    pub start: f32,
+    /// Duration in beats (> 0).
+    pub duration: f32,
+    /// Velocity 0-127.
+    pub velocity: u8,
+}
+
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -187,6 +203,7 @@ pub struct AppTrack {
     pub effects: Vec<TrackEffect>,
     pub modulators: Vec<ProjectModulator>,
     pub mod_routes: Vec<ProjectModulationRoute>,
+    pub midi_notes: Vec<MidiNote>,
 }
 
 pub struct AppProject {
@@ -241,6 +258,7 @@ impl AppProject {
                 effects: t.effects.clone(),
                 modulators: t.modulators.clone(),
                 mod_routes: t.mod_routes.clone(),
+                midi_notes: t.midi_notes.clone(),
             }).collect(),
         }
     }
@@ -278,6 +296,7 @@ impl AppProject {
                 effects: tf.effects,
                 modulators: tf.modulators,
                 mod_routes: tf.mod_routes,
+                midi_notes: tf.midi_notes,
             });
         }
         Ok(AppProject {
@@ -303,6 +322,7 @@ impl AppTrack {
             effects: self.effects.clone(),
             modulators: self.modulators.clone(),
             mod_routes: self.mod_routes.clone(),
+            midi_notes: self.midi_notes.clone(),
         }
     }
 }
@@ -436,6 +456,8 @@ pub struct TrackFile {
     pub modulators: Vec<ProjectModulator>,
     #[serde(default)]
     pub mod_routes: Vec<ProjectModulationRoute>,
+    #[serde(default)]
+    pub midi_notes: Vec<MidiNote>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -469,6 +491,7 @@ pub struct TrackDto {
     pub effects: Vec<TrackEffect>,
     pub modulators: Vec<ProjectModulator>,
     pub mod_routes: Vec<ProjectModulationRoute>,
+    pub midi_notes: Vec<MidiNote>,
 }
 
 #[derive(Serialize, Clone)]

@@ -20,14 +20,15 @@ use crate::audio_clip::AudioClip;
 use crate::project::{
     AppClip, AppProject, AppState, AppTrack, CachedAudioData, generate_id,
     TrackEffect, EffectParams, EqParams, CompressorParams, ReverbParams, DelayParams,
+    MidiNote,
 };
 use super::commands::{
     cmd, AddClipPayload, AddEffectPayload, AddModulationRoutePayload, AddModulatorPayload,
     BatchCommand, CommandEnvelope, CreateTrackPayload, DeleteTrackPayload, MoveClipPayload,
     MuteTrackPayload, RemoveClipPayload, RemoveEffectPayload, RemoveModulationRoutePayload,
-    RemoveModulatorPayload, SeekPayload, SetModulationDepthPayload, SoloTrackPayload,
-    UpdateEffectPayload, UpdateModulatorPayload, UpdateProjectNamePayload, UpdateTempoPayload,
-    UpdateTrackPayload,
+    RemoveModulatorPayload, SeekPayload, SetModulationDepthPayload, SetMidiNotesPayload,
+    SoloTrackPayload, UpdateEffectPayload, UpdateModulatorPayload, UpdateProjectNamePayload,
+    UpdateTempoPayload, UpdateTrackPayload,
 };
 use super::events::{ev, EngineEvent, ProjectEvent};
 
@@ -247,6 +248,7 @@ fn process_command(
                     effects: vec![],
                     modulators: vec![],
                     mod_routes: vec![],
+                    midi_notes: vec![],
                 });
             }
 
@@ -827,6 +829,29 @@ fn process_command(
             Ok(CommandResult::ok(command_id, vec![serde_json::to_value(&engine_ev).unwrap_or_default()]))
         }
 
+        cmd::SET_MIDI_NOTES => {
+            let p: SetMidiNotesPayload = serde_json::from_value(command.payload)
+                .map_err(|e| format!("SET_MIDI_NOTES payload invalid: {e}"))?;
+
+            {
+                let mut project = state.project.lock().map_err(|e| e.to_string())?;
+                let track = project.tracks.iter_mut()
+                    .find(|t| t.id == p.track_id)
+                    .ok_or_else(|| format!("Track {} not found", p.track_id))?;
+                track.midi_notes = p.notes.clone();
+            }
+
+            let notes_val = serde_json::to_value(&p.notes).unwrap_or_default();
+            let event_payload = json!({ "track_id": p.track_id, "notes": notes_val });
+            let project_event = ProjectEvent::new(ev::MIDI_NOTES_SET, event_payload.clone());
+            append_and_maybe_snapshot(state, project_event)?;
+
+            let engine_ev = EngineEvent::new(ev::MIDI_NOTES_SET, &project_id, event_payload);
+            let _ = app.emit("engine-event", &engine_ev);
+
+            Ok(CommandResult::ok(command_id, vec![serde_json::to_value(&engine_ev).unwrap_or_default()]))
+        }
+
         other => Err(format!("Unknown command type: {other}")),
     }
 }
@@ -885,6 +910,7 @@ fn snapshot_project(project: &AppProject) -> AppProject {
                 effects: t.effects.clone(),
                 modulators: t.modulators.clone(),
                 mod_routes: t.mod_routes.clone(),
+                midi_notes: t.midi_notes.clone(),
                 clips: t
                     .clips
                     .iter()
@@ -1008,6 +1034,7 @@ fn apply_events(
                         effects: vec![],
                         modulators: vec![],
                         mod_routes: vec![],
+                        midi_notes: vec![],
                     });
                 }
             }
@@ -1247,6 +1274,17 @@ fn apply_events(
                     if let Some(track) = project.tracks.iter_mut().find(|t| t.id == track_id) {
                         if let Some(route) = track.mod_routes.iter_mut().find(|r| r.id == route_id) {
                             route.depth = depth as f32;
+                        }
+                    }
+                }
+            }
+
+            ev::MIDI_NOTES_SET => {
+                let track_id = event.payload["track_id"].as_str().unwrap_or("");
+                if let Some(raw_notes) = event.payload.get("notes") {
+                    if let Ok(notes) = serde_json::from_value::<Vec<MidiNote>>(raw_notes.clone()) {
+                        if let Some(track) = project.tracks.iter_mut().find(|t| t.id == track_id) {
+                            track.midi_notes = notes;
                         }
                     }
                 }

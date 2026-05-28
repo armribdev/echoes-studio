@@ -65,6 +65,14 @@ export interface ProjectModulationRoute {
 	depth: number;
 }
 
+export interface MidiNote {
+	id: string;
+	pitch: number;
+	start: number;
+	duration: number;
+	velocity: number;
+}
+
 export interface Track {
 	/** Stable ID used by the event-sourcing system. Added in architecture v2. */
 	id: string;
@@ -77,6 +85,7 @@ export interface Track {
 	effects: TrackEffect[];
 	modulators: ProjectModulator[];
 	mod_routes: ProjectModulationRoute[];
+	midi_notes: MidiNote[];
 }
 
 export interface Clip {

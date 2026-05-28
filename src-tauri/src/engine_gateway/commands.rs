@@ -74,6 +74,9 @@ pub mod cmd {
     pub const ADD_MODULATION_ROUTE: &str = "ADD_MODULATION_ROUTE";
     pub const REMOVE_MODULATION_ROUTE: &str = "REMOVE_MODULATION_ROUTE";
     pub const SET_MODULATION_DEPTH: &str = "SET_MODULATION_DEPTH";
+
+    // ── MIDI ──────────────────────────────────────────────────────────────────
+    pub const SET_MIDI_NOTES: &str = "SET_MIDI_NOTES";
 }
 
 // ── Typed payload structs ─────────────────────────────────────────────────────
@@ -217,4 +220,10 @@ pub struct SetModulationDepthPayload {
     pub track_id: String,
     pub route_id: String,
     pub depth: f32,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SetMidiNotesPayload {
+    pub track_id: String,
+    pub notes: Vec<crate::project::MidiNote>,
 }

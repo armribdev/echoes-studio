@@ -11,7 +11,7 @@
  */
 
 import { ev, type EngineEvent } from '../protocol/events';
-import type { Clip, Project, ProjectModulationRoute, ProjectModulator, Track, TrackEffect } from '../../types/global';
+import type { Clip, MidiNote, Project, ProjectModulationRoute, ProjectModulator, Track, TrackEffect } from '../../types/global';
 
 // ── Project state ─────────────────────────────────────────────────────────────
 
@@ -48,6 +48,7 @@ export interface TrackState {
   effects: TrackEffect[];
   modulators: ProjectModulator[];
   mod_routes: ProjectModulationRoute[];
+  midi_notes: MidiNote[];
 }
 
 export function emptyProjectState(): ProjectState {
@@ -75,7 +76,7 @@ export function applyEvent(state: ProjectState, event: EngineEvent): ProjectStat
       if (state.tracks.some((t) => t.id === p.id)) return state; // idempotent
       return {
         ...state,
-        tracks: [...state.tracks, { id: p.id, name: p.name, volume: 80, pan: 0, muted: false, solo: false, clips: [], effects: [], modulators: [], mod_routes: [] }],
+        tracks: [...state.tracks, { id: p.id, name: p.name, volume: 80, pan: 0, muted: false, solo: false, clips: [], effects: [], modulators: [], mod_routes: [], midi_notes: [] }],
       };
     }
 
@@ -319,6 +320,16 @@ export function applyEvent(state: ProjectState, event: EngineEvent): ProjectStat
       };
     }
 
+    case ev.MIDI_NOTES_SET: {
+      const p = event.payload as { track_id: string; notes: MidiNote[] };
+      return {
+        ...state,
+        tracks: state.tracks.map((t) =>
+          t.id !== p.track_id ? t : { ...t, midi_notes: p.notes },
+        ),
+      };
+    }
+
     case ev.MODULATION_DEPTH_CHANGED: {
       const p = event.payload as { track_id: string; route_id: string; depth: number };
       return {
@@ -374,6 +385,7 @@ export function projectFromSnapshot(dto: Project): ProjectState {
       effects: t.effects ?? [],
       modulators: t.modulators ?? [],
       mod_routes: t.mod_routes ?? [],
+      midi_notes: t.midi_notes ?? [],
     })),
   };
 }
