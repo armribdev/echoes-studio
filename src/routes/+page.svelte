@@ -11,6 +11,7 @@
 	import { connectTransportBridge } from '../frontend/transport/bridge';
 	import SettingsPanel from '../components/SettingsPanel.svelte';
 	import { settingsPanelOpen } from '../stores/preferences';
+	import PianoRoll from '../components/PianoRoll.svelte';
 
 	// Register keyboard shortcuts and transport bridge once for the app lifetime.
 	onMount(() => {
@@ -46,6 +47,7 @@
 	</div>
 	<StatusBar />
 	<SettingsPanel />
+	<PianoRoll />
 </div>
 {/if}
 
