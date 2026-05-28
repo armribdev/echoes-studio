@@ -1,7 +1,17 @@
-use hound::WavReader;
 use serde::Serialize;
 use std::error::Error;
 use std::fs::File;
+use std::path::Path;
+
+use symphonia::core::{
+    audio::SampleBuffer,
+    codecs::DecoderOptions,
+    errors::Error as SymphoniaError,
+    formats::FormatOptions,
+    io::MediaSourceStream,
+    meta::MetadataOptions,
+    probe::Hint,
+};
 
 pub struct AudioClip {
     pub raw_samples: Vec<f32>,
@@ -37,35 +47,76 @@ fn compute_peaks(samples: &[f32], chunk_size: usize) -> Vec<[f32; 2]> {
 }
 
 impl AudioClip {
-    pub fn from_wav_file(file_path: &str) -> Result<AudioClip, Box<dyn Error>> {
-        let file = File::open(file_path)?;
-        let mut reader = WavReader::new(file)?;
+    pub fn from_file(file_path: &str) -> Result<AudioClip, Box<dyn Error>> {
+        let src = File::open(file_path)?;
+        let mss = MediaSourceStream::new(Box::new(src), Default::default());
 
-        let spec = reader.spec();
-        let channels = spec.channels as usize;
+        let mut hint = Hint::new();
+        if let Some(ext) = Path::new(file_path).extension().and_then(|e| e.to_str()) {
+            hint.with_extension(ext);
+        }
 
-        let all_samples: Vec<f32> = match spec.sample_format {
-            hound::SampleFormat::Float => reader.samples::<f32>().map(|s| s.unwrap()).collect(),
-            hound::SampleFormat::Int => {
-                let max = (1i32 << (spec.bits_per_sample - 1)) as f32;
-                reader
-                    .samples::<i32>()
-                    .map(|s| s.unwrap() as f32 / max)
-                    .collect()
+        let probed = symphonia::default::get_probe().format(
+            &hint,
+            mss,
+            &FormatOptions::default(),
+            &MetadataOptions::default(),
+        )?;
+
+        let mut format = probed.format;
+        let track = format
+            .default_track()
+            .ok_or("No audio track found in file")?;
+        let track_id = track.id;
+        let raw_sample_rate = track
+            .codec_params
+            .sample_rate
+            .ok_or("Unknown sample rate")?;
+        let channels = track
+            .codec_params
+            .channels
+            .map(|c| c.count())
+            .unwrap_or(1);
+
+        let mut decoder = symphonia::default::get_codecs()
+            .make(&track.codec_params, &DecoderOptions::default())?;
+
+        let mut raw_samples: Vec<f32> = Vec::new();
+
+        loop {
+            let packet = match format.next_packet() {
+                Ok(p) => p,
+                Err(SymphoniaError::IoError(_)) => break,
+                Err(SymphoniaError::ResetRequired) => {
+                    decoder.reset();
+                    continue;
+                }
+                Err(e) => return Err(Box::new(e)),
+            };
+
+            if packet.track_id() != track_id {
+                continue;
             }
-        };
 
-        // Downmix to mono by averaging channels (avoids duration doubling on stereo files)
-        let raw_samples: Vec<f32> = if channels <= 1 {
-            all_samples
-        } else {
-            all_samples
-                .chunks(channels)
-                .map(|frame| frame.iter().sum::<f32>() / channels as f32)
-                .collect()
-        };
+            let decoded = match decoder.decode(&packet) {
+                Ok(d) => d,
+                Err(SymphoniaError::DecodeError(_)) => continue,
+                Err(e) => return Err(Box::new(e)),
+            };
 
-        let raw_sample_rate = spec.sample_rate;
+            let mut buf =
+                SampleBuffer::<f32>::new(decoded.capacity() as u64, *decoded.spec());
+            buf.copy_interleaved_ref(decoded);
+
+            // Downmix to mono by averaging channels
+            if channels <= 1 {
+                raw_samples.extend_from_slice(buf.samples());
+            } else {
+                for frame in buf.samples().chunks(channels) {
+                    raw_samples.push(frame.iter().sum::<f32>() / channels as f32);
+                }
+            }
+        }
 
         Ok(AudioClip {
             raw_samples,

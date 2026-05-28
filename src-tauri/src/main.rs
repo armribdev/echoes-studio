@@ -305,7 +305,7 @@ fn handle_menu_event(app: &tauri::AppHandle, menu_id: &str) {
             let picked = app
                 .dialog()
                 .file()
-                .add_filter("Fichiers audio", &["wav"])
+                .add_filter("Fichiers audio", &["wav", "mp3", "flac", "ogg", "oga"])
                 .blocking_pick_file();
 
             if let Some(FilePath::Path(file_path)) = picked {
@@ -342,13 +342,81 @@ fn menu_action(app: tauri::AppHandle, action: String) {
     });
 }
 
-/// Duration of a WAV file in seconds — used for drag-and-drop preview.
+/// Duration of an audio file in seconds — used for drag-and-drop preview.
+/// Supports WAV, MP3, FLAC, OGG via symphonia.
 #[tauri::command]
 fn get_audio_clip_duration(file_path: &str) -> Result<f64, String> {
-    let file = std::fs::File::open(file_path).map_err(|e| e.to_string())?;
-    let reader = hound::WavReader::new(file).map_err(|e| e.to_string())?;
-    let spec = reader.spec();
-    Ok(reader.duration() as f64 / spec.sample_rate as f64)
+    use symphonia::core::{
+        codecs::DecoderOptions,
+        errors::Error as SymphoniaError,
+        formats::FormatOptions,
+        io::MediaSourceStream,
+        meta::MetadataOptions,
+        probe::Hint,
+    };
+    use std::path::Path;
+
+    fn make_hint(file_path: &str) -> Hint {
+        let mut hint = Hint::new();
+        if let Some(ext) = Path::new(file_path).extension().and_then(|e| e.to_str()) {
+            hint.with_extension(ext);
+        }
+        hint
+    }
+
+    fn open_format(file_path: &str) -> Result<Box<dyn symphonia::core::formats::FormatReader>, String> {
+        let file = std::fs::File::open(file_path).map_err(|e| e.to_string())?;
+        let mss = MediaSourceStream::new(Box::new(file), Default::default());
+        symphonia::default::get_probe()
+            .format(&make_hint(file_path), mss, &FormatOptions::default(), &MetadataOptions::default())
+            .map(|p| p.format)
+            .map_err(|e| e.to_string())
+    }
+
+    // First probe: extract metadata fields we need (released before slow path)
+    let (sample_rate, time_base, n_frames, track_id) = {
+        let format = open_format(file_path)?;
+        let track = format.default_track().ok_or("No audio track found")?;
+        (
+            track.codec_params.sample_rate.ok_or("Unknown sample rate")?,
+            track.codec_params.time_base,
+            track.codec_params.n_frames,
+            track.id,
+        )
+    };
+
+    // Fast path: embedded duration (WAV, FLAC, OGG, CBR MP3 with Xing header)
+    if let (Some(tb), Some(n)) = (time_base, n_frames) {
+        let t = tb.calc_time(n);
+        return Ok(t.seconds as f64 + t.frac);
+    }
+
+    // Slow path: full decode to count frames (VBR MP3 without Xing header)
+    let mut format = open_format(file_path)?;
+    let mut decoder = {
+        let track = format.default_track().ok_or("No audio track found")?;
+        symphonia::default::get_codecs()
+            .make(&track.codec_params, &DecoderOptions::default())
+            .map_err(|e| e.to_string())?
+    };
+
+    let mut total_frames: u64 = 0;
+    loop {
+        let packet = match format.next_packet() {
+            Ok(p) => p,
+            Err(SymphoniaError::IoError(_)) => break,
+            Err(SymphoniaError::ResetRequired) => { decoder.reset(); continue; }
+            Err(_) => break,
+        };
+        if packet.track_id() != track_id { continue; }
+        match decoder.decode(&packet) {
+            Ok(decoded) => total_frames += decoded.frames() as u64,
+            Err(SymphoniaError::DecodeError(_)) => continue,
+            Err(_) => break,
+        }
+    }
+
+    Ok(total_frames as f64 / sample_rate as f64)
 }
 
 /// Full project snapshot for initial frontend hydration.

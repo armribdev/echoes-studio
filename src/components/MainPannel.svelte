@@ -127,20 +127,23 @@
 				fileDragPreview = { trackIndex, startSec: Math.max(0, x / scale), durationSec: pendingDragDuration ?? fileDragPreview?.durationSec ?? null };
 			}
 
+			const AUDIO_EXTS = new Set(['wav', 'mp3', 'flac', 'ogg', 'oga']);
+			const isAudioFile = (p: string) =>
+				AUDIO_EXTS.has(p.split('.').pop()?.toLowerCase() ?? '');
+
 			type DragPayload = { paths: string[]; position: { x: number; y: number } };
 			const dragFns = await Promise.all([
 				listen<DragPayload>('tauri://drag-enter', ({ payload }) => {
 					pendingDragDuration = null;
-					updateDragPreview(payload.position.x, payload.position.y);
 					const path = payload.paths[0];
-					if (path) {
-						invoke<number>('get_audio_clip_duration', { filePath: path })
-							.then((dur) => {
-								pendingDragDuration = dur;
-								if (fileDragPreview) fileDragPreview = { ...fileDragPreview, durationSec: dur };
-							})
-							.catch(() => {});
-					}
+					if (!path || !isAudioFile(path)) return;
+					updateDragPreview(payload.position.x, payload.position.y);
+					invoke<number>('get_audio_clip_duration', { filePath: path })
+						.then((dur) => {
+							pendingDragDuration = dur;
+							if (fileDragPreview) fileDragPreview = { ...fileDragPreview, durationSec: dur };
+						})
+						.catch(() => {});
 				}),
 				listen<DragPayload>('tauri://drag-over', ({ payload }) => {
 					updateDragPreview(payload.position.x, payload.position.y);
@@ -153,6 +156,11 @@
 					const knownDuration = pendingDragDuration ?? preview?.durationSec ?? null;
 					pendingDragDuration = null;
 					if (!filePath) { fileDragPreview = null; return; }
+					if (!isAudioFile(filePath)) {
+						notify(`Format non supporté. Utilisez WAV, MP3, FLAC ou OGG.`, 'error');
+						fileDragPreview = null;
+						return;
+					}
 
 					const trackIndex = preview?.trackIndex ?? 0;
 					const startSec = preview?.startSec ?? 0;
@@ -161,7 +169,7 @@
 						const trackId = tracks[trackIndex]?.id;
 						if (!trackId) { fileDragPreview = null; return; }
 
-						// Dispatch through the gateway — Rust loads the WAV, emits CLIP_ADDED,
+						// Dispatch through the gateway — Rust loads the audio, emits CLIP_ADDED,
 						// the store subscription updates `tracks`, and the $: reactive block
 						// prepares the AudioBuffer automatically.
 						addClip(trackId, filePath, startSec, startSec + dur)

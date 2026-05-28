@@ -100,7 +100,7 @@ impl AppProject {
         for tf in pf.tracks {
             let mut clips = Vec::new();
             for cf in tf.clips {
-                let audio = AudioClip::from_wav_file(&cf.file_path)
+                let audio = AudioClip::from_file(&cf.file_path)
                     .map_err(|e| format!("Erreur lecture '{}': {}", cf.file_path, e))?;
                 let data = audio.into_clip_data();
                 clips.push(AppClip {
