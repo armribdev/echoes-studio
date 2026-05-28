@@ -1,0 +1,62 @@
+//! Modulator nodes — produce normalised (−1…+1) modulation signals.
+//!
+//! These nodes have zero audio inputs and one audio output.  The output buffer
+//! carries the raw modulation curve for one block; the scheduler reads it and
+//! delivers scaled deltas to target nodes via `apply_modulation`.
+
+use crate::audio_graph::buffer::AudioBuffer;
+use crate::audio_graph::node::{AudioNode, NodeId, PrepareContext, TransportInfo};
+
+// ── LFO ───────────────────────────────────────────────────────────────────────
+
+/// Sine-wave LFO.  Output is normalised to −1…+1.
+///
+/// Phase accumulates across blocks; `reset()` returns it to 0.
+pub struct LfoNode {
+    id: NodeId,
+    rate_hz: f32,
+    phase: f32,
+}
+
+impl LfoNode {
+    pub fn new(id: NodeId, rate_hz: f32) -> Self {
+        LfoNode { id, rate_hz, phase: 0.0 }
+    }
+}
+
+impl AudioNode for LfoNode {
+    fn node_id(&self) -> NodeId { self.id }
+    fn label(&self) -> &str { "LFO" }
+    fn num_input_ports(&self) -> usize { 0 }
+    fn num_output_ports(&self) -> usize { 1 }
+
+    fn prepare(&mut self, _ctx: PrepareContext) {}
+
+    fn process(
+        &mut self,
+        _inputs: &[&AudioBuffer],
+        outputs: &mut [AudioBuffer],
+        transport: &TransportInfo,
+    ) {
+        if outputs.is_empty() { return; }
+        let output = &mut outputs[0];
+        let block_size = transport.block_size.min(output.num_frames);
+        let phase_inc = self.rate_hz / transport.sample_rate;
+
+        // Fill channel 0 with the sine curve, then broadcast to all channels.
+        {
+            let ch0 = output.channel_mut(0);
+            let mut phase = self.phase;
+            for i in 0..block_size {
+                ch0[i] = (phase * std::f32::consts::TAU).sin();
+                phase = (phase + phase_inc).fract();
+            }
+            self.phase = phase;
+        }
+        output.mono_to_all_channels();
+    }
+
+    fn reset(&mut self) {
+        self.phase = 0.0;
+    }
+}

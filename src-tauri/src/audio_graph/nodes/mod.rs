@@ -14,14 +14,20 @@
 //! | master   | MasterNode    | N      | 1*      | Final mix + soft-clip + metering       |
 //! | send     | SendNode      | 1      | 1       | Tap signal at gain → return bus        |
 //! | meter    | MeterNode     | 1      | 1       | Pass-through + peak/RMS measurement    |
+//! | modulator| LfoNode       | 0      | 1       | Sine-wave LFO modulation source        |
 //!
 //! *MasterNode declares 1 output internally; the compiler emits it as a sink
 //!  (0 outputs) so the scheduler uses the special `write_master_output` path.
 
 pub mod bus;
+pub mod compressor;
+pub mod delay;
+pub mod eq;
 pub mod gain;
 pub mod master;
 pub mod meter;
+pub mod modulator;
 pub mod pan;
+pub mod reverb;
 pub mod send;
 pub mod track;
