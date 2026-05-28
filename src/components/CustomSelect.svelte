@@ -175,7 +175,7 @@
 		display: flex;
 		align-items: center;
 		gap: 7px;
-		padding: 0 3px;
+		padding: 5px 8px;
 		border-radius: 5px;
 		font-size: 12px;
 		color: rgba(247, 247, 249, 0.75);
