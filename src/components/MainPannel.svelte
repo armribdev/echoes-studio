@@ -1,9 +1,8 @@
 <script lang="ts">
 	import Track from './Track.svelte';
+	import TrackStrip from './TrackStrip.svelte';
 	import TrackContextMenu from './TrackContextMenu.svelte';
 	import ClipContextMenu from './ClipContextMenu.svelte';
-	import FaderMeter from './FaderMeter.svelte';
-	import Knob from './Knob.svelte';
 	import type { Track as TrackType, Project } from '../types/global';
 	import { invoke } from '@tauri-apps/api/core';
 	import { listen } from '@tauri-apps/api/event';
@@ -18,6 +17,8 @@
 	import { clipboard } from '../stores/clipboard';
 	import type { ClipboardEntry } from '../stores/clipboard';
 	import { get } from 'svelte/store';
+	import { exportMixdown } from '../lib/exportMixdown';
+	import { snapPosition, getSnapSubdivisionSec } from '../lib/snapUtils';
 
 	const TRACK_COLORS = [
 		'#4d96ff', '#ff6b6b', '#6bcb77', '#ffd93d',
@@ -27,7 +28,6 @@
 	import { exportTrigger } from '../stores/exportBus';
 	import { trackLevels } from '../stores/trackLevels';
 	import { preferences } from '../stores/preferences';
-	import { save } from '@tauri-apps/plugin-dialog';
 
 	// Live sync from the engine event store.
 	// Local mutations (optimistic UI during drag/import) are reconciled by the
@@ -43,7 +43,7 @@
 	// ── Export trigger ────────────────────────────────────────────────────────
 	const unsubExport = exportTrigger.subscribe((n) => {
 		if (n === 0) return;
-		exportMixdown().catch((e: unknown) =>
+		exportMixdown(tracks, $preferences).catch((e: unknown) =>
 			notify(`Erreur export : ${(e as Error)?.message ?? String(e)}`, 'error')
 		);
 	});
@@ -303,64 +303,17 @@
 	let scrubOriginLeft = 0;
 	let scrubPosition = 0;
 
-	// Returns the finest musical subdivision (in seconds) that still spans
-	// at least MIN_SNAP_PX pixels at the current zoom level.
-	function getSnapSubdivisionSec(): number {
-		const MIN_SNAP_PX = 8;
-		const beatSec = 60 / $tempo.bpm;
-		const barSec = $tempo.numerator * beatSec;
-
-		// Finer than a beat: 1/2, 1/4, 1/8, 1/16, 1/32
-		for (const denom of [32, 16, 8, 4, 2, 1]) {
-			const subSec = beatSec / denom;
-			if (subSec * scale >= MIN_SNAP_PX) return subSec;
-		}
-
-		// Coarser than a beat: whole bars, then every 2, 4, 8 … bars
-		let multiple = 1;
-		while (barSec * multiple * scale < MIN_SNAP_PX) multiple *= 2;
-		return barSec * multiple;
-	}
-
-	function snapPosition(
+	function snap(
 		positionSec: number,
 		altKey: boolean,
 		excludeClip?: { trackIndex: number; clipIndex: number }
 	): number {
-		if (altKey) return positionSec;
-		const thresholdSec = 10 / scale;
-
-		const candidates: number[] = [];
-
-		// Adaptive beat grid
-		const subdivSec = getSnapSubdivisionSec();
-		candidates.push(Math.round(positionSec / subdivSec) * subdivSec);
-
-		// Edges of other clips
-		for (let ti = 0; ti < tracks.length; ti++) {
-			const clips = tracks[ti].clips;
-			for (let ci = 0; ci < clips.length; ci++) {
-				if (excludeClip && ti === excludeClip.trackIndex && ci === excludeClip.clipIndex) continue;
-				candidates.push(clips[ci].start);
-				candidates.push(clips[ci].end);
-			}
-		}
-
-		let best = positionSec;
-		let bestDist = thresholdSec;
-		for (const c of candidates) {
-			const d = Math.abs(c - positionSec);
-			if (d < bestDist) {
-				bestDist = d;
-				best = c;
-			}
-		}
-		return best;
+		return snapPosition(positionSec, altKey, $tempo, scale, tracks, excludeClip);
 	}
 
 	function onScrubMove(e: MouseEvent) {
 		const raw = Math.max(0, (e.clientX - scrubOriginLeft) / scale);
-		scrubPosition = snapPosition(raw, e.altKey);
+		scrubPosition = snap(raw, e.altKey);
 		transport.update((t) => ({ ...t, position: scrubPosition }));
 	}
 
@@ -376,7 +329,7 @@
 		const rect = originEl.getBoundingClientRect();
 		scrubOriginLeft = rect.left;
 		const raw = Math.max(0, (event.clientX - rect.left) / scale);
-		scrubPosition = snapPosition(raw, event.altKey);
+		scrubPosition = snap(raw, event.altKey);
 		isScrubbing = true;
 		transport.update((t) => ({ ...t, position: scrubPosition }));
 		window.addEventListener('mousemove', onScrubMove);
@@ -496,7 +449,7 @@
 		const rect = tracksEl.getBoundingClientRect();
 		const { trackIndex, clipIndex } = dragging;
 		const rawStart = Math.max(0, (e.clientX - rect.left - dragging.offsetPx) / scale);
-		const newStart = snapPosition(rawStart, e.altKey, { trackIndex, clipIndex });
+		const newStart = snap(rawStart, e.altKey, { trackIndex, clipIndex });
 		const clip = tracks[trackIndex].clips[clipIndex];
 		const duration = clip.end - clip.start;
 		tracks[trackIndex].clips[clipIndex] = { ...clip, start: newStart, end: newStart + duration };
@@ -560,14 +513,6 @@
 		);
 	}
 
-	function handleTrackContextMenu(e: MouseEvent, trackIndex: number) {
-		e.preventDefault();
-		e.stopPropagation();
-		const track = tracks[trackIndex];
-		if (!track) return;
-		contextMenu = { x: e.clientX, y: e.clientY, trackId: track.id, trackName: track.name, trackIndex };
-	}
-
 	function renameTrackByIndex(trackIndex: number) {
 		const nameEls = document.querySelectorAll<HTMLElement>('.track-name');
 		const el = nameEls[trackIndex];
@@ -583,29 +528,6 @@
 			if (ev.key === 'Enter') { ev.preventDefault(); el.blur(); }
 		});
 		el.addEventListener('blur', function() {
-			el.contentEditable = 'false';
-			const newName = el.textContent?.trim() || tracks[trackIndex].name;
-			tracks[trackIndex] = { ...tracks[trackIndex], name: newName };
-			tracks = tracks;
-			updateTrack(tracks[trackIndex].id, { name: newName, volume: tracks[trackIndex].volume }).catch(console.error);
-		}, { once: true });
-	}
-
-	function makeEditable(e: MouseEvent, trackIndex: number) {
-		const el = e.currentTarget;
-		if (!(el instanceof HTMLElement)) return;
-
-		el.contentEditable = 'true';
-		el.focus();
-
-		el.addEventListener('keydown', function (event) {
-			if (event.key === 'Enter') {
-				event.preventDefault();
-				el.blur();
-			}
-		});
-
-		el.addEventListener('blur', function () {
 			el.contentEditable = 'false';
 			const newName = el.textContent?.trim() || tracks[trackIndex].name;
 			tracks[trackIndex] = { ...tracks[trackIndex], name: newName };
@@ -642,100 +564,6 @@
 	}
 
 	$: zoomPercent = Math.round((logScale - LOG_MIN) / (LOG_MAX - LOG_MIN) * 100);
-
-	// ── Export mixdown ────────────────────────────────────────────────────────
-
-	async function exportMixdown(): Promise<void> {
-		// 1. Calculate total project duration
-		let totalDuration = 0;
-		for (const track of tracks) {
-			for (const clip of track.clips) {
-				totalDuration = Math.max(totalDuration, clip.end);
-			}
-		}
-		if (totalDuration <= 0) {
-			notify('Aucun clip à exporter', 'error');
-			return;
-		}
-
-		// 2. Save dialog (before the expensive render)
-		const filePath = await save({
-			filters: [{ name: 'Fichier WAV', extensions: ['wav'] }],
-			defaultPath: 'mixdown.wav',
-		});
-		if (!filePath) return;
-
-		notify('Export en cours…', 'info');
-
-		// 3. Offline render — same graph as live: GainNode → StereoPannerNode
-		const sampleRate = $preferences.audio.sampleRate;
-		const length = Math.ceil(totalDuration * sampleRate);
-		const offCtx = new OfflineAudioContext(2, length, sampleRate);
-
-		const anySolo = tracks.some((t) => t.solo);
-
-		for (const track of tracks) {
-			let effectiveGain = track.volume / 100;
-			if (track.muted || (anySolo && !track.solo)) effectiveGain = 0;
-
-			const gainNode = offCtx.createGain();
-			gainNode.gain.value = effectiveGain;
-			const panNode = offCtx.createStereoPanner();
-			panNode.pan.value = track.pan / 100;
-			gainNode.connect(panNode);
-			panNode.connect(offCtx.destination);
-
-			for (const clip of track.clips) {
-				if (clip.raw_samples.length === 0) continue;
-
-				const samples = new Float32Array(clip.raw_samples);
-				let clipBuffer: AudioBuffer;
-
-				if (clip.sample_rate === sampleRate) {
-					clipBuffer = offCtx.createBuffer(1, samples.length, clip.sample_rate);
-					clipBuffer.copyToChannel(samples, 0);
-				} else {
-					// Resample to offCtx sample rate via a nested OfflineAudioContext
-					const duration = samples.length / clip.sample_rate;
-					const resCtx = new OfflineAudioContext(
-						1,
-						Math.ceil(duration * sampleRate),
-						sampleRate
-					);
-					const srcBuf = resCtx.createBuffer(1, samples.length, clip.sample_rate);
-					srcBuf.copyToChannel(samples, 0);
-					const srcNode = resCtx.createBufferSource();
-					srcNode.buffer = srcBuf;
-					srcNode.connect(resCtx.destination);
-					srcNode.start();
-					clipBuffer = await resCtx.startRendering();
-				}
-
-				const source = offCtx.createBufferSource();
-				source.buffer = clipBuffer;
-				source.connect(gainNode);
-				source.start(clip.start);
-			}
-		}
-
-		const rendered = await offCtx.startRendering();
-		const samplesLeft = Array.from(rendered.getChannelData(0));
-		const samplesRight = rendered.numberOfChannels > 1
-			? Array.from(rendered.getChannelData(1))
-			: samplesLeft;
-
-		// 4. Send to Rust for WAV writing
-		await invoke('export_wav', {
-			path: filePath,
-			samplesLeft,
-			samplesRight,
-			sampleRate,
-			bitDepth: $preferences.project.exportBitDepth,
-		});
-
-		const filename = (filePath as string).split(/[\\/]/).pop() ?? 'mixdown.wav';
-		notify(`Exporté : ${filename}`, 'success');
-	}
 
 
 </script>
@@ -789,62 +617,23 @@
 		<div class="ruler-spacer"></div>
 		<div class="instruments">
 			{#each tracks as track, trackIndex}
-				<!-- svelte-ignore a11y-no-static-element-interactions -->
-				<!-- svelte-ignore a11y-no-static-element-interactions -->
-				<div
-					class="instrument"
-					class:instrument--selected={selectedTrackIndex === trackIndex}
-					style="--track-color: {TRACK_COLORS[trackIndex % TRACK_COLORS.length]}"
-					on:mousedown={() => { selectedTrackIndex = trackIndex; }}
-					on:contextmenu={(e) => handleTrackContextMenu(e, trackIndex)}
-				>
-					<!-- Row 1 — identity + routing -->
-					<div class="track-head">
-						<!-- svelte-ignore a11y-no-static-element-interactions -->
-						<strong class="track-name" on:dblclick={(e) => makeEditable(e, trackIndex)}>{track.name}</strong>
-						<button
-							type="button"
-							class="ms-btn"
-							class:active={track.muted}
-							title="Mute"
-							on:click|stopPropagation={() => handleMuteToggle(trackIndex)}
-						>M</button>
-						<button
-							type="button"
-							class="ms-btn"
-							class:active={track.solo}
-							title="Solo"
-							on:click|stopPropagation={() => handleSoloToggle(trackIndex)}
-						>S</button>
-					</div>
-
-					<!-- Row 2 — mix controls -->
-					<div class="track-controls">
-						<!-- Pan knob + Volume fader/meter -->
-						<div class="ctrl-row">
-							<div class="ctrl-pan">
-								<span class="ctrl-label">PAN</span>
-								<Knob
-									min={-100}
-									max={100}
-									defaultValue={0}
-									bind:value={tracks[trackIndex].pan}
-									on:release={() => handlePanRelease(trackIndex)}
-								/>
-							</div>
-							<div class="ctrl-vol">
-								<span class="ctrl-label">VOL</span>
-								<FaderMeter
-									bind:value={tracks[trackIndex].volume}
-									peakL={($trackLevels[track.id]?.[0]) ?? 0}
-									peakR={($trackLevels[track.id]?.[1]) ?? 0}
-									defaultValue={75}
-									on:release={() => handleVolumeRelease(trackIndex)}
-								/>
-							</div>
-						</div>
-					</div>
-				</div>
+				<TrackStrip
+					{track}
+					{trackIndex}
+					selected={selectedTrackIndex === trackIndex}
+					color={TRACK_COLORS[trackIndex % TRACK_COLORS.length]}
+					bind:volume={tracks[trackIndex].volume}
+					bind:pan={tracks[trackIndex].pan}
+					peakL={($trackLevels[track.id]?.[0]) ?? 0}
+					peakR={($trackLevels[track.id]?.[1]) ?? 0}
+					on:select={() => { selectedTrackIndex = trackIndex; }}
+					on:contextmenu={(e) => { contextMenu = { x: e.detail.clientX, y: e.detail.clientY, trackId: track.id, trackName: track.name, trackIndex }; }}
+					on:mutetoggle={() => handleMuteToggle(trackIndex)}
+					on:solotoggle={() => handleSoloToggle(trackIndex)}
+					on:volumerelease={() => handleVolumeRelease(trackIndex)}
+					on:panrelease={() => handlePanRelease(trackIndex)}
+					on:rename={(e) => { tracks[trackIndex] = { ...tracks[trackIndex], name: e.detail.name }; tracks = tracks; updateTrack(tracks[trackIndex].id, { name: e.detail.name, volume: tracks[trackIndex].volume }).catch(console.error); }}
+				/>
 			{/each}
 		</div>
 		<div class="left-panel-footer">
@@ -1157,128 +946,6 @@
 		pointer-events: none;
 		border: 2px dashed rgba(255, 255, 255, 0.6);
 		z-index: 5;
-	}
-
-	// ── Track instrument strip ───────────────────────────────────────────────────
-	.instrument {
-		height: 100px;
-		display: flex;
-		flex-direction: column;
-		box-sizing: border-box;
-		border-bottom: 1px solid $border-color;
-		position: relative;
-		transition: background 0.1s;
-
-		// Color accent bar
-		&::before {
-			content: '';
-			position: absolute;
-			left: 0;
-			top: 10px;
-			bottom: 10px;
-			width: 3px;
-			border-radius: 0 2px 2px 0;
-			background: var(--track-color, #{$accent-color});
-		}
-
-		&--selected { background: $surface-1; }
-	}
-
-	// Row 1 — name + M/S
-	.track-head {
-		height: 32px;
-		flex-shrink: 0;
-		display: flex;
-		align-items: center;
-		gap: 4px;
-		padding: 0 6px 0 13px;
-		border-bottom: 1px solid rgba(255, 255, 255, 0.04);
-	}
-
-	.track-name {
-		flex: 1;
-		font-size: 11px;
-		font-weight: 500;
-		color: $text-color;
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
-		min-width: 0;
-		cursor: default;
-
-		&:focus { outline: none; }
-	}
-
-	.ms-btn {
-		width: 20px;
-		height: 20px;
-		flex-shrink: 0;
-		padding: 0;
-		border: 1px solid rgba(255, 255, 255, 0.1);
-		border-radius: 3px;
-		background: transparent;
-		color: rgba($text-color, 0.45);
-		font-size: 10px;
-		font-weight: 700;
-		line-height: 1;
-		cursor: pointer;
-		transition: background 0.1s, color 0.1s, border-color 0.1s;
-
-		&:hover {
-			color: $text-color;
-			border-color: rgba($text-color, 0.35);
-		}
-
-		&.active {
-			background: $accent-color;
-			border-color: $accent-color;
-			color: #fff;
-		}
-	}
-
-	// Row 2 — mix controls (pan knob + vol fader/meter)
-	.track-controls {
-		flex: 1;
-		display: flex;
-		align-items: center;
-		padding: 0 8px 4px 13px;
-		gap: 0;
-	}
-
-	.ctrl-row {
-		flex: 1;
-		display: flex;
-		align-items: center;
-		gap: 8px;
-	}
-
-	.ctrl-label {
-		font-size: 8px;
-		font-family: $font-mono;
-		color: $text-faint;
-		letter-spacing: 0.05em;
-		text-transform: uppercase;
-		line-height: 1;
-		user-select: none;
-	}
-
-	// Pan: label above knob, fixed width
-	.ctrl-pan {
-		display: flex;
-		flex-direction: column;
-		align-items: center;
-		gap: 3px;
-		flex-shrink: 0;
-	}
-
-	// Vol: label above fader, takes remaining space
-	.ctrl-vol {
-		flex: 1;
-		display: flex;
-		flex-direction: column;
-		align-items: flex-start;
-		gap: 5px;
-		min-width: 0;
 	}
 
 	// ── Empty state ───────────────────────────────────────────────────────────
