@@ -18,13 +18,13 @@ Echoes Studio uses a **three-layer architecture** with explicit interfaces betwe
 ┌─────────────────────────▼───────────────────────────────────┐
 │                      Core Layer                             │
 │                    Rust / Tauri 2.x                         │
-│     engine_gateway ──► EventStore ──► AudioGraphSnapshot    │
+│     engine_gateway ──► EventStore ──► RuntimeSnapshot       │
 └─────────────────────────┬───────────────────────────────────┘
                           │  Rust API (direct function calls)
 ┌─────────────────────────▼───────────────────────────────────┐
 │                    Audio Engine Layer                       │
 │                    Rust + cpal + hound                      │
-│    AudioGraphSnapshot ──► audio_callback ──► Output Stream  │
+│    GraphScheduler ──► audio_callback ──► Output Stream      │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -40,8 +40,8 @@ UI (Svelte/TypeScript)
               ├─ validate payload
               ├─ mutate AppProject (direct, fast path)
               ├─ append ProjectEvent → EventStore
-              ├─ recompile audio graph → AudioGraphSnapshot
-              │     └─ audio_engine::engine::update_snapshot
+              ├─ recompile audio graph → RuntimeSnapshot
+              │     └─ audio_engine::engine::update_from_project
               └─ emit EngineEvent via app.emit("engine-event")
                   └─ eventStore.ts  (receives & logs)
                       └─ reducer.ts (applyEvent)
@@ -72,7 +72,7 @@ UI (Svelte/TypeScript)
 
 1. **UI never mutates state directly.** All project mutations go through `dispatcher.ts → send_command`.
 2. **EventStore is the only source of truth** for project structure. `AppProject` is a cache rebuilt by the reducer.
-3. **Audio thread reads only `Arc<AudioGraphSnapshot>`.** No locks, no allocation inside the audio callback.
+3. **Audio thread uses `GraphScheduler` picked up via `RuntimeSnapshot::try_take()`.** No blocking locks, no allocation inside the audio callback.
 4. **Undo/redo** = move `EventStore::head` + replay from nearest snapshot.
 5. **Batch commands** collapse multiple mutations into a single IPC round-trip and a single graph recompile.
 
@@ -87,11 +87,11 @@ src/
 │   │   ├── commands/index.ts   ← CommandEnvelope + typed payloads
 │   │   └── events/index.ts     ← EngineEvent + typed payloads
 │   └── project/
-│       ├── reducer.ts          ← pure ProjectState reducer
-│       └── eventStore.ts       ← frontend event log + state cache
+│       ├── reducer.ts          ← pure applyEvent(state, event) → state
+│       └── eventStore.ts       ← frontend event log + derived state cache
 └── frontend/
     ├── store/
-    │   └── engineStore.ts      ← Svelte readables from event store
+    │   └── engineStore.ts      ← Svelte readables derived from event store
     ├── selectors/
     │   └── index.ts            ← pure selector functions
     └── commands/
@@ -99,16 +99,39 @@ src/
 
 src-tauri/src/
 ├── engine_gateway/
-│   ├── api.rs       ← Tauri commands: send_command, send_batch, undo, redo
-│   ├── commands.rs  ← CommandEnvelope + typed payloads
-│   ├── events.rs    ← ProjectEvent + EngineEvent
-│   └── store.rs     ← EventStore with undo/redo head
+│   ├── api.rs          ← Tauri commands: send_command, send_batch, undo, redo
+│   ├── commands.rs     ← CommandEnvelope + typed payloads
+│   ├── events.rs       ← ProjectEvent + EngineEvent definitions
+│   └── store.rs        ← EventStore: append-only log, head pointer, snapshots
 ├── audio_engine/
-│   ├── engine.rs    ← AudioEngine (owns snapshot, transport state)
-│   ├── graph.rs     ← AudioGraphCompiler: AppProject → AudioGraphSnapshot
-│   └── snapshot.rs  ← Immutable TrackSnapshot, ClipSnapshot (Arc-wrapped)
-├── project.rs       ← AppProject, AppTrack (with id), AppClip, AudioDataCache
-└── main.rs          ← Tauri builder, legacy commands kept during migration
+│   ├── engine.rs       ← AudioEngine: owns CPAL stream, SharedTransport, RuntimeSnapshot
+│   ├── graph.rs        ← AudioGraphCompiler wrapper (delegates to audio_graph/)
+│   ├── transport.rs    ← SharedTransport: atomic play/pause/seek state
+│   └── snapshot.rs     ← RuntimeSnapshot: Mutex<Option<GraphScheduler>> swap
+├── audio_graph/        ← Core DSP execution engine
+│   ├── node.rs         ← AudioNode trait, PrepareContext, TransportInfo
+│   ├── buffer.rs       ← AudioBuffer: planar f32, allocation-free operations
+│   ├── graph.rs        ← AudioGraph: DAG of NodeId → GraphNode + edges
+│   ├── compiler.rs     ← GraphCompiler: topological sort → CompiledGraph
+│   ├── execution_plan.rs ← ExecutionPlan: Arc-shared immutable flat plan
+│   ├── scheduler.rs    ← GraphScheduler: drives plan in audio callback
+│   ├── modulation.rs   ← ModulationRoute, ModulationMap (data ready; runtime pending)
+│   └── nodes/          ← Built-in DSP nodes (Track, Gain, Pan, Meter, Bus, Master)
+├── plugin_system/      ← Plugin abstraction layer (scaffolded)
+│   ├── host.rs         ← PluginHost: lifecycle, parameter routing, state
+│   ├── wrapper.rs      ← Device trait (extends AudioNode)
+│   ├── parameter.rs    ← ParameterMap, Param, ParameterRange
+│   ├── lifecycle.rs    ← LifecycleState machine
+│   ├── registry.rs     ← PluginManifest, PluginRegistry
+│   └── state.rs        ← DeviceState: opaque plugin state blob
+├── plugin_formats/     ← Format-specific wrappers (scaffolded)
+│   ├── vst3/           ← VST3 wrapper (ffi.rs, host.rs, wrapper.rs)
+│   ├── au/             ← AudioUnit wrapper (macOS)
+│   └── internal/       ← WASM plugin runtime
+├── project.rs          ← AppProject, AppTrack, AppClip, AudioDataCache
+├── audio_clip.rs       ← WAV parsing via hound
+├── audio_settings.rs   ← Audio device & sample rate configuration
+└── main.rs             ← Tauri builder, native menu, Tauri commands
 ```
 
 ---
@@ -147,20 +170,24 @@ replay never re-reads from disk.
 
 ## Audio engine (production path)
 
-The Rust `AudioEngine` is structured for CPAL integration:
+The `AudioEngine` runs a graph-based DSP pipeline. Every structural project
+change compiles a new `GraphScheduler` and atomically swaps it into the CPAL
+callback at the next block boundary:
 
-```rust
-audio_callback:
-  snapshot = engine.current_snapshot()  // Arc clone, no lock held
-  for track in snapshot.tracks:
-    for clip in track.clips:
-      if clip.is_active_at(position):
-        mix samples into output buffer
+```
+Command thread                        Audio thread
+──────────────                        ────────────
+AppProject mutation
+  → AudioGraph::from_project()
+  → GraphCompiler::compile()          try_take() at block start:
+  → GraphScheduler::new()    ──────►  if Some → swap in new scheduler
+  → RuntimeSnapshot::enqueue()        process_block(transport, output)
 ```
 
-During development, playback is handled by the Web Audio API in the
-Svelte frontend. The Rust audio path is activated by calling
-`AudioEngine::start_stream` and wiring it to the `AudioEngine::audio_callback`.
+The audio callback (`GraphScheduler::process_block`) iterates a pre-sorted
+flat `Vec<ExecutionStep>`, calling each node's `process()` in topological
+order. No graph traversal, no allocation, no blocking locks occur in the
+callback. See [AUDIO_ENGINE.md](AUDIO_ENGINE.md) for full details.
 
 ---
 
@@ -247,16 +274,21 @@ Main Thread (UI)
 
 ---
 
-### ADR-005 — Plugin support (open)
+### ADR-005 — Plugin support
 
 **Context:** Third-party audio plugin format.  
-**Options:**
+**Options considered:**
 - VST3 — industry standard, Windows/macOS/Linux support
 - LV2 — open-source, native Linux
 - CLAP — new open-source standard, promising
 - No third-party plugins — maintain simplicity
 
-**Decision:** To be decided in Phase 4.
+**Decision:** VST3 as primary format; AU on macOS. Scaffolding is done
+(`plugin_formats/vst3/`, `plugin_formats/au/`, `plugin_system/`). Full
+implementation deferred to Phase 4. Plugins integrate as thin `AudioNode`
+wrappers — the graph runtime remains format-agnostic.
+
+See `docs/claude/decisions/003-plugin-wrapper-strategy.md` for rationale.
 
 ---
 
@@ -266,3 +298,4 @@ Main Thread (UI)
 - [AUDIO_ENGINE.md](AUDIO_ENGINE.md) — Audio engine specifications
 - [UI_GUIDELINES.md](UI_GUIDELINES.md) — UI component architecture and design principles
 - [BUILD.md](BUILD.md) — Build and development environment setup
+- [claude/README.md](claude/README.md) — Deep-dive architecture reference (audio graph, threading, ADRs, rules)

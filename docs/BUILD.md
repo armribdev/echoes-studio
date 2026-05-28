@@ -40,7 +40,7 @@ Five tools must be present before the first build. Every other dependency is fet
 | **pnpm** | 8.0.0 | Package manager (do not use npm/yarn) | Engine check fails |
 | **Rust** (via rustup) | 1.60.0 | Compiles the Tauri backend | `cargo` is unavailable, build aborts |
 | **cargo** | bundled with Rust | Rust build tool | as above |
-| **Tauri CLI** | 1.5.x | Orchestrates dev/build | Installed locally with `pnpm install` (`@tauri-apps/cli`) |
+| **Tauri CLI** | 2.x | Orchestrates dev/build | Installed locally with `pnpm install` (`@tauri-apps/cli`) |
 
 The Tauri CLI is **not** installed globally — it lives in `node_modules` and is invoked via `pnpm tauri ...`, which means the version is pinned per-checkout.
 

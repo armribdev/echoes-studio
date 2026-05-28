@@ -43,15 +43,30 @@
 - [x] **Undo / Redo** — Ctrl+Z / Ctrl+Y / Ctrl+Shift+Z (event sourcing Rust)
 - [x] **Feedback utilisateur** — status bar pour erreurs, confirmations save/load
 - [x] **Gestion d'erreur IPC** — erreurs d'import et d'undo/redo visibles dans l'UI
-- [x] **Moteur audio natif CPAL** (`audio_engine/engine.rs`) — lecture temps-réel native
+- [x] **Moteur audio natif CPAL** (`audio_engine/`) — lecture temps-réel native
   - `SharedTransport` : état de transport atomique (play/pause/seek, position en samples)
-  - `RuntimeSnapshot` : swap lock-free du `GraphScheduler` entre thread commande et callback
+  - `RuntimeSnapshot` : swap lock-free du `GraphScheduler` entre thread commande et callback audio
   - Callback RT-safe : buffer pré-alloué (4096 frames max), aucune allocation, aucun verrou bloquant, aucun I/O
   - Reporter de position (~30 fps) → événement `POSITION_UPDATED` → tête de lecture animée
-  - `AudioGraphCompiler` : compile le projet en `GraphScheduler` à la volée (topological sort, Kahn BFS)
   - Sélection du périphérique de sortie CPAL, taux d'échantillonnage (44.1–96 kHz), taille de buffer
   - Fallback automatique buffer fixé → buffer par défaut si le périphérique ne supporte pas la valeur demandée
   - Web Audio API relégué au seul chemin d'export offline (`OfflineAudioContext`)
+- [x] **Moteur de graphe DSP** (`audio_graph/`) — exécution déterministe du graphe audio
+  - Trait `AudioNode` : interface uniforme pour tous les nœuds DSP (prepare / process)
+  - `AudioBuffer` : layout planaire f32, opérations sans allocation (clear, mix_from, apply_gain)
+  - `GraphCompiler` : tri topologique (algorithme de Kahn BFS), plan d'exécution immuable
+  - `GraphScheduler` : boucle d'exécution du plan, buffers pré-alloués par nœud et par port
+  - `ExecutionPlan` : `Arc<>` partagé entre thread commande et thread audio, zéro copie
+  - Nœuds intégrés : `TrackNode`, `GainNode`, `PanNode`, `MeterNode`, `BusNode`, `MasterNode`
+  - Tri stable par `NodeId` → rendu bit-identique entre les compilations
+  - Modèle de sécurité des buffers : invariant `src_step < current_step` garanti par le compilateur
+- [x] **Event sourcing complet** (`engine_gateway/`) — mutations projet via log d'événements
+  - `EventStore` : log immuable avec pointeur `head`, snapshots périodiques
+  - Batch commands : plusieurs mutations en un seul aller-retour IPC, une seule recompilation
+  - `AudioDataCache` : données WAV préservées à travers les undo/redo (pas de relecture disque)
+  - Frontend : `ProjectEventStore` + reducer pur `applyEvent(state, event) → state`
+  - Protocole typé (`CommandEnvelope` / `EngineEvent`) partagé Rust ↔ TypeScript
+  - Waveform peaks précalculées à 3 résolutions (64 / 512 / 4096 samples) pour zoom rapide
 - [x] **UI « Ajouter une piste »** — bouton dans le panneau gauche, menu natif et menu contextuel
   - Bouton **"+ Nouvelle piste"** dans le footer du panneau gauche
   - Sous-menu natif **Piste** : "Nouvelle piste" (`Ctrl+Shift+T`) + "Supprimer la piste sélectionnée"
@@ -86,6 +101,14 @@
   - Géométrie 298.8° (7:30 → 4:30 dans le sens horaire)
   - Double-clic pour réinitialiser à `defaultValue`
   - Labels `VOL` / `PAN` au-dessus des knobs
+- [x] **Référentiel architectural `docs/claude/`** — mémoire long terme pour les sessions Claude Code
+  - `architecture/` : audio-graph, plugin-system, threading-model, state-management
+  - `rules/` : realtime-safety, anti-patterns, modulation-rules, architecture-decision-rules
+  - `systems/` : graph-compiler, plugin-wrapper-system, dsp-runtime
+  - `decisions/` : 5 ADR (graph-first, event-sourcing scope, plugin wrapper, snapshots immuables, UI/engine séparation)
+- [x] **Système de modulation — structures de données** (`audio_graph/modulation.rs`)
+  - `ModulationRoute`, `ModulationSource`, `ModulationTarget`, `ModulationMap` implémentés
+  - Intégré dans `ExecutionPlan` ; zéro routes actives pour l'instant (runtime à implémenter)
 
 ### Restant
 - [ ] **Multi-format audio** — support MP3, FLAC, OGG en plus de WAV (via `symphonia`)
@@ -93,6 +116,7 @@
 - [ ] **Couper / Copier / Coller des clips** — sélection et suppression OK, clipboard absent
 - [ ] **Zoom vertical** de la timeline — hauteur de piste fixe (100 px)
 - [ ] **Mute / Solo undoable** — non intégré à l'event sourcing pour l'instant
+- [ ] **Vumètres UI** — `MeterNode` Rust implémenté, affichage frontend absent
 
 ---
 
@@ -106,10 +130,15 @@
 - [ ] **Enregistrement audio** — arm + record sur une piste via `cpal` input (device déjà sélectionnable dans les préférences)
 - [ ] **Monitoring** — écoute en temps réel pendant l'enregistrement
 - [ ] **Effets intégrés** : égaliseur, compresseur, réverbération, délai
-- [ ] **Insert chain** — chaîner plusieurs effets par piste
+  - Chaque effet = un `AudioNode` dans le graphe (graph-first, pas de chaîne d'inserts spéciale)
+- [ ] **Routing d'effets via le graphe** — `SendNode` (`audio_graph/nodes/send.rs`) scaffoldé
+- [ ] **Runtime de modulation** — application des `ModulationRoute` dans le scheduler (structures déjà prêtes)
 - [ ] **Automation** — courbes d'automation pour volume et paramètres d'effets
+  - Mécanisme unifié avec la modulation : `ParameterBlock` par frame
 - [ ] **Marqueurs / Régions** — points de repère sur la timeline
 - [ ] **Métronome** — clic synchronisé au BPM
+- [ ] **Thread compilateur dédié** — déplacer la compilation du graphe hors du thread commande pour éviter les blocages IPC sur les gros projets
+- [ ] **Compensation de latence** — collecte des `latency_samples()` des nœuds, délais d'alignement au master
 
 ---
 
@@ -123,9 +152,14 @@
 - [ ] **Piano roll** — éditeur MIDI intégré
 - [ ] **Support MIDI** — entrée/sortie MIDI (clavier, contrôleur)
 - [ ] **Instruments virtuels natifs** : sampler simple, synthétiseur basique
-- [ ] **[TODO: Décision] Support VST3** — plugins tiers (architecture `plugin_formats/vst3/` scaffoldée, implique gestion de dépendances lourdes)
-- [ ] **[TODO: Décision] Support AU** (macOS) — architecture `plugin_formats/au/` scaffoldée
-- [ ] **[TODO: Décision] Support WASM interne** — `plugin_formats/internal/` avec runtime WASM scaffoldé
+- [ ] **Support VST3** — `plugin_formats/vst3/` scaffoldé (`ffi.rs`, `host.rs`, `wrapper.rs`)
+  - Trait `Device` (extends `AudioNode`) et `PluginHost` prêts (`plugin_system/`)
+  - `ParameterMap`, `LifecycleState`, `PluginRegistry`, `DeviceState` implémentés
+  - À faire : bindings COM VST3, traduction buffers, mirroring paramètres, transport sync
+- [ ] **Support AU** (macOS) — `plugin_formats/au/` scaffoldé
+- [ ] **Support WASM interne** — `plugin_formats/internal/wasm_runtime.rs` scaffoldé
+- [ ] **Transfert d'état DSP** à la recompilation — préserver reverb tails, delay lines entre les swaps de graphe
+- [ ] **Hébergement hors-processus (best effort)** — isolation crash VST3 via subprocess + shared-memory ring buffers
 - [ ] **Quantisation MIDI**
 - [ ] **Velocity, pitch bend, modulation**
 
@@ -143,11 +177,12 @@
 - [ ] **Raccourcis clavier** configurables
 - [ ] **Thèmes UI** — clair / sombre / custom
 - [ ] **Performances** — profiling et optimisation audio engine
-- [ ] **Tests** — unitaires Rust + tests d'intégration Svelte
+- [ ] **Tests** — unitaires Rust (`audio_graph/`, `engine_gateway/`) + tests d'intégration Svelte
 - [ ] **Documentation utilisateur** — guide d'utilisation interactif
 - [ ] **Auto-update** — mise à jour intégrée via Tauri updater
 - [ ] **Signature des binaires** — Windows (Authenticode), macOS (notarisation)
 - [ ] **Internationalisation** — EN + FR minimum
+- [ ] **Format de projet v2** — décision ouverte : JSON texte vs MessagePack vs SQLite (voir ADR-004 dans `docs/ARCHITECTURE.md`)
 
 ---
 

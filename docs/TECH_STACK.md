@@ -1,183 +1,209 @@
 # Tech Stack — Echoes Studio
 
-> Justification de chaque choix technologique, alternatives considérées, et contraintes cross-platform.
+> Rationale for each technology choice, alternatives considered, and cross-platform constraints.
 
 ---
 
-## Vue d'ensemble
+## Overview
 
-| Couche | Technologie | Version | Rôle |
-|--------|-------------|---------|------|
-| Desktop runtime | Tauri | 1.5.4 | Shell natif, IPC, permissions |
-| UI Framework | SvelteKit | 2.0.0 | Interface utilisateur |
-| Langage UI | TypeScript | 5.0 | Typage statique frontend |
-| Styling | SCSS/Sass | 1.69 | Styles avec variables |
-| Waveform | wavesurfer.js | 7.7.1 | Rendu waveform canvas |
-| Build tool | Vite | 5.0.3 | Bundler frontend |
-| Backend | Rust | 2021 edition | Audio engine, I/O |
-| Audio I/O | cpal | 0.15.2 | Stream audio cross-platform |
-| WAV parsing | hound | 3.5.1 | Lecture/écriture WAV |
-| Sérialisation | serde / serde_json | 1.0 | IPC JSON |
-| Package manager | pnpm | ≥ 8 | Dépendances Node |
+| Layer | Technology | Version | Role |
+|-------|------------|---------|------|
+| Desktop runtime | Tauri | **2.x** | Native shell, IPC, permissions |
+| UI Framework | SvelteKit | 2.0 | User interface |
+| UI Language | TypeScript | 5.0 | Static typing (strict mode) |
+| Styling | SCSS/Sass | 1.69 | Design system variables + component styles |
+| Build tool | Vite | 5.0 | Frontend bundler + dev server |
+| Backend language | Rust | 2021 edition | Audio engine, IPC handlers, file I/O |
+| Audio I/O | cpal | 0.15 | Cross-platform audio stream |
+| WAV parsing | hound | 3.5 | WAV read/write |
+| Serialisation | serde / serde_json | 1.0 | IPC JSON, project file format |
+| Package manager | pnpm | ≥ 8 | Node dependency management |
+
+**Removed from previous versions:**
+- `wavesurfer.js` — replaced by a custom `waveform.worker.ts` Web Worker with canvas rendering; no external dependency needed for waveform display.
 
 ---
 
 ## Tauri
 
-### Pourquoi Tauri ?
+### Why Tauri?
 
-Tauri permet de construire des applications desktop avec un frontend web tout en exposant des APIs natives via un backend Rust. C'est le choix le plus adapté pour Echoes Studio pour plusieurs raisons :
+Tauri builds desktop applications with a web frontend backed by a native Rust process. It is the right choice for Echoes Studio for three reasons:
 
-**Performance audio :** Le backend Rust permet d'accéder directement à `cpal` et aux APIs audio bas niveau sans passer par un runtime JavaScript. Un callback audio Electron passerait par Node.js, introduisant une latence et un risque de jitter inacceptables.
+**Audio performance:** The Rust backend calls `cpal` directly, without a JavaScript runtime on the audio path. An Electron-based audio engine would route the callback through Node.js, introducing latency and GC jitter incompatible with real-time audio.
 
-**Empreinte système :** Tauri utilise le WebView natif de l'OS (WebView2 sur Windows, WebKit sur macOS/Linux) — le binaire final fait ~5-10 MB contre ~100+ MB pour Electron qui embarque Chromium.
+**Binary size:** Tauri uses the OS-native WebView (WebView2 on Windows, WebKit on macOS/Linux). The final binary is ~5–10 MB. Electron embeds Chromium — binaries start at ~100 MB.
 
-**Sécurité :** Le modèle de permissions Tauri est explicite : chaque API native doit être déclarée dans `tauri.conf.json`. Par défaut tout est refusé — c'est le bon défaut pour une app audio qui n'a pas besoin d'accès réseau arbitraire.
+**Security model:** Every native API capability must be declared explicitly in `tauri.conf.json`. The default is deny-all, which is the correct default for a desktop audio application.
 
-### Alternatives considérées
+### Tauri 2.x
 
-| Alternative | Raison d'exclusion |
-|-------------|-------------------|
-| Electron | Trop lourd (Chromium embarqué), backend JS inadapté à l'audio temps-réel |
-| Qt (C++) | Pas de hot-reload, écosystème UI moins moderne, licence complexe |
-| JUCE | Excellente librairie audio mais UI propriétaire vieillissante, C++ uniquement |
-| Flutter Desktop | Bon candidat mais dart ecosystem moins mature pour audio professionnel |
-| Native (Win32/Cocoa/GTK) | Trop de code à maintenir pour chaque plateforme |
+The project runs on Tauri 2.x. The v2 rewrite introduced a redesigned permission system, better mobile API surface, and a cleaner plugin model. Migration from the original 1.x scaffold was completed in Phase 0.
 
-### Contraintes cross-platform Tauri
+### Cross-Platform Notes
 
-- **Windows :** Nécessite WebView2 (préinstallé sur Windows 11, installable sur 10). Build nécessite MSVC.
-- **macOS :** Notarisation Apple nécessaire pour la distribution. WebKit peut avoir des différences CSS mineures.
-- **Linux :** Nécessite `webkit2gtk`. Les distributions Linux varient — tester sur Ubuntu, Fedora, Arch.
+| OS | Requirement | Notes |
+|----|------------|-------|
+| Windows | WebView2 (pre-installed on Windows 11) | Installer required on Windows 10 |
+| Windows | MSVC Build Tools 2019+ (C++ workload) | Required to compile `cpal` |
+| macOS | Xcode Command Line Tools | Provides linker + macOS SDK |
+| Linux | `libwebkit2gtk-4.0-dev`, `libgtk-3-dev` | GTK + WebKit required by Tauri |
 
-### Tauri v2 — Note de migration
+### Alternatives Considered
 
-Tauri 2.0 est sorti en 2024 avec un système de permissions refondu et une meilleure API mobile. Une migration vers Tauri 2.x est recommandée avant la Phase 2 (MVP public). Voir [TODO: lien migration guide].
+| Alternative | Reason rejected |
+|-------------|----------------|
+| Electron | ~100 MB binary, Node.js on audio path — unacceptable for real-time audio |
+| Qt (C++) | No hot-reload, ageing UI ecosystem, complex licensing |
+| JUCE | Excellent audio library but proprietary UI, C++ only |
+| Flutter Desktop | Promising but Dart ecosystem less mature for professional audio |
+| Native (Win32/Cocoa/GTK) | Per-platform maintenance cost unacceptable for a small team |
 
 ---
 
 ## SvelteKit
 
-### Pourquoi SvelteKit ?
+### Why SvelteKit?
 
-**Réactivité compilée :** Svelte compile les réactivités en JavaScript vanilla — il n'y a pas de virtual DOM, pas de diffing à l'exécution. Pour une DAW avec des centaines d'éléments UI qui changent rapidement (waveforms, positions de clips, VU-mètres), cela se traduit par des animations plus fluides.
+**Compiled reactivity:** Svelte compiles reactivity to vanilla JavaScript — no virtual DOM, no diffing at runtime. For a DAW with hundreds of elements updating at 60 fps (waveforms, clip positions, VU meters), this means smoother rendering.
 
-**Taille du bundle :** Un composant Svelte compilé est plus léger qu'un composant React équivalent. Pour une app desktop sans CDN, chaque KB compte sur le temps de démarrage.
+**Bundle size:** A compiled Svelte component is smaller than its React equivalent. For a desktop app served without a CDN, startup time is directly affected.
 
-**Stores natifs :** Svelte inclut un système de stores réactifs (`writable`, `readable`, `derived`) qui remplace avantageusement Redux ou Zustand pour la gestion d'état d'une DAW.
+**Native stores:** Svelte's built-in `writable`, `readable`, and `derived` stores replace Redux/Zustand for DAW state management without additional dependencies.
 
-**SvelteKit vs Svelte seul :** SvelteKit est utilisé en mode SPA (SSR désactivé via `prerender = true`). Cela donne accès au routeur SvelteKit (utile pour des pages futures : settings, about) tout en restant une SPA côté Tauri.
+**SvelteKit in SPA mode:** SSR is disabled (`prerender = true`). This gives access to SvelteKit's router (useful for future Settings and About pages) while remaining a pure SPA from Tauri's perspective.
 
-### Alternatives considérées
+### Alternatives Considered
 
-| Alternative | Raison d'exclusion |
-|-------------|-------------------|
-| React | Virtual DOM inutile pour app desktop, bundle plus lourd |
-| Vue 3 | Bon candidat, mais Svelte offre de meilleures perfs à bundle équivalent |
-| Solid.js | Très performant mais écosystème plus petit, moins de contributeurs potentiels |
-| Vanilla TS | Trop de boilerplate pour gérer la réactivité d'une DAW |
+| Alternative | Reason rejected |
+|-------------|----------------|
+| React | Virtual DOM unnecessary for desktop, heavier bundle |
+| Vue 3 | Good candidate, but Svelte has better performance at equivalent bundle size |
+| Solid.js | Very fast, but smaller ecosystem and fewer potential contributors |
+| Vanilla TS | Too much boilerplate to manage DAW-level reactivity |
 
 ---
 
 ## TypeScript
 
-TypeScript 5 est le standard pour tout le code frontend. Pas de fichiers `.js` dans `src/` (sauf héritage à supprimer).
-
-**Configuration (`tsconfig.json`) :** mode strict activé. Toutes les interfaces métier sont définies dans `src/types/global.d.ts`.
+TypeScript 5 strict mode is used throughout the frontend. No `.js` files exist in `src/`. All domain interfaces are defined in `src/types/global.d.ts` and `src/shared/protocol/`.
 
 ---
 
 ## SCSS
 
-SCSS est utilisé pour les variables de thème (`src/variables.scss`) et la structure des styles composants. Chaque composant `.svelte` utilise `<style lang="scss">` pour scoper ses styles.
+SCSS is used for design-system variables (`src/variables.scss`) and component-scoped styles. Every `.svelte` component uses `<style lang="scss">`.
 
-**Variables globales (`variables.scss`) :**
+Core design tokens:
 ```scss
-$bg-base: #1a1a1f;
-$bg-panel: #222229;
-$border: #3c3c43;
-$text: #f7f7f9;
-$accent: #1571ff;
+$color-bg-base:     #1a1a1f;
+$color-bg-panel:    #222229;
+$color-border:      #3c3c43;
+$color-text-primary: #f7f7f9;
+$color-accent:      #1571ff;
 ```
-
-**Alternative considérée :** CSS custom properties uniquement — écarté car les variables SCSS permettent plus de composition (mixins, fonctions) utile pour un design system DAW.
 
 ---
 
 ## Rust (Audio Engine)
 
-### Pourquoi Rust ?
+### Why Rust?
 
-L'audio temps-réel impose des contraintes strictes : zéro allocation dans le callback audio, zéro pause GC, latence prévisible. Rust est le seul langage moderne qui offre ces garanties sans sacrifier la sécurité mémoire.
+Real-time audio imposes hard constraints: zero allocation in the audio callback, zero GC pauses, deterministic latency. Rust is the only modern language that delivers these guarantees without sacrificing memory safety.
 
-De plus, l'intégration Tauri est native — le backend Rust compile directement dans le binaire Tauri.
+Tauri integration is native — the Rust backend compiles directly into the Tauri binary with no interop overhead.
+
+### Audio Graph System (`audio_graph/`)
+
+The DSP engine is implemented as a directed acyclic graph compiled ahead of time into a flat execution plan. Key modules:
+
+| Module | Role |
+|--------|------|
+| `audio_graph/node.rs` | `AudioNode` trait — uniform interface for all DSP elements |
+| `audio_graph/buffer.rs` | `AudioBuffer` — planar f32, allocation-free operations |
+| `audio_graph/compiler.rs` | `GraphCompiler` — topological sort, node instantiation, `prepare()` |
+| `audio_graph/scheduler.rs` | `GraphScheduler` — drives execution plan in the audio callback |
+| `audio_graph/execution_plan.rs` | `ExecutionPlan` — immutable, `Arc`-shared between threads |
+| `audio_graph/nodes/` | Built-in nodes: Track, Gain, Pan, Meter, Bus, Master |
+
+See [AUDIO_ENGINE.md](AUDIO_ENGINE.md) and `docs/claude/architecture/audio-graph.md` for details.
 
 ### cpal
 
-`cpal` (Cross-Platform Audio Library) est la bibliothèque audio bas niveau standard de l'écosystème Rust. Elle supporte :
+Cross-platform audio library. Supports WASAPI (Windows), CoreAudio (macOS), ALSA/JACK/PipeWire (Linux). The CPAL callback is the only place where the audio thread runs — everything else is on the command thread.
 
-| OS | Backend audio |
-|----|--------------|
-| Windows | WASAPI (défaut), ASIO (optionnel) |
-| macOS | CoreAudio |
-| Linux | ALSA, JACK, PipeWire |
-
-**Alternative considérée :** PortAudio via FFI — cpal est plus idiomatique Rust et mieux maintenu.
+**Alternative considered:** PortAudio via FFI — cpal is more idiomatic Rust and better maintained.
 
 ### hound
 
-Parsing et écriture de fichiers WAV. Léger et fiable. Le support d'autres formats (MP3, FLAC, OGG) sera ajouté en Phase 2 via `symphonia` (décodeur audio multi-format pur Rust).
+WAV file parsing and writing. Lightweight and reliable. Multi-format decoding (MP3, FLAC, OGG) will be added via `symphonia` in Phase 2.
 
 ---
 
 ## Vite
 
-Build tool et dev server. Choix par défaut de SvelteKit, offre le hot-module replacement le plus rapide disponible. Aucune raison de changer.
+SvelteKit's default bundler and dev server. Provides the fastest HMR available. No reason to change.
 
 ---
 
 ## pnpm
 
-Gestionnaire de paquets Node. Requis via `.npmrc` (`engine-strict=true`). Plus rapide et économe en espace disque que npm grâce aux hard-links. Le fichier `pnpm-lock.yaml` est commité et versionné.
+Required via `.npmrc` (`engine-strict=true`). Faster and more disk-efficient than npm through hard-links. `pnpm-lock.yaml` is committed and versioned.
 
 ---
 
-## Dépendances à venir (planifiées)
+## Waveform Rendering
 
-| Dépendance | Phase | Usage |
-|------------|-------|-------|
-| `symphonia` (Rust) | Phase 2 | Décodage MP3/FLAC/OGG |
-| `ringbuf` (Rust) | Phase 1 | Échange de données lock-free entre threads audio |
-| `rubato` (Rust) | Phase 2 | Conversion de sample rate |
-| `dasp` (Rust) | Phase 3 | DSP primitives (filtres, enveloppes) |
-| `[TODO]` | Phase 4 | Support VST3 ou CLAP |
+Waveform display uses a custom implementation in `src/lib/waveform.worker.ts` — a Web Worker that computes peak arrays and renders them to a canvas off the UI thread. No external waveform library.
+
+Pre-computed peaks at three resolutions are stored on each `AppClip`:
+- `peaks_64` — 1 peak per 64 samples (zoomed-in view)
+- `peaks_512` — 1 peak per 512 samples (medium zoom)
+- `peaks_4096` — 1 peak per 4096 samples (overview)
+
+This eliminates re-computation on zoom changes.
 
 ---
 
-## Gestion du build
+## Planned Dependencies
 
-### Dev
+| Dependency | Phase | Purpose |
+|------------|-------|---------|
+| `symphonia` (Rust) | Phase 2 | MP3/FLAC/OGG decoding |
+| `rubato` (Rust) | Phase 3 | Sample rate conversion for clips not at project SR |
+| `dasp` (Rust) | Phase 3 | DSP primitives (filters, envelopes) for built-in effects |
+| VST3 SDK / `vst3-sys` (Rust) | Phase 4 | VST3 plugin hosting (scaffolding done in `plugin_formats/vst3/`) |
+
+**Explicitly not used:**
+- `ringbuf` — lock-free ring buffer. Evaluated for the command→audio path, replaced by `RuntimeSnapshot` (a simpler `Mutex<Option<GraphScheduler>>` with `try_lock`) which fits the snapshot-swap model better.
+
+---
+
+## Build
+
+### Development
 ```bash
-pnpm tauri dev
-# Lance Vite dev server (localhost:5173) + Tauri en watch mode
+pnpm tauri:dev
+# Starts Vite dev server (localhost:5173) + Tauri in watch mode
 ```
 
 ### Production
 ```bash
-pnpm tauri build
-# Build Vite → dist/, puis Tauri bundle l'app avec le runtime
-# Output : src-tauri/target/release/bundle/
-#   - Windows : .msi + .exe
-#   - macOS : .app + .dmg
-#   - Linux : .deb + .AppImage
+pnpm tauri:build
+# Builds Vite → dist/, then Tauri bundles the app
+# Output: src-tauri/target/release/bundle/
+#   Windows  → .msi + .exe (NSIS)
+#   macOS    → .app + .dmg
+#   Linux    → .deb + .AppImage
 ```
 
 ### CI/CD
-[TODO: Configurer GitHub Actions pour builder sur les 3 plateformes]
+[TODO: Configure GitHub Actions to build on all 3 platforms]
 
 ---
 
-## Liens
+## Links
 
-- [ARCHITECTURE.md](ARCHITECTURE.md) — Comment les couches s'assemblent
-- [AUDIO_ENGINE.md](AUDIO_ENGINE.md) — Détails de l'implémentation audio
+- [ARCHITECTURE.md](ARCHITECTURE.md) — How the layers fit together
+- [AUDIO_ENGINE.md](AUDIO_ENGINE.md) — Audio engine implementation details
+- [BUILD.md](BUILD.md) — Setup and build instructions
