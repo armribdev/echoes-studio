@@ -51,6 +51,19 @@ function createSelectionStore() {
 			update((s) => (sameSelection(s, next.ids, id) ? s : next));
 		},
 
+		setMany(ids: string[], options?: { additive?: boolean }) {
+			update((s) => {
+				const nextIds = options?.additive ? new Set(s.ids) : new Set<string>();
+				for (const id of ids) nextIds.add(id);
+				if (nextIds.size === 0) {
+					return s.ids.size === 0 ? s : emptyState();
+				}
+				const primaryId = ids.length > 0 ? ids[ids.length - 1]! : s.primaryId ?? [...nextIds][0]!;
+				if (sameSelection(s, nextIds, primaryId)) return s;
+				return { ids: nextIds, primaryId };
+			});
+		},
+
 		clear() {
 			update((s) => (s.ids.size === 0 ? s : emptyState()));
 		},

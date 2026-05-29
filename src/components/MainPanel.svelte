@@ -33,6 +33,11 @@
 	import Playhead from './Playhead.svelte';
 	import { defaultArrangeMaxBars } from '../frontend/timeRuler/ticks';
 	import { startTransportScrub } from '../frontend/transportScrub';
+	import {
+		ARRANGE_POINTER_DRAG_THRESHOLD,
+		ARRANGE_TRACK_HEIGHT,
+		clipsInArrangeSelbox,
+	} from '../frontend/arrangeInteraction';
 
 	const TRACK_COLORS = [
 		'#4d96ff', '#ff6b6b', '#6bcb77', '#ffd93d',
@@ -78,6 +83,7 @@
 	});
 	onDestroy(unsubExportMp3);
 	onDestroy(() => scrubCleanup?.());
+	onDestroy(cleanupTracksPointer);
 
 	let contextMenu: { x: number; y: number; trackId: string; trackName: string; trackIndex: number } | null = null;
 	let clipContextMenu: { x: number; y: number } | null = null;
@@ -168,7 +174,7 @@
 				const x = winX - rect.left;
 				const y = winY - rect.top + tracksEl.scrollTop;
 				if (x < 0 || x > rect.width || y < 0) { fileDragPreview = null; return; }
-				const trackIndex = Math.min(Math.max(0, Math.floor(y / 100)), tracks.length - 1);
+				const trackIndex = Math.min(Math.max(0, Math.floor(y / ARRANGE_TRACK_HEIGHT)), tracks.length - 1);
 				fileDragPreview = { trackIndex, startSec: Math.max(0, x / scale), durationSec: pendingDragDuration ?? fileDragPreview?.durationSec ?? null };
 			}
 
@@ -302,6 +308,102 @@
 
 	let scrubCleanup: (() => void) | null = null;
 
+	type TracksPointerState =
+		| { kind: 'none' }
+		| {
+				kind: 'pending';
+				startX: number;
+				startY: number;
+				clientX: number;
+				clientY: number;
+				additive: boolean;
+		  }
+		| { kind: 'selbox'; x0: number; y0: number; x1: number; y1: number; additive: boolean };
+
+	let tracksPointer: TracksPointerState = { kind: 'none' };
+	let tracksScrollTop = 0;
+
+	function tracksContentCoords(event: MouseEvent): { x: number; y: number } {
+		if (!tracksEl) return { x: 0, y: 0 };
+		const rect = tracksEl.getBoundingClientRect();
+		return {
+			x: event.clientX - rect.left,
+			y: event.clientY - rect.top + tracksEl.scrollTop,
+		};
+	}
+
+	function positionFromClientX(clientX: number, altKey: boolean): number {
+		if (!tracksEl) return 0;
+		const originLeft = tracksEl.getBoundingClientRect().left;
+		return snap(Math.max(0, (clientX - originLeft) / scale), altKey);
+	}
+
+	function seekToClientX(clientX: number, altKey: boolean) {
+		const positionSec = positionFromClientX(clientX, altKey);
+		transport.update((t) => ({ ...t, position: positionSec }));
+		seek(positionSec).catch(console.error);
+	}
+
+	function cleanupTracksPointer() {
+		window.removeEventListener('mousemove', onTracksPointerMove);
+		window.removeEventListener('mouseup', onTracksPointerUp);
+		tracksPointer = { kind: 'none' };
+	}
+
+	function onTracksPointerMove(event: MouseEvent) {
+		if (tracksPointer.kind === 'none') return;
+
+		if (tracksPointer.kind === 'pending') {
+			const dx = event.clientX - tracksPointer.clientX;
+			const dy = event.clientY - tracksPointer.clientY;
+			if (Math.hypot(dx, dy) < ARRANGE_POINTER_DRAG_THRESHOLD) return;
+
+			const { x, y } = tracksContentCoords(event);
+			tracksPointer = {
+				kind: 'selbox',
+				x0: tracksPointer.startX,
+				y0: tracksPointer.startY,
+				x1: x,
+				y1: y,
+				additive: tracksPointer.additive,
+			};
+			return;
+		}
+
+		const { x, y } = tracksContentCoords(event);
+		tracksPointer = { ...tracksPointer, x1: x, y1: y };
+	}
+
+	function onTracksPointerUp(event: MouseEvent) {
+		if (tracksPointer.kind === 'pending') {
+			seekToClientX(event.clientX, event.altKey);
+		} else if (tracksPointer.kind === 'selbox') {
+			const ids = clipsInArrangeSelbox(tracks, tracksPointer, scale);
+			if (ids.length === 1 && !tracksPointer.additive) {
+				const clipId = ids[0]!;
+				selection.setSingle(clipId);
+				activateArrangeClip(clipId);
+			} else if (ids.length > 0) {
+				selection.setMany(ids, { additive: tracksPointer.additive });
+			} else if (!tracksPointer.additive) {
+				selection.clear();
+			}
+		}
+
+		cleanupTracksPointer();
+	}
+
+	function activateArrangeClip(clipId: string) {
+		for (let trackIndex = 0; trackIndex < tracks.length; trackIndex++) {
+			const track = tracks[trackIndex];
+			const midiClip = track.midi_clips?.find((c) => c.id === clipId);
+			if (midiClip) {
+				ensureClipPreview(track, midiClip, trackColor(trackIndex));
+				return;
+			}
+		}
+	}
+
 	function snap(
 		positionSec: number,
 		altKey: boolean,
@@ -329,10 +431,31 @@
 	}
 
 	function handleTracksMouseDown(event: MouseEvent) {
-		if (dragging) return;
+		if (dragging || midiDragging || !tracksEl) return;
+		if (event.button !== 0) return;
+
 		keyboardFocus.setTimeline();
-		beginScrub(event, event.currentTarget as HTMLElement);
-		selection.clear();
+
+		if (event.altKey) {
+			beginScrub(event, tracksEl);
+			return;
+		}
+
+		const { x, y } = tracksContentCoords(event);
+		const additive = event.ctrlKey || event.metaKey;
+		if (!additive) selection.clear();
+
+		tracksPointer = {
+			kind: 'pending',
+			startX: x,
+			startY: y,
+			clientX: event.clientX,
+			clientY: event.clientY,
+			additive,
+		};
+
+		window.addEventListener('mousemove', onTracksPointerMove);
+		window.addEventListener('mouseup', onTracksPointerUp);
 	}
 
 	function deleteSelected() {
@@ -509,7 +632,7 @@
 		const x = event.clientX - rect.left;
 		const y = event.clientY - rect.top + tracksEl.scrollTop;
 		if (x < 0 || y < 0) return;
-		const trackIndex = Math.min(Math.max(0, Math.floor(y / 100)), tracks.length - 1);
+		const trackIndex = Math.min(Math.max(0, Math.floor(y / ARRANGE_TRACK_HEIGHT)), tracks.length - 1);
 		const track = tracks[trackIndex];
 		if (!track) return;
 
@@ -751,6 +874,7 @@
 			class="tracks"
 			class:is-dragging={dragging || midiDragging}
 			class:is-file-dragging={fileDragPreview}
+			class:is-selbox-dragging={tracksPointer.kind === 'selbox'}
 			bind:this={tracksEl}
 			on:drop={handleDrop}
 			on:dragover={handleDragOver}
@@ -759,6 +883,9 @@
 			on:mousedown={handleTracksMouseDown}
 			on:dblclick={handleTracksDoubleClick}
 			on:wheel={handleTracksWheel}
+			on:scroll={() => {
+				if (tracksEl) tracksScrollTop = tracksEl.scrollTop;
+			}}
 		>
 			{#if tracks.length === 0}
 				<div class="empty-tracks">
@@ -778,7 +905,18 @@
 			{#if fileDragPreview}
 				<div
 					class="clip-ghost"
-					style="top: {fileDragPreview.trackIndex * 100}px; left: {fileDragPreview.startSec * scale}px; width: {fileDragPreview.durationSec != null ? fileDragPreview.durationSec * scale : 150}px;"
+					style="top: {fileDragPreview.trackIndex * ARRANGE_TRACK_HEIGHT}px; left: {fileDragPreview.startSec * scale}px; width: {fileDragPreview.durationSec != null ? fileDragPreview.durationSec * scale : 150}px;"
+				></div>
+			{/if}
+			{#if tracksPointer.kind === 'selbox'}
+				<div
+					class="arrange-selbox"
+					style="
+						left: {Math.min(tracksPointer.x0, tracksPointer.x1)}px;
+						top: {Math.min(tracksPointer.y0, tracksPointer.y1) - tracksScrollTop}px;
+						width: {Math.abs(tracksPointer.x1 - tracksPointer.x0)}px;
+						height: {Math.abs(tracksPointer.y1 - tracksPointer.y0)}px;
+					"
 				></div>
 			{/if}
 			{#each tracks as track, trackIndex}
@@ -985,6 +1123,21 @@
 		&.is-file-dragging {
 			cursor: copy;
 		}
+
+		&.is-selbox-dragging {
+			cursor: crosshair;
+			user-select: none;
+		}
+	}
+
+	.arrange-selbox {
+		position: absolute;
+		box-sizing: border-box;
+		pointer-events: none;
+		z-index: 6;
+		background: rgba(21, 113, 255, 0.07);
+		border: 1px dashed rgba(21, 113, 255, 0.65);
+		border-radius: 2px;
 	}
 
 	.clip-ghost {
