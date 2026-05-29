@@ -225,6 +225,7 @@
 
 	let rawOutputLevels:     number[] = Array(16).fill(0);
 	let rawInputLevels:      number[] = Array(16).fill(0);
+	let xrunCount = 0;
 	let displayOutputLevels: number[] = Array(16).fill(0);
 	let displayInputLevels:  number[] = Array(16).fill(0);
 
@@ -275,6 +276,7 @@
 		// Reset display so meters open fresh next time.
 		displayOutputLevels = Array(16).fill(0);
 		displayInputLevels  = Array(16).fill(0);
+		xrunCount = 0;
 	}
 
 	/**
@@ -298,7 +300,7 @@
 
 		unlistenLevels = await listen<{
 			type: string;
-			payload: { output: number[]; input: number[]; position?: number };
+			payload: { output: number[]; input: number[]; position?: number; xruns?: number };
 		}>('engine-event', (event) => {
 			const ev = event.payload;
 			// Levels are piggybacked on POSITION_UPDATED while playing,
@@ -306,6 +308,7 @@
 			if (ev?.type === 'LEVELS_UPDATED' || ev?.type === 'POSITION_UPDATED') {
 				if (ev.payload.output) rawOutputLevels = ev.payload.output;
 				if (ev.payload.input)  rawInputLevels  = ev.payload.input;
+				if (typeof ev.payload.xruns === 'number') xrunCount = ev.payload.xruns;
 			}
 		});
 	});
@@ -531,6 +534,15 @@
 							{#if latencyMs < 10}Excellente — idéale pour l'enregistrement live
 							{:else if latencyMs < 25}Bonne — confortable pour la production
 							{:else}Élevée — envisager un buffer plus petit{/if}
+						</span>
+					</div>
+
+					<div class="xrun-bar" class:xrun-warning={xrunCount > 0}>
+						<span class="xrun-label">Underruns (XRun)</span>
+						<span class="xrun-value">{xrunCount}</span>
+						<span class="xrun-hint">
+							{#if xrunCount === 0}Aucun underrun détecté sur cette session
+							{:else}Le callback audio a été en retard — augmenter le buffer si cela persiste{/if}
 						</span>
 					</div>
 
@@ -993,6 +1005,55 @@
 		color: rgba(247, 247, 249, 0.3);
 		grid-column: 1 / -1;
 		grid-row: 3;
+	}
+
+	.xrun-bar {
+		background: rgba(255, 255, 255, 0.03);
+		border: 1px solid rgba(255, 255, 255, 0.07);
+		border-radius: 7px;
+		padding: 12px 14px;
+		display: grid;
+		grid-template-columns: 1fr auto;
+		grid-template-rows: auto auto;
+		gap: 6px 8px;
+		align-items: center;
+
+		&.xrun-warning {
+			border-color: rgba(255, 120, 80, 0.35);
+			background: rgba(255, 80, 40, 0.06);
+		}
+	}
+
+	.xrun-label {
+		font-size: 11px;
+		color: rgba(247, 247, 249, 0.45);
+		grid-column: 1;
+		grid-row: 1;
+	}
+
+	.xrun-value {
+		font-size: 13px;
+		font-weight: 600;
+		font-family: $font-mono;
+		color: $text-color;
+		grid-column: 2;
+		grid-row: 1;
+		text-align: right;
+
+		.xrun-warning & {
+			color: $color-warning;
+		}
+	}
+
+	.xrun-hint {
+		font-size: 10px;
+		color: rgba(247, 247, 249, 0.3);
+		grid-column: 1 / -1;
+		grid-row: 2;
+
+		.xrun-warning & {
+			color: rgba(255, 180, 120, 0.75);
+		}
 	}
 
 

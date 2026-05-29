@@ -137,12 +137,16 @@ export type TrackLevelsMap = Record<string, [number, number]>;
 export interface PositionUpdatedPayload {
   position: number;
   tracks?: TrackLevelsMap;
+  /** Cumulative underrun count for the current audio stream session. */
+  xruns?: number;
 }
 
 export interface LevelsUpdatedPayload {
   output: number[];
   input: number[];
   tracks?: TrackLevelsMap;
+  /** Cumulative underrun count for the current audio stream session. */
+  xruns?: number;
 }
 
 export interface PeakMeterPayload {

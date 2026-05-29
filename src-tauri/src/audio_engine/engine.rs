@@ -28,9 +28,10 @@
 
 use std::collections::HashMap;
 use std::sync::{
-    atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering},
+    atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering},
     Arc, Mutex,
 };
+use std::time::Duration;
 
 use cpal::{
     traits::{DeviceTrait, HostTrait, StreamTrait},
@@ -75,6 +76,72 @@ const REPORTER_INTERVAL_MS: u64 = 33;
 
 /// Maximum number of audio channels tracked by the level meters.
 const MAX_METER_CHANNELS: usize = 16;
+
+/// Minimum slack added to the expected block duration before declaring an XRun.
+///
+/// Real backends jitter slightly even under normal load; this avoids false positives.
+const XRUN_SLACK_MIN: Duration = Duration::from_micros(2_000);
+
+// ── XrunStats ─────────────────────────────────────────────────────────────────
+
+/// Lock-free underrun counter shared between the audio callback (writer) and
+/// the position reporter (reader → UI telemetry).
+pub struct XrunStats {
+    total: AtomicU64,
+}
+
+impl XrunStats {
+    pub fn new() -> Arc<Self> {
+        Arc::new(XrunStats {
+            total: AtomicU64::new(0),
+        })
+    }
+
+    #[inline]
+    pub fn record(&self) {
+        self.total.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn total(&self) -> u64 {
+        self.total.load(Ordering::Relaxed)
+    }
+
+    pub fn reset(&self) {
+        self.total.store(0, Ordering::Relaxed);
+    }
+}
+
+/// Returns `true` when the gap between consecutive callbacks exceeds the
+/// expected block duration by more than the allowed slack.
+fn is_callback_xrun(elapsed: Duration, expected_block: Duration) -> bool {
+    let slack = XRUN_SLACK_MIN.max(expected_block / 4);
+    elapsed > expected_block + slack
+}
+
+/// Opt-in XRun tracing on the reporter thread (never from the audio callback).
+///
+/// Set `ECHOES_DEBUG_XRUN=1` before launch, or build in debug mode where it
+/// defaults to enabled.
+fn xrun_debug_enabled() -> bool {
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ENABLED.get_or_init(|| {
+        std::env::var("ECHOES_DEBUG_XRUN")
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(cfg!(debug_assertions))
+    })
+}
+
+/// Log newly detected XRuns on the reporter thread (RT-safe).
+fn log_new_xruns(last_reported: &mut u64, current: u64) {
+    if current <= *last_reported {
+        return;
+    }
+    if xrun_debug_enabled() {
+        let delta = current - *last_reported;
+        eprintln!("[audio] XRun détecté — total={current} (+{delta})");
+    }
+    *last_reported = current;
+}
 
 // ── ChannelLevels ─────────────────────────────────────────────────────────────
 
@@ -156,6 +223,9 @@ pub struct AudioEngine {
     /// by audio nodes per-block.  Threaded into every compile so the resulting
     /// scheduler holds the matching `Arc` handles.
     live_params: Arc<LiveParams>,
+
+    /// Cumulative underrun count for the current stream session.
+    pub xrun_stats: Arc<XrunStats>,
 }
 
 impl AudioEngine {
@@ -171,6 +241,7 @@ impl AudioEngine {
             meter_cells: Arc::new(Mutex::new(HashMap::new())),
             active_output_channels: Arc::new(AtomicUsize::new(0)),
             live_params,
+            xrun_stats: XrunStats::new(),
         }
     }
 
@@ -277,15 +348,18 @@ impl AudioEngine {
         // Seed the active-channels atomic with the value from settings so the
         // first block already uses the correct routing.
         self.active_output_channels.store(active_channels, Ordering::Relaxed);
+        self.xrun_stats.reset();
 
         let snap_a    = Arc::clone(&self.snapshot);
         let tport_a   = Arc::clone(&self.transport);
         let ch_ctrl_a = Arc::clone(&self.active_output_channels);
         let levels_a  = Arc::clone(&self.levels);
+        let xruns_a   = Arc::clone(&self.xrun_stats);
         let snap_b    = Arc::clone(&self.snapshot);
         let tport_b   = Arc::clone(&self.transport);
         let ch_ctrl_b = Arc::clone(&self.active_output_channels);
         let levels_b  = Arc::clone(&self.levels);
+        let xruns_b   = Arc::clone(&self.xrun_stats);
 
         let fixed_cfg = cpal::StreamConfig {
             buffer_size: cpal::BufferSize::Fixed(settings.buffer_size),
@@ -293,7 +367,7 @@ impl AudioEngine {
         };
 
         let stream =
-            build_typed_stream(&device, &fixed_cfg, fmt, snap_a, tport_a, hw_channels, ch_ctrl_a, levels_a)
+            build_typed_stream(&device, &fixed_cfg, fmt, snap_a, tport_a, hw_channels, ch_ctrl_a, levels_a, xruns_a)
                 .or_else(|e| {
                     eprintln!(
                         "[audio] Buffer fixe ({} frames) non supporté ({e}), \
@@ -304,7 +378,7 @@ impl AudioEngine {
                         buffer_size: cpal::BufferSize::Default,
                         ..base_cfg
                     };
-                    build_typed_stream(&device, &default_cfg, fmt, snap_b, tport_b, hw_channels, ch_ctrl_b, levels_b)
+                    build_typed_stream(&device, &default_cfg, fmt, snap_b, tport_b, hw_channels, ch_ctrl_b, levels_b, xruns_b)
                 })?;
 
         stream
@@ -317,10 +391,20 @@ impl AudioEngine {
         let reporter_transport    = Arc::clone(&self.transport);
         let reporter_levels       = Arc::clone(&self.levels);
         let reporter_meter_cells  = Arc::clone(&self.meter_cells);
+        let reporter_xruns        = Arc::clone(&self.xrun_stats);
 
         std::thread::Builder::new()
             .name("cpal-pos-reporter".into())
-            .spawn(move || position_reporter(reporter_transport, reporter_levels, reporter_meter_cells, app, stop))
+            .spawn(move || {
+                position_reporter(
+                    reporter_transport,
+                    reporter_levels,
+                    reporter_meter_cells,
+                    reporter_xruns,
+                    app,
+                    stop,
+                )
+            })
             .map_err(|e| format!("Impossible de démarrer le reporter de position : {e}"))?;
 
         self._stream = Some(SendStream(stream));
@@ -468,20 +552,21 @@ fn build_typed_stream(
     hw_channels: usize,
     ch_ctrl: Arc<AtomicUsize>,
     levels: Arc<ChannelLevels>,
+    xrun_stats: Arc<XrunStats>,
 ) -> Result<cpal::Stream, String> {
     match fmt {
         cpal::SampleFormat::F32 => {
-            build_stream::<f32>(device, config, snapshot, transport, hw_channels, ch_ctrl, levels)
+            build_stream::<f32>(device, config, snapshot, transport, hw_channels, ch_ctrl, levels, xrun_stats)
         }
         cpal::SampleFormat::I16 => {
-            build_stream::<i16>(device, config, snapshot, transport, hw_channels, ch_ctrl, levels)
+            build_stream::<i16>(device, config, snapshot, transport, hw_channels, ch_ctrl, levels, xrun_stats)
         }
         cpal::SampleFormat::U16 => {
-            build_stream::<u16>(device, config, snapshot, transport, hw_channels, ch_ctrl, levels)
+            build_stream::<u16>(device, config, snapshot, transport, hw_channels, ch_ctrl, levels, xrun_stats)
         }
         other => {
             eprintln!("[audio] Format {other:?} non géré nativement, tentative F32");
-            build_stream::<f32>(device, config, snapshot, transport, hw_channels, ch_ctrl, levels)
+            build_stream::<f32>(device, config, snapshot, transport, hw_channels, ch_ctrl, levels, xrun_stats)
         }
     }
 }
@@ -502,6 +587,7 @@ fn build_stream<T>(
     hw_channels: usize,
     ch_ctrl: Arc<AtomicUsize>,
     levels: Arc<ChannelLevels>,
+    xrun_stats: Arc<XrunStats>,
 ) -> Result<cpal::Stream, String>
 where
     T: SizedSample + FromSample<f32> + Send + 'static,
@@ -515,18 +601,39 @@ where
     // ITU-R BS.775 / Pro Tools standard: −3 dB for stereo→mono downmix.
     // Precomputed outside the closure — it's a constant, no per-block cost.
     let mono_gain: f32 = 1.0 / 2.0_f32.sqrt();
+    // XRun detection state — lives in the closure, never shared across threads.
+    let mut prev_callback: Option<cpal::StreamInstant> = None;
+    let mut prev_frames: usize = 0;
+    let xrun_stats_cb = Arc::clone(&xrun_stats);
+    let xrun_stats_err = Arc::clone(&xrun_stats);
 
     let stream = device
         .build_output_stream(
             config,
             // ── Audio callback (real-time thread) ─────────────────────────────
-            move |data: &mut [T], _info: &cpal::OutputCallbackInfo| {
+            move |data: &mut [T], info: &cpal::OutputCallbackInfo| {
                 let total_samples = data.len();
                 let frames = if hw_channels > 0 {
                     total_samples / hw_channels
                 } else {
                     return;
                 };
+
+                if let Some(prev) = prev_callback {
+                    if let Some(elapsed) = info.timestamp().callback.duration_since(&prev) {
+                        let sample_rate = transport.sample_rate();
+                        if sample_rate > 0.0 {
+                            let expected = Duration::from_secs_f64(
+                                prev_frames as f64 / sample_rate as f64,
+                            );
+                            if is_callback_xrun(elapsed, expected) {
+                                xrun_stats_cb.record();
+                            }
+                        }
+                    }
+                }
+                prev_callback = Some(info.timestamp().callback);
+                prev_frames = frames;
 
                 if frames > MAX_BLOCK_FRAMES {
                     // Block exceeds our pre-allocated buffer — fill with silence.
@@ -602,7 +709,10 @@ where
                 }
             },
             // ── Error callback ─────────────────────────────────────────────────
-            move |err| eprintln!("[audio] Erreur de flux : {err}"),
+            move |err| {
+                xrun_stats_err.record();
+                eprintln!("[audio] Erreur de flux : {err}");
+            },
             None,
         )
         .map_err(|e| e.to_string())?;
@@ -621,10 +731,12 @@ fn position_reporter(
     transport: Arc<SharedTransport>,
     levels: Arc<ChannelLevels>,
     meter_cells: Arc<Mutex<HashMap<String, MeterCell>>>,
+    xrun_stats: Arc<XrunStats>,
     app: tauri::AppHandle,
     stop: Arc<AtomicBool>,
 ) {
     let interval = std::time::Duration::from_millis(REPORTER_INTERVAL_MS);
+    let mut last_reported_xruns = 0_u64;
     loop {
         std::thread::sleep(interval);
 
@@ -634,6 +746,8 @@ fn position_reporter(
 
         let out = levels.read_outputs();
         let inp = levels.read_inputs();
+        let xruns = xrun_stats.total();
+        log_new_xruns(&mut last_reported_xruns, xruns);
 
         // Read per-track peaks (non-blocking: try_lock, skip on contention)
         let track_levels: serde_json::Value = if let Ok(cells) = meter_cells.try_lock() {
@@ -672,6 +786,7 @@ fn position_reporter(
                         "output":   out,
                         "input":    inp,
                         "tracks":   track_levels,
+                        "xruns":    xruns,
                     }
                 }));
                 continue;
@@ -691,6 +806,7 @@ fn position_reporter(
                         "output":   out,
                         "input":    inp,
                         "tracks":   track_levels,
+                        "xruns":    xruns,
                     }
                 }),
             );
@@ -703,9 +819,23 @@ fn position_reporter(
                         "output": out,
                         "input":  inp,
                         "tracks": track_levels,
+                        "xruns":  xruns,
                     }
                 }),
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn callback_xrun_requires_materially_late_delivery() {
+        let block = Duration::from_millis(10);
+        assert!(!is_callback_xrun(block, block));
+        assert!(!is_callback_xrun(Duration::from_millis(11), block));
+        assert!(is_callback_xrun(Duration::from_millis(20), block));
     }
 }
