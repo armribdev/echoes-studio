@@ -110,6 +110,12 @@
 		dispatch('clipcontextmenu', { id, x: e.clientX, y: e.clientY });
 	}
 
+	function onKeyDown(e: KeyboardEvent) {
+		if (e.key !== 'Enter' && e.key !== ' ') return;
+		e.preventDefault();
+		e.stopPropagation();
+	}
+
 	function onMouseDown(e: MouseEvent) {
 		e.stopPropagation();
 		e.preventDefault();
@@ -137,10 +143,13 @@
 	bind:this={clipEl}
 	class="clip"
 	class:selected
+	role="button"
+	tabindex="0"
 	style="transform: translateX({start * scale}px); width: {(end - start) * scale}px"
 	on:mousedown={onMouseDown}
 	on:contextmenu={onContextMenu}
 	on:click|stopPropagation
+	on:keydown={onKeyDown}
 >
 	<canvas bind:this={canvas}></canvas>
 </div>

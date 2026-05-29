@@ -5,7 +5,6 @@
 	import type { Track } from '../types/global';
 
 	export let track: Track;
-	export let trackIndex: number;
 	export let selected: boolean = false;
 	export let color: string;
 	export let peakL: number = 0;

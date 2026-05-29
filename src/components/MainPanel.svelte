@@ -740,7 +740,6 @@
 			{#each tracks as track, trackIndex}
 				<TrackStrip
 					{track}
-					{trackIndex}
 					selected={selectedTrackIndex === trackIndex}
 					color={TRACK_COLORS[trackIndex % TRACK_COLORS.length]}
 					bind:volume={tracks[trackIndex].volume}

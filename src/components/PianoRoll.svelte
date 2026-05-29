@@ -838,10 +838,10 @@
 </script>
 
 {#if open}
-<!-- svelte-ignore a11y-no-static-element-interactions -->
+<!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
 <div
 	class="piano-roll"
-	role="region"
+	role="application"
 	aria-label="Piano Roll"
 	on:mousedown={() => keyboardFocus.setPianoRoll()}
 >
@@ -961,15 +961,14 @@
 			<canvas class="ruler-canvas" bind:this={rulerCanvas}></canvas>
 
 			<!-- Grid scrollable -->
-			<!-- svelte-ignore a11y-no-static-element-interactions -->
+			<!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
 			<div
 				class="grid-scroll"
 				bind:this={scrollContainer}
 				on:scroll={onGridScroll}
 				on:wheel={onGridWheel}
-				role="presentation"
 			>
-				<!-- svelte-ignore a11y-no-static-element-interactions -->
+				<!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
 				<canvas
 					bind:this={canvasGrid}
 					on:mousedown={onGridMousedown}
@@ -982,8 +981,9 @@
 			</div>
 
 			<!-- Velocity lane -->
-			<!-- svelte-ignore a11y-no-static-element-interactions -->
-			<div class="vel-wrapper" role="presentation">
+			<!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
+			<div class="vel-wrapper">
+				<!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
 				<canvas
 					bind:this={canvasVel}
 					on:mousedown={onVelMousedown}

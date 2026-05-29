@@ -75,6 +75,12 @@
 		}
 	}
 
+	function onKeyDown(e: KeyboardEvent) {
+		if (e.key !== 'Enter' && e.key !== ' ') return;
+		e.preventDefault();
+		e.stopPropagation();
+	}
+
 	function onMouseDown(e: MouseEvent) {
 		e.stopPropagation();
 		e.preventDefault();
@@ -118,16 +124,18 @@
 	onDestroy(() => cancelAnimationFrame(rafId));
 </script>
 
-<!-- svelte-ignore a11y-no-static-element-interactions -->
 <div
 	bind:this={clipEl}
 	class="midi-clip"
 	class:selected
+	role="button"
+	tabindex="0"
 	style="transform: translateX({start * scale}px); width: {width}px; --clip-color: {color};"
 	on:mousedown={onMouseDown}
 	on:dblclick={onDblClick}
 	on:contextmenu={onContextMenu}
 	on:click|stopPropagation
+	on:keydown={onKeyDown}
 >
 	<div class="midi-clip__header">
 		<svg class="midi-clip__icon" viewBox="0 0 10 10" width="8" height="8" fill="currentColor">

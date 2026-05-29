@@ -51,11 +51,9 @@
 	<div class="fx-header" style:z-index={showAddMenu ? 10 : 1}>
 		<span class="fx-title">Effets</span>
 		<div class="add-wrap">
-			<!-- svelte-ignore a11y-no-static-element-interactions -->
 			<button class="add-btn" type="button" on:click|stopPropagation={() => (showAddMenu = !showAddMenu)} title="Ajouter">+</button>
 			{#if showAddMenu}
-				<!-- svelte-ignore a11y-no-static-element-interactions -->
-				<div class="add-menu" on:click|stopPropagation>
+				<div class="add-menu" on:pointerdown|stopPropagation>
 					{#each Object.entries(LABELS) as [kind, label]}
 						<button class="menu-item" type="button" on:click={() => handleAddEffect(kind)}>{label}</button>
 					{/each}
@@ -70,16 +68,17 @@
 
 	{#each effects as effect (effect.id)}
 		<div class="slot" class:bypassed={!effect.enabled}>
-			<!-- svelte-ignore a11y-no-static-element-interactions -->
-			<div class="slot-head" on:click={() => toggleExpand(effect.id)}>
+			<div class="slot-head">
 				<button class="bypass" class:on={effect.enabled} type="button"
 					on:click|stopPropagation={() => handleToggle(effect)} title="Bypass">
 					<svg width="8" height="8" viewBox="0 0 8 8"><circle cx="4" cy="4" r="3" fill="currentColor"/></svg>
 				</button>
-				<span class="slot-name">{LABELS[effect.params.kind] ?? effect.params.kind}</span>
-				<svg class="chevron" class:open={expanded[effect.id]} width="8" height="5" viewBox="0 0 8 5">
-					<path d="M1 1 L4 4 L7 1" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round"/>
-				</svg>
+				<button class="slot-toggle" type="button" on:click={() => toggleExpand(effect.id)}>
+					<span class="slot-name">{LABELS[effect.params.kind] ?? effect.params.kind}</span>
+					<svg class="chevron" class:open={expanded[effect.id]} width="8" height="5" viewBox="0 0 8 5">
+						<path d="M1 1 L4 4 L7 1" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round"/>
+					</svg>
+				</button>
 				<button class="rm-btn" type="button" on:click|stopPropagation={() => handleRemoveEffect(effect.id)} title="Supprimer">×</button>
 			</div>
 
@@ -231,8 +230,24 @@
 
 	.slot-head {
 		display: flex; align-items: center; gap: 5px;
-		padding: 4px 6px; cursor: pointer;
-		&:hover { background: $surface-1; }
+		padding: 4px 6px;
+	}
+
+	.slot-toggle {
+		flex: 1;
+		display: flex;
+		align-items: center;
+		gap: 5px;
+		min-width: 0;
+		padding: 0;
+		border: none;
+		background: transparent;
+		color: inherit;
+		font: inherit;
+		cursor: pointer;
+		text-align: left;
+
+		&:hover { background: $surface-1; border-radius: 3px; }
 	}
 
 	.bypass {
