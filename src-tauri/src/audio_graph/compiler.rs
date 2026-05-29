@@ -162,6 +162,7 @@ impl GraphCompiler {
                     input_connections[dst_port] = Some(InputConnection {
                         src_step,
                         src_port: edge.from.port as usize,
+                        delay_samples: 0,
                     });
                 }
             }
@@ -180,7 +181,9 @@ impl GraphCompiler {
         // Carry the modulation routing table built by AudioGraph::from_project.
         plan_builder.set_modulation(graph.modulation.clone());
 
-        let plan = Arc::new(plan_builder.build());
+        // Build the plan owned (no Arc yet) — we still need to fill in PDC
+        // delays once node latencies are known.
+        let mut plan = plan_builder.build();
 
         // 5. Instantiate processors (Meter nodes get fresh atomic cells)
         let prepare_ctx = PrepareContext {
@@ -211,14 +214,69 @@ impl GraphCompiler {
                 meter_cells.insert(meter_id.clone(), (Arc::clone(&peak_l), Arc::clone(&peak_r)));
                 Box::new(crate::audio_graph::nodes::meter::MeterNode::new(node_id, peak_l, peak_r))
             } else {
-                Self::build_node(node_id, &graph_node.kind, project, &plan, config.sample_rate, live_params)
+                Self::build_node(node_id, &graph_node.kind, project, config.sample_rate, live_params)
             };
             let mut node = node;
             node.prepare(prepare_ctx);
             processors.push(node);
         }
 
+        // 6. Plugin Delay Compensation — compute per-step cumulative latency
+        // and per-input delay alignments now that every node has been built.
+        Self::compute_latency_compensation(&mut plan, &processors);
+
+        let plan = Arc::new(plan);
+
         Ok(CompiledGraph { plan, processors, meter_cells, route_cells })
+    }
+
+    // ── PDC ───────────────────────────────────────────────────────────────────
+
+    /// Compute and assign latency compensation delays into `plan.steps[*].input_connections`.
+    ///
+    /// Walks the plan in topological order (already enforced by the compiler) and:
+    ///   - records each step's intrinsic latency from `node.latency_samples()`.
+    ///   - computes `cumulative_latency[i]` = `intrinsic[i] + max input arrival`.
+    ///   - for each input port `p`, sets `delay_samples` so all converging
+    ///     inputs at step `i` arrive aligned at the maximum input arrival time.
+    fn compute_latency_compensation(
+        plan: &mut ExecutionPlan,
+        processors: &[Box<dyn AudioNode>],
+    ) {
+        let n = plan.steps.len();
+        debug_assert_eq!(processors.len(), n, "plan / processors length mismatch");
+
+        plan.step_latencies.clear();
+        plan.step_latencies.resize(n, 0);
+        plan.step_cumulative_latency.clear();
+        plan.step_cumulative_latency.resize(n, 0);
+
+        for i in 0..n {
+            plan.step_latencies[i] = processors[i].latency_samples();
+        }
+
+        for i in 0..n {
+            // Topological invariant: every src_step < i, so cumulative values are
+            // already filled before we reach this step.
+            let mut arrival: u32 = 0;
+            for conn_opt in &plan.steps[i].input_connections {
+                if let Some(conn) = conn_opt {
+                    let src_lat = plan.step_cumulative_latency[conn.src_step];
+                    if src_lat > arrival {
+                        arrival = src_lat;
+                    }
+                }
+            }
+
+            for conn_opt in plan.steps[i].input_connections.iter_mut() {
+                if let Some(conn) = conn_opt {
+                    let src_lat = plan.step_cumulative_latency[conn.src_step];
+                    conn.delay_samples = arrival.saturating_sub(src_lat);
+                }
+            }
+
+            plan.step_cumulative_latency[i] = plan.step_latencies[i].saturating_add(arrival);
+        }
     }
 
     // ── Topological sort (Kahn's BFS) ─────────────────────────────────────────
@@ -331,7 +389,6 @@ impl GraphCompiler {
         id: NodeId,
         kind: &NodeKind,
         project: &AppProject,
-        _plan: &Arc<ExecutionPlan>,
         engine_sample_rate: f32,
         live_params: &LiveParams,
     ) -> Box<dyn AudioNode> {

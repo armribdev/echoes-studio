@@ -36,6 +36,12 @@ pub struct InputConnection {
     pub src_step: usize,
     /// Output port index on that upstream step's node.
     pub src_port: usize,
+    /// Latency compensation delay applied to this input port before the node
+    /// processes it (Plugin Delay Compensation / PDC).  Computed by
+    /// `GraphCompiler` from each node's `AudioNode::latency_samples()`: the
+    /// shorter input paths converging at this step are padded with this many
+    /// samples of delay so signals stay phase-aligned.  Zero means no delay.
+    pub delay_samples: u32,
 }
 
 // ── Step ──────────────────────────────────────────────────────────────────────
@@ -83,6 +89,19 @@ pub struct ExecutionPlan {
 
     /// Number of audio channels (typically 2 for stereo).
     pub num_channels: usize,
+
+    /// Intrinsic processing latency of each step's node, in samples.
+    /// `step_latencies[i]` is the value returned by the corresponding
+    /// `AudioNode::latency_samples()` at compile time.
+    pub step_latencies: Vec<u32>,
+
+    /// Cumulative latency at the *output* of each step, in samples.
+    /// Defined recursively as:
+    ///   `cumulative[i] = step_latencies[i] + max over inputs of cumulative[input.src_step]`
+    /// (0 for source nodes / unconnected inputs).
+    /// Used by the engine to report the total end-to-end engine latency at the
+    /// master step.
+    pub step_cumulative_latency: Vec<u32>,
 }
 
 impl ExecutionPlan {
@@ -95,7 +114,17 @@ impl ExecutionPlan {
             sample_rate,
             max_block_size: 512,
             num_channels: 2,
+            step_latencies: Vec::new(),
+            step_cumulative_latency: Vec::new(),
         }
+    }
+
+    /// Engine-wide end-to-end latency in samples (= cumulative latency at the
+    /// master step).  Returns 0 if the plan is empty.
+    pub fn total_latency_samples(&self) -> u32 {
+        self.master_step()
+            .and_then(|i| self.step_cumulative_latency.get(i).copied())
+            .unwrap_or(0)
     }
 
     /// The index of the final "master" step (the last step in the plan),
@@ -158,12 +187,15 @@ impl ExecutionPlanBuilder {
     }
 
     pub fn build(self) -> ExecutionPlan {
+        let n = self.steps.len();
         ExecutionPlan {
             steps: self.steps,
             modulation: self.modulation,
             sample_rate: self.sample_rate,
             max_block_size: self.max_block_size,
             num_channels: self.num_channels,
+            step_latencies: vec![0; n],
+            step_cumulative_latency: vec![0; n],
         }
     }
 }

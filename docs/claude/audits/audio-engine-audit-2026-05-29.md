@@ -116,9 +116,16 @@ Pour un projet stéréo de 5 minutes : ~115 MB clonés par tour de bouton, plus 
 Mélanger des clips 44.1 kHz à 48 kHz produit un aliasing audible.
 **Fix appliqué** : interpolation linéaire entre `samples[idx0]` et `samples[idx0+1]` avec fraction `frac = src_pos - floor(src_pos)`. Quand les taux sont identiques (`sr_ratio == 1.0`), `frac == 0.0` et le comportement est identique à l'avant. Reste idéalement à remplacer par un resampler polyphase pour une qualité broadcast.
 
-#### I4 — Pas de compensation de latence (PDC)
-**Fichiers** : [audio_graph/node.rs:168](../../../src-tauri/src/audio_graph/node.rs#L168), [audio_graph/compiler.rs](../../../src-tauri/src/audio_graph/compiler.rs)
-`latency_samples()` existe mais n'est jamais lu par le compiler. Aucune compensation de chemin. Indispensable pour tout plugin avec lookahead.
+#### I4 — Pas de compensation de latence (PDC) ✅ **CORRIGÉ**
+**Fichiers** : [audio_graph/node.rs:168](../../../src-tauri/src/audio_graph/node.rs#L168), [audio_graph/execution_plan.rs](../../../src-tauri/src/audio_graph/execution_plan.rs), [audio_graph/compiler.rs](../../../src-tauri/src/audio_graph/compiler.rs), [audio_graph/scheduler.rs](../../../src-tauri/src/audio_graph/scheduler.rs)
+`latency_samples()` existait mais n'était jamais lu. Sur un graphe avec un chemin contenant un nœud à latence (lookahead, linear-phase EQ), les chemins parallèles arrivaient à la sommation décalés.
+**Fix appliqué** :
+- `InputConnection` gagne un champ `delay_samples: u32`. `ExecutionPlan` expose `step_latencies` et `step_cumulative_latency`, plus `total_latency_samples()`.
+- `GraphCompiler::compute_latency_compensation` (appelé après l'instanciation des nœuds) marche le plan en ordre topologique : pour chaque step, `arrival = max(cumulative_latency[c.src_step])` sur les inputs, chaque `delay_samples = arrival - cumulative_latency[c.src_step]`, puis `cumulative_latency[i] = arrival + latency_samples()`.
+- `GraphScheduler` pré-alloue une `DelayLine` (ring buffer par canal + `AudioBuffer` de sortie scratch) pour chaque `(step, port)` avec `delay_samples > 0`. `run_steps` pousse l'input gathered à travers la delay line et redirige le pointeur de scratch vers le buffer de sortie. Aucune allocation sur le thread audio.
+- Tests : `pdc_aligns_two_parallel_paths`, `pdc_zero_latency_is_passthrough`, `pdc_delay_carries_across_block_boundary` dans [scheduler.rs](../../../src-tauri/src/audio_graph/scheduler.rs) valident l'alignement d'impulsions, le pass-through quand aucun nœud n'a de latence, et la persistance correcte du delay au travers des frontières de block.
+
+**Restes** : la modulation lit toujours le block-rate du source step sans alignement PDC (concession Phase 3 / R2). Acceptable tant que la modulation reste block-rate ; à revoir quand la modulation sample-accurate sera implémentée.
 
 #### I5 — Mute/solo via recompile complet
 **Fichiers** : [engine_gateway/api.rs:340](../../../src-tauri/src/engine_gateway/api.rs#L340), [audio_graph/graph.rs:243](../../../src-tauri/src/audio_graph/graph.rs#L243)

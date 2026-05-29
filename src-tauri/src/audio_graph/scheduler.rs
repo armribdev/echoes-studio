@@ -42,6 +42,72 @@ use crate::audio_graph::node::{AudioNode, NodeId, TransportInfo};
 /// Actual size is `max(MIN_INPUT_PTR_SCRATCH, plan.max_input_ports())`.
 const MIN_INPUT_PTR_SCRATCH: usize = 32;
 
+// ── PDC delay line ────────────────────────────────────────────────────────────
+
+/// Per-channel ring buffer used to delay one input port for latency
+/// compensation.  Allocated at scheduler construction; `process` runs entirely
+/// from pre-allocated storage.
+struct DelayLine {
+    /// One ring buffer per channel (`plan.num_channels` total).
+    rings: Vec<Vec<f32>>,
+    /// Ring capacity in samples (= delay + max_block).
+    cap: usize,
+    /// Delay in samples (> 0; zero-delay inputs don't get a `DelayLine`).
+    delay: usize,
+    /// Cursor into the ring; advances by `block_size` each `process`.
+    write_pos: usize,
+    /// Scratch output buffer; the scheduler points the node's input slot at
+    /// this instead of the upstream raw buffer.
+    out: AudioBuffer,
+}
+
+impl DelayLine {
+    fn new(num_channels: usize, delay: usize, max_block: usize) -> Self {
+        debug_assert!(delay > 0, "DelayLine with zero delay is wasteful — skip it");
+        let cap = delay + max_block;
+        DelayLine {
+            rings: (0..num_channels).map(|_| vec![0.0; cap]).collect(),
+            cap,
+            delay,
+            write_pos: 0,
+            out: AudioBuffer::new(num_channels, max_block),
+        }
+    }
+
+    /// Push one block from `src` into the ring; read out the same block delayed
+    /// by `self.delay` samples into `self.out`.  Allocation-free.
+    fn process(&mut self, src: &AudioBuffer, block_size: usize) {
+        let cap = self.cap;
+        let delay = self.delay;
+        let write_pos = self.write_pos;
+
+        let n_out = self.out.num_channels;
+        for ch in 0..n_out {
+            let src_ch_idx = ch.min(src.num_channels.saturating_sub(1));
+            let src_ch = src.channel(src_ch_idx);
+            let ring = &mut self.rings[ch];
+            let dst_ch = self.out.channel_mut(ch);
+            for i in 0..block_size {
+                let w = (write_pos + i) % cap;
+                ring[w] = src_ch[i];
+                let r = (w + cap - delay) % cap;
+                dst_ch[i] = ring[r];
+            }
+        }
+        self.write_pos = (write_pos + block_size) % cap;
+    }
+
+    fn reset(&mut self) {
+        for ring in self.rings.iter_mut() {
+            for s in ring.iter_mut() {
+                *s = 0.0;
+            }
+        }
+        self.write_pos = 0;
+        self.out.clear();
+    }
+}
+
 // ── Modulation action (pre-compiled) ──────────────────────────────────────────
 
 /// One modulation connection, resolved to step indices at compile time.
@@ -91,6 +157,13 @@ pub struct GraphScheduler {
     /// is at execution step `i`.  Built once at construction; never mutated
     /// during the audio callback.
     mod_actions_by_step: Vec<Vec<CompiledModAction>>,
+
+    /// Plugin Delay Compensation lines, indexed `[step_idx][port_idx]`.
+    /// `None` means the input port has zero compensation delay (the common
+    /// case) and is passed through directly.  When `Some`, the scheduler
+    /// pushes the upstream buffer through the line and points the node's
+    /// input at the delay's internal `out` buffer.
+    delay_lines: Vec<Vec<Option<DelayLine>>>,
 }
 
 // SAFETY:  GraphScheduler is only ever used on the audio thread.
@@ -162,6 +235,27 @@ impl GraphScheduler {
             });
         }
 
+        // ── Pre-allocate PDC delay lines ──────────────────────────────────────
+        // Walk every step's input connections; allocate a `DelayLine` for each
+        // port that the compiler tagged with `delay_samples > 0`.
+        let delay_lines: Vec<Vec<Option<DelayLine>>> = plan
+            .steps
+            .iter()
+            .map(|step| {
+                step.input_connections
+                    .iter()
+                    .map(|conn_opt| match conn_opt {
+                        Some(conn) if conn.delay_samples > 0 => Some(DelayLine::new(
+                            num_channels,
+                            conn.delay_samples as usize,
+                            max_block,
+                        )),
+                        _ => None,
+                    })
+                    .collect()
+            })
+            .collect();
+
         GraphScheduler {
             plan,
             processors,
@@ -169,6 +263,7 @@ impl GraphScheduler {
             silence_buffer,
             input_ptr_scratch,
             mod_actions_by_step,
+            delay_lines,
         }
     }
 
@@ -187,6 +282,7 @@ impl GraphScheduler {
             silence_buffer: AudioBuffer::new(2, 512),
             input_ptr_scratch: vec![std::ptr::null(); MIN_INPUT_PTR_SCRATCH],
             mod_actions_by_step: Vec::new(),
+            delay_lines: Vec::new(),
         }
     }
 
@@ -263,6 +359,33 @@ impl GraphScheduler {
                     },
                     None => &self.silence_buffer as *const AudioBuffer,
                 };
+            }
+
+            // ── Apply PDC delay lines ──────────────────────────────────────────
+            // For every input port the compiler tagged with non-zero
+            // `delay_samples`, push the gathered upstream buffer through its
+            // delay line and redirect the input pointer to the line's internal
+            // `out` buffer.
+            //
+            // SAFETY: `self.delay_lines[step_idx]` is disjoint from any
+            // `self.output_buffers[src_step]` (different fields), and from
+            // `self.output_buffers[step_idx]` (different fields), so the
+            // mutable borrow here does not alias any input we read above or
+            // the output we'll write below.
+            let dl_outer_ptr: *mut Vec<Vec<Option<DelayLine>>> =
+                &mut self.delay_lines as *mut _;
+            let step_delays: &mut Vec<Option<DelayLine>> = unsafe {
+                let outer: &mut Vec<Vec<Option<DelayLine>>> = &mut *dl_outer_ptr;
+                &mut outer[step_idx]
+            };
+            for (port, dl_opt) in step_delays.iter_mut().enumerate() {
+                if let Some(dl) = dl_opt {
+                    // SAFETY: scratch[port] was filled above with a pointer to a
+                    // live AudioBuffer (either an upstream output or silence).
+                    let src_ref: &AudioBuffer = unsafe { &*self.input_ptr_scratch[port] };
+                    dl.process(src_ref, transport.block_size);
+                    self.input_ptr_scratch[port] = &dl.out as *const AudioBuffer;
+                }
             }
 
             // ── Build &[&AudioBuffer] from pointer scratch ─────────────────────
@@ -395,5 +518,299 @@ impl GraphScheduler {
             }
         }
         self.silence_buffer.clear();
+        for step_lines in &mut self.delay_lines {
+            for dl_opt in step_lines.iter_mut() {
+                if let Some(dl) = dl_opt {
+                    dl.reset();
+                }
+            }
+        }
+    }
+}
+
+// ── Tests ─────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::audio_graph::buffer::AudioBuffer;
+    use crate::audio_graph::execution_plan::{
+        ExecutionPlan, ExecutionStep, InputConnection,
+    };
+    use crate::audio_graph::modulation::ModulationMap;
+    use crate::audio_graph::node::{AudioNode, NodeId, PrepareContext, TransportInfo};
+    use crate::audio_graph::compiler::CompiledGraph;
+    use std::collections::HashMap;
+
+    /// Source node: emits a stored sample on frame 0 of the next block, then silence.
+    /// Used to inject a single impulse to verify PDC alignment.
+    struct ImpulseSource {
+        id: NodeId,
+        pending: f32,
+    }
+    impl ImpulseSource {
+        fn new(id: u64, value: f32) -> Self {
+            ImpulseSource { id: NodeId(id), pending: value }
+        }
+    }
+    impl AudioNode for ImpulseSource {
+        fn node_id(&self) -> NodeId { self.id }
+        fn num_input_ports(&self) -> usize { 0 }
+        fn num_output_ports(&self) -> usize { 1 }
+        fn prepare(&mut self, _ctx: PrepareContext) {}
+        fn process(
+            &mut self,
+            _inputs: &[&AudioBuffer],
+            outputs: &mut [AudioBuffer],
+            _transport: &TransportInfo,
+        ) {
+            let buf = &mut outputs[0];
+            for ch in 0..buf.num_channels {
+                let s = buf.channel_mut(ch);
+                if !s.is_empty() {
+                    s[0] = self.pending;
+                }
+            }
+            self.pending = 0.0;
+        }
+        fn reset(&mut self) {}
+    }
+
+    /// Single-input pass-through node that reports a fixed intrinsic latency
+    /// (but does not actually delay its signal).  Lets the test verify that
+    /// the compiler/scheduler insert compensation downstream of *other* paths.
+    struct LatencyReporter {
+        id: NodeId,
+        latency: u32,
+    }
+    impl LatencyReporter {
+        fn new(id: u64, latency: u32) -> Self {
+            LatencyReporter { id: NodeId(id), latency }
+        }
+    }
+    impl AudioNode for LatencyReporter {
+        fn node_id(&self) -> NodeId { self.id }
+        fn num_input_ports(&self) -> usize { 1 }
+        fn num_output_ports(&self) -> usize { 1 }
+        fn prepare(&mut self, _ctx: PrepareContext) {}
+        fn process(
+            &mut self,
+            inputs: &[&AudioBuffer],
+            outputs: &mut [AudioBuffer],
+            _transport: &TransportInfo,
+        ) {
+            outputs[0].copy_from(inputs[0]);
+        }
+        fn reset(&mut self) {}
+        fn latency_samples(&self) -> u32 { self.latency }
+    }
+
+    /// Two-input summing node — joins parallel paths so PDC must align them.
+    struct Sum2 { id: NodeId }
+    impl Sum2 { fn new(id: u64) -> Self { Sum2 { id: NodeId(id) } } }
+    impl AudioNode for Sum2 {
+        fn node_id(&self) -> NodeId { self.id }
+        fn num_input_ports(&self) -> usize { 2 }
+        fn num_output_ports(&self) -> usize { 1 }
+        fn prepare(&mut self, _ctx: PrepareContext) {}
+        fn process(
+            &mut self,
+            inputs: &[&AudioBuffer],
+            outputs: &mut [AudioBuffer],
+            _transport: &TransportInfo,
+        ) {
+            outputs[0].copy_from(inputs[0]);
+            outputs[0].mix_from(inputs[1], 1.0);
+        }
+        fn reset(&mut self) {}
+    }
+
+    /// Build a tiny plan + processors with the topology:
+    ///
+    /// ```text
+    ///   src_a ──► reporter(latency=N) ──┐
+    ///                                    ├──► sum ──► (master output)
+    ///   src_b ──────────────────────────┘
+    /// ```
+    ///
+    /// `sum` has two inputs at different cumulative latencies — the scheduler
+    /// must delay `src_b` by `N` samples so the two impulses land in the same
+    /// output frame.
+    fn build_test_compiled(latency: u32, block: usize) -> CompiledGraph {
+        let steps = vec![
+            // 0: src_a
+            ExecutionStep {
+                node_id: NodeId(1),
+                input_connections: vec![],
+                num_outputs: 1,
+            },
+            // 1: src_b
+            ExecutionStep {
+                node_id: NodeId(2),
+                input_connections: vec![],
+                num_outputs: 1,
+            },
+            // 2: reporter (consumes src_a)
+            ExecutionStep {
+                node_id: NodeId(3),
+                input_connections: vec![Some(InputConnection {
+                    src_step: 0,
+                    src_port: 0,
+                    delay_samples: 0,
+                })],
+                num_outputs: 1,
+            },
+            // 3: sum (consumes reporter, src_b)
+            ExecutionStep {
+                node_id: NodeId(4),
+                input_connections: vec![
+                    Some(InputConnection { src_step: 2, src_port: 0, delay_samples: 0 }),
+                    Some(InputConnection { src_step: 1, src_port: 0, delay_samples: 0 }),
+                ],
+                num_outputs: 1,
+            },
+        ];
+
+        let mut plan = ExecutionPlan {
+            steps,
+            modulation: ModulationMap::new(),
+            sample_rate: 48_000.0,
+            max_block_size: block,
+            num_channels: 2,
+            step_latencies: vec![0; 4],
+            step_cumulative_latency: vec![0; 4],
+        };
+
+        let processors: Vec<Box<dyn AudioNode>> = vec![
+            Box::new(ImpulseSource::new(1, 1.0)),
+            Box::new(ImpulseSource::new(2, 1.0)),
+            Box::new(LatencyReporter::new(3, latency)),
+            Box::new(Sum2::new(4)),
+        ];
+
+        // Replicate the compiler's PDC pass: arrival[i] = max input cumlat;
+        // input.delay = arrival - cumlat[src]; cumlat[i] = intrinsic + arrival.
+        for i in 0..plan.steps.len() {
+            plan.step_latencies[i] = processors[i].latency_samples();
+        }
+        for i in 0..plan.steps.len() {
+            let arrival = plan.steps[i]
+                .input_connections
+                .iter()
+                .filter_map(|c| c.as_ref().map(|c| plan.step_cumulative_latency[c.src_step]))
+                .max()
+                .unwrap_or(0);
+            for conn_opt in plan.steps[i].input_connections.iter_mut() {
+                if let Some(conn) = conn_opt {
+                    let src_lat = plan.step_cumulative_latency[conn.src_step];
+                    conn.delay_samples = arrival.saturating_sub(src_lat);
+                }
+            }
+            plan.step_cumulative_latency[i] =
+                plan.step_latencies[i].saturating_add(arrival);
+        }
+
+        CompiledGraph {
+            plan: Arc::new(plan),
+            processors,
+            meter_cells: HashMap::new(),
+            route_cells: HashMap::new(),
+        }
+    }
+
+    fn run_one_block(sched: &mut GraphScheduler, block: usize) -> Vec<f32> {
+        let transport = TransportInfo {
+            is_playing: true,
+            position_samples: 0,
+            position_seconds: 0.0,
+            bpm: 120.0,
+            sample_rate: 48_000.0,
+            block_size: block,
+        };
+        let master_step = sched.plan.master_step().unwrap();
+        sched.run_steps(&transport);
+        // Read sum's output buffer directly (port 0) and return left channel.
+        sched.output_buffers[master_step][0].channel(0).to_vec()
+    }
+
+    #[test]
+    fn pdc_aligns_two_parallel_paths() {
+        let latency = 5u32;
+        let block = 32usize;
+        let compiled = build_test_compiled(latency, block);
+
+        // Confirm the compiler-side computation produced the expected delays:
+        // src_b (step 1) should be delayed by `latency` samples; the reporter
+        // path is unchanged.
+        let sum_step = &compiled.plan.steps[3];
+        assert_eq!(sum_step.input_connections[0].as_ref().unwrap().delay_samples, 0);
+        assert_eq!(sum_step.input_connections[1].as_ref().unwrap().delay_samples, latency);
+        assert_eq!(compiled.plan.step_cumulative_latency[3], latency);
+
+        let mut sched = GraphScheduler::new(compiled);
+
+        // First block: src_a's impulse hits the reporter at frame 0 → reaches
+        // sum's input 0 at frame 0.  src_b's impulse is delayed by `latency`,
+        // so it lands on sum's input 1 at frame `latency`.  Because the sources
+        // are not aligned by intent (both fire at frame 0), the *naive* sum
+        // without PDC would put both impulses at frame 0.  With PDC active,
+        // the src_b impulse is pushed to frame `latency` to match the path
+        // through the latent node.
+        let out = run_one_block(&mut sched, block);
+
+        assert_eq!(out[0], 1.0, "src_a impulse must arrive at frame 0");
+        for i in 1..(latency as usize) {
+            assert_eq!(out[i], 0.0, "silence expected at frame {i} (waiting on delayed path)");
+        }
+        assert_eq!(out[latency as usize], 1.0, "src_b impulse must arrive at frame `latency`");
+        for i in (latency as usize + 1)..block {
+            assert_eq!(out[i], 0.0, "silence expected after both impulses at frame {i}");
+        }
+    }
+
+    #[test]
+    fn pdc_zero_latency_is_passthrough() {
+        let block = 16usize;
+        let compiled = build_test_compiled(0, block);
+
+        // No node reports latency → every input.delay_samples must be 0 and
+        // the scheduler must not allocate any DelayLines.
+        for step in compiled.plan.steps.iter() {
+            for conn in step.input_connections.iter().flatten() {
+                assert_eq!(conn.delay_samples, 0);
+            }
+        }
+        let mut sched = GraphScheduler::new(compiled);
+        assert!(sched.delay_lines.iter().all(|s| s.iter().all(|d| d.is_none())));
+
+        let out = run_one_block(&mut sched, block);
+        // Both src_a and src_b impulses fire at frame 0 → sum = 2.0.
+        assert_eq!(out[0], 2.0);
+        for s in &out[1..] {
+            assert_eq!(*s, 0.0);
+        }
+    }
+
+    #[test]
+    fn pdc_delay_carries_across_block_boundary() {
+        // Latency larger than one block — the delayed impulse must surface on
+        // a subsequent block.
+        let latency = 10u32;
+        let block = 4usize;
+        let compiled = build_test_compiled(latency, block);
+        let mut sched = GraphScheduler::new(compiled);
+
+        let b0 = run_one_block(&mut sched, block);
+        let b1 = run_one_block(&mut sched, block);
+        let b2 = run_one_block(&mut sched, block);
+
+        // src_a's impulse fired only on the first block (ImpulseSource::pending
+        // is consumed), so b1 / b2 contain only the delayed src_b impulse.
+        assert_eq!(b0[0], 1.0);
+        let delayed_block = (latency as usize) / block;
+        let delayed_offset = (latency as usize) % block;
+        let stream = [b0, b1, b2];
+        assert_eq!(stream[delayed_block][delayed_offset], 1.0,
+            "delayed src_b impulse must land at absolute frame {latency}");
     }
 }
