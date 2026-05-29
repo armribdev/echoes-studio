@@ -127,9 +127,9 @@ Mélanger des clips 44.1 kHz à 48 kHz produit un aliasing audible.
 
 **Restes** : la modulation lit toujours le block-rate du source step sans alignement PDC (concession Phase 3 / R2). Acceptable tant que la modulation reste block-rate ; à revoir quand la modulation sample-accurate sera implémentée.
 
-#### I5 — Mute/solo via recompile complet
-**Fichiers** : [engine_gateway/api.rs:340](../../../src-tauri/src/engine_gateway/api.rs#L340), [audio_graph/graph.rs:243](../../../src-tauri/src/audio_graph/graph.rs#L243)
-Devrait être un atomique de gain lu par-block. Cas particulier de C3.
+#### I5 — Mute/solo via recompile complet ✅ **CORRIGÉ** (avec C3)
+**Fichiers** : [engine_gateway/api.rs:348](../../../src-tauri/src/engine_gateway/api.rs#L348), [engine_gateway/api.rs:378](../../../src-tauri/src/engine_gateway/api.rs#L378), [audio_graph/nodes/track_gain.rs](../../../src-tauri/src/audio_graph/nodes/track_gain.rs)
+Cas particulier de C3, résolu par le même fix : `TrackGainNode` lit `volume × mute × solo × any_solo` depuis ses atomiques par-block. Les handlers `MUTE_TRACK` et `SOLO_TRACK` flippent ces atomiques (`LiveParams::set_track_muted`, `set_track_solo_exclusive`) **sans appeler `recompile_if_needed`**. Le solo est exclusif (un seul track à la fois) et met à jour le flag global `any_solo` consulté par toutes les pistes.
 
 #### I6 — Reset modulation conditionnel
 **Fichiers** : [audio_graph/scheduler.rs:288](../../../src-tauri/src/audio_graph/scheduler.rs#L288), [audio_graph/nodes/gain.rs:60](../../../src-tauri/src/audio_graph/nodes/gain.rs#L60)
