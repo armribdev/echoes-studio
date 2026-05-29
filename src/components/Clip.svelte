@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount, createEventDispatcher } from 'svelte';
 	import { selection } from '../stores/selection';
+	import { keyboardFocus } from '../stores/keyboardFocus';
 
 	export let id: string;
 	export let start: number;
@@ -112,6 +113,8 @@
 	function onMouseDown(e: MouseEvent) {
 		e.stopPropagation();
 		e.preventDefault();
+
+		keyboardFocus.setTimeline();
 
 		selection.update((sel) => {
 			const next = new Set(sel);

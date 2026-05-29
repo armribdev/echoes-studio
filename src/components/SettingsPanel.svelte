@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { preferences, settingsPanelOpen } from '../stores/preferences';
+	import { keyboardFocus } from '../stores/keyboardFocus';
 	import type { Preferences } from '../stores/preferences';
 	import { onMount, onDestroy } from 'svelte';
 	import CustomSelect from './CustomSelect.svelte';
@@ -196,6 +197,7 @@
 
 		preferences.set(draft);
 		settingsPanelOpen.set(false);
+		keyboardFocus.setTimeline();
 	}
 
 	function cancelAndClose() {
@@ -206,6 +208,7 @@
 		// applyDeviceChange with the original device → clean revert.
 		// (prevSRBufKey is left as-is; liveApplyStreamSettings handles the rest.)
 		settingsPanelOpen.set(false);
+		keyboardFocus.setTimeline();
 	}
 
 	function resetSection() {
@@ -261,6 +264,7 @@
 
 	// Start / stop the rAF loop in sync with panel visibility.
 	$: if ($settingsPanelOpen) {
+		keyboardFocus.setSettings();
 		if (!rafRunning) {
 			rafRunning = true;
 			rafId = requestAnimationFrame(decayLoop);

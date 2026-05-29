@@ -11,6 +11,7 @@
 	// The store then stays alive for the entire app lifetime.
 	import { engineProject } from '../frontend/store/engineStore';
 	import { registerShortcuts } from '../frontend/shortcuts/keymap';
+	import { isEditingText } from '../frontend/shortcuts/context';
 	import { connectTransportBridge } from '../frontend/transport/bridge';
 	import SettingsPanel from '../components/SettingsPanel.svelte';
 	import { settingsPanelOpen } from '../stores/preferences';
@@ -23,8 +24,7 @@
 		const unregisterShortcuts = registerShortcuts();
 
 		function handleGlobalKey(e: KeyboardEvent) {
-			const target = e.target as HTMLElement;
-			if (target.isContentEditable || target.tagName === 'INPUT') return;
+			if (isEditingText(e.target)) return;
 
 			if ((e.ctrlKey || e.metaKey) && e.key === ',') {
 				e.preventDefault();

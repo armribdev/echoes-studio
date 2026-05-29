@@ -18,6 +18,7 @@ import { undoCommand, redoCommand, play, pause } from '../commands/dispatcher';
 import { transport } from '../../stores/transport';
 import { notify } from '../../stores/status';
 import { exportTrigger, exportMp3Trigger } from '../../stores/exportBus';
+import { isEditingText, shouldHandleGlobalHistoryShortcuts } from './context';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -121,18 +122,6 @@ const SHORTCUTS: Shortcut[] = [
 
 // ── Matching logic ────────────────────────────────────────────────────────────
 
-/** Returns true when the event target is an editable element. */
-function isEditingText(target: EventTarget | null): boolean {
-  if (!(target instanceof Element)) return false;
-  const tag = target.tagName.toLowerCase();
-  return (
-    tag === 'input' ||
-    tag === 'textarea' ||
-    tag === 'select' ||
-    (target as HTMLElement).isContentEditable
-  );
-}
-
 /**
  * True when the event exactly satisfies a shortcut's key + modifiers.
  *
@@ -170,11 +159,16 @@ export function registerShortcuts(): () => void {
     if (isEditingText(e.target)) return;
 
     for (const shortcut of SHORTCUTS) {
-      if (matches(e, shortcut)) {
-        e.preventDefault();
-        shortcut.action();
-        return; // first match wins
-      }
+      if (!matches(e, shortcut)) continue;
+
+      // Undo/redo are handled locally by the piano roll when it is focused.
+      const isHistory =
+        shortcut.key === 'z' || shortcut.key === 'y';
+      if (isHistory && !shouldHandleGlobalHistoryShortcuts()) continue;
+
+      e.preventDefault();
+      shortcut.action();
+      return; // first match wins
     }
   };
 

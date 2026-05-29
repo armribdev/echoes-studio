@@ -23,6 +23,8 @@
 	import { pianoRollStore } from '../stores/pianoRoll';
 	import { selectedTrack } from '../stores/selectedTrack';
 	import { bottomPanel } from '../stores/bottomPanel';
+	import { shouldHandleTimelineShortcuts } from '../frontend/shortcuts/context';
+	import { keyboardFocus } from '../stores/keyboardFocus';
 
 	const TRACK_COLORS = [
 		'#4d96ff', '#ff6b6b', '#6bcb77', '#ffd93d',
@@ -369,11 +371,13 @@
 	}
 
 	function handleRulerMouseDown(event: MouseEvent) {
+		keyboardFocus.setTimeline();
 		beginScrub(event, event.currentTarget as HTMLElement);
 	}
 
 	function handleTracksMouseDown(event: MouseEvent) {
 		if (dragging) return;
+		keyboardFocus.setTimeline();
 		beginScrub(event, event.currentTarget as HTMLElement);
 		selection.set(new Set());
 	}
@@ -444,6 +448,7 @@
 	}
 
 	function handleClipContextMenu(e: CustomEvent<{ id: string; trackIndex: number; x: number; y: number }>) {
+		keyboardFocus.setTimeline();
 		const { id, x, y } = e.detail;
 		// If the right-clicked clip is not in the selection, make it the sole selection.
 		if (!$selection.has(id)) {
@@ -454,12 +459,12 @@
 	}
 
 	function handleKeyDown(e: KeyboardEvent) {
-		const target = e.target as HTMLElement;
-		if (target.isContentEditable || target.tagName === 'INPUT') return;
+		if (!shouldHandleTimelineShortcuts(e)) return;
 
 		const ctrl = e.ctrlKey || e.metaKey;
 
 		if ((e.key === 'Delete' || e.key === 'Backspace') && !ctrl) {
+			e.preventDefault();
 			deleteSelected();
 		} else if (ctrl && !e.shiftKey && !e.altKey) {
 			if (e.key === 'c') {
@@ -523,11 +528,13 @@
 		if (!track) return;
 		const clip = track.midi_clips?.find((c) => c.id === id);
 		if (!clip) return;
+		keyboardFocus.setPianoRoll();
 		pianoRollStore.openPianoRoll(track.id, id, track.name, TRACK_COLORS[trackIndex % TRACK_COLORS.length], clip.notes ?? []);
 		bottomPanel.openTab('pianoroll');
 	}
 
 	function onMidiClipContextMenu(e: CustomEvent<{ id: string; trackIndex: number; x: number; y: number }>) {
+		keyboardFocus.setTimeline();
 		const { id, x, y } = e.detail;
 		// Reuse clip context menu with a remove action handled via selection
 		selection.update((sel) => { const s = new Set(sel); s.clear(); s.add(id); return s; });
@@ -740,7 +747,7 @@
 					bind:pan={tracks[trackIndex].pan}
 					peakL={($trackLevels[track.id]?.[0]) ?? 0}
 					peakR={($trackLevels[track.id]?.[1]) ?? 0}
-					on:select={() => { selectedTrackIndex = trackIndex; }}
+					on:select={() => { selectedTrackIndex = trackIndex; keyboardFocus.setTimeline(); }}
 					on:contextmenu={(e) => { contextMenu = { x: e.detail.clientX, y: e.detail.clientY, trackId: track.id, trackName: track.name, trackIndex }; }}
 					on:mutetoggle={() => handleMuteToggle(trackIndex)}
 					on:solotoggle={() => handleSoloToggle(trackIndex)}
@@ -750,6 +757,7 @@
 				on:openpianoroll={() => {
 					const firstClip = track.midi_clips?.[0];
 					if (firstClip) {
+						keyboardFocus.setPianoRoll();
 						pianoRollStore.openPianoRoll(track.id, firstClip.id, track.name, TRACK_COLORS[trackIndex % TRACK_COLORS.length], firstClip.notes ?? []);
 						bottomPanel.openTab('pianoroll');
 					} else {

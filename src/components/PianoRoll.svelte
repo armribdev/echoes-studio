@@ -8,6 +8,8 @@
 	import type { MidiNote } from '../types/global';
 	import { engineProject } from '../frontend/store/engineStore';
 	import { setClipMidiNotes, undoCommand, redoCommand } from '../frontend/commands/dispatcher';
+	import { shouldHandlePianoRollShortcuts, hasNoModifiers } from '../frontend/shortcuts/context';
+	import { keyboardFocus } from '../stores/keyboardFocus';
 
 	// ── Constantes de rendu ────────────────────────────────────────────────────
 	const NOTE_H        = 16;
@@ -635,29 +637,45 @@
 	// ── Keyboard ─────────────────────────────────────────────────────────────
 
 	function onKeydown(e: KeyboardEvent) {
-		if (!open) return;
-		const tag = (e.target as HTMLElement)?.tagName;
-		if (tag === 'INPUT' || tag === 'SELECT') return;
+		if (!shouldHandlePianoRollShortcuts(e)) return;
 
-		if      (e.key === 'd' || e.key === 'D') pianoRollStore.setMode('draw');
-		else if (e.key === 'v' || e.key === 'V' || e.key === 's' || e.key === 'S') pianoRollStore.setMode('select');
-		else if (e.key === 'e' || e.key === 'E') pianoRollStore.setMode('erase');
-		else if (e.key === 'Escape') {
+		let handled = false;
+
+		if (hasNoModifiers(e)) {
+			if      (e.key === 'd' || e.key === 'D') { pianoRollStore.setMode('draw');   handled = true; }
+			else if (e.key === 'v' || e.key === 'V' || e.key === 's' || e.key === 'S') { pianoRollStore.setMode('select'); handled = true; }
+			else if (e.key === 'e' || e.key === 'E') { pianoRollStore.setMode('erase');  handled = true; }
+		}
+
+		if (!handled && e.key === 'Escape') {
 			const hasSel = get(pianoRollStore).selectedNoteIds.size > 0;
 			if (hasSel) pianoRollStore.clearSelection();
 			else pianoRollStore.closePianoRoll();
+			handled = true;
 		}
-		else if ((e.key === 'Delete' || e.key === 'Backspace') && tag !== 'INPUT') {
+		else if (!handled && (e.key === 'Delete' || e.key === 'Backspace')) {
 			e.preventDefault();
 			pianoRollStore.deleteSelectedNotes();
 			commitNotes();
+			handled = true;
 		}
-		else if ((e.ctrlKey || e.metaKey) && e.key === 'a') { e.preventDefault(); pianoRollStore.selectAll(); }
-		else if ((e.ctrlKey || e.metaKey) && e.key === 'z') {
+		else if (!handled && (e.ctrlKey || e.metaKey) && e.key === 'a') {
+			e.preventDefault();
+			pianoRollStore.selectAll();
+			handled = true;
+		}
+		else if (!handled && (e.ctrlKey || e.metaKey) && e.key === 'z') {
 			e.preventDefault();
 			if (e.shiftKey) redoCommand(); else undoCommand();
+			handled = true;
 		}
-		else if ((e.ctrlKey || e.metaKey) && e.key === 'y') { e.preventDefault(); redoCommand(); }
+		else if (!handled && (e.ctrlKey || e.metaKey) && e.key === 'y') {
+			e.preventDefault();
+			redoCommand();
+			handled = true;
+		}
+
+		if (handled) e.stopPropagation();
 	}
 
 	function onWindowMousemove(e: MouseEvent) {
@@ -825,6 +843,7 @@
 	class="piano-roll"
 	role="region"
 	aria-label="Piano Roll"
+	on:mousedown={() => keyboardFocus.setPianoRoll()}
 >
 	<!-- Toolbar -->
 	<div class="toolbar">
