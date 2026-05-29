@@ -425,9 +425,9 @@
 		);
 	}
 
-	function handleRulerMouseDown(event: MouseEvent) {
+	function handleRulerMouseDown(event: CustomEvent<MouseEvent>) {
 		if (get(keyboardFocus) !== 'piano-roll') keyboardFocus.setTimeline();
-		beginScrub(event, arrangeRulerEl);
+		beginScrub(event.detail, arrangeRulerEl);
 	}
 
 	function handleTracksMouseDown(event: MouseEvent) {

@@ -42,6 +42,7 @@
 	import { fitEditScrollForNotes, pitchRangeScrollTop } from '../frontend/pianoRoll/editScroll';
 	import TimeRuler from './TimeRuler.svelte';
 	import Playhead from './Playhead.svelte';
+	import ZoomScrollbar from './ZoomScrollbar.svelte';
 	import { RULER_HEIGHT } from '../frontend/timeRuler/constants';
 	const KEYS_WIDTH    = 64;
 	const VEL_H         = 72;
@@ -71,6 +72,13 @@
 
 	let scrollLeft = 0;
 	let scrollTop  = 0;
+
+	// ── Scrollbars personnalisés ────────────────────────────────────────────────
+	let hScrollStart = 0;
+	let hScrollEnd   = 1;
+	let vScrollStart = 0;
+	let vScrollEnd   = 1;
+	let hTotalBeats  = 1; // beats totaux dans le canvas (pour zoom cohérent)
 
 	// Hover (ghost note + position indicator)
 	let hoverBeat  = -1;
@@ -448,6 +456,7 @@
 		}
 		setSize(canvasGrid, w, totalH);
 		if (canvasVel) setSize(canvasVel, w, VEL_H);
+		if (editMode) updateScrollbars();
 	}
 
 	function noteRowH(): number {
@@ -990,6 +999,97 @@
 		if (!editMode && get(previewPanelResizing)) return;
 		if (!editMode && !leftChanged) return;
 		scheduleGridRedraw();
+		if (editMode) updateScrollbars();
+	}
+
+	// ── Scrollbars personnalisés ──────────────────────────────────────────────
+
+	function updateScrollbars() {
+		if (!scrollContainer) return;
+		const totalW = scrollContainer.scrollWidth;
+		const vpW    = scrollContainer.clientWidth;
+		const totalH = scrollContainer.scrollHeight;
+		const vpH    = scrollContainer.clientHeight;
+
+		hTotalBeats  = zoom > 0 ? totalW / zoom : 1;
+		hScrollStart = totalW > vpW ? scrollLeft / totalW : 0;
+		hScrollEnd   = totalW > vpW ? Math.min(1, (scrollLeft + vpW) / totalW) : 1;
+		vScrollStart = totalH > vpH ? scrollTop  / totalH : 0;
+		vScrollEnd   = totalH > vpH ? Math.min(1, (scrollTop  + vpH) / totalH) : 1;
+	}
+
+	function onHScrollChange(e: CustomEvent<{ start: number; end: number; cause: string }>) {
+		if (!scrollContainer || !editMode) return;
+		const { start: ns, end: ne } = e.detail;
+
+		const totalBeats = hTotalBeats;
+		const vpW        = scrollContainer.clientWidth;
+		const leftBeat   = ns * totalBeats;
+		const rightBeat  = ne * totalBeats;
+		const spanBeats  = rightBeat - leftBeat;
+		if (spanBeats <= 0) return;
+
+		const newZoom      = Math.max(12, Math.min(400, vpW / spanBeats));
+		const newScrollLeft = Math.max(0, leftBeat * newZoom);
+
+		// Mise à jour visuelle immédiate pour fluidité
+		hScrollStart = ns;
+		hScrollEnd   = ne;
+
+		if (Math.abs(newZoom - zoom) < 0.5) {
+			// Pan pur
+			scrollContainer.scrollLeft = newScrollLeft;
+			scrollLeft = newScrollLeft;
+			if (velWrapper) velWrapper.scrollLeft = newScrollLeft;
+			scheduleGridRedraw();
+		} else {
+			// Changement de zoom
+			pianoRollStore.setZoom(newZoom);
+			tick().then(() => {
+				if (scrollContainer) {
+					scrollContainer.scrollLeft = newScrollLeft;
+					scrollLeft = newScrollLeft;
+					if (velWrapper) velWrapper.scrollLeft = newScrollLeft;
+				}
+				resizeCanvases();
+				scheduleGridRedraw();
+				updateScrollbars();
+			});
+		}
+	}
+
+	function onVScrollChange(e: CustomEvent<{ start: number; end: number; cause: string }>) {
+		if (!scrollContainer || !editMode) return;
+		const { start: ns, end: ne, cause } = e.detail;
+
+		const totalH   = scrollContainer.scrollHeight;
+		const vpH      = scrollContainer.clientHeight;
+		const thumbSz  = vScrollEnd - vScrollStart;
+
+		let newScrollTop: number;
+
+		if (cause === 'resize-start') {
+			// Poignée haute : fait défiler vers la position de début
+			newScrollTop = ns * totalH;
+			vScrollStart = ns;
+			vScrollEnd   = Math.min(1, ns + thumbSz);
+		} else if (cause === 'resize-end') {
+			// Poignée basse : fait défiler pour que la fin soit visible
+			newScrollTop = (ne - thumbSz) * totalH;
+			vScrollStart = Math.max(0, ne - thumbSz);
+			vScrollEnd   = ne;
+		} else {
+			// Pan
+			newScrollTop = ns * totalH;
+			vScrollStart = ns;
+			vScrollEnd   = ne;
+		}
+
+		newScrollTop = Math.max(0, Math.min(totalH - vpH, newScrollTop));
+		scrollContainer.scrollTop = newScrollTop;
+		scrollTop = newScrollTop;
+		if (keysContainer) keysContainer.scrollTop = newScrollTop;
+		scheduleGridRedraw();
 	}
 
 	// ── Keyboard ─────────────────────────────────────────────────────────────
@@ -1262,6 +1362,7 @@
 				{/each}
 			</div>
 			<div class="keys-vel-label">VEL</div>
+			<div class="keys-hscroll-spacer"></div>
 		</div>
 		{/if}
 
@@ -1280,28 +1381,39 @@
 				/>
 			</div>
 
-			<!-- Grid scrollable -->
-			<!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
-			<div
-				class="grid-scroll"
-				class:grid-scroll--preview={!editMode}
-				bind:this={scrollContainer}
-				on:scroll={onGridScroll}
-				on:wheel={onGridWheel}
-			>
-				<div class="grid-stack">
-					<!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
-					<canvas
-						class="grid-canvas"
-						bind:this={canvasGrid}
-						style="display:block"
-						on:mousedown={onGridMousedown}
-						on:mousemove={onGridMousemove}
-						on:mouseup={onGridMouseup}
-						on:mouseleave={onGridMouseleave}
-						on:contextmenu={onGridContextmenu}
-					></canvas>
+			<!-- Grid scrollable + scrollbar vertical -->
+			<div class="grid-and-vscroll">
+				<!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
+				<div
+					class="grid-scroll"
+					class:grid-scroll--edit={editMode}
+					class:grid-scroll--preview={!editMode}
+					bind:this={scrollContainer}
+					on:scroll={onGridScroll}
+					on:wheel={onGridWheel}
+				>
+					<div class="grid-stack">
+						<!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
+						<canvas
+							class="grid-canvas"
+							bind:this={canvasGrid}
+							style="display:block"
+							on:mousedown={onGridMousedown}
+							on:mousemove={onGridMousemove}
+							on:mouseup={onGridMouseup}
+							on:mouseleave={onGridMouseleave}
+							on:contextmenu={onGridContextmenu}
+						></canvas>
+					</div>
 				</div>
+				{#if editMode}
+				<ZoomScrollbar
+					orientation="v"
+					start={vScrollStart}
+					end={vScrollEnd}
+					on:change={onVScrollChange}
+				/>
+				{/if}
 			</div>
 
 			<!-- Velocity lane (édition uniquement) -->
@@ -1317,9 +1429,22 @@
 					style="display:block"
 				></canvas>
 			</div>
+			<!-- Scrollbar horizontale avec poignées de zoom -->
+			<ZoomScrollbar
+				orientation="h"
+				start={hScrollStart}
+				end={hScrollEnd}
+				on:change={onHScrollChange}
+			/>
 			{/if}
 
+			{#if editMode}
+			<div class="playhead-clip">
+				<Playhead x={playheadMarkerX} />
+			</div>
+			{:else}
 			<Playhead x={playheadMarkerX} />
+			{/if}
 		</div>
 	</div>
 </div>
@@ -1575,6 +1700,11 @@
 		color: #383848; text-transform: uppercase;
 	}
 
+	.keys-hscroll-spacer {
+		height: 8px;
+		flex-shrink: 0;
+	}
+
 	// ── Grille ────────────────────────────────────────────────────────────────
 
 	.grid-wrapper {
@@ -1604,8 +1734,31 @@
 		cursor: pointer;
 	}
 
+	.grid-and-vscroll {
+		flex: 1;
+		display: flex;
+		flex-direction: row;
+		overflow: hidden;
+		min-height: 0;
+	}
+
+	.playhead-clip {
+		position: absolute;
+		top: 0; left: 0;
+		right: 8px;  /* exclut la scrollbar verticale */
+		bottom: 8px; /* exclut la scrollbar horizontale */
+		pointer-events: none;
+		overflow: hidden;
+	}
+
 	.grid-scroll {
 		flex: 1; overflow: auto; position: relative;
+	}
+
+	.grid-scroll--edit {
+		overflow: scroll;
+		scrollbar-width: none;
+		&::-webkit-scrollbar { display: none; }
 	}
 
 	.grid-wrapper--preview {
