@@ -109,14 +109,13 @@
 - [x] **Système de modulation — structures de données** (`audio_graph/modulation.rs`)
   - `ModulationRoute`, `ModulationSource`, `ModulationTarget`, `ModulationMap` implémentés
   - Intégré dans `ExecutionPlan` ; zéro routes actives pour l'instant (runtime à implémenter)
+- [x] **Multi-format audio** — WAV, MP3, FLAC, OGG décodés via `symphonia` (`audio_clip.rs`)
+- [x] **Export MP3** — encodage `mp3lame-encoder` (commande `export_mp3`), bitrate configurable depuis les préférences
+- [x] **Couper / Copier / Coller des clips** — Ctrl+X / Ctrl+C / Ctrl+V + menu contextuel clic droit sur clip
+- [x] **Vumètres UI** — `MeterNode` → `meter_cells` → reporter (`POSITION_UPDATED` / `LEVELS_UPDATED`) → store `trackLevels` → `FaderMeter` par piste (L/R avec décroissance logicielle)
 
 ### Restant
-- [ ] **Multi-format audio** — support MP3, FLAC, OGG en plus de WAV (via `symphonia`)
-- [ ] **Export MP3** — encodage après mixdown WAV
-- [x] **Couper / Copier / Coller des clips** — Ctrl+X / Ctrl+C / Ctrl+V + menu contextuel clic droit sur clip
-- [ ] **Zoom vertical** de la timeline — hauteur de piste fixe (100 px)
 - [ ] **Mute / Solo undoable** — non intégré à l'event sourcing pour l'instant
-- [ ] **Vumètres UI** — `MeterNode` Rust implémenté, affichage frontend absent
 
 ---
 
