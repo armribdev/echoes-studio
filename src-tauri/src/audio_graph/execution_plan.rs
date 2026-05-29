@@ -113,6 +113,18 @@ impl ExecutionPlan {
     pub fn total_output_slots(&self) -> usize {
         self.steps.iter().map(|s| s.num_outputs.max(1)).sum()
     }
+
+    /// Largest `input_connections.len()` across all steps.
+    ///
+    /// Used by `GraphScheduler` to size `input_ptr_scratch` so the master node
+    /// (one input port per track) never exceeds the scratch buffer.
+    pub fn max_input_ports(&self) -> usize {
+        self.steps
+            .iter()
+            .map(|s| s.input_connections.len())
+            .max()
+            .unwrap_or(0)
+    }
 }
 
 // ── Build helpers (used by GraphCompiler) ─────────────────────────────────────

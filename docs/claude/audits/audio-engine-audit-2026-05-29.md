@@ -66,10 +66,10 @@ Sur Windows passait par `AcquireSRWLockExclusive` — pas strictement lock-free.
 
 Pour un projet stéréo de 5 minutes : ~115 MB clonés par tour de bouton, plus des queues de reverb/delay cassées. Le pattern DAW correct = atomiques par-paramètre lus par `process_block`, recompile réservée aux changements **structurels**.
 
-#### C4 — Limite dure de 32 pistes (panic OOB)
+#### C4 — Limite dure de 32 pistes (panic OOB) ✅ **CORRIGÉ**
 **Fichiers** : [audio_graph/scheduler.rs:42](../../../src-tauri/src/audio_graph/scheduler.rs#L42), [audio_graph/scheduler.rs:241](../../../src-tauri/src/audio_graph/scheduler.rs#L241), [audio_graph/graph.rs:237](../../../src-tauri/src/audio_graph/graph.rs#L237)
 `MAX_NODE_INPUT_PORTS = 32` mais le master a `num_inputs = project.tracks.len()`. Au-delà de 32 pistes, `self.input_ptr_scratch[port]` panic. Plafond produit dur.
-**Fix** : à la construction du scheduler, allouer `input_ptr_scratch` à `max(32, max_input_count_of_plan)`.
+**Fix appliqué** : `ExecutionPlan::max_input_ports()` + dimensionnement de `input_ptr_scratch` à `max(MIN_INPUT_PTR_SCRATCH, plan.max_input_ports())` dans `GraphScheduler::new`.
 
 #### C5 — Événements MIDI non triés + perte de notes au seek
 **Fichiers** : [audio_graph/nodes/instrument.rs:74](../../../src-tauri/src/audio_graph/nodes/instrument.rs#L74), [audio_graph/nodes/poly_synth.rs:216](../../../src-tauri/src/audio_graph/nodes/poly_synth.rs#L216)

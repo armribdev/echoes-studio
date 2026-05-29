@@ -38,9 +38,9 @@ use crate::audio_graph::execution_plan::ExecutionPlan;
 use crate::audio_graph::live_params::RouteCells;
 use crate::audio_graph::node::{AudioNode, NodeId, TransportInfo};
 
-/// Maximum number of input ports any single node may declare.
-/// Sized conservatively; increase if needed.
-const MAX_NODE_INPUT_PORTS: usize = 32;
+/// Minimum scratch capacity for per-step input pointer gathering.
+/// Actual size is `max(MIN_INPUT_PTR_SCRATCH, plan.max_input_ports())`.
+const MIN_INPUT_PTR_SCRATCH: usize = 32;
 
 // ── Modulation action (pre-compiled) ──────────────────────────────────────────
 
@@ -81,7 +81,8 @@ pub struct GraphScheduler {
     silence_buffer: AudioBuffer,
 
     /// Pre-allocated raw pointer scratch for gathering input pointers.
-    /// Capacity = `MAX_NODE_INPUT_PORTS`.  Never reallocated in the callback.
+    /// Sized to the plan's largest input port count at construction.
+    /// Never reallocated in the callback.
     input_ptr_scratch: Vec<*const AudioBuffer>,
 
     /// Modulation actions grouped by target step index.
@@ -122,8 +123,9 @@ impl GraphScheduler {
 
         let silence_buffer = AudioBuffer::new(num_channels, max_block);
 
-        // Pre-allocate input pointer scratch to avoid any allocation in the callback
-        let input_ptr_scratch = vec![std::ptr::null(); MAX_NODE_INPUT_PORTS];
+        // Size scratch to the plan's widest node (e.g. master with one port per track).
+        let input_scratch_len = plan.max_input_ports().max(MIN_INPUT_PTR_SCRATCH);
+        let input_ptr_scratch = vec![std::ptr::null(); input_scratch_len];
 
         // ── Pre-compile modulation actions ────────────────────────────────────────
         // NodeId → step index lookup (used only at construction — may allocate).
@@ -183,7 +185,7 @@ impl GraphScheduler {
             processors: Vec::new(),
             output_buffers: Vec::new(),
             silence_buffer: AudioBuffer::new(2, 512),
-            input_ptr_scratch: vec![std::ptr::null(); MAX_NODE_INPUT_PORTS],
+            input_ptr_scratch: vec![std::ptr::null(); MIN_INPUT_PTR_SCRATCH],
             mod_actions_by_step: Vec::new(),
         }
     }
@@ -239,6 +241,11 @@ impl GraphScheduler {
         for step_idx in 0..num_steps {
             let step = &self.plan.steps[step_idx];
             let num_inputs = step.input_connections.len();
+            debug_assert!(
+                num_inputs <= self.input_ptr_scratch.len(),
+                "input_ptr_scratch too small: need {num_inputs}, have {}",
+                self.input_ptr_scratch.len()
+            );
 
             // ── Gather input pointers ──────────────────────────────────────────
             // Fill `input_ptr_scratch[0..num_inputs]` with pointers to the
