@@ -7,7 +7,7 @@
 //! ──────────────                      ────────────────────────────
 //! AudioGraphCompiler::compile()
 //! GraphScheduler::new(compiled)
-//! RuntimeSnapshot::enqueue(sched)  ──► try_take() → swap in
+//! RuntimeSnapshot::enqueue(sched)  ──► try_swap(&mut current) → atomic swap
 //!
 //! SharedTransport::play()          ──► transport.snapshot() → TransportInfo
 //!                                       scheduler.process_block()
@@ -18,8 +18,10 @@
 //! ## Real-time safety contract
 //!
 //! The audio callback:
-//!   ✓ Never allocates (mix_buf pre-allocated before stream start)
-//!   ✓ Never acquires a blocking lock (`try_take` uses `try_lock`)
+//!   ✓ Never allocates (mix_buf and scheduler Box live for the stream's lifetime)
+//!   ✓ Never acquires a blocking lock (`try_swap` uses `AtomicPtr`)
+//!   ✓ Never deallocates (displaced schedulers are handed off to the command
+//!     thread via `RuntimeSnapshot`'s SPSC drop ring)
 //!   ✓ Never performs I/O
 //!   ✓ Never calls `async`/`await`
 //!   ✓ Only reads from `GraphScheduler` (owned for the callback's duration)
@@ -37,7 +39,7 @@ use cpal::{
 use serde_json::json;
 use tauri::Emitter;
 
-use crate::audio_graph::{CompileConfig, GraphScheduler, MeterCell, RuntimeSnapshot};
+use crate::audio_graph::{CompileConfig, GraphScheduler, LiveParams, MeterCell, RuntimeSnapshot};
 use crate::audio_engine::graph::AudioGraphCompiler;
 use crate::audio_engine::transport::SharedTransport;
 use crate::audio_settings::AudioSettings;
@@ -149,10 +151,15 @@ pub struct AudioEngine {
     /// The audio callback reads this atomically every block, so changes
     /// (mono↔stereo, +/−) take effect within one buffer block (~5 ms).
     pub active_output_channels: Arc<AtomicUsize>,
+
+    /// Live parameter registry — atomic cells shared with `AppState` and read
+    /// by audio nodes per-block.  Threaded into every compile so the resulting
+    /// scheduler holds the matching `Arc` handles.
+    live_params: Arc<LiveParams>,
 }
 
 impl AudioEngine {
-    pub fn new(transport: Arc<SharedTransport>) -> Self {
+    pub fn new(transport: Arc<SharedTransport>, live_params: Arc<LiveParams>) -> Self {
         AudioEngine {
             snapshot: Arc::new(RuntimeSnapshot::new()),
             transport,
@@ -163,6 +170,7 @@ impl AudioEngine {
             levels: ChannelLevels::new(),
             meter_cells: Arc::new(Mutex::new(HashMap::new())),
             active_output_channels: Arc::new(AtomicUsize::new(0)),
+            live_params,
         }
     }
 
@@ -186,7 +194,8 @@ impl AudioEngine {
             max_block_size: MAX_BLOCK_FRAMES,
             num_channels: 2,
         };
-        let (scheduler, cells, duration_samples) = AudioGraphCompiler::compile_scheduler(project, config);
+        let (scheduler, cells, duration_samples) =
+            AudioGraphCompiler::compile_scheduler(project, config, &self.live_params);
         self.transport.set_duration(duration_samples);
         if let Ok(mut map) = self.meter_cells.lock() {
             *map = cells;
@@ -257,7 +266,7 @@ impl AudioEngine {
             num_channels: 2,
         };
         let (initial_scheduler, initial_cells, initial_duration) =
-            AudioGraphCompiler::compile_scheduler(project, compile_cfg);
+            AudioGraphCompiler::compile_scheduler(project, compile_cfg, &self.live_params);
         self.transport.set_duration(initial_duration);
         if let Ok(mut map) = self.meter_cells.lock() {
             *map = initial_cells;
@@ -333,7 +342,7 @@ impl AudioEngine {
 
 impl Default for AudioEngine {
     fn default() -> Self {
-        Self::new(SharedTransport::new(48_000.0, 120.0))
+        Self::new(SharedTransport::new(48_000.0, 120.0), Arc::new(LiveParams::new()))
     }
 }
 
@@ -499,7 +508,10 @@ where
 {
     // Pre-allocate the stereo mix buffer once — reused for every block.
     let mut mix_buf = vec![0.0_f32; MAX_BLOCK_FRAMES * 2];
-    let mut scheduler = GraphScheduler::empty(transport.sample_rate());
+    // Box the scheduler so swaps move pointers, not the (heavy) struct itself,
+    // and so the displaced scheduler can be handed back to the command thread
+    // for deallocation without ever calling `drop` on the audio thread.
+    let mut scheduler = Box::new(GraphScheduler::empty(transport.sample_rate()));
     // ITU-R BS.775 / Pro Tools standard: −3 dB for stereo→mono downmix.
     // Precomputed outside the closure — it's a constant, no per-block cost.
     let mono_gain: f32 = 1.0 / 2.0_f32.sqrt();
@@ -525,10 +537,11 @@ where
                     return;
                 }
 
-                // Atomically swap in a new scheduler if one is pending.
-                if let Some(new_sched) = snapshot.try_take() {
-                    scheduler = new_sched;
-                }
+                // Atomically swap in a new scheduler if one is pending.  The
+                // displaced scheduler (if any) is handed back to the command
+                // thread via `RuntimeSnapshot`'s internal drop ring — the
+                // audio thread never deallocates.
+                snapshot.try_swap(&mut scheduler);
 
                 let info = transport.snapshot(frames);
 

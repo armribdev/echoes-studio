@@ -31,6 +31,7 @@ use std::sync::{
 
 use crate::audio_graph::execution_plan::{ExecutionPlan, ExecutionPlanBuilder, ExecutionStep, InputConnection};
 use crate::audio_graph::graph::{AudioGraph, NodeKind};
+use crate::audio_graph::live_params::LiveParams;
 use crate::audio_graph::node::{AudioNode, NodeId, PrepareContext};
 use crate::audio_graph::modulation::ModulationMap;
 use crate::project::AppProject;
@@ -99,6 +100,9 @@ pub struct CompiledGraph {
     /// Per-track peak cells: meter_id (= track id) → (peak_L, peak_R).
     /// Written every block by `MeterNode`; read by the position-reporter thread.
     pub meter_cells: HashMap<String, MeterCell>,
+    /// Per-route depth cells indexed by project route_id, used by the
+    /// scheduler so live depth changes don't require a recompile.
+    pub route_cells: HashMap<String, Arc<crate::audio_graph::live_params::RouteCells>>,
 }
 
 // ── GraphCompiler ─────────────────────────────────────────────────────────────
@@ -114,6 +118,7 @@ impl GraphCompiler {
         graph: &AudioGraph,
         project: &AppProject,
         config: CompileConfig,
+        live_params: &LiveParams,
     ) -> Result<CompiledGraph, CompileError> {
         // 1. Validate
         if graph.master_id.is_none() {
@@ -187,6 +192,17 @@ impl GraphCompiler {
         let mut processors: Vec<Box<dyn AudioNode>> = Vec::with_capacity(order.len());
         let mut meter_cells: HashMap<String, MeterCell> = HashMap::new();
 
+        // Resolve depth cells for every modulation route so the scheduler can
+        // read depths atomically without consulting `LiveParams` at runtime.
+        let mut route_cells: HashMap<String, Arc<crate::audio_graph::live_params::RouteCells>> =
+            HashMap::new();
+        for route in graph.modulation.all_routes() {
+            if let Some(route_id) = &route.route_id {
+                let cells = live_params.get_or_init_route(route_id, route.target.depth);
+                route_cells.insert(route_id.clone(), cells);
+            }
+        }
+
         for &node_id in &order {
             let graph_node = &graph.nodes[&node_id];
             let node: Box<dyn AudioNode> = if let NodeKind::Meter { meter_id } = &graph_node.kind {
@@ -195,14 +211,14 @@ impl GraphCompiler {
                 meter_cells.insert(meter_id.clone(), (Arc::clone(&peak_l), Arc::clone(&peak_r)));
                 Box::new(crate::audio_graph::nodes::meter::MeterNode::new(node_id, peak_l, peak_r))
             } else {
-                Self::build_node(node_id, &graph_node.kind, project, &plan, config.sample_rate)
+                Self::build_node(node_id, &graph_node.kind, project, &plan, config.sample_rate, live_params)
             };
             let mut node = node;
             node.prepare(prepare_ctx);
             processors.push(node);
         }
 
-        Ok(CompiledGraph { plan, processors, meter_cells })
+        Ok(CompiledGraph { plan, processors, meter_cells, route_cells })
     }
 
     // ── Topological sort (Kahn's BFS) ─────────────────────────────────────────
@@ -317,6 +333,7 @@ impl GraphCompiler {
         project: &AppProject,
         _plan: &Arc<ExecutionPlan>,
         engine_sample_rate: f32,
+        live_params: &LiveParams,
     ) -> Box<dyn AudioNode> {
         use crate::audio_graph::nodes;
         use std::sync::Arc as StdArc;
@@ -357,6 +374,8 @@ impl GraphCompiler {
                 // Clip positions are in seconds; convert to engine-sample-rate
                 // frames so the TrackNode can compare them directly against the
                 // atomic `position_samples` counter (which is also in frames).
+                // `samples` is `Arc<Vec<f32>>` shared with the project — no
+                // deep clone of the (potentially huge) decoded audio buffer.
                 let clips = project
                     .tracks
                     .iter()
@@ -365,7 +384,7 @@ impl GraphCompiler {
                         track.clips.iter().map(|c| nodes::track::ClipData {
                             start_sample: (c.start * engine_sample_rate as f64) as u64,
                             end_sample:   (c.end   * engine_sample_rate as f64) as u64,
-                            samples: StdArc::new(c.raw_samples.clone()),
+                            samples: StdArc::clone(&c.raw_samples),
                             native_sample_rate: c.sample_rate,
                         }).collect::<Vec<_>>()
                     })
@@ -374,8 +393,26 @@ impl GraphCompiler {
                 Box::new(nodes::track::TrackNode::new(id, clips))
             }
 
-            NodeKind::TrackGain { gain, .. } => {
-                Box::new(nodes::gain::GainNode::new(id, *gain))
+            NodeKind::TrackGain { track_id, gain } => {
+                // Look up the project track so we seed `LiveParams` with the
+                // current mute/solo/pan state if its entry didn't already
+                // exist.  After this call, the compiler and the gateway both
+                // hold `Arc<TrackParams>` pointing at the same atomics.
+                let (volume, pan, muted, solo) = project
+                    .tracks
+                    .iter()
+                    .find(|t| &t.id == track_id)
+                    .map(|t| {
+                        let v = (t.volume / 100.0).clamp(0.0, 2.0);
+                        (v, t.pan, t.muted, t.solo)
+                    })
+                    .unwrap_or((*gain, 0.0, false, false));
+                let cells = live_params.get_or_init_track(track_id, volume, pan, muted, solo);
+                Box::new(nodes::track_gain::TrackGainNode::new(
+                    id,
+                    cells,
+                    Arc::clone(&live_params.any_solo),
+                ))
             }
 
             NodeKind::Gain { gain_linear } => {
@@ -417,11 +454,15 @@ impl GraphCompiler {
                 Box::new(nodes::gain::GainNode::new(id, 1.0))
             }
 
-            NodeKind::Modulator { kind, rate_hz, waveform } => {
+            NodeKind::Modulator { modulator_id, kind, rate_hz, waveform } => {
                 use crate::audio_graph::modulation::ModulatorKind;
                 match kind {
                     ModulatorKind::Lfo => {
-                        Box::new(nodes::modulator::LfoNode::new(id, *rate_hz, waveform.clone()))
+                        let cells = live_params.get_or_init_modulator(modulator_id, *rate_hz);
+                        Box::new(
+                            nodes::modulator::LfoNode::new(id, *rate_hz, waveform.clone())
+                                .with_rate_cells(cells),
+                        )
                     }
                     _ => {
                         // Other modulator kinds not yet implemented — silent source

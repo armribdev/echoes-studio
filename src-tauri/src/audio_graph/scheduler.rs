@@ -35,6 +35,7 @@ use std::sync::Arc;
 use crate::audio_graph::buffer::AudioBuffer;
 use crate::audio_graph::compiler::CompiledGraph;
 use crate::audio_graph::execution_plan::ExecutionPlan;
+use crate::audio_graph::live_params::RouteCells;
 use crate::audio_graph::node::{AudioNode, NodeId, TransportInfo};
 
 /// Maximum number of input ports any single node may declare.
@@ -56,8 +57,11 @@ struct CompiledModAction {
     source_port: usize,
     /// Parameter name on the target node (e.g. `"gain"`, `"cutoff"`).
     param_name: String,
-    /// Modulation depth — the raw signal sample is multiplied by this.
-    depth: f32,
+    /// Modulation depth.  When `Some`, read per-block from the atomic so the
+    /// command thread can change depth without a recompile.  When `None`,
+    /// `static_depth` is used (routes constructed without a `route_id`).
+    depth_cells: Option<Arc<RouteCells>>,
+    static_depth: f32,
 }
 
 /// Drives one compiled audio graph in the real-time audio callback.
@@ -100,6 +104,7 @@ impl GraphScheduler {
     pub fn new(compiled: CompiledGraph) -> Self {
         let plan = compiled.plan;
         let processors = compiled.processors;
+        let route_cells = compiled.route_cells;
 
         let num_channels = plan.num_channels;
         let max_block = plan.max_block_size;
@@ -142,11 +147,16 @@ impl GraphScheduler {
                 Some(&i) => i,
                 None => continue, // target not in plan — skip
             };
+            let depth_cells = route
+                .route_id
+                .as_ref()
+                .and_then(|id| route_cells.get(id).cloned());
             mod_actions_by_step[target_step].push(CompiledModAction {
                 source_step,
                 source_port: route.source.port as usize,
                 param_name: route.target.param.name.clone(),
-                depth: route.target.depth,
+                depth_cells,
+                static_depth: route.target.depth,
             });
         }
 
@@ -304,8 +314,12 @@ impl GraphScheduler {
                             0.0
                         }
                     };
+                    let depth = match &action.depth_cells {
+                        Some(cells) => cells.depth(),
+                        None => action.static_depth,
+                    };
                     self.processors[step_idx]
-                        .apply_modulation(&action.param_name, mod_signal * action.depth);
+                        .apply_modulation(&action.param_name, mod_signal * depth);
                 }
             }
 

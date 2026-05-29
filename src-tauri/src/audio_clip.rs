@@ -2,6 +2,7 @@ use serde::Serialize;
 use std::error::Error;
 use std::fs::File;
 use std::path::Path;
+use std::sync::Arc;
 
 use symphonia::core::{
     audio::SampleBuffer,
@@ -20,11 +21,23 @@ pub struct AudioClip {
 
 #[derive(Serialize)]
 pub struct AudioClipData {
-    pub raw_samples: Vec<f32>,
+    /// Shared via `Arc` so the project, audio cache, and audio thread can all
+    /// reference the same heap allocation without cloning.  Critical: this
+    /// allocation can be 100+ MB for long stereo files — recompiling the audio
+    /// graph must never clone it.
+    #[serde(serialize_with = "serialize_arc_vec_f32")]
+    pub raw_samples: Arc<Vec<f32>>,
     pub sample_rate: u32,
     pub peaks_64: Vec<[f32; 2]>,
     pub peaks_512: Vec<[f32; 2]>,
     pub peaks_4096: Vec<[f32; 2]>,
+}
+
+pub(crate) fn serialize_arc_vec_f32<S>(v: &Arc<Vec<f32>>, ser: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    serde::Serialize::serialize(&**v, ser)
 }
 
 fn compute_peaks(samples: &[f32], chunk_size: usize) -> Vec<[f32; 2]> {
@@ -129,7 +142,7 @@ impl AudioClip {
         let peaks_512 = compute_peaks(&self.raw_samples, 512);
         let peaks_4096 = compute_peaks(&self.raw_samples, 4096);
         AudioClipData {
-            raw_samples: self.raw_samples,
+            raw_samples: Arc::new(self.raw_samples),
             sample_rate: self.raw_sample_rate,
             peaks_64,
             peaks_512,

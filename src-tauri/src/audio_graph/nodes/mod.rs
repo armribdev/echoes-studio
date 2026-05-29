@@ -33,3 +33,4 @@ pub mod poly_synth;
 pub mod reverb;
 pub mod send;
 pub mod track;
+pub mod track_gain;

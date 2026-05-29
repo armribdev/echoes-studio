@@ -71,6 +71,11 @@ pub struct ModulationTarget {
 pub struct ModulationRoute {
     pub source: ModulationSource,
     pub target: ModulationTarget,
+    /// Project-level route ID — used by the compiler to look up the route's
+    /// `LiveParams` depth cell so depth changes don't trigger a recompile.
+    /// `None` only for routes constructed in tests or future code paths that
+    /// don't originate from a project route.
+    pub route_id: Option<String>,
 }
 
 // ── Map (compiled form) ────────────────────────────────────────────────────────

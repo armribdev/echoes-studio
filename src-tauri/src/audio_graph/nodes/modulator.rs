@@ -4,7 +4,10 @@
 //! carries the raw modulation curve for one block; the scheduler reads it and
 //! delivers scaled deltas to target nodes via `apply_modulation`.
 
+use std::sync::Arc;
+
 use crate::audio_graph::buffer::AudioBuffer;
+use crate::audio_graph::live_params::ModulatorCells;
 use crate::audio_graph::node::{AudioNode, NodeId, PrepareContext, TransportInfo};
 use crate::project::LfoWaveform;
 
@@ -13,16 +16,26 @@ use crate::project::LfoWaveform;
 /// LFO with selectable waveform.  Output is normalised to −1…+1.
 ///
 /// Phase accumulates across blocks; `reset()` returns it to 0.
+///
+/// `rate_cells` lets the command thread retune the LFO without triggering a
+/// graph recompile.  When `None`, falls back to the constant `rate_hz` baked
+/// at construction time (used by placeholder modulators).
 pub struct LfoNode {
     id: NodeId,
     rate_hz: f32,
+    rate_cells: Option<Arc<ModulatorCells>>,
     waveform: LfoWaveform,
     phase: f32,
 }
 
 impl LfoNode {
     pub fn new(id: NodeId, rate_hz: f32, waveform: LfoWaveform) -> Self {
-        LfoNode { id, rate_hz, waveform, phase: 0.0 }
+        LfoNode { id, rate_hz, rate_cells: None, waveform, phase: 0.0 }
+    }
+
+    pub fn with_rate_cells(mut self, cells: Arc<ModulatorCells>) -> Self {
+        self.rate_cells = Some(cells);
+        self
     }
 
     #[inline]
@@ -66,7 +79,11 @@ impl AudioNode for LfoNode {
         if outputs.is_empty() { return; }
         let output = &mut outputs[0];
         let block_size = transport.block_size.min(output.num_frames);
-        let phase_inc = self.rate_hz / transport.sample_rate;
+        let rate_hz = match &self.rate_cells {
+            Some(cells) => cells.rate_hz(),
+            None => self.rate_hz,
+        };
+        let phase_inc = rate_hz / transport.sample_rate;
 
         // Fill channel 0, then broadcast to all channels.
         {

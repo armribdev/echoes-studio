@@ -195,7 +195,10 @@ pub struct AppClip {
     pub start: f64,
     pub end: f64,
     pub file_path: String,
-    pub raw_samples: Vec<f32>,
+    /// Decoded mono f32 samples.  Wrapped in `Arc` so multiple consumers
+    /// (project, audio cache, audio thread via the graph compiler) can share
+    /// the same heap allocation — graph recompilation must never clone this.
+    pub raw_samples: Arc<Vec<f32>>,
     pub sample_rate: u32,
     pub peaks_64: Vec<[f32; 2]>,
     pub peaks_512: Vec<[f32; 2]>,
@@ -367,7 +370,7 @@ impl AppClip {
             start: self.start,
             end: self.end,
             file_path: self.file_path.clone(),
-            raw_samples: self.raw_samples.clone(),
+            raw_samples: Arc::clone(&self.raw_samples),
             sample_rate: self.sample_rate,
             peaks_64: self.peaks_64.clone(),
             peaks_512: self.peaks_512.clone(),
@@ -384,7 +387,7 @@ impl AppClip {
 pub struct AudioDataCache(pub Mutex<HashMap<String, Arc<CachedAudioData>>>);
 
 pub struct CachedAudioData {
-    pub raw_samples: Vec<f32>,
+    pub raw_samples: Arc<Vec<f32>>,
     pub sample_rate: u32,
     pub peaks_64: Vec<[f32; 2]>,
     pub peaks_512: Vec<[f32; 2]>,
@@ -419,6 +422,10 @@ pub struct AppState {
     pub audio_cache: AudioDataCache,
     /// Real-time audio engine — compiles the graph and owns the CPAL stream.
     pub audio_engine: Mutex<crate::audio_engine::engine::AudioEngine>,
+    /// Live parameter registry — atomic cells for volume, mute/solo, modulator
+    /// rate, modulation depth.  Written by gateway hot-path handlers, read
+    /// lock-free by the audio thread via Arc handles embedded in nodes.
+    pub live_params: Arc<crate::audio_graph::live_params::LiveParams>,
     /// Atomic transport state shared with the CPAL callback.
     /// Accessed directly (no lock) for PLAY / STOP / SEEK commands.
     pub transport: std::sync::Arc<crate::audio_engine::transport::SharedTransport>,
@@ -442,6 +449,8 @@ impl AppState {
         // Create the shared transport; the AudioEngine gets a clone of the Arc.
         let transport = crate::audio_engine::transport::SharedTransport::new(48_000.0, 120.0);
 
+        let live_params = Arc::new(crate::audio_graph::live_params::LiveParams::new());
+
         AppState {
             project: Mutex::new(AppProject::new()),
             project_path: Mutex::new(None),
@@ -449,8 +458,10 @@ impl AppState {
             audio_cache: AudioDataCache::new(),
             audio_engine: Mutex::new(crate::audio_engine::engine::AudioEngine::new(
                 std::sync::Arc::clone(&transport),
+                Arc::clone(&live_params),
             )),
             transport,
+            live_params,
             audio_settings: Mutex::new(crate::audio_settings::AudioSettings::default()),
             dirty: AtomicBool::new(false),
         }
@@ -553,7 +564,8 @@ pub struct ClipDto {
     pub start: f64,
     pub end: f64,
     pub file_path: String,
-    pub raw_samples: Vec<f32>,
+    #[serde(serialize_with = "crate::audio_clip::serialize_arc_vec_f32")]
+    pub raw_samples: Arc<Vec<f32>>,
     pub sample_rate: u32,
     pub peaks_64: Vec<[f32; 2]>,
     pub peaks_512: Vec<[f32; 2]>,

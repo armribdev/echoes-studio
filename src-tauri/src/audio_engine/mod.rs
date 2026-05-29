@@ -18,8 +18,11 @@
 //!
 //! - The audio callback reads ONLY from `GraphScheduler` (immutable plan +
 //!   owned mutable DSP state).
-//! - The callback never acquires a blocking `Mutex`; it uses `try_take()`.
+//! - The callback never acquires a blocking `Mutex`; it uses
+//!   `RuntimeSnapshot::try_swap` (lock-free `AtomicPtr`).
 //! - No heap allocation inside the audio callback.
+//! - No `drop` inside the audio callback; displaced schedulers are handed back
+//!   to the command thread via `RuntimeSnapshot`'s SPSC drop ring.
 //! - No async runtime interaction from the audio thread.
 //!
 //! ## Legacy types

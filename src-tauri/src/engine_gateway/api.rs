@@ -317,6 +317,16 @@ fn process_command(
                 }
             }
 
+            // Hot-path: write the new values into the live atomics so the
+            // audio thread picks them up at the next block without a recompile.
+            if let Some(vol) = p.volume {
+                let linear = (vol / 100.0).clamp(0.0, 2.0);
+                state.live_params.set_track_volume(&p.track_id, linear);
+            }
+            if let Some(pan) = p.pan {
+                state.live_params.set_track_pan(&p.track_id, pan);
+            }
+
             let event_payload = json!({
                 "id": p.track_id,
                 "name": p.name,
@@ -328,8 +338,6 @@ fn process_command(
 
             let engine_ev = EngineEvent::new(ev::TRACK_UPDATED, &project_id, event_payload);
             let _ = app.emit("engine-event", &engine_ev);
-            // Volume change → recompile for audio engine
-            recompile_if_needed(state);
 
             Ok(CommandResult::ok(
                 command_id,
@@ -351,13 +359,15 @@ fn process_command(
                 track.muted = p.muted;
             }
 
+            // Hot-path: flip the atomic mute flag; no recompile.
+            state.live_params.set_track_muted(&p.track_id, p.muted);
+
             let event_payload = json!({ "id": p.track_id, "muted": p.muted });
             let project_event = ProjectEvent::new(ev::TRACK_MUTED, event_payload.clone());
             append_and_maybe_snapshot(state, project_event)?;
 
             let engine_ev = EngineEvent::new(ev::TRACK_MUTED, &project_id, event_payload);
             let _ = app.emit("engine-event", &engine_ev);
-            recompile_if_needed(state);
 
             Ok(CommandResult::ok(
                 command_id,
@@ -384,13 +394,17 @@ fn process_command(
                 }
             }
 
+            // Hot-path: update the per-track solo flags and the global any_solo
+            // flag atomically.  Every TrackGainNode picks the new state up at
+            // its next block read.
+            state.live_params.set_track_solo_exclusive(&p.track_id, p.solo);
+
             let event_payload = json!({ "id": p.track_id, "solo": p.solo });
             let project_event = ProjectEvent::new(ev::TRACK_SOLOED, event_payload.clone());
             append_and_maybe_snapshot(state, project_event)?;
 
             let engine_ev = EngineEvent::new(ev::TRACK_SOLOED, &project_id, event_payload);
             let _ = app.emit("engine-event", &engine_ev);
-            recompile_if_needed(state);
 
             Ok(CommandResult::ok(
                 command_id,
@@ -744,10 +758,13 @@ fn process_command(
                     }
                 }
             }
+            // Hot-path: update the LFO rate atomic, no recompile.
+            if let Some(rate) = p.rate_hz {
+                state.live_params.set_modulator_rate(&p.modulator_id, rate);
+            }
             let event_payload = json!({ "track_id": p.track_id, "modulator_id": p.modulator_id, "rate_hz": p.rate_hz });
             let project_event = ProjectEvent::new(ev::MODULATOR_UPDATED, event_payload.clone());
             append_and_maybe_snapshot(state, project_event)?;
-            recompile_if_needed(state);
             let engine_ev = EngineEvent::new(ev::MODULATOR_UPDATED, &project_id, event_payload);
             let _ = app.emit("engine-event", &engine_ev);
             Ok(CommandResult::ok(command_id, vec![serde_json::to_value(&engine_ev).unwrap_or_default()]))
@@ -824,10 +841,11 @@ fn process_command(
                     route.depth = p.depth;
                 }
             }
+            // Hot-path: update the per-route depth atomic, no recompile.
+            state.live_params.set_route_depth(&p.route_id, p.depth);
             let event_payload = json!({ "track_id": p.track_id, "route_id": p.route_id, "depth": p.depth });
             let project_event = ProjectEvent::new(ev::MODULATION_DEPTH_CHANGED, event_payload.clone());
             append_and_maybe_snapshot(state, project_event)?;
-            recompile_if_needed(state);
             let engine_ev = EngineEvent::new(ev::MODULATION_DEPTH_CHANGED, &project_id, event_payload);
             let _ = app.emit("engine-event", &engine_ev);
             Ok(CommandResult::ok(command_id, vec![serde_json::to_value(&engine_ev).unwrap_or_default()]))

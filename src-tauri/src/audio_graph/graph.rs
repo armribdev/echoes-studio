@@ -89,6 +89,10 @@ pub enum NodeKind {
 
     /// Modulation source (LFO, envelope, macro, audio-rate).
     Modulator {
+        /// Project-level modulator ID — used by the compiler to look up the
+        /// matching `LiveParams::ModulatorCells` so rate changes don't trigger
+        /// a recompile.
+        modulator_id: String,
         kind: crate::audio_graph::modulation::ModulatorKind,
         /// Oscillation rate in Hz (used by LFO kind; ignored by others).
         rate_hz: f32,
@@ -303,7 +307,12 @@ impl AudioGraph {
                     ModulatorParams::Lfo(p) => (ModulatorKind::Lfo, p.rate_hz, p.waveform.clone()),
                 };
                 let node_id = graph.add_node(
-                    NodeKind::Modulator { kind, rate_hz, waveform },
+                    NodeKind::Modulator {
+                        modulator_id: modulator.id.clone(),
+                        kind,
+                        rate_hz,
+                        waveform,
+                    },
                     format!("{} [mod:{}]", track.name, modulator.id),
                 );
                 mod_node_ids.insert(modulator.id.clone(), node_id);
@@ -337,6 +346,7 @@ impl AudioGraph {
                         param: ParamId::new(target_node_id, param_name),
                         depth: route.depth,
                     },
+                    route_id: Some(route.id.clone()),
                 });
             }
         }

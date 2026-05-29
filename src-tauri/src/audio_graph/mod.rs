@@ -32,6 +32,7 @@ pub mod buffer;
 pub mod compiler;
 pub mod execution_plan;
 pub mod graph;
+pub mod live_params;
 pub mod midi;
 pub mod modulation;
 pub mod node;
@@ -43,6 +44,7 @@ pub mod snapshot;
 
 pub use buffer::AudioBuffer;
 pub use compiler::{CompileConfig, CompileError, CompiledGraph, GraphCompiler, MeterCell};
+pub use live_params::{LiveParams, ModulatorCells, RouteCells, TrackParams};
 pub use execution_plan::ExecutionPlan;
 pub use graph::{AudioGraph, Edge, NodeKind};
 pub use node::{AudioNode, NodeId, PortId, PrepareContext, TransportInfo};
