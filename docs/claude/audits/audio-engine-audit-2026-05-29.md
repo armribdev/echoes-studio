@@ -91,9 +91,10 @@ Pour un projet stéréo de 5 minutes : ~115 MB clonés par tour de bouton, plus 
 **Fichiers** : [audio_graph/compiler.rs:368](../../../src-tauri/src/audio_graph/compiler.rs#L368), [project.rs:198](../../../src-tauri/src/project.rs#L198)
 `AppClip::raw_samples: Vec<f32>` au lieu de `Arc<Vec<f32>>`. À changer en `Arc<Vec<f32>>` partagé entre projet et `ClipData`. (Lié à C3.)
 
-#### I2 — Coefficients shelving EQ buggés
+#### I2 — Coefficients shelving EQ buggés ✅ **CORRIGÉ**
 **Fichiers** : [audio_graph/nodes/eq.rs:28](../../../src-tauri/src/audio_graph/nodes/eq.rs#L28), [audio_graph/nodes/eq.rs:56](../../../src-tauri/src/audio_graph/nodes/eq.rs#L56)
 `alpha = w.sin() / 2.0 * ((a + 1.0/a) * (1.0/1.0 - 1.0) + 2.0).sqrt()` — `(1.0/1.0 - 1.0) == 0.0`, donc le terme "shelf-S" disparaît. Réponse incorrecte. Comparer au cookbook RBJ.
+**Fix appliqué** : helper `Biquad::shelf_alpha(w, a, shelf_slope)` conforme au cookbook RBJ (`(1/S - 1)`), pente par défaut `S = 1.0`. Tests unitaires sur gain DC, demi-gain à f₀ et dépendance à S.
 
 #### I3 — Resampling nearest-neighbour dans `TrackNode`
 **Fichiers** : [audio_graph/nodes/track.rs:113](../../../src-tauri/src/audio_graph/nodes/track.rs#L113)
