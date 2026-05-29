@@ -72,7 +72,7 @@ UI (Svelte/TypeScript)
 
 1. **UI never mutates state directly.** All project mutations go through `dispatcher.ts → send_command`.
 2. **EventStore is the only source of truth** for project structure. `AppProject` is a cache rebuilt by the reducer.
-3. **Audio thread uses `GraphScheduler` picked up via `RuntimeSnapshot::try_take()`.** No blocking locks, no allocation inside the audio callback.
+3. **Audio thread uses `GraphScheduler` swapped in via `RuntimeSnapshot::try_swap()` (lock-free `AtomicPtr`).** No blocking locks, no allocation, and no `drop` inside the audio callback — displaced schedulers ride an SPSC drop ring back to the command thread.
 4. **Undo/redo** = move `EventStore::head` + replay from nearest snapshot.
 5. **Batch commands** collapse multiple mutations into a single IPC round-trip and a single graph recompile.
 
@@ -179,9 +179,11 @@ Command thread                        Audio thread
 ──────────────                        ────────────
 AppProject mutation
   → AudioGraph::from_project()
-  → GraphCompiler::compile()          try_take() at block start:
-  → GraphScheduler::new()    ──────►  if Some → swap in new scheduler
+  → GraphCompiler::compile()          try_swap(&mut current) at block start:
+  → GraphScheduler::new()    ──────►  AtomicPtr swap; old box → drop ring
   → RuntimeSnapshot::enqueue()        process_block(transport, output)
+    (drains drop ring, frees
+     boxes returned by audio)
 ```
 
 The audio callback (`GraphScheduler::process_block`) iterates a pre-sorted

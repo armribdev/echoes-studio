@@ -30,16 +30,19 @@ Allocation can take µs to ms — enough to miss the deadline.
 ```rust
 // ✗
 some_mutex.lock();
+some_mutex.try_lock();   // not strictly lock-free on Windows (SRW lock)
 ```
 
 `Mutex::lock()` blocks until the lock is available. If the holder is a
 low-priority thread, this causes a **priority inversion**: the high-priority
-audio thread waits for the low-priority UI thread.
+audio thread waits for the low-priority UI thread. `try_lock` is also
+forbidden — on Windows `std::sync::Mutex::try_lock` still goes through
+`AcquireSRWLockExclusive`, which is not strictly lock-free.
 
-**Exception:** `RuntimeSnapshot::try_take()` uses `Mutex::try_lock()`
-(non-blocking). If contended, it returns `None` and the audio thread
-continues with its current scheduler. This is the **one approved lock point**
-in the callback.
+**The approved scheduler-update path:** `RuntimeSnapshot::try_swap` is
+backed by an `AtomicPtr<GraphScheduler>` (lock-free) plus a bounded SPSC
+ring used to hand the displaced scheduler back to the command thread for
+deallocation. The audio thread neither locks nor drops.
 
 ---
 
@@ -125,8 +128,9 @@ self.peak.store(peak_val, Ordering::Release);
 // ✓ iterating pre-allocated Vecs without resize
 for sample in self.delay_line.iter_mut() { ... }
 
-// ✓ try_lock on RuntimeSnapshot (non-blocking, skip if contended)
-if let Some(sched) = snapshot.try_take() { ... }
+// ✓ RuntimeSnapshot::try_swap (lock-free AtomicPtr swap; displaced box
+//   handed to the SPSC drop ring, never dropped on this thread)
+snapshot.try_swap(&mut current_scheduler);
 ```
 
 ---
@@ -138,7 +142,8 @@ Before any code enters the audio path, verify:
 | Check | Rule |
 |-------|------|
 | No `Vec::push`, `Box::new`, `String::new`, `format!` | No allocation |
-| No `Mutex::lock()` | No blocking locks |
+| No `drop` of owned heap values (use SPSC return path) | No deallocation |
+| No `Mutex::lock()` or `Mutex::try_lock()` | No blocking locks |
 | No `.await`, `block_on` | No async |
 | No `std::fs::*`, `std::net::*` | No I/O |
 | No `app.emit()` | No Tauri events from audio thread |

@@ -90,10 +90,12 @@ All memory is allocated once per graph update, never in the callback.
 ### Deallocation phase
 
 When a new `GraphScheduler` replaces the old one:
-- The old scheduler and all its buffers are dropped on whichever thread last
-  held it (usually the audio thread after the next `try_take()`).
-- Deallocation on the audio thread is unavoidable but happens at block
-  boundaries, not mid-callback.
+- The audio thread **never** dropps the displaced scheduler. It pushes the
+  `Box<GraphScheduler>` into `RuntimeSnapshot`'s bounded SPSC drop ring.
+- The command thread drains the drop ring on its next `enqueue` call and
+  runs the actual `drop` (freeing every node, output buffer, clip-sample
+  `Arc`, reverb tail, etc.) off the real-time thread.
+- This is the C1 fix from the 2026-05-29 audit.
 
 ---
 
@@ -118,28 +120,28 @@ When a new `GraphScheduler` replaces the old one:
 4. The only output path is: node writes to `output_buffers[step]` →
    scheduler writes interleaved to CPAL buffer → OS delivers to device.
 5. The only input to the runtime is: `TransportInfo` (from atomics) +
-   `GraphScheduler` (from `RuntimeSnapshot::try_take()`).
+   `GraphScheduler` (from `RuntimeSnapshot::try_swap()`).
 
 ---
 
 ## Snapshot Swap at Runtime
 
-At the start of each `process_block` call:
+At the start of each audio block the CPAL closure calls:
 
 ```rust
-if let Some(new_sched) = self.snapshot.try_take() {
-    *self = new_sched;
-}
-self.process_block(transport, output);
+// `scheduler` is a Box<GraphScheduler> owned by the closure.
+snapshot.try_swap(&mut scheduler);
+scheduler.process_block(&transport, output);
 ```
 
-The swap is unconditional on success. If `try_take()` returns `Some`, the
-new scheduler is used for the current block. The old scheduler is dropped
-in-place (which deallocates its buffers on the audio thread — unavoidable).
+`try_swap` performs a single `AtomicPtr::swap(null)`. If a new scheduler was
+pending, it is moved into `scheduler` and the previous box is pushed into
+the SPSC drop ring (freed later by the command thread). If nothing was
+pending, the current scheduler is left untouched and the block runs against
+stale-but-valid state — imperceptible at one block (~10 ms at 48 kHz / 512
+frames).
 
-If `try_take()` returns `None` (lock contended or no pending update), the
-current scheduler continues unchanged. One block of stale-but-valid audio is
-imperceptible.
+The audio thread never blocks, never allocates, and never drops.
 
 ---
 

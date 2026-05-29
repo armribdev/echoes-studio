@@ -47,14 +47,14 @@ C'est un v0.1 compétent avec des fondations solides, mais **pas encore au nivea
 
 ### CRITIQUES (à corriger avant v1)
 
-#### C1 — `GraphScheduler` droppé sur le thread audio
-**Fichiers** : [audio_engine/engine.rs:529-531](../../../src-tauri/src/audio_engine/engine.rs#L529), [audio_graph/snapshot.rs](../../../src-tauri/src/audio_graph/snapshot.rs)
-Quand `snapshot.try_take()` retourne `Some(new)`, l'ancien scheduler est remplacé et droppé sur place. Cela désalloue chaque nœud, chaque output buffer, chaque `Arc<Vec<f32>>` de samples (si dernière ref), chaque buffer interne de Reverb. **C'est une désallocation tas sur le thread audio**, en contradiction directe avec l'invariant déclaré du fichier.
-**Fix** : swap via `AtomicPtr<Box<GraphScheduler>>` ou `arc-swap`, push l'ancien pointeur dans une file SPSC consommée par un thread worker pour le drop.
+#### C1 — `GraphScheduler` droppé sur le thread audio ✅ **CORRIGÉ**
+**Fichiers** : [audio_engine/engine.rs:493](../../../src-tauri/src/audio_engine/engine.rs#L493), [audio_graph/snapshot.rs](../../../src-tauri/src/audio_graph/snapshot.rs)
+Quand `snapshot.try_take()` retournait `Some(new)`, l'ancien scheduler était remplacé et droppé sur place. Cela désallouait chaque nœud, chaque output buffer, chaque `Arc<Vec<f32>>` de samples (si dernière ref), chaque buffer interne de Reverb. **C'était une désallocation tas sur le thread audio**, en contradiction directe avec l'invariant déclaré du fichier.
+**Fix appliqué** : `RuntimeSnapshot` réécrit avec `AtomicPtr<GraphScheduler>` + ring SPSC borné. Nouvelle API `try_swap(&mut Box<GraphScheduler>)` : remplace in-place le scheduler du thread audio et pousse le déchu dans le drop ring. Le thread de commande draine l'anneau à chaque `enqueue` et fait les `drop` hors RT.
 
-#### C2 — `std::sync::Mutex::try_lock()` sur le thread audio
-**Fichiers** : [audio_graph/snapshot.rs:62](../../../src-tauri/src/audio_graph/snapshot.rs#L62)
-Sur Windows passe par `AcquireSRWLockExclusive` — pas strictement lock-free. Le contrat "aucune primitive bloquante sur le thread audio" n'est pas tenu. À remplacer par `AtomicPtr` ou `ArcSwap` (résout aussi C1).
+#### C2 — `std::sync::Mutex::try_lock()` sur le thread audio ✅ **CORRIGÉ**
+**Fichiers** : [audio_graph/snapshot.rs](../../../src-tauri/src/audio_graph/snapshot.rs)
+Sur Windows passait par `AcquireSRWLockExclusive` — pas strictement lock-free. Le contrat "aucune primitive bloquante sur le thread audio" n'était pas tenu. Plus aucun `Mutex` dans `RuntimeSnapshot` : la slot pending est un `AtomicPtr<GraphScheduler>`, lu via `swap(null, AcqRel)` sur le thread audio. Résolu en même temps que C1.
 
 #### C3 — Recompilation complète sur chaque changement de paramètre
 **Fichiers** : [engine_gateway/api.rs](../../../src-tauri/src/engine_gateway/api.rs) (tous les handlers), [audio_graph/compiler.rs:368](../../../src-tauri/src/audio_graph/compiler.rs#L368)

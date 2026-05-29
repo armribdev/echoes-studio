@@ -175,7 +175,8 @@ This eliminates re-computation on zoom changes.
 | VST3 SDK / `vst3-sys` (Rust) | Phase 4 | VST3 plugin hosting (scaffolding done in `plugin_formats/vst3/`) |
 
 **Explicitly not used:**
-- `ringbuf` — lock-free ring buffer. Evaluated for the command→audio path, replaced by `RuntimeSnapshot` (a simpler `Mutex<Option<GraphScheduler>>` with `try_lock`) which fits the snapshot-swap model better.
+- `ringbuf` — lock-free ring buffer crate. The command→audio path is handled by `RuntimeSnapshot` (`AtomicPtr<GraphScheduler>` + a small in-house SPSC ring for deferred drops), which fits the snapshot-swap model and avoids adding a dependency.
+- `arc-swap` — also considered for the swap slot. The hand-rolled `AtomicPtr` + drop ring is equivalent in behaviour, keeps the deallocation off the audio thread, and ships without a new crate.
 
 ---
 

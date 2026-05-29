@@ -49,18 +49,19 @@ Transport commands (`PLAY`, `STOP`, `SEEK`) do **not** trigger recompilation.
        │               pre-allocate input_ptr_scratch
        │           │
        │      8.   RuntimeSnapshot::enqueue(scheduler)
-       │               lock pending_mutex (blocking — command thread)
-       │               store Some(scheduler)
-       │               unlock
+       │               drain SPSC drop ring (free dead boxes — command thread)
+       │               AtomicPtr::swap publishes the new Box<GraphScheduler>
+       │               if swap returned a non-null pointer (previous update
+       │                 not yet picked up), free it here on command thread
        │
        release locks
        │
 9. (audio callback runs at some future point)
        │
-       ├─ snapshot.try_take()
-       │       try_lock pending_mutex (non-blocking)
-       │       if Some(s): replace current scheduler with s
-       │       if None:    continue with previous scheduler
+       ├─ snapshot.try_swap(&mut current_scheduler)
+       │       AtomicPtr::swap(null)
+       │       if non-null: take new Box, push displaced Box to drop ring
+       │       if null:     leave current_scheduler untouched
        │
 10. scheduler.process_block(&transport, output)
             run steps in topological order
@@ -77,22 +78,27 @@ it before calling `recompile_if_needed`. The audio thread never touches
 
 ### Scheduler swap (step 8 → 9)
 
-The `RuntimeSnapshot` holds `Mutex<Option<GraphScheduler>>`.
+`RuntimeSnapshot` holds an `AtomicPtr<GraphScheduler>` for the pending slot
+plus a bounded SPSC ring used to return displaced schedulers to the command
+thread.
 
-- Command thread: `lock()` (blocking) → write `Some(scheduler)` → unlock.
-- Audio thread: `try_lock()` (non-blocking) → take → unlock.
+- Command thread: `AtomicPtr::swap(new_ptr)` publishes the new scheduler.
+  Lock-free. If the swap returns a non-null pointer (the previous update
+  hadn't been picked up yet), it is dropped here.
+- Audio thread: `AtomicPtr::swap(null)` takes ownership. Lock-free.
+  The displaced `Box<GraphScheduler>` is pushed into the drop ring instead
+  of being dropped inline.
 
-If the audio thread's `try_lock` races with the command thread's `lock`,
-the audio thread skips the swap for one block (10.7 ms at 48 kHz / 512 frames).
-This is imperceptible.
+There is no contention case to handle: `swap` always succeeds in one step,
+no thread ever waits on the other.
 
 ### Overwrite semantics
 
 If the command thread enqueues a second scheduler before the audio thread
-has consumed the first, the first scheduler is silently dropped. The audio
-thread always picks up the **latest** state. This is correct because:
-- The second scheduler is always a superset of the first.
-- The dropped scheduler is deallocated on the command thread (no audio glitch).
+has consumed the first, the first scheduler is silently dropped on the
+command thread (the `swap` in `enqueue` returns the previous pointer and
+hands it to `Box::from_raw`). The audio thread always picks up the
+**latest** state, and the dropped scheduler never costs the real-time path.
 
 ## Memory Lifetime
 
@@ -102,16 +108,20 @@ CompiledGraph { plan: Arc<ExecutionPlan>, processors }
     ▼  GraphScheduler::new() consumes this
 GraphScheduler { plan: Arc<ExecutionPlan>, processors, output_buffers, ... }
     │
-    ▼  RuntimeSnapshot::enqueue() moves this
-RuntimeSnapshot::pending = Some(scheduler)
+    ▼  RuntimeSnapshot::enqueue() boxes + publishes raw ptr
+RuntimeSnapshot::pending: AtomicPtr<GraphScheduler>
     │
-    ▼  try_take() moves this to audio thread
-audio_thread_scheduler = scheduler
+    ▼  try_swap() takes ownership of new Box, pushes old Box to drop ring
+audio_thread_scheduler: Box<GraphScheduler>   (in CPAL closure)
+                                              │
+                                              ▼  drop ring → command thread
+                                              dropped on next enqueue()
 
 The Arc<ExecutionPlan> is shared — zero copy.
-The processors (Box<dyn AudioNode>) are moved to the audio thread.
-The old scheduler (and its processors) are dropped on whichever thread
-last held it (usually the audio thread, or the command thread if overwritten).
+The processors (Box<dyn AudioNode>) are owned by the audio thread for the
+lifetime of the scheduler.
+**Every** scheduler is dropped on the command thread — never on the audio
+thread (this is the C1 fix from the 2026-05-29 audit).
 ```
 
 ## Performance Characteristics
@@ -123,8 +133,8 @@ last held it (usually the audio thread, or the command thread if overwritten).
 | Node instantiation              | O(nodes) — may involve alloc    |
 | `node.prepare()`                | O(1) per node — may alloc       |
 | `GraphScheduler::new()`         | O(nodes × ports × block_size)   |
-| `RuntimeSnapshot::enqueue()`    | O(1) — single mutex + move      |
-| `try_take()` in audio callback  | O(1) — single try_lock          |
+| `RuntimeSnapshot::enqueue()`    | O(1) atomic swap + ring drain   |
+| `try_swap()` in audio callback  | O(1) atomic swap + ring push    |
 | `process_block()`               | O(nodes × frames × channels)   |
 
 The dominant cost is `GraphScheduler::new()` which pre-allocates all audio

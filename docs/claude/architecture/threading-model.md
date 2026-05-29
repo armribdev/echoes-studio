@@ -29,13 +29,15 @@
 │   │   Project file save/load (serde_json)                │     │
 │   └──────────────────────────────────────────────────────┘     │
 └──────────────────────────┬──────────────────────────────────────┘
-                           │ RuntimeSnapshot::enqueue() (blocking lock OK)
+                           │ RuntimeSnapshot::enqueue() (AtomicPtr::swap;
+                           │ drains drop ring, frees dead boxes here)
                            ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │ CPAL Audio Thread (real-time, OS-scheduled)                     │
 │   GraphScheduler::process_block() — the only thing here        │
 │   Reads TransportInfo from atomics                             │
-│   Picks up new scheduler via RuntimeSnapshot::try_take()       │
+│   Picks up new scheduler via RuntimeSnapshot::try_swap()       │
+│     (lock-free AtomicPtr; displaced box → SPSC drop ring)      │
 │   Writes interleaved f32 to CPAL output buffer                 │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -66,9 +68,12 @@ block the graph swap path indirectly.
 
 **Owns:** The current `GraphScheduler` and its pre-allocated buffers.
 
-**Can do:** Read atomics, call `try_lock` (non-blocking only), process DSP.
+**Can do:** Read atomics, call `RuntimeSnapshot::try_swap` (lock-free),
+process DSP.
 
-**Cannot do:** Everything listed in `rules/realtime-safety-rules.md`.
+**Cannot do:** Everything listed in `rules/realtime-safety-rules.md` — and
+in particular: **never `Mutex::lock`/`try_lock`, never `drop` heap-owning
+values, never allocate.**
 
 The audio thread is scheduled by the OS at elevated priority. Any blocking
 operation risks a **priority inversion** (see below) or an underrun.
@@ -82,20 +87,20 @@ operation risks a **priority inversion** (see below) or an underrun.
 The only crossing point is `RuntimeSnapshot`:
 
 ```rust
-// Command thread (blocking OK)
-snapshot.enqueue(new_scheduler);       // lock() → write → unlock
+// Command thread (lock-free, but blocking would be OK here)
+snapshot.enqueue(new_scheduler);
+//   drains the SPSC drop ring (frees displaced boxes from the audio thread)
+//   then AtomicPtr::swap publishes the new Box<GraphScheduler>
 
-// Audio thread (non-blocking only)
-if let Some(sched) = snapshot.try_take() {
-    current_scheduler = sched;
-}
-// If try_lock fails, silently continue with existing scheduler.
-// The new scheduler will be picked up on the next block.
+// Audio thread (lock-free, allocation-free, drop-free)
+snapshot.try_swap(&mut current_scheduler);
+//   AtomicPtr::swap(null) → take ownership of new Box
+//   push displaced Box into the drop ring; command thread frees it later
+//   if nothing was pending, current_scheduler is untouched
 ```
 
-This is the **one approved locking point** in the audio callback.
-`try_lock` failure is not an error — it defers the update by one block (~10 ms
-at 48 kHz / 512 frames), which is imperceptible.
+This is the **only approved scheduler-update path** in the audio callback.
+There is no contention case: every step is a single atomic operation.
 
 ### Audio thread → UI thread (meters, transport)
 
@@ -131,9 +136,12 @@ A priority inversion occurs when the high-priority audio thread blocks waiting
 for a lock held by the low-priority command thread.
 
 Prevention rules:
-- Audio thread **never** calls `Mutex::lock()`.
-- All cross-thread data exchange uses `try_*` variants or lock-free primitives.
-- If `try_lock` fails, the audio thread uses stale-but-valid state for one block.
+- Audio thread **never** calls `Mutex::lock()` or `Mutex::try_lock()` (the
+  latter is not strictly lock-free on Windows).
+- All cross-thread data exchange uses lock-free primitives (`AtomicPtr`,
+  `AtomicU32`, SPSC ring buffers).
+- The audio thread also never deallocates — displaced schedulers are handed
+  back to the command thread through `RuntimeSnapshot`'s drop ring.
 
 ---
 

@@ -81,8 +81,8 @@ next block boundary.
 Command thread                    Audio thread
 ──────────────                    ────────────
 modify AppProject
-compile new GraphScheduler  ───►  try_take() at block start
-                                  swap in new scheduler
+compile new GraphScheduler  ───►  try_swap(&mut current) at block start
+                                  AtomicPtr::swap; old box → drop ring
                                   continue processing
 ```
 
@@ -91,9 +91,12 @@ This means:
 - The graph is always in a consistent state from the audio thread's perspective.
 - Partial graph updates are impossible — the swap is all-or-nothing.
 
-The mechanism is `RuntimeSnapshot`, a `Mutex<Option<GraphScheduler>>` where the
-command thread uses `.lock()` (blocking is acceptable) and the audio callback
-uses `.try_lock()` (non-blocking; skips if contended).
+The mechanism is `RuntimeSnapshot`: an `AtomicPtr<GraphScheduler>` for the
+pending slot plus a bounded SPSC ring used to return displaced schedulers
+to the command thread for deallocation. The command thread publishes via
+`AtomicPtr::swap` and drains the drop ring on every `enqueue`. The audio
+thread calls `try_swap(&mut current)` — lock-free, allocation-free, and
+**no `drop` ever runs on the audio thread**.
 
 See `systems/graph-compiler.md` and `../snapshot-rebuild-flow.md` for the full
 compilation and swap sequence.

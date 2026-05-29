@@ -212,15 +212,15 @@ UI Thread (WebView / JavaScript)
 Graph updates cross the thread boundary through `RuntimeSnapshot`:
 
 ```rust
-// Command thread: blocking OK
-snapshot.enqueue(new_scheduler);        // Mutex::lock() → write → unlock
+// Command thread: drains the drop ring, then publishes new scheduler
+snapshot.enqueue(new_scheduler);        // AtomicPtr::swap + free old box here
 
-// Audio thread: non-blocking only
-if let Some(s) = snapshot.try_take() {  // Mutex::try_lock()
-    current_scheduler = s;
-}
-// If try_lock fails → continue with existing scheduler for 1 block (~10 ms)
-// This is imperceptible and always safe.
+// Audio thread: lock-free, allocation-free, drop-free
+snapshot.try_swap(&mut current_scheduler);
+// Internally: AtomicPtr::swap(null) → take new Box → push old Box into the
+// SPSC drop ring → command thread frees it on its next enqueue.
+// If nothing was pending, current_scheduler is left untouched (always safe:
+// stale graph state still produces correct audio).
 ```
 
 ### 5.2 Audio Thread → UI Thread (meters, transport position)
@@ -242,10 +242,8 @@ position_atomic.store(pos_samples, Ordering::Release);
 
 ```rust
 fn process_block(&mut self, transport: TransportInfo, output: &mut [f32]) {
-    // 1. Pick up new scheduler if one was enqueued (non-blocking)
-    if let Some(new) = self.snapshot.try_take() {
-        *self = new;
-    }
+    // 1. (Done by the CPAL closure *before* calling process_block:
+    //     snapshot.try_swap(&mut current_scheduler) — lock-free, no drop)
 
     // 2. Execute nodes in pre-computed topological order
     for (i, step) in self.plan.steps.iter().enumerate() {
@@ -266,7 +264,9 @@ fn process_block(&mut self, transport: TransportInfo, output: &mut [f32]) {
 
 Real-time safety invariants:
 - All buffers pre-allocated in `GraphScheduler::new()` — no allocation in callback
-- `try_lock` only — no blocking; skipped if contended
+- No `Mutex` of any kind — scheduler swap goes through `AtomicPtr`
+- No `drop` on the audio thread — displaced schedulers ride the SPSC drop ring
+  back to the command thread
 - `TransportInfo` built from atomics — no lock for transport reads
 - No graph traversal — the `ExecutionPlan.steps` array is pre-ordered
 

@@ -34,14 +34,14 @@ some_mutex.try_lock()  // even try_lock — it spins on contention
 that can cause cache-line bouncing between cores. The audio thread must
 never wait for any other thread.
 
-**What to do instead**: Use lock-free data structures (atomics, SPSC queues,
-`RuntimeSnapshot::try_take`). All inter-thread data exchange must be
-designed as producer → consumer with no feedback on the audio path.
+**What to do instead**: Use lock-free data structures (atomics, SPSC ring
+buffers, `RuntimeSnapshot::try_swap`). All inter-thread data exchange must
+be designed as producer → consumer with no feedback on the audio path.
 
-**Exception**: `RuntimeSnapshot::try_take` uses `Mutex::try_lock` to pick up
-a new scheduler. This is the one permitted lock in the callback, guarded by
-`try_lock` (never `lock`) and only taken at the start of the block. If
-contended, it is skipped — no audio glitch.
+**The approved scheduler-update path**: `RuntimeSnapshot::try_swap` reads
+the pending slot via `AtomicPtr::swap` (no mutex) and hands the displaced
+`Box<GraphScheduler>` to the command thread through a bounded SPSC drop
+ring — so the audio thread never locks and never `drop`s.
 
 ### 3. No Async / Await
 

@@ -105,17 +105,21 @@ This invariant is enforced by the `GraphCompiler` and asserted at compile time.
 ## Atomic Snapshot Swap
 
 ```
-Compiler thread              Audio thread
-───────────────              ────────────
+Compiler thread                          Audio thread
+───────────────                          ────────────
+drain drop ring (free dead boxes)
 build new GraphScheduler
-RuntimeSnapshot::enqueue() ──► try_take() at block start
-                                if Some → swap in new scheduler
-                                if None → continue with current
+RuntimeSnapshot::enqueue()          ───► try_swap(&mut current) at block start
+  AtomicPtr::swap publishes ptr           AtomicPtr::swap(null) → take new Box
+                                          push displaced Box to drop ring
+                                          (no drop, no alloc, no lock)
 ```
 
-`try_take` uses `Mutex::try_lock` (non-blocking). If the compiler thread holds
-the lock at the exact block boundary (extremely rare), the audio thread silently
-skips the update for one block. No audio glitch occurs.
+`try_swap` is built on `AtomicPtr::swap` — there is no mutex on the audio
+path. The displaced scheduler is handed back to the command thread through
+a bounded SPSC ring, so the audio thread never deallocates. If nothing is
+pending, `try_swap` is a single atomic load and the audio thread keeps its
+current scheduler.
 
 ## Node Port Model
 

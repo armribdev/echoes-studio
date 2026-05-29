@@ -33,19 +33,28 @@ Three approaches were considered:
 **Immutable snapshot swap.** Every structural project change produces a fresh
 `GraphScheduler` (pre-allocated buffers, pre-compiled execution plan). The
 command thread deposits it in `RuntimeSnapshot`. The audio callback picks it
-up at the start of the next block via non-blocking `try_lock`.
+up at the start of the next block via a lock-free `AtomicPtr::swap`.
 
 ```
 Command thread                          Audio thread
 ──────────────                          ────────────
+drain SPSC drop ring (free dead boxes)
 compile new GraphScheduler
-RuntimeSnapshot::enqueue(sched)  ───►  try_take() at block boundary
-                                        Some → swap in, continue
-                                        None → continue with current
+RuntimeSnapshot::enqueue(sched)  ───►  try_swap(&mut current) at block boundary
+  AtomicPtr publishes new box            AtomicPtr swap; new box owned here
+                                         displaced box → drop ring
+                                         (command thread frees it next enqueue)
 ```
 
-The old scheduler is dropped on whichever thread last held it. Dropping on
-the audio thread is unavoidable but happens at block boundaries, not mid-callback.
+The audio thread **never** drops the displaced scheduler — it hands it back
+through a bounded SPSC ring buffer, and the actual `drop` runs on the
+command thread.
+
+> **Revision history**: the original v1 implementation used
+> `Mutex<Option<GraphScheduler>>` with `try_lock` on the audio thread, and
+> the old scheduler was dropped inline by the callback. The 2026-05-29 audit
+> identified both as RT-safety violations (issues C1 and C2). The current
+> design — `AtomicPtr` + SPSC drop ring — supersedes that approach.
 
 ---
 
@@ -53,8 +62,11 @@ the audio thread is unavoidable but happens at block boundaries, not mid-callbac
 
 **Positive:**
 
-- **Zero synchronization on the hot path.** The callback's `try_lock` is
-  O(1). If uncontested (the common case), it is a single atomic operation.
+- **Zero synchronization on the hot path.** The callback's `try_swap` is
+  O(1) — a single `AtomicPtr::swap`, never blocks, no mutex anywhere.
+- **No deallocation on the audio thread.** Displaced schedulers ride the
+  SPSC drop ring back to the command thread, which `drop`s them off the
+  real-time path.
 - **No audio glitches on update.** The callback always has a valid, complete
   scheduler. There is no "partially updated" state.
 - **No pausing required.** The stream continues uninterrupted during project
@@ -62,9 +74,9 @@ the audio thread is unavoidable but happens at block boundaries, not mid-callbac
 - **Correct by construction.** The new scheduler is fully compiled and prepared
   before being handed to the audio thread. It cannot be in an intermediate state.
 - **Overwrite semantics are safe.** If two commands arrive before the audio
-  thread picks up the first scheduler, the second overwrites the first.
-  The audio thread always gets the latest state. The dropped scheduler is
-  deallocated on the command thread.
+  thread picks up the first scheduler, the `AtomicPtr::swap` in the second
+  `enqueue` returns the previous pointer and frees it on the command thread.
+  The audio thread always gets the latest state.
 
 **Negative:**
 
@@ -72,14 +84,15 @@ the audio thread is unavoidable but happens at block boundaries, not mid-callbac
   (add one track) triggers a full buffer pre-allocation. For large projects
   this is dominated by `GraphScheduler::new()` which allocates
   `O(nodes × ports × block_size)` buffers.
-- **Drop on audio thread.** Dropping the old scheduler (and its `Vec<Vec<AudioBuffer>>`)
-  happens on the audio thread. Memory deallocation is not real-time safe, but
-  occurs at block boundaries where a one-time stall is acceptable.
 - **No DSP state transfer.** The new nodes are freshly initialized. A reverb's
   tail, a delay line's buffer, and a filter's state are lost on graph update.
   This is an audible click for active effects. Mitigated in future by state
   transfer during compilation (copy DSP state from old node to new node with
   matching `NodeId`).
+- **Drop-ring capacity is a static constant.** In the (currently unreachable
+  by construction) case of overflow, the audio thread leaks the displaced
+  box rather than dropping it on the RT path. Capacity is sized well above
+  the worst-case steady-state depth.
 
 ---
 
