@@ -64,6 +64,23 @@ impl MidiEventList {
     pub fn is_empty(&self) -> bool {
         self.len == 0
     }
+
+    /// Sort events by sample offset (ascending).  At equal offsets, NoteOn
+    /// precedes NoteOff so a zero-length note still triggers correctly.
+    ///
+    /// In-place — no allocation.
+    #[inline]
+    pub fn sort_by_offset(&mut self) {
+        self.events[..self.len].sort_by(|a, b| {
+            a.offset.cmp(&b.offset).then_with(|| {
+                let priority = |event: &MidiEvent| match event.kind {
+                    MidiEventKind::NoteOn { .. } => 0,
+                    MidiEventKind::NoteOff { .. } => 1,
+                };
+                priority(a).cmp(&priority(b))
+            })
+        });
+    }
 }
 
 // ── MidiNoteSnapshot ──────────────────────────────────────────────────────────

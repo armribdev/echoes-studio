@@ -71,12 +71,12 @@ Pour un projet stéréo de 5 minutes : ~115 MB clonés par tour de bouton, plus 
 `MAX_NODE_INPUT_PORTS = 32` mais le master a `num_inputs = project.tracks.len()`. Au-delà de 32 pistes, `self.input_ptr_scratch[port]` panic. Plafond produit dur.
 **Fix appliqué** : `ExecutionPlan::max_input_ports()` + dimensionnement de `input_ptr_scratch` à `max(MIN_INPUT_PTR_SCRATCH, plan.max_input_ports())` dans `GraphScheduler::new`.
 
-#### C5 — Événements MIDI non triés + perte de notes au seek
-**Fichiers** : [audio_graph/nodes/instrument.rs:74](../../../src-tauri/src/audio_graph/nodes/instrument.rs#L74), [audio_graph/nodes/poly_synth.rs:216](../../../src-tauri/src/audio_graph/nodes/poly_synth.rs#L216)
+#### C5 — Événements MIDI non triés + perte de notes au seek ✅ **CORRIGÉ**
+**Fichiers** : [audio_graph/nodes/instrument.rs:74](../../../src-tauri/src/audio_graph/nodes/instrument.rs#L74), [audio_graph/nodes/poly_synth.rs:216](../../../src-tauri/src/audio_graph/nodes/poly_synth.rs#L216), [audio_graph/midi.rs](../../../src-tauri/src/audio_graph/midi.rs)
 - `InstrumentNode::process` itère `self.notes.iter()` sans tri. Si deux notes se chevauchent dans un block, l'ordre des events est arbitraire. `PolySynth::process_midi` exige un tri par offset croissant (`while events[ev_idx].offset <= frame`) — sinon des NoteOn sont déclenchés en retard, voire perdus.
 - `note.start_sample >= block_start && note.start_sample < block_end` : si on seek le playhead **après** le start d'une note encore active, le NoteOn n'est jamais joué → silence.
 
-**Fix** : trier `event_buf` par offset avant `process_midi`. Sur transitions transport (seek, début lecture), émettre des NoteOn synthétiques pour les notes telles que `start_sample < pos <= end_sample`.
+**Fix appliqué** : `MidiEventList::sort_by_offset()` (tri in-place, NoteOn avant NoteOff à offset égal). `InstrumentNode` détecte les discontinuités transport (seek, reprise après pause/stop) via `next_expected_block_start` + `was_playing` ; reset du synthé + NoteOn synthétiques à offset 0 pour les notes actives (`start_sample < pos < end_sample`), puis tri avant `process_midi`.
 
 #### C6 — Changement de tempo désynchronise silencieusement le MIDI
 **Fichiers** : [engine_gateway/api.rs:564](../../../src-tauri/src/engine_gateway/api.rs#L564), [audio_graph/compiler.rs:330](../../../src-tauri/src/audio_graph/compiler.rs#L330)
@@ -194,4 +194,4 @@ Sous-système d'input séparé (midir / midi-msg), file lock-free MIDI alimentan
 
 ## Ordre d'attaque suggéré
 
-Si je devais traiter une semaine de travail : **C1, C3, C4, C5** dans cet ordre. Ces quatre éliminent les pires footguns (drops d'allocateur sur thread RT, knob turns qui bloquent l'UI, plafond pistes en dur, bugs MIDI audibles) et débloquent presque tout le reste. C2 part avec C1 (même fix). C6 est trivial à corriger une fois qu'on y pense.
+Si je devais traiter une semaine de travail : **C3, C6** dans cet ordre. C1, C2, C4 et C5 sont corrigés. C3 et C6 éliminent les pires footguns restants (knob turns qui bloquent l'UI, tempo MIDI désynchronisé) et débloquent presque tout le reste.

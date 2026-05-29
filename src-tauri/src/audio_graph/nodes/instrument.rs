@@ -49,6 +49,11 @@ pub struct InstrumentNode {
     device: Box<dyn InstrumentDevice>,
     /// Reused every block — no heap allocation in the RT path.
     event_buf: MidiEventList,
+    /// Expected `position_samples` at the start of the next playing block.
+    /// Used to detect seeks and other non-continuous jumps.
+    next_expected_block_start: u64,
+    /// Previous block's `is_playing` — detects play/pause transitions.
+    was_playing: bool,
 }
 
 impl InstrumentNode {
@@ -57,7 +62,14 @@ impl InstrumentNode {
         notes: Arc<Vec<MidiNoteSnapshot>>,
         device: Box<dyn InstrumentDevice>,
     ) -> Self {
-        InstrumentNode { id, notes, device, event_buf: MidiEventList::new() }
+        InstrumentNode {
+            id,
+            notes,
+            device,
+            event_buf: MidiEventList::new(),
+            next_expected_block_start: 0,
+            was_playing: false,
+        }
     }
 }
 
@@ -82,6 +94,25 @@ impl AudioNode for InstrumentNode {
         if transport.is_playing {
             let block_start = transport.position_samples;
             let block_end   = block_start + transport.block_size as u64;
+            let discontinuity = !self.was_playing
+                || block_start != self.next_expected_block_start;
+
+            if discontinuity {
+                self.device.reset();
+                for note in self.notes.iter() {
+                    // Note already started but not yet ended — emit a catch-up
+                    // NoteOn at the beginning of this block (seek / resume).
+                    if note.start_sample < block_start && block_start < note.end_sample {
+                        self.event_buf.push(MidiEvent {
+                            offset: 0,
+                            kind: MidiEventKind::NoteOn {
+                                pitch: note.pitch,
+                                velocity: note.velocity,
+                            },
+                        });
+                    }
+                }
+            }
 
             for note in self.notes.iter() {
                 if note.start_sample >= block_start && note.start_sample < block_end {
@@ -97,12 +128,20 @@ impl AudioNode for InstrumentNode {
                     });
                 }
             }
+
+            self.event_buf.sort_by_offset();
+            self.next_expected_block_start = block_end;
+        } else {
+            self.next_expected_block_start = transport.position_samples;
         }
 
+        self.was_playing = transport.is_playing;
         self.device.process_midi(&self.event_buf, outputs, transport);
     }
 
     fn reset(&mut self) {
         self.device.reset();
+        self.next_expected_block_start = 0;
+        self.was_playing = false;
     }
 }
