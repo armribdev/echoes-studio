@@ -111,9 +111,10 @@ Pour un projet stéréo de 5 minutes : ~115 MB clonés par tour de bouton, plus 
 `alpha = w.sin() / 2.0 * ((a + 1.0/a) * (1.0/1.0 - 1.0) + 2.0).sqrt()` — `(1.0/1.0 - 1.0) == 0.0`, donc le terme "shelf-S" disparaît. Réponse incorrecte. Comparer au cookbook RBJ.
 **Fix appliqué** : helper `Biquad::shelf_alpha(w, a, shelf_slope)` conforme au cookbook RBJ (`(1/S - 1)`), pente par défaut `S = 1.0`. Tests unitaires sur gain DC, demi-gain à f₀ et dépendance à S.
 
-#### I3 — Resampling nearest-neighbour dans `TrackNode`
+#### I3 — Resampling nearest-neighbour dans `TrackNode` ✅ **CORRIGÉ**
 **Fichiers** : [audio_graph/nodes/track.rs:113](../../../src-tauri/src/audio_graph/nodes/track.rs#L113)
-Mélanger des clips 44.1 kHz à 48 kHz produit un aliasing audible. À remplacer au minimum par une interpolation linéaire, idéalement un resampler polyphase.
+Mélanger des clips 44.1 kHz à 48 kHz produit un aliasing audible.
+**Fix appliqué** : interpolation linéaire entre `samples[idx0]` et `samples[idx0+1]` avec fraction `frac = src_pos - floor(src_pos)`. Quand les taux sont identiques (`sr_ratio == 1.0`), `frac == 0.0` et le comportement est identique à l'avant. Reste idéalement à remplacer par un resampler polyphase pour une qualité broadcast.
 
 #### I4 — Pas de compensation de latence (PDC)
 **Fichiers** : [audio_graph/node.rs:168](../../../src-tauri/src/audio_graph/node.rs#L168), [audio_graph/compiler.rs](../../../src-tauri/src/audio_graph/compiler.rs)

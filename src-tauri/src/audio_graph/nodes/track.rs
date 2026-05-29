@@ -93,15 +93,16 @@ impl AudioNode for TrackNode {
                 continue;
             }
 
-            // Compute the sample ratio for simple nearest-neighbour pitch
-            // correction when native SR ≠ engine SR.  For now 1:1 if equal.
+            // Compute the source-position ratio for linear-interpolated pitch
+            // correction when native SR ≠ engine SR.
             let sr_ratio = if clip.native_sample_rate > 0 {
                 clip.native_sample_rate as f64 / self.engine_sample_rate as f64
             } else {
                 1.0
             };
 
-            // Write channel 0 (mono source)
+            // Write channel 0 (mono source) — linear interpolation between
+            // adjacent source samples when native SR ≠ engine SR.
             {
                 let out_ch0 = output.channel_mut(0);
                 for frame in 0..block {
@@ -110,9 +111,17 @@ impl AudioNode for TrackNode {
                         continue;
                     }
                     let local_offset = global_sample - clip.start_sample;
-                    let src_idx = (local_offset as f64 * sr_ratio) as usize;
-                    if src_idx < clip.samples.len() {
-                        out_ch0[frame] += clip.samples[src_idx];
+                    let src_pos = local_offset as f64 * sr_ratio;
+                    let idx0 = src_pos as usize;
+                    if idx0 < clip.samples.len() {
+                        let s0 = clip.samples[idx0];
+                        let s1 = if idx0 + 1 < clip.samples.len() {
+                            clip.samples[idx0 + 1]
+                        } else {
+                            s0
+                        };
+                        let frac = (src_pos - idx0 as f64) as f32;
+                        out_ch0[frame] += s0 + frac * (s1 - s0);
                     }
                 }
             }
