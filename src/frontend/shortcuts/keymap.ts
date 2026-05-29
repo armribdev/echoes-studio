@@ -23,7 +23,7 @@ import { engineProject } from '../store/engineStore';
 import { selection } from '../../stores/selection';
 import { bottomPanel } from '../../stores/bottomPanel';
 import { settingsPanelOpen } from '../../stores/preferences';
-import { toggleBottomEditor, handleEditorEscapeKey } from '../pianoRoll/clipEditor';
+import { cycleEditorFocus, handleEditorEscapeKey } from '../pianoRoll/clipEditor';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -128,8 +128,8 @@ const SHORTCUTS: Shortcut[] = [
   {
     key: 'Tab',
     modifiers: [],
-    description: 'Afficher / masquer l’éditeur MIDI',
-    action: () => toggleBottomEditor(get(engineProject).tracks, get(selection)),
+    description: 'Plonger dans l’éditeur MIDI / remonter au focus arrangement',
+    action: () => cycleEditorFocus(get(engineProject).tracks, get(selection)),
   },
 ];
 

@@ -426,13 +426,20 @@
 	}
 
 	function handleRulerMouseDown(event: MouseEvent) {
-		keyboardFocus.setTimeline();
+		if (get(keyboardFocus) !== 'piano-roll') keyboardFocus.setTimeline();
 		beginScrub(event, arrangeRulerEl);
 	}
 
 	function handleTracksMouseDown(event: MouseEvent) {
 		if (dragging || midiDragging || !tracksEl) return;
 		if (event.button !== 0) return;
+
+		if (get(keyboardFocus) === 'piano-roll') {
+			// En mode édition piano-roll, ne pas casser le focus ni la sélection
+			// pour un clic dans la zone tracks. Seul le scrub Alt+drag reste possible.
+			if (event.altKey) beginScrub(event, tracksEl);
+			return;
+		}
 
 		keyboardFocus.setTimeline();
 

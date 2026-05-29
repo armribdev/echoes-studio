@@ -97,6 +97,10 @@ export function showMidiClipPreview(
 
 /** Ouvre l'aperçu docké si nécessaire (clic clip, panneau fermé après Échap, etc.). */
 export function ensureClipPreview(track: Track, clip: MidiClip, color: string) {
+	if (get(keyboardFocus) === 'piano-roll') {
+		focusMidiClipForEdit(track, clip, color);
+		return;
+	}
 	showMidiClipPreview(track, clip, color);
 }
 
@@ -172,22 +176,41 @@ export function closeEditor() {
 
 /** Ferme le piano roll si la sélection ne contient plus de clip MIDI actif. */
 export function syncPianoRollToSelection(tracks: Track[], state: SelectionState) {
+	if (get(keyboardFocus) === 'piano-roll') return;
 	if (resolveActiveMidiClip(tracks, state)) return;
 	if (get(bottomPanel).open) closeEditor();
 	else if (get(pianoRollStore).open) pianoRollStore.closePianoRoll();
 }
 
-export function toggleBottomEditor(tracks: Track[], state: SelectionState) {
+/**
+ * Tab : monte d'un cran dans la pile éditeur (miroir d'Escape).
+ *   A (panel fermé) + clip MIDI sélectionné → C (édition directe)
+ *   B (preview, focus arrangement)          → C (édition)
+ *   C (édition)                             → B (preview, focus arrangement)
+ *   A + rien à éditer                       → no-op
+ */
+export function cycleEditorFocus(tracks: Track[], state: SelectionState) {
 	const bp = get(bottomPanel);
-	if (bp.open) {
-		closeEditor();
+
+	if (!bp.open) {
+		const resolved = resolveActiveMidiClip(tracks, state);
+		if (!resolved) return;
+		focusMidiClipForEdit(resolved.track, resolved.clip, trackColor(resolved.trackIndex));
 		return;
 	}
 
-	const resolved = resolveActiveMidiClip(tracks, state);
-	if (resolved) {
-		showMidiClipPreview(resolved.track, resolved.clip, trackColor(resolved.trackIndex));
-	} else {
-		bottomPanel.openTab('pianoroll');
+	if (get(keyboardFocus) === 'piano-roll') {
+		exitEditToPreview();
+		return;
 	}
+
+	// Panel ouvert, focus = timeline → entrer en édition.
+	if (get(pianoRollStore).open) {
+		enterEditFromPreview();
+		return;
+	}
+
+	// Preview ouvert sans clip chargé (rare : panel ouvert via UI sans sélection).
+	const resolved = resolveActiveMidiClip(tracks, state);
+	if (resolved) focusMidiClipForEdit(resolved.track, resolved.clip, trackColor(resolved.trackIndex));
 }
