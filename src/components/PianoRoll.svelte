@@ -1606,14 +1606,6 @@
 
 	.grid-scroll {
 		flex: 1; overflow: auto; position: relative;
-
-		&::-webkit-scrollbar { width: 8px; height: 8px; }
-		&::-webkit-scrollbar-track { background: transparent; }
-		&::-webkit-scrollbar-thumb {
-			background: rgba(255,255,255,0.09); border-radius: 4px;
-			&:hover { background: rgba(255,255,255,0.16); }
-		}
-		&::-webkit-scrollbar-corner { background: transparent; }
 	}
 
 	.grid-wrapper--preview {
