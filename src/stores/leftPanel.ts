@@ -7,7 +7,7 @@ interface LeftPanelState {
 
 function createLeftPanelStore() {
 	const { subscribe, update } = writable<LeftPanelState>({
-		open: true,
+		open: false,
 		width: 240,
 	});
 
