@@ -131,9 +131,10 @@ Mélanger des clips 44.1 kHz à 48 kHz produit un aliasing audible.
 **Fichiers** : [engine_gateway/api.rs:348](../../../src-tauri/src/engine_gateway/api.rs#L348), [engine_gateway/api.rs:378](../../../src-tauri/src/engine_gateway/api.rs#L378), [audio_graph/nodes/track_gain.rs](../../../src-tauri/src/audio_graph/nodes/track_gain.rs)
 Cas particulier de C3, résolu par le même fix : `TrackGainNode` lit `volume × mute × solo × any_solo` depuis ses atomiques par-block. Les handlers `MUTE_TRACK` et `SOLO_TRACK` flippent ces atomiques (`LiveParams::set_track_muted`, `set_track_solo_exclusive`) **sans appeler `recompile_if_needed`**. Le solo est exclusif (un seul track à la fois) et met à jour le flag global `any_solo` consulté par toutes les pistes.
 
-#### I6 — Reset modulation conditionnel
-**Fichiers** : [audio_graph/scheduler.rs:288](../../../src-tauri/src/audio_graph/scheduler.rs#L288), [audio_graph/nodes/gain.rs:60](../../../src-tauri/src/audio_graph/nodes/gain.rs#L60)
-`reset_modulation()` n'est appelé que si `!actions.is_empty()`. Si une route est retirée en cours de session, le dernier `mod_delta` persiste. Toujours reset (ou toujours sommer depuis zéro).
+#### I6 — Reset modulation conditionnel ✅ **CORRIGÉ**
+**Fichiers** : [audio_graph/scheduler.rs:428](../../../src-tauri/src/audio_graph/scheduler.rs#L428), [audio_graph/nodes/gain.rs:60](../../../src-tauri/src/audio_graph/nodes/gain.rs#L60)
+`reset_modulation()` n'était appelé que si `!actions.is_empty()`. Si une route est retirée en cours de session (ou si la liste d'actions effective devient vide entre blocks pour une autre raison), le dernier `mod_delta` du block précédent persistait.
+**Fix appliqué** : `reset_modulation()` est désormais appelé inconditionnellement pour chaque step avant la dispatch des actions. L'impl par défaut du trait étant un no-op, le surcoût est nul pour les nœuds sans paramètres modulés ; pour les nœuds modulables, la dépense est une simple écriture à zéro d'un `f32` par paramètre.
 
 #### I7 — `PluginHost` totalement déconnecté
 **Fichiers** : [plugin_system/host.rs:101](../../../src-tauri/src/plugin_system/host.rs#L101), [audio_graph/compiler.rs:412](../../../src-tauri/src/audio_graph/compiler.rs#L412)

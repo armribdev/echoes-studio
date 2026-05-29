@@ -425,8 +425,13 @@ impl GraphScheduler {
                 &outer[step_idx]
             };
 
+            // Always reset before re-summing modulation contributions for this
+            // block: if a route is removed (or its actions list otherwise
+            // shrinks to empty) between blocks, the previous block's
+            // `mod_delta` must not persist.  Default impl is a no-op, so this
+            // costs nothing for nodes without modulated parameters.
+            self.processors[step_idx].reset_modulation();
             if !actions.is_empty() {
-                self.processors[step_idx].reset_modulation();
                 for action in actions {
                     let mod_signal: f32 = unsafe {
                         let src_bufs: &Vec<AudioBuffer> =
