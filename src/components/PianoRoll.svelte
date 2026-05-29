@@ -1097,11 +1097,11 @@
 		return snapPosition(positionSec, altKey, get(tempo), timelineScale(), get(engineProject).tracks);
 	}
 
-	function handleRulerMouseDown(event: MouseEvent) {
+	function handleRulerMouseDown(event: CustomEvent<MouseEvent>) {
 		if (!pianoRulerEl) return;
 		scrubCleanup?.();
 		scrubCleanup = startTransportScrub(
-			event,
+			event.detail,
 			positionSecFromRuler,
 			(positionSec) => {
 				scrubCleanup = null;
