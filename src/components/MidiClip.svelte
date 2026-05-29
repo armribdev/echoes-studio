@@ -3,7 +3,6 @@
 	import { onMount, onDestroy, createEventDispatcher } from 'svelte';
 	import type { MidiNote } from '../types/global';
 	import { selection } from '../stores/selection';
-	import { keyboardFocus } from '../stores/keyboardFocus';
 
 	export let id: string;
 	export let start: number;
@@ -17,13 +16,17 @@
 		midiclip_dragstart: { offsetPx: number };
 		midiclip_contextmenu: { id: string; x: number; y: number };
 		midiclip_dblclick: { id: string };
+		midiclip_activate: { id: string };
 	}>();
+
+	const CANVAS_INSET = { top: 14, right: 2, bottom: 4, left: 2 };
 
 	let clipEl: HTMLElement;
 	let canvas: HTMLCanvasElement;
 	let rafId = 0;
+	let resizeObserver: ResizeObserver | undefined;
 
-	$: selected = $selection.has(id);
+	$: selected = $selection.ids.has(id);
 	$: width = Math.max(2, (end - start) * scale);
 
 	// Re-render whenever notes, width, bpm, or color change.
@@ -34,11 +37,23 @@
 		rafId = requestAnimationFrame(renderPreview);
 	}
 
-	function renderPreview() {
-		if (!canvas) return;
+	function visibleCanvasHeight(): number {
+		return Math.max(1, clipEl.clientHeight - CANVAS_INSET.top - CANVAS_INSET.bottom);
+	}
+
+	function syncCanvasSize() {
+		if (!canvas || !clipEl) return;
 		const W = Math.max(1, Math.ceil(width));
-		const H = canvas.height;
+		const H = visibleCanvasHeight();
 		if (canvas.width !== W) canvas.width = W;
+		if (canvas.height !== H) canvas.height = H;
+	}
+
+	function renderPreview() {
+		if (!canvas || !clipEl) return;
+		syncCanvasSize();
+		const W = canvas.width;
+		const H = canvas.height;
 
 		const ctx = canvas.getContext('2d');
 		if (!ctx) return;
@@ -85,19 +100,8 @@
 		e.stopPropagation();
 		e.preventDefault();
 
-		keyboardFocus.setTimeline();
-
-		selection.update((sel) => {
-			const next = new Set(sel);
-			if (e.ctrlKey || e.metaKey) {
-				if (next.has(id)) next.delete(id);
-				else next.add(id);
-			} else if (!next.has(id)) {
-				next.clear();
-				next.add(id);
-			}
-			return next;
-		});
+		selection.select(id, { additive: e.ctrlKey || e.metaKey });
+		dispatch('midiclip_activate', { id });
 
 		const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
 		dispatch('midiclip_dragstart', { offsetPx: e.clientX - rect.left });
@@ -116,12 +120,16 @@
 	}
 
 	onMount(() => {
-		canvas.width = Math.max(1, Math.ceil(width));
-		canvas.height = clipEl.clientHeight;
+		syncCanvasSize();
 		renderPreview();
+		resizeObserver = new ResizeObserver(() => scheduleRender());
+		resizeObserver.observe(clipEl);
 	});
 
-	onDestroy(() => cancelAnimationFrame(rafId));
+	onDestroy(() => {
+		cancelAnimationFrame(rafId);
+		resizeObserver?.disconnect();
+	});
 </script>
 
 <div

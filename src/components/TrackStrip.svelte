@@ -78,29 +78,6 @@
 			title="Solo"
 			on:click|stopPropagation={() => dispatch('solotoggle')}
 		>S</button>
-		<button
-			type="button"
-			class="piano-btn"
-			title="Ouvrir le Piano Roll"
-			on:click|stopPropagation={() => dispatch('openpianoroll')}
-		>
-			<svg viewBox="0 0 14 10" width="14" height="10" fill="currentColor" aria-hidden="true">
-				<!-- Touches blanches -->
-				<rect x="0"  y="0" width="1.8" height="10" rx="0.5"/>
-				<rect x="2.1" y="0" width="1.8" height="10" rx="0.5"/>
-				<rect x="4.2" y="0" width="1.8" height="10" rx="0.5"/>
-				<rect x="6.3" y="0" width="1.8" height="10" rx="0.5"/>
-				<rect x="8.4" y="0" width="1.8" height="10" rx="0.5"/>
-				<rect x="10.5" y="0" width="1.8" height="10" rx="0.5"/>
-				<rect x="12.2" y="0" width="1.8" height="10" rx="0.5"/>
-				<!-- Touches noires -->
-				<rect x="1.3" y="0" width="1.4" height="6" rx="0.3" fill="#1a1a1f"/>
-				<rect x="3.4" y="0" width="1.4" height="6" rx="0.3" fill="#1a1a1f"/>
-				<rect x="7.6" y="0" width="1.4" height="6" rx="0.3" fill="#1a1a1f"/>
-				<rect x="9.7" y="0" width="1.4" height="6" rx="0.3" fill="#1a1a1f"/>
-				<rect x="11.8" y="0" width="1.4" height="6" rx="0.3" fill="#1a1a1f"/>
-			</svg>
-		</button>
 	</div>
 
 	<div class="track-controls">
@@ -203,28 +180,6 @@
 			background: $accent-color;
 			border-color: $accent-color;
 			color: #fff;
-		}
-	}
-
-	.piano-btn {
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		width: 22px;
-		height: 20px;
-		flex-shrink: 0;
-		padding: 0;
-		border: 1px solid rgba(255, 255, 255, 0.1);
-		border-radius: 3px;
-		background: transparent;
-		color: rgba($text-color, 0.45);
-		cursor: pointer;
-		transition: background 0.1s, color 0.1s, border-color 0.1s;
-
-		&:hover {
-			color: $text-color;
-			border-color: rgba($text-color, 0.35);
-			background: rgba($accent-color, 0.12);
 		}
 	}
 

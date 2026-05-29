@@ -7,28 +7,17 @@
 	import { notify } from '../stores/status';
 	import { invoke } from '@tauri-apps/api/core';
 	import { open as openDialog } from '@tauri-apps/plugin-dialog';
+	import PanelResizeHandle from './PanelResizeHandle.svelte';
 
 	let isResizing = false;
-	let resizeStartX = 0;
 	let resizeStartW = 0;
 
-	function onResizeStart(e: MouseEvent) {
-		isResizing = true;
-		resizeStartX = e.clientX;
+	function onPanelResizestart() {
 		resizeStartW = $rightPanel.width;
-		window.addEventListener('mousemove', onResizeMove);
-		window.addEventListener('mouseup', onResizeEnd);
 	}
 
-	function onResizeMove(e: MouseEvent) {
-		const delta = resizeStartX - e.clientX;
-		rightPanel.setWidth(resizeStartW + delta);
-	}
-
-	function onResizeEnd() {
-		isResizing = false;
-		window.removeEventListener('mousemove', onResizeMove);
-		window.removeEventListener('mouseup', onResizeEnd);
+	function onPanelResize(e: CustomEvent<number>) {
+		rightPanel.setWidth(resizeStartW + e.detail);
 	}
 
 	let searchQuery = '';
@@ -104,8 +93,13 @@
 	style="--w: {$rightPanel.width}px"
 >
 	{#if $rightPanel.open}
-		<!-- svelte-ignore a11y-no-static-element-interactions -->
-		<div class="resize-handle" on:mousedown={onResizeStart}></div>
+		<PanelResizeHandle
+			axis="horizontal"
+			side="start"
+			bind:resizing={isResizing}
+			on:resizestart={onPanelResizestart}
+			on:resize={onPanelResize}
+		/>
 
 		<div class="library-inner">
 			<div class="search-row">
@@ -215,20 +209,6 @@
 		background: $panel-background-color;
 		overflow: hidden;
 		min-height: 0;
-	}
-
-	.resize-handle {
-		position: absolute;
-		top: 0;
-		left: 0;
-		width: 4px;
-		height: 100%;
-		cursor: ew-resize;
-		z-index: 10;
-		transition: background 0.15s;
-
-		&:hover  { background: rgba($accent-color, 0.4); }
-		&:active { background: $accent-color; }
 	}
 
 	// ── Search bar ────────────────────────────────────────────────────────────

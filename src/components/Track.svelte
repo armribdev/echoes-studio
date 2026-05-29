@@ -18,6 +18,7 @@
 		midiclip_dragstart: { offsetPx: number; trackIndex: number; clipId: string };
 		midiclip_contextmenu: { id: string; trackIndex: number; x: number; y: number };
 		midiclip_dblclick: { id: string; trackIndex: number };
+		midiclip_activate: { id: string; trackIndex: number };
 	}>();
 </script>
 
@@ -48,6 +49,7 @@
 			on:midiclip_dragstart={(e) => dispatch('midiclip_dragstart', { ...e.detail, trackIndex, clipId: clip.id })}
 			on:midiclip_contextmenu={(e) => dispatch('midiclip_contextmenu', { ...e.detail, trackIndex })}
 			on:midiclip_dblclick={(e) => dispatch('midiclip_dblclick', { ...e.detail, trackIndex })}
+			on:midiclip_activate={(e) => dispatch('midiclip_activate', { ...e.detail, trackIndex })}
 		/>
 	{/each}
 </div>

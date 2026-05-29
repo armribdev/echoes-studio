@@ -5,6 +5,11 @@ import type { MidiNote } from '../types/global';
 
 export type PianoRollMode = 'draw' | 'select' | 'erase';
 
+export interface EditScrollPosition {
+	scrollLeft: number;
+	scrollTop: number;
+}
+
 export interface PianoRollState {
 	open: boolean;
 	trackId: string | null;
@@ -16,6 +21,11 @@ export interface PianoRollState {
 	mode: PianoRollMode;
 	quantize: number; // in beats, e.g. 0.25 = 1/16
 	zoom: number;     // px per beat
+	clipDurationBeats: number;
+	/** Zoom preserved when leaving edit mode. */
+	savedEditZoom: number;
+	/** Scroll édition mémorisé par clip (trackId:clipId). */
+	editScrollByClipKey: Record<string, EditScrollPosition>;
 }
 
 const INITIAL: PianoRollState = {
@@ -29,6 +39,9 @@ const INITIAL: PianoRollState = {
 	mode: 'draw',
 	quantize: 0.25,
 	zoom: 80,
+	clipDurationBeats: 16,
+	savedEditZoom: 80,
+	editScrollByClipKey: {},
 };
 
 // ── Store ─────────────────────────────────────────────────────────────────────
@@ -42,16 +55,40 @@ function createPianoRollStore() {
 		subscribe,
 
 		openPianoRoll(trackId: string, clipId: string, trackName: string, trackColor: string, initialNotes: MidiNote[] = []) {
-			update((s) => ({
-				...s,
-				open: true,
-				trackId,
-				clipId,
-				trackName,
-				trackColor,
-				notes: initialNotes,
-				selectedNoteIds: new Set(),
-			}));
+			this.loadClip(trackId, clipId, trackName, trackColor, initialNotes, 16);
+		},
+
+		loadClip(
+			trackId: string,
+			clipId: string,
+			trackName: string,
+			trackColor: string,
+			initialNotes: MidiNote[] = [],
+			clipDurationBeats = 16,
+		) {
+			update((s) => {
+				const sameClip =
+					s.open &&
+					s.trackId === trackId &&
+					s.clipId === clipId &&
+					s.clipDurationBeats === clipDurationBeats &&
+					s.trackName === trackName &&
+					s.trackColor === trackColor &&
+					s.notes === initialNotes;
+				if (sameClip) return s;
+				const keepSelection = s.open && s.trackId === trackId && s.clipId === clipId;
+				return {
+					...s,
+					open: true,
+					trackId,
+					clipId,
+					trackName,
+					trackColor,
+					notes: initialNotes,
+					clipDurationBeats,
+					selectedNoteIds: keepSelection ? s.selectedNoteIds : new Set(),
+				};
+			});
 		},
 
 		closePianoRoll() {
@@ -59,6 +96,7 @@ function createPianoRollStore() {
 				...s,
 				open: false,
 				clipId: null,
+				trackId: null,
 				notes: [],
 				selectedNoteIds: new Set(),
 			}));
@@ -66,7 +104,12 @@ function createPianoRollStore() {
 
 		/** Sync notes from a Rust event (undo/redo/PROJECT_RESET). */
 		syncNotes(notes: MidiNote[]) {
-			update((s) => ({ ...s, notes: [...notes] }));
+			update((s) => {
+				if (s.notes.length === notes.length && s.notes.every((n, i) => n.id === notes[i]?.id)) {
+					return s;
+				}
+				return { ...s, notes: [...notes] };
+			});
 		},
 
 		setMode(mode: PianoRollMode) {
@@ -78,7 +121,40 @@ function createPianoRollStore() {
 		},
 
 		setZoom(zoom: number) {
-			update((s) => ({ ...s, zoom: Math.max(20, Math.min(400, zoom)) }));
+			update((s) => {
+				const z = Math.max(20, Math.min(400, zoom));
+				if (s.zoom === z) return s;
+				return { ...s, zoom: z };
+			});
+		},
+
+		saveEditZoom(zoom: number) {
+			update((s) => ({ ...s, savedEditZoom: Math.max(20, Math.min(400, zoom)) }));
+		},
+
+		restoreEditZoom() {
+			update((s) => (s.zoom === s.savedEditZoom ? s : { ...s, zoom: s.savedEditZoom }));
+		},
+
+		saveEditScroll(trackId: string, clipId: string, scrollLeft: number, scrollTop: number) {
+			const key = `${trackId}:${clipId}`;
+			const pos = {
+				scrollLeft: Math.max(0, scrollLeft),
+				scrollTop: Math.max(0, scrollTop),
+			};
+			update((s) => {
+				const prev = s.editScrollByClipKey[key];
+				if (prev?.scrollLeft === pos.scrollLeft && prev?.scrollTop === pos.scrollTop) return s;
+				return {
+					...s,
+					editScrollByClipKey: { ...s.editScrollByClipKey, [key]: pos },
+				};
+			});
+		},
+
+		getEditScroll(trackId: string | null, clipId: string | null): EditScrollPosition | null {
+			if (!trackId || !clipId) return null;
+			return get({ subscribe }).editScrollByClipKey[`${trackId}:${clipId}`] ?? null;
 		},
 
 		// ── Note CRUD (local-only, commit via setMidiNotes on mouseup) ─────────
@@ -126,6 +202,11 @@ function createPianoRollStore() {
 					n.id === id ? { ...n, duration: Math.max(0.0156, duration) } : n,
 				),
 			}));
+		},
+
+		/** Remplace toutes les notes (commit drag local, sync batch). */
+		setNotes(notes: MidiNote[]) {
+			update((s) => ({ ...s, notes: [...notes] }));
 		},
 
 		deleteNote(id: string) {
@@ -184,7 +265,7 @@ function createPianoRollStore() {
 		},
 
 		clearSelection() {
-			update((s) => ({ ...s, selectedNoteIds: new Set() }));
+			update((s) => (s.selectedNoteIds.size === 0 ? s : { ...s, selectedNoteIds: new Set() }));
 		},
 
 		// ── Accessors ─────────────────────────────────────────────────────────
@@ -202,3 +283,5 @@ function clamp(v: number, min: number, max: number) {
 export const pianoRollStore = createPianoRollStore();
 
 export const pianoRollNotes = derived(pianoRollStore, ($s) => $s.notes);
+
+export const pianoRollSelection = derived(pianoRollStore, ($s) => $s.selectedNoteIds);

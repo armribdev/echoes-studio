@@ -29,7 +29,7 @@
 	let _lastBucket = -1;
 	let _drawnBitmap: ImageBitmap | null = null;
 
-	$: selected = $selection.has(id);
+	$: selected = $selection.ids.has(id);
 
 	function scaleBucket(s: number): number {
 		return Math.round(Math.log2(s) * 8);
@@ -122,17 +122,7 @@
 
 		keyboardFocus.setTimeline();
 
-		selection.update((sel) => {
-			const next = new Set(sel);
-			if (e.ctrlKey || e.metaKey) {
-				if (next.has(id)) next.delete(id);
-				else next.add(id);
-			} else if (!next.has(id)) {
-				next.clear();
-				next.add(id);
-			}
-			return next;
-		});
+		selection.select(id, { additive: e.ctrlKey || e.metaKey });
 
 		const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
 		dispatch('clipdragstart', { offsetPx: e.clientX - rect.left });

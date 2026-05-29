@@ -4,13 +4,17 @@ import { writable } from 'svelte/store';
 export type KeyboardFocusZone = 'timeline' | 'piano-roll' | 'settings';
 
 function createKeyboardFocusStore() {
-	const { subscribe, set } = writable<KeyboardFocusZone>('timeline');
+	const { subscribe, update } = writable<KeyboardFocusZone>('timeline');
+
+	const setZone = (zone: KeyboardFocusZone) => {
+		update((current) => (current === zone ? current : zone));
+	};
 
 	return {
 		subscribe,
-		setTimeline: () => set('timeline'),
-		setPianoRoll: () => set('piano-roll'),
-		setSettings: () => set('settings'),
+		setTimeline: () => setZone('timeline'),
+		setPianoRoll: () => setZone('piano-roll'),
+		setSettings: () => setZone('settings'),
 	};
 }
 

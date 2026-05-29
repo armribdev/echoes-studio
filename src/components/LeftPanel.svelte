@@ -3,28 +3,17 @@
 	import { selectedTrack } from '../stores/selectedTrack';
 	import EffectChain from './EffectChain.svelte';
 	import ModulationPanel from './ModulationPanel.svelte';
+	import PanelResizeHandle from './PanelResizeHandle.svelte';
 
 	let isResizing = false;
-	let resizeStartX = 0;
 	let resizeStartW = 0;
 
-	function onResizeStart(e: MouseEvent) {
-		isResizing = true;
-		resizeStartX = e.clientX;
+	function onPanelResizestart() {
 		resizeStartW = $leftPanel.width;
-		window.addEventListener('mousemove', onResizeMove);
-		window.addEventListener('mouseup', onResizeEnd);
 	}
 
-	function onResizeMove(e: MouseEvent) {
-		const delta = e.clientX - resizeStartX;
-		leftPanel.setWidth(resizeStartW + delta);
-	}
-
-	function onResizeEnd() {
-		isResizing = false;
-		window.removeEventListener('mousemove', onResizeMove);
-		window.removeEventListener('mouseup', onResizeEnd);
+	function onPanelResize(e: CustomEvent<number>) {
+		leftPanel.setWidth(resizeStartW + e.detail);
 	}
 </script>
 
@@ -62,8 +51,13 @@
 			{/if}
 		</div>
 
-		<!-- svelte-ignore a11y-no-static-element-interactions -->
-		<div class="resize-handle" on:mousedown={onResizeStart}></div>
+		<PanelResizeHandle
+			axis="horizontal"
+			side="end"
+			bind:resizing={isResizing}
+			on:resizestart={onPanelResizestart}
+			on:resize={onPanelResize}
+		/>
 	{/if}
 </div>
 
@@ -96,20 +90,6 @@
 		overflow-y: auto;
 		overflow-x: hidden;
 		min-height: 0;
-	}
-
-	.resize-handle {
-		position: absolute;
-		top: 0;
-		right: 0;
-		width: 4px;
-		height: 100%;
-		cursor: ew-resize;
-		z-index: 10;
-		transition: background 0.15s;
-
-		&:hover  { background: rgba($accent-color, 0.4); }
-		&:active { background: $accent-color; }
 	}
 
 	// ── Track header ──────────────────────────────────────────────────────────

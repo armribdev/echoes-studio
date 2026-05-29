@@ -18,7 +18,12 @@ import { undoCommand, redoCommand, play, pause } from '../commands/dispatcher';
 import { transport } from '../../stores/transport';
 import { notify } from '../../stores/status';
 import { exportTrigger, exportMp3Trigger } from '../../stores/exportBus';
-import { isEditingText, shouldHandleGlobalHistoryShortcuts } from './context';
+import { isEditingText, shouldHandleGlobalHistoryShortcuts, hasNoModifiers } from './context';
+import { engineProject } from '../store/engineStore';
+import { selection } from '../../stores/selection';
+import { bottomPanel } from '../../stores/bottomPanel';
+import { settingsPanelOpen } from '../../stores/preferences';
+import { toggleBottomEditor, handleEditorEscapeKey } from '../pianoRoll/clipEditor';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -118,6 +123,14 @@ const SHORTCUTS: Shortcut[] = [
       (isPlaying ? pause() : play()).catch(console.error);
     },
   },
+
+  // ── Editor panel ──────────────────────────────────────────────────────────
+  {
+    key: 'Tab',
+    modifiers: [],
+    description: 'Afficher / masquer l’éditeur MIDI',
+    action: () => toggleBottomEditor(get(engineProject).tracks, get(selection)),
+  },
 ];
 
 // ── Matching logic ────────────────────────────────────────────────────────────
@@ -155,8 +168,18 @@ function matches(e: KeyboardEvent, shortcut: Shortcut): boolean {
  */
 export function registerShortcuts(): () => void {
   const handler = (e: KeyboardEvent): void => {
-    if (e.repeat) return; // ignore key-repeat to avoid spawning multiple Rust threads
+    if (e.repeat) return;
     if (isEditingText(e.target)) return;
+
+    // Piano roll : un seul handler (capture) — désélection → aperçu → fermer.
+    if (e.key === 'Escape' && hasNoModifiers(e) && !get(settingsPanelOpen)) {
+      if (get(bottomPanel).open) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        handleEditorEscapeKey();
+        return;
+      }
+    }
 
     for (const shortcut of SHORTCUTS) {
       if (!matches(e, shortcut)) continue;
@@ -172,6 +195,6 @@ export function registerShortcuts(): () => void {
     }
   };
 
-  window.addEventListener('keydown', handler);
-  return () => window.removeEventListener('keydown', handler);
+  window.addEventListener('keydown', handler, true);
+  return () => window.removeEventListener('keydown', handler, true);
 }

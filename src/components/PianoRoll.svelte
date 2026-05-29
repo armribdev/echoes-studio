@@ -2,23 +2,50 @@
 <script lang="ts">
 	import { onMount, onDestroy, tick } from 'svelte';
 	import { get } from 'svelte/store';
-	import { pianoRollStore, pianoRollNotes, type PianoRollMode } from '../stores/pianoRoll';
+	import {
+		pianoRollStore,
+		pianoRollNotes,
+		pianoRollSelection,
+		type PianoRollMode,
+	} from '../stores/pianoRoll';
+	import { drawGridLayer } from '../frontend/pianoRoll/gridRenderer';
+	import { drawNotesLayer } from '../frontend/pianoRoll/notesRenderer';
+	import { hexAlpha, lighten } from '../frontend/pianoRoll/colorUtils';
+	import {
+		NOTE_H,
+		TOTAL_PITCHES,
+		RESIZE_ZONE,
+		snapBeat,
+		hitTestNote,
+		isResizeHandle,
+		visibleBeatsForEdit,
+		pitchFromGridY,
+	} from '../frontend/pianoRoll/coords';
 	import { transport } from '../stores/transport';
 	import { tempo } from '../stores/tempo';
 	import type { MidiNote } from '../types/global';
 	import { engineProject } from '../frontend/store/engineStore';
-	import { setClipMidiNotes, undoCommand, redoCommand } from '../frontend/commands/dispatcher';
+	import { setClipMidiNotes, undoCommand, redoCommand, seek } from '../frontend/commands/dispatcher';
+	import { snapPosition } from '../lib/snapUtils';
+	import { startTransportScrub } from '../frontend/transportScrub';
 	import { shouldHandlePianoRollShortcuts, hasNoModifiers } from '../frontend/shortcuts/context';
 	import { keyboardFocus } from '../stores/keyboardFocus';
-
-	// ── Constantes de rendu ────────────────────────────────────────────────────
-	const NOTE_H        = 16;
-	const TOTAL_PITCHES = 128;
+	import { closeEditor, enterEditFromPreview } from '../frontend/pianoRoll/clipEditor';
+	import { bottomPanel } from '../stores/bottomPanel';
+	import {
+		getPreviewPitchRange,
+		computePreviewPanelHeight,
+		computePreviewRowH,
+		PREVIEW_CHROME_H,
+	} from '../frontend/pianoRoll/previewLayout';
+	import { previewPanelResizing, editPanelResizing } from '../frontend/pianoRoll/previewRefit';
+	import { fitEditScrollForNotes, pitchRangeScrollTop } from '../frontend/pianoRoll/editScroll';
+	import TimeRuler from './TimeRuler.svelte';
+	import Playhead from './Playhead.svelte';
+	import { RULER_HEIGHT } from '../frontend/timeRuler/constants';
 	const KEYS_WIDTH    = 64;
-	const RULER_H       = 28;
 	const VEL_H         = 72;
 	const VEL_BAR_MIN   = 3;
-	const RESIZE_ZONE   = 8;
 	const MIN_DURATION  = 0.0625;
 	const DEFAULT_ZOOM  = 80;
 
@@ -39,6 +66,7 @@
 	let canvasGrid: HTMLCanvasElement;
 	let canvasVel:  HTMLCanvasElement;
 	let scrollContainer: HTMLDivElement;
+	let velWrapper: HTMLDivElement;
 	let keysContainer:   HTMLDivElement;
 
 	let scrollLeft = 0;
@@ -67,6 +95,35 @@
 	let drag: DragState = { type: 'none' };
 	let isDragging = false;
 
+	/** Notes en cours de drag (pas de mutation store jusqu'au mouseup). */
+	let workingNotes: MidiNote[] | null = null;
+	/** Sélection locale pendant selbox. */
+	let dragSelIds: string[] | null = null;
+
+	let playheadBeat = 0;
+	let rulerViewportWidth = 0;
+	let pianoRulerEl: HTMLDivElement | undefined;
+	let scrubCleanup: (() => void) | null = null;
+
+	let trackId: string | null = null;
+
+	$: clipStartSec = (() => {
+		if (!trackId || !clipId) return 0;
+		const track = $engineProject.tracks.find((t) => t.id === trackId);
+		const clip = track?.midi_clips.find((c) => c.id === clipId);
+		return clip?.start ?? 0;
+	})();
+
+	$: clipStartBeat = (clipStartSec / 60) * $tempo.bpm;
+	$: playheadX = open ? (playheadBeat - clipStartBeat) * zoom : 0;
+	$: playheadMarkerX = playheadX - scrollLeft;
+	$: rulerMaxBars =
+		Math.ceil(
+			(editMode
+				? visibleBeatsForEdit(notes, clipDurationBeats)
+				: Math.max(clipDurationBeats, 1)) / ($tempo.numerator || 4),
+		) + 4;
+
 	async function commitNotes() {
 		const { trackId, clipId } = get(pianoRollStore);
 		if (!trackId || !clipId) return;
@@ -82,88 +139,281 @@
 	let mode: PianoRollMode;
 	let open: boolean;
 	let trackColor: string;
-	let trackName: string;
+	let clipDurationBeats: number;
+	let clipId: string | null;
+	let lastLayoutClipId: string | null = null;
+
+	$: editMode = $keyboardFocus === 'piano-roll';
+
+	let previewPitchMin = 57;
+	let previewPitchMax = 72;
+	let previewRowH = NOTE_H;
 
 	// Doit être déclaré avant les souscriptions (temporal dead zone)
-	let rafPending = false;
-	let rulerRafPending = false;
+	let gridRafPending = false;
+	let velRafPending = false;
+	let layoutRunning = false;
+	let gridResizePasses = 0;
+	const MAX_GRID_RESIZE_PASSES = 4;
+
+	/** Plage de hauteurs ancrée au début d'un redimensionnement en édition. */
+	let editScrollAnchor: { minPitch: number; maxPitch: number } | null = null;
+	let gridViewportObserver: ResizeObserver | undefined;
 
 	const unsubStore = pianoRollStore.subscribe((s) => {
-		zoom       = s.zoom;
-		quantize   = s.quantize;
-		mode       = s.mode;
-		open       = s.open;
-		trackColor = s.trackColor;
-		trackName  = s.trackName;
+		const zoomChanged = s.zoom !== zoom;
+		const quantChanged = s.quantize !== quantize;
+		if (zoomChanged) zoom = s.zoom;
+		if (quantChanged) quantize = s.quantize;
+		if (s.mode !== mode) mode = s.mode;
+		if (s.open !== open) open = s.open;
+		if (s.trackColor !== trackColor) {
+			trackColor = s.trackColor;
+			if (open) scheduleNotesRedraw();
+		}
+		if (s.clipDurationBeats !== clipDurationBeats) clipDurationBeats = s.clipDurationBeats;
+		if (s.clipId !== clipId) clipId = s.clipId;
+		if (s.trackId !== trackId) trackId = s.trackId;
+		const clipChanged = s.open && s.clipId && s.clipId !== lastLayoutClipId;
+		if (clipChanged) lastLayoutClipId = s.clipId;
+		else if (!s.open) lastLayoutClipId = null;
+		if (open && zoomChanged) {
+			tick().then(() => {
+				resizeCanvases();
+				scheduleGridRedraw();
+				scheduleNotesRedraw();
+			});
+		} else if (open && quantChanged) {
+			scheduleGridRedraw();
+		} else if (clipChanged) {
+			if (get(keyboardFocus) === 'piano-roll') {
+				tick().then(() => initEditCanvases(true));
+			} else {
+				scheduleLayout(true);
+			}
+		}
 	});
 	onDestroy(unsubStore);
+
+	let prevKeyboardFocus = get(keyboardFocus);
+	const unsubFocus = keyboardFocus.subscribe((focus) => {
+		if (focus === prevKeyboardFocus) return;
+		if (prevKeyboardFocus === 'piano-roll') persistEditScrollFromView();
+		prevKeyboardFocus = focus;
+		if (!get(pianoRollStore).open) return;
+		tick().then(async () => {
+			if (!get(pianoRollStore).open) return;
+			await tick();
+			if (!get(pianoRollStore).open) return;
+			if (focus === 'piano-roll') initEditCanvases(false);
+			else scheduleLayout(false);
+		});
+	});
+	onDestroy(unsubFocus);
 
 	let notes: MidiNote[] = [];
 	const unsubNotes = pianoRollNotes.subscribe((n) => {
 		notes = n;
-		scheduleRedraw();
+		if (!get(pianoRollStore).open) return;
+		if (get(keyboardFocus) === 'piano-roll') {
+			scheduleNotesRedraw();
+			scheduleVelRedraw();
+		} else {
+			schedulePreviewLayout(false);
+		}
 	});
 	onDestroy(unsubNotes);
 
+	const unsubSelection = pianoRollSelection.subscribe(() => {
+		if (!get(pianoRollStore).open) return;
+		scheduleNotesRedraw();
+		scheduleVelRedraw();
+	});
+	onDestroy(unsubSelection);
+
 	// Sync notes from Rust state (after undo/redo or MIDI_CLIP_NOTES_SET) when not dragging.
 	const unsubEngine = engineProject.subscribe(($project) => {
-		if (isDragging) return;
+		if (isDragging || !get(pianoRollStore).open) return;
 		const { trackId, clipId } = get(pianoRollStore);
 		if (!trackId || !clipId) return;
 		const track = $project.tracks.find((t) => t.id === trackId);
 		if (!track) return;
 		const clip = track.midi_clips.find((c) => c.id === clipId);
-		if (clip) pianoRollStore.syncNotes(clip.notes);
+		if (clip) pianoRollStore.syncNotes(clip.notes ?? []);
 	});
 	onDestroy(unsubEngine);
 
-	let playheadBeat = 0;
 	const unsubTransport = transport.subscribe((t) => {
 		const bpm = get(tempo).bpm;
 		playheadBeat = (t.position / 60) * bpm;
-		scheduleRedraw();
-		scheduleRulerRedraw();
 	});
 	onDestroy(unsubTransport);
 
 	// ── Cycle de vie ──────────────────────────────────────────────────────────
 
-	function scheduleRedraw() {
-		if (rafPending || !open) return;
-		rafPending = true;
+	function displayNotes(): MidiNote[] {
+		return workingNotes ?? notes;
+	}
+
+	function displaySelection(): Set<string> {
+		if (dragSelIds) return new Set(dragSelIds);
+		return get(pianoRollStore).selectedNoteIds;
+	}
+
+	function scheduleGridRedraw() {
+		if (gridRafPending || !open) return;
+		gridRafPending = true;
 		requestAnimationFrame(() => {
-			rafPending = false;
-			drawGrid();
+			gridRafPending = false;
+			drawCanvas();
+		});
+	}
+
+	function scheduleNotesRedraw() {
+		scheduleGridRedraw();
+	}
+
+	function scheduleVelRedraw() {
+		if (velRafPending || !editMode || !open) return;
+		velRafPending = true;
+		requestAnimationFrame(() => {
+			velRafPending = false;
 			drawVelocity();
 		});
 	}
 
-	function scheduleRulerRedraw() {
-		if (rulerRafPending || !open) return;
-		rulerRafPending = true;
-		requestAnimationFrame(() => {
-			rulerRafPending = false;
-			drawRuler();
-		});
+	/** @deprecated alias — notes + velocity */
+	function scheduleRedraw() {
+		scheduleGridRedraw();
+		scheduleNotesRedraw();
+		if (editMode) drawVelocity();
 	}
 
-	onMount(() => {
-		initCanvases();
-		scrollToPitch(60);
+	function scheduleHoverRedraw() {
+		scheduleGridRedraw();
+	}
+
+	const unsubEditResizing = editPanelResizing.subscribe((resizing) => {
+		if (resizing && get(pianoRollStore).open && get(keyboardFocus) === 'piano-roll') {
+			const { min, max } = getPreviewPitchRange(displayNotes());
+			editScrollAnchor = { minPitch: min, maxPitch: max };
+			adjustEditScrollForPanelResize();
+			return;
+		}
+		if (!resizing) {
+			editScrollAnchor = null;
+			if (get(pianoRollStore).open && get(keyboardFocus) === 'piano-roll') {
+				persistEditScrollFromView();
+			}
+		}
 	});
+	onDestroy(unsubEditResizing);
 
-	$: if (open) {
-		tick().then(() => {
-			initCanvases();
-			scrollToPitch(60);
-		});
+	/** Recalcule rowH + canvas en aperçu après redimensionnement (viewport mesuré). */
+	function adjustPreviewLayoutForPanelResize() {
+		if (!scrollContainer || !open || editMode) return;
+
+		syncPreviewLayoutState();
+		resizeCanvases();
+		drawCanvas();
 	}
 
-	function initCanvases() {
+	/** Recentre la plage de notes sans redessiner (le canvas ne change pas en hauteur). */
+	function adjustEditScrollForPanelResize() {
+		if (!scrollContainer || !editScrollAnchor || !editMode) return;
+
+		const viewportH = scrollContainer.clientHeight;
+		if (viewportH <= 0) return;
+
+		const contentH = TOTAL_PITCHES * NOTE_H;
+		const maxScrollTop = Math.max(0, contentH - viewportH);
+		const top = Math.min(
+			pitchRangeScrollTop(editScrollAnchor.minPitch, editScrollAnchor.maxPitch, viewportH),
+			maxScrollTop,
+		);
+
+		scrollContainer.scrollTop = top;
+		scrollTop = top;
+		if (keysContainer) keysContainer.scrollTop = top;
+	}
+
+	async function scheduleLayout(autoHeight = false) {
+		if (!open || layoutRunning) return;
+		layoutRunning = true;
+		try {
+			await tick();
+			await tick();
+			if (!open) return;
+			if (get(keyboardFocus) === 'piano-roll') initEditCanvases(false);
+			else await fitPreviewView(autoHeight);
+		} finally {
+			layoutRunning = false;
+		}
+	}
+
+	function schedulePreviewLayout(autoHeight = false) {
+		if (!open || get(keyboardFocus) === 'piano-roll') return;
+		scheduleLayout(autoHeight);
+	}
+
+	function initEditCanvases(fitScroll = false) {
 		resizeCanvases();
-		resizeRuler();
-		scheduleRedraw();
-		scheduleRulerRedraw();
+		applyEditScrollView(fitScroll);
+		scheduleGridRedraw();
+		scheduleNotesRedraw();
+		scheduleVelRedraw();
+	}
+
+	function persistEditScrollFromView() {
+		if (!scrollContainer) return;
+		const { trackId, clipId } = get(pianoRollStore);
+		if (!trackId || !clipId) return;
+		pianoRollStore.saveEditScroll(
+			trackId,
+			clipId,
+			scrollContainer.scrollLeft,
+			scrollContainer.scrollTop,
+		);
+	}
+
+	function setScrollContainerPosition(left: number, top: number) {
+		if (!scrollContainer) return;
+		scrollContainer.scrollLeft = left;
+		scrollContainer.scrollTop = top;
+		scrollLeft = left;
+		scrollTop = top;
+		if (keysContainer) keysContainer.scrollTop = top;
+		if (velWrapper) velWrapper.scrollLeft = left;
+	}
+
+	/** Restaure le scroll mémorisé ou cadre la plage de notes (première visite / clip changé). */
+	function applyEditScrollView(forceFit = false) {
+		if (!scrollContainer || !editMode) return;
+
+		const { trackId, clipId } = get(pianoRollStore);
+		const viewportH = scrollContainer.clientHeight;
+		const contentH = TOTAL_PITCHES * NOTE_H;
+		const maxScrollTop = Math.max(0, contentH - viewportH);
+		const contentW = Math.max(scrollContainer.clientWidth, visibleBeats() * zoom + 400);
+		const maxScrollLeft = Math.max(0, contentW - scrollContainer.clientWidth);
+
+		let left = 0;
+		let top = 0;
+
+		if (!forceFit) {
+			const saved = pianoRollStore.getEditScroll(trackId, clipId);
+			if (saved) {
+				left = Math.min(saved.scrollLeft, maxScrollLeft);
+				top = Math.min(saved.scrollTop, maxScrollTop);
+				setScrollContainerPosition(left, top);
+				return;
+			}
+		}
+
+		const fit = fitEditScrollForNotes(displayNotes(), viewportH);
+		left = Math.min(fit.scrollLeft, maxScrollLeft);
+		top = Math.min(fit.scrollTop, maxScrollTop);
+		setScrollContainerPosition(left, top);
 	}
 
 	// HiDPI helper
@@ -182,28 +432,93 @@
 	}
 
 	function resizeCanvases() {
-		if (!canvasGrid || !canvasVel || !scrollContainer) return;
-		const totalBeats = visibleBeats();
-		const totalH     = TOTAL_PITCHES * NOTE_H;
-		const w          = Math.max(scrollContainer.clientWidth, totalBeats * zoom + 400);
+		if (!canvasGrid || !scrollContainer) return;
+		rulerViewportWidth = scrollContainer.clientWidth;
+		let totalH: number;
+		let w: number;
+		if (editMode) {
+			const totalBeats = visibleBeats();
+			totalH = TOTAL_PITCHES * NOTE_H;
+			w = Math.max(scrollContainer.clientWidth, totalBeats * zoom + 400);
+		} else {
+			const pitchCount = previewPitchMax - previewPitchMin + 1;
+			totalH = pitchCount * previewRowH;
+			const duration = Math.max(get(pianoRollStore).clipDurationBeats, 0.25);
+			w = Math.max(scrollContainer.clientWidth, duration * zoom + 8);
+		}
 		setSize(canvasGrid, w, totalH);
-		setSize(canvasVel,  w, VEL_H);
+		if (canvasVel) setSize(canvasVel, w, VEL_H);
+	}
+
+	function noteRowH(): number {
+		return editMode ? NOTE_H : previewRowH;
+	}
+
+	/** Met à jour la plage de pitch aperçu depuis les notes courantes (évite notes hors-canvas). */
+	function syncPreviewLayoutState(panelH = get(bottomPanel).height) {
+		const range = getPreviewPitchRange(notes);
+		previewPitchMin = range.min;
+		previewPitchMax = range.max;
+		const measuredGridH = scrollContainer?.clientHeight ?? 0;
+		const effectivePanelH =
+			measuredGridH > 0 ? measuredGridH + PREVIEW_CHROME_H : panelH;
+		previewRowH = computePreviewRowH(notes, effectivePanelH);
+	}
+
+	async function applyPreviewFit(
+		panelH: number,
+		opts: { fitZoom?: boolean; resetScroll?: boolean } = {},
+	) {
+		if (!scrollContainer || get(keyboardFocus) === 'piano-roll') return;
+
+		const { fitZoom = true, resetScroll = false } = opts;
+
+		syncPreviewLayoutState(panelH);
+		gridResizePasses = MAX_GRID_RESIZE_PASSES;
+
+		if (fitZoom) {
+			const duration = Math.max(get(pianoRollStore).clipDurationBeats, 0.25);
+			const viewportW = Math.max(80, scrollContainer.clientWidth - 4);
+			const fitZoomVal = Math.max(12, Math.min(400, (viewportW * 0.96) / duration));
+			if (Math.abs(fitZoomVal - zoom) > 0.5) {
+				pianoRollStore.setZoom(fitZoomVal);
+			}
+		}
+
+		if (resetScroll) {
+			scrollContainer.scrollLeft = 0;
+			scrollContainer.scrollTop = 0;
+		}
+
+		resizeCanvases();
+		scheduleGridRedraw();
+	}
+
+	/** @param autoHeight — calcule et applique la hauteur idéale (ouverture clip / changement de clip). */
+	async function fitPreviewView(autoHeight = false) {
+		if (!scrollContainer || get(keyboardFocus) === 'piano-roll') return;
+		if (get(previewPanelResizing)) return;
+
+		let panelH = get(bottomPanel).height;
+		if (autoHeight) {
+			panelH = computePreviewPanelHeight(notes);
+			bottomPanel.setPreviewAutoHeight(panelH);
+			await tick();
+			panelH = get(bottomPanel).height;
+		}
+
+		await applyPreviewFit(panelH, { fitZoom: true, resetScroll: autoHeight });
 	}
 
 	// ── Conversion coordonnées ────────────────────────────────────────────────
 
-	function pitchToY(pitch: number): number  { return (TOTAL_PITCHES - 1 - pitch) * NOTE_H; }
-	function snapBeat(beat: number): number    { return Math.round(beat / quantize) * quantize; }
-
-	function visibleBeats(): number {
-		const bpm = get(tempo).bpm;
-		return Math.max(16, (bpm / 60) * 120);
+	function pitchToY(pitch: number): number {
+		if (editMode) return (TOTAL_PITCHES - 1 - pitch) * NOTE_H;
+		return (previewPitchMax - pitch) * previewRowH;
 	}
-
-	function scrollToPitch(pitch: number) {
-		if (!scrollContainer) return;
-		const y = pitchToY(pitch) - scrollContainer.clientHeight / 2 + NOTE_H / 2;
-		scrollContainer.scrollTop = Math.max(0, y);
+	function visibleBeats(): number {
+		if (!editMode) return Math.max(get(pianoRollStore).clipDurationBeats, 1);
+		return visibleBeatsForEdit(displayNotes(), clipDurationBeats);
 	}
 
 	// Indicateur de position (toolbar)
@@ -220,155 +535,92 @@
 
 	$: zoomLabel = `${(zoom / DEFAULT_ZOOM).toFixed(1)}×`;
 
-	// ── Dessin de la grille ───────────────────────────────────────────────────
+	$: clipMetaLabel = (() => {
+		const num = $tempo.numerator || 4;
+		const bars = clipDurationBeats / num;
+		const barsRounded = Math.round(bars * 10) / 10;
+		const barsText = Number.isInteger(barsRounded)
+			? `${barsRounded}`
+			: `${barsRounded.toFixed(1)}`;
+		return `${barsText} mes.`;
+	})();
 
-	function drawGrid() {
+	$: noteMetaLabel = `${notes.length} note${notes.length !== 1 ? 's' : ''}`;
+
+	// ── Dessin (grille + notes en couches) ────────────────────────────────────
+
+	function drawCanvas() {
+		if (drawGrid()) drawNotes();
+	}
+
+	function drawGrid(): boolean {
+		if (!canvasGrid) return false;
+		const ctx = getCtx(canvasGrid);
+		if (!ctx) return false;
+
+		const W = canvasGrid.width / dpr;
+		const H = canvasGrid.height / dpr;
+
+		if (!editMode && scrollContainer && !get(previewPanelResizing)) {
+			const pitchCount = previewPitchMax - previewPitchMin + 1;
+			const expectedH = pitchCount * previewRowH;
+			const duration = Math.max(get(pianoRollStore).clipDurationBeats, 0.25);
+			const expectedW = Math.max(scrollContainer.clientWidth, duration * zoom + 8);
+			if (
+				gridResizePasses < MAX_GRID_RESIZE_PASSES &&
+				(Math.abs(H - expectedH) > 1 || Math.abs(W - expectedW) > 1)
+			) {
+				gridResizePasses++;
+				resizeCanvases();
+				scheduleGridRedraw();
+				return false;
+			}
+		}
+
+		drawGridLayer({
+			ctx,
+			width: W,
+			height: H,
+			editMode,
+			zoom,
+			quantize,
+			scrollLeft,
+			viewportWidth: scrollContainer?.clientWidth ?? W,
+			previewPitchMin,
+			previewPitchMax,
+			previewRowH,
+		});
+		return true;
+	}
+
+	function drawNotes() {
 		if (!canvasGrid) return;
 		const ctx = getCtx(canvasGrid);
 		if (!ctx) return;
+		const W = canvasGrid.width / dpr;
+		const H = canvasGrid.height / dpr;
 
-		const W   = canvasGrid.width  / dpr;
-		const H   = canvasGrid.height / dpr;
-		const sel = get(pianoRollStore).selectedNoteIds;
-
-		ctx.clearRect(0, 0, W, H);
-
-		// ── Fond demi-tons ──────────────────────────────────────────────────
-		for (let p = 0; p < TOTAL_PITCHES; p++) {
-			const y   = pitchToY(p);
-			const isB = BLACK_KEYS.has(p % 12);
-			ctx.fillStyle = isB ? '#1b1b22' : '#252530';
-			ctx.fillRect(0, y, W, NOTE_H);
-		}
-
-		// Surbrillance douce sur C (repère d'octave)
-		ctx.fillStyle = 'rgba(255,255,255,0.025)';
-		for (let p = 0; p < TOTAL_PITCHES; p += 12) {
-			ctx.fillRect(0, pitchToY(p), W, NOTE_H);
-		}
-
-		// ── Lignes horizontales ─────────────────────────────────────────────
-		ctx.lineWidth = 0.5;
-		for (let p = 0; p <= TOTAL_PITCHES; p++) {
-			const y = pitchToY(p);
-			ctx.strokeStyle = (p % 12 === 0) ? '#38384a' : '#28282e';
-			ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
-		}
-
-		// ── Grille verticale ────────────────────────────────────────────────
-		const beatsPerMeasure = get(tempo).numerator || 4;
-		const totalBeats      = W / zoom;
-		for (let b = 0; b <= totalBeats; b += quantize) {
-			const x         = b * zoom;
-			const isMeasure = Math.abs(b % beatsPerMeasure) < 0.001;
-			const isBeat    = Math.abs(b % 1) < 0.001;
-			ctx.strokeStyle = isMeasure ? '#3e3e50' : isBeat ? '#2e2e3c' : '#252530';
-			ctx.lineWidth   = isMeasure ? 1 : 0.5;
-			ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke();
-		}
-
-		// ── Playhead ────────────────────────────────────────────────────────
-		const phX = playheadBeat * zoom;
-		if (phX >= 0 && phX <= W) {
-			ctx.save();
-			ctx.shadowColor = 'rgba(21, 113, 255, 0.45)';
-			ctx.shadowBlur  = 8;
-			ctx.strokeStyle = '#1571ff';
-			ctx.lineWidth   = 1.5;
-			ctx.beginPath(); ctx.moveTo(phX, 0); ctx.lineTo(phX, H); ctx.stroke();
-			ctx.restore();
-		}
-
-		// ── Ghost note (mode draw, idle) ─────────────────────────────────────
-		if (mode === 'draw' && drag.type === 'none' && hoverPitch >= 0 && hoverBeat >= 0) {
-			const gBeat = snapBeat(hoverBeat);
-			const gx    = gBeat * zoom;
-			const gy    = pitchToY(hoverPitch);
-			const gw    = Math.max(2, quantize * zoom - 1);
-			ctx.fillStyle   = hexAlpha(trackColor, 0.28);
-			roundRect(ctx, gx, gy + 1, gw, NOTE_H - 2, 3);
-			ctx.fill();
-			ctx.strokeStyle = hexAlpha(trackColor, 0.55);
-			ctx.lineWidth   = 1;
-			roundRect(ctx, gx + 0.5, gy + 1.5, gw - 1, NOTE_H - 3, 3);
-			ctx.stroke();
-		}
-
-		// ── Notes ───────────────────────────────────────────────────────────
-		ctx.font = '9px Inter, system-ui, sans-serif';
-		ctx.textBaseline = 'middle';
-
-		for (const note of notes) {
-			const x        = note.start * zoom;
-			const y        = pitchToY(note.pitch);
-			const w        = Math.max(2, note.duration * zoom - 1);
-			const selected = sel.has(note.id);
-
-			// Opacité pilotée par la velocity (retour visuel de dynamique)
-			const velRatio = note.velocity / 127;
-			const alpha    = selected ? 1 : 0.42 + velRatio * 0.52;
-			const base     = selected ? lighten(trackColor, 0.22) : trackColor;
-
-			// Corps
-			ctx.fillStyle = hexAlpha(base, alpha);
-			roundRect(ctx, x, y + 1, w, NOTE_H - 2, 3);
-			ctx.fill();
-
-			// Reflet lumineux (gradient vertical)
-			if (w > 4) {
-				const gr = ctx.createLinearGradient(0, y + 1, 0, y + NOTE_H - 2);
-				gr.addColorStop(0,   'rgba(255,255,255,0.20)');
-				gr.addColorStop(0.45,'rgba(255,255,255,0.04)');
-				gr.addColorStop(1,   'rgba(0,0,0,0.06)');
-				ctx.fillStyle = gr;
-				roundRect(ctx, x, y + 1, w, NOTE_H - 2, 3);
-				ctx.fill();
-			}
-
-			// Contour de sélection
-			if (selected) {
-				ctx.strokeStyle = '#1571ff';
-				ctx.lineWidth   = 1.5;
-				roundRect(ctx, x + 0.75, y + 1.75, w - 1.5, NOTE_H - 3.5, 2.5);
-				ctx.stroke();
-			}
-
-			// Label pitch
-			if (w > 16) {
-				const name  = NOTE_NAMES[note.pitch % 12];
-				const oct   = Math.floor(note.pitch / 12) - 1;
-				const label = w > 34 ? `${name}${oct}` : name;
-				ctx.fillStyle = `rgba(255,255,255,${selected ? 0.9 : 0.5})`;
-				ctx.fillText(label, x + 3, y + NOTE_H / 2);
-			}
-
-			// Handle resize (triangle coin bas-droit)
-			if (w > 10) {
-				ctx.fillStyle = `rgba(255,255,255,${selected ? 0.55 : 0.22})`;
-				ctx.beginPath();
-				ctx.moveTo(x + w - 1, y + NOTE_H - 5);
-				ctx.lineTo(x + w - 1, y + NOTE_H - 2);
-				ctx.lineTo(x + w - 7, y + NOTE_H - 2);
-				ctx.closePath();
-				ctx.fill();
-			}
-		}
-
-		// ── Boîte de sélection ──────────────────────────────────────────────
-		if (drag.type === 'selbox') {
-			const { x0, y0, x1, y1 } = drag;
-			const rx = Math.min(x0, x1);
-			const ry = Math.min(y0, y1);
-			const rw = Math.abs(x1 - x0);
-			const rh = Math.abs(y1 - y0);
-			ctx.fillStyle = 'rgba(21, 113, 255, 0.07)';
-			ctx.fillRect(rx, ry, rw, rh);
-			ctx.strokeStyle = 'rgba(21, 113, 255, 0.65)';
-			ctx.lineWidth   = 1;
-			ctx.setLineDash([4, 3]);
-			ctx.strokeRect(rx + 0.5, ry + 0.5, rw - 1, rh - 1);
-			ctx.setLineDash([]);
-		}
+		drawNotesLayer({
+			ctx,
+			width: W,
+			height: H,
+			clearBackground: false,
+			editMode,
+			zoom,
+			quantize,
+			mode,
+			trackColor,
+			notes: displayNotes(),
+			selectedNoteIds: displaySelection(),
+			previewPitchMin,
+			previewPitchMax,
+			previewRowH,
+			hoverBeat,
+			hoverPitch,
+			dragType: drag.type,
+			showSelbox: drag.type === 'selbox',
+			selbox: drag.type === 'selbox' ? drag : undefined,
+		});
 	}
 
 	function drawVelocity() {
@@ -377,8 +629,6 @@
 		if (!ctx) return;
 		const W   = canvasVel.width / dpr;
 		const H   = VEL_H;
-		const sel = get(pianoRollStore).selectedNoteIds;
-
 		ctx.clearRect(0, 0, W, H);
 
 		// Fond
@@ -394,7 +644,9 @@
 		});
 
 		// Barres de velocity
-		for (const note of notes) {
+		const velNotes = displayNotes();
+		const sel = displaySelection();
+		for (const note of velNotes) {
 			const x        = note.start * zoom + 1;
 			const barH     = Math.max(VEL_BAR_MIN, (note.velocity / 127) * (H - 6));
 			const barW     = Math.max(3, quantize * zoom - 3);
@@ -432,37 +684,101 @@
 	// ── Interactions Canvas ───────────────────────────────────────────────────
 
 	function getGridCoords(e: MouseEvent): { beat: number; pitch: number; rawX: number; rawY: number } {
+		if (!canvasGrid) return { beat: 0, pitch: 0, rawX: 0, rawY: 0 };
 		const rect = canvasGrid.getBoundingClientRect();
 		const rawX = e.clientX - rect.left;
 		const rawY = e.clientY - rect.top;
+		const rowH = noteRowH();
 		return {
-			beat:  rawX / zoom,
-			pitch: TOTAL_PITCHES - 1 - Math.floor(rawY / NOTE_H),
+			beat: rawX / zoom,
+			pitch: editMode
+				? pitchFromGridY(rawY, rowH)
+				: Math.max(
+						previewPitchMin,
+						Math.min(previewPitchMax, previewPitchMax - Math.floor(rawY / rowH)),
+					),
 			rawX,
 			rawY,
 		};
 	}
 
 	function hitTest(beat: number, pitch: number): MidiNote | undefined {
-		return notes.find(
-			(n) => n.pitch === pitch && beat >= n.start && beat < n.start + n.duration
-		);
+		return hitTestNote(displayNotes(), beat, pitch);
 	}
 
-	function isResizeHandle(note: MidiNote, beatX: number): boolean {
-		const endBeat = note.start + note.duration;
-		const endPx   = endBeat * zoom;
-		const pxX     = beatX * zoom;
-		return pxX >= endPx - RESIZE_ZONE && pxX <= endPx + 2;
+	function noteResizeHandle(note: MidiNote, beatX: number): boolean {
+		return isResizeHandle(note, beatX, zoom);
+	}
+
+	function beginWorkingNotes() {
+		workingNotes = displayNotes().map((n) => ({ ...n }));
+	}
+
+	function resizeWorkingNote(id: string, duration: number) {
+		if (!workingNotes) return;
+		const d = Math.max(MIN_DURATION, duration);
+		workingNotes = workingNotes.map((n) => (n.id === id ? { ...n, duration: d } : n));
+		scheduleNotesRedraw();
+		scheduleVelRedraw();
+	}
+
+	function moveWorkingNote(id: string, pitch: number, start: number) {
+		if (!workingNotes) return;
+		workingNotes = workingNotes.map((n) =>
+			n.id === id
+				? { ...n, pitch: Math.max(0, Math.min(127, pitch)), start: Math.max(0, start) }
+				: n,
+		);
+		scheduleNotesRedraw();
+	}
+
+	function moveWorkingSelected(deltaPitch: number, deltaStart: number) {
+		if (!workingNotes) return;
+		const sel = get(pianoRollStore).selectedNoteIds;
+		workingNotes = workingNotes.map((n) =>
+			sel.has(n.id)
+				? {
+						...n,
+						pitch: Math.max(0, Math.min(127, n.pitch + deltaPitch)),
+						start: Math.max(0, n.start + deltaStart),
+					}
+				: n,
+		);
+		scheduleNotesRedraw();
+	}
+
+	function eraseWorkingNote(id: string) {
+		if (!workingNotes) return;
+		workingNotes = workingNotes.filter((n) => n.id !== id);
+		scheduleNotesRedraw();
+		scheduleVelRedraw();
+	}
+
+	function flushWorkingNotes() {
+		if (workingNotes) {
+			pianoRollStore.setNotes(workingNotes);
+			workingNotes = null;
+		}
+		if (dragSelIds) {
+			pianoRollStore.selectNotes(dragSelIds);
+			dragSelIds = null;
+		}
 	}
 
 	function onGridMousedown(e: MouseEvent) {
-		// Middle-click : pan horizontal
+		// Middle-click : pan horizontal (preview + édition)
 		if (e.button === 1) {
 			e.preventDefault();
 			isPanning          = true;
 			panStartX          = e.clientX;
 			panStartScrollLeft = scrollContainer.scrollLeft;
+			return;
+		}
+		if (!editMode) {
+			if (e.button === 0) {
+				e.preventDefault();
+				enterEditFromPreview();
+			}
 			return;
 		}
 		if (e.button !== 0 && e.button !== 2) return;
@@ -472,20 +788,28 @@
 		const hit = hitTest(beat, pitch);
 
 		if (mode === 'draw') {
+			beginWorkingNotes();
 			if (hit) {
-				if (isResizeHandle(hit, beat)) {
+				if (noteResizeHandle(hit, beat)) {
 					drag = { type: 'resize', noteId: hit.id, origDur: hit.duration, anchorBeat: beat };
 				} else {
 					drag = { type: 'move', noteId: hit.id, origPitch: hit.pitch, origStart: hit.start, anchorBeat: beat, anchorPitch: pitch, isGroup: false };
 				}
 			} else {
-				const sb = snapBeat(beat);
-				const id = pianoRollStore.addNote(pitch, sb, quantize);
+				const sb = snapBeat(beat, quantize);
+				const id = crypto.randomUUID().slice(0, 8);
+				workingNotes = [
+					...displayNotes(),
+					{ id, pitch, start: sb, duration: quantize, velocity: 100 },
+				];
 				drag = { type: 'create', noteId: id, pitch, startBeat: sb, anchorBeat: beat };
+				scheduleNotesRedraw();
+				scheduleVelRedraw();
 			}
 		} else if (mode === 'select') {
 			if (hit) {
-				if (isResizeHandle(hit, beat)) {
+				beginWorkingNotes();
+				if (noteResizeHandle(hit, beat)) {
 					drag = { type: 'resize', noteId: hit.id, origDur: hit.duration, anchorBeat: beat };
 				} else {
 					const isSelected = get(pianoRollStore).selectedNoteIds.has(hit.id);
@@ -495,10 +819,13 @@
 				}
 			} else {
 				if (!(e.ctrlKey || e.metaKey)) pianoRollStore.clearSelection();
+				workingNotes = null;
+				dragSelIds = [];
 				drag = { type: 'selbox', x0: rawX, y0: rawY, x1: rawX, y1: rawY };
 			}
 		} else if (mode === 'erase') {
-			if (hit) pianoRollStore.deleteNote(hit.id);
+			beginWorkingNotes();
+			if (hit) eraseWorkingNote(hit.id);
 			drag = { type: 'erase' };
 		}
 	}
@@ -506,51 +833,58 @@
 	function onGridMousemove(e: MouseEvent) {
 		const { beat, pitch, rawX, rawY } = getGridCoords(e);
 
-		// Mise à jour hover pour ghost note + indicateur de position
-		hoverBeat  = beat;
-		hoverPitch = Math.max(0, Math.min(127, pitch));
+		if (editMode) {
+			hoverBeat  = beat;
+			hoverPitch = Math.max(0, Math.min(127, pitch));
+		}
 
-		if (drag.type === 'none') {
-			updateCursor(e);
-			scheduleRedraw();
+		if (!editMode || drag.type === 'none') {
+			if (editMode) updateCursor(e);
+			scheduleHoverRedraw();
 			return;
 		}
 
 		if (drag.type === 'create') {
-			const newDur = Math.max(MIN_DURATION, snapBeat(beat) - drag.startBeat + quantize);
-			pianoRollStore.resizeNote(drag.noteId, newDur);
+			const newDur = Math.max(MIN_DURATION, snapBeat(beat, quantize) - drag.startBeat + quantize);
+			resizeWorkingNote(drag.noteId, newDur);
 		} else if (drag.type === 'move') {
-			if (drag.isGroup) {
-				const note = notes.find((n) => n.id === drag.noteId);
+			const moveDrag = drag;
+			if (moveDrag.isGroup) {
+				const note = displayNotes().find((n) => n.id === moveDrag.noteId);
 				if (note) {
-					pianoRollStore.moveSelectedNotes(
-						pitch - drag.anchorPitch,
-						Math.max(-note.start, snapBeat(beat - drag.anchorBeat))
+					moveWorkingSelected(
+						pitch - moveDrag.anchorPitch,
+						Math.max(-note.start, snapBeat(beat - moveDrag.anchorBeat, quantize)),
 					);
-					drag = { ...drag, anchorBeat: beat, anchorPitch: pitch };
+					drag = { ...moveDrag, anchorBeat: beat, anchorPitch: pitch };
 				}
 			} else {
-				const newStart = Math.max(0, snapBeat(beat - (drag.anchorBeat - drag.origStart)));
-				const newPitch = Math.max(0, Math.min(127, drag.origPitch + (pitch - drag.anchorPitch)));
-				pianoRollStore.moveNote(drag.noteId, newPitch, newStart);
+				const newStart = Math.max(0, snapBeat(beat - (moveDrag.anchorBeat - moveDrag.origStart), quantize));
+				const newPitch = Math.max(0, Math.min(127, moveDrag.origPitch + (pitch - moveDrag.anchorPitch)));
+				moveWorkingNote(moveDrag.noteId, newPitch, newStart);
 			}
 		} else if (drag.type === 'resize') {
-			const newDur = Math.max(MIN_DURATION, snapBeat(beat - drag.anchorBeat) + drag.origDur);
-			pianoRollStore.resizeNote(drag.noteId, newDur);
+			const newDur = Math.max(MIN_DURATION, snapBeat(beat - drag.anchorBeat, quantize) + drag.origDur);
+			resizeWorkingNote(drag.noteId, newDur);
 		} else if (drag.type === 'erase') {
 			const hit = hitTest(beat, pitch);
-			if (hit) pianoRollStore.deleteNote(hit.id);
+			if (hit) eraseWorkingNote(hit.id);
 		} else if (drag.type === 'selbox') {
 			drag = { ...drag, x1: rawX, y1: rawY };
-			const bLeft  = Math.min(drag.x0, drag.x1) / zoom;
+			const bLeft = Math.min(drag.x0, drag.x1) / zoom;
 			const bRight = Math.max(drag.x0, drag.x1) / zoom;
-			const pTop   = TOTAL_PITCHES - 1 - Math.floor(Math.min(drag.y0, drag.y1) / NOTE_H);
-			const pBot   = TOTAL_PITCHES - 1 - Math.floor(Math.max(drag.y0, drag.y1) / NOTE_H);
-			const inBox  = notes
-				.filter((n) => n.pitch >= pBot && n.pitch <= pTop && n.start < bRight && n.start + n.duration > bLeft)
+			const pTop = TOTAL_PITCHES - 1 - Math.floor(Math.min(drag.y0, drag.y1) / NOTE_H);
+			const pBot = TOTAL_PITCHES - 1 - Math.floor(Math.max(drag.y0, drag.y1) / NOTE_H);
+			dragSelIds = displayNotes()
+				.filter(
+					(n) =>
+						n.pitch >= pBot &&
+						n.pitch <= pTop &&
+						n.start < bRight &&
+						n.start + n.duration > bLeft,
+				)
 				.map((n) => n.id);
-			pianoRollStore.selectNotes(inBox);
-			scheduleRedraw();
+			scheduleNotesRedraw();
 		}
 	}
 
@@ -558,7 +892,13 @@
 		if (drag.type === 'move' && !drag.isGroup) {
 			pianoRollStore.selectNote(drag.noteId, false);
 		}
-		const needsCommit = drag.type === 'create' || drag.type === 'move' || drag.type === 'resize' || drag.type === 'erase';
+		const needsCommit =
+			drag.type === 'create' ||
+			drag.type === 'move' ||
+			drag.type === 'resize' ||
+			drag.type === 'erase' ||
+			drag.type === 'selbox';
+		flushWorkingNotes();
 		drag = { type: 'none' };
 		isDragging = false;
 		if (needsCommit) commitNotes();
@@ -566,9 +906,9 @@
 	}
 
 	function onGridMouseleave() {
-		hoverBeat  = -1;
+		hoverBeat = -1;
 		hoverPitch = -1;
-		scheduleRedraw();
+		scheduleHoverRedraw();
 	}
 
 	function updateCursor(e: MouseEvent) {
@@ -578,11 +918,11 @@
 		const hit = hitTest(beat, pitch);
 		if (mode === 'draw') {
 			canvasGrid.style.cursor = hit
-				? (isResizeHandle(hit, beat) ? 'ew-resize' : 'grab')
+				? (noteResizeHandle(hit, beat) ? 'ew-resize' : 'grab')
 				: 'crosshair';
 		} else if (mode === 'select') {
 			canvasGrid.style.cursor = hit
-				? (isResizeHandle(hit, beat) ? 'ew-resize' : 'grab')
+				? (noteResizeHandle(hit, beat) ? 'ew-resize' : 'grab')
 				: 'default';
 		} else {
 			canvasGrid.style.cursor = 'cell';
@@ -590,6 +930,7 @@
 	}
 
 	function onGridContextmenu(e: MouseEvent) {
+		if (!editMode) return;
 		e.preventDefault();
 		const { beat, pitch } = getGridCoords(e);
 		const hit = hitTest(beat, pitch);
@@ -599,18 +940,26 @@
 	// ── Velocity interactions ──────────────────────────────────────────────────
 
 	function updateVelocity(e: MouseEvent) {
+		if (!canvasVel) return;
 		const rect = canvasVel.getBoundingClientRect();
-		const rawX = e.clientX - rect.left;
+		const rawX = e.clientX - rect.left + (velWrapper?.scrollLeft ?? 0);
 		const beat = rawX / zoom;
-		const hit  = notes.find((n) => beat >= n.start && beat < n.start + n.duration);
+		const hit = displayNotes().find((n) => beat >= n.start && beat < n.start + n.duration);
 		if (!hit) return;
-		const vel = Math.max(1, Math.min(127,
-			Math.round(((VEL_H - (e.clientY - rect.top)) / VEL_H) * 127)
-		));
-		pianoRollStore.setVelocity(hit.id, vel);
+		const vel = Math.max(
+			1,
+			Math.min(127, Math.round(((VEL_H - (e.clientY - rect.top)) / VEL_H) * 127)),
+		);
+		if (!workingNotes) beginWorkingNotes();
+		if (workingNotes) {
+			workingNotes = workingNotes.map((n) => (n.id === hit.id ? { ...n, velocity: vel } : n));
+			scheduleNotesRedraw();
+			scheduleVelRedraw();
+		}
 	}
 
 	function onVelMousedown(e: MouseEvent) {
+		if (!editMode) return;
 		if (e.button !== 0) return;
 		velDragActive = true;
 		updateVelocity(e);
@@ -621,17 +970,26 @@
 		updateVelocity(e);
 	}
 
-	function onVelMouseup() { velDragActive = false; commitNotes(); }
+	function onVelMouseup() {
+		velDragActive = false;
+		flushWorkingNotes();
+		commitNotes();
+	}
 
 	// ── Scroll synchronisé ────────────────────────────────────────────────────
 
 	function onGridScroll(e: Event) {
-		const t   = e.currentTarget as HTMLDivElement;
+		const t = e.currentTarget as HTMLDivElement;
+		const leftChanged = Math.abs(t.scrollLeft - scrollLeft) > 0.5;
 		scrollLeft = t.scrollLeft;
-		scrollTop  = t.scrollTop;
+		scrollTop = t.scrollTop;
 		if (keysContainer) keysContainer.scrollTop = scrollTop;
-		scheduleRedraw();
-		scheduleRulerRedraw();
+		if (velWrapper) velWrapper.scrollLeft = scrollLeft;
+		// En édition, le canvas couvre toute la hauteur : seul le pan horizontal nécessite un redraw.
+		if (editMode && !leftChanged) return;
+		if (!editMode && get(previewPanelResizing)) return;
+		if (!editMode && !leftChanged) return;
+		scheduleGridRedraw();
 	}
 
 	// ── Keyboard ─────────────────────────────────────────────────────────────
@@ -647,13 +1005,7 @@
 			else if (e.key === 'e' || e.key === 'E') { pianoRollStore.setMode('erase');  handled = true; }
 		}
 
-		if (!handled && e.key === 'Escape') {
-			const hasSel = get(pianoRollStore).selectedNoteIds.size > 0;
-			if (hasSel) pianoRollStore.clearSelection();
-			else pianoRollStore.closePianoRoll();
-			handled = true;
-		}
-		else if (!handled && (e.key === 'Delete' || e.key === 'Backspace')) {
+		if (!handled && (e.key === 'Delete' || e.key === 'Backspace')) {
 			e.preventDefault();
 			pianoRollStore.deleteSelectedNotes();
 			commitNotes();
@@ -687,9 +1039,22 @@
 
 	function onWindowMouseup() {
 		if (isPanning) isPanning = false;
-		const needsCommit = drag.type === 'create' || drag.type === 'move' || drag.type === 'resize' || drag.type === 'erase';
-		if (drag.type !== 'none') { drag = { type: 'none' }; isDragging = false; }
-		if (velDragActive) { velDragActive = false; commitNotes(); }
+		const needsCommit =
+			drag.type === 'create' ||
+			drag.type === 'move' ||
+			drag.type === 'resize' ||
+			drag.type === 'erase' ||
+			drag.type === 'selbox';
+		if (drag.type !== 'none') {
+			flushWorkingNotes();
+			drag = { type: 'none' };
+			isDragging = false;
+		}
+		if (velDragActive) {
+			velDragActive = false;
+			flushWorkingNotes();
+			commitNotes();
+		}
 		if (needsCommit) commitNotes();
 	}
 
@@ -699,84 +1064,50 @@
 		window.addEventListener('mouseup',    onWindowMouseup);
 	});
 	onDestroy(() => {
+		gridViewportObserver?.disconnect();
+		scrubCleanup?.();
 		window.removeEventListener('keydown',   onKeydown);
 		window.removeEventListener('mousemove', onWindowMousemove);
 		window.removeEventListener('mouseup',   onWindowMouseup);
 	});
 
-	// ── Règle des beats ───────────────────────────────────────────────────────
-
-	let rulerCanvas: HTMLCanvasElement;
-
-	function drawRuler() {
-		if (!rulerCanvas) return;
-		const ctx = getCtx(rulerCanvas);
-		if (!ctx) return;
-		const W   = rulerCanvas.width  / dpr;
-		const H   = RULER_H;
-		const beatsPerMeasure = get(tempo).numerator || 4;
-		const startBeat       = scrollLeft / zoom;
-		const endBeat         = startBeat + W / zoom;
-
-		ctx.clearRect(0, 0, W, H);
-
-		// Fond dégradé
-		const bg = ctx.createLinearGradient(0, 0, 0, H);
-		bg.addColorStop(0, '#21212c');
-		bg.addColorStop(1, '#1c1c26');
-		ctx.fillStyle = bg;
-		ctx.fillRect(0, 0, W, H);
-
-		ctx.font = '10px Inter, system-ui, sans-serif';
-		ctx.textBaseline = 'middle';
-
-		for (let b = Math.floor(startBeat * 4) / 4; b <= endBeat; b += 0.25) {
-			const x         = b * zoom - scrollLeft;
-			if (x < -20 || x > W + 20) continue;
-			const isMeasure  = Math.abs(b % beatsPerMeasure) < 0.001;
-			const isBeat     = Math.abs(b % 1) < 0.001;
-			const isHalf     = Math.abs(b % 0.5) < 0.001 && !isBeat;
-			if (!isMeasure && !isBeat && !isHalf) continue;
-
-			ctx.strokeStyle = isMeasure ? '#46465a' : isBeat ? '#32323e' : '#27272e';
-			ctx.lineWidth   = isMeasure ? 1 : 0.5;
-			const tickH     = isMeasure ? H - 3 : isBeat ? H * 0.5 : H * 0.3;
-			ctx.beginPath();
-			ctx.moveTo(Math.round(x) + 0.5, H - tickH);
-			ctx.lineTo(Math.round(x) + 0.5, H - 1);
-			ctx.stroke();
-
-			if (isMeasure) {
-				const measure = Math.round(b / beatsPerMeasure) + 1;
-				ctx.fillStyle = '#777790';
-				ctx.fillText(String(measure), x + 4, H * 0.46);
+	$: if (scrollContainer && !gridViewportObserver) {
+		gridViewportObserver = new ResizeObserver(() => {
+			if (get(editPanelResizing) && editScrollAnchor) {
+				adjustEditScrollForPanelResize();
+				return;
 			}
-		}
-
-		// Ligne de séparation basse
-		ctx.strokeStyle = '#32323e';
-		ctx.lineWidth = 1;
-		ctx.beginPath(); ctx.moveTo(0, H - 0.5); ctx.lineTo(W, H - 0.5); ctx.stroke();
-
-		// Playhead triangle
-		const phX = playheadBeat * zoom - scrollLeft;
-		if (phX >= 0 && phX <= W) {
-			ctx.fillStyle = '#1571ff';
-			ctx.beginPath();
-			ctx.moveTo(phX - 5, 3);
-			ctx.lineTo(phX + 5, 3);
-			ctx.lineTo(phX, H - 3);
-			ctx.closePath();
-			ctx.fill();
-		}
+			if (get(previewPanelResizing) && get(keyboardFocus) !== 'piano-roll') {
+				adjustPreviewLayoutForPanelResize();
+			}
+		});
+		gridViewportObserver.observe(scrollContainer);
 	}
 
-	$: if (rulerCanvas && open) { resizeRuler(); scheduleRulerRedraw(); }
-	$: scrollLeft, zoom, playheadBeat, scheduleRulerRedraw();
+	function timelineScale(): number {
+		return zoom * get(tempo).bpm / 60;
+	}
 
-	function resizeRuler() {
-		if (!rulerCanvas || !scrollContainer) return;
-		setSize(rulerCanvas, scrollContainer.clientWidth, RULER_H);
+	function positionSecFromRuler(clientX: number, altKey: boolean): number {
+		if (!pianoRulerEl) return get(transport).position;
+		const rect = pianoRulerEl.getBoundingClientRect();
+		const bpm = get(tempo).bpm;
+		const beatLocal = Math.max(0, (clientX - rect.left + scrollLeft) / zoom);
+		const positionSec = clipStartSec + (beatLocal * 60) / bpm;
+		return snapPosition(positionSec, altKey, get(tempo), timelineScale(), get(engineProject).tracks);
+	}
+
+	function handleRulerMouseDown(event: MouseEvent) {
+		if (!pianoRulerEl) return;
+		scrubCleanup?.();
+		scrubCleanup = startTransportScrub(
+			event,
+			positionSecFromRuler,
+			(positionSec) => {
+				scrubCleanup = null;
+				seek(positionSec).catch(console.error);
+			},
+		);
 	}
 
 	// ── Piano keys ────────────────────────────────────────────────────────────
@@ -792,40 +1123,27 @@
 
 	function isBlack(pitch: number): boolean { return BLACK_KEYS.has(pitch % 12); }
 
-	// ── Utilitaires couleur ───────────────────────────────────────────────────
-
-	function hexAlpha(hex: string, alpha: number): string {
-		const r = parseInt(hex.slice(1, 3), 16);
-		const g = parseInt(hex.slice(3, 5), 16);
-		const b = parseInt(hex.slice(5, 7), 16);
-		return `rgba(${r},${g},${b},${alpha})`;
-	}
-
-	function lighten(hex: string, amount: number): string {
-		const r = Math.min(255, parseInt(hex.slice(1, 3), 16) + Math.round(amount * 255));
-		const g = Math.min(255, parseInt(hex.slice(3, 5), 16) + Math.round(amount * 255));
-		const b = Math.min(255, parseInt(hex.slice(5, 7), 16) + Math.round(amount * 255));
-		return `rgb(${r},${g},${b})`;
-	}
-
-	function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
-		if (w < 2 * r) r = w / 2;
-		if (h < 2 * r) r = h / 2;
-		ctx.beginPath();
-		ctx.moveTo(x + r, y);
-		ctx.arcTo(x + w, y, x + w, y + h, r);
-		ctx.arcTo(x + w, y + h, x, y + h, r);
-		ctx.arcTo(x, y + h, x, y, r);
-		ctx.arcTo(x, y, x + w, y, r);
-		ctx.closePath();
-	}
-
 	// ── Zoom ──────────────────────────────────────────────────────────────────
 
-	function zoomIn()  { pianoRollStore.setZoom(zoom * 1.3); tick().then(resizeCanvases); }
-	function zoomOut() { pianoRollStore.setZoom(zoom / 1.3); tick().then(resizeCanvases); }
+	function zoomIn() {
+		pianoRollStore.setZoom(zoom * 1.3);
+		tick().then(() => {
+			resizeCanvases();
+			scheduleGridRedraw();
+			scheduleNotesRedraw();
+		});
+	}
+	function zoomOut() {
+		pianoRollStore.setZoom(zoom / 1.3);
+		tick().then(() => {
+			resizeCanvases();
+			scheduleGridRedraw();
+			scheduleNotesRedraw();
+		});
+	}
 
 	function onGridWheel(e: WheelEvent) {
+		if (!editMode) return;
 		if (e.ctrlKey || e.metaKey) {
 			e.preventDefault();
 			if (e.deltaY < 0) zoomIn(); else zoomOut();
@@ -834,108 +1152,99 @@
 
 	// ── Réactivité ────────────────────────────────────────────────────────────
 
-	$: zoom, quantize, notes, scheduleRedraw();
 </script>
 
 {#if open}
 <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
 <div
 	class="piano-roll"
+	class:piano-roll--preview={!editMode}
+	class:piano-roll--resizing={$previewPanelResizing}
 	role="application"
 	aria-label="Piano Roll"
-	on:mousedown={() => keyboardFocus.setPianoRoll()}
 >
-	<!-- Toolbar -->
-	<div class="toolbar">
-		<button class="toolbar-close" on:click={() => pianoRollStore.closePianoRoll()} title="Fermer (Échap)">
-			<svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor">
-				<path d="M4.22 4.22a.75.75 0 0 1 1.06 0L8 6.94l2.72-2.72a.75.75 0 1 1 1.06 1.06L9.06 8l2.72 2.72a.75.75 0 1 1-1.06 1.06L8 9.06l-2.72 2.72a.75.75 0 0 1-1.06-1.06L6.94 8 4.22 5.28a.75.75 0 0 1 0-1.06z"/>
-			</svg>
-		</button>
+	{#if editMode}
+	<div class="chrome" style="--track-color: {trackColor}">
+		<div class="chrome-inner">
+			<div class="mode-group" role="group" aria-label="Mode d'édition">
+				<button class="mode-btn" class:active={mode === 'draw'} on:click={() => pianoRollStore.setMode('draw')} title="Dessiner (D)" aria-label="Dessiner">
+					<svg viewBox="0 0 16 16" width="13" height="13" fill="currentColor" aria-hidden="true">
+						<path d="M11.5 1.5a2.121 2.121 0 0 1 3 3L5 14H2v-3L11.5 1.5z"/>
+					</svg>
+				</button>
+				<button class="mode-btn" class:active={mode === 'select'} on:click={() => pianoRollStore.setMode('select')} title="Sélectionner (S)" aria-label="Sélectionner">
+					<svg viewBox="0 0 16 16" width="13" height="13" fill="currentColor" aria-hidden="true">
+						<path d="M3 2l10 6-5 1.5L6.5 14 3 2z"/>
+					</svg>
+				</button>
+				<button class="mode-btn" class:active={mode === 'erase'} on:click={() => pianoRollStore.setMode('erase')} title="Effacer (E)" aria-label="Effacer">
+					<svg viewBox="0 0 16 16" width="13" height="13" fill="currentColor" aria-hidden="true">
+						<path d="M9.5 2.5L14 7l-7 7H3v-3l6.5-8.5zM2 13h5.5l1-1.5H2V13z"/>
+					</svg>
+				</button>
+			</div>
 
-		<div class="toolbar-track" style="--track-color: {trackColor}">
-			<span class="track-dot"></span>
-			<span class="track-name">{trackName}</span>
-		</div>
+			<div class="chrome-divider"></div>
 
-		<div class="toolbar-sep"></div>
+			<select
+				class="q-select"
+				value={quantize}
+				on:change={(e) => pianoRollStore.setQuantize(+e.currentTarget.value)}
+				title="Quantification"
+				aria-label="Quantification"
+			>
+				{#each QUANTIZE_OPTIONS as opt}
+					<option value={opt.beats}>{opt.label}</option>
+				{/each}
+			</select>
 
-		<!-- Modes -->
-		<div class="mode-group" role="group" aria-label="Mode d'édition">
-			<button class="mode-btn" class:active={mode === 'draw'}   on:click={() => pianoRollStore.setMode('draw')}   title="Dessiner (D)">
-				<svg viewBox="0 0 16 16" width="13" height="13" fill="currentColor">
-					<path d="M11.5 1.5a2.121 2.121 0 0 1 3 3L5 14H2v-3L11.5 1.5z"/>
+			<div class="chrome-divider"></div>
+
+			<div class="zoom-group" aria-label="Zoom horizontal">
+				<button class="zoom-btn" on:click={zoomOut} title="Dézoomer">−</button>
+				<span class="zoom-val">{zoomLabel}</span>
+				<button class="zoom-btn" on:click={zoomIn} title="Zoomer">+</button>
+			</div>
+
+			<div class="chrome-spacer"></div>
+
+			{#if posLabel}
+				<span class="pos-readout">{posLabel}</span>
+			{/if}
+
+			<span class="meta-chip">{noteMetaLabel} · {clipMetaLabel}</span>
+
+			<button class="chrome-close" on:click={closeEditor} title="Fermer (Tab)" aria-label="Fermer">
+				<svg viewBox="0 0 10 10" width="10" height="10" fill="none" aria-hidden="true">
+					<path d="M1.5 1.5L8.5 8.5M8.5 1.5L1.5 8.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
 				</svg>
-				<span>Dessiner</span>
-			</button>
-			<button class="mode-btn" class:active={mode === 'select'} on:click={() => pianoRollStore.setMode('select')} title="Sélectionner (S)">
-				<svg viewBox="0 0 16 16" width="13" height="13" fill="currentColor">
-					<path d="M3 2l10 6-5 1.5L6.5 14 3 2z"/>
-				</svg>
-				<span>Sélection</span>
-			</button>
-			<button class="mode-btn" class:active={mode === 'erase'}  on:click={() => pianoRollStore.setMode('erase')}  title="Effacer (E)">
-				<svg viewBox="0 0 16 16" width="13" height="13" fill="currentColor">
-					<path d="M9.5 2.5L14 7l-7 7H3v-3l6.5-8.5zM2 13h5.5l1-1.5H2V13z"/>
-				</svg>
-				<span>Effacer</span>
 			</button>
 		</div>
-
-		<div class="toolbar-sep"></div>
-
-		<!-- Quantize -->
-		<span class="toolbar-label">Q</span>
-		<select
-			id="quantize-sel"
-			class="toolbar-select"
-			value={quantize}
-			on:change={(e) => pianoRollStore.setQuantize(+e.currentTarget.value)}
-		>
-			{#each QUANTIZE_OPTIONS as opt}
-				<option value={opt.beats}>{opt.label}</option>
-			{/each}
-		</select>
-
-		<div class="toolbar-sep"></div>
-
-		<!-- Zoom -->
-		<div class="zoom-group" aria-label="Zoom horizontal">
-			<button class="zoom-btn" on:click={zoomOut} title="Dézoomer (Ctrl+Molette)">−</button>
-			<span class="zoom-val">{zoomLabel}</span>
-			<button class="zoom-btn" on:click={zoomIn}  title="Zoomer (Ctrl+Molette)">+</button>
-		</div>
-
-		<div class="toolbar-sep"></div>
-
-		<!-- Undo / Redo -->
-		<button class="icon-btn" on:click={undoCommand} title="Annuler (Ctrl+Z)">
-			<svg viewBox="0 0 16 16" width="13" height="13" fill="currentColor">
-				<path d="M4 4H2V1H1v4.5l.5.5H5V5H3.12A5 5 0 1 1 3 8H2a6 6 0 1 0 2-4z"/>
-			</svg>
-		</button>
-		<button class="icon-btn" on:click={redoCommand} title="Rétablir (Ctrl+Y)">
-			<svg viewBox="0 0 16 16" width="13" height="13" fill="currentColor">
-				<path d="M12 4h2V1h1v4.5l-.5.5H11V5h1.88A5 5 0 1 1 13 8h1a6 6 0 1 0-2-4z"/>
-			</svg>
-		</button>
-
-		<div class="toolbar-spacer"></div>
-
-		{#if posLabel}
-			<span class="pos-readout">{posLabel}</span>
-			<div class="toolbar-sep"></div>
-		{/if}
-
-		<span class="note-count">{notes.length} note{notes.length !== 1 ? 's' : ''}</span>
 	</div>
+	{:else}
+	<div class="chrome chrome--preview" style="--track-color: {trackColor}">
+		<div class="chrome-inner">
+			<div class="chrome-spacer"></div>
+			<span class="meta-chip">{noteMetaLabel} · {clipMetaLabel}</span>
+			<button class="edit-btn" on:click={enterEditFromPreview}>
+				Éditer
+			</button>
+			<button class="chrome-close" on:click={closeEditor} title="Fermer (Tab)" aria-label="Fermer">
+				<svg viewBox="0 0 10 10" width="10" height="10" fill="none" aria-hidden="true">
+					<path d="M1.5 1.5L8.5 8.5M8.5 1.5L1.5 8.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+				</svg>
+			</button>
+		</div>
+	</div>
+	{/if}
 
 	<!-- Corps principal -->
-	<div class="body">
+	<div class="body" class:body--preview={!editMode}>
+		{#if editMode}
 		<!-- Piano keys -->
 		<!-- svelte-ignore a11y-no-static-element-interactions -->
 		<div class="keys-wrapper">
-			<div class="keys-ruler-spacer"></div>
+			<div class="keys-ruler-spacer" style="height: {RULER_HEIGHT}px"></div>
 			<!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
 			<div class="keys-scroll" bind:this={keysContainer} role="list" aria-label="Touches piano">
 				{#each { length: TOTAL_PITCHES } as _, i}
@@ -954,35 +1263,51 @@
 			</div>
 			<div class="keys-vel-label">VEL</div>
 		</div>
+		{/if}
 
 		<!-- Zone grille + velocity -->
-		<div class="grid-wrapper">
+		<div class="grid-wrapper" class:grid-wrapper--preview={!editMode}>
 			<!-- Règle beats -->
-			<canvas class="ruler-canvas" bind:this={rulerCanvas}></canvas>
+			<div class="ruler-wrap" style="height: {RULER_HEIGHT}px">
+				<TimeRuler
+					bind:rulerEl={pianoRulerEl}
+					pxPerBeat={zoom}
+					numerator={$tempo.numerator}
+					scrollPx={scrollLeft}
+					viewportWidthPx={rulerViewportWidth}
+					maxBars={rulerMaxBars}
+					on:mousedown={handleRulerMouseDown}
+				/>
+			</div>
 
 			<!-- Grid scrollable -->
 			<!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
 			<div
 				class="grid-scroll"
+				class:grid-scroll--preview={!editMode}
 				bind:this={scrollContainer}
 				on:scroll={onGridScroll}
 				on:wheel={onGridWheel}
 			>
-				<!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
-				<canvas
-					bind:this={canvasGrid}
-					on:mousedown={onGridMousedown}
-					on:mousemove={onGridMousemove}
-					on:mouseup={onGridMouseup}
-					on:mouseleave={onGridMouseleave}
-					on:contextmenu={onGridContextmenu}
-					style="display:block"
-				></canvas>
+				<div class="grid-stack">
+					<!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
+					<canvas
+						class="grid-canvas"
+						bind:this={canvasGrid}
+						style="display:block"
+						on:mousedown={onGridMousedown}
+						on:mousemove={onGridMousemove}
+						on:mouseup={onGridMouseup}
+						on:mouseleave={onGridMouseleave}
+						on:contextmenu={onGridContextmenu}
+					></canvas>
+				</div>
 			</div>
 
-			<!-- Velocity lane -->
+			<!-- Velocity lane (édition uniquement) -->
+			{#if editMode}
 			<!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
-			<div class="vel-wrapper">
+			<div class="vel-wrapper" bind:this={velWrapper}>
 				<!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
 				<canvas
 					bind:this={canvasVel}
@@ -992,6 +1317,9 @@
 					style="display:block"
 				></canvas>
 			</div>
+			{/if}
+
+			<Playhead x={playheadMarkerX} />
 		</div>
 	</div>
 </div>
@@ -1007,135 +1335,184 @@
 		overflow: hidden;
 	}
 
-	// ── Toolbar ───────────────────────────────────────────────────────────────
+	// ── Chrome (barre unique) ─────────────────────────────────────────────────
 
-	.toolbar {
+	.chrome {
 		display: flex;
-		align-items: center;
-		gap: 3px;
-		padding: 0 8px;
-		height: 36px;
+		flex-shrink: 0;
+		height: 30px;
 		background: #1d1d27;
 		border-bottom: 1px solid #2e2e3c;
-		flex-shrink: 0;
+		box-shadow: inset 3px 0 0 var(--track-color, #4d96ff);
+
+		&--preview {
+			background: #1a1a22;
+			border-bottom-color: #282832;
+		}
+	}
+
+	.chrome-inner {
+		flex: 1;
+		min-width: 0;
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		padding: 0 8px 0 11px;
 		overflow-x: auto;
 		overflow-y: hidden;
 		scrollbar-width: none;
 		&::-webkit-scrollbar { display: none; }
 	}
 
-	.toolbar-close {
-		display: flex; align-items: center; justify-content: center;
-		width: 24px; height: 24px; padding: 0;
-		background: transparent; border: none;
-		color: #888899; cursor: pointer;
-		border-radius: 5px; flex-shrink: 0;
-		transition: background 0.12s, color 0.12s;
-		&:hover  { background: rgba(255,255,255,0.07); color: #f0f0f8; }
-		&:active { background: rgba(255,255,255,0.12); }
-	}
-
-	.toolbar-track {
-		display: flex; align-items: center; gap: 7px; flex-shrink: 0;
-	}
-
-	.track-dot {
-		width: 8px; height: 8px; border-radius: 50%;
-		background: var(--track-color, #4d96ff);
+	.chrome-divider {
+		width: 1px;
+		height: 16px;
+		background: rgba(255, 255, 255, 0.07);
 		flex-shrink: 0;
-		box-shadow: 0 0 7px var(--track-color, #4d96ff);
 	}
 
-	.track-name {
-		font-size: 12px; font-weight: 600;
-		color: #ededf5; white-space: nowrap; letter-spacing: 0.01em;
+	.chrome-spacer { flex: 1; min-width: 8px; }
+
+	.chrome-close {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		width: 22px;
+		height: 22px;
+		padding: 0;
+		background: transparent;
+		border: none;
+		border-radius: 4px;
+		color: #666678;
+		cursor: pointer;
+		flex-shrink: 0;
+		transition: background 0.12s, color 0.12s;
+
+		&:hover { background: rgba(255, 65, 54, 0.14); color: #ff6b60; }
 	}
 
-	.toolbar-sep {
-		width: 1px; height: 18px;
-		background: rgba(255,255,255,0.08);
-		flex-shrink: 0; margin: 0 3px;
+	.edit-btn {
+		height: 22px;
+		padding: 0 10px;
+		background: rgba(21, 113, 255, 0.12);
+		border: 1px solid rgba(21, 113, 255, 0.28);
+		border-radius: 4px;
+		color: #6aadff;
+		font-size: 11px;
+		font-weight: 500;
+		cursor: pointer;
+		flex-shrink: 0;
+		transition: background 0.12s, border-color 0.12s;
+
+		&:hover {
+			background: rgba(21, 113, 255, 0.2);
+			border-color: rgba(21, 113, 255, 0.45);
+		}
 	}
 
-	.toolbar-spacer { flex: 1; }
-
-	.toolbar-label {
-		font-size: 10px; font-weight: 700; letter-spacing: 0.07em;
-		color: #55556a; white-space: nowrap; flex-shrink: 0;
-		text-transform: uppercase;
+	.meta-chip {
+		font-size: 10px;
+		font-variant-numeric: tabular-nums;
+		color: #555568;
+		white-space: nowrap;
+		flex-shrink: 0;
+		letter-spacing: 0.01em;
 	}
 
-	.toolbar-select {
-		height: 24px; padding: 0 6px;
-		background: rgba(255,255,255,0.05);
-		border: 1px solid rgba(255,255,255,0.09);
-		border-radius: 5px; color: #d8d8e8;
-		font-size: 12px; cursor: pointer; flex-shrink: 0;
+	.q-select {
+		height: 22px;
+		padding: 0 6px;
+		background: rgba(255, 255, 255, 0.04);
+		border: 1px solid rgba(255, 255, 255, 0.08);
+		border-radius: 4px;
+		color: #c8c8d8;
+		font-size: 11px;
+		cursor: pointer;
+		flex-shrink: 0;
 		transition: border-color 0.12s, background 0.12s;
-		&:hover  { background: rgba(255,255,255,0.08); border-color: rgba(255,255,255,0.16); }
-		&:focus  { outline: none; border-color: #1571ff; }
+
+		&:hover { background: rgba(255, 255, 255, 0.07); border-color: rgba(255, 255, 255, 0.14); }
+		&:focus { outline: none; border-color: #1571ff; }
 	}
 
 	.mode-group {
-		display: flex; gap: 2px; flex-shrink: 0;
-		background: rgba(0,0,0,0.22); border-radius: 7px; padding: 2px;
+		display: flex;
+		gap: 1px;
+		flex-shrink: 0;
+		background: rgba(0, 0, 0, 0.25);
+		border-radius: 6px;
+		padding: 2px;
 	}
 
 	.mode-btn {
-		display: flex; align-items: center; gap: 4px;
-		height: 22px; padding: 0 8px;
-		background: transparent; border: none; border-radius: 5px;
-		color: #777788; font-size: 11px; cursor: pointer;
-		white-space: nowrap; flex-shrink: 0;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		width: 26px;
+		height: 22px;
+		padding: 0;
+		background: transparent;
+		border: none;
+		border-radius: 4px;
+		color: #666678;
+		cursor: pointer;
+		flex-shrink: 0;
 		transition: background 0.12s, color 0.12s;
 
-		&:hover { background: rgba(255,255,255,0.07); color: #d0d0e0; }
+		&:hover { background: rgba(255, 255, 255, 0.07); color: #d0d0e0; }
 
 		&.active {
-			background: rgba(21, 113, 255, 0.18);
+			background: rgba(21, 113, 255, 0.2);
 			color: #6aadff;
 		}
 	}
 
 	.zoom-group {
-		display: flex; align-items: center; gap: 3px; flex-shrink: 0;
+		display: flex;
+		align-items: center;
+		gap: 2px;
+		flex-shrink: 0;
 	}
 
 	.zoom-btn {
-		width: 22px; height: 22px; padding: 0;
-		display: flex; align-items: center; justify-content: center;
-		background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.09);
-		border-radius: 5px; color: #d0d0e0; font-size: 15px; line-height: 1; cursor: pointer;
+		width: 20px;
+		height: 20px;
+		padding: 0;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		background: rgba(255, 255, 255, 0.04);
+		border: 1px solid rgba(255, 255, 255, 0.08);
+		border-radius: 4px;
+		color: #b8b8c8;
+		font-size: 14px;
+		line-height: 1;
+		cursor: pointer;
 		transition: background 0.12s;
-		&:hover { background: rgba(255,255,255,0.1); }
+
+		&:hover { background: rgba(255, 255, 255, 0.09); }
 	}
 
 	.zoom-val {
-		font-size: 11px; font-weight: 600; font-variant-numeric: tabular-nums;
-		color: #777788; min-width: 32px; text-align: center;
-	}
-
-	.icon-btn {
-		display: flex; align-items: center; justify-content: center;
-		width: 26px; height: 26px; padding: 0;
-		background: transparent; border: 1px solid transparent; border-radius: 5px;
-		color: #777788; cursor: pointer; flex-shrink: 0;
-		transition: background 0.12s, color 0.12s;
-		&:hover  { background: rgba(255,255,255,0.07); color: #d0d0e0; }
-		&:active { background: rgba(255,255,255,0.12); }
+		font-size: 10px;
+		font-weight: 600;
+		font-variant-numeric: tabular-nums;
+		color: #666678;
+		min-width: 28px;
+		text-align: center;
 	}
 
 	.pos-readout {
-		font-size: 11px; font-weight: 600;
-		font-variant-numeric: tabular-nums; letter-spacing: 0.03em;
-		color: #9999c0; white-space: nowrap; flex-shrink: 0;
-		background: rgba(21, 113, 255, 0.12);
-		padding: 2px 7px; border-radius: 4px;
-	}
-
-	.note-count {
-		font-size: 11px; color: #3e3e52;
-		white-space: nowrap; flex-shrink: 0;
+		font-size: 10px;
+		font-weight: 600;
+		font-variant-numeric: tabular-nums;
+		letter-spacing: 0.02em;
+		color: #9090b8;
+		white-space: nowrap;
+		flex-shrink: 0;
+		background: rgba(21, 113, 255, 0.1);
+		padding: 2px 7px;
+		border-radius: 4px;
 	}
 
 	// ── Corps ─────────────────────────────────────────────────────────────────
@@ -1155,7 +1532,6 @@
 	}
 
 	.keys-ruler-spacer {
-		height: 28px; // = RULER_H
 		background: #1d1d28;
 		border-bottom: 1px solid #2a2a38;
 		flex-shrink: 0;
@@ -1202,16 +1578,34 @@
 	// ── Grille ────────────────────────────────────────────────────────────────
 
 	.grid-wrapper {
-		flex: 1; display: flex; flex-direction: column;
-		overflow: hidden; min-width: 0;
+		flex: 1;
+		display: flex;
+		flex-direction: column;
+		overflow: hidden;
+		min-width: 0;
+		position: relative;
 	}
 
-	.ruler-canvas {
-		display: block; height: 28px; flex-shrink: 0;
+	.ruler-wrap {
+		position: relative;
+		flex-shrink: 0;
+	}
+
+	.grid-stack {
+		position: relative;
+		display: inline-block;
+	}
+
+	.grid-canvas {
+		display: block;
+	}
+
+	.piano-roll--preview .grid-canvas {
+		cursor: pointer;
 	}
 
 	.grid-scroll {
-		flex: 1; overflow: auto; position: relative; cursor: crosshair;
+		flex: 1; overflow: auto; position: relative;
 
 		&::-webkit-scrollbar { width: 8px; height: 8px; }
 		&::-webkit-scrollbar-track { background: transparent; }
@@ -1222,10 +1616,31 @@
 		&::-webkit-scrollbar-corner { background: transparent; }
 	}
 
+	.grid-wrapper--preview {
+		width: 100%;
+	}
+
+	.grid-scroll--preview {
+		overflow: hidden;
+		cursor: pointer;
+		display: flex;
+		align-items: flex-start;
+	}
+
+	.piano-roll--resizing {
+		.grid-stack {
+			contain: layout style paint;
+		}
+	}
+
 	// ── Velocity lane ─────────────────────────────────────────────────────────
 
 	.vel-wrapper {
 		height: 72px; flex-shrink: 0;
-		overflow: hidden; cursor: ns-resize;
+		overflow-x: auto;
+		overflow-y: hidden;
+		cursor: ns-resize;
+		scrollbar-width: none;
+		&::-webkit-scrollbar { display: none; }
 	}
 </style>

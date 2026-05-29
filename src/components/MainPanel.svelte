@@ -20,11 +20,19 @@
 	import { exportMixdown } from '../lib/exportMixdown';
 	import type { ExportFormat } from '../lib/exportMixdown';
 	import { snapPosition, getSnapSubdivisionSec } from '../lib/snapUtils';
-	import { pianoRollStore } from '../stores/pianoRoll';
 	import { selectedTrack } from '../stores/selectedTrack';
-	import { bottomPanel } from '../stores/bottomPanel';
 	import { shouldHandleTimelineShortcuts } from '../frontend/shortcuts/context';
 	import { keyboardFocus } from '../stores/keyboardFocus';
+	import {
+		focusMidiClipForEdit,
+		ensureClipPreview,
+		syncPianoRollToSelection,
+		trackColor,
+	} from '../frontend/pianoRoll/clipEditor';
+	import TimeRuler from './TimeRuler.svelte';
+	import Playhead from './Playhead.svelte';
+	import { defaultArrangeMaxBars } from '../frontend/timeRuler/ticks';
+	import { startTransportScrub } from '../frontend/transportScrub';
 
 	const TRACK_COLORS = [
 		'#4d96ff', '#ff6b6b', '#6bcb77', '#ffd93d',
@@ -46,6 +54,11 @@
 	});
 	onDestroy(unsubStore);
 
+	const unsubSelection = selection.subscribe((sel) => {
+		syncPianoRollToSelection(tracks, sel);
+	});
+	onDestroy(unsubSelection);
+
 	// ── Export triggers ───────────────────────────────────────────────────────
 	function runExport(format: ExportFormat) {
 		exportMixdown(tracks, $preferences, format).catch((e: unknown) =>
@@ -64,6 +77,7 @@
 		runExport('mp3');
 	});
 	onDestroy(unsubExportMp3);
+	onDestroy(() => scrubCleanup?.());
 
 	let contextMenu: { x: number; y: number; trackId: string; trackName: string; trackIndex: number } | null = null;
 	let clipContextMenu: { x: number; y: number } | null = null;
@@ -118,7 +132,6 @@
 	// Position is pushed by the CPAL engine via POSITION_UPDATED events (~30 fps).
 	// The animFrame loop is kept for future per-frame UI work (e.g. VU meters).
 	let animFrameId: number;
-	let isScrubbing = false;
 
 	function loop() {
 		animFrameId = requestAnimationFrame(loop);
@@ -275,67 +288,19 @@
 		};
 	});
 
-	// ── Time ruler (bars & beats) ─────────────────────────────────────────────
-	let rulerMajorTicks: { x: number; label: string }[] = [];
-	let rulerBeatTicks: { x: number; label: string }[] = [];
-	let rulerMinorTicks: { x: number }[] = [];
-
-	$: {
-		const bpm = $tempo.bpm;
-		const numerator = $tempo.numerator;
-		const beatSec = 60 / bpm;
-		const barSec = numerator * beatSec;
-		const pxPerBar = barSec * scale;
-		const pxPerBeat = beatSec * scale;
-		const maxBars = Math.min(Math.ceil(1800 / barSec) + 4, 2000);
-
-		const majors: typeof rulerMajorTicks = [];
-		const beats: typeof rulerBeatTicks = [];
-		const minors: typeof rulerMinorTicks = [];
-
-		let barLabelEvery = 1;
-		while (barLabelEvery * pxPerBar < 40 && barLabelEvery < 4096) barLabelEvery *= 2;
-
-		const showBeatLabels = barLabelEvery === 1 && pxPerBeat >= 20;
-
-		for (let bar = 1; bar <= maxBars; bar++) {
-			const barT = (bar - 1) * barSec;
-			const barX = barT * scale;
-
-			if ((bar - 1) % barLabelEvery === 0) {
-				majors.push({ x: barX, label: `${bar}` });
-			} else if (pxPerBar >= 10) {
-				minors.push({ x: barX });
-			}
-
-			if (pxPerBeat >= 6) {
-				for (let beat = 2; beat <= numerator; beat++) {
-					const beatX = (barT + (beat - 1) * beatSec) * scale;
-					if (showBeatLabels) {
-						beats.push({ x: beatX, label: `${bar}.${beat}` });
-					} else {
-						minors.push({ x: beatX });
-					}
-				}
-			}
-		}
-
-		rulerMajorTicks = majors;
-		rulerBeatTicks = beats;
-		rulerMinorTicks = minors;
-	}
-
+	$: pxPerBeat = (60 / $tempo.bpm) * scale;
+	$: arrangeMaxBars = defaultArrangeMaxBars($tempo.bpm, $tempo.numerator);
 	$: playheadX = $transport.position * scale;
 
 	let tracksEl: HTMLElement;
+	let arrangeRulerEl: HTMLDivElement;
 	let dragging: { trackIndex: number; clipIndex: number; offsetPx: number } | null = null;
 	let midiDragging: { trackIndex: number; clipId: string; offsetPx: number; origStart: number; origEnd: number } | null = null;
 	let midiClipContextTarget: string | null = null;
 	let fileDragPreview: { trackIndex: number; startSec: number; durationSec: number | null } | null = null;
 	let pendingDragDuration: number | null = null;
 
-	let scrubOriginLeft = 0;
-	let scrubPosition = 0;
+	let scrubCleanup: (() => void) | null = null;
 
 	function snap(
 		positionSec: number,
@@ -345,66 +310,54 @@
 		return snapPosition(positionSec, altKey, $tempo, scale, tracks, excludeClip);
 	}
 
-	function onScrubMove(e: MouseEvent) {
-		const raw = Math.max(0, (e.clientX - scrubOriginLeft) / scale);
-		scrubPosition = snap(raw, e.altKey);
-		transport.update((t) => ({ ...t, position: scrubPosition }));
-	}
-
-	function onScrubEnd() {
-		window.removeEventListener('mousemove', onScrubMove);
-		window.removeEventListener('mouseup', onScrubEnd);
-		isScrubbing = false;
-		// CPAL engine picks up the new position from the atomic — no Web Audio restart needed.
-		seek(scrubPosition).catch(console.error);
-	}
-
 	function beginScrub(event: MouseEvent, originEl: HTMLElement) {
-		const rect = originEl.getBoundingClientRect();
-		scrubOriginLeft = rect.left;
-		const raw = Math.max(0, (event.clientX - rect.left) / scale);
-		scrubPosition = snap(raw, event.altKey);
-		isScrubbing = true;
-		transport.update((t) => ({ ...t, position: scrubPosition }));
-		window.addEventListener('mousemove', onScrubMove);
-		window.addEventListener('mouseup', onScrubEnd);
+		const originLeft = originEl.getBoundingClientRect().left;
+		scrubCleanup?.();
+		scrubCleanup = startTransportScrub(
+			event,
+			(clientX, altKey) => snap(Math.max(0, (clientX - originLeft) / scale), altKey),
+			(positionSec) => {
+				scrubCleanup = null;
+				seek(positionSec).catch(console.error);
+			},
+		);
 	}
 
 	function handleRulerMouseDown(event: MouseEvent) {
 		keyboardFocus.setTimeline();
-		beginScrub(event, event.currentTarget as HTMLElement);
+		beginScrub(event, arrangeRulerEl);
 	}
 
 	function handleTracksMouseDown(event: MouseEvent) {
 		if (dragging) return;
 		keyboardFocus.setTimeline();
 		beginScrub(event, event.currentTarget as HTMLElement);
-		selection.set(new Set());
+		selection.clear();
 	}
 
 	function deleteSelected() {
 		// Optimistic: remove from local state immediately for instant feedback.
 		tracks.forEach((track) => {
-			const toDeleteAudio = track.clips.filter((c) => $selection.has(c.id));
+			const toDeleteAudio = track.clips.filter((c) => $selection.ids.has(c.id));
 			for (const clip of toDeleteAudio) {
 				removeClip(track.id, clip.id).catch(console.error);
 			}
-			const toDeleteMidi = (track.midi_clips ?? []).filter((c) => $selection.has(c.id));
+			const toDeleteMidi = (track.midi_clips ?? []).filter((c) => $selection.ids.has(c.id));
 			for (const clip of toDeleteMidi) {
 				removeMidiClip(track.id, clip.id).catch(console.error);
 			}
 		});
 		tracks = tracks.map((track) => ({
 			...track,
-			clips: track.clips.filter((c) => !$selection.has(c.id)),
-			midi_clips: (track.midi_clips ?? []).filter((c) => !$selection.has(c.id)),
+			clips: track.clips.filter((c) => !$selection.ids.has(c.id)),
+			midi_clips: (track.midi_clips ?? []).filter((c) => !$selection.ids.has(c.id)),
 		}));
 		midiClipContextTarget = null;
-		selection.set(new Set());
+		selection.clear();
 	}
 
 	function copySelected() {
-		const sel = $selection;
+		const sel = $selection.ids;
 		if (sel.size === 0) return;
 		let minStart = Infinity;
 		for (const track of tracks) {
@@ -451,8 +404,8 @@
 		keyboardFocus.setTimeline();
 		const { id, x, y } = e.detail;
 		// If the right-clicked clip is not in the selection, make it the sole selection.
-		if (!$selection.has(id)) {
-			selection.set(new Set([id]));
+		if (!$selection.ids.has(id)) {
+			selection.setSingle(id);
 		}
 		contextMenu = null;
 		clipContextMenu = { x, y };
@@ -522,22 +475,29 @@
 		window.removeEventListener('mouseup', onMidiDragEnd);
 	}
 
+	function onMidiClipActivate(e: CustomEvent<{ id: string; trackIndex: number }>) {
+		const { id, trackIndex } = e.detail;
+		const track = tracks[trackIndex];
+		if (!track) return;
+		const clip = track.midi_clips?.find((c) => c.id === id);
+		if (!clip) return;
+		ensureClipPreview(track, clip, trackColor(trackIndex));
+	}
+
 	function onMidiClipDblClick(e: CustomEvent<{ id: string; trackIndex: number }>) {
 		const { id, trackIndex } = e.detail;
 		const track = tracks[trackIndex];
 		if (!track) return;
 		const clip = track.midi_clips?.find((c) => c.id === id);
 		if (!clip) return;
-		keyboardFocus.setPianoRoll();
-		pianoRollStore.openPianoRoll(track.id, id, track.name, TRACK_COLORS[trackIndex % TRACK_COLORS.length], clip.notes ?? []);
-		bottomPanel.openTab('pianoroll');
+		focusMidiClipForEdit(track, clip, trackColor(trackIndex));
 	}
 
 	function onMidiClipContextMenu(e: CustomEvent<{ id: string; trackIndex: number; x: number; y: number }>) {
 		keyboardFocus.setTimeline();
 		const { id, x, y } = e.detail;
 		// Reuse clip context menu with a remove action handled via selection
-		selection.update((sel) => { const s = new Set(sel); s.clear(); s.add(id); return s; });
+		selection.setSingle(id);
 		midiClipContextTarget = id;
 		contextMenu = null;
 		clipContextMenu = { x, y };
@@ -708,7 +668,7 @@
 	<ClipContextMenu
 		x={clipContextMenu.x}
 		y={clipContextMenu.y}
-		selectionCount={$selection.size}
+		selectionCount={$selection.ids.size}
 		canPaste={$clipboard.length > 0}
 		on:cut={() => cutSelected()}
 		on:copy={() => copySelected()}
@@ -756,11 +716,9 @@
 				on:openpianoroll={() => {
 					const firstClip = track.midi_clips?.[0];
 					if (firstClip) {
-						keyboardFocus.setPianoRoll();
-						pianoRollStore.openPianoRoll(track.id, firstClip.id, track.name, TRACK_COLORS[trackIndex % TRACK_COLORS.length], firstClip.notes ?? []);
-						bottomPanel.openTab('pianoroll');
+						selection.setSingle(firstClip.id);
+						focusMidiClipForEdit(track, firstClip, trackColor(trackIndex));
 					} else {
-						// No MIDI clips yet — hint to double-click on the track area
 						const bpm = $tempo.bpm;
 						const fourBeats = (4 / bpm) * 60;
 						addMidiClip(track.id, 0, fourBeats).catch(console.error);
@@ -778,23 +736,15 @@
 
 	<div class="right-panel">
 		<!-- svelte-ignore a11y-no-static-element-interactions a11y-click-events-have-key-events -->
-		<div class="ruler" on:mousedown={handleRulerMouseDown}>
-			{#each rulerMinorTicks as tick}
-				<div class="tick tick--minor" style="left:{tick.x}px"></div>
-			{/each}
-			{#each rulerBeatTicks as tick}
-				<div class="tick tick--beat" style="left:{tick.x}px">
-					<span class="tick-label tick-label--beat">{tick.label}</span>
-				</div>
-			{/each}
-			{#each rulerMajorTicks as tick}
-				<div class="tick tick--major" style="left:{tick.x}px">
-					<span class="tick-label">{tick.label}</span>
-				</div>
-			{/each}
-		</div>
+		<TimeRuler
+			bind:rulerEl={arrangeRulerEl}
+			pxPerBeat={pxPerBeat}
+			numerator={$tempo.numerator}
+			maxBars={arrangeMaxBars}
+			on:mousedown={handleRulerMouseDown}
+		/>
 
-		<div class="playhead" style="transform: translateX({playheadX}px)"></div>
+		<Playhead x={playheadX} />
 
 		<!-- svelte-ignore a11y-no-static-element-interactions a11y-click-events-have-key-events -->
 		<div
@@ -843,6 +793,7 @@
 					on:clipcontextmenu={handleClipContextMenu}
 					on:midiclip_dragstart={onMidiClipDragStart}
 					on:midiclip_dblclick={onMidiClipDblClick}
+					on:midiclip_activate={onMidiClipActivate}
 					on:midiclip_contextmenu={onMidiClipContextMenu}
 				/>
 			{/each}
@@ -1019,55 +970,6 @@
 		overflow: hidden;
 	}
 
-	.ruler {
-		height: 22px;
-		flex-shrink: 0;
-		position: relative;
-		overflow: hidden;
-		background-color: $background-color;
-		border-bottom: 1px solid $border-color;
-		cursor: pointer;
-		user-select: none;
-	}
-
-	.tick {
-		position: absolute;
-		bottom: 0;
-		width: 1px;
-
-		&--major {
-			height: 14px;
-			background-color: rgba(247, 247, 249, 0.45);
-		}
-
-		&--minor {
-			height: 7px;
-			background-color: rgba(247, 247, 249, 0.18);
-		}
-
-		&--beat {
-			height: 7px;
-			background-color: rgba(247, 247, 249, 0.18);
-		}
-	}
-
-	.tick-label {
-		position: absolute;
-		bottom: 2px;
-		left: 4px;
-		font-size: 10px;
-		line-height: 1;
-		color: rgba(247, 247, 249, 0.55);
-		white-space: nowrap;
-		font-family: 'SF Mono', 'Fira Code', ui-monospace, monospace;
-		pointer-events: none;
-
-		&--beat {
-			font-size: 9px;
-			color: rgba(247, 247, 249, 0.3);
-		}
-	}
-
 	.tracks {
 		flex: 1;
 		overflow-y: auto;
@@ -1144,27 +1046,4 @@
 		}
 	}
 
-	// Playhead is positioned in right-panel so it spans ruler + tracks
-	.playhead {
-		position: absolute;
-		top: 0;
-		left: 0;
-		width: 2px;
-		height: 100%;
-		background-color: #fff;
-		pointer-events: none;
-		z-index: 10;
-		will-change: transform;
-
-		&::before {
-			content: '';
-			position: absolute;
-			left: -5px;
-			width: 0;
-			height: 0;
-			border-left: 6px solid transparent;
-			border-right: 6px solid transparent;
-			border-top: 8px solid #fff;
-		}
-	}
 </style>
