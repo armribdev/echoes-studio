@@ -344,19 +344,17 @@ impl GraphCompiler {
                 use crate::audio_graph::nodes::instrument::InstrumentNode;
                 use crate::audio_graph::nodes::poly_synth::PolySynth;
 
-                let beats_to_secs = 60.0 / project.bpm as f64;
                 let mut notes: Vec<MidiNoteSnapshot> = Vec::new();
 
                 if let Some(track) = project.tracks.iter().find(|t| &t.id == track_id) {
                     for clip in &track.midi_clips {
                         for note in &clip.notes {
-                            let note_start_secs = clip.start + note.start as f64 * beats_to_secs;
-                            let note_end_secs   = clip.start + (note.start + note.duration) as f64 * beats_to_secs;
                             notes.push(MidiNoteSnapshot {
                                 pitch: note.pitch,
                                 velocity: note.velocity,
-                                start_sample: (note_start_secs * engine_sample_rate as f64) as u64,
-                                end_sample:   (note_end_secs   * engine_sample_rate as f64) as u64,
+                                clip_start_sec: clip.start,
+                                start_beats: note.start,
+                                end_beats: note.start + note.duration,
                             });
                         }
                     }

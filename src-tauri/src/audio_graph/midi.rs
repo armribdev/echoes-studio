@@ -85,16 +85,41 @@ impl MidiEventList {
 
 // ── MidiNoteSnapshot ──────────────────────────────────────────────────────────
 
-/// A MIDI note converted to absolute project-sample positions.
+/// A MIDI note stored in beat space for runtime tempo conversion.
 ///
 /// Created at graph compile time (non-RT) from `AppMidiClip` note data.
-/// Stored inside `InstrumentNode` to drive per-block event scheduling.
+/// `clip_start_sec` is the clip anchor on the timeline (seconds); note beats
+/// are relative to that anchor.  Sample positions are derived per block from
+/// the live transport BPM so tempo changes stay in sync without recompiling.
 #[derive(Debug, Clone)]
 pub struct MidiNoteSnapshot {
     pub pitch: u8,
     pub velocity: u8,
-    /// Absolute start in engine samples.
-    pub start_sample: u64,
-    /// Absolute end in engine samples.
-    pub end_sample: u64,
+    /// Clip start on the project timeline, in seconds.
+    pub clip_start_sec: f64,
+    /// Note start in beats, relative to `clip_start_sec`.
+    pub start_beats: f32,
+    /// Note end in beats, relative to `clip_start_sec`.
+    pub end_beats: f32,
+}
+
+impl MidiNoteSnapshot {
+    /// Absolute start in engine samples for the given tempo.
+    #[inline]
+    pub fn start_sample(&self, bpm: f32, sample_rate: f32) -> u64 {
+        beats_to_sample(self.clip_start_sec, self.start_beats, bpm, sample_rate)
+    }
+
+    /// Absolute end in engine samples for the given tempo.
+    #[inline]
+    pub fn end_sample(&self, bpm: f32, sample_rate: f32) -> u64 {
+        beats_to_sample(self.clip_start_sec, self.end_beats, bpm, sample_rate)
+    }
+}
+
+/// Convert a beat offset (relative to `clip_start_sec`) to absolute samples.
+#[inline]
+pub fn beats_to_sample(clip_start_sec: f64, beats: f32, bpm: f32, sample_rate: f32) -> u64 {
+    let secs = clip_start_sec + beats as f64 * (60.0 / bpm as f64);
+    (secs * sample_rate as f64) as u64
 }

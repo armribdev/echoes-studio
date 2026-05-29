@@ -44,7 +44,7 @@ pub trait InstrumentDevice: Send + 'static {
 pub struct InstrumentNode {
     id: NodeId,
     /// All notes for this instrument, in any order.
-    /// Pre-converted to absolute sample positions at compile time.
+    /// Stored in beat space; sample positions are derived per block from transport BPM.
     notes: Arc<Vec<MidiNoteSnapshot>>,
     device: Box<dyn InstrumentDevice>,
     /// Reused every block — no heap allocation in the RT path.
@@ -94,15 +94,19 @@ impl AudioNode for InstrumentNode {
         if transport.is_playing {
             let block_start = transport.position_samples;
             let block_end   = block_start + transport.block_size as u64;
+            let bpm = transport.bpm;
+            let sample_rate = transport.sample_rate;
             let discontinuity = !self.was_playing
                 || block_start != self.next_expected_block_start;
 
             if discontinuity {
                 self.device.reset();
                 for note in self.notes.iter() {
+                    let start_sample = note.start_sample(bpm, sample_rate);
+                    let end_sample = note.end_sample(bpm, sample_rate);
                     // Note already started but not yet ended — emit a catch-up
                     // NoteOn at the beginning of this block (seek / resume).
-                    if note.start_sample < block_start && block_start < note.end_sample {
+                    if start_sample < block_start && block_start < end_sample {
                         self.event_buf.push(MidiEvent {
                             offset: 0,
                             kind: MidiEventKind::NoteOn {
@@ -115,15 +119,17 @@ impl AudioNode for InstrumentNode {
             }
 
             for note in self.notes.iter() {
-                if note.start_sample >= block_start && note.start_sample < block_end {
+                let start_sample = note.start_sample(bpm, sample_rate);
+                let end_sample = note.end_sample(bpm, sample_rate);
+                if start_sample >= block_start && start_sample < block_end {
                     self.event_buf.push(MidiEvent {
-                        offset: (note.start_sample - block_start) as u32,
+                        offset: (start_sample - block_start) as u32,
                         kind: MidiEventKind::NoteOn { pitch: note.pitch, velocity: note.velocity },
                     });
                 }
-                if note.end_sample >= block_start && note.end_sample < block_end {
+                if end_sample >= block_start && end_sample < block_end {
                     self.event_buf.push(MidiEvent {
-                        offset: (note.end_sample - block_start) as u32,
+                        offset: (end_sample - block_start) as u32,
                         kind: MidiEventKind::NoteOff { pitch: note.pitch },
                     });
                 }
