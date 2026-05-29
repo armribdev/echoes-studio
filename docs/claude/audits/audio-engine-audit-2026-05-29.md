@@ -56,7 +56,7 @@ Quand `snapshot.try_take()` retournait `Some(new)`, l'ancien scheduler était re
 **Fichiers** : [audio_graph/snapshot.rs](../../../src-tauri/src/audio_graph/snapshot.rs)
 Sur Windows passait par `AcquireSRWLockExclusive` — pas strictement lock-free. Le contrat "aucune primitive bloquante sur le thread audio" n'était pas tenu. Plus aucun `Mutex` dans `RuntimeSnapshot` : la slot pending est un `AtomicPtr<GraphScheduler>`, lu via `swap(null, AcqRel)` sur le thread audio. Résolu en même temps que C1.
 
-#### C3 — Recompilation complète sur chaque changement de paramètre
+#### C3 — Recompilation complète sur chaque changement de paramètre ✅ **CORRIGÉ**
 **Fichiers** : [engine_gateway/api.rs](../../../src-tauri/src/engine_gateway/api.rs) (tous les handlers), [audio_graph/compiler.rs:368](../../../src-tauri/src/audio_graph/compiler.rs#L368)
 `UPDATE_TRACK` (volume/pan), `UPDATE_EFFECT`, `MUTE_TRACK`, `SOLO_TRACK`, `SET_MODULATION_DEPTH`, rate de modulateur — tous appellent `recompile_if_needed()`. Chaque recompile :
 - Reconstruit l'`AudioGraph` complet.
@@ -65,6 +65,19 @@ Sur Windows passait par `AcquireSRWLockExclusive` — pas strictement lock-free.
 - **Clone chaque `Vec<f32>` de samples de clip** (`c.raw_samples.clone()` à [compiler.rs:368](../../../src-tauri/src/audio_graph/compiler.rs#L368)).
 
 Pour un projet stéréo de 5 minutes : ~115 MB clonés par tour de bouton, plus des queues de reverb/delay cassées. Le pattern DAW correct = atomiques par-paramètre lus par `process_block`, recompile réservée aux changements **structurels**.
+
+**Fix appliqué** :
+- Nouveau registre [`LiveParams`](../../../src-tauri/src/audio_graph/live_params.rs) : `HashMap<String, Arc<…>>` sous `Mutex` côté commande, exposant des `AtomicU32` / `AtomicBool` lus lock-free par le thread audio. Une instance partagée `Arc<LiveParams>` vit dans `AppState` et l'`AudioEngine`.
+- Nouveau nœud [`TrackGainNode`](../../../src-tauri/src/audio_graph/nodes/track_gain.rs) qui lit `volume × mute × solo × any_solo` depuis ses atomiques par-block (remplace `GainNode` pour `NodeKind::TrackGain`).
+- [`LfoNode`](../../../src-tauri/src/audio_graph/nodes/modulator.rs) accepte un `Arc<ModulatorCells>` via `with_rate_cells()` et lit `rate_hz` per-block.
+- `CompiledModAction.depth` devient `depth_cells: Option<Arc<RouteCells>>` lu par block dans [scheduler.rs:317](../../../src-tauri/src/audio_graph/scheduler.rs#L317). Le compilateur résout les cellules par `route_id` (`ModulationRoute.route_id: Option<String>` ajouté) et les transporte via `CompiledGraph.route_cells`.
+- Handlers gateway hot-path (`UPDATE_TRACK`, `MUTE_TRACK`, `SOLO_TRACK`, `UPDATE_MODULATOR.rate`, `SET_MODULATION_DEPTH`) : écrivent le projet **et** l'atomique correspondant ; **plus de `recompile_if_needed`**.
+- `LiveParams::prune_to_project` à chaque recompile structurelle jette les entrées orphelines et rafraîchit `any_solo` sans clobberiser les atomiques existants — un knob turn en vol survit à une recompile concurrente.
+- I1 réglé en parallèle (voir ci-dessous) : la recompile fait `Arc::clone` au lieu de cloner les samples.
+
+**Restes hors scope (à traiter séparément)** :
+- `UPDATE_EFFECT` continue à recompiler — chaque type d'effet a son propre lot de params ; route séparée à concevoir (atomiques typés par effet ou `ParameterBlock` générique).
+- `UPDATE_TEMPO` traité indépendamment (C6).
 
 #### C4 — Limite dure de 32 pistes (panic OOB) ✅ **CORRIGÉ**
 **Fichiers** : [audio_graph/scheduler.rs:42](../../../src-tauri/src/audio_graph/scheduler.rs#L42), [audio_graph/scheduler.rs:241](../../../src-tauri/src/audio_graph/scheduler.rs#L241), [audio_graph/graph.rs:237](../../../src-tauri/src/audio_graph/graph.rs#L237)
@@ -87,9 +100,11 @@ Pour un projet stéréo de 5 minutes : ~115 MB clonés par tour de bouton, plus 
 
 ### IMPORTANTES (qualité / scaling)
 
-#### I1 — Clone des `raw_samples` à chaque recompile
+#### I1 — Clone des `raw_samples` à chaque recompile ✅ **CORRIGÉ**
 **Fichiers** : [audio_graph/compiler.rs:368](../../../src-tauri/src/audio_graph/compiler.rs#L368), [project.rs:198](../../../src-tauri/src/project.rs#L198)
 `AppClip::raw_samples: Vec<f32>` au lieu de `Arc<Vec<f32>>`. À changer en `Arc<Vec<f32>>` partagé entre projet et `ClipData`. (Lié à C3.)
+
+**Fix appliqué** : `AppClip::raw_samples`, `CachedAudioData::raw_samples`, `AudioClipData::raw_samples` et `ClipDto::raw_samples` passent à `Arc<Vec<f32>>` (sérialisation JSON via helper `serialize_arc_vec_f32`). `GraphCompiler::build_node` fait `StdArc::clone(&c.raw_samples)` au lieu de `StdArc::new(c.raw_samples.clone())` — plus aucun deep-clone des samples décodés à la recompile.
 
 #### I2 — Coefficients shelving EQ buggés ✅ **CORRIGÉ**
 **Fichiers** : [audio_graph/nodes/eq.rs:28](../../../src-tauri/src/audio_graph/nodes/eq.rs#L28), [audio_graph/nodes/eq.rs:56](../../../src-tauri/src/audio_graph/nodes/eq.rs#L56)
@@ -195,4 +210,6 @@ Sous-système d'input séparé (midir / midi-msg), file lock-free MIDI alimentan
 
 ## Ordre d'attaque suggéré
 
-Si je devais traiter une semaine de travail : **C3, C6** dans cet ordre. C1, C2, C4 et C5 sont corrigés. C3 et C6 éliminent les pires footguns restants (knob turns qui bloquent l'UI, tempo MIDI désynchronisé) et débloquent presque tout le reste.
+C1, C2, C3, C4, C5 et I1 sont corrigés. Reste **C6** (tempo MIDI désynchronisé) — fix trivial une fois identifié : appeler `recompile_if_needed` dans `UPDATE_TEMPO` ou stocker les notes en beats. Ensuite la priorité bascule vers les importantes (I2–I12), notamment I7 (`PluginHost` à brancher) et I8 (export bypass moteur) qui ouvrent le chemin v1.
+
+**Note résiduelle pour C3** : `UPDATE_EFFECT` continue à recompiler. Pour fermer complètement la boucle hot-path, concevoir un `ParameterBlock` générique ou des cellules atomiques typées par effet (EQ, Compresseur, Reverb, Delay) — chaque effet expose alors ses params via `LiveParams` au même titre que volume/pan/mute/solo.
