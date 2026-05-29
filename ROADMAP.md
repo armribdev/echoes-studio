@@ -114,8 +114,7 @@
 - [x] **Couper / Copier / Coller des clips** — Ctrl+X / Ctrl+C / Ctrl+V + menu contextuel clic droit sur clip
 - [x] **Vumètres UI** — `MeterNode` → `meter_cells` → reporter (`POSITION_UPDATED` / `LEVELS_UPDATED`) → store `trackLevels` → `FaderMeter` par piste (L/R avec décroissance logicielle)
 
-### Restant
-- [ ] **Mute / Solo undoable** — non intégré à l'event sourcing pour l'instant
+- [x] **Mute / Solo undoable** — `TRACK_MUTED` / `TRACK_SOLOED` intégrés à l'event sourcing (`append_and_maybe_snapshot`) ; undo/redo via replay du log
 
 ---
 

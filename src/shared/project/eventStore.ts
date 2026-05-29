@@ -118,13 +118,6 @@ export class ProjectEventStore {
       return; // handled by engineRuntimeEvents store
     }
 
-    // Mixer events — mutate state but are not undoable (not logged)
-    if (event.type === ev.TRACK_MUTED || event.type === ev.TRACK_SOLOED) {
-      this._state = applyEvent(this._state, event);
-      this._notify();
-      return;
-    }
-
     // Project events — append to log and apply to state
     this._events.push(event);
     this._state = applyEvent(this._state, event);

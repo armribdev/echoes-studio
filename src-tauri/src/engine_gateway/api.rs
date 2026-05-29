@@ -351,9 +351,10 @@ fn process_command(
                 track.muted = p.muted;
             }
 
-            // Mixer state — not appended to the event store (no undo/redo step).
-            state.dirty.store(true, std::sync::atomic::Ordering::Relaxed);
             let event_payload = json!({ "id": p.track_id, "muted": p.muted });
+            let project_event = ProjectEvent::new(ev::TRACK_MUTED, event_payload.clone());
+            append_and_maybe_snapshot(state, project_event)?;
+
             let engine_ev = EngineEvent::new(ev::TRACK_MUTED, &project_id, event_payload);
             let _ = app.emit("engine-event", &engine_ev);
             recompile_if_needed(state);
@@ -383,9 +384,10 @@ fn process_command(
                 }
             }
 
-            // Mixer state — not appended to the event store (no undo/redo step).
-            state.dirty.store(true, std::sync::atomic::Ordering::Relaxed);
             let event_payload = json!({ "id": p.track_id, "solo": p.solo });
+            let project_event = ProjectEvent::new(ev::TRACK_SOLOED, event_payload.clone());
+            append_and_maybe_snapshot(state, project_event)?;
+
             let engine_ev = EngineEvent::new(ev::TRACK_SOLOED, &project_id, event_payload);
             let _ = app.emit("engine-event", &engine_ev);
             recompile_if_needed(state);
@@ -1052,38 +1054,11 @@ fn merge_effect_params(existing: &EffectParams, raw: serde_json::Value) -> Resul
     }.map_err(|e| format!("Effect params invalid: {e}"))
 }
 
-/// Snapshot mute/solo per track — mixer state is not event-sourced and must
-/// survive undo/redo rebuilds.
-fn extract_mixer_state(project: &AppProject) -> std::collections::HashMap<String, (bool, bool)> {
-    project
-        .tracks
-        .iter()
-        .map(|t| (t.id.clone(), (t.muted, t.solo)))
-        .collect()
-}
-
-fn restore_mixer_state(
-    project: &mut AppProject,
-    mixer: &std::collections::HashMap<String, (bool, bool)>,
-) {
-    for track in &mut project.tracks {
-        if let Some(&(muted, solo)) = mixer.get(&track.id) {
-            track.muted = muted;
-            track.solo = solo;
-        }
-    }
-}
-
 /// Rebuild `AppState::project` from the event store (snapshot + events).
 /// Called after undo/redo.
 pub fn rebuild_project_from_store(
     state: &tauri::State<'_, AppState>,
 ) -> Result<(), String> {
-    let mixer = {
-        let project = state.project.lock().map_err(|e| e.to_string())?;
-        extract_mixer_state(&project)
-    };
-
     // Collect what we need while holding the store lock
     let (base_project, events_to_replay): (AppProject, Vec<super::events::ProjectEvent>) = {
         let store = state.event_store.lock().map_err(|e| e.to_string())?;
@@ -1097,9 +1072,8 @@ pub fn rebuild_project_from_store(
         (base, events.to_vec())
     };
 
-    // Apply events to the base project
-    let mut rebuilt = apply_events(state, base_project, &events_to_replay)?;
-    restore_mixer_state(&mut rebuilt, &mixer);
+    // Apply events — mute/solo are now event-sourced so no extra mixer restore needed
+    let rebuilt = apply_events(state, base_project, &events_to_replay)?;
 
     // Write back
     let mut project = state.project.lock().map_err(|e| e.to_string())?;

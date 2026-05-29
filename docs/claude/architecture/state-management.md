@@ -26,7 +26,7 @@ what the user *decided* about their project, not what the audio engine is doing.
 | `TRACK_CREATED` / `TRACK_DELETED` | Structural, undoable |
 | `CLIP_ADDED` / `CLIP_MOVED` / `CLIP_REMOVED` | Structural, undoable |
 | `TRACK_UPDATED` (name, volume, pan) | Structural, undoable |
-| `TRACK_MUTED` / `TRACK_SOLOED` | Future: undoable when integrated |
+| `TRACK_MUTED` / `TRACK_SOLOED` | Structural, undoable |
 | `TEMPO_UPDATED` | Structural, affects rendering |
 | `PROJECT_NAME_UPDATED` | Structural |
 | Automation curves (future) | Structural, undoable |
