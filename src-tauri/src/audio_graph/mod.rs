@@ -32,6 +32,7 @@ pub mod buffer;
 pub mod compiler;
 pub mod execution_plan;
 pub mod graph;
+pub mod midi;
 pub mod modulation;
 pub mod node;
 pub mod nodes;

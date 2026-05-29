@@ -877,6 +877,7 @@ fn process_command(
 
             let engine_ev = EngineEvent::new(ev::MIDI_CLIP_ADDED, &project_id, event_payload);
             let _ = app.emit("engine-event", &engine_ev);
+            recompile_if_needed(state);
 
             Ok(CommandResult::ok(command_id, vec![serde_json::to_value(&engine_ev).unwrap_or_default()]))
         }
@@ -899,6 +900,7 @@ fn process_command(
 
             let engine_ev = EngineEvent::new(ev::MIDI_CLIP_REMOVED, &project_id, event_payload);
             let _ = app.emit("engine-event", &engine_ev);
+            recompile_if_needed(state);
 
             Ok(CommandResult::ok(command_id, vec![serde_json::to_value(&engine_ev).unwrap_or_default()]))
         }
@@ -925,6 +927,7 @@ fn process_command(
 
             let engine_ev = EngineEvent::new(ev::MIDI_CLIP_MOVED, &project_id, event_payload);
             let _ = app.emit("engine-event", &engine_ev);
+            recompile_if_needed(state);
 
             Ok(CommandResult::ok(command_id, vec![serde_json::to_value(&engine_ev).unwrap_or_default()]))
         }
@@ -951,6 +954,7 @@ fn process_command(
 
             let engine_ev = EngineEvent::new(ev::MIDI_CLIP_NOTES_SET, &project_id, event_payload);
             let _ = app.emit("engine-event", &engine_ev);
+            recompile_if_needed(state);
 
             Ok(CommandResult::ok(command_id, vec![serde_json::to_value(&engine_ev).unwrap_or_default()]))
         }

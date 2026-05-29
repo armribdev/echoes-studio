@@ -44,6 +44,11 @@ pub enum NodeKind {
         track_id: String,
     },
 
+    /// Reads MIDI clips for one track, synthesises audio via a built-in instrument.
+    Instrument {
+        track_id: String,
+    },
+
     /// Applies gain and panning for one track.
     TrackGain {
         track_id: String,
@@ -239,10 +244,17 @@ impl AudioGraph {
 
         // ── Per-track chain ─────────────────────────────────────────────────────
         for (port_idx, track) in project.tracks.iter().enumerate() {
-            let track_node = graph.add_node(
-                NodeKind::Track { track_id: track.id.clone() },
-                format!("{} [clips]", track.name),
-            );
+            let track_node = if !track.midi_clips.is_empty() {
+                graph.add_node(
+                    NodeKind::Instrument { track_id: track.id.clone() },
+                    format!("{} [instrument]", track.name),
+                )
+            } else {
+                graph.add_node(
+                    NodeKind::Track { track_id: track.id.clone() },
+                    format!("{} [clips]", track.name),
+                )
+            };
 
             let effectively_muted = track.muted || (any_solo && !track.solo);
             let gain_linear = if effectively_muted {

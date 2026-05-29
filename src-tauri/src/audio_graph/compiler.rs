@@ -266,6 +266,7 @@ impl GraphCompiler {
     fn num_inputs_for_kind(kind: &NodeKind) -> usize {
         match kind {
             NodeKind::Track { .. }              => 0, // source node
+            NodeKind::Instrument { .. }         => 0, // source node
             NodeKind::TrackGain { .. }          => 1,
             NodeKind::Bus                       => 8, // up to 8 mix inputs
             NodeKind::Send { .. }               => 1,
@@ -284,7 +285,8 @@ impl GraphCompiler {
 
     fn num_outputs_for_kind(kind: &NodeKind) -> usize {
         match kind {
-            NodeKind::Track { .. }     => 1,
+            NodeKind::Track { .. }       => 1,
+            NodeKind::Instrument { .. }  => 1,
             NodeKind::TrackGain { .. } => 1,
             NodeKind::Bus              => 1,
             NodeKind::Send { .. }      => 0, // side-effect node
@@ -320,6 +322,36 @@ impl GraphCompiler {
         use std::sync::Arc as StdArc;
 
         match kind {
+            NodeKind::Instrument { track_id } => {
+                use crate::audio_graph::midi::MidiNoteSnapshot;
+                use crate::audio_graph::nodes::instrument::InstrumentNode;
+                use crate::audio_graph::nodes::poly_synth::PolySynth;
+
+                let beats_to_secs = 60.0 / project.bpm as f64;
+                let mut notes: Vec<MidiNoteSnapshot> = Vec::new();
+
+                if let Some(track) = project.tracks.iter().find(|t| &t.id == track_id) {
+                    for clip in &track.midi_clips {
+                        for note in &clip.notes {
+                            let note_start_secs = clip.start + note.start as f64 * beats_to_secs;
+                            let note_end_secs   = clip.start + (note.start + note.duration) as f64 * beats_to_secs;
+                            notes.push(MidiNoteSnapshot {
+                                pitch: note.pitch,
+                                velocity: note.velocity,
+                                start_sample: (note_start_secs * engine_sample_rate as f64) as u64,
+                                end_sample:   (note_end_secs   * engine_sample_rate as f64) as u64,
+                            });
+                        }
+                    }
+                }
+
+                Box::new(InstrumentNode::new(
+                    id,
+                    StdArc::new(notes),
+                    Box::new(PolySynth::new()),
+                ))
+            }
+
             NodeKind::Track { track_id } => {
                 // Gather clip data from the project for this track.
                 // Clip positions are in seconds; convert to engine-sample-rate
