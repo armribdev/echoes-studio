@@ -44,6 +44,7 @@ use crate::audio_graph::{CompileConfig, GraphScheduler, LiveParams, MeterCell, R
 use crate::audio_engine::graph::AudioGraphCompiler;
 use crate::audio_engine::transport::SharedTransport;
 use crate::audio_settings::AudioSettings;
+use crate::plugin_system::PluginHost;
 use crate::project::AppProject;
 
 // ── SendStream wrapper ────────────────────────────────────────────────────────
@@ -226,6 +227,13 @@ pub struct AudioEngine {
 
     /// Cumulative underrun count for the current stream session.
     pub xrun_stats: Arc<XrunStats>,
+
+    /// Plugin host — owns the registry, instantiates `Box<dyn AudioNode>` for
+    /// every `NodeKind::Plugin` step at compile time, and tracks per-device
+    /// lifecycle state.  Lives on the command thread only; consulted by the
+    /// graph compiler during `update_from_project`.  The audio thread never
+    /// touches it (device instances are moved into the `GraphScheduler`).
+    pub plugin_host: PluginHost,
 }
 
 impl AudioEngine {
@@ -242,6 +250,7 @@ impl AudioEngine {
             active_output_channels: Arc::new(AtomicUsize::new(0)),
             live_params,
             xrun_stats: XrunStats::new(),
+            plugin_host: PluginHost::new(),
         }
     }
 
@@ -265,8 +274,12 @@ impl AudioEngine {
             max_block_size: MAX_BLOCK_FRAMES,
             num_channels: 2,
         };
-        let (scheduler, cells, duration_samples) =
-            AudioGraphCompiler::compile_scheduler(project, config, &self.live_params);
+        let (scheduler, cells, duration_samples) = AudioGraphCompiler::compile_scheduler(
+            project,
+            config,
+            &self.live_params,
+            &mut self.plugin_host,
+        );
         self.transport.set_duration(duration_samples);
         if let Ok(mut map) = self.meter_cells.lock() {
             *map = cells;
@@ -337,7 +350,12 @@ impl AudioEngine {
             num_channels: 2,
         };
         let (initial_scheduler, initial_cells, initial_duration) =
-            AudioGraphCompiler::compile_scheduler(project, compile_cfg, &self.live_params);
+            AudioGraphCompiler::compile_scheduler(
+                project,
+                compile_cfg,
+                &self.live_params,
+                &mut self.plugin_host,
+            );
         self.transport.set_duration(initial_duration);
         if let Ok(mut map) = self.meter_cells.lock() {
             *map = initial_cells;

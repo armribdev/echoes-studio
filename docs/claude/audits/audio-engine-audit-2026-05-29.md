@@ -136,9 +136,20 @@ Cas particulier de C3, résolu par le même fix : `TrackGainNode` lit `volume ×
 `reset_modulation()` n'était appelé que si `!actions.is_empty()`. Si une route est retirée en cours de session (ou si la liste d'actions effective devient vide entre blocks pour une autre raison), le dernier `mod_delta` du block précédent persistait.
 **Fix appliqué** : `reset_modulation()` est désormais appelé inconditionnellement pour chaque step avant la dispatch des actions. L'impl par défaut du trait étant un no-op, le surcoût est nul pour les nœuds sans paramètres modulés ; pour les nœuds modulables, la dépense est une simple écriture à zéro d'un `f32` par paramètre.
 
-#### I7 — `PluginHost` totalement déconnecté
-**Fichiers** : [plugin_system/host.rs:101](../../../src-tauri/src/plugin_system/host.rs#L101), [audio_graph/compiler.rs:412](../../../src-tauri/src/audio_graph/compiler.rs#L412)
-`NodeKind::Plugin` retourne toujours un `GainNode` placeholder. `PluginHost::instantiate` n'est jamais appelé. Les quatre formats (VST3/AU/CLAP/WASM) sont des stubs. Toute l'abstraction plugin est actuellement un no-op.
+#### I7 — `PluginHost` totalement déconnecté ✅ **CORRIGÉ**
+**Fichiers** : [plugin_system/host.rs:101](../../../src-tauri/src/plugin_system/host.rs#L101), [audio_graph/compiler.rs](../../../src-tauri/src/audio_graph/compiler.rs), [audio_engine/graph.rs](../../../src-tauri/src/audio_engine/graph.rs), [audio_engine/engine.rs](../../../src-tauri/src/audio_engine/engine.rs)
+`NodeKind::Plugin` retournait toujours un `GainNode` placeholder. `PluginHost::instantiate` n'était jamais appelé. Toute l'abstraction plugin était un no-op.
+
+**Fix appliqué** :
+- `AudioEngine` possède désormais un `PluginHost` (champ `plugin_host: PluginHost`), construit dans `AudioEngine::new`. Vit sur le thread commande ; jamais touché par le thread audio (les `Box<dyn AudioNode>` sont déplacés dans le `GraphScheduler` à la compilation).
+- `AudioGraphCompiler::compile_scheduler` et `GraphCompiler::compile` acceptent `&mut PluginHost`, threaded jusqu'à `build_node`.
+- Le bras `NodeKind::Plugin` de `build_node` appelle `plugin_host.instantiate(node_id, device_id)`. Sur succès : le `Box<dyn AudioNode>` retourné par le host (interne → `PassThroughDevice` ; VST3/AU/CLAP/WASM → encore `PassThroughDevice` en attendant les wrappers réels) est inséré dans le graphe ; un `DeviceRecord` est enregistré côté host pour le suivi de lifecycle et l'undo des paramètres. Sur échec (registry miss / instanciation échouée) : fallback `GainNode` unitaire pour que le graphe compile quand même, plus log d'erreur.
+- `update_from_project` et `start_stream_with_settings` passent `&mut self.plugin_host` au compile.
+
+**Restes hors scope** :
+- Les wrappers VST3/AU/CLAP/WASM eux-mêmes restent des stubs : `PluginHost::instantiate` retourne un `PassThroughDevice` pour ces formats. Le chemin est désormais branché — il suffit d'implémenter chaque wrapper et de remplacer le fallback dans `host.rs`.
+- `num_inputs_for_kind(NodeKind::Plugin)` est encore figé à 2/2 ; à terme il faudra lire `PluginManifest.num_audio_inputs/outputs` au moment de la compilation pour respecter les configurations mono / 5.1 / etc.
+- L'écriture des paramètres (`PluginHost::set_parameter_normalised`) n'est pas encore routée depuis le gateway. Idem pour la sérialisation d'état au save/load projet.
 
 #### I8 — L'export bypass le moteur
 **Fichiers** : [main.rs:455-613](../../../src-tauri/src/main.rs#L455)

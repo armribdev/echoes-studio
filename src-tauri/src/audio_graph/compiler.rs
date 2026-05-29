@@ -34,6 +34,7 @@ use crate::audio_graph::graph::{AudioGraph, NodeKind};
 use crate::audio_graph::live_params::LiveParams;
 use crate::audio_graph::node::{AudioNode, NodeId, PrepareContext};
 use crate::audio_graph::modulation::ModulationMap;
+use crate::plugin_system::PluginHost;
 use crate::project::AppProject;
 
 /// Shared peak cells for one track meter: (peak_L, peak_R).
@@ -119,6 +120,7 @@ impl GraphCompiler {
         project: &AppProject,
         config: CompileConfig,
         live_params: &LiveParams,
+        plugin_host: &mut PluginHost,
     ) -> Result<CompiledGraph, CompileError> {
         // 1. Validate
         if graph.master_id.is_none() {
@@ -214,7 +216,14 @@ impl GraphCompiler {
                 meter_cells.insert(meter_id.clone(), (Arc::clone(&peak_l), Arc::clone(&peak_r)));
                 Box::new(crate::audio_graph::nodes::meter::MeterNode::new(node_id, peak_l, peak_r))
             } else {
-                Self::build_node(node_id, &graph_node.kind, project, config.sample_rate, live_params)
+                Self::build_node(
+                    node_id,
+                    &graph_node.kind,
+                    project,
+                    config.sample_rate,
+                    live_params,
+                    plugin_host,
+                )
             };
             let mut node = node;
             node.prepare(prepare_ctx);
@@ -391,6 +400,7 @@ impl GraphCompiler {
         project: &AppProject,
         engine_sample_rate: f32,
         live_params: &LiveParams,
+        plugin_host: &mut PluginHost,
     ) -> Box<dyn AudioNode> {
         use crate::audio_graph::nodes;
         use std::sync::Arc as StdArc;
@@ -502,11 +512,21 @@ impl GraphCompiler {
             }
 
             NodeKind::Plugin { device_id } => {
-                // Plugin nodes are opaque DSP nodes — format resolved at runtime
-                // For now, emit a pass-through gain node as a placeholder.
-                // The real PluginHost will supply the concrete wrapper here.
-                eprintln!("[audio] Plugin '{device_id}' non chargé — pass-through utilisé");
-                Box::new(nodes::gain::GainNode::new(id, 1.0))
+                // Hand off to `PluginHost` so the appropriate device wrapper
+                // (internal, VST3, AU, CLAP, WASM) is instantiated.  The host
+                // registers the resulting record so subsequent parameter
+                // updates and lifecycle calls can find it.  If the device is
+                // unknown (registry miss) or fails to instantiate, fall back
+                // to a unity-gain pass-through so the graph still compiles.
+                match plugin_host.instantiate(id, device_id) {
+                    Ok(node) => node,
+                    Err(e) => {
+                        eprintln!(
+                            "[audio] Plugin '{device_id}' instantiation failed ({e}) — pass-through utilisé"
+                        );
+                        Box::new(nodes::gain::GainNode::new(id, 1.0))
+                    }
+                }
             }
 
             NodeKind::Modulator { modulator_id, kind, rate_hz, waveform } => {

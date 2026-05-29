@@ -26,6 +26,7 @@ use crate::audio_graph::{
     LiveParams,
     MeterCell,
 };
+use crate::plugin_system::PluginHost;
 use crate::project::AppProject;
 
 /// Bridges `AppProject` → `GraphScheduler` + per-track meter cells.
@@ -42,6 +43,7 @@ impl AudioGraphCompiler {
         project: &AppProject,
         config: CompileConfig,
         live_params: &LiveParams,
+        plugin_host: &mut PluginHost,
     ) -> (GraphScheduler, HashMap<String, MeterCell>, u64) {
         let duration_secs = project.tracks
             .iter()
@@ -58,7 +60,7 @@ impl AudioGraphCompiler {
 
         let graph = AudioGraph::from_project(project);
 
-        match GraphCompiler::compile(&graph, project, config, live_params) {
+        match GraphCompiler::compile(&graph, project, config, live_params, plugin_host) {
             Ok(compiled) => {
                 let cells = compiled.meter_cells.clone();
                 (GraphScheduler::new(compiled), cells, duration_samples)
