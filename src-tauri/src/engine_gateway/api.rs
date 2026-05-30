@@ -1463,20 +1463,20 @@ fn apply_events(
 /// for atomic pickup by the audio thread at the next block boundary.
 ///
 /// Must be called **outside** of any Mutex locks to avoid deadlocks.
+///
+/// Canonical lock order: **project → engine**. This matches
+/// `render_project_to_stereo` in `main.rs`; reversing it here would create
+/// an AB-BA deadlock with the offline render path.
 fn recompile_if_needed(state: &tauri::State<'_, AppState>) {
-    // Hold the project lock only long enough to compile; release before
-    // touching the engine lock.
-    let compile_done = {
+    let compile_done = if let Ok(project) = state.project.lock() {
         if let Ok(mut engine) = state.audio_engine.lock() {
-            if let Ok(project) = state.project.lock() {
-                engine.update_from_project(&project);
-                true
-            } else {
-                false
-            }
+            engine.update_from_project(&project);
+            true
         } else {
             false
         }
+    } else {
+        false
     };
 
     if !compile_done {

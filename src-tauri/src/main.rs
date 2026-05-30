@@ -920,9 +920,11 @@ fn set_active_output_channels(
 /// Must be called **outside** any held Mutex locks to avoid deadlocks.
 /// Mirrors the logic in `engine_gateway::api::recompile_if_needed` but is
 /// accessible from `main.rs` (where that private function is not visible).
+///
+/// Canonical lock order: **project → engine** (matches `render_project_to_stereo`).
 fn recompile_audio_graph(state: &tauri::State<'_, AppState>) {
-    if let Ok(mut engine) = state.audio_engine.lock() {
-        if let Ok(project) = state.project.lock() {
+    if let Ok(project) = state.project.lock() {
+        if let Ok(mut engine) = state.audio_engine.lock() {
             engine.update_from_project(&project);
         }
     }

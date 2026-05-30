@@ -187,9 +187,11 @@ Le pattern `pool_ptr.add(src)` (immutable) + `pool_ptr.add(step_idx)` (mutable) 
 
 Tests PDC inchangés : `pdc_aligns_two_parallel_paths`, `pdc_zero_latency_is_passthrough`, `pdc_delay_carries_across_block_boundary` passent. Suite `audio_graph` complète verte (12 tests).
 
-#### I11 — Lock du moteur pendant tout le compile
-**Fichiers** : [engine_gateway/api.rs:1442](../../../src-tauri/src/engine_gateway/api.rs#L1442)
-`update_from_project` acquiert `audio_engine.lock()` puis fait tout le compile (avec clone de tous les samples). D'autres commandes bloquent. Risque de deadlock vu l'ordre opposé dans `apply_loaded_project`.
+#### I11 — Lock du moteur pendant tout le compile ✅ **CORRIGÉ (partiel — deadlock résolu)**
+**Fichiers** : [engine_gateway/api.rs](../../../src-tauri/src/engine_gateway/api.rs), [main.rs](../../../src-tauri/src/main.rs)
+`recompile_if_needed` (api.rs) et `recompile_audio_graph` (main.rs) verrouillaient **engine → project**, alors que `render_project_to_stereo` (main.rs:466) verrouille **project → engine** : AB-BA deadlock latent.
+**Fix appliqué** : ordre canonique unifié **project → engine** dans les deux helpers de recompile. Doc-comments mis à jour pour expliquer la convention.
+*Reste à faire* : la durée de détention du lock engine pendant le compile (qui bloque les autres commandes engine) demanderait un refactor de `PluginHost` en `Arc<Mutex<>>` pour compiler hors du lock engine — repoussé (out of scope d'I11 strict, candidat pour un futur R).
 
 #### I12 — Compare de `String` sur le hot path modulation
 **Fichiers** : [audio_graph/scheduler.rs:55](../../../src-tauri/src/audio_graph/scheduler.rs#L55), [audio_graph/nodes/gain.rs:68](../../../src-tauri/src/audio_graph/nodes/gain.rs#L68)
@@ -255,6 +257,6 @@ Sous-système d'input séparé (midir / midi-msg), file lock-free MIDI alimentan
 
 ## Ordre d'attaque suggéré
 
-C1, C2, C3, C4, C5, I1, I2, I3, I4, I5, I6, I7, I8, I9, I10 et M1 sont corrigés. Reste **C6** (tempo MIDI désynchronisé) — fix trivial une fois identifié : appeler `recompile_if_needed` dans `UPDATE_TEMPO` ou stocker les notes en beats. Ensuite la priorité bascule vers les importantes restantes (I11 lock moteur sur compile, I12 String hot-path), puis les mineures M2–M9.
+C1, C2, C3, C4, C5, I1, I2, I3, I4, I5, I6, I7, I8, I9, I10, I11 (deadlock) et M1 sont corrigés. Reste **C6** (tempo MIDI désynchronisé) — fix trivial une fois identifié : appeler `recompile_if_needed` dans `UPDATE_TEMPO` ou stocker les notes en beats. Ensuite la priorité bascule vers **I12** (String hot-path modulation), le volet "engine lock pendant compile" d'I11 (refactor `PluginHost` en `Arc<Mutex<>>`), puis les mineures M2–M9.
 
 **Note résiduelle pour C3** : `UPDATE_EFFECT` continue à recompiler. Pour fermer complètement la boucle hot-path, concevoir un `ParameterBlock` générique ou des cellules atomiques typées par effet (EQ, Compresseur, Reverb, Delay) — chaque effet expose alors ses params via `LiveParams` au même titre que volume/pan/mute/solo.
