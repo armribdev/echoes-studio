@@ -39,6 +39,7 @@ pub mod node;
 pub mod nodes;
 pub mod scheduler;
 pub mod snapshot;
+pub mod snapshot_dto;
 
 // ── Convenience re-exports ────────────────────────────────────────────────────
 
@@ -47,6 +48,7 @@ pub use compiler::{CompileConfig, CompileError, CompiledGraph, GraphCompiler, Me
 pub use live_params::{LiveParams, ModulatorCells, RouteCells, TrackParams};
 pub use execution_plan::ExecutionPlan;
 pub use graph::{AudioGraph, Edge, NodeKind};
+pub use snapshot_dto::GraphSnapshotDto;
 pub use node::{AudioNode, NodeId, PortId, PrepareContext, TransportInfo};
 pub use scheduler::GraphScheduler;
 pub use snapshot::RuntimeSnapshot;

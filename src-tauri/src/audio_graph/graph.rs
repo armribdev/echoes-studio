@@ -223,6 +223,21 @@ impl AudioGraph {
         self.edges.len()
     }
 
+    /// Iterate all nodes (for UI snapshot export).
+    pub fn all_nodes(&self) -> impl Iterator<Item = &GraphNode> {
+        self.nodes.values()
+    }
+
+    /// All audio edges in insertion order.
+    pub fn all_edges(&self) -> &[Edge] {
+        &self.edges
+    }
+
+    /// Modulation routes compiled into this graph topology.
+    pub fn modulation_routes(&self) -> &[ModulationRoute] {
+        self.modulation.all_routes()
+    }
+
     // ── Project builder ────────────────────────────────────────────────────────
 
     /// Construct a signal-flow graph from an `AppProject`.

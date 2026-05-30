@@ -14,14 +14,18 @@
 	import { isEditingText } from '../frontend/shortcuts/context';
 	import { connectTransportBridge } from '../frontend/transport/bridge';
 	import SettingsPanel from '../components/SettingsPanel.svelte';
+	import GraphView from '../components/GraphView.svelte';
 	import { settingsPanelOpen } from '../stores/preferences';
 	import { leftPanel } from '../stores/leftPanel';
 	import { rightPanel } from '../stores/rightPanel';
+	import { viewMode } from '../stores/viewMode';
+	import { graphSnapshot } from '../stores/graphSnapshot';
 
 	// Register keyboard shortcuts and transport bridge once for the app lifetime.
 	onMount(() => {
 		const disconnectBridge = connectTransportBridge();
 		const unregisterShortcuts = registerShortcuts();
+		void graphSnapshot.connect();
 
 		function handleGlobalKey(e: KeyboardEvent) {
 			if (isEditingText(e.target)) return;
@@ -44,6 +48,7 @@
 		return () => {
 			disconnectBridge();
 			unregisterShortcuts();
+			graphSnapshot.disconnect();
 			window.removeEventListener('keydown', handleGlobalKey);
 		};
 	});
@@ -60,7 +65,11 @@
 	<div class="workspace">
 		<div class="center-area">
 			<LeftPanel />
-			<MainPanel />
+			{#if $viewMode.main === 'arrange'}
+				<MainPanel />
+			{:else}
+				<GraphView />
+			{/if}
 			<RightPanel />
 		</div>
 		<BottomPanel />

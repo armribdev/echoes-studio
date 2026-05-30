@@ -24,6 +24,7 @@ import { selection } from '../../stores/selection';
 import { bottomPanel } from '../../stores/bottomPanel';
 import { settingsPanelOpen } from '../../stores/preferences';
 import { cycleEditorFocus, handleEditorEscapeKey } from '../pianoRoll/clipEditor';
+import { viewMode } from '../../stores/viewMode';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -122,6 +123,14 @@ const SHORTCUTS: Shortcut[] = [
       const { isPlaying } = get(transport);
       (isPlaying ? pause() : play()).catch(console.error);
     },
+  },
+
+  // ── View ──────────────────────────────────────────────────────────────────
+  {
+    key: 'g',
+    modifiers: [],
+    description: 'Basculer Arrangement / Graph',
+    action: () => viewMode.toggleMain(),
   },
 
   // ── Editor panel ──────────────────────────────────────────────────────────

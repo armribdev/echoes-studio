@@ -17,6 +17,7 @@ use std::sync::Arc;
 use tauri::Emitter;
 
 use crate::audio_clip::AudioClip;
+use crate::audio_graph::GraphSnapshotDto;
 use crate::project::{
     AppClip, AppMidiClip, AppProject, AppState, AppTrack, CachedAudioData, generate_id,
     TrackEffect, EffectParams, EqParams, CompressorParams, ReverbParams, DelayParams,
@@ -103,6 +104,14 @@ pub fn send_batch(
 pub fn get_snapshot(state: tauri::State<'_, AppState>) -> Result<serde_json::Value, String> {
     let project = state.project.lock().map_err(|e| e.to_string())?;
     serde_json::to_value(project.to_dto()).map_err(|e| e.to_string())
+}
+
+/// Return the audio graph topology derived from the current project.
+/// Read-only — used by the Graph view UI.
+#[tauri::command]
+pub fn get_graph_snapshot(state: tauri::State<'_, AppState>) -> Result<GraphSnapshotDto, String> {
+    let project = state.project.lock().map_err(|e| e.to_string())?;
+    Ok(GraphSnapshotDto::from_project(&project))
 }
 
 /// Undo the last project-structural event. Returns the new project snapshot.

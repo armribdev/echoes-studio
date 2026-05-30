@@ -9,7 +9,7 @@ mod plugin_system;
 mod project;
 mod windows_theme;
 
-use engine_gateway::api::{get_snapshot, redo, send_batch, send_command, undo};
+use engine_gateway::api::{get_graph_snapshot, get_snapshot, redo, send_batch, send_command, undo};
 use project::{AppProject, AppState, ProjectDto, ProjectFile};
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::{Emitter, Manager, Theme};
@@ -145,6 +145,7 @@ fn main() {
             send_command,
             send_batch,
             get_snapshot,
+            get_graph_snapshot,
             undo,
             redo,
             // ── Keyboard shortcut bridge ──────────────────────────────────────
