@@ -151,14 +151,31 @@ pub trait AudioNode: Send + 'static {
     /// this call).
     fn reset_modulation(&mut self) {}
 
-    /// Accumulate one modulation contribution onto a named parameter.
+    /// Resolve a parameter name to a node-local `u32` identifier.
+    ///
+    /// Called **once at scheduler construction time** for every modulation
+    /// route targeting this node.  The returned ID is then handed to
+    /// [`apply_modulation`] on the hot path, replacing the per-block string
+    /// compare that this used to require.
+    ///
+    /// Returns `None` for unknown parameter names — the scheduler skips such
+    /// routes at compile time (equivalent to the previous behaviour where
+    /// nodes silently ignored unknown names in `apply_modulation`).
+    ///
+    /// Default: no-op (no modulated parameters).
+    fn param_id(&self, _name: &str) -> Option<u32> {
+        None
+    }
+
+    /// Accumulate one modulation contribution onto a parameter identified by
+    /// its node-local `u32` ID (resolved by [`param_id`] at construction).
     ///
     /// `delta` is already scaled by the route's depth (i.e. `signal * depth`).
     /// Multiple routes to the same parameter are summed across multiple calls.
     /// The node applies `base_value + total_delta` during `process`.
     ///
     /// Default: no-op.
-    fn apply_modulation(&mut self, _param: &str, _delta: f32) {}
+    fn apply_modulation(&mut self, _param_id: u32, _delta: f32) {}
 
     // ── Optional metadata ──────────────────────────────────────────────────────
 

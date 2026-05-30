@@ -88,9 +88,18 @@ impl AudioNode for TrackGainNode {
         self.mod_delta = 0.0;
     }
 
-    fn apply_modulation(&mut self, param: &str, delta: f32) {
-        if param == "gain" {
+    fn param_id(&self, name: &str) -> Option<u32> {
+        match name {
+            "gain" => Some(PARAM_GAIN),
+            _ => None,
+        }
+    }
+
+    fn apply_modulation(&mut self, param_id: u32, delta: f32) {
+        if param_id == PARAM_GAIN {
             self.mod_delta += delta;
         }
     }
 }
+
+const PARAM_GAIN: u32 = 0;

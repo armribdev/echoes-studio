@@ -125,8 +125,10 @@ struct CompiledModAction {
     source_step: usize,
     /// Output port index on the source node (0 for LFO main output).
     source_port: usize,
-    /// Parameter name on the target node (e.g. `"gain"`, `"cutoff"`).
-    param_name: String,
+    /// Node-local parameter identifier resolved by `AudioNode::param_id` at
+    /// scheduler construction.  Replaces the previous `String` (cloned per
+    /// route, string-compared each block on the hot path — see audit I12).
+    param_id: u32,
     /// Modulation depth.  When `Some`, read per-block from the atomic so the
     /// command thread can change depth without a recompile.  When `None`,
     /// `static_depth` is used (routes constructed without a `route_id`).
@@ -226,6 +228,13 @@ impl GraphScheduler {
                 Some(&i) => i,
                 None => continue, // target not in plan — skip
             };
+            // Resolve the parameter name to a node-local u32 ID once, here.
+            // Unknown names are dropped at compile time (matches the previous
+            // semantics where `apply_modulation` silently ignored them).
+            let param_id = match processors[target_step].param_id(&route.target.param.name) {
+                Some(id) => id,
+                None => continue,
+            };
             let depth_cells = route
                 .route_id
                 .as_ref()
@@ -233,7 +242,7 @@ impl GraphScheduler {
             mod_actions_by_step[target_step].push(CompiledModAction {
                 source_step,
                 source_port: route.source.port as usize,
-                param_name: route.target.param.name.clone(),
+                param_id,
                 depth_cells,
                 static_depth: route.target.depth,
             });
@@ -442,7 +451,7 @@ impl GraphScheduler {
                     Some(cells) => cells.depth(),
                     None => action.static_depth,
                 };
-                processor.apply_modulation(&action.param_name, mod_signal * depth);
+                processor.apply_modulation(action.param_id, mod_signal * depth);
             }
 
             // ── Dispatch ───────────────────────────────────────────────────────

@@ -193,9 +193,10 @@ Tests PDC inchangés : `pdc_aligns_two_parallel_paths`, `pdc_zero_latency_is_pas
 **Fix appliqué** : ordre canonique unifié **project → engine** dans les deux helpers de recompile. Doc-comments mis à jour pour expliquer la convention.
 *Reste à faire* : la durée de détention du lock engine pendant le compile (qui bloque les autres commandes engine) demanderait un refactor de `PluginHost` en `Arc<Mutex<>>` pour compiler hors du lock engine — repoussé (out of scope d'I11 strict, candidat pour un futur R).
 
-#### I12 — Compare de `String` sur le hot path modulation
-**Fichiers** : [audio_graph/scheduler.rs:55](../../../src-tauri/src/audio_graph/scheduler.rs#L55), [audio_graph/nodes/gain.rs:68](../../../src-tauri/src/audio_graph/nodes/gain.rs#L68)
-`CompiledModAction::param_name: String`, comparé sur chaque route chaque block. Remplacer par un `u32` interné.
+#### I12 — Compare de `String` sur le hot path modulation ✅ **CORRIGÉ**
+**Fichiers** : [audio_graph/scheduler.rs](../../../src-tauri/src/audio_graph/scheduler.rs), [audio_graph/node.rs](../../../src-tauri/src/audio_graph/node.rs), [audio_graph/nodes/gain.rs](../../../src-tauri/src/audio_graph/nodes/gain.rs), [audio_graph/nodes/track_gain.rs](../../../src-tauri/src/audio_graph/nodes/track_gain.rs)
+`CompiledModAction::param_name: String` était cloné par route à la compilation et comparé (`==`) à un `&str` à chaque block sur le hot path.
+**Fix appliqué** : nouveau `AudioNode::param_id(name: &str) -> Option<u32>` qui résout les noms de paramètres en identifiants `u32` locaux au nœud. Le scheduler appelle `param_id` **une seule fois** par route à la construction, stocke un `u32` (au lieu d'un `String`) dans `CompiledModAction`, et passe ce `u32` à `apply_modulation` sur le hot path. Les routes dont le nom est inconnu (`param_id` renvoie `None`) sont éliminées dès la compilation au lieu d'être no-op à chaque block. La signature de `apply_modulation` devient `(param_id: u32, delta: f32)`. Plus aucun `String::clone` ni compare hot-path.
 
 ---
 
