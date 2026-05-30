@@ -30,6 +30,7 @@
 
 pub mod buffer;
 pub mod compiler;
+pub mod denormal;
 pub mod execution_plan;
 pub mod graph;
 pub mod live_params;

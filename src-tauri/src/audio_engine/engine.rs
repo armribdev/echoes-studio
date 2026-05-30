@@ -41,6 +41,7 @@ use serde_json::json;
 use tauri::Emitter;
 
 use crate::audio_graph::{CompileConfig, GraphScheduler, LiveParams, MeterCell, RuntimeSnapshot};
+use crate::audio_graph::denormal::enable_flush_to_zero;
 use crate::audio_engine::graph::AudioGraphCompiler;
 use crate::audio_engine::transport::SharedTransport;
 use crate::audio_settings::AudioSettings;
@@ -622,6 +623,9 @@ where
     // XRun detection state — lives in the closure, never shared across threads.
     let mut prev_callback: Option<cpal::StreamInstant> = None;
     let mut prev_frames: usize = 0;
+    // FTZ/DAZ must be set per-thread; do it on first callback invocation. CPAL
+    // owns the audio thread so this is the earliest hook we have.
+    let mut denormal_guard_set = false;
     let xrun_stats_cb = Arc::clone(&xrun_stats);
     let xrun_stats_err = Arc::clone(&xrun_stats);
 
@@ -630,6 +634,11 @@ where
             config,
             // ── Audio callback (real-time thread) ─────────────────────────────
             move |data: &mut [T], info: &cpal::OutputCallbackInfo| {
+                if !denormal_guard_set {
+                    enable_flush_to_zero();
+                    denormal_guard_set = true;
+                }
+
                 let total_samples = data.len();
                 let frames = if hw_channels > 0 {
                     total_samples / hw_channels

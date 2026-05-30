@@ -1,4 +1,5 @@
 use crate::audio_graph::buffer::AudioBuffer;
+use crate::audio_graph::denormal::ANTI_DENORMAL;
 use crate::audio_graph::node::{AudioNode, NodeId, PrepareContext, TransportInfo};
 use crate::project::DelayParams;
 
@@ -53,13 +54,15 @@ impl AudioNode for DelayNode {
             let in_l = if channels > 0 { input.channel(0)[i] } else { 0.0 };
             let in_r = if channels > 1 { input.channel(1)[i] } else { in_l };
 
-            // Write to delay buffer: feedback from delay out, cross-channel if ping-pong
+            // Write to delay buffer: feedback from delay out, cross-channel if ping-pong.
+            // ANTI_DENORMAL on each write keeps the recursive state out of the
+            // sub-normal range during long silences (otherwise: x86 CPU spike).
             if ping_pong {
-                self.buf[self.write_pos * 2]     = in_l + del_r * feedback;
-                self.buf[self.write_pos * 2 + 1] = in_r + del_l * feedback;
+                self.buf[self.write_pos * 2]     = in_l + del_r * feedback + ANTI_DENORMAL;
+                self.buf[self.write_pos * 2 + 1] = in_r + del_l * feedback + ANTI_DENORMAL;
             } else {
-                self.buf[self.write_pos * 2]     = in_l + del_l * feedback;
-                self.buf[self.write_pos * 2 + 1] = in_r + del_r * feedback;
+                self.buf[self.write_pos * 2]     = in_l + del_l * feedback + ANTI_DENORMAL;
+                self.buf[self.write_pos * 2 + 1] = in_r + del_r * feedback + ANTI_DENORMAL;
             }
 
             self.write_pos = (self.write_pos + 1) % cap;

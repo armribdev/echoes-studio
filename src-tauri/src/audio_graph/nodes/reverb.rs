@@ -1,4 +1,5 @@
 use crate::audio_graph::buffer::AudioBuffer;
+use crate::audio_graph::denormal::ANTI_DENORMAL;
 use crate::audio_graph::node::{AudioNode, NodeId, PrepareContext, TransportInfo};
 use crate::project::ReverbParams;
 
@@ -19,7 +20,9 @@ impl CombFilter {
 
     fn process(&mut self, input: f32) -> f32 {
         let output = self.buf[self.pos];
-        self.filterstore = output * self.damp2 + self.filterstore * self.damp1;
+        // ANTI_DENORMAL keeps the LPF + comb state out of the sub-normal range
+        // when input has been silent for several seconds.
+        self.filterstore = output * self.damp2 + self.filterstore * self.damp1 + ANTI_DENORMAL;
         self.buf[self.pos] = input + self.filterstore * self.feedback;
         self.pos = (self.pos + 1) % self.buf.len();
         output
@@ -40,7 +43,7 @@ impl AllpassFilter {
     fn process(&mut self, input: f32) -> f32 {
         let bufout = self.buf[self.pos];
         let output = -input + bufout;
-        self.buf[self.pos] = input + bufout * 0.5;
+        self.buf[self.pos] = input + bufout * 0.5 + ANTI_DENORMAL;
         self.pos = (self.pos + 1) % self.buf.len();
         output
     }

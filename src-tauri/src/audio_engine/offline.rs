@@ -28,6 +28,7 @@
 
 use crate::audio_engine::graph::AudioGraphCompiler;
 use crate::audio_graph::{CompileConfig, LiveParams};
+use crate::audio_graph::denormal::enable_flush_to_zero;
 use crate::audio_graph::node::TransportInfo;
 use crate::plugin_system::PluginHost;
 use crate::project::AppProject;
@@ -56,6 +57,10 @@ pub fn render_project_offline(
         max_block_size: OFFLINE_BLOCK_SIZE,
         num_channels: 2,
     };
+
+    // Same denormal mitigation as the live audio thread — DSP feedback paths
+    // hit sub-normals on long silences, with the same CPU-spike penalty.
+    enable_flush_to_zero();
 
     let (mut scheduler, _cells, duration_samples) =
         AudioGraphCompiler::compile_scheduler(project, config, live_params, plugin_host);

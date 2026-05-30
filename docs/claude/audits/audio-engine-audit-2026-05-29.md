@@ -164,9 +164,16 @@ Cas particulier de C3, résolu par le même fix : `TrackGainNode` lit `volume ×
 
 **Restes hors scope** : pas de fichier de notification de progression pour les longs renders (l'UI reste figée sur "Export en cours…"). À ajouter quand le rendu deviendra long (gros projets, plugins). Le tempo passé au `TransportInfo` est le tempo statique du projet — quand C6 sera traité avec stockage en beats, l'export héritera automatiquement.
 
-#### I9 — Pas de protection anti-dénormales
-**Fichiers** : [audio_graph/nodes/reverb.rs](../../../src-tauri/src/audio_graph/nodes/reverb.rs), [audio_graph/nodes/delay.rs](../../../src-tauri/src/audio_graph/nodes/delay.rs), [audio_graph/nodes/compressor.rs](../../../src-tauri/src/audio_graph/nodes/compressor.rs)
-Les chemins de feedback (reverb, delay, enveloppe compresseur) ne flush pas les dénormales. Long silences → spikes CPU 100× sur x86. Ajouter `+ 1e-25` ou activer FTZ/DAZ.
+#### I9 — Pas de protection anti-dénormales ✅ **CORRIGÉ**
+**Fichiers** : [audio_graph/denormal.rs](../../../src-tauri/src/audio_graph/denormal.rs), [audio_graph/nodes/reverb.rs](../../../src-tauri/src/audio_graph/nodes/reverb.rs), [audio_graph/nodes/delay.rs](../../../src-tauri/src/audio_graph/nodes/delay.rs), [audio_engine/engine.rs](../../../src-tauri/src/audio_engine/engine.rs), [audio_engine/offline.rs](../../../src-tauri/src/audio_engine/offline.rs)
+Les chemins de feedback (reverb comb/allpass, delay) ne flushaient pas les dénormales : sur x86, les sub-normales coûtent 10×–100× plus de cycles, donc un long silence dans la queue de reverb pouvait provoquer un XRun.
+
+**Fix appliqué** :
+- Nouveau module [`audio_graph::denormal`](../../../src-tauri/src/audio_graph/denormal.rs) avec `enable_flush_to_zero()` qui flippe FTZ + DAZ (bits 15/6 de MXCSR sur x86/x86_64, bit FZ de FPCR sur aarch64). Per-thread, donc appelé sur le thread audio CPAL via un flag `denormal_guard_set` à la première invocation du callback dans [`engine::build_stream`](../../../src-tauri/src/audio_engine/engine.rs#L618), et au début de [`render_project_offline`](../../../src-tauri/src/audio_engine/offline.rs) pour le rendu offline.
+- Belt-and-suspenders pour les architectures sans FTZ : constante `ANTI_DENORMAL = 1e-25` ajoutée aux écritures de feedback du `CombFilter`, `AllpassFilter` et `DelayNode`. ≈ −500 dBFS — inaudible, mais largement au-dessus de la frontière sub-normale (~1.18e-38).
+- L'enveloppe du compresseur converge vers 1.0 pendant les silences (pas vers 0), donc pas de risque de sub-normale en pratique ; FTZ couvre tout cas pathologique sans surcoût.
+
+Tests existants (reverb / scheduler / PDC) inchangés (10 passent).
 
 #### I10 — Stacked-borrows / aliasing dans `run_steps`
 **Fichiers** : [audio_graph/scheduler.rs:226-309](../../../src-tauri/src/audio_graph/scheduler.rs#L226)
@@ -239,6 +246,6 @@ Sous-système d'input séparé (midir / midi-msg), file lock-free MIDI alimentan
 
 ## Ordre d'attaque suggéré
 
-C1, C2, C3, C4, C5, I1, I2, I3, I4, I5, I6, I7 et I8 sont corrigés. Reste **C6** (tempo MIDI désynchronisé) — fix trivial une fois identifié : appeler `recompile_if_needed` dans `UPDATE_TEMPO` ou stocker les notes en beats. Ensuite la priorité bascule vers les importantes restantes (I9 dénormales, I10 stacked-borrows, I11 lock moteur sur compile, I12 String hot-path), puis les mineures M1–M9.
+C1, C2, C3, C4, C5, I1, I2, I3, I4, I5, I6, I7, I8 et I9 sont corrigés. Reste **C6** (tempo MIDI désynchronisé) — fix trivial une fois identifié : appeler `recompile_if_needed` dans `UPDATE_TEMPO` ou stocker les notes en beats. Ensuite la priorité bascule vers les importantes restantes (I10 stacked-borrows, I11 lock moteur sur compile, I12 String hot-path), puis les mineures M1–M9.
 
 **Note résiduelle pour C3** : `UPDATE_EFFECT` continue à recompiler. Pour fermer complètement la boucle hot-path, concevoir un `ParameterBlock` générique ou des cellules atomiques typées par effet (EQ, Compresseur, Reverb, Delay) — chaque effet expose alors ses params via `LiveParams` au même titre que volume/pan/mute/solo.
