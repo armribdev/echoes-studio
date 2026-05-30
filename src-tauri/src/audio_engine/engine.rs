@@ -37,10 +37,12 @@ use cpal::{
     traits::{DeviceTrait, HostTrait, StreamTrait},
     FromSample, SizedSample,
 };
-use serde_json::json;
 use tauri::Emitter;
 
 use crate::audio_graph::{CompileConfig, GraphScheduler, LiveParams, MeterCell, RuntimeSnapshot};
+use crate::engine_gateway::events::{
+    ev, LevelsUpdatedPayload, PositionUpdatedPayload, TelemetryEngineEvent,
+};
 use crate::audio_graph::denormal::enable_flush_to_zero;
 use crate::audio_engine::graph::AudioGraphCompiler;
 use crate::audio_engine::transport::SharedTransport;
@@ -78,6 +80,10 @@ const REPORTER_INTERVAL_MS: u64 = 33;
 
 /// Maximum number of audio channels tracked by the level meters.
 const MAX_METER_CHANNELS: usize = 16;
+
+const _: () = assert!(
+    MAX_METER_CHANNELS == crate::engine_gateway::events::METER_CHANNEL_COUNT
+);
 
 /// Minimum slack added to the expected block duration before declaring an XRun.
 ///
@@ -749,6 +755,61 @@ where
 
 // ── Position reporter ─────────────────────────────────────────────────────────
 
+/// Reusable telemetry buffers for the ~30 Hz reporter (no per-tick `json!` / `Map::new`).
+struct PositionReporterState {
+    levels: LevelsUpdatedPayload,
+    position: PositionUpdatedPayload,
+}
+
+impl PositionReporterState {
+    fn new() -> Self {
+        Self {
+            levels: LevelsUpdatedPayload {
+                output: [0.0; MAX_METER_CHANNELS],
+                input: [0.0; MAX_METER_CHANNELS],
+                tracks: HashMap::new(),
+                xruns: 0,
+            },
+            position: PositionUpdatedPayload {
+                position: 0.0,
+                output: [0.0; MAX_METER_CHANNELS],
+                input: [0.0; MAX_METER_CHANNELS],
+                tracks: HashMap::new(),
+                xruns: 0,
+            },
+        }
+    }
+
+    fn fill_meters(
+        &mut self,
+        output: [f32; MAX_METER_CHANNELS],
+        input: [f32; MAX_METER_CHANNELS],
+        xruns: u64,
+        meter_cells: &Arc<Mutex<HashMap<String, MeterCell>>>,
+    ) {
+        self.levels.output = output;
+        self.levels.input = input;
+        self.levels.xruns = xruns;
+        self.position.output = output;
+        self.position.input = input;
+        self.position.xruns = xruns;
+
+        self.levels.tracks.clear();
+        if let Ok(cells) = meter_cells.try_lock() {
+            for (id, (l, r)) in cells.iter() {
+                self.levels.tracks.insert(
+                    id.clone(),
+                    [
+                        f32::from_bits(l.load(Ordering::Relaxed)),
+                        f32::from_bits(r.load(Ordering::Relaxed)),
+                    ],
+                );
+            }
+        }
+        self.position.tracks.clone_from(&self.levels.tracks);
+    }
+}
+
 /// Background thread: emits engine events at ~30 fps.
 ///
 /// Always emits `LEVELS_UPDATED` (for the Settings panel meters + track meters).
@@ -764,6 +825,8 @@ fn position_reporter(
 ) {
     let interval = std::time::Duration::from_millis(REPORTER_INTERVAL_MS);
     let mut last_reported_xruns = 0_u64;
+    let mut state = PositionReporterState::new();
+
     loop {
         std::thread::sleep(interval);
 
@@ -775,80 +838,59 @@ fn position_reporter(
         let inp = levels.read_inputs();
         let xruns = xrun_stats.total();
         log_new_xruns(&mut last_reported_xruns, xruns);
-
-        // Read per-track peaks (non-blocking: try_lock, skip on contention)
-        let track_levels: serde_json::Value = if let Ok(cells) = meter_cells.try_lock() {
-            let map: serde_json::Map<String, serde_json::Value> = cells
-                .iter()
-                .map(|(id, (l, r))| {
-                    let peak_l = f32::from_bits(l.load(Ordering::Relaxed));
-                    let peak_r = f32::from_bits(r.load(Ordering::Relaxed));
-                    (id.clone(), json!([peak_l, peak_r]))
-                })
-                .collect();
-            serde_json::Value::Object(map)
-        } else {
-            serde_json::Value::Object(serde_json::Map::new())
-        };
+        state.fill_meters(out, inp, xruns, &meter_cells);
 
         if transport.is_playing.load(Ordering::Relaxed) {
-            let sr  = transport.sample_rate();
+            let sr = transport.sample_rate();
             let pos = transport.position_samples.load(Ordering::Relaxed);
             let dur = transport.duration_samples.load(Ordering::Relaxed);
 
             // Auto-stop when playhead reaches the end of the last clip.
             if dur > 0 && pos >= dur {
                 transport.stop();
-                let _ = app.emit("engine-event", json!({
-                    "type": "PLAY_STOPPED",
-                    "payload": {}
-                }));
-                let _ = app.emit("engine-event", json!({
-                    "id": "pos",
-                    "projectId": "",
-                    "type": "POSITION_UPDATED",
-                    "timestamp": 0,
-                    "payload": {
-                        "position": 0.0_f64,
-                        "output":   out,
-                        "input":    inp,
-                        "tracks":   track_levels,
-                        "xruns":    xruns,
-                    }
-                }));
+                let _ = app.emit(
+                    "engine-event",
+                    &crate::engine_gateway::events::EngineEvent::with_payload(
+                        ev::PLAY_STOPPED,
+                        "",
+                        serde_json::json!({}),
+                    ),
+                );
+                state.position.position = 0.0;
+                let _ = app.emit(
+                    "engine-event",
+                    &TelemetryEngineEvent {
+                        id: "pos",
+                        project_id: "",
+                        event_type: ev::POSITION_UPDATED,
+                        timestamp: 0,
+                        payload: &state.position,
+                    },
+                );
                 continue;
             }
 
-            let pos_secs = pos as f64 / sr as f64;
-
+            state.position.position = pos as f64 / sr as f64;
             let _ = app.emit(
                 "engine-event",
-                json!({
-                    "id": "pos",
-                    "projectId": "",
-                    "type": "POSITION_UPDATED",
-                    "timestamp": 0,
-                    "payload": {
-                        "position": pos_secs,
-                        "output":   out,
-                        "input":    inp,
-                        "tracks":   track_levels,
-                        "xruns":    xruns,
-                    }
-                }),
+                &TelemetryEngineEvent {
+                    id: "pos",
+                    project_id: "",
+                    event_type: ev::POSITION_UPDATED,
+                    timestamp: 0,
+                    payload: &state.position,
+                },
             );
         } else {
             let _ = app.emit(
                 "engine-event",
-                json!({
-                    "type": "LEVELS_UPDATED",
-                    "payload": {
-                        "output": out,
-                        "input":  inp,
-                        "tracks": track_levels,
-                        "xruns":  xruns,
-                    }
-                }),
+                &TelemetryEngineEvent {
+                    id: "levels",
+                    project_id: "",
+                    event_type: ev::LEVELS_UPDATED,
+                    timestamp: 0,
+                    payload: &state.levels,
+                },
             );
         }
     }

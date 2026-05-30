@@ -218,9 +218,13 @@ Justification incorrecte (le scheduler EST envoyé entre threads). Corriger le d
 **Fichier** : [audio_engine/engine.rs:511](../../../src-tauri/src/audio_engine/engine.rs#L511)
 `OutputCallbackInfo` ignoré. Ajouter détection underrun + télémétrie UI.
 
-#### M5 — Reporter de position alloue à 30 Hz
-**Fichier** : [audio_engine/engine.rs:607](../../../src-tauri/src/audio_engine/engine.rs#L607)
-`serde_json::json!` + `Map::new()` par tick. Utiliser une struct `Serialize` typée réutilisable.
+#### M5 — Reporter de position alloue à 30 Hz ✅ **CORRIGÉ**
+**Fichiers** : [audio_engine/engine.rs](../../../src-tauri/src/audio_engine/engine.rs), [engine_gateway/events.rs](../../../src-tauri/src/engine_gateway/events.rs)
+`serde_json::json!` + `serde_json::Map::new()` par tick (et `json!([peak_l, peak_r])` par piste) reconstruisaient l'enveloppe et les niveaux à ~30 Hz.
+**Fix appliqué** :
+- Payloads typés [`LevelsUpdatedPayload`](../../../src-tauri/src/engine_gateway/events.rs) / [`PositionUpdatedPayload`](../../../src-tauri/src/engine_gateway/events.rs) + [`TelemetryEngineEvent`](../../../src-tauri/src/engine_gateway/events.rs) (`id` / `projectId` en `&'static str`, pas d'alloc d'enveloppe par tick).
+- [`PositionReporterState`](../../../src-tauri/src/audio_engine/engine.rs) réutilise deux `HashMap` de pics par piste (remplissage in-place, une seule copie vers le payload position).
+- `EngineEvent` aligné sur camelCase (`#[serde(rename_all = "camelCase")]`) + `EngineEvent::with_payload` pour le gateway ; `ev::LEVELS_UPDATED` ajouté côté Rust.
 
 #### M6 — Bounds check par frame dans `TrackNode`
 **Fichier** : [audio_graph/nodes/track.rs:107](../../../src-tauri/src/audio_graph/nodes/track.rs#L107)
@@ -257,6 +261,6 @@ Sous-système d'input séparé (midir / midi-msg), file lock-free MIDI alimentan
 
 ## Ordre d'attaque suggéré
 
-C1, C2, C3, C4, C5, I1, I2, I3, I4, I5, I6, I7, I8, I9, I10, I11 (deadlock) et M1 sont corrigés. Reste **C6** (tempo MIDI désynchronisé) — fix trivial une fois identifié : appeler `recompile_if_needed` dans `UPDATE_TEMPO` ou stocker les notes en beats. Ensuite la priorité bascule vers **I12** (String hot-path modulation), le volet "engine lock pendant compile" d'I11 (refactor `PluginHost` en `Arc<Mutex<>>`), puis les mineures M2–M9.
+C1, C2, C3, C4, C5, I1, I2, I3, I4, I5, I6, I7, I8, I9, I10, I11 (deadlock), M1 et M5 sont corrigés. Reste **C6** (tempo MIDI désynchronisé) — fix trivial une fois identifié : appeler `recompile_if_needed` dans `UPDATE_TEMPO` ou stocker les notes en beats. Ensuite la priorité bascule vers **I12** (String hot-path modulation), le volet "engine lock pendant compile" d'I11 (refactor `PluginHost` en `Arc<Mutex<>>`), puis les mineures M2–M4, M6–M9.
 
 **Note résiduelle pour C3** : `UPDATE_EFFECT` continue à recompiler. Pour fermer complètement la boucle hot-path, concevoir un `ParameterBlock` générique ou des cellules atomiques typées par effet (EQ, Compresseur, Reverb, Delay) — chaque effet expose alors ses params via `LiveParams` au même titre que volume/pan/mute/solo.

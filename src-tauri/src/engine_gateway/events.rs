@@ -10,9 +10,13 @@
 //!   They are NOT persisted and carry no undo/redo semantics.
 
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::project::generate_id;
+
+/// Channel count for output/input peak arrays in telemetry payloads.
+pub const METER_CHANNEL_COUNT: usize = 16;
 
 // ── Event type constants ──────────────────────────────────────────────────────
 
@@ -52,6 +56,7 @@ pub mod ev {
     pub const PLAY_STARTED: &str = "PLAY_STARTED";
     pub const PLAY_STOPPED: &str = "PLAY_STOPPED";
     pub const POSITION_UPDATED: &str = "POSITION_UPDATED";
+    pub const LEVELS_UPDATED: &str = "LEVELS_UPDATED";
 
     // Audio feedback — NOT persisted
     pub const PEAK_METER: &str = "PEAK_METER";
@@ -87,12 +92,52 @@ impl ProjectEvent {
     }
 }
 
+// ── Telemetry payloads (position reporter, ~30 Hz) ───────────────────────────
+
+/// Peak levels emitted while transport is stopped (`LEVELS_UPDATED`) or piggybacked
+/// on `POSITION_UPDATED` while playing.
+#[derive(Debug, Clone, Serialize)]
+pub struct LevelsUpdatedPayload {
+    pub output: [f32; METER_CHANNEL_COUNT],
+    pub input: [f32; METER_CHANNEL_COUNT],
+    #[serde(skip_serializing_if = "HashMap::is_empty")]
+    pub tracks: HashMap<String, [f32; 2]>,
+    pub xruns: u64,
+}
+
+/// Transport position plus meter telemetry (`POSITION_UPDATED`).
+#[derive(Debug, Clone, Serialize)]
+pub struct PositionUpdatedPayload {
+    pub position: f64,
+    pub output: [f32; METER_CHANNEL_COUNT],
+    pub input: [f32; METER_CHANNEL_COUNT],
+    #[serde(skip_serializing_if = "HashMap::is_empty")]
+    pub tracks: HashMap<String, [f32; 2]>,
+    pub xruns: u64,
+}
+
+/// Lightweight engine-event envelope for the ~30 Hz reporter thread.
+///
+/// Uses `&'static str` for `id` / `project_id` so each tick does not allocate
+/// envelope strings. Serializes to the same JSON shape as [`EngineEvent`].
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TelemetryEngineEvent<P: Serialize> {
+    pub id: &'static str,
+    pub project_id: &'static str,
+    #[serde(rename = "type")]
+    pub event_type: &'static str,
+    pub timestamp: u64,
+    pub payload: P,
+}
+
 // ── Engine event (sent to UI via Tauri emit) ──────────────────────────────────
 
 /// A message from the engine to the frontend. Project events are wrapped in
 /// this envelope before being emitted so the frontend has full context
 /// (project_id, sequence number).
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct EngineEvent {
     /// Unique ID for this emission.
     pub id: String,
@@ -109,12 +154,21 @@ pub struct EngineEvent {
 
 impl EngineEvent {
     pub fn new(event_type: &str, project_id: &str, payload: serde_json::Value) -> Self {
+        Self::with_payload(event_type, project_id, payload)
+    }
+
+    /// Build an engine event from any serializable payload (avoids `json!` macros).
+    pub fn with_payload<P: Serialize>(
+        event_type: &str,
+        project_id: &str,
+        payload: P,
+    ) -> Self {
         EngineEvent {
             id: generate_id(),
             project_id: project_id.to_string(),
             event_type: event_type.to_string(),
             timestamp: now_ms(),
-            payload,
+            payload: serde_json::to_value(payload).unwrap_or(serde_json::Value::Null),
         }
     }
 
@@ -137,4 +191,32 @@ fn now_ms() -> u64 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis() as u64
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn telemetry_event_serializes_camel_case_envelope() {
+        let payload = LevelsUpdatedPayload {
+            output: [0.0; METER_CHANNEL_COUNT],
+            input: [0.0; METER_CHANNEL_COUNT],
+            tracks: HashMap::new(),
+            xruns: 0,
+        };
+        let ev = TelemetryEngineEvent {
+            id: "levels",
+            project_id: "",
+            event_type: ev::LEVELS_UPDATED,
+            timestamp: 0,
+            payload,
+        };
+        let json = serde_json::to_value(&ev).unwrap();
+        assert_eq!(json["id"], "levels");
+        assert_eq!(json["projectId"], "");
+        assert_eq!(json["type"], ev::LEVELS_UPDATED);
+        assert!(json["payload"]["output"].is_array());
+        assert_eq!(json["payload"]["output"].as_array().unwrap().len(), 16);
+    }
 }
