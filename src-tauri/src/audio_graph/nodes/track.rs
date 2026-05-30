@@ -67,8 +67,8 @@ impl AudioNode for TrackNode {
     ///
     /// Algorithm:
     ///   For each clip active in `[pos, pos+block_size)`:
-    ///     For each output frame:
-    ///       If within the clip, accumulate the sample (supports overlapping clips).
+    ///     Compute `[start_frame, end_frame)` = intersection with the block once,
+    ///     then accumulate samples only in that range (overlapping clips supported).
     ///
     /// No allocation.  Mono source is duplicated to all output channels.
     fn process(
@@ -101,28 +101,28 @@ impl AudioNode for TrackNode {
                 1.0
             };
 
+            // Intersection of block [pos, pos+block) with clip [start, end), as frame indices.
+            let overlap_start = pos.max(clip.start_sample);
+            let overlap_end = (pos + block as u64).min(clip.end_sample);
+            let start_frame = (overlap_start - pos) as usize;
+            let end_frame = (overlap_end - pos) as usize;
+
             // Write channel 0 (mono source) — linear interpolation between
             // adjacent source samples when native SR ≠ engine SR.
-            {
-                let out_ch0 = output.channel_mut(0);
-                for frame in 0..block {
-                    let global_sample = pos + frame as u64;
-                    if global_sample < clip.start_sample || global_sample >= clip.end_sample {
-                        continue;
-                    }
-                    let local_offset = global_sample - clip.start_sample;
-                    let src_pos = local_offset as f64 * sr_ratio;
-                    let idx0 = src_pos as usize;
-                    if idx0 < clip.samples.len() {
-                        let s0 = clip.samples[idx0];
-                        let s1 = if idx0 + 1 < clip.samples.len() {
-                            clip.samples[idx0 + 1]
-                        } else {
-                            s0
-                        };
-                        let frac = (src_pos - idx0 as f64) as f32;
-                        out_ch0[frame] += s0 + frac * (s1 - s0);
-                    }
+            let out_ch0 = output.channel_mut(0);
+            for frame in start_frame..end_frame {
+                let local_offset = overlap_start - clip.start_sample + (frame - start_frame) as u64;
+                let src_pos = local_offset as f64 * sr_ratio;
+                let idx0 = src_pos as usize;
+                if idx0 < clip.samples.len() {
+                    let s0 = clip.samples[idx0];
+                    let s1 = if idx0 + 1 < clip.samples.len() {
+                        clip.samples[idx0 + 1]
+                    } else {
+                        s0
+                    };
+                    let frac = (src_pos - idx0 as f64) as f32;
+                    out_ch0[frame] += s0 + frac * (s1 - s0);
                 }
             }
         }
