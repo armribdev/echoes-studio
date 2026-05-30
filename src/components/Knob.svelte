@@ -1,5 +1,7 @@
 <script lang="ts">
-	import { createEventDispatcher } from 'svelte';
+	import { createEventDispatcher, onDestroy } from 'svelte';
+	import { isTauri } from '@tauri-apps/api/core';
+	import { getCurrentWindow, LogicalPosition } from '@tauri-apps/api/window';
 
 	export let value: number;
 	export let min: number;
@@ -60,21 +62,88 @@
 	$: valuePath = t > 0.005 ? arcPath(START_MATH, valueMath, TRACK_R) : '';
 
 	// ── Drag interaction ──────────────────────────────────────────────────────
-	let startY: number, startValue: number;
+	// In Tauri: hide cursor + warp back to origin each move → infinite drag, no popup.
+	// In browser dev: absolute drag fallback (limited by screen edges).
+
+	let knobEl: HTMLDivElement;
+	let dragging = false;
+	let warpDrag = false;
+	let originX = 0;
+	let originY = 0;
+	let startY = 0;
+	let startValue = 0;
+	let dragDeltaY = 0;
+	let captureEl: HTMLElement | null = null;
+	let capturePointerId = -1;
 
 	function clamp(n: number, lo: number, hi: number): number {
 		return Math.max(lo, Math.min(hi, n));
 	}
 
+	function applyDrag(deltaY: number): void {
+		value = clamp(startValue - ((max - min) * deltaY) / pixelRange, min, max);
+	}
+
+	function warpCursorToOrigin(): void {
+		void getCurrentWindow()
+			.setCursorPosition(new LogicalPosition(originX, originY))
+			.catch(() => {});
+	}
+
 	function pointerMove(e: PointerEvent): void {
-		value = clamp(startValue - ((max - min) * (e.clientY - startY)) / pixelRange, min, max);
+		if (warpDrag) {
+			dragDeltaY += e.clientY - originY;
+			applyDrag(dragDeltaY);
+			warpCursorToOrigin();
+		} else {
+			applyDrag(e.clientY - startY);
+		}
+	}
+
+	function removeDragListeners(): void {
+		window.removeEventListener('pointermove', pointerMove);
+		window.removeEventListener('pointerup', pointerUp);
+		window.removeEventListener('pointercancel', pointerUp);
+	}
+
+	async function hideCursor(): Promise<void> {
+		document.body.style.cursor = 'none';
+		if (!warpDrag) return;
+		try {
+			await getCurrentWindow().setCursorVisible(false);
+		} catch {
+			// Unavailable platform API.
+		}
+	}
+
+	async function restoreCursor(): Promise<void> {
+		document.body.style.cursor = '';
+		if (!warpDrag) return;
+		try {
+			const win = getCurrentWindow();
+			await win.setCursorPosition(new LogicalPosition(originX, originY));
+			await win.setCursorVisible(true);
+		} catch {
+			// Browser dev: CSS cursor restore is enough.
+		}
+	}
+
+	function finishDrag(): void {
+		if (!dragging) return;
+		dragging = false;
+		removeDragListeners();
+		if (captureEl && capturePointerId >= 0) {
+			captureEl.releasePointerCapture(capturePointerId);
+			captureEl = null;
+			capturePointerId = -1;
+		}
+		void restoreCursor().then(() => {
+			dispatch('release', value);
+		});
 	}
 
 	function pointerUp(): void {
-		document.body.style.cursor = '';
-		window.removeEventListener('pointermove', pointerMove);
-		window.removeEventListener('pointerup', pointerUp);
-		dispatch('release', value);
+		finishDrag();
 	}
 
 	function doubleClick(): void {
@@ -85,17 +154,40 @@
 
 	function pointerDown(e: PointerEvent): void {
 		e.preventDefault();
-		(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-		document.body.style.cursor = 'ns-resize';
+		if (dragging) return;
+
+		captureEl = knobEl;
+		capturePointerId = e.pointerId;
+		knobEl.setPointerCapture(e.pointerId);
+
+		warpDrag = isTauri();
+		dragging = true;
+		dragDeltaY = 0;
+		originX = e.clientX;
+		originY = e.clientY;
 		startY = e.clientY;
 		startValue = value;
+
+		void hideCursor();
+
 		window.addEventListener('pointermove', pointerMove);
 		window.addEventListener('pointerup', pointerUp);
+		window.addEventListener('pointercancel', pointerUp);
 	}
+
+	onDestroy(() => {
+		if (dragging) finishDrag();
+	});
 </script>
 
 <!-- svelte-ignore a11y-no-static-element-interactions -->
-<div class="knob" on:pointerdown={pointerDown} on:dblclick={doubleClick}>
+<div
+	class="knob"
+	class:dragging
+	bind:this={knobEl}
+	on:pointerdown={pointerDown}
+	on:dblclick={doubleClick}
+>
 	<svg width={SIZE} height={SIZE} viewBox="0 0 {SIZE} {SIZE}">
 		<path class="track" d={trackPath} stroke-width={STROKE} />
 		{#if valuePath}
@@ -119,6 +211,10 @@
 
 		&:hover { filter: brightness(1.25); }
 		&:active { filter: brightness(1.5); }
+
+		&.dragging {
+			cursor: none;
+		}
 	}
 
 	svg {
