@@ -237,9 +237,10 @@ La boucle parcourait `0..block` avec un `continue` par frame hors clip.
 `num_outputs_for_kind(NodeKind::Send)` déclarait `0` (« side-effect node ») alors que `SendNode` expose `num_output_ports = 1` et écrit un buffer pass-through à gain send — incohérence avec le plan d'exécution et la table des ports dans `nodes/mod.rs`.
 **Fix appliqué** : `num_outputs_for_kind(Send)` passe à `1`, aligné sur `SendNode` (même pattern que Master : un slot de buffer pour le tap, routage vers Return à venir).
 
-#### M8 — PolySynth mono dupliqué
-**Fichier** : [audio_graph/nodes/poly_synth.rs:233](../../../src-tauri/src/audio_graph/nodes/poly_synth.rs#L233)
-Pas de spread stéréo des voix. OK pour v0.
+#### M8 — PolySynth mono dupliqué ✅ **CORRIGÉ**
+**Fichier** : [audio_graph/nodes/poly_synth.rs](../../../src-tauri/src/audio_graph/nodes/poly_synth.rs)
+Le mix mono était dupliqué sur L/R via `mono_to_all_channels()` — champ stéréo plat.
+**Fix appliqué** : chaque voix reçoit des gains L/R equal-power (`pitch_to_pan_gains`, même loi que `PanNode`) dérivés de la hauteur MIDI au `note_on` (middle C centré, ±4 octaves vers hard L/R). Accumulation séparée sur les deux canaux ; plus de `mono_to_all_channels`. Sortie mono inchangée quand `num_channels < 2`.
 
 #### M9 — Pas d'oversampling
 EQ, compresseur (genou), soft-clip — aliasing sur transitoires.
@@ -264,6 +265,6 @@ Sous-système d'input séparé (midir / midi-msg), file lock-free MIDI alimentan
 
 ## Ordre d'attaque suggéré
 
-C1, C2, C3, C4, C5, I1, I2, I3, I4, I5, I6, I7, I8, I9, I10, I11 (deadlock), I12, M1, M5, M6 et M7 sont corrigés. Reste **C6** (tempo MIDI désynchronisé) — fix trivial une fois identifié : appeler `recompile_if_needed` dans `UPDATE_TEMPO` ou stocker les notes en beats. Ensuite le volet "engine lock pendant compile" d'I11 (refactor `PluginHost` en `Arc<Mutex<>>`), puis les mineures M2–M4, M8–M9.
+C1, C2, C3, C4, C5, I1, I2, I3, I4, I5, I6, I7, I8, I9, I10, I11 (deadlock), I12, M1, M5, M6, M7 et M8 sont corrigés. Reste **C6** (tempo MIDI désynchronisé) — fix trivial une fois identifié : appeler `recompile_if_needed` dans `UPDATE_TEMPO` ou stocker les notes en beats. Ensuite le volet "engine lock pendant compile" d'I11 (refactor `PluginHost` en `Arc<Mutex<>>`), puis les mineures M2–M4, M9.
 
 **Note résiduelle pour C3** : `UPDATE_EFFECT` continue à recompiler. Pour fermer complètement la boucle hot-path, concevoir un `ParameterBlock` générique ou des cellules atomiques typées par effet (EQ, Compresseur, Reverb, Delay) — chaque effet expose alors ses params via `LiveParams` au même titre que volume/pan/mute/solo.

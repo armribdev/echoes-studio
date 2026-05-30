@@ -47,6 +47,9 @@ struct Voice {
     phase_inc: f32,
     stage: Stage,
     level: f32,
+    /// Equal-power stereo gains derived from MIDI pitch at note-on.
+    gain_l: f32,
+    gain_r: f32,
     /// Monotonically increasing counter — used for voice stealing (oldest first).
     birth: u64,
 }
@@ -61,6 +64,8 @@ impl Voice {
             phase_inc: 0.0,
             stage: Stage::Idle,
             level: 0.0,
+            gain_l: 1.0,
+            gain_r: 1.0,
             birth: 0,
         }
     }
@@ -91,18 +96,29 @@ impl PolySynth {
         440.0 * 2.0_f32.powf((pitch as f32 - 69.0) / 12.0)
     }
 
+    /// Equal-power pan from pitch (keyboard spread): middle C centred, ±4 octaves to hard L/R.
+    #[inline]
+    fn pitch_to_pan_gains(pitch: u8) -> (f32, f32) {
+        let position = ((pitch as f32 - 60.0) / 48.0).clamp(-1.0, 1.0);
+        let angle = (position + 1.0) * 0.25 * std::f32::consts::PI;
+        (angle.cos(), angle.sin())
+    }
+
     fn note_on(&mut self, pitch: u8, velocity: u8) {
         self.birth_counter += 1;
         let birth = self.birth_counter;
         let freq = Self::pitch_to_freq(pitch);
         let phase_inc = freq * TWO_PI / self.sample_rate;
         let vel = velocity as f32 / 127.0;
+        let (gain_l, gain_r) = Self::pitch_to_pan_gains(pitch);
 
         // Re-trigger same pitch if already playing
         for v in &mut self.voices {
             if v.active && v.pitch == pitch {
                 v.phase_inc = phase_inc;
                 v.velocity = vel;
+                v.gain_l = gain_l;
+                v.gain_r = gain_r;
                 v.stage = Stage::Attack;
                 v.birth = birth;
                 return;
@@ -117,6 +133,8 @@ impl PolySynth {
                 v.velocity = vel;
                 v.phase = 0.0;
                 v.phase_inc = phase_inc;
+                v.gain_l = gain_l;
+                v.gain_r = gain_r;
                 v.stage = Stage::Attack;
                 v.level = 0.0;
                 v.birth = birth;
@@ -131,6 +149,8 @@ impl PolySynth {
             v.velocity = vel;
             v.phase = 0.0;
             v.phase_inc = phase_inc;
+            v.gain_l = gain_l;
+            v.gain_r = gain_r;
             v.stage = Stage::Attack;
             v.level = 0.0;
             v.birth = birth;
@@ -211,26 +231,45 @@ impl InstrumentDevice for PolySynth {
         let adsr = self.adsr;
         let sr = self.sample_rate;
 
-        let ch0 = output.channel_mut(0);
+        let stereo = self.num_channels >= 2 && output.num_channels >= 2;
 
-        for frame in 0..block_size {
-            // Dispatch all events scheduled at or before this sample
-            while ev_idx < events.len() && events[ev_idx].offset as usize <= frame {
-                match events[ev_idx].kind {
-                    MidiEventKind::NoteOn { pitch, velocity } => self.note_on(pitch, velocity),
-                    MidiEventKind::NoteOff { pitch }          => self.note_off(pitch),
+        if stereo {
+            let (ch0, ch1) = output.two_channels_mut(0, 1);
+            for frame in 0..block_size {
+                while ev_idx < events.len() && events[ev_idx].offset as usize <= frame {
+                    match events[ev_idx].kind {
+                        MidiEventKind::NoteOn { pitch, velocity } => self.note_on(pitch, velocity),
+                        MidiEventKind::NoteOff { pitch }          => self.note_off(pitch),
+                    }
+                    ev_idx += 1;
                 }
-                ev_idx += 1;
+                let mut left = 0.0f32;
+                let mut right = 0.0f32;
+                for v in &mut self.voices {
+                    let s = Self::tick(v, adsr, sr);
+                    left += s * v.gain_l;
+                    right += s * v.gain_r;
+                }
+                ch0[frame] = left * VOICE_SCALE;
+                ch1[frame] = right * VOICE_SCALE;
             }
-
-            let mut sample = 0.0f32;
-            for v in &mut self.voices {
-                sample += Self::tick(v, adsr, sr);
+        } else {
+            let ch0 = output.channel_mut(0);
+            for frame in 0..block_size {
+                while ev_idx < events.len() && events[ev_idx].offset as usize <= frame {
+                    match events[ev_idx].kind {
+                        MidiEventKind::NoteOn { pitch, velocity } => self.note_on(pitch, velocity),
+                        MidiEventKind::NoteOff { pitch }          => self.note_off(pitch),
+                    }
+                    ev_idx += 1;
+                }
+                let mut sample = 0.0f32;
+                for v in &mut self.voices {
+                    sample += Self::tick(v, adsr, sr);
+                }
+                ch0[frame] = sample * VOICE_SCALE;
             }
-            ch0[frame] = sample * VOICE_SCALE;
         }
-
-        output.mono_to_all_channels();
     }
 
     fn reset(&mut self) {
