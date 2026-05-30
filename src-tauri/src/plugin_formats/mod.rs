@@ -13,5 +13,6 @@
 //! | WASM     | `internal` | Interface defined; wasmtime pending         |
 
 pub mod au;
+pub mod clap;
 pub mod internal;
 pub mod vst3;

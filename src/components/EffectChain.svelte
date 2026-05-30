@@ -1,25 +1,45 @@
-<!-- EffectChain.svelte — per-track insert effects panel (floating overlay) -->
+<!-- EffectChain.svelte — per-track insert effects panel (built-in + VST3/CLAP) -->
 <script lang="ts">
 	import Knob from './Knob.svelte';
+	import PluginPicker from './PluginPicker.svelte';
 	import type { TrackEffect, EqParams, CompressorParams, ReverbParams, DelayParams } from '../types/global';
+	import type { PluginInfo } from '../stores/plugins';
+	import { loadPlugins, plugins } from '../stores/plugins';
 	import { addEffect, removeEffect, updateEffect } from '../frontend/commands/dispatcher';
 	import { notify } from '../stores/status';
 
 	export let trackId: string;
 	export let effects: TrackEffect[];
 
-	let expanded: Record<string, boolean> = {};
-	let showAddMenu = false;
+	let expanded:    Record<string, boolean> = {};
+	let showAddMenu  = false;
+	let showPicker   = false;
+
+	// Ensure plugins are loaded (no-op if already loaded)
+	if ($plugins.length === 0) loadPlugins();
 
 	function toggleExpand(id: string) {
 		expanded[id] = !expanded[id];
 		expanded = expanded;
 	}
 
-	async function handleAddEffect(kind: string) {
+	// ── Built-in effects ───────────────────────────────────────────────────────
+
+	async function handleAddBuiltin(kind: string) {
 		showAddMenu = false;
 		try { await addEffect(trackId, kind); }
 		catch (e) { notify(`Erreur ajout effet : ${(e as Error)?.message ?? e}`, 'error'); }
+	}
+
+	// ── Plugin effects (VST3 / CLAP) ──────────────────────────────────────────
+
+	async function handlePickPlugin(p: PluginInfo) {
+		showPicker   = false;
+		showAddMenu  = false;
+		// Encode name + format into the kind string so the backend can cache them.
+		const kind = `plugin:${p.id}|${p.name}|${p.format}`;
+		try { await addEffect(trackId, kind); }
+		catch (e) { notify(`Erreur ajout plugin : ${(e as Error)?.message ?? e}`, 'error'); }
 	}
 
 	async function handleRemoveEffect(effectId: string) {
@@ -37,8 +57,24 @@
 		catch (e) { notify(`Erreur paramètre : ${(e as Error)?.message ?? e}`, 'error'); }
 	}
 
-	const LABELS: Record<string, string> = {
+	const BUILTIN_LABELS: Record<string, string> = {
 		eq: 'EQ 3-bandes', compressor: 'Compresseur', reverb: 'Réverb', delay: 'Délai',
+	};
+
+	function effectLabel(effect: TrackEffect): string {
+		if (effect.params.kind === 'plugin') return (effect.params as any).name ?? 'Plugin';
+		return BUILTIN_LABELS[effect.params.kind] ?? effect.params.kind;
+	}
+
+	function effectFormat(effect: TrackEffect): string | null {
+		if (effect.params.kind === 'plugin') return (effect.params as any).format ?? null;
+		return null;
+	}
+
+	const FORMAT_COLOR: Record<string, string> = {
+		VST3: '#1571ff',
+		CLAP: '#22c55e',
+		AU:   '#f59e0b',
 	};
 
 	function eqP(e: TrackEffect) { return (e.params as { kind: 'eq'; params: EqParams }).params; }
@@ -47,6 +83,13 @@
 	function delP(e: TrackEffect) { return (e.params as { kind: 'delay'; params: DelayParams }).params; }
 </script>
 
+{#if showPicker}
+	<PluginPicker
+		on:pick={(e) => handlePickPlugin(e.detail)}
+		on:cancel={() => (showPicker = false)}
+	/>
+{/if}
+
 <div class="fx-panel">
 	<div class="fx-header" style:z-index={showAddMenu ? 10 : 1}>
 		<span class="fx-title">Effets</span>
@@ -54,9 +97,17 @@
 			<button class="add-btn" type="button" on:click|stopPropagation={() => (showAddMenu = !showAddMenu)} title="Ajouter">+</button>
 			{#if showAddMenu}
 				<div class="add-menu" on:pointerdown|stopPropagation>
-					{#each Object.entries(LABELS) as [kind, label]}
-						<button class="menu-item" type="button" on:click={() => handleAddEffect(kind)}>{label}</button>
+					{#each Object.entries(BUILTIN_LABELS) as [kind, label]}
+						<button class="menu-item" type="button" on:click={() => handleAddBuiltin(kind)}>{label}</button>
 					{/each}
+					<div class="menu-separator"></div>
+					<button class="menu-item menu-item--plugin" type="button" on:click={() => { showAddMenu = false; showPicker = true; }}>
+						<span>VST3 / CLAP…</span>
+						<span class="menu-badges">
+							<span class="badge" style:background="#1571ff">VST3</span>
+							<span class="badge" style:background="#22c55e">CLAP</span>
+						</span>
+					</button>
 				</div>
 			{/if}
 		</div>
@@ -74,7 +125,12 @@
 					<svg width="8" height="8" viewBox="0 0 8 8"><circle cx="4" cy="4" r="3" fill="currentColor"/></svg>
 				</button>
 				<button class="slot-toggle" type="button" on:click={() => toggleExpand(effect.id)}>
-					<span class="slot-name">{LABELS[effect.params.kind] ?? effect.params.kind}</span>
+					<span class="slot-name">{effectLabel(effect)}</span>
+					{#if effectFormat(effect)}
+						<span class="fmt-badge" style:background={FORMAT_COLOR[effectFormat(effect) ?? ''] ?? '#555'}>
+							{effectFormat(effect)}
+						</span>
+					{/if}
 					<svg class="chevron" class:open={expanded[effect.id]} width="8" height="5" viewBox="0 0 8 5">
 						<path d="M1 1 L4 4 L7 1" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round"/>
 					</svg>
@@ -157,6 +213,11 @@
 							</button>
 							<span class="val"></span>
 						</div>
+
+					{:else if effect.params.kind === 'plugin'}
+						<p class="plugin-hint">
+							Paramètres du plugin disponibles via la fenêtre native (prochainement).
+						</p>
 					{/if}
 				</div>
 			{/if}
@@ -167,30 +228,21 @@
 <style lang="scss">
 	@use '../variables.scss' as *;
 
-	.fx-panel {
-		width: 100%;
-	}
+	.fx-panel { width: 100%; }
 
 	.fx-header {
-		display: flex;
-		align-items: center;
-		gap: 4px;
+		display: flex; align-items: center; gap: 4px;
 		padding: 5px 6px;
 		border-bottom: 1px solid $border-faint;
-		position: sticky;
-		top: 0;
+		position: sticky; top: 0;
 		background: #222229;
 		z-index: 1;
 	}
 
 	.fx-title {
-		flex: 1;
-		font-size: 10px;
-		font-weight: 700;
-		font-family: $font-mono;
-		letter-spacing: 0.08em;
-		color: $text-muted;
-		text-transform: uppercase;
+		flex: 1; font-size: 10px; font-weight: 700;
+		font-family: $font-mono; letter-spacing: 0.08em;
+		color: $text-muted; text-transform: uppercase;
 	}
 
 	.add-wrap { position: relative; }
@@ -207,15 +259,28 @@
 	.add-menu {
 		position: absolute; right: 0; top: calc(100% + 4px);
 		background: #2a2a32; border: 1px solid $border-color;
-		border-radius: $radius-md; z-index: 100; min-width: 130px;
+		border-radius: $radius-md; z-index: 100; min-width: 150px;
 		overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.4);
 	}
 
 	.menu-item {
-		display: block; width: 100%; padding: 6px 10px;
+		display: flex; align-items: center; width: 100%; padding: 6px 10px;
 		background: transparent; border: none; color: $text-color;
 		font-size: 11px; font-family: inherit; text-align: left; cursor: pointer;
+		gap: 6px;
 		&:hover { background: $surface-hover; }
+		&--plugin { justify-content: space-between; }
+	}
+
+	.menu-separator {
+		height: 1px; background: $border-faint; margin: 3px 0;
+	}
+
+	.menu-badges { display: flex; gap: 3px; }
+
+	.badge {
+		font-size: 7px; font-family: $font-mono; font-weight: 700;
+		letter-spacing: 0.04em; padding: 1px 4px; border-radius: 2px; color: #fff;
 	}
 
 	.empty {
@@ -234,19 +299,9 @@
 	}
 
 	.slot-toggle {
-		flex: 1;
-		display: flex;
-		align-items: center;
-		gap: 5px;
-		min-width: 0;
-		padding: 0;
-		border: none;
-		background: transparent;
-		color: inherit;
-		font: inherit;
-		cursor: pointer;
-		text-align: left;
-
+		flex: 1; display: flex; align-items: center; gap: 5px; min-width: 0;
+		padding: 0; border: none; background: transparent;
+		color: inherit; font: inherit; cursor: pointer; text-align: left;
 		&:hover { background: $surface-1; border-radius: 3px; }
 	}
 
@@ -261,6 +316,12 @@
 	.slot-name {
 		flex: 1; font-size: 10px; font-weight: 500; color: $text-color;
 		user-select: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+	}
+
+	.fmt-badge {
+		font-size: 7px; font-family: $font-mono; font-weight: 700;
+		letter-spacing: 0.04em; padding: 1px 4px; border-radius: 2px;
+		color: #fff; flex-shrink: 0;
 	}
 
 	.chevron {
@@ -279,6 +340,11 @@
 	.slot-params {
 		padding: 6px 8px 8px;
 		background: rgba(0,0,0,0.15);
+	}
+
+	.plugin-hint {
+		font-size: 9px; color: $text-faint; text-align: center;
+		padding: 8px 4px; margin: 0; font-style: italic;
 	}
 
 	.grid {

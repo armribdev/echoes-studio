@@ -21,7 +21,7 @@ use crate::audio_graph::GraphSnapshotDto;
 use crate::project::{
     AppClip, AppMidiClip, AppProject, AppState, AppTrack, CachedAudioData, generate_id,
     TrackEffect, EffectParams, EqParams, CompressorParams, ReverbParams, DelayParams,
-    MidiNote, MidiClipDto,
+    PluginParams, MidiNote, MidiClipDto,
 };
 use super::commands::{
     cmd, AddClipPayload, AddEffectPayload, AddModulationRoutePayload, AddModulatorPayload,
@@ -1067,6 +1067,17 @@ fn snapshot_project(project: &AppProject) -> AppProject {
 }
 
 fn default_params_for_kind(kind: &str) -> Option<EffectParams> {
+    // Plugin effects: kind = "plugin:<plugin_id>|<name>|<format>"
+    // Encoded as pipe-separated triple so ADD_EFFECT carries name + format for the UI.
+    if let Some(rest) = kind.strip_prefix("plugin:") {
+        let mut parts = rest.splitn(3, '|');
+        let plugin_id = parts.next().unwrap_or("").to_string();
+        let name      = parts.next().unwrap_or("Plugin").to_string();
+        let format    = parts.next().unwrap_or("").to_string();
+        if !plugin_id.is_empty() {
+            return Some(EffectParams::Plugin(PluginParams { plugin_id, name, format, params: vec![] }));
+        }
+    }
     match kind {
         "eq"         => Some(EffectParams::Eq(EqParams::default())),
         "compressor" => Some(EffectParams::Compressor(CompressorParams::default())),
@@ -1082,6 +1093,16 @@ fn merge_effect_params(existing: &EffectParams, raw: serde_json::Value) -> Resul
         EffectParams::Compressor(_) => serde_json::from_value::<CompressorParams>(raw).map(EffectParams::Compressor),
         EffectParams::Reverb(_)     => serde_json::from_value::<ReverbParams>(raw).map(EffectParams::Reverb),
         EffectParams::Delay(_)      => serde_json::from_value::<DelayParams>(raw).map(EffectParams::Delay),
+        EffectParams::Plugin(p)     => {
+            // Plugin params are a Vec<(u32, f32)>; update in place or replace entirely.
+            serde_json::from_value::<PluginParams>(raw)
+                .map(|updated| EffectParams::Plugin(PluginParams {
+                    plugin_id: p.plugin_id.clone(),
+                    name:      p.name.clone(),
+                    format:    p.format.clone(),
+                    params:    updated.params,
+                }))
+        }
     }.map_err(|e| format!("Effect params invalid: {e}"))
 }
 

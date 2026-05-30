@@ -257,7 +257,11 @@ impl AudioEngine {
             active_output_channels: Arc::new(AtomicUsize::new(0)),
             live_params,
             xrun_stats: XrunStats::new(),
-            plugin_host: PluginHost::new(),
+            plugin_host: {
+                let mut host = PluginHost::new();
+                host.scan_plugins();
+                host
+            },
         }
     }
 

@@ -293,6 +293,7 @@ impl AudioGraph {
                     EffectParams::Compressor(p) => NodeKind::Compressor { params: p.clone() },
                     EffectParams::Reverb(p)     => NodeKind::Reverb { params: p.clone() },
                     EffectParams::Delay(p)      => NodeKind::Delay { params: p.clone() },
+                    EffectParams::Plugin(p)     => NodeKind::Plugin { device_id: p.plugin_id.clone() },
                 };
                 let fx_node = graph.add_node(kind, format!("{} [fx:{}]", track.name, effect.id));
                 effect_node_ids.insert(effect.id.clone(), fx_node);

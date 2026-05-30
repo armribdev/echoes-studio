@@ -1,32 +1,33 @@
 //! Plugin host — manages the lifecycle of all device instances.
 //!
-//! The `PluginHost` is the single entry point for all plugin operations:
-//! loading, instantiation, parameter sync, state management, and teardown.
+//! The `PluginHost` is the single entry point for all plugin operations.
+//! It lives on the **command/gateway thread**, never on the audio thread.
 //!
-//! ## Responsibilities
+//! ## Scan-then-instantiate flow
 //!
-//! - Load plugin manifests from the registry
-//! - Instantiate device wrappers (`Device + AudioNode`)
-//! - Manage lifecycle state transitions
-//! - Route parameter changes from the UI to the correct device
-//! - Serialise/deserialise device state for project save/load
-//! - Provide `AudioNode` handles to the graph compiler
-//!
-//! ## Thread safety
-//!
-//! `PluginHost` runs on the **command/gateway thread**, never on the audio
-//! thread.  Plugin instances are moved into `GraphScheduler` (audio thread)
-//! when a graph is compiled, after which the host no longer has direct access
-//! to those instances.  State changes arrive via the command pipeline.
+//! 1. At startup, `scan_plugins` populates the registry by probing VST3 and
+//!    CLAP search directories.
+//! 2. When the graph compiler encounters `NodeKind::Plugin { device_id }`, it
+//!    calls `instantiate` to get a `Box<dyn AudioNode>`.
+//! 3. The wrapper node takes ownership of the loaded COM/CLAP pointers and
+//!    carries them into the `GraphScheduler` on the audio thread.
 
 use std::collections::HashMap;
+use std::ptr::NonNull;
+use std::sync::Arc;
 
 use crate::audio_graph::node::{AudioNode, NodeId};
-use crate::plugin_system::lifecycle::{LifecycleState, LifecycleError, transition};
+use crate::plugin_formats::clap::ffi::{ClapLibrary, CLAP_PLUGIN_FACTORY_ID};
+use crate::plugin_formats::clap::host::decode_plugin_id as clap_decode_id;
+use crate::plugin_formats::clap::wrapper::ClapWrapperNode;
+use crate::plugin_formats::vst3::ffi::{Vst3Library, instantiate_processor};
+use crate::plugin_formats::vst3::host::decode_plugin_id as vst3_decode_id;
+use crate::plugin_formats::vst3::wrapper::VstWrapperNode;
+use crate::plugin_system::lifecycle::{LifecycleError, LifecycleState, transition};
 use crate::plugin_system::parameter::ParamKey;
 use crate::plugin_system::registry::{PluginManifest, PluginRegistry};
 use crate::plugin_system::state::DeviceState;
-use crate::plugin_system::wrapper::{Device, DeviceInfo, DeviceFormat, PassThroughDevice};
+use crate::plugin_system::wrapper::{Device, DeviceFormat, PassThroughDevice};
 
 // ── Host error ────────────────────────────────────────────────────────────────
 
@@ -42,24 +43,20 @@ pub enum HostError {
 impl std::fmt::Display for HostError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            HostError::DeviceNotFound(id)      => write!(f, "device not found: {}", id),
-            HostError::PluginNotFound(id)      => write!(f, "plugin not in registry: {}", id),
-            HostError::LifecycleError(e)       => write!(f, "lifecycle error: {}", e),
-            HostError::InstantiationFailed(e)  => write!(f, "instantiation failed: {}", e),
-            HostError::ParameterNotFound(k)    => write!(f, "parameter not found: {}", k),
+            HostError::DeviceNotFound(id)     => write!(f, "device not found: {id}"),
+            HostError::PluginNotFound(id)     => write!(f, "plugin not in registry: {id}"),
+            HostError::LifecycleError(e)      => write!(f, "lifecycle error: {e}"),
+            HostError::InstantiationFailed(e) => write!(f, "instantiation failed: {e}"),
+            HostError::ParameterNotFound(k)   => write!(f, "parameter not found: {k}"),
         }
     }
 }
 
 // ── Device record ─────────────────────────────────────────────────────────────
 
-/// The host's view of a live device instance.
 struct DeviceRecord {
-    /// Opaque device ID (matches the graph node's `device_id`).
-    id: String,
-    /// Current lifecycle state (mirrored from the device; updated on transitions).
-    lifecycle: LifecycleState,
-    /// Saved state (updated after each UI parameter change for undo support).
+    id:          String,
+    lifecycle:   LifecycleState,
     saved_state: DeviceState,
 }
 
@@ -67,40 +64,60 @@ struct DeviceRecord {
 
 pub struct PluginHost {
     registry: PluginRegistry,
-    /// Metadata records for every device the host knows about.
-    records: HashMap<String, DeviceRecord>,
+    records:  HashMap<String, DeviceRecord>,
 }
 
 impl PluginHost {
     pub fn new() -> Self {
         PluginHost {
             registry: PluginRegistry::new(),
-            records: HashMap::new(),
+            records:  HashMap::new(),
         }
     }
 
     // ── Registry ───────────────────────────────────────────────────────────────
 
-    pub fn registry(&self) -> &PluginRegistry {
-        &self.registry
+    pub fn registry(&self)     -> &PluginRegistry     { &self.registry }
+    pub fn registry_mut(&mut self) -> &mut PluginRegistry { &mut self.registry }
+
+    // ── Plugin scanning ────────────────────────────────────────────────────────
+
+    /// Scan standard system directories for VST3 and CLAP plugins.
+    ///
+    /// Safe to call multiple times — already-registered plugins are skipped.
+    pub fn scan_plugins(&mut self) {
+        let vst3_host = crate::plugin_formats::vst3::host::Vst3Host::new();
+        vst3_host.scan(&mut self.registry);
+
+        let clap_host = crate::plugin_formats::clap::host::ClapHost::new();
+        clap_host.scan(&mut self.registry);
+
+        let total = self.registry.len();
+        eprintln!("[plugin] scan complete — {total} plugins registered");
     }
 
-    pub fn registry_mut(&mut self) -> &mut PluginRegistry {
-        &mut self.registry
+    /// Return all discovered plugins as serialisable descriptors.
+    pub fn list_plugins(&self) -> Vec<PluginInfo> {
+        self.registry
+            .all()
+            .filter(|m| {
+                matches!(m.format, DeviceFormat::Vst3 | DeviceFormat::Clap)
+            })
+            .map(|m| PluginInfo {
+                id:     m.id.clone(),
+                name:   m.name.clone(),
+                vendor: m.vendor.clone(),
+                format: format_tag(m.format),
+                categories: m.categories.clone(),
+            })
+            .collect()
     }
 
     // ── Instantiation ─────────────────────────────────────────────────────────
 
-    /// Create a new device instance for the given plugin ID.
-    ///
-    /// Returns a `Box<dyn AudioNode>` that can be placed in the audio graph.
-    /// The host also registers the instance so it can receive parameter changes.
-    ///
-    /// Currently all external plugins fall back to a `PassThroughDevice`.
-    /// Real format-specific constructors will be wired in per format module.
     pub fn instantiate(
         &mut self,
-        node_id: NodeId,
+        node_id:   NodeId,
         plugin_id: &str,
     ) -> Result<Box<dyn AudioNode>, HostError> {
         let manifest = self.registry.get(plugin_id)
@@ -109,50 +126,127 @@ impl PluginHost {
 
         let device: Box<dyn AudioNode> = match manifest.format {
             DeviceFormat::Internal => {
-                // Built-in devices are constructed directly
                 Box::new(PassThroughDevice::new(node_id, plugin_id, &manifest.name))
             }
+
             DeviceFormat::Vst3 => {
-                // TODO: call plugin_formats::vst3::VstWrapper::new(...)
-                eprintln!("[host] VST3 not yet implemented for '{}' — using pass-through", plugin_id);
-                Box::new(PassThroughDevice::new(node_id, plugin_id, &manifest.name))
+                self.instantiate_vst3(node_id, plugin_id, &manifest)?
             }
-            DeviceFormat::Au => {
-                // TODO: call plugin_formats::au::AuWrapper::new(...)
-                eprintln!("[host] AU not yet implemented for '{}' — using pass-through", plugin_id);
-                Box::new(PassThroughDevice::new(node_id, plugin_id, &manifest.name))
-            }
-            DeviceFormat::Wasm => {
-                // TODO: call plugin_formats::internal::WasmWrapper::new(...)
-                eprintln!("[host] WASM not yet implemented for '{}' — using pass-through", plugin_id);
-                Box::new(PassThroughDevice::new(node_id, plugin_id, &manifest.name))
-            }
+
             DeviceFormat::Clap => {
-                eprintln!("[host] CLAP not yet implemented for '{}' — using pass-through", plugin_id);
+                self.instantiate_clap(node_id, plugin_id, &manifest)?
+            }
+
+            DeviceFormat::Au => {
+                eprintln!("[host] AU not yet implemented for '{plugin_id}' — pass-through");
+                Box::new(PassThroughDevice::new(node_id, plugin_id, &manifest.name))
+            }
+
+            DeviceFormat::Wasm => {
+                eprintln!("[host] WASM not yet implemented for '{plugin_id}' — pass-through");
                 Box::new(PassThroughDevice::new(node_id, plugin_id, &manifest.name))
             }
         };
 
-        // Register record
         self.records.insert(plugin_id.to_string(), DeviceRecord {
-            id: plugin_id.to_string(),
-            lifecycle: LifecycleState::Running,
+            id:          plugin_id.to_string(),
+            lifecycle:   LifecycleState::Running,
             saved_state: DeviceState::empty(plugin_id),
         });
 
         Ok(device)
     }
 
+    // ── VST3 instantiation ────────────────────────────────────────────────────
+
+    fn instantiate_vst3(
+        &self,
+        node_id:   NodeId,
+        plugin_id: &str,
+        manifest:  &PluginManifest,
+    ) -> Result<Box<dyn AudioNode>, HostError> {
+        let cid = vst3_decode_id(plugin_id)
+            .ok_or_else(|| HostError::InstantiationFailed("invalid VST3 plugin_id".into()))?;
+
+        let dll = manifest.path.as_ref()
+            .ok_or_else(|| HostError::InstantiationFailed("no DLL path in manifest".into()))?;
+
+        let (lib, factory) = Vst3Library::load(dll)
+            .map_err(HostError::InstantiationFailed)?;
+
+        let (comp, proc) = unsafe {
+            instantiate_processor(factory, &cid)
+                .map_err(HostError::InstantiationFailed)?
+        };
+
+        // Release factory ref — we no longer need to enumerate classes.
+        unsafe {
+            ((*(*factory).vtbl).release)(factory as *mut _);
+        }
+
+        let comp_nn = NonNull::new(comp)
+            .ok_or_else(|| HostError::InstantiationFailed("null IComponent".into()))?;
+        let proc_nn = NonNull::new(proc)
+            .ok_or_else(|| HostError::InstantiationFailed("null IAudioProcessor".into()))?;
+
+        Ok(Box::new(VstWrapperNode::new(
+            node_id, plugin_id, &manifest.name, comp_nn, proc_nn, lib,
+        )))
+    }
+
+    // ── CLAP instantiation ────────────────────────────────────────────────────
+
+    fn instantiate_clap(
+        &self,
+        node_id:   NodeId,
+        plugin_id: &str,
+        manifest:  &PluginManifest,
+    ) -> Result<Box<dyn AudioNode>, HostError> {
+        let clap_id = clap_decode_id(plugin_id)
+            .ok_or_else(|| HostError::InstantiationFailed("invalid CLAP plugin_id".into()))?;
+
+        let dll = manifest.path.as_ref()
+            .ok_or_else(|| HostError::InstantiationFailed("no DLL path in manifest".into()))?;
+
+        let (lib, entry) = ClapLibrary::load(dll)
+            .map_err(HostError::InstantiationFailed)?;
+
+        // Get factory
+        let factory_ptr = unsafe {
+            ((*entry).get_factory)(CLAP_PLUGIN_FACTORY_ID.as_ptr() as *const std::ffi::c_char)
+        };
+        if factory_ptr.is_null() {
+            return Err(HostError::InstantiationFailed("clap_entry.get_factory returned null".into()));
+        }
+        let factory = factory_ptr as *const crate::plugin_formats::clap::ffi::ClapPluginFactory;
+
+        // Build host struct (heap-stable for plugin lifetime)
+        let host = crate::plugin_formats::clap::ffi::make_host();
+
+        // Create plugin instance
+        let clap_id_cstr: Vec<u8> = clap_id.bytes().chain(std::iter::once(0)).collect();
+        let plugin = unsafe {
+            ((*factory).create_plugin)(factory, host.as_ref(), clap_id_cstr.as_ptr() as *const std::ffi::c_char)
+        };
+        if plugin.is_null() {
+            return Err(HostError::InstantiationFailed(
+                format!("CLAP create_plugin returned null for '{clap_id}'"),
+            ));
+        }
+
+        Ok(Box::new(ClapWrapperNode::new(
+            node_id,
+            plugin_id,
+            &manifest.name,
+            &manifest.vendor,
+            plugin,
+            host,
+            lib,
+        )))
+    }
+
     // ── Parameter routing ─────────────────────────────────────────────────────
 
-    /// Route a normalised parameter change from the UI.
-    ///
-    /// The host records the change for undo/redo support.  The actual device
-    /// update happens via the graph recompile (the compiler reads the host's
-    /// saved state and constructs the node with updated parameters).
-    ///
-    /// In the future, sample-accurate parameter automation will patch the
-    /// `ParameterBlock` directly without a full recompile.
     pub fn set_parameter_normalised(
         &mut self,
         device_id: &str,
@@ -162,7 +256,6 @@ impl PluginHost {
         if !self.records.contains_key(device_id) {
             return Err(HostError::DeviceNotFound(device_id.to_string()));
         }
-        // Record the change so the next graph compile picks it up
         let record = self.records.get_mut(device_id).unwrap();
         record.saved_state = DeviceState::from_json(
             device_id,
@@ -211,9 +304,7 @@ impl PluginHost {
 
     // ── Introspection ─────────────────────────────────────────────────────────
 
-    pub fn device_count(&self) -> usize {
-        self.records.len()
-    }
+    pub fn device_count(&self) -> usize { self.records.len() }
 
     pub fn lifecycle_of(&self, device_id: &str) -> Option<LifecycleState> {
         self.records.get(device_id).map(|r| r.lifecycle)
@@ -221,7 +312,26 @@ impl PluginHost {
 }
 
 impl Default for PluginHost {
-    fn default() -> Self {
-        Self::new()
+    fn default() -> Self { Self::new() }
+}
+
+// ── Serialisable plugin info (for the frontend) ───────────────────────────────
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct PluginInfo {
+    pub id:         String,
+    pub name:       String,
+    pub vendor:     String,
+    pub format:     String,
+    pub categories: Vec<String>,
+}
+
+fn format_tag(fmt: DeviceFormat) -> String {
+    match fmt {
+        DeviceFormat::Vst3     => "VST3".into(),
+        DeviceFormat::Clap     => "CLAP".into(),
+        DeviceFormat::Au       => "AU".into(),
+        DeviceFormat::Internal => "Internal".into(),
+        DeviceFormat::Wasm     => "WASM".into(),
     }
 }

@@ -66,6 +66,20 @@ impl Default for DelayParams {
     }
 }
 
+/// Parameters for an external plugin effect (VST3 or CLAP).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PluginParams {
+    /// Stable plugin identifier: `"vst3:<32-hex-cid>"` or `"clap:<plugin-id>"`.
+    pub plugin_id: String,
+    /// Human-readable name cached at insert time (so the UI doesn't need registry lookups).
+    pub name: String,
+    /// `"vst3"` | `"clap"` — shown as a badge in the UI.
+    pub format: String,
+    /// Normalised parameter values `(param_id, value ∈ [0,1])` persisted across compiles.
+    #[serde(default)]
+    pub params: Vec<(u32, f32)>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", content = "params", rename_all = "snake_case")]
 pub enum EffectParams {
@@ -73,6 +87,7 @@ pub enum EffectParams {
     Compressor(CompressorParams),
     Reverb(ReverbParams),
     Delay(DelayParams),
+    Plugin(PluginParams),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

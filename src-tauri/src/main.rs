@@ -142,6 +142,8 @@ fn main() {
             // ── Read-only helpers ─────────────────────────────────────────────
             get_audio_clip_duration,
             get_project,
+            list_plugins,
+            scan_plugins,
             // ── Gateway commands (all mutations go here) ──────────────────────
             send_command,
             send_batch,
@@ -443,6 +445,23 @@ fn get_audio_clip_duration(file_path: &str) -> Result<f64, String> {
     }
 
     Ok(total_frames as f64 / sample_rate as f64)
+}
+
+/// Return the list of all discovered VST3 and CLAP plugins.
+#[tauri::command]
+fn list_plugins(
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<plugin_system::host::PluginInfo>, String> {
+    let engine = state.audio_engine.lock().map_err(|e| e.to_string())?;
+    Ok(engine.plugin_host.list_plugins())
+}
+
+/// Re-scan plugin directories on demand (e.g. after installing a new plugin).
+#[tauri::command]
+fn scan_plugins(state: tauri::State<'_, AppState>) -> Result<Vec<plugin_system::host::PluginInfo>, String> {
+    let mut engine = state.audio_engine.lock().map_err(|e| e.to_string())?;
+    engine.plugin_host.scan_plugins();
+    Ok(engine.plugin_host.list_plugins())
 }
 
 /// Full project snapshot for initial frontend hydration.
