@@ -6,32 +6,46 @@
 //! playback.  It is swapped atomically via `RuntimeSnapshot` at block
 //! boundaries; the audio callback never contends with the compiler thread.
 //!
+//! When constructed with `num_workers > 0`, the scheduler also drives a
+//! pre-spawned worker pool (`audio_graph::worker_pool::WorkerPool`).  At each
+//! block the audio thread walks `ExecutionPlan::levels` and dispatches every
+//! level's steps to the pool; steps in the same level have no transitive
+//! dependency and are processed concurrently.  The dispatcher participates in
+//! the work-stealing loop too so it doesn't sit idle.  See `worker_pool.rs`
+//! for the dispatch / completion protocol.
+//!
 //! ## Memory model
 //!
 //! All allocations happen at graph construction time (`GraphScheduler::new`).
-//! The `process_block` function is allocation-free:
+//! `process_block` is allocation-free:
 //!
-//! - `processors`       — fixed-length Vec, no resize.
-//! - `output_buffers`   — pre-allocated AudioBuffer per step per port.
-//! - `silence_buffer`   — shared read-only zero buffer for unconnected ports.
-//! - `input_ptr_scratch`— pre-sized raw pointer scratch; cleared + filled per step.
+//! - `processors`         — fixed-length Vec, no resize.
+//! - `output_buffers`     — pre-allocated AudioBuffer per step per port.
+//! - `silence_buffer`     — shared read-only zero buffer for unconnected ports.
+//! - `worker_scratch`     — one `Vec<*const AudioBuffer>` per worker (audio
+//!                          thread = worker `num_workers`); pre-sized.
+//! - `delay_lines`        — pre-allocated PDC rings.
+//! - `mod_actions_by_step`— per-step modulation table, built at construction.
 //!
-//! ## Safety contract for `process_block`
+//! ## Safety contract for parallel execution
 //!
-//! The audio callback passes `&mut GraphScheduler` exclusively.  Inside
-//! `run_steps`, the output buffer pool is split at the current step index via
-//! `split_at_mut(step_idx)`:
+//! `Workspace` carries raw pointers into the per-step Vecs.  Inside
+//! `process_one_step`, every read/write is gated by the level invariant
+//! enforced by `GraphCompiler::compute_execution_levels`:
 //!
-//! - For step `i`, input connections always reference `src_step < i`
-//!   (guaranteed by topological ordering in `ExecutionPlan`).
-//! - `processed = output_buffers[0..i]` (left half, reborrowed shared) is used
-//!   to derive input pointers; `outputs = &mut output_buffers[i]` (first slot
-//!   of the right half) is borrowed mutably.  The split makes the disjointness
-//!   explicit to the compiler — no aliasing raw-pointer trick on the pool.
-//! - Only the `input_ptr_scratch` → `&[&AudioBuffer]` transmute remains
-//!   `unsafe`: the pointers were derived from live references whose backing
-//!   storage (output buffers, delay-line scratch, silence buffer) outlives the
-//!   single `process` call that consumes them.
+//! - `processors[step_idx]`, `output_buffers[step_idx]`, `delay_lines[step_idx]`
+//!   are mutated only by the worker assigned to that `step_idx`.
+//! - Audio inputs reference `output_buffers[src_step]` for `src_step` in a
+//!   strictly *earlier* level — already fully written and synchronised by the
+//!   pool's level-completion barrier.
+//! - Modulation source steps are also constrained to strictly-earlier levels
+//!   by `compute_execution_levels` (it folds modulation routes into the
+//!   dependency relation).
+//! - `worker_scratch[worker_id]` is touched only by that worker.
+//!
+//! The only `unsafe` is the raw-pointer dereference of these disjoint slots
+//! plus the `*const AudioBuffer → &AudioBuffer` slice transmute for the
+//! `&[&AudioBuffer]` input slice.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -41,10 +55,16 @@ use crate::audio_graph::compiler::CompiledGraph;
 use crate::audio_graph::execution_plan::ExecutionPlan;
 use crate::audio_graph::live_params::RouteCells;
 use crate::audio_graph::node::{AudioNode, NodeId, TransportInfo};
+use crate::audio_graph::worker_pool::WorkerPool;
 
 /// Minimum scratch capacity for per-step input pointer gathering.
 /// Actual size is `max(MIN_INPUT_PTR_SCRATCH, plan.max_input_ports())`.
 const MIN_INPUT_PTR_SCRATCH: usize = 32;
+
+/// Threshold below which a level is run inline (no pool dispatch overhead).
+/// A single-step level always runs inline; the cost of unpark + barrier
+/// dominates over actually processing one step.
+const POOL_MIN_LEVEL_WIDTH: usize = 2;
 
 // ── PDC delay line ────────────────────────────────────────────────────────────
 
@@ -120,8 +140,10 @@ impl DelayLine {
 /// `process_block`.  Grouped by target step index so the scheduler can apply
 /// modulation with a single indexed lookup per step.
 struct CompiledModAction {
-    /// Step that produced the modulation signal (always < target_step by
-    /// topological ordering — guaranteed by `GraphCompiler`).
+    /// Step that produced the modulation signal.  Always at a strictly lower
+    /// level than the target step — `GraphCompiler::compute_execution_levels`
+    /// folds modulation edges into the dependency relation, so by the time we
+    /// read this source's output buffer it is fully written.
     source_step: usize,
     /// Output port index on the source node (0 for LFO main output).
     source_port: usize,
@@ -135,6 +157,34 @@ struct CompiledModAction {
     depth_cells: Option<Arc<RouteCells>>,
     static_depth: f32,
 }
+
+// ── Workspace ─────────────────────────────────────────────────────────────────
+
+/// Raw pointer view into the scheduler's per-step state.  Passed to the worker
+/// pool as the dispatch context; every pointer stays valid for the lifetime of
+/// the enclosing `process_block` call.
+#[derive(Clone, Copy)]
+struct Workspace {
+    plan: *const ExecutionPlan,
+    processors_ptr: *mut Box<dyn AudioNode>,
+    output_buffers_ptr: *mut Vec<AudioBuffer>,
+    delay_lines_ptr: *mut Vec<Option<DelayLine>>,
+    mod_actions_ptr: *const Vec<CompiledModAction>,
+    silence_ptr: *const AudioBuffer,
+    /// Base of `Vec<Vec<*const AudioBuffer>>` — one row per worker (the audio
+    /// thread uses row `num_workers`).
+    worker_scratch_ptr: *mut Vec<*const AudioBuffer>,
+    transport_ptr: *const TransportInfo,
+}
+
+// SAFETY: every pointer is into storage exclusively owned by the
+// `GraphScheduler`; the scheduler is `&mut self` during `process_block`, so no
+// other thread holds an aliasing reference.  Workers only access disjoint
+// indices under the level invariant.  See module-level safety contract.
+unsafe impl Send for Workspace {}
+unsafe impl Sync for Workspace {}
+
+// ── GraphScheduler ────────────────────────────────────────────────────────────
 
 /// Drives one compiled audio graph in the real-time audio callback.
 pub struct GraphScheduler {
@@ -152,10 +202,10 @@ pub struct GraphScheduler {
     /// A permanently-zeroed buffer handed to unconnected input ports.
     silence_buffer: AudioBuffer,
 
-    /// Pre-allocated raw pointer scratch for gathering input pointers.
-    /// Sized to the plan's largest input port count at construction.
-    /// Never reallocated in the callback.
-    input_ptr_scratch: Vec<*const AudioBuffer>,
+    /// Per-worker input-pointer scratch rows.  `worker_scratch[w]` is sized to
+    /// `plan.max_input_ports()`; only worker `w` (or the audio thread when
+    /// `w == num_workers`) touches it.  Pre-allocated; never reallocated.
+    worker_scratch: Vec<Vec<*const AudioBuffer>>,
 
     /// Modulation actions grouped by target step index.
     ///
@@ -170,18 +220,30 @@ pub struct GraphScheduler {
     /// pushes the upstream buffer through the line and points the node's
     /// input at the delay's internal `out` buffer.
     delay_lines: Vec<Vec<Option<DelayLine>>>,
+
+    /// Optional worker pool for parallel level execution (R1).  `None` (or an
+    /// empty pool) means every level is processed sequentially inline on the
+    /// audio thread.
+    pool: Option<WorkerPool<Workspace>>,
 }
 
-// SAFETY:  GraphScheduler is only ever used on the audio thread.
-// The raw pointers in `input_ptr_scratch` are only valid during the scope
-// of `process_block` and are never sent to another thread.
+// SAFETY: see `Workspace` — raw pointers are scoped to `process_block` calls
+// where the scheduler holds `&mut self`.
 unsafe impl Send for GraphScheduler {}
 
 impl GraphScheduler {
-    /// Build a new scheduler from a freshly compiled graph.
-    ///
-    /// Called on the compiler/command thread; may allocate freely.
+    /// Build a new scheduler from a freshly compiled graph with no worker
+    /// pool (purely sequential level execution).  Equivalent to
+    /// [`Self::with_workers`] passing `0`.
     pub fn new(compiled: CompiledGraph) -> Self {
+        Self::with_workers(compiled, 0)
+    }
+
+    /// Build a new scheduler and a fixed pool of `num_workers` DSP worker
+    /// threads.  Workers park between blocks; level dispatches `unpark` them.
+    ///
+    /// Called on the compiler / command thread; may allocate freely.
+    pub fn with_workers(compiled: CompiledGraph, num_workers: usize) -> Self {
         let plan = compiled.plan;
         let processors = compiled.processors;
         let route_cells = compiled.route_cells;
@@ -202,9 +264,13 @@ impl GraphScheduler {
 
         let silence_buffer = AudioBuffer::new(num_channels, max_block);
 
-        // Size scratch to the plan's widest node (e.g. master with one port per track).
-        let input_scratch_len = plan.max_input_ports().max(MIN_INPUT_PTR_SCRATCH);
-        let input_ptr_scratch = vec![std::ptr::null(); input_scratch_len];
+        // Size scratch to the plan's widest node (e.g. master with one port
+        // per track).  One row per worker plus one for the dispatching audio
+        // thread (id = num_workers).
+        let scratch_len = plan.max_input_ports().max(MIN_INPUT_PTR_SCRATCH);
+        let worker_scratch: Vec<Vec<*const AudioBuffer>> = (0..(num_workers + 1))
+            .map(|_| vec![std::ptr::null(); scratch_len])
+            .collect();
 
         // ── Pre-compile modulation actions ────────────────────────────────────────
         // NodeId → step index lookup (used only at construction — may allocate).
@@ -269,14 +335,21 @@ impl GraphScheduler {
             })
             .collect();
 
+        let pool = if num_workers > 0 {
+            Some(WorkerPool::<Workspace>::new(num_workers))
+        } else {
+            None
+        };
+
         GraphScheduler {
             plan,
             processors,
             output_buffers,
             silence_buffer,
-            input_ptr_scratch,
+            worker_scratch,
             mod_actions_by_step,
             delay_lines,
+            pool,
         }
     }
 
@@ -293,9 +366,10 @@ impl GraphScheduler {
             processors: Vec::new(),
             output_buffers: Vec::new(),
             silence_buffer: AudioBuffer::new(2, 512),
-            input_ptr_scratch: vec![std::ptr::null(); MIN_INPUT_PTR_SCRATCH],
+            worker_scratch: vec![vec![std::ptr::null(); MIN_INPUT_PTR_SCRATCH]],
             mod_actions_by_step: Vec::new(),
             delay_lines: Vec::new(),
+            pool: None,
         }
     }
 
@@ -310,22 +384,11 @@ impl GraphScheduler {
         transport: &TransportInfo,
         interleaved_output: &mut [f32],
     ) {
-        let _block_size = transport.block_size;
-        let _num_channels = self.plan.num_channels;
-
-        // Run every step in topological order.
-        self.run_steps(transport);
+        // Run every level in topological order.
+        self.run_levels(transport);
 
         // Write final output (master step = last step) to the output buffer.
         if let Some(master_step_idx) = self.plan.master_step() {
-            // The master node is a sink (0 outputs), so we read from its
-            // *last* upstream step via the master's input connections.
-            // Actually: master has 0 outputs but its inputs are the mixed
-            // signals — we grab the signal from the last non-sink step.
-            //
-            // Convention: the node immediately before master sums all tracks.
-            // If the master IS the last step and has 0 outputs, we look at
-            // the step that feeds into it.
             self.write_master_output(master_step_idx, transport, interleaved_output);
         } else {
             // Empty graph — fill with silence
@@ -333,129 +396,51 @@ impl GraphScheduler {
         }
     }
 
-    // ── Internal step execution ────────────────────────────────────────────────
+    // ── Level dispatch ────────────────────────────────────────────────────────
 
-    /// Execute every step in the plan.
-    ///
-    /// Disjointness is expressed to the compiler via `split_at_mut(step_idx)`:
-    /// `processed` (left half) covers every prior step that input connections
-    /// may reference, and `outputs` (first slot of the right half) is the
-    /// current step's writable buffers.  No raw-pointer aliasing on the pool.
-    fn run_steps(&mut self, transport: &TransportInfo) {
-        let Self {
-            plan,
-            processors,
-            output_buffers,
-            silence_buffer,
-            input_ptr_scratch,
-            mod_actions_by_step,
-            delay_lines,
-        } = self;
+    /// Walk every level of the plan and dispatch its steps either inline
+    /// (sequential / single-step / no pool) or through the worker pool
+    /// (parallel within a level).
+    fn run_levels(&mut self, transport: &TransportInfo) {
+        if self.plan.steps.is_empty() {
+            return;
+        }
 
-        let num_steps = plan.steps.len();
-        let silence_ptr: *const AudioBuffer = &*silence_buffer;
+        // Build the workspace pointer bundle.  `plan` is held by Arc and
+        // re-borrowed via `*const`, which lives as long as `self`.
+        let plan_arc = Arc::clone(&self.plan);
+        let workspace = Workspace {
+            plan: Arc::as_ptr(&plan_arc),
+            processors_ptr: self.processors.as_mut_ptr(),
+            output_buffers_ptr: self.output_buffers.as_mut_ptr(),
+            delay_lines_ptr: self.delay_lines.as_mut_ptr(),
+            mod_actions_ptr: self.mod_actions_by_step.as_ptr(),
+            silence_ptr: &self.silence_buffer,
+            worker_scratch_ptr: self.worker_scratch.as_mut_ptr(),
+            transport_ptr: transport as *const TransportInfo,
+        };
 
-        for step_idx in 0..num_steps {
-            let step = &plan.steps[step_idx];
-            let num_inputs = step.input_connections.len();
-            debug_assert!(
-                num_inputs <= input_ptr_scratch.len(),
-                "input_ptr_scratch too small: need {num_inputs}, have {}",
-                input_ptr_scratch.len()
-            );
-
-            // Split the pool: `processed` is read-only and covers every step
-            // an input may reference (src_step < step_idx, topological order);
-            // `outputs` is this step's writable buffer slot.
-            let (processed, tail) = output_buffers.split_at_mut(step_idx);
-            let outputs: &mut Vec<AudioBuffer> = &mut tail[0];
-
-            // ── Gather input pointers ──────────────────────────────────────────
-            // Fill `input_ptr_scratch[0..num_inputs]` with pointers to the
-            // upstream output buffers (or silence for unconnected ports).
-            for (port, conn_opt) in step.input_connections.iter().enumerate() {
-                input_ptr_scratch[port] = match conn_opt {
-                    Some(conn) => {
-                        let src_bufs: &Vec<AudioBuffer> = &processed[conn.src_step];
-                        let src_port = conn.src_port.min(src_bufs.len().saturating_sub(1));
-                        &src_bufs[src_port] as *const AudioBuffer
-                    }
-                    None => silence_ptr,
-                };
+        // Iterate using the Arc clone (immutable borrow only) so we don't
+        // double-borrow `self`.
+        for level_indices in plan_arc.levels.iter() {
+            if level_indices.is_empty() {
+                continue;
             }
 
-            // ── Apply PDC delay lines ──────────────────────────────────────────
-            // For every input port the compiler tagged with non-zero
-            // `delay_samples`, push the gathered upstream buffer through its
-            // delay line and redirect the input pointer to the line's internal
-            // `out` buffer.
-            let step_delays = &mut delay_lines[step_idx];
-            for (port, dl_opt) in step_delays.iter_mut().enumerate() {
-                if let Some(dl) = dl_opt {
-                    // SAFETY: scratch[port] was filled above with a pointer to
-                    // a live AudioBuffer (either an upstream output in
-                    // `processed`, which is still borrowed, or the long-lived
-                    // `silence_buffer`).
-                    let src_ref: &AudioBuffer = unsafe { &*input_ptr_scratch[port] };
-                    dl.process(src_ref, transport.block_size);
-                    input_ptr_scratch[port] = &dl.out as *const AudioBuffer;
+            match &self.pool {
+                Some(pool) if level_indices.len() >= POOL_MIN_LEVEL_WIDTH => {
+                    pool.dispatch(level_indices, workspace, step_thunk);
+                }
+                _ => {
+                    // Sequential — run inline as worker 0 (the only worker
+                    // when there is no pool).  Even with a pool, single-step
+                    // levels skip the dispatch to avoid the unpark/barrier
+                    // overhead.
+                    for &step_idx in level_indices {
+                        unsafe { process_one_step(0, step_idx, workspace) };
+                    }
                 }
             }
-
-            // ── Build &[&AudioBuffer] from pointer scratch ─────────────────────
-            // SAFETY: All pointers in scratch[0..num_inputs] point to live
-            // AudioBuffer values whose backing storage (entries in `processed`,
-            // delay-line `out` buffers in `delay_lines[step_idx]`, or
-            // `silence_buffer`) is disjoint from `outputs` and outlives the
-            // `process` call below.
-            let inputs: &[&AudioBuffer] = unsafe {
-                std::slice::from_raw_parts(
-                    input_ptr_scratch.as_ptr() as *const &AudioBuffer,
-                    num_inputs,
-                )
-            };
-
-            // ── Clear output buffers before processing ─────────────────────────
-            for buf in outputs.iter_mut() {
-                buf.clear();
-            }
-
-            // ── Modulation dispatch ────────────────────────────────────────────
-            // Apply all modulation routes targeting this step before calling
-            // process.  Source buffers live in `processed` (src_step < step_idx
-            // by topological order), disjoint from the processor being mutated.
-            let actions: &[CompiledModAction] = &mod_actions_by_step[step_idx];
-            let processor = &mut processors[step_idx];
-
-            // Always reset before re-summing modulation contributions for this
-            // block: if a route is removed (or its actions list otherwise
-            // shrinks to empty) between blocks, the previous block's
-            // `mod_delta` must not persist.  Default impl is a no-op, so this
-            // costs nothing for nodes without modulated parameters.
-            processor.reset_modulation();
-            for action in actions {
-                let src_bufs: &Vec<AudioBuffer> = &processed[action.source_step];
-                let mod_signal: f32 = if action.source_port < src_bufs.len()
-                    && src_bufs[action.source_port].num_frames > 0
-                {
-                    // PROVISIONAL (Phase 3): block-rate modulation — samples
-                    // the first sample of the modulator's output buffer per
-                    // block.  Up to one block of latency; not suitable for
-                    // audio-rate modulation (FM, ring-mod).  Replace with
-                    // sample-accurate interleaved dispatch when needed.
-                    src_bufs[action.source_port].channel(0)[0]
-                } else {
-                    0.0
-                };
-                let depth = match &action.depth_cells {
-                    Some(cells) => cells.depth(),
-                    None => action.static_depth,
-                };
-                processor.apply_modulation(action.param_id, mod_signal * depth);
-            }
-
-            // ── Dispatch ───────────────────────────────────────────────────────
-            processor.process(inputs, outputs, transport);
         }
     }
 
@@ -476,7 +461,7 @@ impl GraphScheduler {
         interleaved_output.fill(0.0);
 
         // output_buffers[master_step_idx][0] was written by MasterNode::process
-        // during run_steps (it declared num_outputs = 1 so the scheduler
+        // during run_levels (it declared num_outputs = 1 so the scheduler
         // pre-allocated exactly this slot).
         let master_bufs = &self.output_buffers[master_step_idx];
         if master_bufs.is_empty() {
@@ -529,18 +514,122 @@ impl GraphScheduler {
     }
 }
 
+// ── Per-step processing ───────────────────────────────────────────────────────
+
+/// Thin function-pointer adapter so the worker pool can invoke
+/// `process_one_step` (which is `unsafe`) via a safe `fn` slot.
+fn step_thunk(worker_id: usize, step_idx: usize, ws: Workspace) {
+    unsafe { process_one_step(worker_id, step_idx, ws) }
+}
+
+/// Process one step.  Must be called either by the audio thread (`worker_id =
+/// num_workers`) or by exactly one pool worker per `step_idx` per level
+/// (`worker_id < num_workers`).
+///
+/// # Safety
+///
+/// The caller must guarantee that:
+///   - `step_idx` is not concurrently processed by any other thread.
+///   - Every step at a strictly lower level than `step_idx` has completed
+///     (the pool's completion barrier provides this synchronisation).
+///   - The pointers inside `ws` remain valid for the call (true while the
+///     enclosing `process_block` holds `&mut self`).
+unsafe fn process_one_step(worker_id: usize, step_idx: usize, ws: Workspace) {
+    let plan = &*ws.plan;
+    let step = &plan.steps[step_idx];
+    let num_inputs = step.input_connections.len();
+    let transport = &*ws.transport_ptr;
+
+    // Pick this worker's scratch row.
+    let scratch = &mut *ws.worker_scratch_ptr.add(worker_id);
+    debug_assert!(
+        num_inputs <= scratch.len(),
+        "input_ptr_scratch too small: need {num_inputs}, have {}",
+        scratch.len()
+    );
+
+    // ── Gather input pointers ─────────────────────────────────────────────────
+    for (port, conn_opt) in step.input_connections.iter().enumerate() {
+        scratch[port] = match conn_opt {
+            Some(conn) => {
+                let src_bufs = &*ws.output_buffers_ptr.add(conn.src_step);
+                let src_port = conn.src_port.min(src_bufs.len().saturating_sub(1));
+                &src_bufs[src_port] as *const AudioBuffer
+            }
+            None => ws.silence_ptr,
+        };
+    }
+
+    // ── Apply PDC delay lines ─────────────────────────────────────────────────
+    let step_delays = &mut *ws.delay_lines_ptr.add(step_idx);
+    for (port, dl_opt) in step_delays.iter_mut().enumerate() {
+        if let Some(dl) = dl_opt {
+            // scratch[port] was filled above with a pointer to a live
+            // AudioBuffer (either an upstream output, valid because the
+            // earlier level finished, or the long-lived silence buffer).
+            let src_ref: &AudioBuffer = &*scratch[port];
+            dl.process(src_ref, transport.block_size);
+            scratch[port] = &dl.out as *const AudioBuffer;
+        }
+    }
+
+    // ── Build &[&AudioBuffer] from pointer scratch ─────────────────────────────
+    let inputs: &[&AudioBuffer] = std::slice::from_raw_parts(
+        scratch.as_ptr() as *const &AudioBuffer,
+        num_inputs,
+    );
+
+    // ── Clear output buffers before processing ────────────────────────────────
+    let outputs = &mut *ws.output_buffers_ptr.add(step_idx);
+    for buf in outputs.iter_mut() {
+        buf.clear();
+    }
+
+    // ── Modulation dispatch ───────────────────────────────────────────────────
+    let actions: &[CompiledModAction] = &*ws.mod_actions_ptr.add(step_idx);
+    let processor = &mut *ws.processors_ptr.add(step_idx);
+
+    // Always reset before re-summing modulation contributions for this block:
+    // if a route is removed (or its actions list otherwise shrinks to empty)
+    // between blocks, the previous block's `mod_delta` must not persist.
+    processor.reset_modulation();
+    for action in actions {
+        let src_bufs = &*ws.output_buffers_ptr.add(action.source_step);
+        let mod_signal: f32 = if action.source_port < src_bufs.len()
+            && src_bufs[action.source_port].num_frames > 0
+        {
+            // PROVISIONAL (Phase 3): block-rate modulation — samples the
+            // first sample of the modulator's output buffer per block.  Up to
+            // one block of latency; not suitable for audio-rate modulation
+            // (FM, ring-mod).  Replace with sample-accurate interleaved
+            // dispatch when needed.
+            src_bufs[action.source_port].channel(0)[0]
+        } else {
+            0.0
+        };
+        let depth = match &action.depth_cells {
+            Some(cells) => cells.depth(),
+            None => action.static_depth,
+        };
+        processor.apply_modulation(action.param_id, mod_signal * depth);
+    }
+
+    // ── Dispatch ──────────────────────────────────────────────────────────────
+    processor.process(inputs, outputs, transport);
+}
+
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::audio_graph::buffer::AudioBuffer;
+    use crate::audio_graph::compiler::{CompiledGraph, GraphCompiler};
     use crate::audio_graph::execution_plan::{
         ExecutionPlan, ExecutionStep, InputConnection,
     };
     use crate::audio_graph::modulation::ModulationMap;
     use crate::audio_graph::node::{AudioNode, NodeId, PrepareContext, TransportInfo};
-    use crate::audio_graph::compiler::CompiledGraph;
     use std::collections::HashMap;
 
     /// Source node: emits a stored sample on frame 0 of the next block, then silence.
@@ -633,10 +722,6 @@ mod tests {
     ///                                    ├──► sum ──► (master output)
     ///   src_b ──────────────────────────┘
     /// ```
-    ///
-    /// `sum` has two inputs at different cumulative latencies — the scheduler
-    /// must delay `src_b` by `N` samples so the two impulses land in the same
-    /// output frame.
     fn build_test_compiled(latency: u32, block: usize) -> CompiledGraph {
         let steps = vec![
             // 0: src_a
@@ -680,6 +765,8 @@ mod tests {
             num_channels: 2,
             step_latencies: vec![0; 4],
             step_cumulative_latency: vec![0; 4],
+            step_levels: vec![0; 4],
+            levels: Vec::new(),
         };
 
         let processors: Vec<Box<dyn AudioNode>> = vec![
@@ -711,6 +798,10 @@ mod tests {
                 plan.step_latencies[i].saturating_add(arrival);
         }
 
+        // Compute levels via the public compiler entry point so the test
+        // mirrors the production code path.
+        GraphCompiler::compute_execution_levels(&mut plan);
+
         CompiledGraph {
             plan: Arc::new(plan),
             processors,
@@ -729,7 +820,7 @@ mod tests {
             block_size: block,
         };
         let master_step = sched.plan.master_step().unwrap();
-        sched.run_steps(&transport);
+        sched.run_levels(&transport);
         // Read sum's output buffer directly (port 0) and return left channel.
         sched.output_buffers[master_step][0].channel(0).to_vec()
     }
@@ -740,23 +831,12 @@ mod tests {
         let block = 32usize;
         let compiled = build_test_compiled(latency, block);
 
-        // Confirm the compiler-side computation produced the expected delays:
-        // src_b (step 1) should be delayed by `latency` samples; the reporter
-        // path is unchanged.
         let sum_step = &compiled.plan.steps[3];
         assert_eq!(sum_step.input_connections[0].as_ref().unwrap().delay_samples, 0);
         assert_eq!(sum_step.input_connections[1].as_ref().unwrap().delay_samples, latency);
         assert_eq!(compiled.plan.step_cumulative_latency[3], latency);
 
         let mut sched = GraphScheduler::new(compiled);
-
-        // First block: src_a's impulse hits the reporter at frame 0 → reaches
-        // sum's input 0 at frame 0.  src_b's impulse is delayed by `latency`,
-        // so it lands on sum's input 1 at frame `latency`.  Because the sources
-        // are not aligned by intent (both fire at frame 0), the *naive* sum
-        // without PDC would put both impulses at frame 0.  With PDC active,
-        // the src_b impulse is pushed to frame `latency` to match the path
-        // through the latent node.
         let out = run_one_block(&mut sched, block);
 
         assert_eq!(out[0], 1.0, "src_a impulse must arrive at frame 0");
@@ -774,8 +854,6 @@ mod tests {
         let block = 16usize;
         let compiled = build_test_compiled(0, block);
 
-        // No node reports latency → every input.delay_samples must be 0 and
-        // the scheduler must not allocate any DelayLines.
         for step in compiled.plan.steps.iter() {
             for conn in step.input_connections.iter().flatten() {
                 assert_eq!(conn.delay_samples, 0);
@@ -785,7 +863,6 @@ mod tests {
         assert!(sched.delay_lines.iter().all(|s| s.iter().all(|d| d.is_none())));
 
         let out = run_one_block(&mut sched, block);
-        // Both src_a and src_b impulses fire at frame 0 → sum = 2.0.
         assert_eq!(out[0], 2.0);
         for s in &out[1..] {
             assert_eq!(*s, 0.0);
@@ -794,8 +871,6 @@ mod tests {
 
     #[test]
     fn pdc_delay_carries_across_block_boundary() {
-        // Latency larger than one block — the delayed impulse must surface on
-        // a subsequent block.
         let latency = 10u32;
         let block = 4usize;
         let compiled = build_test_compiled(latency, block);
@@ -805,13 +880,51 @@ mod tests {
         let b1 = run_one_block(&mut sched, block);
         let b2 = run_one_block(&mut sched, block);
 
-        // src_a's impulse fired only on the first block (ImpulseSource::pending
-        // is consumed), so b1 / b2 contain only the delayed src_b impulse.
         assert_eq!(b0[0], 1.0);
         let delayed_block = (latency as usize) / block;
         let delayed_offset = (latency as usize) % block;
         let stream = [b0, b1, b2];
         assert_eq!(stream[delayed_block][delayed_offset], 1.0,
             "delayed src_b impulse must land at absolute frame {latency}");
+    }
+
+    // ── R1: level-set + parallel execution ────────────────────────────────────
+
+    #[test]
+    fn level_computation_groups_parallel_sources() {
+        // src_a (lvl 0), src_b (lvl 0) → reporter (lvl 1) → sum (lvl 2).
+        // src_b lives at level 0 too even though sum receives it directly,
+        // because the level of each step is computed off its inputs.
+        let compiled = build_test_compiled(0, 16);
+        let plan = &compiled.plan;
+        assert_eq!(plan.step_levels, vec![0, 0, 1, 2]);
+        assert_eq!(plan.levels.len(), 3);
+        assert_eq!(plan.levels[0], vec![0, 1]);
+        assert_eq!(plan.levels[1], vec![2]);
+        assert_eq!(plan.levels[2], vec![3]);
+    }
+
+    #[test]
+    fn parallel_pool_produces_same_output_as_sequential() {
+        // Build two identical plans; one runs sequential, one with a pool.
+        let latency = 7u32;
+        let block = 32usize;
+
+        let mut seq_sched = GraphScheduler::with_workers(build_test_compiled(latency, block), 0);
+        let mut par_sched = GraphScheduler::with_workers(build_test_compiled(latency, block), 3);
+
+        let seq = run_one_block(&mut seq_sched, block);
+        let par = run_one_block(&mut par_sched, block);
+
+        assert_eq!(seq, par, "parallel execution must match sequential output");
+    }
+
+    #[test]
+    fn parallel_pool_handles_multiple_blocks() {
+        let block = 8usize;
+        let mut sched = GraphScheduler::with_workers(build_test_compiled(0, block), 2);
+        for _ in 0..16 {
+            let _ = run_one_block(&mut sched, block);
+        }
     }
 }

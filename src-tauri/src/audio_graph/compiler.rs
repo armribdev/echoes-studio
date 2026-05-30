@@ -234,6 +234,10 @@ impl GraphCompiler {
         // and per-input delay alignments now that every node has been built.
         Self::compute_latency_compensation(&mut plan, &processors);
 
+        // 7. Parallel execution levels — groups of steps that can be processed
+        // concurrently because they share no transitive dependency (R1).
+        Self::compute_execution_levels(&mut plan);
+
         let plan = Arc::new(plan);
 
         Ok(CompiledGraph { plan, processors, meter_cells, route_cells })
@@ -286,6 +290,84 @@ impl GraphCompiler {
 
             plan.step_cumulative_latency[i] = plan.step_latencies[i].saturating_add(arrival);
         }
+    }
+
+    // ── Execution levels (R1: parallel scheduling) ────────────────────────────
+
+    /// Assign each step a "level" index such that any two steps at the same
+    /// level have no transitive dependency on each other and can be processed
+    /// in parallel.
+    ///
+    /// The dependency relation includes:
+    ///   - audio edges (`input_connections[*].src_step`)
+    ///   - modulation edges (`route.source.node → route.target.param.node`)
+    ///
+    /// Source steps with no dependencies sit at level 0; every other step is
+    /// placed at `1 + max(level[dep])`.  Steps are then grouped per level
+    /// (ascending step index for determinism) and stored on the plan.
+    pub(crate) fn compute_execution_levels(plan: &mut ExecutionPlan) {
+        let n = plan.steps.len();
+        plan.step_levels.clear();
+        plan.step_levels.resize(n, 0);
+        plan.levels.clear();
+        if n == 0 {
+            return;
+        }
+
+        // Resolve modulation `source NodeId → step idx` once.  Modulation
+        // routes don't carry step indices, only `NodeId`s, so we need the
+        // lookup table.
+        let node_to_step: HashMap<NodeId, usize> = plan
+            .steps
+            .iter()
+            .enumerate()
+            .map(|(i, s)| (s.node_id, i))
+            .collect();
+
+        // For every step we need the list of step-indices it depends on.
+        // Audio edges are already on the step; modulation edges are folded in
+        // here so the level assignment guarantees `source_step < target_step`
+        // — which the scheduler relies on when reading modulation source
+        // buffers from previously-processed levels.
+        let mut mod_deps: Vec<Vec<usize>> = vec![Vec::new(); n];
+        for route in plan.modulation.all_routes() {
+            let (Some(&src_step), Some(&tgt_step)) = (
+                node_to_step.get(&route.source.node),
+                node_to_step.get(&route.target.param.node),
+            ) else { continue };
+            if src_step != tgt_step {
+                mod_deps[tgt_step].push(src_step);
+            }
+        }
+
+        // Steps come out of `topological_sort` in dependency order, so a
+        // single forward pass is enough: every dep's level is already known
+        // when we visit step `i`.
+        for i in 0..n {
+            let mut lvl: u32 = 0;
+            for conn_opt in &plan.steps[i].input_connections {
+                if let Some(conn) = conn_opt {
+                    let dl = plan.step_levels[conn.src_step].saturating_add(1);
+                    if dl > lvl {
+                        lvl = dl;
+                    }
+                }
+            }
+            for &src in &mod_deps[i] {
+                let dl = plan.step_levels[src].saturating_add(1);
+                if dl > lvl {
+                    lvl = dl;
+                }
+            }
+            plan.step_levels[i] = lvl;
+        }
+
+        let num_levels = (*plan.step_levels.iter().max().unwrap_or(&0) as usize) + 1;
+        plan.levels = vec![Vec::new(); num_levels];
+        for (i, &lvl) in plan.step_levels.iter().enumerate() {
+            plan.levels[lvl as usize].push(i);
+        }
+        // step indices within a level are already ascending (we iterate 0..n).
     }
 
     // ── Topological sort (Kahn's BFS) ─────────────────────────────────────────

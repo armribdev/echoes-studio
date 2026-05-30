@@ -258,8 +258,21 @@ EQ, compresseur (genou), soft-clip — aliasing sur transitoires.
 
 ### REFACTORS (à planifier)
 
-#### R1 — Exécution parallèle du graphe
-Le `ExecutionPlan` a déjà les dépendances par-step. Un scheduler par level-set + pool de workers débloquerait le multi-core. Important dès que les nœuds plugin coûtent cher.
+#### R1 — Exécution parallèle du graphe ✅ **CORRIGÉ**
+**Fichiers** : [audio_graph/execution_plan.rs](../../../src-tauri/src/audio_graph/execution_plan.rs), [audio_graph/compiler.rs](../../../src-tauri/src/audio_graph/compiler.rs), [audio_graph/scheduler.rs](../../../src-tauri/src/audio_graph/scheduler.rs), [audio_graph/worker_pool.rs](../../../src-tauri/src/audio_graph/worker_pool.rs), [audio_engine/graph.rs](../../../src-tauri/src/audio_engine/graph.rs)
+
+**Fix appliqué** :
+- `ExecutionPlan` gagne `step_levels: Vec<u32>` (niveau par step) et `levels: Vec<Vec<usize>>` (steps groupés par vague topologique). `GraphCompiler::compute_execution_levels` les calcule en pliant à la fois les arêtes audio **et** les routes de modulation dans la relation de dépendance — un modulateur a donc toujours un niveau strictement inférieur à ses cibles, ce qui rend sûre la lecture des buffers de modulation sans synchronisation supplémentaire.
+- Nouveau module [`audio_graph::worker_pool`](../../../src-tauri/src/audio_graph/worker_pool.rs) : `WorkerPool<Ctx>` pré-spawn N threads parkés, dispatch par niveau via `next_idx: AtomicUsize` (work-stealing) + barrière `workers_done` (Release/Acquire), aucune allocation sur le dispatch ni dans la boucle worker, shutdown propre via flag + unpark. Le thread audio participe aussi à la work-stealing loop (id = `num_workers`) au lieu de rester idle.
+- `GraphScheduler::with_workers(compiled, num_workers)` accepte un compteur de workers ; `new` reste l'alias pour `num_workers = 0` (exécution séquentielle inchangée). Le scheduler pré-alloue une row de scratch d'input par worker (+1 pour le thread audio) — pas de contention de cache sur le scratch.
+- `run_levels` itère sur `plan.levels` : niveaux avec un seul step ou pool vide → exécution inline (pas d'overhead unpark) ; niveaux ≥ 2 steps avec pool → dispatch parallèle. La fonction `process_one_step` est `unsafe` mais ses invariants sont énoncés dans le contrat module : disjointness garantie par la construction des niveaux (lecture des outputs des niveaux antérieurs synchronisée par la barrière du pool ; écritures de chaque step possédées par exactement un worker).
+- Wiring : [`audio_worker_count()`](../../../src-tauri/src/audio_engine/graph.rs) lit `ECHOES_AUDIO_WORKERS` (défaut `0` → comportement séquentiel inchangé). Permet de benchmarker et activer la parallélisation sans changer les caractéristiques XRun par défaut. L'export offline ([`render_project_offline`](../../../src-tauri/src/audio_engine/offline.rs)) hérite automatiquement de l'env var via `AudioGraphCompiler::compile_scheduler`.
+- Tests : `level_computation_groups_parallel_sources` valide le calcul des niveaux ; `parallel_pool_produces_same_output_as_sequential` vérifie l'équivalence bit-à-bit entre exécutions séquentielle (0 worker) et parallèle (3 workers) sur le graphe PDC ; `parallel_pool_handles_multiple_blocks` valide la stabilité multi-block ; 3 tests pour le `WorkerPool` lui-même (dispatch single-shot, fallback 0 worker, idempotence sur dispatchs répétés).
+
+**Trade-offs / restes hors scope** :
+- Le pool est par-scheduler : un recompile structurel respawn les threads. Acceptable car les recompiles sont rares depuis C3 (changements paramétriques passent par `LiveParams`). Si la fréquence augmente, refactoriser pour partager `Arc<WorkerPool>` via `AudioEngine`.
+- Pas de priorité RT sur les threads workers : ils héritent de la priorité du processus. Pour exploiter pleinement le multi-core sans risquer de jitter, ajouter `SetThreadPriority(THREAD_PRIORITY_TIME_CRITICAL)` (Windows) / `pthread_setschedparam(SCHED_FIFO)` (Linux) — laissé pour une PR dédiée car nécessite la gestion des permissions selon l'OS.
+- Défaut OFF (`ECHOES_AUDIO_WORKERS=0`) : la sortie est bit-identique à l'ancien scheduler, aucun risque de régression silencieuse. Activer (≥ 2) une fois qu'un benchmark de référence (graphe ~50 nœuds, plugins lourds) confirme un gain réel.
 
 #### R2 — Modulation sample-accurate
 Requiert soit dispatch par-sample (lent), soit "programmes de modulation" compilés qui remplissent un buffer de paramètre par-block lu inline par le nœud. À implémenter quand FM/audio-rate sera nécessaire.
@@ -274,6 +287,6 @@ Sous-système d'input séparé (midir / midi-msg), file lock-free MIDI alimentan
 
 ## Ordre d'attaque suggéré
 
-C1, C2, C3, C4, C5, I1, I2, I3, I4, I5, I6, I7, I8, I9, I10, I11 (deadlock), I12, M1, M5, M6, M7, M8 et M9 sont corrigés. Reste **C6** (tempo MIDI désynchronisé) — fix trivial une fois identifié : appeler `recompile_if_needed` dans `UPDATE_TEMPO` ou stocker les notes en beats. Ensuite le volet "engine lock pendant compile" d'I11 (refactor `PluginHost` en `Arc<Mutex<>>`), puis les mineures M2–M4.
+C1, C2, C3, C4, C5, I1, I2, I3, I4, I5, I6, I7, I8, I9, I10, I11 (deadlock), I12, M1, M5, M6, M7, M8, M9 et R1 sont corrigés. Reste **C6** (tempo MIDI désynchronisé) — fix trivial une fois identifié : appeler `recompile_if_needed` dans `UPDATE_TEMPO` ou stocker les notes en beats. Ensuite le volet "engine lock pendant compile" d'I11 (refactor `PluginHost` en `Arc<Mutex<>>`), puis les mineures M2–M4.
 
 **Note résiduelle pour C3** : `UPDATE_EFFECT` continue à recompiler. Pour fermer complètement la boucle hot-path, concevoir un `ParameterBlock` générique ou des cellules atomiques typées par effet (EQ, Compresseur, Reverb, Delay) — chaque effet expose alors ses params via `LiveParams` au même titre que volume/pan/mute/solo.

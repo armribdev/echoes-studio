@@ -29,6 +29,21 @@ use crate::audio_graph::{
 use crate::plugin_system::PluginHost;
 use crate::project::AppProject;
 
+/// Number of pool workers the live scheduler should use, parsed from the
+/// `ECHOES_AUDIO_WORKERS` environment variable.  Defaults to `0` (purely
+/// sequential level execution — unchanged behaviour).  Negative or
+/// non-numeric values are treated as `0`.
+///
+/// A future change can swap this for a project / device setting; the env var
+/// gives us an opt-in path to benchmark parallel execution without committing
+/// to a default-on rollout that could shift XRun characteristics.
+pub fn audio_worker_count() -> usize {
+    std::env::var("ECHOES_AUDIO_WORKERS")
+        .ok()
+        .and_then(|s| s.trim().parse::<usize>().ok())
+        .unwrap_or(0)
+}
+
 /// Bridges `AppProject` → `GraphScheduler` + per-track meter cells.
 pub struct AudioGraphCompiler;
 
@@ -60,10 +75,16 @@ impl AudioGraphCompiler {
 
         let graph = AudioGraph::from_project(project);
 
+        let num_workers = audio_worker_count();
+
         match GraphCompiler::compile(&graph, project, config, live_params, plugin_host) {
             Ok(compiled) => {
                 let cells = compiled.meter_cells.clone();
-                (GraphScheduler::new(compiled), cells, duration_samples)
+                (
+                    GraphScheduler::with_workers(compiled, num_workers),
+                    cells,
+                    duration_samples,
+                )
             }
             Err(e) => {
                 eprintln!("[audio_graph] Compile error: {} — using empty graph", e);

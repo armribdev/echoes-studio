@@ -102,6 +102,19 @@ pub struct ExecutionPlan {
     /// Used by the engine to report the total end-to-end engine latency at the
     /// master step.
     pub step_cumulative_latency: Vec<u32>,
+
+    /// Per-step "wave" / level index for parallel execution (R1).
+    ///
+    /// Defined as `level[i] = 1 + max(level[dep])` over every step `i` depends
+    /// on (audio inputs *and* modulation sources), with source steps at level
+    /// 0.  Steps sharing a level have no transitive dependency between them
+    /// and can be processed concurrently on a worker pool.
+    pub step_levels: Vec<u32>,
+
+    /// Steps grouped by level, in ascending order.  `levels[k]` lists the
+    /// indices of every step at level `k`, sorted ascending for determinism.
+    /// `levels.len()` is the number of waves the scheduler walks per block.
+    pub levels: Vec<Vec<usize>>,
 }
 
 impl ExecutionPlan {
@@ -116,6 +129,8 @@ impl ExecutionPlan {
             num_channels: 2,
             step_latencies: Vec::new(),
             step_cumulative_latency: Vec::new(),
+            step_levels: Vec::new(),
+            levels: Vec::new(),
         }
     }
 
@@ -196,6 +211,8 @@ impl ExecutionPlanBuilder {
             num_channels: self.num_channels,
             step_latencies: vec![0; n],
             step_cumulative_latency: vec![0; n],
+            step_levels: vec![0; n],
+            levels: Vec::new(),
         }
     }
 }

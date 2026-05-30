@@ -42,6 +42,7 @@ pub mod nodes;
 pub mod scheduler;
 pub mod snapshot;
 pub mod snapshot_dto;
+pub mod worker_pool;
 
 // ── Convenience re-exports ────────────────────────────────────────────────────
 
