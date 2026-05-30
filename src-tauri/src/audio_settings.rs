@@ -47,6 +47,9 @@ pub struct AudioSettings {
     /// Must be ≤ the device's native channel count.
     /// `0` means "use all device channels" (default behaviour).
     pub output_channels: u16,
+    /// When true, the master bus applies tanh soft-clip before device output.
+    #[serde(default)]
+    pub master_soft_clip: bool,
 }
 
 impl Default for AudioSettings {
@@ -57,6 +60,7 @@ impl Default for AudioSettings {
             sample_rate: 48_000,
             buffer_size: 256,
             output_channels: 0,
+            master_soft_clip: false,
         }
     }
 }

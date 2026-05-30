@@ -175,9 +175,17 @@ Les chemins de feedback (reverb comb/allpass, delay) ne flushaient pas les déno
 
 Tests existants (reverb / scheduler / PDC) inchangés (10 passent).
 
-#### I10 — Stacked-borrows / aliasing dans `run_steps`
-**Fichiers** : [audio_graph/scheduler.rs:226-309](../../../src-tauri/src/audio_graph/scheduler.rs#L226)
-Le pattern `pool_ptr.add(src)` (immutable) + `pool_ptr.add(step_idx)` (mutable) sur un même `Vec` est sujet à des problèmes de provenance sous les futures évolutions de `noalias`. Préférer `split_at_mut` pour séparer explicitement les régions processed/current.
+#### I10 — Stacked-borrows / aliasing dans `run_steps` ✅ **CORRIGÉ**
+**Fichiers** : [audio_graph/scheduler.rs](../../../src-tauri/src/audio_graph/scheduler.rs)
+Le pattern `pool_ptr.add(src)` (immutable) + `pool_ptr.add(step_idx)` (mutable) sur un même `Vec` était sujet à des problèmes de provenance sous les futures évolutions de `noalias`.
+
+**Fix appliqué** :
+- `run_steps` destructure `self` au sommet (`let Self { plan, processors, output_buffers, … } = self`), ce qui matérialise les emprunts disjoints sur chaque champ et permet au borrow-checker de prouver la non-aliasing sans raw pointer.
+- À chaque step, `output_buffers.split_at_mut(step_idx)` sépare explicitement `processed` (sources, reborrowed shared) de `outputs = &mut tail[0]` (cible du step courant). Les pointeurs d'inputs et la lecture de modulation passent par `&processed[src_step]` — plus aucune aliasing raw pointer sur le pool.
+- Les anciens raw pointers `dl_outer_ptr` (PDC) et `actions_ptr` (modulation) sont supprimés ; remplacés par des emprunts directs `&mut delay_lines[step_idx]` et `&mod_actions_by_step[step_idx]`, possibles maintenant que les champs sont destructurés.
+- Le seul `unsafe` restant dans `run_steps` est le transmute `input_ptr_scratch → &[&AudioBuffer]` pour le scratch pré-alloué (inhérent à la structure data-oriented ; la SAFETY note est mise à jour pour pointer vers les nouvelles dérivations via `split_at_mut`).
+
+Tests PDC inchangés : `pdc_aligns_two_parallel_paths`, `pdc_zero_latency_is_passthrough`, `pdc_delay_carries_across_block_boundary` passent. Suite `audio_graph` complète verte (12 tests).
 
 #### I11 — Lock du moteur pendant tout le compile
 **Fichiers** : [engine_gateway/api.rs:1442](../../../src-tauri/src/engine_gateway/api.rs#L1442)
@@ -191,9 +199,10 @@ Le pattern `pool_ptr.add(src)` (immutable) + `pool_ptr.add(step_idx)` (mutable) 
 
 ### MINEURES / hygiène
 
-#### M1 — Soft-clip master inconditionnel
-**Fichier** : [audio_graph/nodes/master.rs:50](../../../src-tauri/src/audio_graph/nodes/master.rs#L50)
-`tanh` n'est pas transparent en dessous de ±0.9. Mettre derrière un setting.
+#### M1 — Soft-clip master inconditionnel ✅ **CORRIGÉ**
+**Fichiers** : [audio_graph/nodes/master.rs](../../../src-tauri/src/audio_graph/nodes/master.rs), [audio_graph/live_params.rs](../../../src-tauri/src/audio_graph/live_params.rs), [audio_settings.rs](../../../src-tauri/src/audio_settings.rs), [main.rs](../../../src-tauri/src/main.rs), [preferences.ts](../../../src/stores/preferences.ts), [SettingsPanel.svelte](../../../src/components/SettingsPanel.svelte)
+`tanh` n'était pas transparent en dessous de ±0.9 (ex. `tanh(0.5) ≈ 0.46`) mais était appliqué sur chaque échantillon du master.
+**Fix appliqué** : `LiveParams::master_soft_clip` (`Arc<AtomicBool>`, défaut `false`) lu par `MasterNode` per-block — pas de recompile au toggle. `apply_audio_settings` synchronise le flag depuis les préférences. Case à cocher « Limiteur master (soft clip) » dans Paramètres → Audio. Master linéaire par défaut (somme + peak metering uniquement).
 
 #### M2 — Types legacy `audio_engine/snapshot.rs` morts
 **Fichier** : [audio_engine/snapshot.rs](../../../src-tauri/src/audio_engine/snapshot.rs)
@@ -246,6 +255,6 @@ Sous-système d'input séparé (midir / midi-msg), file lock-free MIDI alimentan
 
 ## Ordre d'attaque suggéré
 
-C1, C2, C3, C4, C5, I1, I2, I3, I4, I5, I6, I7, I8 et I9 sont corrigés. Reste **C6** (tempo MIDI désynchronisé) — fix trivial une fois identifié : appeler `recompile_if_needed` dans `UPDATE_TEMPO` ou stocker les notes en beats. Ensuite la priorité bascule vers les importantes restantes (I10 stacked-borrows, I11 lock moteur sur compile, I12 String hot-path), puis les mineures M1–M9.
+C1, C2, C3, C4, C5, I1, I2, I3, I4, I5, I6, I7, I8, I9, I10 et M1 sont corrigés. Reste **C6** (tempo MIDI désynchronisé) — fix trivial une fois identifié : appeler `recompile_if_needed` dans `UPDATE_TEMPO` ou stocker les notes en beats. Ensuite la priorité bascule vers les importantes restantes (I11 lock moteur sur compile, I12 String hot-path), puis les mineures M2–M9.
 
 **Note résiduelle pour C3** : `UPDATE_EFFECT` continue à recompiler. Pour fermer complètement la boucle hot-path, concevoir un `ParameterBlock` générique ou des cellules atomiques typées par effet (EQ, Compresseur, Reverb, Delay) — chaque effet expose alors ses params via `LiveParams` au même titre que volume/pan/mute/solo.

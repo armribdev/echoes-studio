@@ -125,6 +125,7 @@
 				sampleRate:     targetSR,
 				bufferSize:     draft.audio.bufferSize,
 				outputChannels: Math.min(draft.audio.outputChannels, realOutputChannels),
+				masterSoftClip: draft.audio.masterSoftClip,
 			});
 		} catch (err) {
 			applyError = typeof err === 'string' ? err : 'Impossible d\'appliquer les paramètres audio.';
@@ -154,6 +155,7 @@
 				sampleRate:     draft.audio.sampleRate,
 				bufferSize:     draft.audio.bufferSize,
 				outputChannels: Math.min(draft.audio.outputChannels, realOutputChannels),
+				masterSoftClip: draft.audio.masterSoftClip,
 			});
 		} catch (err) {
 			applyError = typeof err === 'string' ? err : 'Impossible d\'appliquer les paramètres audio.';
@@ -189,6 +191,7 @@
 				sampleRate:      draft.audio.sampleRate,
 				bufferSize:      draft.audio.bufferSize,
 				outputChannels:  Math.min(draft.audio.outputChannels, realOutputChannels),
+				masterSoftClip:  draft.audio.masterSoftClip,
 			});
 		} catch (err) {
 			applyError = typeof err === 'string' ? err : 'Impossible d\'appliquer les paramètres audio.';
@@ -212,7 +215,7 @@
 	}
 
 	function resetSection() {
-		if (activeSection === 'audio') draft.audio = { inputDevice: 'default', outputDevice: 'default', sampleRate: 48000, bufferSize: 256, inputChannels: 2, outputChannels: 2 };
+		if (activeSection === 'audio') draft.audio = { inputDevice: 'default', outputDevice: 'default', sampleRate: 48000, bufferSize: 256, inputChannels: 2, outputChannels: 2, masterSoftClip: false };
 		else if (activeSection === 'project') draft.project = { defaultFolder: '', autoSave: true, autoSaveIntervalSec: 60, autoSaveMaxBackups: 5, defaultBpm: 120, defaultNumerator: 4, defaultDenominator: 4, exportBitDepth: 32, exportMp3Bitrate: 320 };
 		else if (activeSection === 'interface') draft.interface = { showMinimap: false };
 		draft = { ...draft };
@@ -545,6 +548,15 @@
 							{:else}Le callback audio a été en retard — augmenter le buffer si cela persiste{/if}
 						</span>
 					</div>
+
+				<div class="divider"></div>
+				<h3 class="subsection-title">Sortie master</h3>
+
+				<Toggle
+					bind:checked={draft.audio.masterSoftClip}
+					label="Limiteur master (soft clip)"
+					description="Désactivé : sortie linéaire. Activé : saturation douce tanh sur le signal sommé."
+				/>
 
 				<div class="divider"></div>
 				<h3 class="subsection-title">Routage Master</h3>

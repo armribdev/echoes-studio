@@ -45,6 +45,8 @@ export interface AudioSettingsPayload {
 	 * 0 = use all device channels (default when unset).
 	 */
 	outputChannels: number;
+	/** When true, master bus applies tanh soft-clip before device output. */
+	masterSoftClip: boolean;
 }
 
 // ── API ───────────────────────────────────────────────────────────────────────

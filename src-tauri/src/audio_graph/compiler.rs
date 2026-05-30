@@ -493,7 +493,11 @@ impl GraphCompiler {
             }
 
             NodeKind::Master { num_inputs } => {
-                Box::new(nodes::master::MasterNode::new(id, *num_inputs))
+                Box::new(nodes::master::MasterNode::new(
+                    id,
+                    *num_inputs,
+                    Arc::clone(&live_params.master_soft_clip),
+                ))
             }
 
             NodeKind::Meter { .. } => {

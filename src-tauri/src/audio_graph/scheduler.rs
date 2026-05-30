@@ -19,15 +19,19 @@
 //! ## Safety contract for `process_block`
 //!
 //! The audio callback passes `&mut GraphScheduler` exclusively.  Inside
-//! `process_block` we use raw pointers to build a non-aliasing view of the
-//! buffer pool:
+//! `run_steps`, the output buffer pool is split at the current step index via
+//! `split_at_mut(step_idx)`:
 //!
 //! - For step `i`, input connections always reference `src_step < i`
 //!   (guaranteed by topological ordering in `ExecutionPlan`).
-//! - We read from `output_buffers[src_step]` and write to
-//!   `output_buffers[i]`; these are disjoint elements of the Vec.
-//! - We transmute the raw pointer scratch into `&[&AudioBuffer]` for the node
-//!   call — valid because the pointers were derived from live references.
+//! - `processed = output_buffers[0..i]` (left half, reborrowed shared) is used
+//!   to derive input pointers; `outputs = &mut output_buffers[i]` (first slot
+//!   of the right half) is borrowed mutably.  The split makes the disjointness
+//!   explicit to the compiler — no aliasing raw-pointer trick on the pool.
+//! - Only the `input_ptr_scratch` → `&[&AudioBuffer]` transmute remains
+//!   `unsafe`: the pointers were derived from live references whose backing
+//!   storage (output buffers, delay-line scratch, silence buffer) outlives the
+//!   single `process` call that consumes them.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -324,40 +328,50 @@ impl GraphScheduler {
 
     /// Execute every step in the plan.
     ///
-    /// # Safety
-    ///
-    /// For each step `i`, all `input_connections[*].src_step < i` (enforced by
-    /// the compiler's topological sort).  This ensures that when we take a raw
-    /// pointer to `output_buffers[src_step]` and a mutable reference to
-    /// `output_buffers[i]`, they refer to distinct, non-overlapping memory.
+    /// Disjointness is expressed to the compiler via `split_at_mut(step_idx)`:
+    /// `processed` (left half) covers every prior step that input connections
+    /// may reference, and `outputs` (first slot of the right half) is the
+    /// current step's writable buffers.  No raw-pointer aliasing on the pool.
     fn run_steps(&mut self, transport: &TransportInfo) {
-        let pool_ptr: *mut Vec<AudioBuffer> = self.output_buffers.as_mut_ptr();
-        let num_steps = self.plan.steps.len();
+        let Self {
+            plan,
+            processors,
+            output_buffers,
+            silence_buffer,
+            input_ptr_scratch,
+            mod_actions_by_step,
+            delay_lines,
+        } = self;
+
+        let num_steps = plan.steps.len();
+        let silence_ptr: *const AudioBuffer = &*silence_buffer;
 
         for step_idx in 0..num_steps {
-            let step = &self.plan.steps[step_idx];
+            let step = &plan.steps[step_idx];
             let num_inputs = step.input_connections.len();
             debug_assert!(
-                num_inputs <= self.input_ptr_scratch.len(),
+                num_inputs <= input_ptr_scratch.len(),
                 "input_ptr_scratch too small: need {num_inputs}, have {}",
-                self.input_ptr_scratch.len()
+                input_ptr_scratch.len()
             );
+
+            // Split the pool: `processed` is read-only and covers every step
+            // an input may reference (src_step < step_idx, topological order);
+            // `outputs` is this step's writable buffer slot.
+            let (processed, tail) = output_buffers.split_at_mut(step_idx);
+            let outputs: &mut Vec<AudioBuffer> = &mut tail[0];
 
             // ── Gather input pointers ──────────────────────────────────────────
             // Fill `input_ptr_scratch[0..num_inputs]` with pointers to the
             // upstream output buffers (or silence for unconnected ports).
-            //
-            // SAFETY: src_step < step_idx for all connections (compiler invariant).
-            // The source buffers are in `output_buffers[src_step]`, which is a
-            // distinct element from `output_buffers[step_idx]`.
             for (port, conn_opt) in step.input_connections.iter().enumerate() {
-                self.input_ptr_scratch[port] = match conn_opt {
-                    Some(conn) => unsafe {
-                        let src_bufs: &Vec<AudioBuffer> = &*pool_ptr.add(conn.src_step);
+                input_ptr_scratch[port] = match conn_opt {
+                    Some(conn) => {
+                        let src_bufs: &Vec<AudioBuffer> = &processed[conn.src_step];
                         let src_port = conn.src_port.min(src_bufs.len().saturating_sub(1));
                         &src_bufs[src_port] as *const AudioBuffer
-                    },
-                    None => &self.silence_buffer as *const AudioBuffer,
+                    }
+                    None => silence_ptr,
                 };
             }
 
@@ -366,100 +380,73 @@ impl GraphScheduler {
             // `delay_samples`, push the gathered upstream buffer through its
             // delay line and redirect the input pointer to the line's internal
             // `out` buffer.
-            //
-            // SAFETY: `self.delay_lines[step_idx]` is disjoint from any
-            // `self.output_buffers[src_step]` (different fields), and from
-            // `self.output_buffers[step_idx]` (different fields), so the
-            // mutable borrow here does not alias any input we read above or
-            // the output we'll write below.
-            let dl_outer_ptr: *mut Vec<Vec<Option<DelayLine>>> =
-                &mut self.delay_lines as *mut _;
-            let step_delays: &mut Vec<Option<DelayLine>> = unsafe {
-                let outer: &mut Vec<Vec<Option<DelayLine>>> = &mut *dl_outer_ptr;
-                &mut outer[step_idx]
-            };
+            let step_delays = &mut delay_lines[step_idx];
             for (port, dl_opt) in step_delays.iter_mut().enumerate() {
                 if let Some(dl) = dl_opt {
-                    // SAFETY: scratch[port] was filled above with a pointer to a
-                    // live AudioBuffer (either an upstream output or silence).
-                    let src_ref: &AudioBuffer = unsafe { &*self.input_ptr_scratch[port] };
+                    // SAFETY: scratch[port] was filled above with a pointer to
+                    // a live AudioBuffer (either an upstream output in
+                    // `processed`, which is still borrowed, or the long-lived
+                    // `silence_buffer`).
+                    let src_ref: &AudioBuffer = unsafe { &*input_ptr_scratch[port] };
                     dl.process(src_ref, transport.block_size);
-                    self.input_ptr_scratch[port] = &dl.out as *const AudioBuffer;
+                    input_ptr_scratch[port] = &dl.out as *const AudioBuffer;
                 }
             }
 
             // ── Build &[&AudioBuffer] from pointer scratch ─────────────────────
             // SAFETY: All pointers in scratch[0..num_inputs] point to live
-            // AudioBuffer values.  We build a slice of references for the node.
+            // AudioBuffer values whose backing storage (entries in `processed`,
+            // delay-line `out` buffers in `delay_lines[step_idx]`, or
+            // `silence_buffer`) is disjoint from `outputs` and outlives the
+            // `process` call below.
             let inputs: &[&AudioBuffer] = unsafe {
                 std::slice::from_raw_parts(
-                    self.input_ptr_scratch.as_ptr() as *const &AudioBuffer,
+                    input_ptr_scratch.as_ptr() as *const &AudioBuffer,
                     num_inputs,
                 )
             };
 
             // ── Clear output buffers before processing ─────────────────────────
-            // SAFETY: output_buffers[step_idx] is a distinct element from all
-            // source buffers referenced above (src_step < step_idx).
-            let outputs: &mut Vec<AudioBuffer> = unsafe { &mut *pool_ptr.add(step_idx) };
             for buf in outputs.iter_mut() {
                 buf.clear();
             }
 
             // ── Modulation dispatch ────────────────────────────────────────────
             // Apply all modulation routes targeting this step before calling
-            // process.  Source buffers are already filled (src_step < step_idx
-            // by topological order — compiler invariant).
-            //
-            // SAFETY: `mod_actions_by_step` is never modified during
-            // `run_steps`.  We take a raw pointer to it so we can simultaneously
-            // hold a mutable borrow on `self.processors[step_idx]`.
-            // The two fields are disjoint; this mirrors the `pool_ptr` pattern.
-            let actions_ptr: *const Vec<Vec<CompiledModAction>> =
-                &self.mod_actions_by_step as *const _;
-            // SAFETY: `mod_actions_by_step` is never modified during `run_steps`.
-            // We first bind the raw pointer to a safe reference, then index —
-            // this avoids the implicit-autoref-through-raw-pointer lint.
-            let actions: &[CompiledModAction] = unsafe {
-                let outer: &Vec<Vec<CompiledModAction>> = &*actions_ptr;
-                &outer[step_idx]
-            };
+            // process.  Source buffers live in `processed` (src_step < step_idx
+            // by topological order), disjoint from the processor being mutated.
+            let actions: &[CompiledModAction] = &mod_actions_by_step[step_idx];
+            let processor = &mut processors[step_idx];
 
             // Always reset before re-summing modulation contributions for this
             // block: if a route is removed (or its actions list otherwise
             // shrinks to empty) between blocks, the previous block's
             // `mod_delta` must not persist.  Default impl is a no-op, so this
             // costs nothing for nodes without modulated parameters.
-            self.processors[step_idx].reset_modulation();
-            if !actions.is_empty() {
-                for action in actions {
-                    let mod_signal: f32 = unsafe {
-                        let src_bufs: &Vec<AudioBuffer> =
-                            &*pool_ptr.add(action.source_step);
-                        if action.source_port < src_bufs.len()
-                            && src_bufs[action.source_port].num_frames > 0
-                        {
-                            // PROVISIONAL (Phase 3): block-rate modulation — samples the first
-                        // sample of the modulator's output buffer per block.  This
-                        // introduces up to one block of latency and is not suitable for
-                        // audio-rate modulation (FM, ring-mod).  Replace with sample-accurate
-                        // interleaved dispatch when that requirement arises.
-                            src_bufs[action.source_port].channel(0)[0]
-                        } else {
-                            0.0
-                        }
-                    };
-                    let depth = match &action.depth_cells {
-                        Some(cells) => cells.depth(),
-                        None => action.static_depth,
-                    };
-                    self.processors[step_idx]
-                        .apply_modulation(&action.param_name, mod_signal * depth);
-                }
+            processor.reset_modulation();
+            for action in actions {
+                let src_bufs: &Vec<AudioBuffer> = &processed[action.source_step];
+                let mod_signal: f32 = if action.source_port < src_bufs.len()
+                    && src_bufs[action.source_port].num_frames > 0
+                {
+                    // PROVISIONAL (Phase 3): block-rate modulation — samples
+                    // the first sample of the modulator's output buffer per
+                    // block.  Up to one block of latency; not suitable for
+                    // audio-rate modulation (FM, ring-mod).  Replace with
+                    // sample-accurate interleaved dispatch when needed.
+                    src_bufs[action.source_port].channel(0)[0]
+                } else {
+                    0.0
+                };
+                let depth = match &action.depth_cells {
+                    Some(cells) => cells.depth(),
+                    None => action.static_depth,
+                };
+                processor.apply_modulation(&action.param_name, mod_signal * depth);
             }
 
             // ── Dispatch ───────────────────────────────────────────────────────
-            self.processors[step_idx].process(inputs, outputs, transport);
+            processor.process(inputs, outputs, transport);
         }
     }
 

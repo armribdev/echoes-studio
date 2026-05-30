@@ -116,6 +116,8 @@ pub struct LiveParams {
     /// True when at least one track has solo enabled.  Read by every
     /// `TrackGainNode` per block to compute the effective solo gate.
     pub any_solo: Arc<AtomicBool>,
+    /// When true, `MasterNode` applies tanh soft-clip on the summed output.
+    pub master_soft_clip: Arc<AtomicBool>,
 }
 
 impl Default for LiveParams {
@@ -129,6 +131,7 @@ impl LiveParams {
         LiveParams {
             inner: Mutex::new(LiveParamsInner::default()),
             any_solo: Arc::new(AtomicBool::new(false)),
+            master_soft_clip: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -184,6 +187,14 @@ impl LiveParams {
 
     pub fn any_solo(&self) -> bool {
         self.any_solo.load(Ordering::Relaxed)
+    }
+
+    pub fn master_soft_clip_enabled(&self) -> bool {
+        self.master_soft_clip.load(Ordering::Relaxed)
+    }
+
+    pub fn set_master_soft_clip(&self, enabled: bool) {
+        self.master_soft_clip.store(enabled, Ordering::Relaxed);
     }
 
     // ── Hot-path setters (called by gateway handlers) ────────────────────────

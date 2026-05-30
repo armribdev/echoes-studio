@@ -862,6 +862,10 @@ fn apply_audio_settings(
         *s = settings.clone();
     }
 
+    state
+        .live_params
+        .set_master_soft_clip(settings.master_soft_clip);
+
     // Determine whether a stream restart is actually needed.
     let needs_restart = current.output_device != settings.output_device
         || current.input_device  != settings.input_device

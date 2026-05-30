@@ -7,6 +7,8 @@ export interface AudioPreferences {
 	bufferSize: 64 | 128 | 256 | 512 | 1024 | 2048;
 	inputChannels: number;
 	outputChannels: number;
+	/** When true, master bus applies tanh soft-clip before device output. */
+	masterSoftClip: boolean;
 }
 
 export interface ProjectPreferences {
@@ -43,7 +45,8 @@ function defaultPreferences(): Preferences {
 			sampleRate: 48000,
 			bufferSize: 256,
 			inputChannels: 2,
-			outputChannels: 2
+			outputChannels: 2,
+			masterSoftClip: false
 		},
 		project: {
 			defaultFolder: '',
