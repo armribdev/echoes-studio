@@ -372,7 +372,8 @@ impl GraphCompiler {
             NodeKind::Instrument { .. }  => 1,
             NodeKind::TrackGain { .. } => 1,
             NodeKind::Bus              => 1,
-            NodeKind::Send { .. }      => 0, // side-effect node
+            // Pass-through tap at send gain; Return routing is future work.
+            NodeKind::Send { .. }      => 1,
             NodeKind::Return { .. }    => 1,
             NodeKind::Gain { .. }      => 1,
             NodeKind::Pan { .. }       => 1,

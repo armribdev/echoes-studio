@@ -232,9 +232,10 @@ Justification incorrecte (le scheduler EST envoyé entre threads). Corriger le d
 La boucle parcourait `0..block` avec un `continue` par frame hors clip.
 **Fix appliqué** : après le fast-reject clip/block, calcul de `overlap_start` / `overlap_end` (intersection timeline), conversion en `start_frame..end_frame`, puis accumulation uniquement sur cette plage — plus de test de bornes par frame.
 
-#### M7 — Incohérence port count Send
-**Fichiers** : [audio_graph/compiler.rs:292](../../../src-tauri/src/audio_graph/compiler.rs#L292), [audio_graph/nodes/send.rs:26](../../../src-tauri/src/audio_graph/nodes/send.rs#L26)
-Compiler déclare `num_outputs = 0`, le nœud déclare `num_output_ports = 1`. Aligner.
+#### M7 — Incohérence port count Send ✅ **CORRIGÉ**
+**Fichiers** : [audio_graph/compiler.rs](../../../src-tauri/src/audio_graph/compiler.rs), [audio_graph/nodes/send.rs](../../../src-tauri/src/audio_graph/nodes/send.rs)
+`num_outputs_for_kind(NodeKind::Send)` déclarait `0` (« side-effect node ») alors que `SendNode` expose `num_output_ports = 1` et écrit un buffer pass-through à gain send — incohérence avec le plan d'exécution et la table des ports dans `nodes/mod.rs`.
+**Fix appliqué** : `num_outputs_for_kind(Send)` passe à `1`, aligné sur `SendNode` (même pattern que Master : un slot de buffer pour le tap, routage vers Return à venir).
 
 #### M8 — PolySynth mono dupliqué
 **Fichier** : [audio_graph/nodes/poly_synth.rs:233](../../../src-tauri/src/audio_graph/nodes/poly_synth.rs#L233)
@@ -263,6 +264,6 @@ Sous-système d'input séparé (midir / midi-msg), file lock-free MIDI alimentan
 
 ## Ordre d'attaque suggéré
 
-C1, C2, C3, C4, C5, I1, I2, I3, I4, I5, I6, I7, I8, I9, I10, I11 (deadlock), I12, M1, M5 et M6 sont corrigés. Reste **C6** (tempo MIDI désynchronisé) — fix trivial une fois identifié : appeler `recompile_if_needed` dans `UPDATE_TEMPO` ou stocker les notes en beats. Ensuite le volet "engine lock pendant compile" d'I11 (refactor `PluginHost` en `Arc<Mutex<>>`), puis les mineures M2–M4, M7–M9.
+C1, C2, C3, C4, C5, I1, I2, I3, I4, I5, I6, I7, I8, I9, I10, I11 (deadlock), I12, M1, M5, M6 et M7 sont corrigés. Reste **C6** (tempo MIDI désynchronisé) — fix trivial une fois identifié : appeler `recompile_if_needed` dans `UPDATE_TEMPO` ou stocker les notes en beats. Ensuite le volet "engine lock pendant compile" d'I11 (refactor `PluginHost` en `Arc<Mutex<>>`), puis les mineures M2–M4, M8–M9.
 
 **Note résiduelle pour C3** : `UPDATE_EFFECT` continue à recompiler. Pour fermer complètement la boucle hot-path, concevoir un `ParameterBlock` générique ou des cellules atomiques typées par effet (EQ, Compresseur, Reverb, Delay) — chaque effet expose alors ses params via `LiveParams` au même titre que volume/pan/mute/solo.
