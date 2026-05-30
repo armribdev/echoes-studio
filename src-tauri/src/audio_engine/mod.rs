@@ -33,5 +33,6 @@
 
 pub mod engine;
 pub mod graph;
+pub mod offline;
 pub mod snapshot;
 pub mod transport;

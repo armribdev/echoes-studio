@@ -23,7 +23,8 @@ fn main() {
             // ── Native audio engine ───────────────────────────────────────────
             // Start the CPAL output stream as early as possible so the engine
             // is ready before any project is loaded.  Failure is logged but
-            // non-fatal: the app continues and export (via OfflineAudioContext) still works.
+            // non-fatal: the app continues and offline export still works
+            // (it drives the graph directly, without needing the live stream).
             start_native_audio(app);
 
             // ── Debug auto-load ───────────────────────────────────────────────
@@ -452,6 +453,26 @@ fn get_project(state: tauri::State<'_, AppState>) -> Result<ProjectDto, String> 
     Ok(project.to_dto())
 }
 
+/// Render the current project offline through the real Rust audio engine.
+///
+/// Returns interleaved-channel-split f32 buffers `(left, right)`.  Lives on
+/// the command thread; never touches the live CPAL stream.  Reflects current
+/// `LiveParams` (volume, mute/solo, modulation depth, …) and the engine's
+/// `PluginHost` so the export is bit-identical to what is being heard.
+fn render_project_to_stereo(
+    state: &tauri::State<'_, AppState>,
+    sample_rate: u32,
+) -> Result<(Vec<f32>, Vec<f32>), String> {
+    let project = state.project.lock().map_err(|e| e.to_string())?;
+    let mut engine = state.audio_engine.lock().map_err(|e| e.to_string())?;
+    audio_engine::offline::render_project_offline(
+        &project,
+        &state.live_params,
+        &mut engine.plugin_host,
+        sample_rate,
+    )
+}
+
 /// Write a stereo mixdown as a WAV file at the requested bit depth.
 ///
 /// | `bit_depth` | WAV format            | Notes                          |
@@ -460,17 +481,18 @@ fn get_project(state: tauri::State<'_, AppState>) -> Result<ProjectDto, String> 
 /// | 24          | 24-bit PCM (int)      | Pro standard for delivery      |
 /// | 32          | 32-bit float          | Archival / stem exports        |
 ///
-/// Called by the frontend after rendering the project offline via
-/// `OfflineAudioContext`. The path is chosen by the user via the JS save
-/// dialog before this command is invoked.
+/// The project is rendered offline by the same Rust audio engine that drives
+/// live playback (see `audio_engine::offline`).  The path is chosen by the
+/// user via the JS save dialog before this command is invoked.
 #[tauri::command]
 fn export_wav(
+    state: tauri::State<'_, AppState>,
     path: String,
-    samples_left: Vec<f32>,
-    samples_right: Vec<f32>,
     sample_rate: u32,
     bit_depth: u8,
 ) -> Result<(), String> {
+    let (samples_left, samples_right) = render_project_to_stereo(&state, sample_rate)?;
+
     let path = std::path::PathBuf::from(&path);
     let path = if path.extension().map_or(true, |e| e != "wav") {
         path.with_extension("wav")
@@ -538,19 +560,20 @@ fn export_wav(
 /// | 192            | High quality — recommended for distribution        |
 /// | 320            | Maximum quality — archival / professional delivery |
 ///
-/// The samples are the same f32 interleaved-channel data produced by the
-/// frontend `OfflineAudioContext`. Encoding is done entirely in Rust via
-/// LAME compiled from source (`mp3lame-encoder` crate) — no system library
-/// dependency required.
+/// The project is rendered offline by the same Rust audio engine that drives
+/// live playback (see `audio_engine::offline`).  Encoding is done entirely in
+/// Rust via LAME compiled from source (`mp3lame-encoder` crate) — no system
+/// library dependency required.
 #[tauri::command]
 fn export_mp3(
+    state: tauri::State<'_, AppState>,
     path: String,
-    samples_left: Vec<f32>,
-    samples_right: Vec<f32>,
     sample_rate: u32,
     bitrate_kbps: u32,
 ) -> Result<(), String> {
     use mp3lame_encoder::{Builder, DualPcm, FlushNoGap};
+
+    let (samples_left, samples_right) = render_project_to_stereo(&state, sample_rate)?;
 
     let path = std::path::PathBuf::from(&path);
     let path = if path.extension().map_or(true, |e| e != "mp3") {

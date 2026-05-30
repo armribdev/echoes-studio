@@ -151,9 +151,18 @@ Cas particulier de C3, résolu par le même fix : `TrackGainNode` lit `volume ×
 - `num_inputs_for_kind(NodeKind::Plugin)` est encore figé à 2/2 ; à terme il faudra lire `PluginManifest.num_audio_inputs/outputs` au moment de la compilation pour respecter les configurations mono / 5.1 / etc.
 - L'écriture des paramètres (`PluginHost::set_parameter_normalised`) n'est pas encore routée depuis le gateway. Idem pour la sérialisation d'état au save/load projet.
 
-#### I8 — L'export bypass le moteur
-**Fichiers** : [main.rs:455-613](../../../src-tauri/src/main.rs#L455)
-`export_wav`/`export_mp3` reçoivent les samples depuis l'`OfflineAudioContext` du frontend. Web Audio est donc un deuxième moteur de rendu de facto. L'utilisateur peut entendre quelque chose de différent en live (moteur Rust) vs ce qui est exporté (Web Audio). Risque de divergence silencieuse sérieux.
+#### I8 — L'export bypass le moteur ✅ **CORRIGÉ**
+**Fichiers** : [audio_engine/offline.rs](../../../src-tauri/src/audio_engine/offline.rs), [main.rs](../../../src-tauri/src/main.rs), [src/lib/exportMixdown.ts](../../../src/lib/exportMixdown.ts)
+`export_wav`/`export_mp3` recevaient les samples depuis l'`OfflineAudioContext` du frontend. Web Audio devenait un deuxième moteur de rendu de facto — risque de divergence silencieuse entre live (Rust) et export (Web Audio).
+
+**Fix appliqué** :
+- Nouveau module [`audio_engine::offline`](../../../src-tauri/src/audio_engine/offline.rs) : `render_project_offline(project, live_params, plugin_host, sample_rate)` compile un `GraphScheduler` éphémère via `AudioGraphCompiler::compile_scheduler` (même chemin que la live) et le pilote en boucle avec un `TransportInfo` synthétique jusqu'à la durée du projet. Aucune interaction avec le stream CPAL, aucune `enqueue` sur le snapshot. Tourne sur le thread commande — peut allouer librement.
+- `export_wav` / `export_mp3` (dans `main.rs`) reçoivent maintenant uniquement `path`, `sample_rate` + format params. Ils lockent `AppState`, appellent `render_project_offline` avec le `LiveParams` partagé et le `PluginHost` de l'engine (donc l'export reflète volumes / mute / solo / depth de modulation courants ainsi que l'état des plugins), puis encodent via `hound` / `mp3lame-encoder` comme avant.
+- [`src/lib/exportMixdown.ts`](../../../src/lib/exportMixdown.ts) ne crée plus d'`OfflineAudioContext`, ne convertit plus les clips, n'envoie plus de `Float32Array`s à travers IPC. Il vérifie juste qu'il y a du contenu à exporter (`totalDuration > 0`) puis invoque la commande Tauri avec le chemin et les params d'encodage.
+
+**Bénéfices** : un seul moteur DSP, donc l'export entend ce que le user entend (compresseur, EQ, reverb, modulation, PDC, plugins) ; économie IPC majeure (plus de transfert MB de samples) ; ouvre la voie au rendu hors-ligne plus rapide-que-temps-réel par-stem.
+
+**Restes hors scope** : pas de fichier de notification de progression pour les longs renders (l'UI reste figée sur "Export en cours…"). À ajouter quand le rendu deviendra long (gros projets, plugins). Le tempo passé au `TransportInfo` est le tempo statique du projet — quand C6 sera traité avec stockage en beats, l'export héritera automatiquement.
 
 #### I9 — Pas de protection anti-dénormales
 **Fichiers** : [audio_graph/nodes/reverb.rs](../../../src-tauri/src/audio_graph/nodes/reverb.rs), [audio_graph/nodes/delay.rs](../../../src-tauri/src/audio_graph/nodes/delay.rs), [audio_graph/nodes/compressor.rs](../../../src-tauri/src/audio_graph/nodes/compressor.rs)
@@ -230,6 +239,6 @@ Sous-système d'input séparé (midir / midi-msg), file lock-free MIDI alimentan
 
 ## Ordre d'attaque suggéré
 
-C1, C2, C3, C4, C5 et I1 sont corrigés. Reste **C6** (tempo MIDI désynchronisé) — fix trivial une fois identifié : appeler `recompile_if_needed` dans `UPDATE_TEMPO` ou stocker les notes en beats. Ensuite la priorité bascule vers les importantes (I2–I12), notamment I7 (`PluginHost` à brancher) et I8 (export bypass moteur) qui ouvrent le chemin v1.
+C1, C2, C3, C4, C5, I1, I2, I3, I4, I5, I6, I7 et I8 sont corrigés. Reste **C6** (tempo MIDI désynchronisé) — fix trivial une fois identifié : appeler `recompile_if_needed` dans `UPDATE_TEMPO` ou stocker les notes en beats. Ensuite la priorité bascule vers les importantes restantes (I9 dénormales, I10 stacked-borrows, I11 lock moteur sur compile, I12 String hot-path), puis les mineures M1–M9.
 
 **Note résiduelle pour C3** : `UPDATE_EFFECT` continue à recompiler. Pour fermer complètement la boucle hot-path, concevoir un `ParameterBlock` générique ou des cellules atomiques typées par effet (EQ, Compresseur, Reverb, Delay) — chaque effet expose alors ses params via `LiveParams` au même titre que volume/pan/mute/solo.
