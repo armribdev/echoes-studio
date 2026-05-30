@@ -1,5 +1,6 @@
 use crate::audio_graph::buffer::AudioBuffer;
 use crate::audio_graph::node::{AudioNode, NodeId, PrepareContext, TransportInfo};
+use crate::audio_graph::oversampling::Oversample2x;
 use crate::project::EqParams;
 
 // Direct Form II Transposed biquad — no allocation per sample.
@@ -80,12 +81,21 @@ pub struct EqNode {
     low: Biquad,
     mid: Biquad,
     high: Biquad,
+    oversample: Oversample2x,
 }
 
 impl EqNode {
     pub fn new(id: NodeId, params: EqParams) -> Self {
-        EqNode { id, params, low: Biquad::default(), mid: Biquad::default(), high: Biquad::default() }
+        EqNode {
+            id,
+            params,
+            low: Biquad::default(),
+            mid: Biquad::default(),
+            high: Biquad::default(),
+            oversample: Oversample2x::default(),
+        }
     }
+
 }
 
 impl AudioNode for EqNode {
@@ -95,10 +105,11 @@ impl AudioNode for EqNode {
     fn num_output_ports(&self) -> usize { 1 }
 
     fn prepare(&mut self, ctx: PrepareContext) {
-        let sr = ctx.sample_rate;
-        self.low  = Biquad::low_shelf(self.params.low_freq, self.params.low_gain_db, sr);
-        self.mid  = Biquad::peaking(self.params.mid_freq, self.params.mid_gain_db, self.params.mid_q, sr);
-        self.high = Biquad::high_shelf(self.params.high_freq, self.params.high_gain_db, sr);
+        let sr_os = ctx.sample_rate * 2.0;
+        self.low  = Biquad::low_shelf(self.params.low_freq, self.params.low_gain_db, sr_os);
+        self.mid  = Biquad::peaking(self.params.mid_freq, self.params.mid_gain_db, self.params.mid_q, sr_os);
+        self.high = Biquad::high_shelf(self.params.high_freq, self.params.high_gain_db, sr_os);
+        self.oversample.prepare(ctx.max_block_size, ctx.sample_rate);
     }
 
     fn process(&mut self, inputs: &[&AudioBuffer], outputs: &mut [AudioBuffer], t: &TransportInfo) {
@@ -106,18 +117,24 @@ impl AudioNode for EqNode {
         let output = &mut outputs[0];
         let channels = output.num_channels.min(input.num_channels).min(2);
         let frames = t.block_size.min(output.num_frames).min(input.num_frames);
+        let Self { low, mid, high, oversample, .. } = self;
         for ch in 0..channels {
             let in_ch = input.channel(ch);
             let out_ch = output.channel_mut(ch);
-            for i in 0..frames {
-                let s = self.low.process(in_ch[i], ch);
-                let s = self.mid.process(s, ch);
-                out_ch[i] = self.high.process(s, ch);
-            }
+            oversample.process_channel(ch, in_ch, out_ch, frames, |x| {
+                let s = low.process(x, ch);
+                let s = mid.process(s, ch);
+                high.process(s, ch)
+            });
         }
     }
 
-    fn reset(&mut self) { self.low.reset(); self.mid.reset(); self.high.reset(); }
+    fn reset(&mut self) {
+        self.low.reset();
+        self.mid.reset();
+        self.high.reset();
+        self.oversample.reset();
+    }
 }
 
 #[cfg(test)]

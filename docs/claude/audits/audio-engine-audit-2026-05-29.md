@@ -242,8 +242,17 @@ La boucle parcourait `0..block` avec un `continue` par frame hors clip.
 Le mix mono était dupliqué sur L/R via `mono_to_all_channels()` — champ stéréo plat.
 **Fix appliqué** : chaque voix reçoit des gains L/R equal-power (`pitch_to_pan_gains`, même loi que `PanNode`) dérivés de la hauteur MIDI au `note_on` (middle C centré, ±4 octaves vers hard L/R). Accumulation séparée sur les deux canaux ; plus de `mono_to_all_channels`. Sortie mono inchangée quand `num_channels < 2`.
 
-#### M9 — Pas d'oversampling
+#### M9 — Pas d'oversampling ✅ **CORRIGÉ**
+**Fichiers** : [audio_graph/oversampling.rs](../../../src-tauri/src/audio_graph/oversampling.rs), [audio_graph/nodes/eq.rs](../../../src-tauri/src/audio_graph/nodes/eq.rs), [audio_graph/nodes/compressor.rs](../../../src-tauri/src/audio_graph/nodes/compressor.rs), [audio_graph/nodes/master.rs](../../../src-tauri/src/audio_graph/nodes/master.rs)
 EQ, compresseur (genou), soft-clip — aliasing sur transitoires.
+
+**Fix appliqué** :
+- Nouveau module [`Oversample2x`](../../../src-tauri/src/audio_graph/oversampling.rs) : upsample linéaire 2×, double one-pole anti-imaging / anti-alias (~12 dB/oct), traitement non-linéaire à 2×, decimation par moyenne des paires. Scratch pré-alloué dans `prepare` (aucune alloc sur le thread audio).
+- [`EqNode`](../../../src-tauri/src/audio_graph/nodes/eq.rs) : biquads recalculés à `2 × sample_rate`, chaîne EQ exécutée à 2× via `process_channel`.
+- [`CompressorNode`](../../../src-tauri/src/audio_graph/nodes/compressor.rs) : enveloppe + mapping genou à la cadence de base (lent), application du gain à 2× pour limiter l'aliasing du produit ; coeffs attack/release calibrés à `2 × sample_rate`.
+- [`MasterNode`](../../../src-tauri/src/audio_graph/nodes/master.rs) : `tanh` soft-clip uniquement quand activé, via `process_inplace` à 2×.
+
+**Restes** : facteur fixe 2× (pas 4×/8×) ; détection de crête du compresseur reste block-rate — un genou très court peut encore générer un peu d'aliasing. Suffisant pour la plupart des usages DAW ; monter à 4× si besoin broadcast.
 
 ---
 
@@ -265,6 +274,6 @@ Sous-système d'input séparé (midir / midi-msg), file lock-free MIDI alimentan
 
 ## Ordre d'attaque suggéré
 
-C1, C2, C3, C4, C5, I1, I2, I3, I4, I5, I6, I7, I8, I9, I10, I11 (deadlock), I12, M1, M5, M6, M7 et M8 sont corrigés. Reste **C6** (tempo MIDI désynchronisé) — fix trivial une fois identifié : appeler `recompile_if_needed` dans `UPDATE_TEMPO` ou stocker les notes en beats. Ensuite le volet "engine lock pendant compile" d'I11 (refactor `PluginHost` en `Arc<Mutex<>>`), puis les mineures M2–M4, M9.
+C1, C2, C3, C4, C5, I1, I2, I3, I4, I5, I6, I7, I8, I9, I10, I11 (deadlock), I12, M1, M5, M6, M7, M8 et M9 sont corrigés. Reste **C6** (tempo MIDI désynchronisé) — fix trivial une fois identifié : appeler `recompile_if_needed` dans `UPDATE_TEMPO` ou stocker les notes en beats. Ensuite le volet "engine lock pendant compile" d'I11 (refactor `PluginHost` en `Arc<Mutex<>>`), puis les mineures M2–M4.
 
 **Note résiduelle pour C3** : `UPDATE_EFFECT` continue à recompiler. Pour fermer complètement la boucle hot-path, concevoir un `ParameterBlock` générique ou des cellules atomiques typées par effet (EQ, Compresseur, Reverb, Delay) — chaque effet expose alors ses params via `LiveParams` au même titre que volume/pan/mute/solo.

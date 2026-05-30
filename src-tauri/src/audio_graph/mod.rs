@@ -36,6 +36,7 @@ pub mod graph;
 pub mod live_params;
 pub mod midi;
 pub mod modulation;
+pub mod oversampling;
 pub mod node;
 pub mod nodes;
 pub mod scheduler;
