@@ -25,6 +25,7 @@
 
 use crate::audio_graph::buffer::AudioBuffer;
 use crate::audio_graph::node::{AudioNode, NodeId, PrepareContext, TransportInfo};
+use crate::plugin_system::capabilities::DeviceCapabilities;
 use crate::plugin_system::parameter::ParameterMap;
 use crate::plugin_system::state::DeviceState;
 use crate::plugin_system::lifecycle::LifecycleState;
@@ -106,6 +107,23 @@ pub trait Device: AudioNode {
     /// Reported processing latency in samples.
     fn reported_latency(&self) -> u32 {
         0
+    }
+
+    // ── Capabilities (Phase 1) ─────────────────────────────────────────────────
+
+    /// Introspected static capabilities (ports, parameters, latency, …).
+    ///
+    /// Default impl synthesises a safe shape from the legacy `DeviceInfo`
+    /// fields, so wrappers that have not yet migrated to true introspection
+    /// keep compiling and reporting the same surface as before.
+    ///
+    /// Phase 2+ wrappers override this with values read from
+    /// `IComponent::getBusInfo` (VST3) and `clap.audio-ports` / `clap.params`
+    /// (CLAP) at `prepare()` time.
+    fn capabilities(&self) -> DeviceCapabilities {
+        let mut caps = DeviceCapabilities::from_legacy_info(self.info());
+        caps.reported_latency_samples = self.reported_latency();
+        caps
     }
 }
 

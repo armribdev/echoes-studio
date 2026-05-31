@@ -17,6 +17,7 @@ use std::sync::Arc;
 
 use crate::audio_graph::buffer::AudioBuffer;
 use crate::audio_graph::node::{AudioNode, NodeId, PrepareContext, TransportInfo};
+use crate::plugin_system::capabilities::DeviceCapabilities;
 use crate::plugin_system::lifecycle::LifecycleState;
 use crate::plugin_system::parameter::ParameterMap;
 use crate::plugin_system::state::DeviceState;
@@ -50,6 +51,11 @@ pub struct VstWrapperNode {
     out_bus: AudioBusBuffers,
 
     num_channels: usize,
+
+    /// Cached intrinsic latency (samples).  Read once at `prepare()` via
+    /// `IAudioProcessor::getLatencySamples`; queried off-RT by the graph
+    /// compiler through `latency_samples()`.
+    reported_latency: u32,
 }
 
 // SAFETY: see module-level doc
@@ -89,6 +95,7 @@ impl VstWrapperNode {
             in_bus:  unsafe { std::mem::zeroed() },
             out_bus: unsafe { std::mem::zeroed() },
             num_channels: 2,
+            reported_latency: 0,
         }
     }
 }
@@ -135,6 +142,12 @@ impl AudioNode for VstWrapperNode {
         unsafe {
             ((*(*proc).vtbl).setup_processing)(proc, &setup);
             ((*(*proc).vtbl).set_processing)(proc, 1);
+
+            // Query intrinsic latency after setup so the value reflects the
+            // configured sample rate / block size.  VST3 spec: callable from
+            // the main thread; the host must re-query if `restart` is fired
+            // with `kLatencyChanged` (handled when Phase 6 wires restart).
+            self.reported_latency = ((*(*proc).vtbl).get_latency_samples)(proc);
         }
 
         self.lifecycle = LifecycleState::Running;
@@ -210,6 +223,12 @@ impl AudioNode for VstWrapperNode {
             ((*(*proc).vtbl).set_processing)(proc, 1);
         }
     }
+
+    /// Plain field read — populated once in `prepare()`.  Off-RT consumer
+    /// (graph compiler); never invoked from `process`.
+    fn latency_samples(&self) -> u32 {
+        self.reported_latency
+    }
 }
 
 impl Drop for VstWrapperNode {
@@ -245,4 +264,16 @@ impl Device for VstWrapperNode {
     fn suspend(&mut self)  { self.lifecycle = LifecycleState::Suspended; }
     fn resume(&mut self)   { self.lifecycle = LifecycleState::Running; }
     fn destroy(&mut self)  { self.lifecycle = LifecycleState::Destroyed; }
+
+    fn reported_latency(&self) -> u32 { self.reported_latency }
+
+    /// Phase 1: legacy shape (stereo, no params, no state) plus the
+    /// freshly-introspected latency.  Phase 2 will replace this with full
+    /// bus / parameter introspection via `IComponent::getBusInfo` and
+    /// `IEditController::getParameterInfo`.
+    fn capabilities(&self) -> DeviceCapabilities {
+        let mut caps = DeviceCapabilities::from_legacy_info(&self.info);
+        caps.reported_latency_samples = self.reported_latency;
+        caps
+    }
 }

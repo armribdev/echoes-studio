@@ -322,6 +322,23 @@ pub struct ClapWindow {
     pub specific: usize,  // HWND as usize (Win32), NSView* (Cocoa), Window (X11)
 }
 
+// ── clap.latency extension (plugin → host PDC reporting) ──────────────────────
+
+/// Extension ID for `clap.latency` (CLAP 1.x).
+pub const CLAP_EXT_LATENCY: &[u8] = b"clap.latency\0";
+
+/// `clap.latency` plugin-side vtable.
+///
+/// Plugin calls `get` on the main thread when activated; we read it once in
+/// `prepare()` and cache the result.  CLAP spec: `get` is main-thread only,
+/// not callable from `process`.  Some plugins return the value lazily — the
+/// host must call `get` strictly *after* `activate()` to receive a valid
+/// number.
+#[repr(C)]
+pub struct ClapPluginLatency {
+    pub get: unsafe extern "C" fn(*const ClapPlugin) -> u32,
+}
+
 // ── Host-side extensions (host_get_extension can return these) ────────────────
 
 pub const CLAP_EXT_LOG:      &[u8] = b"clap.log\0";

@@ -41,6 +41,49 @@ pub struct PortId {
     pub port: u32,
 }
 
+// ── PortKind (Phase 1 declaration — not yet enforced by the compiler) ─────────
+
+/// Bipolar / unipolar polarity hint for modulation ports.
+///
+/// Reserved for the future `PortKind::Modulation` variant.  Phase 1 only
+/// declares the type; the compiler keeps treating every edge as `Audio`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Polarity {
+    /// Range `[-1.0, 1.0]` — LFO, envelope follower with center detune.
+    Bipolar,
+    /// Range `[0.0, 1.0]` — ADSR envelope, macro knob.
+    Unipolar,
+}
+
+/// Typed category of a node port.
+///
+/// **Phase 1 status**: declared as a public enum to fix the contract early
+/// (target BP-2), but the graph compiler does **not** read it yet.  Every
+/// existing `Edge` is implicitly `Audio`; ADR-008 (Phase 5) introduces the
+/// `kind` field on `Edge` and the validation pass.
+///
+/// Keeping the variant set stable now means later phases extend
+/// behaviour without re-introducing exhaustiveness churn across the codebase.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PortKind {
+    /// Audio samples (f32 PCM).  All current ports default to this.
+    Audio { channels: u8 },
+    /// MIDI / note events (Phase 5 — `clap_event_note`, VST3 `IEventList`).
+    Midi,
+    /// Continuous modulation signal (Phase 5e — Envelope, Macro, Follower).
+    Modulation { polarity: Polarity },
+    /// Discrete control event (transport, gate, trigger).  Reserved for
+    /// future use; no Phase currently emits this.
+    Control,
+}
+
+impl PortKind {
+    /// Default for legacy connections that pre-date `PortKind` typing.
+    pub const fn default_audio_stereo() -> Self {
+        PortKind::Audio { channels: 2 }
+    }
+}
+
 // ── Context types ──────────────────────────────────────────────────────────────
 
 /// Passed to [`AudioNode::prepare`] when the session initialises or when the

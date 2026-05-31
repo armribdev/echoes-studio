@@ -16,14 +16,15 @@ use std::sync::Arc;
 
 use crate::audio_graph::buffer::AudioBuffer;
 use crate::audio_graph::node::{AudioNode, NodeId, PrepareContext, TransportInfo};
+use crate::plugin_system::capabilities::DeviceCapabilities;
 use crate::plugin_system::lifecycle::LifecycleState;
 use crate::plugin_system::parameter::ParameterMap;
 use crate::plugin_system::state::DeviceState;
 use crate::plugin_system::wrapper::{Device, DeviceFormat, DeviceInfo};
 
 use super::ffi::{
-    ClapAudioBuffer, ClapHost, ClapLibrary, ClapOutputEvents, ClapProcess, ClapPlugin,
-    FixedEventList, CLAP_PROCESS_CONTINUE, CLAP_PROCESS_ERROR,
+    ClapAudioBuffer, ClapHost, ClapLibrary, ClapOutputEvents, ClapPluginLatency, ClapProcess,
+    ClapPlugin, FixedEventList, CLAP_EXT_LATENCY, CLAP_PROCESS_CONTINUE, CLAP_PROCESS_ERROR,
 };
 
 // ── No-op output events (plugins can push events out; we ignore them for now) ──
@@ -58,6 +59,11 @@ pub struct ClapWrapperNode {
 
     num_channels: usize,
     active: bool,
+
+    /// Cached intrinsic latency (samples).  Read once at `prepare()` via the
+    /// `clap.latency` extension; queried by the graph compiler off the audio
+    /// thread through `latency_samples()`.
+    reported_latency: u32,
 }
 
 // SAFETY: see module-level doc
@@ -103,6 +109,7 @@ impl ClapWrapperNode {
             },
             num_channels: 2,
             active: false,
+            reported_latency: 0,
         }
     }
 }
@@ -128,6 +135,15 @@ impl AudioNode for ClapWrapperNode {
             self.active = ok;
 
             if ok {
+                // Query `clap.latency` *after* activate (spec: main thread only,
+                // value may not be valid before activation).  Off-RT — invoked
+                // by the command thread during graph prepare.
+                let ext_ptr = ((*p).get_extension)(p, CLAP_EXT_LATENCY.as_ptr() as *const _);
+                if !ext_ptr.is_null() {
+                    let ext = ext_ptr as *const ClapPluginLatency;
+                    self.reported_latency = ((*ext).get)(p);
+                }
+
                 ((*p).start_processing)(p);
             }
         }
@@ -200,6 +216,12 @@ impl AudioNode for ClapWrapperNode {
             unsafe { ((*p).reset)(p); }
         }
     }
+
+    /// Plain field read; populated once in `prepare()` via the `clap.latency`
+    /// extension.  Called by the graph compiler — never on the audio thread.
+    fn latency_samples(&self) -> u32 {
+        self.reported_latency
+    }
 }
 
 impl Drop for ClapWrapperNode {
@@ -229,4 +251,14 @@ impl Device for ClapWrapperNode {
     fn suspend(&mut self)  { self.lifecycle = LifecycleState::Suspended; }
     fn resume(&mut self)   { self.lifecycle = LifecycleState::Running; }
     fn destroy(&mut self)  { self.lifecycle = LifecycleState::Destroyed; }
+
+    fn reported_latency(&self) -> u32 { self.reported_latency }
+
+    /// Phase 1: legacy shape (stereo, no params) plus the freshly-introspected
+    /// latency.  Phase 2 replaces this with full audio-port / param introspection.
+    fn capabilities(&self) -> DeviceCapabilities {
+        let mut caps = DeviceCapabilities::from_legacy_info(&self.info);
+        caps.reported_latency_samples = self.reported_latency;
+        caps
+    }
 }

@@ -48,6 +48,7 @@
 //! `&[&AudioBuffer]` input slice.
 
 use std::collections::HashMap;
+use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::Arc;
 
 use crate::audio_graph::buffer::AudioBuffer;
@@ -615,7 +616,35 @@ unsafe fn process_one_step(worker_id: usize, step_idx: usize, ws: Workspace) {
     }
 
     // ── Dispatch ──────────────────────────────────────────────────────────────
-    processor.process(inputs, outputs, transport);
+    // Phase 1 / P0-5 short-term containment: catch Rust panics so a buggy
+    // node (or a Rust-side panic raised from a third-party wrapper) does not
+    // unwind the audio thread or a pool worker, which would crash the engine.
+    //
+    // The output buffers were cleared above; on panic they stay silent for
+    // this block.  The processor itself may be left in an inconsistent state
+    // — proper isolation (sandbox / Dead-marking) is Phase 6 work.
+    //
+    // Note: this only captures Rust unwinding panics.  C++ structured
+    // exceptions (Windows SEH access violations) still abort the process;
+    // see the audit's P0-5 long-term entry and ADR-010 for the bridged-host
+    // plan that addresses them.
+    //
+    // Cost on the hot path: one setjmp-style frame setup per node per block,
+    // measured in single-digit ns on x86_64.  Negligible compared to a real
+    // plugin's `process` (µs–ms).  No allocation, no syscalls.
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        processor.process(inputs, outputs, transport);
+    }));
+    if result.is_err() {
+        // SAFETY: the closure consumed the previous `&mut Vec<AudioBuffer>`
+        // borrow when it returned (whether normally or by unwind), so it is
+        // safe to re-acquire a fresh exclusive borrow here.  The level
+        // barrier still guarantees exclusive access to step_idx.
+        let outs = &mut *ws.output_buffers_ptr.add(step_idx);
+        for buf in outs.iter_mut() {
+            buf.clear();
+        }
+    }
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────

@@ -13,13 +13,15 @@
 //!
 //! ## Module map
 //!
-//! - [`parameter`]  — `Param`, `ParameterMap`, `ParameterRange`
-//! - [`wrapper`]    — `Device` trait + `PassThroughDevice` placeholder
-//! - [`lifecycle`]  — `LifecycleState` + transition validator
-//! - [`state`]      — `DeviceState` for project save/load
-//! - [`registry`]   — `PluginManifest` + `PluginRegistry` (discovery)
-//! - [`host`]       — `PluginHost` (lifecycle, parameter routing, state)
+//! - [`parameter`]    — `Param`, `ParameterMap`, `ParameterRange`
+//! - [`wrapper`]      — `Device` trait + `PassThroughDevice` placeholder
+//! - [`lifecycle`]    — `LifecycleState` + transition validator
+//! - [`state`]        — `DeviceState` for project save/load
+//! - [`registry`]     — `PluginManifest` + `PluginRegistry` (discovery)
+//! - [`host`]         — `PluginHost` (lifecycle, parameter routing, state)
+//! - [`capabilities`] — `DeviceCapabilities` introspected device metadata (Phase 1)
 
+pub mod capabilities;
 pub mod gui;
 pub mod host;
 pub mod lifecycle;
@@ -28,6 +30,10 @@ pub mod registry;
 pub mod state;
 pub mod wrapper;
 
+pub use capabilities::{
+    AudioBusInfo, DeviceCapabilities, MidiPortInfo, NativeParamId, ParameterFlags,
+    ParameterInfo, SpeakerLayout,
+};
 pub use host::PluginHost;
 pub use lifecycle::LifecycleState;
 pub use parameter::{Param, ParameterMap, ParameterRange};
