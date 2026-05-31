@@ -29,6 +29,12 @@ pub const K_RESULT_FALSE: TResult = 1;
 // ── Interface IDs ──────────────────────────────────────────────────────────────
 // Derived from the VST3 SDK using FUID::toTUID() big-endian serialisation.
 
+/// Steinberg's FUnknown IID (non-COM-compatible, modern SDK convention).
+pub const IID_FUNKNOWN: Tuid = [
+    0x00,0x00,0x00,0x00, 0x00,0x00,0x00,0x00,
+    0xC0,0x00,0x00,0x00, 0x00,0x00,0x00,0x46,
+];
+
 pub const IID_IPLUGIN_FACTORY: Tuid = [
     0x7A,0x4D,0x81,0x1C, 0x52,0x11,0x4A,0x1F,
     0xAE,0xD9,0xD2,0xEE, 0x0D,0xB2,0x5A,0x41,
@@ -299,6 +305,171 @@ impl Vst3Library {
     pub fn load(_dll_path: &Path) -> Result<(std::sync::Arc<Self>, *mut IPluginFactory), String> {
         Err("VST3 only supported on Windows (and macOS/Linux in a future release)".into())
     }
+}
+
+// ── IEditController (vtable index 0–17) ───────────────────────────────────────
+// Extends FUnknown (0–2) + IPluginBase (3–4) + IEditController own methods (5–17).
+
+/// IEditController — UI/parameter controller interface, main-thread only.
+pub const IID_IEDIT_CONTROLLER: Tuid = [
+    0xDC,0xD7,0xBB,0xE3, 0x77,0x42,0x44,0x8D,
+    0xA8,0x74,0xAA,0xCC, 0x97,0x9C,0x9D,0x2C,
+];
+
+#[repr(C)]
+pub struct IEditController {
+    pub vtbl: *const IEditControllerVtbl,
+}
+
+#[repr(C)]
+pub struct IEditControllerVtbl {
+    // FUnknown (0–2)
+    pub query_interface:
+        unsafe extern "C" fn(*mut IEditController, *const Tuid, *mut *mut c_void) -> TResult,
+    pub add_ref:  unsafe extern "C" fn(*mut IEditController) -> u32,
+    pub release:  unsafe extern "C" fn(*mut IEditController) -> u32,
+    // IPluginBase (3–4)
+    pub initialize: unsafe extern "C" fn(*mut IEditController, *mut FUnknown) -> TResult,
+    pub terminate:  unsafe extern "C" fn(*mut IEditController) -> TResult,
+    // IEditController own — methods 5–16 unused by us; *const c_void as placeholder
+    pub _pad5:  *const c_void,  // setComponentState
+    pub _pad6:  *const c_void,  // setState
+    pub _pad7:  *const c_void,  // getState
+    pub _pad8:  *const c_void,  // getParameterCount
+    pub _pad9:  *const c_void,  // getParameterInfo
+    pub _pad10: *const c_void,  // getParamStringByValue
+    pub _pad11: *const c_void,  // getParamValueByString
+    pub _pad12: *const c_void,  // normalizedParamToPlain
+    pub _pad13: *const c_void,  // plainParamToNormalized
+    pub _pad14: *const c_void,  // getParamNormalized
+    pub _pad15: *const c_void,  // setParamNormalized
+    // (16) setComponentHandler — typed so we can wire IComponentHandler
+    pub set_component_handler:
+        unsafe extern "C" fn(*mut IEditController, *mut FUnknown) -> TResult,
+    // (17) createView — the one we call
+    pub create_view:
+        unsafe extern "C" fn(*mut IEditController, *const u8) -> *mut IPlugView,
+}
+
+// ── IPlugView (vtable index 0–14) ─────────────────────────────────────────────
+
+pub const IID_IPLUG_VIEW: Tuid = [
+    0x5B,0xC3,0x25,0x07, 0xD0,0x60,0x49,0xEA,
+    0x84,0x00,0x4B,0x4C, 0x80,0xCF,0xCE,0x37,
+];
+
+/// Plugin-preferred view rectangle (in screen pixels).
+#[repr(C)]
+pub struct ViewRect {
+    pub left:   i32,
+    pub top:    i32,
+    pub right:  i32,
+    pub bottom: i32,
+}
+
+#[repr(C)]
+pub struct IPlugView {
+    pub vtbl: *const IPlugViewVtbl,
+}
+
+#[repr(C)]
+pub struct IPlugViewVtbl {
+    // FUnknown (0–2)
+    pub query_interface:
+        unsafe extern "C" fn(*mut IPlugView, *const Tuid, *mut *mut c_void) -> TResult,
+    pub add_ref:  unsafe extern "C" fn(*mut IPlugView) -> u32,
+    pub release:  unsafe extern "C" fn(*mut IPlugView) -> u32,
+    // IPlugView (3–14)
+    pub is_platform_type_supported:
+        unsafe extern "C" fn(*mut IPlugView, *const u8) -> TResult,
+    pub attached:
+        unsafe extern "C" fn(*mut IPlugView, *mut c_void, *const u8) -> TResult,
+    pub removed: unsafe extern "C" fn(*mut IPlugView) -> TResult,
+    pub _pad6:   *const c_void,  // onWheel
+    pub _pad7:   *const c_void,  // onKeyDown
+    pub _pad8:   *const c_void,  // onKeyUp
+    pub get_size:
+        unsafe extern "C" fn(*mut IPlugView, *mut ViewRect) -> TResult,
+    pub _pad10:  *const c_void,  // onSize
+    pub _pad11:  *const c_void,  // onFocus
+    pub set_frame:
+        unsafe extern "C" fn(*mut IPlugView, *mut FUnknown) -> TResult,
+    pub _pad13:  *const c_void,  // canResize
+    pub _pad14:  *const c_void,  // checkSizeConstraint
+}
+
+// Fail-fast: vtable layouts depend on each entry being pointer-sized.  These
+// asserts catch accidental width drift on exotic targets.
+const _: () = assert!(
+    std::mem::size_of::<IPlugViewVtbl>() == 15 * std::mem::size_of::<usize>(),
+    "IPlugViewVtbl layout drift",
+);
+const _: () = assert!(
+    std::mem::size_of::<IEditControllerVtbl>() == 18 * std::mem::size_of::<usize>(),
+    "IEditControllerVtbl layout drift",
+);
+
+// ── IHostApplication ──────────────────────────────────────────────────────────
+// Minimal host context passed to IComponent::initialize.  Plugins QI for this
+// to fetch the host name and to ask the host to create auxiliary objects
+// (IMessage, IAttributeList).  Returning kResultFalse for unsupported requests
+// is the documented fall-back; well-behaved plugins must accept it.
+
+pub const IID_IHOST_APPLICATION: Tuid = [
+    0x58,0xE5,0x95,0xCD, 0x9A,0x2C,0x44,0x49,
+    0xAD,0xCA,0xED,0xA9, 0x96,0xDC,0xEA,0xA0,
+];
+
+#[repr(C)]
+pub struct IHostApplicationVtbl {
+    pub query_interface:
+        unsafe extern "C" fn(*mut FUnknown, *const Tuid, *mut *mut c_void) -> TResult,
+    pub add_ref: unsafe extern "C" fn(*mut FUnknown) -> u32,
+    pub release: unsafe extern "C" fn(*mut FUnknown) -> u32,
+    /// Fill `name` with at most 128 UTF-16 code units (Steinberg `String128`).
+    pub get_name: unsafe extern "C" fn(*mut FUnknown, *mut u16) -> TResult,
+    pub create_instance:
+        unsafe extern "C" fn(*mut FUnknown, *const Tuid, *const Tuid, *mut *mut c_void) -> TResult,
+}
+
+// ── IComponentHandler ────────────────────────────────────────────────────────
+// Plugins call this to notify the host of parameter edits (begin/perform/end)
+// and to request a component restart.  Many plugins assume the handler is
+// non-null and crash on the first knob touch without one.
+
+pub const IID_ICOMPONENT_HANDLER: Tuid = [
+    0x93,0xA0,0xBE,0xA3, 0x94,0xB8,0xB4,0x85,
+    0xBC,0xBE,0x57,0xDB, 0x18,0xA5,0x2D,0xB7,
+];
+
+#[repr(C)]
+pub struct IComponentHandlerVtbl {
+    pub query_interface:
+        unsafe extern "C" fn(*mut FUnknown, *const Tuid, *mut *mut c_void) -> TResult,
+    pub add_ref: unsafe extern "C" fn(*mut FUnknown) -> u32,
+    pub release: unsafe extern "C" fn(*mut FUnknown) -> u32,
+    pub begin_edit:        unsafe extern "C" fn(*mut FUnknown, u32) -> TResult,
+    pub perform_edit:      unsafe extern "C" fn(*mut FUnknown, u32, f64) -> TResult,
+    pub end_edit:          unsafe extern "C" fn(*mut FUnknown, u32) -> TResult,
+    pub restart_component: unsafe extern "C" fn(*mut FUnknown, i32) -> TResult,
+}
+
+// ── IPlugFrame ────────────────────────────────────────────────────────────────
+// Set on the IPlugView so the plugin can request a resize of its container.
+
+pub const IID_IPLUG_FRAME: Tuid = [
+    0x36,0x7F,0xAF,0x01, 0xAF,0xA9,0x46,0x93,
+    0x8D,0x4D,0xA2,0xA0, 0xED,0x05,0x70,0xE6,
+];
+
+#[repr(C)]
+pub struct IPlugFrameVtbl {
+    pub query_interface:
+        unsafe extern "C" fn(*mut FUnknown, *const Tuid, *mut *mut c_void) -> TResult,
+    pub add_ref: unsafe extern "C" fn(*mut FUnknown) -> u32,
+    pub release: unsafe extern "C" fn(*mut FUnknown) -> u32,
+    pub resize_view:
+        unsafe extern "C" fn(*mut FUnknown, *mut IPlugView, *mut ViewRect) -> TResult,
 }
 
 // ── Plugin enumeration helper ─────────────────────────────────────────────────

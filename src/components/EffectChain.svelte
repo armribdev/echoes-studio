@@ -7,6 +7,7 @@
 	import { loadPlugins, plugins } from '../stores/plugins';
 	import { addEffect, removeEffect, updateEffect } from '../frontend/commands/dispatcher';
 	import { notify } from '../stores/status';
+	import { invoke } from '@tauri-apps/api/core';
 
 	export let trackId: string;
 	export let effects: TrackEffect[];
@@ -14,6 +15,8 @@
 	let expanded:    Record<string, boolean> = {};
 	let showAddMenu  = false;
 	let showPicker   = false;
+	// effect_ids that currently have an open native editor window
+	let openEditors: Set<string> = new Set();
 
 	// Ensure plugins are loaded (no-op if already loaded)
 	if ($plugins.length === 0) loadPlugins();
@@ -57,17 +60,39 @@
 		catch (e) { notify(`Erreur paramètre : ${(e as Error)?.message ?? e}`, 'error'); }
 	}
 
+	async function handleOpenEditor(effect: TrackEffect) {
+		// EffectParams::Plugin serialises as { kind: "plugin", params: { plugin_id, name, … } }
+		const p = (effect.params as any).params ?? {};
+		const isOpen = openEditors.has(effect.id);
+		try {
+			if (isOpen) {
+				await invoke('close_plugin_editor', { effectId: effect.id });
+				openEditors.delete(effect.id);
+			} else {
+				await invoke('open_plugin_editor', {
+					pluginId:   p.plugin_id,
+					effectId:   effect.id,
+					pluginName: p.name ?? 'Plugin',
+				});
+				openEditors.add(effect.id);
+			}
+			openEditors = new Set(openEditors); // trigger reactivity
+		} catch (e) {
+			notify(`Erreur éditeur plugin : ${(e as Error)?.message ?? e}`, 'error');
+		}
+	}
+
 	const BUILTIN_LABELS: Record<string, string> = {
 		eq: 'EQ 3-bandes', compressor: 'Compresseur', reverb: 'Réverb', delay: 'Délai',
 	};
 
 	function effectLabel(effect: TrackEffect): string {
-		if (effect.params.kind === 'plugin') return (effect.params as any).name ?? 'Plugin';
+		if (effect.params.kind === 'plugin') return (effect.params as any).params?.name ?? 'Plugin';
 		return BUILTIN_LABELS[effect.params.kind] ?? effect.params.kind;
 	}
 
 	function effectFormat(effect: TrackEffect): string | null {
-		if (effect.params.kind === 'plugin') return (effect.params as any).format ?? null;
+		if (effect.params.kind === 'plugin') return (effect.params as any).params?.format ?? null;
 		return null;
 	}
 
@@ -215,9 +240,20 @@
 						</div>
 
 					{:else if effect.params.kind === 'plugin'}
-						<p class="plugin-hint">
-							Paramètres du plugin disponibles via la fenêtre native (prochainement).
-						</p>
+						<div class="plugin-editor-row">
+							<button
+								class="open-editor-btn"
+								class:active={openEditors.has(effect.id)}
+								type="button"
+								on:click={() => handleOpenEditor(effect)}
+							>
+								{#if openEditors.has(effect.id)}
+									Fermer l'éditeur
+								{:else}
+									Ouvrir l'éditeur
+								{/if}
+							</button>
+						</div>
 					{/if}
 				</div>
 			{/if}
@@ -342,9 +378,19 @@
 		background: rgba(0,0,0,0.15);
 	}
 
-	.plugin-hint {
-		font-size: 9px; color: $text-faint; text-align: center;
-		padding: 8px 4px; margin: 0; font-style: italic;
+	.plugin-editor-row {
+		display: flex; justify-content: center; padding: 8px 4px;
+	}
+
+	.open-editor-btn {
+		padding: 5px 14px;
+		border: 1px solid $border-subtle; border-radius: 4px;
+		background: transparent; color: $text-subtle;
+		font-size: 10px; font-family: $font-mono; font-weight: 600;
+		letter-spacing: 0.04em; cursor: pointer;
+		transition: background 0.1s, color 0.1s, border-color 0.1s;
+		&:hover { background: rgba(21,113,255,0.15); color: $text-color; border-color: rgba(21,113,255,0.4); }
+		&.active { background: rgba(21,113,255,0.2); color: $accent-color; border-color: rgba(21,113,255,0.5); }
 	}
 
 	.grid {

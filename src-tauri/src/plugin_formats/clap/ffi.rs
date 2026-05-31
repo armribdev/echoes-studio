@@ -306,6 +306,87 @@ pub type ClapProcessStatus = i32;
 pub const CLAP_PROCESS_ERROR:    ClapProcessStatus = 0;
 pub const CLAP_PROCESS_CONTINUE: ClapProcessStatus = 1;
 
+// ── GUI extension ─────────────────────────────────────────────────────────────
+
+/// Extension ID for the clap.gui extension.
+pub const CLAP_EXT_GUI: &[u8] = b"clap.gui\0";
+
+/// Win32 API string for `ClapWindow`.
+pub const CLAP_WINDOW_API_WIN32: &[u8] = b"win32\0";
+
+/// Window handle passed to `set_parent` / `set_transient`.
+/// The `specific` field carries the platform-specific handle (HWND on Windows).
+#[repr(C)]
+pub struct ClapWindow {
+    pub api:      *const c_char,
+    pub specific: usize,  // HWND as usize (Win32), NSView* (Cocoa), Window (X11)
+}
+
+// ── Host-side extensions (host_get_extension can return these) ────────────────
+
+pub const CLAP_EXT_LOG:      &[u8] = b"clap.log\0";
+pub const CLAP_EXT_HOST_GUI: &[u8] = b"clap.gui\0";
+
+pub type ClapLogSeverity = i32;
+pub const CLAP_LOG_DEBUG:               ClapLogSeverity = 0;
+pub const CLAP_LOG_INFO:                ClapLogSeverity = 1;
+pub const CLAP_LOG_WARNING:             ClapLogSeverity = 2;
+pub const CLAP_LOG_ERROR:               ClapLogSeverity = 3;
+pub const CLAP_LOG_FATAL:               ClapLogSeverity = 4;
+pub const CLAP_LOG_HOST_MISBEHAVING:    ClapLogSeverity = 5;
+pub const CLAP_LOG_PLUGIN_MISBEHAVING:  ClapLogSeverity = 6;
+
+#[repr(C)]
+pub struct ClapHostLog {
+    pub log: unsafe extern "C" fn(*const ClapHost, ClapLogSeverity, *const c_char),
+}
+
+/// Host-side `clap.gui` extension — lets the plugin request resize/show/hide
+/// and notify the host that its GUI was closed by the user.
+#[repr(C)]
+pub struct ClapHostGui {
+    pub resize_hints_changed: unsafe extern "C" fn(*const ClapHost),
+    pub request_resize:       unsafe extern "C" fn(*const ClapHost, u32, u32) -> bool,
+    pub request_show:         unsafe extern "C" fn(*const ClapHost) -> bool,
+    pub request_hide:         unsafe extern "C" fn(*const ClapHost) -> bool,
+    pub closed:               unsafe extern "C" fn(*const ClapHost, bool),
+}
+
+/// `clap.gui` extension vtable (method order matches CLAP 1.x spec).
+#[repr(C)]
+pub struct ClapGuiExtension {
+    pub is_api_supported:
+        unsafe extern "C" fn(*const ClapPlugin, *const c_char, bool) -> bool,
+    pub get_preferred_api:
+        unsafe extern "C" fn(*const ClapPlugin, *mut *const c_char, *mut bool) -> bool,
+    pub create:
+        unsafe extern "C" fn(*const ClapPlugin, *const c_char, bool) -> bool,
+    pub destroy:
+        unsafe extern "C" fn(*const ClapPlugin),
+    pub set_scale:
+        unsafe extern "C" fn(*const ClapPlugin, f64) -> bool,
+    pub get_size:
+        unsafe extern "C" fn(*const ClapPlugin, *mut u32, *mut u32) -> bool,
+    pub can_resize:
+        unsafe extern "C" fn(*const ClapPlugin) -> bool,
+    pub get_resize_hints:
+        unsafe extern "C" fn(*const ClapPlugin, *mut c_void) -> bool,
+    pub adjust_size:
+        unsafe extern "C" fn(*const ClapPlugin, *mut u32, *mut u32) -> bool,
+    pub set_size:
+        unsafe extern "C" fn(*const ClapPlugin, u32, u32) -> bool,
+    pub set_parent:
+        unsafe extern "C" fn(*const ClapPlugin, *const ClapWindow) -> bool,
+    pub set_transient:
+        unsafe extern "C" fn(*const ClapPlugin, *const ClapWindow) -> bool,
+    pub suggest_title:
+        unsafe extern "C" fn(*const ClapPlugin, *const c_char),
+    pub show:
+        unsafe extern "C" fn(*const ClapPlugin) -> bool,
+    pub hide:
+        unsafe extern "C" fn(*const ClapPlugin) -> bool,
+}
+
 // ── Loaded library ─────────────────────────────────────────────────────────────
 
 #[cfg(windows)]
@@ -323,8 +404,10 @@ mod win32 {
 
 #[cfg(windows)]
 pub struct ClapLibrary {
-    handle: *mut c_void,
-    pub path: std::path::PathBuf,
+    handle:      *mut c_void,
+    entry:       *const ClapPluginEntry,
+    init_called: std::sync::atomic::AtomicBool,
+    pub path:    std::path::PathBuf,
 }
 
 #[cfg(windows)]
@@ -332,9 +415,39 @@ unsafe impl Send for ClapLibrary {}
 #[cfg(windows)]
 unsafe impl Sync for ClapLibrary {}
 
+// Process-wide strong cache.  CLAP spec: clap_entry.init() must be called
+// exactly once before any other use of the DLL.  Re-calling it (even after a
+// matching deinit) is undefined and crashes plugins that keep state in
+// DllMain/static initialisers (Vital, Surge, many JUCE-based CLAPs).
+//
+// To honour "exactly once per process per DLL" without coordination at every
+// call site, we cache loaded libraries strongly.  Once a `.clap` is loaded it
+// stays for the process lifetime; deinit() only ever runs at process exit.
+// This mirrors the Bitwig / clap-host reference behaviour.
+#[cfg(windows)]
+static CLAP_LIBRARIES: std::sync::OnceLock<
+    std::sync::Mutex<std::collections::HashMap<std::path::PathBuf, std::sync::Arc<ClapLibrary>>>,
+> = std::sync::OnceLock::new();
+
 #[cfg(windows)]
 impl ClapLibrary {
+    /// Load a CLAP DLL, calling `clap_entry.init` exactly once per process per
+    /// canonical path.  Subsequent `load()` calls for the same path return the
+    /// cached `Arc` without re-running `init()`.
     pub fn load(dll_path: &Path) -> Result<(std::sync::Arc<Self>, *const ClapPluginEntry), String> {
+        use std::sync::atomic::AtomicBool;
+
+        let cache = CLAP_LIBRARIES.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+        let canonical = dll_path.canonicalize().unwrap_or_else(|_| dll_path.to_path_buf());
+
+        // Serialize the whole load: cache lookup + LoadLibrary + init.  Held
+        // for the duration of plugin init (can be seconds), but avoids the
+        // double-init race that would crash strict plugins.
+        let mut map = cache.lock().map_err(|e| e.to_string())?;
+        if let Some(lib) = map.get(&canonical) {
+            return Ok((std::sync::Arc::clone(lib), lib.entry));
+        }
+
         let wide: Vec<u16> = dll_path
             .to_string_lossy()
             .encode_utf16()
@@ -356,7 +469,22 @@ impl ClapLibrary {
         };
 
         let entry: *const ClapPluginEntry = unsafe { std::mem::transmute(sym) };
-        let lib = std::sync::Arc::new(ClapLibrary { handle, path: dll_path.to_path_buf() });
+
+        let path_cstr: Vec<u8> = dll_path.to_string_lossy()
+            .bytes().chain(std::iter::once(0)).collect();
+        let init_ok = unsafe { ((*entry).init)(path_cstr.as_ptr() as *const c_char) };
+        if !init_ok {
+            unsafe { win32::FreeLibrary(handle) };
+            return Err(format!("clap_entry.init returned false for {}", dll_path.display()));
+        }
+
+        let lib = std::sync::Arc::new(ClapLibrary {
+            handle,
+            entry,
+            init_called: AtomicBool::new(true),
+            path: canonical.clone(),
+        });
+        map.insert(canonical, std::sync::Arc::clone(&lib));
         Ok((lib, entry))
     }
 }
@@ -364,6 +492,11 @@ impl ClapLibrary {
 #[cfg(windows)]
 impl Drop for ClapLibrary {
     fn drop(&mut self) {
+        // Only fires at process exit because the cache holds strong refs.
+        // Still pair init/deinit correctly so future cache eviction would work.
+        if self.init_called.load(std::sync::atomic::Ordering::Acquire) {
+            unsafe { ((*self.entry).deinit)() };
+        }
         unsafe { win32::FreeLibrary(self.handle) };
     }
 }

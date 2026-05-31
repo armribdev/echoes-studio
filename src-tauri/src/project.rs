@@ -451,6 +451,9 @@ pub struct AppState {
     /// True when the project has unsaved changes. Reset to false after save /
     /// new / open; set to true after any structural mutation.
     pub dirty: AtomicBool,
+    /// Open native plugin editor windows.  Maps `effect_id → HWND as usize`.
+    /// Shared as Arc so it can be cloned into `run_on_main_thread` closures.
+    pub open_plugin_editors: Arc<Mutex<HashMap<String, usize>>>,
 }
 
 impl AppState {
@@ -479,6 +482,7 @@ impl AppState {
             live_params,
             audio_settings: Mutex::new(crate::audio_settings::AudioSettings::default()),
             dirty: AtomicBool::new(false),
+            open_plugin_editors: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 }

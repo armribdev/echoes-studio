@@ -34,21 +34,15 @@ impl ClapHost {
     fn register_clap(&self, dll_path: &Path, registry: &mut PluginRegistry) {
         use crate::plugin_formats::clap::ffi::{ClapLibrary, CLAP_PLUGIN_FACTORY_ID};
 
-        let (lib, entry) = match ClapLibrary::load(dll_path) {
+        // `ClapLibrary::load` caches loaded DLLs process-wide and calls
+        // `clap_entry.init` exactly once per DLL — no need to call init here.
+        let (_lib, entry) = match ClapLibrary::load(dll_path) {
             Ok(r) => r,
             Err(e) => {
                 eprintln!("[clap] scan: {} — {e}", dll_path.display());
                 return;
             }
         };
-        let _ = lib;
-
-        // Call init so the plugin can set up any global state.
-        let path_cstr = dll_path.to_string_lossy();
-        let path_cstr_bytes: Vec<u8> = path_cstr.bytes().chain(std::iter::once(0)).collect();
-        unsafe {
-            ((*entry).init)(path_cstr_bytes.as_ptr() as *const std::ffi::c_char);
-        }
 
         // Get the plugin factory.
         let factory_ptr = unsafe {

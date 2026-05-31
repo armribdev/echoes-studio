@@ -20,6 +20,7 @@
 //! - [`registry`]   — `PluginManifest` + `PluginRegistry` (discovery)
 //! - [`host`]       — `PluginHost` (lifecycle, parameter routing, state)
 
+pub mod gui;
 pub mod host;
 pub mod lifecycle;
 pub mod parameter;

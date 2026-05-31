@@ -144,6 +144,9 @@ fn main() {
             get_project,
             list_plugins,
             scan_plugins,
+            // ── Plugin native GUI ─────────────────────────────────────────────
+            open_plugin_editor,
+            close_plugin_editor,
             // ── Gateway commands (all mutations go here) ──────────────────────
             send_command,
             send_batch,
@@ -653,6 +656,90 @@ fn export_mp3(
     unsafe { mp3_out.set_len(mp3_out.len() + flush_size) };
 
     std::fs::write(&path, &mp3_out).map_err(|e| e.to_string())
+}
+
+// ── Plugin native GUI commands ────────────────────────────────────────────────
+
+/// Open the native GUI window for a VST3 or CLAP plugin effect.
+///
+/// Creates a fresh GUI-only plugin instance (separate from the audio node),
+/// embeds it in a Win32 container window, and shows it.  Idempotent: if the
+/// editor for `effect_id` is already open, returns immediately.
+#[tauri::command]
+fn open_plugin_editor(
+    plugin_id:   String,
+    effect_id:   String,
+    plugin_name: String,
+    app:         tauri::AppHandle,
+    state:       tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    // Idempotency check
+    if let Ok(editors) = state.open_plugin_editors.lock() {
+        if editors.contains_key(&effect_id) {
+            return Ok(());
+        }
+    }
+
+    // Fetch manifest from registry (brief lock, then release)
+    let manifest = {
+        let engine = state.audio_engine.lock().map_err(|e| e.to_string())?;
+        engine.plugin_host
+            .registry()
+            .get(&plugin_id)
+            .cloned()
+            .ok_or_else(|| format!("plugin not in registry: {plugin_id}"))?
+    };
+
+    let format = manifest.format;
+    let open_editors = std::sync::Arc::clone(&state.open_plugin_editors);
+
+    // The GUI APIs (IPlugView::attached, clap_gui.set_parent, …) and
+    // Win32 window creation must all happen on the Win32 main thread.
+    let (tx, rx) = std::sync::mpsc::channel::<Result<usize, String>>();
+
+    app.run_on_main_thread(move || {
+        let result: Result<usize, String> = match format {
+            #[cfg(windows)]
+            plugin_system::wrapper::DeviceFormat::Vst3 => unsafe {
+                plugin_system::gui::open_vst3_editor(
+                    &manifest, &plugin_name, &effect_id, open_editors,
+                )
+            },
+            #[cfg(windows)]
+            plugin_system::wrapper::DeviceFormat::Clap => unsafe {
+                plugin_system::gui::open_clap_editor(
+                    &manifest, &plugin_name, &effect_id, open_editors,
+                )
+            },
+            _ => Err("native GUI is only available on Windows".into()),
+        };
+        tx.send(result).ok();
+    }).map_err(|e| e.to_string())?;
+
+    rx.recv().map_err(|e| e.to_string())??;
+    Ok(())
+}
+
+/// Programmatically close the native GUI window for a plugin effect.
+///
+/// Posts `WM_CLOSE` to the window; the WndProc runs the cleanup closure and
+/// removes the entry from `open_plugin_editors` on the main thread.
+#[tauri::command]
+fn close_plugin_editor(
+    effect_id: String,
+    state:     tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    let hwnd = state.open_plugin_editors
+        .lock()
+        .map_err(|e| e.to_string())?
+        .get(&effect_id)
+        .copied();
+
+    if let Some(hwnd) = hwnd {
+        plugin_system::gui::post_close(hwnd);
+    }
+
+    Ok(())
 }
 
 // ── Native audio bootstrap ────────────────────────────────────────────────────
