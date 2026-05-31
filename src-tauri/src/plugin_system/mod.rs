@@ -20,10 +20,12 @@
 //! - [`registry`]     — `PluginManifest` + `PluginRegistry` (discovery)
 //! - [`host`]         — `PluginHost` (lifecycle, parameter routing, state)
 //! - [`capabilities`] — `DeviceCapabilities` introspected device metadata (Phase 1)
+//! - [`instance`]     — `PluginInstance` (Phase 2a): Arc-shared native handle
 
 pub mod capabilities;
 pub mod gui;
 pub mod host;
+pub mod instance;
 pub mod lifecycle;
 pub mod parameter;
 pub mod registry;
@@ -35,6 +37,7 @@ pub use capabilities::{
     ParameterInfo, SpeakerLayout,
 };
 pub use host::PluginHost;
+pub use instance::{NativeHandle, PluginInstance};
 pub use lifecycle::LifecycleState;
 pub use parameter::{Param, ParameterMap, ParameterRange};
 pub use registry::{PluginManifest, PluginRegistry};

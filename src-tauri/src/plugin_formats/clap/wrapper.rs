@@ -5,26 +5,36 @@
 //! All allocations (Vec, Box) happen in `new` and `prepare`.  `process` only
 //! updates raw pointers and calls `ClapPlugin::process` — no heap ops, no locks.
 //!
+//! ## Shared instance (ADR-007, Phase 2a)
+//!
+//! The CLAP plugin pointer and host struct no longer live in this wrapper;
+//! they are owned by a shared [`PluginInstance`] behind an `Arc`.  The wrapper
+//! holds a clone captured at construction; `process` reaches the plugin via
+//! `instance.clap_plugin()` — a non-atomic load through `Arc::deref`.
+//!
 //! ## Thread safety
 //!
 //! `ClapWrapperNode` is `Send` because:
-//! - CLAP plugin instances are required by spec to be single-threaded: all
-//!   audio-thread calls (activate, process) happen on one thread at a time.
-//! - The `Arc<ClapLibrary>` keeps the DLL loaded and is `Send + Sync`.
+//! - CLAP plugin instances are required by spec to be single-threaded.  The
+//!   audio-graph scheduler enforces per-step exclusive ownership, and the
+//!   host only touches the instance between blocks.
+//! - The shared `Arc<PluginInstance>` is `Send + Sync` (see `instance.rs`
+//!   safety claim).
 
 use std::sync::Arc;
 
 use crate::audio_graph::buffer::AudioBuffer;
 use crate::audio_graph::node::{AudioNode, NodeId, PrepareContext, TransportInfo};
 use crate::plugin_system::capabilities::DeviceCapabilities;
+use crate::plugin_system::instance::PluginInstance;
 use crate::plugin_system::lifecycle::LifecycleState;
 use crate::plugin_system::parameter::ParameterMap;
 use crate::plugin_system::state::DeviceState;
-use crate::plugin_system::wrapper::{Device, DeviceFormat, DeviceInfo};
+use crate::plugin_system::wrapper::{Device, DeviceInfo};
 
 use super::ffi::{
-    ClapAudioBuffer, ClapHost, ClapLibrary, ClapOutputEvents, ClapPluginLatency, ClapProcess,
-    ClapPlugin, FixedEventList, CLAP_EXT_LATENCY, CLAP_PROCESS_CONTINUE, CLAP_PROCESS_ERROR,
+    ClapAudioBuffer, ClapOutputEvents, ClapPlugin, ClapPluginLatency, ClapProcess,
+    FixedEventList, CLAP_EXT_LATENCY, CLAP_PROCESS_ERROR,
 };
 
 // ── No-op output events (plugins can push events out; we ignore them for now) ──
@@ -36,16 +46,15 @@ pub struct ClapWrapperNode {
     node_id: NodeId,
     info:    DeviceInfo,
     params:  ParameterMap,
+
+    /// Local lifecycle copy.  Phase 2a keeps this duplicated alongside the
+    /// authoritative `instance.lifecycle` atomic; Phase 2b will retire it.
     lifecycle: LifecycleState,
 
-    // CLAP plugin instance pointer (never null after successful construction)
-    plugin: *const ClapPlugin,
-
-    // Host struct — must outlive the plugin instance
-    _host: Box<ClapHost>,
-
-    // Keeps the DLL loaded
-    _lib: Arc<ClapLibrary>,
+    /// Shared, refcounted handle to the live plugin.  Captured at
+    /// construction; cloned only on the command thread.  Deref on the audio
+    /// thread is a non-atomic field load (cf. `ADR-007`).
+    instance: Arc<PluginInstance>,
 
     // Per-block scratch — pre-allocated in prepare, stable after that
     in_channel_ptrs:  Vec<*mut f32>,
@@ -66,38 +75,26 @@ pub struct ClapWrapperNode {
     reported_latency: u32,
 }
 
-// SAFETY: see module-level doc
+// SAFETY: see module-level doc.  CLAP pointers are reached via Arc-shared
+// `PluginInstance`, which bears `Send + Sync` under the same single-threaded
+// access discipline mandated by the CLAP spec.
 unsafe impl Send for ClapWrapperNode {}
 
 impl ClapWrapperNode {
-    pub fn new(
-        node_id: NodeId,
-        plugin_id: impl Into<String>,
-        name:      impl Into<String>,
-        vendor:    impl Into<String>,
-        plugin:    *const ClapPlugin,
-        host:      Box<ClapHost>,
-        lib:       Arc<ClapLibrary>,
-    ) -> Self {
-        let plugin_id = plugin_id.into();
+    /// Construct from a shared [`PluginInstance`].  Caller must guarantee the
+    /// instance was built with a CLAP native handle (`PluginInstance::new_clap`).
+    pub fn new(node_id: NodeId, instance: Arc<PluginInstance>) -> Self {
+        debug_assert!(
+            instance.clap_plugin().is_some(),
+            "ClapWrapperNode requires a CLAP PluginInstance"
+        );
+        let info = instance.legacy_device_info();
         ClapWrapperNode {
             node_id,
-            info: DeviceInfo {
-                device_id:   plugin_id,
-                name:        name.into(),
-                vendor:      vendor.into(),
-                version:     String::new(),
-                format:      DeviceFormat::Clap,
-                num_inputs:  2,
-                num_outputs: 2,
-                has_midi_input:  false,
-                has_midi_output: false,
-            },
+            info,
             params:    ParameterMap::new(),
             lifecycle: LifecycleState::Created,
-            plugin,
-            _host: host,
-            _lib:  lib,
+            instance,
             in_channel_ptrs:  Vec::new(),
             out_channel_ptrs: Vec::new(),
             in_audio_buf:  unsafe { std::mem::zeroed() },
@@ -112,6 +109,17 @@ impl ClapWrapperNode {
             reported_latency: 0,
         }
     }
+
+    /// CLAP plugin-pointer helper.  Panics if the shared instance was built
+    /// for a different format — wired in `PluginHost::instantiate_clap` and
+    /// guarded by the constructor `debug_assert!`.
+    #[inline(always)]
+    fn plugin_ptr(&self) -> *const ClapPlugin {
+        // Non-atomic pointer-chase through Arc::deref.
+        self.instance
+            .clap_plugin()
+            .expect("ClapWrapperNode missing CLAP plugin pointer (programmer error)")
+    }
 }
 
 impl AudioNode for ClapWrapperNode {
@@ -125,7 +133,7 @@ impl AudioNode for ClapWrapperNode {
         self.in_channel_ptrs  = vec![std::ptr::null_mut(); ctx.num_channels];
         self.out_channel_ptrs = vec![std::ptr::null_mut(); ctx.num_channels];
 
-        let p = self.plugin;
+        let p = self.plugin_ptr();
         unsafe {
             // Initialize the plugin instance if not already done
             ((*p).init)(p);
@@ -149,6 +157,7 @@ impl AudioNode for ClapWrapperNode {
         }
 
         self.lifecycle = LifecycleState::Running;
+        self.instance.set_lifecycle(LifecycleState::Running);
     }
 
     fn process(
@@ -201,7 +210,8 @@ impl AudioNode for ClapWrapperNode {
             out_events: &self.out_events,
         };
 
-        let p = self.plugin;
+        // Non-atomic load through Arc::deref.
+        let p = self.plugin_ptr();
         let status = unsafe { ((*p).process)(p, &process) };
 
         // On error, pass through
@@ -212,7 +222,7 @@ impl AudioNode for ClapWrapperNode {
 
     fn reset(&mut self) {
         if self.active {
-            let p = self.plugin;
+            let p = self.plugin_ptr();
             unsafe { ((*p).reset)(p); }
         }
     }
@@ -226,15 +236,25 @@ impl AudioNode for ClapWrapperNode {
 
 impl Drop for ClapWrapperNode {
     fn drop(&mut self) {
-        let p = self.plugin;
-        unsafe {
-            if self.active {
+        // CLAP lifecycle requires stop_processing + deactivate before
+        // destroy, but only if start_processing was called (the spec
+        // forbids stop on an inactive plugin).  We perform those two steps
+        // here, then release the `Arc<PluginInstance>` clone; the final
+        // `destroy()` happens in `PluginInstance::drop` once the last `Arc`
+        // is released (host clone + this clone — see `instance.rs`).
+        //
+        // Runs off-RT: the snapshot drop ring releases the old `CompiledGraph`
+        // on a dedicated worker thread, never on the audio thread.
+        if self.active {
+            let p = self.plugin_ptr();
+            unsafe {
                 ((*p).stop_processing)(p);
                 ((*p).deactivate)(p);
             }
-            ((*p).destroy)(p);
+            self.active = false;
         }
-        // _lib Arc drops → FreeLibrary when no other nodes use this DLL
+        // `self.instance` Arc drops next.  If this was the last clone the
+        // PluginInstance::Drop fires destroy() + frees the DLL.
     }
 }
 
@@ -248,9 +268,18 @@ impl Device for ClapWrapperNode {
     fn load_state(&mut self, _: &DeviceState) {}
 
     fn lifecycle_state(&self) -> LifecycleState { self.lifecycle }
-    fn suspend(&mut self)  { self.lifecycle = LifecycleState::Suspended; }
-    fn resume(&mut self)   { self.lifecycle = LifecycleState::Running; }
-    fn destroy(&mut self)  { self.lifecycle = LifecycleState::Destroyed; }
+    fn suspend(&mut self)  {
+        self.lifecycle = LifecycleState::Suspended;
+        self.instance.set_lifecycle(LifecycleState::Suspended);
+    }
+    fn resume(&mut self)   {
+        self.lifecycle = LifecycleState::Running;
+        self.instance.set_lifecycle(LifecycleState::Running);
+    }
+    fn destroy(&mut self)  {
+        self.lifecycle = LifecycleState::Destroyed;
+        self.instance.set_lifecycle(LifecycleState::Destroyed);
+    }
 
     fn reported_latency(&self) -> u32 { self.reported_latency }
 

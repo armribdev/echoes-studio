@@ -5,12 +5,24 @@
 //! All allocations happen in `prepare`.  `process` only moves pointers around
 //! and calls IAudioProcessor::process — no heap ops, no locks.
 //!
+//! ## Shared instance (ADR-007, Phase 2a)
+//!
+//! The COM pointers no longer live in this wrapper.  They are owned by
+//! [`PluginInstance`] behind an `Arc`; the wrapper holds a clone captured at
+//! construction time.  Every FFI dispatch (`prepare`, `process`, `reset`)
+//! reaches the handle via `instance.vst3_handles()` — a non-atomic field read
+//! through the `Arc::deref`.  No `Arc::clone` and no `Arc::drop` ever runs on
+//! the audio thread.
+//!
 //! ## Thread safety
 //!
 //! `VstWrapperNode` is `Send` because:
-//! - The COM object pointers are only dereferenced on one thread at a time:
-//!   `prepare` on the command thread, `process` exclusively on the audio thread.
-//! - `Arc<Vst3Library>` is `Send + Sync` (FreeLibrary is safe from any thread).
+//! - The COM object pointers (now inside the shared `PluginInstance`) are
+//!   accessed serially per the audio-graph scheduler's per-step ownership
+//!   invariant: `prepare` runs on the command thread, `process` runs
+//!   exclusively on the audio thread.
+//! - The shared `Arc<PluginInstance>` is `Send + Sync` (see `instance.rs`
+//!   safety claim).
 
 use std::ptr::NonNull;
 use std::sync::Arc;
@@ -18,14 +30,15 @@ use std::sync::Arc;
 use crate::audio_graph::buffer::AudioBuffer;
 use crate::audio_graph::node::{AudioNode, NodeId, PrepareContext, TransportInfo};
 use crate::plugin_system::capabilities::DeviceCapabilities;
+use crate::plugin_system::instance::PluginInstance;
 use crate::plugin_system::lifecycle::LifecycleState;
 use crate::plugin_system::parameter::ParameterMap;
 use crate::plugin_system::state::DeviceState;
-use crate::plugin_system::wrapper::{Device, DeviceFormat, DeviceInfo};
+use crate::plugin_system::wrapper::{Device, DeviceInfo};
 
 use super::ffi::{
     AudioBusBuffers, IAudioProcessor, IComponent, ProcessData, ProcessSetup,
-    Vst3Library, K_RESULT_OK, SPEAKER_STEREO,
+    K_RESULT_OK, SPEAKER_STEREO,
 };
 
 // ── VstWrapperNode ─────────────────────────────────────────────────────────────
@@ -34,14 +47,14 @@ pub struct VstWrapperNode {
     node_id: NodeId,
     info:    DeviceInfo,
     params:  ParameterMap,
+
+    /// Local lifecycle copy.  Phase 2a keeps this duplicated alongside the
+    /// authoritative `instance.lifecycle` atomic; Phase 2b will retire it.
     lifecycle: LifecycleState,
 
-    // COM pointers (never null after successful construction)
-    component: NonNull<IComponent>,
-    processor: NonNull<IAudioProcessor>,
-
-    // Keeps the DLL loaded for the lifetime of this node.
-    _lib: Arc<Vst3Library>,
+    /// Shared, refcounted handle.  Captured at construction; cloned only on
+    /// the command thread.  Deref on the audio thread is a non-atomic load.
+    instance: Arc<PluginInstance>,
 
     // Per-block scratch — pre-allocated in prepare, pointer-stable until next prepare.
     // Vecs are never resized on the audio thread.
@@ -58,38 +71,26 @@ pub struct VstWrapperNode {
     reported_latency: u32,
 }
 
-// SAFETY: see module-level doc
+// SAFETY: see module-level doc.  Raw pointers are reached via Arc-shared
+// `PluginInstance`, which itself bears `Send + Sync` under the same
+// sequential-access discipline.
 unsafe impl Send for VstWrapperNode {}
 
 impl VstWrapperNode {
-    /// Construct from a live IComponent + IAudioProcessor pair.
-    pub fn new(
-        node_id: NodeId,
-        plugin_id: impl Into<String>,
-        name: impl Into<String>,
-        component: NonNull<IComponent>,
-        processor: NonNull<IAudioProcessor>,
-        lib: Arc<Vst3Library>,
-    ) -> Self {
-        let plugin_id = plugin_id.into();
+    /// Construct from a shared [`PluginInstance`].  Caller must guarantee the
+    /// instance was built with VST3 native handles (`PluginInstance::new_vst3`).
+    pub fn new(node_id: NodeId, instance: Arc<PluginInstance>) -> Self {
+        debug_assert!(
+            instance.vst3_handles().is_some(),
+            "VstWrapperNode requires a VST3 PluginInstance"
+        );
+        let info = instance.legacy_device_info();
         VstWrapperNode {
             node_id,
-            info: DeviceInfo {
-                device_id:   plugin_id,
-                name:        name.into(),
-                vendor:      String::new(),
-                version:     String::new(),
-                format:      DeviceFormat::Vst3,
-                num_inputs:  2,
-                num_outputs: 2,
-                has_midi_input:  false,
-                has_midi_output: false,
-            },
+            info,
             params:    ParameterMap::new(),
             lifecycle: LifecycleState::Created,
-            component,
-            processor,
-            _lib: lib,
+            instance,
             in_channel_ptrs:  Vec::new(),
             out_channel_ptrs: Vec::new(),
             in_bus:  unsafe { std::mem::zeroed() },
@@ -97,6 +98,19 @@ impl VstWrapperNode {
             num_channels: 2,
             reported_latency: 0,
         }
+    }
+
+    /// VST3 handles helper.  Panics if the shared instance was constructed
+    /// for a different format — wired in `PluginHost::instantiate_vst3` and
+    /// guarded by the constructor `debug_assert!`, so this is a programmer
+    /// error rather than a runtime condition.
+    #[inline(always)]
+    fn handles(&self) -> (NonNull<IComponent>, NonNull<IAudioProcessor>) {
+        // Non-atomic pointer-chase through Arc::deref.  Identical RT cost to a
+        // struct field load.
+        self.instance
+            .vst3_handles()
+            .expect("VstWrapperNode missing VST3 handles (programmer error)")
     }
 }
 
@@ -113,7 +127,9 @@ impl AudioNode for VstWrapperNode {
         self.in_channel_ptrs  = vec![std::ptr::null_mut(); ctx.num_channels];
         self.out_channel_ptrs = vec![std::ptr::null_mut(); ctx.num_channels];
 
-        let proc = self.processor.as_ptr();
+        let (comp_nn, proc_nn) = self.handles();
+        let proc = proc_nn.as_ptr();
+        let comp = comp_nn.as_ptr();
 
         // Inform plugin of bus arrangement (stereo in + stereo out)
         let mut in_arr  = SPEAKER_STEREO;
@@ -123,7 +139,6 @@ impl AudioNode for VstWrapperNode {
         }
 
         // Activate main I/O buses on the component side
-        let comp = self.component.as_ptr();
         unsafe {
             // kAudio=0, kInput=0, index 0, activate=true(1)
             ((*(*comp).vtbl).activate_bus)(comp, 0, 0, 0, 1);
@@ -151,6 +166,7 @@ impl AudioNode for VstWrapperNode {
         }
 
         self.lifecycle = LifecycleState::Running;
+        self.instance.set_lifecycle(LifecycleState::Running);
     }
 
     fn process(
@@ -206,7 +222,9 @@ impl AudioNode for VstWrapperNode {
             process_context:      std::ptr::null_mut(),
         };
 
-        let proc = self.processor.as_ptr();
+        // Non-atomic load through Arc::deref → identical cost to a field read.
+        let (_, proc_nn) = self.handles();
+        let proc = proc_nn.as_ptr();
         let r = unsafe { ((*(*proc).vtbl).process)(proc, &mut data) };
 
         // On plugin error, fall back to pass-through.
@@ -217,7 +235,8 @@ impl AudioNode for VstWrapperNode {
 
     fn reset(&mut self) {
         // VST3 setProcessing(false) then setProcessing(true) resets internal state.
-        let proc = self.processor.as_ptr();
+        let (_, proc_nn) = self.handles();
+        let proc = proc_nn.as_ptr();
         unsafe {
             ((*(*proc).vtbl).set_processing)(proc, 0);
             ((*(*proc).vtbl).set_processing)(proc, 1);
@@ -231,23 +250,13 @@ impl AudioNode for VstWrapperNode {
     }
 }
 
-impl Drop for VstWrapperNode {
-    fn drop(&mut self) {
-        let proc = self.processor.as_ptr();
-        let comp = self.component.as_ptr();
-        unsafe {
-            // Deactivate and terminate before releasing.
-            ((*(*proc).vtbl).set_processing)(proc, 0);
-            ((*(*comp).vtbl).set_active)(comp, 0);
-            ((*(*comp).vtbl).terminate)(comp);
-            // Release IAudioProcessor ref (may be same object as IComponent).
-            ((*(*proc).vtbl).release)(proc as *mut _);
-            // Release IComponent ref.
-            ((*(*comp).vtbl).release)(comp as *mut _);
-        }
-        // _lib Arc drops here, FreeLibrary when last node using this DLL is gone.
-    }
-}
+// NOTE: no `Drop` impl here.  The COM pointers are owned by `PluginInstance`,
+// which holds the only authoritative `Drop` for the FFI handles (see
+// `instance.rs`).  When the snapshot drop ring releases this wrapper, the
+// embedded `Arc<PluginInstance>` decrements the refcount; the host's own
+// clone usually still holds the instance alive at that moment.  The handle
+// is freed when the **last** `Arc` is released, on whichever off-RT thread
+// performs that release.
 
 impl Device for VstWrapperNode {
     fn device_id(&self) -> &str { &self.info.device_id }
@@ -261,9 +270,18 @@ impl Device for VstWrapperNode {
     fn load_state(&mut self, _state: &DeviceState) {}
 
     fn lifecycle_state(&self)  -> LifecycleState { self.lifecycle }
-    fn suspend(&mut self)  { self.lifecycle = LifecycleState::Suspended; }
-    fn resume(&mut self)   { self.lifecycle = LifecycleState::Running; }
-    fn destroy(&mut self)  { self.lifecycle = LifecycleState::Destroyed; }
+    fn suspend(&mut self)  {
+        self.lifecycle = LifecycleState::Suspended;
+        self.instance.set_lifecycle(LifecycleState::Suspended);
+    }
+    fn resume(&mut self)   {
+        self.lifecycle = LifecycleState::Running;
+        self.instance.set_lifecycle(LifecycleState::Running);
+    }
+    fn destroy(&mut self)  {
+        self.lifecycle = LifecycleState::Destroyed;
+        self.instance.set_lifecycle(LifecycleState::Destroyed);
+    }
 
     fn reported_latency(&self) -> u32 { self.reported_latency }
 

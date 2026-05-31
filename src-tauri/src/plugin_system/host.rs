@@ -8,9 +8,17 @@
 //! 1. At startup, `scan_plugins` populates the registry by probing VST3 and
 //!    CLAP search directories.
 //! 2. When the graph compiler encounters `NodeKind::Plugin { device_id }`, it
-//!    calls `instantiate` to get a `Box<dyn AudioNode>`.
-//! 3. The wrapper node takes ownership of the loaded COM/CLAP pointers and
-//!    carries them into the `GraphScheduler` on the audio thread.
+//!    calls `instantiate`.  The host:
+//!       * builds an `Arc<PluginInstance>` that owns the native handle,
+//!       * stores its own clone of that `Arc` in `instances`,
+//!       * hands a wrapper `Box<dyn AudioNode>` (holding *another* clone) to
+//!         the compiler.
+//!    Both clones share the same underlying handle — ADR-007 / Phase 2a.
+//! 3. The wrapper carries the audio-side clone into the `GraphScheduler` on
+//!    the audio thread.  When the old `CompiledGraph` retires through the
+//!    snapshot drop ring, the audio-side clone drops off the RT path.  The
+//!    last `Arc::drop` (whichever thread holds it) runs `PluginInstance::drop`
+//!    and tears the FFI handle down.
 
 use std::collections::HashMap;
 use std::ptr::NonNull;
@@ -23,11 +31,11 @@ use crate::plugin_formats::clap::wrapper::ClapWrapperNode;
 use crate::plugin_formats::vst3::ffi::{Vst3Library, instantiate_processor};
 use crate::plugin_formats::vst3::host::decode_plugin_id as vst3_decode_id;
 use crate::plugin_formats::vst3::wrapper::VstWrapperNode;
+use crate::plugin_system::instance::PluginInstance;
 use crate::plugin_system::lifecycle::{LifecycleError, LifecycleState, transition};
-use crate::plugin_system::parameter::ParamKey;
 use crate::plugin_system::registry::{PluginManifest, PluginRegistry};
 use crate::plugin_system::state::DeviceState;
-use crate::plugin_system::wrapper::{Device, DeviceFormat, PassThroughDevice};
+use crate::plugin_system::wrapper::{DeviceFormat, PassThroughDevice};
 
 // ── Host error ────────────────────────────────────────────────────────────────
 
@@ -53,9 +61,15 @@ impl std::fmt::Display for HostError {
 }
 
 // ── Device record ─────────────────────────────────────────────────────────────
+//
+// Phase 2a: the long-lived ownership root for one device.  Carries the
+// host-side `Arc` clone (so the host can address the live instance) plus the
+// transitional `lifecycle` / `saved_state` fields the legacy API still
+// surfaces.  Phase 2b will fold `lifecycle` into the instance's atomic;
+// Phase 3 will retire `saved_state` once SPSC param transport lands.
 
 struct DeviceRecord {
-    id:          String,
+    instance:    Arc<PluginInstance>,
     lifecycle:   LifecycleState,
     saved_state: DeviceState,
 }
@@ -115,6 +129,12 @@ impl PluginHost {
 
     // ── Instantiation ─────────────────────────────────────────────────────────
 
+    /// Instantiate a plugin and return the audio-side `Box<dyn AudioNode>`
+    /// the graph compiler embeds in `CompiledGraph.processors`.
+    ///
+    /// The host keeps its own `Arc<PluginInstance>` clone in `instances` so
+    /// later lifecycle / parameter / state calls can address the live
+    /// instance directly (ADR-007).
     pub fn instantiate(
         &mut self,
         node_id:   NodeId,
@@ -124,9 +144,11 @@ impl PluginHost {
             .ok_or_else(|| HostError::PluginNotFound(plugin_id.to_string()))?
             .clone();
 
-        let device: Box<dyn AudioNode> = match manifest.format {
+        let (instance, device): (Arc<PluginInstance>, Box<dyn AudioNode>) = match manifest.format {
             DeviceFormat::Internal => {
-                Box::new(PassThroughDevice::new(node_id, plugin_id, &manifest.name))
+                let inst = PluginInstance::new_internal(plugin_id, &manifest.name);
+                let node = Box::new(PassThroughDevice::new(node_id, plugin_id, &manifest.name));
+                (inst, node)
             }
 
             DeviceFormat::Vst3 => {
@@ -139,17 +161,21 @@ impl PluginHost {
 
             DeviceFormat::Au => {
                 eprintln!("[host] AU not yet implemented for '{plugin_id}' — pass-through");
-                Box::new(PassThroughDevice::new(node_id, plugin_id, &manifest.name))
+                let inst = PluginInstance::new_internal(plugin_id, &manifest.name);
+                let node = Box::new(PassThroughDevice::new(node_id, plugin_id, &manifest.name));
+                (inst, node)
             }
 
             DeviceFormat::Wasm => {
                 eprintln!("[host] WASM not yet implemented for '{plugin_id}' — pass-through");
-                Box::new(PassThroughDevice::new(node_id, plugin_id, &manifest.name))
+                let inst = PluginInstance::new_internal(plugin_id, &manifest.name);
+                let node = Box::new(PassThroughDevice::new(node_id, plugin_id, &manifest.name));
+                (inst, node)
             }
         };
 
         self.records.insert(plugin_id.to_string(), DeviceRecord {
-            id:          plugin_id.to_string(),
+            instance,
             lifecycle:   LifecycleState::Running,
             saved_state: DeviceState::empty(plugin_id),
         });
@@ -164,7 +190,7 @@ impl PluginHost {
         node_id:   NodeId,
         plugin_id: &str,
         manifest:  &PluginManifest,
-    ) -> Result<Box<dyn AudioNode>, HostError> {
+    ) -> Result<(Arc<PluginInstance>, Box<dyn AudioNode>), HostError> {
         let cid = vst3_decode_id(plugin_id)
             .ok_or_else(|| HostError::InstantiationFailed("invalid VST3 plugin_id".into()))?;
 
@@ -189,9 +215,15 @@ impl PluginHost {
         let proc_nn = NonNull::new(proc)
             .ok_or_else(|| HostError::InstantiationFailed("null IAudioProcessor".into()))?;
 
-        Ok(Box::new(VstWrapperNode::new(
-            node_id, plugin_id, &manifest.name, comp_nn, proc_nn, lib,
-        )))
+        let instance = PluginInstance::new_vst3(
+            plugin_id, &manifest.name, comp_nn, proc_nn, lib,
+        );
+
+        let node: Box<dyn AudioNode> = Box::new(VstWrapperNode::new(
+            node_id, Arc::clone(&instance),
+        ));
+
+        Ok((instance, node))
     }
 
     // ── CLAP instantiation ────────────────────────────────────────────────────
@@ -201,7 +233,7 @@ impl PluginHost {
         node_id:   NodeId,
         plugin_id: &str,
         manifest:  &PluginManifest,
-    ) -> Result<Box<dyn AudioNode>, HostError> {
+    ) -> Result<(Arc<PluginInstance>, Box<dyn AudioNode>), HostError> {
         let clap_id = clap_decode_id(plugin_id)
             .ok_or_else(|| HostError::InstantiationFailed("invalid CLAP plugin_id".into()))?;
 
@@ -234,15 +266,20 @@ impl PluginHost {
             ));
         }
 
-        Ok(Box::new(ClapWrapperNode::new(
-            node_id,
+        let instance = PluginInstance::new_clap(
             plugin_id,
             &manifest.name,
             &manifest.vendor,
             plugin,
             host,
             lib,
-        )))
+        );
+
+        let node: Box<dyn AudioNode> = Box::new(ClapWrapperNode::new(
+            node_id, Arc::clone(&instance),
+        ));
+
+        Ok((instance, node))
     }
 
     // ── Parameter routing ─────────────────────────────────────────────────────
@@ -257,6 +294,10 @@ impl PluginHost {
             return Err(HostError::DeviceNotFound(device_id.to_string()));
         }
         let record = self.records.get_mut(device_id).unwrap();
+        // Phase 2a: still stash the value in a JSON blob.  Phase 3 (ADR-008)
+        // will replace this with an SPSC `ParamChange` push to the
+        // instance-owned queue.  Routing the value to the live plugin
+        // requires the queue plus the wrapper-side drain — out of scope here.
         record.saved_state = DeviceState::from_json(
             device_id,
             serde_json::json!({ "param": param_key, "value": value }),
@@ -271,6 +312,7 @@ impl PluginHost {
             .ok_or_else(|| HostError::DeviceNotFound(device_id.to_string()))?;
         record.lifecycle = transition(record.lifecycle, LifecycleState::Suspended)
             .map_err(HostError::LifecycleError)?;
+        record.instance.set_lifecycle(record.lifecycle);
         Ok(())
     }
 
@@ -279,13 +321,18 @@ impl PluginHost {
             .ok_or_else(|| HostError::DeviceNotFound(device_id.to_string()))?;
         record.lifecycle = transition(record.lifecycle, LifecycleState::Running)
             .map_err(HostError::LifecycleError)?;
+        record.instance.set_lifecycle(record.lifecycle);
         Ok(())
     }
 
     pub fn destroy_device(&mut self, device_id: &str) {
         if let Some(record) = self.records.get_mut(device_id) {
             record.lifecycle = LifecycleState::Destroyed;
+            record.instance.set_lifecycle(LifecycleState::Destroyed);
         }
+        // Dropping the record releases the host-side `Arc<PluginInstance>`
+        // clone.  If the audio side has already retired its clone, the last
+        // `Arc::drop` here runs `PluginInstance::drop` and tears the FFI down.
         self.records.remove(device_id);
     }
 
@@ -308,6 +355,14 @@ impl PluginHost {
 
     pub fn lifecycle_of(&self, device_id: &str) -> Option<LifecycleState> {
         self.records.get(device_id).map(|r| r.lifecycle)
+    }
+
+    /// Borrow the shared instance for an already-instantiated device.
+    ///
+    /// Returns a clone of the host-side `Arc` so callers (Phase 2c GUI editor,
+    /// future tests) can address the live plugin without duplicating it.
+    pub fn instance(&self, device_id: &str) -> Option<Arc<PluginInstance>> {
+        self.records.get(device_id).map(|r| Arc::clone(&r.instance))
     }
 }
 
