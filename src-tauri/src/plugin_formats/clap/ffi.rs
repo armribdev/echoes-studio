@@ -460,6 +460,151 @@ pub struct ClapPluginLatency {
     pub get: unsafe extern "C" fn(*const ClapPlugin) -> u32,
 }
 
+// ── clap.state extension (plugin state save/load — Phase 4c, ADR-010) ─────────
+//
+// The CLAP analogue of VST3's `IComponent::get/setState` (sub-phase 4b).  Unlike
+// VST3 (host-implemented `IBStream` over FUnknown), CLAP streams are pure C: a
+// `ctx` back-pointer plus a single read/write fn pointer — the same shape the
+// event lists in this file already use (`FixedEventList`).  The host supplies a
+// `Vec<u8>`-backed `ClapStateStream`; the plugin writes into it (`save`) or
+// reads back from it (`load`) synchronously inside the call.
+//
+// Threading: `save`/`load` are `[main-thread]` in the CLAP spec.  We call them
+// on the command thread (project save / open) while the transport is stopped —
+// the same operating invariant documented for VST3 in `plugin_system::instance`.
+
+/// Extension ID for `clap.state` (CLAP 1.x).
+pub const CLAP_EXT_STATE: &[u8] = b"clap.state\0";
+
+/// `clap_istream` — host-provided input byte stream the plugin reads its state
+/// from during `clap_plugin_state.load`.
+#[repr(C)]
+pub struct ClapIStream {
+    pub ctx:  *mut c_void,
+    /// Returns the number of bytes read; `0` = EOF, `-1` = read error.
+    pub read: unsafe extern "C" fn(*const ClapIStream, *mut c_void, u64) -> i64,
+}
+
+/// `clap_ostream` — host-provided output byte stream the plugin writes its
+/// state into during `clap_plugin_state.save`.
+#[repr(C)]
+pub struct ClapOStream {
+    pub ctx:   *mut c_void,
+    /// Returns the number of bytes written; `-1` = write error.
+    pub write: unsafe extern "C" fn(*const ClapOStream, *const c_void, u64) -> i64,
+}
+
+/// `clap_plugin_state` plugin-side vtable.  Both calls are `[main-thread]`.
+#[repr(C)]
+pub struct ClapPluginState {
+    pub save: unsafe extern "C" fn(*const ClapPlugin, *const ClapOStream) -> bool,
+    pub load: unsafe extern "C" fn(*const ClapPlugin, *const ClapIStream) -> bool,
+}
+
+/// Host-side byte buffer backing both a `clap_istream` and a `clap_ostream`.
+///
+/// Boxed so its address is stable: the `ctx` field of each embedded stream
+/// vtable points back at this struct, exactly like `FixedEventList`.  Lives for
+/// the duration of a single save/load call and is dropped immediately after.
+pub struct ClapStateStream {
+    data:    Vec<u8>,
+    pos:     usize,
+    istream: ClapIStream,
+    ostream: ClapOStream,
+}
+
+unsafe extern "C" fn clap_istream_read(
+    stream: *const ClapIStream, buffer: *mut c_void, size: u64,
+) -> i64 {
+    if stream.is_null() { return -1; }
+    let s = (*stream).ctx as *mut ClapStateStream;
+    if s.is_null() || (buffer.is_null() && size != 0) { return -1; }
+    let s = &mut *s;
+    let want  = size as usize;
+    let avail = s.data.len().saturating_sub(s.pos);
+    let n = want.min(avail);
+    if n > 0 {
+        std::ptr::copy_nonoverlapping(s.data.as_ptr().add(s.pos), buffer as *mut u8, n);
+        s.pos += n;
+    }
+    n as i64 // 0 here naturally signals EOF
+}
+
+unsafe extern "C" fn clap_ostream_write(
+    stream: *const ClapOStream, buffer: *const c_void, size: u64,
+) -> i64 {
+    if stream.is_null() { return -1; }
+    let s = (*stream).ctx as *mut ClapStateStream;
+    if s.is_null() || (buffer.is_null() && size != 0) { return -1; }
+    let s = &mut *s;
+    let n = size as usize;
+    if n > 0 {
+        // Overwrite/extend at the current position.
+        if s.pos + n > s.data.len() {
+            s.data.resize(s.pos + n, 0);
+        }
+        std::ptr::copy_nonoverlapping(buffer as *const u8, s.data.as_mut_ptr().add(s.pos), n);
+        s.pos += n;
+    }
+    n as i64
+}
+
+impl ClapStateStream {
+    fn build(data: Vec<u8>) -> Box<Self> {
+        let mut s = Box::new(ClapStateStream {
+            data,
+            pos: 0,
+            istream: ClapIStream { ctx: std::ptr::null_mut(), read:  clap_istream_read },
+            ostream: ClapOStream { ctx: std::ptr::null_mut(), write: clap_ostream_write },
+        });
+        // Point both vtable ctx fields back at the (now heap-stable) struct.
+        let self_ptr = s.as_mut() as *mut ClapStateStream as *mut c_void;
+        s.istream.ctx = self_ptr;
+        s.ostream.ctx = self_ptr;
+        s
+    }
+    fn empty() -> Box<Self>             { Self::build(Vec::new()) }
+    fn with_data(data: Vec<u8>) -> Box<Self> { Self::build(data) }
+}
+
+/// Serialise a CLAP plugin's state into a byte buffer via the `clap.state`
+/// extension.  Returns `None` if the plugin exposes no `clap.state`, reports
+/// failure, or writes no bytes.
+///
+/// # Safety
+/// `plugin` must be a valid, initialised `ClapPlugin`.  Call off the audio
+/// thread (see the threading caveat in `plugin_system::instance`).
+pub unsafe fn read_plugin_state(plugin: *const ClapPlugin) -> Option<Vec<u8>> {
+    if plugin.is_null() { return None; }
+    let ext = ((*plugin).get_extension)(plugin, CLAP_EXT_STATE.as_ptr() as *const c_char)
+        as *const ClapPluginState;
+    if ext.is_null() { return None; }
+
+    let mut stream = ClapStateStream::empty();
+    let os = &stream.ostream as *const ClapOStream;
+    let ok = ((*ext).save)(plugin, os);
+    if !ok { return None; }
+
+    let data = std::mem::take(&mut stream.data);
+    if data.is_empty() { None } else { Some(data) }
+}
+
+/// Restore a previously-saved blob into a CLAP plugin via `clap.state.load`.
+/// Returns `true` on success, `false` if unsupported or the plugin rejected it.
+///
+/// # Safety
+/// As [`read_plugin_state`].
+pub unsafe fn write_plugin_state(plugin: *const ClapPlugin, bytes: &[u8]) -> bool {
+    if plugin.is_null() { return false; }
+    let ext = ((*plugin).get_extension)(plugin, CLAP_EXT_STATE.as_ptr() as *const c_char)
+        as *const ClapPluginState;
+    if ext.is_null() { return false; }
+
+    let mut stream = ClapStateStream::with_data(bytes.to_vec());
+    let is = &stream.istream as *const ClapIStream;
+    ((*ext).load)(plugin, is)
+}
+
 // ── Host-side extensions (host_get_extension can return these) ────────────────
 
 pub const CLAP_EXT_LOG:      &[u8] = b"clap.log\0";
@@ -645,5 +790,57 @@ pub struct ClapLibrary { pub path: std::path::PathBuf }
 impl ClapLibrary {
     pub fn load(_: &Path) -> Result<(std::sync::Arc<Self>, *const ClapPluginEntry), String> {
         Err("CLAP only supported on Windows currently".into())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Exercises the host-side `ClapStateStream` the way a plugin's
+    // `clap.state.save`/`load` would: write bytes through the ostream vtable,
+    // then read them straight back through the istream vtable.  No real plugin
+    // required — validates the stream plumbing read/write/EOF semantics.
+    #[test]
+    fn clap_state_stream_write_then_read_roundtrips() {
+        let payload: Vec<u8> = (0u8..200).collect();
+
+        // ── save: plugin writes into the ostream (two chunks) ──
+        let mut out = ClapStateStream::empty();
+        let os = &out.ostream as *const ClapOStream;
+        unsafe {
+            let w1 = (out.ostream.write)(os, payload.as_ptr() as *const c_void, 128);
+            let w2 = (out.ostream.write)(
+                os,
+                payload[128..].as_ptr() as *const c_void,
+                (payload.len() - 128) as u64,
+            );
+            assert_eq!(w1, 128);
+            assert_eq!(w2, (payload.len() - 128) as i64);
+        }
+        let saved = std::mem::take(&mut out.data);
+        assert_eq!(saved, payload);
+
+        // ── load: plugin reads back from the istream ──
+        let inp = ClapStateStream::with_data(saved.clone());
+        let is = &inp.istream as *const ClapIStream;
+        let mut buf = vec![0u8; saved.len()];
+        unsafe {
+            let r = (inp.istream.read)(is, buf.as_mut_ptr() as *mut c_void, saved.len() as u64);
+            assert_eq!(r, saved.len() as i64);
+            // Past the end → 0 bytes (EOF), not an error.
+            let eof = (inp.istream.read)(is, buf.as_mut_ptr() as *mut c_void, 16);
+            assert_eq!(eof, 0);
+        }
+        assert_eq!(buf, payload);
+    }
+
+    // A zero-length save must surface as `None` from `read_plugin_state`'s
+    // caller contract; here we assert the stream itself stays empty so the
+    // helper's `is_empty()` check fires.
+    #[test]
+    fn clap_state_stream_empty_save_is_empty() {
+        let out = ClapStateStream::empty();
+        assert!(out.data.is_empty());
     }
 }

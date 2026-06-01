@@ -1,16 +1,21 @@
-# ADR-010 — Plugin state persistence via native FFI (Phase 4b, VST3)
+# ADR-010 — Plugin state persistence via native FFI (Phase 4b VST3 + 4c CLAP)
 
 ## Status
 
-Accepted. Implements the **VST3 half (sub-phase 4b)** of **Phase 4 — Séparation
-DSP/UI stricte (clôture)** of [`docs/migration_plan.md`](../../migration_plan.md)
-§4 (the `P0-4` of
+Accepted. Implements the **VST3 half (sub-phase 4b)** and the **CLAP half
+(sub-phase 4c)** of **Phase 4 — Séparation DSP/UI stricte (clôture)** of
+[`docs/migration_plan.md`](../../migration_plan.md) §4 (the `P0-4` of
 [`audits/plugin-system-audit-2026-05-31.md`](../audits/plugin-system-audit-2026-05-31.md)).
 
-Scope of this ADR: **VST3 only.** CLAP state (sub-phase 4c, via `clap.state` +
-`clap_istream`/`clap_ostream`) and AU are deferred and continue to use the
+Scope of this ADR: **VST3 + CLAP.** AU/WASM are deferred and continue to use the
 empty/cache fallback. Phase 4a (single GUI/audio `Arc<PluginInstance>`, closing
 A1 of the GUI audit) shipped in Phase 2c and is a precondition here.
+
+Sub-phase 4c reuses **verbatim** the `PluginInstance` / `PluginHost` / project
+plumbing introduced for VST3: only a CLAP-native stream pair and a dispatch
+branch were added (see *Module map* and *CLAP addendum* below). The host API,
+project file schema, and save/load orchestration are format-agnostic and were
+not touched.
 
 ---
 
@@ -62,12 +67,27 @@ had no concrete stream to pass.
 | File | Change |
 |---|---|
 | `plugin_formats/vst3/ffi.rs` | `HostStream` (`IBStream`) + `IID_IBSTREAM` + `read/write_component_state` |
-| `plugin_system/instance.rs` | `save_state_blob` / `load_state_blob` (VST3 dispatch) |
-| `plugin_system/host.rs` | `save/load_device_state` via FFI; `device_ids()` |
+| `plugin_formats/clap/ffi.rs` | **(4c)** `CLAP_EXT_STATE` + `ClapPluginState`/`ClapIStream`/`ClapOStream` vtables + `ClapStateStream` (`Vec<u8>`-backed) + `read/write_plugin_state` + stream round-trip test |
+| `plugin_system/instance.rs` | `save_state_blob` / `load_state_blob` (VST3 dispatch; **4c** adds the CLAP branch) |
+| `plugin_system/host.rs` | `save/load_device_state` via FFI; `device_ids()` (format-agnostic — unchanged by 4c) |
 | `plugin_system/state.rs` | `encode_base64` / `decode_base64` + tests |
 | `project.rs` | `AppProject.plugin_state_blobs` + `ProjectFile.plugin_state_blobs` (serde default); `to_file` / `from_file` |
 | `engine_gateway/api.rs` | `snapshot_project` carries the (empty) field |
 | `main.rs` | harvest on save; restore after recompile on load |
+
+### CLAP addendum (sub-phase 4c)
+
+CLAP's `clap.state` extension is the direct analogue of VST3 `IComponent::get/setState`.
+The difference is the stream shape: VST3 needs a host-implemented `IBStream` over
+FUnknown (query_interface/add_ref/release/read/write/seek/tell); CLAP streams are
+pure C — a `ctx` back-pointer plus a single `read` (`clap_istream`) or `write`
+(`clap_ostream`) function pointer, the same shape the existing `FixedEventList`
+already uses. `ClapStateStream` is a boxed `Vec<u8>` buffer whose two embedded
+vtables point their `ctx` back at the box; `read_plugin_state`/`write_plugin_state`
+fetch the `clap.state` extension via `get_extension`, run `save`/`load`
+synchronously, and drop the stream immediately after. A `get_extension` returning
+null (plugin without `clap.state`) falls through to `None`/`false` → default
+preset, preserving pre-4c behaviour.
 
 ## Real-time impact
 
@@ -109,13 +129,21 @@ sub-phase's scope (C-7: compiler extended, not rewritten).
 
 ## Technical debt added
 
-- **CLAP / AU state unimplemented** (sub-phase 4c): they return `None`/`false`
-  and fall back to the empty cache.
-- **State save/load not barrier-synchronised** against `process` (see caveat).
-- **Controller-only state not persisted** (single-component assumption).
+- **AU / WASM state unimplemented**: they return `None`/`false` and fall back to
+  the empty cache. (CLAP closed in 4c.)
+- **State save/load not barrier-synchronised** against `process` (see caveat) —
+  applies to CLAP identically: `clap.state.save/load` are `[main-thread]` and are
+  called on the command thread while the transport is stopped.
+- **Controller-only state not persisted** (single-component assumption, VST3).
+- **CLAP state not verified against a real plugin in CI** — the round-trip test
+  exercises the host stream callbacks only; smoke-testing Surge XT / a CLAP synth
+  preset is a manual release-checklist item (V5 of the migration plan).
 
 ## Next step
 
-Sub-phase 4c — CLAP state via a new `clap.state` extension +
-`clap_istream`/`clap_ostream` in `clap/ffi.rs`, reusing the `PluginInstance` /
-`PluginHost` / project plumbing introduced here verbatim.
+Phase 4 (state) is complete for VST3 + CLAP. The remaining Phase 4 surface is
+already shipped (4a single instance). Subsequent work moves to Phase 5
+(PortKind + MIDI + automation); see [`docs/migration_plan.md`](../../migration_plan.md) §5.
+A focused follow-up may apply `setState`/`clap.state.load` at instantiate time
+(the race-free option deferred in *Alternatives rejected*) once the compiler can
+carry the blob map.
