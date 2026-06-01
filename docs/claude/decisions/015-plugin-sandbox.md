@@ -86,7 +86,8 @@ that latency through the existing `latency_samples()` path, and the engine's PDC
 |------|-------------|---------|--------|
 | **6a** | This ADR + `PluginParams.sandboxed` opt-in flag, **persisted but inert** (engine always in-process) | nil | **Implemented** |
 | **6b** | Plumb `sandboxed` project → `NodeKind::Plugin` → compiler → `PluginHost::instantiate` (still always in-process) | nil | **Implemented** |
-| 6c | `plugin_host_bridge` crate + shared-memory ring primitive (off-RT, unit-tested in isolation) | nil | Pending |
+| **6c-i** | Shared-memory SPSC ring primitive + wire protocol POD types, off-RT, unit-tested in isolation (`plugin_system/bridge/`) | nil | **Implemented** |
+| 6c-ii | `plugin_host_bridge` binary crate + workspace decision | nil | Pending |
 | 6d | `BridgedPluginInstance` proxy + RT wiring (bounded spin + timeout + silence) | **high** | Pending |
 | 6e | Watchdog + `Dead`-marking + prototype on a **single** plugin (Vital), then generalise | high | Pending |
 
@@ -131,6 +132,38 @@ has its own project source and is sandboxed in a later step. `NodeKind` derives
 only `Debug, Clone` — the new field affects no graph identity / recompile-diff
 logic, so the compiled graph and offline render stay bit-identical (C-2,
 verified: full suite 53/53 green).
+
+## Sub-phase 6c-i — what shipped
+
+The shared-memory transport **core**, off-RT and unit-tested in isolation,
+under [`plugin_system/bridge/`](../../../src-tauri/src/plugin_system/bridge/):
+
+- `shmem::ShmemRing` — a region-agnostic SPSC ring that lives entirely inside a
+  caller-supplied raw byte region (an OS shared-memory mapping in production; an
+  aligned `OwnedRegion` heap backing in tests). Header (`capacity | slot_size |
+  head:AtomicU32 | tail:AtomicU32`) + length-prefixed fixed-stride slots.
+  `init` (owner) / `attach` (peer), `push` / `pop` with no allocation, no lock,
+  fixed-size copies — RT-safe for the audio thread it will run on in 6d.
+- `protocol` — `#[repr(C)]` POD message types pinning the cross-process ABI:
+  `BRIDGE_PROTOCOL_VERSION`, `BLOCK_MAGIC`, `ChannelRole`, `BlockHeader`,
+  `ParamMessage`, with size/alignment assertions so the layout is frozen before
+  the rings are wired.
+
+Why a separate module and **not** the existing `ParamQueue`: that queue stores
+its slots behind heap pointers (`Box<[UnsafeCell]>`) that are meaningless in
+another process's address space. The bridge needs the whole ring state — indices
+*and* data — laid out inside one mapped region.
+
+**Deliberately deferred to 6c-ii:** the `plugin_host_bridge` binary crate. The
+engine (`src-tauri`) is a standalone Tauri app crate with no workspace; spinning
+up a sibling binary crate is a build-system change (workspace root, shared
+protocol crate) with no payoff until 6d gives it real IPC to run. Keeping it out
+of 6c-i leaves `src-tauri`'s manifest and every runtime path untouched.
+
+**Not wired:** no runtime path references `bridge::*`; the module carries
+`#![allow(dead_code)]`. The engine remains bit-identical (full suite 64/64
+green, +11 new bridge tests including a 100 k-message two-thread ring exchange
+that exercises the SPSC discipline a real cross-process bridge depends on).
 
 ## Consequences
 

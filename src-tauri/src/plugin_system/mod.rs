@@ -21,7 +21,10 @@
 //! - [`host`]         — `PluginHost` (lifecycle, parameter routing, state)
 //! - [`capabilities`] — `DeviceCapabilities` introspected device metadata (Phase 1)
 //! - [`instance`]     — `PluginInstance` (Phase 2a): Arc-shared native handle
+//! - [`bridge`]       — out-of-process sandbox transport primitives (Phase 6c-i,
+//!                      not yet wired; see ADR-015)
 
+pub mod bridge;
 pub mod capabilities;
 pub mod gui;
 pub mod host;
