@@ -692,11 +692,16 @@ fn process_command(
 
                 // Classify the hot action for an enabled effect.
                 let hot = if effect.enabled {
+                    // All internal effects now carry a `ParameterBlock`
+                    // (ADR-009), so a parameter-only edit is delivered hot for
+                    // every variant — no recompile fallback remains for these.
                     match &effect.params {
                         EffectParams::Eq(eq) => HotEffectUpdate::Eq(eq.clone()),
+                        EffectParams::Compressor(c) => HotEffectUpdate::Compressor(c.clone()),
+                        EffectParams::Reverb(r) => HotEffectUpdate::Reverb(r.clone()),
+                        EffectParams::Delay(d) => HotEffectUpdate::Delay(d.clone()),
                         EffectParams::Plugin(pp) =>
                             HotEffectUpdate::Plugin(pp.plugin_id.clone(), pp.params.clone()),
-                        _ => HotEffectUpdate::None,
                     }
                 } else {
                     HotEffectUpdate::None
@@ -718,6 +723,18 @@ fn process_command(
                 match &hot {
                     HotEffectUpdate::Eq(eq) => {
                         let values = crate::audio_graph::nodes::eq::eq_block_values(eq);
+                        state.live_params.write_effect_block(&p.effect_id, &values)
+                    }
+                    HotEffectUpdate::Compressor(c) => {
+                        let values = crate::audio_graph::nodes::compressor::compressor_block_values(c);
+                        state.live_params.write_effect_block(&p.effect_id, &values)
+                    }
+                    HotEffectUpdate::Reverb(r) => {
+                        let values = crate::audio_graph::nodes::reverb::reverb_block_values(r);
+                        state.live_params.write_effect_block(&p.effect_id, &values)
+                    }
+                    HotEffectUpdate::Delay(d) => {
+                        let values = crate::audio_graph::nodes::delay::delay_block_values(d);
                         state.live_params.write_effect_block(&p.effect_id, &values)
                     }
                     HotEffectUpdate::Plugin(device_id, params) => {
@@ -1128,6 +1145,15 @@ enum HotEffectUpdate {
     /// Internal EQ effect: write the natural-unit values into its
     /// `ParameterBlock` (ADR-009).
     Eq(EqParams),
+    /// Internal compressor effect: write the natural-unit values into its
+    /// `ParameterBlock` (ADR-009).
+    Compressor(CompressorParams),
+    /// Internal reverb effect: write the natural-unit values into its
+    /// `ParameterBlock` (ADR-009).
+    Reverb(ReverbParams),
+    /// Internal delay effect: write the natural-unit values into its
+    /// `ParameterBlock` (ADR-009).
+    Delay(DelayParams),
     /// External plugin: push normalised `(native_id, value)` pairs into the
     /// instance's SPSC ring, keyed by `device_id` (= plugin_id) (ADR-007).
     Plugin(String, Vec<(u32, f32)>),

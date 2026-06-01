@@ -1,7 +1,38 @@
+use std::sync::Arc;
+
 use crate::audio_graph::buffer::AudioBuffer;
 use crate::audio_graph::denormal::ANTI_DENORMAL;
 use crate::audio_graph::node::{AudioNode, NodeId, PrepareContext, TransportInfo};
+use crate::audio_graph::parameter_block::ParameterBlock;
 use crate::project::ReverbParams;
+
+// ── Hot-parameter block layout (ADR-009) ──────────────────────────────────────
+//
+// Cell order for the reverb's `ParameterBlock`.  Shared by the compiler (seed),
+// the gateway (`reverb_block_values` on a knob turn), and `ReverbNode` (per-block
+// read).  Values are stored in natural units (0..1 normalised controls).
+pub const REVERB_PARAM_COUNT: usize = 5;
+pub const REVERB_ROOM_SIZE: usize = 0;
+pub const REVERB_DAMPING: usize = 1;
+pub const REVERB_WET: usize = 2;
+pub const REVERB_DRY: usize = 3;
+pub const REVERB_WIDTH: usize = 4;
+
+/// Flatten `ReverbParams` into the `ParameterBlock` cell order above.
+pub fn reverb_block_values(p: &ReverbParams) -> [f32; REVERB_PARAM_COUNT] {
+    [p.room_size, p.damping, p.wet, p.dry, p.width]
+}
+
+/// Read the block back into a `ReverbParams`.
+fn reverb_params_from_block(block: &ParameterBlock) -> ReverbParams {
+    ReverbParams {
+        room_size: block.get(REVERB_ROOM_SIZE),
+        damping:   block.get(REVERB_DAMPING),
+        wet:       block.get(REVERB_WET),
+        dry:       block.get(REVERB_DRY),
+        width:     block.get(REVERB_WIDTH),
+    }
+}
 
 // Freeverb comb filter with damping
 struct CombFilter {
@@ -56,11 +87,22 @@ const STEREO_SPREAD: usize = 23;
 
 pub struct ReverbNode {
     id: NodeId,
+    /// Cached parameter values — `room_size` / `damping` are currently baked
+    /// into the comb feedback/damping coefficients.  Compared against the hot
+    /// block each block to decide whether a recompute is needed.
     params: ReverbParams,
     combs_l: Vec<CombFilter>,
     combs_r: Vec<CombFilter>,
     allpass_l: Vec<AllpassFilter>,
     allpass_r: Vec<AllpassFilter>,
+
+    /// Hot-parameter block (ADR-009).  When present, `process` reads parameter
+    /// values from it each block and re-applies the comb coefficients only when
+    /// `room_size`/`damping` change — without reallocating the comb/allpass
+    /// buffers, so the reverb tail is preserved.  `wet`/`dry`/`width` are read
+    /// from `self.params` directly each block.  `None` keeps the pre-ADR-009
+    /// behaviour (coefficients frozen at `prepare`).
+    block: Option<Arc<ParameterBlock>>,
 }
 
 impl ReverbNode {
@@ -69,6 +111,27 @@ impl ReverbNode {
             id, params,
             combs_l: Vec::new(), combs_r: Vec::new(),
             allpass_l: Vec::new(), allpass_r: Vec::new(),
+            block: None,
+        }
+    }
+
+    /// Attach the hot-parameter block (ADR-009).  Builder-style; called by the
+    /// compiler right after `new`.
+    pub fn with_block(mut self, block: Arc<ParameterBlock>) -> Self {
+        self.block = Some(block);
+        self
+    }
+
+    /// Re-apply the comb feedback/damping coefficients from `self.params`.  Does
+    /// **not** resize or clear any buffer, so the running reverb tail survives a
+    /// `room_size`/`damping` change — only the coefficients move.
+    fn apply_coeffs(&mut self) {
+        let feedback = 0.84 * self.params.room_size;
+        let damp = self.params.damping * 0.4;
+        for c in self.combs_l.iter_mut().chain(self.combs_r.iter_mut()) {
+            c.feedback = feedback;
+            c.damp1 = damp;
+            c.damp2 = 1.0 - damp;
         }
     }
 }
@@ -81,28 +144,42 @@ impl AudioNode for ReverbNode {
 
     fn prepare(&mut self, ctx: PrepareContext) {
         let scale = ctx.sample_rate / 44100.0;
-        let feedback = 0.84 * self.params.room_size;
-        let damp = self.params.damping * 0.4;
 
-        self.combs_l = COMB_TUNING_L.iter().map(|&t| {
-            let mut c = CombFilter::new((t as f32 * scale) as usize);
-            c.feedback = feedback;
-            c.damp1 = damp;
-            c.damp2 = 1.0 - damp;
-            c
-        }).collect();
-        self.combs_r = COMB_TUNING_L.iter().map(|&t| {
-            let mut c = CombFilter::new(((t + STEREO_SPREAD) as f32 * scale) as usize);
-            c.feedback = feedback;
-            c.damp1 = damp;
-            c.damp2 = 1.0 - damp;
-            c
-        }).collect();
-        self.allpass_l = ALLPASS_TUNING_L.iter().map(|&t| AllpassFilter::new((t as f32 * scale) as usize)).collect();
-        self.allpass_r = ALLPASS_TUNING_L.iter().map(|&t| AllpassFilter::new(((t + STEREO_SPREAD) as f32 * scale) as usize)).collect();
+        // Comb/allpass buffer sizes depend only on the sample rate (structural),
+        // never on the hot params — so they are allocated here and reused.
+        self.combs_l = COMB_TUNING_L.iter()
+            .map(|&t| CombFilter::new((t as f32 * scale) as usize)).collect();
+        self.combs_r = COMB_TUNING_L.iter()
+            .map(|&t| CombFilter::new(((t + STEREO_SPREAD) as f32 * scale) as usize)).collect();
+        self.allpass_l = ALLPASS_TUNING_L.iter()
+            .map(|&t| AllpassFilter::new((t as f32 * scale) as usize)).collect();
+        self.allpass_r = ALLPASS_TUNING_L.iter()
+            .map(|&t| AllpassFilter::new(((t + STEREO_SPREAD) as f32 * scale) as usize)).collect();
+
+        // If a hot block is attached, seed the cached params from it so the
+        // coefficients reflect any edits made before this (re)compile.
+        if let Some(block) = &self.block {
+            self.params = reverb_params_from_block(block);
+        }
+        self.apply_coeffs();
     }
 
     fn process(&mut self, inputs: &[&AudioBuffer], outputs: &mut [AudioBuffer], t: &TransportInfo) {
+        // ADR-009: pull live parameter values from the hot block.  Re-apply the
+        // comb coefficients only when room_size/damping changed (no realloc, no
+        // lock).  wet/dry/width are read from self.params below each block.
+        let next = self.block.as_ref().map(|b| reverb_params_from_block(b));
+        if let Some(next) = next {
+            if reverb_block_values(&next) != reverb_block_values(&self.params) {
+                let recompute = next.room_size != self.params.room_size
+                    || next.damping != self.params.damping;
+                self.params = next;
+                if recompute {
+                    self.apply_coeffs();
+                }
+            }
+        }
+
         let input = &inputs[0];
         let output = &mut outputs[0];
         let frames = t.block_size.min(output.num_frames).min(input.num_frames);
@@ -138,5 +215,34 @@ impl AudioNode for ReverbNode {
         for c in &mut self.combs_r { c.filterstore = 0.0; c.buf.fill(0.0); }
         for a in &mut self.allpass_l { a.buf.fill(0.0); }
         for a in &mut self.allpass_r { a.buf.fill(0.0); }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hot_block_changes_coeffs_without_prepare() {
+        let params = ReverbParams::default();
+        let block = ParameterBlock::new(&reverb_block_values(&params));
+        let mut node = ReverbNode::new(NodeId(1), params).with_block(Arc::clone(&block));
+        node.prepare(PrepareContext { sample_rate: 48_000.0, max_block_size: 64, num_channels: 2 });
+
+        let before_feedback = node.combs_l[0].feedback;
+
+        // Push room_size to max into the block (cell order from constants).
+        block.set(REVERB_ROOM_SIZE, 1.0);
+
+        let input = AudioBuffer::new(2, 64);
+        let mut output = AudioBuffer::new(2, 64);
+        let t = TransportInfo::stopped(48_000.0);
+        node.process(&[&input], std::slice::from_mut(&mut output), &t);
+
+        assert_ne!(
+            node.combs_l[0].feedback, before_feedback,
+            "reverb must re-apply comb coefficients from the hot block on a live change"
+        );
+        assert_eq!(node.params.room_size, 1.0, "cached params follow the block");
     }
 }

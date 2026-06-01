@@ -9,9 +9,13 @@ Accepted. Implements the **ADR-009 ParameterBlock** half of **Phase 3** of
 Companion: [`008-param-transport-spsc.md`](008-param-transport-spsc.md) (the
 external-plugin equivalent). This ADR covers the **internal** effects.
 
-Migrated this PR: **EQ only** — the simplest variant, per migration_plan §3.4
-("Eq d'abord, puis Compressor, Reverb, Delay"). Compressor / Reverb / Delay
-keep the legacy recompile path until their variant lands.
+Migrated: **EQ, Compressor, Reverb, Delay** — the four internal effects, per
+migration_plan §3.4 ("Eq d'abord, puis Compressor, Reverb, Delay"). EQ landed
+first; Compressor / Reverb / Delay then reused the same infrastructure verbatim
+and **dropped their legacy recompile fallback** (the `UPDATE_EFFECT` match over
+`EffectParams` is now exhaustive for hot delivery — only structural changes such
+as the enable/disable toggle recompile). No internal effect recompiles on a
+parameter-only edit anymore.
 
 ---
 
@@ -97,8 +101,9 @@ next block, identical to a one-block-late automation value.
   `UPDATE_EFFECT`, so the EQ reads its seeded values and computes identically.
   When `block` is `None` (not yet wired) the node keeps the pre-ADR coefficient
   freeze exactly.
-- **C-3 (variant-by-variant).** Only EQ is migrated; Compressor/Reverb/Delay
-  recompile as before until their variant lands.
+- **C-3 (variant-by-variant).** Migrated one variant at a time (EQ, then
+  Compressor → Reverb → Delay); each landed independently against the same
+  infrastructure. All four internal effects are now hot.
 - **C-4 (saved projects).** No schema change — `EffectParams` unchanged. The
   block is a runtime mirror seeded from the project (the source of truth); the
   project is still updated on every edit for persistence/undo, only the
@@ -118,8 +123,11 @@ next block, identical to a one-block-late automation value.
     moves; explicit per-parameter smoothing is a later refinement.
   - The block re-seeds from the project on each structural recompile, so the
     block and project cannot drift.
-  - `effect_id` now rides on all four effect `NodeKind` variants but only EQ
-    reads a block — a small, intentional asymmetry until the others migrate.
+  - `effect_id` rides on all four effect `NodeKind` variants and all four now
+    read a block — the asymmetry noted for the EQ-only step is closed.
+  - Reverb `dry` and delay `dry` ride in the block for a complete round-trip but
+    remain unused by the DSP (`dry = 1.0 - wet`, unchanged); delay `ping_pong`
+    is encoded as a 0.0/1.0 cell.
 - **Reversibility.** Additive. Dropping `with_block` (or never registering the
   block) returns the node to the legacy frozen-coefficient behaviour; the
   gateway's `applied_hot` simply stays `false` and recompiles.
@@ -139,8 +147,8 @@ next block, identical to a one-block-late automation value.
 
 ## Follow-ups
 
-- **Phase 3 (next variants)** — migrate Compressor → Reverb → Delay to their
-  own `ParameterBlock`s using the same infrastructure; remove their
-  `recompile_if_needed` fallback once each is wired.
+- **Phase 3 (next variants)** — ✅ done: Compressor → Reverb → Delay migrated to
+  their own `ParameterBlock`s on the same infrastructure; their
+  `recompile_if_needed` fallback for parameter edits is removed.
 - **Phase 5e** — automation lanes write into these same cells block-rate
   (`AutomationEvaluator`), sharing the cell with UI and modulation.

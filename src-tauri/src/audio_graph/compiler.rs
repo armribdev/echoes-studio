@@ -643,12 +643,28 @@ impl GraphCompiler {
                 );
                 Box::new(nodes::eq::EqNode::new(id, params.clone()).with_block(block))
             }
-            NodeKind::Compressor { params, .. } =>
-                Box::new(nodes::compressor::CompressorNode::new(id, params.clone())),
-            NodeKind::Reverb { params, .. } =>
-                Box::new(nodes::reverb::ReverbNode::new(id, params.clone())),
-            NodeKind::Delay { params, .. } =>
-                Box::new(nodes::delay::DelayNode::new(id, params.clone())),
+            NodeKind::Compressor { effect_id, params } => {
+                // ADR-009: same hot-parameter-block wiring as EQ.
+                let block = live_params.get_or_init_effect_block(
+                    effect_id,
+                    &nodes::compressor::compressor_block_values(params),
+                );
+                Box::new(nodes::compressor::CompressorNode::new(id, params.clone()).with_block(block))
+            }
+            NodeKind::Reverb { effect_id, params } => {
+                let block = live_params.get_or_init_effect_block(
+                    effect_id,
+                    &nodes::reverb::reverb_block_values(params),
+                );
+                Box::new(nodes::reverb::ReverbNode::new(id, params.clone()).with_block(block))
+            }
+            NodeKind::Delay { effect_id, params } => {
+                let block = live_params.get_or_init_effect_block(
+                    effect_id,
+                    &nodes::delay::delay_block_values(params),
+                );
+                Box::new(nodes::delay::DelayNode::new(id, params.clone()).with_block(block))
+            }
         }
     }
 }

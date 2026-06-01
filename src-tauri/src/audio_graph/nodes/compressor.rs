@@ -1,10 +1,54 @@
+use std::sync::Arc;
+
 use crate::audio_graph::buffer::AudioBuffer;
 use crate::audio_graph::node::{AudioNode, NodeId, PrepareContext, TransportInfo};
 use crate::audio_graph::oversampling::Oversample2x;
+use crate::audio_graph::parameter_block::ParameterBlock;
 use crate::project::CompressorParams;
+
+// ── Hot-parameter block layout (ADR-009) ──────────────────────────────────────
+//
+// Cell order for the compressor's `ParameterBlock`.  Shared by the compiler
+// (which seeds the block), the gateway (which writes cells on a knob turn via
+// `compressor_block_values`), and `CompressorNode` (which reads them per
+// block).  Values are stored in natural units (dB, ratio, ms).
+pub const COMP_PARAM_COUNT: usize = 6;
+pub const COMP_THRESHOLD_DB: usize = 0;
+pub const COMP_RATIO: usize = 1;
+pub const COMP_ATTACK_MS: usize = 2;
+pub const COMP_RELEASE_MS: usize = 3;
+pub const COMP_MAKEUP_DB: usize = 4;
+pub const COMP_KNEE_DB: usize = 5;
+
+/// Flatten `CompressorParams` into the `ParameterBlock` cell order above.
+pub fn compressor_block_values(p: &CompressorParams) -> [f32; COMP_PARAM_COUNT] {
+    [
+        p.threshold_db,
+        p.ratio,
+        p.attack_ms,
+        p.release_ms,
+        p.makeup_db,
+        p.knee_db,
+    ]
+}
+
+/// Read the block back into a `CompressorParams`.
+fn compressor_params_from_block(block: &ParameterBlock) -> CompressorParams {
+    CompressorParams {
+        threshold_db: block.get(COMP_THRESHOLD_DB),
+        ratio:        block.get(COMP_RATIO),
+        attack_ms:    block.get(COMP_ATTACK_MS),
+        release_ms:   block.get(COMP_RELEASE_MS),
+        makeup_db:    block.get(COMP_MAKEUP_DB),
+        knee_db:      block.get(COMP_KNEE_DB),
+    }
+}
 
 pub struct CompressorNode {
     id: NodeId,
+    /// Cached parameter values — the time-constants currently baked into
+    /// `attack_coeff` / `release_coeff` / `makeup_linear`.  Compared against the
+    /// hot block each block to decide whether a recompute is needed.
     params: CompressorParams,
     envelope: f32,
     attack_coeff: f32,
@@ -13,6 +57,15 @@ pub struct CompressorNode {
     oversample: Oversample2x,
     /// Per-block envelope gains (base rate), pre-allocated in `prepare`.
     env_scratch: Vec<f32>,
+
+    /// Oversampled sample rate (engine SR × 2), captured at `prepare`.
+    sr_os: f32,
+
+    /// Hot-parameter block (ADR-009).  When present, `process` reads parameter
+    /// values from it each block and recomputes the time-constants only when
+    /// they change — so a knob turn never triggers a recompile.  `None` keeps
+    /// the pre-ADR-009 behaviour (coefficients frozen at `prepare`).
+    block: Option<Arc<ParameterBlock>>,
 }
 
 impl CompressorNode {
@@ -25,7 +78,25 @@ impl CompressorNode {
             makeup_linear: 1.0,
             oversample: Oversample2x::default(),
             env_scratch: Vec::new(),
+            sr_os: 96_000.0,
+            block: None,
         }
+    }
+
+    /// Attach the hot-parameter block (ADR-009).  Builder-style; called by the
+    /// compiler right after `new`.
+    pub fn with_block(mut self, block: Arc<ParameterBlock>) -> Self {
+        self.block = Some(block);
+        self
+    }
+
+    /// Recompute the time-constant coefficients from `self.params`.  Does not
+    /// touch `self.envelope`, so a parameter change does not reset the running
+    /// detector — only the smoothing/makeup gain move.
+    fn recompute_coeffs(&mut self) {
+        self.attack_coeff  = (-1.0 / (self.params.attack_ms  * 0.001 * self.sr_os)).exp();
+        self.release_coeff = (-1.0 / (self.params.release_ms * 0.001 * self.sr_os)).exp();
+        self.makeup_linear = 10.0_f32.powf(self.params.makeup_db / 20.0);
     }
 
     fn compute_gain_db(&self, input_db: f32) -> f32 {
@@ -51,15 +122,29 @@ impl AudioNode for CompressorNode {
     fn num_output_ports(&self) -> usize { 1 }
 
     fn prepare(&mut self, ctx: PrepareContext) {
-        let sr_os = ctx.sample_rate * 2.0;
-        self.attack_coeff  = (-1.0 / (self.params.attack_ms  * 0.001 * sr_os)).exp();
-        self.release_coeff = (-1.0 / (self.params.release_ms * 0.001 * sr_os)).exp();
-        self.makeup_linear = 10.0_f32.powf(self.params.makeup_db / 20.0);
+        self.sr_os = ctx.sample_rate * 2.0;
+        // If a hot block is attached, seed the cached params from it so the
+        // coefficients reflect any edits made before this (re)compile.
+        if let Some(block) = &self.block {
+            self.params = compressor_params_from_block(block);
+        }
+        self.recompute_coeffs();
         self.oversample.prepare(ctx.max_block_size, ctx.sample_rate);
         self.env_scratch.resize(ctx.max_block_size, 0.0);
     }
 
     fn process(&mut self, inputs: &[&AudioBuffer], outputs: &mut [AudioBuffer], t: &TransportInfo) {
+        // ADR-009: pull live parameter values from the hot block and recompute
+        // the time-constants only when they actually changed.  No allocation,
+        // no lock: `ParameterBlock::get` is one relaxed atomic load per param.
+        let next = self.block.as_ref().map(|b| compressor_params_from_block(b));
+        if let Some(next) = next {
+            if compressor_block_values(&next) != compressor_block_values(&self.params) {
+                self.params = next;
+                self.recompute_coeffs();
+            }
+        }
+
         let input = &inputs[0];
         let output = &mut outputs[0];
         let frames = t.block_size.min(output.num_frames).min(input.num_frames);
@@ -94,5 +179,35 @@ impl AudioNode for CompressorNode {
     fn reset(&mut self) {
         self.envelope = 0.0;
         self.oversample.reset();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hot_block_changes_coeffs_without_prepare() {
+        let params = CompressorParams::default();
+        let block = ParameterBlock::new(&compressor_block_values(&params));
+        let mut node = CompressorNode::new(NodeId(1), params).with_block(Arc::clone(&block));
+        node.prepare(PrepareContext { sample_rate: 48_000.0, max_block_size: 64, num_channels: 2 });
+
+        let before_makeup = node.makeup_linear;
+
+        // Write +6 dB makeup into the block (cell order from constants).
+        block.set(COMP_MAKEUP_DB, 6.0);
+
+        // Run a block: the node must detect the change and recompute.
+        let input = AudioBuffer::new(2, 64);
+        let mut output = AudioBuffer::new(2, 64);
+        let t = TransportInfo::stopped(48_000.0);
+        node.process(&[&input], std::slice::from_mut(&mut output), &t);
+
+        assert_ne!(
+            node.makeup_linear, before_makeup,
+            "compressor must recompute coefficients from the hot block on a live change"
+        );
+        assert_eq!(node.params.makeup_db, 6.0, "cached params follow the block");
     }
 }
