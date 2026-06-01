@@ -736,3 +736,169 @@ pub unsafe fn instantiate_processor(
 
     Ok((comp, processor as *mut IAudioProcessor))
 }
+
+// ── IBStream (host-implemented; backs IComponent::get/set_state) ──────────────
+//
+// Phase 4b (ADR-010).  `IComponent::getState` asks the host for an `IBStream`
+// to *write* the plugin's processor state into; `setState` asks for one to
+// *read* it back from.  The VST3 SDK ships a concrete `MemoryStream`, but we do
+// not link the SDK — so the host provides its own `Vec<u8>`-backed stream
+// exposing the four IBStream methods (read / write / seek / tell) on top of
+// FUnknown.
+//
+// Lifetime: a `HostStream` is built on the command thread for the duration of a
+// single get/set_state call and dropped immediately after.  The plugin only
+// touches it synchronously inside that call.  Refcount methods return a dummy
+// count (the host owns the box outright), matching the pattern used by
+// `HostParameterChanges` and the GUI-side COM stubs.
+
+/// Steinberg `IBStream` IID (`FUID::toTUID()` big-endian — same convention as
+/// every other IID in this file).
+pub const IID_IBSTREAM: Tuid = [
+    0xC3,0xBF,0x6E,0xA2, 0x30,0x99,0x47,0x52,
+    0x9B,0x6B,0xF9,0x90, 0x1E,0xE3,0x3E,0x9B,
+];
+
+/// `IBStream::IStreamSeekMode`
+const K_IB_SEEK_SET: i32 = 0;
+const K_IB_SEEK_CUR: i32 = 1;
+const K_IB_SEEK_END: i32 = 2;
+
+#[repr(C)]
+pub struct IBStreamVtbl {
+    pub query_interface:
+        unsafe extern "C" fn(*mut HostStream, *const Tuid, *mut *mut c_void) -> TResult,
+    pub add_ref: unsafe extern "C" fn(*mut HostStream) -> u32,
+    pub release: unsafe extern "C" fn(*mut HostStream) -> u32,
+    pub read:
+        unsafe extern "C" fn(*mut HostStream, *mut c_void, i32, *mut i32) -> TResult,
+    pub write:
+        unsafe extern "C" fn(*mut HostStream, *mut c_void, i32, *mut i32) -> TResult,
+    pub seek:
+        unsafe extern "C" fn(*mut HostStream, i64, i32, *mut i64) -> TResult,
+    pub tell:
+        unsafe extern "C" fn(*mut HostStream, *mut i64) -> TResult,
+}
+
+/// Host-side `IBStream` backed by an in-memory byte buffer.  `vtbl` MUST stay
+/// at offset 0 so the plugin can dispatch through it.
+#[repr(C)]
+pub struct HostStream {
+    vtbl: *const IBStreamVtbl,
+    data: Vec<u8>,
+    pos:  usize,
+}
+
+unsafe extern "C" fn stream_query_interface(
+    this: *mut HostStream, iid: *const Tuid, obj: *mut *mut c_void,
+) -> TResult {
+    if obj.is_null() { return -1; }
+    if !iid.is_null() && (*iid == IID_IBSTREAM || *iid == IID_FUNKNOWN) {
+        *obj = this as *mut c_void;
+        return K_RESULT_OK;
+    }
+    *obj = std::ptr::null_mut();
+    -1 // kNoInterface
+}
+unsafe extern "C" fn stream_add_ref(_this: *mut HostStream) -> u32 { 1 }
+unsafe extern "C" fn stream_release(_this: *mut HostStream) -> u32 { 1 }
+
+unsafe extern "C" fn stream_read(
+    this: *mut HostStream, buffer: *mut c_void, num_bytes: i32, num_read: *mut i32,
+) -> TResult {
+    let s = &mut *this;
+    let want  = num_bytes.max(0) as usize;
+    let avail = s.data.len().saturating_sub(s.pos);
+    let n = want.min(avail);
+    if n > 0 && !buffer.is_null() {
+        std::ptr::copy_nonoverlapping(s.data.as_ptr().add(s.pos), buffer as *mut u8, n);
+        s.pos += n;
+    }
+    if !num_read.is_null() { *num_read = n as i32; }
+    K_RESULT_OK
+}
+
+unsafe extern "C" fn stream_write(
+    this: *mut HostStream, buffer: *mut c_void, num_bytes: i32, num_written: *mut i32,
+) -> TResult {
+    let s = &mut *this;
+    let n = num_bytes.max(0) as usize;
+    if n > 0 && !buffer.is_null() {
+        // Overwrite/extend at the current position (MemoryStream semantics).
+        if s.pos + n > s.data.len() {
+            s.data.resize(s.pos + n, 0);
+        }
+        std::ptr::copy_nonoverlapping(buffer as *const u8, s.data.as_mut_ptr().add(s.pos), n);
+        s.pos += n;
+    }
+    if !num_written.is_null() { *num_written = n as i32; }
+    K_RESULT_OK
+}
+
+unsafe extern "C" fn stream_seek(
+    this: *mut HostStream, pos: i64, mode: i32, result: *mut i64,
+) -> TResult {
+    let s = &mut *this;
+    let base = match mode {
+        K_IB_SEEK_SET => 0i64,
+        K_IB_SEEK_CUR => s.pos as i64,
+        K_IB_SEEK_END => s.data.len() as i64,
+        _ => return K_RESULT_FALSE,
+    };
+    // Allow seeking past end (a following write() will zero-fill the gap).
+    s.pos = (base + pos).max(0) as usize;
+    if !result.is_null() { *result = s.pos as i64; }
+    K_RESULT_OK
+}
+
+unsafe extern "C" fn stream_tell(this: *mut HostStream, pos: *mut i64) -> TResult {
+    if pos.is_null() { return -1; }
+    *pos = (*this).pos as i64;
+    K_RESULT_OK
+}
+
+static IBSTREAM_VTBL: IBStreamVtbl = IBStreamVtbl {
+    query_interface: stream_query_interface,
+    add_ref: stream_add_ref,
+    release: stream_release,
+    read:    stream_read,
+    write:   stream_write,
+    seek:    stream_seek,
+    tell:    stream_tell,
+};
+
+impl HostStream {
+    fn empty() -> Box<Self> {
+        Box::new(HostStream { vtbl: &IBSTREAM_VTBL, data: Vec::new(), pos: 0 })
+    }
+    fn with_data(data: Vec<u8>) -> Box<Self> {
+        Box::new(HostStream { vtbl: &IBSTREAM_VTBL, data, pos: 0 })
+    }
+}
+
+/// Read the processor state of a VST3 component into a byte buffer via a
+/// host-provided `IBStream` (`IComponent::getState`).  Returns `None` if the
+/// plugin reports failure or writes no bytes.
+///
+/// # Safety
+/// `comp` must be a valid, initialised `IComponent`.  Call off the audio thread
+/// (see the threading caveat in `plugin_system::instance`).
+pub unsafe fn read_component_state(comp: *mut IComponent) -> Option<Vec<u8>> {
+    let mut stream = HostStream::empty();
+    let ib = stream.as_mut() as *mut HostStream as *mut c_void;
+    let r = ((*(*comp).vtbl).get_state)(comp, ib);
+    if r != K_RESULT_OK { return None; }
+    let data = std::mem::take(&mut stream.data);
+    if data.is_empty() { None } else { Some(data) }
+}
+
+/// Restore a previously-saved blob into a VST3 component
+/// (`IComponent::setState`).  Returns `true` on `kResultOk`.
+///
+/// # Safety
+/// As [`read_component_state`].
+pub unsafe fn write_component_state(comp: *mut IComponent, bytes: &[u8]) -> bool {
+    let mut stream = HostStream::with_data(bytes.to_vec());
+    let ib = stream.as_mut() as *mut HostStream as *mut c_void;
+    ((*(*comp).vtbl).set_state)(comp, ib) == K_RESULT_OK
+}

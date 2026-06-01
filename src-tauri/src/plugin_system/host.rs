@@ -356,15 +356,39 @@ impl PluginHost {
 
     // ── State serialisation ───────────────────────────────────────────────────
 
+    /// Serialise a device's live state (Phase 4b / ADR-010).
+    ///
+    /// VST3 devices return their processor state via FFI
+    /// (`IComponent::getState`).  Formats without an FFI state path yet (CLAP =
+    /// Phase 4c, internal) fall back to the transitional `saved_state` cache so
+    /// the returned `DeviceState` is never lost.
     pub fn save_device_state(&self, device_id: &str) -> Option<DeviceState> {
-        self.records.get(device_id).map(|r| r.saved_state.clone())
+        let record = self.records.get(device_id)?;
+        match record.instance.save_state_blob() {
+            Some(bytes) => Some(DeviceState::from_binary(device_id, bytes)),
+            None        => Some(record.saved_state.clone()),
+        }
     }
 
+    /// Restore a device's state.  For VST3 the blob is pushed into the live
+    /// plugin via `IComponent::setState`; the blob is also cached so formats
+    /// not yet wired to FFI keep their previous behaviour.
     pub fn load_device_state(&mut self, state: DeviceState) {
         let id = state.device_id.clone();
         if let Some(record) = self.records.get_mut(&id) {
+            if let Some(bytes) = state.as_binary() {
+                if !record.instance.load_state_blob(bytes) {
+                    eprintln!("[plugin] setState rejected/ignored for '{id}'");
+                }
+            }
             record.saved_state = state;
         }
+    }
+
+    /// Iterate the device IDs of all currently-instantiated plugins.  Used by
+    /// the project-save path to harvest live plugin state.
+    pub fn device_ids(&self) -> impl Iterator<Item = &str> {
+        self.records.keys().map(String::as_str)
     }
 
     // ── Introspection ─────────────────────────────────────────────────────────

@@ -207,6 +207,38 @@ impl PluginInstance {
         self.param_queue.drain(f);
     }
 
+    // ── State persistence (Phase 4b, ADR-010) ─────────────────────────────────
+    //
+    // VST3 only for now (the native handle carries the IComponent).  These run
+    // on the command thread; per the module header they are NOT sequenced
+    // against the audio thread's `process` on the same instance.  In practice
+    // save/load happen while the transport is stopped (explicit project save /
+    // project open), where no `process` is in flight for this instance — that
+    // is the operating invariant until a proper between-blocks barrier lands.
+    // CLAP (Phase 4c) and internal devices return `None` / `false`.
+
+    /// Serialise the live plugin's processor state.  `None` when the format has
+    /// no FFI state path yet or the plugin reports no state.
+    pub fn save_state_blob(&self) -> Option<Vec<u8>> {
+        match &self.handle {
+            NativeHandle::Vst3 { component, .. } => unsafe {
+                crate::plugin_formats::vst3::ffi::read_component_state(component.as_ptr())
+            },
+            _ => None,
+        }
+    }
+
+    /// Restore previously-saved processor state into the live plugin.  Returns
+    /// `false` if unsupported for this format or the plugin rejected the blob.
+    pub fn load_state_blob(&self, bytes: &[u8]) -> bool {
+        match &self.handle {
+            NativeHandle::Vst3 { component, .. } => unsafe {
+                crate::plugin_formats::vst3::ffi::write_component_state(component.as_ptr(), bytes)
+            },
+            _ => false,
+        }
+    }
+
     // ── Handle access (used by wrappers / future GUI editor) ──────────────────
 
     /// Borrow the native handle for FFI dispatch.  Wrappers pattern-match

@@ -244,6 +244,11 @@ pub struct AppProject {
     pub numerator: u8,
     pub denominator: u8,
     pub tracks: Vec<AppTrack>,
+    /// Per-device binary plugin state (e.g. VST3 chunk), keyed by `device_id`.
+    /// Harvested from the live `PluginHost` at save time and re-applied after
+    /// the graph is compiled on load.  Not part of the event-sourced model —
+    /// it mirrors live plugin internals, so it is excluded from undo snapshots.
+    pub plugin_state_blobs: HashMap<String, Vec<u8>>,
 }
 
 impl AppProject {
@@ -254,6 +259,7 @@ impl AppProject {
             numerator: 4,
             denominator: 4,
             tracks: vec![],
+            plugin_state_blobs: HashMap::new(),
         }
     }
 
@@ -298,6 +304,10 @@ impl AppProject {
                     notes: mc.notes.clone(),
                 }).collect(),
             }).collect(),
+            plugin_state_blobs: self.plugin_state_blobs
+                .iter()
+                .map(|(k, v)| (k.clone(), crate::plugin_system::state::encode_base64(v)))
+                .collect(),
         }
     }
 
@@ -344,12 +354,19 @@ impl AppProject {
                 midi_clips,
             });
         }
+        let plugin_state_blobs = pf.plugin_state_blobs
+            .into_iter()
+            .filter_map(|(k, v)| {
+                crate::plugin_system::state::decode_base64(&v).map(|bytes| (k, bytes))
+            })
+            .collect();
         Ok(AppProject {
             name: pf.name,
             bpm: pf.bpm,
             numerator: pf.numerator,
             denominator: pf.denominator,
             tracks,
+            plugin_state_blobs,
         })
     }
 }
@@ -497,6 +514,11 @@ pub struct ProjectFile {
     pub numerator: u8,
     pub denominator: u8,
     pub tracks: Vec<TrackFile>,
+    /// Base64-encoded per-device plugin state (VST3 chunk), keyed by
+    /// `device_id`.  `#[serde(default)]` keeps projects saved before Phase 4b
+    /// loading unchanged (empty map → default plugin presets, as before).
+    #[serde(default)]
+    pub plugin_state_blobs: HashMap<String, String>,
 }
 
 #[derive(Serialize, Deserialize)]

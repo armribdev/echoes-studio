@@ -1134,6 +1134,10 @@ fn snapshot_project(project: &AppProject) -> AppProject {
                     .collect(),
             })
             .collect(),
+        // Plugin binary state mirrors live plugin internals and is restored
+        // separately (project load → compile → setState), not via the event
+        // store.  Undo/redo snapshots therefore keep this empty.
+        plugin_state_blobs: std::collections::HashMap::new(),
     }
 }
 

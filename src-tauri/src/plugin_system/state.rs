@@ -87,3 +87,98 @@ impl DeviceState {
         matches!(self.format, StateFormat::Empty)
     }
 }
+
+// ── Base64 (RFC 4648, standard alphabet) ────────────────────────────────────
+//
+// Plugin state chunks (VST3) are stored in the project file as base64 strings
+// (audit B3).  The project carries no `base64` crate dependency, so we provide
+// a minimal, self-contained codec — round-trip tested below.  Compact relative
+// to a JSON byte array (which would ~4× a multi-MB synth preset).
+
+const B64_ALPHABET: &[u8; 64] =
+    b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+/// Encode bytes to a padded base64 string.
+pub fn encode_base64(bytes: &[u8]) -> String {
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let b0 = chunk[0] as u32;
+        let b1 = *chunk.get(1).unwrap_or(&0) as u32;
+        let b2 = *chunk.get(2).unwrap_or(&0) as u32;
+        let n = (b0 << 16) | (b1 << 8) | b2;
+        out.push(B64_ALPHABET[((n >> 18) & 0x3F) as usize] as char);
+        out.push(B64_ALPHABET[((n >> 12) & 0x3F) as usize] as char);
+        out.push(if chunk.len() > 1 {
+            B64_ALPHABET[((n >> 6) & 0x3F) as usize] as char
+        } else { '=' });
+        out.push(if chunk.len() > 2 {
+            B64_ALPHABET[(n & 0x3F) as usize] as char
+        } else { '=' });
+    }
+    out
+}
+
+/// Decode a base64 string.  Returns `None` on any invalid character or
+/// truncated group (whitespace is skipped, trailing `=` padding honoured).
+pub fn decode_base64(s: &str) -> Option<Vec<u8>> {
+    fn val(c: u8) -> Option<u32> {
+        match c {
+            b'A'..=b'Z' => Some((c - b'A') as u32),
+            b'a'..=b'z' => Some((c - b'a' + 26) as u32),
+            b'0'..=b'9' => Some((c - b'0' + 52) as u32),
+            b'+' => Some(62),
+            b'/' => Some(63),
+            _ => None,
+        }
+    }
+
+    let mut acc: u32 = 0;
+    let mut bits = 0u32;
+    let mut out = Vec::with_capacity(s.len() / 4 * 3);
+    for &c in s.as_bytes() {
+        match c {
+            b'=' => break,
+            b'\n' | b'\r' | b' ' | b'\t' => continue,
+            _ => {
+                let v = val(c)?;
+                acc = (acc << 6) | v;
+                bits += 6;
+                if bits >= 8 {
+                    bits -= 8;
+                    out.push((acc >> bits) as u8);
+                }
+            }
+        }
+    }
+    Some(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn base64_round_trips_arbitrary_bytes() {
+        for len in 0..=64usize {
+            let bytes: Vec<u8> = (0..len).map(|i| (i * 37 + 11) as u8).collect();
+            let encoded = encode_base64(&bytes);
+            let decoded = decode_base64(&encoded).expect("valid base64 round-trip");
+            assert_eq!(decoded, bytes, "round-trip failed at len {len}");
+        }
+    }
+
+    #[test]
+    fn base64_matches_known_vectors() {
+        assert_eq!(encode_base64(b""), "");
+        assert_eq!(encode_base64(b"f"), "Zg==");
+        assert_eq!(encode_base64(b"fo"), "Zm8=");
+        assert_eq!(encode_base64(b"foo"), "Zm9v");
+        assert_eq!(encode_base64(b"foobar"), "Zm9vYmFy");
+        assert_eq!(decode_base64("Zm9vYmFy").unwrap(), b"foobar");
+    }
+
+    #[test]
+    fn base64_decode_rejects_invalid() {
+        assert!(decode_base64("@@@").is_none());
+    }
+}

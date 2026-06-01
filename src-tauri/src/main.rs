@@ -204,6 +204,9 @@ fn apply_loaded_project(
 ) {
     let name = project.name.clone();
     let dto = project.to_dto();
+    // Capture plugin state blobs before `project` is moved into AppState — they
+    // are re-applied after the graph compiles (the instances must exist first).
+    let plugin_state_blobs = project.plugin_state_blobs.clone();
 
     // Seed event store from loaded project (snapshot-at-zero approach)
     if let (Ok(mut store), Ok(mut p)) =
@@ -221,6 +224,19 @@ fn apply_loaded_project(
     // Without this the scheduler stays at the empty-project state and produces
     // silence even though the UI shows the correct tracks and clips.
     recompile_audio_graph(state);
+
+    // Restore plugin internal state now that the compile has instantiated the
+    // devices (Phase 4b / ADR-010).  Off-RT; project open implies a stopped
+    // transport, so `setState` does not race the audio thread here.
+    if !plugin_state_blobs.is_empty() {
+        if let Ok(mut engine) = state.audio_engine.lock() {
+            for (id, bytes) in &plugin_state_blobs {
+                engine.plugin_host.load_device_state(
+                    plugin_system::state::DeviceState::from_binary(id, bytes.clone()),
+                );
+            }
+        }
+    }
 
     state.dirty.store(false, std::sync::atomic::Ordering::Relaxed);
     set_window_title(app, &name);
@@ -313,7 +329,26 @@ fn handle_menu_event(app: &tauri::AppHandle, menu_id: &str) {
             };
 
             let write_result = {
-                let project = state.project.lock().unwrap();
+                // Canonical lock order: project → engine (matches
+                // `recompile_audio_graph` / `render_project_to_stereo`).
+                let mut project = state.project.lock().unwrap();
+                // Harvest live plugin state (VST3) so the saved file carries
+                // the current presets (Phase 4b / ADR-010).  Off-RT; assumes
+                // the transport is stopped during save.
+                if let Ok(engine) = state.audio_engine.lock() {
+                    project.plugin_state_blobs.clear();
+                    let ids: Vec<String> =
+                        engine.plugin_host.device_ids().map(str::to_string).collect();
+                    for id in ids {
+                        if let Some(ds) = engine.plugin_host.save_device_state(&id) {
+                            if let Some(bytes) = ds.as_binary() {
+                                if !bytes.is_empty() {
+                                    project.plugin_state_blobs.insert(id, bytes.to_vec());
+                                }
+                            }
+                        }
+                    }
+                }
                 serde_json::to_string_pretty(&project.to_file())
             }
             .and_then(|json| {
