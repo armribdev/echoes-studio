@@ -151,3 +151,128 @@ impl AudioNode for InstrumentNode {
         self.was_playing = false;
     }
 }
+
+// ── Tests (ADR-012 / Phase 5b — per-block tempo resolution, BP-3) ─────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Mutex;
+
+    /// A test-only `InstrumentDevice` that records the events handed to it each
+    /// block.  The `Mutex` lives only in test code — never on the RT path.
+    struct CaptureDevice {
+        captured: Arc<Mutex<Vec<MidiEvent>>>,
+    }
+
+    impl InstrumentDevice for CaptureDevice {
+        fn prepare(&mut self, _sr: f32, _mb: usize, _nc: usize) {}
+        fn process_midi(
+            &mut self,
+            events: &MidiEventList,
+            _outputs: &mut [AudioBuffer],
+            _transport: &TransportInfo,
+        ) {
+            let mut g = self.captured.lock().unwrap();
+            g.clear();
+            g.extend_from_slice(events.as_slice());
+        }
+        fn reset(&mut self) {}
+    }
+
+    fn one_beat_note() -> MidiNoteSnapshot {
+        // Beat 1 → beat 2 (one beat long), anchored at the timeline origin.
+        MidiNoteSnapshot {
+            pitch: 60,
+            velocity: 100,
+            clip_start_sec: 0.0,
+            start_beats: 1.0,
+            end_beats: 2.0,
+        }
+    }
+
+    fn make_node(captured: Arc<Mutex<Vec<MidiEvent>>>) -> InstrumentNode {
+        let mut node = InstrumentNode::new(
+            NodeId(1),
+            Arc::new(vec![one_beat_note()]),
+            Box::new(CaptureDevice { captured }),
+        );
+        node.prepare(PrepareContext { sample_rate: 48_000.0, max_block_size: 64_000, num_channels: 2 });
+        node
+    }
+
+    fn run_block(node: &mut InstrumentNode, transport: &TransportInfo) {
+        let inputs: [&AudioBuffer; 0] = [];
+        let mut outputs = vec![AudioBuffer::new(2, transport.block_size)];
+        node.process(&inputs, &mut outputs, transport);
+    }
+
+    /// At 120 BPM a beat-1 NoteOn must land at sample offset 24_000 within a
+    /// block that starts at the project origin.
+    #[test]
+    fn emits_note_on_at_correct_offset() {
+        let captured = Arc::new(Mutex::new(Vec::new()));
+        let mut node = make_node(captured.clone());
+
+        let transport = TransportInfo {
+            is_playing: true,
+            position_samples: 0,
+            position_seconds: 0.0,
+            bpm: 120.0,
+            sample_rate: 48_000.0,
+            block_size: 48_001, // covers both NoteOn (24_000) and NoteOff (48_000)
+        };
+        run_block(&mut node, &transport);
+
+        let events = captured.lock().unwrap();
+        let note_on = events
+            .iter()
+            .find(|e| matches!(e.kind, MidiEventKind::NoteOn { .. }))
+            .expect("NoteOn emitted");
+        assert_eq!(note_on.offset, 24_000);
+    }
+
+    /// Same node, notes unchanged: changing `transport.bpm` between blocks
+    /// re-resolves the note position — no rebake, no recompile.  This is the
+    /// ADR-012 property at the node level (BP-3).
+    #[test]
+    fn tempo_change_between_blocks_reschedules_same_node() {
+        let captured = Arc::new(Mutex::new(Vec::new()));
+        let mut node = make_node(captured.clone());
+
+        // Block 1 @ 120 BPM, frames 0..1_000 — note (start 24_000) not yet due.
+        let block1 = TransportInfo {
+            is_playing: true,
+            position_samples: 0,
+            position_seconds: 0.0,
+            bpm: 120.0,
+            sample_rate: 48_000.0,
+            block_size: 1_000,
+        };
+        run_block(&mut node, &block1);
+        assert!(
+            captured.lock().unwrap().iter().all(|e| !matches!(e.kind, MidiEventKind::NoteOn { .. })),
+            "no NoteOn yet at 120 BPM in frames 0..1_000"
+        );
+
+        // Block 2 @ 240 BPM, continuous from frame 1_000 (no discontinuity).
+        // At 240 BPM beat 1 → 12_000 frames, so NoteOn lands at offset
+        // 12_000 - 1_000 = 11_000 in this block.
+        let block2 = TransportInfo {
+            is_playing: true,
+            position_samples: 1_000,
+            position_seconds: 1_000.0 / 48_000.0,
+            bpm: 240.0,
+            sample_rate: 48_000.0,
+            block_size: 20_000, // frames 1_000..21_000
+        };
+        run_block(&mut node, &block2);
+
+        let events = captured.lock().unwrap();
+        let note_on = events
+            .iter()
+            .find(|e| matches!(e.kind, MidiEventKind::NoteOn { .. }))
+            .expect("NoteOn emitted at the new tempo");
+        assert_eq!(note_on.offset, 11_000);
+    }
+}

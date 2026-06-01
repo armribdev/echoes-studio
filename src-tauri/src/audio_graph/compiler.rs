@@ -32,7 +32,7 @@ use std::sync::{
 use crate::audio_graph::execution_plan::{ExecutionPlan, ExecutionPlanBuilder, ExecutionStep, InputConnection};
 use crate::audio_graph::graph::{AudioGraph, NodeKind};
 use crate::audio_graph::live_params::LiveParams;
-use crate::audio_graph::node::{AudioNode, NodeId, PrepareContext};
+use crate::audio_graph::node::{AudioNode, NodeId, PortId, PortKind, PrepareContext};
 use crate::audio_graph::modulation::ModulationMap;
 use crate::plugin_system::PluginHost;
 use crate::project::AppProject;
@@ -76,6 +76,10 @@ pub enum CompileError {
     MissingNode(NodeId),
     /// An edge references a port that the node does not have.
     InvalidPort { node: NodeId, port: u32 },
+    /// An edge declares a [`PortKind`] the compiler cannot route yet
+    /// (anything other than `Audio`).  Guards Phase 5a until the MIDI /
+    /// modulation paths (5c/5e) wire the producing & consuming ports.
+    UnsupportedPortKind { from: PortId, to: PortId, kind: PortKind },
 }
 
 impl std::fmt::Display for CompileError {
@@ -87,6 +91,12 @@ impl std::fmt::Display for CompileError {
             CompileError::InvalidPort { node, port } => {
                 write!(f, "invalid port {} on node {}", port, node)
             }
+            CompileError::UnsupportedPortKind { from, to, kind } => write!(
+                f,
+                "edge {:?} → {:?} declares port kind {:?}, which the compiler cannot route yet \
+                 (only Audio is supported in Phase 5a)",
+                from, to, kind
+            ),
         }
     }
 }
@@ -126,6 +136,7 @@ impl GraphCompiler {
         if graph.master_id.is_none() {
             return Err(CompileError::NoMasterNode);
         }
+        Self::validate_port_kinds(graph)?;
 
         // 2. Topological sort (Kahn's algorithm)
         let order = Self::topological_sort(graph)?;
@@ -372,6 +383,29 @@ impl GraphCompiler {
 
     // ── Topological sort (Kahn's BFS) ─────────────────────────────────────────
 
+    /// Validate that every edge carries a routable [`PortKind`] (ADR-008, 5a).
+    ///
+    /// Today only `Audio` is routable.  A non-`Audio` edge means a later phase
+    /// produced a typed edge before its node-side ports exist — we fail fast
+    /// rather than silently treating a note stream as audio.  With all edges
+    /// defaulting to `Audio` (legacy path) this pass is a no-op, preserving the
+    /// bit-identical guarantee (C-2).
+    fn validate_port_kinds(graph: &AudioGraph) -> Result<(), CompileError> {
+        for edge in &graph.edges {
+            match edge.kind {
+                PortKind::Audio { .. } => {}
+                other => {
+                    return Err(CompileError::UnsupportedPortKind {
+                        from: edge.from,
+                        to: edge.to,
+                        kind: other,
+                    });
+                }
+            }
+        }
+        Ok(())
+    }
+
     fn topological_sort(graph: &AudioGraph) -> Result<Vec<NodeId>, CompileError> {
         let node_ids: Vec<NodeId> = graph.nodes.keys().copied().collect();
 
@@ -491,10 +525,11 @@ impl GraphCompiler {
         match kind {
             NodeKind::Instrument { track_id } => {
                 use crate::audio_graph::midi::MidiNoteSnapshot;
-                use crate::audio_graph::nodes::instrument::InstrumentNode;
+                use crate::audio_graph::nodes::instrument::{InstrumentDevice, InstrumentNode};
                 use crate::audio_graph::nodes::poly_synth::PolySynth;
 
                 let mut notes: Vec<MidiNoteSnapshot> = Vec::new();
+                let mut instrument_id: Option<&str> = None;
 
                 if let Some(track) = project.tracks.iter().find(|t| &t.id == track_id) {
                     for clip in &track.midi_clips {
@@ -508,13 +543,27 @@ impl GraphCompiler {
                             });
                         }
                     }
+                    instrument_id = track.instrument.as_deref();
                 }
 
-                Box::new(InstrumentNode::new(
-                    id,
-                    StdArc::new(notes),
-                    Box::new(PolySynth::new()),
-                ))
+                // Phase 5c: a track may name a plugin instrument.  Try to
+                // instantiate it (CLAP only for now); on any failure fall back
+                // to the built-in PolySynth so the graph still compiles and the
+                // legacy/bit-identical path is preserved.
+                let device: Box<dyn InstrumentDevice> = match instrument_id {
+                    Some(device_id) => match plugin_host.instantiate_instrument(device_id) {
+                        Ok(dev) => dev,
+                        Err(e) => {
+                            eprintln!(
+                                "[audio] Instrument '{device_id}' instantiation failed ({e}) — PolySynth utilisé"
+                            );
+                            Box::new(PolySynth::new())
+                        }
+                    },
+                    None => Box::new(PolySynth::new()),
+                };
+
+                Box::new(InstrumentNode::new(id, StdArc::new(notes), device))
             }
 
             NodeKind::Track { track_id } => {
@@ -666,5 +715,46 @@ impl GraphCompiler {
                 Box::new(nodes::delay::DelayNode::new(id, params.clone()).with_block(block))
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::audio_graph::graph::AudioGraph;
+
+    fn two_node_graph() -> (AudioGraph, NodeId, NodeId) {
+        let mut g = AudioGraph::new();
+        let a = g.add_node(NodeKind::Meter { meter_id: "a".into() }, "a");
+        let b = g.add_node(NodeKind::Meter { meter_id: "b".into() }, "b");
+        (g, a, b)
+    }
+
+    #[test]
+    fn default_audio_edges_pass_validation() {
+        let (mut g, a, b) = two_node_graph();
+        g.connect(a, 0, b, 0);
+        assert_eq!(GraphCompiler::validate_port_kinds(&g), Ok(()));
+    }
+
+    #[test]
+    fn midi_edge_is_rejected_until_phase_5c() {
+        let (mut g, a, b) = two_node_graph();
+        g.connect_typed(a, 0, b, 0, PortKind::Midi);
+        assert!(matches!(
+            GraphCompiler::validate_port_kinds(&g),
+            Err(CompileError::UnsupportedPortKind { kind: PortKind::Midi, .. })
+        ));
+    }
+
+    #[test]
+    fn modulation_edge_is_rejected_until_phase_5e() {
+        use crate::audio_graph::node::Polarity;
+        let (mut g, a, b) = two_node_graph();
+        g.connect_typed(a, 0, b, 0, PortKind::Modulation { polarity: Polarity::Bipolar });
+        assert!(matches!(
+            GraphCompiler::validate_port_kinds(&g),
+            Err(CompileError::UnsupportedPortKind { .. })
+        ));
     }
 }

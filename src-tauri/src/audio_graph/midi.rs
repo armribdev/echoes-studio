@@ -123,3 +123,50 @@ pub fn beats_to_sample(clip_start_sec: f64, beats: f32, bpm: f32, sample_rate: f
     let secs = clip_start_sec + beats as f64 * (60.0 / bpm as f64);
     (secs * sample_rate as f64) as u64
 }
+
+// ── Tests (ADR-012 / Phase 5b — BP-3 bit-identical lock) ──────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Locks the beats→samples resolution: at constant tempo it must be exact
+    /// and deterministic.  This is the bit-identical guard (C-2 / BP-3) — any
+    /// future change to the resolution maths trips this test.
+    #[test]
+    fn beats_to_sample_is_deterministic_at_constant_tempo() {
+        // 120 BPM, 48 kHz → 1 beat = 0.5 s = 24_000 frames.
+        assert_eq!(beats_to_sample(0.0, 0.0, 120.0, 48_000.0), 0);
+        assert_eq!(beats_to_sample(0.0, 1.0, 120.0, 48_000.0), 24_000);
+        assert_eq!(beats_to_sample(0.0, 2.0, 120.0, 48_000.0), 48_000);
+    }
+
+    /// The clip anchor is tempo-independent (seconds); only the beat offset
+    /// scales with tempo.  Verifies the mixed seconds/beats project model.
+    #[test]
+    fn clip_anchor_is_tempo_independent() {
+        // 1.0 s anchor + 0 beats = exactly 48_000 frames regardless of BPM.
+        assert_eq!(beats_to_sample(1.0, 0.0, 120.0, 48_000.0), 48_000);
+        assert_eq!(beats_to_sample(1.0, 0.0, 240.0, 48_000.0), 48_000);
+    }
+
+    /// The same snapshot resolves to a different sample position when the
+    /// tempo changes — no rebake, no recompile.  This is the core ADR-012
+    /// property exercised at the snapshot level.
+    #[test]
+    fn tempo_change_rescales_note_without_rebake() {
+        let note = MidiNoteSnapshot {
+            pitch: 60,
+            velocity: 100,
+            clip_start_sec: 0.0,
+            start_beats: 1.0,
+            end_beats: 2.0,
+        };
+        // 120 BPM: beat 1 → 24_000, beat 2 → 48_000.
+        assert_eq!(note.start_sample(120.0, 48_000.0), 24_000);
+        assert_eq!(note.end_sample(120.0, 48_000.0), 48_000);
+        // 240 BPM (twice as fast): beat positions halve.
+        assert_eq!(note.start_sample(240.0, 48_000.0), 12_000);
+        assert_eq!(note.end_sample(240.0, 48_000.0), 24_000);
+    }
+}

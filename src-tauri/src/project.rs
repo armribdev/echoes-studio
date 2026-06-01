@@ -236,6 +236,11 @@ pub struct AppTrack {
     pub midi_notes: Vec<MidiNote>,
     /// MIDI clips placed on the timeline.
     pub midi_clips: Vec<AppMidiClip>,
+    /// Optional plugin instrument that generates this track's audio from its
+    /// MIDI clips (Phase 5c).  `None` → the built-in `PolySynth` (legacy,
+    /// bit-identical).  When `Some(device_id)`, the compiler instantiates that
+    /// plugin as the instrument node's generator.
+    pub instrument: Option<String>,
 }
 
 pub struct AppProject {
@@ -303,6 +308,7 @@ impl AppProject {
                     end: mc.end,
                     notes: mc.notes.clone(),
                 }).collect(),
+                instrument: t.instrument.clone(),
             }).collect(),
             plugin_state_blobs: self.plugin_state_blobs
                 .iter()
@@ -352,6 +358,7 @@ impl AppProject {
                 mod_routes: tf.mod_routes,
                 midi_notes: tf.midi_notes,
                 midi_clips,
+                instrument: tf.instrument,
             });
         }
         let plugin_state_blobs = pf.plugin_state_blobs
@@ -391,6 +398,7 @@ impl AppTrack {
                 end: mc.end,
                 notes: mc.notes.clone(),
             }).collect(),
+            instrument: self.instrument.clone(),
         }
     }
 }
@@ -545,6 +553,8 @@ pub struct TrackFile {
     pub midi_notes: Vec<MidiNote>,
     #[serde(default)]
     pub midi_clips: Vec<MidiClipFile>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub instrument: Option<String>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -597,6 +607,7 @@ pub struct TrackDto {
     pub mod_routes: Vec<ProjectModulationRoute>,
     pub midi_notes: Vec<MidiNote>,
     pub midi_clips: Vec<MidiClipDto>,
+    pub instrument: Option<String>,
 }
 
 #[derive(Serialize, Clone)]
@@ -611,4 +622,52 @@ pub struct ClipDto {
     pub peaks_64: Vec<[f32; 2]>,
     pub peaks_512: Vec<[f32; 2]>,
     pub peaks_4096: Vec<[f32; 2]>,
+}
+
+// ── Tests (Phase 5c — AppTrack.instrument backward-compat / round-trip) ────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// C-4: a saved project from before Phase 5c (no `instrument` field) loads
+    /// with `instrument == None` → the track keeps the built-in PolySynth.
+    #[test]
+    fn track_file_without_instrument_defaults_to_none() {
+        let json = r#"{
+            "name": "Legacy",
+            "volume": 80.0,
+            "clips": []
+        }"#;
+        let tf: TrackFile = serde_json::from_str(json).expect("deserialize legacy track");
+        assert_eq!(tf.instrument, None);
+    }
+
+    /// The instrument device_id survives a file save → load round-trip.
+    #[test]
+    fn instrument_round_trips_through_file() {
+        let mut project = AppProject::new();
+        project.tracks.push(AppTrack {
+            id: "t1".into(),
+            name: "Synth".into(),
+            volume: 80.0,
+            pan: 0.0,
+            muted: false,
+            solo: false,
+            clips: vec![],
+            effects: vec![],
+            modulators: vec![],
+            mod_routes: vec![],
+            midi_notes: vec![],
+            midi_clips: vec![],
+            instrument: Some("clap://surge.dll?org.surge-synth.surge-xt".into()),
+        });
+
+        let file = project.to_file();
+        let restored = AppProject::from_file(file).expect("from_file");
+        assert_eq!(
+            restored.tracks[0].instrument.as_deref(),
+            Some("clap://surge.dll?org.surge-synth.surge-xt")
+        );
+    }
 }

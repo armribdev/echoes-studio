@@ -20,6 +20,7 @@
 //!  (0 outputs) so the scheduler uses the special `write_master_output` path.
 
 pub mod bus;
+pub mod clap_instrument;
 pub mod compressor;
 pub mod delay;
 pub mod eq;

@@ -21,7 +21,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use crate::audio_graph::modulation::{
     ModulationMap, ModulationRoute, ModulationSource, ModulationTarget, ModulatorKind, ParamId,
 };
-use crate::audio_graph::node::{NodeId, PortId};
+use crate::audio_graph::node::{NodeId, PortId, PortKind};
 use crate::project::{AppProject, EffectParams, ModulationTargetRef, ModulatorParams};
 
 // ── Node ID allocation ─────────────────────────────────────────────────────────
@@ -135,13 +135,27 @@ pub struct GraphNode {
 
 // ── Edge ──────────────────────────────────────────────────────────────────────
 
-/// A directed audio connection from one port to another.
+/// A directed connection from one port to another.
 ///
-/// Convention: audio flows  `from` → `to`.
+/// Convention: signal flows  `from` → `to`.
+///
+/// ## Port typing (ADR-008 / Phase 5a)
+///
+/// Every edge carries a [`PortKind`].  Legacy connections created via
+/// [`AudioGraph::connect`] default to `Audio { channels: 2 }`, which keeps the
+/// compiled graph bit-identical to the pre-typing behaviour (target C-2).
+/// Typed edges (`Midi`, `Modulation`) are created via
+/// [`AudioGraph::connect_typed`] — wired up in Phase 5c/5e once nodes declare
+/// real MIDI / modulation ports.  Until then the compiler's
+/// `validate_port_kinds` pass rejects any non-`Audio` edge as a guard.
+///
+/// `Edge` is **not** serialised — it is rebuilt from `AppProject` on every
+/// `from_project`, so adding `kind` does not affect the project file format.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Edge {
     pub from: PortId,
     pub to: PortId,
+    pub kind: PortKind,
 }
 
 // ── AudioGraph ────────────────────────────────────────────────────────────────
@@ -180,6 +194,10 @@ impl AudioGraph {
 
     /// Connect output port `from_port` of `from_node` to input port `to_port`
     /// of `to_node`.  Returns the created edge.
+    ///
+    /// The edge defaults to `PortKind::Audio { channels: 2 }` — the legacy
+    /// behaviour.  Use [`AudioGraph::connect_typed`] for MIDI / modulation
+    /// edges (Phase 5c/5e).
     pub fn connect(
         &mut self,
         from_node: NodeId,
@@ -187,9 +205,27 @@ impl AudioGraph {
         to_node: NodeId,
         to_port: u32,
     ) -> Edge {
+        self.connect_typed(from_node, from_port, to_node, to_port, PortKind::default_audio_stereo())
+    }
+
+    /// Connect two ports with an explicit [`PortKind`].
+    ///
+    /// Phase 5a introduces the typed edge.  The compiler's `validate_port_kinds`
+    /// pass currently rejects any `kind` other than `Audio`; the `Midi` /
+    /// `Modulation` paths are enabled in later sub-phases once the producing
+    /// and consuming nodes declare matching ports.
+    pub fn connect_typed(
+        &mut self,
+        from_node: NodeId,
+        from_port: u32,
+        to_node: NodeId,
+        to_port: u32,
+        kind: PortKind,
+    ) -> Edge {
         let edge = Edge {
             from: PortId { node: from_node, port: from_port },
             to: PortId { node: to_node, port: to_port },
+            kind,
         };
         self.edges.push(edge.clone());
         edge

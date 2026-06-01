@@ -25,6 +25,8 @@ use std::ptr::NonNull;
 use std::sync::Arc;
 
 use crate::audio_graph::node::{AudioNode, NodeId};
+use crate::audio_graph::nodes::clap_instrument::ClapInstrument;
+use crate::audio_graph::nodes::instrument::InstrumentDevice;
 use crate::plugin_formats::clap::ffi::{ClapLibrary, CLAP_PLUGIN_FACTORY_ID};
 use crate::plugin_formats::clap::host::decode_plugin_id as clap_decode_id;
 use crate::plugin_formats::clap::wrapper::ClapWrapperNode;
@@ -242,6 +244,23 @@ impl PluginHost {
         plugin_id: &str,
         manifest:  &PluginManifest,
     ) -> Result<(Arc<PluginInstance>, Box<dyn AudioNode>), HostError> {
+        let instance = self.create_clap_instance(plugin_id, manifest)?;
+        let node: Box<dyn AudioNode> = Box::new(ClapWrapperNode::new(
+            node_id, Arc::clone(&instance),
+        ));
+        Ok((instance, node))
+    }
+
+    /// Load the DLL, create the CLAP plugin, and build the shared
+    /// `PluginInstance` — **without** building an audio wrapper.  Shared by the
+    /// effect path ([`instantiate_clap`]) and the instrument path
+    /// ([`instantiate_instrument`]) so the FFI create sequence lives in one
+    /// place.
+    fn create_clap_instance(
+        &self,
+        plugin_id: &str,
+        manifest:  &PluginManifest,
+    ) -> Result<Arc<PluginInstance>, HostError> {
         let clap_id = clap_decode_id(plugin_id)
             .ok_or_else(|| HostError::InstantiationFailed("invalid CLAP plugin_id".into()))?;
 
@@ -274,20 +293,48 @@ impl PluginHost {
             ));
         }
 
-        let instance = PluginInstance::new_clap(
+        Ok(PluginInstance::new_clap(
             plugin_id,
             &manifest.name,
             &manifest.vendor,
             plugin,
             host,
             lib,
-        );
+        ))
+    }
 
-        let node: Box<dyn AudioNode> = Box::new(ClapWrapperNode::new(
-            node_id, Arc::clone(&instance),
-        ));
+    // ── Instrument instantiation (Phase 5c) ────────────────────────────────────
 
-        Ok((instance, node))
+    /// Instantiate a plugin as a MIDI **instrument** generator, returning a
+    /// `Box<dyn InstrumentDevice>` the compiler embeds as the inner device of
+    /// an `InstrumentNode`.  The host registers the shared `PluginInstance`
+    /// (same as [`instantiate`]) so parameter / state / lifecycle calls address
+    /// the live instance.
+    ///
+    /// Only CLAP is wired in this phase (C-3 variant-by-variant).  Other formats
+    /// return `Err` so the caller falls back to the built-in `PolySynth`.
+    pub fn instantiate_instrument(
+        &mut self,
+        plugin_id: &str,
+    ) -> Result<Box<dyn InstrumentDevice>, HostError> {
+        let manifest = self.registry.get(plugin_id)
+            .ok_or_else(|| HostError::PluginNotFound(plugin_id.to_string()))?
+            .clone();
+
+        match manifest.format {
+            DeviceFormat::Clap => {
+                let instance = self.create_clap_instance(plugin_id, &manifest)?;
+                instance.set_lifecycle(LifecycleState::Running);
+                self.records.insert(plugin_id.to_string(), DeviceRecord {
+                    instance: Arc::clone(&instance),
+                    saved_state: DeviceState::empty(plugin_id),
+                });
+                Ok(Box::new(ClapInstrument::new(instance)))
+            }
+            other => Err(HostError::InstantiationFailed(
+                format!("instrument format {other:?} not supported yet (CLAP only in Phase 5c)"),
+            )),
+        }
     }
 
     // ── Parameter routing ─────────────────────────────────────────────────────

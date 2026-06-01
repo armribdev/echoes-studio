@@ -260,6 +260,7 @@ fn process_command(
                     mod_routes: vec![],
                     midi_notes: vec![],
                     midi_clips: vec![],
+                    instrument: None,
                 });
             }
 
@@ -1117,6 +1118,7 @@ fn snapshot_project(project: &AppProject) -> AppProject {
                 mod_routes: t.mod_routes.clone(),
                 midi_notes: t.midi_notes.clone(),
                 midi_clips: t.midi_clips.clone(),
+                instrument: t.instrument.clone(),
                 clips: t
                     .clips
                     .iter()
@@ -1261,6 +1263,7 @@ fn apply_events(
                         mod_routes: vec![],
                         midi_notes: vec![],
                         midi_clips: vec![],
+                        instrument: None,
                     });
                 }
             }
