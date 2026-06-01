@@ -161,7 +161,19 @@ impl GraphCompiler {
             let graph_node = graph.nodes.get(&node_id)
                 .ok_or(CompileError::MissingNode(node_id))?;
 
-            let num_inputs = Self::num_inputs_for_kind(&graph_node.kind);
+            // Base port count from the node kind, plus any auxiliary
+            // (sidechain) input ports the plugin declares in its scan-time
+            // manifest (Phase 5d, P0-3).  Aux count is 0 for every plugin today
+            // → strictly bit-identical until bus introspection populates it.
+            let num_inputs = {
+                let base = Self::num_inputs_for_kind(&graph_node.kind);
+                match &graph_node.kind {
+                    NodeKind::Plugin { device_id } => {
+                        base + plugin_host.sidechain_input_ports(device_id)
+                    }
+                    _ => base,
+                }
+            };
             let num_outputs = Self::num_outputs_for_kind(&graph_node.kind);
 
             // Build input_connections: for each input port, find the upstream edge

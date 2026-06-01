@@ -69,6 +69,9 @@ impl Vst3Host {
                 num_audio_outputs: 2,
                 has_midi_input:  false,
                 has_midi_output: false,
+                // No bus introspection at scan yet; a lazy `getBusInfo` probe
+                // will populate this (Phase 5d follow-up).
+                num_sidechain_inputs: 0,
             });
         }
 

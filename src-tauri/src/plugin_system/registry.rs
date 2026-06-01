@@ -33,6 +33,12 @@ pub struct PluginManifest {
     pub num_audio_outputs: usize,
     pub has_midi_input: bool,
     pub has_midi_output: bool,
+    /// Number of **auxiliary** (sidechain) input ports/buses, separate from the
+    /// main input bus (Phase 5d, P0-3 / P1-5).  Cached at scan time; the graph
+    /// compiler allocates this many extra input ports on the plugin node so a
+    /// sidechain source can be routed in.  `0` for plugins with no aux bus →
+    /// the compiler sizes the node exactly as before (bit-identical, C-2).
+    pub num_sidechain_inputs: usize,
 }
 
 impl PluginManifest {
@@ -54,6 +60,7 @@ impl PluginManifest {
             num_audio_outputs: 2,
             has_midi_input: false,
             has_midi_output: false,
+            num_sidechain_inputs: 0,
         }
     }
 }

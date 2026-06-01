@@ -96,6 +96,13 @@ impl PluginHost {
     pub fn registry(&self)     -> &PluginRegistry     { &self.registry }
     pub fn registry_mut(&mut self) -> &mut PluginRegistry { &mut self.registry }
 
+    /// Number of auxiliary (sidechain) input ports the plugin declares, from
+    /// the scan-time manifest cache (Phase 5d).  `0` when the device is unknown
+    /// or has no aux bus — the compiler then sizes the node exactly as before.
+    pub fn sidechain_input_ports(&self, device_id: &str) -> usize {
+        self.registry.get(device_id).map(|m| m.num_sidechain_inputs).unwrap_or(0)
+    }
+
     // ── Plugin scanning ────────────────────────────────────────────────────────
 
     /// Scan standard system directories for VST3 and CLAP plugins.
@@ -478,5 +485,44 @@ fn format_tag(fmt: DeviceFormat) -> String {
         DeviceFormat::Au       => "AU".into(),
         DeviceFormat::Internal => "Internal".into(),
         DeviceFormat::Wasm     => "WASM".into(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::plugin_system::registry::PluginManifest;
+
+    fn manifest_with_sidechain(id: &str, aux: usize) -> PluginManifest {
+        PluginManifest {
+            id: id.to_string(),
+            name: "Comp".into(),
+            vendor: "Test".into(),
+            version: String::new(),
+            format: DeviceFormat::Clap,
+            path: None,
+            categories: vec![],
+            num_audio_inputs: 2,
+            num_audio_outputs: 2,
+            has_midi_input: false,
+            has_midi_output: false,
+            num_sidechain_inputs: aux,
+        }
+    }
+
+    #[test]
+    fn sidechain_ports_read_from_manifest() {
+        let mut host = PluginHost::new();
+        host.registry_mut().add(manifest_with_sidechain("clap:ducker", 1));
+        assert_eq!(host.sidechain_input_ports("clap:ducker"), 1);
+    }
+
+    #[test]
+    fn sidechain_ports_zero_for_unknown_or_plain_device() {
+        let host = PluginHost::new();
+        // Unknown device → 0 (compiler sizes node as before).
+        assert_eq!(host.sidechain_input_ports("clap:does-not-exist"), 0);
+        // Built-in device has no aux bus → 0 (bit-identical).
+        assert_eq!(host.sidechain_input_ports("echoes.gain"), 0);
     }
 }
