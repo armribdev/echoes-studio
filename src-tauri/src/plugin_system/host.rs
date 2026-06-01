@@ -62,15 +62,15 @@ impl std::fmt::Display for HostError {
 
 // ── Device record ─────────────────────────────────────────────────────────────
 //
-// Phase 2a: the long-lived ownership root for one device.  Carries the
-// host-side `Arc` clone (so the host can address the live instance) plus the
-// transitional `lifecycle` / `saved_state` fields the legacy API still
-// surfaces.  Phase 2b will fold `lifecycle` into the instance's atomic;
-// Phase 3 will retire `saved_state` once SPSC param transport lands.
+// Phase 2a: long-lived ownership root for one device — carries the host-side
+// `Arc<PluginInstance>` clone so the host can address the live instance.
+//
+// Phase 2b: the per-record `lifecycle` field is gone.  The instance's atomic
+// is the single source of truth; this record only keeps the transitional
+// `saved_state` blob (retired by Phase 3 / 4 once SPSC + FFI state lands).
 
 struct DeviceRecord {
     instance:    Arc<PluginInstance>,
-    lifecycle:   LifecycleState,
     saved_state: DeviceState,
 }
 
@@ -174,9 +174,17 @@ impl PluginHost {
             }
         };
 
+        // Phase 2b: lifecycle now lives exclusively on the instance.  The
+        // legacy host-side state machine jumped straight to `Running` after
+        // instantiation; we preserve that observable behaviour by stamping
+        // the atomic here (the wrapper's `prepare` will later re-stamp it,
+        // which is idempotent).  Phase 4 will introduce the proper
+        // Created → Loaded → Initialized → Running sequence once state load
+        // / save lands on the host API.
+        instance.set_lifecycle(LifecycleState::Running);
+
         self.records.insert(plugin_id.to_string(), DeviceRecord {
             instance,
-            lifecycle:   LifecycleState::Running,
             saved_state: DeviceState::empty(plugin_id),
         });
 
@@ -306,28 +314,38 @@ impl PluginHost {
     }
 
     // ── Lifecycle management ───────────────────────────────────────────────────
+    //
+    // Phase 2b: the instance atomic is the only state store.  Each command
+    // reads the current value, validates the target via `transition`, then
+    // stores the new value back.  The read-validate-store sequence is safe
+    // because lifecycle mutations are command-thread only — the audio thread
+    // never writes to `instance.lifecycle`, it only reads it (and even that
+    // is not yet wired on the hot path).
 
     pub fn suspend_device(&mut self, device_id: &str) -> Result<(), HostError> {
-        let record = self.records.get_mut(device_id)
+        let record = self.records.get(device_id)
             .ok_or_else(|| HostError::DeviceNotFound(device_id.to_string()))?;
-        record.lifecycle = transition(record.lifecycle, LifecycleState::Suspended)
+        let next = transition(record.instance.lifecycle(), LifecycleState::Suspended)
             .map_err(HostError::LifecycleError)?;
-        record.instance.set_lifecycle(record.lifecycle);
+        record.instance.set_lifecycle(next);
         Ok(())
     }
 
     pub fn resume_device(&mut self, device_id: &str) -> Result<(), HostError> {
-        let record = self.records.get_mut(device_id)
+        let record = self.records.get(device_id)
             .ok_or_else(|| HostError::DeviceNotFound(device_id.to_string()))?;
-        record.lifecycle = transition(record.lifecycle, LifecycleState::Running)
+        let next = transition(record.instance.lifecycle(), LifecycleState::Running)
             .map_err(HostError::LifecycleError)?;
-        record.instance.set_lifecycle(record.lifecycle);
+        record.instance.set_lifecycle(next);
         Ok(())
     }
 
     pub fn destroy_device(&mut self, device_id: &str) {
-        if let Some(record) = self.records.get_mut(device_id) {
-            record.lifecycle = LifecycleState::Destroyed;
+        if let Some(record) = self.records.get(device_id) {
+            // `Destroyed` is reachable from any non-terminal state via
+            // `transition`'s catch-all rule for `Error`; we use unconditional
+            // store here because destroy is a forced teardown, not a
+            // negotiable transition.
             record.instance.set_lifecycle(LifecycleState::Destroyed);
         }
         // Dropping the record releases the host-side `Arc<PluginInstance>`
@@ -354,7 +372,8 @@ impl PluginHost {
     pub fn device_count(&self) -> usize { self.records.len() }
 
     pub fn lifecycle_of(&self, device_id: &str) -> Option<LifecycleState> {
-        self.records.get(device_id).map(|r| r.lifecycle)
+        // Phase 2b: read the authoritative atomic.
+        self.records.get(device_id).map(|r| r.instance.lifecycle())
     }
 
     /// Borrow the shared instance for an already-instantiated device.

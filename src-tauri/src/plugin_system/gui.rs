@@ -39,7 +39,7 @@ use std::ptr::{null, null_mut};
 use std::sync::atomic::{AtomicPtr, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
-use crate::plugin_system::registry::PluginManifest;
+use crate::plugin_system::instance::PluginInstance;
 
 // ── Win32 bindings ────────────────────────────────────────────────────────────
 
@@ -335,6 +335,17 @@ unsafe fn show_and_start_timer(hwnd: *mut c_void) {
 }
 
 // ── CLAP host extensions and shared state ─────────────────────────────────────
+//
+// Phase 2c: the audio-side `PluginHost::instantiate_clap` builds a *bare*
+// ClapHost (see `clap::ffi::make_host`), so the plugin's create-time host
+// pointer does NOT route to the GUI HWND.  The vtable callbacks below
+// (`clap_host_request_callback`, `gui_host_get_extension`, the log + gui
+// extensions, …) are therefore parked dead-code for the audio-shared path;
+// they remain validated by review and ready for Phase 4, when the audio host
+// will be enriched with a runtime-bindable `ClapHostShared` block so the
+// plugin can reach `request_resize` / `on_main_thread` of the editor window.
+// `dead_code` is allowed on each parked item rather than the whole module so
+// we still catch genuinely dead helpers in the active code path.
 
 use crate::plugin_formats::clap::ffi::{
     CLAP_EXT_HOST_GUI, CLAP_EXT_LOG, ClapHost, ClapHostGui, ClapHostLog,
@@ -355,6 +366,7 @@ struct ClapHostShared {
     host_hwnd: AtomicPtr<c_void>,
 }
 
+#[allow(dead_code)] // Phase 2c park — see section header
 unsafe extern "C" fn clap_host_request_callback(host: *const ClapHost) {
     if host.is_null() { return; }
     let data = (*host).host_data;
@@ -368,17 +380,20 @@ unsafe extern "C" fn clap_host_request_callback(host: *const ClapHost) {
     user32::PostMessageW(hwnd, WM_APP_DRAIN, 0, 0);
 }
 
+#[allow(dead_code)] // Phase 2c park
 unsafe extern "C" fn clap_host_request_restart(_host: *const ClapHost) {
     // No-op: restart requires deactivate/activate on the audio thread, which
     // is out of scope for the GUI-only path.
 }
 
+#[allow(dead_code)] // Phase 2c park
 unsafe extern "C" fn clap_host_request_process(_host: *const ClapHost) {
     // No-op: GUI-only instance is never activated for processing.
 }
 
 // ── clap.log host extension ──
 
+#[allow(dead_code)] // Phase 2c park
 unsafe extern "C" fn clap_host_log_log(
     _host: *const ClapHost,
     severity: ClapLogSeverity,
@@ -399,12 +414,15 @@ unsafe extern "C" fn clap_host_log_log(
     eprintln!("[clap.{label}] {s}");
 }
 
+#[allow(dead_code)] // Phase 2c park
 static CLAP_LOG_VTBL: ClapHostLog = ClapHostLog { log: clap_host_log_log };
 
 // ── clap.gui host extension ──
 
+#[allow(dead_code)] // Phase 2c park
 unsafe extern "C" fn clap_host_gui_resize_hints_changed(_host: *const ClapHost) {}
 
+#[allow(dead_code)] // Phase 2c park
 unsafe extern "C" fn clap_host_gui_request_resize(
     host: *const ClapHost, w: u32, h: u32,
 ) -> bool {
@@ -418,9 +436,12 @@ unsafe extern "C" fn clap_host_gui_request_resize(
     true
 }
 
+#[allow(dead_code)] // Phase 2c park
 unsafe extern "C" fn clap_host_gui_request_show(_host: *const ClapHost) -> bool { true }
+#[allow(dead_code)] // Phase 2c park
 unsafe extern "C" fn clap_host_gui_request_hide(_host: *const ClapHost) -> bool { true }
 
+#[allow(dead_code)] // Phase 2c park
 unsafe extern "C" fn clap_host_gui_closed(host: *const ClapHost, _was_destroyed: bool) {
     if host.is_null() { return; }
     let data = (*host).host_data;
@@ -432,6 +453,7 @@ unsafe extern "C" fn clap_host_gui_closed(host: *const ClapHost, _was_destroyed:
     }
 }
 
+#[allow(dead_code)] // Phase 2c park
 static CLAP_HOST_GUI_VTBL: ClapHostGui = ClapHostGui {
     resize_hints_changed: clap_host_gui_resize_hints_changed,
     request_resize:       clap_host_gui_request_resize,
@@ -442,6 +464,7 @@ static CLAP_HOST_GUI_VTBL: ClapHostGui = ClapHostGui {
 
 // ── host_get_extension router ──
 
+#[allow(dead_code)] // Phase 2c park
 unsafe extern "C" fn gui_host_get_extension(
     _host: *const ClapHost,
     id:    *const c_char,
@@ -474,7 +497,15 @@ unsafe extern "C" fn vst3_refcount_addref(_: *mut FUnknown) -> u32 { 1 }
 unsafe extern "C" fn vst3_refcount_release(_: *mut FUnknown) -> u32 { 1 }
 
 // ── IHostApplication ──
+//
+// Phase 2c park: the audio-side `instantiate_processor` currently passes a
+// null host context to `IComponent::initialize` (single shared instance, so
+// the GUI can no longer hand its own context).  The vtable below is retained
+// for Phase 4, when `instantiate_processor` will be threaded with a real
+// host-application pointer and the GUI will reach it through the shared
+// `Arc<PluginInstance>`.
 
+#[allow(dead_code)] // Phase 2c park
 unsafe extern "C" fn host_app_qi(
     this: *mut FUnknown, iid: *const Tuid, obj: *mut *mut c_void,
 ) -> TResult {
@@ -487,6 +518,7 @@ unsafe extern "C" fn host_app_qi(
     -1
 }
 
+#[allow(dead_code)] // Phase 2c park
 unsafe extern "C" fn host_app_get_name(_this: *mut FUnknown, name: *mut u16) -> TResult {
     if name.is_null() { return -1; }
     let host_name = "Echoes Studio";
@@ -496,6 +528,7 @@ unsafe extern "C" fn host_app_get_name(_this: *mut FUnknown, name: *mut u16) -> 
     K_RESULT_OK
 }
 
+#[allow(dead_code)] // Phase 2c park
 unsafe extern "C" fn host_app_create_instance(
     _this: *mut FUnknown,
     _cid:  *const Tuid,
@@ -507,6 +540,7 @@ unsafe extern "C" fn host_app_create_instance(
     K_RESULT_FALSE
 }
 
+#[allow(dead_code)] // Phase 2c park
 static HOST_APP_VTBL: IHostApplicationVtbl = IHostApplicationVtbl {
     query_interface: host_app_qi,
     add_ref:         vst3_refcount_addref,
@@ -515,6 +549,7 @@ static HOST_APP_VTBL: IHostApplicationVtbl = IHostApplicationVtbl {
     create_instance: host_app_create_instance,
 };
 
+#[allow(dead_code)] // Phase 2c park
 #[repr(C)]
 struct HostApplication { vtbl: *const IHostApplicationVtbl }
 
@@ -522,8 +557,10 @@ struct HostApplication { vtbl: *const IHostApplicationVtbl }
 // are stateless and re-entrant-safe.
 unsafe impl Sync for HostApplication {}
 
+#[allow(dead_code)] // Phase 2c park
 static HOST_APP: HostApplication = HostApplication { vtbl: &HOST_APP_VTBL };
 
+#[allow(dead_code)] // Phase 2c park
 fn host_app_as_funknown() -> *mut FUnknown {
     &HOST_APP as *const HostApplication as *mut FUnknown
 }
@@ -624,50 +661,38 @@ fn make_plug_frame() -> Box<PlugFrame> {
 ///
 /// # Safety
 ///
-/// Must be called on the Win32 main thread.  All COM pointers obtained here
-/// stay live until the WndProc invokes the cleanup closure on `WM_CLOSE`.
+/// Must be called on the Win32 main thread.  The caller passes a clone of the
+/// shared `Arc<PluginInstance>` (held by `PluginHost`); the editor captures
+/// this clone in its cleanup closure, so the plugin handle stays live until
+/// the editor window closes — even if the audio side retires its own clone in
+/// the meantime (e.g. through a recompile).
+///
+/// Phase 2c: this function no longer instantiates a second IComponent — it
+/// reuses the audio-side one through `instance.vst3_handles()`.  Closes A1 of
+/// the plugin-GUI audit (one COM object per device, audio + GUI sharing).
 pub unsafe fn open_vst3_editor(
-    manifest:     &PluginManifest,
+    instance:     Arc<PluginInstance>,
     name:         &str,
     effect_id:    &str,
     open_editors: Arc<Mutex<HashMap<String, usize>>>,
 ) -> Result<usize, String> {
     use crate::plugin_formats::vst3::ffi::{
-        IComponent, IEditController, Vst3Library,
-        IID_ICOMPONENT, IID_IEDIT_CONTROLLER,
+        IEditController, IID_IEDIT_CONTROLLER,
     };
-    use crate::plugin_formats::vst3::host::decode_plugin_id as vst3_decode;
 
-    let dll = manifest.path.as_ref()
-        .ok_or_else(|| "VST3 GUI: no DLL path in manifest".to_string())?;
-    let cid = vst3_decode(&manifest.id)
-        .ok_or_else(|| "VST3 GUI: invalid plugin_id format".to_string())?;
-
-    let (lib, factory) = Vst3Library::load(dll)?;
-
-    // Create IComponent (GUI-only instance — never activated for audio)
-    let mut comp_raw: *mut c_void = null_mut();
-    let r = ((*(*factory).vtbl).create_instance)(
-        factory, cid.as_ptr(), IID_ICOMPONENT.as_ptr(), &mut comp_raw,
-    );
-    ((*(*factory).vtbl).release)(factory);
-    if r != K_RESULT_OK || comp_raw.is_null() {
-        return Err(format!("VST3 GUI: createInstance(IComponent) failed: {r}"));
-    }
-    let comp = comp_raw as *mut IComponent;
-
-    // V1: check `initialize`.  Pass our minimal IHostApplication so plugins
-    // that QI for it succeed; plugins that don't need it still see a non-null
-    // context, which a number of them assume.
-    let init_r = ((*(*comp).vtbl).initialize)(comp, host_app_as_funknown());
-    if init_r != K_RESULT_OK && init_r != K_RESULT_FALSE {
-        ((*(*comp).vtbl).release)(comp as *mut _);
-        return Err(format!("VST3 GUI: IComponent::initialize failed: {init_r}"));
-    }
+    // Reach the audio-side IComponent through the shared Arc.  The instance
+    // was built by `PluginHost::instantiate_vst3` (which already called
+    // `IComponent::initialize` via `instantiate_processor`), so we MUST NOT
+    // initialize again — VST3 spec forbids it.
+    let (comp_nn, _proc_nn) = instance.vst3_handles()
+        .ok_or_else(|| "VST3 GUI: shared instance has no VST3 handles".to_string())?;
+    let comp = comp_nn.as_ptr();
 
     // Query IEditController via QI (single-component model only — dual-
     // component plugins return a separate CID via getControllerClassId,
-    // unsupported here).
+    // unsupported here).  QI adds +1 refcount on the COM object, which we
+    // release in cleanup; the primary IComponent ref is owned by
+    // `PluginInstance::Drop`.
     let mut ctrl_raw: *mut c_void = null_mut();
     let r = ((*(*comp).vtbl).query_interface)(
         comp,
@@ -675,39 +700,29 @@ pub unsafe fn open_vst3_editor(
         &mut ctrl_raw,
     );
     if r != K_RESULT_OK || ctrl_raw.is_null() {
-        ((*(*comp).vtbl).terminate)(comp);
-        ((*(*comp).vtbl).release)(comp as *mut _);
         return Err("VST3 GUI: IEditController not available via QI (single-component only)".into());
     }
     let ctrl = ctrl_raw as *mut IEditController;
-    // ctrl and comp are the same COM object; QI added +1 refcount (total = 2).
 
-    // V2: install component handler so the plugin can begin/perform/end edits.
+    // Install component handler so the plugin can begin/perform/end edits.
     // Many plugins assume a non-null handler and crash on the first knob touch.
     let _ = ((*(*ctrl).vtbl).set_component_handler)(ctrl, component_handler_as_funknown());
 
-    // Create view — DO NOT call ctrl.initialize (comp.initialize already did it
-    // for the shared object).
+    // Create view — `initialize` is already done for the shared COM object.
     let view = ((*(*ctrl).vtbl).create_view)(ctrl, b"editor\0".as_ptr());
     if view.is_null() {
-        ((*(*ctrl).vtbl).terminate)(ctrl);
         ((*(*ctrl).vtbl).release)(ctrl as *mut _);
-        ((*(*comp).vtbl).release)(comp as *mut _);
         return Err("VST3 GUI: IEditController::createView returned null".into());
     }
 
     if ((*(*view).vtbl).is_platform_type_supported)(view, b"HWND\0".as_ptr()) != K_RESULT_OK {
         ((*(*view).vtbl).release)(view as *mut _);
-        ((*(*ctrl).vtbl).terminate)(ctrl);
         ((*(*ctrl).vtbl).release)(ctrl as *mut _);
-        ((*(*comp).vtbl).release)(comp as *mut _);
         return Err("VST3 GUI: plugin view does not support HWND".into());
     }
 
-    // V3: allocate IPlugFrame and set it on the view *before* attached().
+    // Allocate IPlugFrame and set it on the view *before* attached().
     // The Box must outlive the view; ownership is transferred to cleanup.
-    // We also keep a raw *const PlugFrame to wire `container_hwnd` after
-    // CreateWindowExW returns — safe because Box address is stable.
     let plug_frame      = make_plug_frame();
     let plug_frame_ptr  = &*plug_frame as *const PlugFrame;
     let frame_funknown  = plug_frame_ptr as *mut FUnknown;
@@ -719,21 +734,28 @@ pub unsafe fn open_vst3_editor(
     let probe_w = (rect.right  - rect.left).max(1);
     let probe_h = (rect.bottom - rect.top ).max(1);
 
-    // Build cleanup + tick closures (own all FFI handles)
-    let lib_owned = lib;
-    let frame_owned = plug_frame;
+    // Build cleanup + tick closures.  The shared `Arc<PluginInstance>` is
+    // captured here so the plugin stays live until the editor closes.  The
+    // closure does NOT call `terminate` on IComponent and does NOT release
+    // its primary ref — those are owned by `PluginInstance::Drop`.  It only
+    // tears down the editor-side resources (view, frame, the QI'd ctrl ref).
+    let frame_owned    = plug_frame;
+    let instance_owned = instance.clone();
     let cleanup: Box<dyn FnOnce()> = Box::new(move || {
-        let _frame = frame_owned;
-        let _lib   = lib_owned;
+        let _frame    = frame_owned;
+        let _instance = instance_owned;  // keep plugin alive through teardown
         unsafe {
             ((*(*view).vtbl).removed)(view);
-            // Drop our frame ref before terminating ctrl — set_frame(null).
+            // Drop our frame ref before releasing ctrl — set_frame(null).
             let _ = ((*(*view).vtbl).set_frame)(view, null_mut());
             ((*(*view).vtbl).release)(view as *mut _);
-            ((*(*ctrl).vtbl).terminate)(ctrl);
+            // Release the QI-added IEditController ref (primary IComponent
+            // ref is held by PluginInstance).
             ((*(*ctrl).vtbl).release)(ctrl as *mut _);
-            ((*(*comp).vtbl).release)(comp as *mut _);
         }
+        // _instance Arc drops last — if this was the last clone, the host
+        // already released its own clone earlier, and PluginInstance::Drop
+        // now runs terminate + release on the IComponent.
     });
     let tick: Box<dyn Fn()> = Box::new(|| {});
 
@@ -793,85 +815,52 @@ pub unsafe fn open_vst3_editor(
 ///
 /// # Safety
 ///
-/// Must be called on the Win32 main thread.  `clap_entry.init` was called
-/// once by `ClapLibrary::load`, which caches loaded DLLs process-wide.
+/// Must be called on the Win32 main thread.  Phase 2c: the editor reuses the
+/// audio-side ClapPlugin pointer through `instance.clap_plugin()` — closes A1
+/// of the plugin-GUI audit.  `plugin.init()` was already called by
+/// `ClapWrapperNode::prepare` during graph compile and MUST NOT be called
+/// again (CLAP spec).
+///
+/// **Known limitation (Phase 2c minimal)**: the shared plugin was created with
+/// the audio host (bare `make_host`, no extensions).  Plugins that rely on
+/// host-side callbacks (clap.gui `request_resize`, clap.log) will not see
+/// those wired here — Phase 4 will enrich the audio host with a runtime-
+/// bindable `ClapHostShared` block.
 pub unsafe fn open_clap_editor(
-    manifest:     &PluginManifest,
+    instance:     Arc<PluginInstance>,
     name:         &str,
     effect_id:    &str,
     open_editors: Arc<Mutex<HashMap<String, usize>>>,
 ) -> Result<usize, String> {
     use crate::plugin_formats::clap::ffi::{
-        ClapGuiExtension, ClapLibrary, ClapPluginFactory, ClapWindow,
-        CLAP_EXT_GUI, CLAP_PLUGIN_FACTORY_ID, CLAP_WINDOW_API_WIN32, make_host,
+        ClapGuiExtension, ClapWindow,
+        CLAP_EXT_GUI, CLAP_WINDOW_API_WIN32,
     };
-    use crate::plugin_formats::clap::host::decode_plugin_id as clap_decode;
 
-    let dll = manifest.path.as_ref()
-        .ok_or_else(|| "CLAP GUI: no DLL path in manifest".to_string())?;
-    let clap_id = clap_decode(&manifest.id)
-        .ok_or_else(|| "CLAP GUI: invalid plugin_id format".to_string())?;
+    let plugin = instance.clap_plugin()
+        .ok_or_else(|| "CLAP GUI: shared instance has no CLAP plugin pointer".to_string())?;
 
-    // C1 fix: load() handles init() exactly once per DLL per process.
-    let (lib, entry) = ClapLibrary::load(dll)?;
-
-    let factory_raw = ((*entry).get_factory)(
-        CLAP_PLUGIN_FACTORY_ID.as_ptr() as *const c_char,
-    );
-    if factory_raw.is_null() {
-        return Err("CLAP GUI: get_factory returned null".into());
-    }
-    let factory = factory_raw as *const ClapPluginFactory;
-
-    // CL1 fix: shared state with AtomicPtr — no torn reads from worker threads
+    // Local shared state used by `tick` so a racing teardown can stop further
+    // `on_main_thread` calls.  Not connected to the plugin's host vtable in
+    // Phase 2c (that's Phase 4 territory).
     let shared = Arc::new(ClapHostShared {
-        plugin:    AtomicPtr::new(null_mut()),
+        plugin:    AtomicPtr::new(plugin as *mut ClapPlugin),
         host_hwnd: AtomicPtr::new(null_mut()),
     });
-
-    // Build host (heap-stable: Box address is preserved on move).  Wire
-    // host_data to the inside of the shared Arc; the Arc is captured by
-    // `tick` and `cleanup` so it outlives the plugin.
-    let mut host = make_host();
-    host.host_data        = Arc::as_ptr(&shared) as *mut c_void;
-    host.request_callback = clap_host_request_callback;
-    host.request_restart  = clap_host_request_restart;
-    host.request_process  = clap_host_request_process;
-    host.get_extension    = gui_host_get_extension;
-
-    // Keep clap_id bytes alive until plugin.destroy (CL4: cheap robustness
-    // against plugins that store the id pointer past create_plugin's return).
-    let clap_id_c: Vec<u8> = clap_id.bytes().chain(std::iter::once(0)).collect();
-    let plugin = ((*factory).create_plugin)(
-        factory, host.as_ref(), clap_id_c.as_ptr() as *const c_char,
-    );
-    if plugin.is_null() {
-        return Err(format!("CLAP GUI: create_plugin null for '{clap_id}'"));
-    }
-
-    shared.plugin.store(plugin as *mut ClapPlugin, Ordering::Release);
-
-    if !((*plugin).init)(plugin) {
-        ((*plugin).destroy)(plugin);
-        return Err("CLAP GUI: plugin.init failed".into());
-    }
 
     let gui_raw = ((*plugin).get_extension)(
         plugin, CLAP_EXT_GUI.as_ptr() as *const c_char,
     );
     if gui_raw.is_null() {
-        ((*plugin).destroy)(plugin);
         return Err("CLAP GUI: plugin does not expose clap.gui extension".into());
     }
     let gui = gui_raw as *const ClapGuiExtension;
 
     if !((*gui).is_api_supported)(plugin, CLAP_WINDOW_API_WIN32.as_ptr() as *const c_char, false) {
-        ((*plugin).destroy)(plugin);
         return Err("CLAP GUI: plugin clap.gui does not support Win32".into());
     }
 
     if !((*gui).create)(plugin, CLAP_WINDOW_API_WIN32.as_ptr() as *const c_char, false) {
-        ((*plugin).destroy)(plugin);
         return Err("CLAP GUI: clap_gui.create failed".into());
     }
 
@@ -879,31 +868,28 @@ pub unsafe fn open_clap_editor(
     let mut ph: u32 = 600;
     let _ = ((*gui).get_size)(plugin, &mut pw, &mut ph);
 
-    // CL2 fix: build cleanup *first*, in correct drop order
+    // Cleanup order:
     //   1. shared.plugin = null    → tick no-ops if it races
-    //   2. gui.hide / destroy      → release plugin GUI resources
-    //   3. plugin.destroy          → no more callbacks possible
-    //   4. shared / host / lib / clap_id_c drop                  (captures)
-    let lib_owned = lib;
-    let host_owned = host;
+    //   2. gui.hide / gui.destroy  → release GUI resources only
+    //                                 (plugin instance survives — owned by Arc)
+    //   3. _instance Arc drops     → if last clone, PluginInstance::Drop runs
+    //                                 plugin.destroy (CLAP spec teardown).
     let shared_for_cleanup = Arc::clone(&shared);
-    let clap_id_owned = clap_id_c;
+    let instance_owned     = instance.clone();
     let cleanup: Box<dyn FnOnce()> = Box::new(move || {
-        let _lib  = lib_owned;
-        let _host = host_owned;
-        let _clap_id = clap_id_owned;
-        // Disable callbacks before touching the plugin
+        // Stop tick from invoking the plugin once we start tearing down.
         shared_for_cleanup.plugin.store(null_mut(), Ordering::Release);
         unsafe {
             let _ = ((*gui).hide)(plugin);
             ((*gui).destroy)(plugin);
-            ((*plugin).destroy)(plugin);
         }
         drop(shared_for_cleanup);
+        // _instance Arc drops here — see header comment.
+        drop(instance_owned);
     });
 
     // tick: drain on_main_thread.  Reads plugin via AtomicPtr — sees null
-    // once cleanup has begun, so it can't race with destroy.
+    // once cleanup has begun.
     let shared_for_tick = Arc::clone(&shared);
     let tick: Box<dyn Fn()> = Box::new(move || {
         let p = shared_for_tick.plugin.load(Ordering::Acquire);

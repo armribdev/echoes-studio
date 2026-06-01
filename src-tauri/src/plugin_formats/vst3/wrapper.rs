@@ -14,6 +14,14 @@
 //! through the `Arc::deref`.  No `Arc::clone` and no `Arc::drop` ever runs on
 //! the audio thread.
 //!
+//! ## Unified lifecycle (Phase 2b)
+//!
+//! The wrapper no longer keeps its own `LifecycleState` field.  The single
+//! source of truth is the `AtomicU8` inside [`PluginInstance`].  Queries
+//! (`lifecycle_state()`) load the atomic; mutations (`suspend / resume /
+//! destroy`) validate via [`transition`] against the current atomic value
+//! before writing the new state back.
+//!
 //! ## Thread safety
 //!
 //! `VstWrapperNode` is `Send` because:
@@ -31,7 +39,7 @@ use crate::audio_graph::buffer::AudioBuffer;
 use crate::audio_graph::node::{AudioNode, NodeId, PrepareContext, TransportInfo};
 use crate::plugin_system::capabilities::DeviceCapabilities;
 use crate::plugin_system::instance::PluginInstance;
-use crate::plugin_system::lifecycle::LifecycleState;
+use crate::plugin_system::lifecycle::{LifecycleState, transition};
 use crate::plugin_system::parameter::ParameterMap;
 use crate::plugin_system::state::DeviceState;
 use crate::plugin_system::wrapper::{Device, DeviceInfo};
@@ -48,12 +56,10 @@ pub struct VstWrapperNode {
     info:    DeviceInfo,
     params:  ParameterMap,
 
-    /// Local lifecycle copy.  Phase 2a keeps this duplicated alongside the
-    /// authoritative `instance.lifecycle` atomic; Phase 2b will retire it.
-    lifecycle: LifecycleState,
-
     /// Shared, refcounted handle.  Captured at construction; cloned only on
     /// the command thread.  Deref on the audio thread is a non-atomic load.
+    /// Phase 2b: also holds the authoritative `lifecycle` atomic (the wrapper
+    /// no longer keeps its own copy).
     instance: Arc<PluginInstance>,
 
     // Per-block scratch — pre-allocated in prepare, pointer-stable until next prepare.
@@ -89,7 +95,6 @@ impl VstWrapperNode {
             node_id,
             info,
             params:    ParameterMap::new(),
-            lifecycle: LifecycleState::Created,
             instance,
             in_channel_ptrs:  Vec::new(),
             out_channel_ptrs: Vec::new(),
@@ -165,7 +170,7 @@ impl AudioNode for VstWrapperNode {
             self.reported_latency = ((*(*proc).vtbl).get_latency_samples)(proc);
         }
 
-        self.lifecycle = LifecycleState::Running;
+        // Phase 2b: single source of truth — the instance atomic.
         self.instance.set_lifecycle(LifecycleState::Running);
     }
 
@@ -269,18 +274,33 @@ impl Device for VstWrapperNode {
     }
     fn load_state(&mut self, _state: &DeviceState) {}
 
-    fn lifecycle_state(&self)  -> LifecycleState { self.lifecycle }
-    fn suspend(&mut self)  {
-        self.lifecycle = LifecycleState::Suspended;
-        self.instance.set_lifecycle(LifecycleState::Suspended);
+    // ── Lifecycle (Phase 2b: single source of truth = instance atomic) ─────────
+    //
+    // Mutations validate the requested transition against the current atomic
+    // value via `lifecycle::transition`.  Invalid transitions are silently
+    // ignored at this layer — the host-side API is what surfaces errors to
+    // callers (`PluginHost::{suspend,resume}_device`).  No FFI side effect
+    // here in Phase 2b: suspend/resume on VST3 happens via setProcessing
+    // toggles already exercised by `reset()`, and the lifecycle field has
+    // historically been advisory only.  Phase 4 will wire it to setActive /
+    // setProcessing once state save/load lands.
+
+    fn lifecycle_state(&self) -> LifecycleState { self.instance.lifecycle() }
+
+    fn suspend(&mut self) {
+        if let Ok(next) = transition(self.instance.lifecycle(), LifecycleState::Suspended) {
+            self.instance.set_lifecycle(next);
+        }
     }
-    fn resume(&mut self)   {
-        self.lifecycle = LifecycleState::Running;
-        self.instance.set_lifecycle(LifecycleState::Running);
+    fn resume(&mut self) {
+        if let Ok(next) = transition(self.instance.lifecycle(), LifecycleState::Running) {
+            self.instance.set_lifecycle(next);
+        }
     }
-    fn destroy(&mut self)  {
-        self.lifecycle = LifecycleState::Destroyed;
-        self.instance.set_lifecycle(LifecycleState::Destroyed);
+    fn destroy(&mut self) {
+        if let Ok(next) = transition(self.instance.lifecycle(), LifecycleState::Destroyed) {
+            self.instance.set_lifecycle(next);
+        }
     }
 
     fn reported_latency(&self) -> u32 { self.reported_latency }

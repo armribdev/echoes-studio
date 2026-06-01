@@ -680,17 +680,24 @@ fn open_plugin_editor(
         }
     }
 
-    // Fetch manifest from registry (brief lock, then release)
-    let manifest = {
+    // Phase 2c: fetch the shared `Arc<PluginInstance>` from the host (the
+    // device was already instantiated when the effect was added — graph
+    // compile + prepare runs synchronously on the command thread, so the
+    // audio-side prepare has completed before the user can click "Open
+    // editor").  No more re-loading the DLL.
+    let (instance, format) = {
         let engine = state.audio_engine.lock().map_err(|e| e.to_string())?;
-        engine.plugin_host
+        let format = engine.plugin_host
             .registry()
             .get(&plugin_id)
-            .cloned()
-            .ok_or_else(|| format!("plugin not in registry: {plugin_id}"))?
+            .map(|m| m.format)
+            .ok_or_else(|| format!("plugin not in registry: {plugin_id}"))?;
+        let inst = engine.plugin_host
+            .instance(&plugin_id)
+            .ok_or_else(|| format!("plugin instance not loaded: {plugin_id} (graph not compiled?)"))?;
+        (inst, format)
     };
 
-    let format = manifest.format;
     let open_editors = std::sync::Arc::clone(&state.open_plugin_editors);
 
     // The GUI APIs (IPlugView::attached, clap_gui.set_parent, …) and
@@ -702,13 +709,13 @@ fn open_plugin_editor(
             #[cfg(windows)]
             plugin_system::wrapper::DeviceFormat::Vst3 => unsafe {
                 plugin_system::gui::open_vst3_editor(
-                    &manifest, &plugin_name, &effect_id, open_editors,
+                    instance, &plugin_name, &effect_id, open_editors,
                 )
             },
             #[cfg(windows)]
             plugin_system::wrapper::DeviceFormat::Clap => unsafe {
                 plugin_system::gui::open_clap_editor(
-                    &manifest, &plugin_name, &effect_id, open_editors,
+                    instance, &plugin_name, &effect_id, open_editors,
                 )
             },
             _ => Err("native GUI is only available on Windows".into()),

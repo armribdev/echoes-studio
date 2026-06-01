@@ -12,6 +12,12 @@
 //! holds a clone captured at construction; `process` reaches the plugin via
 //! `instance.clap_plugin()` — a non-atomic load through `Arc::deref`.
 //!
+//! ## Unified lifecycle (Phase 2b)
+//!
+//! The local `LifecycleState` field is gone.  All queries / mutations route
+//! through `instance.lifecycle()` / `instance.set_lifecycle()`; mutations
+//! validate via [`transition`] against the current atomic value.
+//!
 //! ## Thread safety
 //!
 //! `ClapWrapperNode` is `Send` because:
@@ -27,7 +33,7 @@ use crate::audio_graph::buffer::AudioBuffer;
 use crate::audio_graph::node::{AudioNode, NodeId, PrepareContext, TransportInfo};
 use crate::plugin_system::capabilities::DeviceCapabilities;
 use crate::plugin_system::instance::PluginInstance;
-use crate::plugin_system::lifecycle::LifecycleState;
+use crate::plugin_system::lifecycle::{LifecycleState, transition};
 use crate::plugin_system::parameter::ParameterMap;
 use crate::plugin_system::state::DeviceState;
 use crate::plugin_system::wrapper::{Device, DeviceInfo};
@@ -47,13 +53,10 @@ pub struct ClapWrapperNode {
     info:    DeviceInfo,
     params:  ParameterMap,
 
-    /// Local lifecycle copy.  Phase 2a keeps this duplicated alongside the
-    /// authoritative `instance.lifecycle` atomic; Phase 2b will retire it.
-    lifecycle: LifecycleState,
-
     /// Shared, refcounted handle to the live plugin.  Captured at
     /// construction; cloned only on the command thread.  Deref on the audio
     /// thread is a non-atomic field load (cf. `ADR-007`).
+    /// Phase 2b: also holds the authoritative `lifecycle` atomic.
     instance: Arc<PluginInstance>,
 
     // Per-block scratch — pre-allocated in prepare, stable after that
@@ -93,7 +96,6 @@ impl ClapWrapperNode {
             node_id,
             info,
             params:    ParameterMap::new(),
-            lifecycle: LifecycleState::Created,
             instance,
             in_channel_ptrs:  Vec::new(),
             out_channel_ptrs: Vec::new(),
@@ -156,7 +158,7 @@ impl AudioNode for ClapWrapperNode {
             }
         }
 
-        self.lifecycle = LifecycleState::Running;
+        // Phase 2b: single source of truth — the instance atomic.
         self.instance.set_lifecycle(LifecycleState::Running);
     }
 
@@ -267,18 +269,29 @@ impl Device for ClapWrapperNode {
     fn save_state(&self) -> DeviceState { DeviceState::empty(&self.info.device_id) }
     fn load_state(&mut self, _: &DeviceState) {}
 
-    fn lifecycle_state(&self) -> LifecycleState { self.lifecycle }
-    fn suspend(&mut self)  {
-        self.lifecycle = LifecycleState::Suspended;
-        self.instance.set_lifecycle(LifecycleState::Suspended);
+    // ── Lifecycle (Phase 2b: single source of truth = instance atomic) ─────────
+    //
+    // Invalid transitions are silently ignored at this layer — the host-side
+    // API surfaces errors to callers.  No FFI side effect in Phase 2b: CLAP
+    // suspend/resume would require start_processing/stop_processing toggles,
+    // which Phase 4 will wire properly once the host owns the lifecycle.
+
+    fn lifecycle_state(&self) -> LifecycleState { self.instance.lifecycle() }
+
+    fn suspend(&mut self) {
+        if let Ok(next) = transition(self.instance.lifecycle(), LifecycleState::Suspended) {
+            self.instance.set_lifecycle(next);
+        }
     }
-    fn resume(&mut self)   {
-        self.lifecycle = LifecycleState::Running;
-        self.instance.set_lifecycle(LifecycleState::Running);
+    fn resume(&mut self) {
+        if let Ok(next) = transition(self.instance.lifecycle(), LifecycleState::Running) {
+            self.instance.set_lifecycle(next);
+        }
     }
-    fn destroy(&mut self)  {
-        self.lifecycle = LifecycleState::Destroyed;
-        self.instance.set_lifecycle(LifecycleState::Destroyed);
+    fn destroy(&mut self) {
+        if let Ok(next) = transition(self.instance.lifecycle(), LifecycleState::Destroyed) {
+            self.instance.set_lifecycle(next);
+        }
     }
 
     fn reported_latency(&self) -> u32 { self.reported_latency }
