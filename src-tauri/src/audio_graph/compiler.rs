@@ -168,7 +168,7 @@ impl GraphCompiler {
             let num_inputs = {
                 let base = Self::num_inputs_for_kind(&graph_node.kind);
                 match &graph_node.kind {
-                    NodeKind::Plugin { device_id } => {
+                    NodeKind::Plugin { device_id, .. } => {
                         base + plugin_host.sidechain_input_ports(device_id)
                     }
                     _ => base,
@@ -659,14 +659,18 @@ impl GraphCompiler {
                 Box::new(nodes::bus::BusNode::new(id, 1))
             }
 
-            NodeKind::Plugin { device_id } => {
+            NodeKind::Plugin { device_id, sandboxed } => {
                 // Hand off to `PluginHost` so the appropriate device wrapper
                 // (internal, VST3, AU, CLAP, WASM) is instantiated.  The host
                 // registers the resulting record so subsequent parameter
                 // updates and lifecycle calls can find it.  If the device is
                 // unknown (registry miss) or fails to instantiate, fall back
                 // to a unity-gain pass-through so the graph still compiles.
-                match plugin_host.instantiate(id, device_id) {
+                //
+                // `sandboxed` is forwarded to the host's decision point but is
+                // inert until step 6d (ADR-015): the plugin is instantiated
+                // in-process regardless of the flag today.
+                match plugin_host.instantiate(id, device_id, *sandboxed) {
                     Ok(node) => node,
                     Err(e) => {
                         eprintln!(

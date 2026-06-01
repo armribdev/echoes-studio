@@ -85,6 +85,11 @@ pub enum NodeKind {
     Plugin {
         /// Opaque device ID looked up in `PluginHost`.
         device_id: String,
+        /// Per-device out-of-process sandbox opt-in (ADR-015, Phase 6).
+        /// Carried from `PluginParams.sandboxed` to the host's `instantiate`
+        /// decision point.  **Accepted but inert** until step 6d branches on
+        /// it; today every plugin is instantiated in-process regardless.
+        sandboxed: bool,
     },
 
     /// Modulation source (LFO, envelope, macro, audio-rate).
@@ -335,7 +340,7 @@ impl AudioGraph {
                     EffectParams::Compressor(p) => NodeKind::Compressor { effect_id: effect.id.clone(), params: p.clone() },
                     EffectParams::Reverb(p)     => NodeKind::Reverb { effect_id: effect.id.clone(), params: p.clone() },
                     EffectParams::Delay(p)      => NodeKind::Delay { effect_id: effect.id.clone(), params: p.clone() },
-                    EffectParams::Plugin(p)     => NodeKind::Plugin { device_id: p.plugin_id.clone() },
+                    EffectParams::Plugin(p)     => NodeKind::Plugin { device_id: p.plugin_id.clone(), sandboxed: p.sandboxed },
                 };
                 let fx_node = graph.add_node(kind, format!("{} [fx:{}]", track.name, effect.id));
                 effect_node_ids.insert(effect.id.clone(), fx_node);

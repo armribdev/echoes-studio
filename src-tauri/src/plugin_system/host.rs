@@ -148,7 +148,15 @@ impl PluginHost {
         &mut self,
         node_id:   NodeId,
         plugin_id: &str,
+        sandboxed: bool,
     ) -> Result<Box<dyn AudioNode>, HostError> {
+        // ADR-015 step 6b: the per-device sandbox opt-in reaches its decision
+        // point here.  It is **inert** until step 6d wires the out-of-process
+        // bridge — every plugin is instantiated in-process regardless.  The
+        // parameter is threaded now so 6d only has to add the branch, not
+        // re-plumb the project → graph → compiler → host chain.
+        let _ = sandboxed;
+
         let manifest = self.registry.get(plugin_id)
             .ok_or_else(|| HostError::PluginNotFound(plugin_id.to_string()))?
             .clone();

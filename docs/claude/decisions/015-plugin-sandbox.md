@@ -85,7 +85,7 @@ that latency through the existing `latency_samples()` path, and the engine's PDC
 | Step | Deliverable | RT risk | Status |
 |------|-------------|---------|--------|
 | **6a** | This ADR + `PluginParams.sandboxed` opt-in flag, **persisted but inert** (engine always in-process) | nil | **Implemented** |
-| 6b | Plumb `sandboxed` project → `NodeKind::Plugin` → compiler → `PluginHost::instantiate` (still always in-process) | nil | Pending |
+| **6b** | Plumb `sandboxed` project → `NodeKind::Plugin` → compiler → `PluginHost::instantiate` (still always in-process) | nil | **Implemented** |
 | 6c | `plugin_host_bridge` crate + shared-memory ring primitive (off-RT, unit-tested in isolation) | nil | Pending |
 | 6d | `BridgedPluginInstance` proxy + RT wiring (bounded spin + timeout + silence) | **high** | Pending |
 | 6e | Watchdog + `Dead`-marking + prototype on a **single** plugin (Vital), then generalise | high | Pending |
@@ -109,6 +109,28 @@ runtime snapshot DTO, the scheduler, `PluginHost`, `PluginInstance`. The flag is
 declaring `PortKind` before wiring it to the compiler. This keeps the
 graph/RT/snapshot boundaries entirely unchanged while making projects
 forward-compatible with the opt-in.
+
+## Sub-phase 6b — what shipped
+
+The opt-in flag now travels from the project model to the host's instantiation
+decision point, **still inert** (always in-process):
+
+- `NodeKind::Plugin` gains a `sandboxed: bool` field
+  ([`graph.rs`](../../../src-tauri/src/audio_graph/graph.rs)); the
+  `from_project` builder copies it from `PluginParams.sandboxed`.
+- The compiler's `build_node` destructures it and forwards it to
+  `PluginHost::instantiate(node_id, plugin_id, sandboxed)`
+  ([`compiler.rs`](../../../src-tauri/src/audio_graph/compiler.rs)).
+- `instantiate` accepts the flag and discards it (`let _ = sandboxed;`) with a
+  marker for 6d ([`host.rs`](../../../src-tauri/src/plugin_system/host.rs)).
+- The read-only snapshot DTO ignores the field (`{ device_id, .. }`); the UI
+  label is unchanged.
+
+Scope: **effect path only**. The instrument path (`instantiate_instrument`)
+has its own project source and is sandboxed in a later step. `NodeKind` derives
+only `Debug, Clone` — the new field affects no graph identity / recompile-diff
+logic, so the compiled graph and offline render stay bit-identical (C-2,
+verified: full suite 53/53 green).
 
 ## Consequences
 

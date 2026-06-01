@@ -218,7 +218,7 @@ fn describe_kind(kind: &NodeKind) -> (String, Option<String>, Option<String>, Op
             Some(format!("{:.0}%", send_gain * 100.0)),
         ),
         NodeKind::Return { .. } => ("return".into(), None, None, None, None),
-        NodeKind::Plugin { device_id } => (
+        NodeKind::Plugin { device_id, .. } => (
             "plugin".into(),
             None,
             None,
