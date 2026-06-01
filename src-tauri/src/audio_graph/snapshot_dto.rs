@@ -161,7 +161,7 @@ fn describe_kind(kind: &NodeKind) -> (String, Option<String>, Option<String>, Op
             None,
             Some(format!("{rate_hz:.2} Hz · {}", waveform_label(waveform))),
         ),
-        NodeKind::Eq { params } => (
+        NodeKind::Eq { params, .. } => (
             "eq".into(),
             None,
             None,
@@ -171,7 +171,7 @@ fn describe_kind(kind: &NodeKind) -> (String, Option<String>, Option<String>, Op
                 params.low_gain_db, params.mid_gain_db, params.high_gain_db
             )),
         ),
-        NodeKind::Compressor { params } => (
+        NodeKind::Compressor { params, .. } => (
             "compressor".into(),
             None,
             None,
@@ -181,14 +181,14 @@ fn describe_kind(kind: &NodeKind) -> (String, Option<String>, Option<String>, Op
                 params.threshold_db, params.ratio
             )),
         ),
-        NodeKind::Reverb { params } => (
+        NodeKind::Reverb { params, .. } => (
             "reverb".into(),
             None,
             None,
             Some("reverb".into()),
             Some(format!("Wet {:.0}%", params.wet * 100.0)),
         ),
-        NodeKind::Delay { params } => (
+        NodeKind::Delay { params, .. } => (
             "delay".into(),
             None,
             None,

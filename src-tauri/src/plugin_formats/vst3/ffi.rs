@@ -221,6 +221,204 @@ pub struct IAudioProcessorVtbl {
         unsafe extern "C" fn(*mut IAudioProcessor) -> u32,
 }
 
+// ── IParameterChanges / IParamValueQueue (host → plugin parameter transport) ──
+//
+// ADR-007.  The host fills these structures each block from the SPSC parameter
+// ring and hands them to the plugin via `ProcessData::input_param_changes`.
+// The plugin only *reads* them (getParameterCount → getParameterData → per
+// queue getParameterId / getPointCount / getPoint); the add* methods exist for
+// spec completeness and are what the host uses internally to fill the data.
+
+#[repr(C)]
+pub struct IParamValueQueueVtbl {
+    pub query_interface:
+        unsafe extern "C" fn(*mut HostParamValueQueue, *const Tuid, *mut *mut c_void) -> TResult,
+    pub add_ref:  unsafe extern "C" fn(*mut HostParamValueQueue) -> u32,
+    pub release:  unsafe extern "C" fn(*mut HostParamValueQueue) -> u32,
+    pub get_parameter_id: unsafe extern "C" fn(*mut HostParamValueQueue) -> u32,
+    pub get_point_count:  unsafe extern "C" fn(*mut HostParamValueQueue) -> i32,
+    pub get_point:
+        unsafe extern "C" fn(*mut HostParamValueQueue, i32, *mut i32, *mut f64) -> TResult,
+    pub add_point:
+        unsafe extern "C" fn(*mut HostParamValueQueue, i32, f64, *mut i32) -> TResult,
+}
+
+#[repr(C)]
+pub struct IParameterChangesVtbl {
+    pub query_interface:
+        unsafe extern "C" fn(*mut HostParameterChanges, *const Tuid, *mut *mut c_void) -> TResult,
+    pub add_ref:  unsafe extern "C" fn(*mut HostParameterChanges) -> u32,
+    pub release:  unsafe extern "C" fn(*mut HostParameterChanges) -> u32,
+    pub get_parameter_count: unsafe extern "C" fn(*mut HostParameterChanges) -> i32,
+    pub get_parameter_data:
+        unsafe extern "C" fn(*mut HostParameterChanges, i32) -> *mut HostParamValueQueue,
+    pub add_parameter_data:
+        unsafe extern "C" fn(*mut HostParameterChanges, *const u32, *mut i32) -> *mut HostParamValueQueue,
+}
+
+/// Max distinct parameters carried in one block, and max value points per
+/// parameter per block.  Both comfortably exceed a 60 Hz UI / automation load.
+pub const MAX_PARAM_QUEUES:     usize = 128;
+pub const MAX_POINTS_PER_QUEUE: usize = 16;
+
+/// One parameter's value points for the current block.  `#[repr(C)]` keeps the
+/// `vtbl` at offset 0 so the plugin can dispatch through it; the remaining
+/// fields are private host data the vtable methods read.
+#[repr(C)]
+pub struct HostParamValueQueue {
+    pub vtbl:     *const IParamValueQueueVtbl,
+    pub param_id: u32,
+    pub offsets:  [i32; MAX_POINTS_PER_QUEUE],
+    pub values:   [f64; MAX_POINTS_PER_QUEUE],
+    pub count:    i32,
+}
+
+/// The per-block parameter-change list handed to the plugin.
+#[repr(C)]
+pub struct HostParameterChanges {
+    pub vtbl:   *const IParameterChangesVtbl,
+    pub queues: [HostParamValueQueue; MAX_PARAM_QUEUES],
+    pub count:  i32,
+}
+
+// ── Vtable implementations ─────────────────────────────────────────────────────
+
+unsafe extern "C" fn pvq_query_interface(
+    _this: *mut HostParamValueQueue, _iid: *const Tuid, obj: *mut *mut c_void,
+) -> TResult {
+    if !obj.is_null() { *obj = std::ptr::null_mut(); }
+    -1 // kNoInterface
+}
+unsafe extern "C" fn pvq_add_ref(_this: *mut HostParamValueQueue) -> u32 { 1 }
+unsafe extern "C" fn pvq_release(_this: *mut HostParamValueQueue) -> u32 { 1 }
+
+unsafe extern "C" fn pvq_get_parameter_id(this: *mut HostParamValueQueue) -> u32 {
+    (*this).param_id
+}
+unsafe extern "C" fn pvq_get_point_count(this: *mut HostParamValueQueue) -> i32 {
+    (*this).count
+}
+unsafe extern "C" fn pvq_get_point(
+    this: *mut HostParamValueQueue, index: i32, sample_offset: *mut i32, value: *mut f64,
+) -> TResult {
+    let q = &*this;
+    if index < 0 || index >= q.count { return K_RESULT_FALSE; }
+    let i = index as usize;
+    if !sample_offset.is_null() { *sample_offset = q.offsets[i]; }
+    if !value.is_null() { *value = q.values[i]; }
+    K_RESULT_OK
+}
+unsafe extern "C" fn pvq_add_point(
+    this: *mut HostParamValueQueue, sample_offset: i32, value: f64, index: *mut i32,
+) -> TResult {
+    let q = &mut *this;
+    if (q.count as usize) >= MAX_POINTS_PER_QUEUE { return K_RESULT_FALSE; }
+    let i = q.count as usize;
+    q.offsets[i] = sample_offset;
+    q.values[i]  = value;
+    q.count += 1;
+    if !index.is_null() { *index = i as i32; }
+    K_RESULT_OK
+}
+
+unsafe extern "C" fn pc_query_interface(
+    _this: *mut HostParameterChanges, _iid: *const Tuid, obj: *mut *mut c_void,
+) -> TResult {
+    if !obj.is_null() { *obj = std::ptr::null_mut(); }
+    -1
+}
+unsafe extern "C" fn pc_add_ref(_this: *mut HostParameterChanges) -> u32 { 1 }
+unsafe extern "C" fn pc_release(_this: *mut HostParameterChanges) -> u32 { 1 }
+
+unsafe extern "C" fn pc_get_parameter_count(this: *mut HostParameterChanges) -> i32 {
+    (*this).count
+}
+unsafe extern "C" fn pc_get_parameter_data(
+    this: *mut HostParameterChanges, index: i32,
+) -> *mut HostParamValueQueue {
+    let pc = &mut *this;
+    if index < 0 || index >= pc.count { return std::ptr::null_mut(); }
+    &mut pc.queues[index as usize] as *mut HostParamValueQueue
+}
+unsafe extern "C" fn pc_add_parameter_data(
+    this: *mut HostParameterChanges, id: *const u32, index: *mut i32,
+) -> *mut HostParamValueQueue {
+    let pc = &mut *this;
+    let param_id = if id.is_null() { 0 } else { *id };
+    // Reuse an existing queue for this id if present.
+    for i in 0..pc.count as usize {
+        if pc.queues[i].param_id == param_id {
+            if !index.is_null() { *index = i as i32; }
+            return &mut pc.queues[i] as *mut HostParamValueQueue;
+        }
+    }
+    if (pc.count as usize) >= MAX_PARAM_QUEUES {
+        return std::ptr::null_mut();
+    }
+    let i = pc.count as usize;
+    pc.queues[i].param_id = param_id;
+    pc.queues[i].count = 0;
+    pc.count += 1;
+    if !index.is_null() { *index = i as i32; }
+    &mut pc.queues[i] as *mut HostParamValueQueue
+}
+
+static PVQ_VTBL: IParamValueQueueVtbl = IParamValueQueueVtbl {
+    query_interface: pvq_query_interface,
+    add_ref:         pvq_add_ref,
+    release:         pvq_release,
+    get_parameter_id: pvq_get_parameter_id,
+    get_point_count:  pvq_get_point_count,
+    get_point:        pvq_get_point,
+    add_point:        pvq_add_point,
+};
+
+static PC_VTBL: IParameterChangesVtbl = IParameterChangesVtbl {
+    query_interface: pc_query_interface,
+    add_ref:         pc_add_ref,
+    release:         pc_release,
+    get_parameter_count: pc_get_parameter_count,
+    get_parameter_data:  pc_get_parameter_data,
+    add_parameter_data:  pc_add_parameter_data,
+};
+
+impl HostParameterChanges {
+    /// Allocate a zeroed, vtable-wired parameter-change list on the heap
+    /// (pointer-stable).  Call once at `prepare` — never on the audio thread.
+    pub fn boxed() -> Box<Self> {
+        // SAFETY: every field is plain data or a raw pointer; zeroing yields a
+        // valid empty list.  We then patch in the vtable pointers.
+        let mut b: Box<HostParameterChanges> = unsafe { Box::new(std::mem::zeroed()) };
+        b.vtbl = &PC_VTBL as *const _;
+        b.count = 0;
+        for q in b.queues.iter_mut() {
+            q.vtbl = &PVQ_VTBL as *const _;
+            q.count = 0;
+        }
+        b
+    }
+
+    /// Reset to empty for a new block (no allocation).
+    #[inline]
+    pub fn reset(&mut self) {
+        self.count = 0;
+    }
+
+    /// Append one normalised value point for `param_id` at `sample_offset`.
+    /// Finds or creates the parameter's queue.  Silently drops if either the
+    /// queue table or the per-queue point list is full.
+    #[inline]
+    pub fn push(&mut self, param_id: u32, sample_offset: i32, normalised: f64) {
+        let this = self as *mut HostParameterChanges;
+        unsafe {
+            let q = pc_add_parameter_data(this, &param_id, std::ptr::null_mut());
+            if !q.is_null() {
+                pvq_add_point(q, sample_offset, normalised, std::ptr::null_mut());
+            }
+        }
+    }
+}
+
 // ── Loaded library ─────────────────────────────────────────────────────────────
 
 /// Thin kernel32 wrapper — avoids dependency on a specific windows-sys HMODULE type.

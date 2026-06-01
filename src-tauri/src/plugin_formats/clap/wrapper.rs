@@ -27,6 +27,7 @@
 //! - The shared `Arc<PluginInstance>` is `Send + Sync` (see `instance.rs`
 //!   safety claim).
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::audio_graph::buffer::AudioBuffer;
@@ -39,8 +40,9 @@ use crate::plugin_system::state::DeviceState;
 use crate::plugin_system::wrapper::{Device, DeviceInfo};
 
 use super::ffi::{
-    ClapAudioBuffer, ClapOutputEvents, ClapPlugin, ClapPluginLatency, ClapProcess,
-    FixedEventList, CLAP_EXT_LATENCY, CLAP_PROCESS_ERROR,
+    ClapAudioBuffer, ClapOutputEvents, ClapParamInfo, ClapPlugin, ClapPluginLatency,
+    ClapPluginParams, ClapProcess, FixedParamEventList, CLAP_EXT_LATENCY, CLAP_EXT_PARAMS,
+    CLAP_PROCESS_ERROR,
 };
 
 // ── No-op output events (plugins can push events out; we ignore them for now) ──
@@ -65,9 +67,14 @@ pub struct ClapWrapperNode {
     in_audio_buf:  ClapAudioBuffer,
     out_audio_buf: ClapAudioBuffer,
 
-    // Fixed-size event list (no alloc in process)
-    in_events:  Box<FixedEventList>,
-    out_events: ClapOutputEvents,
+    // Fixed-size parameter-event list (no alloc in process), ADR-007.
+    param_events: Box<FixedParamEventList>,
+    out_events:   ClapOutputEvents,
+
+    /// Parameter plain ranges (`native_id → (min, max)`), enumerated once at
+    /// `prepare` via `clap.params`.  Used to denormalise queued values before
+    /// emitting `clap_event_param_value` (CLAP carries plain values).
+    param_ranges: HashMap<u32, (f32, f32)>,
 
     num_channels: usize,
     active: bool,
@@ -101,11 +108,12 @@ impl ClapWrapperNode {
             out_channel_ptrs: Vec::new(),
             in_audio_buf:  unsafe { std::mem::zeroed() },
             out_audio_buf: unsafe { std::mem::zeroed() },
-            in_events:  FixedEventList::new(),
+            param_events: FixedParamEventList::new(),
             out_events: ClapOutputEvents {
                 ctx: std::ptr::null_mut(),
                 try_push: out_try_push,
             },
+            param_ranges: HashMap::new(),
             num_channels: 2,
             active: false,
             reported_latency: 0,
@@ -154,6 +162,23 @@ impl AudioNode for ClapWrapperNode {
                     self.reported_latency = ((*ext).get)(p);
                 }
 
+                // Enumerate parameters via `clap.params` (main thread, post
+                // activate) so we can denormalise queued values to each
+                // parameter's plain range (ADR-007).  Off-RT.
+                self.param_ranges.clear();
+                let params_ptr = ((*p).get_extension)(p, CLAP_EXT_PARAMS.as_ptr() as *const _);
+                if !params_ptr.is_null() {
+                    let params = params_ptr as *const ClapPluginParams;
+                    let count = ((*params).count)(p);
+                    for idx in 0..count {
+                        let mut info: ClapParamInfo = std::mem::zeroed();
+                        if ((*params).get_info)(p, idx, &mut info) {
+                            self.param_ranges
+                                .insert(info.id, (info.min_value as f32, info.max_value as f32));
+                        }
+                    }
+                }
+
                 ((*p).start_processing)(p);
             }
         }
@@ -172,6 +197,22 @@ impl AudioNode for ClapWrapperNode {
 
         let nc = self.num_channels;
         let nf = outputs[0].num_frames;
+
+        // ── Drain pending parameter changes (ADR-007) ─────────────────────────
+        // CLAP carries plain values, so denormalise via the ranges enumerated
+        // at `prepare` (unknown ids fall back to a 0..1 identity range).
+        self.param_events.clear();
+        {
+            let param_events = &mut self.param_events;
+            let ranges = &self.param_ranges;
+            self.instance.drain_params(|change| {
+                let plain = match ranges.get(&change.native_id) {
+                    Some((min, max)) => min + change.normalised * (max - min),
+                    None => change.normalised,
+                };
+                param_events.push_param_value(change.sample_offset, change.native_id, plain as f64);
+            });
+        }
 
         // Populate channel pointer arrays (no allocation)
         for c in 0..nc {
@@ -208,7 +249,7 @@ impl AudioNode for ClapWrapperNode {
             audio_outputs:       &mut self.out_audio_buf,
             audio_inputs_count:  if inputs.is_empty() { 0 } else { 1 },
             audio_outputs_count: 1,
-            in_events:  &self.in_events.input_events_vtable,
+            in_events:  &self.param_events.input_events_vtable,
             out_events: &self.out_events,
         };
 

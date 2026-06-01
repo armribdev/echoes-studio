@@ -23,6 +23,7 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 
+use crate::audio_graph::parameter_block::ParameterBlock;
 use crate::project::AppProject;
 
 // ── Per-target cells ──────────────────────────────────────────────────────────
@@ -109,6 +110,10 @@ struct LiveParamsInner {
     tracks: HashMap<String, Arc<TrackParams>>,
     modulators: HashMap<String, Arc<ModulatorCells>>,
     routes: HashMap<String, Arc<RouteCells>>,
+    /// Per-effect hot-parameter blocks (ADR-009), keyed by project `effect_id`.
+    /// Inserted by the compiler at `build_node`; written by the gateway on a
+    /// knob turn so the change reaches the node without a recompile.
+    effect_params: HashMap<String, Arc<ParameterBlock>>,
 }
 
 pub struct LiveParams {
@@ -170,6 +175,40 @@ impl LiveParams {
         let cells = ModulatorCells::new(rate_hz);
         inner.modulators.insert(id.to_string(), Arc::clone(&cells));
         cells
+    }
+
+    /// Return the hot-parameter block for `effect_id`, creating it seeded with
+    /// `values` (one cell per natural-unit parameter) if absent.  Called by the
+    /// compiler at `build_node` (ADR-009).
+    pub fn get_or_init_effect_block(
+        &self,
+        effect_id: &str,
+        values: &[f32],
+    ) -> Arc<ParameterBlock> {
+        let mut inner = match self.inner.lock() {
+            Ok(g) => g,
+            Err(p) => p.into_inner(),
+        };
+        if let Some(existing) = inner.effect_params.get(effect_id) {
+            // Re-seed on recompile so the live block agrees with the project
+            // (the project is the source of truth; a structural recompile may
+            // follow edits made through the legacy path before the block
+            // existed).
+            for (i, v) in values.iter().enumerate() {
+                existing.set(i, *v);
+            }
+            return Arc::clone(existing);
+        }
+        let block = ParameterBlock::new(values);
+        inner.effect_params.insert(effect_id.to_string(), Arc::clone(&block));
+        block
+    }
+
+    /// Borrow the hot-parameter block for `effect_id`, if one is registered
+    /// (i.e. the effect is present in the active compiled graph).
+    pub fn effect_block(&self, effect_id: &str) -> Option<Arc<ParameterBlock>> {
+        let inner = self.inner.lock().ok()?;
+        inner.effect_params.get(effect_id).cloned()
     }
 
     pub fn get_or_init_route(&self, id: &str, depth: f32) -> Arc<RouteCells> {
@@ -278,6 +317,32 @@ impl LiveParams {
         }
     }
 
+    /// Write one cell of an effect's hot-parameter block (no recompile).
+    /// Returns false if no block exists yet (effect not in the active graph) —
+    /// the caller then falls back to the legacy recompile path (ADR-009, T4).
+    pub fn set_effect_param(&self, effect_id: &str, idx: usize, value: f32) -> bool {
+        if let Some(block) = self.effect_block(effect_id) {
+            block.set(idx, value);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Write every cell of an effect's hot-parameter block in one call
+    /// (no recompile).  `values` must be in the node's cell order.  Returns
+    /// false if no block is registered — caller falls back to recompile.
+    pub fn write_effect_block(&self, effect_id: &str, values: &[f32]) -> bool {
+        if let Some(block) = self.effect_block(effect_id) {
+            for (i, v) in values.iter().enumerate() {
+                block.set(i, *v);
+            }
+            true
+        } else {
+            false
+        }
+    }
+
     fn lookup_track(&self, track_id: &str) -> Option<Arc<TrackParams>> {
         let inner = self.inner.lock().ok()?;
         inner.tracks.get(track_id).cloned()
@@ -316,6 +381,16 @@ impl LiveParams {
             .flat_map(|t| t.mod_routes.iter().map(|r| r.id.as_str()))
             .collect();
         inner.routes.retain(|id, _| live_route_ids.contains(id.as_str()));
+
+        // Drop hot-parameter blocks whose effect is no longer in the project.
+        let live_effect_ids: std::collections::HashSet<&str> = project
+            .tracks
+            .iter()
+            .flat_map(|t| t.effects.iter().map(|e| e.id.as_str()))
+            .collect();
+        inner
+            .effect_params
+            .retain(|id, _| live_effect_ids.contains(id.as_str()));
 
         let any_solo = project.tracks.iter().any(|t| t.solo);
         self.any_solo.store(any_solo, Ordering::Relaxed);

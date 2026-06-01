@@ -49,7 +49,12 @@ use std::sync::atomic::{AtomicU8, Ordering};
 use crate::plugin_formats::clap::ffi::{ClapHost, ClapLibrary, ClapPlugin};
 use crate::plugin_formats::vst3::ffi::{IAudioProcessor, IComponent, Vst3Library};
 use crate::plugin_system::lifecycle::LifecycleState;
+use crate::plugin_system::param_queue::{ParamChange, ParamQueue};
 use crate::plugin_system::wrapper::{DeviceFormat, DeviceInfo};
+
+/// Capacity of the per-instance parameter SPSC ring (ADR-007).  1024 slots ≈
+/// 17 s of edits at a 60 Hz UI — far more than the drain interval needs.
+const PARAM_QUEUE_CAPACITY: usize = 1024;
 
 // ── Native handle ─────────────────────────────────────────────────────────────
 
@@ -119,6 +124,11 @@ pub struct PluginInstance {
     /// own copy as well (full unification is Phase 2b); this field exists so
     /// the host can read state without going through the wrapper.
     lifecycle: AtomicU8,
+
+    /// Lock-free SPSC ring of pending parameter changes (ADR-007).  The
+    /// command thread (via `PluginHost`) is the sole producer; the audio-graph
+    /// wrapper drains it at the top of `process` — the sole consumer.
+    param_queue: ParamQueue,
 }
 
 impl PluginInstance {
@@ -134,6 +144,7 @@ impl PluginInstance {
             format:    DeviceFormat::Internal,
             handle:    NativeHandle::Internal,
             lifecycle: AtomicU8::new(encode_lifecycle(LifecycleState::Running)),
+            param_queue: ParamQueue::with_capacity(PARAM_QUEUE_CAPACITY),
         })
     }
 
@@ -155,6 +166,7 @@ impl PluginInstance {
             format:    DeviceFormat::Vst3,
             handle:    NativeHandle::Vst3 { component, processor, _lib: lib },
             lifecycle: AtomicU8::new(encode_lifecycle(LifecycleState::Created)),
+            param_queue: ParamQueue::with_capacity(PARAM_QUEUE_CAPACITY),
         })
     }
 
@@ -174,7 +186,25 @@ impl PluginInstance {
             format:    DeviceFormat::Clap,
             handle:    NativeHandle::Clap { plugin, _host: host, _lib: lib },
             lifecycle: AtomicU8::new(encode_lifecycle(LifecycleState::Created)),
+            param_queue: ParamQueue::with_capacity(PARAM_QUEUE_CAPACITY),
         })
+    }
+
+    // ── Parameter transport (ADR-007) ─────────────────────────────────────────
+
+    /// Push a normalised parameter change into the SPSC ring.  Called on the
+    /// command thread (sole producer).  Returns `false` if the ring is full.
+    pub fn push_param(&self, native_id: u32, normalised: f32) -> bool {
+        self.param_queue.push(ParamChange {
+            native_id,
+            normalised,
+            sample_offset: 0,
+        })
+    }
+
+    /// Drain all pending parameter changes (audio thread, sole consumer).
+    pub fn drain_params(&self, f: impl FnMut(ParamChange)) {
+        self.param_queue.drain(f);
     }
 
     // ── Handle access (used by wrappers / future GUI editor) ──────────────────
@@ -311,5 +341,27 @@ fn decode_lifecycle(code: u8) -> LifecycleState {
         LC_DESTROYED   => LifecycleState::Destroyed,
         LC_ERROR       => LifecycleState::Error,
         _              => LifecycleState::Created,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn param_queue_push_then_drain_roundtrips() {
+        // An internal instance carries the same SPSC ring as any plugin.
+        let inst = PluginInstance::new_internal("dev://x", "X");
+        assert!(inst.push_param(7, 0.25));
+        assert!(inst.push_param(9, 0.75));
+
+        let mut got = Vec::new();
+        inst.drain_params(|c| got.push((c.native_id, c.normalised)));
+        assert_eq!(got, vec![(7, 0.25), (9, 0.75)]);
+
+        // Drained empty afterwards.
+        let mut n = 0;
+        inst.drain_params(|_| n += 1);
+        assert_eq!(n, 0);
     }
 }

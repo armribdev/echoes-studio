@@ -27,6 +27,7 @@ pub mod gui;
 pub mod host;
 pub mod instance;
 pub mod lifecycle;
+pub mod param_queue;
 pub mod parameter;
 pub mod registry;
 pub mod state;
@@ -39,6 +40,7 @@ pub use capabilities::{
 pub use host::PluginHost;
 pub use instance::{NativeHandle, PluginInstance};
 pub use lifecycle::LifecycleState;
+pub use param_queue::{ParamChange, ParamQueue};
 pub use parameter::{Param, ParameterMap, ParameterRange};
 pub use registry::{PluginManifest, PluginRegistry};
 pub use state::DeviceState;

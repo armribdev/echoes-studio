@@ -32,6 +32,7 @@
 //! - The shared `Arc<PluginInstance>` is `Send + Sync` (see `instance.rs`
 //!   safety claim).
 
+use std::ffi::c_void;
 use std::ptr::NonNull;
 use std::sync::Arc;
 
@@ -45,8 +46,8 @@ use crate::plugin_system::state::DeviceState;
 use crate::plugin_system::wrapper::{Device, DeviceInfo};
 
 use super::ffi::{
-    AudioBusBuffers, IAudioProcessor, IComponent, ProcessData, ProcessSetup,
-    K_RESULT_OK, SPEAKER_STEREO,
+    AudioBusBuffers, HostParameterChanges, IAudioProcessor, IComponent, ProcessData,
+    ProcessSetup, K_RESULT_OK, SPEAKER_STEREO,
 };
 
 // ── VstWrapperNode ─────────────────────────────────────────────────────────────
@@ -70,6 +71,12 @@ pub struct VstWrapperNode {
     out_bus: AudioBusBuffers,
 
     num_channels: usize,
+
+    /// Pre-allocated host-side parameter-change list (ADR-007).  Filled each
+    /// block from the instance's SPSC ring and handed to the plugin via
+    /// `ProcessData::input_param_changes`.  Allocated in `prepare`; pointer
+    /// stable thereafter.  `None` until prepared.
+    param_changes: Option<Box<HostParameterChanges>>,
 
     /// Cached intrinsic latency (samples).  Read once at `prepare()` via
     /// `IAudioProcessor::getLatencySamples`; queried off-RT by the graph
@@ -101,6 +108,7 @@ impl VstWrapperNode {
             in_bus:  unsafe { std::mem::zeroed() },
             out_bus: unsafe { std::mem::zeroed() },
             num_channels: 2,
+            param_changes: None,
             reported_latency: 0,
         }
     }
@@ -131,6 +139,9 @@ impl AudioNode for VstWrapperNode {
         // Pre-allocate pointer scratch (stable for the life of this prepared node)
         self.in_channel_ptrs  = vec![std::ptr::null_mut(); ctx.num_channels];
         self.out_channel_ptrs = vec![std::ptr::null_mut(); ctx.num_channels];
+
+        // Pre-allocate the parameter-change list (ADR-007) — heap, off-RT.
+        self.param_changes = Some(HostParameterChanges::boxed());
 
         let (comp_nn, proc_nn) = self.handles();
         let proc = proc_nn.as_ptr();
@@ -185,6 +196,24 @@ impl AudioNode for VstWrapperNode {
         let nc = self.num_channels;
         let nf = outputs[0].num_frames;
 
+        // ── Drain pending parameter changes (ADR-007) ─────────────────────────
+        // VST3 `IParameterChanges` carries normalised values directly, so the
+        // queued `normalised` field maps 1:1.  No allocation: the list lives in
+        // `self.param_changes`, reset and refilled in place each block.
+        let param_changes_ptr: *mut c_void = if let Some(pc) = self.param_changes.as_mut() {
+            pc.reset();
+            self.instance.drain_params(|change| {
+                pc.push(change.native_id, change.sample_offset as i32, change.normalised as f64);
+            });
+            if pc.count > 0 {
+                pc.as_mut() as *mut HostParameterChanges as *mut c_void
+            } else {
+                std::ptr::null_mut()
+            }
+        } else {
+            std::ptr::null_mut()
+        };
+
         // Populate input channel pointer array.
         // SAFETY: VST3 spec guarantees plugins do not write to input buffers.
         for c in 0..nc {
@@ -220,7 +249,7 @@ impl AudioNode for VstWrapperNode {
             num_outputs:          1,
             inputs:               &mut self.in_bus,
             outputs:              &mut self.out_bus,
-            input_param_changes:  std::ptr::null_mut(),
+            input_param_changes:  param_changes_ptr,
             output_param_changes: std::ptr::null_mut(),
             input_events:         std::ptr::null_mut(),
             output_events:        std::ptr::null_mut(),

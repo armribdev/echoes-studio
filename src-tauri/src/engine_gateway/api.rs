@@ -668,7 +668,11 @@ fn process_command(
             let p: UpdateEffectPayload = serde_json::from_value(command.payload)
                 .map_err(|e| format!("UPDATE_EFFECT payload invalid: {e}"))?;
 
-            let updated_effect = {
+            // Dual-path: a parameter-only edit of an enabled effect is delivered
+            // hot — through the EQ `ParameterBlock` (ADR-009) or the plugin SPSC
+            // queue (ADR-007) — with no recompile.  A structural change
+            // (enable/disable toggle) still recompiles.
+            let (updated_effect, hot, structural) = {
                 let mut project = state.project.lock().map_err(|e| e.to_string())?;
                 let track = project.tracks.iter_mut()
                     .find(|t| t.id == p.track_id)
@@ -676,11 +680,29 @@ fn process_command(
                 let effect = track.effects.iter_mut()
                     .find(|e| e.id == p.effect_id)
                     .ok_or_else(|| format!("Effect {} not found", p.effect_id))?;
-                if let Some(en) = p.enabled { effect.enabled = en; }
+
+                let mut structural = false;
+                if let Some(en) = p.enabled {
+                    if effect.enabled != en { structural = true; }
+                    effect.enabled = en;
+                }
                 if let Some(raw) = p.params {
                     effect.params = merge_effect_params(&effect.params, raw)?;
                 }
-                serde_json::to_value(&*effect).unwrap_or_default()
+
+                // Classify the hot action for an enabled effect.
+                let hot = if effect.enabled {
+                    match &effect.params {
+                        EffectParams::Eq(eq) => HotEffectUpdate::Eq(eq.clone()),
+                        EffectParams::Plugin(pp) =>
+                            HotEffectUpdate::Plugin(pp.plugin_id.clone(), pp.params.clone()),
+                        _ => HotEffectUpdate::None,
+                    }
+                } else {
+                    HotEffectUpdate::None
+                };
+
+                (serde_json::to_value(&*effect).unwrap_or_default(), hot, structural)
             };
 
             let event_payload = json!({ "track_id": p.track_id, "effect_id": p.effect_id, "effect": updated_effect });
@@ -689,7 +711,39 @@ fn process_command(
 
             let engine_ev = EngineEvent::new(ev::EFFECT_UPDATED, &project_id, event_payload);
             let _ = app.emit("engine-event", &engine_ev);
-            recompile_if_needed(state);
+
+            let applied_hot = if structural {
+                false
+            } else {
+                match &hot {
+                    HotEffectUpdate::Eq(eq) => {
+                        let values = crate::audio_graph::nodes::eq::eq_block_values(eq);
+                        state.live_params.write_effect_block(&p.effect_id, &values)
+                    }
+                    HotEffectUpdate::Plugin(device_id, params) => {
+                        // Push each normalised (native_id, value) to the live
+                        // plugin's SPSC ring.  Succeeds only if the device is
+                        // already instantiated in the active graph; otherwise
+                        // fall back to recompile (which instantiates it).
+                        if let Ok(mut engine) = state.audio_engine.lock() {
+                            let mut all_ok = !params.is_empty();
+                            for (native_id, value) in params {
+                                match engine.plugin_host.push_plugin_param(device_id, *native_id, *value) {
+                                    Ok(_) => {}
+                                    Err(_) => { all_ok = false; break; }
+                                }
+                            }
+                            all_ok
+                        } else {
+                            false
+                        }
+                    }
+                    HotEffectUpdate::None => false,
+                }
+            };
+            if !applied_hot {
+                recompile_if_needed(state);
+            }
 
             Ok(CommandResult::ok(command_id, vec![serde_json::to_value(&engine_ev).unwrap_or_default()]))
         }
@@ -1064,6 +1118,19 @@ fn snapshot_project(project: &AppProject) -> AppProject {
             })
             .collect(),
     }
+}
+
+/// Classifies how an `UPDATE_EFFECT` parameter edit is delivered to the audio
+/// thread without a recompile (see the `UPDATE_EFFECT` handler).
+enum HotEffectUpdate {
+    /// Not hot-deliverable — fall back to recompile.
+    None,
+    /// Internal EQ effect: write the natural-unit values into its
+    /// `ParameterBlock` (ADR-009).
+    Eq(EqParams),
+    /// External plugin: push normalised `(native_id, value)` pairs into the
+    /// instance's SPSC ring, keyed by `device_id` (= plugin_id) (ADR-007).
+    Plugin(String, Vec<(u32, f32)>),
 }
 
 fn default_params_for_kind(kind: &str) -> Option<EffectParams> {

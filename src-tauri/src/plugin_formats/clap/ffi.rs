@@ -169,6 +169,8 @@ pub struct ClapAudioBuffer {
 
 pub const CLAP_EVENT_NOTE_ON:  u16 = 0;
 pub const CLAP_EVENT_NOTE_OFF: u16 = 1;
+/// `CLAP_EVENT_PARAM_VALUE` — host → plugin parameter change (ADR-007).
+pub const CLAP_EVENT_PARAM_VALUE: u16 = 5;
 pub const CLAP_CORE_EVENT_SPACE: u16 = 0;
 
 #[repr(C)]
@@ -285,6 +287,125 @@ unsafe extern "C" fn fel_get(list: *const ClapInputEvents, index: u32) -> *const
         return std::ptr::null();
     }
     &fel.events[index as usize].header as *const ClapEventHeader
+}
+
+// ── Parameter-value events (host → plugin, ADR-007) ────────────────────────────
+
+/// `clap_event_param_value` — carries one parameter change.  The value is in
+/// the parameter's **plain** range (CLAP, unlike VST3, does not normalise), so
+/// the wrapper denormalises before pushing.
+#[repr(C)]
+pub struct ClapEventParamValue {
+    pub header:     ClapEventHeader,
+    pub param_id:   u32,    // clap_id
+    pub cookie:     *mut c_void,
+    pub note_id:    i32,
+    pub port_index: i16,
+    pub channel:    i16,
+    pub key:        i16,
+    pub _pad:       i16,
+    pub value:      f64,    // plain value
+}
+
+/// Fixed-capacity list of parameter-value events with a `clap_input_events`
+/// vtable.  No allocation in `process`; reset and refilled in place each block.
+pub struct FixedParamEventList {
+    pub events: [ClapEventParamValue; MAX_EVENTS],
+    pub count:  usize,
+    pub input_events_vtable: ClapInputEvents,
+}
+
+impl FixedParamEventList {
+    pub fn new() -> Box<Self> {
+        let mut list = Box::new(FixedParamEventList {
+            events: unsafe { std::mem::zeroed() },
+            count: 0,
+            input_events_vtable: ClapInputEvents {
+                ctx:  std::ptr::null_mut(),
+                size: fpel_size,
+                get:  fpel_get,
+            },
+        });
+        list.input_events_vtable.ctx = list.as_mut() as *mut FixedParamEventList as *mut c_void;
+        list
+    }
+
+    #[inline]
+    pub fn clear(&mut self) { self.count = 0; }
+
+    /// Append a parameter change (plain value).  Silently drops if full.
+    pub fn push_param_value(&mut self, time: u32, param_id: u32, value: f64) {
+        if self.count >= MAX_EVENTS { return; }
+        self.events[self.count] = ClapEventParamValue {
+            header: ClapEventHeader {
+                size:     std::mem::size_of::<ClapEventParamValue>() as u32,
+                time,
+                space_id: CLAP_CORE_EVENT_SPACE,
+                r#type:   CLAP_EVENT_PARAM_VALUE,
+                flags:    0,
+            },
+            param_id,
+            cookie:     std::ptr::null_mut(),
+            note_id:    -1,
+            port_index: -1,
+            channel:    -1,
+            key:        -1,
+            _pad:       0,
+            value,
+        };
+        self.count += 1;
+    }
+}
+
+unsafe extern "C" fn fpel_size(list: *const ClapInputEvents) -> u32 {
+    let l = (*list).ctx as *const FixedParamEventList;
+    (*l).count as u32
+}
+
+unsafe extern "C" fn fpel_get(list: *const ClapInputEvents, index: u32) -> *const ClapEventHeader {
+    let l = (*list).ctx as *const FixedParamEventList;
+    let l = &*l;
+    if index as usize >= l.count {
+        return std::ptr::null();
+    }
+    &l.events[index as usize].header as *const ClapEventHeader
+}
+
+// ── clap.params extension (parameter enumeration) ──────────────────────────────
+
+/// Extension ID for `clap.params` (CLAP 1.x).
+pub const CLAP_EXT_PARAMS: &[u8] = b"clap.params\0";
+
+pub const CLAP_NAME_SIZE: usize = 256;
+pub const CLAP_PATH_SIZE: usize = 1024;
+
+/// `clap_param_info` — describes one parameter (subset; trailing text fields
+/// kept at spec size so the struct layout matches the plugin's writes).
+#[repr(C)]
+pub struct ClapParamInfo {
+    pub id:            u32,
+    pub flags:         u32,
+    pub cookie:        *mut c_void,
+    pub name:          [u8; CLAP_NAME_SIZE],
+    pub module:        [u8; CLAP_PATH_SIZE],
+    pub min_value:     f64,
+    pub max_value:     f64,
+    pub default_value: f64,
+}
+
+/// `clap_plugin_params` plugin-side vtable (method order matches CLAP 1.x).
+/// We only call `count` / `get_info` (main thread, after activate) to learn
+/// each parameter's plain range for denormalisation.
+#[repr(C)]
+pub struct ClapPluginParams {
+    pub count: unsafe extern "C" fn(*const ClapPlugin) -> u32,
+    pub get_info: unsafe extern "C" fn(*const ClapPlugin, u32, *mut ClapParamInfo) -> bool,
+    pub get_value: unsafe extern "C" fn(*const ClapPlugin, u32, *mut f64) -> bool,
+    pub value_to_text:
+        unsafe extern "C" fn(*const ClapPlugin, u32, f64, *mut c_char, u32) -> bool,
+    pub text_to_value:
+        unsafe extern "C" fn(*const ClapPlugin, u32, *const c_char, *mut f64) -> bool,
+    pub flush: unsafe extern "C" fn(*const ClapPlugin, *const ClapInputEvents, *const ClapOutputEvents),
 }
 
 // ── Process context ────────────────────────────────────────────────────────────

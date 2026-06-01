@@ -633,13 +633,21 @@ impl GraphCompiler {
                 }
             }
 
-            NodeKind::Eq { params } =>
-                Box::new(nodes::eq::EqNode::new(id, params.clone())),
-            NodeKind::Compressor { params } =>
+            NodeKind::Eq { effect_id, params } => {
+                // ADR-009: register/look up the hot-parameter block seeded from
+                // the project values, and hand the node a clone.  Subsequent
+                // knob turns write the block (no recompile).
+                let block = live_params.get_or_init_effect_block(
+                    effect_id,
+                    &nodes::eq::eq_block_values(params),
+                );
+                Box::new(nodes::eq::EqNode::new(id, params.clone()).with_block(block))
+            }
+            NodeKind::Compressor { params, .. } =>
                 Box::new(nodes::compressor::CompressorNode::new(id, params.clone())),
-            NodeKind::Reverb { params } =>
+            NodeKind::Reverb { params, .. } =>
                 Box::new(nodes::reverb::ReverbNode::new(id, params.clone())),
-            NodeKind::Delay { params } =>
+            NodeKind::Delay { params, .. } =>
                 Box::new(nodes::delay::DelayNode::new(id, params.clone())),
         }
     }

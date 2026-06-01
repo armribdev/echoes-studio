@@ -292,25 +292,25 @@ impl PluginHost {
 
     // ── Parameter routing ─────────────────────────────────────────────────────
 
-    pub fn set_parameter_normalised(
-        &mut self,
+    /// Push a normalised parameter change to a live plugin (ADR-007).
+    ///
+    /// `native_id` is the format-native parameter identifier (VST3 `ParamID`,
+    /// CLAP `clap_id`) — the same `u32` the frontend already stores in
+    /// `PluginParams.params`.  The value is enqueued on the instance's SPSC
+    /// ring; the audio-graph wrapper drains it at the top of `process` and
+    /// converts it to the native parameter event.  No recompile, no lock.
+    ///
+    /// Returns `Ok(false)` if the ring was full (newest dropped — the UI will
+    /// resend on its next tick).  Errors only if the device is unknown.
+    pub fn push_plugin_param(
+        &self,
         device_id: &str,
-        param_key: &str,
-        value: f32,
-    ) -> Result<(), HostError> {
-        if !self.records.contains_key(device_id) {
-            return Err(HostError::DeviceNotFound(device_id.to_string()));
-        }
-        let record = self.records.get_mut(device_id).unwrap();
-        // Phase 2a: still stash the value in a JSON blob.  Phase 3 (ADR-008)
-        // will replace this with an SPSC `ParamChange` push to the
-        // instance-owned queue.  Routing the value to the live plugin
-        // requires the queue plus the wrapper-side drain — out of scope here.
-        record.saved_state = DeviceState::from_json(
-            device_id,
-            serde_json::json!({ "param": param_key, "value": value }),
-        );
-        Ok(())
+        native_id: u32,
+        normalised: f32,
+    ) -> Result<bool, HostError> {
+        let record = self.records.get(device_id)
+            .ok_or_else(|| HostError::DeviceNotFound(device_id.to_string()))?;
+        Ok(record.instance.push_param(native_id, normalised))
     }
 
     // ── Lifecycle management ───────────────────────────────────────────────────

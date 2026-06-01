@@ -112,10 +112,16 @@ pub enum NodeKind {
     Master { num_inputs: usize },
 
     // ── Insert effects ─────────────────────────────────────────────────────────
-    Eq        { params: crate::project::EqParams },
-    Compressor { params: crate::project::CompressorParams },
-    Reverb    { params: crate::project::ReverbParams },
-    Delay     { params: crate::project::DelayParams },
+    //
+    // `effect_id` is the project-level effect identifier.  The compiler uses it
+    // to look up the matching `LiveParams::ParameterBlock` (ADR-009) so hot
+    // parameter edits reach the node without a recompile.  Only `Eq` consumes a
+    // block today; the field is carried on every variant so the remaining
+    // effects migrate variant-by-variant without re-touching this enum.
+    Eq        { effect_id: String, params: crate::project::EqParams },
+    Compressor { effect_id: String, params: crate::project::CompressorParams },
+    Reverb    { effect_id: String, params: crate::project::ReverbParams },
+    Delay     { effect_id: String, params: crate::project::DelayParams },
 }
 
 // ── Graph node ────────────────────────────────────────────────────────────────
@@ -289,10 +295,10 @@ impl AudioGraph {
             for effect in &track.effects {
                 if !effect.enabled { continue; }
                 let kind = match &effect.params {
-                    EffectParams::Eq(p)         => NodeKind::Eq { params: p.clone() },
-                    EffectParams::Compressor(p) => NodeKind::Compressor { params: p.clone() },
-                    EffectParams::Reverb(p)     => NodeKind::Reverb { params: p.clone() },
-                    EffectParams::Delay(p)      => NodeKind::Delay { params: p.clone() },
+                    EffectParams::Eq(p)         => NodeKind::Eq { effect_id: effect.id.clone(), params: p.clone() },
+                    EffectParams::Compressor(p) => NodeKind::Compressor { effect_id: effect.id.clone(), params: p.clone() },
+                    EffectParams::Reverb(p)     => NodeKind::Reverb { effect_id: effect.id.clone(), params: p.clone() },
+                    EffectParams::Delay(p)      => NodeKind::Delay { effect_id: effect.id.clone(), params: p.clone() },
                     EffectParams::Plugin(p)     => NodeKind::Plugin { device_id: p.plugin_id.clone() },
                 };
                 let fx_node = graph.add_node(kind, format!("{} [fx:{}]", track.name, effect.id));

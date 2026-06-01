@@ -1,7 +1,51 @@
+use std::sync::Arc;
+
 use crate::audio_graph::buffer::AudioBuffer;
 use crate::audio_graph::node::{AudioNode, NodeId, PrepareContext, TransportInfo};
 use crate::audio_graph::oversampling::Oversample2x;
+use crate::audio_graph::parameter_block::ParameterBlock;
 use crate::project::EqParams;
+
+// ── Hot-parameter block layout (ADR-009) ──────────────────────────────────────
+//
+// Cell order for the EQ's `ParameterBlock`.  Shared by the compiler (which
+// seeds the block), the gateway (which writes cells on a knob turn via
+// `eq_block_values`), and `EqNode` (which reads them per block).  Values are
+// stored in natural units (Hz, dB, Q).
+pub const EQ_PARAM_COUNT: usize = 7;
+pub const EQ_LOW_GAIN_DB: usize = 0;
+pub const EQ_LOW_FREQ: usize = 1;
+pub const EQ_MID_GAIN_DB: usize = 2;
+pub const EQ_MID_FREQ: usize = 3;
+pub const EQ_MID_Q: usize = 4;
+pub const EQ_HIGH_GAIN_DB: usize = 5;
+pub const EQ_HIGH_FREQ: usize = 6;
+
+/// Flatten `EqParams` into the `ParameterBlock` cell order above.
+pub fn eq_block_values(p: &EqParams) -> [f32; EQ_PARAM_COUNT] {
+    [
+        p.low_gain_db,
+        p.low_freq,
+        p.mid_gain_db,
+        p.mid_freq,
+        p.mid_q,
+        p.high_gain_db,
+        p.high_freq,
+    ]
+}
+
+/// Read the block back into an `EqParams`.
+fn eq_params_from_block(block: &ParameterBlock) -> EqParams {
+    EqParams {
+        low_gain_db:  block.get(EQ_LOW_GAIN_DB),
+        low_freq:     block.get(EQ_LOW_FREQ),
+        mid_gain_db:  block.get(EQ_MID_GAIN_DB),
+        mid_freq:     block.get(EQ_MID_FREQ),
+        mid_q:        block.get(EQ_MID_Q),
+        high_gain_db: block.get(EQ_HIGH_GAIN_DB),
+        high_freq:    block.get(EQ_HIGH_FREQ),
+    }
+}
 
 // Direct Form II Transposed biquad — no allocation per sample.
 // RBJ Audio EQ Cookbook: S = 1 → steepest monotonically increasing/decreasing shelf.
@@ -77,11 +121,23 @@ impl Biquad {
 
 pub struct EqNode {
     id: NodeId,
+    /// Cached parameter values — the coefficients currently baked into the
+    /// biquads.  Compared against the hot block each block to decide whether a
+    /// recompute is needed.
     params: EqParams,
     low: Biquad,
     mid: Biquad,
     high: Biquad,
     oversample: Oversample2x,
+
+    /// Oversampled sample rate (engine SR × 2), captured at `prepare`.
+    sr_os: f32,
+
+    /// Hot-parameter block (ADR-009).  When present, `process` reads parameter
+    /// values from it each block and recomputes coefficients only when they
+    /// change — so a knob turn never triggers a recompile.  `None` keeps the
+    /// pre-ADR-009 behaviour (coefficients frozen at `prepare`).
+    block: Option<Arc<ParameterBlock>>,
 }
 
 impl EqNode {
@@ -93,9 +149,34 @@ impl EqNode {
             mid: Biquad::default(),
             high: Biquad::default(),
             oversample: Oversample2x::default(),
+            sr_os: 96_000.0,
+            block: None,
         }
     }
 
+    /// Attach the hot-parameter block (ADR-009).  Builder-style; called by the
+    /// compiler right after `new`.
+    pub fn with_block(mut self, block: Arc<ParameterBlock>) -> Self {
+        self.block = Some(block);
+        self
+    }
+
+    /// Recompute the three biquad coefficient sets from `self.params`.
+    /// Preserves the filter state (`s1`/`s2`) so a parameter change does not
+    /// reset the running filters — only the coefficients move.
+    fn recompute_coeffs(&mut self) {
+        let s_low  = self.low.s1; let s_low2  = self.low.s2;
+        let s_mid  = self.mid.s1; let s_mid2  = self.mid.s2;
+        let s_high = self.high.s1; let s_high2 = self.high.s2;
+
+        self.low  = Biquad::low_shelf(self.params.low_freq, self.params.low_gain_db, self.sr_os);
+        self.mid  = Biquad::peaking(self.params.mid_freq, self.params.mid_gain_db, self.params.mid_q, self.sr_os);
+        self.high = Biquad::high_shelf(self.params.high_freq, self.params.high_gain_db, self.sr_os);
+
+        self.low.s1 = s_low;  self.low.s2 = s_low2;
+        self.mid.s1 = s_mid;  self.mid.s2 = s_mid2;
+        self.high.s1 = s_high; self.high.s2 = s_high2;
+    }
 }
 
 impl AudioNode for EqNode {
@@ -105,14 +186,28 @@ impl AudioNode for EqNode {
     fn num_output_ports(&self) -> usize { 1 }
 
     fn prepare(&mut self, ctx: PrepareContext) {
-        let sr_os = ctx.sample_rate * 2.0;
-        self.low  = Biquad::low_shelf(self.params.low_freq, self.params.low_gain_db, sr_os);
-        self.mid  = Biquad::peaking(self.params.mid_freq, self.params.mid_gain_db, self.params.mid_q, sr_os);
-        self.high = Biquad::high_shelf(self.params.high_freq, self.params.high_gain_db, sr_os);
+        self.sr_os = ctx.sample_rate * 2.0;
+        // If a hot block is attached, seed the cached params from it so the
+        // coefficients reflect any edits made before this (re)compile.
+        if let Some(block) = &self.block {
+            self.params = eq_params_from_block(block);
+        }
+        self.recompute_coeffs();
         self.oversample.prepare(ctx.max_block_size, ctx.sample_rate);
     }
 
     fn process(&mut self, inputs: &[&AudioBuffer], outputs: &mut [AudioBuffer], t: &TransportInfo) {
+        // ADR-009: pull live parameter values from the hot block and recompute
+        // the biquads only when they actually changed.  No allocation, no lock:
+        // `ParameterBlock::get` is one relaxed atomic load per parameter.
+        let next = self.block.as_ref().map(|b| eq_params_from_block(b));
+        if let Some(next) = next {
+            if eq_block_values(&next) != eq_block_values(&self.params) {
+                self.params = next;
+                self.recompute_coeffs();
+            }
+        }
+
         let input = &inputs[0];
         let output = &mut outputs[0];
         let channels = output.num_channels.min(input.num_channels).min(2);
@@ -185,6 +280,36 @@ mod tests {
             gain_db / 2.0
         );
     }
+    #[test]
+    fn hot_block_changes_coefficients_without_prepare() {
+        use crate::audio_graph::node::{AudioNode, PrepareContext};
+        use crate::audio_graph::parameter_block::ParameterBlock;
+        use std::sync::Arc;
+
+        let params = EqParams::default();
+        let block = ParameterBlock::new(&eq_block_values(&params));
+        let mut node = EqNode::new(NodeId(1), params).with_block(Arc::clone(&block));
+        node.prepare(PrepareContext { sample_rate: 48_000.0, max_block_size: 64, num_channels: 2 });
+
+        // Baseline: flat EQ → low-shelf is unity-ish.
+        let before = node.low.b0;
+
+        // Write a big low-shelf boost into the block (cell order from constants).
+        block.set(EQ_LOW_GAIN_DB, 12.0);
+
+        // Run a block: the node must detect the change and recompute.
+        let input = AudioBuffer::new(2, 64);
+        let mut output = AudioBuffer::new(2, 64);
+        let t = TransportInfo::stopped(48_000.0);
+        node.process(&[&input], std::slice::from_mut(&mut output), &t);
+
+        assert_ne!(
+            node.low.b0, before,
+            "EQ must recompute coefficients from the hot block on a live change"
+        );
+        assert_eq!(node.params.low_gain_db, 12.0, "cached params follow the block");
+    }
+
     #[test]
     fn high_shelf_nyquist_gain_matches_rbj() {
         let sr = 48_000.0;
