@@ -78,6 +78,17 @@ pub struct PluginParams {
     /// Normalised parameter values `(param_id, value ∈ [0,1])` persisted across compiles.
     #[serde(default)]
     pub params: Vec<(u32, f32)>,
+    /// Per-device opt-in for the out-of-process sandbox (ADR-015, Phase 6).
+    ///
+    /// **Declared but not yet consumed** (step 6a): the flag is persisted with
+    /// the project so the user's intent survives save/load round-trips, but the
+    /// engine still always instantiates the plugin in-process.  The compiler /
+    /// host wiring lands in step 6b, the bridge in 6c–6e.
+    ///
+    /// `#[serde(default)]` keeps projects saved before Phase 6 loading with
+    /// `false` → in-process, behaviour strictly unchanged (C-2, C-4, C-9).
+    #[serde(default)]
+    pub sandboxed: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

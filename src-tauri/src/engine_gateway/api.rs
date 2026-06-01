@@ -1174,7 +1174,7 @@ fn default_params_for_kind(kind: &str) -> Option<EffectParams> {
         let name      = parts.next().unwrap_or("Plugin").to_string();
         let format    = parts.next().unwrap_or("").to_string();
         if !plugin_id.is_empty() {
-            return Some(EffectParams::Plugin(PluginParams { plugin_id, name, format, params: vec![] }));
+            return Some(EffectParams::Plugin(PluginParams { plugin_id, name, format, params: vec![], sandboxed: false }));
         }
     }
     match kind {
@@ -1200,6 +1200,10 @@ fn merge_effect_params(existing: &EffectParams, raw: serde_json::Value) -> Resul
                     name:      p.name.clone(),
                     format:    p.format.clone(),
                     params:    updated.params,
+                    // Identity/config fields stay with the existing effect; the
+                    // merge payload only carries param values.  Preserve the
+                    // sandbox opt-in (ADR-015).
+                    sandboxed: p.sandboxed,
                 }))
         }
     }.map_err(|e| format!("Effect params invalid: {e}"))
