@@ -126,7 +126,7 @@ The DSP engine is implemented as a directed acyclic graph compiled ahead of time
 | `audio_graph/execution_plan.rs` | `ExecutionPlan` — immutable, `Arc`-shared between threads |
 | `audio_graph/nodes/` | Built-in nodes: Track, Gain, Pan, Meter, Bus, Master |
 
-See [AUDIO_ENGINE.md](AUDIO_ENGINE.md) and `docs/claude/architecture/audio-graph.md` for details.
+See [AUDIO_ENGINE.md](AUDIO_ENGINE.md) and `docs/active/architecture/audio-graph.md` for details.
 
 ### cpal
 

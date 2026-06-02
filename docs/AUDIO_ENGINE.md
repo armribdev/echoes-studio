@@ -270,7 +270,7 @@ Real-time safety invariants:
 - `TransportInfo` built from atomics — no lock for transport reads
 - No graph traversal — the `ExecutionPlan.steps` array is pre-ordered
 
-See `docs/claude/rules/realtime-safety-rules.md` for the full checklist.
+See `docs/active/threading/realtime-safety.md` for the full checklist.
 
 ---
 
@@ -335,7 +335,7 @@ Current export flow:
 The plugin system (`plugin_system/`, `plugin_formats/`) is scaffolded for Phase 4.
 
 Architecture: every plugin wraps as an `AudioNode`. The graph has no knowledge
-of plugin formats. See `docs/claude/architecture/plugin-system.md`.
+of plugin formats. See `docs/active/plugins/plugin-system.md`.
 
 | Module | Status | Contents |
 |--------|--------|---------|
@@ -362,8 +362,8 @@ at ~30 fps via a dedicated Tauri command. Frontend VU meter widgets are pending
 
 - [ARCHITECTURE.md](ARCHITECTURE.md) — Overall architecture and IPC pipeline
 - [TECH_STACK.md](TECH_STACK.md) — Technology choices and rationale
-- [docs/claude/architecture/audio-graph.md](claude/architecture/audio-graph.md) — Graph-first philosophy
-- [docs/claude/architecture/threading-model.md](claude/architecture/threading-model.md) — Thread model detail
-- [docs/claude/rules/realtime-safety-rules.md](claude/rules/realtime-safety-rules.md) — Audio thread constraints
-- [docs/claude/systems/graph-compiler.md](claude/systems/graph-compiler.md) — Compilation pipeline
+- [docs/active/architecture/audio-graph.md](active/architecture/audio-graph.md) — Graph-first philosophy
+- [docs/active/threading/threading-model.md](active/threading/threading-model.md) — Thread model detail
+- [docs/active/threading/realtime-safety.md](active/threading/realtime-safety.md) — Audio thread constraints
+- [docs/active/dsp/graph-compiler.md](active/dsp/graph-compiler.md) — Compilation pipeline
 - [src-tauri/src/audio_graph/](../src-tauri/src/audio_graph/) — DSP engine source

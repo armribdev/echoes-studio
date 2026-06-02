@@ -1,6 +1,6 @@
 //! Plugin capabilities — introspected device metadata.
 //!
-//! Phase 1 of the migration plan (`docs/migration_plan.md`) introduces the
+//! Phase 1 of the migration plan (`docs/active/migration/migration_plan.md`) introduces the
 //! type vocabulary that later phases will use to carry data introspected from
 //! VST3 (`IComponent::getBusInfo`, `IEditController::getParameterInfo`) and
 //! CLAP (`clap.audio-ports`, `clap.note-ports`, `clap.params`) plugins.

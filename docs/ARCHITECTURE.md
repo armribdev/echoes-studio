@@ -290,7 +290,7 @@ Main Thread (UI)
 implementation deferred to Phase 4. Plugins integrate as thin `AudioNode`
 wrappers — the graph runtime remains format-agnostic.
 
-See `docs/claude/decisions/003-plugin-wrapper-strategy.md` for rationale.
+See `docs/active/decisions/003-plugin-wrapper-strategy.md` for rationale.
 
 ---
 

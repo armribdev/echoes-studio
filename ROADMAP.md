@@ -101,7 +101,7 @@
   - Géométrie 298.8° (7:30 → 4:30 dans le sens horaire)
   - Double-clic pour réinitialiser à `defaultValue`
   - Labels `VOL` / `PAN` au-dessus des knobs
-- [x] **Référentiel architectural `docs/claude/`** — mémoire long terme pour les sessions Claude Code
+- [x] **Référentiel architectural `docs/active/`** — mémoire long terme pour les sessions Claude Code
   - `architecture/` : audio-graph, plugin-system, threading-model, state-management
   - `rules/` : realtime-safety, anti-patterns, modulation-rules, architecture-decision-rules
   - `systems/` : graph-compiler, plugin-wrapper-system, dsp-runtime
