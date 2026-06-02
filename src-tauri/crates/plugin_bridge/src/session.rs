@@ -39,7 +39,7 @@
 use std::io;
 use std::path::Path;
 use std::process::{Child, Command};
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use crate::protocol::{BlockHeader, BLOCK_HEADER_BYTES, BLOCK_MAGIC, BRIDGE_PROTOCOL_VERSION};
@@ -190,7 +190,20 @@ pub struct BridgeSession {
     /// Count of blocks that hit the spin-budget timeout (silence inserted).
     /// Read off-RT for telemetry; bumped on the audio thread.
     timeout_count: AtomicU64,
+    /// Consecutive timeouts since the last successful block (audio-thread only).
+    consecutive_timeouts: u32,
+    /// Watchdog verdict: once a run of `DEAD_AFTER_CONSECUTIVE_TIMEOUTS` blocks
+    /// has timed out, the bridge is declared dead and every later block
+    /// short-circuits to silence (no spin).  Written by the audio thread, read
+    /// off-RT for UI/telemetry.
+    dead: AtomicBool,
 }
+
+/// Consecutive timed-out blocks after which the watchdog declares the bridge
+/// dead (ADR-015, 6e).  Low enough that a crashed/hung plugin stops burning the
+/// spin budget within a few blocks; high enough that a one-off scheduling hiccup
+/// (which would not repeat consecutively) never trips it.
+pub const DEAD_AFTER_CONSECUTIVE_TIMEOUTS: u32 = 8;
 
 impl BridgeSession {
     /// Create the region sized for `layout`, spawn the bridge in **passthrough**
@@ -312,6 +325,8 @@ impl BridgeSession {
             send_scratch: vec![0u8; slot],
             recv_scratch: vec![0u8; slot],
             timeout_count: AtomicU64::new(0),
+            consecutive_timeouts: 0,
+            dead: AtomicBool::new(false),
         })
     }
 
@@ -355,6 +370,10 @@ impl BridgeSession {
     ///   otherwise), but the wait is **bounded**: past `spin_budget` it gives up,
     ///   inserts silence, and bumps [`timeout_count`](Self::timeout_count) so a
     ///   stalled/crashed bridge degrades to silence instead of an underrun.
+    /// - **Watchdog (6e):** after [`DEAD_AFTER_CONSECUTIVE_TIMEOUTS`] consecutive
+    ///   timeouts the bridge is marked [`is_dead`](Self::is_dead) and every later
+    ///   block returns silence **immediately** (no spin), so a crashed plugin
+    ///   stops costing CPU on the audio thread.
     ///
     /// `input` / `output` are planar (channel-major), length
     /// `channel_count * block_size`.
@@ -369,11 +388,30 @@ impl BridgeSession {
         let frames = self.layout.block_size as usize;
         let nc = self.layout.channel_count as usize;
         let n = nc * frames;
-        if input.len() < n || output.len() < n {
+
+        // Dead bridge or malformed buffers → silence, no round-trip.  A dead
+        // bridge does not re-enter the watchdog (it is already condemned).
+        if self.dead.load(Ordering::Relaxed) || input.len() < n || output.len() < n {
             output.iter_mut().for_each(|s| *s = 0.0);
             return BlockOutcome::TimedOut;
         }
 
+        let outcome = self.round_trip(input, output, sequence, sample_rate, spin_budget, n);
+        self.note_outcome(outcome);
+        outcome
+    }
+
+    /// One send → bounded-spin → receive cycle.  Returns the outcome; the caller
+    /// records it via [`note_outcome`](Self::note_outcome).
+    fn round_trip(
+        &mut self,
+        input: &[f32],
+        output: &mut [f32],
+        sequence: u64,
+        sample_rate: u32,
+        spin_budget: Duration,
+        n: usize,
+    ) -> BlockOutcome {
         // Drain any stale outputs left by a previous timed-out block, so the
         // block we are about to read pairs with the one we are about to send.
         while self.audio_out.pop(&mut self.recv_scratch).is_some() {}
@@ -398,7 +436,6 @@ impl BridgeSession {
         let send_len = BLOCK_HEADER_BYTES + n * 4;
         if !self.audio_in.push(&self.send_scratch[..send_len]) {
             output[..n].iter_mut().for_each(|s| *s = 0.0);
-            self.timeout_count.fetch_add(1, Ordering::Relaxed);
             return BlockOutcome::TimedOut;
         }
 
@@ -417,16 +454,37 @@ impl BridgeSession {
             }
             if Instant::now() >= deadline {
                 output[..n].iter_mut().for_each(|s| *s = 0.0);
-                self.timeout_count.fetch_add(1, Ordering::Relaxed);
                 return BlockOutcome::TimedOut;
             }
             std::hint::spin_loop();
         }
     }
 
+    /// Watchdog bookkeeping: a success clears the consecutive-timeout run; a
+    /// timeout extends it and, past the threshold, condemns the bridge.
+    fn note_outcome(&mut self, outcome: BlockOutcome) {
+        match outcome {
+            BlockOutcome::Processed => self.consecutive_timeouts = 0,
+            BlockOutcome::TimedOut => {
+                self.timeout_count.fetch_add(1, Ordering::Relaxed);
+                self.consecutive_timeouts = self.consecutive_timeouts.saturating_add(1);
+                if self.consecutive_timeouts >= DEAD_AFTER_CONSECUTIVE_TIMEOUTS {
+                    self.dead.store(true, Ordering::Relaxed);
+                }
+            }
+        }
+    }
+
     /// Number of blocks that timed out (degraded to silence) since spawn.
     pub fn timeout_count(&self) -> u64 {
         self.timeout_count.load(Ordering::Relaxed)
+    }
+
+    /// Whether the watchdog has condemned the bridge (ADR-015, 6e).  Once dead,
+    /// every `process_block` returns silence immediately.  Readable off-RT for
+    /// UI/telemetry ("plugin disabled").
+    pub fn is_dead(&self) -> bool {
+        self.dead.load(Ordering::Relaxed)
     }
 
     /// The region's layout.

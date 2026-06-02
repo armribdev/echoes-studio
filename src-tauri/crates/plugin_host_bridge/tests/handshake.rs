@@ -71,6 +71,47 @@ fn process_block_round_trips_planar_audio() {
         assert_eq!(output, input, "block {seq} samples mismatch");
     }
     assert_eq!(session.timeout_count(), 0);
+    assert!(!session.is_dead(), "a healthy bridge must not be condemned");
+
+    drop(session);
+}
+
+#[test]
+fn watchdog_condemns_bridge_after_consecutive_timeouts() {
+    use plugin_bridge::session::{BlockOutcome, DEAD_AFTER_CONSECUTIVE_TIMEOUTS};
+
+    let layout = BridgeLayout::new(16, 2, 8);
+    let name = unique_name("watchdog");
+    let mut session = BridgeSession::spawn(bridge_exe(), &name, &layout, Duration::from_secs(5))
+        .expect("bridge should reach READY");
+
+    let n = (2 * 16) as usize;
+    let input = vec![1.0f32; n];
+    let mut output = vec![1.0f32; n];
+
+    // A zero spin budget guarantees a timeout every block (the bridge cannot echo
+    // within ~nanoseconds), so the watchdog trips deterministically.
+    for _ in 0..DEAD_AFTER_CONSECUTIVE_TIMEOUTS {
+        assert!(!session.is_dead(), "not condemned before the threshold");
+        let outcome = session.process_block(&input, &mut output, 0, 48_000, Duration::ZERO);
+        assert_eq!(outcome, BlockOutcome::TimedOut);
+        assert!(
+            output.iter().all(|&s| s == 0.0),
+            "timed-out block is silence"
+        );
+    }
+
+    assert!(
+        session.is_dead(),
+        "condemned after the consecutive-timeout threshold"
+    );
+
+    // Once dead, even a generous budget short-circuits to silence immediately —
+    // no more spinning on the audio thread.
+    output.iter_mut().for_each(|s| *s = 1.0);
+    let outcome = session.process_block(&input, &mut output, 0, 48_000, Duration::from_secs(1));
+    assert_eq!(outcome, BlockOutcome::TimedOut);
+    assert!(output.iter().all(|&s| s == 0.0));
 
     drop(session);
 }

@@ -94,7 +94,7 @@ that latency through the existing `latency_samples()` path, and the engine's PDC
 | **6d-iii-b-1** | `BridgeProcessor` seam: the loop deserialises/processes/reserialises `f32` blocks through a trait; `PassthroughProcessor` is the identity impl | nil (separate process) | **Implemented** |
 | **6d-iii-b-2** | Real CLAP plugin loaded in the bridge (FFI) driving its `process` vtable as a `BridgeProcessor`; `clap_ffi` extracted as a shared crate | nil (separate process) | **Implemented** (CLAP; VST3 later) |
 | **6d-iv** | `BridgedNode` proxy + **RT wiring** (`process_block`: bounded spin + timeout + silence) on the audio thread; compiler routes sandboxed CLAP devices to it | **high** | **Implemented** |
-| 6e | Watchdog + `Dead`-marking on repeated timeouts + prototype on a **single** real plugin (Vital), then generalise | high | Pending |
+| **6e** | Watchdog: `Dead`-marking after consecutive timeouts → immediate-silence fast path (no spin); real-plugin smoke validation remains manual | low | **Implemented** (watchdog; smoke manual) |
 
 Rationale for the cut: 6a–6c and 6d-i/ii/iii touch **zero** audio-thread code and
 are bit-identical (C-2). Only **6d-iv** crosses the RT boundary, and it does so
@@ -473,6 +473,58 @@ tested: opt-in flag → region → spawn/handshake → process loop → real CLA
 → **audio-thread round-trip with bounded-spin + silence**. Only **6e**
 (watchdog / `Dead`-marking + real-plugin smoke validation) remains, plus the
 later VST3 processor behind the same seam.
+
+## Sub-phase 6e — what shipped
+
+A watchdog so a crashed/hung plugin stops costing the audio thread anything:
+
+- `BridgeSession` tracks `consecutive_timeouts`; after
+  `DEAD_AFTER_CONSECUTIVE_TIMEOUTS` (8) in a row it sets a `dead` `AtomicBool`.
+  A successful block clears the run, so a one-off scheduling hiccup (which does
+  not repeat *consecutively*) never trips it.
+- `process_block` **short-circuits** when dead: it fills silence and returns
+  immediately, with **no send and no spin** — so a dead bridge costs ~nothing per
+  block instead of burning the full spin budget. `is_dead()` is exposed off-RT
+  for UI/telemetry ("plugin disabled").
+- No new syscalls on the audio thread: a crashed child is detected purely through
+  its repeated timeouts (the rings stop being serviced), not by polling the
+  process — keeping the hot path RT-safe.
+
+**Detection is intentionally timeout-based, not respawn.** A condemned device
+stays silent for the session; automatic respawn/recovery is a later refinement.
+
+**Verification (deterministic):** an integration test drives `process_block`
+with a **zero** spin budget against the real bridge — every block then times out
+by construction — and asserts the watchdog flips `is_dead()` after exactly the
+threshold, that timed-out blocks are silence, and that a dead session
+short-circuits even under a generous budget. The healthy round-trip test asserts
+`is_dead() == false`. `plugin_bridge` 21/21, `plugin_host_bridge` 6/6
+(2 synthetic-CLAP unit + 4 integration), `clap_ffi` 2/2, engine **53/53**;
+`clippy --tests -D warnings` and `fmt` clean.
+
+## Phase 6 — overall status
+
+The out-of-process plugin sandbox (ADR-015) is **functionally complete for
+CLAP**, end to end and RT-safe:
+
+```
+opt-in flag (6a) → graph plumbing (6b) → shmem ring (6c-i) → shared crates (6c-ii)
+→ OS region (6d-i) → spawn + handshake (6d-ii) → ring process loop (6d-iii-a)
+→ real CLAP plugin (6d-iii-b-2) → audio-thread round-trip (6d-iv) → watchdog (6e)
+```
+
+Every step kept the engine **bit-identical** for non-sandboxed projects (the
+flag defaults off) and the audio-thread crossing is bounded-spin + silence +
+watchdog, so a misbehaving sandboxed plugin can no longer take the engine down
+(the P0-5 goal).
+
+**Remaining (out of this ADR's core scope):**
+- VST3 processor behind the same `BridgeProcessor` seam (CLAP shipped first
+  because its FFI is a clean C ABI; VST3 is COM).
+- Manual smoke validation on a real `.clap` (audit V5) — CI cannot assume an
+  installed plugin.
+- Automatic respawn/recovery of a condemned device; spin-budget tuning;
+  param/MIDI rings to the bridge.
 
 ## Consequences
 
