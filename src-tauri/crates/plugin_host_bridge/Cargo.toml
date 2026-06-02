@@ -8,3 +8,6 @@ publish = false
 
 [dependencies]
 plugin_bridge = { path = "../plugin_bridge" }
+# CLAP C-ABI bindings shared with the engine — lets the bridge load and drive a
+# real plugin's `process` (ADR-015 6d-iii-b-2).
+clap_ffi = { path = "../clap_ffi" }

@@ -91,7 +91,8 @@ that latency through the existing `latency_samples()` path, and the engine's PDC
 | **6d-i** | `region::SharedRegion`: named OS shared-memory mapping (Windows first) backing the rings, off-RT, tested in isolation | nil | **Implemented** |
 | **6d-ii** | Engine spawns `plugin_host_bridge` + control handshake (`BridgeSession`/`serve`), off-RT, proven against the real binary | nil | **Implemented** |
 | **6d-iii-a** | Ring-driven per-block process loop in the bridge with an identity pass-through stand-in; audio frames carried over the rings | nil (separate process) | **Implemented** |
-| 6d-iii-b | Bridge host loads the real VST3/CLAP plugin (FFI) — its `process()` replaces the identity copy | nil (separate process) | Pending |
+| **6d-iii-b-1** | `BridgeProcessor` seam: the loop deserialises/processes/reserialises `f32` blocks through a trait; `PassthroughProcessor` is the identity impl | nil (separate process) | **Implemented** |
+| **6d-iii-b-2** | Real CLAP plugin loaded in the bridge (FFI) driving its `process` vtable as a `BridgeProcessor`; `clap_ffi` extracted as a shared crate | nil (separate process) | **Implemented** (CLAP; VST3 later) |
 | 6d-iv | `BridgedPluginInstance` proxy + **RT wiring** (bounded spin + timeout + silence) on the audio thread | **high** | Pending |
 | 6e | Watchdog + `Dead`-marking + prototype on a **single** plugin (Vital), then generalise | high | Pending |
 
@@ -315,6 +316,105 @@ engine spawns the real binary, sends 16 distinct audio blocks, reads each back
 per-block sequence/ordering check. `plugin_bridge` 19/19,
 `plugin_host_bridge` 2/2, engine **53/53** unchanged; `clippy --tests -D warnings`
 and `fmt` clean.
+
+## Sub-phase 6d-iii-b-1 — what shipped
+
+The bridge loop now processes audio at the **`f32` sample level through a typed
+seam** — the exact interface a real plugin implements:
+
+- `session::BridgeProcessor` — `process(&mut self, input: &[f32], output: &mut
+  [f32], ctx: &BlockContext)`, plus `BlockContext` decoded from the `BlockHeader`.
+- `session::PassthroughProcessor` — identity impl (the stand-in that keeps the
+  transport verifiable without an installed plugin).
+- `serve` now deserialises each block's samples into a preallocated `f32` buffer,
+  calls the processor, and re-serialises the output (header echoed, samples
+  written back). `serve_with(.., &mut dyn BridgeProcessor)` is the entry point a
+  real plugin processor uses in 6d-iii-b-2; the loop and transport are identical.
+  Buffers (`scratch`, `in_samples`, `out_samples`) are preallocated — no
+  allocation in the loop.
+
+### Why the seam, not the real plugin, in this step
+
+The engine's CLAP FFI (`plugin_formats/clap/ffi.rs`) is, helpfully,
+**self-contained** (no `use crate::` — pure C-ABI bindings), so it *is*
+extractable. But loading a real plugin in this step is blocked on two things the
+constraints don't allow to rush:
+
+1. **Engine-core churn** — sharing that FFI means either moving it out of
+   `src-tauri` (rewiring `instance.rs` / `wrapper.rs` / `host.rs` imports) or
+   duplicating ~200 lines of `unsafe`. Either is an engine-plugin-core change,
+   not a localized one.
+2. **Untestable here** — "load a real plugin and process" can't be verified in
+   the harness without a guaranteed `.clap` on disk. That is exactly audit B4
+   (embed a minimal Rust-written CLAP plugin for tests), a prerequisite that
+   belongs with 6d-iii-b-2.
+
+So 6d-iii-b-1 builds the seam (testable now with identity + a unit-test gain
+processor proving the loop transforms), and 6d-iii-b-2 implements
+`BridgeProcessor` for a real loaded plugin against an embedded test plugin —
+a localized change behind this trait.
+
+**Real-time:** loop runs in the bridge process with preallocated buffers; the
+sample copies are fixed-size and allocation-free. Engine and `ShmemRing`
+untouched.
+
+**Verification:** `PassthroughProcessor` (identity) and a test `GainProcessor`
+(×2) unit-tested directly, proving the loop drives the seam rather than echoing
+bytes. The end-to-end round-trip (real binary, 16 blocks) now flows through the
+f32 seam and still returns identical samples. `plugin_bridge` 21/21,
+`plugin_host_bridge` 2/2, engine **53/53** unchanged; `clippy --tests -D warnings`
+and `fmt` clean.
+
+## Sub-phase 6d-iii-b-2 — what shipped
+
+The bridge now loads and drives a **real CLAP plugin** (the identity stand-in is
+replaced by an actual `process()` call):
+
+- **`clap_ffi` crate** — the engine's `plugin_formats/clap/ffi.rs` (846 lines,
+  already `use crate::`-free) was `git mv`'d into a standalone crate. The engine's
+  `ffi.rs` became a one-line re-export shim (`pub use clap_ffi::*;`), so **every**
+  existing in-engine import path is unchanged. Both the engine and the bridge link
+  one CLAP ABI definition.
+- **`ClapProcessor`** (in `plugin_host_bridge`) implements `BridgeProcessor`:
+  `load` does the `clap_entry → factory → create → init → activate →
+  start_processing` sequence; `process` marshals the planar `f32` block into
+  `clap_audio_buffer` channel-pointer arrays + `clap_process` and calls the
+  plugin's `process` vtable (replicating the engine wrapper's proven sequence);
+  `Drop` tears down (`stop_processing → deactivate → destroy`). Params/MIDI are
+  passed as empty event lists for now.
+- The bridge CLI gains a real-plugin serve mode
+  (`--sample-rate --plugin-dll --plugin-id`).
+
+### Engine bit-identical (the extraction)
+
+The CLAP FFI moved out of `src-tauri` but the engine compiles and behaves
+identically: only `ffi.rs` changed (→ shim), every consumer import is untouched,
+`clap_ffi` is std-only so feature resolution can't shift. Engine suite **51/51**
+(the 2 FFI unit tests moved with the code into `clap_ffi`; 51 + 2 = the prior 53).
+
+### What is tested vs. smoke-only
+
+- **Tested (deterministic, no DLL):** `ClapProcessor::process` is unit-tested
+  against a **synthetic CLAP plugin** — a real `clap_plugin`-shaped vtable whose
+  `process` applies ×2 gain — asserting correct per-channel marshalling, plus an
+  oversized-block guard. This validates the risky part (building `clap_process`
+  correctly), the new code, without needing an installed plugin.
+- **Smoke-only (audit V5):** `ClapProcessor::load` of a real `.clap` reuses
+  `clap_ffi`'s loader (proven in the engine) and the CLI plugin mode; these run
+  only with a plugin on disk, so they are manual/smoke, not CI.
+
+### Why CLAP and not VST3 here
+
+CLAP's FFI is a self-contained C ABI (extractable cleanly, no engine coupling);
+VST3 is COM with deeper engine entanglement. Prototyping the sandbox on one
+format (CLAP) matches the plan's "single plugin first"; the VST3 processor is a
+later, analogous step behind the same `BridgeProcessor` seam.
+
+**Real-time:** all of this runs in the bridge process; `process` uses only the
+preallocated channel-pointer vectors (no allocation). Engine runtime and
+`ShmemRing` untouched. `plugin_bridge` 21/21, `plugin_host_bridge` 4/4
+(2 synthetic-CLAP unit + 2 spawn/round-trip integration), `clap_ffi` 2/2, engine
+**51/51**; `clippy --tests -D warnings` and `fmt` clean.
 
 ## Consequences
 

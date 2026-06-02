@@ -42,7 +42,7 @@ use std::process::{Child, Command};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 
-use crate::protocol::{BlockHeader, BLOCK_HEADER_BYTES, BRIDGE_PROTOCOL_VERSION};
+use crate::protocol::{BlockHeader, BLOCK_HEADER_BYTES, BLOCK_MAGIC, BRIDGE_PROTOCOL_VERSION};
 use crate::region::SharedRegion;
 use crate::shmem::{RingLayout, ShmemRing};
 
@@ -313,18 +313,61 @@ impl Drop for BridgeSession {
     }
 }
 
-// ── Bridge side ─────────────────────────────────────────────────────────────
+// ── Bridge side: the processing seam ────────────────────────────────────────
+
+/// Per-block context handed to a [`BridgeProcessor`], decoded from the incoming
+/// [`BlockHeader`].
+#[derive(Debug, Clone, Copy)]
+pub struct BlockContext {
+    pub block_size: u32,
+    pub channel_count: u32,
+    pub sample_rate: u32,
+}
+
+/// The DSP unit the bridge process loop drives, one block at a time.
+///
+/// This is the seam a **real plugin slots into**: 6d-iii-b-2 implements it for a
+/// loaded VST3/CLAP plugin (its `process()`), keeping the loop and the transport
+/// unchanged.  `input` and `output` are interleaved-by-channel `f32`, length
+/// `channel_count * block_size`.
+pub trait BridgeProcessor {
+    /// Process one block: read `input`, write `output` (same length).
+    fn process(&mut self, input: &[f32], output: &mut [f32], ctx: &BlockContext);
+}
+
+/// Identity stand-in: copies input to output unchanged.  This is what runs until
+/// 6d-iii-b-2 loads a real plugin; it makes the transport + loop verifiable
+/// without depending on any installed plugin.
+pub struct PassthroughProcessor;
+
+impl BridgeProcessor for PassthroughProcessor {
+    fn process(&mut self, input: &[f32], output: &mut [f32], _ctx: &BlockContext) {
+        let n = input.len().min(output.len());
+        output[..n].copy_from_slice(&input[..n]);
+    }
+}
+
+// ── Bridge side: the process loop ───────────────────────────────────────────
 
 /// Bridge-side process loop (ADR-015, 6d-iii): open the region described by
 /// `layout`, validate the control block, attach the audio rings, signal `READY`,
-/// then process input blocks into output blocks until the owner sets `SHUTDOWN`.
+/// then run [`PassthroughProcessor`] over each block until the owner sets
+/// `SHUTDOWN`.
 ///
-/// **The "processor" here is an identity pass-through stand-in**: it copies each
-/// input block to the output ring unchanged.  6d-iii-b replaces the copy with the
-/// real loaded VST3/CLAP plugin's `process()`.  No plugin is loaded yet.
-///
-/// Returns once `SHUTDOWN` is observed, or an error if the handshake fails.
+/// The processor is the identity stand-in; 6d-iii-b-2 swaps it for a real loaded
+/// plugin via [`serve_with`].  Returns once `SHUTDOWN` is observed, or an error
+/// if the handshake fails.
 pub fn serve(region_name: &str, layout: &BridgeLayout) -> io::Result<()> {
+    serve_with(region_name, layout, &mut PassthroughProcessor)
+}
+
+/// Like [`serve`], but with a caller-supplied processor.  6d-iii-b-2 passes a
+/// real plugin processor here; the loop and transport are identical.
+pub fn serve_with(
+    region_name: &str,
+    layout: &BridgeLayout,
+    processor: &mut dyn BridgeProcessor,
+) -> io::Result<()> {
     let region_bytes = layout.region_bytes();
     let region = SharedRegion::open(region_name, region_bytes)?;
     let base = region.as_mut_ptr();
@@ -360,26 +403,55 @@ pub fn serve(region_name: &str, layout: &BridgeLayout) -> io::Result<()> {
 
     unsafe { status_store(base, STATUS_READY) };
 
-    // Preallocated scratch — no allocation inside the loop.
+    // Preallocated buffers — no allocation inside the loop.  The byte scratch
+    // can't be cast to `&[f32]` (a `Vec<u8>` is only 1-aligned), so samples are
+    // copied through the f32 buffers; copies are RT-safe (fixed-size, no alloc).
+    let frames = (layout.channel_count as usize) * (layout.block_size as usize);
     let mut scratch = vec![0u8; audio_in.slot_size()];
+    let mut in_samples = vec![0.0f32; frames];
+    let mut out_samples = vec![0.0f32; frames];
 
     loop {
         if unsafe { status_load(base) } == STATUS_SHUTDOWN {
             return Ok(());
         }
-        match audio_in.pop(&mut scratch) {
-            Some(n) => {
-                // Torn-region guard: a valid block starts with a `BlockHeader`
-                // whose magic matches.  Drop malformed blocks rather than echo
-                // garbage.  (The real plugin's process() replaces this copy.)
-                if BlockHeader::from_bytes(&scratch[..n])
-                    .is_some_and(|h| h.magic == crate::protocol::BLOCK_MAGIC)
-                {
-                    audio_out.push(&scratch[..n]);
-                }
-            }
-            None => std::thread::sleep(Duration::from_micros(200)),
+        let Some(n) = audio_in.pop(&mut scratch) else {
+            std::thread::sleep(Duration::from_micros(200));
+            continue;
+        };
+
+        // Torn-region guard: a valid block starts with a `BlockHeader` whose
+        // magic matches.  Drop malformed blocks rather than process garbage.
+        let Some(header) = BlockHeader::from_bytes(&scratch[..n]) else {
+            continue;
+        };
+        if header.magic != BLOCK_MAGIC {
+            continue;
         }
+
+        let body = &scratch[BLOCK_HEADER_BYTES..n];
+        let count = (body.len() / 4).min(frames);
+        for (slot, chunk) in in_samples[..count].iter_mut().zip(body.chunks_exact(4)) {
+            *slot = f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
+        }
+
+        let ctx = BlockContext {
+            block_size: header.block_size,
+            channel_count: header.channel_count,
+            sample_rate: header.sample_rate,
+        };
+        processor.process(&in_samples[..count], &mut out_samples[..count], &ctx);
+
+        // Re-serialise: echo the header, then the processed samples.  Reuse the
+        // scratch buffer in place (it is large enough for header + samples).
+        scratch[..BLOCK_HEADER_BYTES].copy_from_slice(&header.to_bytes());
+        for (sample, dst) in out_samples[..count]
+            .iter()
+            .zip(scratch[BLOCK_HEADER_BYTES..].chunks_exact_mut(4))
+        {
+            dst.copy_from_slice(&sample.to_le_bytes());
+        }
+        audio_out.push(&scratch[..BLOCK_HEADER_BYTES + count * 4]);
     }
 }
 
@@ -419,5 +491,40 @@ mod tests {
     fn control_magic_is_distinct_from_block_magic() {
         assert_ne!(CONTROL_MAGIC, crate::protocol::BLOCK_MAGIC);
         assert_eq!(&CONTROL_MAGIC.to_le_bytes(), b"EsCt");
+    }
+
+    // A non-identity processor proves the loop actually drives the seam (not just
+    // echoes bytes).  This mirrors how a real plugin's `process()` will be wired.
+    struct GainProcessor(f32);
+    impl BridgeProcessor for GainProcessor {
+        fn process(&mut self, input: &[f32], output: &mut [f32], _ctx: &BlockContext) {
+            for (o, i) in output.iter_mut().zip(input) {
+                *o = i * self.0;
+            }
+        }
+    }
+
+    fn ctx() -> BlockContext {
+        BlockContext {
+            block_size: 4,
+            channel_count: 1,
+            sample_rate: 48_000,
+        }
+    }
+
+    #[test]
+    fn passthrough_copies_input_to_output() {
+        let input = [0.1, -0.2, 0.3, -0.4];
+        let mut output = [0.0; 4];
+        PassthroughProcessor.process(&input, &mut output, &ctx());
+        assert_eq!(output, input);
+    }
+
+    #[test]
+    fn processor_transforms_samples() {
+        let input = [1.0, 2.0, 3.0, 4.0];
+        let mut output = [0.0; 4];
+        GainProcessor(2.0).process(&input, &mut output, &ctx());
+        assert_eq!(output, [2.0, 4.0, 6.0, 8.0]);
     }
 }

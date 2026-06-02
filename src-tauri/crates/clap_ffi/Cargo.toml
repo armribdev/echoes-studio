@@ -1,0 +1,13 @@
+[package]
+name = "clap_ffi"
+version = "0.1.0"
+edition = "2021"
+description = "Self-contained CLAP C-ABI bindings, shared by the engine and the plugin bridge host (ADR-015)."
+license = "MIT"
+publish = false
+
+# std-only: these are raw C-ABI bindings (the DLL loader uses its own `extern`
+# declarations).  Extracted verbatim from the engine's
+# `plugin_formats/clap/ffi.rs` so the engine and `plugin_host_bridge` link ONE
+# definition of the CLAP ABI.
+[dependencies]

@@ -16,7 +16,7 @@ rust-version = "1.60"
 # stating it explicitly preserves the exact feature resolution → the engine binary
 # stays bit-identical (C-2).
 [workspace]
-members = ["crates/plugin_bridge", "crates/plugin_host_bridge"]
+members = ["crates/clap_ffi", "crates/plugin_bridge", "crates/plugin_host_bridge"]
 resolver = "2"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -29,6 +29,9 @@ tauri-build = { version = "2", features = [] }
 # engine links it to reuse the same shmem-ring + wire-protocol ABI the bridge
 # host (`plugin_host_bridge`) speaks.  std-only, no transitive deps.
 plugin_bridge = { path = "crates/plugin_bridge" }
+# CLAP C-ABI bindings, shared with the bridge host (ADR-015 6d-iii-b-2).  The
+# engine's `plugin_formats::clap::ffi` re-exports this crate.
+clap_ffi = { path = "crates/clap_ffi" }
 serde_json = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 tauri = { version = "2", features = [] }
