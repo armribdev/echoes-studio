@@ -59,6 +59,35 @@ pub struct BlockHeader {
     pub sequence: u64,
 }
 
+/// Serialised size of a [`BlockHeader`] (frozen by the ABI assertion below).
+pub const BLOCK_HEADER_BYTES: usize = 32;
+
+// Compile-time guard: the (de)serialisation transmutes rely on this exact size.
+// A layout change is a protocol break → bump `BRIDGE_PROTOCOL_VERSION`.
+const _: () = assert!(core::mem::size_of::<BlockHeader>() == BLOCK_HEADER_BYTES);
+
+impl BlockHeader {
+    /// Serialise to its fixed-size byte form for a ring slot's header prefix.
+    pub fn to_bytes(&self) -> [u8; BLOCK_HEADER_BYTES] {
+        // SAFETY: `BlockHeader` is `#[repr(C)]` POD of exactly BLOCK_HEADER_BYTES
+        // (const-asserted), so a bit copy is a valid byte representation.
+        unsafe { core::mem::transmute_copy::<BlockHeader, [u8; BLOCK_HEADER_BYTES]>(self) }
+    }
+
+    /// Deserialise from the leading bytes of a ring slot.  Returns `None` if
+    /// `bytes` is shorter than a header; the caller still checks [`BlockHeader::magic`].
+    pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
+        if bytes.len() < BLOCK_HEADER_BYTES {
+            return None;
+        }
+        let mut arr = [0u8; BLOCK_HEADER_BYTES];
+        arr.copy_from_slice(&bytes[..BLOCK_HEADER_BYTES]);
+        // SAFETY: equal-size by-value transmute of a POD type onto a fresh,
+        // properly-aligned value (the array is align-1 but the result is owned).
+        Some(unsafe { core::mem::transmute::<[u8; BLOCK_HEADER_BYTES], BlockHeader>(arr) })
+    }
+}
+
 /// One parameter change carried over a `Params` ring.  ABI-stable mirror of the
 /// engine's in-process `ParamChange` (`plugin_system::param_queue`).
 #[repr(C)]
@@ -96,5 +125,26 @@ mod tests {
     #[test]
     fn magic_is_readable_ascii() {
         assert_eq!(&BLOCK_MAGIC.to_le_bytes(), b"EsBr");
+    }
+
+    #[test]
+    fn block_header_bytes_roundtrip() {
+        let h = BlockHeader {
+            magic: BLOCK_MAGIC,
+            version: BRIDGE_PROTOCOL_VERSION,
+            block_size: 256,
+            channel_count: 2,
+            sample_rate: 48_000,
+            _reserved: 0,
+            sequence: 42,
+        };
+        let bytes = h.to_bytes();
+        assert_eq!(bytes.len(), BLOCK_HEADER_BYTES);
+        assert_eq!(BlockHeader::from_bytes(&bytes), Some(h));
+    }
+
+    #[test]
+    fn from_bytes_rejects_short_input() {
+        assert_eq!(BlockHeader::from_bytes(&[0u8; 8]), None);
     }
 }

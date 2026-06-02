@@ -90,7 +90,8 @@ that latency through the existing `latency_samples()` path, and the engine's PDC
 | **6c-ii** | `plugin_host_bridge` binary crate + shared `plugin_bridge` lib crate + workspace | nil | **Implemented** |
 | **6d-i** | `region::SharedRegion`: named OS shared-memory mapping (Windows first) backing the rings, off-RT, tested in isolation | nil | **Implemented** |
 | **6d-ii** | Engine spawns `plugin_host_bridge` + control handshake (`BridgeSession`/`serve`), off-RT, proven against the real binary | nil | **Implemented** |
-| 6d-iii | Bridge host loads the real VST3/CLAP plugin + runs the per-block process loop over the rings | nil (separate process) | Pending |
+| **6d-iii-a** | Ring-driven per-block process loop in the bridge with an identity pass-through stand-in; audio frames carried over the rings | nil (separate process) | **Implemented** |
+| 6d-iii-b | Bridge host loads the real VST3/CLAP plugin (FFI) — its `process()` replaces the identity copy | nil (separate process) | Pending |
 | 6d-iv | `BridgedPluginInstance` proxy + **RT wiring** (bounded spin + timeout + silence) on the audio thread | **high** | Pending |
 | 6e | Watchdog + `Dead`-marking + prototype on a **single** plugin (Vital), then generalise | high | Pending |
 
@@ -272,6 +273,48 @@ is integration-tested **against the real binary** in the bridge crate's own
 `tests/` (where `CARGO_BIN_EXE_plugin_host_bridge` is available), including a
 repeatability case. `plugin_bridge` 17/17, `plugin_host_bridge` 2/2, engine
 **53/53** unchanged; `clippy --tests -D warnings` and `fmt` clean.
+
+## Sub-phase 6d-iii-a — what shipped
+
+Real audio now flows through the rings, processed by a loop — just not yet by a
+real plugin. The mechanism the 6d-iv RT proxy will drive is built and proven:
+
+- `protocol::BlockHeader::{to_bytes, from_bytes}` + `BLOCK_HEADER_BYTES`, with a
+  const size assertion freezing the 32-byte layout.
+- `session::BridgeLayout` — carves the region into `[control][audio-in][audio-out]`,
+  computing each ring's offset and size from `block_size × channel_count ×
+  capacity` so owner and peer agree without extra messages.
+- `BridgeSession` now sizes the region from the layout, initialises both audio
+  ring headers (owner side), and exposes `try_send_input` / `try_recv_output`
+  (the off-RT shape of what the 6d-iv proxy will call on the audio thread).
+- `session::serve` is now the **process loop**: attach the rings, signal READY,
+  then `pop(audio-in) → identity → push(audio-out)` until SHUTDOWN, validating
+  each block's `BlockHeader` magic (torn-region guard) and dropping malformed
+  blocks. A preallocated scratch buffer means no allocation in the loop.
+- `plugin_host_bridge` serve CLI is now layout-driven
+  (`--block-size/--channels/--audio-capacity`).
+
+### Why an identity stand-in, not the real plugin
+
+Loading a real VST3/CLAP plugin in the bridge process needs the engine's
+`plugin_formats` FFI stack (DLL load, COM/`clap_entry` instantiation). That code
+lives deep in `src-tauri` and would have to be extracted into a shared crate or
+the bridge would have to depend on the whole Tauri app crate — a large refactor
+of the engine's plugin core, exactly the "break the engine to design better" the
+constraints forbid in one step. The *ring-driven loop* is separable from *what
+runs inside it*, so 6d-iii-a proves the loop with an identity copy; 6d-iii-b
+slots the real `process()` into the same place.
+
+**Real-time:** the loop runs in the bridge process; the engine-side helpers are
+off-RT (a small scratch allocation, documented for replacement by a preallocated
+path in 6d-iv). `ShmemRing`, the RT-validated primitive, was **not modified**.
+
+**Verification:** `BlockHeader` (de)serialisation unit-tested. The full path —
+engine spawns the real binary, sends 16 distinct audio blocks, reads each back
+**identical** through the bridge's loop — is integration-tested, plus a
+per-block sequence/ordering check. `plugin_bridge` 19/19,
+`plugin_host_bridge` 2/2, engine **53/53** unchanged; `clippy --tests -D warnings`
+and `fmt` clean.
 
 ## Consequences
 

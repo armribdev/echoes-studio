@@ -42,8 +42,9 @@ use std::process::{Child, Command};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 
-use crate::protocol::BRIDGE_PROTOCOL_VERSION;
+use crate::protocol::{BlockHeader, BLOCK_HEADER_BYTES, BRIDGE_PROTOCOL_VERSION};
 use crate::region::SharedRegion;
+use crate::shmem::{RingLayout, ShmemRing};
 
 /// Magic stamped in the control block — ASCII `"EsCt"` (Echoes Control), LE.
 /// Distinct from the per-block [`BLOCK_MAGIC`](crate::protocol::BLOCK_MAGIC).
@@ -66,6 +67,59 @@ const OFF_STATUS: usize = 12;
 /// Bytes reserved for the control block at the head of the region.  Audio / param
 /// / event rings (6d-iii) start at this offset.
 pub const CONTROL_BYTES: usize = 16;
+
+// ── Region layout ───────────────────────────────────────────────────────────
+
+/// Describes how a device's shared region is carved up, so the engine (owner)
+/// and the bridge (peer) agree on ring offsets and sizes (ADR-015, 6d-iii).
+///
+/// Layout: `[control block][audio-in ring][audio-out ring]`.  Param / event
+/// rings are a later micro-step (same pattern); they would extend this struct.
+#[derive(Debug, Clone, Copy)]
+pub struct BridgeLayout {
+    /// Frames per processing block.
+    pub block_size: u32,
+    /// Audio channel count (per block, interleaved-by-channel).
+    pub channel_count: u32,
+    /// Slot count for each audio ring (depth of in-flight blocks).
+    pub audio_capacity: usize,
+}
+
+impl BridgeLayout {
+    pub fn new(block_size: u32, channel_count: u32, audio_capacity: usize) -> Self {
+        BridgeLayout {
+            block_size,
+            channel_count,
+            audio_capacity,
+        }
+    }
+
+    /// Ring shape for one audio ring: each slot holds a [`BlockHeader`] followed
+    /// by `channel_count * block_size` `f32` samples.
+    pub fn audio_ring_layout(&self) -> RingLayout {
+        let samples = self.channel_count as usize * self.block_size as usize;
+        RingLayout::new(self.audio_capacity, BLOCK_HEADER_BYTES + samples * 4)
+    }
+
+    fn audio_ring_bytes(&self) -> usize {
+        self.audio_ring_layout().bytes_required()
+    }
+
+    /// Byte offset of the audio-in ring (engine → bridge) within the region.
+    pub fn audio_in_offset(&self) -> usize {
+        CONTROL_BYTES
+    }
+
+    /// Byte offset of the audio-out ring (bridge → engine) within the region.
+    pub fn audio_out_offset(&self) -> usize {
+        CONTROL_BYTES + self.audio_ring_bytes()
+    }
+
+    /// Total bytes the shared region must provide.
+    pub fn region_bytes(&self) -> usize {
+        CONTROL_BYTES + 2 * self.audio_ring_bytes()
+    }
+}
 
 // ── Control-block accessors (operate on a raw region base) ──────────────────────
 
@@ -104,7 +158,8 @@ unsafe fn status_store(base: *mut u8, value: u32) {
 
 // ── Engine side ─────────────────────────────────────────────────────────────
 
-/// A live bridge child process and its shared region (owner side).
+/// A live bridge child process, its shared region, and the engine-side ends of
+/// the audio rings (owner side).
 ///
 /// Construction performs the full spawn + handshake; if it returns `Ok`, the
 /// child is attached and `READY`.  Dropping the session asks the child to shut
@@ -112,42 +167,55 @@ unsafe fn status_store(base: *mut u8, value: u32) {
 pub struct BridgeSession {
     region: SharedRegion,
     child: Child,
+    layout: BridgeLayout,
+    /// Engine → bridge audio ring (owner is the **producer**).
+    audio_in: ShmemRing,
+    /// Bridge → engine audio ring (owner is the **consumer**).
+    audio_out: ShmemRing,
     /// Region name (kept for diagnostics).
     name: String,
 }
 
 impl BridgeSession {
-    /// Create the region, spawn `bridge_exe`, and wait until the child reports
+    /// Create the region sized for `layout`, initialise the control block and the
+    /// two audio rings, spawn `bridge_exe`, and wait until the child reports
     /// `READY` (or `ready_timeout` elapses / the child dies / it reports `ERROR`).
-    ///
-    /// `region_bytes` must be at least [`CONTROL_BYTES`]; later steps size it to
-    /// fit the audio/param/event rings as well.
     pub fn spawn(
         bridge_exe: &Path,
         region_name: &str,
-        region_bytes: usize,
+        layout: &BridgeLayout,
         ready_timeout: Duration,
     ) -> io::Result<Self> {
-        assert!(
-            region_bytes >= CONTROL_BYTES,
-            "BridgeSession::spawn: region smaller than control block"
-        );
-
+        let region_bytes = layout.region_bytes();
         let region = SharedRegion::create(region_name, region_bytes)?;
-        // SAFETY: the region is at least CONTROL_BYTES and page-aligned.
-        unsafe { write_control_init(region.as_mut_ptr(), region_bytes as u32) };
+        let base = region.as_mut_ptr();
+
+        // Owner initialises every header (control + both ring headers) before the
+        // child can attach.  SAFETY: region is page-aligned and large enough.
+        let (audio_in, audio_out) = unsafe {
+            write_control_init(base, region_bytes as u32);
+            let ring = layout.audio_ring_layout();
+            let bytes = ring.bytes_required();
+            let audio_in = ShmemRing::init(base.add(layout.audio_in_offset()), bytes, ring);
+            let audio_out = ShmemRing::init(base.add(layout.audio_out_offset()), bytes, ring);
+            (audio_in, audio_out)
+        };
 
         let mut child = Command::new(bridge_exe)
             .arg("--region-name")
             .arg(region_name)
-            .arg("--region-bytes")
-            .arg(region_bytes.to_string())
+            .arg("--block-size")
+            .arg(layout.block_size.to_string())
+            .arg("--channels")
+            .arg(layout.channel_count.to_string())
+            .arg("--audio-capacity")
+            .arg(layout.audio_capacity.to_string())
             .spawn()?;
 
         let deadline = Instant::now() + ready_timeout;
         loop {
             // SAFETY: region stays mapped for the duration of this call.
-            match unsafe { status_load(region.as_mut_ptr()) } {
+            match unsafe { status_load(base) } {
                 STATUS_READY => break,
                 STATUS_ERROR => {
                     let _ = child.kill();
@@ -159,7 +227,6 @@ impl BridgeSession {
                 }
                 _ => {}
             }
-            // Child died before becoming ready?
             if let Some(exit) = child.try_wait()? {
                 return Err(io::Error::new(
                     io::ErrorKind::BrokenPipe,
@@ -180,13 +247,41 @@ impl BridgeSession {
         Ok(BridgeSession {
             region,
             child,
+            layout: *layout,
+            audio_in,
+            audio_out,
             name: region_name.to_string(),
         })
     }
 
-    /// The shared region (for ring setup in later steps).
-    pub fn region(&self) -> &SharedRegion {
-        &self.region
+    /// Enqueue one input block (`header` + interleaved `samples` bytes) for the
+    /// bridge to process.  Returns `false` if the input ring is full.
+    ///
+    /// **Off-RT helper** (allocates a small scratch buffer): the 6d-iv audio-thread
+    /// proxy will instead format the block into a preallocated scratch and use a
+    /// non-allocating two-part push.
+    pub fn try_send_input(&self, header: &BlockHeader, samples: &[u8]) -> bool {
+        let mut buf = Vec::with_capacity(BLOCK_HEADER_BYTES + samples.len());
+        buf.extend_from_slice(&header.to_bytes());
+        buf.extend_from_slice(samples);
+        self.audio_in.push(&buf)
+    }
+
+    /// Dequeue one processed output block into `out` (header + samples bytes),
+    /// returning its length, or `None` if no block is ready.
+    pub fn try_recv_output(&self, out: &mut [u8]) -> Option<usize> {
+        self.audio_out.pop(out)
+    }
+
+    /// Byte size of one audio ring slot (header + samples) — the size `out` for
+    /// [`try_recv_output`](Self::try_recv_output) should provide.
+    pub fn audio_slot_size(&self) -> usize {
+        self.layout.audio_ring_layout().slot_size
+    }
+
+    /// The region's layout.
+    pub fn layout(&self) -> &BridgeLayout {
+        &self.layout
     }
 
     /// The region name.
@@ -220,13 +315,17 @@ impl Drop for BridgeSession {
 
 // ── Bridge side ─────────────────────────────────────────────────────────────
 
-/// Bridge-side handshake: open the named region, validate the control block,
-/// signal `READY`, then block until the owner sets `SHUTDOWN`.
+/// Bridge-side process loop (ADR-015, 6d-iii): open the region described by
+/// `layout`, validate the control block, attach the audio rings, signal `READY`,
+/// then process input blocks into output blocks until the owner sets `SHUTDOWN`.
 ///
-/// In 6d-ii this performs **only** the handshake — no plugin is loaded and no
-/// audio is processed (those are 6d-iii / 6d-iv).  Returns once `SHUTDOWN` is
-/// observed, or an error if the handshake fails.
-pub fn serve(region_name: &str, region_bytes: usize) -> io::Result<()> {
+/// **The "processor" here is an identity pass-through stand-in**: it copies each
+/// input block to the output ring unchanged.  6d-iii-b replaces the copy with the
+/// real loaded VST3/CLAP plugin's `process()`.  No plugin is loaded yet.
+///
+/// Returns once `SHUTDOWN` is observed, or an error if the handshake fails.
+pub fn serve(region_name: &str, layout: &BridgeLayout) -> io::Result<()> {
+    let region_bytes = layout.region_bytes();
     let region = SharedRegion::open(region_name, region_bytes)?;
     let base = region.as_mut_ptr();
 
@@ -247,14 +346,40 @@ pub fn serve(region_name: &str, region_bytes: usize) -> io::Result<()> {
         ));
     }
 
-    // 6d-iii will attach the audio/param/event rings here before signalling ready.
+    // Attach the audio rings the owner initialised.  Owner is the producer of
+    // audio-in (we consume) and the consumer of audio-out (we produce).
+    // SAFETY: offsets/sizes come from the shared layout; headers are valid.
+    let ring = layout.audio_ring_layout();
+    let bytes = ring.bytes_required();
+    let (audio_in, audio_out) = unsafe {
+        (
+            ShmemRing::attach(base.add(layout.audio_in_offset()), bytes),
+            ShmemRing::attach(base.add(layout.audio_out_offset()), bytes),
+        )
+    };
+
     unsafe { status_store(base, STATUS_READY) };
+
+    // Preallocated scratch — no allocation inside the loop.
+    let mut scratch = vec![0u8; audio_in.slot_size()];
 
     loop {
         if unsafe { status_load(base) } == STATUS_SHUTDOWN {
             return Ok(());
         }
-        std::thread::sleep(Duration::from_millis(2));
+        match audio_in.pop(&mut scratch) {
+            Some(n) => {
+                // Torn-region guard: a valid block starts with a `BlockHeader`
+                // whose magic matches.  Drop malformed blocks rather than echo
+                // garbage.  (The real plugin's process() replaces this copy.)
+                if BlockHeader::from_bytes(&scratch[..n])
+                    .is_some_and(|h| h.magic == crate::protocol::BLOCK_MAGIC)
+                {
+                    audio_out.push(&scratch[..n]);
+                }
+            }
+            None => std::thread::sleep(Duration::from_micros(200)),
+        }
     }
 }
 

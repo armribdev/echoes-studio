@@ -6,18 +6,19 @@
 //! plugin, then per block drain params/events, call the plugin's `process`, and
 //! publish the output — with a watchdog (6e) marking it `Dead` on timeout.
 //!
-//! **As of 6d-ii** the binary performs the process-lifecycle **handshake** but no
-//! audio: in `--region-name` mode it opens the shared region, validates the
-//! control block, signals `READY`, and waits for the engine's `SHUTDOWN`. It
-//! loads no plugin and processes no audio — the hosting loop is 6d-iii / 6d-iv.
+//! **As of 6d-iii** the serve mode runs the ring-driven **process loop** with an
+//! identity pass-through stand-in: it opens the shared region, attaches the audio
+//! rings, signals `READY`, and copies each input block to the output ring until
+//! the engine sets `SHUTDOWN`.  It loads **no real plugin yet** — the VST3/CLAP
+//! FFI load that replaces the identity copy is 6d-iii-b.
 //!
 //! ## CLI (stable)
 //!
 //! ```text
-//! plugin_host_bridge --region-name <NAME> --region-bytes <N>
-//!     Serve mode: open the named shared region of N bytes, handshake to READY,
-//!     run until the engine sets SHUTDOWN. Exit 0 on clean shutdown, 3 on a
-//!     handshake/region error.
+//! plugin_host_bridge --region-name <N> --block-size <B> --channels <C> --audio-capacity <A>
+//!     Serve mode: open the region for this layout, run the process loop until
+//!     the engine sets SHUTDOWN. Exit 0 on clean shutdown, 3 on a region error,
+//!     64 on bad arguments.
 //!
 //! plugin_host_bridge --protocol-version <N>
 //!     N must equal plugin_bridge::protocol::BRIDGE_PROTOCOL_VERSION, else exit 2.
@@ -29,7 +30,7 @@
 use std::process::ExitCode;
 
 use plugin_bridge::protocol::BRIDGE_PROTOCOL_VERSION;
-use plugin_bridge::session;
+use plugin_bridge::session::{self, BridgeLayout};
 
 /// Engine's requested protocol version does not match this binary's.
 const EXIT_PROTOCOL_MISMATCH: u8 = 2;
@@ -50,7 +51,9 @@ fn main() -> ExitCode {
 
         ["--protocol-version", value] => check_protocol(value),
 
-        ["--region-name", name, "--region-bytes", bytes] => serve(name, bytes),
+        ["--region-name", name, "--block-size", bs, "--channels", ch, "--audio-capacity", cap] => {
+            serve(name, bs, ch, cap)
+        }
 
         _ => usage(),
     }
@@ -76,16 +79,19 @@ fn check_protocol(value: &str) -> ExitCode {
     }
 }
 
-fn serve(name: &str, bytes: &str) -> ExitCode {
-    let bytes: usize = match bytes.parse() {
-        Ok(n) => n,
-        Err(_) => {
-            eprintln!("[plugin_host_bridge] invalid --region-bytes value: {bytes:?}");
+fn serve(name: &str, block_size: &str, channels: &str, audio_capacity: &str) -> ExitCode {
+    let layout = match (block_size.parse(), channels.parse(), audio_capacity.parse()) {
+        (Ok(bs), Ok(ch), Ok(cap)) => BridgeLayout::new(bs, ch, cap),
+        _ => {
+            eprintln!(
+                "[plugin_host_bridge] invalid layout args: \
+                 block-size={block_size:?} channels={channels:?} audio-capacity={audio_capacity:?}"
+            );
             return ExitCode::from(EXIT_USAGE);
         }
     };
 
-    match session::serve(name, bytes) {
+    match session::serve(name, &layout) {
         Ok(()) => {
             eprintln!("[plugin_host_bridge] clean shutdown (region '{name}').");
             ExitCode::SUCCESS
@@ -99,7 +105,7 @@ fn serve(name: &str, bytes: &str) -> ExitCode {
 
 fn usage() -> ExitCode {
     eprintln!(
-        "usage: plugin_host_bridge --region-name <NAME> --region-bytes <N>\n\
+        "usage: plugin_host_bridge --region-name <N> --block-size <B> --channels <C> --audio-capacity <A>\n\
          \x20      plugin_host_bridge --protocol-version <N>\n\
          \x20      plugin_host_bridge --print-protocol-version"
     );
