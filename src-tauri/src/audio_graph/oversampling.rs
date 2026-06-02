@@ -110,8 +110,13 @@ impl Oversample2x {
     }
 
     /// In-place variant (same slice for input and output).
-    pub fn process_inplace<F>(&mut self, ch: usize, data: &mut [f32], frames: usize, mut sample_fn: F)
-    where
+    pub fn process_inplace<F>(
+        &mut self,
+        ch: usize,
+        data: &mut [f32],
+        frames: usize,
+        mut sample_fn: F,
+    ) where
         F: FnMut(f32) -> f32,
     {
         debug_assert!(ch < 2);

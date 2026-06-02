@@ -16,7 +16,15 @@ pub struct EqParams {
 
 impl Default for EqParams {
     fn default() -> Self {
-        EqParams { low_gain_db: 0.0, low_freq: 250.0, mid_gain_db: 0.0, mid_freq: 1000.0, mid_q: 1.0, high_gain_db: 0.0, high_freq: 4000.0 }
+        EqParams {
+            low_gain_db: 0.0,
+            low_freq: 250.0,
+            mid_gain_db: 0.0,
+            mid_freq: 1000.0,
+            mid_q: 1.0,
+            high_gain_db: 0.0,
+            high_freq: 4000.0,
+        }
     }
 }
 
@@ -32,7 +40,14 @@ pub struct CompressorParams {
 
 impl Default for CompressorParams {
     fn default() -> Self {
-        CompressorParams { threshold_db: -18.0, ratio: 4.0, attack_ms: 10.0, release_ms: 100.0, makeup_db: 0.0, knee_db: 6.0 }
+        CompressorParams {
+            threshold_db: -18.0,
+            ratio: 4.0,
+            attack_ms: 10.0,
+            release_ms: 100.0,
+            makeup_db: 0.0,
+            knee_db: 6.0,
+        }
     }
 }
 
@@ -47,7 +62,13 @@ pub struct ReverbParams {
 
 impl Default for ReverbParams {
     fn default() -> Self {
-        ReverbParams { room_size: 0.5, damping: 0.5, wet: 0.33, dry: 1.0, width: 1.0 }
+        ReverbParams {
+            room_size: 0.5,
+            damping: 0.5,
+            wet: 0.33,
+            dry: 1.0,
+            width: 1.0,
+        }
     }
 }
 
@@ -62,7 +83,13 @@ pub struct DelayParams {
 
 impl Default for DelayParams {
     fn default() -> Self {
-        DelayParams { delay_ms: 250.0, feedback: 0.4, wet: 0.3, dry: 1.0, ping_pong: false }
+        DelayParams {
+            delay_ms: 250.0,
+            feedback: 0.4,
+            wet: 0.3,
+            dry: 1.0,
+            ping_pong: false,
+        }
     }
 }
 
@@ -128,11 +155,16 @@ pub struct LfoParams {
     pub waveform: LfoWaveform,
 }
 
-fn default_lfo_rate() -> f32 { 1.0 }
+fn default_lfo_rate() -> f32 {
+    1.0
+}
 
 impl Default for LfoParams {
     fn default() -> Self {
-        LfoParams { rate_hz: 1.0, waveform: LfoWaveform::Sine }
+        LfoParams {
+            rate_hz: 1.0,
+            waveform: LfoWaveform::Sine,
+        }
     }
 }
 
@@ -157,7 +189,11 @@ pub enum ModulationTargetRef {
     /// The track's main volume fader.
     TrackGain { track_id: String },
     /// A named parameter on a specific effect in the track's effect chain.
-    EffectParam { track_id: String, effect_id: String, param: String },
+    EffectParam {
+        track_id: String,
+        effect_id: String,
+        param: String,
+    },
 }
 
 /// One modulation connection stored in the project.
@@ -296,32 +332,45 @@ impl AppProject {
             bpm: self.bpm,
             numerator: self.numerator,
             denominator: self.denominator,
-            tracks: self.tracks.iter().map(|t| TrackFile {
-                id: Some(t.id.clone()),
-                name: t.name.clone(),
-                volume: t.volume,
-                pan: t.pan,
-                muted: t.muted,
-                solo: t.solo,
-                clips: t.clips.iter().map(|c| ClipFile {
-                    id: c.id.clone(),
-                    start: c.start,
-                    end: c.end,
-                    file_path: c.file_path.clone(),
-                }).collect(),
-                effects: t.effects.clone(),
-                modulators: t.modulators.clone(),
-                mod_routes: t.mod_routes.clone(),
-                midi_notes: t.midi_notes.clone(),
-                midi_clips: t.midi_clips.iter().map(|mc| MidiClipFile {
-                    id: mc.id.clone(),
-                    start: mc.start,
-                    end: mc.end,
-                    notes: mc.notes.clone(),
-                }).collect(),
-                instrument: t.instrument.clone(),
-            }).collect(),
-            plugin_state_blobs: self.plugin_state_blobs
+            tracks: self
+                .tracks
+                .iter()
+                .map(|t| TrackFile {
+                    id: Some(t.id.clone()),
+                    name: t.name.clone(),
+                    volume: t.volume,
+                    pan: t.pan,
+                    muted: t.muted,
+                    solo: t.solo,
+                    clips: t
+                        .clips
+                        .iter()
+                        .map(|c| ClipFile {
+                            id: c.id.clone(),
+                            start: c.start,
+                            end: c.end,
+                            file_path: c.file_path.clone(),
+                        })
+                        .collect(),
+                    effects: t.effects.clone(),
+                    modulators: t.modulators.clone(),
+                    mod_routes: t.mod_routes.clone(),
+                    midi_notes: t.midi_notes.clone(),
+                    midi_clips: t
+                        .midi_clips
+                        .iter()
+                        .map(|mc| MidiClipFile {
+                            id: mc.id.clone(),
+                            start: mc.start,
+                            end: mc.end,
+                            notes: mc.notes.clone(),
+                        })
+                        .collect(),
+                    instrument: t.instrument.clone(),
+                })
+                .collect(),
+            plugin_state_blobs: self
+                .plugin_state_blobs
                 .iter()
                 .map(|(k, v)| (k.clone(), crate::plugin_system::state::encode_base64(v)))
                 .collect(),
@@ -350,12 +399,16 @@ impl AppProject {
             }
             // Migrate: generate id if not present in file
             let track_id = tf.id.unwrap_or_else(generate_id);
-            let midi_clips = tf.midi_clips.into_iter().map(|mc| AppMidiClip {
-                id: mc.id,
-                start: mc.start,
-                end: mc.end,
-                notes: mc.notes,
-            }).collect();
+            let midi_clips = tf
+                .midi_clips
+                .into_iter()
+                .map(|mc| AppMidiClip {
+                    id: mc.id,
+                    start: mc.start,
+                    end: mc.end,
+                    notes: mc.notes,
+                })
+                .collect();
             tracks.push(AppTrack {
                 id: track_id,
                 name: tf.name,
@@ -372,7 +425,8 @@ impl AppProject {
                 instrument: tf.instrument,
             });
         }
-        let plugin_state_blobs = pf.plugin_state_blobs
+        let plugin_state_blobs = pf
+            .plugin_state_blobs
             .into_iter()
             .filter_map(|(k, v)| {
                 crate::plugin_system::state::decode_base64(&v).map(|bytes| (k, bytes))
@@ -403,12 +457,16 @@ impl AppTrack {
             modulators: self.modulators.clone(),
             mod_routes: self.mod_routes.clone(),
             midi_notes: self.midi_notes.clone(),
-            midi_clips: self.midi_clips.iter().map(|mc| MidiClipDto {
-                id: mc.id.clone(),
-                start: mc.start,
-                end: mc.end,
-                notes: mc.notes.clone(),
-            }).collect(),
+            midi_clips: self
+                .midi_clips
+                .iter()
+                .map(|mc| MidiClipDto {
+                    id: mc.id.clone(),
+                    start: mc.start,
+                    end: mc.end,
+                    notes: mc.notes.clone(),
+                })
+                .collect(),
             instrument: self.instrument.clone(),
         }
     }

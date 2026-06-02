@@ -74,13 +74,22 @@ impl InstrumentNode {
 }
 
 impl AudioNode for InstrumentNode {
-    fn node_id(&self) -> NodeId { self.id }
-    fn label(&self) -> &str { "InstrumentNode" }
-    fn num_input_ports(&self) -> usize { 0 }
-    fn num_output_ports(&self) -> usize { 1 }
+    fn node_id(&self) -> NodeId {
+        self.id
+    }
+    fn label(&self) -> &str {
+        "InstrumentNode"
+    }
+    fn num_input_ports(&self) -> usize {
+        0
+    }
+    fn num_output_ports(&self) -> usize {
+        1
+    }
 
     fn prepare(&mut self, ctx: PrepareContext) {
-        self.device.prepare(ctx.sample_rate, ctx.max_block_size, ctx.num_channels);
+        self.device
+            .prepare(ctx.sample_rate, ctx.max_block_size, ctx.num_channels);
     }
 
     fn process(
@@ -93,11 +102,10 @@ impl AudioNode for InstrumentNode {
 
         if transport.is_playing {
             let block_start = transport.position_samples;
-            let block_end   = block_start + transport.block_size as u64;
+            let block_end = block_start + transport.block_size as u64;
             let bpm = transport.bpm;
             let sample_rate = transport.sample_rate;
-            let discontinuity = !self.was_playing
-                || block_start != self.next_expected_block_start;
+            let discontinuity = !self.was_playing || block_start != self.next_expected_block_start;
 
             if discontinuity {
                 self.device.reset();
@@ -124,7 +132,10 @@ impl AudioNode for InstrumentNode {
                 if start_sample >= block_start && start_sample < block_end {
                     self.event_buf.push(MidiEvent {
                         offset: (start_sample - block_start) as u32,
-                        kind: MidiEventKind::NoteOn { pitch: note.pitch, velocity: note.velocity },
+                        kind: MidiEventKind::NoteOn {
+                            pitch: note.pitch,
+                            velocity: note.velocity,
+                        },
                     });
                 }
                 if end_sample >= block_start && end_sample < block_end {
@@ -142,7 +153,8 @@ impl AudioNode for InstrumentNode {
         }
 
         self.was_playing = transport.is_playing;
-        self.device.process_midi(&self.event_buf, outputs, transport);
+        self.device
+            .process_midi(&self.event_buf, outputs, transport);
     }
 
     fn reset(&mut self) {
@@ -197,7 +209,11 @@ mod tests {
             Arc::new(vec![one_beat_note()]),
             Box::new(CaptureDevice { captured }),
         );
-        node.prepare(PrepareContext { sample_rate: 48_000.0, max_block_size: 64_000, num_channels: 2 });
+        node.prepare(PrepareContext {
+            sample_rate: 48_000.0,
+            max_block_size: 64_000,
+            num_channels: 2,
+        });
         node
     }
 
@@ -251,7 +267,11 @@ mod tests {
         };
         run_block(&mut node, &block1);
         assert!(
-            captured.lock().unwrap().iter().all(|e| !matches!(e.kind, MidiEventKind::NoteOn { .. })),
+            captured
+                .lock()
+                .unwrap()
+                .iter()
+                .all(|e| !matches!(e.kind, MidiEventKind::NoteOn { .. })),
             "no NoteOn yet at 120 BPM in frames 0..1_000"
         );
 

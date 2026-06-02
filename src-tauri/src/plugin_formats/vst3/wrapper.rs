@@ -40,22 +40,22 @@ use crate::audio_graph::buffer::AudioBuffer;
 use crate::audio_graph::node::{AudioNode, NodeId, PrepareContext, TransportInfo};
 use crate::plugin_system::capabilities::DeviceCapabilities;
 use crate::plugin_system::instance::PluginInstance;
-use crate::plugin_system::lifecycle::{LifecycleState, transition};
+use crate::plugin_system::lifecycle::{transition, LifecycleState};
 use crate::plugin_system::parameter::ParameterMap;
 use crate::plugin_system::state::DeviceState;
 use crate::plugin_system::wrapper::{Device, DeviceInfo};
 
 use super::ffi::{
-    AudioBusBuffers, HostParameterChanges, IAudioProcessor, IComponent, ProcessData,
-    ProcessSetup, K_RESULT_OK, SPEAKER_STEREO,
+    AudioBusBuffers, HostParameterChanges, IAudioProcessor, IComponent, ProcessData, ProcessSetup,
+    K_RESULT_OK, SPEAKER_STEREO,
 };
 
 // ── VstWrapperNode ─────────────────────────────────────────────────────────────
 
 pub struct VstWrapperNode {
     node_id: NodeId,
-    info:    DeviceInfo,
-    params:  ParameterMap,
+    info: DeviceInfo,
+    params: ParameterMap,
 
     /// Shared, refcounted handle.  Captured at construction; cloned only on
     /// the command thread.  Deref on the audio thread is a non-atomic load.
@@ -65,9 +65,9 @@ pub struct VstWrapperNode {
 
     // Per-block scratch — pre-allocated in prepare, pointer-stable until next prepare.
     // Vecs are never resized on the audio thread.
-    in_channel_ptrs:  Vec<*mut f32>,
+    in_channel_ptrs: Vec<*mut f32>,
     out_channel_ptrs: Vec<*mut f32>,
-    in_bus:  AudioBusBuffers,
+    in_bus: AudioBusBuffers,
     out_bus: AudioBusBuffers,
 
     num_channels: usize,
@@ -101,11 +101,11 @@ impl VstWrapperNode {
         VstWrapperNode {
             node_id,
             info,
-            params:    ParameterMap::new(),
+            params: ParameterMap::new(),
             instance,
-            in_channel_ptrs:  Vec::new(),
+            in_channel_ptrs: Vec::new(),
             out_channel_ptrs: Vec::new(),
-            in_bus:  unsafe { std::mem::zeroed() },
+            in_bus: unsafe { std::mem::zeroed() },
             out_bus: unsafe { std::mem::zeroed() },
             num_channels: 2,
             param_changes: None,
@@ -128,16 +128,24 @@ impl VstWrapperNode {
 }
 
 impl AudioNode for VstWrapperNode {
-    fn node_id(&self) -> NodeId { self.node_id }
-    fn label(&self) -> &str { "VstWrapperNode" }
-    fn num_input_ports(&self)  -> usize { 1 }
-    fn num_output_ports(&self) -> usize { 1 }
+    fn node_id(&self) -> NodeId {
+        self.node_id
+    }
+    fn label(&self) -> &str {
+        "VstWrapperNode"
+    }
+    fn num_input_ports(&self) -> usize {
+        1
+    }
+    fn num_output_ports(&self) -> usize {
+        1
+    }
 
     fn prepare(&mut self, ctx: PrepareContext) {
         self.num_channels = ctx.num_channels;
 
         // Pre-allocate pointer scratch (stable for the life of this prepared node)
-        self.in_channel_ptrs  = vec![std::ptr::null_mut(); ctx.num_channels];
+        self.in_channel_ptrs = vec![std::ptr::null_mut(); ctx.num_channels];
         self.out_channel_ptrs = vec![std::ptr::null_mut(); ctx.num_channels];
 
         // Pre-allocate the parameter-change list (ADR-007) — heap, off-RT.
@@ -148,7 +156,7 @@ impl AudioNode for VstWrapperNode {
         let comp = comp_nn.as_ptr();
 
         // Inform plugin of bus arrangement (stereo in + stereo out)
-        let mut in_arr  = SPEAKER_STEREO;
+        let mut in_arr = SPEAKER_STEREO;
         let mut out_arr = SPEAKER_STEREO;
         unsafe {
             ((*(*proc).vtbl).set_bus_arrangements)(proc, &mut in_arr, 1, &mut out_arr, 1);
@@ -165,10 +173,10 @@ impl AudioNode for VstWrapperNode {
 
         // Setup processing parameters
         let setup = ProcessSetup {
-            process_mode:          0, // realtime
-            symbolic_sample_size:  0, // float32
+            process_mode: 0,         // realtime
+            symbolic_sample_size: 0, // float32
             max_samples_per_block: ctx.max_block_size as i32,
-            sample_rate:           ctx.sample_rate as f64,
+            sample_rate: ctx.sample_rate as f64,
         };
         unsafe {
             ((*(*proc).vtbl).setup_processing)(proc, &setup);
@@ -187,11 +195,13 @@ impl AudioNode for VstWrapperNode {
 
     fn process(
         &mut self,
-        inputs:  &[&AudioBuffer],
+        inputs: &[&AudioBuffer],
         outputs: &mut [AudioBuffer],
         _transport: &TransportInfo,
     ) {
-        if outputs.is_empty() { return; }
+        if outputs.is_empty() {
+            return;
+        }
 
         let nc = self.num_channels;
         let nf = outputs[0].num_frames;
@@ -203,7 +213,11 @@ impl AudioNode for VstWrapperNode {
         let param_changes_ptr: *mut c_void = if let Some(pc) = self.param_changes.as_mut() {
             pc.reset();
             self.instance.drain_params(|change| {
-                pc.push(change.native_id, change.sample_offset as i32, change.normalised as f64);
+                pc.push(
+                    change.native_id,
+                    change.sample_offset as i32,
+                    change.normalised as f64,
+                );
             });
             if pc.count > 0 {
                 pc.as_mut() as *mut HostParameterChanges as *mut c_void
@@ -231,29 +245,29 @@ impl AudioNode for VstWrapperNode {
 
         // Build AudioBusBuffers (no allocation — just setting fields).
         self.in_bus = AudioBusBuffers {
-            num_channels:      nc as i32,
-            silence_flags:     if inputs.is_empty() { u64::MAX } else { 0 },
+            num_channels: nc as i32,
+            silence_flags: if inputs.is_empty() { u64::MAX } else { 0 },
             channel_buffers32: self.in_channel_ptrs.as_mut_ptr(),
         };
         self.out_bus = AudioBusBuffers {
-            num_channels:      nc as i32,
-            silence_flags:     0,
+            num_channels: nc as i32,
+            silence_flags: 0,
             channel_buffers32: self.out_channel_ptrs.as_mut_ptr(),
         };
 
         let mut data = ProcessData {
-            process_mode:         0,
+            process_mode: 0,
             symbolic_sample_size: 0,
-            num_samples:          nf as i32,
-            num_inputs:           1,
-            num_outputs:          1,
-            inputs:               &mut self.in_bus,
-            outputs:              &mut self.out_bus,
-            input_param_changes:  param_changes_ptr,
+            num_samples: nf as i32,
+            num_inputs: 1,
+            num_outputs: 1,
+            inputs: &mut self.in_bus,
+            outputs: &mut self.out_bus,
+            input_param_changes: param_changes_ptr,
             output_param_changes: std::ptr::null_mut(),
-            input_events:         std::ptr::null_mut(),
-            output_events:        std::ptr::null_mut(),
-            process_context:      std::ptr::null_mut(),
+            input_events: std::ptr::null_mut(),
+            output_events: std::ptr::null_mut(),
+            process_context: std::ptr::null_mut(),
         };
 
         // Non-atomic load through Arc::deref → identical cost to a field read.
@@ -293,10 +307,18 @@ impl AudioNode for VstWrapperNode {
 // performs that release.
 
 impl Device for VstWrapperNode {
-    fn device_id(&self) -> &str { &self.info.device_id }
-    fn info(&self)       -> &DeviceInfo  { &self.info }
-    fn parameters(&self) -> &ParameterMap { &self.params }
-    fn parameters_mut(&mut self) -> &mut ParameterMap { &mut self.params }
+    fn device_id(&self) -> &str {
+        &self.info.device_id
+    }
+    fn info(&self) -> &DeviceInfo {
+        &self.info
+    }
+    fn parameters(&self) -> &ParameterMap {
+        &self.params
+    }
+    fn parameters_mut(&mut self) -> &mut ParameterMap {
+        &mut self.params
+    }
 
     fn save_state(&self) -> DeviceState {
         DeviceState::empty(&self.info.device_id)
@@ -314,7 +336,9 @@ impl Device for VstWrapperNode {
     // historically been advisory only.  Phase 4 will wire it to setActive /
     // setProcessing once state save/load lands.
 
-    fn lifecycle_state(&self) -> LifecycleState { self.instance.lifecycle() }
+    fn lifecycle_state(&self) -> LifecycleState {
+        self.instance.lifecycle()
+    }
 
     fn suspend(&mut self) {
         if let Ok(next) = transition(self.instance.lifecycle(), LifecycleState::Suspended) {
@@ -332,7 +356,9 @@ impl Device for VstWrapperNode {
         }
     }
 
-    fn reported_latency(&self) -> u32 { self.reported_latency }
+    fn reported_latency(&self) -> u32 {
+        self.reported_latency
+    }
 
     /// Phase 1: legacy shape (stereo, no params, no state) plus the
     /// freshly-introspected latency.  Phase 2 will replace this with full

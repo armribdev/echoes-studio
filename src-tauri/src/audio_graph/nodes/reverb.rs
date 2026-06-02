@@ -27,10 +27,10 @@ pub fn reverb_block_values(p: &ReverbParams) -> [f32; REVERB_PARAM_COUNT] {
 fn reverb_params_from_block(block: &ParameterBlock) -> ReverbParams {
     ReverbParams {
         room_size: block.get(REVERB_ROOM_SIZE),
-        damping:   block.get(REVERB_DAMPING),
-        wet:       block.get(REVERB_WET),
-        dry:       block.get(REVERB_DRY),
-        width:     block.get(REVERB_WIDTH),
+        damping: block.get(REVERB_DAMPING),
+        wet: block.get(REVERB_WET),
+        dry: block.get(REVERB_DRY),
+        width: block.get(REVERB_WIDTH),
     }
 }
 
@@ -46,7 +46,14 @@ struct CombFilter {
 
 impl CombFilter {
     fn new(size: usize) -> Self {
-        CombFilter { buf: vec![0.0; size], pos: 0, filterstore: 0.0, damp1: 0.5, damp2: 0.5, feedback: 0.5 }
+        CombFilter {
+            buf: vec![0.0; size],
+            pos: 0,
+            filterstore: 0.0,
+            damp1: 0.5,
+            damp2: 0.5,
+            feedback: 0.5,
+        }
     }
 
     fn process(&mut self, input: f32) -> f32 {
@@ -68,7 +75,10 @@ struct AllpassFilter {
 
 impl AllpassFilter {
     fn new(size: usize) -> Self {
-        AllpassFilter { buf: vec![0.0; size], pos: 0 }
+        AllpassFilter {
+            buf: vec![0.0; size],
+            pos: 0,
+        }
     }
 
     fn process(&mut self, input: f32) -> f32 {
@@ -108,9 +118,12 @@ pub struct ReverbNode {
 impl ReverbNode {
     pub fn new(id: NodeId, params: ReverbParams) -> Self {
         ReverbNode {
-            id, params,
-            combs_l: Vec::new(), combs_r: Vec::new(),
-            allpass_l: Vec::new(), allpass_r: Vec::new(),
+            id,
+            params,
+            combs_l: Vec::new(),
+            combs_r: Vec::new(),
+            allpass_l: Vec::new(),
+            allpass_r: Vec::new(),
             block: None,
         }
     }
@@ -137,24 +150,40 @@ impl ReverbNode {
 }
 
 impl AudioNode for ReverbNode {
-    fn node_id(&self) -> NodeId { self.id }
-    fn label(&self) -> &str { "ReverbNode" }
-    fn num_input_ports(&self) -> usize { 1 }
-    fn num_output_ports(&self) -> usize { 1 }
+    fn node_id(&self) -> NodeId {
+        self.id
+    }
+    fn label(&self) -> &str {
+        "ReverbNode"
+    }
+    fn num_input_ports(&self) -> usize {
+        1
+    }
+    fn num_output_ports(&self) -> usize {
+        1
+    }
 
     fn prepare(&mut self, ctx: PrepareContext) {
         let scale = ctx.sample_rate / 44100.0;
 
         // Comb/allpass buffer sizes depend only on the sample rate (structural),
         // never on the hot params — so they are allocated here and reused.
-        self.combs_l = COMB_TUNING_L.iter()
-            .map(|&t| CombFilter::new((t as f32 * scale) as usize)).collect();
-        self.combs_r = COMB_TUNING_L.iter()
-            .map(|&t| CombFilter::new(((t + STEREO_SPREAD) as f32 * scale) as usize)).collect();
-        self.allpass_l = ALLPASS_TUNING_L.iter()
-            .map(|&t| AllpassFilter::new((t as f32 * scale) as usize)).collect();
-        self.allpass_r = ALLPASS_TUNING_L.iter()
-            .map(|&t| AllpassFilter::new(((t + STEREO_SPREAD) as f32 * scale) as usize)).collect();
+        self.combs_l = COMB_TUNING_L
+            .iter()
+            .map(|&t| CombFilter::new((t as f32 * scale) as usize))
+            .collect();
+        self.combs_r = COMB_TUNING_L
+            .iter()
+            .map(|&t| CombFilter::new(((t + STEREO_SPREAD) as f32 * scale) as usize))
+            .collect();
+        self.allpass_l = ALLPASS_TUNING_L
+            .iter()
+            .map(|&t| AllpassFilter::new((t as f32 * scale) as usize))
+            .collect();
+        self.allpass_r = ALLPASS_TUNING_L
+            .iter()
+            .map(|&t| AllpassFilter::new(((t + STEREO_SPREAD) as f32 * scale) as usize))
+            .collect();
 
         // If a hot block is attached, seed the cached params from it so the
         // coefficients reflect any edits made before this (re)compile.
@@ -171,8 +200,8 @@ impl AudioNode for ReverbNode {
         let next = self.block.as_ref().map(|b| reverb_params_from_block(b));
         if let Some(next) = next {
             if reverb_block_values(&next) != reverb_block_values(&self.params) {
-                let recompute = next.room_size != self.params.room_size
-                    || next.damping != self.params.damping;
+                let recompute =
+                    next.room_size != self.params.room_size || next.damping != self.params.damping;
                 self.params = next;
                 if recompute {
                     self.apply_coeffs();
@@ -193,28 +222,58 @@ impl AudioNode for ReverbNode {
 
         // Mono sum of input for reverb input
         for i in 0..frames {
-            let in_l = if channels > 0 { input.channel(0)[i] } else { 0.0 };
-            let in_r = if channels > 1 { input.channel(1)[i] } else { in_l };
+            let in_l = if channels > 0 {
+                input.channel(0)[i]
+            } else {
+                0.0
+            };
+            let in_r = if channels > 1 {
+                input.channel(1)[i]
+            } else {
+                in_l
+            };
             let mono = (in_l + in_r) * 0.015; // Freeverb input gain
 
             let mut out_l = 0.0_f32;
             let mut out_r = 0.0_f32;
 
-            for c in &mut self.combs_l { out_l += c.process(mono); }
-            for c in &mut self.combs_r { out_r += c.process(mono); }
-            for a in &mut self.allpass_l { out_l = a.process(out_l); }
-            for a in &mut self.allpass_r { out_r = a.process(out_r); }
+            for c in &mut self.combs_l {
+                out_l += c.process(mono);
+            }
+            for c in &mut self.combs_r {
+                out_r += c.process(mono);
+            }
+            for a in &mut self.allpass_l {
+                out_l = a.process(out_l);
+            }
+            for a in &mut self.allpass_r {
+                out_r = a.process(out_r);
+            }
 
-            if channels > 0 { output.channel_mut(0)[i] = out_l * wet1 + out_r * wet2 + in_l * dry; }
-            if channels > 1 { output.channel_mut(1)[i] = out_r * wet1 + out_l * wet2 + in_r * dry; }
+            if channels > 0 {
+                output.channel_mut(0)[i] = out_l * wet1 + out_r * wet2 + in_l * dry;
+            }
+            if channels > 1 {
+                output.channel_mut(1)[i] = out_r * wet1 + out_l * wet2 + in_r * dry;
+            }
         }
     }
 
     fn reset(&mut self) {
-        for c in &mut self.combs_l { c.filterstore = 0.0; c.buf.fill(0.0); }
-        for c in &mut self.combs_r { c.filterstore = 0.0; c.buf.fill(0.0); }
-        for a in &mut self.allpass_l { a.buf.fill(0.0); }
-        for a in &mut self.allpass_r { a.buf.fill(0.0); }
+        for c in &mut self.combs_l {
+            c.filterstore = 0.0;
+            c.buf.fill(0.0);
+        }
+        for c in &mut self.combs_r {
+            c.filterstore = 0.0;
+            c.buf.fill(0.0);
+        }
+        for a in &mut self.allpass_l {
+            a.buf.fill(0.0);
+        }
+        for a in &mut self.allpass_r {
+            a.buf.fill(0.0);
+        }
     }
 }
 
@@ -227,7 +286,11 @@ mod tests {
         let params = ReverbParams::default();
         let block = ParameterBlock::new(&reverb_block_values(&params));
         let mut node = ReverbNode::new(NodeId(1), params).with_block(Arc::clone(&block));
-        node.prepare(PrepareContext { sample_rate: 48_000.0, max_block_size: 64, num_channels: 2 });
+        node.prepare(PrepareContext {
+            sample_rate: 48_000.0,
+            max_block_size: 64,
+            num_channels: 2,
+        });
 
         let before_feedback = node.combs_l[0].feedback;
 

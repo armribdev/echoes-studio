@@ -79,9 +79,11 @@ fn main() {
             windows_theme::force_dark_popups();
 
             // Create the three controlled items disabled from the start.
-            let save_item  = MenuItem::with_id(app, "save",  "Enregistrer",            false, Some("CmdOrCtrl+S"))?;
-            let undo_item  = MenuItem::with_id(app, "undo",  "Annuler",                false, Some("CmdOrCtrl+Z"))?;
-            let redo_item  = MenuItem::with_id(app, "redo",  "Rétablir",               false, Some("CmdOrCtrl+Shift+Z"))?;
+            let save_item =
+                MenuItem::with_id(app, "save", "Enregistrer", false, Some("CmdOrCtrl+S"))?;
+            let undo_item = MenuItem::with_id(app, "undo", "Annuler", false, Some("CmdOrCtrl+Z"))?;
+            let redo_item =
+                MenuItem::with_id(app, "redo", "Rétablir", false, Some("CmdOrCtrl+Shift+Z"))?;
 
             // Clone so the menu can own one copy while the closures own another.
             let save_h = save_item.clone();
@@ -99,13 +101,19 @@ fn main() {
                 "Fichier",
                 true,
                 &[
-                    &MenuItem::with_id(app, "new",          "Nouveau projet",                    true,  Some("CmdOrCtrl+N"))?,
-                    &MenuItem::with_id(app, "open",         "Ouvrir...",                          true,  Some("CmdOrCtrl+O"))?,
+                    &MenuItem::with_id(app, "new", "Nouveau projet", true, Some("CmdOrCtrl+N"))?,
+                    &MenuItem::with_id(app, "open", "Ouvrir...", true, Some("CmdOrCtrl+O"))?,
                     &PredefinedMenuItem::separator(app)?,
-                    &MenuItem::with_id(app, "import-audio", "Importer audio...",                  true,  None::<&str>)?,
+                    &MenuItem::with_id(
+                        app,
+                        "import-audio",
+                        "Importer audio...",
+                        true,
+                        None::<&str>,
+                    )?,
                     &PredefinedMenuItem::separator(app)?,
                     &save_item,
-                    &MenuItem::with_id(app, "save-as",      "Enregistrer sous...",                true,  None::<&str>)?,
+                    &MenuItem::with_id(app, "save-as", "Enregistrer sous...", true, None::<&str>)?,
                     &PredefinedMenuItem::separator(app)?,
                     &undo_item,
                     &redo_item,
@@ -119,8 +127,20 @@ fn main() {
                 "Piste",
                 true,
                 &[
-                    &MenuItem::with_id(app, "add-track",    "Nouvelle piste",                    true,  Some("CmdOrCtrl+Shift+T"))?,
-                    &MenuItem::with_id(app, "delete-track", "Supprimer la piste sélectionnée",   true,  None::<&str>)?,
+                    &MenuItem::with_id(
+                        app,
+                        "add-track",
+                        "Nouvelle piste",
+                        true,
+                        Some("CmdOrCtrl+Shift+T"),
+                    )?,
+                    &MenuItem::with_id(
+                        app,
+                        "delete-track",
+                        "Supprimer la piste sélectionnée",
+                        true,
+                        None::<&str>,
+                    )?,
                 ],
             )?;
 
@@ -209,9 +229,7 @@ fn apply_loaded_project(
     let plugin_state_blobs = project.plugin_state_blobs.clone();
 
     // Seed event store from loaded project (snapshot-at-zero approach)
-    if let (Ok(mut store), Ok(mut p)) =
-        (state.event_store.lock(), state.project.lock())
-    {
+    if let (Ok(mut store), Ok(mut p)) = (state.event_store.lock(), state.project.lock()) {
         store.init_from_project(engine_gateway::api::snapshot_project_for_store(&project));
         *p = project;
     }
@@ -238,7 +256,9 @@ fn apply_loaded_project(
         }
     }
 
-    state.dirty.store(false, std::sync::atomic::Ordering::Relaxed);
+    state
+        .dirty
+        .store(false, std::sync::atomic::Ordering::Relaxed);
     set_window_title(app, &name);
     let _ = app.emit("project-loaded", dto);
     menu_state::refresh_menu(app, state);
@@ -263,7 +283,9 @@ fn handle_menu_event(app: &tauri::AppHandle, menu_id: &str) {
                 *p = None;
             }
             recompile_audio_graph(&state);
-            state.dirty.store(false, std::sync::atomic::Ordering::Relaxed);
+            state
+                .dirty
+                .store(false, std::sync::atomic::Ordering::Relaxed);
             set_window_title(app, "Sans titre");
             let _ = app.emit("project-loaded", dto);
             menu_state::refresh_menu(app, &state);
@@ -337,8 +359,11 @@ fn handle_menu_event(app: &tauri::AppHandle, menu_id: &str) {
                 // the transport is stopped during save.
                 if let Ok(engine) = state.audio_engine.lock() {
                     project.plugin_state_blobs.clear();
-                    let ids: Vec<String> =
-                        engine.plugin_host.device_ids().map(str::to_string).collect();
+                    let ids: Vec<String> = engine
+                        .plugin_host
+                        .device_ids()
+                        .map(str::to_string)
+                        .collect();
                     for id in ids {
                         if let Some(ds) = engine.plugin_host.save_device_state(&id) {
                             if let Some(bytes) = ds.as_binary() {
@@ -359,7 +384,9 @@ fn handle_menu_event(app: &tauri::AppHandle, menu_id: &str) {
                 if let Ok(mut p) = state.project_path.lock() {
                     *p = Some(save_path.clone());
                 }
-                state.dirty.store(false, std::sync::atomic::Ordering::Relaxed);
+                state
+                    .dirty
+                    .store(false, std::sync::atomic::Ordering::Relaxed);
                 let _ = app.emit("project-saved", save_path.to_string_lossy().to_string());
                 menu_state::refresh_menu(app, &state);
             } else if let Err(e) = write_result {
@@ -412,15 +439,11 @@ fn menu_action(app: tauri::AppHandle, action: String) {
 /// Supports WAV, MP3, FLAC, OGG via symphonia.
 #[tauri::command]
 fn get_audio_clip_duration(file_path: &str) -> Result<f64, String> {
-    use symphonia::core::{
-        codecs::DecoderOptions,
-        errors::Error as SymphoniaError,
-        formats::FormatOptions,
-        io::MediaSourceStream,
-        meta::MetadataOptions,
-        probe::Hint,
-    };
     use std::path::Path;
+    use symphonia::core::{
+        codecs::DecoderOptions, errors::Error as SymphoniaError, formats::FormatOptions,
+        io::MediaSourceStream, meta::MetadataOptions, probe::Hint,
+    };
 
     fn make_hint(file_path: &str) -> Hint {
         let mut hint = Hint::new();
@@ -430,11 +453,18 @@ fn get_audio_clip_duration(file_path: &str) -> Result<f64, String> {
         hint
     }
 
-    fn open_format(file_path: &str) -> Result<Box<dyn symphonia::core::formats::FormatReader>, String> {
+    fn open_format(
+        file_path: &str,
+    ) -> Result<Box<dyn symphonia::core::formats::FormatReader>, String> {
         let file = std::fs::File::open(file_path).map_err(|e| e.to_string())?;
         let mss = MediaSourceStream::new(Box::new(file), Default::default());
         symphonia::default::get_probe()
-            .format(&make_hint(file_path), mss, &FormatOptions::default(), &MetadataOptions::default())
+            .format(
+                &make_hint(file_path),
+                mss,
+                &FormatOptions::default(),
+                &MetadataOptions::default(),
+            )
             .map(|p| p.format)
             .map_err(|e| e.to_string())
     }
@@ -444,7 +474,10 @@ fn get_audio_clip_duration(file_path: &str) -> Result<f64, String> {
         let format = open_format(file_path)?;
         let track = format.default_track().ok_or("No audio track found")?;
         (
-            track.codec_params.sample_rate.ok_or("Unknown sample rate")?,
+            track
+                .codec_params
+                .sample_rate
+                .ok_or("Unknown sample rate")?,
             track.codec_params.time_base,
             track.codec_params.n_frames,
             track.id,
@@ -471,10 +504,15 @@ fn get_audio_clip_duration(file_path: &str) -> Result<f64, String> {
         let packet = match format.next_packet() {
             Ok(p) => p,
             Err(SymphoniaError::IoError(_)) => break,
-            Err(SymphoniaError::ResetRequired) => { decoder.reset(); continue; }
+            Err(SymphoniaError::ResetRequired) => {
+                decoder.reset();
+                continue;
+            }
             Err(_) => break,
         };
-        if packet.track_id() != track_id { continue; }
+        if packet.track_id() != track_id {
+            continue;
+        }
         match decoder.decode(&packet) {
             Ok(decoded) => total_frames += decoded.frames() as u64,
             Err(SymphoniaError::DecodeError(_)) => continue,
@@ -496,7 +534,9 @@ fn list_plugins(
 
 /// Re-scan plugin directories on demand (e.g. after installing a new plugin).
 #[tauri::command]
-fn scan_plugins(state: tauri::State<'_, AppState>) -> Result<Vec<plugin_system::host::PluginInfo>, String> {
+fn scan_plugins(
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<plugin_system::host::PluginInfo>, String> {
     let mut engine = state.audio_engine.lock().map_err(|e| e.to_string())?;
     engine.plugin_host.scan_plugins();
     Ok(engine.plugin_host.list_plugins())
@@ -702,11 +742,11 @@ fn export_mp3(
 /// editor for `effect_id` is already open, returns immediately.
 #[tauri::command]
 fn open_plugin_editor(
-    plugin_id:   String,
-    effect_id:   String,
+    plugin_id: String,
+    effect_id: String,
     plugin_name: String,
-    app:         tauri::AppHandle,
-    state:       tauri::State<'_, AppState>,
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
 ) -> Result<(), String> {
     // Idempotency check
     if let Ok(editors) = state.open_plugin_editors.lock() {
@@ -722,14 +762,15 @@ fn open_plugin_editor(
     // editor").  No more re-loading the DLL.
     let (instance, format) = {
         let engine = state.audio_engine.lock().map_err(|e| e.to_string())?;
-        let format = engine.plugin_host
+        let format = engine
+            .plugin_host
             .registry()
             .get(&plugin_id)
             .map(|m| m.format)
             .ok_or_else(|| format!("plugin not in registry: {plugin_id}"))?;
-        let inst = engine.plugin_host
-            .instance(&plugin_id)
-            .ok_or_else(|| format!("plugin instance not loaded: {plugin_id} (graph not compiled?)"))?;
+        let inst = engine.plugin_host.instance(&plugin_id).ok_or_else(|| {
+            format!("plugin instance not loaded: {plugin_id} (graph not compiled?)")
+        })?;
         (inst, format)
     };
 
@@ -744,19 +785,26 @@ fn open_plugin_editor(
             #[cfg(windows)]
             plugin_system::wrapper::DeviceFormat::Vst3 => unsafe {
                 plugin_system::gui::open_vst3_editor(
-                    instance, &plugin_name, &effect_id, open_editors,
+                    instance,
+                    &plugin_name,
+                    &effect_id,
+                    open_editors,
                 )
             },
             #[cfg(windows)]
             plugin_system::wrapper::DeviceFormat::Clap => unsafe {
                 plugin_system::gui::open_clap_editor(
-                    instance, &plugin_name, &effect_id, open_editors,
+                    instance,
+                    &plugin_name,
+                    &effect_id,
+                    open_editors,
                 )
             },
             _ => Err("native GUI is only available on Windows".into()),
         };
         tx.send(result).ok();
-    }).map_err(|e| e.to_string())?;
+    })
+    .map_err(|e| e.to_string())?;
 
     rx.recv().map_err(|e| e.to_string())??;
     Ok(())
@@ -767,11 +815,9 @@ fn open_plugin_editor(
 /// Posts `WM_CLOSE` to the window; the WndProc runs the cleanup closure and
 /// removes the entry from `open_plugin_editors` on the main thread.
 #[tauri::command]
-fn close_plugin_editor(
-    effect_id: String,
-    state:     tauri::State<'_, AppState>,
-) -> Result<(), String> {
-    let hwnd = state.open_plugin_editors
+fn close_plugin_editor(effect_id: String, state: tauri::State<'_, AppState>) -> Result<(), String> {
+    let hwnd = state
+        .open_plugin_editors
         .lock()
         .map_err(|e| e.to_string())?
         .get(&effect_id)
@@ -884,9 +930,7 @@ fn get_device_sample_rates(device_id: String) -> Vec<u32> {
     } else {
         host.output_devices()
             .ok()
-            .and_then(|mut it| {
-                it.find(|d| d.name().map(|n| n == device_id).unwrap_or(false))
-            })
+            .and_then(|mut it| it.find(|d| d.name().map(|n| n == device_id).unwrap_or(false)))
             .or_else(|| host.default_output_device())
     };
 
@@ -949,9 +993,7 @@ fn get_device_channels(device_id: String, is_input: bool) -> u16 {
         } else {
             host.input_devices()
                 .ok()
-                .and_then(|mut it| {
-                    it.find(|d| d.name().map(|n| n == device_id).unwrap_or(false))
-                })
+                .and_then(|mut it| it.find(|d| d.name().map(|n| n == device_id).unwrap_or(false)))
                 .or_else(|| host.default_input_device())
         };
         device
@@ -964,9 +1006,7 @@ fn get_device_channels(device_id: String, is_input: bool) -> u16 {
         } else {
             host.output_devices()
                 .ok()
-                .and_then(|mut it| {
-                    it.find(|d| d.name().map(|n| n == device_id).unwrap_or(false))
-                })
+                .and_then(|mut it| it.find(|d| d.name().map(|n| n == device_id).unwrap_or(false)))
                 .or_else(|| host.default_output_device())
         };
         device
@@ -1016,9 +1056,9 @@ fn apply_audio_settings(
 
     // Determine whether a stream restart is actually needed.
     let needs_restart = current.output_device != settings.output_device
-        || current.input_device  != settings.input_device
-        || current.sample_rate   != settings.sample_rate
-        || current.buffer_size   != settings.buffer_size;
+        || current.input_device != settings.input_device
+        || current.sample_rate != settings.sample_rate
+        || current.buffer_size != settings.buffer_size;
 
     if needs_restart {
         // Full restart: device / sample rate / buffer changed.
@@ -1051,10 +1091,7 @@ fn apply_audio_settings(
 ///
 /// `count = 0` restores the "use all hardware channels" default.
 #[tauri::command]
-fn set_active_output_channels(
-    count: u16,
-    state: tauri::State<'_, AppState>,
-) {
+fn set_active_output_channels(count: u16, state: tauri::State<'_, AppState>) {
     if let Ok(engine) = state.audio_engine.lock() {
         engine.set_active_output_channels(count as usize);
     }

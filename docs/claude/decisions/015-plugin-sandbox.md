@@ -93,8 +93,8 @@ that latency through the existing `latency_samples()` path, and the engine's PDC
 | **6d-iii-a** | Ring-driven per-block process loop in the bridge with an identity pass-through stand-in; audio frames carried over the rings | nil (separate process) | **Implemented** |
 | **6d-iii-b-1** | `BridgeProcessor` seam: the loop deserialises/processes/reserialises `f32` blocks through a trait; `PassthroughProcessor` is the identity impl | nil (separate process) | **Implemented** |
 | **6d-iii-b-2** | Real CLAP plugin loaded in the bridge (FFI) driving its `process` vtable as a `BridgeProcessor`; `clap_ffi` extracted as a shared crate | nil (separate process) | **Implemented** (CLAP; VST3 later) |
-| 6d-iv | `BridgedPluginInstance` proxy + **RT wiring** (bounded spin + timeout + silence) on the audio thread | **high** | Pending |
-| 6e | Watchdog + `Dead`-marking + prototype on a **single** plugin (Vital), then generalise | high | Pending |
+| **6d-iv** | `BridgedNode` proxy + **RT wiring** (`process_block`: bounded spin + timeout + silence) on the audio thread; compiler routes sandboxed CLAP devices to it | **high** | **Implemented** |
+| 6e | Watchdog + `Dead`-marking on repeated timeouts + prototype on a **single** real plugin (Vital), then generalise | high | Pending |
 
 Rationale for the cut: 6a–6c and 6d-i/ii/iii touch **zero** audio-thread code and
 are bit-identical (C-2). Only **6d-iv** crosses the RT boundary, and it does so
@@ -415,6 +415,64 @@ preallocated channel-pointer vectors (no allocation). Engine runtime and
 `ShmemRing` untouched. `plugin_bridge` 21/21, `plugin_host_bridge` 4/4
 (2 synthetic-CLAP unit + 2 spawn/round-trip integration), `clap_ffi` 2/2, engine
 **51/51**; `clippy --tests -D warnings` and `fmt` clean.
+
+## Sub-phase 6d-iv — what shipped (the RT crossing)
+
+The engine now hosts a sandboxed plugin **out-of-process, on the audio thread**:
+
+- **`BridgeSession::process_block`** (in `plugin_bridge`) — the real-time
+  round-trip. Formats the planar input block into a **preallocated** scratch
+  (no allocation), pushes it to the audio-in ring, **bounded-spins** on the
+  audio-out ring up to a `spin_budget`, and copies the result into `output`. On
+  timeout (or a full ring) it fills `output` with **silence** and bumps a
+  `timeout_count` atomic. No mutex, no syscall (only the lock-free SPSC rings +
+  a userspace `Instant` deadline). It drains stale outputs from a prior
+  timed-out block first, so sends and receives stay paired. `BridgeSession`
+  also gained `spawn_plugin` (spawns the bridge in real-CLAP mode).
+- **`BridgedNode`** (engine `plugin_system::bridged_node`) — an `AudioNode`
+  (1 multichannel port in/out, mirroring the in-process wrapper). `prepare`
+  (off-RT) spawns the `plugin_host_bridge` child loading the real plugin;
+  `process` marshals the graph's planar buffers through `process_block`. If the
+  bridge can't be spawned (no binary, unknown DLL, error), or for a partial
+  final block, it **falls back to transparent pass-through** so the graph keeps
+  running.
+- **Compiler wiring** — `build_node` routes a `NodeKind::Plugin { sandboxed:
+  true }` CLAP device to `BridgedNode::try_new`; anything not bridgeable falls
+  through to the existing in-process path. Gated on `sandboxed` (default false)
+  → **non-sandboxed projects are bit-identical** (engine 53/53, the +2 are the
+  new `BridgedNode` tests).
+
+### Real-time honesty
+
+`process` deliberately *waits* — out-of-process hosting cannot be synchronous
+otherwise — but the wait is **bounded** and degrades to silence, which is the
+whole P0-5 win: a crashed/stalled plugin can no longer take the engine down. The
+budget (5 ms placeholder) and a watchdog that marks a device `Dead` after
+repeated timeouts are 6e. The round-trip is synchronous, so it adds **no** block
+of latency when it completes in budget (simpler than the async model BP-5
+assumed).
+
+### What is tested vs. smoke
+
+- **Tested (real binary, deterministic):** `process_block` is exercised
+  end-to-end against the real `plugin_host_bridge` (passthrough) — 32 planar
+  blocks round-tripped exactly, `timeout_count == 0`. `BridgedNode`'s
+  pass-through fallback (no bridge) is unit-tested.
+- **Smoke-only (audit V5):** the full chain *sandboxed CLAP device → spawn
+  bridge with the real plugin → audio-thread round-trip* needs a real `.clap` +
+  the colocated bridge binary + `sandboxed = true`, so it is manual.
+
+`plugin_bridge` 21/21, `plugin_host_bridge` 5/5 (2 synthetic-CLAP unit +
+3 spawn/round-trip integration), `clap_ffi` 2/2, engine **53/53**;
+`clippy --tests -D warnings` and `fmt` clean.
+
+### Phase 6 status
+
+Everything up to and including the RT boundary is now built and (where CI can)
+tested: opt-in flag → region → spawn/handshake → process loop → real CLAP plugin
+→ **audio-thread round-trip with bounded-spin + silence**. Only **6e**
+(watchdog / `Dead`-marking + real-plugin smoke validation) remains, plus the
+later VST3 processor behind the same seam.
 
 ## Consequences
 

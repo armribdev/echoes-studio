@@ -12,8 +12,8 @@
 //! gain.  The command thread can write these atomics directly without
 //! triggering a recompile.
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 use crate::audio_graph::buffer::AudioBuffer;
 use crate::audio_graph::live_params::TrackParams;
@@ -29,7 +29,12 @@ pub struct TrackGainNode {
 
 impl TrackGainNode {
     pub fn new(id: NodeId, params: Arc<TrackParams>, any_solo: Arc<AtomicBool>) -> Self {
-        TrackGainNode { id, params, any_solo, mod_delta: 0.0 }
+        TrackGainNode {
+            id,
+            params,
+            any_solo,
+            mod_delta: 0.0,
+        }
     }
 
     /// Compute the linear gain for this block from the atomic cells.
@@ -51,10 +56,18 @@ impl TrackGainNode {
 }
 
 impl AudioNode for TrackGainNode {
-    fn node_id(&self) -> NodeId { self.id }
-    fn label(&self) -> &str { "TrackGainNode" }
-    fn num_input_ports(&self) -> usize { 1 }
-    fn num_output_ports(&self) -> usize { 1 }
+    fn node_id(&self) -> NodeId {
+        self.id
+    }
+    fn label(&self) -> &str {
+        "TrackGainNode"
+    }
+    fn num_input_ports(&self) -> usize {
+        1
+    }
+    fn num_output_ports(&self) -> usize {
+        1
+    }
 
     fn prepare(&mut self, _ctx: PrepareContext) {}
 

@@ -23,7 +23,7 @@ pub type TResult = i32;
 /// 16-byte interface / class identifier.
 pub type Tuid = [u8; 16];
 
-pub const K_RESULT_OK:    TResult = 0;
+pub const K_RESULT_OK: TResult = 0;
 pub const K_RESULT_FALSE: TResult = 1;
 
 // ── Interface IDs ──────────────────────────────────────────────────────────────
@@ -31,21 +31,17 @@ pub const K_RESULT_FALSE: TResult = 1;
 
 /// Steinberg's FUnknown IID (non-COM-compatible, modern SDK convention).
 pub const IID_FUNKNOWN: Tuid = [
-    0x00,0x00,0x00,0x00, 0x00,0x00,0x00,0x00,
-    0xC0,0x00,0x00,0x00, 0x00,0x00,0x00,0x46,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46,
 ];
 
 pub const IID_IPLUGIN_FACTORY: Tuid = [
-    0x7A,0x4D,0x81,0x1C, 0x52,0x11,0x4A,0x1F,
-    0xAE,0xD9,0xD2,0xEE, 0x0D,0xB2,0x5A,0x41,
+    0x7A, 0x4D, 0x81, 0x1C, 0x52, 0x11, 0x4A, 0x1F, 0xAE, 0xD9, 0xD2, 0xEE, 0x0D, 0xB2, 0x5A, 0x41,
 ];
 pub const IID_ICOMPONENT: Tuid = [
-    0xE8,0x31,0xFF,0x31, 0xF2,0xD5,0x43,0x01,
-    0x92,0x8E,0xBB,0xEE, 0x25,0x69,0x78,0x02,
+    0xE8, 0x31, 0xFF, 0x31, 0xF2, 0xD5, 0x43, 0x01, 0x92, 0x8E, 0xBB, 0xEE, 0x25, 0x69, 0x78, 0x02,
 ];
 pub const IID_IAUDIO_PROCESSOR: Tuid = [
-    0x42,0x04,0x3F,0x99, 0xB7,0xDA,0x45,0x3C,
-    0xA5,0x69,0xE7,0x9D, 0x9A,0xAE,0xC3,0x3D,
+    0x42, 0x04, 0x3F, 0x99, 0xB7, 0xDA, 0x45, 0x3C, 0xA5, 0x69, 0xE7, 0x9D, 0x9A, 0xAE, 0xC3, 0x3D,
 ];
 
 // ── Speaker arrangements ───────────────────────────────────────────────────────
@@ -53,12 +49,12 @@ pub const IID_IAUDIO_PROCESSOR: Tuid = [
 /// L | R  (bits 0 and 1)
 pub const SPEAKER_STEREO: u64 = 0x0000_0003;
 /// Mono center (bit 19 = kSpeakerM)
-pub const SPEAKER_MONO:   u64 = 0x0008_0000;
+pub const SPEAKER_MONO: u64 = 0x0008_0000;
 
 // ── PClassInfo ─────────────────────────────────────────────────────────────────
 
 pub const CATEGORY_AUDIO_MODULE: &[u8] = b"Audio Module Class";
-pub const CATEGORY_COMPONENT:    &[u8] = b"Component Controller Class";
+pub const CATEGORY_COMPONENT: &[u8] = b"Component Controller Class";
 
 /// Minimal class info returned by IPluginFactory::getClassInfo.
 #[repr(C)]
@@ -71,11 +67,19 @@ pub struct PClassInfo {
 
 impl PClassInfo {
     pub fn name_str(&self) -> &str {
-        let end = self.name.iter().position(|&b| b == 0).unwrap_or(self.name.len());
+        let end = self
+            .name
+            .iter()
+            .position(|&b| b == 0)
+            .unwrap_or(self.name.len());
         std::str::from_utf8(&self.name[..end]).unwrap_or("")
     }
     pub fn category_str(&self) -> &str {
-        let end = self.category.iter().position(|&b| b == 0).unwrap_or(self.category.len());
+        let end = self
+            .category
+            .iter()
+            .position(|&b| b == 0)
+            .unwrap_or(self.category.len());
         std::str::from_utf8(&self.category[..end]).unwrap_or("")
     }
     pub fn is_audio_module(&self) -> bool {
@@ -96,7 +100,7 @@ pub struct FUnknownVtbl {
     pub query_interface:
         unsafe extern "C" fn(*mut FUnknown, *const Tuid, *mut *mut c_void) -> TResult,
     pub add_ref: unsafe extern "C" fn(*mut FUnknown) -> u32,
-    pub release:  unsafe extern "C" fn(*mut FUnknown) -> u32,
+    pub release: unsafe extern "C" fn(*mut FUnknown) -> u32,
 }
 
 // ── IPluginFactory (vtable index 0–6) ─────────────────────────────────────────
@@ -112,15 +116,17 @@ pub struct IPluginFactoryVtbl {
     pub query_interface:
         unsafe extern "C" fn(*mut IPluginFactory, *const Tuid, *mut *mut c_void) -> TResult,
     pub add_ref: unsafe extern "C" fn(*mut IPluginFactory) -> u32,
-    pub release:  unsafe extern "C" fn(*mut IPluginFactory) -> u32,
+    pub release: unsafe extern "C" fn(*mut IPluginFactory) -> u32,
     // IPluginFactory
     pub get_factory_info: unsafe extern "C" fn(*mut IPluginFactory, *mut c_void) -> TResult,
-    pub count_classes:    unsafe extern "C" fn(*mut IPluginFactory) -> i32,
-    pub get_class_info:
-        unsafe extern "C" fn(*mut IPluginFactory, i32, *mut PClassInfo) -> TResult,
-    pub create_instance:
-        unsafe extern "C" fn(*mut IPluginFactory, *const u8, *const u8, *mut *mut c_void)
-            -> TResult,
+    pub count_classes: unsafe extern "C" fn(*mut IPluginFactory) -> i32,
+    pub get_class_info: unsafe extern "C" fn(*mut IPluginFactory, i32, *mut PClassInfo) -> TResult,
+    pub create_instance: unsafe extern "C" fn(
+        *mut IPluginFactory,
+        *const u8,
+        *const u8,
+        *mut *mut c_void,
+    ) -> TResult,
 }
 
 // ── IComponent (vtable index 0–13) ────────────────────────────────────────────
@@ -137,20 +143,21 @@ pub struct IComponentVtbl {
     pub query_interface:
         unsafe extern "C" fn(*mut IComponent, *const Tuid, *mut *mut c_void) -> TResult,
     pub add_ref: unsafe extern "C" fn(*mut IComponent) -> u32,
-    pub release:  unsafe extern "C" fn(*mut IComponent) -> u32,
+    pub release: unsafe extern "C" fn(*mut IComponent) -> u32,
     // IPluginBase
     pub initialize: unsafe extern "C" fn(*mut IComponent, *mut FUnknown) -> TResult,
-    pub terminate:  unsafe extern "C" fn(*mut IComponent) -> TResult,
+    pub terminate: unsafe extern "C" fn(*mut IComponent) -> TResult,
     // IComponent
     pub get_controller_class_id: unsafe extern "C" fn(*mut IComponent, *mut u8) -> TResult,
     pub set_io_mode: unsafe extern "C" fn(*mut IComponent, i32) -> TResult,
     pub get_bus_count: unsafe extern "C" fn(*mut IComponent, i32, i32) -> i32,
-    pub get_bus_info:  unsafe extern "C" fn(*mut IComponent, i32, i32, i32, *mut c_void) -> TResult,
-    pub get_routing_info: unsafe extern "C" fn(*mut IComponent, *mut c_void, *mut c_void) -> TResult,
+    pub get_bus_info: unsafe extern "C" fn(*mut IComponent, i32, i32, i32, *mut c_void) -> TResult,
+    pub get_routing_info:
+        unsafe extern "C" fn(*mut IComponent, *mut c_void, *mut c_void) -> TResult,
     pub activate_bus: unsafe extern "C" fn(*mut IComponent, i32, i32, i32, u8) -> TResult,
-    pub set_active:   unsafe extern "C" fn(*mut IComponent, u8) -> TResult,
-    pub set_state:    unsafe extern "C" fn(*mut IComponent, *mut c_void) -> TResult,
-    pub get_state:    unsafe extern "C" fn(*mut IComponent, *mut c_void) -> TResult,
+    pub set_active: unsafe extern "C" fn(*mut IComponent, u8) -> TResult,
+    pub set_state: unsafe extern "C" fn(*mut IComponent, *mut c_void) -> TResult,
+    pub get_state: unsafe extern "C" fn(*mut IComponent, *mut c_void) -> TResult,
 }
 
 // ── IAudioProcessor (vtable index 0–10) ───────────────────────────────────────
@@ -172,27 +179,27 @@ pub struct AudioBusBuffers {
 /// Setup passed to `setupProcessing`.
 #[repr(C)]
 pub struct ProcessSetup {
-    pub process_mode:           i32,  // 0 = realtime
-    pub symbolic_sample_size:   i32,  // 0 = float32
-    pub max_samples_per_block:  i32,
-    pub sample_rate:            f64,
+    pub process_mode: i32,         // 0 = realtime
+    pub symbolic_sample_size: i32, // 0 = float32
+    pub max_samples_per_block: i32,
+    pub sample_rate: f64,
 }
 
 /// Per-block processing data (null pointers for unused fields are valid).
 #[repr(C)]
 pub struct ProcessData {
-    pub process_mode:         i32,  // 0 = realtime
-    pub symbolic_sample_size: i32,  // 0 = float32
-    pub num_samples:          i32,
-    pub num_inputs:           i32,
-    pub num_outputs:          i32,
-    pub inputs:               *mut AudioBusBuffers,
-    pub outputs:              *mut AudioBusBuffers,
-    pub input_param_changes:  *mut c_void,
+    pub process_mode: i32,         // 0 = realtime
+    pub symbolic_sample_size: i32, // 0 = float32
+    pub num_samples: i32,
+    pub num_inputs: i32,
+    pub num_outputs: i32,
+    pub inputs: *mut AudioBusBuffers,
+    pub outputs: *mut AudioBusBuffers,
+    pub input_param_changes: *mut c_void,
     pub output_param_changes: *mut c_void,
-    pub input_events:         *mut c_void,
-    pub output_events:        *mut c_void,
-    pub process_context:      *mut c_void,
+    pub input_events: *mut c_void,
+    pub output_events: *mut c_void,
+    pub process_context: *mut c_void,
 }
 
 #[repr(C)]
@@ -201,24 +208,19 @@ pub struct IAudioProcessorVtbl {
     pub query_interface:
         unsafe extern "C" fn(*mut IAudioProcessor, *const Tuid, *mut *mut c_void) -> TResult,
     pub add_ref: unsafe extern "C" fn(*mut IAudioProcessor) -> u32,
-    pub release:  unsafe extern "C" fn(*mut IAudioProcessor) -> u32,
+    pub release: unsafe extern "C" fn(*mut IAudioProcessor) -> u32,
     // IAudioProcessor
     pub set_bus_arrangements:
         unsafe extern "C" fn(*mut IAudioProcessor, *mut u64, i32, *mut u64, i32) -> TResult,
     pub get_bus_arrangement:
         unsafe extern "C" fn(*mut IAudioProcessor, i32, i32, *mut u64) -> TResult,
-    pub can_process_sample_size:
-        unsafe extern "C" fn(*mut IAudioProcessor, i32) -> TResult,
-    pub get_latency_samples:
-        unsafe extern "C" fn(*mut IAudioProcessor) -> u32,
+    pub can_process_sample_size: unsafe extern "C" fn(*mut IAudioProcessor, i32) -> TResult,
+    pub get_latency_samples: unsafe extern "C" fn(*mut IAudioProcessor) -> u32,
     pub setup_processing:
         unsafe extern "C" fn(*mut IAudioProcessor, *const ProcessSetup) -> TResult,
-    pub set_processing:
-        unsafe extern "C" fn(*mut IAudioProcessor, u8) -> TResult,
-    pub process:
-        unsafe extern "C" fn(*mut IAudioProcessor, *mut ProcessData) -> TResult,
-    pub get_tail_samples:
-        unsafe extern "C" fn(*mut IAudioProcessor) -> u32,
+    pub set_processing: unsafe extern "C" fn(*mut IAudioProcessor, u8) -> TResult,
+    pub process: unsafe extern "C" fn(*mut IAudioProcessor, *mut ProcessData) -> TResult,
+    pub get_tail_samples: unsafe extern "C" fn(*mut IAudioProcessor) -> u32,
 }
 
 // ── IParameterChanges / IParamValueQueue (host → plugin parameter transport) ──
@@ -233,32 +235,34 @@ pub struct IAudioProcessorVtbl {
 pub struct IParamValueQueueVtbl {
     pub query_interface:
         unsafe extern "C" fn(*mut HostParamValueQueue, *const Tuid, *mut *mut c_void) -> TResult,
-    pub add_ref:  unsafe extern "C" fn(*mut HostParamValueQueue) -> u32,
-    pub release:  unsafe extern "C" fn(*mut HostParamValueQueue) -> u32,
+    pub add_ref: unsafe extern "C" fn(*mut HostParamValueQueue) -> u32,
+    pub release: unsafe extern "C" fn(*mut HostParamValueQueue) -> u32,
     pub get_parameter_id: unsafe extern "C" fn(*mut HostParamValueQueue) -> u32,
-    pub get_point_count:  unsafe extern "C" fn(*mut HostParamValueQueue) -> i32,
+    pub get_point_count: unsafe extern "C" fn(*mut HostParamValueQueue) -> i32,
     pub get_point:
         unsafe extern "C" fn(*mut HostParamValueQueue, i32, *mut i32, *mut f64) -> TResult,
-    pub add_point:
-        unsafe extern "C" fn(*mut HostParamValueQueue, i32, f64, *mut i32) -> TResult,
+    pub add_point: unsafe extern "C" fn(*mut HostParamValueQueue, i32, f64, *mut i32) -> TResult,
 }
 
 #[repr(C)]
 pub struct IParameterChangesVtbl {
     pub query_interface:
         unsafe extern "C" fn(*mut HostParameterChanges, *const Tuid, *mut *mut c_void) -> TResult,
-    pub add_ref:  unsafe extern "C" fn(*mut HostParameterChanges) -> u32,
-    pub release:  unsafe extern "C" fn(*mut HostParameterChanges) -> u32,
+    pub add_ref: unsafe extern "C" fn(*mut HostParameterChanges) -> u32,
+    pub release: unsafe extern "C" fn(*mut HostParameterChanges) -> u32,
     pub get_parameter_count: unsafe extern "C" fn(*mut HostParameterChanges) -> i32,
     pub get_parameter_data:
         unsafe extern "C" fn(*mut HostParameterChanges, i32) -> *mut HostParamValueQueue,
-    pub add_parameter_data:
-        unsafe extern "C" fn(*mut HostParameterChanges, *const u32, *mut i32) -> *mut HostParamValueQueue,
+    pub add_parameter_data: unsafe extern "C" fn(
+        *mut HostParameterChanges,
+        *const u32,
+        *mut i32,
+    ) -> *mut HostParamValueQueue,
 }
 
 /// Max distinct parameters carried in one block, and max value points per
 /// parameter per block.  Both comfortably exceed a 60 Hz UI / automation load.
-pub const MAX_PARAM_QUEUES:     usize = 128;
+pub const MAX_PARAM_QUEUES: usize = 128;
 pub const MAX_POINTS_PER_QUEUE: usize = 16;
 
 /// One parameter's value points for the current block.  `#[repr(C)]` keeps the
@@ -266,31 +270,39 @@ pub const MAX_POINTS_PER_QUEUE: usize = 16;
 /// fields are private host data the vtable methods read.
 #[repr(C)]
 pub struct HostParamValueQueue {
-    pub vtbl:     *const IParamValueQueueVtbl,
+    pub vtbl: *const IParamValueQueueVtbl,
     pub param_id: u32,
-    pub offsets:  [i32; MAX_POINTS_PER_QUEUE],
-    pub values:   [f64; MAX_POINTS_PER_QUEUE],
-    pub count:    i32,
+    pub offsets: [i32; MAX_POINTS_PER_QUEUE],
+    pub values: [f64; MAX_POINTS_PER_QUEUE],
+    pub count: i32,
 }
 
 /// The per-block parameter-change list handed to the plugin.
 #[repr(C)]
 pub struct HostParameterChanges {
-    pub vtbl:   *const IParameterChangesVtbl,
+    pub vtbl: *const IParameterChangesVtbl,
     pub queues: [HostParamValueQueue; MAX_PARAM_QUEUES],
-    pub count:  i32,
+    pub count: i32,
 }
 
 // ── Vtable implementations ─────────────────────────────────────────────────────
 
 unsafe extern "C" fn pvq_query_interface(
-    _this: *mut HostParamValueQueue, _iid: *const Tuid, obj: *mut *mut c_void,
+    _this: *mut HostParamValueQueue,
+    _iid: *const Tuid,
+    obj: *mut *mut c_void,
 ) -> TResult {
-    if !obj.is_null() { *obj = std::ptr::null_mut(); }
+    if !obj.is_null() {
+        *obj = std::ptr::null_mut();
+    }
     -1 // kNoInterface
 }
-unsafe extern "C" fn pvq_add_ref(_this: *mut HostParamValueQueue) -> u32 { 1 }
-unsafe extern "C" fn pvq_release(_this: *mut HostParamValueQueue) -> u32 { 1 }
+unsafe extern "C" fn pvq_add_ref(_this: *mut HostParamValueQueue) -> u32 {
+    1
+}
+unsafe extern "C" fn pvq_release(_this: *mut HostParamValueQueue) -> u32 {
+    1
+}
 
 unsafe extern "C" fn pvq_get_parameter_id(this: *mut HostParamValueQueue) -> u32 {
     (*this).param_id
@@ -299,56 +311,87 @@ unsafe extern "C" fn pvq_get_point_count(this: *mut HostParamValueQueue) -> i32 
     (*this).count
 }
 unsafe extern "C" fn pvq_get_point(
-    this: *mut HostParamValueQueue, index: i32, sample_offset: *mut i32, value: *mut f64,
+    this: *mut HostParamValueQueue,
+    index: i32,
+    sample_offset: *mut i32,
+    value: *mut f64,
 ) -> TResult {
     let q = &*this;
-    if index < 0 || index >= q.count { return K_RESULT_FALSE; }
+    if index < 0 || index >= q.count {
+        return K_RESULT_FALSE;
+    }
     let i = index as usize;
-    if !sample_offset.is_null() { *sample_offset = q.offsets[i]; }
-    if !value.is_null() { *value = q.values[i]; }
+    if !sample_offset.is_null() {
+        *sample_offset = q.offsets[i];
+    }
+    if !value.is_null() {
+        *value = q.values[i];
+    }
     K_RESULT_OK
 }
 unsafe extern "C" fn pvq_add_point(
-    this: *mut HostParamValueQueue, sample_offset: i32, value: f64, index: *mut i32,
+    this: *mut HostParamValueQueue,
+    sample_offset: i32,
+    value: f64,
+    index: *mut i32,
 ) -> TResult {
     let q = &mut *this;
-    if (q.count as usize) >= MAX_POINTS_PER_QUEUE { return K_RESULT_FALSE; }
+    if (q.count as usize) >= MAX_POINTS_PER_QUEUE {
+        return K_RESULT_FALSE;
+    }
     let i = q.count as usize;
     q.offsets[i] = sample_offset;
-    q.values[i]  = value;
+    q.values[i] = value;
     q.count += 1;
-    if !index.is_null() { *index = i as i32; }
+    if !index.is_null() {
+        *index = i as i32;
+    }
     K_RESULT_OK
 }
 
 unsafe extern "C" fn pc_query_interface(
-    _this: *mut HostParameterChanges, _iid: *const Tuid, obj: *mut *mut c_void,
+    _this: *mut HostParameterChanges,
+    _iid: *const Tuid,
+    obj: *mut *mut c_void,
 ) -> TResult {
-    if !obj.is_null() { *obj = std::ptr::null_mut(); }
+    if !obj.is_null() {
+        *obj = std::ptr::null_mut();
+    }
     -1
 }
-unsafe extern "C" fn pc_add_ref(_this: *mut HostParameterChanges) -> u32 { 1 }
-unsafe extern "C" fn pc_release(_this: *mut HostParameterChanges) -> u32 { 1 }
+unsafe extern "C" fn pc_add_ref(_this: *mut HostParameterChanges) -> u32 {
+    1
+}
+unsafe extern "C" fn pc_release(_this: *mut HostParameterChanges) -> u32 {
+    1
+}
 
 unsafe extern "C" fn pc_get_parameter_count(this: *mut HostParameterChanges) -> i32 {
     (*this).count
 }
 unsafe extern "C" fn pc_get_parameter_data(
-    this: *mut HostParameterChanges, index: i32,
+    this: *mut HostParameterChanges,
+    index: i32,
 ) -> *mut HostParamValueQueue {
     let pc = &mut *this;
-    if index < 0 || index >= pc.count { return std::ptr::null_mut(); }
+    if index < 0 || index >= pc.count {
+        return std::ptr::null_mut();
+    }
     &mut pc.queues[index as usize] as *mut HostParamValueQueue
 }
 unsafe extern "C" fn pc_add_parameter_data(
-    this: *mut HostParameterChanges, id: *const u32, index: *mut i32,
+    this: *mut HostParameterChanges,
+    id: *const u32,
+    index: *mut i32,
 ) -> *mut HostParamValueQueue {
     let pc = &mut *this;
     let param_id = if id.is_null() { 0 } else { *id };
     // Reuse an existing queue for this id if present.
     for i in 0..pc.count as usize {
         if pc.queues[i].param_id == param_id {
-            if !index.is_null() { *index = i as i32; }
+            if !index.is_null() {
+                *index = i as i32;
+            }
             return &mut pc.queues[i] as *mut HostParamValueQueue;
         }
     }
@@ -359,27 +402,29 @@ unsafe extern "C" fn pc_add_parameter_data(
     pc.queues[i].param_id = param_id;
     pc.queues[i].count = 0;
     pc.count += 1;
-    if !index.is_null() { *index = i as i32; }
+    if !index.is_null() {
+        *index = i as i32;
+    }
     &mut pc.queues[i] as *mut HostParamValueQueue
 }
 
 static PVQ_VTBL: IParamValueQueueVtbl = IParamValueQueueVtbl {
     query_interface: pvq_query_interface,
-    add_ref:         pvq_add_ref,
-    release:         pvq_release,
+    add_ref: pvq_add_ref,
+    release: pvq_release,
     get_parameter_id: pvq_get_parameter_id,
-    get_point_count:  pvq_get_point_count,
-    get_point:        pvq_get_point,
-    add_point:        pvq_add_point,
+    get_point_count: pvq_get_point_count,
+    get_point: pvq_get_point,
+    add_point: pvq_add_point,
 };
 
 static PC_VTBL: IParameterChangesVtbl = IParameterChangesVtbl {
     query_interface: pc_query_interface,
-    add_ref:         pc_add_ref,
-    release:         pc_release,
+    add_ref: pc_add_ref,
+    release: pc_release,
     get_parameter_count: pc_get_parameter_count,
-    get_parameter_data:  pc_get_parameter_data,
-    add_parameter_data:  pc_add_parameter_data,
+    get_parameter_data: pc_get_parameter_data,
+    add_parameter_data: pc_add_parameter_data,
 };
 
 impl HostParameterChanges {
@@ -467,7 +512,10 @@ impl Vst3Library {
             Some(f) => f,
             None => {
                 unsafe { win32::FreeLibrary(handle) };
-                return Err(format!("GetPluginFactory not found in {}", dll_path.display()));
+                return Err(format!(
+                    "GetPluginFactory not found in {}",
+                    dll_path.display()
+                ));
             }
         };
 
@@ -480,7 +528,10 @@ impl Vst3Library {
             return Err("GetPluginFactory returned null".into());
         }
 
-        let lib = std::sync::Arc::new(Vst3Library { handle, path: dll_path.to_path_buf() });
+        let lib = std::sync::Arc::new(Vst3Library {
+            handle,
+            path: dll_path.to_path_buf(),
+        });
         Ok((lib, factory))
     }
 }
@@ -510,8 +561,7 @@ impl Vst3Library {
 
 /// IEditController — UI/parameter controller interface, main-thread only.
 pub const IID_IEDIT_CONTROLLER: Tuid = [
-    0xDC,0xD7,0xBB,0xE3, 0x77,0x42,0x44,0x8D,
-    0xA8,0x74,0xAA,0xCC, 0x97,0x9C,0x9D,0x2C,
+    0xDC, 0xD7, 0xBB, 0xE3, 0x77, 0x42, 0x44, 0x8D, 0xA8, 0x74, 0xAA, 0xCC, 0x97, 0x9C, 0x9D, 0x2C,
 ];
 
 #[repr(C)]
@@ -524,44 +574,41 @@ pub struct IEditControllerVtbl {
     // FUnknown (0–2)
     pub query_interface:
         unsafe extern "C" fn(*mut IEditController, *const Tuid, *mut *mut c_void) -> TResult,
-    pub add_ref:  unsafe extern "C" fn(*mut IEditController) -> u32,
-    pub release:  unsafe extern "C" fn(*mut IEditController) -> u32,
+    pub add_ref: unsafe extern "C" fn(*mut IEditController) -> u32,
+    pub release: unsafe extern "C" fn(*mut IEditController) -> u32,
     // IPluginBase (3–4)
     pub initialize: unsafe extern "C" fn(*mut IEditController, *mut FUnknown) -> TResult,
-    pub terminate:  unsafe extern "C" fn(*mut IEditController) -> TResult,
+    pub terminate: unsafe extern "C" fn(*mut IEditController) -> TResult,
     // IEditController own — methods 5–16 unused by us; *const c_void as placeholder
-    pub _pad5:  *const c_void,  // setComponentState
-    pub _pad6:  *const c_void,  // setState
-    pub _pad7:  *const c_void,  // getState
-    pub _pad8:  *const c_void,  // getParameterCount
-    pub _pad9:  *const c_void,  // getParameterInfo
-    pub _pad10: *const c_void,  // getParamStringByValue
-    pub _pad11: *const c_void,  // getParamValueByString
-    pub _pad12: *const c_void,  // normalizedParamToPlain
-    pub _pad13: *const c_void,  // plainParamToNormalized
-    pub _pad14: *const c_void,  // getParamNormalized
-    pub _pad15: *const c_void,  // setParamNormalized
+    pub _pad5: *const c_void,  // setComponentState
+    pub _pad6: *const c_void,  // setState
+    pub _pad7: *const c_void,  // getState
+    pub _pad8: *const c_void,  // getParameterCount
+    pub _pad9: *const c_void,  // getParameterInfo
+    pub _pad10: *const c_void, // getParamStringByValue
+    pub _pad11: *const c_void, // getParamValueByString
+    pub _pad12: *const c_void, // normalizedParamToPlain
+    pub _pad13: *const c_void, // plainParamToNormalized
+    pub _pad14: *const c_void, // getParamNormalized
+    pub _pad15: *const c_void, // setParamNormalized
     // (16) setComponentHandler — typed so we can wire IComponentHandler
-    pub set_component_handler:
-        unsafe extern "C" fn(*mut IEditController, *mut FUnknown) -> TResult,
+    pub set_component_handler: unsafe extern "C" fn(*mut IEditController, *mut FUnknown) -> TResult,
     // (17) createView — the one we call
-    pub create_view:
-        unsafe extern "C" fn(*mut IEditController, *const u8) -> *mut IPlugView,
+    pub create_view: unsafe extern "C" fn(*mut IEditController, *const u8) -> *mut IPlugView,
 }
 
 // ── IPlugView (vtable index 0–14) ─────────────────────────────────────────────
 
 pub const IID_IPLUG_VIEW: Tuid = [
-    0x5B,0xC3,0x25,0x07, 0xD0,0x60,0x49,0xEA,
-    0x84,0x00,0x4B,0x4C, 0x80,0xCF,0xCE,0x37,
+    0x5B, 0xC3, 0x25, 0x07, 0xD0, 0x60, 0x49, 0xEA, 0x84, 0x00, 0x4B, 0x4C, 0x80, 0xCF, 0xCE, 0x37,
 ];
 
 /// Plugin-preferred view rectangle (in screen pixels).
 #[repr(C)]
 pub struct ViewRect {
-    pub left:   i32,
-    pub top:    i32,
-    pub right:  i32,
+    pub left: i32,
+    pub top: i32,
+    pub right: i32,
     pub bottom: i32,
 }
 
@@ -575,25 +622,21 @@ pub struct IPlugViewVtbl {
     // FUnknown (0–2)
     pub query_interface:
         unsafe extern "C" fn(*mut IPlugView, *const Tuid, *mut *mut c_void) -> TResult,
-    pub add_ref:  unsafe extern "C" fn(*mut IPlugView) -> u32,
-    pub release:  unsafe extern "C" fn(*mut IPlugView) -> u32,
+    pub add_ref: unsafe extern "C" fn(*mut IPlugView) -> u32,
+    pub release: unsafe extern "C" fn(*mut IPlugView) -> u32,
     // IPlugView (3–14)
-    pub is_platform_type_supported:
-        unsafe extern "C" fn(*mut IPlugView, *const u8) -> TResult,
-    pub attached:
-        unsafe extern "C" fn(*mut IPlugView, *mut c_void, *const u8) -> TResult,
+    pub is_platform_type_supported: unsafe extern "C" fn(*mut IPlugView, *const u8) -> TResult,
+    pub attached: unsafe extern "C" fn(*mut IPlugView, *mut c_void, *const u8) -> TResult,
     pub removed: unsafe extern "C" fn(*mut IPlugView) -> TResult,
-    pub _pad6:   *const c_void,  // onWheel
-    pub _pad7:   *const c_void,  // onKeyDown
-    pub _pad8:   *const c_void,  // onKeyUp
-    pub get_size:
-        unsafe extern "C" fn(*mut IPlugView, *mut ViewRect) -> TResult,
-    pub _pad10:  *const c_void,  // onSize
-    pub _pad11:  *const c_void,  // onFocus
-    pub set_frame:
-        unsafe extern "C" fn(*mut IPlugView, *mut FUnknown) -> TResult,
-    pub _pad13:  *const c_void,  // canResize
-    pub _pad14:  *const c_void,  // checkSizeConstraint
+    pub _pad6: *const c_void, // onWheel
+    pub _pad7: *const c_void, // onKeyDown
+    pub _pad8: *const c_void, // onKeyUp
+    pub get_size: unsafe extern "C" fn(*mut IPlugView, *mut ViewRect) -> TResult,
+    pub _pad10: *const c_void, // onSize
+    pub _pad11: *const c_void, // onFocus
+    pub set_frame: unsafe extern "C" fn(*mut IPlugView, *mut FUnknown) -> TResult,
+    pub _pad13: *const c_void, // canResize
+    pub _pad14: *const c_void, // checkSizeConstraint
 }
 
 // Fail-fast: vtable layouts depend on each entry being pointer-sized.  These
@@ -614,8 +657,7 @@ const _: () = assert!(
 // is the documented fall-back; well-behaved plugins must accept it.
 
 pub const IID_IHOST_APPLICATION: Tuid = [
-    0x58,0xE5,0x95,0xCD, 0x9A,0x2C,0x44,0x49,
-    0xAD,0xCA,0xED,0xA9, 0x96,0xDC,0xEA,0xA0,
+    0x58, 0xE5, 0x95, 0xCD, 0x9A, 0x2C, 0x44, 0x49, 0xAD, 0xCA, 0xED, 0xA9, 0x96, 0xDC, 0xEA, 0xA0,
 ];
 
 #[repr(C)]
@@ -636,8 +678,7 @@ pub struct IHostApplicationVtbl {
 // non-null and crash on the first knob touch without one.
 
 pub const IID_ICOMPONENT_HANDLER: Tuid = [
-    0x93,0xA0,0xBE,0xA3, 0x94,0xB8,0xB4,0x85,
-    0xBC,0xBE,0x57,0xDB, 0x18,0xA5,0x2D,0xB7,
+    0x93, 0xA0, 0xBE, 0xA3, 0x94, 0xB8, 0xB4, 0x85, 0xBC, 0xBE, 0x57, 0xDB, 0x18, 0xA5, 0x2D, 0xB7,
 ];
 
 #[repr(C)]
@@ -646,9 +687,9 @@ pub struct IComponentHandlerVtbl {
         unsafe extern "C" fn(*mut FUnknown, *const Tuid, *mut *mut c_void) -> TResult,
     pub add_ref: unsafe extern "C" fn(*mut FUnknown) -> u32,
     pub release: unsafe extern "C" fn(*mut FUnknown) -> u32,
-    pub begin_edit:        unsafe extern "C" fn(*mut FUnknown, u32) -> TResult,
-    pub perform_edit:      unsafe extern "C" fn(*mut FUnknown, u32, f64) -> TResult,
-    pub end_edit:          unsafe extern "C" fn(*mut FUnknown, u32) -> TResult,
+    pub begin_edit: unsafe extern "C" fn(*mut FUnknown, u32) -> TResult,
+    pub perform_edit: unsafe extern "C" fn(*mut FUnknown, u32, f64) -> TResult,
+    pub end_edit: unsafe extern "C" fn(*mut FUnknown, u32) -> TResult,
     pub restart_component: unsafe extern "C" fn(*mut FUnknown, i32) -> TResult,
 }
 
@@ -656,8 +697,7 @@ pub struct IComponentHandlerVtbl {
 // Set on the IPlugView so the plugin can request a resize of its container.
 
 pub const IID_IPLUG_FRAME: Tuid = [
-    0x36,0x7F,0xAF,0x01, 0xAF,0xA9,0x46,0x93,
-    0x8D,0x4D,0xA2,0xA0, 0xED,0x05,0x70,0xE6,
+    0x36, 0x7F, 0xAF, 0x01, 0xAF, 0xA9, 0x46, 0x93, 0x8D, 0x4D, 0xA2, 0xA0, 0xED, 0x05, 0x70, 0xE6,
 ];
 
 #[repr(C)]
@@ -666,8 +706,7 @@ pub struct IPlugFrameVtbl {
         unsafe extern "C" fn(*mut FUnknown, *const Tuid, *mut *mut c_void) -> TResult,
     pub add_ref: unsafe extern "C" fn(*mut FUnknown) -> u32,
     pub release: unsafe extern "C" fn(*mut FUnknown) -> u32,
-    pub resize_view:
-        unsafe extern "C" fn(*mut FUnknown, *mut IPlugView, *mut ViewRect) -> TResult,
+    pub resize_view: unsafe extern "C" fn(*mut FUnknown, *mut IPlugView, *mut ViewRect) -> TResult,
 }
 
 // ── Plugin enumeration helper ─────────────────────────────────────────────────
@@ -676,17 +715,19 @@ pub struct IPlugFrameVtbl {
 ///
 /// Returns `(class_id, plugin_name)` pairs.  The class_id is passed back to
 /// `IPluginFactory::createInstance` to create the audio component.
-pub unsafe fn enumerate_classes(
-    factory: *mut IPluginFactory,
-) -> Vec<([u8; 16], String)> {
+pub unsafe fn enumerate_classes(factory: *mut IPluginFactory) -> Vec<([u8; 16], String)> {
     let count = ((*(*factory).vtbl).count_classes)(factory);
     let mut out = Vec::with_capacity(count.max(0) as usize);
 
     for i in 0..count {
         let mut info: PClassInfo = std::mem::zeroed();
         let r = ((*(*factory).vtbl).get_class_info)(factory, i, &mut info);
-        if r != K_RESULT_OK { continue; }
-        if !info.is_audio_module() { continue; }
+        if r != K_RESULT_OK {
+            continue;
+        }
+        if !info.is_audio_module() {
+            continue;
+        }
         out.push((info.cid, info.name_str().to_string()));
     }
     out
@@ -755,8 +796,7 @@ pub unsafe fn instantiate_processor(
 /// Steinberg `IBStream` IID (`FUID::toTUID()` big-endian — same convention as
 /// every other IID in this file).
 pub const IID_IBSTREAM: Tuid = [
-    0xC3,0xBF,0x6E,0xA2, 0x30,0x99,0x47,0x52,
-    0x9B,0x6B,0xF9,0x90, 0x1E,0xE3,0x3E,0x9B,
+    0xC3, 0xBF, 0x6E, 0xA2, 0x30, 0x99, 0x47, 0x52, 0x9B, 0x6B, 0xF9, 0x90, 0x1E, 0xE3, 0x3E, 0x9B,
 ];
 
 /// `IBStream::IStreamSeekMode`
@@ -770,14 +810,10 @@ pub struct IBStreamVtbl {
         unsafe extern "C" fn(*mut HostStream, *const Tuid, *mut *mut c_void) -> TResult,
     pub add_ref: unsafe extern "C" fn(*mut HostStream) -> u32,
     pub release: unsafe extern "C" fn(*mut HostStream) -> u32,
-    pub read:
-        unsafe extern "C" fn(*mut HostStream, *mut c_void, i32, *mut i32) -> TResult,
-    pub write:
-        unsafe extern "C" fn(*mut HostStream, *mut c_void, i32, *mut i32) -> TResult,
-    pub seek:
-        unsafe extern "C" fn(*mut HostStream, i64, i32, *mut i64) -> TResult,
-    pub tell:
-        unsafe extern "C" fn(*mut HostStream, *mut i64) -> TResult,
+    pub read: unsafe extern "C" fn(*mut HostStream, *mut c_void, i32, *mut i32) -> TResult,
+    pub write: unsafe extern "C" fn(*mut HostStream, *mut c_void, i32, *mut i32) -> TResult,
+    pub seek: unsafe extern "C" fn(*mut HostStream, i64, i32, *mut i64) -> TResult,
+    pub tell: unsafe extern "C" fn(*mut HostStream, *mut i64) -> TResult,
 }
 
 /// Host-side `IBStream` backed by an in-memory byte buffer.  `vtbl` MUST stay
@@ -786,13 +822,17 @@ pub struct IBStreamVtbl {
 pub struct HostStream {
     vtbl: *const IBStreamVtbl,
     data: Vec<u8>,
-    pos:  usize,
+    pos: usize,
 }
 
 unsafe extern "C" fn stream_query_interface(
-    this: *mut HostStream, iid: *const Tuid, obj: *mut *mut c_void,
+    this: *mut HostStream,
+    iid: *const Tuid,
+    obj: *mut *mut c_void,
 ) -> TResult {
-    if obj.is_null() { return -1; }
+    if obj.is_null() {
+        return -1;
+    }
     if !iid.is_null() && (*iid == IID_IBSTREAM || *iid == IID_FUNKNOWN) {
         *obj = this as *mut c_void;
         return K_RESULT_OK;
@@ -800,26 +840,38 @@ unsafe extern "C" fn stream_query_interface(
     *obj = std::ptr::null_mut();
     -1 // kNoInterface
 }
-unsafe extern "C" fn stream_add_ref(_this: *mut HostStream) -> u32 { 1 }
-unsafe extern "C" fn stream_release(_this: *mut HostStream) -> u32 { 1 }
+unsafe extern "C" fn stream_add_ref(_this: *mut HostStream) -> u32 {
+    1
+}
+unsafe extern "C" fn stream_release(_this: *mut HostStream) -> u32 {
+    1
+}
 
 unsafe extern "C" fn stream_read(
-    this: *mut HostStream, buffer: *mut c_void, num_bytes: i32, num_read: *mut i32,
+    this: *mut HostStream,
+    buffer: *mut c_void,
+    num_bytes: i32,
+    num_read: *mut i32,
 ) -> TResult {
     let s = &mut *this;
-    let want  = num_bytes.max(0) as usize;
+    let want = num_bytes.max(0) as usize;
     let avail = s.data.len().saturating_sub(s.pos);
     let n = want.min(avail);
     if n > 0 && !buffer.is_null() {
         std::ptr::copy_nonoverlapping(s.data.as_ptr().add(s.pos), buffer as *mut u8, n);
         s.pos += n;
     }
-    if !num_read.is_null() { *num_read = n as i32; }
+    if !num_read.is_null() {
+        *num_read = n as i32;
+    }
     K_RESULT_OK
 }
 
 unsafe extern "C" fn stream_write(
-    this: *mut HostStream, buffer: *mut c_void, num_bytes: i32, num_written: *mut i32,
+    this: *mut HostStream,
+    buffer: *mut c_void,
+    num_bytes: i32,
+    num_written: *mut i32,
 ) -> TResult {
     let s = &mut *this;
     let n = num_bytes.max(0) as usize;
@@ -831,12 +883,17 @@ unsafe extern "C" fn stream_write(
         std::ptr::copy_nonoverlapping(buffer as *const u8, s.data.as_mut_ptr().add(s.pos), n);
         s.pos += n;
     }
-    if !num_written.is_null() { *num_written = n as i32; }
+    if !num_written.is_null() {
+        *num_written = n as i32;
+    }
     K_RESULT_OK
 }
 
 unsafe extern "C" fn stream_seek(
-    this: *mut HostStream, pos: i64, mode: i32, result: *mut i64,
+    this: *mut HostStream,
+    pos: i64,
+    mode: i32,
+    result: *mut i64,
 ) -> TResult {
     let s = &mut *this;
     let base = match mode {
@@ -847,12 +904,16 @@ unsafe extern "C" fn stream_seek(
     };
     // Allow seeking past end (a following write() will zero-fill the gap).
     s.pos = (base + pos).max(0) as usize;
-    if !result.is_null() { *result = s.pos as i64; }
+    if !result.is_null() {
+        *result = s.pos as i64;
+    }
     K_RESULT_OK
 }
 
 unsafe extern "C" fn stream_tell(this: *mut HostStream, pos: *mut i64) -> TResult {
-    if pos.is_null() { return -1; }
+    if pos.is_null() {
+        return -1;
+    }
     *pos = (*this).pos as i64;
     K_RESULT_OK
 }
@@ -861,18 +922,26 @@ static IBSTREAM_VTBL: IBStreamVtbl = IBStreamVtbl {
     query_interface: stream_query_interface,
     add_ref: stream_add_ref,
     release: stream_release,
-    read:    stream_read,
-    write:   stream_write,
-    seek:    stream_seek,
-    tell:    stream_tell,
+    read: stream_read,
+    write: stream_write,
+    seek: stream_seek,
+    tell: stream_tell,
 };
 
 impl HostStream {
     fn empty() -> Box<Self> {
-        Box::new(HostStream { vtbl: &IBSTREAM_VTBL, data: Vec::new(), pos: 0 })
+        Box::new(HostStream {
+            vtbl: &IBSTREAM_VTBL,
+            data: Vec::new(),
+            pos: 0,
+        })
     }
     fn with_data(data: Vec<u8>) -> Box<Self> {
-        Box::new(HostStream { vtbl: &IBSTREAM_VTBL, data, pos: 0 })
+        Box::new(HostStream {
+            vtbl: &IBSTREAM_VTBL,
+            data,
+            pos: 0,
+        })
     }
 }
 
@@ -887,9 +956,15 @@ pub unsafe fn read_component_state(comp: *mut IComponent) -> Option<Vec<u8>> {
     let mut stream = HostStream::empty();
     let ib = stream.as_mut() as *mut HostStream as *mut c_void;
     let r = ((*(*comp).vtbl).get_state)(comp, ib);
-    if r != K_RESULT_OK { return None; }
+    if r != K_RESULT_OK {
+        return None;
+    }
     let data = std::mem::take(&mut stream.data);
-    if data.is_empty() { None } else { Some(data) }
+    if data.is_empty() {
+        None
+    } else {
+        Some(data)
+    }
 }
 
 /// Restore a previously-saved blob into a VST3 component

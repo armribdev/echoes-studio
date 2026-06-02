@@ -26,9 +26,9 @@
 use crate::audio_graph::buffer::AudioBuffer;
 use crate::audio_graph::node::{AudioNode, NodeId, PrepareContext, TransportInfo};
 use crate::plugin_system::capabilities::DeviceCapabilities;
+use crate::plugin_system::lifecycle::LifecycleState;
 use crate::plugin_system::parameter::ParameterMap;
 use crate::plugin_system::state::DeviceState;
-use crate::plugin_system::lifecycle::LifecycleState;
 
 // ── Device info ───────────────────────────────────────────────────────────────
 
@@ -163,10 +163,18 @@ impl PassThroughDevice {
 }
 
 impl AudioNode for PassThroughDevice {
-    fn node_id(&self) -> NodeId { self.node_id }
-    fn label(&self) -> &str { "PassThrough" }
-    fn num_input_ports(&self) -> usize { 1 }
-    fn num_output_ports(&self) -> usize { 1 }
+    fn node_id(&self) -> NodeId {
+        self.node_id
+    }
+    fn label(&self) -> &str {
+        "PassThrough"
+    }
+    fn num_input_ports(&self) -> usize {
+        1
+    }
+    fn num_output_ports(&self) -> usize {
+        1
+    }
 
     fn prepare(&mut self, ctx: PrepareContext) {
         self.num_channels = ctx.num_channels;
@@ -185,10 +193,18 @@ impl AudioNode for PassThroughDevice {
 }
 
 impl Device for PassThroughDevice {
-    fn device_id(&self) -> &str { &self.info.device_id }
-    fn info(&self) -> &DeviceInfo { &self.info }
-    fn parameters(&self) -> &ParameterMap { &self.params }
-    fn parameters_mut(&mut self) -> &mut ParameterMap { &mut self.params }
+    fn device_id(&self) -> &str {
+        &self.info.device_id
+    }
+    fn info(&self) -> &DeviceInfo {
+        &self.info
+    }
+    fn parameters(&self) -> &ParameterMap {
+        &self.params
+    }
+    fn parameters_mut(&mut self) -> &mut ParameterMap {
+        &mut self.params
+    }
 
     fn save_state(&self) -> DeviceState {
         DeviceState::empty(&self.info.device_id)
@@ -196,8 +212,16 @@ impl Device for PassThroughDevice {
 
     fn load_state(&mut self, _state: &DeviceState) {}
 
-    fn lifecycle_state(&self) -> LifecycleState { self.lifecycle }
-    fn suspend(&mut self) { self.lifecycle = LifecycleState::Suspended; }
-    fn resume(&mut self) { self.lifecycle = LifecycleState::Running; }
-    fn destroy(&mut self) { self.lifecycle = LifecycleState::Destroyed; }
+    fn lifecycle_state(&self) -> LifecycleState {
+        self.lifecycle
+    }
+    fn suspend(&mut self) {
+        self.lifecycle = LifecycleState::Suspended;
+    }
+    fn resume(&mut self) {
+        self.lifecycle = LifecycleState::Running;
+    }
+    fn destroy(&mut self) {
+        self.lifecycle = LifecycleState::Destroyed;
+    }
 }

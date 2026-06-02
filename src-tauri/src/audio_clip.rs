@@ -5,13 +5,8 @@ use std::path::Path;
 use std::sync::Arc;
 
 use symphonia::core::{
-    audio::SampleBuffer,
-    codecs::DecoderOptions,
-    errors::Error as SymphoniaError,
-    formats::FormatOptions,
-    io::MediaSourceStream,
-    meta::MetadataOptions,
-    probe::Hint,
+    audio::SampleBuffer, codecs::DecoderOptions, errors::Error as SymphoniaError,
+    formats::FormatOptions, io::MediaSourceStream, meta::MetadataOptions, probe::Hint,
 };
 
 pub struct AudioClip {
@@ -85,11 +80,7 @@ impl AudioClip {
             .codec_params
             .sample_rate
             .ok_or("Unknown sample rate")?;
-        let channels = track
-            .codec_params
-            .channels
-            .map(|c| c.count())
-            .unwrap_or(1);
+        let channels = track.codec_params.channels.map(|c| c.count()).unwrap_or(1);
 
         let mut decoder = symphonia::default::get_codecs()
             .make(&track.codec_params, &DecoderOptions::default())?;
@@ -117,8 +108,7 @@ impl AudioClip {
                 Err(e) => return Err(Box::new(e)),
             };
 
-            let mut buf =
-                SampleBuffer::<f32>::new(decoded.capacity() as u64, *decoded.spec());
+            let mut buf = SampleBuffer::<f32>::new(decoded.capacity() as u64, *decoded.spec());
             buf.copy_interleaved_ref(decoded);
 
             // Downmix to mono by averaging channels

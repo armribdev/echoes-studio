@@ -51,11 +51,21 @@ impl AuWrapperNode {
 }
 
 impl AudioNode for AuWrapperNode {
-    fn node_id(&self) -> NodeId { self.node_id }
-    fn label(&self) -> &str { "AuWrapperNode" }
-    fn num_input_ports(&self) -> usize { 1 }
-    fn num_output_ports(&self) -> usize { 1 }
-    fn prepare(&mut self, _ctx: PrepareContext) { self.lifecycle = LifecycleState::Running; }
+    fn node_id(&self) -> NodeId {
+        self.node_id
+    }
+    fn label(&self) -> &str {
+        "AuWrapperNode"
+    }
+    fn num_input_ports(&self) -> usize {
+        1
+    }
+    fn num_output_ports(&self) -> usize {
+        1
+    }
+    fn prepare(&mut self, _ctx: PrepareContext) {
+        self.lifecycle = LifecycleState::Running;
+    }
     fn process(&mut self, inputs: &[&AudioBuffer], outputs: &mut [AudioBuffer], _: &TransportInfo) {
         if !inputs.is_empty() && !outputs.is_empty() {
             outputs[0].copy_from(inputs[0]);
@@ -65,14 +75,32 @@ impl AudioNode for AuWrapperNode {
 }
 
 impl Device for AuWrapperNode {
-    fn device_id(&self) -> &str { &self.device_id }
-    fn info(&self) -> &DeviceInfo { &self.info }
-    fn parameters(&self) -> &ParameterMap { &self.params }
-    fn parameters_mut(&mut self) -> &mut ParameterMap { &mut self.params }
-    fn save_state(&self) -> DeviceState { DeviceState::empty(&self.device_id) }
+    fn device_id(&self) -> &str {
+        &self.device_id
+    }
+    fn info(&self) -> &DeviceInfo {
+        &self.info
+    }
+    fn parameters(&self) -> &ParameterMap {
+        &self.params
+    }
+    fn parameters_mut(&mut self) -> &mut ParameterMap {
+        &mut self.params
+    }
+    fn save_state(&self) -> DeviceState {
+        DeviceState::empty(&self.device_id)
+    }
     fn load_state(&mut self, _state: &DeviceState) {}
-    fn lifecycle_state(&self) -> LifecycleState { self.lifecycle }
-    fn suspend(&mut self) { self.lifecycle = LifecycleState::Suspended; }
-    fn resume(&mut self) { self.lifecycle = LifecycleState::Running; }
-    fn destroy(&mut self) { self.lifecycle = LifecycleState::Destroyed; }
+    fn lifecycle_state(&self) -> LifecycleState {
+        self.lifecycle
+    }
+    fn suspend(&mut self) {
+        self.lifecycle = LifecycleState::Suspended;
+    }
+    fn resume(&mut self) {
+        self.lifecycle = LifecycleState::Running;
+    }
+    fn destroy(&mut self) {
+        self.lifecycle = LifecycleState::Destroyed;
+    }
 }

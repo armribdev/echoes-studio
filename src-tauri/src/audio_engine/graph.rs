@@ -19,12 +19,7 @@
 use std::collections::HashMap;
 
 use crate::audio_graph::{
-    AudioGraph,
-    GraphCompiler,
-    GraphScheduler,
-    CompileConfig,
-    LiveParams,
-    MeterCell,
+    AudioGraph, CompileConfig, GraphCompiler, GraphScheduler, LiveParams, MeterCell,
 };
 use crate::plugin_system::PluginHost;
 use crate::project::AppProject;
@@ -60,7 +55,8 @@ impl AudioGraphCompiler {
         live_params: &LiveParams,
         plugin_host: &mut PluginHost,
     ) -> (GraphScheduler, HashMap<String, MeterCell>, u64) {
-        let duration_secs = project.tracks
+        let duration_secs = project
+            .tracks
             .iter()
             .flat_map(|t| t.clips.iter())
             .map(|c| c.end)
@@ -88,7 +84,11 @@ impl AudioGraphCompiler {
             }
             Err(e) => {
                 eprintln!("[audio_graph] Compile error: {} — using empty graph", e);
-                (GraphScheduler::empty(config.sample_rate), HashMap::new(), duration_samples)
+                (
+                    GraphScheduler::empty(config.sample_rate),
+                    HashMap::new(),
+                    duration_samples,
+                )
             }
         }
     }

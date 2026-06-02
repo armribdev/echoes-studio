@@ -8,7 +8,9 @@ use crate::plugin_system::wrapper::DeviceFormat;
 pub struct Vst3Host;
 
 impl Vst3Host {
-    pub fn new() -> Self { Vst3Host }
+    pub fn new() -> Self {
+        Vst3Host
+    }
 
     /// Scan all standard VST3 directories and register found plugins.
     pub fn scan(&self, registry: &mut PluginRegistry) {
@@ -55,19 +57,21 @@ impl Vst3Host {
             // Encode CID into the plugin_id so no extra storage is needed.
             // Format: "vst3:<32-hex-chars>"
             let plugin_id = format!("vst3:{}", hex_cid(&cid));
-            if registry.get(&plugin_id).is_some() { continue; }
+            if registry.get(&plugin_id).is_some() {
+                continue;
+            }
 
             registry.add(PluginManifest {
-                id:   plugin_id,
+                id: plugin_id,
                 name: name.clone(),
                 vendor: String::new(),
                 version: String::new(),
                 format: DeviceFormat::Vst3,
-                path:  Some(dll.clone()),
+                path: Some(dll.clone()),
                 categories: vec!["VST3".into()],
-                num_audio_inputs:  2,
+                num_audio_inputs: 2,
                 num_audio_outputs: 2,
-                has_midi_input:  false,
+                has_midi_input: false,
                 has_midi_output: false,
                 // No bus introspection at scan yet; a lazy `getBusInfo` probe
                 // will populate this (Phase 5d follow-up).
@@ -83,7 +87,9 @@ impl Vst3Host {
 }
 
 impl Default for Vst3Host {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 // ── Path helpers ───────────────────────────────────────────────────────────────
@@ -97,7 +103,12 @@ fn vst3_search_paths() -> Vec<PathBuf> {
         paths.push(PathBuf::from(pf).join("Common Files").join("VST3"));
     }
     if let Ok(local) = std::env::var("LOCALAPPDATA") {
-        paths.push(PathBuf::from(local).join("Programs").join("Common").join("VST3"));
+        paths.push(
+            PathBuf::from(local)
+                .join("Programs")
+                .join("Common")
+                .join("VST3"),
+        );
     }
     if let Ok(appdata) = std::env::var("APPDATA") {
         paths.push(PathBuf::from(appdata).join("VST3"));
@@ -117,7 +128,11 @@ fn resolve_vst3_dll(bundle: &Path) -> Option<PathBuf> {
     if bundle.is_file() {
         return Some(bundle.to_path_buf());
     }
-    let arch = if cfg!(target_arch = "x86_64") { "x86_64-win" } else { "x86-win" };
+    let arch = if cfg!(target_arch = "x86_64") {
+        "x86_64-win"
+    } else {
+        "x86-win"
+    };
     let contents = bundle.join("Contents").join(arch);
     if contents.exists() {
         for entry in std::fs::read_dir(&contents).ok()?.flatten() {
@@ -140,7 +155,9 @@ pub fn hex_cid(cid: &[u8; 16]) -> String {
 /// Decode a `vst3:<32hex>` plugin_id back to a 16-byte CID.
 pub fn decode_plugin_id(plugin_id: &str) -> Option<[u8; 16]> {
     let hex = plugin_id.strip_prefix("vst3:")?;
-    if hex.len() != 32 { return None; }
+    if hex.len() != 32 {
+        return None;
+    }
     let mut cid = [0u8; 16];
     for (i, b) in cid.iter_mut().enumerate() {
         *b = u8::from_str_radix(&hex[i * 2..i * 2 + 2], 16).ok()?;

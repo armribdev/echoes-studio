@@ -13,15 +13,26 @@ pub struct BusNode {
 
 impl BusNode {
     pub fn new(id: NodeId, num_inputs: usize) -> Self {
-        BusNode { id, num_inputs: num_inputs.max(1) }
+        BusNode {
+            id,
+            num_inputs: num_inputs.max(1),
+        }
     }
 }
 
 impl AudioNode for BusNode {
-    fn node_id(&self) -> NodeId { self.id }
-    fn label(&self) -> &str { "BusNode" }
-    fn num_input_ports(&self) -> usize { self.num_inputs }
-    fn num_output_ports(&self) -> usize { 1 }
+    fn node_id(&self) -> NodeId {
+        self.id
+    }
+    fn label(&self) -> &str {
+        "BusNode"
+    }
+    fn num_input_ports(&self) -> usize {
+        self.num_inputs
+    }
+    fn num_output_ports(&self) -> usize {
+        1
+    }
 
     fn prepare(&mut self, _ctx: PrepareContext) {}
 

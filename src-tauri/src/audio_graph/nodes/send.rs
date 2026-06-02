@@ -20,10 +20,18 @@ impl SendNode {
 }
 
 impl AudioNode for SendNode {
-    fn node_id(&self) -> NodeId { self.id }
-    fn label(&self) -> &str { "SendNode" }
-    fn num_input_ports(&self) -> usize { 1 }
-    fn num_output_ports(&self) -> usize { 1 }
+    fn node_id(&self) -> NodeId {
+        self.id
+    }
+    fn label(&self) -> &str {
+        "SendNode"
+    }
+    fn num_input_ports(&self) -> usize {
+        1
+    }
+    fn num_output_ports(&self) -> usize {
+        1
+    }
 
     fn prepare(&mut self, _ctx: PrepareContext) {}
 

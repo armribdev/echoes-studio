@@ -160,7 +160,9 @@ impl LiveParams {
             return Arc::clone(existing);
         }
         let cells = TrackParams::new(volume, pan, muted, solo);
-        inner.tracks.insert(track_id.to_string(), Arc::clone(&cells));
+        inner
+            .tracks
+            .insert(track_id.to_string(), Arc::clone(&cells));
         cells
     }
 
@@ -180,11 +182,7 @@ impl LiveParams {
     /// Return the hot-parameter block for `effect_id`, creating it seeded with
     /// `values` (one cell per natural-unit parameter) if absent.  Called by the
     /// compiler at `build_node` (ADR-009).
-    pub fn get_or_init_effect_block(
-        &self,
-        effect_id: &str,
-        values: &[f32],
-    ) -> Arc<ParameterBlock> {
+    pub fn get_or_init_effect_block(&self, effect_id: &str, values: &[f32]) -> Arc<ParameterBlock> {
         let mut inner = match self.inner.lock() {
             Ok(g) => g,
             Err(p) => p.into_inner(),
@@ -200,7 +198,9 @@ impl LiveParams {
             return Arc::clone(existing);
         }
         let block = ParameterBlock::new(values);
-        inner.effect_params.insert(effect_id.to_string(), Arc::clone(&block));
+        inner
+            .effect_params
+            .insert(effect_id.to_string(), Arc::clone(&block));
         block
     }
 
@@ -366,21 +366,27 @@ impl LiveParams {
 
         let live_track_ids: std::collections::HashSet<&str> =
             project.tracks.iter().map(|t| t.id.as_str()).collect();
-        inner.tracks.retain(|id, _| live_track_ids.contains(id.as_str()));
+        inner
+            .tracks
+            .retain(|id, _| live_track_ids.contains(id.as_str()));
 
         let live_mod_ids: std::collections::HashSet<&str> = project
             .tracks
             .iter()
             .flat_map(|t| t.modulators.iter().map(|m| m.id.as_str()))
             .collect();
-        inner.modulators.retain(|id, _| live_mod_ids.contains(id.as_str()));
+        inner
+            .modulators
+            .retain(|id, _| live_mod_ids.contains(id.as_str()));
 
         let live_route_ids: std::collections::HashSet<&str> = project
             .tracks
             .iter()
             .flat_map(|t| t.mod_routes.iter().map(|r| r.id.as_str()))
             .collect();
-        inner.routes.retain(|id, _| live_route_ids.contains(id.as_str()));
+        inner
+            .routes
+            .retain(|id, _| live_route_ids.contains(id.as_str()));
 
         // Drop hot-parameter blocks whose effect is no longer in the project.
         let live_effect_ids: std::collections::HashSet<&str> = project

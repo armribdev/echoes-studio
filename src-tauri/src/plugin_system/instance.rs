@@ -43,8 +43,8 @@
 //! introduce GUI calls and must coordinate via the lifecycle state machine.
 
 use std::ptr::NonNull;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::Arc;
 
 use crate::plugin_formats::clap::ffi::{ClapHost, ClapLibrary, ClapPlugin};
 use crate::plugin_formats::vst3::ffi::{IAudioProcessor, IComponent, Vst3Library};
@@ -73,7 +73,7 @@ pub enum NativeHandle {
     Vst3 {
         component: NonNull<IComponent>,
         processor: NonNull<IAudioProcessor>,
-        _lib:      Arc<Vst3Library>,
+        _lib: Arc<Vst3Library>,
     },
 
     /// Live CLAP plugin instance.  `_host` is heap-stable for the lifetime
@@ -81,8 +81,8 @@ pub enum NativeHandle {
     /// must outlive the plugin).
     Clap {
         plugin: *const ClapPlugin,
-        _host:  Box<ClapHost>,
-        _lib:   Arc<ClapLibrary>,
+        _host: Box<ClapHost>,
+        _lib: Arc<ClapLibrary>,
     },
 }
 
@@ -133,16 +133,13 @@ pub struct PluginInstance {
 
 impl PluginInstance {
     /// Construct an internal (PassThrough) instance with no FFI handle.
-    pub fn new_internal(
-        device_id: impl Into<String>,
-        name:      impl Into<String>,
-    ) -> Arc<Self> {
+    pub fn new_internal(device_id: impl Into<String>, name: impl Into<String>) -> Arc<Self> {
         Arc::new(PluginInstance {
             device_id: device_id.into(),
-            name:      name.into(),
-            vendor:    "Internal".to_string(),
-            format:    DeviceFormat::Internal,
-            handle:    NativeHandle::Internal,
+            name: name.into(),
+            vendor: "Internal".to_string(),
+            format: DeviceFormat::Internal,
+            handle: NativeHandle::Internal,
             lifecycle: AtomicU8::new(encode_lifecycle(LifecycleState::Running)),
             param_queue: ParamQueue::with_capacity(PARAM_QUEUE_CAPACITY),
         })
@@ -154,17 +151,21 @@ impl PluginInstance {
     /// eventually frees it.
     pub fn new_vst3(
         device_id: impl Into<String>,
-        name:      impl Into<String>,
+        name: impl Into<String>,
         component: NonNull<IComponent>,
         processor: NonNull<IAudioProcessor>,
-        lib:       Arc<Vst3Library>,
+        lib: Arc<Vst3Library>,
     ) -> Arc<Self> {
         Arc::new(PluginInstance {
             device_id: device_id.into(),
-            name:      name.into(),
-            vendor:    String::new(),
-            format:    DeviceFormat::Vst3,
-            handle:    NativeHandle::Vst3 { component, processor, _lib: lib },
+            name: name.into(),
+            vendor: String::new(),
+            format: DeviceFormat::Vst3,
+            handle: NativeHandle::Vst3 {
+                component,
+                processor,
+                _lib: lib,
+            },
             lifecycle: AtomicU8::new(encode_lifecycle(LifecycleState::Created)),
             param_queue: ParamQueue::with_capacity(PARAM_QUEUE_CAPACITY),
         })
@@ -173,18 +174,22 @@ impl PluginInstance {
     /// Construct a CLAP instance from an already-created plugin pointer.
     pub fn new_clap(
         device_id: impl Into<String>,
-        name:      impl Into<String>,
-        vendor:    impl Into<String>,
-        plugin:    *const ClapPlugin,
-        host:      Box<ClapHost>,
-        lib:       Arc<ClapLibrary>,
+        name: impl Into<String>,
+        vendor: impl Into<String>,
+        plugin: *const ClapPlugin,
+        host: Box<ClapHost>,
+        lib: Arc<ClapLibrary>,
     ) -> Arc<Self> {
         Arc::new(PluginInstance {
             device_id: device_id.into(),
-            name:      name.into(),
-            vendor:    vendor.into(),
-            format:    DeviceFormat::Clap,
-            handle:    NativeHandle::Clap { plugin, _host: host, _lib: lib },
+            name: name.into(),
+            vendor: vendor.into(),
+            format: DeviceFormat::Clap,
+            handle: NativeHandle::Clap {
+                plugin,
+                _host: host,
+                _lib: lib,
+            },
             lifecycle: AtomicU8::new(encode_lifecycle(LifecycleState::Created)),
             param_queue: ParamQueue::with_capacity(PARAM_QUEUE_CAPACITY),
         })
@@ -258,7 +263,11 @@ impl PluginInstance {
     /// Convenience: extract VST3 handles if this instance is VST3.
     pub fn vst3_handles(&self) -> Option<(NonNull<IComponent>, NonNull<IAudioProcessor>)> {
         match &self.handle {
-            NativeHandle::Vst3 { component, processor, .. } => Some((*component, *processor)),
+            NativeHandle::Vst3 {
+                component,
+                processor,
+                ..
+            } => Some((*component, *processor)),
             _ => None,
         }
     }
@@ -275,7 +284,8 @@ impl PluginInstance {
     //    until Phase 2b unifies the source of truth) ──────────────────────────
 
     pub fn set_lifecycle(&self, state: LifecycleState) {
-        self.lifecycle.store(encode_lifecycle(state), Ordering::Release);
+        self.lifecycle
+            .store(encode_lifecycle(state), Ordering::Release);
     }
 
     pub fn lifecycle(&self) -> LifecycleState {
@@ -287,14 +297,14 @@ impl PluginInstance {
     /// `DeviceInfo`.  Caller may override defaults (e.g. channel counts).
     pub fn legacy_device_info(&self) -> DeviceInfo {
         DeviceInfo {
-            device_id:       self.device_id.clone(),
-            name:            self.name.clone(),
-            vendor:          self.vendor.clone(),
-            version:         String::new(),
-            format:          self.format,
-            num_inputs:      2,
-            num_outputs:     2,
-            has_midi_input:  false,
+            device_id: self.device_id.clone(),
+            name: self.name.clone(),
+            vendor: self.vendor.clone(),
+            version: String::new(),
+            format: self.format,
+            num_inputs: 2,
+            num_outputs: 2,
+            has_midi_input: false,
             has_midi_output: false,
         }
     }
@@ -316,7 +326,11 @@ impl Drop for PluginInstance {
         match &self.handle {
             NativeHandle::Internal => {}
 
-            NativeHandle::Vst3 { component, processor, .. } => {
+            NativeHandle::Vst3 {
+                component,
+                processor,
+                ..
+            } => {
                 let proc = processor.as_ptr();
                 let comp = component.as_ptr();
                 unsafe {
@@ -351,35 +365,35 @@ impl Drop for PluginInstance {
 
 // ── Lifecycle encoding ────────────────────────────────────────────────────────
 
-const LC_CREATED:     u8 = 0;
-const LC_LOADED:      u8 = 1;
+const LC_CREATED: u8 = 0;
+const LC_LOADED: u8 = 1;
 const LC_INITIALIZED: u8 = 2;
-const LC_RUNNING:     u8 = 3;
-const LC_SUSPENDED:   u8 = 4;
-const LC_DESTROYED:   u8 = 5;
-const LC_ERROR:       u8 = 6;
+const LC_RUNNING: u8 = 3;
+const LC_SUSPENDED: u8 = 4;
+const LC_DESTROYED: u8 = 5;
+const LC_ERROR: u8 = 6;
 
 fn encode_lifecycle(state: LifecycleState) -> u8 {
     match state {
-        LifecycleState::Created     => LC_CREATED,
-        LifecycleState::Loaded      => LC_LOADED,
+        LifecycleState::Created => LC_CREATED,
+        LifecycleState::Loaded => LC_LOADED,
         LifecycleState::Initialized => LC_INITIALIZED,
-        LifecycleState::Running     => LC_RUNNING,
-        LifecycleState::Suspended   => LC_SUSPENDED,
-        LifecycleState::Destroyed   => LC_DESTROYED,
-        LifecycleState::Error       => LC_ERROR,
+        LifecycleState::Running => LC_RUNNING,
+        LifecycleState::Suspended => LC_SUSPENDED,
+        LifecycleState::Destroyed => LC_DESTROYED,
+        LifecycleState::Error => LC_ERROR,
     }
 }
 
 fn decode_lifecycle(code: u8) -> LifecycleState {
     match code {
-        LC_LOADED      => LifecycleState::Loaded,
+        LC_LOADED => LifecycleState::Loaded,
         LC_INITIALIZED => LifecycleState::Initialized,
-        LC_RUNNING     => LifecycleState::Running,
-        LC_SUSPENDED   => LifecycleState::Suspended,
-        LC_DESTROYED   => LifecycleState::Destroyed,
-        LC_ERROR       => LifecycleState::Error,
-        _              => LifecycleState::Created,
+        LC_RUNNING => LifecycleState::Running,
+        LC_SUSPENDED => LifecycleState::Suspended,
+        LC_DESTROYED => LifecycleState::Destroyed,
+        LC_ERROR => LifecycleState::Error,
+        _ => LifecycleState::Created,
     }
 }
 

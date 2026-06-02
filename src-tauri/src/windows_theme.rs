@@ -30,7 +30,8 @@ pub fn force_dark_popups() {
         if let Some(proc) = set_preferred {
             let set_preferred: SetPreferredAppMode = std::mem::transmute(proc);
             set_preferred(PreferredAppMode::ForceDark);
-        } else if let Some(proc) = GetProcAddress(uxtheme, UXTHEME_ALLOWDARKMODEFORAPP as *const u8) {
+        } else if let Some(proc) = GetProcAddress(uxtheme, UXTHEME_ALLOWDARKMODEFORAPP as *const u8)
+        {
             let allow_dark: AllowDarkModeForApp = std::mem::transmute(proc);
             allow_dark(true);
         }
@@ -42,7 +43,10 @@ pub fn force_dark_popups() {
 
         // Rafraîchit l'état des couleurs immersives (comme tao).
         const UXTHEME_REFRESHIMMERSIVECOLORPOLICYSTATE: usize = 104;
-        if let Some(proc) = GetProcAddress(uxtheme, UXTHEME_REFRESHIMMERSIVECOLORPOLICYSTATE as *const u8) {
+        if let Some(proc) = GetProcAddress(
+            uxtheme,
+            UXTHEME_REFRESHIMMERSIVECOLORPOLICYSTATE as *const u8,
+        ) {
             type RefreshImmersiveColorPolicyState = unsafe extern "system" fn();
             let refresh: RefreshImmersiveColorPolicyState = std::mem::transmute(proc);
             refresh();

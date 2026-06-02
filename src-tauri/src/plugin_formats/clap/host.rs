@@ -8,7 +8,9 @@ use crate::plugin_system::wrapper::DeviceFormat;
 pub struct ClapHost;
 
 impl ClapHost {
-    pub fn new() -> Self { ClapHost }
+    pub fn new() -> Self {
+        ClapHost
+    }
 
     pub fn scan(&self, registry: &mut PluginRegistry) {
         for dir in clap_search_paths() {
@@ -25,7 +27,10 @@ impl ClapHost {
         };
         for entry in entries.flatten() {
             let path = entry.path();
-            if path.extension().map_or(false, |e| e.eq_ignore_ascii_case("clap")) {
+            if path
+                .extension()
+                .map_or(false, |e| e.eq_ignore_ascii_case("clap"))
+            {
                 self.register_clap(&path, registry);
             }
         }
@@ -48,34 +53,40 @@ impl ClapHost {
         let factory_ptr = unsafe {
             ((*entry).get_factory)(CLAP_PLUGIN_FACTORY_ID.as_ptr() as *const std::ffi::c_char)
         };
-        if factory_ptr.is_null() { return; }
+        if factory_ptr.is_null() {
+            return;
+        }
 
         let factory = factory_ptr as *const crate::plugin_formats::clap::ffi::ClapPluginFactory;
         let count = unsafe { ((*factory).get_plugin_count)(factory) };
 
         for i in 0..count {
             let desc = unsafe { ((*factory).get_plugin_descriptor)(factory, i) };
-            if desc.is_null() { continue; }
+            if desc.is_null() {
+                continue;
+            }
             let desc = unsafe { &*desc };
 
-            let clap_id   = desc.id_str().to_string();
-            let name      = desc.name_str().to_string();
-            let vendor    = desc.vendor_str().to_string();
+            let clap_id = desc.id_str().to_string();
+            let name = desc.name_str().to_string();
+            let vendor = desc.vendor_str().to_string();
             let plugin_id = format!("clap:{clap_id}");
 
-            if registry.get(&plugin_id).is_some() { continue; }
+            if registry.get(&plugin_id).is_some() {
+                continue;
+            }
 
             registry.add(PluginManifest {
-                id:   plugin_id,
+                id: plugin_id,
                 name,
                 vendor,
-                version:  String::new(),
-                format:   DeviceFormat::Clap,
-                path:     Some(dll_path.to_path_buf()),
+                version: String::new(),
+                format: DeviceFormat::Clap,
+                path: Some(dll_path.to_path_buf()),
                 categories: vec!["CLAP".into()],
-                num_audio_inputs:  2,
+                num_audio_inputs: 2,
                 num_audio_outputs: 2,
-                has_midi_input:  false,
+                has_midi_input: false,
                 has_midi_output: false,
                 // No bus introspection at scan yet (descriptor-only); a lazy
                 // `clap.audio-ports` probe will populate this (Phase 5d follow-up).
@@ -86,7 +97,9 @@ impl ClapHost {
 }
 
 impl Default for ClapHost {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 fn clap_search_paths() -> Vec<PathBuf> {
@@ -95,7 +108,12 @@ fn clap_search_paths() -> Vec<PathBuf> {
         paths.push(PathBuf::from(pf).join("Common Files").join("CLAP"));
     }
     if let Ok(local) = std::env::var("LOCALAPPDATA") {
-        paths.push(PathBuf::from(local).join("Programs").join("Common").join("CLAP"));
+        paths.push(
+            PathBuf::from(local)
+                .join("Programs")
+                .join("Common")
+                .join("CLAP"),
+        );
     }
     #[cfg(target_os = "macos")]
     {

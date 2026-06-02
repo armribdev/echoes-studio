@@ -259,7 +259,9 @@ impl GraphScheduler {
             .iter()
             .map(|step| {
                 let n = step.num_outputs.max(1); // at least one slot even for sinks
-                (0..n).map(|_| AudioBuffer::new(num_channels, max_block)).collect()
+                (0..n)
+                    .map(|_| AudioBuffer::new(num_channels, max_block))
+                    .collect()
             })
             .collect();
 
@@ -380,11 +382,7 @@ impl GraphScheduler {
     ///
     /// After this returns, `interleaved_output` contains the rendered audio
     /// in `[L0, R0, L1, R1, …]` interleaved format.
-    pub fn process_block(
-        &mut self,
-        transport: &TransportInfo,
-        interleaved_output: &mut [f32],
-    ) {
+    pub fn process_block(&mut self, transport: &TransportInfo, interleaved_output: &mut [f32]) {
         // Run every level in topological order.
         self.run_levels(transport);
 
@@ -575,10 +573,8 @@ unsafe fn process_one_step(worker_id: usize, step_idx: usize, ws: Workspace) {
     }
 
     // ── Build &[&AudioBuffer] from pointer scratch ─────────────────────────────
-    let inputs: &[&AudioBuffer] = std::slice::from_raw_parts(
-        scratch.as_ptr() as *const &AudioBuffer,
-        num_inputs,
-    );
+    let inputs: &[&AudioBuffer] =
+        std::slice::from_raw_parts(scratch.as_ptr() as *const &AudioBuffer, num_inputs);
 
     // ── Clear output buffers before processing ────────────────────────────────
     let outputs = &mut *ws.output_buffers_ptr.add(step_idx);
@@ -596,18 +592,17 @@ unsafe fn process_one_step(worker_id: usize, step_idx: usize, ws: Workspace) {
     processor.reset_modulation();
     for action in actions {
         let src_bufs = &*ws.output_buffers_ptr.add(action.source_step);
-        let mod_signal: f32 = if action.source_port < src_bufs.len()
-            && src_bufs[action.source_port].num_frames > 0
-        {
-            // PROVISIONAL (Phase 3): block-rate modulation — samples the
-            // first sample of the modulator's output buffer per block.  Up to
-            // one block of latency; not suitable for audio-rate modulation
-            // (FM, ring-mod).  Replace with sample-accurate interleaved
-            // dispatch when needed.
-            src_bufs[action.source_port].channel(0)[0]
-        } else {
-            0.0
-        };
+        let mod_signal: f32 =
+            if action.source_port < src_bufs.len() && src_bufs[action.source_port].num_frames > 0 {
+                // PROVISIONAL (Phase 3): block-rate modulation — samples the
+                // first sample of the modulator's output buffer per block.  Up to
+                // one block of latency; not suitable for audio-rate modulation
+                // (FM, ring-mod).  Replace with sample-accurate interleaved
+                // dispatch when needed.
+                src_bufs[action.source_port].channel(0)[0]
+            } else {
+                0.0
+            };
         let depth = match &action.depth_cells {
             Some(cells) => cells.depth(),
             None => action.static_depth,
@@ -654,9 +649,7 @@ mod tests {
     use super::*;
     use crate::audio_graph::buffer::AudioBuffer;
     use crate::audio_graph::compiler::{CompiledGraph, GraphCompiler};
-    use crate::audio_graph::execution_plan::{
-        ExecutionPlan, ExecutionStep, InputConnection,
-    };
+    use crate::audio_graph::execution_plan::{ExecutionPlan, ExecutionStep, InputConnection};
     use crate::audio_graph::modulation::ModulationMap;
     use crate::audio_graph::node::{AudioNode, NodeId, PrepareContext, TransportInfo};
     use std::collections::HashMap;
@@ -669,13 +662,22 @@ mod tests {
     }
     impl ImpulseSource {
         fn new(id: u64, value: f32) -> Self {
-            ImpulseSource { id: NodeId(id), pending: value }
+            ImpulseSource {
+                id: NodeId(id),
+                pending: value,
+            }
         }
     }
     impl AudioNode for ImpulseSource {
-        fn node_id(&self) -> NodeId { self.id }
-        fn num_input_ports(&self) -> usize { 0 }
-        fn num_output_ports(&self) -> usize { 1 }
+        fn node_id(&self) -> NodeId {
+            self.id
+        }
+        fn num_input_ports(&self) -> usize {
+            0
+        }
+        fn num_output_ports(&self) -> usize {
+            1
+        }
         fn prepare(&mut self, _ctx: PrepareContext) {}
         fn process(
             &mut self,
@@ -704,13 +706,22 @@ mod tests {
     }
     impl LatencyReporter {
         fn new(id: u64, latency: u32) -> Self {
-            LatencyReporter { id: NodeId(id), latency }
+            LatencyReporter {
+                id: NodeId(id),
+                latency,
+            }
         }
     }
     impl AudioNode for LatencyReporter {
-        fn node_id(&self) -> NodeId { self.id }
-        fn num_input_ports(&self) -> usize { 1 }
-        fn num_output_ports(&self) -> usize { 1 }
+        fn node_id(&self) -> NodeId {
+            self.id
+        }
+        fn num_input_ports(&self) -> usize {
+            1
+        }
+        fn num_output_ports(&self) -> usize {
+            1
+        }
         fn prepare(&mut self, _ctx: PrepareContext) {}
         fn process(
             &mut self,
@@ -721,16 +732,30 @@ mod tests {
             outputs[0].copy_from(inputs[0]);
         }
         fn reset(&mut self) {}
-        fn latency_samples(&self) -> u32 { self.latency }
+        fn latency_samples(&self) -> u32 {
+            self.latency
+        }
     }
 
     /// Two-input summing node — joins parallel paths so PDC must align them.
-    struct Sum2 { id: NodeId }
-    impl Sum2 { fn new(id: u64) -> Self { Sum2 { id: NodeId(id) } } }
+    struct Sum2 {
+        id: NodeId,
+    }
+    impl Sum2 {
+        fn new(id: u64) -> Self {
+            Sum2 { id: NodeId(id) }
+        }
+    }
     impl AudioNode for Sum2 {
-        fn node_id(&self) -> NodeId { self.id }
-        fn num_input_ports(&self) -> usize { 2 }
-        fn num_output_ports(&self) -> usize { 1 }
+        fn node_id(&self) -> NodeId {
+            self.id
+        }
+        fn num_input_ports(&self) -> usize {
+            2
+        }
+        fn num_output_ports(&self) -> usize {
+            1
+        }
         fn prepare(&mut self, _ctx: PrepareContext) {}
         fn process(
             &mut self,
@@ -779,8 +804,16 @@ mod tests {
             ExecutionStep {
                 node_id: NodeId(4),
                 input_connections: vec![
-                    Some(InputConnection { src_step: 2, src_port: 0, delay_samples: 0 }),
-                    Some(InputConnection { src_step: 1, src_port: 0, delay_samples: 0 }),
+                    Some(InputConnection {
+                        src_step: 2,
+                        src_port: 0,
+                        delay_samples: 0,
+                    }),
+                    Some(InputConnection {
+                        src_step: 1,
+                        src_port: 0,
+                        delay_samples: 0,
+                    }),
                 ],
                 num_outputs: 1,
             },
@@ -823,8 +856,7 @@ mod tests {
                     conn.delay_samples = arrival.saturating_sub(src_lat);
                 }
             }
-            plan.step_cumulative_latency[i] =
-                plan.step_latencies[i].saturating_add(arrival);
+            plan.step_cumulative_latency[i] = plan.step_latencies[i].saturating_add(arrival);
         }
 
         // Compute levels via the public compiler entry point so the test
@@ -861,8 +893,20 @@ mod tests {
         let compiled = build_test_compiled(latency, block);
 
         let sum_step = &compiled.plan.steps[3];
-        assert_eq!(sum_step.input_connections[0].as_ref().unwrap().delay_samples, 0);
-        assert_eq!(sum_step.input_connections[1].as_ref().unwrap().delay_samples, latency);
+        assert_eq!(
+            sum_step.input_connections[0]
+                .as_ref()
+                .unwrap()
+                .delay_samples,
+            0
+        );
+        assert_eq!(
+            sum_step.input_connections[1]
+                .as_ref()
+                .unwrap()
+                .delay_samples,
+            latency
+        );
         assert_eq!(compiled.plan.step_cumulative_latency[3], latency);
 
         let mut sched = GraphScheduler::new(compiled);
@@ -870,11 +914,20 @@ mod tests {
 
         assert_eq!(out[0], 1.0, "src_a impulse must arrive at frame 0");
         for i in 1..(latency as usize) {
-            assert_eq!(out[i], 0.0, "silence expected at frame {i} (waiting on delayed path)");
+            assert_eq!(
+                out[i], 0.0,
+                "silence expected at frame {i} (waiting on delayed path)"
+            );
         }
-        assert_eq!(out[latency as usize], 1.0, "src_b impulse must arrive at frame `latency`");
+        assert_eq!(
+            out[latency as usize], 1.0,
+            "src_b impulse must arrive at frame `latency`"
+        );
         for i in (latency as usize + 1)..block {
-            assert_eq!(out[i], 0.0, "silence expected after both impulses at frame {i}");
+            assert_eq!(
+                out[i], 0.0,
+                "silence expected after both impulses at frame {i}"
+            );
         }
     }
 
@@ -889,7 +942,10 @@ mod tests {
             }
         }
         let mut sched = GraphScheduler::new(compiled);
-        assert!(sched.delay_lines.iter().all(|s| s.iter().all(|d| d.is_none())));
+        assert!(sched
+            .delay_lines
+            .iter()
+            .all(|s| s.iter().all(|d| d.is_none())));
 
         let out = run_one_block(&mut sched, block);
         assert_eq!(out[0], 2.0);
@@ -913,8 +969,10 @@ mod tests {
         let delayed_block = (latency as usize) / block;
         let delayed_offset = (latency as usize) % block;
         let stream = [b0, b1, b2];
-        assert_eq!(stream[delayed_block][delayed_offset], 1.0,
-            "delayed src_b impulse must land at absolute frame {latency}");
+        assert_eq!(
+            stream[delayed_block][delayed_offset], 1.0,
+            "delayed src_b impulse must land at absolute frame {latency}"
+        );
     }
 
     // ── R1: level-set + parallel execution ────────────────────────────────────

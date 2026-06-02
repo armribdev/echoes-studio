@@ -31,7 +31,10 @@ impl AudioBuffer {
     ///
     /// Called at graph compile time, **never** inside the audio callback.
     pub fn new(num_channels: usize, num_frames: usize) -> Self {
-        assert!(num_channels > 0 && num_frames > 0, "AudioBuffer: dimensions must be > 0");
+        assert!(
+            num_channels > 0 && num_frames > 0,
+            "AudioBuffer: dimensions must be > 0"
+        );
         AudioBuffer {
             data: vec![0.0_f32; num_channels * num_frames],
             num_channels,
@@ -66,14 +69,23 @@ impl AudioBuffer {
     /// Panics if `a == b` or either index is out of range.
     pub fn two_channels_mut(&mut self, a: usize, b: usize) -> (&mut [f32], &mut [f32]) {
         assert_ne!(a, b, "two_channels_mut: channels must differ");
-        assert!(a < self.num_channels && b < self.num_channels, "channel index out of range");
+        assert!(
+            a < self.num_channels && b < self.num_channels,
+            "channel index out of range"
+        );
         let frames = self.num_frames;
         if a < b {
             let (left, right) = self.data.split_at_mut(b * frames);
-            (&mut left[a * frames..(a + 1) * frames], &mut right[..frames])
+            (
+                &mut left[a * frames..(a + 1) * frames],
+                &mut right[..frames],
+            )
         } else {
             let (left, right) = self.data.split_at_mut(a * frames);
-            (&mut right[..frames], &mut left[b * frames..(b + 1) * frames])
+            (
+                &mut right[..frames],
+                &mut left[b * frames..(b + 1) * frames],
+            )
         }
     }
 
@@ -88,8 +100,14 @@ impl AudioBuffer {
     /// Copy samples from `src`.  Shapes must match.
     #[inline]
     pub fn copy_from(&mut self, src: &AudioBuffer) {
-        debug_assert_eq!(self.num_channels, src.num_channels, "channel count mismatch in copy_from");
-        debug_assert_eq!(self.num_frames, src.num_frames, "frame count mismatch in copy_from");
+        debug_assert_eq!(
+            self.num_channels, src.num_channels,
+            "channel count mismatch in copy_from"
+        );
+        debug_assert_eq!(
+            self.num_frames, src.num_frames,
+            "frame count mismatch in copy_from"
+        );
         self.data.copy_from_slice(&src.data);
     }
 

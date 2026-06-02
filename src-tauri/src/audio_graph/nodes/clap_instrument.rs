@@ -98,7 +98,10 @@ impl ClapInstrument {
             out_channel_ptrs: Vec::new(),
             out_audio_buf: unsafe { std::mem::zeroed() },
             note_events: FixedEventList::new(),
-            out_events: ClapOutputEvents { ctx: std::ptr::null_mut(), try_push: out_try_push },
+            out_events: ClapOutputEvents {
+                ctx: std::ptr::null_mut(),
+                try_push: out_try_push,
+            },
             num_channels: 2,
             active: false,
         }
@@ -181,7 +184,9 @@ impl InstrumentDevice for ClapInstrument {
     fn reset(&mut self) {
         if self.active {
             let p = self.plugin_ptr();
-            unsafe { ((*p).reset)(p); }
+            unsafe {
+                ((*p).reset)(p);
+            }
         }
     }
 }
@@ -210,8 +215,17 @@ mod tests {
     #[test]
     fn fill_clap_notes_maps_on_and_off() {
         let mut events = MidiEventList::new();
-        events.push(MidiEvent { offset: 24_000, kind: MidiEventKind::NoteOn { pitch: 60, velocity: 127 } });
-        events.push(MidiEvent { offset: 48_000, kind: MidiEventKind::NoteOff { pitch: 60 } });
+        events.push(MidiEvent {
+            offset: 24_000,
+            kind: MidiEventKind::NoteOn {
+                pitch: 60,
+                velocity: 127,
+            },
+        });
+        events.push(MidiEvent {
+            offset: 48_000,
+            kind: MidiEventKind::NoteOff { pitch: 60 },
+        });
 
         let mut list = FixedEventList::new();
         fill_clap_notes(&events, &mut list);
@@ -230,7 +244,13 @@ mod tests {
     fn fill_clap_notes_clears_previous_block() {
         let mut list = FixedEventList::new();
         let mut a = MidiEventList::new();
-        a.push(MidiEvent { offset: 0, kind: MidiEventKind::NoteOn { pitch: 64, velocity: 64 } });
+        a.push(MidiEvent {
+            offset: 0,
+            kind: MidiEventKind::NoteOn {
+                pitch: 64,
+                velocity: 64,
+            },
+        });
         fill_clap_notes(&a, &mut list);
         assert_eq!(list.count, 1);
         // A subsequent empty block must reset the list.

@@ -13,7 +13,9 @@ use crate::plugin_system::registry::PluginRegistry;
 pub struct AuHost;
 
 impl AuHost {
-    pub fn new() -> Self { AuHost }
+    pub fn new() -> Self {
+        AuHost
+    }
 
     /// Scan the system for installed AU components.
     ///
@@ -25,5 +27,7 @@ impl AuHost {
 }
 
 impl Default for AuHost {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }

@@ -30,11 +30,11 @@ use crate::audio_graph::nodes::instrument::InstrumentDevice;
 use crate::plugin_formats::clap::ffi::{ClapLibrary, CLAP_PLUGIN_FACTORY_ID};
 use crate::plugin_formats::clap::host::decode_plugin_id as clap_decode_id;
 use crate::plugin_formats::clap::wrapper::ClapWrapperNode;
-use crate::plugin_formats::vst3::ffi::{Vst3Library, instantiate_processor};
+use crate::plugin_formats::vst3::ffi::{instantiate_processor, Vst3Library};
 use crate::plugin_formats::vst3::host::decode_plugin_id as vst3_decode_id;
 use crate::plugin_formats::vst3::wrapper::VstWrapperNode;
 use crate::plugin_system::instance::PluginInstance;
-use crate::plugin_system::lifecycle::{LifecycleError, LifecycleState, transition};
+use crate::plugin_system::lifecycle::{transition, LifecycleError, LifecycleState};
 use crate::plugin_system::registry::{PluginManifest, PluginRegistry};
 use crate::plugin_system::state::DeviceState;
 use crate::plugin_system::wrapper::{DeviceFormat, PassThroughDevice};
@@ -53,11 +53,11 @@ pub enum HostError {
 impl std::fmt::Display for HostError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            HostError::DeviceNotFound(id)     => write!(f, "device not found: {id}"),
-            HostError::PluginNotFound(id)     => write!(f, "plugin not in registry: {id}"),
-            HostError::LifecycleError(e)      => write!(f, "lifecycle error: {e}"),
+            HostError::DeviceNotFound(id) => write!(f, "device not found: {id}"),
+            HostError::PluginNotFound(id) => write!(f, "plugin not in registry: {id}"),
+            HostError::LifecycleError(e) => write!(f, "lifecycle error: {e}"),
             HostError::InstantiationFailed(e) => write!(f, "instantiation failed: {e}"),
-            HostError::ParameterNotFound(k)   => write!(f, "parameter not found: {k}"),
+            HostError::ParameterNotFound(k) => write!(f, "parameter not found: {k}"),
         }
     }
 }
@@ -72,7 +72,7 @@ impl std::fmt::Display for HostError {
 // `saved_state` blob (retired by Phase 3 / 4 once SPSC + FFI state lands).
 
 struct DeviceRecord {
-    instance:    Arc<PluginInstance>,
+    instance: Arc<PluginInstance>,
     saved_state: DeviceState,
 }
 
@@ -80,27 +80,34 @@ struct DeviceRecord {
 
 pub struct PluginHost {
     registry: PluginRegistry,
-    records:  HashMap<String, DeviceRecord>,
+    records: HashMap<String, DeviceRecord>,
 }
 
 impl PluginHost {
     pub fn new() -> Self {
         PluginHost {
             registry: PluginRegistry::new(),
-            records:  HashMap::new(),
+            records: HashMap::new(),
         }
     }
 
     // ── Registry ───────────────────────────────────────────────────────────────
 
-    pub fn registry(&self)     -> &PluginRegistry     { &self.registry }
-    pub fn registry_mut(&mut self) -> &mut PluginRegistry { &mut self.registry }
+    pub fn registry(&self) -> &PluginRegistry {
+        &self.registry
+    }
+    pub fn registry_mut(&mut self) -> &mut PluginRegistry {
+        &mut self.registry
+    }
 
     /// Number of auxiliary (sidechain) input ports the plugin declares, from
     /// the scan-time manifest cache (Phase 5d).  `0` when the device is unknown
     /// or has no aux bus — the compiler then sizes the node exactly as before.
     pub fn sidechain_input_ports(&self, device_id: &str) -> usize {
-        self.registry.get(device_id).map(|m| m.num_sidechain_inputs).unwrap_or(0)
+        self.registry
+            .get(device_id)
+            .map(|m| m.num_sidechain_inputs)
+            .unwrap_or(0)
     }
 
     // ── Plugin scanning ────────────────────────────────────────────────────────
@@ -123,12 +130,10 @@ impl PluginHost {
     pub fn list_plugins(&self) -> Vec<PluginInfo> {
         self.registry
             .all()
-            .filter(|m| {
-                matches!(m.format, DeviceFormat::Vst3 | DeviceFormat::Clap)
-            })
+            .filter(|m| matches!(m.format, DeviceFormat::Vst3 | DeviceFormat::Clap))
             .map(|m| PluginInfo {
-                id:     m.id.clone(),
-                name:   m.name.clone(),
+                id: m.id.clone(),
+                name: m.name.clone(),
                 vendor: m.vendor.clone(),
                 format: format_tag(m.format),
                 categories: m.categories.clone(),
@@ -146,7 +151,7 @@ impl PluginHost {
     /// instance directly (ADR-007).
     pub fn instantiate(
         &mut self,
-        node_id:   NodeId,
+        node_id: NodeId,
         plugin_id: &str,
         sandboxed: bool,
     ) -> Result<Box<dyn AudioNode>, HostError> {
@@ -157,7 +162,9 @@ impl PluginHost {
         // re-plumb the project → graph → compiler → host chain.
         let _ = sandboxed;
 
-        let manifest = self.registry.get(plugin_id)
+        let manifest = self
+            .registry
+            .get(plugin_id)
             .ok_or_else(|| HostError::PluginNotFound(plugin_id.to_string()))?
             .clone();
 
@@ -168,13 +175,9 @@ impl PluginHost {
                 (inst, node)
             }
 
-            DeviceFormat::Vst3 => {
-                self.instantiate_vst3(node_id, plugin_id, &manifest)?
-            }
+            DeviceFormat::Vst3 => self.instantiate_vst3(node_id, plugin_id, &manifest)?,
 
-            DeviceFormat::Clap => {
-                self.instantiate_clap(node_id, plugin_id, &manifest)?
-            }
+            DeviceFormat::Clap => self.instantiate_clap(node_id, plugin_id, &manifest)?,
 
             DeviceFormat::Au => {
                 eprintln!("[host] AU not yet implemented for '{plugin_id}' — pass-through");
@@ -200,10 +203,13 @@ impl PluginHost {
         // / save lands on the host API.
         instance.set_lifecycle(LifecycleState::Running);
 
-        self.records.insert(plugin_id.to_string(), DeviceRecord {
-            instance,
-            saved_state: DeviceState::empty(plugin_id),
-        });
+        self.records.insert(
+            plugin_id.to_string(),
+            DeviceRecord {
+                instance,
+                saved_state: DeviceState::empty(plugin_id),
+            },
+        );
 
         Ok(device)
     }
@@ -212,22 +218,22 @@ impl PluginHost {
 
     fn instantiate_vst3(
         &self,
-        node_id:   NodeId,
+        node_id: NodeId,
         plugin_id: &str,
-        manifest:  &PluginManifest,
+        manifest: &PluginManifest,
     ) -> Result<(Arc<PluginInstance>, Box<dyn AudioNode>), HostError> {
         let cid = vst3_decode_id(plugin_id)
             .ok_or_else(|| HostError::InstantiationFailed("invalid VST3 plugin_id".into()))?;
 
-        let dll = manifest.path.as_ref()
+        let dll = manifest
+            .path
+            .as_ref()
             .ok_or_else(|| HostError::InstantiationFailed("no DLL path in manifest".into()))?;
 
-        let (lib, factory) = Vst3Library::load(dll)
-            .map_err(HostError::InstantiationFailed)?;
+        let (lib, factory) = Vst3Library::load(dll).map_err(HostError::InstantiationFailed)?;
 
         let (comp, proc) = unsafe {
-            instantiate_processor(factory, &cid)
-                .map_err(HostError::InstantiationFailed)?
+            instantiate_processor(factory, &cid).map_err(HostError::InstantiationFailed)?
         };
 
         // Release factory ref — we no longer need to enumerate classes.
@@ -240,13 +246,10 @@ impl PluginHost {
         let proc_nn = NonNull::new(proc)
             .ok_or_else(|| HostError::InstantiationFailed("null IAudioProcessor".into()))?;
 
-        let instance = PluginInstance::new_vst3(
-            plugin_id, &manifest.name, comp_nn, proc_nn, lib,
-        );
+        let instance = PluginInstance::new_vst3(plugin_id, &manifest.name, comp_nn, proc_nn, lib);
 
-        let node: Box<dyn AudioNode> = Box::new(VstWrapperNode::new(
-            node_id, Arc::clone(&instance),
-        ));
+        let node: Box<dyn AudioNode> =
+            Box::new(VstWrapperNode::new(node_id, Arc::clone(&instance)));
 
         Ok((instance, node))
     }
@@ -255,14 +258,13 @@ impl PluginHost {
 
     fn instantiate_clap(
         &self,
-        node_id:   NodeId,
+        node_id: NodeId,
         plugin_id: &str,
-        manifest:  &PluginManifest,
+        manifest: &PluginManifest,
     ) -> Result<(Arc<PluginInstance>, Box<dyn AudioNode>), HostError> {
         let instance = self.create_clap_instance(plugin_id, manifest)?;
-        let node: Box<dyn AudioNode> = Box::new(ClapWrapperNode::new(
-            node_id, Arc::clone(&instance),
-        ));
+        let node: Box<dyn AudioNode> =
+            Box::new(ClapWrapperNode::new(node_id, Arc::clone(&instance)));
         Ok((instance, node))
     }
 
@@ -274,23 +276,26 @@ impl PluginHost {
     fn create_clap_instance(
         &self,
         plugin_id: &str,
-        manifest:  &PluginManifest,
+        manifest: &PluginManifest,
     ) -> Result<Arc<PluginInstance>, HostError> {
         let clap_id = clap_decode_id(plugin_id)
             .ok_or_else(|| HostError::InstantiationFailed("invalid CLAP plugin_id".into()))?;
 
-        let dll = manifest.path.as_ref()
+        let dll = manifest
+            .path
+            .as_ref()
             .ok_or_else(|| HostError::InstantiationFailed("no DLL path in manifest".into()))?;
 
-        let (lib, entry) = ClapLibrary::load(dll)
-            .map_err(HostError::InstantiationFailed)?;
+        let (lib, entry) = ClapLibrary::load(dll).map_err(HostError::InstantiationFailed)?;
 
         // Get factory
         let factory_ptr = unsafe {
             ((*entry).get_factory)(CLAP_PLUGIN_FACTORY_ID.as_ptr() as *const std::ffi::c_char)
         };
         if factory_ptr.is_null() {
-            return Err(HostError::InstantiationFailed("clap_entry.get_factory returned null".into()));
+            return Err(HostError::InstantiationFailed(
+                "clap_entry.get_factory returned null".into(),
+            ));
         }
         let factory = factory_ptr as *const crate::plugin_formats::clap::ffi::ClapPluginFactory;
 
@@ -300,12 +305,16 @@ impl PluginHost {
         // Create plugin instance
         let clap_id_cstr: Vec<u8> = clap_id.bytes().chain(std::iter::once(0)).collect();
         let plugin = unsafe {
-            ((*factory).create_plugin)(factory, host.as_ref(), clap_id_cstr.as_ptr() as *const std::ffi::c_char)
+            ((*factory).create_plugin)(
+                factory,
+                host.as_ref(),
+                clap_id_cstr.as_ptr() as *const std::ffi::c_char,
+            )
         };
         if plugin.is_null() {
-            return Err(HostError::InstantiationFailed(
-                format!("CLAP create_plugin returned null for '{clap_id}'"),
-            ));
+            return Err(HostError::InstantiationFailed(format!(
+                "CLAP create_plugin returned null for '{clap_id}'"
+            )));
         }
 
         Ok(PluginInstance::new_clap(
@@ -332,7 +341,9 @@ impl PluginHost {
         &mut self,
         plugin_id: &str,
     ) -> Result<Box<dyn InstrumentDevice>, HostError> {
-        let manifest = self.registry.get(plugin_id)
+        let manifest = self
+            .registry
+            .get(plugin_id)
             .ok_or_else(|| HostError::PluginNotFound(plugin_id.to_string()))?
             .clone();
 
@@ -340,15 +351,18 @@ impl PluginHost {
             DeviceFormat::Clap => {
                 let instance = self.create_clap_instance(plugin_id, &manifest)?;
                 instance.set_lifecycle(LifecycleState::Running);
-                self.records.insert(plugin_id.to_string(), DeviceRecord {
-                    instance: Arc::clone(&instance),
-                    saved_state: DeviceState::empty(plugin_id),
-                });
+                self.records.insert(
+                    plugin_id.to_string(),
+                    DeviceRecord {
+                        instance: Arc::clone(&instance),
+                        saved_state: DeviceState::empty(plugin_id),
+                    },
+                );
                 Ok(Box::new(ClapInstrument::new(instance)))
             }
-            other => Err(HostError::InstantiationFailed(
-                format!("instrument format {other:?} not supported yet (CLAP only in Phase 5c)"),
-            )),
+            other => Err(HostError::InstantiationFailed(format!(
+                "instrument format {other:?} not supported yet (CLAP only in Phase 5c)"
+            ))),
         }
     }
 
@@ -370,7 +384,9 @@ impl PluginHost {
         native_id: u32,
         normalised: f32,
     ) -> Result<bool, HostError> {
-        let record = self.records.get(device_id)
+        let record = self
+            .records
+            .get(device_id)
             .ok_or_else(|| HostError::DeviceNotFound(device_id.to_string()))?;
         Ok(record.instance.push_param(native_id, normalised))
     }
@@ -385,7 +401,9 @@ impl PluginHost {
     // is not yet wired on the hot path).
 
     pub fn suspend_device(&mut self, device_id: &str) -> Result<(), HostError> {
-        let record = self.records.get(device_id)
+        let record = self
+            .records
+            .get(device_id)
             .ok_or_else(|| HostError::DeviceNotFound(device_id.to_string()))?;
         let next = transition(record.instance.lifecycle(), LifecycleState::Suspended)
             .map_err(HostError::LifecycleError)?;
@@ -394,7 +412,9 @@ impl PluginHost {
     }
 
     pub fn resume_device(&mut self, device_id: &str) -> Result<(), HostError> {
-        let record = self.records.get(device_id)
+        let record = self
+            .records
+            .get(device_id)
             .ok_or_else(|| HostError::DeviceNotFound(device_id.to_string()))?;
         let next = transition(record.instance.lifecycle(), LifecycleState::Running)
             .map_err(HostError::LifecycleError)?;
@@ -428,7 +448,7 @@ impl PluginHost {
         let record = self.records.get(device_id)?;
         match record.instance.save_state_blob() {
             Some(bytes) => Some(DeviceState::from_binary(device_id, bytes)),
-            None        => Some(record.saved_state.clone()),
+            None => Some(record.saved_state.clone()),
         }
     }
 
@@ -455,7 +475,9 @@ impl PluginHost {
 
     // ── Introspection ─────────────────────────────────────────────────────────
 
-    pub fn device_count(&self) -> usize { self.records.len() }
+    pub fn device_count(&self) -> usize {
+        self.records.len()
+    }
 
     pub fn lifecycle_of(&self, device_id: &str) -> Option<LifecycleState> {
         // Phase 2b: read the authoritative atomic.
@@ -472,27 +494,29 @@ impl PluginHost {
 }
 
 impl Default for PluginHost {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 // ── Serialisable plugin info (for the frontend) ───────────────────────────────
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct PluginInfo {
-    pub id:         String,
-    pub name:       String,
-    pub vendor:     String,
-    pub format:     String,
+    pub id: String,
+    pub name: String,
+    pub vendor: String,
+    pub format: String,
     pub categories: Vec<String>,
 }
 
 fn format_tag(fmt: DeviceFormat) -> String {
     match fmt {
-        DeviceFormat::Vst3     => "VST3".into(),
-        DeviceFormat::Clap     => "CLAP".into(),
-        DeviceFormat::Au       => "AU".into(),
+        DeviceFormat::Vst3 => "VST3".into(),
+        DeviceFormat::Clap => "CLAP".into(),
+        DeviceFormat::Au => "AU".into(),
         DeviceFormat::Internal => "Internal".into(),
-        DeviceFormat::Wasm     => "WASM".into(),
+        DeviceFormat::Wasm => "WASM".into(),
     }
 }
 
@@ -521,7 +545,8 @@ mod tests {
     #[test]
     fn sidechain_ports_read_from_manifest() {
         let mut host = PluginHost::new();
-        host.registry_mut().add(manifest_with_sidechain("clap:ducker", 1));
+        host.registry_mut()
+            .add(manifest_with_sidechain("clap:ducker", 1));
         assert_eq!(host.sidechain_input_ports("clap:ducker"), 1);
     }
 

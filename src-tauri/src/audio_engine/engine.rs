@@ -39,14 +39,14 @@ use cpal::{
 };
 use tauri::Emitter;
 
+use crate::audio_engine::graph::AudioGraphCompiler;
+use crate::audio_engine::transport::SharedTransport;
+use crate::audio_graph::denormal::enable_flush_to_zero;
 use crate::audio_graph::{CompileConfig, GraphScheduler, LiveParams, MeterCell, RuntimeSnapshot};
+use crate::audio_settings::AudioSettings;
 use crate::engine_gateway::events::{
     ev, LevelsUpdatedPayload, PositionUpdatedPayload, TelemetryEngineEvent,
 };
-use crate::audio_graph::denormal::enable_flush_to_zero;
-use crate::audio_engine::graph::AudioGraphCompiler;
-use crate::audio_engine::transport::SharedTransport;
-use crate::audio_settings::AudioSettings;
 use crate::plugin_system::PluginHost;
 use crate::project::AppProject;
 
@@ -81,9 +81,7 @@ const REPORTER_INTERVAL_MS: u64 = 33;
 /// Maximum number of audio channels tracked by the level meters.
 const MAX_METER_CHANNELS: usize = 16;
 
-const _: () = assert!(
-    MAX_METER_CHANNELS == crate::engine_gateway::events::METER_CHANNEL_COUNT
-);
+const _: () = assert!(MAX_METER_CHANNELS == crate::engine_gateway::events::METER_CHANNEL_COUNT);
 
 /// Minimum slack added to the expected block duration before declaring an XRun.
 ///
@@ -169,7 +167,7 @@ impl ChannelLevels {
     fn new() -> Arc<Self> {
         Arc::new(ChannelLevels {
             output: Box::new(std::array::from_fn(|_| AtomicU32::new(0))),
-            input:  Box::new(std::array::from_fn(|_| AtomicU32::new(0))),
+            input: Box::new(std::array::from_fn(|_| AtomicU32::new(0))),
         })
     }
 
@@ -332,7 +330,7 @@ impl AudioEngine {
 
         // ── 3. Build a stream config that honours the requested sample rate ────
         let (base_cfg, fmt) = resolve_stream_config(&device, settings.sample_rate)?;
-        let actual_sr   = base_cfg.sample_rate.0;
+        let actual_sr = base_cfg.sample_rate.0;
         let hw_channels = base_cfg.channels as usize;
 
         // Clamp the user-requested active channels to what the device supports.
@@ -345,7 +343,9 @@ impl AudioEngine {
 
         eprintln!(
             "[audio] {} — {} Hz, {} hw-ch, {} active-ch, {:?}",
-            device.name().unwrap_or_else(|_| "Périphérique inconnu".to_string()),
+            device
+                .name()
+                .unwrap_or_else(|_| "Périphérique inconnu".to_string()),
             actual_sr,
             hw_channels,
             active_channels,
@@ -376,39 +376,59 @@ impl AudioEngine {
         // ── 5. Build the CPAL stream (try Fixed buffer, fall back to Default) ──
         // Seed the active-channels atomic with the value from settings so the
         // first block already uses the correct routing.
-        self.active_output_channels.store(active_channels, Ordering::Relaxed);
+        self.active_output_channels
+            .store(active_channels, Ordering::Relaxed);
         self.xrun_stats.reset();
 
-        let snap_a    = Arc::clone(&self.snapshot);
-        let tport_a   = Arc::clone(&self.transport);
+        let snap_a = Arc::clone(&self.snapshot);
+        let tport_a = Arc::clone(&self.transport);
         let ch_ctrl_a = Arc::clone(&self.active_output_channels);
-        let levels_a  = Arc::clone(&self.levels);
-        let xruns_a   = Arc::clone(&self.xrun_stats);
-        let snap_b    = Arc::clone(&self.snapshot);
-        let tport_b   = Arc::clone(&self.transport);
+        let levels_a = Arc::clone(&self.levels);
+        let xruns_a = Arc::clone(&self.xrun_stats);
+        let snap_b = Arc::clone(&self.snapshot);
+        let tport_b = Arc::clone(&self.transport);
         let ch_ctrl_b = Arc::clone(&self.active_output_channels);
-        let levels_b  = Arc::clone(&self.levels);
-        let xruns_b   = Arc::clone(&self.xrun_stats);
+        let levels_b = Arc::clone(&self.levels);
+        let xruns_b = Arc::clone(&self.xrun_stats);
 
         let fixed_cfg = cpal::StreamConfig {
             buffer_size: cpal::BufferSize::Fixed(settings.buffer_size),
             ..base_cfg.clone()
         };
 
-        let stream =
-            build_typed_stream(&device, &fixed_cfg, fmt, snap_a, tport_a, hw_channels, ch_ctrl_a, levels_a, xruns_a)
-                .or_else(|e| {
-                    eprintln!(
-                        "[audio] Buffer fixe ({} frames) non supporté ({e}), \
+        let stream = build_typed_stream(
+            &device,
+            &fixed_cfg,
+            fmt,
+            snap_a,
+            tport_a,
+            hw_channels,
+            ch_ctrl_a,
+            levels_a,
+            xruns_a,
+        )
+        .or_else(|e| {
+            eprintln!(
+                "[audio] Buffer fixe ({} frames) non supporté ({e}), \
                          passage au mode par défaut",
-                        settings.buffer_size
-                    );
-                    let default_cfg = cpal::StreamConfig {
-                        buffer_size: cpal::BufferSize::Default,
-                        ..base_cfg
-                    };
-                    build_typed_stream(&device, &default_cfg, fmt, snap_b, tport_b, hw_channels, ch_ctrl_b, levels_b, xruns_b)
-                })?;
+                settings.buffer_size
+            );
+            let default_cfg = cpal::StreamConfig {
+                buffer_size: cpal::BufferSize::Default,
+                ..base_cfg
+            };
+            build_typed_stream(
+                &device,
+                &default_cfg,
+                fmt,
+                snap_b,
+                tport_b,
+                hw_channels,
+                ch_ctrl_b,
+                levels_b,
+                xruns_b,
+            )
+        })?;
 
         stream
             .play()
@@ -417,10 +437,10 @@ impl AudioEngine {
         // ── 6. Spawn position reporter ────────────────────────────────────────
         self.reporter_stop = Arc::new(AtomicBool::new(false));
         let stop = Arc::clone(&self.reporter_stop);
-        let reporter_transport    = Arc::clone(&self.transport);
-        let reporter_levels       = Arc::clone(&self.levels);
-        let reporter_meter_cells  = Arc::clone(&self.meter_cells);
-        let reporter_xruns        = Arc::clone(&self.xrun_stats);
+        let reporter_transport = Arc::clone(&self.transport);
+        let reporter_levels = Arc::clone(&self.levels);
+        let reporter_meter_cells = Arc::clone(&self.meter_cells);
+        let reporter_xruns = Arc::clone(&self.xrun_stats);
 
         std::thread::Builder::new()
             .name("cpal-pos-reporter".into())
@@ -455,7 +475,10 @@ impl AudioEngine {
 
 impl Default for AudioEngine {
     fn default() -> Self {
-        Self::new(SharedTransport::new(48_000.0, 120.0), Arc::new(LiveParams::new()))
+        Self::new(
+            SharedTransport::new(48_000.0, 120.0),
+            Arc::new(LiveParams::new()),
+        )
     }
 }
 
@@ -515,9 +538,7 @@ fn resolve_stream_config(
         ranges
             .iter()
             .find(|r| {
-                r.sample_format() == fmt
-                    && r.min_sample_rate() <= sr
-                    && r.max_sample_rate() >= sr
+                r.sample_format() == fmt && r.min_sample_rate() <= sr && r.max_sample_rate() >= sr
             })
             .map(|r| -> (cpal::StreamConfig, cpal::SampleFormat) {
                 (r.with_sample_rate(sr).into(), fmt)
@@ -584,18 +605,48 @@ fn build_typed_stream(
     xrun_stats: Arc<XrunStats>,
 ) -> Result<cpal::Stream, String> {
     match fmt {
-        cpal::SampleFormat::F32 => {
-            build_stream::<f32>(device, config, snapshot, transport, hw_channels, ch_ctrl, levels, xrun_stats)
-        }
-        cpal::SampleFormat::I16 => {
-            build_stream::<i16>(device, config, snapshot, transport, hw_channels, ch_ctrl, levels, xrun_stats)
-        }
-        cpal::SampleFormat::U16 => {
-            build_stream::<u16>(device, config, snapshot, transport, hw_channels, ch_ctrl, levels, xrun_stats)
-        }
+        cpal::SampleFormat::F32 => build_stream::<f32>(
+            device,
+            config,
+            snapshot,
+            transport,
+            hw_channels,
+            ch_ctrl,
+            levels,
+            xrun_stats,
+        ),
+        cpal::SampleFormat::I16 => build_stream::<i16>(
+            device,
+            config,
+            snapshot,
+            transport,
+            hw_channels,
+            ch_ctrl,
+            levels,
+            xrun_stats,
+        ),
+        cpal::SampleFormat::U16 => build_stream::<u16>(
+            device,
+            config,
+            snapshot,
+            transport,
+            hw_channels,
+            ch_ctrl,
+            levels,
+            xrun_stats,
+        ),
         other => {
             eprintln!("[audio] Format {other:?} non géré nativement, tentative F32");
-            build_stream::<f32>(device, config, snapshot, transport, hw_channels, ch_ctrl, levels, xrun_stats)
+            build_stream::<f32>(
+                device,
+                config,
+                snapshot,
+                transport,
+                hw_channels,
+                ch_ctrl,
+                levels,
+                xrun_stats,
+            )
         }
     }
 }
@@ -660,9 +711,8 @@ where
                     if let Some(elapsed) = info.timestamp().callback.duration_since(&prev) {
                         let sample_rate = transport.sample_rate();
                         if sample_rate > 0.0 {
-                            let expected = Duration::from_secs_f64(
-                                prev_frames as f64 / sample_rate as f64,
-                            );
+                            let expected =
+                                Duration::from_secs_f64(prev_frames as f64 / sample_rate as f64);
                             if is_callback_xrun(elapsed, expected) {
                                 xrun_stats_cb.record();
                             }
@@ -707,8 +757,12 @@ where
                 for f in 0..frames {
                     let s_l = mix[f * 2].abs();
                     let s_r = mix[f * 2 + 1].abs();
-                    if s_l > peak_l { peak_l = s_l; }
-                    if s_r > peak_r { peak_r = s_r; }
+                    if s_l > peak_l {
+                        peak_l = s_l;
+                    }
+                    if s_r > peak_r {
+                        peak_r = s_r;
+                    }
                 }
                 for ch in 0..active.min(MAX_METER_CHANNELS) {
                     levels.set_output(ch, if ch % 2 == 0 { peak_l } else { peak_r });
@@ -729,14 +783,23 @@ where
                 for frame in 0..frames {
                     let mix_l = mix[frame * 2];
                     let mix_r = mix[frame * 2 + 1];
-                    let mono_s = if mono { (mix_l + mix_r) * mono_gain } else { 0.0 };
+                    let mono_s = if mono {
+                        (mix_l + mix_r) * mono_gain
+                    } else {
+                        0.0
+                    };
 
                     for ch in 0..hw_channels {
                         let idx = frame * hw_channels + ch;
                         if idx < total_samples {
                             let s = if ch < active {
-                                if mono { mono_s }
-                                else if ch % 2 == 0 { mix_l } else { mix_r }
+                                if mono {
+                                    mono_s
+                                } else if ch % 2 == 0 {
+                                    mix_l
+                                } else {
+                                    mix_r
+                                }
                             } else {
                                 0.0
                             };

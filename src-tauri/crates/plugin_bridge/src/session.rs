@@ -39,7 +39,7 @@
 use std::io;
 use std::path::Path;
 use std::process::{Child, Command};
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use crate::protocol::{BlockHeader, BLOCK_HEADER_BYTES, BLOCK_MAGIC, BRIDGE_PROTOCOL_VERSION};
@@ -158,6 +158,15 @@ unsafe fn status_store(base: *mut u8, value: u32) {
 
 // ── Engine side ─────────────────────────────────────────────────────────────
 
+/// Outcome of one [`BridgeSession::process_block`] round-trip.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BlockOutcome {
+    /// The bridge returned the processed block within the spin budget.
+    Processed,
+    /// The spin budget elapsed (or the input ring was full); silence inserted.
+    TimedOut,
+}
+
 /// A live bridge child process, its shared region, and the engine-side ends of
 /// the audio rings (owner side).
 ///
@@ -174,16 +183,54 @@ pub struct BridgeSession {
     audio_out: ShmemRing,
     /// Region name (kept for diagnostics).
     name: String,
+    /// Preallocated scratch for [`process_block`](Self::process_block) — sized at
+    /// spawn so the audio-thread round-trip never allocates.
+    send_scratch: Vec<u8>,
+    recv_scratch: Vec<u8>,
+    /// Count of blocks that hit the spin-budget timeout (silence inserted).
+    /// Read off-RT for telemetry; bumped on the audio thread.
+    timeout_count: AtomicU64,
 }
 
 impl BridgeSession {
-    /// Create the region sized for `layout`, initialise the control block and the
-    /// two audio rings, spawn `bridge_exe`, and wait until the child reports
-    /// `READY` (or `ready_timeout` elapses / the child dies / it reports `ERROR`).
+    /// Create the region sized for `layout`, spawn the bridge in **passthrough**
+    /// mode (identity processor), and wait for `READY`.
     pub fn spawn(
         bridge_exe: &Path,
         region_name: &str,
         layout: &BridgeLayout,
+        ready_timeout: Duration,
+    ) -> io::Result<Self> {
+        Self::spawn_with(bridge_exe, region_name, layout, None, ready_timeout)
+    }
+
+    /// Like [`spawn`](Self::spawn), but the bridge loads and drives a **real CLAP
+    /// plugin** (`dll` + `plugin_id`) instead of the identity passthrough.
+    pub fn spawn_plugin(
+        bridge_exe: &Path,
+        region_name: &str,
+        layout: &BridgeLayout,
+        sample_rate: u32,
+        dll: &Path,
+        plugin_id: &str,
+        ready_timeout: Duration,
+    ) -> io::Result<Self> {
+        Self::spawn_with(
+            bridge_exe,
+            region_name,
+            layout,
+            Some((sample_rate, dll, plugin_id)),
+            ready_timeout,
+        )
+    }
+
+    /// Shared spawn + handshake.  `plugin = Some((sample_rate, dll, id))` selects
+    /// the real-plugin serve mode; `None` selects passthrough.
+    fn spawn_with(
+        bridge_exe: &Path,
+        region_name: &str,
+        layout: &BridgeLayout,
+        plugin: Option<(u32, &Path, &str)>,
         ready_timeout: Duration,
     ) -> io::Result<Self> {
         let region_bytes = layout.region_bytes();
@@ -201,7 +248,8 @@ impl BridgeSession {
             (audio_in, audio_out)
         };
 
-        let mut child = Command::new(bridge_exe)
+        let mut command = Command::new(bridge_exe);
+        command
             .arg("--region-name")
             .arg(region_name)
             .arg("--block-size")
@@ -209,8 +257,17 @@ impl BridgeSession {
             .arg("--channels")
             .arg(layout.channel_count.to_string())
             .arg("--audio-capacity")
-            .arg(layout.audio_capacity.to_string())
-            .spawn()?;
+            .arg(layout.audio_capacity.to_string());
+        if let Some((sample_rate, dll, plugin_id)) = plugin {
+            command
+                .arg("--sample-rate")
+                .arg(sample_rate.to_string())
+                .arg("--plugin-dll")
+                .arg(dll)
+                .arg("--plugin-id")
+                .arg(plugin_id);
+        }
+        let mut child = command.spawn()?;
 
         let deadline = Instant::now() + ready_timeout;
         loop {
@@ -244,6 +301,7 @@ impl BridgeSession {
             std::thread::sleep(Duration::from_millis(1));
         }
 
+        let slot = layout.audio_ring_layout().slot_size;
         Ok(BridgeSession {
             region,
             child,
@@ -251,6 +309,9 @@ impl BridgeSession {
             audio_in,
             audio_out,
             name: region_name.to_string(),
+            send_scratch: vec![0u8; slot],
+            recv_scratch: vec![0u8; slot],
+            timeout_count: AtomicU64::new(0),
         })
     }
 
@@ -277,6 +338,95 @@ impl BridgeSession {
     /// [`try_recv_output`](Self::try_recv_output) should provide.
     pub fn audio_slot_size(&self) -> usize {
         self.layout.audio_ring_layout().slot_size
+    }
+
+    /// **The real-time round-trip (ADR-015, 6d-iv).**  Send one planar `input`
+    /// block to the bridge, wait (bounded by `spin_budget`) for the processed
+    /// output, and write it into `output`.  On timeout, fill `output` with
+    /// silence and return [`BlockOutcome::TimedOut`].
+    ///
+    /// ## Real-time safety
+    ///
+    /// Designed to run on the audio thread:
+    /// - No allocation (formats into the preallocated `send_scratch`).
+    /// - No mutex / no syscall — only the lock-free SPSC rings and a bounded spin
+    ///   on the wall clock (`Instant::now()` is a userspace counter).
+    /// - It *does* wait, by design (out-of-process plugins cannot be synchronous
+    ///   otherwise), but the wait is **bounded**: past `spin_budget` it gives up,
+    ///   inserts silence, and bumps [`timeout_count`](Self::timeout_count) so a
+    ///   stalled/crashed bridge degrades to silence instead of an underrun.
+    ///
+    /// `input` / `output` are planar (channel-major), length
+    /// `channel_count * block_size`.
+    pub fn process_block(
+        &mut self,
+        input: &[f32],
+        output: &mut [f32],
+        sequence: u64,
+        sample_rate: u32,
+        spin_budget: Duration,
+    ) -> BlockOutcome {
+        let frames = self.layout.block_size as usize;
+        let nc = self.layout.channel_count as usize;
+        let n = nc * frames;
+        if input.len() < n || output.len() < n {
+            output.iter_mut().for_each(|s| *s = 0.0);
+            return BlockOutcome::TimedOut;
+        }
+
+        // Drain any stale outputs left by a previous timed-out block, so the
+        // block we are about to read pairs with the one we are about to send.
+        while self.audio_out.pop(&mut self.recv_scratch).is_some() {}
+
+        // Format header + planar samples into the preallocated scratch (no alloc).
+        let header = BlockHeader {
+            magic: BLOCK_MAGIC,
+            version: BRIDGE_PROTOCOL_VERSION,
+            block_size: self.layout.block_size,
+            channel_count: self.layout.channel_count,
+            sample_rate,
+            _reserved: 0,
+            sequence,
+        };
+        self.send_scratch[..BLOCK_HEADER_BYTES].copy_from_slice(&header.to_bytes());
+        for (sample, dst) in input[..n]
+            .iter()
+            .zip(self.send_scratch[BLOCK_HEADER_BYTES..].chunks_exact_mut(4))
+        {
+            dst.copy_from_slice(&sample.to_le_bytes());
+        }
+        let send_len = BLOCK_HEADER_BYTES + n * 4;
+        if !self.audio_in.push(&self.send_scratch[..send_len]) {
+            output[..n].iter_mut().for_each(|s| *s = 0.0);
+            self.timeout_count.fetch_add(1, Ordering::Relaxed);
+            return BlockOutcome::TimedOut;
+        }
+
+        // Bounded spin for the processed output.
+        let deadline = Instant::now() + spin_budget;
+        loop {
+            if let Some(m) = self.audio_out.pop(&mut self.recv_scratch) {
+                let body = &self.recv_scratch[BLOCK_HEADER_BYTES..m];
+                let count = (body.len() / 4).min(n);
+                for (slot, chunk) in output[..count].iter_mut().zip(body.chunks_exact(4)) {
+                    *slot = f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
+                }
+                // Zero any tail the bridge did not fill.
+                output[count..n].iter_mut().for_each(|s| *s = 0.0);
+                return BlockOutcome::Processed;
+            }
+            if Instant::now() >= deadline {
+                output[..n].iter_mut().for_each(|s| *s = 0.0);
+                self.timeout_count.fetch_add(1, Ordering::Relaxed);
+                return BlockOutcome::TimedOut;
+            }
+            std::hint::spin_loop();
+        }
+    }
+
+    /// Number of blocks that timed out (degraded to silence) since spawn.
+    pub fn timeout_count(&self) -> u64 {
+        self.timeout_count.load(Ordering::Relaxed)
     }
 
     /// The region's layout.

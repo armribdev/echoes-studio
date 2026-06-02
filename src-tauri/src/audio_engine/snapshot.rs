@@ -33,7 +33,10 @@ pub struct AudioGraphSnapshot {
 
 impl AudioGraphSnapshot {
     pub fn empty(sample_rate: u32) -> Self {
-        AudioGraphSnapshot { sample_rate, tracks: vec![] }
+        AudioGraphSnapshot {
+            sample_rate,
+            tracks: vec![],
+        }
     }
 }
 
@@ -56,14 +59,18 @@ pub struct ClipSnapshot {
 }
 
 impl ClipSnapshot {
-    pub fn duration_sec(&self) -> f64 { self.end_sec - self.start_sec }
+    pub fn duration_sec(&self) -> f64 {
+        self.end_sec - self.start_sec
+    }
 
     pub fn is_active_at(&self, position: f64) -> bool {
         position >= self.start_sec && position < self.end_sec
     }
 
     pub fn sample_offset(&self, position: f64) -> Option<usize> {
-        if !self.is_active_at(position) { return None; }
+        if !self.is_active_at(position) {
+            return None;
+        }
         let offset_sec = position - self.start_sec;
         Some((offset_sec * self.sample_rate as f64) as usize)
     }

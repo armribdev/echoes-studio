@@ -24,16 +24,15 @@
 //! 7. **Return** `(ExecutionPlan, Vec<Box<dyn AudioNode>>)`.
 
 use std::collections::{HashMap, VecDeque};
-use std::sync::{
-    atomic::AtomicU32,
-    Arc,
-};
+use std::sync::{atomic::AtomicU32, Arc};
 
-use crate::audio_graph::execution_plan::{ExecutionPlan, ExecutionPlanBuilder, ExecutionStep, InputConnection};
+use crate::audio_graph::execution_plan::{
+    ExecutionPlan, ExecutionPlanBuilder, ExecutionStep, InputConnection,
+};
 use crate::audio_graph::graph::{AudioGraph, NodeKind};
 use crate::audio_graph::live_params::LiveParams;
-use crate::audio_graph::node::{AudioNode, NodeId, PortId, PortKind, PrepareContext};
 use crate::audio_graph::modulation::ModulationMap;
+use crate::audio_graph::node::{AudioNode, NodeId, PortId, PortKind, PrepareContext};
 use crate::plugin_system::PluginHost;
 use crate::project::AppProject;
 
@@ -79,7 +78,11 @@ pub enum CompileError {
     /// An edge declares a [`PortKind`] the compiler cannot route yet
     /// (anything other than `Audio`).  Guards Phase 5a until the MIDI /
     /// modulation paths (5c/5e) wire the producing & consuming ports.
-    UnsupportedPortKind { from: PortId, to: PortId, kind: PortKind },
+    UnsupportedPortKind {
+        from: PortId,
+        to: PortId,
+        kind: PortKind,
+    },
 }
 
 impl std::fmt::Display for CompileError {
@@ -142,11 +145,8 @@ impl GraphCompiler {
         let order = Self::topological_sort(graph)?;
 
         // 3. Build step-index map  NodeId → usize
-        let step_index: HashMap<NodeId, usize> = order
-            .iter()
-            .enumerate()
-            .map(|(i, &id)| (id, i))
-            .collect();
+        let step_index: HashMap<NodeId, usize> =
+            order.iter().enumerate().map(|(i, &id)| (id, i)).collect();
 
         // 4. Build ExecutionSteps
         let mut plan_builder = ExecutionPlanBuilder::new(
@@ -158,7 +158,9 @@ impl GraphCompiler {
         let mut steps: Vec<ExecutionStep> = Vec::with_capacity(order.len());
 
         for &node_id in &order {
-            let graph_node = graph.nodes.get(&node_id)
+            let graph_node = graph
+                .nodes
+                .get(&node_id)
                 .ok_or(CompileError::MissingNode(node_id))?;
 
             // Base port count from the node kind, plus any auxiliary
@@ -182,7 +184,8 @@ impl GraphCompiler {
             for edge in graph.edges_into(node_id) {
                 let dst_port = edge.to.port as usize;
                 if dst_port < num_inputs {
-                    let src_step = *step_index.get(&edge.from.node)
+                    let src_step = *step_index
+                        .get(&edge.from.node)
                         .ok_or(CompileError::MissingNode(edge.from.node))?;
                     input_connections[dst_port] = Some(InputConnection {
                         src_step,
@@ -237,7 +240,9 @@ impl GraphCompiler {
                 let peak_l = zero_cell();
                 let peak_r = zero_cell();
                 meter_cells.insert(meter_id.clone(), (Arc::clone(&peak_l), Arc::clone(&peak_r)));
-                Box::new(crate::audio_graph::nodes::meter::MeterNode::new(node_id, peak_l, peak_r))
+                Box::new(crate::audio_graph::nodes::meter::MeterNode::new(
+                    node_id, peak_l, peak_r,
+                ))
             } else {
                 Self::build_node(
                     node_id,
@@ -263,7 +268,12 @@ impl GraphCompiler {
 
         let plan = Arc::new(plan);
 
-        Ok(CompiledGraph { plan, processors, meter_cells, route_cells })
+        Ok(CompiledGraph {
+            plan,
+            processors,
+            meter_cells,
+            route_cells,
+        })
     }
 
     // ── PDC ───────────────────────────────────────────────────────────────────
@@ -275,10 +285,7 @@ impl GraphCompiler {
     ///   - computes `cumulative_latency[i]` = `intrinsic[i] + max input arrival`.
     ///   - for each input port `p`, sets `delay_samples` so all converging
     ///     inputs at step `i` arrive aligned at the maximum input arrival time.
-    fn compute_latency_compensation(
-        plan: &mut ExecutionPlan,
-        processors: &[Box<dyn AudioNode>],
-    ) {
+    fn compute_latency_compensation(plan: &mut ExecutionPlan, processors: &[Box<dyn AudioNode>]) {
         let n = plan.steps.len();
         debug_assert_eq!(processors.len(), n, "plan / processors length mismatch");
 
@@ -357,7 +364,9 @@ impl GraphCompiler {
             let (Some(&src_step), Some(&tgt_step)) = (
                 node_to_step.get(&route.source.node),
                 node_to_step.get(&route.target.param.node),
-            ) else { continue };
+            ) else {
+                continue;
+            };
             if src_step != tgt_step {
                 mod_deps[tgt_step].push(src_step);
             }
@@ -422,8 +431,7 @@ impl GraphCompiler {
         let node_ids: Vec<NodeId> = graph.nodes.keys().copied().collect();
 
         // In-degree per node
-        let mut in_degree: HashMap<NodeId, usize> =
-            node_ids.iter().map(|&id| (id, 0)).collect();
+        let mut in_degree: HashMap<NodeId, usize> = node_ids.iter().map(|&id| (id, 0)).collect();
 
         // Adjacency list (from → [to])
         let mut adj: HashMap<NodeId, Vec<NodeId>> =
@@ -476,44 +484,48 @@ impl GraphCompiler {
 
     fn num_inputs_for_kind(kind: &NodeKind) -> usize {
         match kind {
-            NodeKind::Track { .. }              => 0, // source node
-            NodeKind::Instrument { .. }         => 0, // source node
-            NodeKind::TrackGain { .. }          => 1,
-            NodeKind::Bus                       => 8, // up to 8 mix inputs
-            NodeKind::Send { .. }               => 1,
-            NodeKind::Return { .. }             => 0, // collects from sends internally
-            NodeKind::Gain { .. }               => 1,
-            NodeKind::Pan { .. }                => 1,
-            NodeKind::Plugin { .. }             => 2, // default stereo in
-            NodeKind::Modulator { .. }          => 0, // modulator = source
-            NodeKind::Meter { .. }              => 1,
+            NodeKind::Track { .. } => 0,      // source node
+            NodeKind::Instrument { .. } => 0, // source node
+            NodeKind::TrackGain { .. } => 1,
+            NodeKind::Bus => 8, // up to 8 mix inputs
+            NodeKind::Send { .. } => 1,
+            NodeKind::Return { .. } => 0, // collects from sends internally
+            NodeKind::Gain { .. } => 1,
+            NodeKind::Pan { .. } => 1,
+            NodeKind::Plugin { .. } => 2,    // default stereo in
+            NodeKind::Modulator { .. } => 0, // modulator = source
+            NodeKind::Meter { .. } => 1,
             // num_inputs is set per-project so every track gets its own port.
-            NodeKind::Master { num_inputs }     => *num_inputs,
-            NodeKind::Eq { .. } | NodeKind::Compressor { .. }
-            | NodeKind::Reverb { .. } | NodeKind::Delay { .. } => 1,
+            NodeKind::Master { num_inputs } => *num_inputs,
+            NodeKind::Eq { .. }
+            | NodeKind::Compressor { .. }
+            | NodeKind::Reverb { .. }
+            | NodeKind::Delay { .. } => 1,
         }
     }
 
     fn num_outputs_for_kind(kind: &NodeKind) -> usize {
         match kind {
-            NodeKind::Track { .. }       => 1,
-            NodeKind::Instrument { .. }  => 1,
+            NodeKind::Track { .. } => 1,
+            NodeKind::Instrument { .. } => 1,
             NodeKind::TrackGain { .. } => 1,
-            NodeKind::Bus              => 1,
+            NodeKind::Bus => 1,
             // Pass-through tap at send gain; Return routing is future work.
-            NodeKind::Send { .. }      => 1,
-            NodeKind::Return { .. }    => 1,
-            NodeKind::Gain { .. }      => 1,
-            NodeKind::Pan { .. }       => 1,
-            NodeKind::Plugin { .. }    => 2, // default stereo out
+            NodeKind::Send { .. } => 1,
+            NodeKind::Return { .. } => 1,
+            NodeKind::Gain { .. } => 1,
+            NodeKind::Pan { .. } => 1,
+            NodeKind::Plugin { .. } => 2,    // default stereo out
             NodeKind::Modulator { .. } => 1, // one modulation output
-            NodeKind::Meter { .. }     => 1, // pass-through
+            NodeKind::Meter { .. } => 1,     // pass-through
             // Master produces one mixed stereo output that the scheduler reads
             // directly.  Declaring it as 1 (instead of 0) means the scheduler
             // pre-allocates the buffer and `write_master_output` can read it.
-            NodeKind::Master { .. }    => 1,
-            NodeKind::Eq { .. } | NodeKind::Compressor { .. }
-            | NodeKind::Reverb { .. } | NodeKind::Delay { .. } => 1,
+            NodeKind::Master { .. } => 1,
+            NodeKind::Eq { .. }
+            | NodeKind::Compressor { .. }
+            | NodeKind::Reverb { .. }
+            | NodeKind::Delay { .. } => 1,
         }
     }
 
@@ -590,12 +602,16 @@ impl GraphCompiler {
                     .iter()
                     .find(|t| &t.id == track_id)
                     .map(|track| {
-                        track.clips.iter().map(|c| nodes::track::ClipData {
-                            start_sample: (c.start * engine_sample_rate as f64) as u64,
-                            end_sample:   (c.end   * engine_sample_rate as f64) as u64,
-                            samples: StdArc::clone(&c.raw_samples),
-                            native_sample_rate: c.sample_rate,
-                        }).collect::<Vec<_>>()
+                        track
+                            .clips
+                            .iter()
+                            .map(|c| nodes::track::ClipData {
+                                start_sample: (c.start * engine_sample_rate as f64) as u64,
+                                end_sample: (c.end * engine_sample_rate as f64) as u64,
+                                samples: StdArc::clone(&c.raw_samples),
+                                native_sample_rate: c.sample_rate,
+                            })
+                            .collect::<Vec<_>>()
                     })
                     .unwrap_or_default();
 
@@ -628,21 +644,18 @@ impl GraphCompiler {
                 Box::new(nodes::gain::GainNode::new(id, *gain_linear))
             }
 
-            NodeKind::Pan { position } => {
-                Box::new(nodes::pan::PanNode::new(id, *position))
-            }
+            NodeKind::Pan { position } => Box::new(nodes::pan::PanNode::new(id, *position)),
 
-            NodeKind::Bus => {
-                Box::new(nodes::bus::BusNode::new(id, Self::num_inputs_for_kind(kind)))
-            }
+            NodeKind::Bus => Box::new(nodes::bus::BusNode::new(
+                id,
+                Self::num_inputs_for_kind(kind),
+            )),
 
-            NodeKind::Master { num_inputs } => {
-                Box::new(nodes::master::MasterNode::new(
-                    id,
-                    *num_inputs,
-                    Arc::clone(&live_params.master_soft_clip),
-                ))
-            }
+            NodeKind::Master { num_inputs } => Box::new(nodes::master::MasterNode::new(
+                id,
+                *num_inputs,
+                Arc::clone(&live_params.master_soft_clip),
+            )),
 
             NodeKind::Meter { .. } => {
                 // Handled before build_node is called (see compile loop above).
@@ -659,17 +672,34 @@ impl GraphCompiler {
                 Box::new(nodes::bus::BusNode::new(id, 1))
             }
 
-            NodeKind::Plugin { device_id, sandboxed } => {
+            NodeKind::Plugin {
+                device_id,
+                sandboxed,
+            } => {
+                // ADR-015 6d-iv: a sandboxed device is hosted out-of-process via
+                // a `BridgedNode`.  If sandboxing is unavailable for this device
+                // (unknown, non-CLAP, no DLL, or no bridge binary), fall through
+                // to the in-process path below — no behaviour change for it.
+                if *sandboxed {
+                    if let Some(node) = crate::plugin_system::bridged_node::BridgedNode::try_new(
+                        id,
+                        device_id,
+                        plugin_host,
+                    ) {
+                        return node;
+                    }
+                    eprintln!(
+                        "[audio] Plugin '{device_id}' marked sandboxed but cannot be bridged — \
+                         using in-process host"
+                    );
+                }
+
                 // Hand off to `PluginHost` so the appropriate device wrapper
                 // (internal, VST3, AU, CLAP, WASM) is instantiated.  The host
                 // registers the resulting record so subsequent parameter
                 // updates and lifecycle calls can find it.  If the device is
                 // unknown (registry miss) or fails to instantiate, fall back
                 // to a unity-gain pass-through so the graph still compiles.
-                //
-                // `sandboxed` is forwarded to the host's decision point but is
-                // inert until step 6d (ADR-015): the plugin is instantiated
-                // in-process regardless of the flag today.
                 match plugin_host.instantiate(id, device_id, *sandboxed) {
                     Ok(node) => node,
                     Err(e) => {
@@ -681,7 +711,12 @@ impl GraphCompiler {
                 }
             }
 
-            NodeKind::Modulator { modulator_id, kind, rate_hz, waveform } => {
+            NodeKind::Modulator {
+                modulator_id,
+                kind,
+                rate_hz,
+                waveform,
+            } => {
                 use crate::audio_graph::modulation::ModulatorKind;
                 match kind {
                     ModulatorKind::Lfo => {
@@ -693,7 +728,11 @@ impl GraphCompiler {
                     }
                     _ => {
                         // Other modulator kinds not yet implemented — silent source
-                        Box::new(nodes::modulator::LfoNode::new(id, 0.0, crate::project::LfoWaveform::Sine))
+                        Box::new(nodes::modulator::LfoNode::new(
+                            id,
+                            0.0,
+                            crate::project::LfoWaveform::Sine,
+                        ))
                     }
                 }
             }
@@ -702,10 +741,8 @@ impl GraphCompiler {
                 // ADR-009: register/look up the hot-parameter block seeded from
                 // the project values, and hand the node a clone.  Subsequent
                 // knob turns write the block (no recompile).
-                let block = live_params.get_or_init_effect_block(
-                    effect_id,
-                    &nodes::eq::eq_block_values(params),
-                );
+                let block = live_params
+                    .get_or_init_effect_block(effect_id, &nodes::eq::eq_block_values(params));
                 Box::new(nodes::eq::EqNode::new(id, params.clone()).with_block(block))
             }
             NodeKind::Compressor { effect_id, params } => {
@@ -714,7 +751,9 @@ impl GraphCompiler {
                     effect_id,
                     &nodes::compressor::compressor_block_values(params),
                 );
-                Box::new(nodes::compressor::CompressorNode::new(id, params.clone()).with_block(block))
+                Box::new(
+                    nodes::compressor::CompressorNode::new(id, params.clone()).with_block(block),
+                )
             }
             NodeKind::Reverb { effect_id, params } => {
                 let block = live_params.get_or_init_effect_block(
@@ -724,10 +763,8 @@ impl GraphCompiler {
                 Box::new(nodes::reverb::ReverbNode::new(id, params.clone()).with_block(block))
             }
             NodeKind::Delay { effect_id, params } => {
-                let block = live_params.get_or_init_effect_block(
-                    effect_id,
-                    &nodes::delay::delay_block_values(params),
-                );
+                let block = live_params
+                    .get_or_init_effect_block(effect_id, &nodes::delay::delay_block_values(params));
                 Box::new(nodes::delay::DelayNode::new(id, params.clone()).with_block(block))
             }
         }
@@ -741,8 +778,18 @@ mod tests {
 
     fn two_node_graph() -> (AudioGraph, NodeId, NodeId) {
         let mut g = AudioGraph::new();
-        let a = g.add_node(NodeKind::Meter { meter_id: "a".into() }, "a");
-        let b = g.add_node(NodeKind::Meter { meter_id: "b".into() }, "b");
+        let a = g.add_node(
+            NodeKind::Meter {
+                meter_id: "a".into(),
+            },
+            "a",
+        );
+        let b = g.add_node(
+            NodeKind::Meter {
+                meter_id: "b".into(),
+            },
+            "b",
+        );
         (g, a, b)
     }
 
@@ -759,7 +806,10 @@ mod tests {
         g.connect_typed(a, 0, b, 0, PortKind::Midi);
         assert!(matches!(
             GraphCompiler::validate_port_kinds(&g),
-            Err(CompileError::UnsupportedPortKind { kind: PortKind::Midi, .. })
+            Err(CompileError::UnsupportedPortKind {
+                kind: PortKind::Midi,
+                ..
+            })
         ));
     }
 
@@ -767,7 +817,15 @@ mod tests {
     fn modulation_edge_is_rejected_until_phase_5e() {
         use crate::audio_graph::node::Polarity;
         let (mut g, a, b) = two_node_graph();
-        g.connect_typed(a, 0, b, 0, PortKind::Modulation { polarity: Polarity::Bipolar });
+        g.connect_typed(
+            a,
+            0,
+            b,
+            0,
+            PortKind::Modulation {
+                polarity: Polarity::Bipolar,
+            },
+        );
         assert!(matches!(
             GraphCompiler::validate_port_kinds(&g),
             Err(CompileError::UnsupportedPortKind { .. })

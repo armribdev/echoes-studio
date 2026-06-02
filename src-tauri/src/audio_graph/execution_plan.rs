@@ -23,8 +23,8 @@
 //! allows the scheduler to split the buffer array into disjoint read/write
 //! regions without locking.
 
-use crate::audio_graph::node::NodeId;
 use crate::audio_graph::modulation::ModulationMap;
+use crate::audio_graph::node::NodeId;
 
 // ── Connection ─────────────────────────────────────────────────────────────────
 
@@ -147,7 +147,11 @@ impl ExecutionPlan {
     ///
     /// Returns `None` if the plan is empty.
     pub fn master_step(&self) -> Option<usize> {
-        if self.steps.is_empty() { None } else { Some(self.steps.len() - 1) }
+        if self.steps.is_empty() {
+            None
+        } else {
+            Some(self.steps.len() - 1)
+        }
     }
 
     /// Total number of output buffer slots required.

@@ -40,8 +40,8 @@
 //! it resolves on the very next block, exactly like a one-block-late
 //! automation value.
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::Arc;
 
 /// A fixed bank of atomic `f32` cells for one effect's hot parameters.
 ///

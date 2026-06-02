@@ -25,6 +25,7 @@
 //!                      not yet wired; see ADR-015)
 
 pub mod bridge;
+pub mod bridged_node;
 pub mod capabilities;
 pub mod gui;
 pub mod host;
@@ -37,8 +38,8 @@ pub mod state;
 pub mod wrapper;
 
 pub use capabilities::{
-    AudioBusInfo, DeviceCapabilities, MidiPortInfo, NativeParamId, ParameterFlags,
-    ParameterInfo, SpeakerLayout,
+    AudioBusInfo, DeviceCapabilities, MidiPortInfo, NativeParamId, ParameterFlags, ParameterInfo,
+    SpeakerLayout,
 };
 pub use host::PluginHost;
 pub use instance::{NativeHandle, PluginInstance};

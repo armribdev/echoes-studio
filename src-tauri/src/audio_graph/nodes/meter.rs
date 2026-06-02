@@ -23,15 +23,27 @@ pub struct MeterNode {
 impl MeterNode {
     /// Create a node that writes its per-block peak into the provided atomics.
     pub fn new(id: NodeId, peak_l: Arc<AtomicU32>, peak_r: Arc<AtomicU32>) -> Self {
-        MeterNode { id, peak_l_out: peak_l, peak_r_out: peak_r }
+        MeterNode {
+            id,
+            peak_l_out: peak_l,
+            peak_r_out: peak_r,
+        }
     }
 }
 
 impl AudioNode for MeterNode {
-    fn node_id(&self) -> NodeId { self.id }
-    fn label(&self) -> &str { "MeterNode" }
-    fn num_input_ports(&self) -> usize { 1 }
-    fn num_output_ports(&self) -> usize { 1 }
+    fn node_id(&self) -> NodeId {
+        self.id
+    }
+    fn label(&self) -> &str {
+        "MeterNode"
+    }
+    fn num_input_ports(&self) -> usize {
+        1
+    }
+    fn num_output_ports(&self) -> usize {
+        1
+    }
 
     fn prepare(&mut self, _ctx: PrepareContext) {}
 

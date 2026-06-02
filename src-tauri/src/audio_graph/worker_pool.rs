@@ -50,7 +50,9 @@ struct Job<Ctx: Copy + 'static> {
 }
 
 impl<Ctx: Copy + 'static> Clone for Job<Ctx> {
-    fn clone(&self) -> Self { *self }
+    fn clone(&self) -> Self {
+        *self
+    }
 }
 impl<Ctx: Copy + 'static> Copy for Job<Ctx> {}
 
@@ -204,9 +206,7 @@ fn worker_loop<Ctx: Copy + Send + Sync + 'static>(id: usize, shared: Arc<PoolSha
 
         // Snapshot the job.  Safety: the dispatcher placed it before unparking
         // us, and won't mutate it again until every worker bumps `workers_done`.
-        let job = unsafe {
-            (*shared.job.get()).expect("worker unparked without a job")
-        };
+        let job = unsafe { (*shared.job.get()).expect("worker unparked without a job") };
 
         // Drain the work queue.
         loop {
@@ -250,7 +250,10 @@ mod tests {
     #[test]
     fn dispatch_runs_every_index_exactly_once() {
         let counters: Vec<AtomicU32> = (0..64).map(|_| AtomicU32::new(0)).collect();
-        let ctx = TestCtx { counters: counters.as_ptr(), len: counters.len() };
+        let ctx = TestCtx {
+            counters: counters.as_ptr(),
+            len: counters.len(),
+        };
 
         let pool = WorkerPool::<TestCtx>::new(3);
         let indices: Vec<usize> = (0..counters.len()).collect();
@@ -264,7 +267,10 @@ mod tests {
     #[test]
     fn dispatch_with_zero_workers_still_runs() {
         let counters: Vec<AtomicU32> = (0..8).map(|_| AtomicU32::new(0)).collect();
-        let ctx = TestCtx { counters: counters.as_ptr(), len: counters.len() };
+        let ctx = TestCtx {
+            counters: counters.as_ptr(),
+            len: counters.len(),
+        };
         let pool = WorkerPool::<TestCtx>::new(0);
         let indices: Vec<usize> = (0..counters.len()).collect();
         pool.dispatch(&indices, ctx, bump);
@@ -276,7 +282,10 @@ mod tests {
     #[test]
     fn multiple_dispatches_are_idempotent() {
         let counters: Vec<AtomicU32> = (0..16).map(|_| AtomicU32::new(0)).collect();
-        let ctx = TestCtx { counters: counters.as_ptr(), len: counters.len() };
+        let ctx = TestCtx {
+            counters: counters.as_ptr(),
+            len: counters.len(),
+        };
         let pool = WorkerPool::<TestCtx>::new(2);
         let indices: Vec<usize> = (0..counters.len()).collect();
         for _ in 0..10 {

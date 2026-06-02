@@ -61,10 +61,7 @@ impl GraphSnapshotDto {
     }
 
     pub fn from_graph(graph: &AudioGraph) -> Self {
-        let mut nodes: Vec<GraphNodeDto> = graph
-            .all_nodes()
-            .map(node_to_dto)
-            .collect();
+        let mut nodes: Vec<GraphNodeDto> = graph.all_nodes().map(node_to_dto).collect();
         nodes.sort_by_key(|n| n.id);
 
         let audio_edges: Vec<AudioEdgeDto> = graph
@@ -78,11 +75,8 @@ impl GraphSnapshotDto {
             })
             .collect();
 
-        let mod_edges: Vec<ModEdgeDto> = graph
-            .modulation_routes()
-            .iter()
-            .map(route_to_dto)
-            .collect();
+        let mod_edges: Vec<ModEdgeDto> =
+            graph.modulation_routes().iter().map(route_to_dto).collect();
 
         GraphSnapshotDto {
             nodes,
@@ -117,15 +111,17 @@ fn route_to_dto(route: &ModulationRoute) -> ModEdgeDto {
     }
 }
 
-fn describe_kind(kind: &NodeKind) -> (String, Option<String>, Option<String>, Option<String>, Option<String>) {
+fn describe_kind(
+    kind: &NodeKind,
+) -> (
+    String,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+) {
     match kind {
-        NodeKind::Track { track_id } => (
-            "track".into(),
-            Some(track_id.clone()),
-            None,
-            None,
-            None,
-        ),
+        NodeKind::Track { track_id } => ("track".into(), Some(track_id.clone()), None, None, None),
         NodeKind::Instrument { track_id } => (
             "instrument".into(),
             Some(track_id.clone()),
@@ -140,13 +136,7 @@ fn describe_kind(kind: &NodeKind) -> (String, Option<String>, Option<String>, Op
             None,
             Some(format!("{:.0}%", gain * 100.0)),
         ),
-        NodeKind::Meter { meter_id } => (
-            "meter".into(),
-            Some(meter_id.clone()),
-            None,
-            None,
-            None,
-        ),
+        NodeKind::Meter { meter_id } => ("meter".into(), Some(meter_id.clone()), None, None, None),
         NodeKind::Master { num_inputs } => (
             "master".into(),
             None,
@@ -154,7 +144,12 @@ fn describe_kind(kind: &NodeKind) -> (String, Option<String>, Option<String>, Op
             None,
             Some(format!("{num_inputs} entrées")),
         ),
-        NodeKind::Modulator { modulator_id, rate_hz, waveform, .. } => (
+        NodeKind::Modulator {
+            modulator_id,
+            rate_hz,
+            waveform,
+            ..
+        } => (
             "modulator".into(),
             None,
             Some(modulator_id.clone()),
@@ -193,7 +188,11 @@ fn describe_kind(kind: &NodeKind) -> (String, Option<String>, Option<String>, Op
             None,
             None,
             Some("delay".into()),
-            Some(format!("{:.0} ms · Wet {:.0}%", params.delay_ms, params.wet * 100.0)),
+            Some(format!(
+                "{:.0} ms · Wet {:.0}%",
+                params.delay_ms,
+                params.wet * 100.0
+            )),
         ),
         NodeKind::Gain { gain_linear } => (
             "gain".into(),
@@ -218,13 +217,9 @@ fn describe_kind(kind: &NodeKind) -> (String, Option<String>, Option<String>, Op
             Some(format!("{:.0}%", send_gain * 100.0)),
         ),
         NodeKind::Return { .. } => ("return".into(), None, None, None, None),
-        NodeKind::Plugin { device_id, .. } => (
-            "plugin".into(),
-            None,
-            None,
-            None,
-            Some(device_id.clone()),
-        ),
+        NodeKind::Plugin { device_id, .. } => {
+            ("plugin".into(), None, None, None, Some(device_id.clone()))
+        }
     }
 }
 

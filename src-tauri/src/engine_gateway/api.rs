@@ -16,23 +16,23 @@ use serde_json::json;
 use std::sync::Arc;
 use tauri::Emitter;
 
+use super::commands::{
+    cmd, AddClipPayload, AddEffectPayload, AddMidiClipPayload, AddModulationRoutePayload,
+    AddModulatorPayload, BatchCommand, CommandEnvelope, CreateTrackPayload, DeleteTrackPayload,
+    MoveClipPayload, MoveMidiClipPayload, MuteTrackPayload, RemoveClipPayload, RemoveEffectPayload,
+    RemoveMidiClipPayload, RemoveModulationRoutePayload, RemoveModulatorPayload, SeekPayload,
+    SetClipMidiNotesPayload, SetMidiNotesPayload, SetModulationDepthPayload, SoloTrackPayload,
+    UpdateEffectPayload, UpdateModulatorPayload, UpdateProjectNamePayload, UpdateTempoPayload,
+    UpdateTrackPayload,
+};
+use super::events::{ev, EngineEvent, ProjectEvent};
 use crate::audio_clip::AudioClip;
 use crate::audio_graph::GraphSnapshotDto;
 use crate::project::{
-    AppClip, AppMidiClip, AppProject, AppState, AppTrack, CachedAudioData, generate_id,
-    TrackEffect, EffectParams, EqParams, CompressorParams, ReverbParams, DelayParams,
-    PluginParams, MidiNote, MidiClipDto,
+    generate_id, AppClip, AppMidiClip, AppProject, AppState, AppTrack, CachedAudioData,
+    CompressorParams, DelayParams, EffectParams, EqParams, MidiClipDto, MidiNote, PluginParams,
+    ReverbParams, TrackEffect,
 };
-use super::commands::{
-    cmd, AddClipPayload, AddEffectPayload, AddModulationRoutePayload, AddModulatorPayload,
-    BatchCommand, CommandEnvelope, CreateTrackPayload, DeleteTrackPayload, MoveClipPayload,
-    MuteTrackPayload, RemoveClipPayload, RemoveEffectPayload, RemoveModulationRoutePayload,
-    RemoveModulatorPayload, SeekPayload, SetModulationDepthPayload, SetMidiNotesPayload,
-    SoloTrackPayload, UpdateEffectPayload, UpdateModulatorPayload, UpdateProjectNamePayload,
-    UpdateTempoPayload, UpdateTrackPayload,
-    AddMidiClipPayload, RemoveMidiClipPayload, MoveMidiClipPayload, SetClipMidiNotesPayload,
-};
-use super::events::{ev, EngineEvent, ProjectEvent};
 
 // ── Command result ────────────────────────────────────────────────────────────
 
@@ -52,10 +52,20 @@ pub struct CommandResult {
 
 impl CommandResult {
     fn ok(command_id: String, events: Vec<serde_json::Value>) -> Self {
-        CommandResult { success: true, command_id, events, error: None }
+        CommandResult {
+            success: true,
+            command_id,
+            events,
+            error: None,
+        }
     }
     fn err(command_id: String, msg: String) -> Self {
-        CommandResult { success: false, command_id, events: vec![], error: Some(msg) }
+        CommandResult {
+            success: false,
+            command_id,
+            events: vec![],
+            error: Some(msg),
+        }
     }
 }
 
@@ -86,8 +96,7 @@ pub fn send_batch(
         .into_iter()
         .map(|cmd| {
             let id = cmd.id.clone();
-            process_command(&app, &state, cmd)
-                .unwrap_or_else(|e| CommandResult::err(id, e))
+            process_command(&app, &state, cmd).unwrap_or_else(|e| CommandResult::err(id, e))
         })
         .collect();
 
@@ -141,7 +150,9 @@ pub fn undo(
     let engine_event = EngineEvent::new(ev::PROJECT_RESET, "", snapshot_val.clone());
     let _ = app.emit("engine-event", &engine_event);
 
-    state.dirty.store(true, std::sync::atomic::Ordering::Relaxed);
+    state
+        .dirty
+        .store(true, std::sync::atomic::Ordering::Relaxed);
     crate::menu_state::refresh_menu(&app, &state);
 
     Ok(snapshot_val)
@@ -173,7 +184,9 @@ pub fn redo(
     let engine_event = EngineEvent::new(ev::PROJECT_RESET, "", snapshot_val.clone());
     let _ = app.emit("engine-event", &engine_event);
 
-    state.dirty.store(true, std::sync::atomic::Ordering::Relaxed);
+    state
+        .dirty
+        .store(true, std::sync::atomic::Ordering::Relaxed);
     crate::menu_state::refresh_menu(&app, &state);
 
     Ok(snapshot_val)
@@ -196,7 +209,10 @@ fn process_command(
             state.transport.play();
             let ev = EngineEvent::new(ev::PLAY_STARTED, &project_id, json!({}));
             let _ = app.emit("engine-event", &ev);
-            Ok(CommandResult::ok(command_id, vec![serde_json::to_value(&ev).unwrap_or_default()]))
+            Ok(CommandResult::ok(
+                command_id,
+                vec![serde_json::to_value(&ev).unwrap_or_default()],
+            ))
         }
 
         cmd::STOP => {
@@ -211,17 +227,23 @@ fn process_command(
             );
             let _ = app.emit("engine-event", &ev_stop);
             let _ = app.emit("engine-event", &ev_pos);
-            Ok(CommandResult::ok(command_id, vec![
-                serde_json::to_value(&ev_stop).unwrap_or_default(),
-                serde_json::to_value(&ev_pos).unwrap_or_default(),
-            ]))
+            Ok(CommandResult::ok(
+                command_id,
+                vec![
+                    serde_json::to_value(&ev_stop).unwrap_or_default(),
+                    serde_json::to_value(&ev_pos).unwrap_or_default(),
+                ],
+            ))
         }
 
         cmd::PAUSE => {
             state.transport.pause();
             let ev = EngineEvent::new(ev::PLAY_STOPPED, &project_id, json!({ "pause": true }));
             let _ = app.emit("engine-event", &ev);
-            Ok(CommandResult::ok(command_id, vec![serde_json::to_value(&ev).unwrap_or_default()]))
+            Ok(CommandResult::ok(
+                command_id,
+                vec![serde_json::to_value(&ev).unwrap_or_default()],
+            ))
         }
 
         cmd::SEEK => {
@@ -235,7 +257,10 @@ fn process_command(
                 json!({ "position": p.position }),
             );
             let _ = app.emit("engine-event", &ev);
-            Ok(CommandResult::ok(command_id, vec![serde_json::to_value(&ev).unwrap_or_default()]))
+            Ok(CommandResult::ok(
+                command_id,
+                vec![serde_json::to_value(&ev).unwrap_or_default()],
+            ))
         }
 
         // ── Project structural commands (event-sourced) ───────────────────────
@@ -407,7 +432,9 @@ fn process_command(
             // Hot-path: update the per-track solo flags and the global any_solo
             // flag atomically.  Every TrackGainNode picks the new state up at
             // its next block read.
-            state.live_params.set_track_solo_exclusive(&p.track_id, p.solo);
+            state
+                .live_params
+                .set_track_solo_exclusive(&p.track_id, p.solo);
 
             let event_payload = json!({ "id": p.track_id, "solo": p.solo });
             let project_event = ProjectEvent::new(ev::TRACK_SOLOED, event_payload.clone());
@@ -571,12 +598,10 @@ fn process_command(
             }
 
             let event_payload = json!({ "name": p.name });
-            let project_event =
-                ProjectEvent::new(ev::PROJECT_NAME_UPDATED, event_payload.clone());
+            let project_event = ProjectEvent::new(ev::PROJECT_NAME_UPDATED, event_payload.clone());
             append_and_maybe_snapshot(state, project_event)?;
 
-            let engine_ev =
-                EngineEvent::new(ev::PROJECT_NAME_UPDATED, &project_id, event_payload);
+            let engine_ev = EngineEvent::new(ev::PROJECT_NAME_UPDATED, &project_id, event_payload);
             let _ = app.emit("engine-event", &engine_ev);
 
             Ok(CommandResult::ok(
@@ -620,11 +645,17 @@ fn process_command(
             let effect_id = generate_id();
             let params = default_params_for_kind(&p.kind)
                 .ok_or_else(|| format!("Unknown effect kind: {}", p.kind))?;
-            let effect = TrackEffect { id: effect_id.clone(), enabled: true, params };
+            let effect = TrackEffect {
+                id: effect_id.clone(),
+                enabled: true,
+                params,
+            };
 
             {
                 let mut project = state.project.lock().map_err(|e| e.to_string())?;
-                let track = project.tracks.iter_mut()
+                let track = project
+                    .tracks
+                    .iter_mut()
                     .find(|t| t.id == p.track_id)
                     .ok_or_else(|| format!("Track {} not found", p.track_id))?;
                 track.effects.push(effect.clone());
@@ -639,7 +670,10 @@ fn process_command(
             let _ = app.emit("engine-event", &engine_ev);
             recompile_if_needed(state);
 
-            Ok(CommandResult::ok(command_id, vec![serde_json::to_value(&engine_ev).unwrap_or_default()]))
+            Ok(CommandResult::ok(
+                command_id,
+                vec![serde_json::to_value(&engine_ev).unwrap_or_default()],
+            ))
         }
 
         cmd::REMOVE_EFFECT => {
@@ -648,7 +682,9 @@ fn process_command(
 
             {
                 let mut project = state.project.lock().map_err(|e| e.to_string())?;
-                let track = project.tracks.iter_mut()
+                let track = project
+                    .tracks
+                    .iter_mut()
                     .find(|t| t.id == p.track_id)
                     .ok_or_else(|| format!("Track {} not found", p.track_id))?;
                 track.effects.retain(|e| e.id != p.effect_id);
@@ -662,7 +698,10 @@ fn process_command(
             let _ = app.emit("engine-event", &engine_ev);
             recompile_if_needed(state);
 
-            Ok(CommandResult::ok(command_id, vec![serde_json::to_value(&engine_ev).unwrap_or_default()]))
+            Ok(CommandResult::ok(
+                command_id,
+                vec![serde_json::to_value(&engine_ev).unwrap_or_default()],
+            ))
         }
 
         cmd::UPDATE_EFFECT => {
@@ -675,16 +714,22 @@ fn process_command(
             // (enable/disable toggle) still recompiles.
             let (updated_effect, hot, structural) = {
                 let mut project = state.project.lock().map_err(|e| e.to_string())?;
-                let track = project.tracks.iter_mut()
+                let track = project
+                    .tracks
+                    .iter_mut()
                     .find(|t| t.id == p.track_id)
                     .ok_or_else(|| format!("Track {} not found", p.track_id))?;
-                let effect = track.effects.iter_mut()
+                let effect = track
+                    .effects
+                    .iter_mut()
                     .find(|e| e.id == p.effect_id)
                     .ok_or_else(|| format!("Effect {} not found", p.effect_id))?;
 
                 let mut structural = false;
                 if let Some(en) = p.enabled {
-                    if effect.enabled != en { structural = true; }
+                    if effect.enabled != en {
+                        structural = true;
+                    }
                     effect.enabled = en;
                 }
                 if let Some(raw) = p.params {
@@ -701,14 +746,19 @@ fn process_command(
                         EffectParams::Compressor(c) => HotEffectUpdate::Compressor(c.clone()),
                         EffectParams::Reverb(r) => HotEffectUpdate::Reverb(r.clone()),
                         EffectParams::Delay(d) => HotEffectUpdate::Delay(d.clone()),
-                        EffectParams::Plugin(pp) =>
-                            HotEffectUpdate::Plugin(pp.plugin_id.clone(), pp.params.clone()),
+                        EffectParams::Plugin(pp) => {
+                            HotEffectUpdate::Plugin(pp.plugin_id.clone(), pp.params.clone())
+                        }
                     }
                 } else {
                     HotEffectUpdate::None
                 };
 
-                (serde_json::to_value(&*effect).unwrap_or_default(), hot, structural)
+                (
+                    serde_json::to_value(&*effect).unwrap_or_default(),
+                    hot,
+                    structural,
+                )
             };
 
             let event_payload = json!({ "track_id": p.track_id, "effect_id": p.effect_id, "effect": updated_effect });
@@ -727,7 +777,8 @@ fn process_command(
                         state.live_params.write_effect_block(&p.effect_id, &values)
                     }
                     HotEffectUpdate::Compressor(c) => {
-                        let values = crate::audio_graph::nodes::compressor::compressor_block_values(c);
+                        let values =
+                            crate::audio_graph::nodes::compressor::compressor_block_values(c);
                         state.live_params.write_effect_block(&p.effect_id, &values)
                     }
                     HotEffectUpdate::Reverb(r) => {
@@ -746,9 +797,15 @@ fn process_command(
                         if let Ok(mut engine) = state.audio_engine.lock() {
                             let mut all_ok = !params.is_empty();
                             for (native_id, value) in params {
-                                match engine.plugin_host.push_plugin_param(device_id, *native_id, *value) {
+                                match engine
+                                    .plugin_host
+                                    .push_plugin_param(device_id, *native_id, *value)
+                                {
                                     Ok(_) => {}
-                                    Err(_) => { all_ok = false; break; }
+                                    Err(_) => {
+                                        all_ok = false;
+                                        break;
+                                    }
                                 }
                             }
                             all_ok
@@ -763,11 +820,13 @@ fn process_command(
                 recompile_if_needed(state);
             }
 
-            Ok(CommandResult::ok(command_id, vec![serde_json::to_value(&engine_ev).unwrap_or_default()]))
+            Ok(CommandResult::ok(
+                command_id,
+                vec![serde_json::to_value(&engine_ev).unwrap_or_default()],
+            ))
         }
 
         // ── Modulation commands ───────────────────────────────────────────────
-
         cmd::ADD_MODULATOR => {
             let p: AddModulatorPayload = serde_json::from_value(command.payload)
                 .map_err(|e| format!("ADD_MODULATOR payload invalid: {e}"))?;
@@ -781,13 +840,18 @@ fn process_command(
                     }),
                     other => return Err(format!("Unknown modulator kind: {other}")),
                 };
-                ProjectModulator { id: generate_id(), params }
+                ProjectModulator {
+                    id: generate_id(),
+                    params,
+                }
             };
 
             let mod_value = serde_json::to_value(&modulator).unwrap_or_default();
             {
                 let mut project = state.project.lock().map_err(|e| e.to_string())?;
-                let track = project.tracks.iter_mut()
+                let track = project
+                    .tracks
+                    .iter_mut()
                     .find(|t| t.id == p.track_id)
                     .ok_or_else(|| format!("Track {} not found", p.track_id))?;
                 track.modulators.push(modulator);
@@ -800,7 +864,10 @@ fn process_command(
 
             let engine_ev = EngineEvent::new(ev::MODULATOR_ADDED, &project_id, event_payload);
             let _ = app.emit("engine-event", &engine_ev);
-            Ok(CommandResult::ok(command_id, vec![serde_json::to_value(&engine_ev).unwrap_or_default()]))
+            Ok(CommandResult::ok(
+                command_id,
+                vec![serde_json::to_value(&engine_ev).unwrap_or_default()],
+            ))
         }
 
         cmd::REMOVE_MODULATOR => {
@@ -808,11 +875,15 @@ fn process_command(
                 .map_err(|e| format!("REMOVE_MODULATOR payload invalid: {e}"))?;
             {
                 let mut project = state.project.lock().map_err(|e| e.to_string())?;
-                let track = project.tracks.iter_mut()
+                let track = project
+                    .tracks
+                    .iter_mut()
                     .find(|t| t.id == p.track_id)
                     .ok_or_else(|| format!("Track {} not found", p.track_id))?;
                 track.modulators.retain(|m| m.id != p.modulator_id);
-                track.mod_routes.retain(|r| r.modulator_id != p.modulator_id);
+                track
+                    .mod_routes
+                    .retain(|r| r.modulator_id != p.modulator_id);
             }
             let event_payload = json!({ "track_id": p.track_id, "modulator_id": p.modulator_id });
             let project_event = ProjectEvent::new(ev::MODULATOR_REMOVED, event_payload.clone());
@@ -820,7 +891,10 @@ fn process_command(
             recompile_if_needed(state);
             let engine_ev = EngineEvent::new(ev::MODULATOR_REMOVED, &project_id, event_payload);
             let _ = app.emit("engine-event", &engine_ev);
-            Ok(CommandResult::ok(command_id, vec![serde_json::to_value(&engine_ev).unwrap_or_default()]))
+            Ok(CommandResult::ok(
+                command_id,
+                vec![serde_json::to_value(&engine_ev).unwrap_or_default()],
+            ))
         }
 
         cmd::UPDATE_MODULATOR => {
@@ -828,7 +902,9 @@ fn process_command(
                 .map_err(|e| format!("UPDATE_MODULATOR payload invalid: {e}"))?;
             {
                 let mut project = state.project.lock().map_err(|e| e.to_string())?;
-                let track = project.tracks.iter_mut()
+                let track = project
+                    .tracks
+                    .iter_mut()
                     .find(|t| t.id == p.track_id)
                     .ok_or_else(|| format!("Track {} not found", p.track_id))?;
                 if let Some(m) = track.modulators.iter_mut().find(|x| x.id == p.modulator_id) {
@@ -848,7 +924,10 @@ fn process_command(
             append_and_maybe_snapshot(state, project_event)?;
             let engine_ev = EngineEvent::new(ev::MODULATOR_UPDATED, &project_id, event_payload);
             let _ = app.emit("engine-event", &engine_ev);
-            Ok(CommandResult::ok(command_id, vec![serde_json::to_value(&engine_ev).unwrap_or_default()]))
+            Ok(CommandResult::ok(
+                command_id,
+                vec![serde_json::to_value(&engine_ev).unwrap_or_default()],
+            ))
         }
 
         cmd::ADD_MODULATION_ROUTE => {
@@ -858,10 +937,14 @@ fn process_command(
             let route = {
                 use crate::project::{ModulationTargetRef, ProjectModulationRoute};
                 let target = match p.target_kind.as_str() {
-                    "track_gain" => ModulationTargetRef::TrackGain { track_id: p.track_id.clone() },
+                    "track_gain" => ModulationTargetRef::TrackGain {
+                        track_id: p.track_id.clone(),
+                    },
                     "effect_param" => ModulationTargetRef::EffectParam {
                         track_id: p.track_id.clone(),
-                        effect_id: p.effect_id.ok_or("effect_id required for effect_param target")?,
+                        effect_id: p
+                            .effect_id
+                            .ok_or("effect_id required for effect_param target")?,
                         param: p.param,
                     },
                     other => return Err(format!("Unknown target kind: {other}")),
@@ -877,18 +960,25 @@ fn process_command(
             let route_value = serde_json::to_value(&route).unwrap_or_default();
             {
                 let mut project = state.project.lock().map_err(|e| e.to_string())?;
-                let track = project.tracks.iter_mut()
+                let track = project
+                    .tracks
+                    .iter_mut()
                     .find(|t| t.id == p.track_id)
                     .ok_or_else(|| format!("Track {} not found", p.track_id))?;
                 track.mod_routes.push(route);
             }
             let event_payload = json!({ "track_id": p.track_id, "route": route_value });
-            let project_event = ProjectEvent::new(ev::MODULATION_ROUTE_ADDED, event_payload.clone());
+            let project_event =
+                ProjectEvent::new(ev::MODULATION_ROUTE_ADDED, event_payload.clone());
             append_and_maybe_snapshot(state, project_event)?;
             recompile_if_needed(state);
-            let engine_ev = EngineEvent::new(ev::MODULATION_ROUTE_ADDED, &project_id, event_payload);
+            let engine_ev =
+                EngineEvent::new(ev::MODULATION_ROUTE_ADDED, &project_id, event_payload);
             let _ = app.emit("engine-event", &engine_ev);
-            Ok(CommandResult::ok(command_id, vec![serde_json::to_value(&engine_ev).unwrap_or_default()]))
+            Ok(CommandResult::ok(
+                command_id,
+                vec![serde_json::to_value(&engine_ev).unwrap_or_default()],
+            ))
         }
 
         cmd::REMOVE_MODULATION_ROUTE => {
@@ -896,18 +986,25 @@ fn process_command(
                 .map_err(|e| format!("REMOVE_MODULATION_ROUTE payload invalid: {e}"))?;
             {
                 let mut project = state.project.lock().map_err(|e| e.to_string())?;
-                let track = project.tracks.iter_mut()
+                let track = project
+                    .tracks
+                    .iter_mut()
                     .find(|t| t.id == p.track_id)
                     .ok_or_else(|| format!("Track {} not found", p.track_id))?;
                 track.mod_routes.retain(|r| r.id != p.route_id);
             }
             let event_payload = json!({ "track_id": p.track_id, "route_id": p.route_id });
-            let project_event = ProjectEvent::new(ev::MODULATION_ROUTE_REMOVED, event_payload.clone());
+            let project_event =
+                ProjectEvent::new(ev::MODULATION_ROUTE_REMOVED, event_payload.clone());
             append_and_maybe_snapshot(state, project_event)?;
             recompile_if_needed(state);
-            let engine_ev = EngineEvent::new(ev::MODULATION_ROUTE_REMOVED, &project_id, event_payload);
+            let engine_ev =
+                EngineEvent::new(ev::MODULATION_ROUTE_REMOVED, &project_id, event_payload);
             let _ = app.emit("engine-event", &engine_ev);
-            Ok(CommandResult::ok(command_id, vec![serde_json::to_value(&engine_ev).unwrap_or_default()]))
+            Ok(CommandResult::ok(
+                command_id,
+                vec![serde_json::to_value(&engine_ev).unwrap_or_default()],
+            ))
         }
 
         cmd::SET_MODULATION_DEPTH => {
@@ -915,7 +1012,9 @@ fn process_command(
                 .map_err(|e| format!("SET_MODULATION_DEPTH payload invalid: {e}"))?;
             {
                 let mut project = state.project.lock().map_err(|e| e.to_string())?;
-                let track = project.tracks.iter_mut()
+                let track = project
+                    .tracks
+                    .iter_mut()
                     .find(|t| t.id == p.track_id)
                     .ok_or_else(|| format!("Track {} not found", p.track_id))?;
                 if let Some(route) = track.mod_routes.iter_mut().find(|r| r.id == p.route_id) {
@@ -924,12 +1023,18 @@ fn process_command(
             }
             // Hot-path: update the per-route depth atomic, no recompile.
             state.live_params.set_route_depth(&p.route_id, p.depth);
-            let event_payload = json!({ "track_id": p.track_id, "route_id": p.route_id, "depth": p.depth });
-            let project_event = ProjectEvent::new(ev::MODULATION_DEPTH_CHANGED, event_payload.clone());
+            let event_payload =
+                json!({ "track_id": p.track_id, "route_id": p.route_id, "depth": p.depth });
+            let project_event =
+                ProjectEvent::new(ev::MODULATION_DEPTH_CHANGED, event_payload.clone());
             append_and_maybe_snapshot(state, project_event)?;
-            let engine_ev = EngineEvent::new(ev::MODULATION_DEPTH_CHANGED, &project_id, event_payload);
+            let engine_ev =
+                EngineEvent::new(ev::MODULATION_DEPTH_CHANGED, &project_id, event_payload);
             let _ = app.emit("engine-event", &engine_ev);
-            Ok(CommandResult::ok(command_id, vec![serde_json::to_value(&engine_ev).unwrap_or_default()]))
+            Ok(CommandResult::ok(
+                command_id,
+                vec![serde_json::to_value(&engine_ev).unwrap_or_default()],
+            ))
         }
 
         cmd::SET_MIDI_NOTES => {
@@ -938,7 +1043,9 @@ fn process_command(
 
             {
                 let mut project = state.project.lock().map_err(|e| e.to_string())?;
-                let track = project.tracks.iter_mut()
+                let track = project
+                    .tracks
+                    .iter_mut()
                     .find(|t| t.id == p.track_id)
                     .ok_or_else(|| format!("Track {} not found", p.track_id))?;
                 track.midi_notes = p.notes.clone();
@@ -952,19 +1059,34 @@ fn process_command(
             let engine_ev = EngineEvent::new(ev::MIDI_NOTES_SET, &project_id, event_payload);
             let _ = app.emit("engine-event", &engine_ev);
 
-            Ok(CommandResult::ok(command_id, vec![serde_json::to_value(&engine_ev).unwrap_or_default()]))
+            Ok(CommandResult::ok(
+                command_id,
+                vec![serde_json::to_value(&engine_ev).unwrap_or_default()],
+            ))
         }
 
         cmd::ADD_MIDI_CLIP => {
             let p: AddMidiClipPayload = serde_json::from_value(command.payload)
                 .map_err(|e| format!("ADD_MIDI_CLIP payload invalid: {e}"))?;
             let clip_id = generate_id();
-            let clip = AppMidiClip { id: clip_id.clone(), start: p.start, end: p.end, notes: vec![] };
-            let clip_dto = MidiClipDto { id: clip.id.clone(), start: clip.start, end: clip.end, notes: vec![] };
+            let clip = AppMidiClip {
+                id: clip_id.clone(),
+                start: p.start,
+                end: p.end,
+                notes: vec![],
+            };
+            let clip_dto = MidiClipDto {
+                id: clip.id.clone(),
+                start: clip.start,
+                end: clip.end,
+                notes: vec![],
+            };
 
             {
                 let mut project = state.project.lock().map_err(|e| e.to_string())?;
-                let track = project.tracks.iter_mut()
+                let track = project
+                    .tracks
+                    .iter_mut()
                     .find(|t| t.id == p.track_id)
                     .ok_or_else(|| format!("Track {} not found", p.track_id))?;
                 track.midi_clips.push(clip);
@@ -978,7 +1100,10 @@ fn process_command(
             let _ = app.emit("engine-event", &engine_ev);
             recompile_if_needed(state);
 
-            Ok(CommandResult::ok(command_id, vec![serde_json::to_value(&engine_ev).unwrap_or_default()]))
+            Ok(CommandResult::ok(
+                command_id,
+                vec![serde_json::to_value(&engine_ev).unwrap_or_default()],
+            ))
         }
 
         cmd::REMOVE_MIDI_CLIP => {
@@ -987,7 +1112,9 @@ fn process_command(
 
             {
                 let mut project = state.project.lock().map_err(|e| e.to_string())?;
-                let track = project.tracks.iter_mut()
+                let track = project
+                    .tracks
+                    .iter_mut()
                     .find(|t| t.id == p.track_id)
                     .ok_or_else(|| format!("Track {} not found", p.track_id))?;
                 track.midi_clips.retain(|c| c.id != p.clip_id);
@@ -1001,7 +1128,10 @@ fn process_command(
             let _ = app.emit("engine-event", &engine_ev);
             recompile_if_needed(state);
 
-            Ok(CommandResult::ok(command_id, vec![serde_json::to_value(&engine_ev).unwrap_or_default()]))
+            Ok(CommandResult::ok(
+                command_id,
+                vec![serde_json::to_value(&engine_ev).unwrap_or_default()],
+            ))
         }
 
         cmd::MOVE_MIDI_CLIP => {
@@ -1010,10 +1140,14 @@ fn process_command(
 
             {
                 let mut project = state.project.lock().map_err(|e| e.to_string())?;
-                let track = project.tracks.iter_mut()
+                let track = project
+                    .tracks
+                    .iter_mut()
                     .find(|t| t.id == p.track_id)
                     .ok_or_else(|| format!("Track {} not found", p.track_id))?;
-                let clip = track.midi_clips.iter_mut()
+                let clip = track
+                    .midi_clips
+                    .iter_mut()
                     .find(|c| c.id == p.clip_id)
                     .ok_or_else(|| format!("MidiClip {} not found", p.clip_id))?;
                 clip.start = p.start;
@@ -1028,7 +1162,10 @@ fn process_command(
             let _ = app.emit("engine-event", &engine_ev);
             recompile_if_needed(state);
 
-            Ok(CommandResult::ok(command_id, vec![serde_json::to_value(&engine_ev).unwrap_or_default()]))
+            Ok(CommandResult::ok(
+                command_id,
+                vec![serde_json::to_value(&engine_ev).unwrap_or_default()],
+            ))
         }
 
         cmd::SET_CLIP_MIDI_NOTES => {
@@ -1037,17 +1174,22 @@ fn process_command(
 
             {
                 let mut project = state.project.lock().map_err(|e| e.to_string())?;
-                let track = project.tracks.iter_mut()
+                let track = project
+                    .tracks
+                    .iter_mut()
                     .find(|t| t.id == p.track_id)
                     .ok_or_else(|| format!("Track {} not found", p.track_id))?;
-                let clip = track.midi_clips.iter_mut()
+                let clip = track
+                    .midi_clips
+                    .iter_mut()
                     .find(|c| c.id == p.clip_id)
                     .ok_or_else(|| format!("MidiClip {} not found", p.clip_id))?;
                 clip.notes = p.notes.clone();
             }
 
             let notes_val = serde_json::to_value(&p.notes).unwrap_or_default();
-            let event_payload = json!({ "track_id": p.track_id, "clip_id": p.clip_id, "notes": notes_val });
+            let event_payload =
+                json!({ "track_id": p.track_id, "clip_id": p.clip_id, "notes": notes_val });
             let project_event = ProjectEvent::new(ev::MIDI_CLIP_NOTES_SET, event_payload.clone());
             append_and_maybe_snapshot(state, project_event)?;
 
@@ -1055,7 +1197,10 @@ fn process_command(
             let _ = app.emit("engine-event", &engine_ev);
             recompile_if_needed(state);
 
-            Ok(CommandResult::ok(command_id, vec![serde_json::to_value(&engine_ev).unwrap_or_default()]))
+            Ok(CommandResult::ok(
+                command_id,
+                vec![serde_json::to_value(&engine_ev).unwrap_or_default()],
+            ))
         }
 
         other => Err(format!("Unknown command type: {other}")),
@@ -1068,7 +1213,9 @@ fn append_and_maybe_snapshot(
     state: &tauri::State<'_, AppState>,
     event: ProjectEvent,
 ) -> Result<(), String> {
-    state.dirty.store(true, std::sync::atomic::Ordering::Relaxed);
+    state
+        .dirty
+        .store(true, std::sync::atomic::Ordering::Relaxed);
     let mut store = state.event_store.lock().map_err(|e| e.to_string())?;
     store.append(event);
 
@@ -1171,49 +1318,64 @@ fn default_params_for_kind(kind: &str) -> Option<EffectParams> {
     if let Some(rest) = kind.strip_prefix("plugin:") {
         let mut parts = rest.splitn(3, '|');
         let plugin_id = parts.next().unwrap_or("").to_string();
-        let name      = parts.next().unwrap_or("Plugin").to_string();
-        let format    = parts.next().unwrap_or("").to_string();
+        let name = parts.next().unwrap_or("Plugin").to_string();
+        let format = parts.next().unwrap_or("").to_string();
         if !plugin_id.is_empty() {
-            return Some(EffectParams::Plugin(PluginParams { plugin_id, name, format, params: vec![], sandboxed: false }));
+            return Some(EffectParams::Plugin(PluginParams {
+                plugin_id,
+                name,
+                format,
+                params: vec![],
+                sandboxed: false,
+            }));
         }
     }
     match kind {
-        "eq"         => Some(EffectParams::Eq(EqParams::default())),
+        "eq" => Some(EffectParams::Eq(EqParams::default())),
         "compressor" => Some(EffectParams::Compressor(CompressorParams::default())),
-        "reverb"     => Some(EffectParams::Reverb(ReverbParams::default())),
-        "delay"      => Some(EffectParams::Delay(DelayParams::default())),
-        _            => None,
+        "reverb" => Some(EffectParams::Reverb(ReverbParams::default())),
+        "delay" => Some(EffectParams::Delay(DelayParams::default())),
+        _ => None,
     }
 }
 
-fn merge_effect_params(existing: &EffectParams, raw: serde_json::Value) -> Result<EffectParams, String> {
+fn merge_effect_params(
+    existing: &EffectParams,
+    raw: serde_json::Value,
+) -> Result<EffectParams, String> {
     match existing {
-        EffectParams::Eq(_)         => serde_json::from_value::<EqParams>(raw).map(EffectParams::Eq),
-        EffectParams::Compressor(_) => serde_json::from_value::<CompressorParams>(raw).map(EffectParams::Compressor),
-        EffectParams::Reverb(_)     => serde_json::from_value::<ReverbParams>(raw).map(EffectParams::Reverb),
-        EffectParams::Delay(_)      => serde_json::from_value::<DelayParams>(raw).map(EffectParams::Delay),
-        EffectParams::Plugin(p)     => {
+        EffectParams::Eq(_) => serde_json::from_value::<EqParams>(raw).map(EffectParams::Eq),
+        EffectParams::Compressor(_) => {
+            serde_json::from_value::<CompressorParams>(raw).map(EffectParams::Compressor)
+        }
+        EffectParams::Reverb(_) => {
+            serde_json::from_value::<ReverbParams>(raw).map(EffectParams::Reverb)
+        }
+        EffectParams::Delay(_) => {
+            serde_json::from_value::<DelayParams>(raw).map(EffectParams::Delay)
+        }
+        EffectParams::Plugin(p) => {
             // Plugin params are a Vec<(u32, f32)>; update in place or replace entirely.
-            serde_json::from_value::<PluginParams>(raw)
-                .map(|updated| EffectParams::Plugin(PluginParams {
+            serde_json::from_value::<PluginParams>(raw).map(|updated| {
+                EffectParams::Plugin(PluginParams {
                     plugin_id: p.plugin_id.clone(),
-                    name:      p.name.clone(),
-                    format:    p.format.clone(),
-                    params:    updated.params,
+                    name: p.name.clone(),
+                    format: p.format.clone(),
+                    params: updated.params,
                     // Identity/config fields stay with the existing effect; the
                     // merge payload only carries param values.  Preserve the
                     // sandbox opt-in (ADR-015).
                     sandboxed: p.sandboxed,
-                }))
+                })
+            })
         }
-    }.map_err(|e| format!("Effect params invalid: {e}"))
+    }
+    .map_err(|e| format!("Effect params invalid: {e}"))
 }
 
 /// Rebuild `AppState::project` from the event store (snapshot + events).
 /// Called after undo/redo.
-pub fn rebuild_project_from_store(
-    state: &tauri::State<'_, AppState>,
-) -> Result<(), String> {
+pub fn rebuild_project_from_store(state: &tauri::State<'_, AppState>) -> Result<(), String> {
     // Collect what we need while holding the store lock
     let (base_project, events_to_replay): (AppProject, Vec<super::events::ProjectEvent>) = {
         let store = state.event_store.lock().map_err(|e| e.to_string())?;
@@ -1250,8 +1412,10 @@ fn apply_events(
         match event.event_type.as_str() {
             ev::TRACK_CREATED => {
                 let id = event.payload["id"].as_str().unwrap_or("").to_string();
-                let name =
-                    event.payload["name"].as_str().unwrap_or("Track").to_string();
+                let name = event.payload["name"]
+                    .as_str()
+                    .unwrap_or("Track")
+                    .to_string();
                 // Only add if not already present (idempotent)
                 if !project.tracks.iter().any(|t| t.id == id) {
                     project.tracks.push(AppTrack {
@@ -1314,7 +1478,10 @@ fn apply_events(
             ev::CLIP_ADDED => {
                 let track_id = event.payload["track_id"].as_str().unwrap_or("");
                 let clip_id = event.payload["clip_id"].as_str().unwrap_or("").to_string();
-                let file_path = event.payload["file_path"].as_str().unwrap_or("").to_string();
+                let file_path = event.payload["file_path"]
+                    .as_str()
+                    .unwrap_or("")
+                    .to_string();
                 let start = event.payload["start"].as_f64().unwrap_or(0.0);
                 let end = event.payload["end"].as_f64().unwrap_or(0.0);
 
@@ -1339,7 +1506,9 @@ fn apply_events(
                                     peaks_512: data.peaks_512,
                                     peaks_4096: data.peaks_4096,
                                 });
-                                state.audio_cache.insert(clip_id.clone(), Arc::clone(&cached));
+                                state
+                                    .audio_cache
+                                    .insert(clip_id.clone(), Arc::clone(&cached));
                                 Some(cached)
                             }
                             Err(e) => {
@@ -1432,7 +1601,9 @@ fn apply_events(
                 if let Some(track) = project.tracks.iter_mut().find(|t| t.id == track_id) {
                     if let Some(effect) = track.effects.iter_mut().find(|e| e.id == effect_id) {
                         if let Some(raw_effect) = event.payload.get("effect") {
-                            if let Ok(updated) = serde_json::from_value::<TrackEffect>(raw_effect.clone()) {
+                            if let Ok(updated) =
+                                serde_json::from_value::<TrackEffect>(raw_effect.clone())
+                            {
                                 effect.enabled = updated.enabled;
                                 effect.params = updated.params;
                             }
@@ -1445,7 +1616,9 @@ fn apply_events(
             ev::MODULATOR_ADDED => {
                 let track_id = event.payload["track_id"].as_str().unwrap_or("");
                 if let Some(raw) = event.payload.get("modulator") {
-                    if let Ok(m) = serde_json::from_value::<crate::project::ProjectModulator>(raw.clone()) {
+                    if let Ok(m) =
+                        serde_json::from_value::<crate::project::ProjectModulator>(raw.clone())
+                    {
                         if let Some(track) = project.tracks.iter_mut().find(|t| t.id == track_id) {
                             if !track.modulators.iter().any(|x| x.id == m.id) {
                                 track.modulators.push(m);
@@ -1482,7 +1655,10 @@ fn apply_events(
             ev::MODULATION_ROUTE_ADDED => {
                 let track_id = event.payload["track_id"].as_str().unwrap_or("");
                 if let Some(raw) = event.payload.get("route") {
-                    if let Ok(route) = serde_json::from_value::<crate::project::ProjectModulationRoute>(raw.clone()) {
+                    if let Ok(route) = serde_json::from_value::<
+                        crate::project::ProjectModulationRoute,
+                    >(raw.clone())
+                    {
                         if let Some(track) = project.tracks.iter_mut().find(|t| t.id == track_id) {
                             if !track.mod_routes.iter().any(|r| r.id == route.id) {
                                 track.mod_routes.push(route);
@@ -1505,7 +1681,8 @@ fn apply_events(
                 let route_id = event.payload["route_id"].as_str().unwrap_or("");
                 if let Some(depth) = event.payload["depth"].as_f64() {
                     if let Some(track) = project.tracks.iter_mut().find(|t| t.id == track_id) {
-                        if let Some(route) = track.mod_routes.iter_mut().find(|r| r.id == route_id) {
+                        if let Some(route) = track.mod_routes.iter_mut().find(|r| r.id == route_id)
+                        {
                             route.depth = depth as f32;
                         }
                     }
@@ -1533,7 +1710,12 @@ fn apply_events(
                     ) {
                         if let Some(track) = project.tracks.iter_mut().find(|t| t.id == track_id) {
                             if !track.midi_clips.iter().any(|c| c.id == id) {
-                                track.midi_clips.push(AppMidiClip { id, start, end, notes: vec![] });
+                                track.midi_clips.push(AppMidiClip {
+                                    id,
+                                    start,
+                                    end,
+                                    notes: vec![],
+                                });
                             }
                         }
                     }
@@ -1567,7 +1749,9 @@ fn apply_events(
                 if let Some(raw_notes) = event.payload.get("notes") {
                     if let Ok(notes) = serde_json::from_value::<Vec<MidiNote>>(raw_notes.clone()) {
                         if let Some(track) = project.tracks.iter_mut().find(|t| t.id == track_id) {
-                            if let Some(clip) = track.midi_clips.iter_mut().find(|c| c.id == clip_id) {
+                            if let Some(clip) =
+                                track.midi_clips.iter_mut().find(|c| c.id == clip_id)
+                            {
                                 clip.notes = notes;
                             }
                         }

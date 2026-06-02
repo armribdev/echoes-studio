@@ -30,12 +30,23 @@ struct Adsr {
 
 impl Default for Adsr {
     fn default() -> Self {
-        Adsr { attack_secs: 0.01, decay_secs: 0.1, sustain: 0.7, release_secs: 0.3 }
+        Adsr {
+            attack_secs: 0.01,
+            decay_secs: 0.1,
+            sustain: 0.7,
+            release_secs: 0.3,
+        }
     }
 }
 
 #[derive(Clone, Copy, PartialEq)]
-enum Stage { Idle, Attack, Decay, Sustain, Release }
+enum Stage {
+    Idle,
+    Attack,
+    Decay,
+    Sustain,
+    Release,
+}
 
 // ── Voice ─────────────────────────────────────────────────────────────────────
 
@@ -169,20 +180,28 @@ impl PolySynth {
     /// Sets `v.active = false` when the voice finishes releasing.
     #[inline]
     fn tick(v: &mut Voice, adsr: Adsr, sr: f32) -> f32 {
-        if !v.active { return 0.0; }
+        if !v.active {
+            return 0.0;
+        }
 
-        let attack_rate  = 1.0 / (adsr.attack_secs.max(0.0001)  * sr);
-        let decay_rate   = (1.0 - adsr.sustain) / (adsr.decay_secs.max(0.0001)   * sr);
+        let attack_rate = 1.0 / (adsr.attack_secs.max(0.0001) * sr);
+        let decay_rate = (1.0 - adsr.sustain) / (adsr.decay_secs.max(0.0001) * sr);
         let release_rate = 1.0 / (adsr.release_secs.max(0.0001) * sr);
 
         match v.stage {
             Stage::Attack => {
                 v.level += attack_rate;
-                if v.level >= 1.0 { v.level = 1.0; v.stage = Stage::Decay; }
+                if v.level >= 1.0 {
+                    v.level = 1.0;
+                    v.stage = Stage::Decay;
+                }
             }
             Stage::Decay => {
                 v.level -= decay_rate;
-                if v.level <= adsr.sustain { v.level = adsr.sustain; v.stage = Stage::Sustain; }
+                if v.level <= adsr.sustain {
+                    v.level = adsr.sustain;
+                    v.stage = Stage::Sustain;
+                }
             }
             Stage::Sustain => {}
             Stage::Release => {
@@ -199,7 +218,9 @@ impl PolySynth {
 
         let sample = v.phase.sin() * v.level * v.velocity;
         v.phase += v.phase_inc;
-        if v.phase >= TWO_PI { v.phase -= TWO_PI; }
+        if v.phase >= TWO_PI {
+            v.phase -= TWO_PI;
+        }
         sample
     }
 }
@@ -239,7 +260,7 @@ impl InstrumentDevice for PolySynth {
                 while ev_idx < events.len() && events[ev_idx].offset as usize <= frame {
                     match events[ev_idx].kind {
                         MidiEventKind::NoteOn { pitch, velocity } => self.note_on(pitch, velocity),
-                        MidiEventKind::NoteOff { pitch }          => self.note_off(pitch),
+                        MidiEventKind::NoteOff { pitch } => self.note_off(pitch),
                     }
                     ev_idx += 1;
                 }
@@ -259,7 +280,7 @@ impl InstrumentDevice for PolySynth {
                 while ev_idx < events.len() && events[ev_idx].offset as usize <= frame {
                     match events[ev_idx].kind {
                         MidiEventKind::NoteOn { pitch, velocity } => self.note_on(pitch, velocity),
-                        MidiEventKind::NoteOff { pitch }          => self.note_off(pitch),
+                        MidiEventKind::NoteOff { pitch } => self.note_off(pitch),
                     }
                     ev_idx += 1;
                 }

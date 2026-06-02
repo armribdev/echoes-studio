@@ -30,7 +30,13 @@ pub struct LfoNode {
 
 impl LfoNode {
     pub fn new(id: NodeId, rate_hz: f32, waveform: LfoWaveform) -> Self {
-        LfoNode { id, rate_hz, rate_cells: None, waveform, phase: 0.0 }
+        LfoNode {
+            id,
+            rate_hz,
+            rate_cells: None,
+            waveform,
+            phase: 0.0,
+        }
     }
 
     pub fn with_rate_cells(mut self, cells: Arc<ModulatorCells>) -> Self {
@@ -56,17 +62,29 @@ impl LfoNode {
             LfoWaveform::Saw => 2.0 * phase - 1.0,
             // Square: +1 for first half, −1 for second half
             LfoWaveform::Square => {
-                if phase < 0.5 { 1.0 } else { -1.0 }
+                if phase < 0.5 {
+                    1.0
+                } else {
+                    -1.0
+                }
             }
         }
     }
 }
 
 impl AudioNode for LfoNode {
-    fn node_id(&self) -> NodeId { self.id }
-    fn label(&self) -> &str { "LFO" }
-    fn num_input_ports(&self) -> usize { 0 }
-    fn num_output_ports(&self) -> usize { 1 }
+    fn node_id(&self) -> NodeId {
+        self.id
+    }
+    fn label(&self) -> &str {
+        "LFO"
+    }
+    fn num_input_ports(&self) -> usize {
+        0
+    }
+    fn num_output_ports(&self) -> usize {
+        1
+    }
 
     fn prepare(&mut self, _ctx: PrepareContext) {}
 
@@ -76,7 +94,9 @@ impl AudioNode for LfoNode {
         outputs: &mut [AudioBuffer],
         transport: &TransportInfo,
     ) {
-        if outputs.is_empty() { return; }
+        if outputs.is_empty() {
+            return;
+        }
         let output = &mut outputs[0];
         let block_size = transport.block_size.min(output.num_frames);
         let rate_hz = match &self.rate_cells {

@@ -85,11 +85,11 @@ impl PluginRegistry {
     fn register_builtins(&mut self) {
         // These match the `NodeKind` entries the compiler can build.
         let builtins = [
-            ("echoes.gain",   "Gain",   "Echoes Studio"),
-            ("echoes.pan",    "Pan",    "Echoes Studio"),
-            ("echoes.bus",    "Bus",    "Echoes Studio"),
-            ("echoes.send",   "Send",   "Echoes Studio"),
-            ("echoes.meter",  "Meter",  "Echoes Studio"),
+            ("echoes.gain", "Gain", "Echoes Studio"),
+            ("echoes.pan", "Pan", "Echoes Studio"),
+            ("echoes.bus", "Bus", "Echoes Studio"),
+            ("echoes.send", "Send", "Echoes Studio"),
+            ("echoes.meter", "Meter", "Echoes Studio"),
             ("echoes.master", "Master", "Echoes Studio"),
         ];
 

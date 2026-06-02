@@ -53,10 +53,18 @@ impl TrackNode {
 }
 
 impl AudioNode for TrackNode {
-    fn node_id(&self) -> NodeId { self.id }
-    fn label(&self) -> &str { "TrackNode" }
-    fn num_input_ports(&self) -> usize { 0 }
-    fn num_output_ports(&self) -> usize { 1 }
+    fn node_id(&self) -> NodeId {
+        self.id
+    }
+    fn label(&self) -> &str {
+        "TrackNode"
+    }
+    fn num_input_ports(&self) -> usize {
+        0
+    }
+    fn num_output_ports(&self) -> usize {
+        1
+    }
 
     fn prepare(&mut self, ctx: PrepareContext) {
         self.engine_sample_rate = ctx.sample_rate;

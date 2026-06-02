@@ -15,7 +15,11 @@ pub struct GainNode {
 
 impl GainNode {
     pub fn new(id: NodeId, gain: f32) -> Self {
-        GainNode { id, gain, mod_delta: 0.0 }
+        GainNode {
+            id,
+            gain,
+            mod_delta: 0.0,
+        }
     }
 
     pub fn set_gain(&mut self, gain: f32) {
@@ -28,10 +32,18 @@ impl GainNode {
 }
 
 impl AudioNode for GainNode {
-    fn node_id(&self) -> NodeId { self.id }
-    fn label(&self) -> &str { "GainNode" }
-    fn num_input_ports(&self) -> usize { 1 }
-    fn num_output_ports(&self) -> usize { 1 }
+    fn node_id(&self) -> NodeId {
+        self.id
+    }
+    fn label(&self) -> &str {
+        "GainNode"
+    }
+    fn num_input_ports(&self) -> usize {
+        1
+    }
+    fn num_output_ports(&self) -> usize {
+        1
+    }
 
     fn prepare(&mut self, _ctx: PrepareContext) {}
 

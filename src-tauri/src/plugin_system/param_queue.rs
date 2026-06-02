@@ -135,7 +135,11 @@ mod tests {
     use super::*;
 
     fn pc(id: u32, v: f32) -> ParamChange {
-        ParamChange { native_id: id, normalised: v, sample_offset: 0 }
+        ParamChange {
+            native_id: id,
+            normalised: v,
+            sample_offset: 0,
+        }
     }
 
     #[test]

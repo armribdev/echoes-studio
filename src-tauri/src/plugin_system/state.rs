@@ -95,8 +95,7 @@ impl DeviceState {
 // a minimal, self-contained codec — round-trip tested below.  Compact relative
 // to a JSON byte array (which would ~4× a multi-MB synth preset).
 
-const B64_ALPHABET: &[u8; 64] =
-    b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+const B64_ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
 /// Encode bytes to a padded base64 string.
 pub fn encode_base64(bytes: &[u8]) -> String {
@@ -110,10 +109,14 @@ pub fn encode_base64(bytes: &[u8]) -> String {
         out.push(B64_ALPHABET[((n >> 12) & 0x3F) as usize] as char);
         out.push(if chunk.len() > 1 {
             B64_ALPHABET[((n >> 6) & 0x3F) as usize] as char
-        } else { '=' });
+        } else {
+            '='
+        });
         out.push(if chunk.len() > 2 {
             B64_ALPHABET[(n & 0x3F) as usize] as char
-        } else { '=' });
+        } else {
+            '='
+        });
     }
     out
 }

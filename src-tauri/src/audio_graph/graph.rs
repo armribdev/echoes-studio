@@ -40,14 +40,10 @@ fn alloc_node_id() -> NodeId {
 #[derive(Debug, Clone)]
 pub enum NodeKind {
     /// Reads timeline clips for one track and outputs audio.
-    Track {
-        track_id: String,
-    },
+    Track { track_id: String },
 
     /// Reads MIDI clips for one track, synthesises audio via a built-in instrument.
-    Instrument {
-        track_id: String,
-    },
+    Instrument { track_id: String },
 
     /// Applies gain and panning for one track.
     TrackGain {
@@ -67,19 +63,13 @@ pub enum NodeKind {
     },
 
     /// Receives audio from all `Send` nodes with the matching `return_id`.
-    Return {
-        return_id: String,
-    },
+    Return { return_id: String },
 
     /// Per-sample gain (linear multiplier, handles both gain and volume faders).
-    Gain {
-        gain_linear: f32,
-    },
+    Gain { gain_linear: f32 },
 
     /// Stereo panner (−1.0 = hard left, 0.0 = centre, +1.0 = hard right).
-    Pan {
-        position: f32,
-    },
+    Pan { position: f32 },
 
     /// Wraps an external or internal plugin.
     Plugin {
@@ -106,9 +96,7 @@ pub enum NodeKind {
     },
 
     /// Peak / RMS meter (side-effect: writes to a meter ring-buffer for the UI).
-    Meter {
-        meter_id: String,
-    },
+    Meter { meter_id: String },
 
     /// The master output node — final stereo sum before device output.
     ///
@@ -123,10 +111,22 @@ pub enum NodeKind {
     // parameter edits reach the node without a recompile.  Only `Eq` consumes a
     // block today; the field is carried on every variant so the remaining
     // effects migrate variant-by-variant without re-touching this enum.
-    Eq        { effect_id: String, params: crate::project::EqParams },
-    Compressor { effect_id: String, params: crate::project::CompressorParams },
-    Reverb    { effect_id: String, params: crate::project::ReverbParams },
-    Delay     { effect_id: String, params: crate::project::DelayParams },
+    Eq {
+        effect_id: String,
+        params: crate::project::EqParams,
+    },
+    Compressor {
+        effect_id: String,
+        params: crate::project::CompressorParams,
+    },
+    Reverb {
+        effect_id: String,
+        params: crate::project::ReverbParams,
+    },
+    Delay {
+        effect_id: String,
+        params: crate::project::DelayParams,
+    },
 }
 
 // ── Graph node ────────────────────────────────────────────────────────────────
@@ -190,7 +190,14 @@ impl AudioGraph {
     pub fn add_node(&mut self, kind: NodeKind, label: impl Into<String>) -> NodeId {
         let id = alloc_node_id();
         let is_master = matches!(kind, NodeKind::Master { .. });
-        self.nodes.insert(id, GraphNode { id, kind, label: label.into() });
+        self.nodes.insert(
+            id,
+            GraphNode {
+                id,
+                kind,
+                label: label.into(),
+            },
+        );
         if is_master {
             self.master_id = Some(id);
         }
@@ -210,7 +217,13 @@ impl AudioGraph {
         to_node: NodeId,
         to_port: u32,
     ) -> Edge {
-        self.connect_typed(from_node, from_port, to_node, to_port, PortKind::default_audio_stereo())
+        self.connect_typed(
+            from_node,
+            from_port,
+            to_node,
+            to_port,
+            PortKind::default_audio_stereo(),
+        )
     }
 
     /// Connect two ports with an explicit [`PortKind`].
@@ -228,8 +241,14 @@ impl AudioGraph {
         kind: PortKind,
     ) -> Edge {
         let edge = Edge {
-            from: PortId { node: from_node, port: from_port },
-            to: PortId { node: to_node, port: to_port },
+            from: PortId {
+                node: from_node,
+                port: from_port,
+            },
+            to: PortId {
+                node: to_node,
+                port: to_port,
+            },
             kind,
         };
         self.edges.push(edge.clone());
@@ -302,7 +321,9 @@ impl AudioGraph {
         // ── Master node ─────────────────────────────────────────────────────────
         let num_track_inputs = project.tracks.len().max(1);
         let master_id = graph.add_node(
-            NodeKind::Master { num_inputs: num_track_inputs },
+            NodeKind::Master {
+                num_inputs: num_track_inputs,
+            },
             "Master",
         );
 
@@ -312,12 +333,16 @@ impl AudioGraph {
         for (port_idx, track) in project.tracks.iter().enumerate() {
             let track_node = if !track.midi_clips.is_empty() {
                 graph.add_node(
-                    NodeKind::Instrument { track_id: track.id.clone() },
+                    NodeKind::Instrument {
+                        track_id: track.id.clone(),
+                    },
                     format!("{} [instrument]", track.name),
                 )
             } else {
                 graph.add_node(
-                    NodeKind::Track { track_id: track.id.clone() },
+                    NodeKind::Track {
+                        track_id: track.id.clone(),
+                    },
                     format!("{} [clips]", track.name),
                 )
             };
@@ -334,13 +359,30 @@ impl AudioGraph {
 
             let mut last_node = track_node;
             for effect in &track.effects {
-                if !effect.enabled { continue; }
+                if !effect.enabled {
+                    continue;
+                }
                 let kind = match &effect.params {
-                    EffectParams::Eq(p)         => NodeKind::Eq { effect_id: effect.id.clone(), params: p.clone() },
-                    EffectParams::Compressor(p) => NodeKind::Compressor { effect_id: effect.id.clone(), params: p.clone() },
-                    EffectParams::Reverb(p)     => NodeKind::Reverb { effect_id: effect.id.clone(), params: p.clone() },
-                    EffectParams::Delay(p)      => NodeKind::Delay { effect_id: effect.id.clone(), params: p.clone() },
-                    EffectParams::Plugin(p)     => NodeKind::Plugin { device_id: p.plugin_id.clone(), sandboxed: p.sandboxed },
+                    EffectParams::Eq(p) => NodeKind::Eq {
+                        effect_id: effect.id.clone(),
+                        params: p.clone(),
+                    },
+                    EffectParams::Compressor(p) => NodeKind::Compressor {
+                        effect_id: effect.id.clone(),
+                        params: p.clone(),
+                    },
+                    EffectParams::Reverb(p) => NodeKind::Reverb {
+                        effect_id: effect.id.clone(),
+                        params: p.clone(),
+                    },
+                    EffectParams::Delay(p) => NodeKind::Delay {
+                        effect_id: effect.id.clone(),
+                        params: p.clone(),
+                    },
+                    EffectParams::Plugin(p) => NodeKind::Plugin {
+                        device_id: p.plugin_id.clone(),
+                        sandboxed: p.sandboxed,
+                    },
                 };
                 let fx_node = graph.add_node(kind, format!("{} [fx:{}]", track.name, effect.id));
                 effect_node_ids.insert(effect.id.clone(), fx_node);
@@ -349,11 +391,16 @@ impl AudioGraph {
             }
 
             let gain_node = graph.add_node(
-                NodeKind::TrackGain { track_id: track.id.clone(), gain: gain_linear },
+                NodeKind::TrackGain {
+                    track_id: track.id.clone(),
+                    gain: gain_linear,
+                },
                 format!("{} [vol]", track.name),
             );
             let meter_node = graph.add_node(
-                NodeKind::Meter { meter_id: track.id.clone() },
+                NodeKind::Meter {
+                    meter_id: track.id.clone(),
+                },
                 format!("{} [meter]", track.name),
             );
 
@@ -404,7 +451,10 @@ impl AudioGraph {
                 };
 
                 graph.modulation.add_route(ModulationRoute {
-                    source: ModulationSource { node: source_node_id, port: 0 },
+                    source: ModulationSource {
+                        node: source_node_id,
+                        port: 0,
+                    },
                     target: ModulationTarget {
                         param: ParamId::new(target_node_id, param_name),
                         depth: route.depth,

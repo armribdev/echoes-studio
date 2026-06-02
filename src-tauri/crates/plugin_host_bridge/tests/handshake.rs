@@ -42,6 +42,40 @@ fn spawn_reaches_ready_then_shuts_down() {
 }
 
 #[test]
+fn process_block_round_trips_planar_audio() {
+    use plugin_bridge::session::BlockOutcome;
+    use std::time::Duration;
+
+    let block_size = 32u32;
+    let channels = 2u32;
+    let layout = BridgeLayout::new(block_size, channels, 8);
+    let name = unique_name("rt");
+
+    let mut session = BridgeSession::spawn(bridge_exe(), &name, &layout, Duration::from_secs(5))
+        .expect("bridge should reach READY");
+
+    let n = (channels * block_size) as usize;
+    let mut output = vec![0.0f32; n];
+
+    for seq in 0..32u64 {
+        // Planar input, distinct per block.
+        let input: Vec<f32> = (0..n).map(|i| seq as f32 + i as f32 * 0.5).collect();
+        // Generous budget: the passthrough bridge echoes well within it.
+        let outcome =
+            session.process_block(&input, &mut output, seq, 48_000, Duration::from_secs(1));
+        assert_eq!(
+            outcome,
+            BlockOutcome::Processed,
+            "block {seq} should round-trip"
+        );
+        assert_eq!(output, input, "block {seq} samples mismatch");
+    }
+    assert_eq!(session.timeout_count(), 0);
+
+    drop(session);
+}
+
+#[test]
 fn audio_blocks_round_trip_through_the_bridge() {
     let block_size = 64u32;
     let channels = 2u32;

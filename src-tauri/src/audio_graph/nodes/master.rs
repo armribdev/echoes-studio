@@ -14,8 +14,8 @@
 //! However, we still allocate one slot in `output_buffers[master_step]` as a
 //! working buffer that the scheduler reads after `run_steps`.
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 use crate::audio_graph::buffer::AudioBuffer;
 use crate::audio_graph::node::{AudioNode, NodeId, PrepareContext, TransportInfo};
@@ -60,13 +60,21 @@ impl MasterNode {
 }
 
 impl AudioNode for MasterNode {
-    fn node_id(&self) -> NodeId { self.id }
-    fn label(&self) -> &str { "MasterNode" }
-    fn num_input_ports(&self) -> usize { self.num_inputs }
+    fn node_id(&self) -> NodeId {
+        self.id
+    }
+    fn label(&self) -> &str {
+        "MasterNode"
+    }
+    fn num_input_ports(&self) -> usize {
+        self.num_inputs
+    }
     /// The compiler treats the master as a sink (num_outputs = 0).
     /// We return 1 here so the scheduler pre-allocates a working buffer
     /// for the `write_master_output` path.
-    fn num_output_ports(&self) -> usize { 1 }
+    fn num_output_ports(&self) -> usize {
+        1
+    }
 
     fn prepare(&mut self, ctx: PrepareContext) {
         self.oversample.prepare(ctx.max_block_size, ctx.sample_rate);
@@ -99,11 +107,14 @@ impl AudioNode for MasterNode {
         if apply_clip {
             if output.num_channels >= 2 {
                 let (ch_l, ch_r) = output.two_channels_mut(0, 1);
-                self.oversample.process_inplace(0, ch_l, frames, Self::soft_clip);
-                self.oversample.process_inplace(1, ch_r, frames, Self::soft_clip);
+                self.oversample
+                    .process_inplace(0, ch_l, frames, Self::soft_clip);
+                self.oversample
+                    .process_inplace(1, ch_r, frames, Self::soft_clip);
             } else {
                 let ch = output.channel_mut(0);
-                self.oversample.process_inplace(0, ch, frames, Self::soft_clip);
+                self.oversample
+                    .process_inplace(0, ch, frames, Self::soft_clip);
             }
         }
         if output.num_channels >= 2 {
@@ -143,7 +154,11 @@ mod tests {
     fn process_linear_when_soft_clip_disabled() {
         let clip_flag = Arc::new(AtomicBool::new(false));
         let mut node = MasterNode::new(NodeId(0), 1, Arc::clone(&clip_flag));
-        node.prepare(PrepareContext { sample_rate: 48_000.0, max_block_size: 512, num_channels: 1 });
+        node.prepare(PrepareContext {
+            sample_rate: 48_000.0,
+            max_block_size: 512,
+            num_channels: 1,
+        });
         let mut input = AudioBuffer::new(1, 4);
         input.channel_mut(0).copy_from_slice(&[0.5, -0.3, 0.9, 1.2]);
         let input_ref = &input;
@@ -162,7 +177,11 @@ mod tests {
     fn process_applies_tanh_when_soft_clip_enabled() {
         let clip_flag = Arc::new(AtomicBool::new(true));
         let mut node = MasterNode::new(NodeId(0), 1, Arc::clone(&clip_flag));
-        node.prepare(PrepareContext { sample_rate: 48_000.0, max_block_size: 512, num_channels: 1 });
+        node.prepare(PrepareContext {
+            sample_rate: 48_000.0,
+            max_block_size: 512,
+            num_channels: 1,
+        });
         let mut input = AudioBuffer::new(1, 8);
         input.channel_mut(0).fill(0.5);
         let input_ref = &input;
@@ -171,7 +190,14 @@ mod tests {
         let mut outputs = [output];
         node.process(&[input_ref], &mut outputs, &transport);
         let last = outputs[0].channel(0)[7];
-        assert!((last - 0.5_f32.tanh()).abs() < 0.05, "last sample {last}, expected ~{}", 0.5_f32.tanh());
-        assert!((last - 0.5).abs() > 1e-4, "soft clip should shape the plateau");
+        assert!(
+            (last - 0.5_f32.tanh()).abs() < 0.05,
+            "last sample {last}, expected ~{}",
+            0.5_f32.tanh()
+        );
+        assert!(
+            (last - 0.5).abs() > 1e-4,
+            "soft clip should shape the plateau"
+        );
     }
 }

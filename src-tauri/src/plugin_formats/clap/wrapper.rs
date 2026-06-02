@@ -34,7 +34,7 @@ use crate::audio_graph::buffer::AudioBuffer;
 use crate::audio_graph::node::{AudioNode, NodeId, PrepareContext, TransportInfo};
 use crate::plugin_system::capabilities::DeviceCapabilities;
 use crate::plugin_system::instance::PluginInstance;
-use crate::plugin_system::lifecycle::{LifecycleState, transition};
+use crate::plugin_system::lifecycle::{transition, LifecycleState};
 use crate::plugin_system::parameter::ParameterMap;
 use crate::plugin_system::state::DeviceState;
 use crate::plugin_system::wrapper::{Device, DeviceInfo};
@@ -46,14 +46,19 @@ use super::ffi::{
 };
 
 // ── No-op output events (plugins can push events out; we ignore them for now) ──
-unsafe extern "C" fn out_try_push(_: *const ClapOutputEvents, _: *const super::ffi::ClapEventHeader) -> bool { true }
+unsafe extern "C" fn out_try_push(
+    _: *const ClapOutputEvents,
+    _: *const super::ffi::ClapEventHeader,
+) -> bool {
+    true
+}
 
 // ── ClapWrapperNode ────────────────────────────────────────────────────────────
 
 pub struct ClapWrapperNode {
     node_id: NodeId,
-    info:    DeviceInfo,
-    params:  ParameterMap,
+    info: DeviceInfo,
+    params: ParameterMap,
 
     /// Shared, refcounted handle to the live plugin.  Captured at
     /// construction; cloned only on the command thread.  Deref on the audio
@@ -62,14 +67,14 @@ pub struct ClapWrapperNode {
     instance: Arc<PluginInstance>,
 
     // Per-block scratch — pre-allocated in prepare, stable after that
-    in_channel_ptrs:  Vec<*mut f32>,
+    in_channel_ptrs: Vec<*mut f32>,
     out_channel_ptrs: Vec<*mut f32>,
-    in_audio_buf:  ClapAudioBuffer,
+    in_audio_buf: ClapAudioBuffer,
     out_audio_buf: ClapAudioBuffer,
 
     // Fixed-size parameter-event list (no alloc in process), ADR-007.
     param_events: Box<FixedParamEventList>,
-    out_events:   ClapOutputEvents,
+    out_events: ClapOutputEvents,
 
     /// Parameter plain ranges (`native_id → (min, max)`), enumerated once at
     /// `prepare` via `clap.params`.  Used to denormalise queued values before
@@ -102,11 +107,11 @@ impl ClapWrapperNode {
         ClapWrapperNode {
             node_id,
             info,
-            params:    ParameterMap::new(),
+            params: ParameterMap::new(),
             instance,
-            in_channel_ptrs:  Vec::new(),
+            in_channel_ptrs: Vec::new(),
             out_channel_ptrs: Vec::new(),
-            in_audio_buf:  unsafe { std::mem::zeroed() },
+            in_audio_buf: unsafe { std::mem::zeroed() },
             out_audio_buf: unsafe { std::mem::zeroed() },
             param_events: FixedParamEventList::new(),
             out_events: ClapOutputEvents {
@@ -133,14 +138,22 @@ impl ClapWrapperNode {
 }
 
 impl AudioNode for ClapWrapperNode {
-    fn node_id(&self) -> NodeId { self.node_id }
-    fn label(&self) -> &str { "ClapWrapperNode" }
-    fn num_input_ports(&self)  -> usize { 1 }
-    fn num_output_ports(&self) -> usize { 1 }
+    fn node_id(&self) -> NodeId {
+        self.node_id
+    }
+    fn label(&self) -> &str {
+        "ClapWrapperNode"
+    }
+    fn num_input_ports(&self) -> usize {
+        1
+    }
+    fn num_output_ports(&self) -> usize {
+        1
+    }
 
     fn prepare(&mut self, ctx: PrepareContext) {
         self.num_channels = ctx.num_channels;
-        self.in_channel_ptrs  = vec![std::ptr::null_mut(); ctx.num_channels];
+        self.in_channel_ptrs = vec![std::ptr::null_mut(); ctx.num_channels];
         self.out_channel_ptrs = vec![std::ptr::null_mut(); ctx.num_channels];
 
         let p = self.plugin_ptr();
@@ -189,11 +202,13 @@ impl AudioNode for ClapWrapperNode {
 
     fn process(
         &mut self,
-        inputs:  &[&AudioBuffer],
+        inputs: &[&AudioBuffer],
         outputs: &mut [AudioBuffer],
         _transport: &TransportInfo,
     ) {
-        if outputs.is_empty() || !self.active { return; }
+        if outputs.is_empty() || !self.active {
+            return;
+        }
 
         let nc = self.num_channels;
         let nf = outputs[0].num_frames;
@@ -227,29 +242,29 @@ impl AudioNode for ClapWrapperNode {
 
         // Build ClapAudioBuffer structs (stack, no alloc)
         self.in_audio_buf = ClapAudioBuffer {
-            data32:        self.in_channel_ptrs.as_mut_ptr(),
-            data64:        std::ptr::null_mut(),
+            data32: self.in_channel_ptrs.as_mut_ptr(),
+            data64: std::ptr::null_mut(),
             channel_count: nc as u32,
-            latency:       0,
+            latency: 0,
             constant_mask: 0,
         };
         self.out_audio_buf = ClapAudioBuffer {
-            data32:        self.out_channel_ptrs.as_mut_ptr(),
-            data64:        std::ptr::null_mut(),
+            data32: self.out_channel_ptrs.as_mut_ptr(),
+            data64: std::ptr::null_mut(),
             channel_count: nc as u32,
-            latency:       0,
+            latency: 0,
             constant_mask: 0,
         };
 
         let process = ClapProcess {
-            steady_time:         -1,
-            frames_count:        nf as u32,
-            transport:           std::ptr::null(),
-            audio_inputs:        &self.in_audio_buf,
-            audio_outputs:       &mut self.out_audio_buf,
-            audio_inputs_count:  if inputs.is_empty() { 0 } else { 1 },
+            steady_time: -1,
+            frames_count: nf as u32,
+            transport: std::ptr::null(),
+            audio_inputs: &self.in_audio_buf,
+            audio_outputs: &mut self.out_audio_buf,
+            audio_inputs_count: if inputs.is_empty() { 0 } else { 1 },
             audio_outputs_count: 1,
-            in_events:  &self.param_events.input_events_vtable,
+            in_events: &self.param_events.input_events_vtable,
             out_events: &self.out_events,
         };
 
@@ -266,7 +281,9 @@ impl AudioNode for ClapWrapperNode {
     fn reset(&mut self) {
         if self.active {
             let p = self.plugin_ptr();
-            unsafe { ((*p).reset)(p); }
+            unsafe {
+                ((*p).reset)(p);
+            }
         }
     }
 
@@ -302,12 +319,22 @@ impl Drop for ClapWrapperNode {
 }
 
 impl Device for ClapWrapperNode {
-    fn device_id(&self) -> &str { &self.info.device_id }
-    fn info(&self)       -> &DeviceInfo  { &self.info }
-    fn parameters(&self) -> &ParameterMap { &self.params }
-    fn parameters_mut(&mut self) -> &mut ParameterMap { &mut self.params }
+    fn device_id(&self) -> &str {
+        &self.info.device_id
+    }
+    fn info(&self) -> &DeviceInfo {
+        &self.info
+    }
+    fn parameters(&self) -> &ParameterMap {
+        &self.params
+    }
+    fn parameters_mut(&mut self) -> &mut ParameterMap {
+        &mut self.params
+    }
 
-    fn save_state(&self) -> DeviceState { DeviceState::empty(&self.info.device_id) }
+    fn save_state(&self) -> DeviceState {
+        DeviceState::empty(&self.info.device_id)
+    }
     fn load_state(&mut self, _: &DeviceState) {}
 
     // ── Lifecycle (Phase 2b: single source of truth = instance atomic) ─────────
@@ -317,7 +344,9 @@ impl Device for ClapWrapperNode {
     // suspend/resume would require start_processing/stop_processing toggles,
     // which Phase 4 will wire properly once the host owns the lifecycle.
 
-    fn lifecycle_state(&self) -> LifecycleState { self.instance.lifecycle() }
+    fn lifecycle_state(&self) -> LifecycleState {
+        self.instance.lifecycle()
+    }
 
     fn suspend(&mut self) {
         if let Ok(next) = transition(self.instance.lifecycle(), LifecycleState::Suspended) {
@@ -335,7 +364,9 @@ impl Device for ClapWrapperNode {
         }
     }
 
-    fn reported_latency(&self) -> u32 { self.reported_latency }
+    fn reported_latency(&self) -> u32 {
+        self.reported_latency
+    }
 
     /// Phase 1: legacy shape (stereo, no params) plus the freshly-introspected
     /// latency.  Phase 2 replaces this with full audio-port / param introspection.

@@ -37,13 +37,13 @@ pub fn eq_block_values(p: &EqParams) -> [f32; EQ_PARAM_COUNT] {
 /// Read the block back into an `EqParams`.
 fn eq_params_from_block(block: &ParameterBlock) -> EqParams {
     EqParams {
-        low_gain_db:  block.get(EQ_LOW_GAIN_DB),
-        low_freq:     block.get(EQ_LOW_FREQ),
-        mid_gain_db:  block.get(EQ_MID_GAIN_DB),
-        mid_freq:     block.get(EQ_MID_FREQ),
-        mid_q:        block.get(EQ_MID_Q),
+        low_gain_db: block.get(EQ_LOW_GAIN_DB),
+        low_freq: block.get(EQ_LOW_FREQ),
+        mid_gain_db: block.get(EQ_MID_GAIN_DB),
+        mid_freq: block.get(EQ_MID_FREQ),
+        mid_q: block.get(EQ_MID_Q),
         high_gain_db: block.get(EQ_HIGH_GAIN_DB),
-        high_freq:    block.get(EQ_HIGH_FREQ),
+        high_freq: block.get(EQ_HIGH_FREQ),
     }
 }
 
@@ -53,8 +53,11 @@ const DEFAULT_SHELF_SLOPE: f32 = 1.0;
 
 #[derive(Clone, Copy, Default)]
 struct Biquad {
-    b0: f32, b1: f32, b2: f32,
-    a1: f32, a2: f32,
+    b0: f32,
+    b1: f32,
+    b2: f32,
+    a1: f32,
+    a2: f32,
     s1: [f32; 2],
     s2: [f32; 2],
 }
@@ -67,7 +70,10 @@ impl Biquad {
         y
     }
 
-    fn reset(&mut self) { self.s1 = [0.0; 2]; self.s2 = [0.0; 2]; }
+    fn reset(&mut self) {
+        self.s1 = [0.0; 2];
+        self.s2 = [0.0; 2];
+    }
 
     /// RBJ shelving alpha from shelf slope S (see Audio EQ Cookbook, case S).
     fn shelf_alpha(w: f32, a: f32, shelf_slope: f32) -> f32 {
@@ -87,7 +93,15 @@ impl Biquad {
         let a0 = (a + 1.0) + (a - 1.0) * cos_w + 2.0 * a_sqrt * alpha;
         let a1 = -2.0 * ((a - 1.0) + (a + 1.0) * cos_w);
         let a2 = (a + 1.0) + (a - 1.0) * cos_w - 2.0 * a_sqrt * alpha;
-        Biquad { b0: b0/a0, b1: b1/a0, b2: b2/a0, a1: a1/a0, a2: a2/a0, s1: [0.0;2], s2: [0.0;2] }
+        Biquad {
+            b0: b0 / a0,
+            b1: b1 / a0,
+            b2: b2 / a0,
+            a1: a1 / a0,
+            a2: a2 / a0,
+            s1: [0.0; 2],
+            s2: [0.0; 2],
+        }
     }
 
     fn peaking(freq: f32, gain_db: f32, q: f32, sr: f32) -> Self {
@@ -100,7 +114,15 @@ impl Biquad {
         let a0 = 1.0 + alpha / a;
         let a1 = -2.0 * w.cos();
         let a2 = 1.0 - alpha / a;
-        Biquad { b0: b0/a0, b1: b1/a0, b2: b2/a0, a1: a1/a0, a2: a2/a0, s1: [0.0;2], s2: [0.0;2] }
+        Biquad {
+            b0: b0 / a0,
+            b1: b1 / a0,
+            b2: b2 / a0,
+            a1: a1 / a0,
+            a2: a2 / a0,
+            s1: [0.0; 2],
+            s2: [0.0; 2],
+        }
     }
 
     fn high_shelf(freq: f32, gain_db: f32, sr: f32) -> Self {
@@ -115,7 +137,15 @@ impl Biquad {
         let a0 = (a + 1.0) - (a - 1.0) * cos_w + 2.0 * a_sqrt * alpha;
         let a1 = 2.0 * ((a - 1.0) - (a + 1.0) * cos_w);
         let a2 = (a + 1.0) - (a - 1.0) * cos_w - 2.0 * a_sqrt * alpha;
-        Biquad { b0: b0/a0, b1: b1/a0, b2: b2/a0, a1: a1/a0, a2: a2/a0, s1: [0.0;2], s2: [0.0;2] }
+        Biquad {
+            b0: b0 / a0,
+            b1: b1 / a0,
+            b2: b2 / a0,
+            a1: a1 / a0,
+            a2: a2 / a0,
+            s1: [0.0; 2],
+            s2: [0.0; 2],
+        }
     }
 }
 
@@ -165,25 +195,44 @@ impl EqNode {
     /// Preserves the filter state (`s1`/`s2`) so a parameter change does not
     /// reset the running filters — only the coefficients move.
     fn recompute_coeffs(&mut self) {
-        let s_low  = self.low.s1; let s_low2  = self.low.s2;
-        let s_mid  = self.mid.s1; let s_mid2  = self.mid.s2;
-        let s_high = self.high.s1; let s_high2 = self.high.s2;
+        let s_low = self.low.s1;
+        let s_low2 = self.low.s2;
+        let s_mid = self.mid.s1;
+        let s_mid2 = self.mid.s2;
+        let s_high = self.high.s1;
+        let s_high2 = self.high.s2;
 
-        self.low  = Biquad::low_shelf(self.params.low_freq, self.params.low_gain_db, self.sr_os);
-        self.mid  = Biquad::peaking(self.params.mid_freq, self.params.mid_gain_db, self.params.mid_q, self.sr_os);
+        self.low = Biquad::low_shelf(self.params.low_freq, self.params.low_gain_db, self.sr_os);
+        self.mid = Biquad::peaking(
+            self.params.mid_freq,
+            self.params.mid_gain_db,
+            self.params.mid_q,
+            self.sr_os,
+        );
         self.high = Biquad::high_shelf(self.params.high_freq, self.params.high_gain_db, self.sr_os);
 
-        self.low.s1 = s_low;  self.low.s2 = s_low2;
-        self.mid.s1 = s_mid;  self.mid.s2 = s_mid2;
-        self.high.s1 = s_high; self.high.s2 = s_high2;
+        self.low.s1 = s_low;
+        self.low.s2 = s_low2;
+        self.mid.s1 = s_mid;
+        self.mid.s2 = s_mid2;
+        self.high.s1 = s_high;
+        self.high.s2 = s_high2;
     }
 }
 
 impl AudioNode for EqNode {
-    fn node_id(&self) -> NodeId { self.id }
-    fn label(&self) -> &str { "EqNode" }
-    fn num_input_ports(&self) -> usize { 1 }
-    fn num_output_ports(&self) -> usize { 1 }
+    fn node_id(&self) -> NodeId {
+        self.id
+    }
+    fn label(&self) -> &str {
+        "EqNode"
+    }
+    fn num_input_ports(&self) -> usize {
+        1
+    }
+    fn num_output_ports(&self) -> usize {
+        1
+    }
 
     fn prepare(&mut self, ctx: PrepareContext) {
         self.sr_os = ctx.sample_rate * 2.0;
@@ -212,7 +261,13 @@ impl AudioNode for EqNode {
         let output = &mut outputs[0];
         let channels = output.num_channels.min(input.num_channels).min(2);
         let frames = t.block_size.min(output.num_frames).min(input.num_frames);
-        let Self { low, mid, high, oversample, .. } = self;
+        let Self {
+            low,
+            mid,
+            high,
+            oversample,
+            ..
+        } = self;
         for ch in 0..channels {
             let in_ch = input.channel(ch);
             let out_ch = output.channel_mut(ch);
@@ -247,7 +302,9 @@ mod tests {
         (num_re * num_re + num_im * num_im).sqrt() / (den_re * den_re + den_im * den_im).sqrt()
     }
 
-    fn db(x: f32) -> f32 { 20.0 * x.log10() }
+    fn db(x: f32) -> f32 {
+        20.0 * x.log10()
+    }
 
     #[test]
     fn shelf_alpha_depends_on_slope() {
@@ -264,7 +321,10 @@ mod tests {
         let gain_db = 12.0;
         let b = Biquad::low_shelf(250.0, gain_db, sr);
         let mag_db = db(biquad_mag_at_hz(&b, 0.0, sr));
-        assert!((mag_db - gain_db).abs() < 0.5, "DC gain {mag_db} dB, expected {gain_db} dB");
+        assert!(
+            (mag_db - gain_db).abs() < 0.5,
+            "DC gain {mag_db} dB, expected {gain_db} dB"
+        );
     }
 
     #[test]
@@ -289,7 +349,11 @@ mod tests {
         let params = EqParams::default();
         let block = ParameterBlock::new(&eq_block_values(&params));
         let mut node = EqNode::new(NodeId(1), params).with_block(Arc::clone(&block));
-        node.prepare(PrepareContext { sample_rate: 48_000.0, max_block_size: 64, num_channels: 2 });
+        node.prepare(PrepareContext {
+            sample_rate: 48_000.0,
+            max_block_size: 64,
+            num_channels: 2,
+        });
 
         // Baseline: flat EQ → low-shelf is unity-ish.
         let before = node.low.b0;
@@ -307,7 +371,10 @@ mod tests {
             node.low.b0, before,
             "EQ must recompute coefficients from the hot block on a live change"
         );
-        assert_eq!(node.params.low_gain_db, 12.0, "cached params follow the block");
+        assert_eq!(
+            node.params.low_gain_db, 12.0,
+            "cached params follow the block"
+        );
     }
 
     #[test]
@@ -316,6 +383,9 @@ mod tests {
         let gain_db = 12.0;
         let b = Biquad::high_shelf(4000.0, gain_db, sr);
         let mag_db = db(biquad_mag_at_hz(&b, sr * 0.5, sr));
-        assert!((mag_db - gain_db).abs() < 0.5, "Nyquist gain {mag_db} dB, expected {gain_db} dB");
+        assert!(
+            (mag_db - gain_db).abs() < 0.5,
+            "Nyquist gain {mag_db} dB, expected {gain_db} dB"
+        );
     }
 }

@@ -14,7 +14,7 @@ pub struct MidiEvent {
 
 #[derive(Debug, Clone, Copy)]
 pub enum MidiEventKind {
-    NoteOn  { pitch: u8, velocity: u8 },
+    NoteOn { pitch: u8, velocity: u8 },
     NoteOff { pitch: u8 },
 }
 

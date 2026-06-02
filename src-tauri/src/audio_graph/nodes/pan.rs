@@ -10,14 +10,19 @@ use crate::audio_graph::node::{AudioNode, NodeId, PrepareContext, TransportInfo}
 
 pub struct PanNode {
     id: NodeId,
-    position: f32,  // −1 … +1
+    position: f32, // −1 … +1
     gain_l: f32,
     gain_r: f32,
 }
 
 impl PanNode {
     pub fn new(id: NodeId, position: f32) -> Self {
-        let mut node = PanNode { id, position: 0.0, gain_l: 1.0, gain_r: 1.0 };
+        let mut node = PanNode {
+            id,
+            position: 0.0,
+            gain_l: 1.0,
+            gain_r: 1.0,
+        };
         node.set_position(position);
         node
     }
@@ -36,10 +41,18 @@ impl PanNode {
 }
 
 impl AudioNode for PanNode {
-    fn node_id(&self) -> NodeId { self.id }
-    fn label(&self) -> &str { "PanNode" }
-    fn num_input_ports(&self) -> usize { 1 }
-    fn num_output_ports(&self) -> usize { 1 }
+    fn node_id(&self) -> NodeId {
+        self.id
+    }
+    fn label(&self) -> &str {
+        "PanNode"
+    }
+    fn num_input_ports(&self) -> usize {
+        1
+    }
+    fn num_output_ports(&self) -> usize {
+        1
+    }
 
     fn prepare(&mut self, _ctx: PrepareContext) {}
 

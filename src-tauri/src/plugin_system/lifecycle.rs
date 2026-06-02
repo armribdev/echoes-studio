@@ -49,13 +49,13 @@ impl LifecycleState {
 impl std::fmt::Display for LifecycleState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let s = match self {
-            LifecycleState::Created     => "Created",
-            LifecycleState::Loaded      => "Loaded",
+            LifecycleState::Created => "Created",
+            LifecycleState::Loaded => "Loaded",
             LifecycleState::Initialized => "Initialized",
-            LifecycleState::Running     => "Running",
-            LifecycleState::Suspended   => "Suspended",
-            LifecycleState::Destroyed   => "Destroyed",
-            LifecycleState::Error       => "Error",
+            LifecycleState::Running => "Running",
+            LifecycleState::Suspended => "Suspended",
+            LifecycleState::Destroyed => "Destroyed",
+            LifecycleState::Error => "Error",
         };
         write!(f, "{}", s)
     }
@@ -65,7 +65,10 @@ impl std::fmt::Display for LifecycleState {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LifecycleError {
-    InvalidTransition { from: LifecycleState, to: LifecycleState },
+    InvalidTransition {
+        from: LifecycleState,
+        to: LifecycleState,
+    },
     AlreadyDestroyed,
 }
 
@@ -95,19 +98,22 @@ pub fn transition(
 
     let valid = matches!(
         (current, target),
-        (LifecycleState::Created,     LifecycleState::Loaded)
-        | (LifecycleState::Loaded,    LifecycleState::Initialized)
-        | (LifecycleState::Initialized, LifecycleState::Running)
-        | (LifecycleState::Running,   LifecycleState::Suspended)
-        | (LifecycleState::Suspended, LifecycleState::Running)
-        | (LifecycleState::Running,   LifecycleState::Destroyed)
-        | (LifecycleState::Suspended, LifecycleState::Destroyed)
-        | (_,                         LifecycleState::Error)
+        (LifecycleState::Created, LifecycleState::Loaded)
+            | (LifecycleState::Loaded, LifecycleState::Initialized)
+            | (LifecycleState::Initialized, LifecycleState::Running)
+            | (LifecycleState::Running, LifecycleState::Suspended)
+            | (LifecycleState::Suspended, LifecycleState::Running)
+            | (LifecycleState::Running, LifecycleState::Destroyed)
+            | (LifecycleState::Suspended, LifecycleState::Destroyed)
+            | (_, LifecycleState::Error)
     );
 
     if valid {
         Ok(target)
     } else {
-        Err(LifecycleError::InvalidTransition { from: current, to: target })
+        Err(LifecycleError::InvalidTransition {
+            from: current,
+            to: target,
+        })
     }
 }

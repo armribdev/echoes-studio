@@ -36,11 +36,11 @@ pub fn compressor_block_values(p: &CompressorParams) -> [f32; COMP_PARAM_COUNT] 
 fn compressor_params_from_block(block: &ParameterBlock) -> CompressorParams {
     CompressorParams {
         threshold_db: block.get(COMP_THRESHOLD_DB),
-        ratio:        block.get(COMP_RATIO),
-        attack_ms:    block.get(COMP_ATTACK_MS),
-        release_ms:   block.get(COMP_RELEASE_MS),
-        makeup_db:    block.get(COMP_MAKEUP_DB),
-        knee_db:      block.get(COMP_KNEE_DB),
+        ratio: block.get(COMP_RATIO),
+        attack_ms: block.get(COMP_ATTACK_MS),
+        release_ms: block.get(COMP_RELEASE_MS),
+        makeup_db: block.get(COMP_MAKEUP_DB),
+        knee_db: block.get(COMP_KNEE_DB),
     }
 }
 
@@ -71,7 +71,8 @@ pub struct CompressorNode {
 impl CompressorNode {
     pub fn new(id: NodeId, params: CompressorParams) -> Self {
         CompressorNode {
-            id, params,
+            id,
+            params,
             envelope: 0.0,
             attack_coeff: 0.0,
             release_coeff: 0.0,
@@ -94,7 +95,7 @@ impl CompressorNode {
     /// touch `self.envelope`, so a parameter change does not reset the running
     /// detector — only the smoothing/makeup gain move.
     fn recompute_coeffs(&mut self) {
-        self.attack_coeff  = (-1.0 / (self.params.attack_ms  * 0.001 * self.sr_os)).exp();
+        self.attack_coeff = (-1.0 / (self.params.attack_ms * 0.001 * self.sr_os)).exp();
         self.release_coeff = (-1.0 / (self.params.release_ms * 0.001 * self.sr_os)).exp();
         self.makeup_linear = 10.0_f32.powf(self.params.makeup_db / 20.0);
     }
@@ -116,10 +117,18 @@ impl CompressorNode {
 }
 
 impl AudioNode for CompressorNode {
-    fn node_id(&self) -> NodeId { self.id }
-    fn label(&self) -> &str { "CompressorNode" }
-    fn num_input_ports(&self) -> usize { 1 }
-    fn num_output_ports(&self) -> usize { 1 }
+    fn node_id(&self) -> NodeId {
+        self.id
+    }
+    fn label(&self) -> &str {
+        "CompressorNode"
+    }
+    fn num_input_ports(&self) -> usize {
+        1
+    }
+    fn num_output_ports(&self) -> usize {
+        1
+    }
 
     fn prepare(&mut self, ctx: PrepareContext) {
         self.sr_os = ctx.sample_rate * 2.0;
@@ -156,10 +165,18 @@ impl AudioNode for CompressorNode {
             for ch in 0..channels {
                 peak = peak.max(input.channel(ch)[i].abs());
             }
-            let peak_db = if peak > 1e-6 { 20.0 * peak.log10() } else { -120.0 };
+            let peak_db = if peak > 1e-6 {
+                20.0 * peak.log10()
+            } else {
+                -120.0
+            };
             let gain_db = self.compute_gain_db(peak_db);
             let gain_linear = 10.0_f32.powf(gain_db / 20.0);
-            let coeff = if gain_linear < self.envelope { self.attack_coeff } else { self.release_coeff };
+            let coeff = if gain_linear < self.envelope {
+                self.attack_coeff
+            } else {
+                self.release_coeff
+            };
             self.envelope = coeff * self.envelope + (1.0 - coeff) * gain_linear;
             self.env_scratch[i] = self.envelope * self.makeup_linear;
         }
@@ -168,11 +185,12 @@ impl AudioNode for CompressorNode {
             let in_ch = input.channel(ch);
             let out_ch = output.channel_mut(ch);
             let mut os_idx = 0usize;
-            self.oversample.process_channel(ch, in_ch, out_ch, frames, |x| {
-                let g = self.env_scratch[os_idx / 2];
-                os_idx += 1;
-                x * g
-            });
+            self.oversample
+                .process_channel(ch, in_ch, out_ch, frames, |x| {
+                    let g = self.env_scratch[os_idx / 2];
+                    os_idx += 1;
+                    x * g
+                });
         }
     }
 
@@ -191,7 +209,11 @@ mod tests {
         let params = CompressorParams::default();
         let block = ParameterBlock::new(&compressor_block_values(&params));
         let mut node = CompressorNode::new(NodeId(1), params).with_block(Arc::clone(&block));
-        node.prepare(PrepareContext { sample_rate: 48_000.0, max_block_size: 64, num_channels: 2 });
+        node.prepare(PrepareContext {
+            sample_rate: 48_000.0,
+            max_block_size: 64,
+            num_channels: 2,
+        });
 
         let before_makeup = node.makeup_linear;
 

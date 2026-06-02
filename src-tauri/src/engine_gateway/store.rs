@@ -28,7 +28,11 @@ pub struct EventStore {
 
 impl EventStore {
     pub fn new() -> Self {
-        EventStore { events: Vec::new(), head: 0, snapshot: None }
+        EventStore {
+            events: Vec::new(),
+            head: 0,
+            snapshot: None,
+        }
     }
 
     // ── Write path ────────────────────────────────────────────────────────────

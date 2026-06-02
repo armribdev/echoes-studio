@@ -63,7 +63,12 @@ pub enum ParameterMapping {
 
 impl ParameterRange {
     pub fn linear(min: f32, max: f32, default: f32) -> Self {
-        ParameterRange { min, max, default, mapping: ParameterMapping::Linear }
+        ParameterRange {
+            min,
+            max,
+            default,
+            mapping: ParameterMapping::Linear,
+        }
     }
 
     pub fn percent() -> Self {
@@ -86,7 +91,9 @@ impl ParameterRange {
                 ((plain - self.min) / (self.max - self.min)).clamp(0.0, 1.0)
             }
             ParameterMapping::Logarithmic => {
-                if self.min <= 0.0 || self.max <= 0.0 { return 0.0; }
+                if self.min <= 0.0 || self.max <= 0.0 {
+                    return 0.0;
+                }
                 let log_min = self.min.ln();
                 let log_max = self.max.ln();
                 ((plain.ln() - log_min) / (log_max - log_min)).clamp(0.0, 1.0)
@@ -103,14 +110,14 @@ impl ParameterRange {
         match self.mapping {
             ParameterMapping::Linear => self.min + n * (self.max - self.min),
             ParameterMapping::Logarithmic => {
-                if self.min <= 0.0 || self.max <= 0.0 { return self.min; }
+                if self.min <= 0.0 || self.max <= 0.0 {
+                    return self.min;
+                }
                 let log_min = self.min.ln();
                 let log_max = self.max.ln();
                 (log_min + n * (log_max - log_min)).exp()
             }
-            ParameterMapping::Decibels { min_db, max_db } => {
-                min_db + n * (max_db - min_db)
-            }
+            ParameterMapping::Decibels { min_db, max_db } => min_db + n * (max_db - min_db),
         }
     }
 }

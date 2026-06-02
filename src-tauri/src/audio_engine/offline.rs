@@ -27,9 +27,9 @@
 //! No `enqueue` is performed — the live scheduler is untouched.
 
 use crate::audio_engine::graph::AudioGraphCompiler;
-use crate::audio_graph::{CompileConfig, LiveParams};
 use crate::audio_graph::denormal::enable_flush_to_zero;
 use crate::audio_graph::node::TransportInfo;
+use crate::audio_graph::{CompileConfig, LiveParams};
 use crate::plugin_system::PluginHost;
 use crate::project::AppProject;
 

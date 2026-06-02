@@ -158,11 +158,7 @@ impl EngineEvent {
     }
 
     /// Build an engine event from any serializable payload (avoids `json!` macros).
-    pub fn with_payload<P: Serialize>(
-        event_type: &str,
-        project_id: &str,
-        payload: P,
-    ) -> Self {
+    pub fn with_payload<P: Serialize>(event_type: &str, project_id: &str, payload: P) -> Self {
         EngineEvent {
             id: generate_id(),
             project_id: project_id.to_string(),

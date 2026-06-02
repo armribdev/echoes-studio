@@ -32,17 +32,19 @@ pub enum SpeakerLayout {
     Surround5_1,
     Surround7_1,
     /// Anything not in the standard set; `channel_count` is authoritative.
-    Custom { channel_count: u8 },
+    Custom {
+        channel_count: u8,
+    },
 }
 
 impl SpeakerLayout {
     pub fn channel_count(&self) -> u8 {
         match self {
-            SpeakerLayout::Mono          => 1,
-            SpeakerLayout::Stereo        => 2,
-            SpeakerLayout::Quad          => 4,
-            SpeakerLayout::Surround5_1   => 6,
-            SpeakerLayout::Surround7_1   => 8,
+            SpeakerLayout::Mono => 1,
+            SpeakerLayout::Stereo => 2,
+            SpeakerLayout::Quad => 4,
+            SpeakerLayout::Surround5_1 => 6,
+            SpeakerLayout::Surround7_1 => 8,
             SpeakerLayout::Custom { channel_count } => *channel_count,
         }
     }
@@ -54,14 +56,14 @@ impl SpeakerLayout {
 /// VST3: `IComponent::getBusInfo`.  CLAP: `clap_audio_port_info`.
 #[derive(Debug, Clone)]
 pub struct AudioBusInfo {
-    pub name:          String,
+    pub name: String,
     pub channel_count: u8,
     /// `true` for the primary bus (track signal path).  At most one main bus
     /// per direction is expected.
-    pub is_main:       bool,
+    pub is_main: bool,
     /// `true` for sidechain / aux buses.  Mutually exclusive with `is_main`
     /// (a bus is either the main signal or an auxiliary).
-    pub is_aux:        bool,
+    pub is_aux: bool,
     pub speaker_layout: SpeakerLayout,
 }
 
@@ -72,7 +74,7 @@ pub struct AudioBusInfo {
 /// VST3: bus of kind `kEvent`.  CLAP: `clap_note_port_info`.
 #[derive(Debug, Clone)]
 pub struct MidiPortInfo {
-    pub name:    String,
+    pub name: String,
     pub is_main: bool,
 }
 
@@ -86,12 +88,12 @@ pub struct MidiPortInfo {
 pub struct ParameterFlags(pub u32);
 
 impl ParameterFlags {
-    pub const NONE:        ParameterFlags = ParameterFlags(0);
+    pub const NONE: ParameterFlags = ParameterFlags(0);
     pub const AUTOMATABLE: ParameterFlags = ParameterFlags(1 << 0);
-    pub const HIDDEN:      ParameterFlags = ParameterFlags(1 << 1);
-    pub const IS_BYPASS:   ParameterFlags = ParameterFlags(1 << 2);
-    pub const READ_ONLY:   ParameterFlags = ParameterFlags(1 << 3);
-    pub const STEPPED:     ParameterFlags = ParameterFlags(1 << 4);
+    pub const HIDDEN: ParameterFlags = ParameterFlags(1 << 1);
+    pub const IS_BYPASS: ParameterFlags = ParameterFlags(1 << 2);
+    pub const READ_ONLY: ParameterFlags = ParameterFlags(1 << 3);
+    pub const STEPPED: ParameterFlags = ParameterFlags(1 << 4);
 
     pub fn contains(self, other: ParameterFlags) -> bool {
         (self.0 & other.0) == other.0
@@ -112,13 +114,13 @@ pub struct NativeParamId(pub u32);
 /// `IEditController::getParameterInfo` and CLAP `clap.params.get_info`.
 #[derive(Debug, Clone)]
 pub struct ParameterInfo {
-    pub native_id:        NativeParamId,
-    pub name:             String,
+    pub native_id: NativeParamId,
+    pub name: String,
     pub default_normalized: f32,
     /// Discrete step count (0 = continuous).  VST3 `stepCount`,
     /// CLAP `is_stepped` + `min/max`.
-    pub step_count:       u32,
-    pub flags:            ParameterFlags,
+    pub step_count: u32,
+    pub flags: ParameterFlags,
 }
 
 // ── DeviceCapabilities ────────────────────────────────────────────────────────
@@ -132,21 +134,21 @@ pub struct ParameterInfo {
 /// and `reported_tail_samples` are wired immediately (the rest fills in Phase 2+).
 #[derive(Debug, Clone, Default)]
 pub struct DeviceCapabilities {
-    pub audio_input_buses:  Vec<AudioBusInfo>,
+    pub audio_input_buses: Vec<AudioBusInfo>,
     pub audio_output_buses: Vec<AudioBusInfo>,
-    pub midi_input_ports:   Vec<MidiPortInfo>,
-    pub midi_output_ports:  Vec<MidiPortInfo>,
-    pub parameters:         Vec<ParameterInfo>,
+    pub midi_input_ports: Vec<MidiPortInfo>,
+    pub midi_output_ports: Vec<MidiPortInfo>,
+    pub parameters: Vec<ParameterInfo>,
 
     pub supports_state: bool,
-    pub supports_gui:   bool,
-    pub is_instrument:  bool,
+    pub supports_gui: bool,
+    pub is_instrument: bool,
 
     /// Reported intrinsic processing latency, in samples.  Drives PDC.
     pub reported_latency_samples: u32,
     /// Reported reverb tail length, in samples.  Used for offline render
     /// flushing.  Phase 1 leaves this at 0.
-    pub reported_tail_samples:    u32,
+    pub reported_tail_samples: u32,
 }
 
 impl DeviceCapabilities {
@@ -164,7 +166,9 @@ impl DeviceCapabilities {
                 4 => SpeakerLayout::Quad,
                 6 => SpeakerLayout::Surround5_1,
                 8 => SpeakerLayout::Surround7_1,
-                _ => SpeakerLayout::Custom { channel_count: n.min(u8::MAX as usize) as u8 },
+                _ => SpeakerLayout::Custom {
+                    channel_count: n.min(u8::MAX as usize) as u8,
+                },
             }
         };
 
@@ -173,10 +177,10 @@ impl DeviceCapabilities {
                 Vec::new()
             } else {
                 vec![AudioBusInfo {
-                    name:           format!("{dir} 1"),
-                    channel_count:  n.min(u8::MAX as usize) as u8,
-                    is_main:        true,
-                    is_aux:         false,
+                    name: format!("{dir} 1"),
+                    channel_count: n.min(u8::MAX as usize) as u8,
+                    is_main: true,
+                    is_aux: false,
                     speaker_layout: layout_for(n),
                 }]
             }
@@ -184,23 +188,26 @@ impl DeviceCapabilities {
 
         let mk_midi_port = |present: bool, dir: &str| -> Vec<MidiPortInfo> {
             if present {
-                vec![MidiPortInfo { name: format!("{dir} 1"), is_main: true }]
+                vec![MidiPortInfo {
+                    name: format!("{dir} 1"),
+                    is_main: true,
+                }]
             } else {
                 Vec::new()
             }
         };
 
         DeviceCapabilities {
-            audio_input_buses:  mk_audio_bus(info.num_inputs,  "In"),
+            audio_input_buses: mk_audio_bus(info.num_inputs, "In"),
             audio_output_buses: mk_audio_bus(info.num_outputs, "Out"),
-            midi_input_ports:   mk_midi_port(info.has_midi_input,  "MIDI In"),
-            midi_output_ports:  mk_midi_port(info.has_midi_output, "MIDI Out"),
-            parameters:         Vec::new(),
-            supports_state:     false,
-            supports_gui:       false,
-            is_instrument:      false,
+            midi_input_ports: mk_midi_port(info.has_midi_input, "MIDI In"),
+            midi_output_ports: mk_midi_port(info.has_midi_output, "MIDI Out"),
+            parameters: Vec::new(),
+            supports_state: false,
+            supports_gui: false,
+            is_instrument: false,
             reported_latency_samples: 0,
-            reported_tail_samples:    0,
+            reported_tail_samples: 0,
         }
     }
 }

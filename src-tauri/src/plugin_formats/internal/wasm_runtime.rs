@@ -42,7 +42,9 @@
 pub struct WasmRuntime;
 
 impl WasmRuntime {
-    pub fn new() -> Self { WasmRuntime }
+    pub fn new() -> Self {
+        WasmRuntime
+    }
 
     /// Load a `.wasm` binary and prepare it for audio processing.
     pub fn load(&self, _wasm_bytes: &[u8]) -> Result<(), String> {
@@ -51,5 +53,7 @@ impl WasmRuntime {
 }
 
 impl Default for WasmRuntime {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
