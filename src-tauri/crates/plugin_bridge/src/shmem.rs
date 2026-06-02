@@ -1,9 +1,10 @@
 //! Region-agnostic SPSC ring buffer for the plugin bridge (ADR-015, Phase 6c-i).
 //!
-//! ## Why not reuse [`ParamQueue`](crate::plugin_system::param_queue)?
+//! ## Why not reuse the engine's in-process `ParamQueue`?
 //!
-//! `ParamQueue` is single-producer / single-consumer and lock-free, but it
-//! stores its slots in a `Box<[UnsafeCell<_>]>` — heap pointers that are
+//! `plugin_system::param_queue::ParamQueue` is single-producer / single-consumer
+//! and lock-free, but it stores its slots in a `Box<[UnsafeCell<_>]>` — heap
+//! pointers that are
 //! **meaningless in another process's address space**.  The bridge needs a ring
 //! whose entire state (control indices *and* slot data) lives inside one
 //! contiguous **raw byte region** that both processes map.  This type is that
@@ -44,10 +45,10 @@ use std::sync::atomic::{AtomicU32, Ordering};
 /// Layout: `capacity:u32 | slot_size:u32 | head:AtomicU32 | tail:AtomicU32`.
 const HEADER_BYTES: usize = 16;
 
-const OFF_CAPACITY:  usize = 0;
+const OFF_CAPACITY: usize = 0;
 const OFF_SLOT_SIZE: usize = 4;
-const OFF_HEAD:      usize = 8;
-const OFF_TAIL:      usize = 12;
+const OFF_HEAD: usize = 8;
+const OFF_TAIL: usize = 12;
 
 #[inline]
 const fn align_up(n: usize, align: usize) -> usize {
@@ -94,11 +95,11 @@ impl RingLayout {
 pub struct ShmemRing {
     head_ptr: *const AtomicU32,
     tail_ptr: *const AtomicU32,
-    data:     *mut u8,
+    data: *mut u8,
     capacity: usize,
     slot_size: usize,
-    stride:   usize,
-    mask:     usize,
+    stride: usize,
+    mask: usize,
 }
 
 // SAFETY: the only shared mutable state is the slot array and the two atomic
@@ -119,7 +120,11 @@ impl ShmemRing {
     /// - No other `ShmemRing` may be initialising the same region concurrently.
     pub unsafe fn init(base: *mut u8, len: usize, layout: RingLayout) -> Self {
         assert!(!base.is_null(), "ShmemRing::init: null region");
-        assert_eq!(base as usize % 4, 0, "ShmemRing::init: region must be 4-byte aligned");
+        assert_eq!(
+            base as usize % 4,
+            0,
+            "ShmemRing::init: region must be 4-byte aligned"
+        );
         assert!(
             len >= layout.bytes_required(),
             "ShmemRing::init: region too small ({len} < {})",
@@ -143,14 +148,27 @@ impl ShmemRing {
     /// region must already have been initialised by the producer.
     pub unsafe fn attach(base: *mut u8, len: usize) -> Self {
         assert!(!base.is_null(), "ShmemRing::attach: null region");
-        assert_eq!(base as usize % 4, 0, "ShmemRing::attach: region must be 4-byte aligned");
-        assert!(len >= HEADER_BYTES, "ShmemRing::attach: region smaller than header");
+        assert_eq!(
+            base as usize % 4,
+            0,
+            "ShmemRing::attach: region must be 4-byte aligned"
+        );
+        assert!(
+            len >= HEADER_BYTES,
+            "ShmemRing::attach: region smaller than header"
+        );
 
-        let capacity  = core::ptr::read_unaligned(base.add(OFF_CAPACITY) as *const u32) as usize;
+        let capacity = core::ptr::read_unaligned(base.add(OFF_CAPACITY) as *const u32) as usize;
         let slot_size = core::ptr::read_unaligned(base.add(OFF_SLOT_SIZE) as *const u32) as usize;
-        assert!(capacity.is_power_of_two(), "ShmemRing::attach: corrupt capacity {capacity}");
+        assert!(
+            capacity.is_power_of_two(),
+            "ShmemRing::attach: corrupt capacity {capacity}"
+        );
 
-        let layout = RingLayout { capacity, slot_size };
+        let layout = RingLayout {
+            capacity,
+            slot_size,
+        };
         assert!(
             len >= layout.bytes_required(),
             "ShmemRing::attach: region too small for declared shape"
@@ -164,7 +182,7 @@ impl ShmemRing {
         ShmemRing {
             head_ptr: base.add(OFF_HEAD) as *const AtomicU32,
             tail_ptr: base.add(OFF_TAIL) as *const AtomicU32,
-            data:     base.add(HEADER_BYTES),
+            data: base.add(HEADER_BYTES),
             capacity,
             slot_size,
             stride,
@@ -174,16 +192,24 @@ impl ShmemRing {
 
     /// Maximum payload bytes a single message may carry.
     #[inline]
-    pub fn slot_size(&self) -> usize { self.slot_size }
+    pub fn slot_size(&self) -> usize {
+        self.slot_size
+    }
 
     /// Number of message slots.
     #[inline]
-    pub fn capacity(&self) -> usize { self.capacity }
+    pub fn capacity(&self) -> usize {
+        self.capacity
+    }
 
     #[inline]
-    fn head(&self) -> &AtomicU32 { unsafe { &*self.head_ptr } }
+    fn head(&self) -> &AtomicU32 {
+        unsafe { &*self.head_ptr }
+    }
     #[inline]
-    fn tail(&self) -> &AtomicU32 { unsafe { &*self.tail_ptr } }
+    fn tail(&self) -> &AtomicU32 {
+        unsafe { &*self.tail_ptr }
+    }
 
     /// Producer side.  Enqueue `bytes` as one message.  Returns `false` if the
     /// payload exceeds `slot_size` or the ring is full (newest dropped).
@@ -248,8 +274,8 @@ impl ShmemRing {
 /// alignment (≥ the 4-byte the header needs).
 pub struct OwnedRegion {
     _buf: Vec<u64>,
-    ptr:  *mut u8,
-    len:  usize,
+    ptr: *mut u8,
+    len: usize,
 }
 
 impl OwnedRegion {
@@ -259,15 +285,25 @@ impl OwnedRegion {
         let mut buf = vec![0u64; words.max(1)];
         let ptr = buf.as_mut_ptr() as *mut u8;
         let len = buf.len() * 8;
-        OwnedRegion { _buf: buf, ptr, len }
+        OwnedRegion {
+            _buf: buf,
+            ptr,
+            len,
+        }
     }
 
     /// Raw base pointer (stable for the lifetime of the region).
-    pub fn as_mut_ptr(&self) -> *mut u8 { self.ptr }
+    pub fn as_mut_ptr(&self) -> *mut u8 {
+        self.ptr
+    }
     /// Region length in bytes.
-    pub fn len(&self) -> usize { self.len }
+    pub fn len(&self) -> usize {
+        self.len
+    }
     /// Whether the region is empty.
-    pub fn is_empty(&self) -> bool { self.len == 0 }
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
 }
 
 #[cfg(test)]
@@ -328,7 +364,7 @@ mod tests {
     fn rejects_oversized_payload() {
         let (_r, ring) = ring(4, 4);
         assert!(!ring.push(&[0u8; 5])); // > slot_size
-        assert!(ring.push(&[0u8; 4]));  // == slot_size ok
+        assert!(ring.push(&[0u8; 4])); // == slot_size ok
     }
 
     #[test]

@@ -28,13 +28,13 @@ pub const BLOCK_MAGIC: u32 = u32::from_le_bytes(*b"EsBr");
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ChannelRole {
     /// Engine → bridge: input audio blocks to process.
-    AudioIn  = 0,
+    AudioIn = 0,
     /// Bridge → engine: processed output audio blocks.
     AudioOut = 1,
     /// Engine → bridge: parameter changes (drained before `process`).
-    Params   = 2,
+    Params = 2,
     /// Engine → bridge: MIDI / note events for this block.
-    Events   = 3,
+    Events = 3,
 }
 
 /// Header prefixed to one audio block transferred over an `AudioIn` / `AudioOut`
@@ -60,7 +60,7 @@ pub struct BlockHeader {
 }
 
 /// One parameter change carried over a `Params` ring.  ABI-stable mirror of the
-/// in-process [`ParamChange`](crate::plugin_system::param_queue::ParamChange).
+/// engine's in-process `ParamChange` (`plugin_system::param_queue`).
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ParamMessage {

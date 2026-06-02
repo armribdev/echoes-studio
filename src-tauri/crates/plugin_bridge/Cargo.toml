@@ -1,0 +1,13 @@
+[package]
+name = "plugin_bridge"
+version = "0.1.0"
+edition = "2021"
+description = "Shared transport core (shmem ring + wire protocol) for the out-of-process plugin sandbox — ADR-015."
+license = "MIT"
+publish = false
+
+# Intentionally dependency-free (std only): this crate defines the cross-process
+# ABI shared by the engine (`echoes-studio`) and the bridge host
+# (`plugin_host_bridge`).  Adding a dependency here widens the trusted surface of
+# the real-time transport — keep it empty unless an ADR says otherwise.
+[dependencies]

@@ -815,6 +815,7 @@ dependencies = [
  "cpal",
  "hound",
  "mp3lame-encoder",
+ "plugin_bridge",
  "serde",
  "serde_json",
  "symphonia",
@@ -2491,6 +2492,17 @@ dependencies = [
  "quick-xml",
  "serde",
  "time",
+]
+
+[[package]]
+name = "plugin_bridge"
+version = "0.1.0"
+
+[[package]]
+name = "plugin_host_bridge"
+version = "0.1.0"
+dependencies = [
+ "plugin_bridge",
 ]
 
 [[package]]

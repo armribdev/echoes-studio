@@ -9,12 +9,26 @@ default-run = "echoes-studio"
 edition = "2021"
 rust-version = "1.60"
 
+# Workspace rooted at this crate (ADR-015, Phase 6c-ii).  Rooting here — rather
+# than at the repo root — keeps the build artifact directory at `src-tauri/target`,
+# so the existing Tauri build/dev flow and tooling scripts are unaffected.
+# `resolver = "2"` is the implicit default for a standalone edition-2021 crate;
+# stating it explicitly preserves the exact feature resolution → the engine binary
+# stays bit-identical (C-2).
+[workspace]
+members = ["crates/plugin_bridge", "crates/plugin_host_bridge"]
+resolver = "2"
+
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
+# Shared transport core for the out-of-process plugin sandbox (ADR-015).  The
+# engine links it to reuse the same shmem-ring + wire-protocol ABI the bridge
+# host (`plugin_host_bridge`) speaks.  std-only, no transitive deps.
+plugin_bridge = { path = "crates/plugin_bridge" }
 serde_json = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 tauri = { version = "2", features = [] }

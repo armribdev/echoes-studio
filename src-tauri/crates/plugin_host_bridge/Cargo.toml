@@ -1,0 +1,10 @@
+[package]
+name = "plugin_host_bridge"
+version = "0.1.0"
+edition = "2021"
+description = "Out-of-process host for sandboxed VST3/CLAP plugins (ADR-015). Spawned by the engine; communicates over shared-memory rings."
+license = "MIT"
+publish = false
+
+[dependencies]
+plugin_bridge = { path = "../plugin_bridge" }

@@ -87,7 +87,7 @@ that latency through the existing `latency_samples()` path, and the engine's PDC
 | **6a** | This ADR + `PluginParams.sandboxed` opt-in flag, **persisted but inert** (engine always in-process) | nil | **Implemented** |
 | **6b** | Plumb `sandboxed` project → `NodeKind::Plugin` → compiler → `PluginHost::instantiate` (still always in-process) | nil | **Implemented** |
 | **6c-i** | Shared-memory SPSC ring primitive + wire protocol POD types, off-RT, unit-tested in isolation (`plugin_system/bridge/`) | nil | **Implemented** |
-| 6c-ii | `plugin_host_bridge` binary crate + workspace decision | nil | Pending |
+| **6c-ii** | `plugin_host_bridge` binary crate + shared `plugin_bridge` lib crate + workspace | nil | **Implemented** |
 | 6d | `BridgedPluginInstance` proxy + RT wiring (bounded spin + timeout + silence) | **high** | Pending |
 | 6e | Watchdog + `Dead`-marking + prototype on a **single** plugin (Vital), then generalise | high | Pending |
 
@@ -164,6 +164,47 @@ of 6c-i leaves `src-tauri`'s manifest and every runtime path untouched.
 `#![allow(dead_code)]`. The engine remains bit-identical (full suite 64/64
 green, +11 new bridge tests including a 100 k-message two-thread ring exchange
 that exercises the SPSC discipline a real cross-process bridge depends on).
+
+## Sub-phase 6c-ii — what shipped
+
+The transport core became a **shared library crate** so the engine and the
+bridge host link one definition of the cross-process ABI:
+
+- `src-tauri/crates/plugin_bridge/` *(new lib, std-only, zero deps)* — `shmem` +
+  `protocol` were `git mv`'d here unchanged (only two inter-crate doc links
+  fixed). Its 11 tests moved with it.
+- `src-tauri/crates/plugin_host_bridge/` *(new bin)* — **skeleton** host: it
+  links `plugin_bridge`, pins the spawn-time CLI handshake
+  (`--protocol-version <N>` / `--print-protocol-version`) and validates
+  `BRIDGE_PROTOCOL_VERSION`, then exits. It maps no region, loads no plugin,
+  processes no audio — the hosting loop is step 6d. Honest stub, no faked work.
+- `src-tauri/src/plugin_system/bridge.rs` — replaces the old `bridge/` module;
+  re-exports `plugin_bridge::{shmem, protocol}` so `crate::plugin_system::bridge::…`
+  paths stay stable for 6d.
+- `src-tauri/Cargo.toml` — `[workspace]` **rooted at this crate** (not the repo
+  root) so `target/` stays at `src-tauri/target` and the Tauri build/dev flow is
+  untouched; `resolver = "2"` made explicit (already the implicit default) to
+  freeze feature resolution; adds the `plugin_bridge` path dependency.
+- `scripts/test-all.mjs` — `clippy` / `test` gain `--workspace` so CI covers the
+  new crates.
+
+### Why a workspace rooted at `src-tauri`, not at the repo root
+
+A repo-root workspace would relocate the Cargo artifact dir to `<repo>/target`,
+diverging from the `src-tauri/target` path the Tauri tooling and `scripts/`
+already use. Rooting the workspace at `src-tauri` keeps that path identical, so
+the only build-system surface touched is `src-tauri/Cargo.toml` plus the two new
+member crates. The `plugin_host_bridge` binary is **not** a dependency of the
+engine (it is *spawned* as a process in 6d, never linked), so it builds only
+under `--workspace` / `-p`.
+
+### Verification
+
+- Engine bit-identical (C-2): `resolver = "2"` is the standalone edition-2021
+  default; `plugin_bridge` shares no transitive deps with the engine's existing
+  dependencies, so feature unification cannot shift. Engine suite **53/53**
+  unchanged; the 11 transport tests now run under `plugin_bridge` (workspace
+  total 64). New crates pass `cargo clippy -D warnings` and `cargo fmt --check`.
 
 ## Consequences
 
