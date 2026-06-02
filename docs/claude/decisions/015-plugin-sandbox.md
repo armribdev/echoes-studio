@@ -88,12 +88,18 @@ that latency through the existing `latency_samples()` path, and the engine's PDC
 | **6b** | Plumb `sandboxed` project → `NodeKind::Plugin` → compiler → `PluginHost::instantiate` (still always in-process) | nil | **Implemented** |
 | **6c-i** | Shared-memory SPSC ring primitive + wire protocol POD types, off-RT, unit-tested in isolation (`plugin_system/bridge/`) | nil | **Implemented** |
 | **6c-ii** | `plugin_host_bridge` binary crate + shared `plugin_bridge` lib crate + workspace | nil | **Implemented** |
-| 6d | `BridgedPluginInstance` proxy + RT wiring (bounded spin + timeout + silence) | **high** | Pending |
+| **6d-i** | `region::SharedRegion`: named OS shared-memory mapping (Windows first) backing the rings, off-RT, tested in isolation | nil | **Implemented** |
+| **6d-ii** | Engine spawns `plugin_host_bridge` + control handshake (`BridgeSession`/`serve`), off-RT, proven against the real binary | nil | **Implemented** |
+| 6d-iii | Bridge host loads the real VST3/CLAP plugin + runs the per-block process loop over the rings | nil (separate process) | Pending |
+| 6d-iv | `BridgedPluginInstance` proxy + **RT wiring** (bounded spin + timeout + silence) on the audio thread | **high** | Pending |
 | 6e | Watchdog + `Dead`-marking + prototype on a **single** plugin (Vital), then generalise | high | Pending |
 
-Rationale for the cut: 6a/6b/6c touch **zero** audio-thread code and are
-bit-identical (C-2). Only 6d crosses the RT boundary, and it does so against an
-interface already ratified here and a transport already validated in 6c.
+Rationale for the cut: 6a–6c and 6d-i/ii/iii touch **zero** audio-thread code and
+are bit-identical (C-2). Only **6d-iv** crosses the RT boundary, and it does so
+against an interface already ratified here and a transport already validated in
+6c/6d-i. Decomposing 6d this finely is deliberate: wiring a cross-process wait on
+the audio thread before the region, spawn, and host loop are individually proven
+would be the "break the engine to design better" the constraints forbid.
 
 ## Sub-phase 6a — what shipped
 
@@ -205,6 +211,67 @@ under `--workspace` / `-p`.
   dependencies, so feature unification cannot shift. Engine suite **53/53**
   unchanged; the 11 transport tests now run under `plugin_bridge` (workspace
   total 64). New crates pass `cargo clippy -D warnings` and `cargo fmt --check`.
+
+## Sub-phase 6d-i — what shipped
+
+The rings now have a **real cross-process home**. Until now `ShmemRing` was only
+ever backed by a heap `OwnedRegion` (single process). 6d-i adds the OS mapping
+the production rings live in:
+
+- `plugin_bridge::region::SharedRegion` — a named shared-memory mapping.
+  `create` (owner) / `open` (peer) wrap Win32 `CreateFileMappingW` /
+  `OpenFileMappingW` + `MapViewOfFile`; `Drop` unmaps and closes. The mapped
+  base is allocation-granularity aligned, so it satisfies `ShmemRing`'s 4-byte
+  alignment requirement. `unsafe impl Send` (owned exclusively, not `Sync`).
+- `plugin_bridge` gains a **Windows-only** `windows-sys` dependency
+  (`Win32_System_Memory` + `Win32_Foundation` + `Win32_Security` — the last
+  because `CreateFileMappingW`'s signature references `SECURITY_ATTRIBUTES`).
+  Same `0.59` the engine already pins → no new resolution. Non-Windows targets
+  get a stub returning `io::ErrorKind::Unsupported` so the crate still builds
+  everywhere; their POSIX `shm_open`/`mmap` mapping lands with cross-platform
+  sandbox work (migration plan §6.8 prioritises Windows).
+- The engine re-export (`plugin_system::bridge`) now also surfaces `region`.
+
+**Real-time:** mapping is one-time setup (off the audio thread); the hot path
+will only ever touch the region through the lock-free `ShmemRing`. Nothing here
+runs in `process_block`.
+
+**Verification:** 3 new Windows tests prove two *independent mappings* of one
+named region see each other's writes through `ShmemRing` (`init` on one, `attach`
+on the other) — the exact cross-process mechanism, exercised in one process via
+two mappings — plus missing-name error handling and base alignment.
+`plugin_bridge` 14/14, engine **53/53** unchanged, `clippy --tests -D warnings`
+and `fmt` clean.
+
+## Sub-phase 6d-ii — what shipped
+
+The bridge process now has a **lifecycle**, off-RT, in `plugin_bridge::session`:
+
+- A fixed **control block** at the head of the shared region
+  (`magic | protocol | region_bytes | status:AtomicU32`, [`CONTROL_BYTES`] = 16;
+  rings start after it). `CONTROL_MAGIC` = `"EsCt"`, distinct from the per-block
+  `BLOCK_MAGIC`.
+- `BridgeSession::spawn` (engine/owner) — create region, stamp the control block
+  `INIT`, `Command::spawn` the bridge with `--region-name/--region-bytes`, then
+  poll `status` (bounded by a timeout) until `READY`; fails cleanly if the child
+  dies, reports `ERROR`, or times out. `Drop` sets `SHUTDOWN` and reaps the child
+  (grace period, then kill).
+- `serve` (bridge/peer) — open the region, validate magic + protocol + size,
+  signal `READY`, then block until `SHUTDOWN`. **No plugin is loaded and no audio
+  is processed** — that is 6d-iii / 6d-iv.
+- `plugin_host_bridge` gains a `--region-name <N> --region-bytes <N>` serve mode.
+
+Scope discipline: the engine's `PluginHost` is **not** wired to spawn a session
+yet (that call site belongs with the `BridgedPluginInstance` proxy in 6d-iv).
+6d-ii delivers and **proves** the mechanism without touching the engine's runtime
+path → engine stays bit-identical.
+
+**Verification:** control-block read/write/transition unit-tested cross-platform
+on a heap region (no OS mapping needed). The full spawn→READY→SHUTDOWN handshake
+is integration-tested **against the real binary** in the bridge crate's own
+`tests/` (where `CARGO_BIN_EXE_plugin_host_bridge` is available), including a
+repeatability case. `plugin_bridge` 17/17, `plugin_host_bridge` 2/2, engine
+**53/53** unchanged; `clippy --tests -D warnings` and `fmt` clean.
 
 ## Consequences
 

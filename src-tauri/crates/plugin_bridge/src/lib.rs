@@ -19,6 +19,11 @@
 //! - [`shmem`]    — [`shmem::ShmemRing`], a region-agnostic SPSC ring living
 //!   inside a raw byte region (OS shared memory in production, an aligned heap
 //!   backing in tests).
+//! - [`region`]   — [`region::SharedRegion`], the named OS shared-memory mapping
+//!   the production rings live in (Windows first; Phase 6d-i).
+//! - [`session`]  — [`session::BridgeSession`] (spawn + handshake) and
+//!   [`session::serve`] (bridge-side attach), the off-RT process lifecycle
+//!   (Phase 6d-ii).
 //! - [`protocol`] — the `#[repr(C)]` POD message types that pin the cross-process
 //!   ABI carried over those rings.
 //!
@@ -29,4 +34,6 @@
 //! real-time / process boundary yet — that is step 6d.
 
 pub mod protocol;
+pub mod region;
+pub mod session;
 pub mod shmem;

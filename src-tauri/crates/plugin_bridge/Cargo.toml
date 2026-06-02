@@ -6,8 +6,16 @@ description = "Shared transport core (shmem ring + wire protocol) for the out-of
 license = "MIT"
 publish = false
 
-# Intentionally dependency-free (std only): this crate defines the cross-process
-# ABI shared by the engine (`echoes-studio`) and the bridge host
-# (`plugin_host_bridge`).  Adding a dependency here widens the trusted surface of
-# the real-time transport — keep it empty unless an ADR says otherwise.
+# Cross-platform code is std-only: this crate defines the cross-process ABI
+# shared by the engine (`echoes-studio`) and the bridge host
+# (`plugin_host_bridge`).  Keep the trusted surface of the real-time transport
+# minimal — add dependencies only when an ADR requires them.
 [dependencies]
+
+# Win32 file-mapping APIs for `region::SharedRegion` (ADR-015 6d-i).  Same
+# version the engine already pins, so no extra resolution.
+[target.'cfg(windows)'.dependencies]
+# `Win32_Security` is required because `CreateFileMappingW`'s signature
+# references `SECURITY_ATTRIBUTES` (we pass null), so windows-sys only exposes the
+# function when that feature is enabled.
+windows-sys = { version = "0.59", features = ["Win32_System_Memory", "Win32_Foundation", "Win32_Security"] }

@@ -1,77 +1,107 @@
-//! Out-of-process plugin host (ADR-015, Phase 6c-ii — skeleton).
+//! Out-of-process plugin host (ADR-015, Phase 6d-ii).
 //!
-//! In the finished sandbox (step 6d) the engine spawns this binary once per
-//! sandboxed device, hands it the names of the shared-memory regions and the
-//! target plugin, and the process runs a real-time loop: attach the rings,
-//! load the real VST3/CLAP plugin, then per block drain params/events, call the
-//! plugin's `process`, and publish the output — with a watchdog (6e) marking it
-//! `Dead` on timeout.
+//! In the finished sandbox the engine spawns this binary once per sandboxed
+//! device, hands it the shared-memory region and the target plugin, and the
+//! process runs a real-time loop: attach the rings, load the real VST3/CLAP
+//! plugin, then per block drain params/events, call the plugin's `process`, and
+//! publish the output — with a watchdog (6e) marking it `Dead` on timeout.
 //!
-//! **This skeleton does none of that.** It exists in 6c-ii to (a) prove the
-//! binary builds and links the shared [`plugin_bridge`] crate, and (b) pin the
-//! command-line handshake the engine will use to spawn it. It performs the
-//! protocol-version check and exits; it never maps a region, loads a plugin, or
-//! processes audio. The hosting loop is added in 6d.
+//! **As of 6d-ii** the binary performs the process-lifecycle **handshake** but no
+//! audio: in `--region-name` mode it opens the shared region, validates the
+//! control block, signals `READY`, and waits for the engine's `SHUTDOWN`. It
+//! loads no plugin and processes no audio — the hosting loop is 6d-iii / 6d-iv.
 //!
-//! ## CLI handshake (stable from here)
+//! ## CLI (stable)
 //!
 //! ```text
+//! plugin_host_bridge --region-name <NAME> --region-bytes <N>
+//!     Serve mode: open the named shared region of N bytes, handshake to READY,
+//!     run until the engine sets SHUTDOWN. Exit 0 on clean shutdown, 3 on a
+//!     handshake/region error.
+//!
 //! plugin_host_bridge --protocol-version <N>
-//!     N must equal plugin_bridge::protocol::BRIDGE_PROTOCOL_VERSION, else the
-//!     engine and bridge disagree on the wire ABI → exit code 2.
+//!     N must equal plugin_bridge::protocol::BRIDGE_PROTOCOL_VERSION, else exit 2.
 //!
 //! plugin_host_bridge --print-protocol-version
-//!     Print the linked protocol version and exit 0 (used by the engine to probe
-//!     a bridge binary before spawning it for real).
+//!     Print the linked protocol version and exit 0 (engine probe).
 //! ```
 
 use std::process::ExitCode;
 
 use plugin_bridge::protocol::BRIDGE_PROTOCOL_VERSION;
+use plugin_bridge::session;
 
-/// Exit code returned when the engine's requested protocol version does not
-/// match the version this binary was compiled against.
+/// Engine's requested protocol version does not match this binary's.
 const EXIT_PROTOCOL_MISMATCH: u8 = 2;
-/// Exit code for malformed / unsupported arguments.
+/// Serve mode failed (region open / control-block validation).
+const EXIT_SERVE_FAILED: u8 = 3;
+/// Malformed / unsupported arguments.
 const EXIT_USAGE: u8 = 64; // EX_USAGE (sysexits.h convention)
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    let argv: Vec<&str> = args.iter().map(String::as_str).collect();
 
-    match args.split_first() {
-        Some((flag, rest)) if flag == "--print-protocol-version" && rest.is_empty() => {
+    match argv.as_slice() {
+        ["--print-protocol-version"] => {
             println!("{BRIDGE_PROTOCOL_VERSION}");
             ExitCode::SUCCESS
         }
 
-        Some((flag, [value])) if flag == "--protocol-version" => match value.parse::<u32>() {
-            Ok(v) if v == BRIDGE_PROTOCOL_VERSION => {
-                eprintln!(
-                    "[plugin_host_bridge] handshake OK (protocol v{BRIDGE_PROTOCOL_VERSION}). \
-                     Hosting loop not implemented — ADR-015 step 6d."
-                );
-                ExitCode::SUCCESS
-            }
-            Ok(v) => {
-                eprintln!(
-                    "[plugin_host_bridge] protocol mismatch: engine requested v{v}, \
-                     bridge speaks v{BRIDGE_PROTOCOL_VERSION}"
-                );
-                ExitCode::from(EXIT_PROTOCOL_MISMATCH)
-            }
-            Err(_) => {
-                eprintln!("[plugin_host_bridge] invalid --protocol-version value: {value:?}");
-                ExitCode::from(EXIT_USAGE)
-            }
-        },
+        ["--protocol-version", value] => check_protocol(value),
 
-        _ => {
+        ["--region-name", name, "--region-bytes", bytes] => serve(name, bytes),
+
+        _ => usage(),
+    }
+}
+
+fn check_protocol(value: &str) -> ExitCode {
+    match value.parse::<u32>() {
+        Ok(v) if v == BRIDGE_PROTOCOL_VERSION => {
+            eprintln!("[plugin_host_bridge] handshake OK (protocol v{BRIDGE_PROTOCOL_VERSION}).");
+            ExitCode::SUCCESS
+        }
+        Ok(v) => {
             eprintln!(
-                "usage: plugin_host_bridge --protocol-version <N>\n\
-                 \x20      plugin_host_bridge --print-protocol-version\n\
-                 (skeleton — ADR-015 step 6c-ii; hosting loop lands in 6d)"
+                "[plugin_host_bridge] protocol mismatch: engine requested v{v}, \
+                 bridge speaks v{BRIDGE_PROTOCOL_VERSION}"
             );
+            ExitCode::from(EXIT_PROTOCOL_MISMATCH)
+        }
+        Err(_) => {
+            eprintln!("[plugin_host_bridge] invalid --protocol-version value: {value:?}");
             ExitCode::from(EXIT_USAGE)
         }
     }
+}
+
+fn serve(name: &str, bytes: &str) -> ExitCode {
+    let bytes: usize = match bytes.parse() {
+        Ok(n) => n,
+        Err(_) => {
+            eprintln!("[plugin_host_bridge] invalid --region-bytes value: {bytes:?}");
+            return ExitCode::from(EXIT_USAGE);
+        }
+    };
+
+    match session::serve(name, bytes) {
+        Ok(()) => {
+            eprintln!("[plugin_host_bridge] clean shutdown (region '{name}').");
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("[plugin_host_bridge] serve failed for region '{name}': {e}");
+            ExitCode::from(EXIT_SERVE_FAILED)
+        }
+    }
+}
+
+fn usage() -> ExitCode {
+    eprintln!(
+        "usage: plugin_host_bridge --region-name <NAME> --region-bytes <N>\n\
+         \x20      plugin_host_bridge --protocol-version <N>\n\
+         \x20      plugin_host_bridge --print-protocol-version"
+    );
+    ExitCode::from(EXIT_USAGE)
 }

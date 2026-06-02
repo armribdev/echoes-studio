@@ -10,4 +10,4 @@
 //! Nothing in the engine consumes these yet — the re-export is dead until 6d.
 #![allow(unused_imports)]
 
-pub use plugin_bridge::{protocol, shmem};
+pub use plugin_bridge::{protocol, region, session, shmem};
