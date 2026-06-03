@@ -96,12 +96,13 @@
 				trackId: t.id,
 				trackName: t.name,
 				trackColor: TRACK_COLORS[selectedTrackIndex % TRACK_COLORS.length],
+				instrument: t.instrument ?? null,
 				effects: t.effects ?? [],
 				modulators: t.modulators ?? [],
 				mod_routes: t.mod_routes ?? [],
 			});
 		} else {
-			selectedTrack.set({ trackId: null, trackName: '', trackColor: '#4d96ff', effects: [], modulators: [], mod_routes: [] });
+			selectedTrack.set({ trackId: null, trackName: '', trackColor: '#4d96ff', instrument: null, effects: [], modulators: [], mod_routes: [] });
 		}
 	}
 

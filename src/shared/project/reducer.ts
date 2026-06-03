@@ -50,6 +50,7 @@ export interface TrackState {
   mod_routes: ProjectModulationRoute[];
   midi_notes: MidiNote[];
   midi_clips: MidiClip[];
+  instrument: string | null;
 }
 
 export function emptyProjectState(): ProjectState {
@@ -77,7 +78,7 @@ export function applyEvent(state: ProjectState, event: EngineEvent): ProjectStat
       if (state.tracks.some((t) => t.id === p.id)) return state; // idempotent
       return {
         ...state,
-        tracks: [...state.tracks, { id: p.id, name: p.name, volume: 80, pan: 0, muted: false, solo: false, clips: [], effects: [], modulators: [], mod_routes: [], midi_notes: [], midi_clips: [] }],
+        tracks: [...state.tracks, { id: p.id, name: p.name, volume: 80, pan: 0, muted: false, solo: false, instrument: null, clips: [], effects: [], modulators: [], mod_routes: [], midi_notes: [], midi_clips: [] }],
       };
     }
 
@@ -125,6 +126,16 @@ export function applyEvent(state: ProjectState, event: EngineEvent): ProjectStat
         ...state,
         tracks: state.tracks.map((t) =>
           t.id !== p.id ? t : { ...t, solo: false },
+        ),
+      };
+    }
+
+    case ev.TRACK_INSTRUMENT_SET: {
+      const p = event.payload as { id: string; instrument: string | null };
+      return {
+        ...state,
+        tracks: state.tracks.map((t) =>
+          t.id !== p.id ? t : { ...t, instrument: p.instrument ?? null },
         ),
       };
     }
@@ -451,6 +462,7 @@ export function projectFromSnapshot(dto: Project): ProjectState {
       mod_routes: t.mod_routes ?? [],
       midi_notes: t.midi_notes ?? [],
       midi_clips: t.midi_clips ?? [],
+      instrument: t.instrument ?? null,
     })),
   };
 }

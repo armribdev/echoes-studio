@@ -198,6 +198,7 @@
 			trackId: t.id,
 			trackName: t.name,
 			trackColor: colors[idx % colors.length],
+			instrument: t.instrument ?? null,
 			effects: t.effects ?? [],
 			modulators: t.modulators ?? [],
 			mod_routes: t.mod_routes ?? [],

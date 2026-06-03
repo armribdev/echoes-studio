@@ -26,6 +26,7 @@ export const cmd = {
   UPDATE_TRACK: 'UPDATE_TRACK',
   MUTE_TRACK: 'MUTE_TRACK',
   SOLO_TRACK: 'SOLO_TRACK',
+  SET_TRACK_INSTRUMENT: 'SET_TRACK_INSTRUMENT',
   ADD_CLIP: 'ADD_CLIP',
   MOVE_CLIP: 'MOVE_CLIP',
   REMOVE_CLIP: 'REMOVE_CLIP',
@@ -109,6 +110,11 @@ export interface MuteTrackPayload {
 export interface SoloTrackPayload {
   track_id: string;
   solo: boolean;
+}
+
+export interface SetTrackInstrumentPayload {
+  track_id: string;
+  instrument: string | null;
 }
 
 export interface AddClipPayload {

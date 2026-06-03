@@ -45,6 +45,7 @@ pub mod cmd {
     pub const UPDATE_TRACK: &str = "UPDATE_TRACK";
     pub const MUTE_TRACK: &str = "MUTE_TRACK";
     pub const SOLO_TRACK: &str = "SOLO_TRACK";
+    pub const SET_TRACK_INSTRUMENT: &str = "SET_TRACK_INSTRUMENT";
     pub const ADD_CLIP: &str = "ADD_CLIP";
     pub const MOVE_CLIP: &str = "MOVE_CLIP";
     pub const REMOVE_CLIP: &str = "REMOVE_CLIP";
@@ -104,6 +105,13 @@ pub struct MuteTrackPayload {
 pub struct SoloTrackPayload {
     pub track_id: String,
     pub solo: bool,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SetTrackInstrumentPayload {
+    pub track_id: String,
+    /// `None` → built-in PolySynth.  `Some(plugin_id)` → CLAP instrument (Phase 5c).
+    pub instrument: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

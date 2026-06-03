@@ -7,6 +7,7 @@ export interface PluginInfo {
 	vendor: string;
 	format: 'VST3' | 'CLAP' | 'AU' | string;
 	categories: string[];
+	is_instrument: boolean;
 }
 
 // All discovered plugins (populated at app init + on manual rescan).

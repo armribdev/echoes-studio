@@ -2,7 +2,7 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::plugin_system::registry::{PluginManifest, PluginRegistry};
+use crate::plugin_system::registry::{classify_instrument, PluginManifest, PluginRegistry};
 use crate::plugin_system::wrapper::DeviceFormat;
 
 pub struct Vst3Host;
@@ -61,6 +61,13 @@ impl Vst3Host {
                 continue;
             }
 
+            let is_instrument = classify_instrument(&[], &name);
+            let categories: Vec<String> = if is_instrument {
+                vec!["Instrument".into(), "VST3".into()]
+            } else {
+                vec!["VST3".into()]
+            };
+
             registry.add(PluginManifest {
                 id: plugin_id,
                 name: name.clone(),
@@ -68,14 +75,13 @@ impl Vst3Host {
                 version: String::new(),
                 format: DeviceFormat::Vst3,
                 path: Some(dll.clone()),
-                categories: vec!["VST3".into()],
-                num_audio_inputs: 2,
+                categories,
+                num_audio_inputs: if is_instrument { 0 } else { 2 },
                 num_audio_outputs: 2,
-                has_midi_input: false,
+                has_midi_input: is_instrument,
                 has_midi_output: false,
-                // No bus introspection at scan yet; a lazy `getBusInfo` probe
-                // will populate this (Phase 5d follow-up).
                 num_sidechain_inputs: 0,
+                is_instrument,
             });
         }
 

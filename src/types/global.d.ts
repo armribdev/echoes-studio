@@ -90,6 +90,8 @@ export interface Track {
 	pan: number;
 	muted: boolean;
 	solo: boolean;
+	/** Plugin id (e.g. `clap:…`) or null for built-in PolySynth. */
+	instrument?: string | null;
 	clips: Clip[];
 	effects: TrackEffect[];
 	modulators: ProjectModulator[];

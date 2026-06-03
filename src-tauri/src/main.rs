@@ -722,9 +722,15 @@ fn open_plugin_editor(
             .get(&plugin_id)
             .map(|m| m.format)
             .ok_or_else(|| format!("plugin not in registry: {plugin_id}"))?;
-        let inst = engine.plugin_host.instance(&plugin_id).ok_or_else(|| {
-            format!("plugin instance not loaded: {plugin_id} (graph not compiled?)")
-        })?;
+        let inst = engine
+            .plugin_host
+            .instance_by_key(&effect_id)
+            .or_else(|| engine.plugin_host.instance(&plugin_id))
+            .ok_or_else(|| {
+                format!(
+                    "plugin instance not loaded: {plugin_id} (key={effect_id}, graph compiled?)"
+                )
+            })?;
         (inst, format)
     };
 

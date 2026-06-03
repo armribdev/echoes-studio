@@ -70,6 +70,13 @@ impl ClapHost {
             let name = desc.name_str().to_string();
             let vendor = desc.vendor_str().to_string();
             let plugin_id = format!("clap:{clap_id}");
+            let features = clap_descriptor_features(desc);
+            let is_instrument = features.iter().any(|f| f == "instrument");
+            let categories: Vec<String> = if is_instrument {
+                vec!["Instrument".into(), "CLAP".into()]
+            } else {
+                vec!["CLAP".into()]
+            };
 
             if registry.get(&plugin_id).is_some() {
                 continue;
@@ -82,14 +89,13 @@ impl ClapHost {
                 version: String::new(),
                 format: DeviceFormat::Clap,
                 path: Some(dll_path.to_path_buf()),
-                categories: vec!["CLAP".into()],
-                num_audio_inputs: 2,
+                categories,
+                num_audio_inputs: if is_instrument { 0 } else { 2 },
                 num_audio_outputs: 2,
-                has_midi_input: false,
+                has_midi_input: is_instrument,
                 has_midi_output: false,
-                // No bus introspection at scan yet (descriptor-only); a lazy
-                // `clap.audio-ports` probe will populate this (Phase 5d follow-up).
                 num_sidechain_inputs: 0,
+                is_instrument,
             });
         }
     }
@@ -127,4 +133,25 @@ fn clap_search_paths() -> Vec<PathBuf> {
 /// Decode a `clap:<clap-plugin-id>` plugin_id back to the raw CLAP id string.
 pub fn decode_plugin_id(plugin_id: &str) -> Option<&str> {
     plugin_id.strip_prefix("clap:")
+}
+
+fn clap_descriptor_features(desc: &crate::plugin_formats::clap::ffi::ClapPluginDescriptor) -> Vec<String> {
+    use std::ffi::CStr;
+
+    if desc.features.is_null() {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    let mut i = 0usize;
+    loop {
+        let ptr = unsafe { *desc.features.add(i) };
+        if ptr.is_null() {
+            break;
+        }
+        if let Ok(s) = unsafe { CStr::from_ptr(ptr) }.to_str() {
+            out.push(s.to_string());
+        }
+        i += 1;
+    }
+    out
 }

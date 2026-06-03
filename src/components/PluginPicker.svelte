@@ -6,11 +6,16 @@
 
 	const dispatch = createEventDispatcher<{ pick: PluginInfo; cancel: void }>();
 
+	/** `instrument` = synths only, `effect` = inserts only, `all` = no filter */
+	export let mode: 'instrument' | 'effect' | 'all' = 'all';
+
 	let query = '';
 	let inputEl: HTMLInputElement;
 
 	$: filtered = $plugins
 		.filter((p) => {
+			if (mode === 'instrument' && !(p.is_instrument ?? false)) return false;
+			if (mode === 'effect' && (p.is_instrument ?? false)) return false;
 			if (!query) return true;
 			const q = query.toLowerCase();
 			return (
@@ -20,6 +25,8 @@
 			);
 		})
 		.sort((a, b) => a.name.localeCompare(b.name));
+
+	$: pickerTitle = mode === 'instrument' ? 'Instruments' : mode === 'effect' ? 'Effets' : 'Plugins';
 
 	onMount(() => inputEl?.focus());
 
@@ -42,7 +49,7 @@
 <div class="backdrop" on:pointerdown|self={() => dispatch('cancel')} role="presentation">
 	<div class="picker" on:keydown={handleKey} role="dialog" aria-label="Plugin browser">
 		<div class="header">
-			<span class="title">Plugins</span>
+			<span class="title">{pickerTitle}</span>
 			<button class="rescan" type="button" on:click={rescanPlugins} disabled={$pluginsLoading}>
 				{$pluginsLoading ? '…' : '↺'} Rescanner
 			</button>
@@ -59,7 +66,13 @@
 		<div class="list" role="listbox">
 			{#if filtered.length === 0}
 				<p class="empty">
-					{$pluginsLoading ? 'Scan en cours…' : query ? 'Aucun résultat' : 'Aucun plugin détecté'}
+					{$pluginsLoading
+						? 'Scan en cours…'
+						: query
+							? 'Aucun résultat'
+							: mode === 'instrument'
+								? 'Aucun instrument détecté (CLAP)'
+								: 'Aucun plugin détecté'}
 				</p>
 			{:else}
 				{#each filtered as p (p.id)}

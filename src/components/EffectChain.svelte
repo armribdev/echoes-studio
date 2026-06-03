@@ -110,6 +110,7 @@
 
 {#if showPicker}
 	<PluginPicker
+		mode="effect"
 		on:pick={(e) => handlePickPlugin(e.detail)}
 		on:cancel={() => (showPicker = false)}
 	/>

@@ -25,6 +25,7 @@ pub mod ev {
     pub const TRACK_UPDATED: &str = "TRACK_UPDATED";
     pub const TRACK_MUTED: &str = "TRACK_MUTED";
     pub const TRACK_SOLOED: &str = "TRACK_SOLOED";
+    pub const TRACK_INSTRUMENT_SET: &str = "TRACK_INSTRUMENT_SET";
     pub const CLIP_ADDED: &str = "CLIP_ADDED";
     pub const CLIP_MOVED: &str = "CLIP_MOVED";
     pub const CLIP_REMOVED: &str = "CLIP_REMOVED";

@@ -37,6 +37,7 @@ import {
   type SetModulationDepthPayload,
   type AddModulationRoutePayload,
   type AddModulatorPayload,
+  type SetTrackInstrumentPayload,
   type SoloTrackPayload,
   type UpdateEffectPayload,
   type UpdateModulatorPayload,
@@ -133,6 +134,16 @@ export function muteTrack(trackId: string, muted: boolean): Promise<CommandResul
 
 export function soloTrack(trackId: string, solo: boolean): Promise<CommandResult> {
   return dispatch<SoloTrackPayload>(cmd.SOLO_TRACK, { track_id: trackId, solo });
+}
+
+export function setTrackInstrument(
+  trackId: string,
+  instrument: string | null,
+): Promise<CommandResult> {
+  return dispatch<SetTrackInstrumentPayload>(cmd.SET_TRACK_INSTRUMENT, {
+    track_id: trackId,
+    instrument,
+  });
 }
 
 // ── Clip commands ─────────────────────────────────────────────────────────────

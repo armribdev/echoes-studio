@@ -128,6 +128,7 @@ impl PluginHost {
                 vendor: m.vendor.clone(),
                 format: format_tag(m.format),
                 categories: m.categories.clone(),
+                is_instrument: m.is_instrument,
             })
             .collect()
     }
@@ -486,6 +487,13 @@ impl PluginHost {
         self.record_by_device_id(device_id)
             .map(|r| Arc::clone(&r.instance))
     }
+
+    /// Borrow by graph placement key (`effect.id` or `instrument:{track_id}`).
+    pub fn instance_by_key(&self, instance_key: &str) -> Option<Arc<PluginInstance>> {
+        self.records
+            .get(instance_key)
+            .map(|r| Arc::clone(&r.instance))
+    }
 }
 
 impl Default for PluginHost {
@@ -501,6 +509,7 @@ pub struct PluginInfo {
     pub vendor: String,
     pub format: String,
     pub categories: Vec<String>,
+    pub is_instrument: bool,
 }
 
 fn format_tag(fmt: DeviceFormat) -> String {
@@ -532,6 +541,7 @@ mod tests {
             has_midi_input: false,
             has_midi_output: false,
             num_sidechain_inputs: aux,
+            is_instrument: false,
         }
     }
 

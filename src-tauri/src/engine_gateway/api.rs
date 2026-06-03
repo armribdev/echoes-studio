@@ -22,10 +22,11 @@ use super::commands::{
     AddModulatorPayload, BatchCommand, CommandEnvelope, CreateTrackPayload, DeleteTrackPayload,
     MoveClipPayload, MoveMidiClipPayload, MuteTrackPayload, RemoveClipPayload, RemoveEffectPayload,
     RemoveMidiClipPayload, RemoveModulationRoutePayload, RemoveModulatorPayload, SeekPayload,
-    SetClipMidiNotesPayload, SetMidiNotesPayload, SetModulationDepthPayload, SoloTrackPayload,
-    UpdateEffectPayload, UpdateModulatorPayload, UpdateProjectNamePayload, UpdateTempoPayload,
-    UpdateTrackPayload,
+    SetClipMidiNotesPayload, SetMidiNotesPayload, SetModulationDepthPayload,
+    SetTrackInstrumentPayload, SoloTrackPayload, UpdateEffectPayload, UpdateModulatorPayload,
+    UpdateProjectNamePayload, UpdateTempoPayload, UpdateTrackPayload,
 };
+use crate::plugin_system::wrapper::DeviceFormat;
 use super::events::{ev, EngineEvent, ProjectEvent};
 use crate::audio_clip::{AudioClip, AudioClipData};
 use crate::audio_graph::GraphSnapshotDto;
@@ -759,6 +760,48 @@ fn process_command(
             )
         }
 
+        cmd::SET_TRACK_INSTRUMENT => {
+            let p: SetTrackInstrumentPayload = serde_json::from_value(command.payload)
+                .map_err(|e| format!("SET_TRACK_INSTRUMENT payload invalid: {e}"))?;
+
+            if let Some(ref plugin_id) = p.instrument {
+                let engine = state
+                    .audio_engine
+                    .lock()
+                    .map_err(|e| format!("audio engine lock: {e}"))?;
+                let manifest = engine
+                    .plugin_host
+                    .registry()
+                    .get(plugin_id)
+                    .ok_or_else(|| format!("Plugin '{plugin_id}' introuvable"))?;
+                if !manifest.is_instrument {
+                    return Err(format!(
+                        "'{}' n'est pas un instrument — ajoutez-le dans Effets",
+                        manifest.name
+                    ));
+                }
+                if manifest.format != DeviceFormat::Clap {
+                    return Err(format!(
+                        "Les instruments {} ne sont pas encore supportés — utilisez la version CLAP de '{}'",
+                        format_tag(manifest.format),
+                        manifest.name
+                    ));
+                }
+            }
+
+            with_project_mut(state, |project| {
+                require_track_mut(project, &p.track_id)?.instrument = p.instrument.clone();
+                Ok(())
+            })?;
+
+            commit_same_payload(
+                &ctx,
+                ev::TRACK_INSTRUMENT_SET,
+                json!({ "id": p.track_id, "instrument": p.instrument }),
+                true,
+            )
+        }
+
         cmd::ADD_CLIP => {
             let p: AddClipPayload = serde_json::from_value(command.payload)
                 .map_err(|e| format!("ADD_CLIP payload invalid: {e}"))?;
@@ -881,6 +924,22 @@ fn process_command(
         cmd::ADD_EFFECT => {
             let p: AddEffectPayload = serde_json::from_value(command.payload)
                 .map_err(|e| format!("ADD_EFFECT payload invalid: {e}"))?;
+
+            if let Some(plugin_id) = plugin_id_from_effect_kind(&p.kind) {
+                let engine = state
+                    .audio_engine
+                    .lock()
+                    .map_err(|e| format!("audio engine lock: {e}"))?;
+                if let Some(manifest) = engine.plugin_host.registry().get(plugin_id) {
+                    if manifest.is_instrument {
+                        return Err(format!(
+                            "'{}' est un instrument — choisissez-le dans la section Instrument",
+                            manifest.name
+                        ));
+                    }
+                }
+            }
+
             let effect_id = generate_id();
             let params = default_params_for_kind(&p.kind)
                 .ok_or_else(|| format!("Unknown effect kind: {}", p.kind))?;
@@ -1268,6 +1327,20 @@ fn snapshot_project(project: &AppProject) -> AppProject {
     }
 }
 
+fn plugin_id_from_effect_kind(kind: &str) -> Option<&str> {
+    kind.strip_prefix("plugin:")?.splitn(3, '|').next()
+}
+
+fn format_tag(fmt: DeviceFormat) -> &'static str {
+    match fmt {
+        DeviceFormat::Vst3 => "VST3",
+        DeviceFormat::Clap => "CLAP",
+        DeviceFormat::Au => "AU",
+        DeviceFormat::Internal => "interne",
+        DeviceFormat::Wasm => "WASM",
+    }
+}
+
 fn default_params_for_kind(kind: &str) -> Option<EffectParams> {
     // Plugin kind encodes identity as "plugin:<id>|<name>|<format>" so ADD_EFFECT
     // carries name and format for the UI without a separate lookup.
@@ -1386,6 +1459,16 @@ fn apply_track_soloed(project: &mut AppProject, payload: &Value) {
         &payload_str(payload, "id"),
         payload["solo"].as_bool().unwrap_or(false),
     );
+}
+
+fn apply_track_instrument_set(project: &mut AppProject, payload: &Value) {
+    let id = payload_str(payload, "id");
+    let Some(track) = find_track_mut(project, &id) else {
+        return;
+    };
+    track.instrument = payload["instrument"]
+        .as_str()
+        .map(|s| s.to_string());
 }
 
 fn apply_clip_added(
@@ -1680,6 +1763,7 @@ fn apply_events(
             ev::TRACK_UPDATED => apply_track_updated(&mut project, &event.payload),
             ev::TRACK_MUTED => apply_track_muted(&mut project, &event.payload),
             ev::TRACK_SOLOED => apply_track_soloed(&mut project, &event.payload),
+            ev::TRACK_INSTRUMENT_SET => apply_track_instrument_set(&mut project, &event.payload),
             ev::CLIP_ADDED => apply_clip_added(state, &mut project, &event.payload),
             ev::CLIP_MOVED => apply_clip_moved(&mut project, &event.payload),
             ev::CLIP_REMOVED => apply_clip_removed(&mut project, &event.payload),

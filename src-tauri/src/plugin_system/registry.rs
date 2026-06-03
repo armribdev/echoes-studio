@@ -37,6 +37,20 @@ pub struct PluginManifest {
     /// sidechain source can be routed in.  `0` for plugins with no aux bus →
     /// the compiler sizes the node exactly as before (bit-identical, C-2).
     pub num_sidechain_inputs: usize,
+    /// Generator/synth (MIDI → audio), not an insert effect.
+    pub is_instrument: bool,
+}
+
+/// Heuristic used when scan metadata is incomplete (e.g. VST3 class name).
+pub fn classify_instrument(categories: &[String], name: &str) -> bool {
+    if categories.iter().any(|c| {
+        let l = c.to_lowercase();
+        l.contains("instrument") || l == "synth"
+    }) {
+        return true;
+    }
+    let n = name.to_lowercase();
+    n.contains("instrument") || n.contains("synth")
 }
 
 impl PluginManifest {
@@ -59,6 +73,7 @@ impl PluginManifest {
             has_midi_input: false,
             has_midi_output: false,
             num_sidechain_inputs: 0,
+            is_instrument: false,
         }
     }
 }

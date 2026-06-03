@@ -2,6 +2,7 @@
 	import { leftPanel } from '../stores/leftPanel';
 	import { selectedTrack } from '../stores/selectedTrack';
 	import EffectChain from './EffectChain.svelte';
+	import InstrumentPanel from './InstrumentPanel.svelte';
 	import ModulationPanel from './ModulationPanel.svelte';
 	import PanelResizeHandle from './PanelResizeHandle.svelte';
 
@@ -30,6 +31,15 @@
 					<span class="track-color-bar"></span>
 					<span class="track-title">{$selectedTrack.trackName || 'Piste sans nom'}</span>
 				</div>
+
+				<div class="section">
+					<InstrumentPanel
+						trackId={$selectedTrack.trackId}
+						instrument={$selectedTrack.instrument}
+					/>
+				</div>
+
+				<div class="section-divider"></div>
 
 				<div class="section">
 					<EffectChain
