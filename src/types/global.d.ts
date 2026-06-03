@@ -112,10 +112,42 @@ export interface Clip {
 	peaks_4096: [number, number][];
 }
 
+export interface SidePanelLayoutDto {
+	open: boolean;
+	width: number;
+}
+
+export interface BottomPanelLayoutDto {
+	open: boolean;
+	height: number;
+	saved_edit_height: number;
+	saved_preview_height: number;
+}
+
+export interface ViewModeLayoutDto {
+	main: string;
+	graph_scope: string;
+}
+
+export interface ProjectUiLayout {
+	left_panel: SidePanelLayoutDto;
+	right_panel: SidePanelLayoutDto;
+	bottom_panel: BottomPanelLayoutDto;
+	view_mode: ViewModeLayoutDto;
+}
+
 export interface Project {
 	name: string;
 	bpm: number;
 	numerator: number;
 	denominator: number;
+	/** Grille MIDI / arrangement en fractions de noire (0.25 = 1/16). */
+	midi_grid_beats: number;
+	key_root: string;
+	key_mode: string;
+	swing_percent: number;
+	midi_ppq: number;
+	midi_grid_use_triplets: boolean;
 	tracks: Track[];
+	ui_layout?: ProjectUiLayout;
 }

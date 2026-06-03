@@ -17,7 +17,6 @@ import { invoke } from '@tauri-apps/api/core';
 import { undoCommand, redoCommand, play, pause } from '../commands/dispatcher';
 import { transport } from '../../stores/transport';
 import { notify } from '../../stores/status';
-import { exportTrigger, exportMp3Trigger } from '../../stores/exportBus';
 import { isEditingText, shouldHandleGlobalHistoryShortcuts, hasNoModifiers } from './context';
 import { engineProject } from '../store/engineStore';
 import { selection } from '../../stores/selection';
@@ -105,13 +104,13 @@ const SHORTCUTS: Shortcut[] = [
     key: 'e',
     modifiers: ['ctrl', 'shift'],
     description: 'Exporter mixdown WAV…',
-    action: () => exportTrigger.update((n) => n + 1),
+    action: menuAction('export-wav'),
   },
   {
     key: 'm',
     modifiers: ['ctrl', 'shift'],
     description: 'Exporter mixdown MP3…',
-    action: () => exportMp3Trigger.update((n) => n + 1),
+    action: menuAction('export-mp3'),
   },
 
   // ── Transport ─────────────────────────────────────────────────────────────

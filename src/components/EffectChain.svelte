@@ -11,6 +11,7 @@
 
 	export let trackId: string;
 	export let effects: TrackEffect[];
+	export let compact = false;
 
 	let expanded:    Record<string, boolean> = {};
 	let showAddMenu  = false;
@@ -116,9 +117,9 @@
 	/>
 {/if}
 
-<div class="fx-panel">
+<div class="fx-panel" class:compact>
 	<div class="fx-header" style:z-index={showAddMenu ? 10 : 1}>
-		<span class="fx-title">Effets</span>
+		<span class="fx-title">{compact ? 'FX' : 'Effets'}</span>
 		<div class="add-wrap">
 			<button class="add-btn" type="button" on:click|stopPropagation={() => (showAddMenu = !showAddMenu)} title="Ajouter">+</button>
 			{#if showAddMenu}
@@ -140,7 +141,7 @@
 	</div>
 
 	{#if effects.length === 0}
-		<p class="empty">Aucun effet — cliquez + pour en ajouter</p>
+		<p class="empty">{compact ? '—' : 'Aucun effet — cliquez + pour en ajouter'}</p>
 	{/if}
 
 	{#each effects as effect (effect.id)}
@@ -247,12 +248,13 @@
 								class:active={openEditors.has(effect.id)}
 								type="button"
 								on:click={() => handleOpenEditor(effect)}
+								title={openEditors.has(effect.id) ? "Fermer l'éditeur" : "Ouvrir l'éditeur"}
 							>
-								{#if openEditors.has(effect.id)}
-									Fermer l'éditeur
-								{:else}
-									Ouvrir l'éditeur
-								{/if}
+								{compact
+									? (openEditors.has(effect.id) ? '× GUI' : 'GUI')
+									: openEditors.has(effect.id)
+										? "Fermer l'éditeur"
+										: "Ouvrir l'éditeur"}
 							</button>
 						</div>
 					{/if}
@@ -265,7 +267,25 @@
 <style lang="scss">
 	@use '../variables.scss' as *;
 
-	.fx-panel { width: 100%; }
+	.fx-panel {
+		width: 100%;
+
+		&.compact .fx-header { padding: 3px 5px; }
+		&.compact .slot-head { padding: 2px 5px; }
+		&.compact .slot-params { padding: 4px 5px 5px; }
+		&.compact .empty { padding: 6px 5px; font-size: 9px; }
+		&.compact .grid {
+			grid-template-columns: 28px 26px 1fr;
+			row-gap: 2px;
+		}
+		&.compact .lbl { font-size: 7px; }
+		&.compact .val { font-size: 8px; }
+		&.compact .slot-name { font-size: 9px; }
+		&.compact .open-editor-btn {
+			padding: 3px 8px;
+			font-size: 9px;
+		}
+	}
 
 	.fx-header {
 		display: flex; align-items: center; gap: 4px;

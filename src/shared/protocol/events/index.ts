@@ -130,6 +130,12 @@ export interface TempoUpdatedPayload {
   bpm: number;
   numerator: number;
   denominator: number;
+  midi_grid_beats: number;
+  key_root?: string;
+  key_mode?: string;
+  swing_percent?: number;
+  midi_ppq?: number;
+  midi_grid_use_triplets?: boolean;
 }
 
 /** Per-track peak levels: track_id → [peakL, peakR] in linear amplitude 0–1. */

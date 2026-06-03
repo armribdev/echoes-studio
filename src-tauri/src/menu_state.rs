@@ -1,23 +1,24 @@
 //! Native menu state synchronisation.
 //!
-//! `MenuHandles` stores direct update closures for the three controlled menu
-//! items (undo, redo, save). This avoids the unreliable `app.menu().get(id)`
-//! lookup which can return `None` on Windows when items are nested in a
-//! submenu or when the app-level menu is not yet fully initialised.
+//! `MenuHandles` stores direct update closures for controlled menu items.
+//! This avoids the unreliable `app.menu().get(id)` lookup which can return
+//! `None` on Windows when items are nested in a submenu or when the app-level
+//! menu is not yet fully initialised.
 //!
 //! Usage:
-//!   1. Create the `MenuItem`s with `enabled: false`.
+//!   1. Create the `MenuItem`s with `enabled: false` where needed.
 //!   2. Build `MenuHandles` from them and call `app.manage()`.
-//!   3. Call `refresh_menu` after any state change.
+//!   3. Call `refresh_menu` / `set_delete_track_enabled` after state changes.
 
 use crate::project::AppState;
 use tauri::Manager;
 
-/// Holds `set_enabled` closures for the three controlled items.
+/// Holds `set_enabled` closures for controlled menu items.
 pub struct MenuHandles {
     pub set_undo: Box<dyn Fn(bool) -> tauri::Result<()> + Send + Sync>,
     pub set_redo: Box<dyn Fn(bool) -> tauri::Result<()> + Send + Sync>,
     pub set_save: Box<dyn Fn(bool) -> tauri::Result<()> + Send + Sync>,
+    pub set_delete_track: Box<dyn Fn(bool) -> tauri::Result<()> + Send + Sync>,
 }
 
 pub fn refresh_menu(app: &tauri::AppHandle, state: &tauri::State<'_, AppState>) {
@@ -33,4 +34,9 @@ pub fn refresh_menu(app: &tauri::AppHandle, state: &tauri::State<'_, AppState>) 
     let _ = (handles.set_undo)(can_undo);
     let _ = (handles.set_redo)(can_redo);
     let _ = (handles.set_save)(is_dirty);
+}
+
+pub fn set_delete_track_enabled(app: &tauri::AppHandle, enabled: bool) {
+    let handles = app.state::<MenuHandles>();
+    let _ = (handles.set_delete_track)(enabled);
 }

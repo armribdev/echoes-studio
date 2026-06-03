@@ -13,8 +13,12 @@ function createRightPanelStore() {
 
 	return {
 		subscribe,
+		hydrate(partial: Partial<RightPanelState>) {
+			update((s) => ({ ...s, ...partial }));
+		},
 		toggle() {
 			update((s) => ({ ...s, open: !s.open }));
+			import('../lib/projectUiLayout').then((m) => m.persistProjectUiLayout());
 		},
 		setWidth(w: number) {
 			update((s) => ({ ...s, width: Math.max(200, Math.min(480, w)) }));

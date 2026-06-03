@@ -204,7 +204,7 @@
 			mod_routes: t.mod_routes ?? [],
 		});
 
-		if (!get(leftPanel).open) leftPanel.toggle();
+		if (!get(leftPanel).open) leftPanel.openForTrack();
 
 		if (scope === 'project') {
 			viewMode.setGraphScope('track');

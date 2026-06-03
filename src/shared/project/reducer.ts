@@ -20,6 +20,12 @@ export interface ProjectState {
   bpm: number;
   numerator: number;
   denominator: number;
+  midi_grid_beats: number;
+  key_root: string;
+  key_mode: string;
+  swing_percent: number;
+  midi_ppq: number;
+  midi_grid_use_triplets: boolean;
   tracks: TrackState[];
 }
 
@@ -59,6 +65,12 @@ export function emptyProjectState(): ProjectState {
     bpm: 120,
     numerator: 4,
     denominator: 4,
+    midi_grid_beats: 0.25,
+    key_root: 'C',
+    key_mode: 'major',
+    swing_percent: 0,
+    midi_ppq: 960,
+    midi_grid_use_triplets: false,
     tracks: [],
   };
 }
@@ -194,8 +206,29 @@ export function applyEvent(state: ProjectState, event: EngineEvent): ProjectStat
     }
 
     case ev.TEMPO_UPDATED: {
-      const p = event.payload as { bpm: number; numerator: number; denominator: number };
-      return { ...state, bpm: p.bpm, numerator: p.numerator, denominator: p.denominator };
+      const p = event.payload as {
+        bpm: number;
+        numerator: number;
+        denominator: number;
+        midi_grid_beats?: number;
+        key_root?: string;
+        key_mode?: string;
+        swing_percent?: number;
+        midi_ppq?: number;
+        midi_grid_use_triplets?: boolean;
+      };
+      return {
+        ...state,
+        bpm: p.bpm,
+        numerator: p.numerator,
+        denominator: p.denominator,
+        midi_grid_beats: p.midi_grid_beats ?? state.midi_grid_beats,
+        key_root: p.key_root ?? state.key_root,
+        key_mode: p.key_mode ?? state.key_mode,
+        swing_percent: p.swing_percent ?? state.swing_percent,
+        midi_ppq: p.midi_ppq ?? state.midi_ppq,
+        midi_grid_use_triplets: p.midi_grid_use_triplets ?? state.midi_grid_use_triplets,
+      };
     }
 
     case ev.PROJECT_RESET: {
@@ -449,6 +482,12 @@ export function projectFromSnapshot(dto: Project): ProjectState {
     bpm: dto.bpm,
     numerator: dto.numerator,
     denominator: dto.denominator,
+    midi_grid_beats: dto.midi_grid_beats ?? 0.25,
+    key_root: dto.key_root ?? 'C',
+    key_mode: dto.key_mode ?? 'major',
+    swing_percent: dto.swing_percent ?? 0,
+    midi_ppq: dto.midi_ppq ?? 960,
+    midi_grid_use_triplets: dto.midi_grid_use_triplets ?? false,
     tracks: dto.tracks.map((t) => ({
       id: t.id,
       name: t.name,

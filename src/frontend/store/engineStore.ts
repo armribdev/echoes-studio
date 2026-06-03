@@ -107,6 +107,11 @@ export const engineTempo: Readable<{ bpm: number; numerator: number; denominator
     denominator: $p.denominator,
   }));
 
+export const engineMidiGridBeats: Readable<number> = derived(
+  engineProject,
+  ($p) => $p.midi_grid_beats ?? 0.25,
+);
+
 /** Project name derived from engine state. */
 export const engineProjectName: Readable<string> = derived(
   engineProject,

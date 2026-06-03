@@ -27,6 +27,9 @@
 	import { engineProject } from '../frontend/store/engineStore';
 	import { setClipMidiNotes, undoCommand, redoCommand, seek } from '../frontend/commands/dispatcher';
 	import { snapPosition } from '../lib/snapUtils';
+	import { MIDI_GRID_OPTIONS } from '../lib/midiGrid';
+	import { midiGridBeats } from '../stores/project';
+	import { currentProjectMusical, updateProjectMusical } from '../frontend/commands/dispatcher';
 	import { startTransportScrub } from '../frontend/transportScrub';
 	import { shouldHandlePianoRollShortcuts, hasNoModifiers } from '../frontend/shortcuts/context';
 	import { keyboardFocus } from '../stores/keyboardFocus';
@@ -53,15 +56,6 @@
 	const NOTE_NAMES = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
 	const BLACK_KEYS = new Set([1,3,6,8,10]);
 	const dpr = typeof window !== 'undefined' ? (window.devicePixelRatio || 1) : 1;
-
-	const QUANTIZE_OPTIONS: { label: string; beats: number }[] = [
-		{ label: '1/1',  beats: 4     },
-		{ label: '1/2',  beats: 2     },
-		{ label: '1/4',  beats: 1     },
-		{ label: '1/8',  beats: 0.5   },
-		{ label: '1/16', beats: 0.25  },
-		{ label: '1/32', beats: 0.125 },
-	];
 
 	// ── État local ─────────────────────────────────────────────────────────────
 	let canvasGrid: HTMLCanvasElement;
@@ -1194,7 +1188,14 @@
 		const bpm = get(tempo).bpm;
 		const beatLocal = Math.max(0, (clientX - rect.left + scrollLeft) / zoom);
 		const positionSec = clipStartSec + (beatLocal * 60) / bpm;
-		return snapPosition(positionSec, altKey, get(tempo), timelineScale(), get(engineProject).tracks);
+		return snapPosition(
+			positionSec,
+			altKey,
+			get(tempo),
+			timelineScale(),
+			get(midiGridBeats),
+			get(engineProject).tracks,
+		);
 	}
 
 	function handleRulerMouseDown(event: CustomEvent<MouseEvent>) {
@@ -1289,11 +1290,18 @@
 			<select
 				class="q-select"
 				value={quantize}
-				on:change={(e) => pianoRollStore.setQuantize(+e.currentTarget.value)}
-				title="Quantification"
+				on:change={(e) => {
+					const beats = +e.currentTarget.value;
+					pianoRollStore.setQuantize(beats);
+					midiGridBeats.set(beats);
+					updateProjectMusical({ ...currentProjectMusical(), midi_grid_beats: beats }).catch(
+						console.error,
+					);
+				}}
+				title="Quantification (enregistrée dans le projet)"
 				aria-label="Quantification"
 			>
-				{#each QUANTIZE_OPTIONS as opt}
+				{#each MIDI_GRID_OPTIONS as opt}
 					<option value={opt.beats}>{opt.label}</option>
 				{/each}
 			</select>

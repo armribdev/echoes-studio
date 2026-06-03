@@ -11,14 +11,14 @@
 	import { transport } from '../stores/transport';
 	import { selection } from '../stores/selection';
 	import { tempo } from '../stores/tempo';
-	import { projectName, projectPath } from '../stores/project';
+	import { projectName, projectPath, midiGridBeats } from '../stores/project';
+	import { pianoRollStore } from '../stores/pianoRoll';
+	import { normalizeMidiGridBeats } from '../lib/midiGrid';
 	import { projectEventStore } from '../shared/project/eventStore';
 	import { addClip, moveClip, removeClip, updateTrack, muteTrack, soloTrack, seek, createTrack, deleteTrack, addMidiClip, moveMidiClip, removeMidiClip } from '../frontend/commands/dispatcher';
 	import { clipboard } from '../stores/clipboard';
 	import type { ClipboardEntry } from '../stores/clipboard';
 	import { get } from 'svelte/store';
-	import { exportMixdown } from '../lib/exportMixdown';
-	import type { ExportFormat } from '../lib/exportMixdown';
 	import { snapPosition, getSnapSubdivisionSec } from '../lib/snapUtils';
 	import { selectedTrack } from '../stores/selectedTrack';
 	import { shouldHandleTimelineShortcuts } from '../frontend/shortcuts/context';
@@ -44,9 +44,7 @@
 		'#c77dff', '#ff9a3c', '#00c9a7', '#ff6db6',
 	];
 	import { notify } from '../stores/status';
-	import { exportTrigger, exportMp3Trigger } from '../stores/exportBus';
 	import { trackLevels } from '../stores/trackLevels';
-	import { preferences } from '../stores/preferences';
 
 	// Live sync from the engine event store.
 	// Local mutations (optimistic UI during drag/import) are reconciled by the
@@ -56,6 +54,9 @@
 		tracks = state.tracks;
 		// Keep the tempo store in sync so MenuBar reflects undo/redo correctly.
 		tempo.set({ bpm: state.bpm, numerator: state.numerator, denominator: state.denominator });
+		const grid = normalizeMidiGridBeats(state.midi_grid_beats);
+		midiGridBeats.set(grid);
+		pianoRollStore.setQuantize(grid);
 	});
 	onDestroy(unsubStore);
 
@@ -64,24 +65,6 @@
 	});
 	onDestroy(unsubSelection);
 
-	// ── Export triggers ───────────────────────────────────────────────────────
-	function runExport(format: ExportFormat) {
-		exportMixdown(tracks, $preferences, format).catch((e: unknown) =>
-			notify(`Erreur export : ${(e as Error)?.message ?? String(e)}`, 'error')
-		);
-	}
-
-	const unsubExport = exportTrigger.subscribe((n) => {
-		if (n === 0) return;
-		runExport('wav');
-	});
-	onDestroy(unsubExport);
-
-	const unsubExportMp3 = exportMp3Trigger.subscribe((n) => {
-		if (n === 0) return;
-		runExport('mp3');
-	});
-	onDestroy(unsubExportMp3);
 	onDestroy(() => scrubCleanup?.());
 	onDestroy(cleanupTracksPointer);
 
@@ -122,10 +105,17 @@
 	// ── Project loading ───────────────────────────────────────────────────────
 
 	async function loadProject(dto: Project) {
+		selectedTrackIndex = null;
 		transport.update((t) => ({ ...t, isPlaying: false, position: 0 }));
+
+		const { applyProjectUiLayout } = await import('../lib/projectUiLayout');
+		applyProjectUiLayout(dto.ui_layout);
 
 		projectName.set(dto.name);
 		tempo.set({ bpm: dto.bpm, numerator: dto.numerator, denominator: dto.denominator });
+		const grid = normalizeMidiGridBeats(dto.midi_grid_beats ?? 0.25);
+		midiGridBeats.set(grid);
+		pianoRollStore.setQuantize(grid);
 
 		// Seed the engine store — the subscription above will update `tracks` reactively,
 		// which in turn triggers the $: buffer-preparation block for all clips.
@@ -259,11 +249,8 @@
 					if (payload === 'add-track') {
 						handleCreateTrack();
 					} else if (payload === 'delete-track') {
-						const idx = selectedTrackIndex ?? (tracks.length > 0 ? tracks.length - 1 : null);
-						if (idx !== null && tracks[idx]) {
-							handleDeleteTrack(tracks[idx].id);
-						} else {
-							notify('Aucune piste sélectionnée', 'error');
+						if (selectedTrackIndex !== null && tracks[selectedTrackIndex]) {
+							handleDeleteTrack(tracks[selectedTrackIndex].id);
 						}
 					}
 				}),
@@ -410,7 +397,7 @@
 		altKey: boolean,
 		excludeClip?: { trackIndex: number; clipIndex: number }
 	): number {
-		return snapPosition(positionSec, altKey, $tempo, scale, tracks, excludeClip);
+		return snapPosition(positionSec, altKey, $tempo, scale, $midiGridBeats, tracks, excludeClip);
 	}
 
 	function beginScrub(event: MouseEvent, originEl: HTMLElement) {

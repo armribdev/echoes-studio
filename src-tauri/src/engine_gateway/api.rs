@@ -33,7 +33,7 @@ use crate::audio_graph::GraphSnapshotDto;
 use crate::project::{
     generate_id, AppClip, AppMidiClip, AppProject, AppState, AppTrack, CachedAudioData,
     CompressorParams, DelayParams, EffectParams, EqParams, MidiClipDto, MidiNote, PluginParams,
-    ReverbParams, TrackEffect,
+    ProjectUiLayout, ReverbParams, TrackEffect,
 };
 
 /// Returned by `send_command` / `send_batch` to the UI.
@@ -910,13 +910,29 @@ fn process_command(
                 project.bpm = p.bpm;
                 project.numerator = p.numerator;
                 project.denominator = p.denominator;
+                project.midi_grid_beats = p.midi_grid_beats;
+                project.key_root = p.key_root.clone();
+                project.key_mode = p.key_mode.clone();
+                project.swing_percent = p.swing_percent.min(100);
+                project.midi_ppq = p.midi_ppq;
+                project.midi_grid_use_triplets = p.midi_grid_use_triplets;
                 Ok(())
             })?;
 
             commit_same_payload(
                 &ctx,
                 ev::TEMPO_UPDATED,
-                json!({ "bpm": p.bpm, "numerator": p.numerator, "denominator": p.denominator }),
+                json!({
+                    "bpm": p.bpm,
+                    "numerator": p.numerator,
+                    "denominator": p.denominator,
+                    "midi_grid_beats": p.midi_grid_beats,
+                    "key_root": p.key_root,
+                    "key_mode": p.key_mode,
+                    "swing_percent": p.swing_percent.min(100),
+                    "midi_ppq": p.midi_ppq,
+                    "midi_grid_use_triplets": p.midi_grid_use_triplets,
+                }),
                 false,
             )
         }
@@ -1319,11 +1335,18 @@ fn snapshot_project(project: &AppProject) -> AppProject {
         bpm: project.bpm,
         numerator: project.numerator,
         denominator: project.denominator,
+        midi_grid_beats: project.midi_grid_beats,
+        key_root: project.key_root.clone(),
+        key_mode: project.key_mode.clone(),
+        swing_percent: project.swing_percent,
+        midi_ppq: project.midi_ppq,
+        midi_grid_use_triplets: project.midi_grid_use_triplets,
         tracks: project.tracks.iter().map(snapshot_track).collect(),
         // Plugin binary state mirrors live plugin internals and is restored
         // separately (project load → compile → setState), not via the event
         // store.  Undo/redo snapshots therefore keep this empty.
         plugin_state_blobs: std::collections::HashMap::new(),
+        ui_layout: ProjectUiLayout::default(),
     }
 }
 
@@ -1407,8 +1430,11 @@ pub fn rebuild_project_from_store(state: &tauri::State<'_, AppState>) -> Result<
         (base, events.to_vec())
     };
 
+    let ui_layout = lock_project(state)?.ui_layout.clone();
     let rebuilt = apply_events(state, base_project, &events_to_replay)?;
-    *lock_project(state)? = rebuilt;
+    let mut project = lock_project(state)?;
+    *project = rebuilt;
+    project.ui_layout = ui_layout;
 
     Ok(())
 }
@@ -1539,6 +1565,24 @@ fn apply_tempo_updated(project: &mut AppProject, payload: &Value) {
     }
     if let Some(d) = payload["denominator"].as_u64() {
         project.denominator = d as u8;
+    }
+    if let Some(g) = payload["midi_grid_beats"].as_f64() {
+        project.midi_grid_beats = g as f32;
+    }
+    if let Some(k) = payload["key_root"].as_str() {
+        project.key_root = k.to_string();
+    }
+    if let Some(m) = payload["key_mode"].as_str() {
+        project.key_mode = m.to_string();
+    }
+    if let Some(s) = payload["swing_percent"].as_u64() {
+        project.swing_percent = (s as u8).min(100);
+    }
+    if let Some(p) = payload["midi_ppq"].as_u64() {
+        project.midi_ppq = p as u16;
+    }
+    if let Some(t) = payload["midi_grid_use_triplets"].as_bool() {
+        project.midi_grid_use_triplets = t;
     }
 }
 

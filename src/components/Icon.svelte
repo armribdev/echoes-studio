@@ -1,5 +1,15 @@
 <script lang="ts">
-	export let name: 'settings' | 'volume' | 'folder' | 'monitor' | 'close' | 'arrow-right' | 'alert-triangle' | 'cpu';
+	export let name:
+		| 'settings'
+		| 'volume'
+		| 'folder'
+		| 'monitor'
+		| 'close'
+		| 'arrow-right'
+		| 'alert-triangle'
+		| 'cpu'
+		| 'inspector'
+		| 'library';
 	export let size: number = 14;
 	export let strokeWidth: number = 1.8;
 </script>
@@ -49,5 +59,16 @@
 		<line x1="1" y1="15" x2="4" y2="15"/>
 		<line x1="20" y1="9" x2="23" y2="9"/>
 		<line x1="20" y1="15" x2="23" y2="15"/>
+	{:else if name === 'inspector'}
+		<rect x="3" y="3" width="18" height="18" rx="2"/>
+		<line x1="9" y1="3" x2="9" y2="21"/>
+		<line x1="5" y1="8" x2="7" y2="8"/>
+		<line x1="5" y1="12" x2="7" y2="12"/>
+		<line x1="5" y1="16" x2="7" y2="16"/>
+	{:else if name === 'library'}
+		<rect x="3" y="3" width="7" height="7" rx="1"/>
+		<rect x="14" y="3" width="7" height="7" rx="1"/>
+		<rect x="3" y="14" width="7" height="7" rx="1"/>
+		<rect x="14" y="14" width="7" height="7" rx="1"/>
 	{/if}
 </svg>

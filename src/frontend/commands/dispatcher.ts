@@ -16,6 +16,7 @@
  *   - Structural:    immediate engine round-trip (no local optimistic state).
  */
 
+import { get } from 'svelte/store';
 import { invoke } from '@tauri-apps/api/core';
 import {
   cmd,
@@ -50,6 +51,17 @@ import {
   type MoveMidiClipPayload,
   type SetClipMidiNotesPayload,
 } from '../../shared/protocol/commands';
+import type { ProjectMusicalFields } from '../../lib/projectMusical';
+import {
+  DEFAULT_KEY_MODE,
+  DEFAULT_KEY_ROOT,
+  DEFAULT_MIDI_PPQ,
+  DEFAULT_SWING_PERCENT,
+} from '../../lib/projectMusical';
+import { normalizeMidiGridBeats } from '../../lib/midiGrid';
+import { engineProject } from '../store/engineStore';
+import { tempo } from '../../stores/tempo';
+import { midiGridBeats } from '../../stores/project';
 
 // ── Active project ID ─────────────────────────────────────────────────────────
 //
@@ -195,12 +207,46 @@ export function updateProjectName(name: string): Promise<CommandResult> {
   return dispatch<UpdateProjectNamePayload>(cmd.UPDATE_PROJECT_NAME, { name });
 }
 
+export function currentProjectMusical(): ProjectMusicalFields {
+  const t = get(tempo);
+  const p = get(engineProject);
+  return {
+    bpm: t.bpm,
+    numerator: t.numerator,
+    denominator: t.denominator,
+    midi_grid_beats: normalizeMidiGridBeats(get(midiGridBeats)),
+    key_root: p.key_root ?? DEFAULT_KEY_ROOT,
+    key_mode: p.key_mode ?? DEFAULT_KEY_MODE,
+    swing_percent: p.swing_percent ?? DEFAULT_SWING_PERCENT,
+    midi_ppq: p.midi_ppq ?? DEFAULT_MIDI_PPQ,
+    midi_grid_use_triplets: p.midi_grid_use_triplets ?? false,
+  };
+}
+
+export function updateProjectMusical(
+  fields: ProjectMusicalFields,
+): Promise<CommandResult> {
+  return dispatch<UpdateTempoPayload>(cmd.UPDATE_TEMPO, {
+    ...fields,
+    midi_grid_beats: normalizeMidiGridBeats(fields.midi_grid_beats),
+    swing_percent: Math.min(100, Math.max(0, Math.round(fields.swing_percent))),
+  });
+}
+
 export function updateTempo(
   bpm: number,
   numerator: number,
   denominator: number,
+  midi_grid_beats?: number,
 ): Promise<CommandResult> {
-  return dispatch<UpdateTempoPayload>(cmd.UPDATE_TEMPO, { bpm, numerator, denominator });
+  const cur = currentProjectMusical();
+  return updateProjectMusical({
+    ...cur,
+    bpm,
+    numerator,
+    denominator,
+    midi_grid_beats: midi_grid_beats ?? cur.midi_grid_beats,
+  });
 }
 
 // ── Transport commands ────────────────────────────────────────────────────────

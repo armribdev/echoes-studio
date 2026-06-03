@@ -9,19 +9,31 @@ export interface TempoInfo {
  * Returns the finest musical subdivision (in seconds) that still spans
  * at least MIN_SNAP_PX pixels at the current zoom level.
  */
-export function getSnapSubdivisionSec(tempo: TempoInfo, scale: number): number {
+export function getSnapSubdivisionSec(
+	tempo: TempoInfo,
+	scale: number,
+	midiGridBeats: number,
+): number {
 	const MIN_SNAP_PX = 8;
 	const beatSec = 60 / tempo.bpm;
 	const barSec = tempo.numerator * beatSec;
+	const projectGridSec = beatSec * midiGridBeats;
 
+	let adaptiveSec = barSec;
 	for (const denom of [32, 16, 8, 4, 2, 1]) {
 		const subSec = beatSec / denom;
-		if (subSec * scale >= MIN_SNAP_PX) return subSec;
+		if (subSec * scale >= MIN_SNAP_PX) {
+			adaptiveSec = subSec;
+			break;
+		}
+	}
+	if (adaptiveSec === barSec) {
+		let multiple = 1;
+		while (barSec * multiple * scale < MIN_SNAP_PX) multiple *= 2;
+		adaptiveSec = barSec * multiple;
 	}
 
-	let multiple = 1;
-	while (barSec * multiple * scale < MIN_SNAP_PX) multiple *= 2;
-	return barSec * multiple;
+	return Math.max(projectGridSec, adaptiveSec);
 }
 
 export function snapPosition(
@@ -29,6 +41,7 @@ export function snapPosition(
 	altKey: boolean,
 	tempo: TempoInfo,
 	scale: number,
+	midiGridBeats: number,
 	tracks: Track[],
 	excludeClip?: { trackIndex: number; clipIndex: number }
 ): number {
@@ -37,7 +50,7 @@ export function snapPosition(
 
 	const candidates: number[] = [];
 
-	const subdivSec = getSnapSubdivisionSec(tempo, scale);
+	const subdivSec = getSnapSubdivisionSec(tempo, scale, midiGridBeats);
 	candidates.push(Math.round(positionSec / subdivSec) * subdivSec);
 
 	for (let ti = 0; ti < tracks.length; ti++) {

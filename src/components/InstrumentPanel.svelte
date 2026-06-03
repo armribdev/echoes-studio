@@ -8,6 +8,9 @@
 
 	export let trackId: string;
 	export let instrument: string | null;
+	export let compact = false;
+	export let trackName = '';
+	export let trackColor = '#4d96ff';
 
 	let showPicker = false;
 	let editorOpen = false;
@@ -92,28 +95,42 @@
 	/>
 {/if}
 
-<div class="instr-panel">
-	<div class="instr-header">
-		<span class="instr-title">Instrument</span>
-		<button class="change-btn" type="button" on:click={() => (showPicker = true)} title="Changer">
-			Changer
+<div class="instr-panel" class:compact>
+	<div class="instr-header" style:--track-color={trackColor}>
+		{#if compact}
+			<span class="track-bar"></span>
+			<span class="track-name">{trackName || 'Piste'}</span>
+		{:else}
+			<span class="instr-title">Instrument</span>
+		{/if}
+		<button class="change-btn" type="button" on:click={() => (showPicker = true)} title="Changer l'instrument">
+			{compact ? '…' : 'Changer'}
 		</button>
 	</div>
 
 	<div class="instr-slot">
-		<span class="instr-name">{label}</span>
+		<span class="instr-name" title={label}>{label}</span>
 		{#if activePlugin}
 			<span
 				class="fmt-badge"
 				style:background={FORMAT_COLOR[activePlugin.format] ?? '#555'}
 			>{activePlugin.format}</span>
 		{/if}
+		{#if instrument && activePlugin}
+			<button
+				class="gui-btn"
+				class:active={editorOpen}
+				type="button"
+				on:click={handleToggleEditor}
+				title={editorOpen ? "Fermer l'éditeur" : "Ouvrir l'éditeur"}
+			>GUI</button>
+		{/if}
 		{#if instrument}
 			<button class="rm-btn" type="button" on:click={handleClear} title="PolySynth intégré">×</button>
 		{/if}
 	</div>
 
-	{#if instrument && activePlugin}
+	{#if !compact && instrument && activePlugin}
 		<div class="editor-row">
 			<button
 				class="open-editor-btn"
@@ -124,7 +141,7 @@
 				{editorOpen ? "Fermer l'éditeur" : "Ouvrir l'éditeur"}
 			</button>
 		</div>
-	{:else if !instrument}
+	{:else if !compact && !instrument}
 		<p class="hint">Synthé intégré par défaut — choisissez un instrument CLAP (ex. Vital).</p>
 	{/if}
 </div>
@@ -134,6 +151,23 @@
 
 	.instr-panel {
 		width: 100%;
+
+		&.compact .instr-header {
+			padding: 4px 5px 4px 0;
+		}
+
+		&.compact .instr-slot {
+			padding: 4px 5px;
+		}
+
+		&.compact .instr-name {
+			font-size: 10px;
+		}
+
+		&.compact .change-btn {
+			min-width: 18px;
+			padding: 2px 5px;
+		}
 	}
 
 	.instr-header {
@@ -143,6 +177,25 @@
 		padding: 5px 6px;
 		border-bottom: 1px solid $border-faint;
 		background: #222229;
+	}
+
+	.track-bar {
+		width: 3px;
+		height: 14px;
+		background: var(--track-color, $accent-color);
+		border-radius: 0 2px 2px 0;
+		flex-shrink: 0;
+	}
+
+	.track-name {
+		flex: 1;
+		min-width: 0;
+		font-size: 10px;
+		font-weight: 600;
+		color: $text-color;
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
 	}
 
 	.instr-title {
@@ -198,6 +251,28 @@
 		border-radius: 2px;
 		color: #fff;
 		flex-shrink: 0;
+	}
+
+	.gui-btn {
+		flex-shrink: 0;
+		padding: 1px 5px;
+		border: 1px solid $border-subtle;
+		border-radius: 3px;
+		background: transparent;
+		color: $text-subtle;
+		font-size: 8px;
+		font-family: $font-mono;
+		font-weight: 700;
+		cursor: pointer;
+		&:hover {
+			background: rgba(21, 113, 255, 0.15);
+			color: $text-color;
+		}
+		&.active {
+			background: rgba(21, 113, 255, 0.2);
+			color: $accent-color;
+			border-color: rgba(21, 113, 255, 0.5);
+		}
 	}
 
 	.rm-btn {

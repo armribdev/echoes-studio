@@ -8,6 +8,7 @@
 	import { invoke } from '@tauri-apps/api/core';
 	import { open as openDialog } from '@tauri-apps/plugin-dialog';
 	import PanelResizeHandle from './PanelResizeHandle.svelte';
+	import { persistProjectUiLayout } from '../lib/projectUiLayout';
 
 	let isResizing = false;
 	let resizeStartW = 0;
@@ -18,6 +19,10 @@
 
 	function onPanelResize(e: CustomEvent<number>) {
 		rightPanel.setWidth(resizeStartW + e.detail);
+	}
+
+	function onPanelResizeend() {
+		persistProjectUiLayout();
 	}
 
 	let searchQuery = '';
@@ -99,6 +104,7 @@
 			bind:resizing={isResizing}
 			on:resizestart={onPanelResizestart}
 			on:resize={onPanelResize}
+			on:resizeend={onPanelResizeend}
 		/>
 
 		<div class="library-inner">

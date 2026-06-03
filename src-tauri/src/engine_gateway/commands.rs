@@ -146,6 +146,34 @@ pub struct UpdateTempoPayload {
     pub bpm: f32,
     pub numerator: u8,
     pub denominator: u8,
+    #[serde(default = "default_midi_grid_beats_cmd")]
+    pub midi_grid_beats: f32,
+    #[serde(default = "default_key_root_cmd")]
+    pub key_root: String,
+    #[serde(default = "default_key_mode_cmd")]
+    pub key_mode: String,
+    #[serde(default)]
+    pub swing_percent: u8,
+    #[serde(default = "default_midi_ppq_cmd")]
+    pub midi_ppq: u16,
+    #[serde(default)]
+    pub midi_grid_use_triplets: bool,
+}
+
+fn default_midi_grid_beats_cmd() -> f32 {
+    0.25
+}
+
+fn default_key_root_cmd() -> String {
+    "C".to_string()
+}
+
+fn default_key_mode_cmd() -> String {
+    "major".to_string()
+}
+
+fn default_midi_ppq_cmd() -> u16 {
+    960
 }
 
 #[derive(Debug, Deserialize)]

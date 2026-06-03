@@ -15,6 +15,7 @@
 	export let modulators: ProjectModulator[];
 	export let mod_routes: ProjectModulationRoute[];
 	export let effects: TrackEffect[];
+	export let compact = false;
 
 	const EFFECT_LABELS: Record<string, string> = {
 		eq: 'EQ', compressor: 'Comp', reverb: 'Réverb', delay: 'Délai',
@@ -68,17 +69,17 @@
 	}
 </script>
 
-<div class="mod-panel">
+<div class="mod-panel" class:compact>
 
 	<!-- ── Sources ─────────────────────────────────────────────────────────────── -->
 	<div class="section-header">
-		<span class="section-title">Modulateurs</span>
+		<span class="section-title">{compact ? 'Mod' : 'Modulateurs'}</span>
 		<!-- svelte-ignore a11y-no-static-element-interactions -->
 		<button class="add-btn" type="button" on:click={handleAddLfo} title="Ajouter LFO">+</button>
 	</div>
 
 	{#if modulators.length === 0}
-		<p class="empty">Aucun modulateur — cliquez + pour en ajouter</p>
+		<p class="empty">{compact ? '—' : 'Aucun modulateur — cliquez + pour en ajouter'}</p>
 	{/if}
 
 	{#each modulators as mod, i (mod.id)}
@@ -91,8 +92,8 @@
 							stroke="currentColor" stroke-width="1.2" fill="none" stroke-linecap="round"/>
 					</svg>
 				</div>
-				<span class="slot-name">LFO {i + 1}</span>
-				<span class="param-lbl">RATE</span>
+				<span class="slot-name">{compact ? `L${i + 1}` : `LFO ${i + 1}`}</span>
+				{#if !compact}<span class="param-lbl">RATE</span>{/if}
 				<Knob
 					min={0.1}
 					max={20}
@@ -100,7 +101,7 @@
 					value={mod.rate_hz ?? 1}
 					on:release={(e) => handleRateChange(mod.id, e.detail)}
 				/>
-				<span class="param-val">{(mod.rate_hz ?? 1).toFixed(2)} Hz</span>
+				<span class="param-val">{(mod.rate_hz ?? 1).toFixed(compact ? 1 : 2)}{compact ? '' : ' Hz'}</span>
 				<button class="rm-btn" type="button"
 					on:click|stopPropagation={() => handleRemoveMod(mod.id)} title="Supprimer">×</button>
 			</div>
@@ -109,11 +110,11 @@
 
 	<!-- ── Routes ──────────────────────────────────────────────────────────────── -->
 	<div class="section-header routes-header">
-		<span class="section-title">Routes</span>
+		<span class="section-title">{compact ? 'Rtes' : 'Routes'}</span>
 	</div>
 
 	{#if mod_routes.length === 0}
-		<p class="empty">Aucune route — assignez un LFO à un paramètre</p>
+		<p class="empty">{compact ? '—' : 'Aucune route — assignez un LFO à un paramètre'}</p>
 	{/if}
 
 	{#each mod_routes as route (route.id)}
@@ -132,7 +133,7 @@
 					value={route.depth}
 					on:change={(e) => handleDepthChange(route.id, e)}
 				/>
-				<span class="depth-val">{route.depth >= 0 ? '+' : ''}{(route.depth * 100).toFixed(0)}%</span>
+				<span class="depth-val">{route.depth >= 0 ? '+' : ''}{(route.depth * 100).toFixed(0)}{compact ? '' : '%'}</span>
 				<button class="rm-btn" type="button"
 					on:click|stopPropagation={() => handleRemoveRoute(route.id)} title="Supprimer">×</button>
 			</div>
@@ -144,7 +145,22 @@
 <style lang="scss">
 	@use '../variables.scss' as *;
 
-	.mod-panel { width: 100%; }
+	.mod-panel {
+		width: 100%;
+
+		&.compact .section-header { padding: 3px 5px; }
+		&.compact .slot-head,
+		&.compact .route-row { padding: 2px 5px; gap: 3px; }
+		&.compact .empty { padding: 6px 5px; font-size: 9px; }
+		&.compact .lfo-icon { width: 14px; }
+		&.compact .lfo-icon svg { width: 12px; height: 8px; }
+		&.compact .slot-name { min-width: 20px; font-size: 9px; }
+		&.compact .param-val { min-width: 28px; font-size: 8px; }
+		&.compact .depth-slider { width: 40px; }
+		&.compact .depth-val { min-width: 24px; font-size: 8px; }
+		&.compact .route-src { min-width: 22px; font-size: 8px; }
+		&.compact .route-tgt { font-size: 8px; }
+	}
 
 	.section-header {
 		display: flex;

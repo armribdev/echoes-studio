@@ -323,7 +323,7 @@
 
 	const SECTIONS: { id: Section; label: string }[] = [
 		{ id: 'audio',     label: 'Audio'     },
-		{ id: 'project',   label: 'Projet'    },
+		{ id: 'project',   label: 'Par défaut' },
 		{ id: 'interface', label: 'Interface' }
 	];
 </script>
@@ -600,7 +600,7 @@
 
 				{:else if activeSection === 'project'}
 				<div class="section">
-					<h2 class="section-title">Projet & Sauvegarde</h2>
+					<h2 class="section-title">Projets & sauvegarde (globaux)</h2>
 
 					<div class="field">
 						<span class="field-label">Dossier de projets par défaut</span>

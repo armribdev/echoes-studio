@@ -34,18 +34,28 @@ function createBottomPanelStore() {
 		savedPreviewHeight: PREVIEW_PANEL_MIN,
 	});
 
+	function notifyPersist() {
+		import('../lib/projectUiLayout').then((m) => m.persistProjectUiLayout());
+	}
+
 	return {
 		subscribe,
+		hydrate(partial: Partial<BottomPanelState>) {
+			update((s) => ({ ...s, ...partial }));
+		},
 		openTab(tab: BottomPanelTab) {
 			update((s) =>
 				s.open && s.activeTab === tab ? s : { ...s, open: true, activeTab: tab },
 			);
+			notifyPersist();
 		},
 		toggle() {
 			update((s) => ({ ...s, open: !s.open }));
+			notifyPersist();
 		},
 		close() {
 			update((s) => ({ ...s, open: false }));
+			notifyPersist();
 		},
 		/** Hauteur auto (ouverture clip / sortie édition). */
 		setPreviewAutoHeight(height: number) {
@@ -58,6 +68,7 @@ function createBottomPanelStore() {
 					? s
 					: { ...s, height: clamped, savedPreviewHeight: clamped },
 			);
+			notifyPersist();
 		},
 		/** Redimensionnement manuel en aperçu — persisté pour la session d'aperçu. */
 		setPreviewHeight(height: number, maxHeight = PREVIEW_PANEL_RESIZE_MAX) {
@@ -83,6 +94,7 @@ function createBottomPanelStore() {
 		saveEditHeight(h: number) {
 			const clamped = Math.max(DEFAULT_EDIT_PANEL_HEIGHT, Math.min(600, h));
 			update((s) => (s.savedEditHeight === clamped ? s : { ...s, savedEditHeight: clamped }));
+			notifyPersist();
 		},
 		restoreEditHeight() {
 			update((s) => (s.height === s.savedEditHeight ? s : { ...s, height: s.savedEditHeight }));

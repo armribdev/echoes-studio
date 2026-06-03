@@ -10,7 +10,7 @@ mod project;
 mod windows_theme;
 
 use engine_gateway::api::{get_graph_snapshot, get_snapshot, redo, send_batch, send_command, undo};
-use project::{AppProject, AppState, ProjectDto, ProjectFile};
+use project::{AppProject, AppState, ProjectDto, ProjectFile, ProjectUiLayout};
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::{Emitter, Manager, Theme};
 use tauri_plugin_dialog::{DialogExt, FilePath};
@@ -81,16 +81,47 @@ fn main() {
             let undo_item = MenuItem::with_id(app, "undo", "Annuler", false, Some("CmdOrCtrl+Z"))?;
             let redo_item =
                 MenuItem::with_id(app, "redo", "Rétablir", false, Some("CmdOrCtrl+Shift+Z"))?;
+            let delete_track_item = MenuItem::with_id(
+                app,
+                "delete-track",
+                "Supprimer la piste sélectionnée",
+                false,
+                None::<&str>,
+            )?;
 
             let save_h = save_item.clone();
             let undo_h = undo_item.clone();
             let redo_h = redo_item.clone();
+            let delete_track_h = delete_track_item.clone();
 
             app.manage(menu_state::MenuHandles {
                 set_undo: Box::new(move |e| undo_h.set_enabled(e)),
                 set_redo: Box::new(move |e| redo_h.set_enabled(e)),
                 set_save: Box::new(move |e| save_h.set_enabled(e)),
+                set_delete_track: Box::new(move |e| delete_track_h.set_enabled(e)),
             });
+
+            let export_menu = Submenu::with_items(
+                app,
+                "Exporter",
+                true,
+                &[
+                    &MenuItem::with_id(
+                        app,
+                        "export-wav",
+                        "WAV",
+                        true,
+                        Some("CmdOrCtrl+Shift+E"),
+                    )?,
+                    &MenuItem::with_id(
+                        app,
+                        "export-mp3",
+                        "MP3",
+                        true,
+                        Some("CmdOrCtrl+Shift+M"),
+                    )?,
+                ],
+            )?;
 
             let file_menu = Submenu::with_items(
                 app,
@@ -99,6 +130,13 @@ fn main() {
                 &[
                     &MenuItem::with_id(app, "new", "Nouveau projet", true, Some("CmdOrCtrl+N"))?,
                     &MenuItem::with_id(app, "open", "Ouvrir...", true, Some("CmdOrCtrl+O"))?,
+                    &MenuItem::with_id(
+                        app,
+                        "project-settings",
+                        "Projet...",
+                        true,
+                        Some("CmdOrCtrl+Shift+,"),
+                    )?,
                     &PredefinedMenuItem::separator(app)?,
                     &MenuItem::with_id(
                         app,
@@ -108,14 +146,33 @@ fn main() {
                         None::<&str>,
                     )?,
                     &PredefinedMenuItem::separator(app)?,
+                    &export_menu,
+                    &PredefinedMenuItem::separator(app)?,
                     &save_item,
                     &MenuItem::with_id(app, "save-as", "Enregistrer sous...", true, None::<&str>)?,
                     &PredefinedMenuItem::separator(app)?,
-                    &undo_item,
-                    &redo_item,
-                    &PredefinedMenuItem::separator(app)?,
                     &PredefinedMenuItem::quit(app, None)?,
                 ],
+            )?;
+
+            let edit_menu = Submenu::with_items(
+                app,
+                "Édition",
+                true,
+                &[&undo_item, &redo_item],
+            )?;
+
+            let app_menu = Submenu::with_items(
+                app,
+                "Echoes Studio",
+                true,
+                &[&MenuItem::with_id(
+                    app,
+                    "preferences",
+                    "Préférences...",
+                    true,
+                    Some("CmdOrCtrl+,"),
+                )?],
             )?;
 
             let track_menu = Submenu::with_items(
@@ -130,17 +187,20 @@ fn main() {
                         true,
                         Some("CmdOrCtrl+Shift+T"),
                     )?,
-                    &MenuItem::with_id(
-                        app,
-                        "delete-track",
-                        "Supprimer la piste sélectionnée",
-                        true,
-                        None::<&str>,
-                    )?,
+                    &delete_track_item,
                 ],
             )?;
 
-            let menu = Menu::with_items(app, &[&file_menu, &track_menu])?;
+            #[cfg(target_os = "macos")]
+            let menu = Menu::with_items(
+                app,
+                &[&app_menu, &file_menu, &edit_menu, &track_menu],
+            )?;
+            #[cfg(not(target_os = "macos"))]
+            let menu = Menu::with_items(
+                app,
+                &[&file_menu, &edit_menu, &track_menu, &app_menu],
+            )?;
             app.set_menu(menu)?;
 
             apply_native_dark_theme(app.handle());
@@ -168,6 +228,7 @@ fn main() {
             undo,
             redo,
             menu_action,
+            sync_menu_track_selection,
             export_wav,
             export_mp3,
             get_audio_devices,
@@ -175,6 +236,7 @@ fn main() {
             get_device_channels,
             apply_audio_settings,
             set_active_output_channels,
+            sync_project_ui_layout,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -397,6 +459,22 @@ fn handle_menu_event(app: &tauri::AppHandle, menu_id: &str) {
             }
         }
 
+        "export-wav" => {
+            let _ = app.emit("menu-export", "wav");
+        }
+
+        "export-mp3" => {
+            let _ = app.emit("menu-export", "mp3");
+        }
+
+        "preferences" => {
+            let _ = app.emit("open-preferences", ());
+        }
+
+        "project-settings" => {
+            let _ = app.emit("open-project-settings", ());
+        }
+
         "add-track" => {
             let _ = app.emit("track-action", "add-track");
         }
@@ -421,6 +499,11 @@ fn menu_action(app: tauri::AppHandle, action: String) {
     std::thread::spawn(move || {
         handle_menu_event(&app, &action);
     });
+}
+
+#[tauri::command]
+fn sync_menu_track_selection(app: tauri::AppHandle, has_selected_track: bool) {
+    menu_state::set_delete_track_enabled(&app, has_selected_track);
 }
 
 /// Duration of an audio file in seconds — used for drag-and-drop preview.
@@ -535,6 +618,22 @@ fn scan_plugins(
 fn get_project(state: tauri::State<'_, AppState>) -> Result<ProjectDto, String> {
     let project = state.project.lock().map_err(|e| e.to_string())?;
     Ok(project.to_dto())
+}
+
+/// Met à jour la disposition des panneaux (hors event store / undo).
+#[tauri::command]
+fn sync_project_ui_layout(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    ui_layout: ProjectUiLayout,
+) -> Result<(), String> {
+    let mut project = state.project.lock().map_err(|e| e.to_string())?;
+    project.ui_layout = ui_layout;
+    state
+        .dirty
+        .store(true, std::sync::atomic::Ordering::Relaxed);
+    menu_state::refresh_menu(&app, &state);
+    Ok(())
 }
 
 /// Render the current project offline through the real Rust audio engine.

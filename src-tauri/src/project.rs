@@ -282,17 +282,162 @@ pub struct AppTrack {
     pub instrument: Option<String>,
 }
 
+fn default_midi_grid_beats() -> f32 {
+    0.25
+}
+
+fn default_key_root() -> String {
+    "C".to_string()
+}
+
+fn default_key_mode() -> String {
+    "major".to_string()
+}
+
+fn default_swing_percent() -> u8 {
+    0
+}
+
+fn default_midi_ppq() -> u16 {
+    960
+}
+
+fn default_left_panel_width() -> u16 {
+    168
+}
+
+fn default_right_panel_width() -> u16 {
+    260
+}
+
+fn default_bottom_panel_height() -> u16 {
+    168
+}
+
+fn default_bottom_edit_height() -> u16 {
+    480
+}
+
+/// Disposition des panneaux UI — persistée dans le fichier projet, hors undo.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LeftPanelLayout {
+    #[serde(default)]
+    pub open: bool,
+    #[serde(default = "default_left_panel_width")]
+    pub width: u16,
+}
+
+impl Default for LeftPanelLayout {
+    fn default() -> Self {
+        Self {
+            open: false,
+            width: default_left_panel_width(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RightPanelLayout {
+    #[serde(default)]
+    pub open: bool,
+    #[serde(default = "default_right_panel_width")]
+    pub width: u16,
+}
+
+impl Default for RightPanelLayout {
+    fn default() -> Self {
+        Self {
+            open: false,
+            width: default_right_panel_width(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BottomPanelLayout {
+    #[serde(default)]
+    pub open: bool,
+    #[serde(default = "default_bottom_panel_height")]
+    pub height: u16,
+    #[serde(default = "default_bottom_edit_height")]
+    pub saved_edit_height: u16,
+    #[serde(default = "default_bottom_panel_height")]
+    pub saved_preview_height: u16,
+}
+
+impl Default for BottomPanelLayout {
+    fn default() -> Self {
+        Self {
+            open: false,
+            height: default_bottom_panel_height(),
+            saved_edit_height: default_bottom_edit_height(),
+            saved_preview_height: default_bottom_panel_height(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ViewModeLayout {
+    #[serde(default = "default_view_main")]
+    pub main: String,
+    #[serde(default = "default_graph_scope")]
+    pub graph_scope: String,
+}
+
+fn default_view_main() -> String {
+    "arrange".to_string()
+}
+
+fn default_graph_scope() -> String {
+    "track".to_string()
+}
+
+impl Default for ViewModeLayout {
+    fn default() -> Self {
+        Self {
+            main: default_view_main(),
+            graph_scope: default_graph_scope(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ProjectUiLayout {
+    #[serde(default)]
+    pub left_panel: LeftPanelLayout,
+    #[serde(default)]
+    pub right_panel: RightPanelLayout,
+    #[serde(default)]
+    pub bottom_panel: BottomPanelLayout,
+    #[serde(default)]
+    pub view_mode: ViewModeLayout,
+}
+
 pub struct AppProject {
     pub name: String,
     pub bpm: f32,
     pub numerator: u8,
     pub denominator: u8,
+    /// Quantification éditeur (piano roll / accrochage) en fractions de noire (0.25 = 1/16).
+    pub midi_grid_beats: f32,
+    /// Tonalité (racine), ex. "C", "F#". Moteur / export MIDI à venir.
+    pub key_root: String,
+    /// "major" | "minor". Moteur à venir.
+    pub key_mode: String,
+    /// Swing 0–100 %. Lecture transport à venir.
+    pub swing_percent: u8,
+    /// Subdivision MIDI du projet — résolution PPQ (pulses per quarter note).
+    pub midi_ppq: u16,
+    /// Grille en triolet (subdivision T) — éditeur à venir.
+    pub midi_grid_use_triplets: bool,
     pub tracks: Vec<AppTrack>,
     /// Per-device binary plugin state (e.g. VST3 chunk), keyed by `device_id`.
     /// Harvested from the live `PluginHost` at save time and re-applied after
     /// the graph is compiled on load.  Not part of the event-sourced model —
     /// it mirrors live plugin internals, so it is excluded from undo snapshots.
     pub plugin_state_blobs: HashMap<String, Vec<u8>>,
+    /// Panneaux et vue principale — persistés au save, exclus de l'undo.
+    pub ui_layout: ProjectUiLayout,
 }
 
 impl AppProject {
@@ -302,8 +447,15 @@ impl AppProject {
             bpm: 120.0,
             numerator: 4,
             denominator: 4,
+            midi_grid_beats: default_midi_grid_beats(),
+            key_root: default_key_root(),
+            key_mode: default_key_mode(),
+            swing_percent: default_swing_percent(),
+            midi_ppq: default_midi_ppq(),
+            midi_grid_use_triplets: false,
             tracks: vec![],
             plugin_state_blobs: HashMap::new(),
+            ui_layout: ProjectUiLayout::default(),
         }
     }
 
@@ -313,7 +465,14 @@ impl AppProject {
             bpm: self.bpm,
             numerator: self.numerator,
             denominator: self.denominator,
+            midi_grid_beats: self.midi_grid_beats,
+            key_root: self.key_root.clone(),
+            key_mode: self.key_mode.clone(),
+            swing_percent: self.swing_percent,
+            midi_ppq: self.midi_ppq,
+            midi_grid_use_triplets: self.midi_grid_use_triplets,
             tracks: self.tracks.iter().map(AppTrack::to_dto).collect(),
+            ui_layout: self.ui_layout.clone(),
         }
     }
 
@@ -324,6 +483,12 @@ impl AppProject {
             bpm: self.bpm,
             numerator: self.numerator,
             denominator: self.denominator,
+            midi_grid_beats: self.midi_grid_beats,
+            key_root: self.key_root.clone(),
+            key_mode: self.key_mode.clone(),
+            swing_percent: self.swing_percent,
+            midi_ppq: self.midi_ppq,
+            midi_grid_use_triplets: self.midi_grid_use_triplets,
             tracks: self
                 .tracks
                 .iter()
@@ -366,6 +531,7 @@ impl AppProject {
                 .iter()
                 .map(|(k, v)| (k.clone(), crate::plugin_system::state::encode_base64(v)))
                 .collect(),
+            ui_layout: self.ui_layout.clone(),
         }
     }
 
@@ -428,8 +594,15 @@ impl AppProject {
             bpm: pf.bpm,
             numerator: pf.numerator,
             denominator: pf.denominator,
+            midi_grid_beats: pf.midi_grid_beats,
+            key_root: pf.key_root,
+            key_mode: pf.key_mode,
+            swing_percent: pf.swing_percent,
+            midi_ppq: pf.midi_ppq,
+            midi_grid_use_triplets: pf.midi_grid_use_triplets,
             tracks,
             plugin_state_blobs,
+            ui_layout: pf.ui_layout,
         })
     }
 }
@@ -580,12 +753,26 @@ pub struct ProjectFile {
     pub bpm: f32,
     pub numerator: u8,
     pub denominator: u8,
+    #[serde(default = "default_midi_grid_beats")]
+    pub midi_grid_beats: f32,
+    #[serde(default = "default_key_root")]
+    pub key_root: String,
+    #[serde(default = "default_key_mode")]
+    pub key_mode: String,
+    #[serde(default = "default_swing_percent")]
+    pub swing_percent: u8,
+    #[serde(default = "default_midi_ppq")]
+    pub midi_ppq: u16,
+    #[serde(default)]
+    pub midi_grid_use_triplets: bool,
     pub tracks: Vec<TrackFile>,
     /// Base64-encoded per-device plugin state (VST3 chunk), keyed by
     /// `device_id`.  `#[serde(default)]` keeps projects saved before Phase 4b
     /// loading unchanged (empty map → default plugin presets, as before).
     #[serde(default)]
     pub plugin_state_blobs: HashMap<String, String>,
+    #[serde(default)]
+    pub ui_layout: ProjectUiLayout,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -639,7 +826,14 @@ pub struct ProjectDto {
     pub bpm: f32,
     pub numerator: u8,
     pub denominator: u8,
+    pub midi_grid_beats: f32,
+    pub key_root: String,
+    pub key_mode: String,
+    pub swing_percent: u8,
+    pub midi_ppq: u16,
+    pub midi_grid_use_triplets: bool,
     pub tracks: Vec<TrackDto>,
+    pub ui_layout: ProjectUiLayout,
 }
 
 #[derive(Serialize, Clone)]

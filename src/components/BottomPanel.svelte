@@ -11,6 +11,7 @@
 	import { keyboardFocus } from '../stores/keyboardFocus';
 	import PianoRoll from './PianoRoll.svelte';
 	import PanelResizeHandle from './PanelResizeHandle.svelte';
+	import { persistProjectUiLayout } from '../lib/projectUiLayout';
 
 	let isResizing = false;
 	let resizeStartH = 0;
@@ -36,6 +37,7 @@
 	function onPanelResizeend() {
 		previewPanelResizing.set(false);
 		editPanelResizing.set(false);
+		persistProjectUiLayout();
 	}
 </script>
 
