@@ -55,3 +55,7 @@ impacted docs (`doc_sync_rules.md`) after.
   for that subsystem (keep both in sync; if they disagree, surface it).
 - Decisions already made → [`docs/active/decisions/`](docs/active/decisions/).
 - General project docs (build, tech stack, UX) → [`docs/`](docs/) root.
+
+# Comments
+- Any comment that can be inferred from reading the code should be removed.
+- Prefer refactoring over commenting. If explanation is needed, improve naming or structure first.
