@@ -6,7 +6,6 @@
 	import { settingsPanelOpen } from '../stores/preferences';
 	import { leftPanel } from '../stores/leftPanel';
 	import { rightPanel } from '../stores/rightPanel';
-	import { viewMode } from '../stores/viewMode';
 	import NumberInput from './NumberInput.svelte';
 
 	import Icon from './Icon.svelte';
@@ -110,29 +109,6 @@
 
 	<div class="sep"></div>
 
-	<div class="view-tabs">
-		<button
-			type="button"
-			class="view-tab"
-			class:active={$viewMode.main === 'arrange'}
-			on:click={() => viewMode.setMain('arrange')}
-			title="Arrangement"
-		>
-			Arrangement
-		</button>
-		<button
-			type="button"
-			class="view-tab"
-			class:active={$viewMode.main === 'graph'}
-			on:click={() => viewMode.setMain('graph')}
-			title="Graphe audio (G)"
-		>
-			Graph
-		</button>
-	</div>
-
-	<div class="sep"></div>
-
 	<div class="position">
 		<span class="ctrl-label">POSITION</span>
 		<div class="position-display">
@@ -224,36 +200,6 @@
 		gap: 12px;
 		border-bottom: 1px solid $border-color;
 		flex-shrink: 0;
-	}
-
-	// ── View tabs ─────────────────────────────────────────────────────────────
-	.view-tabs {
-		display: flex;
-		gap: 2px;
-		background: rgba(0, 0, 0, 0.25);
-		border-radius: $radius-md;
-		padding: 2px;
-	}
-
-	.view-tab {
-		padding: 4px 10px;
-		border: none;
-		border-radius: 4px;
-		background: transparent;
-		color: $text-muted;
-		font-size: 11px;
-		font-family: inherit;
-		cursor: pointer;
-		transition: background 0.1s, color 0.1s;
-
-		&.active {
-			background: rgba(21, 113, 255, 0.25);
-			color: $text-color;
-		}
-
-		&:hover:not(.active) {
-			color: $text-color;
-		}
 	}
 
 	// ── Transport ─────────────────────────────────────────────────────────────

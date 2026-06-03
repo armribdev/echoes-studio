@@ -1,11 +1,35 @@
 <script lang="ts">
 	import { statusMessage } from '../stores/status';
+	import { viewMode } from '../stores/viewMode';
 </script>
 
 <div class="status-bar">
-	{#if $statusMessage}
-		<span class="message message--{$statusMessage.level}">{$statusMessage.text}</span>
-	{/if}
+	<div class="status-left">
+		{#if $statusMessage}
+			<span class="message message--{$statusMessage.level}">{$statusMessage.text}</span>
+		{/if}
+	</div>
+
+	<div class="view-tabs">
+		<button
+			type="button"
+			class="view-tab"
+			class:active={$viewMode.main === 'arrange'}
+			on:click={() => viewMode.setMain('arrange')}
+			title="Arrangement"
+		>
+			Arrangement
+		</button>
+		<button
+			type="button"
+			class="view-tab"
+			class:active={$viewMode.main === 'graph'}
+			on:click={() => viewMode.setMain('graph')}
+			title="Graphe audio (G)"
+		>
+			Graph
+		</button>
+	</div>
 </div>
 
 <style lang="scss">
@@ -15,10 +39,53 @@
 		min-height: 24px;
 		background-color: $panel-background-color;
 		border-top: 1px solid $border-color;
-		display: flex;
+		display: grid;
+		grid-template-columns: 1fr auto 1fr;
 		align-items: center;
 		padding: 0 12px;
 		flex-shrink: 0;
+	}
+
+	.status-left {
+		grid-column: 1;
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.view-tabs {
+		grid-column: 2;
+		display: flex;
+		gap: 1px;
+		padding: 1px;
+		opacity: 0.55;
+		transition: opacity 0.15s;
+
+		&:hover {
+			opacity: 0.85;
+		}
+	}
+
+	.view-tab {
+		padding: 3px 8px;
+		border: none;
+		border-radius: 3px;
+		background: transparent;
+		color: rgba(247, 247, 249, 0.32);
+		font-size: 10px;
+		font-family: inherit;
+		cursor: pointer;
+		transition: background 0.12s, color 0.12s;
+
+		&.active {
+			background: rgba(21, 113, 255, 0.12);
+			color: rgba(247, 247, 249, 0.62);
+		}
+
+		&:hover:not(.active) {
+			color: rgba(247, 247, 249, 0.48);
+		}
 	}
 
 	.message {
