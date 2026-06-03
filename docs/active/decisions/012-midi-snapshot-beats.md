@@ -111,6 +111,23 @@ note list; the `CaptureDevice` `Mutex` exists only under `#[cfg(test)]`.
 - **Reversibility.** The runtime is unchanged by this ADR (it predates it); the
   tests are additive.
 
+## Known risk — surfaced 2026-06-03 (architecture review), not yet closed
+
+**Cross-platform determinism of `beats_to_sample` is asserted, not proven.**
+`(clip_start_sec + beats·60/bpm)·sample_rate` is computed in `f64` and cast
+(truncated) to a sample index. For a note landing near an integer boundary
+(e.g. 23999.9999 vs 24000.0001), the FPU rounding / compiler FMA / libm
+differences between Windows, macOS and Linux can flip the truncated result by one
+sample, moving the `NoteOn` into a different block. The current test pins
+`beat 1 @ 120 BPM / 48 kHz = 24_000` on **one** platform — that does not
+establish cross-OS bit-identity (C-2 across machines).
+
+This is governed by the determinism invariant
+(`architecture-decision-rules.md`). Close it with the **cross-OS golden-master
+`.wav`** for a MIDI project (harness V1), and consider resolving notes via exact
+integer/rational arithmetic at the bake anchor rather than an `f64` multiply-then-
+truncate, so the result cannot depend on the FPU.
+
 ## Alternatives considered
 
 - **Bake to samples at compile using the current BPM.** Rejected — the original

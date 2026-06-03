@@ -107,6 +107,17 @@ time, before the node enters the snapshot) is deferred — it would require
 threading the blob map through the compiler signature, which is out of this
 sub-phase's scope (C-7: compiler extended, not rewritten).
 
+> **⚠ Blocking debt — surfaced 2026-06-03 (architecture review).** This invariant
+> is a **convention, not enforced by any code**. It holds today only because the
+> sole save/load triggers are user-initiated and happen at rest. **The first
+> feature that writes plugin state while the transport may be running — most
+> obviously autosave-during-playback, expected for "sessions énormes" we don't
+> want to lose — makes this a genuine data race on the shared `IComponent`
+> (corruption / crash on an untrusted plugin).** Treat the race-free option
+> (apply `setState` at instantiate, before the node enters the snapshot) as a
+> **prerequisite** for any such feature, not an optional follow-up. Do not ship
+> autosave-during-playback on top of the current code.
+
 ## Compatibility
 
 - **Bit-identical offline (C-2):** no DSP change.

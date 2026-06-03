@@ -45,9 +45,35 @@ approval:
 | Plugin ownership rules (graph sees only `AudioNode`) | `../plugins/plugin-system.md` |
 | State management boundaries (event sourcing scope) | `../architecture/state-management.md` |
 | UI / engine separation (no direct state sharing) | `005-ui-engine-separation.md` |
+| **Bit-exact determinism** (same project + transport ⇒ identical render, cross-platform) | migration C-2 / C-10, `../migration/target_architecture.md` §0 |
 
 Changing these without an ADR is an architectural regression, not a
 convenience shortcut.
+
+### Determinism is a governed invariant, not an emergent property
+
+C-2 (bit-identical offline) and C-10 (no flag may gate determinism) were
+previously enforced only inside the migration docs. They are listed here because
+the 2026-06-03 architecture review found three ADRs that **erode determinism
+without any rule naming it as the thing at stake**: the topological-sort claim
+reduces determinism to node order alone (ADR-001), `MidiNoteSnapshot` resolves
+beat→sample in `f64` with no cross-platform proof (ADR-012), and block-rate vs
+sample-accurate automation sits behind a feature flag in tension with C-10
+(ADR-008). Any change that affects render output must:
+
+1. Keep the C-2 offline harness green, **and**
+2. Be validated by the cross-OS golden-master `.wav` (migration plan harness V1
+   — still to land in CI). Until V1 exists, a determinism-affecting change must
+   say so explicitly in its ADR and PR.
+
+> **Build-profile note (anti-foot-gun).** The only in-process crash guard
+> (`catch_unwind` around `AudioNode::process`, ADR-006) works **solely** under
+> `panic = "unwind"`. The build currently has no `[profile]` override, so unwind
+> is in effect and the guard is live — but nothing *pins* it. Adding
+> `panic = "abort"` (a common size/speed optimisation) would silently turn the
+> guard into a no-op. Treat the panic strategy as a governed property: do not set
+> `panic = "abort"` without an ADR that first replaces the guard (e.g. the
+> out-of-process bridge, ADR-015).
 
 ---
 

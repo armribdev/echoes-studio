@@ -526,6 +526,36 @@ watchdog, so a misbehaving sandboxed plugin can no longer take the engine down
 - Automatic respawn/recovery of a condemned device; spin-budget tuning;
   param/MIDI rings to the bridge.
 
+## Known risk — surfaced 2026-06-03 (architecture review), not yet closed
+
+The crash-isolation goal (P0-5) is met and the decomposition is sound. Two
+RT-strategy items must be resolved **before the sandbox is enabled on real
+content** (it is off by default, so non-blocking for current dev):
+
+1. **Spin budget contradicts the block period.** The decision text says ~10 µs;
+   6d-iv ships a **5 ms placeholder**. At 48 kHz / 64 samples a block lasts
+   ~1.33 ms, so a 5 ms busy-spin on the audio thread *guarantees* underrun, and
+   per-device spins add up. A busy-wait also burns RT-thread CPU and, without a
+   guaranteed core pin (not portable to Linux without RT privileges, or macOS),
+   can starve the very bridge process it waits on (priority/affinity inversion).
+   Tune the budget to a fraction of the block period **and** prefer the
+   **asynchronous pipelined** model (process block N−1 while computing N; the one
+   block of latency is exactly what PDC/BP-5 already absorbs) over the current
+   synchronous spin. The synchronous model was chosen to avoid added latency —
+   the wrong trade-off against the project's stated "robustesse runtime > pureté"
+   priority.
+2. **Offline render + sandbox is unspecified.** During an offline render the
+   bridge round-trip timing is non-deterministic (OS scheduling of a separate
+   process); a budget expiry injects silence, making the render non-reproducible.
+   Offline must use a **blocking, un-timed** round-trip (acceptable — offline is
+   not real-time) or force sandboxed devices in-process for rendering. Until
+   specified, a sandboxed device breaks C-2. Governed by the determinism
+   invariant (`architecture-decision-rules.md`).
+
+3. *(minor)* A `Dead`-marked device stays silent for the whole session
+   (no auto-respawn) — a transient hiccup permanently mutes a plugin. UX choice
+   to revisit.
+
 ## Consequences
 
 - **C-2 (bit-identical offline):** guaranteed at 6a — no runtime change.

@@ -131,6 +131,29 @@ hold. No mutex, no allocation, no UI call introduced on the audio path.
 - **Reversibility.** All changes are local and additive. Each can be
   reverted independently by a focused PR.
 
+## Known risk — surfaced 2026-06-03 (architecture review), not yet closed
+
+The `catch_unwind` guard is weaker than the "RT cost ~ns, no risk" table row
+implies. Three caveats are tracked debt, to be addressed at the next contact with
+the scheduler / plugin process path:
+
+1. **Conditional on `panic = "unwind"`.** The guard is a **no-op** under
+   `panic = "abort"`. The build currently uses the default (unwind) so the guard
+   is live, but nothing pins it — see the build-profile note in
+   `architecture-decision-rules.md`. Do not switch to `panic = "abort"` without
+   first replacing this guard (ADR-015 bridge).
+2. **Corrupted DSP state after a caught panic.** Re-zeroing the output buffers
+   does **not** reset the node's internal state. A node that panicked mid-`process`
+   (half-updated filter coefficients, partial ring write) is left live; the next
+   block may emit NaN/instability. Proper recovery is `Dead`-marking the node
+   (deferred to Phase 6 / ADR-015), not "leave it live".
+3. **Cost not measured.** The per-node, per-block landing-pad cost and its effect
+   on dispatch inlining were asserted, not benchmarked. Measure before relying on
+   the "~ns" figure on the hot path.
+
+These do not change the Phase 1 decision; they record that the guard is a
+*containment stopgap*, and the real isolation is ADR-015.
+
 ## Alternatives considered
 
 - **Bundle Phase 2 (`Arc<PluginInstance>`) into Phase 1.** Rejected:

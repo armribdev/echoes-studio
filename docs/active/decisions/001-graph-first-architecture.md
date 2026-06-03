@@ -65,6 +65,21 @@ connected to a `GainNode` connected to a `MasterNode` via graph edges.
 
 ---
 
+## Known risk — surfaced 2026-06-03 (architecture review), not yet closed
+
+1. **Determinism is claimed from the topological sort alone.** "Topological sort
+   + stable `NodeId` ordering guarantees bit-identical output" is necessary but
+   **not sufficient**: bit-exactness also depends on the buffer summation order,
+   FMA contraction, denormal/flush-to-zero mode, and the worker-pool reduction
+   order. Cross-platform bit-identity (C-2 across machines) is therefore not
+   established by node ordering alone. Governed by the determinism invariant
+   (`architecture-decision-rules.md`); proven only once the cross-OS golden master
+   (harness V1) runs in CI.
+2. **Cache locality is not discussed.** A DAG of `Box<dyn AudioNode>` means
+   virtual dispatch + pointer-chasing per node — the opposite of a contiguous
+   insert chain for the common track-linear case. This is a real perf tax on the
+   dominant path; record a benchmark before treating the graph model as free.
+
 ## Alternatives Considered
 
 ### Track-Centric (Rejected)

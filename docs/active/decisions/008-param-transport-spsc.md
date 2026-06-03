@@ -151,6 +151,32 @@ overflow degrades to drop-newest, never to a blocking or allocating path.
 - **Reversibility.** Additive. Reverting restores the (inert) JSON-blob path;
   the wrapper drains simply pass null again.
 
+## Known risk — surfaced 2026-06-03 (architecture review), not yet closed
+
+Tracked debt for when the automation path (Phase 5e) is built on this queue:
+
+1. **Drop-newest loses automation targets.** A full ring drops the *newest*
+   change. For a continuous automation/modulation stream that is the worst
+   policy — the dropped value is the most recent target the DSP should converge
+   to. Under dense multi-parameter automation (the "sessions énormes" case) the
+   plugin can be left at a stale value. Phase 5e should switch to **coalescing by
+   `native_id`** (keep only the latest per parameter) or drop-oldest, not
+   drop-newest.
+2. **Offline render of *recorded* automation is unspecified.** "Offline issues no
+   `UPDATE_EFFECT`, so the ring stays empty" guarantees C-2 only for projects
+   with **no** automation. It does **not** say how recorded automation lanes are
+   delivered to the plugin during an offline render. If that path differs from
+   the live ring, render≠live divergence is possible. There must be **one**
+   automation delivery path, exercised by the cross-OS golden master (governance
+   determinism rule).
+3. **Block-rate vs C-10.** `sample_offset` is always 0; sample-accurate is
+   "deferred behind a feature flag". A flag that changes render output collides
+   with C-10 (no flag may gate determinism). Resolve by making sample-accurate
+   the single deterministic behaviour, or by proving both flag states are
+   independently bit-reproducible — not by leaving two renders behind a toggle.
+4. **Fixed caps silently drop.** `MAX_PARAM_QUEUES = 128` is a hard cap; a synth
+   with >128 simultaneously-automated params overflows silently.
+
 ## Alternatives considered
 
 - **Recompile on every plugin-param edit.** Rejected — this is exactly the

@@ -120,6 +120,21 @@ thread.
 - **Reversibility.** Additive. Clearing `instrument` (or an instantiation
   failure) returns the track to `PolySynth`.
 
+## Known risk — surfaced 2026-06-03 (architecture review), not yet closed
+
+1. **Silent `PolySynth` fallback is a fidelity hazard.** A saved project whose
+   CLAP synth fails to instantiate (missing DLL, version mismatch) plays a
+   `PolySynth` **silently** — the render is wrong with no signal to the user.
+   Robust against crashing, but "your instrument was substituted without telling
+   you" is worse than a visible error. The fallback should be **surfaced** (UI
+   warning / project-load report), not muted.
+2. **C-2 does not hold once a third-party synth is in the project.** Bit-identical
+   offline is guaranteed only for `instrument == None`. Most synths are not
+   bit-deterministic (internal state, denormals, SIMD paths), so a project using
+   a CLAP instrument is not reproducible cross-machine. This is structural, not a
+   bug — but it means the determinism invariant applies only to the built-in
+   signal path; document that boundary where C-2 is claimed.
+
 ## Alternatives considered
 
 - **`InstrumentNode.inner: Box<dyn AudioNode>` + `PortKind::Midi` input edges
