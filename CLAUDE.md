@@ -56,21 +56,41 @@ impacted docs (`doc_sync_rules.md`) after.
 - Decisions already made → [`docs/active/decisions/`](docs/active/decisions/).
 - General project docs (build, tech stack, UX) → [`docs/`](docs/) root.
 
-## Code Style Rules
+## Code style rules
 
-### Commenting
-- Write comments only when they add information not obvious from the code.
-- Comments must explain "why", not "what".
-- Avoid redundant comments that repeat code behavior.
-- Prefer improving naming or structure instead of adding comments.
-- Keep comments short and high-signal (1–2 lines max).
+### Core principle
+Write simple, readable and maintainable code. Prioritize clarity over cleverness.
 
-### General
-- Favor clear code over explanatory comments.
-- Keep functions small and focused.
-- Use naming to express intent instead of comments.
+### Comments rules
+- Avoid obvious comments.
+- Comments must explain intent or non-obvious reasoning only.
+- Do NOT describe what the code already shows.
+- Remove commented-out code instead of keeping it.
+- Prefer self-explanatory code over comments.
+- Keep comments short and rare.
 
-### Rust / Tauri
-- Do not comment standard Rust or Tauri patterns.
-- Document only non-obvious logic, constraints, or unsafe operations.
-- Explicitly document security-sensitive operations (filesystem, shell, IPC).
+### Naming
+- Use clear and descriptive names.
+- Avoid abbreviations.
+- Prefer consistency across the project.
+
+### Functions
+- Small and focused (one responsibility).
+- No flag arguments.
+- Prefer composition over complexity.
+
+### General rules
+- Keep it simple.
+- Avoid unnecessary abstractions.
+- Follow existing project conventions.
+- Reduce complexity whenever possible.
+
+### Important
+If unsure, prefer simpler code over more “clever” design.
+
+
+### Strict comment policy
+- Prefer zero comments when code is self-explanatory.
+- Only add comments for non-obvious business logic or constraints.
+- Never explain obvious code.
+- If a comment is required, keep it under 1 sentence.
