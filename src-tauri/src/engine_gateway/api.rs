@@ -493,13 +493,16 @@ fn apply_hot_effect_update(
             let values = crate::audio_graph::nodes::delay::delay_block_values(d);
             state.live_params.write_effect_block(effect_id, &values)
         }
-        HotEffectUpdate::Plugin(device_id, params) => {
+        HotEffectUpdate::Plugin(_device_id, params) => {
+            // Address by `effect_id` (= the plugin's per-placement instance key),
+            // not the plugin *type*, so duplicates on different tracks don't
+            // collide (ADR-017).
             if let Ok(engine) = state.audio_engine.lock() {
                 let mut all_ok = !params.is_empty();
                 for (native_id, value) in params {
                     match engine
                         .plugin_host
-                        .push_plugin_param(device_id, *native_id, *value)
+                        .push_plugin_param(effect_id, *native_id, *value)
                     {
                         Ok(_) => {}
                         Err(_) => {
@@ -1345,7 +1348,7 @@ fn snapshot_project(project: &AppProject) -> AppProject {
         // Plugin binary state mirrors live plugin internals and is restored
         // separately (project load → compile → setState), not via the event
         // store.  Undo/redo snapshots therefore keep this empty.
-        plugin_state_blobs: std::collections::HashMap::new(),
+        plugin_states: std::collections::HashMap::new(),
         ui_layout: ProjectUiLayout::default(),
     }
 }

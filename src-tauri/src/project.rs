@@ -431,11 +431,13 @@ pub struct AppProject {
     /// Grille en triolet (subdivision T) — éditeur à venir.
     pub midi_grid_use_triplets: bool,
     pub tracks: Vec<AppTrack>,
-    /// Per-device binary plugin state (e.g. VST3 chunk), keyed by `device_id`.
+    /// Binary plugin state (e.g. VST3 chunk), keyed by **`instance_key`** (the
+    /// per-placement id = `effect.id`, or `instrument:{track_id}`) so two
+    /// instances of the same plugin type persist distinct state (ADR-017).
     /// Harvested from the live `PluginHost` at save time and re-applied after
     /// the graph is compiled on load.  Not part of the event-sourced model —
     /// it mirrors live plugin internals, so it is excluded from undo snapshots.
-    pub plugin_state_blobs: HashMap<String, Vec<u8>>,
+    pub plugin_states: HashMap<String, Vec<u8>>,
     /// Panneaux et vue principale — persistés au save, exclus de l'undo.
     pub ui_layout: ProjectUiLayout,
 }
@@ -454,7 +456,7 @@ impl AppProject {
             midi_ppq: default_midi_ppq(),
             midi_grid_use_triplets: false,
             tracks: vec![],
-            plugin_state_blobs: HashMap::new(),
+            plugin_states: HashMap::new(),
             ui_layout: ProjectUiLayout::default(),
         }
     }
@@ -526,11 +528,15 @@ impl AppProject {
                     instrument: t.instrument.clone(),
                 })
                 .collect(),
-            plugin_state_blobs: self
-                .plugin_state_blobs
+            // New per-instance format (ADR-017): keyed by `instance_key`.
+            plugin_states: self
+                .plugin_states
                 .iter()
                 .map(|(k, v)| (k.clone(), crate::plugin_system::state::encode_base64(v)))
                 .collect(),
+            // Legacy device_id-keyed field is no longer written (read-only for
+            // backward compat on load).
+            plugin_state_blobs: HashMap::new(),
             ui_layout: self.ui_layout.clone(),
         }
     }
@@ -582,13 +588,19 @@ impl AppProject {
                 instrument: tf.instrument,
             });
         }
-        let plugin_state_blobs = pf
-            .plugin_state_blobs
-            .into_iter()
-            .filter_map(|(k, v)| {
-                crate::plugin_system::state::decode_base64(&v).map(|bytes| (k, bytes))
-            })
-            .collect();
+        // Plugin state: prefer the per-instance format (ADR-017); fall back to
+        // the legacy device_id-keyed blobs, mapped onto instances by scanning the
+        // loaded placements (unambiguous for one-instance-per-type projects).
+        let plugin_states = if !pf.plugin_states.is_empty() {
+            pf.plugin_states
+                .into_iter()
+                .filter_map(|(k, v)| {
+                    crate::plugin_system::state::decode_base64(&v).map(|bytes| (k, bytes))
+                })
+                .collect()
+        } else {
+            map_legacy_plugin_state(&tracks, pf.plugin_state_blobs)
+        };
         Ok(Self {
             name: pf.name,
             bpm: pf.bpm,
@@ -601,10 +613,43 @@ impl AppProject {
             midi_ppq: pf.midi_ppq,
             midi_grid_use_triplets: pf.midi_grid_use_triplets,
             tracks,
-            plugin_state_blobs,
+            plugin_states,
             ui_layout: pf.ui_layout,
         })
     }
+}
+
+/// Map legacy `device_id`-keyed plugin state blobs onto per-instance
+/// `instance_key`s by scanning the loaded placements (ADR-017 backward compat).
+/// One instance per plugin type → unambiguous; duplicates in a legacy file (a
+/// pre-ADR-017 collision) resolve to the first matching placement.
+fn map_legacy_plugin_state(
+    tracks: &[AppTrack],
+    legacy: HashMap<String, String>,
+) -> HashMap<String, Vec<u8>> {
+    let mut by_device: HashMap<&str, String> = HashMap::new();
+    for t in tracks {
+        for e in &t.effects {
+            if let EffectParams::Plugin(pp) = &e.params {
+                by_device
+                    .entry(pp.plugin_id.as_str())
+                    .or_insert_with(|| e.id.clone());
+            }
+        }
+        if let Some(device_id) = &t.instrument {
+            by_device
+                .entry(device_id.as_str())
+                .or_insert_with(|| format!("instrument:{}", t.id));
+        }
+    }
+    legacy
+        .into_iter()
+        .filter_map(|(device_id, v)| {
+            let key = by_device.get(device_id.as_str())?.clone();
+            let bytes = crate::plugin_system::state::decode_base64(&v)?;
+            Some((key, bytes))
+        })
+        .collect()
 }
 
 impl AppTrack {
@@ -766,9 +811,14 @@ pub struct ProjectFile {
     #[serde(default)]
     pub midi_grid_use_triplets: bool,
     pub tracks: Vec<TrackFile>,
-    /// Base64-encoded per-device plugin state (VST3 chunk), keyed by
-    /// `device_id`.  `#[serde(default)]` keeps projects saved before Phase 4b
-    /// loading unchanged (empty map → default plugin presets, as before).
+    /// Base64-encoded per-**instance** plugin state, keyed by `instance_key`
+    /// (ADR-017).  This is what new saves write; `#[serde(default)]` keeps older
+    /// files (which only carry `plugin_state_blobs`) loading unchanged.
+    #[serde(default)]
+    pub plugin_states: HashMap<String, String>,
+    /// Legacy base64 plugin state keyed by `device_id` (plugin type).  Read-only:
+    /// kept so projects saved before ADR-017 still load (mapped to instances at
+    /// `from_file`); new saves leave it empty.
     #[serde(default)]
     pub plugin_state_blobs: HashMap<String, String>,
     #[serde(default)]
@@ -917,6 +967,74 @@ mod tests {
         assert_eq!(
             restored.tracks[0].instrument.as_deref(),
             Some("clap://surge.dll?org.surge-synth.surge-xt")
+        );
+    }
+
+    fn track_with_plugin(track_id: &str, effect_id: &str, plugin_id: &str) -> AppTrack {
+        AppTrack {
+            id: track_id.into(),
+            name: track_id.into(),
+            volume: 80.0,
+            pan: 0.0,
+            muted: false,
+            solo: false,
+            clips: vec![],
+            effects: vec![TrackEffect {
+                id: effect_id.into(),
+                enabled: true,
+                params: EffectParams::Plugin(PluginParams {
+                    plugin_id: plugin_id.into(),
+                    name: "P".into(),
+                    format: "vst3".into(),
+                    params: vec![],
+                    sandboxed: false,
+                }),
+            }],
+            modulators: vec![],
+            mod_routes: vec![],
+            midi_notes: vec![],
+            midi_clips: vec![],
+            instrument: None,
+        }
+    }
+
+    /// ADR-017: two instances of the same plugin type (same `plugin_id`, distinct
+    /// `effect.id`) persist **distinct** state across a save → load round-trip,
+    /// keyed per placement by `instance_key`.
+    #[test]
+    fn plugin_states_round_trip_per_instance() {
+        let mut project = AppProject::new();
+        project.tracks.push(track_with_plugin("t1", "fx-a", "vst3://x"));
+        project.tracks.push(track_with_plugin("t2", "fx-b", "vst3://x"));
+        project.plugin_states.insert("fx-a".into(), vec![1, 2, 3]);
+        project.plugin_states.insert("fx-b".into(), vec![9, 9]);
+
+        let restored = AppProject::from_file(project.to_file()).expect("from_file");
+        assert_eq!(restored.plugin_states.get("fx-a"), Some(&vec![1, 2, 3]));
+        assert_eq!(restored.plugin_states.get("fx-b"), Some(&vec![9, 9]));
+    }
+
+    /// ADR-017 / C-4: a legacy project file carrying `device_id`-keyed state loads
+    /// by mapping each blob onto the matching placement's `instance_key`.
+    #[test]
+    fn legacy_device_keyed_state_maps_to_instance() {
+        let mut project = AppProject::new();
+        project.tracks.push(track_with_plugin("t1", "fx-eq", "vst3://x"));
+
+        // Simulate a pre-ADR-017 file: state under the new per-instance field is
+        // absent; the legacy device_id-keyed field carries the blob.
+        let mut file = project.to_file();
+        file.plugin_states.clear();
+        file.plugin_state_blobs.insert(
+            "vst3://x".into(),
+            crate::plugin_system::state::encode_base64(&[7, 7, 7]),
+        );
+
+        let restored = AppProject::from_file(file).expect("from_file");
+        assert_eq!(
+            restored.plugin_states.get("fx-eq"),
+            Some(&vec![7, 7, 7]),
+            "legacy device_id blob must map onto the effect's instance_key"
         );
     }
 }

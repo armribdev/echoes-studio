@@ -2,8 +2,11 @@
 
 ## Status
 
-**Proposed — awaiting approval to implement.** On approval + implementation this
-flips to *Accepted*. Fully closes **point 2** of
+**Accepted — implemented 2026-06-03.** Param routing (`api.rs` →
+`push_plugin_param` by `instance_key`), GUI-open (`instance_by_key`,
+`open_*_editor(effect_id)`), and the project file-format migration
+(`plugin_states` keyed by `instance_key`, legacy `plugin_state_blobs` read on
+load) are in place. Fully closes **point 2** of
 [`audits/engine-architecture-audit-2026-06-03.md`](../audits/engine-architecture-audit-2026-06-03.md).
 Builds on the per-instance records keying landed in the
 [ADR-007 update (2026-06-03)](007-plugin-instance-arc.md#update--2026-06-03-records-keyed-by-instance_key)

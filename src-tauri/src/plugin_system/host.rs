@@ -227,11 +227,12 @@ impl PluginHost {
         instance.set_lifecycle(LifecycleState::Running);
 
         // ADR-010 race-free state restore: if the project-load path staged a blob
-        // for this device, apply it now — the instance is brand-new and not yet in
-        // any snapshot, so `setState` cannot race the audio thread's `process()`.
-        // The blob is also cached in `saved_state` so formats with no FFI state
-        // path (internal/AU/WASM) still round-trip it on the next save.
-        let saved_state = match self.pending_state_blobs.get(plugin_id) {
+        // for this placement, apply it now — the instance is brand-new and not yet
+        // in any snapshot, so `setState` cannot race the audio thread's
+        // `process()`.  Keyed by `instance_key` (ADR-017) so duplicates of the
+        // same plugin type restore their own state.  The blob is also cached in
+        // `saved_state` so formats with no FFI state path round-trip it on save.
+        let saved_state = match self.pending_state_blobs.get(instance_key) {
             Some(bytes) => {
                 let _ = instance.load_state_blob(bytes);
                 DeviceState::from_binary(plugin_id, bytes.clone())
@@ -424,25 +425,28 @@ impl PluginHost {
             .find(|r| r.instance.device_id == device_id)
     }
 
-    /// Push a normalised parameter change to a live plugin (ADR-007).
+    /// Push a normalised parameter change to a live plugin instance (ADR-007,
+    /// ADR-017).
+    ///
+    /// Addressed by `instance_key` (the per-placement id = project `effect.id`),
+    /// so two instances of the same plugin type on different tracks receive their
+    /// own parameter changes instead of colliding on `device_id`.
     ///
     /// `native_id` is the format-native parameter identifier (VST3 `ParamID`,
-    /// CLAP `clap_id`) — the same `u32` the frontend already stores in
-    /// `PluginParams.params`.  The value is enqueued on the instance's SPSC
-    /// ring; the audio-graph wrapper drains it at the top of `process` and
-    /// converts it to the native parameter event.  No recompile, no lock.
-    ///
-    /// Returns `Ok(false)` if the ring was full (newest dropped — the UI will
-    /// resend on its next tick).  Errors only if the device is unknown.
+    /// CLAP `clap_id`).  The value is enqueued on the instance's SPSC ring; the
+    /// audio-graph wrapper drains it at the top of `process`.  No recompile, no
+    /// lock.  Returns `Ok(false)` if the ring was full (newest dropped — the UI
+    /// resends on its next tick).  Errors only if the placement is unknown.
     pub fn push_plugin_param(
         &self,
-        device_id: &str,
+        instance_key: &str,
         native_id: u32,
         normalised: f32,
     ) -> Result<bool, HostError> {
         let record = self
-            .record_by_device_id(device_id)
-            .ok_or_else(|| HostError::DeviceNotFound(device_id.to_string()))?;
+            .records
+            .get(instance_key)
+            .ok_or_else(|| HostError::DeviceNotFound(instance_key.to_string()))?;
         Ok(record.instance.push_param(native_id, normalised))
     }
 
@@ -529,13 +533,27 @@ impl PluginHost {
         }
     }
 
-    /// Iterate the device (plugin **type**) IDs of all currently-instantiated
-    /// plugins.  Used by the project-save path to harvest live plugin state,
-    /// which is keyed by `device_id` in the project file (unchanged here).  May
-    /// yield the same `device_id` more than once when a plugin type is used on
-    /// several tracks; the consumer de-duplicates via its `device_id`-keyed map.
-    pub fn device_ids(&self) -> impl Iterator<Item = &str> {
-        self.records.values().map(|r| r.instance.device_id.as_str())
+    /// Harvest live plugin state for every instantiated placement, keyed by
+    /// `instance_key` (ADR-017), so duplicates of the same plugin type are saved
+    /// separately.  Used by the project-save path; only non-empty blobs are
+    /// returned (VST3/CLAP via FFI `getState`; other formats via the cached
+    /// `saved_state`).
+    pub fn collect_plugin_states(&self) -> Vec<(String, Vec<u8>)> {
+        self.records
+            .iter()
+            .filter_map(|(key, record)| {
+                let ds = match record.instance.save_state_blob() {
+                    Some(bytes) => DeviceState::from_binary(&record.instance.device_id, bytes),
+                    None => record.saved_state.clone(),
+                };
+                let bytes = ds.as_binary()?;
+                if bytes.is_empty() {
+                    None
+                } else {
+                    Some((key.clone(), bytes.to_vec()))
+                }
+            })
+            .collect()
     }
 
     pub fn device_count(&self) -> usize {
@@ -716,6 +734,33 @@ mod tests {
             "same instance_key must reuse the live instance, not rebuild it"
         );
         assert_eq!(host.device_count(), 1, "reuse must not add a record");
+    }
+
+    /// ADR-017: `push_plugin_param` addresses by `instance_key`, so two instances
+    /// of the same plugin type on different placements receive their own changes
+    /// instead of colliding.
+    #[test]
+    fn push_plugin_param_targets_the_addressed_instance() {
+        let mut host = PluginHost::new();
+        host.instantiate(NodeId(1), "track-a:fx0", "echoes.gain", false)
+            .unwrap();
+        host.instantiate(NodeId(2), "track-b:fx0", "echoes.gain", false)
+            .unwrap();
+
+        assert!(host.push_plugin_param("track-b:fx0", 42, 0.5).unwrap());
+
+        // The change landed on B's ring, not A's.
+        let mut a = Vec::new();
+        host.instance_by_key("track-a:fx0")
+            .unwrap()
+            .drain_params(|c| a.push(c.native_id));
+        let mut b = Vec::new();
+        host.instance_by_key("track-b:fx0")
+            .unwrap()
+            .drain_params(|c| b.push(c.native_id));
+
+        assert!(a.is_empty(), "untargeted instance must receive nothing");
+        assert_eq!(b, vec![42], "targeted instance receives the change");
     }
 
     /// ADR-016: a staged state blob (project load) forces a fresh instance so the

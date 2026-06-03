@@ -274,7 +274,8 @@ fn apply_loaded_project(
     let dto = project.to_dto();
     // Capture plugin state blobs before `project` is moved into AppState — they
     // are re-applied after the graph compiles (the instances must exist first).
-    let plugin_state_blobs = project.plugin_state_blobs.clone();
+    // Keyed per placement by `instance_key` (ADR-017).
+    let plugin_states = project.plugin_states.clone();
 
     // Seed event store from loaded project (snapshot-at-zero approach)
     if let (Ok(mut store), Ok(mut p)) = (state.event_store.lock(), state.project.lock()) {
@@ -290,11 +291,9 @@ fn apply_loaded_project(
     // before any node enters a snapshot — rather than pushing `setState` onto the
     // already-snapshotted instances afterwards, which raced the audio thread on
     // the shared handle (ADR-010 race-free restore).
-    if !plugin_state_blobs.is_empty() {
+    if !plugin_states.is_empty() {
         if let Ok(mut engine) = state.audio_engine.lock() {
-            engine
-                .plugin_host
-                .set_pending_state_blobs(plugin_state_blobs);
+            engine.plugin_host.set_pending_state_blobs(plugin_states);
         }
     }
 
@@ -406,25 +405,16 @@ fn handle_menu_event(app: &tauri::AppHandle, menu_id: &str) {
                 // Canonical lock order: project → engine (matches
                 // `recompile_audio_graph` / `render_project_to_stereo`).
                 let mut project = state.project.lock().unwrap();
-                // Harvest live plugin state (VST3) so the saved file carries
-                // the current presets (Phase 4b / ADR-010).  Off-RT; assumes
-                // the transport is stopped during save.
+                // Harvest live plugin state so the saved file carries the current
+                // presets (Phase 4b / ADR-010).  Keyed per placement by
+                // `instance_key` (ADR-017).  Off-RT; assumes the transport is
+                // stopped during save.
                 if let Ok(engine) = state.audio_engine.lock() {
-                    project.plugin_state_blobs.clear();
-                    let ids: Vec<String> = engine
+                    project.plugin_states = engine
                         .plugin_host
-                        .device_ids()
-                        .map(str::to_string)
+                        .collect_plugin_states()
+                        .into_iter()
                         .collect();
-                    for id in ids {
-                        if let Some(ds) = engine.plugin_host.save_device_state(&id) {
-                            if let Some(bytes) = ds.as_binary() {
-                                if !bytes.is_empty() {
-                                    project.plugin_state_blobs.insert(id, bytes.to_vec());
-                                }
-                            }
-                        }
-                    }
                 }
                 serde_json::to_string_pretty(&project.to_file())
             }

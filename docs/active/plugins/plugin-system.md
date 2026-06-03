@@ -130,9 +130,11 @@ The host keeps one `Arc<PluginInstance>` clone per **plugin placement** in its
 (or `instrument:{track_id}` for a track instrument) — **not** by `device_id` (the
 plugin *type*). This is what lets the same plugin used on two tracks live as two
 distinct records instead of one silently overwriting the other (engine audit
-point 2). The UI/IPC surface still addresses plugins by `device_id`;
-`PluginHost::record_by_device_id` resolves type → record, which is unambiguous in
-the common one-instance-per-type case and matches the previous lookup semantics.
+point 2). The UI/IPC surface addresses plugins by `instance_key` too (ADR-017):
+parameter pushes (`push_plugin_param`), the GUI editor (`instance_by_key`), and
+saved state (`plugin_states`, see below) are all per-placement. The legacy
+`record_by_device_id` helper remains only for type-scoped queries and the
+legacy-file state mapper.
 
 After every successful compile, `GraphCompiler::compile` calls
 `PluginHost::retain_devices(active)` with the set of `device_id`s the new graph
@@ -222,6 +224,15 @@ use JSON for legibility. VST3/AU/CLAP plugins use their native binary chunk
 format. This is important for long-term compatibility: if a plugin's internal
 state format changes across versions, the host is unaffected — the plugin
 handles its own migration.
+
+**Per-instance persistence (ADR-017).** Saved state lives in the project file's
+`plugin_states` map, keyed by `instance_key`, so two instances of the same plugin
+type keep distinct presets. `PluginHost::collect_plugin_states` harvests it at
+save (keyed by placement); restore stages it by `instance_key` and applies it at
+instantiation (ADR-010 race-free). Projects saved before ADR-017 carry a legacy
+`plugin_state_blobs` map keyed by `device_id`; `AppProject::from_file` maps those
+onto the matching placements (C-4 backward compat), and new saves stop writing the
+legacy field.
 
 ---
 
