@@ -133,6 +133,48 @@ impl PluginHost {
             .collect()
     }
 
+    /// Reuse the live instance already held for this `instance_key` instead of
+    /// rebuilding it, when the placement still hosts the same plugin type and the
+    /// format's activation lifecycle is reuse-safe (ADR-016). Returns a fresh
+    /// wrapper around the shared `Arc<PluginInstance>` — **no new native handle**,
+    /// so the plugin's internal DSP state is preserved across the recompile.
+    ///
+    /// `None` (→ caller does a full re-instantiate) when:
+    /// - state blobs are staged (project load wants a fresh instance to apply
+    ///   them at instantiation — ADR-010 race-free restore),
+    /// - no record exists for the key, or the slot now hosts a different type,
+    /// - the instance is terminal (`Destroyed`/`Error`), or
+    /// - the format isn't reuse-safe yet (VST3/AU/WASM — ADR-016 follow-up).
+    fn reuse_existing(
+        &self,
+        node_id: NodeId,
+        instance_key: &str,
+        plugin_id: &str,
+    ) -> Option<Box<dyn AudioNode>> {
+        if !self.pending_state_blobs.is_empty() {
+            return None;
+        }
+        let inst = &self.records.get(instance_key)?.instance;
+        if inst.device_id != plugin_id {
+            return None;
+        }
+        if matches!(
+            inst.lifecycle(),
+            LifecycleState::Destroyed | LifecycleState::Error
+        ) {
+            return None;
+        }
+        match inst.format {
+            DeviceFormat::Internal => Some(Box::new(PassThroughDevice::new(
+                node_id,
+                &inst.device_id,
+                &inst.name,
+            ))),
+            DeviceFormat::Clap => Some(Box::new(ClapWrapperNode::new(node_id, Arc::clone(inst)))),
+            _ => None,
+        }
+    }
+
     /// `instance_key` = per-placement id (ADR-007); host keeps `Arc` in `records`.
     pub fn instantiate(
         &mut self,
@@ -143,6 +185,12 @@ impl PluginHost {
     ) -> Result<Box<dyn AudioNode>, HostError> {
         // Inert until ADR-015 step 6d wires the out-of-process bridge.
         let _ = sandboxed;
+
+        // ADR-016: reuse a live instance for this placement instead of rebuilding
+        // it (no FFI churn, preserves the plugin's internal DSP state).
+        if let Some(node) = self.reuse_existing(node_id, instance_key, plugin_id) {
+            return Ok(node);
+        }
 
         let manifest = self
             .registry
@@ -320,6 +368,23 @@ impl PluginHost {
         instance_key: &str,
         plugin_id: &str,
     ) -> Result<Box<dyn InstrumentDevice>, HostError> {
+        // ADR-016: reuse the live CLAP instrument for this track instead of
+        // rebuilding it, preserving its internal voice/DSP state across recompiles.
+        if self.pending_state_blobs.is_empty() {
+            if let Some(record) = self.records.get(instance_key) {
+                let inst = &record.instance;
+                if inst.device_id == plugin_id
+                    && inst.format == DeviceFormat::Clap
+                    && !matches!(
+                        inst.lifecycle(),
+                        LifecycleState::Destroyed | LifecycleState::Error
+                    )
+                {
+                    return Ok(Box::new(ClapInstrument::new(Arc::clone(inst))));
+                }
+            }
+        }
+
         let manifest = self
             .registry
             .get(plugin_id)
@@ -628,6 +693,51 @@ mod tests {
         assert_eq!(host.device_count(), 2, "two placements → two records");
         // The legacy device_id-addressed path still resolves to one of them.
         assert!(host.instance("echoes.gain").is_some());
+    }
+
+    /// Audit point 1 / ADR-016: instantiating the **same placement**
+    /// (`instance_key`) again reuses the live instance instead of rebuilding it —
+    /// the underlying `PluginInstance` (its `instance_id`) is preserved and the
+    /// record count does not grow. Exercised on the reuse-safe internal format.
+    #[test]
+    fn same_instance_key_reuses_the_live_instance() {
+        let mut host = PluginHost::new();
+        host.instantiate(NodeId(1), "fx0", "echoes.gain", false)
+            .unwrap();
+        let first_id = host.instance("echoes.gain").unwrap().instance_id();
+
+        // Recompile re-instantiates the same placement.
+        host.instantiate(NodeId(2), "fx0", "echoes.gain", false)
+            .unwrap();
+        let second_id = host.instance("echoes.gain").unwrap().instance_id();
+
+        assert_eq!(
+            first_id, second_id,
+            "same instance_key must reuse the live instance, not rebuild it"
+        );
+        assert_eq!(host.device_count(), 1, "reuse must not add a record");
+    }
+
+    /// ADR-016: a staged state blob (project load) forces a fresh instance so the
+    /// blob is applied at instantiation (ADR-010) — reuse must not short-circuit it.
+    #[test]
+    fn staged_state_forces_fresh_instance_over_reuse() {
+        let mut host = PluginHost::new();
+        host.instantiate(NodeId(1), "fx0", "echoes.gain", false)
+            .unwrap();
+        let first_id = host.instance("echoes.gain").unwrap().instance_id();
+
+        let mut staged = HashMap::new();
+        staged.insert("echoes.gain".to_string(), vec![1u8, 2, 3]);
+        host.set_pending_state_blobs(staged);
+        host.instantiate(NodeId(2), "fx0", "echoes.gain", false)
+            .unwrap();
+        let second_id = host.instance("echoes.gain").unwrap().instance_id();
+
+        assert_ne!(
+            first_id, second_id,
+            "a staged blob must rebuild the instance, not reuse the live one"
+        );
     }
 
     /// ADR-010 race-free restore: a blob staged before the compile is applied to

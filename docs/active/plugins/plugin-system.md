@@ -142,13 +142,17 @@ releases the host-side clone so the FFI handle is torn down once the retiring
 `CompiledGraph` frees its audio-side clone through the snapshot drop ring — always
 off the audio thread (ADR-007 removal path).
 
-> **Known cost — engine audit point 1 (not yet fixed).** `instantiate` still
-> rebuilds every plugin instance on *every* structural recompile; it does **not**
-> yet reuse a live instance across compiles, so a structural edit re-creates the
-> FFI handle and loses the plugin's internal DSP state. The `instance_key` keying
-> above is the foundation that makes that reuse safe (a separate, pending step) —
-> it is required because reuse keyed by `device_id` would be unsound as soon as a
-> plugin type is duplicated.
+> **Instance reuse (engine audit point 1 — ADR-016, 2026-06-03).** `instantiate`
+> reuses the live instance held under a placement's `instance_key` instead of
+> rebuilding it, when the slot still hosts the same plugin type and the format is
+> reuse-safe (**CLAP + internal** today; VST3 deferred). A reused node is a fresh
+> wrapper around the shared `Arc<PluginInstance>` — no new native handle — so the
+> plugin's internal DSP state survives a structural recompile. The CLAP
+> `init → activate → start_processing` / `stop_processing → deactivate` lifecycle
+> is owned by `PluginInstance` (`clap_ensure_active` + its `Drop`), not the
+> wrapper, so a displaced wrapper never deactivates an instance the new graph
+> still shares. State-restoring compiles (project load, staged blobs) skip reuse
+> so the blob is applied to a fresh instance at instantiation (ADR-010).
 
 ---
 

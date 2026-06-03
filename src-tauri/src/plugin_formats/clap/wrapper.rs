@@ -153,14 +153,17 @@ impl AudioNode for ClapWrapperNode {
         self.in_channel_ptrs = vec![std::ptr::null_mut(); ctx.num_channels];
         self.out_channel_ptrs = vec![std::ptr::null_mut(); ctx.num_channels];
 
-        let p = self.plugin_ptr();
-        unsafe {
-            ((*p).init)(p);
+        // Activation lifecycle is owned by the shared instance (ADR-016) so it
+        // survives a wrapper rebuild when the graph is recompiled and the live
+        // instance is reused.  Idempotent: an already-active instance is left
+        // untouched (the CLAP spec forbids a second `activate`).
+        self.active = self
+            .instance
+            .clap_ensure_active(ctx.sample_rate, ctx.max_block_size as u32);
 
-            let ok = ((*p).activate)(p, ctx.sample_rate as f64, 1, ctx.max_block_size as u32);
-            self.active = ok;
-
-            if ok {
+        if self.active {
+            let p = self.plugin_ptr();
+            unsafe {
                 // `clap.latency` is valid only after activate (main thread / prepare).
                 let ext_ptr = ((*p).get_extension)(p, CLAP_EXT_LATENCY.as_ptr() as *const _);
                 if !ext_ptr.is_null() {
@@ -182,8 +185,6 @@ impl AudioNode for ClapWrapperNode {
                         }
                     }
                 }
-
-                ((*p).start_processing)(p);
             }
         }
 
@@ -278,29 +279,12 @@ impl AudioNode for ClapWrapperNode {
     }
 }
 
-impl Drop for ClapWrapperNode {
-    fn drop(&mut self) {
-        // CLAP lifecycle requires stop_processing + deactivate before
-        // destroy, but only if start_processing was called (the spec
-        // forbids stop on an inactive plugin).  We perform those two steps
-        // here, then release the `Arc<PluginInstance>` clone; the final
-        // `destroy()` happens in `PluginInstance::drop` once the last `Arc`
-        // is released (host clone + this clone — see `instance.rs`).
-        //
-        // Runs off-RT: the snapshot drop ring releases the old `CompiledGraph`
-        // on a dedicated worker thread, never on the audio thread.
-        if self.active {
-            let p = self.plugin_ptr();
-            unsafe {
-                ((*p).stop_processing)(p);
-                ((*p).deactivate)(p);
-            }
-            self.active = false;
-        }
-        // `self.instance` Arc drops next.  If this was the last clone the
-        // PluginInstance::Drop fires destroy() + frees the DLL.
-    }
-}
+// NOTE: no `Drop` impl here (ADR-016).  The CLAP `stop_processing → deactivate
+// → destroy` sequence is owned by `PluginInstance::Drop`, which runs once when
+// the **last** `Arc<PluginInstance>` is released.  A wrapper that is displaced by
+// a recompile must NOT deactivate the plugin, because the new graph may share
+// (reuse) the same live instance — deactivating it would corrupt the instance
+// the new graph is still processing.
 
 impl Device for ClapWrapperNode {
     fn device_id(&self) -> &str {

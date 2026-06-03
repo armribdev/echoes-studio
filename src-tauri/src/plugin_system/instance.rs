@@ -43,7 +43,7 @@
 //! introduce GUI calls and must coordinate via the lifecycle state machine.
 
 use std::ptr::NonNull;
-use std::sync::atomic::{AtomicU8, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU8, AtomicU64, Ordering};
 use std::sync::Arc;
 
 use crate::plugin_formats::clap::ffi::{ClapHost, ClapLibrary, ClapPlugin};
@@ -113,6 +113,35 @@ pub enum NativeHandle {
 unsafe impl Send for NativeHandle {}
 unsafe impl Sync for NativeHandle {}
 
+// ── CLAP activation state (ADR-016) ───────────────────────────────────────────
+//
+// The CLAP `init → activate → start_processing` / `stop_processing → deactivate`
+// lifecycle is owned **by the instance**, not the wrapper, so it survives a
+// wrapper rebuild when a graph is recompiled and the same live instance is
+// reused.  All transitions run on the command thread (graph prepare) or the
+// drop-ring worker (teardown) — never the audio thread.
+
+struct ClapActivation {
+    initialized: AtomicBool,
+    active: AtomicBool,
+    /// Sample rate (`f32::to_bits`) the plugin was activated at; activation is
+    /// bound to it, so a config change forces deactivate + reactivate.
+    sr_bits: AtomicU32,
+    /// Max block size the plugin was activated at.
+    block: AtomicU32,
+}
+
+impl ClapActivation {
+    fn new() -> Self {
+        ClapActivation {
+            initialized: AtomicBool::new(false),
+            active: AtomicBool::new(false),
+            sr_bits: AtomicU32::new(0),
+            block: AtomicU32::new(0),
+        }
+    }
+}
+
 /// Shared, refcounted handle to one live plugin instance.
 ///
 /// Held by:
@@ -156,6 +185,10 @@ pub struct PluginInstance {
     /// command thread (via `PluginHost`) is the sole producer; the audio-graph
     /// wrapper drains it at the top of `process` — the sole consumer.
     param_queue: ParamQueue,
+
+    /// CLAP activation lifecycle (ADR-016).  Owned here so it survives wrapper
+    /// rebuilds on recompile.  Unused for non-CLAP handles.
+    clap_activation: ClapActivation,
 }
 
 impl PluginInstance {
@@ -169,6 +202,7 @@ impl PluginInstance {
             handle: NativeHandle::Internal,
             lifecycle: AtomicU8::new(encode_lifecycle(LifecycleState::Running)),
             param_queue: ParamQueue::with_capacity(PARAM_QUEUE_CAPACITY),
+            clap_activation: ClapActivation::new(),
         })
     }
 
@@ -196,6 +230,7 @@ impl PluginInstance {
             },
             lifecycle: AtomicU8::new(encode_lifecycle(LifecycleState::Created)),
             param_queue: ParamQueue::with_capacity(PARAM_QUEUE_CAPACITY),
+            clap_activation: ClapActivation::new(),
         })
     }
 
@@ -220,6 +255,7 @@ impl PluginInstance {
             },
             lifecycle: AtomicU8::new(encode_lifecycle(LifecycleState::Created)),
             param_queue: ParamQueue::with_capacity(PARAM_QUEUE_CAPACITY),
+            clap_activation: ClapActivation::new(),
         })
     }
 
@@ -303,6 +339,59 @@ impl PluginInstance {
         }
     }
 
+    /// Idempotently bring the CLAP plugin to the active, processing state
+    /// (`init → activate → start_processing`), owned by the instance so it
+    /// survives wrapper rebuilds on recompile (ADR-016 reuse).
+    ///
+    /// - Already active at the same `(sample_rate, max_block)` → no-op.
+    /// - Already active at a different config → `stop_processing + deactivate`,
+    ///   then reactivate (CLAP binds these bounds at `activate`).
+    /// - Not active → `init` (once) + `activate` + `start_processing`.
+    ///
+    /// No-op (`false`) for non-CLAP handles.  Runs on the command thread during
+    /// graph prepare — never the audio thread.  Returns whether the plugin is
+    /// active.
+    pub fn clap_ensure_active(&self, sample_rate: f32, max_block: u32) -> bool {
+        let plugin = match &self.handle {
+            NativeHandle::Clap { plugin, .. } => *plugin,
+            _ => return false,
+        };
+        let sr_bits = sample_rate.to_bits();
+        let act = &self.clap_activation;
+
+        if act.active.load(Ordering::Acquire) {
+            if act.sr_bits.load(Ordering::Relaxed) == sr_bits
+                && act.block.load(Ordering::Relaxed) == max_block
+            {
+                return true;
+            }
+            // Config changed — tear the processing/active state down before
+            // re-activating with the new bounds.
+            unsafe {
+                ((*plugin).stop_processing)(plugin);
+                ((*plugin).deactivate)(plugin);
+            }
+            act.active.store(false, Ordering::Release);
+        }
+
+        unsafe {
+            if !act.initialized.load(Ordering::Acquire) {
+                if !((*plugin).init)(plugin) {
+                    return false;
+                }
+                act.initialized.store(true, Ordering::Release);
+            }
+            let ok = ((*plugin).activate)(plugin, sample_rate as f64, 1, max_block);
+            if ok {
+                ((*plugin).start_processing)(plugin);
+                act.sr_bits.store(sr_bits, Ordering::Relaxed);
+                act.block.store(max_block, Ordering::Relaxed);
+                act.active.store(true, Ordering::Release);
+            }
+            ok
+        }
+    }
+
     /// Convenience: extract the CLAP plugin pointer if this instance is CLAP.
     pub fn clap_plugin(&self) -> Option<*const ClapPlugin> {
         match &self.handle {
@@ -370,6 +459,13 @@ impl Drop for PluginInstance {
             NativeHandle::Clap { plugin, .. } => {
                 let p = *plugin;
                 unsafe {
+                    // The activation lifecycle is owned here (ADR-016): the
+                    // wrappers no longer stop/deactivate in their own `Drop`,
+                    // so the instance does it once, before `destroy`.
+                    if self.clap_activation.active.load(Ordering::Acquire) {
+                        ((*p).stop_processing)(p);
+                        ((*p).deactivate)(p);
+                    }
                     ((*p).destroy)(p);
                 }
             }

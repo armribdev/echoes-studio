@@ -39,16 +39,18 @@ lives there.
 | [013](013-clap-plugin-instruments.md) | CLAP plugin instruments via `InstrumentDevice` adapter | Plugins |
 | [014](014-capability-driven-port-sizing.md) | Capability-driven plugin port sizing (sidechain foundation) | Plugins / routing |
 | [015](015-plugin-sandbox.md) | Out-of-process plugin sandbox, opt-in per device | Plugins / sandboxing |
+| [016](016-plugin-instance-reuse.md) | Plugin instance reuse across recompiles | Plugins / RT safety |
+| [017](017-per-instance-plugin-addressing.md) | Per-instance plugin addressing & state persistence | Plugins / state / UI boundary |
 
 ---
 
 ## By theme
 
 - **Graph / DSP core:** 001, 011, 012
-- **Threading / RT safety:** 004, 007, 008
-- **State / persistence:** 002, 010
-- **Architecture boundary:** 005
-- **Plugins:** 003, 006, 007, 008, 010, 013, 014, 015
+- **Threading / RT safety:** 004, 007, 008, 016
+- **State / persistence:** 002, 010, 017
+- **Architecture boundary:** 005, 017
+- **Plugins:** 003, 006, 007, 008, 010, 013, 014, 015, 016, 017
 - **Modulation / parameters:** 009
 
 > Note: several ADRs span more than one theme; listed under each that applies.

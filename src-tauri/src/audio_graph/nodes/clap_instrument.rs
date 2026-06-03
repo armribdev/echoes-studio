@@ -117,18 +117,12 @@ impl InstrumentDevice for ClapInstrument {
         self.num_channels = num_channels;
         self.out_channel_ptrs = vec![std::ptr::null_mut(); num_channels];
 
-        let p = self.plugin_ptr();
-        unsafe {
-            // CLAP lifecycle: init → activate → start_processing.  `init` must
-            // precede (and may gate) `activate`, so don't activate an
-            // uninitialised plugin.
-            let init_ok = ((*p).init)(p);
-            self.active =
-                init_ok && ((*p).activate)(p, sample_rate as f64, 1, max_block_size as u32);
-            if self.active {
-                ((*p).start_processing)(p);
-            }
-        }
+        // Activation lifecycle is owned by the shared instance (ADR-016) so it
+        // survives a wrapper rebuild when the live instance is reused across a
+        // recompile.  Idempotent: an already-active instance is left untouched.
+        self.active = self
+            .instance
+            .clap_ensure_active(sample_rate, max_block_size as u32);
     }
 
     fn process_midi(
@@ -197,21 +191,10 @@ impl InstrumentDevice for ClapInstrument {
     }
 }
 
-impl Drop for ClapInstrument {
-    fn drop(&mut self) {
-        // Mirror `ClapWrapperNode`: stop_processing + deactivate before the
-        // shared `Arc<PluginInstance>` releases (destroy fires when the last
-        // clone drops).  Runs off-RT via the snapshot drop ring.
-        if self.active {
-            let p = self.plugin_ptr();
-            unsafe {
-                ((*p).stop_processing)(p);
-                ((*p).deactivate)(p);
-            }
-            self.active = false;
-        }
-    }
-}
+// NOTE: no `Drop` impl here (ADR-016).  The CLAP `stop_processing → deactivate
+// → destroy` sequence is owned by `PluginInstance::Drop`.  A displaced wrapper
+// must not deactivate the plugin, since a recompiled graph may reuse the same
+// live instance.
 
 #[cfg(test)]
 mod tests {
