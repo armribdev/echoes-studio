@@ -155,7 +155,6 @@ impl AudioNode for CompressorNode {
         let frames = t.block_size.min(output.num_frames).min(input.num_frames);
         let channels = output.num_channels.min(input.num_channels).min(2);
 
-        // Envelope at base rate (slow); nonlinear gain mapping + multiply at 2×.
         for i in 0..frames {
             let mut peak = 0.0_f32;
             for ch in 0..channels {
@@ -213,10 +212,8 @@ mod tests {
 
         let before_makeup = node.makeup_linear;
 
-        // Write +6 dB makeup into the block (cell order from constants).
         block.set(COMP_MAKEUP_DB, 6.0);
 
-        // Run a block: the node must detect the change and recompute.
         let input = AudioBuffer::new(2, 64);
         let mut output = AudioBuffer::new(2, 64);
         let t = TransportInfo::stopped(48_000.0);

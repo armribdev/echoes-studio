@@ -351,13 +351,10 @@ mod tests {
             num_channels: 2,
         });
 
-        // Baseline: flat EQ → low-shelf is unity-ish.
         let before = node.low.b0;
 
-        // Write a big low-shelf boost into the block (cell order from constants).
         block.set(EQ_LOW_GAIN_DB, 12.0);
 
-        // Run a block: the node must detect the change and recompute.
         let input = AudioBuffer::new(2, 64);
         let mut output = AudioBuffer::new(2, 64);
         let t = TransportInfo::stopped(48_000.0);

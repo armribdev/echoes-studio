@@ -37,7 +37,6 @@ impl EventStore {
 
     /// Append a new event. Truncates any redo-future events first.
     pub fn append(&mut self, event: ProjectEvent) {
-        // Discard any events that were "in the future" (from previous redos)
         self.events.truncate(self.head);
         self.events.push(event);
         self.head = self.events.len();

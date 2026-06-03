@@ -429,13 +429,11 @@ fn process_command(
             let p: AddClipPayload = serde_json::from_value(command.payload)
                 .map_err(|e| format!("ADD_CLIP payload invalid: {e}"))?;
 
-            // Load audio (may block — acceptable for non-realtime path)
             let audio = AudioClip::from_file(&p.file_path)
                 .map_err(|e| format!("Failed to load audio '{}': {e}", p.file_path))?;
             let data = audio.into_clip_data();
             let clip_id = generate_id();
 
-            // Cache audio data for future undo/redo replay
             let cached = Arc::new(CachedAudioData {
                 raw_samples: data.raw_samples.clone(),
                 sample_rate: data.sample_rate,
@@ -478,7 +476,6 @@ fn process_command(
             let project_event = ProjectEvent::new(ev::CLIP_ADDED, event_payload.clone());
             append_and_maybe_snapshot(state, project_event)?;
 
-            // Full ClipDto includes samples for waveform rendering.
             let engine_payload = json!({
                 "track_id": p.track_id,
                 "clip": clip_dto,

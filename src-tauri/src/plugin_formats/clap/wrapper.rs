@@ -128,7 +128,6 @@ impl ClapWrapperNode {
     /// guarded by the constructor `debug_assert!`.
     #[inline(always)]
     fn plugin_ptr(&self) -> *const ClapPlugin {
-        // Non-atomic pointer-chase through Arc::deref.
         self.instance
             .clap_plugin()
             .expect("ClapWrapperNode missing CLAP plugin pointer (programmer error)")
@@ -162,18 +161,14 @@ impl AudioNode for ClapWrapperNode {
             self.active = ok;
 
             if ok {
-                // Query `clap.latency` *after* activate (spec: main thread only,
-                // value may not be valid before activation).  Off-RT — invoked
-                // by the command thread during graph prepare.
+                // `clap.latency` is valid only after activate (main thread / prepare).
                 let ext_ptr = ((*p).get_extension)(p, CLAP_EXT_LATENCY.as_ptr() as *const _);
                 if !ext_ptr.is_null() {
                     let ext = ext_ptr as *const ClapPluginLatency;
                     self.reported_latency = ((*ext).get)(p);
                 }
 
-                // Enumerate parameters via `clap.params` (main thread, post
-                // activate) so we can denormalise queued values to each
-                // parameter's plain range (ADR-007).  Off-RT.
+                // ADR-007: plain ranges for denormalising queued params.
                 self.param_ranges.clear();
                 let params_ptr = ((*p).get_extension)(p, CLAP_EXT_PARAMS.as_ptr() as *const _);
                 if !params_ptr.is_null() {
@@ -192,7 +187,6 @@ impl AudioNode for ClapWrapperNode {
             }
         }
 
-        // Phase 2b: single source of truth — the instance atomic.
         self.instance.set_lifecycle(LifecycleState::Running);
     }
 
@@ -207,11 +201,7 @@ impl AudioNode for ClapWrapperNode {
         }
 
         let nc = self.num_channels;
-        // Current block size, not the buffer's allocated capacity
-        // (`num_frames` = MAX_BLOCK_FRAMES).  Passing the full capacity advances
-        // the plugin past the real block and corrupts its output (see
-        // clap_instrument.rs for the detailed rationale).
-        let nf = transport.block_size;
+        let nf = transport.block_size; // real block, not MAX_BLOCK_FRAMES capacity
 
         // CLAP carries plain values; denormalise via ranges enumerated at `prepare` (ADR-007).
         self.param_events.clear();
@@ -264,11 +254,9 @@ impl AudioNode for ClapWrapperNode {
             out_events: &self.out_events,
         };
 
-        // Non-atomic load through Arc::deref.
         let p = self.plugin_ptr();
         let status = unsafe { ((*p).process)(p, &process) };
 
-        // On error, pass through
         if status == CLAP_PROCESS_ERROR && !inputs.is_empty() {
             outputs[0].copy_from(inputs[0]);
         }

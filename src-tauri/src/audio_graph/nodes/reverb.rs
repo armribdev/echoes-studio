@@ -30,7 +30,6 @@ fn reverb_params_from_block(block: &ParameterBlock) -> ReverbParams {
     }
 }
 
-// Freeverb comb filter with damping
 struct CombFilter {
     buf: Vec<f32>,
     pos: usize,
@@ -63,7 +62,6 @@ impl CombFilter {
     }
 }
 
-// Allpass filter (Schroeder)
 struct AllpassFilter {
     buf: Vec<f32>,
     pos: usize,
@@ -216,7 +214,6 @@ impl AudioNode for ReverbNode {
         let wet1 = wet * (width / 2.0 + 0.5);
         let wet2 = wet * (0.5 - width / 2.0);
 
-        // Mono sum of input for reverb input
         for i in 0..frames {
             let in_l = if channels > 0 {
                 input.channel(0)[i]
@@ -290,7 +287,6 @@ mod tests {
 
         let before_feedback = node.combs_l[0].feedback;
 
-        // Push room_size to max into the block (cell order from constants).
         block.set(REVERB_ROOM_SIZE, 1.0);
 
         let input = AudioBuffer::new(2, 64);

@@ -63,10 +63,8 @@ impl AudioGraphCompiler {
             .fold(0.0_f64, f64::max);
         let duration_samples = (duration_secs * config.sample_rate as f64) as u64;
 
-        // Drop registry entries for tracks/modulators/routes that no longer
-        // exist in the project; refresh the global `any_solo` flag.  Existing
-        // atomics are kept intact so an in-flight hot-path command racing with
-        // this recompile cannot be clobbered.
+        // Keep existing atomics intact: an in-flight hot-path command racing
+        // this recompile must not be clobbered.
         live_params.prune_to_project(project);
 
         let graph = AudioGraph::from_project(project);

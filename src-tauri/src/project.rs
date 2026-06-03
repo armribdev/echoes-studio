@@ -389,7 +389,6 @@ impl AppProject {
                     peaks_4096: data.peaks_4096,
                 });
             }
-            // Migrate: generate id if not present in file
             let track_id = tf.id.unwrap_or_else(generate_id);
             let midi_clips = tf
                 .midi_clips
@@ -546,7 +545,6 @@ impl AppState {
         let mut event_store = crate::engine_gateway::store::EventStore::new();
         event_store.init_from_project(AppProject::new());
 
-        // Create the shared transport; the AudioEngine gets a clone of the Arc.
         let transport = crate::audio_engine::transport::SharedTransport::new(48_000.0, 120.0);
 
         let live_params = Arc::new(crate::audio_graph::live_params::LiveParams::new());

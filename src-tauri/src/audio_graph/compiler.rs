@@ -127,20 +127,16 @@ impl GraphCompiler {
         live_params: &LiveParams,
         plugin_host: &mut PluginHost,
     ) -> Result<CompiledGraph, CompileError> {
-        // 1. Validate
         if graph.master_id.is_none() {
             return Err(CompileError::NoMasterNode);
         }
         Self::validate_port_kinds(graph)?;
 
-        // 2. Topological sort (Kahn's algorithm)
         let order = Self::topological_sort(graph)?;
 
-        // 3. Build step-index map  NodeId → usize
         let step_index: HashMap<NodeId, usize> =
             order.iter().enumerate().map(|(i, &id)| (id, i)).collect();
 
-        // 4. Build ExecutionSteps
         let mut plan_builder = ExecutionPlanBuilder::new(
             config.sample_rate,
             config.max_block_size,
@@ -155,10 +151,7 @@ impl GraphCompiler {
                 .get(&node_id)
                 .ok_or(CompileError::MissingNode(node_id))?;
 
-            // Base port count from the node kind, plus any auxiliary
-            // (sidechain) input ports the plugin declares in its scan-time
-            // manifest (Phase 5d, P0-3).  Aux count is 0 for every plugin today
-            // → strictly bit-identical until bus introspection populates it.
+            // Sidechain aux inputs from scan manifest (Phase 5d); 0 until bus introspection.
             let num_inputs = {
                 let base = Self::num_inputs_for_kind(&graph_node.kind);
                 match &graph_node.kind {
@@ -200,7 +193,6 @@ impl GraphCompiler {
         plan_builder.set_modulation(graph.modulation.clone());
         let mut plan = plan_builder.build();
 
-        // 5. Instantiate processors (Meter nodes get fresh atomic cells)
         let prepare_ctx = PrepareContext {
             sample_rate: config.sample_rate,
             max_block_size: config.max_block_size,
@@ -210,8 +202,6 @@ impl GraphCompiler {
         let mut processors: Vec<Box<dyn AudioNode>> = Vec::with_capacity(order.len());
         let mut meter_cells: HashMap<String, MeterCell> = HashMap::new();
 
-        // Resolve depth cells for every modulation route so the scheduler can
-        // read depths atomically without consulting `LiveParams` at runtime.
         let mut route_cells: HashMap<String, Arc<crate::audio_graph::live_params::RouteCells>> =
             HashMap::new();
         for route in graph.modulation.all_routes() {
@@ -245,15 +235,10 @@ impl GraphCompiler {
             processors.push(node);
         }
 
-        // 6. Plugin Delay Compensation — compute per-step cumulative latency
-        // and per-input delay alignments now that every node has been built.
         Self::compute_latency_compensation(&mut plan, &processors);
-
-        // 7. Parallel execution levels — groups of steps that can be processed
-        // concurrently because they share no transitive dependency (R1).
         Self::compute_execution_levels(&mut plan);
 
-        // 8. Drop host records for devices no longer in the graph (ADR-007 removal path).
+        // ADR-007 removal path: drop host records for devices no longer in the graph.
         let mut active_devices: HashSet<String> = HashSet::new();
         for graph_node in graph.nodes.values() {
             match &graph_node.kind {
@@ -306,8 +291,6 @@ impl GraphCompiler {
         }
 
         for i in 0..n {
-            // Topological invariant: every src_step < i, so cumulative values are
-            // already filled before we reach this step.
             let mut arrival: u32 = 0;
             for conn_opt in &plan.steps[i].input_connections {
                 if let Some(conn) = conn_opt {
@@ -349,9 +332,6 @@ impl GraphCompiler {
             return;
         }
 
-        // Resolve modulation `source NodeId → step idx` once.  Modulation
-        // routes don't carry step indices, only `NodeId`s, so we need the
-        // lookup table.
         let node_to_step: HashMap<NodeId, usize> = plan
             .steps
             .iter()
@@ -359,11 +339,7 @@ impl GraphCompiler {
             .map(|(i, s)| (s.node_id, i))
             .collect();
 
-        // For every step we need the list of step-indices it depends on.
-        // Audio edges are already on the step; modulation edges are folded in
-        // here so the level assignment guarantees `source_step < target_step`
-        // — which the scheduler relies on when reading modulation source
-        // buffers from previously-processed levels.
+        // Fold modulation deps into level assignment (scheduler reads sources from prior levels).
         let mut mod_deps: Vec<Vec<usize>> = vec![Vec::new(); n];
         for route in plan.modulation.all_routes() {
             let (Some(&src_step), Some(&tgt_step)) = (
@@ -377,9 +353,6 @@ impl GraphCompiler {
             }
         }
 
-        // Steps come out of `topological_sort` in dependency order, so a
-        // single forward pass is enough: every dep's level is already known
-        // when we visit step `i`.
         for i in 0..n {
             let mut lvl: u32 = 0;
             for conn_opt in &plan.steps[i].input_connections {
@@ -490,7 +463,6 @@ impl GraphCompiler {
             NodeKind::Plugin { .. } => 2,    // default stereo in
             NodeKind::Modulator { .. } => 0, // modulator = source
             NodeKind::Meter { .. } => 1,
-            // num_inputs is set per-project so every track gets its own port.
             NodeKind::Master { num_inputs } => *num_inputs,
             NodeKind::Eq { .. }
             | NodeKind::Compressor { .. }
@@ -505,7 +477,6 @@ impl GraphCompiler {
             NodeKind::Instrument { .. } => 1,
             NodeKind::TrackGain { .. } => 1,
             NodeKind::Bus => 1,
-            // Pass-through tap at send gain; Return routing is future work.
             NodeKind::Send { .. } => 1,
             NodeKind::Return { .. } => 1,
             NodeKind::Gain { .. } => 1,
@@ -563,13 +534,7 @@ impl GraphCompiler {
                     instrument_id = track.instrument.as_deref();
                 }
 
-                // Phase 5c: a track may name a plugin instrument.  Try to
-                // instantiate it (CLAP only for now); on any failure fall back
-                // to the built-in PolySynth so the graph still compiles and the
-                // legacy/bit-identical path is preserved.
-                // One instrument per track → the track id is the stable,
-                // per-placement instance key.  Namespaced so it can never
-                // collide with an effect's `effect_id` in the host records map.
+                // Phase 5c: CLAP instrument or PolySynth fallback; key `instrument:{track_id}`.
                 let instr_key = format!("instrument:{track_id}");
                 let device: Box<dyn InstrumentDevice> = match instrument_id {
                     Some(device_id) => match plugin_host
@@ -646,20 +611,13 @@ impl GraphCompiler {
                 Arc::clone(&live_params.master_soft_clip),
             )),
 
-            NodeKind::Meter { .. } => {
-                // Handled before build_node is called (see compile loop above).
-                // Fallback: silence pass-through if reached unexpectedly.
-                Box::new(nodes::gain::GainNode::new(id, 1.0))
-            }
+            NodeKind::Meter { .. } => Box::new(nodes::gain::GainNode::new(id, 1.0)),
 
             NodeKind::Send { send_gain, .. } => {
                 Box::new(nodes::send::SendNode::new(id, *send_gain))
             }
 
-            NodeKind::Return { .. } => {
-                // Return node collects from a shared ring — future work
-                Box::new(nodes::bus::BusNode::new(id, 1))
-            }
+            NodeKind::Return { .. } => Box::new(nodes::bus::BusNode::new(id, 1)),
 
             NodeKind::Plugin {
                 instance_key,
@@ -706,14 +664,11 @@ impl GraphCompiler {
                                 .with_rate_cells(cells),
                         )
                     }
-                    _ => {
-                        // Other modulator kinds not yet implemented — silent source
-                        Box::new(nodes::modulator::LfoNode::new(
+                    _ => Box::new(nodes::modulator::LfoNode::new(
                             id,
                             0.0,
                             crate::project::LfoWaveform::Sine,
-                        ))
-                    }
+                        )),
                 }
             }
 
@@ -839,12 +794,9 @@ mod tests {
             GraphCompiler::compile(&g, &project, CompileConfig::default(), &live, &mut host)
                 .expect("compile must succeed");
 
-        // (1)+(2) created and registered with the host.
         assert!(host.instance("echoes.gain").is_some());
-        // (3) present in the plan as a real processor.
         assert!(compiled.processors.iter().any(|n| n.label() == "PassThrough"));
 
-        // (4) the scheduler runs every step (including the plugin) without panic.
         let mut sched = GraphScheduler::new(compiled);
         let block = 16usize;
         let mut out = vec![0.0_f32; block * 2];
@@ -870,7 +822,6 @@ mod tests {
         let live = LiveParams::new();
         let project = AppProject::new();
 
-        // Graph A — with the plugin.
         let mut g1 = AudioGraph::new();
         let m1 = g1.add_node(NodeKind::Master { num_inputs: 1 }, "Master");
         let p1 = g1.add_node(
@@ -886,7 +837,6 @@ mod tests {
             .expect("compile A");
         assert!(host.instance("echoes.gain").is_some());
 
-        // Graph B — plugin removed.
         let mut g2 = AudioGraph::new();
         g2.add_node(NodeKind::Master { num_inputs: 1 }, "Master");
         GraphCompiler::compile(&g2, &project, CompileConfig::default(), &live, &mut host)

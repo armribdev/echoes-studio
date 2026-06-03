@@ -159,9 +159,7 @@ impl AudioNode for VstWrapperNode {
         }
 
         unsafe {
-            // kAudio=0, kInput=0, index 0, activate=true(1)
             ((*(*comp).vtbl).activate_bus)(comp, 0, 0, 0, 1);
-            // kAudio=0, kOutput=1, index 0, activate=true(1)
             ((*(*comp).vtbl).activate_bus)(comp, 0, 1, 0, 1);
             ((*(*comp).vtbl).set_active)(comp, 1);
         }
@@ -183,7 +181,6 @@ impl AudioNode for VstWrapperNode {
             self.reported_latency = ((*(*proc).vtbl).get_latency_samples)(proc);
         }
 
-        // Phase 2b: single source of truth — the instance atomic.
         self.instance.set_lifecycle(LifecycleState::Running);
     }
 
@@ -198,9 +195,7 @@ impl AudioNode for VstWrapperNode {
         }
 
         let nc = self.num_channels;
-        // Current block size, not the buffer's allocated capacity
-        // (`num_frames` = MAX_BLOCK_FRAMES); see clap_instrument.rs rationale.
-        let nf = transport.block_size;
+        let nf = transport.block_size; // real block, not MAX_BLOCK_FRAMES capacity
 
         // ADR-007: drain pending parameter changes.
         // VST3 `IParameterChanges` carries normalised values directly, so the
@@ -224,8 +219,7 @@ impl AudioNode for VstWrapperNode {
             std::ptr::null_mut()
         };
 
-        // Populate input channel pointer array.
-        // SAFETY: VST3 spec guarantees plugins do not write to input buffers.
+        // SAFETY: VST3 spec — plugins must not write input buffers.
         for c in 0..nc {
             self.in_channel_ptrs[c] = if !inputs.is_empty() {
                 inputs[0].channel(c).as_ptr() as *mut f32
@@ -269,7 +263,6 @@ impl AudioNode for VstWrapperNode {
         let proc = proc_nn.as_ptr();
         let r = unsafe { ((*(*proc).vtbl).process)(proc, &mut data) };
 
-        // On plugin error, fall back to pass-through.
         if r != K_RESULT_OK && !inputs.is_empty() {
             outputs[0].copy_from(inputs[0]);
         }

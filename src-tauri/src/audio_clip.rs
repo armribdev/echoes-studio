@@ -111,7 +111,6 @@ impl AudioClip {
             let mut buf = SampleBuffer::<f32>::new(decoded.capacity() as u64, *decoded.spec());
             buf.copy_interleaved_ref(decoded);
 
-            // Downmix to mono by averaging channels
             if channels <= 1 {
                 raw_samples.extend_from_slice(buf.samples());
             } else {

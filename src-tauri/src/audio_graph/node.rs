@@ -31,11 +31,9 @@ impl std::fmt::Display for NodeId {
     }
 }
 
-/// Identifies a specific port on a specific node.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct PortId {
     pub node: NodeId,
-    /// 0-based port index.
     pub port: u32,
 }
 
@@ -45,9 +43,7 @@ pub struct PortId {
 /// declares the type; the compiler keeps treating every edge as `Audio`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Polarity {
-    /// Range `[-1.0, 1.0]` — LFO, envelope follower with center detune.
     Bipolar,
-    /// Range `[0.0, 1.0]` — ADSR envelope, macro knob.
     Unipolar,
 }
 
@@ -62,14 +58,9 @@ pub enum Polarity {
 /// behaviour without re-introducing exhaustiveness churn across the codebase.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PortKind {
-    /// Audio samples (f32 PCM).  All current ports default to this.
     Audio { channels: u8 },
-    /// MIDI / note events (Phase 5 — `clap_event_note`, VST3 `IEventList`).
     Midi,
-    /// Continuous modulation signal (Phase 5e — Envelope, Macro, Follower).
     Modulation { polarity: Polarity },
-    /// Discrete control event (transport, gate, trigger).  Reserved for
-    /// future use; no Phase currently emits this.
     Control,
 }
 
@@ -80,31 +71,20 @@ impl PortKind {
     }
 }
 
-/// Passed to [`AudioNode::prepare`] when the session initialises or when the
-/// audio device configuration changes.
-///
-/// Calling `prepare` is always safe to allocate in.
 #[derive(Debug, Clone, Copy)]
 pub struct PrepareContext {
     pub sample_rate: f32,
     pub max_block_size: usize,
-    /// Channel count that all buffers in this session will use.
     pub num_channels: usize,
 }
 
-/// Transport state delivered to every node's `process` call.
-///
-/// Copied per-block: no locking required on the audio thread.
 #[derive(Debug, Clone, Copy)]
 pub struct TransportInfo {
     pub is_playing: bool,
-    /// Absolute position in samples since the start of the project (never wraps).
     pub position_samples: u64,
-    /// Same position converted to seconds (convenience).
     pub position_seconds: f64,
     pub bpm: f32,
     pub sample_rate: f32,
-    /// Number of frames in the current block (≤ `max_block_size`).
     pub block_size: usize,
 }
 
@@ -121,24 +101,10 @@ impl TransportInfo {
     }
 }
 
-/// The fundamental DSP processing unit.
-///
-/// Implementors cover everything from raw audio clips to VST3 wrappers.
-/// The graph runtime treats them all identically.
-///
-/// ## Port model
-///
-/// Each node declares a fixed number of input and output **ports** via
-/// `num_input_ports` / `num_output_ports`.  Each port carries one
-/// `AudioBuffer` per block.  Port indices are 0-based.
-///
-/// The `process` call receives:
-/// - `inputs`:  one `&AudioBuffer` per input port  (may be a silence buffer if unconnected)
-/// - `outputs`: one `&mut AudioBuffer` per output port (pre-zeroed by the scheduler)
+/// DSP unit in the graph (clips, effects, plugins).  `process` must be RT-safe.
 pub trait AudioNode: Send + 'static {
     fn node_id(&self) -> NodeId;
 
-    /// Human-readable label for debugging / UI display.
     fn label(&self) -> &str {
         "AudioNode"
     }
@@ -146,19 +112,10 @@ pub trait AudioNode: Send + 'static {
     fn num_input_ports(&self) -> usize;
     fn num_output_ports(&self) -> usize;
 
-    /// Called once before streaming begins and whenever device parameters change.
-    ///
-    /// Allowed to allocate.  Must be idempotent (may be called multiple times).
+    /// May allocate; idempotent.
     fn prepare(&mut self, ctx: PrepareContext);
 
-    /// Process one block of audio.
-    ///
-    /// `inputs.len()  == self.num_input_ports()`
-    /// `outputs.len() == self.num_output_ports()`
-    ///
-    /// Outputs are pre-zeroed by the scheduler before this call.
-    ///
-    /// **Must never allocate or block.**
+    /// Must never allocate or block.  Outputs are pre-zeroed.
     fn process(
         &mut self,
         inputs: &[&AudioBuffer],
@@ -166,57 +123,26 @@ pub trait AudioNode: Send + 'static {
         transport: &TransportInfo,
     );
 
-    /// Reset all stateful DSP (filters, envelopes, delay lines) to initial state.
-    ///
-    /// Called on transport stop or when the node is deactivated.
     fn reset(&mut self);
 
-    /// Reset per-block modulation accumulators to zero.
-    ///
-    /// Called by the scheduler before the first `apply_modulation` call for
-    /// each block.  Default: no-op (nodes without modulated parameters ignore
-    /// this call).
     fn reset_modulation(&mut self) {}
 
-    /// Resolve a parameter name to a node-local `u32` identifier.
-    ///
-    /// Called **once at scheduler construction time** for every modulation
-    /// route targeting this node.  The returned ID is then handed to
-    /// [`apply_modulation`] on the hot path, replacing the per-block string
-    /// compare that this used to require.
-    ///
-    /// Returns `None` for unknown parameter names — the scheduler skips such
-    /// routes at compile time (equivalent to the previous behaviour where
-    /// nodes silently ignored unknown names in `apply_modulation`).
-    ///
-    /// Default: no-op (no modulated parameters).
+    /// Resolved once at scheduler build (avoids per-block string compare, audit I12).
     fn param_id(&self, _name: &str) -> Option<u32> {
         None
     }
 
-    /// Accumulate one modulation contribution onto a parameter identified by
-    /// its node-local `u32` ID (resolved by [`param_id`] at construction).
-    ///
-    /// `delta` is already scaled by the route's depth (i.e. `signal * depth`).
-    /// Multiple routes to the same parameter are summed across multiple calls.
-    /// The node applies `base_value + total_delta` during `process`.
-    ///
-    /// Default: no-op.
+    /// `delta` is `signal * depth`; summed per parameter before `process`.
     fn apply_modulation(&mut self, _param_id: u32, _delta: f32) {}
 
-    /// Intrinsic processing latency in samples (default 0).
-    ///
-    /// Used by the compiler for latency compensation.
     fn latency_samples(&self) -> u32 {
         0
     }
 
-    /// True if the node is a source (no audio inputs, e.g. a track player).
     fn is_source(&self) -> bool {
         self.num_input_ports() == 0
     }
 
-    /// True if the node is a sink (no audio outputs, e.g. the master output).
     fn is_sink(&self) -> bool {
         self.num_output_ports() == 0
     }

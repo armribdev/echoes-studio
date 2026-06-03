@@ -58,29 +58,15 @@ use crate::audio_graph::live_params::RouteCells;
 use crate::audio_graph::node::{AudioNode, NodeId, TransportInfo};
 use crate::audio_graph::worker_pool::WorkerPool;
 
-/// Minimum scratch capacity for per-step input pointer gathering.
-/// Actual size is `max(MIN_INPUT_PTR_SCRATCH, plan.max_input_ports())`.
 const MIN_INPUT_PTR_SCRATCH: usize = 32;
+const POOL_MIN_LEVEL_WIDTH: usize = 2; // wider levels use the pool; single-step stays inline
 
-/// Threshold below which a level is run inline (no pool dispatch overhead).
-/// A single-step level always runs inline; the cost of unpark + barrier
-/// dominates over actually processing one step.
-const POOL_MIN_LEVEL_WIDTH: usize = 2;
-
-/// Per-channel ring buffer used to delay one input port for latency
-/// compensation.  Allocated at scheduler construction; `process` runs entirely
-/// from pre-allocated storage.
+/// PDC ring per input port; pre-allocated at scheduler construction.
 struct DelayLine {
-    /// One ring buffer per channel (`plan.num_channels` total).
     rings: Vec<Vec<f32>>,
-    /// Ring capacity in samples (= delay + max_block).
     cap: usize,
-    /// Delay in samples (> 0; zero-delay inputs don't get a `DelayLine`).
     delay: usize,
-    /// Cursor into the ring; advances by `block_size` each `process`.
     write_pos: usize,
-    /// Scratch output buffer; the scheduler points the node's input slot at
-    /// this instead of the upstream raw buffer.
     out: AudioBuffer,
 }
 
@@ -97,8 +83,6 @@ impl DelayLine {
         }
     }
 
-    /// Push one block from `src` into the ring; read out the same block delayed
-    /// by `self.delay` samples into `self.out`.  Allocation-free.
     fn process(&mut self, src: &AudioBuffer, block_size: usize) {
         let cap = self.cap;
         let delay = self.delay;
@@ -131,33 +115,14 @@ impl DelayLine {
     }
 }
 
-/// One modulation connection, resolved to step indices at compile time.
-///
-/// Built from `ModulationMap` in `GraphScheduler::new`; read-only during
-/// `process_block`.  Grouped by target step index so the scheduler can apply
-/// modulation with a single indexed lookup per step.
 struct CompiledModAction {
-    /// Step that produced the modulation signal.  Always at a strictly lower
-    /// level than the target step — `GraphCompiler::compute_execution_levels`
-    /// folds modulation edges into the dependency relation, so by the time we
-    /// read this source's output buffer it is fully written.
     source_step: usize,
-    /// Output port index on the source node (0 for LFO main output).
     source_port: usize,
-    /// Node-local parameter identifier resolved by `AudioNode::param_id` at
-    /// scheduler construction.  Replaces the previous `String` (cloned per
-    /// route, string-compared each block on the hot path — see audit I12).
     param_id: u32,
-    /// Modulation depth.  When `Some`, read per-block from the atomic so the
-    /// command thread can change depth without a recompile.  When `None`,
-    /// `static_depth` is used (routes constructed without a `route_id`).
     depth_cells: Option<Arc<RouteCells>>,
     static_depth: f32,
 }
 
-/// Raw pointer view into the scheduler's per-step state.  Passed to the worker
-/// pool as the dispatch context; every pointer stays valid for the lifetime of
-/// the enclosing `process_block` call.
 #[derive(Clone, Copy)]
 struct Workspace {
     plan: *const ExecutionPlan,
@@ -166,8 +131,6 @@ struct Workspace {
     delay_lines_ptr: *mut Vec<Option<DelayLine>>,
     mod_actions_ptr: *const Vec<CompiledModAction>,
     silence_ptr: *const AudioBuffer,
-    /// Base of `Vec<Vec<*const AudioBuffer>>` — one row per worker (the audio
-    /// thread uses row `num_workers`).
     worker_scratch_ptr: *mut Vec<*const AudioBuffer>,
     transport_ptr: *const TransportInfo,
 }
@@ -179,44 +142,14 @@ struct Workspace {
 unsafe impl Send for Workspace {}
 unsafe impl Sync for Workspace {}
 
-/// Drives one compiled audio graph in the real-time audio callback.
 pub struct GraphScheduler {
-    /// Compiled execution plan (immutable, shared with compiler thread).
     plan: Arc<ExecutionPlan>,
-
-    /// DSP processors in the same order as `plan.steps`.
     processors: Vec<Box<dyn AudioNode>>,
-
-    /// `output_buffers[step_idx]` holds the output buffers for that step.
-    /// Indexed as `output_buffers[step][port]`.
-    /// Pre-allocated at construction; never resized in `process_block`.
     output_buffers: Vec<Vec<AudioBuffer>>,
-
-    /// A permanently-zeroed buffer handed to unconnected input ports.
     silence_buffer: AudioBuffer,
-
-    /// Per-worker input-pointer scratch rows.  `worker_scratch[w]` is sized to
-    /// `plan.max_input_ports()`; only worker `w` (or the audio thread when
-    /// `w == num_workers`) touches it.  Pre-allocated; never reallocated.
     worker_scratch: Vec<Vec<*const AudioBuffer>>,
-
-    /// Modulation actions grouped by target step index.
-    ///
-    /// `mod_actions_by_step[i]` lists all modulation routes whose target node
-    /// is at execution step `i`.  Built once at construction; never mutated
-    /// during the audio callback.
     mod_actions_by_step: Vec<Vec<CompiledModAction>>,
-
-    /// Plugin Delay Compensation lines, indexed `[step_idx][port_idx]`.
-    /// `None` means the input port has zero compensation delay (the common
-    /// case) and is passed through directly.  When `Some`, the scheduler
-    /// pushes the upstream buffer through the line and points the node's
-    /// input at the delay's internal `out` buffer.
     delay_lines: Vec<Vec<Option<DelayLine>>>,
-
-    /// Optional worker pool for parallel level execution (R1).  `None` (or an
-    /// empty pool) means every level is processed sequentially inline on the
-    /// audio thread.
     pool: Option<WorkerPool<Workspace>>,
 }
 
@@ -225,17 +158,11 @@ pub struct GraphScheduler {
 unsafe impl Send for GraphScheduler {}
 
 impl GraphScheduler {
-    /// Build a new scheduler from a freshly compiled graph with no worker
-    /// pool (purely sequential level execution).  Equivalent to
-    /// [`Self::with_workers`] passing `0`.
     pub fn new(compiled: CompiledGraph) -> Self {
         Self::with_workers(compiled, 0)
     }
 
-    /// Build a new scheduler and a fixed pool of `num_workers` DSP worker
-    /// threads.  Workers park between blocks; level dispatches `unpark` them.
-    ///
-    /// Called on the compiler / command thread; may allocate freely.
+    /// `num_workers == 0` → sequential execution on the audio thread.
     pub fn with_workers(compiled: CompiledGraph, num_workers: usize) -> Self {
         let plan = compiled.plan;
         let processors = compiled.processors;
@@ -339,12 +266,10 @@ impl GraphScheduler {
         }
     }
 
-    /// Number of nodes in the current execution plan (0 = empty graph).
     pub fn num_steps(&self) -> usize {
         self.plan.steps.len()
     }
 
-    /// An empty scheduler that produces silence.
     pub fn empty(sample_rate: f32) -> Self {
         let plan = Arc::new(ExecutionPlan::empty(sample_rate));
         GraphScheduler {
@@ -359,10 +284,7 @@ impl GraphScheduler {
         }
     }
 
-    /// Process one block.  Must only be called from the audio thread.
-    ///
-    /// After this returns, `interleaved_output` contains the rendered audio
-    /// in `[L0, R0, L1, R1, …]` interleaved format.
+    /// Audio thread only.  Output is interleaved `[L0, R0, L1, R1, …]`.
     pub fn process_block(&mut self, transport: &TransportInfo, interleaved_output: &mut [f32]) {
         self.run_levels(transport);
 
@@ -442,12 +364,10 @@ impl GraphScheduler {
         }
     }
 
-    /// Returns the current execution plan (used for introspection / debugging).
     pub fn plan(&self) -> &Arc<ExecutionPlan> {
         &self.plan
     }
 
-    /// Reset all node DSP state (e.g. on transport stop).
     pub fn reset(&mut self) {
         for processor in &mut self.processors {
             processor.reset();
@@ -473,18 +393,8 @@ fn step_thunk(worker_id: usize, step_idx: usize, ws: Workspace) {
     unsafe { process_one_step(worker_id, step_idx, ws) }
 }
 
-/// Process one step.  Must be called either by the audio thread (`worker_id =
-/// num_workers`) or by exactly one pool worker per `step_idx` per level
-/// (`worker_id < num_workers`).
-///
 /// # Safety
-///
-/// The caller must guarantee that:
-///   - `step_idx` is not concurrently processed by any other thread.
-///   - Every step at a strictly lower level than `step_idx` has completed
-///     (the pool's completion barrier provides this synchronisation).
-///   - The pointers inside `ws` remain valid for the call (true while the
-///     enclosing `process_block` holds `&mut self`).
+/// `step_idx` is exclusive per level; lower levels finished; `ws` valid for `process_block`.
 unsafe fn process_one_step(worker_id: usize, step_idx: usize, ws: Workspace) {
     let plan = &*ws.plan;
     let step = &plan.steps[step_idx];

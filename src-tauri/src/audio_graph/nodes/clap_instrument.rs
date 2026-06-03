@@ -237,11 +237,9 @@ mod tests {
         fill_clap_notes(&events, &mut list);
 
         assert_eq!(list.count, 2);
-        // NoteOn: full velocity → 1.0, key 60, time 24_000.
         assert_eq!(list.events[0].header.time, 24_000);
         assert_eq!(list.events[0].key, 60);
         assert!((list.events[0].velocity - 1.0).abs() < 1e-9);
-        // NoteOff: time 48_000, key 60.
         assert_eq!(list.events[1].header.time, 48_000);
         assert_eq!(list.events[1].key, 60);
     }
@@ -259,7 +257,6 @@ mod tests {
         });
         fill_clap_notes(&a, &mut list);
         assert_eq!(list.count, 1);
-        // A subsequent empty block must reset the list.
         let empty = MidiEventList::new();
         fill_clap_notes(&empty, &mut list);
         assert_eq!(list.count, 0);

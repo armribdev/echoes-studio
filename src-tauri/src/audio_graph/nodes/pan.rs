@@ -66,7 +66,6 @@ impl AudioNode for PanNode {
         let output = &mut outputs[0];
 
         if output.num_channels < 2 {
-            // Mono pass-through
             let frames = output.num_frames.min(input.num_frames);
             let in_ch = input.channel(0);
             let out_ch = output.channel_mut(0);
@@ -76,9 +75,7 @@ impl AudioNode for PanNode {
 
         let frames = output.num_frames.min(input.num_frames);
 
-        // Input may be mono (1 ch) or stereo (2 ch).
         if input.num_channels >= 2 {
-            // Stereo input: apply independent L/R gains
             let in_l = input.channel(0);
             let in_r = input.channel(1);
             let (out_l, out_r) = output.two_channels_mut(0, 1);
@@ -87,7 +84,6 @@ impl AudioNode for PanNode {
                 out_r[i] = in_r[i] * self.gain_r;
             }
         } else {
-            // Mono input: distribute according to equal-power law
             let in_ch = input.channel(0);
             let (out_l, out_r) = output.two_channels_mut(0, 1);
             for i in 0..frames {

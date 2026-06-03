@@ -26,13 +26,8 @@ use std::sync::{Arc, Mutex};
 use crate::audio_graph::parameter_block::ParameterBlock;
 use crate::project::AppProject;
 
-/// Per-track parameter cells held by `TrackGainNode`.
 pub struct TrackParams {
-    /// Linear volume multiplier (0.0..1.0), stored as `f32::to_bits()`.
     pub volume: AtomicU32,
-    /// Pan position −1.0..+1.0, stored as `f32::to_bits()`.  Currently unused
-    /// by the graph (no PanNode in the per-track chain) but still tracked so
-    /// future pan support can read it without a recompile.
     pub pan: AtomicU32,
     pub muted: AtomicBool,
     pub solo: AtomicBool,
@@ -64,9 +59,7 @@ impl TrackParams {
     }
 }
 
-/// Per-modulator parameter cells (LFO rate, etc.).
 pub struct ModulatorCells {
-    /// LFO rate in Hz.
     pub rate_hz: AtomicU32,
 }
 
@@ -83,7 +76,6 @@ impl ModulatorCells {
     }
 }
 
-/// Per-route modulation depth.
 pub struct RouteCells {
     pub depth: AtomicU32,
 }
@@ -106,18 +98,12 @@ struct LiveParamsInner {
     tracks: HashMap<String, Arc<TrackParams>>,
     modulators: HashMap<String, Arc<ModulatorCells>>,
     routes: HashMap<String, Arc<RouteCells>>,
-    /// Per-effect hot-parameter blocks (ADR-009), keyed by project `effect_id`.
-    /// Inserted by the compiler at `build_node`; written by the gateway on a
-    /// knob turn so the change reaches the node without a recompile.
     effect_params: HashMap<String, Arc<ParameterBlock>>,
 }
 
 pub struct LiveParams {
     inner: Mutex<LiveParamsInner>,
-    /// True when at least one track has solo enabled.  Read by every
-    /// `TrackGainNode` per block to compute the effective solo gate.
     pub any_solo: Arc<AtomicBool>,
-    /// When true, `MasterNode` applies tanh soft-clip on the summed output.
     pub master_soft_clip: Arc<AtomicBool>,
 }
 
@@ -136,8 +122,6 @@ impl LiveParams {
         }
     }
 
-    /// Return the cells for `track_id`, creating them seeded with the project
-    /// values if absent.
     pub fn get_or_init_track(
         &self,
         track_id: &str,
@@ -173,19 +157,12 @@ impl LiveParams {
         cells
     }
 
-    /// Return the hot-parameter block for `effect_id`, creating it seeded with
-    /// `values` (one cell per natural-unit parameter) if absent.  Called by the
-    /// compiler at `build_node` (ADR-009).
     pub fn get_or_init_effect_block(&self, effect_id: &str, values: &[f32]) -> Arc<ParameterBlock> {
         let mut inner = match self.inner.lock() {
             Ok(g) => g,
             Err(p) => p.into_inner(),
         };
         if let Some(existing) = inner.effect_params.get(effect_id) {
-            // Re-seed on recompile so the live block agrees with the project
-            // (the project is the source of truth; a structural recompile may
-            // follow edits made through the legacy path before the block
-            // existed).
             for (i, v) in values.iter().enumerate() {
                 existing.set(i, *v);
             }
@@ -198,8 +175,6 @@ impl LiveParams {
         block
     }
 
-    /// Borrow the hot-parameter block for `effect_id`, if one is registered
-    /// (i.e. the effect is present in the active compiled graph).
     pub fn effect_block(&self, effect_id: &str) -> Option<Arc<ParameterBlock>> {
         let inner = self.inner.lock().ok()?;
         inner.effect_params.get(effect_id).cloned()
@@ -230,8 +205,6 @@ impl LiveParams {
         self.master_soft_clip.store(enabled, Ordering::Relaxed);
     }
 
-    /// Write a new volume to the track's atomic cell (no recompile).
-    /// Returns false if no cell exists yet (track not in the active graph).
     pub fn set_track_volume(&self, track_id: &str, volume: f32) -> bool {
         if let Some(cells) = self.lookup_track(track_id) {
             cells.volume.store(volume.to_bits(), Ordering::Relaxed);
@@ -259,8 +232,6 @@ impl LiveParams {
         }
     }
 
-    /// Exclusive solo: at most one track solo'd at a time.  Writes the solo
-    /// flag for every known track and recomputes `any_solo`.
     pub fn set_track_solo_exclusive(&self, track_id: &str, solo: bool) {
         let inner = match self.inner.lock() {
             Ok(g) => g,

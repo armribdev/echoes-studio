@@ -341,7 +341,6 @@ impl AudioGraph {
                 (track.volume / 100.0).clamp(0.0, 1.0)
             };
 
-            // Record effect_id → NodeId for modulation route resolution below.
             let mut effect_node_ids: HashMap<String, NodeId> = HashMap::new();
 
             let mut last_node = track_node;
@@ -396,7 +395,6 @@ impl AudioGraph {
             graph.connect(gain_node, 0, meter_node, 0);
             graph.connect(meter_node, 0, master_id, port_idx as u32);
 
-            // modulator_id (project) → NodeId (graph)
             let mut mod_node_ids: HashMap<String, NodeId> = HashMap::new();
 
             for modulator in &track.modulators {

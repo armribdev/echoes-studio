@@ -758,20 +758,13 @@ pub unsafe fn open_vst3_editor(
 ) -> Result<usize, String> {
     use crate::plugin_formats::vst3::ffi::{IEditController, IID_IEDIT_CONTROLLER};
 
-    // Reach the audio-side IComponent through the shared Arc.  The instance
-    // was built by `PluginHost::instantiate_vst3` (which already called
-    // `IComponent::initialize` via `instantiate_processor`), so we MUST NOT
-    // initialize again — VST3 spec forbids it.
+    // MUST NOT call `initialize` again — already done at instantiation (VST3 spec).
     let (comp_nn, _proc_nn) = instance
         .vst3_handles()
         .ok_or_else(|| "VST3 GUI: shared instance has no VST3 handles".to_string())?;
     let comp = comp_nn.as_ptr();
 
-    // Query IEditController via QI (single-component model only — dual-
-    // component plugins return a separate CID via getControllerClassId,
-    // unsupported here).  QI adds +1 refcount on the COM object, which we
-    // release in cleanup; the primary IComponent ref is owned by
-    // `PluginInstance::Drop`.
+    // Single-component model only; QI ref released in editor cleanup.
     let mut ctrl_raw: *mut c_void = null_mut();
     let r = ((*(*comp).vtbl).query_interface)(
         comp,
@@ -785,11 +778,9 @@ pub unsafe fn open_vst3_editor(
     }
     let ctrl = ctrl_raw as *mut IEditController;
 
-    // Install component handler so the plugin can begin/perform/end edits.
-    // Many plugins assume a non-null handler and crash on the first knob touch.
+    // Many plugins crash without a non-null component handler.
     let _ = ((*(*ctrl).vtbl).set_component_handler)(ctrl, component_handler_as_funknown());
 
-    // Create view — `initialize` is already done for the shared COM object.
     let view = ((*(*ctrl).vtbl).create_view)(ctrl, b"editor\0".as_ptr());
     if view.is_null() {
         ((*(*ctrl).vtbl).release)(ctrl as *mut _);
@@ -802,14 +793,11 @@ pub unsafe fn open_vst3_editor(
         return Err("VST3 GUI: plugin view does not support HWND".into());
     }
 
-    // Allocate IPlugFrame and set it on the view *before* attached().
-    // The Box must outlive the view; ownership is transferred to cleanup.
-    let plug_frame = make_plug_frame();
+    let plug_frame = make_plug_frame(); // before attached(); owned by cleanup
     let plug_frame_ptr = &*plug_frame as *const PlugFrame;
     let frame_funknown = plug_frame_ptr as *mut FUnknown;
     let _ = ((*(*view).vtbl).set_frame)(view, frame_funknown);
 
-    // Probe preferred size (may return zero before attach; that's OK).
     let mut rect = ViewRect {
         left: 0,
         top: 0,
@@ -854,7 +842,6 @@ pub unsafe fn open_vst3_editor(
     });
     let userdata_raw = Box::into_raw(userdata);
 
-    // Create container — USERDATA installed via WM_NCCREATE
     let hwnd = match create_container(name, probe_w, probe_h, userdata_raw) {
         Ok(h) => h,
         Err(e) => {
@@ -867,22 +854,16 @@ pub unsafe fn open_vst3_editor(
         }
     };
 
-    // Wire plug_frame -> this HWND so resizeView routes correctly.
-    // plug_frame_ptr is valid: the Box is captured by `cleanup` which is
-    // owned by the WindowUserData now installed in USERDATA.
     (*plug_frame_ptr)
         .container_hwnd
         .store(hwnd, Ordering::Release);
 
-    // Attach
     let attach_r = ((*(*view).vtbl).attached)(view, hwnd, b"HWND\0".as_ptr());
     if attach_r != K_RESULT_OK {
-        // Cleanup runs through WM_CLOSE — we just trigger it.
         user32::PostMessageW(hwnd, WM_CLOSE, 0, 0);
         return Err(format!("VST3 GUI: IPlugView::attached failed: {attach_r}"));
     }
 
-    // Re-query size after attach (plugin may know real size only post-attach)
     let mut rect2 = ViewRect {
         left: 0,
         top: 0,

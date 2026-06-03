@@ -148,7 +148,6 @@ impl AudioNode for DelayNode {
         let ping_pong = self.params.ping_pong;
 
         for i in 0..frames {
-            // Read from delay line
             let read_pos = (self.write_pos + cap - self.delay_samples.min(cap - 1)) % cap;
             let del_l = self.buf[read_pos * 2];
             let del_r = self.buf[read_pos * 2 + 1];
@@ -209,7 +208,6 @@ mod tests {
 
         let before = node.delay_samples;
 
-        // Halve the delay time via the block (cell order from constants).
         block.set(DELAY_DELAY_MS, 125.0);
 
         let input = AudioBuffer::new(2, 64);

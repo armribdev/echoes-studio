@@ -89,7 +89,6 @@ impl AudioNode for MasterNode {
         let output = &mut outputs[0];
         output.clear();
 
-        // Sum all inputs
         for input in inputs {
             let channels = output.num_channels.min(input.num_channels);
             let frames = output.num_frames.min(input.num_frames);

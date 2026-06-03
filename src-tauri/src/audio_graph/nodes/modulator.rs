@@ -103,7 +103,6 @@ impl AudioNode for LfoNode {
         };
         let phase_inc = rate_hz / transport.sample_rate;
 
-        // Fill channel 0, then broadcast to all channels.
         {
             let ch0 = output.channel_mut(0);
             let mut phase = self.phase;

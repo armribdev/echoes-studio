@@ -187,7 +187,6 @@ mod tests {
     }
 
     fn one_beat_note() -> MidiNoteSnapshot {
-        // Beat 1 → beat 2 (one beat long), anchored at the timeline origin.
         MidiNoteSnapshot {
             pitch: 60,
             velocity: 100,
@@ -250,7 +249,6 @@ mod tests {
         let captured = Arc::new(Mutex::new(Vec::new()));
         let mut node = make_node(captured.clone());
 
-        // Block 1 @ 120 BPM, frames 0..1_000 — note (start 24_000) not yet due.
         let block1 = TransportInfo {
             is_playing: true,
             position_samples: 0,
@@ -269,9 +267,6 @@ mod tests {
             "no NoteOn yet at 120 BPM in frames 0..1_000"
         );
 
-        // Block 2 @ 240 BPM, continuous from frame 1_000 (no discontinuity).
-        // At 240 BPM beat 1 → 12_000 frames, so NoteOn lands at offset
-        // 12_000 - 1_000 = 11_000 in this block.
         let block2 = TransportInfo {
             is_playing: true,
             position_samples: 1_000,

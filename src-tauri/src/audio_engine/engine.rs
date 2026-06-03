@@ -315,7 +315,6 @@ impl AudioEngine {
         let actual_sr = base_cfg.sample_rate.0;
         let hw_channels = base_cfg.channels as usize;
 
-        // Clamp the user-requested active channels to what the device supports.
         // `0` means "use all hardware channels" (default / unset).
         let active_channels = if settings.output_channels == 0 {
             hw_channels

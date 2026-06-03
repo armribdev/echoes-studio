@@ -457,7 +457,6 @@ fn get_audio_clip_duration(file_path: &str) -> Result<f64, String> {
             .map_err(|e| e.to_string())
     }
 
-    // First probe: extract metadata fields we need (released before slow path)
     let (sample_rate, time_base, n_frames, track_id) = {
         let format = open_format(file_path)?;
         let track = format.default_track().ok_or("No audio track found")?;
@@ -608,7 +607,6 @@ fn export_wav(
             w.finalize().map_err(|e| e.to_string())
         }
         _ => {
-            // 16-bit or anything unrecognised
             let spec = hound::WavSpec {
                 channels: 2,
                 sample_rate,

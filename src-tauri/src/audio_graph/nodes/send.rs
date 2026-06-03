@@ -41,7 +41,6 @@ impl AudioNode for SendNode {
         outputs: &mut [AudioBuffer],
         _transport: &TransportInfo,
     ) {
-        // Pass through at send gain (no independent routing yet)
         let input = &inputs[0];
         let output = &mut outputs[0];
         let channels = output.num_channels.min(input.num_channels);

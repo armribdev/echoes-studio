@@ -70,11 +70,7 @@ struct DeviceRecord {
 pub struct PluginHost {
     registry: PluginRegistry,
     records: HashMap<String, DeviceRecord>,
-    /// Plugin state blobs staged before a project-load compile, keyed by
-    /// `device_id`.  `instantiate` applies the matching blob to a freshly-created
-    /// instance **before the node enters any snapshot**, so `setState` cannot race
-    /// the audio thread's `process()` (ADR-010 race-free restore).  Empty for
-    /// ordinary recompiles — only the project-load path stages and then clears it.
+    /// ADR-010: blobs applied at instantiate before snapshot (project-load only).
     pending_state_blobs: HashMap<String, Vec<u8>>,
 }
 
@@ -87,17 +83,10 @@ impl PluginHost {
         }
     }
 
-    /// Stage plugin state blobs to be applied during the next compile, at
-    /// instantiation time (before any node is published to the audio thread).
-    /// Called on the command thread by the project-load path, immediately before
-    /// the recompile it pairs with.
     pub fn set_pending_state_blobs(&mut self, blobs: HashMap<String, Vec<u8>>) {
         self.pending_state_blobs = blobs;
     }
 
-    /// Drop any staged state blobs.  Called after the project-load compile so a
-    /// later structural recompile never re-applies stale loaded state over the
-    /// instance's live state.
     pub fn clear_pending_state_blobs(&mut self) {
         self.pending_state_blobs.clear();
     }
@@ -109,9 +98,7 @@ impl PluginHost {
         &mut self.registry
     }
 
-    /// Number of auxiliary (sidechain) input ports the plugin declares, from
-    /// the scan-time manifest cache (Phase 5d).  `0` when the device is unknown
-    /// or has no aux bus — the compiler then sizes the node exactly as before.
+    /// Sidechain aux inputs from scan manifest (Phase 5d); 0 if unknown.
     pub fn sidechain_input_ports(&self, device_id: &str) -> usize {
         self.registry
             .get(device_id)
@@ -119,9 +106,7 @@ impl PluginHost {
             .unwrap_or(0)
     }
 
-    /// Scan standard system directories for VST3 and CLAP plugins.
-    ///
-    /// Safe to call multiple times — already-registered plugins are skipped.
+    /// Idempotent — skips plugins already registered.
     pub fn scan_plugins(&mut self) {
         let vst3_host = crate::plugin_formats::vst3::host::Vst3Host::new();
         vst3_host.scan(&mut self.registry);
@@ -133,7 +118,6 @@ impl PluginHost {
         eprintln!("[plugin] scan complete — {total} plugins registered");
     }
 
-    /// Return all discovered plugins as serialisable descriptors.
     pub fn list_plugins(&self) -> Vec<PluginInfo> {
         self.registry
             .all()
@@ -148,15 +132,7 @@ impl PluginHost {
             .collect()
     }
 
-    /// Instantiate a plugin and return the audio-side `Box<dyn AudioNode>`
-    /// the graph compiler embeds in `CompiledGraph.processors`.
-    ///
-    /// The host keeps its own `Arc<PluginInstance>` clone in `records`, keyed by
-    /// `instance_key` (the stable per-placement id, e.g. project `effect.id`) so
-    /// two instances of the *same* plugin type no longer overwrite each other in
-    /// the map.  Lifecycle / parameter / state calls still address by `plugin_id`
-    /// (the type) via `record_by_device_id` until per-instance UI addressing
-    /// lands (audit point 2, step 4); ADR-007.
+    /// `instance_key` = per-placement id (ADR-007); host keeps `Arc` in `records`.
     pub fn instantiate(
         &mut self,
         node_id: NodeId,
@@ -245,7 +221,6 @@ impl PluginHost {
             instantiate_processor(factory, &cid).map_err(HostError::InstantiationFailed)?
         };
 
-        // Release factory ref — we no longer need to enumerate classes.
         unsafe {
             ((*(*factory).vtbl).release)(factory as *mut _);
         }
@@ -305,7 +280,6 @@ impl PluginHost {
         }
         let factory = factory_ptr as *const crate::plugin_formats::clap::ffi::ClapPluginFactory;
 
-        // Build host struct (heap-stable for plugin lifetime)
         let host = crate::plugin_formats::clap::ffi::make_host();
 
         let clap_id_cstr: Vec<u8> = clap_id.bytes().chain(std::iter::once(0)).collect();

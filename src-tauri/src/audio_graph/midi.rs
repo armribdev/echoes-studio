@@ -127,7 +127,6 @@ mod tests {
     /// future change to the resolution maths trips this test.
     #[test]
     fn beats_to_sample_is_deterministic_at_constant_tempo() {
-        // 120 BPM, 48 kHz → 1 beat = 0.5 s = 24_000 frames.
         assert_eq!(beats_to_sample(0.0, 0.0, 120.0, 48_000.0), 0);
         assert_eq!(beats_to_sample(0.0, 1.0, 120.0, 48_000.0), 24_000);
         assert_eq!(beats_to_sample(0.0, 2.0, 120.0, 48_000.0), 48_000);
@@ -137,7 +136,6 @@ mod tests {
     /// scales with tempo.  Verifies the mixed seconds/beats project model.
     #[test]
     fn clip_anchor_is_tempo_independent() {
-        // 1.0 s anchor + 0 beats = exactly 48_000 frames regardless of BPM.
         assert_eq!(beats_to_sample(1.0, 0.0, 120.0, 48_000.0), 48_000);
         assert_eq!(beats_to_sample(1.0, 0.0, 240.0, 48_000.0), 48_000);
     }
@@ -154,10 +152,8 @@ mod tests {
             start_beats: 1.0,
             end_beats: 2.0,
         };
-        // 120 BPM: beat 1 → 24_000, beat 2 → 48_000.
         assert_eq!(note.start_sample(120.0, 48_000.0), 24_000);
         assert_eq!(note.end_sample(120.0, 48_000.0), 48_000);
-        // 240 BPM (twice as fast): beat positions halve.
         assert_eq!(note.start_sample(240.0, 48_000.0), 12_000);
         assert_eq!(note.end_sample(240.0, 48_000.0), 24_000);
     }

@@ -97,8 +97,6 @@ impl AudioNode for TrackNode {
                 continue;
             }
 
-            // Compute the source-position ratio for linear-interpolated pitch
-            // correction when native SR ≠ engine SR.
             let sr_ratio = if clip.native_sample_rate > 0 {
                 clip.native_sample_rate as f64 / self.engine_sample_rate as f64
             } else {
@@ -111,8 +109,6 @@ impl AudioNode for TrackNode {
             let start_frame = (overlap_start - pos) as usize;
             let end_frame = (overlap_end - pos) as usize;
 
-            // Write channel 0 (mono source) — linear interpolation between
-            // adjacent source samples when native SR ≠ engine SR.
             let out_ch0 = output.channel_mut(0);
             for frame in start_frame..end_frame {
                 let local_offset = overlap_start - clip.start_sample + (frame - start_frame) as u64;
@@ -131,7 +127,6 @@ impl AudioNode for TrackNode {
             }
         }
 
-        // Duplicate ch0 to remaining channels (mono → stereo / multichannel)
         output.mono_to_all_channels();
     }
 

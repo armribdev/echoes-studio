@@ -117,7 +117,6 @@ impl PolySynth {
         let vel = velocity as f32 / 127.0;
         let (gain_l, gain_r) = Self::pitch_to_pan_gains(pitch);
 
-        // Re-trigger same pitch if already playing
         for v in &mut self.voices {
             if v.active && v.pitch == pitch {
                 v.phase_inc = phase_inc;
@@ -130,7 +129,6 @@ impl PolySynth {
             }
         }
 
-        // Allocate a free voice
         for v in &mut self.voices {
             if !v.active {
                 v.active = true;
@@ -147,7 +145,6 @@ impl PolySynth {
             }
         }
 
-        // Steal the oldest active voice
         if let Some(v) = self.voices.iter_mut().min_by_key(|v| v.birth) {
             v.active = true;
             v.pitch = pitch;

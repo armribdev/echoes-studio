@@ -55,7 +55,6 @@ pub struct BridgedNode {
     /// Format-native plugin id passed to the bridge (e.g. the CLAP id).
     plugin_id: String,
 
-    // Set at `prepare`:
     channels: usize,
     block_size: usize,
     sample_rate: u32,
@@ -130,7 +129,6 @@ impl AudioNode for BridgedNode {
         "BridgedPlugin"
     }
 
-    // One multichannel audio port in / out, mirroring the in-process wrapper.
     fn num_input_ports(&self) -> usize {
         1
     }
@@ -200,7 +198,6 @@ impl AudioNode for BridgedNode {
             return;
         }
 
-        // Marshal inputs into the planar scratch (channel-major).
         for c in 0..nc {
             let dst = &mut self.planar_in[c * frames..c * frames + frames];
             if inputs.is_empty() {
@@ -212,8 +209,6 @@ impl AudioNode for BridgedNode {
 
         let n = nc * frames;
         let session = self.session.as_mut().unwrap();
-        // On timeout `process_block` fills `planar_out` with silence, so the copy
-        // below is correct either way.
         session.process_block(
             &self.planar_in[..n],
             &mut self.planar_out[..n],
@@ -231,8 +226,6 @@ impl AudioNode for BridgedNode {
     }
 
     fn reset(&mut self) {
-        // Stateless from the engine's side; the plugin keeps its own state across
-        // transport stops (matching the in-process wrapper).
     }
 }
 
@@ -259,8 +252,6 @@ mod tests {
 
     #[test]
     fn falls_back_to_passthrough_without_a_bridge() {
-        // No `prepare` → no session, `block_size == 0`: `process` must take the
-        // graceful pass-through path (input copied to output), never panic.
         let mut n = node();
         n.channels = 2;
 

@@ -49,7 +49,6 @@ impl ClapHost {
             }
         };
 
-        // Get the plugin factory.
         let factory_ptr = unsafe {
             ((*entry).get_factory)(CLAP_PLUGIN_FACTORY_ID.as_ptr() as *const std::ffi::c_char)
         };
