@@ -37,7 +37,10 @@
 		ARRANGE_POINTER_DRAG_THRESHOLD,
 		ARRANGE_TRACK_HEIGHT,
 		clipsInArrangeSelbox,
+		trackIndexFromArrangeY,
 	} from '../frontend/arrangeInteraction';
+	import { ev, isEngineEvent, type TrackCreatedPayload } from '../shared/protocol/events';
+	import type { CommandResult } from '../shared/protocol/commands';
 
 	const TRACK_COLORS = [
 		'#4d96ff', '#ff6b6b', '#6bcb77', '#ffd93d',
@@ -71,6 +74,30 @@
 	let contextMenu: { x: number; y: number; trackId: string; trackName: string; trackIndex: number } | null = null;
 	let clipContextMenu: { x: number; y: number } | null = null;
 	let selectedTrackIndex: number | null = null;
+
+	function selectTrackIndex(trackIndex: number) {
+		if (trackIndex < 0 || trackIndex >= tracks.length) return;
+		selectedTrackIndex = trackIndex;
+		keyboardFocus.setTimeline();
+	}
+
+	function selectTrackFromArrangeY(y: number) {
+		const idx = trackIndexFromArrangeY(y, tracks.length);
+		if (idx !== null) selectTrackIndex(idx);
+	}
+
+	function selectTrackFromCreateResult(result: CommandResult) {
+		for (const raw of result.events) {
+			if (!isEngineEvent(raw) || raw.type !== ev.TRACK_CREATED) continue;
+			const id = (raw.payload as TrackCreatedPayload).id;
+			const idx = tracks.findIndex((t) => t.id === id);
+			if (idx >= 0) {
+				selectTrackIndex(idx);
+				return;
+			}
+		}
+		if (tracks.length > 0) selectTrackIndex(tracks.length - 1);
+	}
 
 	$: {
 		if (selectedTrackIndex !== null && tracks[selectedTrackIndex]) {
@@ -364,6 +391,7 @@
 
 	function onTracksPointerUp(event: MouseEvent) {
 		if (tracksPointer.kind === 'pending') {
+			selectTrackFromArrangeY(tracksPointer.startY);
 			seekToClientX(event.clientX, event.altKey);
 		} else if (tracksPointer.kind === 'selbox') {
 			const ids = clipsInArrangeSelbox(tracks, tracksPointer, scale);
@@ -373,8 +401,10 @@
 				activateArrangeClip(clipId);
 			} else if (ids.length > 0) {
 				selection.setMany(ids, { additive: tracksPointer.additive });
+				selectTrackFromArrangeY(tracksPointer.y0);
 			} else if (!tracksPointer.additive) {
 				selection.clear();
+				selectTrackFromArrangeY(tracksPointer.y0);
 			}
 		}
 
@@ -386,7 +416,12 @@
 			const track = tracks[trackIndex];
 			const midiClip = track.midi_clips?.find((c) => c.id === clipId);
 			if (midiClip) {
+				selectTrackIndex(trackIndex);
 				ensureClipPreview(track, midiClip, trackColor(trackIndex));
+				return;
+			}
+			if (track.clips.some((c) => c.id === clipId)) {
+				selectTrackIndex(trackIndex);
 				return;
 			}
 		}
@@ -520,7 +555,8 @@
 
 	function handleClipContextMenu(e: CustomEvent<{ id: string; trackIndex: number; x: number; y: number }>) {
 		keyboardFocus.setTimeline();
-		const { id, x, y } = e.detail;
+		const { id, trackIndex, x, y } = e.detail;
+		selectTrackIndex(trackIndex);
 		// If the right-clicked clip is not in the selection, make it the sole selection.
 		if (!$selection.ids.has(id)) {
 			selection.setSingle(id);
@@ -553,6 +589,7 @@
 
 	function onMidiClipDragStart(e: CustomEvent<{ offsetPx: number; trackIndex: number; clipId: string }>) {
 		const { trackIndex, clipId, offsetPx } = e.detail;
+		selectTrackIndex(trackIndex);
 		const track = tracks[trackIndex];
 		const clip = track?.midi_clips?.find((c) => c.id === clipId);
 		if (!clip) return;
@@ -613,7 +650,8 @@
 
 	function onMidiClipContextMenu(e: CustomEvent<{ id: string; trackIndex: number; x: number; y: number }>) {
 		keyboardFocus.setTimeline();
-		const { id, x, y } = e.detail;
+		const { id, trackIndex, x, y } = e.detail;
+		selectTrackIndex(trackIndex);
 		// Reuse clip context menu with a remove action handled via selection
 		selection.setSingle(id);
 		midiClipContextTarget = id;
@@ -621,23 +659,21 @@
 		clipContextMenu = { x, y };
 	}
 
-	function handleTracksDoubleClick(event: MouseEvent) {
-		if (!tracksEl) return;
-		const rect = tracksEl.getBoundingClientRect();
-		const x = event.clientX - rect.left;
-		const y = event.clientY - rect.top + tracksEl.scrollTop;
-		if (x < 0 || y < 0) return;
-		const trackIndex = Math.min(Math.max(0, Math.floor(y / ARRANGE_TRACK_HEIGHT)), tracks.length - 1);
+	function handleTrackDoubleClick(e: CustomEvent<{ offsetPx: number; trackIndex: number }>) {
+		const { offsetPx, trackIndex } = e.detail;
 		const track = tracks[trackIndex];
 		if (!track) return;
 
-		const startSec = Math.max(0, x / scale);
+		selectTrackIndex(trackIndex);
+
+		const startSec = Math.max(0, offsetPx / scale);
 		const bpm = $tempo.bpm;
 		const fourBeats = (4 / bpm) * 60;
 		addMidiClip(track.id, startSec, startSec + fourBeats).catch(console.error);
 	}
 
 	function onClipDragStart(e: CustomEvent<{ offsetPx: number; trackIndex: number; clipIndex: number }>) {
+		selectTrackIndex(e.detail.trackIndex);
 		dragging = e.detail;
 		window.addEventListener('mousemove', onDragMove);
 		window.addEventListener('mouseup', onDragEnd);
@@ -700,10 +736,13 @@
 		soloTrack(track.id, !track.solo).catch(console.error);
 	}
 
-	function handleCreateTrack() {
-		createTrack(`Piste ${tracks.length + 1}`).catch((e: unknown) =>
-			notify(`Erreur création piste : ${(e as Error)?.message ?? String(e)}`, 'error')
-		);
+	async function handleCreateTrack() {
+		try {
+			const result = await createTrack(`Piste ${tracks.length + 1}`);
+			selectTrackFromCreateResult(result);
+		} catch (e: unknown) {
+			notify(`Erreur création piste : ${(e as Error)?.message ?? String(e)}`, 'error');
+		}
 	}
 
 	function handleDeleteTrack(trackId: string) {
@@ -824,7 +863,7 @@
 					bind:pan={tracks[trackIndex].pan}
 					peakL={($trackLevels[track.id]?.[0]) ?? 0}
 					peakR={($trackLevels[track.id]?.[1]) ?? 0}
-					on:select={() => { selectedTrackIndex = trackIndex; keyboardFocus.setTimeline(); }}
+					on:select={() => selectTrackIndex(trackIndex)}
 					on:contextmenu={(e) => { contextMenu = { x: e.detail.clientX, y: e.detail.clientY, trackId: track.id, trackName: track.name, trackIndex }; }}
 					on:mutetoggle={() => handleMuteToggle(trackIndex)}
 					on:solotoggle={() => handleSoloToggle(trackIndex)}
@@ -876,7 +915,6 @@
 			on:dragenter={handleDragEnter}
 			on:dragleave={handleDragLeave}
 			on:mousedown={handleTracksMouseDown}
-			on:dblclick={handleTracksDoubleClick}
 			on:wheel={handleTracksWheel}
 			on:scroll={() => {
 				if (tracksEl) tracksScrollTop = tracksEl.scrollTop;
@@ -928,6 +966,7 @@
 					on:midiclip_dblclick={onMidiClipDblClick}
 					on:midiclip_activate={onMidiClipActivate}
 					on:midiclip_contextmenu={onMidiClipContextMenu}
+					on:trackdblclick={handleTrackDoubleClick}
 				/>
 			{/each}
 		</div>

@@ -3,6 +3,11 @@ import type { Track } from '../types/global';
 export const ARRANGE_TRACK_HEIGHT = 100;
 export const ARRANGE_POINTER_DRAG_THRESHOLD = 3;
 
+export function trackIndexFromArrangeY(y: number, trackCount: number): number | null {
+	if (trackCount <= 0) return null;
+	return Math.min(Math.max(0, Math.floor(y / ARRANGE_TRACK_HEIGHT)), trackCount - 1);
+}
+
 export type ArrangeSelbox = { x0: number; y0: number; x1: number; y1: number };
 
 export function clipsInArrangeSelbox(

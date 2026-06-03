@@ -19,10 +19,22 @@
 		midiclip_contextmenu: { id: string; trackIndex: number; x: number; y: number };
 		midiclip_dblclick: { id: string; trackIndex: number };
 		midiclip_activate: { id: string; trackIndex: number };
+		trackdblclick: { offsetPx: number; trackIndex: number };
 	}>();
+
+	function onTrackDblClick(e: MouseEvent) {
+		const target = e.target;
+		if (!(target instanceof HTMLElement)) return;
+		if (target.closest('.clip, .midi-clip')) return;
+
+		e.stopPropagation();
+		const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+		dispatch('trackdblclick', { offsetPx: e.clientX - rect.left, trackIndex });
+	}
 </script>
 
-<div class="track">
+<!-- svelte-ignore a11y-no-static-element-interactions -->
+<div class="track" on:dblclick={onTrackDblClick}>
 	{#each clips as clip, clipIndex}
 		<Clip
 			id={clip.id}
