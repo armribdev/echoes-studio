@@ -145,6 +145,24 @@ impl AudioNode for InstrumentNode {
             self.event_buf.sort_by_offset();
             self.next_expected_block_start = block_end;
         } else {
+            // Play → pause: release notes still sounding at the pause point so
+            // voices fade out instead of ringing until the transport later
+            // crosses their end. Reuses the NoteOff path (PolySynth + CLAP).
+            if self.was_playing {
+                let pause_point = transport.position_samples;
+                let bpm = transport.bpm;
+                let sample_rate = transport.sample_rate;
+                for note in self.notes.iter() {
+                    let start_sample = note.start_sample(bpm, sample_rate);
+                    let end_sample = note.end_sample(bpm, sample_rate);
+                    if start_sample <= pause_point && pause_point < end_sample {
+                        self.event_buf.push(MidiEvent {
+                            offset: 0,
+                            kind: MidiEventKind::NoteOff { pitch: note.pitch },
+                        });
+                    }
+                }
+            }
             self.next_expected_block_start = transport.position_samples;
         }
 
@@ -239,6 +257,44 @@ mod tests {
             .find(|e| matches!(e.kind, MidiEventKind::NoteOn { .. }))
             .expect("NoteOn emitted");
         assert_eq!(note_on.offset, 24_000);
+    }
+
+    /// Pausing while a note is sounding must emit a NoteOff so the voice is
+    /// released instead of ringing until the transport later crosses its end.
+    #[test]
+    fn pause_while_note_sounding_emits_note_off() {
+        let captured = Arc::new(Mutex::new(Vec::new()));
+        let mut node = make_node(captured.clone());
+
+        // Block straddling the note start (24_000 at 120 BPM) so the voice is on.
+        let playing = TransportInfo {
+            is_playing: true,
+            position_samples: 0,
+            position_seconds: 0.0,
+            bpm: 120.0,
+            sample_rate: 48_000.0,
+            block_size: 30_000,
+        };
+        run_block(&mut node, &playing);
+
+        // Pause with the playhead inside the note (start 24_000, end 48_000).
+        let paused = TransportInfo {
+            is_playing: false,
+            position_samples: 30_000,
+            position_seconds: 30_000.0 / 48_000.0,
+            bpm: 120.0,
+            sample_rate: 48_000.0,
+            block_size: 512,
+        };
+        run_block(&mut node, &paused);
+
+        let events = captured.lock().unwrap();
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e.kind, MidiEventKind::NoteOff { pitch: 60 })),
+            "pausing inside a note must release it"
+        );
     }
 
     /// Same node, notes unchanged: changing `transport.bpm` between blocks

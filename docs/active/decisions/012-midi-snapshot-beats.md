@@ -55,7 +55,9 @@ scheduler without a rebake or recompile.
    - `InstrumentNode::process` resolves `note.start_sample(transport.bpm,
      transport.sample_rate)` **every block**, emits `NoteOn`/`NoteOff` at the
      intra-block offset, and handles seek/resume discontinuity with a catch-up
-     `NoteOn`.
+     `NoteOn`. On a play→pause transition it emits a `NoteOff` for notes still
+     sounding at the pause point, so voices release instead of ringing until the
+     transport later crosses their end.
 
 4. **[`audio_engine/transport.rs`](../../../src-tauri/src/audio_engine/transport.rs)**
    - `SharedTransport.bpm_bits: AtomicU32`; `snapshot(block_size)` reads it into
