@@ -26,8 +26,6 @@
 
 use crate::audio_graph::node::NodeId;
 
-// ── Parameter identification ───────────────────────────────────────────────────
-
 /// Opaque stable identifier for a parameter on a specific node.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ParamId {
@@ -45,8 +43,6 @@ impl ParamId {
     }
 }
 
-// ── Modulation source ──────────────────────────────────────────────────────────
-
 /// Identifies which output port of a modulator node carries the modulation
 /// signal (normalised −1…+1 f32 per sample).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -56,8 +52,6 @@ pub struct ModulationSource {
     pub port: u32,
 }
 
-// ── Modulation target ──────────────────────────────────────────────────────────
-
 /// A single modulation destination: one parameter on one node.
 #[derive(Debug, Clone)]
 pub struct ModulationTarget {
@@ -66,8 +60,6 @@ pub struct ModulationTarget {
     /// e.g. `depth = 6.0` on a gain parameter means ±6 dB of modulation.
     pub depth: f32,
 }
-
-// ── Route ─────────────────────────────────────────────────────────────────────
 
 /// A complete modulation connection: one source → one target.
 #[derive(Debug, Clone)]
@@ -80,8 +72,6 @@ pub struct ModulationRoute {
     /// don't originate from a project route.
     pub route_id: Option<String>,
 }
-
-// ── Map (compiled form) ────────────────────────────────────────────────────────
 
 /// The complete modulation routing table for one compiled execution plan.
 ///
@@ -134,8 +124,6 @@ impl ModulationMap {
         self.routes.len()
     }
 }
-
-// ── Modulation categories ──────────────────────────────────────────────────────
 
 /// The kind of modulation a source node produces.
 ///

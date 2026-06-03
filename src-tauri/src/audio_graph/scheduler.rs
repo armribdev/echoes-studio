@@ -67,8 +67,6 @@ const MIN_INPUT_PTR_SCRATCH: usize = 32;
 /// dominates over actually processing one step.
 const POOL_MIN_LEVEL_WIDTH: usize = 2;
 
-// ── PDC delay line ────────────────────────────────────────────────────────────
-
 /// Per-channel ring buffer used to delay one input port for latency
 /// compensation.  Allocated at scheduler construction; `process` runs entirely
 /// from pre-allocated storage.
@@ -133,8 +131,6 @@ impl DelayLine {
     }
 }
 
-// ── Modulation action (pre-compiled) ──────────────────────────────────────────
-
 /// One modulation connection, resolved to step indices at compile time.
 ///
 /// Built from `ModulationMap` in `GraphScheduler::new`; read-only during
@@ -159,8 +155,6 @@ struct CompiledModAction {
     static_depth: f32,
 }
 
-// ── Workspace ─────────────────────────────────────────────────────────────────
-
 /// Raw pointer view into the scheduler's per-step state.  Passed to the worker
 /// pool as the dispatch context; every pointer stays valid for the lifetime of
 /// the enclosing `process_block` call.
@@ -184,8 +178,6 @@ struct Workspace {
 // indices under the level invariant.  See module-level safety contract.
 unsafe impl Send for Workspace {}
 unsafe impl Sync for Workspace {}
-
-// ── GraphScheduler ────────────────────────────────────────────────────────────
 
 /// Drives one compiled audio graph in the real-time audio callback.
 pub struct GraphScheduler {
@@ -252,8 +244,6 @@ impl GraphScheduler {
         let num_channels = plan.num_channels;
         let max_block = plan.max_block_size;
 
-        // Pre-allocate output buffers: one Vec<AudioBuffer> per step,
-        // one AudioBuffer per output port.
         let output_buffers: Vec<Vec<AudioBuffer>> = plan
             .steps
             .iter()
@@ -267,16 +257,12 @@ impl GraphScheduler {
 
         let silence_buffer = AudioBuffer::new(num_channels, max_block);
 
-        // Size scratch to the plan's widest node (e.g. master with one port
-        // per track).  One row per worker plus one for the dispatching audio
-        // thread (id = num_workers).
         let scratch_len = plan.max_input_ports().max(MIN_INPUT_PTR_SCRATCH);
         let worker_scratch: Vec<Vec<*const AudioBuffer>> = (0..(num_workers + 1))
             .map(|_| vec![std::ptr::null(); scratch_len])
             .collect();
 
-        // ── Pre-compile modulation actions ────────────────────────────────────────
-        // NodeId → step index lookup (used only at construction — may allocate).
+        // NodeId → step index — used only at construction, may allocate.
         let node_to_step: HashMap<NodeId, usize> = plan
             .steps
             .iter()
@@ -317,9 +303,6 @@ impl GraphScheduler {
             });
         }
 
-        // ── Pre-allocate PDC delay lines ──────────────────────────────────────
-        // Walk every step's input connections; allocate a `DelayLine` for each
-        // port that the compiler tagged with `delay_samples > 0`.
         let delay_lines: Vec<Vec<Option<DelayLine>>> = plan
             .steps
             .iter()
@@ -376,37 +359,25 @@ impl GraphScheduler {
         }
     }
 
-    // ── Audio callback entry point ─────────────────────────────────────────────
-
     /// Process one block.  Must only be called from the audio thread.
     ///
     /// After this returns, `interleaved_output` contains the rendered audio
     /// in `[L0, R0, L1, R1, …]` interleaved format.
     pub fn process_block(&mut self, transport: &TransportInfo, interleaved_output: &mut [f32]) {
-        // Run every level in topological order.
         self.run_levels(transport);
 
-        // Write final output (master step = last step) to the output buffer.
         if let Some(master_step_idx) = self.plan.master_step() {
             self.write_master_output(master_step_idx, transport, interleaved_output);
         } else {
-            // Empty graph — fill with silence
             interleaved_output.fill(0.0);
         }
     }
 
-    // ── Level dispatch ────────────────────────────────────────────────────────
-
-    /// Walk every level of the plan and dispatch its steps either inline
-    /// (sequential / single-step / no pool) or through the worker pool
-    /// (parallel within a level).
     fn run_levels(&mut self, transport: &TransportInfo) {
         if self.plan.steps.is_empty() {
             return;
         }
 
-        // Build the workspace pointer bundle.  `plan` is held by Arc and
-        // re-borrowed via `*const`, which lives as long as `self`.
         let plan_arc = Arc::clone(&self.plan);
         let workspace = Workspace {
             plan: Arc::as_ptr(&plan_arc),
@@ -419,8 +390,6 @@ impl GraphScheduler {
             transport_ptr: transport as *const TransportInfo,
         };
 
-        // Iterate using the Arc clone (immutable borrow only) so we don't
-        // double-borrow `self`.
         for level_indices in plan_arc.levels.iter() {
             if level_indices.is_empty() {
                 continue;
@@ -431,10 +400,7 @@ impl GraphScheduler {
                     pool.dispatch(level_indices, workspace, step_thunk);
                 }
                 _ => {
-                    // Sequential — run inline as worker 0 (the only worker
-                    // when there is no pool).  Even with a pool, single-step
-                    // levels skip the dispatch to avoid the unpark/barrier
-                    // overhead.
+                    // Single-step levels skip pool dispatch to avoid unpark/barrier overhead.
                     for &step_idx in level_indices {
                         unsafe { process_one_step(0, step_idx, workspace) };
                     }
@@ -443,11 +409,6 @@ impl GraphScheduler {
         }
     }
 
-    /// Read the final stereo signal and write to `interleaved_output`.
-    ///
-    /// `MasterNode::process` already sums all track inputs, applies soft-clip,
-    /// and writes the result to `output_buffers[master_step_idx][0]`.  We read
-    /// that buffer directly — no need to re-sum upstream nodes here.
     fn write_master_output(
         &self,
         master_step_idx: usize,
@@ -459,9 +420,6 @@ impl GraphScheduler {
 
         interleaved_output.fill(0.0);
 
-        // output_buffers[master_step_idx][0] was written by MasterNode::process
-        // during run_levels (it declared num_outputs = 1 so the scheduler
-        // pre-allocated exactly this slot).
         let master_bufs = &self.output_buffers[master_step_idx];
         if master_bufs.is_empty() {
             return; // safety guard — should never happen
@@ -483,8 +441,6 @@ impl GraphScheduler {
             }
         }
     }
-
-    // ── Graph swap ─────────────────────────────────────────────────────────────
 
     /// Returns the current execution plan (used for introspection / debugging).
     pub fn plan(&self) -> &Arc<ExecutionPlan> {
@@ -513,10 +469,6 @@ impl GraphScheduler {
     }
 }
 
-// ── Per-step processing ───────────────────────────────────────────────────────
-
-/// Thin function-pointer adapter so the worker pool can invoke
-/// `process_one_step` (which is `unsafe`) via a safe `fn` slot.
 fn step_thunk(worker_id: usize, step_idx: usize, ws: Workspace) {
     unsafe { process_one_step(worker_id, step_idx, ws) }
 }
@@ -539,7 +491,6 @@ unsafe fn process_one_step(worker_id: usize, step_idx: usize, ws: Workspace) {
     let num_inputs = step.input_connections.len();
     let transport = &*ws.transport_ptr;
 
-    // Pick this worker's scratch row.
     let scratch = &mut *ws.worker_scratch_ptr.add(worker_id);
     debug_assert!(
         num_inputs <= scratch.len(),
@@ -547,7 +498,6 @@ unsafe fn process_one_step(worker_id: usize, step_idx: usize, ws: Workspace) {
         scratch.len()
     );
 
-    // ── Gather input pointers ─────────────────────────────────────────────────
     for (port, conn_opt) in step.input_connections.iter().enumerate() {
         scratch[port] = match conn_opt {
             Some(conn) => {
@@ -559,30 +509,23 @@ unsafe fn process_one_step(worker_id: usize, step_idx: usize, ws: Workspace) {
         };
     }
 
-    // ── Apply PDC delay lines ─────────────────────────────────────────────────
     let step_delays = &mut *ws.delay_lines_ptr.add(step_idx);
     for (port, dl_opt) in step_delays.iter_mut().enumerate() {
         if let Some(dl) = dl_opt {
-            // scratch[port] was filled above with a pointer to a live
-            // AudioBuffer (either an upstream output, valid because the
-            // earlier level finished, or the long-lived silence buffer).
             let src_ref: &AudioBuffer = &*scratch[port];
             dl.process(src_ref, transport.block_size);
             scratch[port] = &dl.out as *const AudioBuffer;
         }
     }
 
-    // ── Build &[&AudioBuffer] from pointer scratch ─────────────────────────────
     let inputs: &[&AudioBuffer] =
         std::slice::from_raw_parts(scratch.as_ptr() as *const &AudioBuffer, num_inputs);
 
-    // ── Clear output buffers before processing ────────────────────────────────
     let outputs = &mut *ws.output_buffers_ptr.add(step_idx);
     for buf in outputs.iter_mut() {
         buf.clear();
     }
 
-    // ── Modulation dispatch ───────────────────────────────────────────────────
     let actions: &[CompiledModAction] = &*ws.mod_actions_ptr.add(step_idx);
     let processor = &mut *ws.processors_ptr.add(step_idx);
 
@@ -610,8 +553,7 @@ unsafe fn process_one_step(worker_id: usize, step_idx: usize, ws: Workspace) {
         processor.apply_modulation(action.param_id, mod_signal * depth);
     }
 
-    // ── Dispatch ──────────────────────────────────────────────────────────────
-    // Phase 1 / P0-5 short-term containment: catch Rust panics so a buggy
+    // Phase 1 / P0-5: catch Rust panics so a buggy
     // node (or a Rust-side panic raised from a third-party wrapper) does not
     // unwind the audio thread or a pool worker, which would crash the engine.
     //
@@ -641,8 +583,6 @@ unsafe fn process_one_step(worker_id: usize, step_idx: usize, ws: Workspace) {
         }
     }
 }
-
-// ── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
@@ -882,7 +822,6 @@ mod tests {
         };
         let master_step = sched.plan.master_step().unwrap();
         sched.run_levels(&transport);
-        // Read sum's output buffer directly (port 0) and return left channel.
         sched.output_buffers[master_step][0].channel(0).to_vec()
     }
 
@@ -974,8 +913,6 @@ mod tests {
             "delayed src_b impulse must land at absolute frame {latency}"
         );
     }
-
-    // ── R1: level-set + parallel execution ────────────────────────────────────
 
     #[test]
     fn level_computation_groups_parallel_sources() {

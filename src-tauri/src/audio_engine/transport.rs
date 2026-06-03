@@ -22,8 +22,6 @@ use std::sync::Arc;
 
 use crate::audio_graph::node::TransportInfo;
 
-// ── SharedTransport ───────────────────────────────────────────────────────────
-
 /// Atomic transport state shared between the command thread and the CPAL callback.
 pub struct SharedTransport {
     /// `true` while the engine is rendering audio.
@@ -55,8 +53,6 @@ impl SharedTransport {
         })
     }
 
-    // ── Accessors ─────────────────────────────────────────────────────────────
-
     #[inline]
     pub fn sample_rate(&self) -> f32 {
         f32::from_bits(self.sample_rate_bits.load(Ordering::Relaxed))
@@ -82,8 +78,6 @@ impl SharedTransport {
         self.duration_samples.store(samples, Ordering::Relaxed);
     }
 
-    // ── Transport commands ────────────────────────────────────────────────────
-
     /// Start playback from the current position.
     pub fn play(&self) {
         self.is_playing.store(true, Ordering::Relaxed);
@@ -105,8 +99,6 @@ impl SharedTransport {
         let pos = (position_seconds * self.sample_rate() as f64) as u64;
         self.position_samples.store(pos, Ordering::Relaxed);
     }
-
-    // ── Audio-thread helpers ──────────────────────────────────────────────────
 
     /// Snapshot the current transport state into a `TransportInfo` value.
     ///

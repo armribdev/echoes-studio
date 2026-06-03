@@ -6,8 +6,6 @@
 
 use serde::{Deserialize, Serialize};
 
-// ── Envelope ──────────────────────────────────────────────────────────────────
-
 /// The outer wrapper for every command sent from the UI.
 ///
 /// `rename_all = "camelCase"` bridges TypeScript (camelCase) ↔ Rust (snake_case).
@@ -36,16 +34,12 @@ pub struct BatchCommand {
     pub commands: Vec<CommandEnvelope>,
 }
 
-// ── Command type constants ────────────────────────────────────────────────────
-
 pub mod cmd {
-    // ── Transport ─────────────────────────────────────────────────────────────
     pub const PLAY: &str = "PLAY";
     pub const STOP: &str = "STOP";
     pub const PAUSE: &str = "PAUSE";
     pub const SEEK: &str = "SEEK";
 
-    // ── Project structure (event-sourced) ─────────────────────────────────────
     pub const CREATE_TRACK: &str = "CREATE_TRACK";
     pub const DELETE_TRACK: &str = "DELETE_TRACK";
     pub const UPDATE_TRACK: &str = "UPDATE_TRACK";
@@ -57,17 +51,14 @@ pub mod cmd {
     pub const UPDATE_PROJECT_NAME: &str = "UPDATE_PROJECT_NAME";
     pub const UPDATE_TEMPO: &str = "UPDATE_TEMPO";
 
-    // ── Effects ───────────────────────────────────────────────────────────────
     pub const ADD_EFFECT: &str = "ADD_EFFECT";
     pub const REMOVE_EFFECT: &str = "REMOVE_EFFECT";
     pub const UPDATE_EFFECT: &str = "UPDATE_EFFECT";
 
-    // ── Audio graph (structural routing) ──────────────────────────────────────
     pub const ADD_NODE: &str = "ADD_NODE";
     pub const REMOVE_NODE: &str = "REMOVE_NODE";
     pub const CONNECT_NODES: &str = "CONNECT_NODES";
 
-    // ── Modulation ────────────────────────────────────────────────────────────
     pub const ADD_MODULATOR: &str = "ADD_MODULATOR";
     pub const REMOVE_MODULATOR: &str = "REMOVE_MODULATOR";
     pub const UPDATE_MODULATOR: &str = "UPDATE_MODULATOR";
@@ -75,7 +66,6 @@ pub mod cmd {
     pub const REMOVE_MODULATION_ROUTE: &str = "REMOVE_MODULATION_ROUTE";
     pub const SET_MODULATION_DEPTH: &str = "SET_MODULATION_DEPTH";
 
-    // ── MIDI ──────────────────────────────────────────────────────────────────
     pub const SET_MIDI_NOTES: &str = "SET_MIDI_NOTES";
     pub const ADD_MIDI_CLIP: &str = "ADD_MIDI_CLIP";
     pub const REMOVE_MIDI_CLIP: &str = "REMOVE_MIDI_CLIP";
@@ -83,8 +73,6 @@ pub mod cmd {
     pub const SET_CLIP_MIDI_NOTES: &str = "SET_CLIP_MIDI_NOTES";
 }
 
-// ── Typed payload structs ─────────────────────────────────────────────────────
-//
 // Each struct is deserialised from `CommandEnvelope::payload` for its matching
 // command type. Keep these lean — no audio data here.
 
@@ -176,8 +164,6 @@ pub struct UpdateEffectPayload {
     pub enabled: Option<bool>,
     pub params: Option<serde_json::Value>,
 }
-
-// ── Modulation payloads ───────────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize)]
 pub struct AddModulatorPayload {

@@ -47,8 +47,6 @@ impl AudioBuffer {
         AudioBuffer::new(1, 1)
     }
 
-    // ── Per-channel access ─────────────────────────────────────────────────────
-
     /// Immutable slice for channel `ch`.
     #[inline]
     pub fn channel(&self, ch: usize) -> &[f32] {
@@ -88,8 +86,6 @@ impl AudioBuffer {
             )
         }
     }
-
-    // ── Block operations ───────────────────────────────────────────────────────
 
     /// Zero all samples.  No allocation.
     #[inline]
@@ -136,14 +132,12 @@ impl AudioBuffer {
             return;
         }
         let frames = self.num_frames;
-        // ch0 is data[0..frames] — copy to every subsequent channel
         for ch in 1..self.num_channels {
             let (src_half, dst_half) = if ch * frames < frames {
                 unreachable!()
             } else {
                 self.data.split_at_mut(ch * frames)
             };
-            // src_half = data[0..ch*frames], take last `frames` of it as ch0
             let src = &src_half[0..frames];
             let dst = &mut dst_half[0..frames];
             dst.copy_from_slice(src);

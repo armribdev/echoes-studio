@@ -43,8 +43,6 @@ fn zero_cell() -> Arc<AtomicU32> {
     Arc::new(AtomicU32::new(0.0_f32.to_bits()))
 }
 
-// ── Compile config ─────────────────────────────────────────────────────────────
-
 /// Parameters that vary per audio device session.
 #[derive(Debug, Clone, Copy)]
 pub struct CompileConfig {
@@ -62,8 +60,6 @@ impl Default for CompileConfig {
         }
     }
 }
-
-// ── Compile error ─────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CompileError {
@@ -104,8 +100,6 @@ impl std::fmt::Display for CompileError {
     }
 }
 
-// ── Compiled output ───────────────────────────────────────────────────────────
-
 /// Everything the `GraphScheduler` needs to run one session.
 pub struct CompiledGraph {
     pub plan: Arc<ExecutionPlan>,
@@ -118,8 +112,6 @@ pub struct CompiledGraph {
     /// scheduler so live depth changes don't require a recompile.
     pub route_cells: HashMap<String, Arc<crate::audio_graph::live_params::RouteCells>>,
 }
-
-// ── GraphCompiler ─────────────────────────────────────────────────────────────
 
 pub struct GraphCompiler;
 
@@ -178,7 +170,6 @@ impl GraphCompiler {
             };
             let num_outputs = Self::num_outputs_for_kind(&graph_node.kind);
 
-            // Build input_connections: for each input port, find the upstream edge
             let mut input_connections: Vec<Option<InputConnection>> = vec![None; num_inputs];
 
             for edge in graph.edges_into(node_id) {
@@ -206,11 +197,7 @@ impl GraphCompiler {
             plan_builder.push_step(step);
         }
 
-        // Carry the modulation routing table built by AudioGraph::from_project.
         plan_builder.set_modulation(graph.modulation.clone());
-
-        // Build the plan owned (no Arc yet) — we still need to fill in PDC
-        // delays once node latencies are known.
         let mut plan = plan_builder.build();
 
         // 5. Instantiate processors (Meter nodes get fresh atomic cells)
@@ -266,13 +253,7 @@ impl GraphCompiler {
         // concurrently because they share no transitive dependency (R1).
         Self::compute_execution_levels(&mut plan);
 
-        // 8. Sync the plugin host's device records with the live graph.
-        //    `build_node` (above) inserts/refreshes a record for every plugin or
-        //    instrument node it instantiates; here we drop records for devices
-        //    the new graph no longer references, so a removed plugin's FFI handle
-        //    is torn down once the retiring graph releases its audio-side clone
-        //    (ADR-007 removal path — previously this had no caller and records
-        //    leaked).  Command-thread only; no DSP change, bit-identical (C-2).
+        // 8. Drop host records for devices no longer in the graph (ADR-007 removal path).
         let mut active_devices: HashSet<String> = HashSet::new();
         for graph_node in graph.nodes.values() {
             match &graph_node.kind {
@@ -303,8 +284,6 @@ impl GraphCompiler {
             route_cells,
         })
     }
-
-    // ── PDC ───────────────────────────────────────────────────────────────────
 
     /// Compute and assign latency compensation delays into `plan.steps[*].input_connections`.
     ///
@@ -349,8 +328,6 @@ impl GraphCompiler {
             plan.step_cumulative_latency[i] = plan.step_latencies[i].saturating_add(arrival);
         }
     }
-
-    // ── Execution levels (R1: parallel scheduling) ────────────────────────────
 
     /// Assign each step a "level" index such that any two steps at the same
     /// level have no transitive dependency on each other and can be processed
@@ -427,10 +404,7 @@ impl GraphCompiler {
         for (i, &lvl) in plan.step_levels.iter().enumerate() {
             plan.levels[lvl as usize].push(i);
         }
-        // step indices within a level are already ascending (we iterate 0..n).
     }
-
-    // ── Topological sort (Kahn's BFS) ─────────────────────────────────────────
 
     /// Validate that every edge carries a routable [`PortKind`] (ADR-008, 5a).
     ///
@@ -458,10 +432,7 @@ impl GraphCompiler {
     fn topological_sort(graph: &AudioGraph) -> Result<Vec<NodeId>, CompileError> {
         let node_ids: Vec<NodeId> = graph.nodes.keys().copied().collect();
 
-        // In-degree per node
         let mut in_degree: HashMap<NodeId, usize> = node_ids.iter().map(|&id| (id, 0)).collect();
-
-        // Adjacency list (from → [to])
         let mut adj: HashMap<NodeId, Vec<NodeId>> =
             node_ids.iter().map(|&id| (id, Vec::new())).collect();
 
@@ -470,14 +441,12 @@ impl GraphCompiler {
             adj.entry(edge.from.node).or_default().push(edge.to.node);
         }
 
-        // Seed queue with zero-in-degree nodes
         let mut queue: VecDeque<NodeId> = in_degree
             .iter()
             .filter(|(_, &d)| d == 0)
             .map(|(&id, _)| id)
             .collect();
 
-        // Sort for determinism (stable order regardless of HashMap iteration)
         let mut queue_vec: Vec<NodeId> = queue.drain(..).collect();
         queue_vec.sort_unstable();
         queue.extend(queue_vec);
@@ -496,7 +465,7 @@ impl GraphCompiler {
                         next.push(nb);
                     }
                 }
-                next.sort_unstable(); // determinism
+                next.sort_unstable();
                 queue.extend(next);
             }
         }
@@ -507,8 +476,6 @@ impl GraphCompiler {
 
         Ok(order)
     }
-
-    // ── Port count helpers ────────────────────────────────────────────────────
 
     fn num_inputs_for_kind(kind: &NodeKind) -> usize {
         match kind {
@@ -556,8 +523,6 @@ impl GraphCompiler {
             | NodeKind::Delay { .. } => 1,
         }
     }
-
-    // ── Node factory ─────────────────────────────────────────────────────────
 
     /// Instantiate the concrete `AudioNode` for a given graph node kind.
     ///
@@ -619,12 +584,6 @@ impl GraphCompiler {
             }
 
             NodeKind::Track { track_id } => {
-                // Gather clip data from the project for this track.
-                // Clip positions are in seconds; convert to engine-sample-rate
-                // frames so the TrackNode can compare them directly against the
-                // atomic `position_samples` counter (which is also in frames).
-                // `samples` is `Arc<Vec<f32>>` shared with the project — no
-                // deep clone of the (potentially huge) decoded audio buffer.
                 let clips = project
                     .tracks
                     .iter()
@@ -647,10 +606,6 @@ impl GraphCompiler {
             }
 
             NodeKind::TrackGain { track_id, gain } => {
-                // Look up the project track so we seed `LiveParams` with the
-                // current mute/solo/pan state if its entry didn't already
-                // exist.  After this call, the compiler and the gateway both
-                // hold `Arc<TrackParams>` pointing at the same atomics.
                 let (volume, pan, muted, solo) = project
                     .tracks
                     .iter()
@@ -704,10 +659,6 @@ impl GraphCompiler {
                 device_id,
                 sandboxed,
             } => {
-                // ADR-015 6d-iv: a sandboxed device is hosted out-of-process via
-                // a `BridgedNode`.  If sandboxing is unavailable for this device
-                // (unknown, non-CLAP, no DLL, or no bridge binary), fall through
-                // to the in-process path below — no behaviour change for it.
                 if *sandboxed {
                     if let Some(node) = crate::plugin_system::bridged_node::BridgedNode::try_new(
                         id,
@@ -722,12 +673,6 @@ impl GraphCompiler {
                     );
                 }
 
-                // Hand off to `PluginHost` so the appropriate device wrapper
-                // (internal, VST3, AU, CLAP, WASM) is instantiated.  The host
-                // registers the resulting record so subsequent parameter
-                // updates and lifecycle calls can find it.  If the device is
-                // unknown (registry miss) or fails to instantiate, fall back
-                // to a unity-gain pass-through so the graph still compiles.
                 match plugin_host.instantiate(id, device_id, *sandboxed) {
                     Ok(node) => node,
                     Err(e) => {
@@ -766,15 +711,11 @@ impl GraphCompiler {
             }
 
             NodeKind::Eq { effect_id, params } => {
-                // ADR-009: register/look up the hot-parameter block seeded from
-                // the project values, and hand the node a clone.  Subsequent
-                // knob turns write the block (no recompile).
                 let block = live_params
                     .get_or_init_effect_block(effect_id, &nodes::eq::eq_block_values(params));
                 Box::new(nodes::eq::EqNode::new(id, params.clone()).with_block(block))
             }
             NodeKind::Compressor { effect_id, params } => {
-                // ADR-009: same hot-parameter-block wiring as EQ.
                 let block = live_params.get_or_init_effect_block(
                     effect_id,
                     &nodes::compressor::compressor_block_values(params),
@@ -859,8 +800,6 @@ mod tests {
             Err(CompileError::UnsupportedPortKind { .. })
         ));
     }
-
-    // ── Plugin lifecycle through the real compile + schedule pipeline ──────────
 
     /// End-to-end runtime proof: a `NodeKind::Plugin` is (1) instantiated by the
     /// host, (2) registered, (3) inserted into the compiled plan as a processor,

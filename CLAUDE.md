@@ -56,6 +56,21 @@ impacted docs (`doc_sync_rules.md`) after.
 - Decisions already made → [`docs/active/decisions/`](docs/active/decisions/).
 - General project docs (build, tech stack, UX) → [`docs/`](docs/) root.
 
-# Comments
-- Any comment that can be inferred from reading the code should be removed.
-- Prefer refactoring over commenting. If explanation is needed, improve naming or structure first.
+## Code Style Rules
+
+### Commenting
+- Write comments only when they add information not obvious from the code.
+- Comments must explain "why", not "what".
+- Avoid redundant comments that repeat code behavior.
+- Prefer improving naming or structure instead of adding comments.
+- Keep comments short and high-signal (1–2 lines max).
+
+### General
+- Favor clear code over explanatory comments.
+- Keep functions small and focused.
+- Use naming to express intent instead of comments.
+
+### Rust / Tauri
+- Do not comment standard Rust or Tauri patterns.
+- Document only non-obvious logic, constraints, or unsafe operations.
+- Explicitly document security-sensitive operations (filesystem, shell, IPC).

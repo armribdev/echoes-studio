@@ -6,11 +6,7 @@ use crate::audio_graph::node::{AudioNode, NodeId, PrepareContext, TransportInfo}
 use crate::audio_graph::parameter_block::ParameterBlock;
 use crate::project::ReverbParams;
 
-// ── Hot-parameter block layout (ADR-009) ──────────────────────────────────────
-//
-// Cell order for the reverb's `ParameterBlock`.  Shared by the compiler (seed),
-// the gateway (`reverb_block_values` on a knob turn), and `ReverbNode` (per-block
-// read).  Values are stored in natural units (0..1 normalised controls).
+// Cell order for `ParameterBlock` (ADR-009): shared by compiler, gateway, and `ReverbNode`.
 pub const REVERB_PARAM_COUNT: usize = 5;
 pub const REVERB_ROOM_SIZE: usize = 0;
 pub const REVERB_DAMPING: usize = 1;

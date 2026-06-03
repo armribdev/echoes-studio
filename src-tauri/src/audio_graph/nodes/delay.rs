@@ -6,12 +6,8 @@ use crate::audio_graph::node::{AudioNode, NodeId, PrepareContext, TransportInfo}
 use crate::audio_graph::parameter_block::ParameterBlock;
 use crate::project::DelayParams;
 
-// ── Hot-parameter block layout (ADR-009) ──────────────────────────────────────
-//
-// Cell order for the delay's `ParameterBlock`.  Shared by the compiler (seed),
-// the gateway (`delay_block_values` on a knob turn), and `DelayNode` (per-block
-// read).  Continuous values are stored in natural units; the `ping_pong` bool
-// is encoded as 0.0 / 1.0 (read back with a 0.5 threshold).
+// Cell order for `ParameterBlock` (ADR-009): shared by compiler, gateway, and `DelayNode`.
+// `ping_pong` bool is encoded as 0.0 / 1.0 (threshold 0.5).
 pub const DELAY_PARAM_COUNT: usize = 5;
 pub const DELAY_DELAY_MS: usize = 0;
 pub const DELAY_FEEDBACK: usize = 1;

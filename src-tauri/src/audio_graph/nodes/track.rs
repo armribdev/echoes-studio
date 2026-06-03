@@ -16,8 +16,6 @@ use std::sync::Arc;
 use crate::audio_graph::buffer::AudioBuffer;
 use crate::audio_graph::node::{AudioNode, NodeId, PrepareContext, TransportInfo};
 
-// ── Clip data ─────────────────────────────────────────────────────────────────
-
 /// Pre-decoded audio clip data, ready for real-time playback.
 pub struct ClipData {
     /// Clip start in the project timeline, in samples at the engine sample rate.
@@ -31,8 +29,6 @@ pub struct ClipData {
     /// when the engine sample rate differs (future: SRC resampling).
     pub native_sample_rate: u32,
 }
-
-// ── TrackNode ─────────────────────────────────────────────────────────────────
 
 pub struct TrackNode {
     id: NodeId,

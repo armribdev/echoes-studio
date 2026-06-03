@@ -30,8 +30,6 @@ use crate::plugin_system::lifecycle::LifecycleState;
 use crate::plugin_system::parameter::ParameterMap;
 use crate::plugin_system::state::DeviceState;
 
-// ── Device info ───────────────────────────────────────────────────────────────
-
 /// Static metadata about a plugin device.
 #[derive(Debug, Clone)]
 pub struct DeviceInfo {
@@ -56,8 +54,6 @@ pub enum DeviceFormat {
     Wasm,
 }
 
-// ── Device trait ──────────────────────────────────────────────────────────────
-
 /// Unifies all plugin formats behind a single interface.
 ///
 /// A `Device` is always wrapped in a struct that also implements `AudioNode`.
@@ -66,8 +62,6 @@ pub enum DeviceFormat {
 pub trait Device: AudioNode {
     fn device_id(&self) -> &str;
     fn info(&self) -> &DeviceInfo;
-
-    // ── Parameter access ───────────────────────────────────────────────────────
 
     fn parameters(&self) -> &ParameterMap;
     fn parameters_mut(&mut self) -> &mut ParameterMap;
@@ -78,15 +72,11 @@ pub trait Device: AudioNode {
         self.parameters_mut().set_normalised(&k, value);
     }
 
-    // ── State serialisation ────────────────────────────────────────────────────
-
     /// Serialise the complete device state for project save / undo.
     fn save_state(&self) -> DeviceState;
 
     /// Restore device state from a previously saved snapshot.
     fn load_state(&mut self, state: &DeviceState);
-
-    // ── Lifecycle ──────────────────────────────────────────────────────────────
 
     fn lifecycle_state(&self) -> LifecycleState;
 
@@ -99,8 +89,6 @@ pub trait Device: AudioNode {
     /// Permanently tear down the device (releases all resources).
     fn destroy(&mut self);
 
-    // ── Transport / sync ──────────────────────────────────────────────────────
-
     /// Called when the project BPM or time signature changes.
     fn on_tempo_changed(&mut self, _bpm: f32, _numerator: u8, _denominator: u8) {}
 
@@ -108,8 +96,6 @@ pub trait Device: AudioNode {
     fn reported_latency(&self) -> u32 {
         0
     }
-
-    // ── Capabilities (Phase 1) ─────────────────────────────────────────────────
 
     /// Introspected static capabilities (ports, parameters, latency, …).
     ///
@@ -126,8 +112,6 @@ pub trait Device: AudioNode {
         caps
     }
 }
-
-// ── Pass-through wrapper (used as placeholder) ────────────────────────────────
 
 /// A minimal no-op device used while a real plugin is loading or as a
 /// compile-time placeholder.

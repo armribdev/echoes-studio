@@ -1,8 +1,6 @@
 use crate::audio_clip::AudioClip;
 use serde::{Deserialize, Serialize};
 
-// ── Effect parameter types ────────────────────────────────────────────────────
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EqParams {
     pub low_gain_db: f32,
@@ -135,8 +133,6 @@ pub struct TrackEffect {
     pub params: EffectParams,
 }
 
-// ── Modulation types ──────────────────────────────────────────────────────────
-
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum LfoWaveform {
@@ -206,8 +202,6 @@ pub struct ProjectModulationRoute {
     /// Modulation depth in the parameter's native range (signed).
     pub depth: f32,
 }
-// ── MIDI types ────────────────────────────────────────────────────────────────
-
 /// One MIDI note stored in the project.  Coordinates are in beats (float).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MidiNote {
@@ -249,8 +243,6 @@ pub fn generate_id() -> String {
     let c = ID_COUNTER.fetch_add(1, Ordering::SeqCst);
     format!("{:x}{:x}", t, c)
 }
-
-// ── In-memory structs ────────────────────────────────────────────────────────
 
 pub struct AppClip {
     pub id: String,
@@ -488,8 +480,6 @@ impl AppClip {
     }
 }
 
-// ── Audio data cache ─────────────────────────────────────────────────────────
-//
 // Keyed by clip_id. Persists audio data across undo/redo so events can be
 // replayed without re-reading audio files from disk.
 
@@ -518,8 +508,6 @@ impl AudioDataCache {
         }
     }
 }
-
-// ── Application state ────────────────────────────────────────────────────────
 
 pub struct AppState {
     pub project: Mutex<AppProject>,
@@ -581,8 +569,6 @@ impl AppState {
     }
 }
 
-// ── File format (project saved to disk) ─────────────────────────────────────
-
 #[derive(Serialize, Deserialize)]
 pub struct ProjectFile {
     pub version: u32,
@@ -643,8 +629,6 @@ pub struct ClipFile {
     pub file_path: String,
 }
 
-// ── DTOs returned to frontend ────────────────────────────────────────────────
-
 #[derive(Serialize, Clone)]
 pub struct ProjectDto {
     pub name: String,
@@ -692,8 +676,6 @@ pub struct ClipDto {
     pub peaks_512: Vec<[f32; 2]>,
     pub peaks_4096: Vec<[f32; 2]>,
 }
-
-// ── Tests (Phase 5c — AppTrack.instrument backward-compat / round-trip) ────────
 
 #[cfg(test)]
 mod tests {

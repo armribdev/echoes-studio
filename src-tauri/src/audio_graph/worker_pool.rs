@@ -37,8 +37,6 @@ use std::thread::{self, JoinHandle};
 /// equals `num_workers` for the dispatching (audio) thread.
 pub type StepFn<Ctx> = fn(worker_id: usize, step_idx: usize, ctx: Ctx);
 
-// ── Job ───────────────────────────────────────────────────────────────────────
-
 /// Description of one level of work.  Lives in `PoolShared::job` between
 /// dispatch and barrier; both pointers stay valid until every worker has
 /// bumped `workers_done`.
@@ -61,8 +59,6 @@ impl<Ctx: Copy + 'static> Copy for Job<Ctx> {}
 unsafe impl<Ctx: Copy + Send + Sync + 'static> Send for Job<Ctx> {}
 unsafe impl<Ctx: Copy + Send + Sync + 'static> Sync for Job<Ctx> {}
 
-// ── PoolShared ────────────────────────────────────────────────────────────────
-
 struct PoolShared<Ctx: Copy + Send + Sync + 'static> {
     /// Job slot — `Some(_)` between dispatch and barrier; `None` after.
     /// Written by the dispatcher with workers parked; read by workers after
@@ -81,8 +77,6 @@ struct PoolShared<Ctx: Copy + Send + Sync + 'static> {
 // worker is parked (and therefore not reading it).  Workers read it only
 // after the `unpark` that follows the mutation.
 unsafe impl<Ctx: Copy + Send + Sync + 'static> Sync for PoolShared<Ctx> {}
-
-// ── WorkerPool ────────────────────────────────────────────────────────────────
 
 pub struct WorkerPool<Ctx: Copy + Send + Sync + 'static> {
     workers: Vec<JoinHandle<()>>,
@@ -127,7 +121,6 @@ impl<Ctx: Copy + Send + Sync + 'static> WorkerPool<Ctx> {
             return;
         }
 
-        // No workers — just run inline.
         if self.workers.is_empty() {
             for &step_idx in indices {
                 step_fn(0, step_idx, ctx);
@@ -193,11 +186,8 @@ impl<Ctx: Copy + Send + Sync + 'static> Drop for WorkerPool<Ctx> {
     }
 }
 
-// ── Worker loop ───────────────────────────────────────────────────────────────
-
 fn worker_loop<Ctx: Copy + Send + Sync + 'static>(id: usize, shared: Arc<PoolShared<Ctx>>) {
     loop {
-        // Park until the dispatcher signals work or shutdown.
         thread::park();
 
         if shared.shutdown.load(Ordering::Acquire) {
@@ -208,7 +198,6 @@ fn worker_loop<Ctx: Copy + Send + Sync + 'static>(id: usize, shared: Arc<PoolSha
         // us, and won't mutate it again until every worker bumps `workers_done`.
         let job = unsafe { (*shared.job.get()).expect("worker unparked without a job") };
 
-        // Drain the work queue.
         loop {
             let idx = shared.next_idx.fetch_add(1, Ordering::Relaxed);
             if idx >= job.len {
@@ -223,8 +212,6 @@ fn worker_loop<Ctx: Copy + Send + Sync + 'static>(id: usize, shared: Arc<PoolSha
         shared.workers_done.fetch_add(1, Ordering::Release);
     }
 }
-
-// ── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {

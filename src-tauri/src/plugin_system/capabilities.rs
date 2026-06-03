@@ -17,8 +17,6 @@
 
 use crate::plugin_system::wrapper::DeviceInfo;
 
-// ── Audio bus ─────────────────────────────────────────────────────────────────
-
 /// Speaker layout reported by the plugin.
 ///
 /// Kept intentionally small: covers what VST3 `SpeakerArrangement` and CLAP
@@ -67,8 +65,6 @@ pub struct AudioBusInfo {
     pub speaker_layout: SpeakerLayout,
 }
 
-// ── MIDI / note port ──────────────────────────────────────────────────────────
-
 /// Description of one MIDI / note port reported by the plugin.
 ///
 /// VST3: bus of kind `kEvent`.  CLAP: `clap_note_port_info`.
@@ -77,8 +73,6 @@ pub struct MidiPortInfo {
     pub name: String,
     pub is_main: bool,
 }
-
-// ── Parameter ─────────────────────────────────────────────────────────────────
 
 /// Parameter automation / display flags.
 ///
@@ -122,8 +116,6 @@ pub struct ParameterInfo {
     pub step_count: u32,
     pub flags: ParameterFlags,
 }
-
-// ── DeviceCapabilities ────────────────────────────────────────────────────────
 
 /// Aggregate of every static fact a plugin reports about itself.
 ///

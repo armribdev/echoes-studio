@@ -6,12 +6,8 @@ use crate::audio_graph::oversampling::Oversample2x;
 use crate::audio_graph::parameter_block::ParameterBlock;
 use crate::project::EqParams;
 
-// ── Hot-parameter block layout (ADR-009) ──────────────────────────────────────
-//
-// Cell order for the EQ's `ParameterBlock`.  Shared by the compiler (which
-// seeds the block), the gateway (which writes cells on a knob turn via
-// `eq_block_values`), and `EqNode` (which reads them per block).  Values are
-// stored in natural units (Hz, dB, Q).
+// Cell order for `ParameterBlock` (ADR-009): shared by compiler, gateway, and `EqNode`.
+// Values in natural units (Hz, dB, Q).
 pub const EQ_PARAM_COUNT: usize = 7;
 pub const EQ_LOW_GAIN_DB: usize = 0;
 pub const EQ_LOW_FREQ: usize = 1;

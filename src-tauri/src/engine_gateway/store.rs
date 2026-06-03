@@ -35,8 +35,6 @@ impl EventStore {
         }
     }
 
-    // ── Write path ────────────────────────────────────────────────────────────
-
     /// Append a new event. Truncates any redo-future events first.
     pub fn append(&mut self, event: ProjectEvent) {
         // Discard any events that were "in the future" (from previous redos)
@@ -58,8 +56,6 @@ impl EventStore {
         self.head = 0;
         self.snapshot = Some((0, project));
     }
-
-    // ── Undo / Redo ───────────────────────────────────────────────────────────
 
     pub fn can_undo(&self) -> bool {
         self.head > 0
@@ -88,8 +84,6 @@ impl EventStore {
             false
         }
     }
-
-    // ── Read path ─────────────────────────────────────────────────────────────
 
     /// Events that form the current state: `events[0..head]`.
     pub fn active_events(&self) -> &[ProjectEvent] {

@@ -9,8 +9,6 @@ use crate::audio_graph::graph::{AudioGraph, GraphNode, NodeKind};
 use crate::audio_graph::modulation::ModulationRoute;
 use crate::project::{AppProject, LfoWaveform};
 
-// ── DTO types ─────────────────────────────────────────────────────────────────
-
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GraphSnapshotDto {
@@ -50,8 +48,6 @@ pub struct ModEdgeDto {
     pub depth: f32,
     pub route_id: Option<String>,
 }
-
-// ── Conversion ────────────────────────────────────────────────────────────────
 
 impl GraphSnapshotDto {
     /// Build a UI snapshot from the current project topology.

@@ -56,8 +56,6 @@ use crate::plugin_system::wrapper::{DeviceFormat, DeviceInfo};
 /// 17 s of edits at a 60 Hz UI — far more than the drain interval needs.
 const PARAM_QUEUE_CAPACITY: usize = 1024;
 
-// ── Instance identity ─────────────────────────────────────────────────────────
-//
 // Every `PluginInstance` is stamped at construction with a process-unique,
 // monotonically increasing `instance_id`.  Unlike `device_id` — which is the
 // project-side *plugin type* identifier (e.g. the VST3 FUID / CLAP id, shared by
@@ -80,8 +78,6 @@ fn next_instance_id() -> u64 {
     // memory — and this runs off the audio thread at construction time.
     NEXT_INSTANCE_ID.fetch_add(1, Ordering::Relaxed)
 }
-
-// ── Native handle ─────────────────────────────────────────────────────────────
 
 /// Format-specific live handles for one plugin instance.
 ///
@@ -116,8 +112,6 @@ pub enum NativeHandle {
 // dereferenced under that discipline.
 unsafe impl Send for NativeHandle {}
 unsafe impl Sync for NativeHandle {}
-
-// ── PluginInstance ────────────────────────────────────────────────────────────
 
 /// Shared, refcounted handle to one live plugin instance.
 ///
@@ -165,7 +159,6 @@ pub struct PluginInstance {
 }
 
 impl PluginInstance {
-    /// Construct an internal (PassThrough) instance with no FFI handle.
     pub fn new_internal(device_id: impl Into<String>, name: impl Into<String>) -> Arc<Self> {
         Arc::new(PluginInstance {
             instance_id: next_instance_id(),
@@ -206,7 +199,6 @@ impl PluginInstance {
         })
     }
 
-    /// Construct a CLAP instance from an already-created plugin pointer.
     pub fn new_clap(
         device_id: impl Into<String>,
         name: impl Into<String>,
@@ -231,8 +223,6 @@ impl PluginInstance {
         })
     }
 
-    // ── Identity ───────────────────────────────────────────────────────────────
-
     /// Process-unique, stable identity for this live instance.  Two instances of
     /// the same plugin type (same [`device_id`](Self::device_id)) return
     /// **different** values; a given instance returns the **same** value for its
@@ -241,8 +231,6 @@ impl PluginInstance {
     pub fn instance_id(&self) -> u64 {
         self.instance_id
     }
-
-    // ── Parameter transport (ADR-007) ─────────────────────────────────────────
 
     /// Push a normalised parameter change into the SPSC ring.  Called on the
     /// command thread (sole producer).  Returns `false` if the ring is full.
@@ -259,8 +247,6 @@ impl PluginInstance {
         self.param_queue.drain(f);
     }
 
-    // ── State persistence (Phase 4b VST3 / Phase 4c CLAP, ADR-010) ─────────────
-    //
     // VST3 (`IComponent::get/setState`) and CLAP (`clap.state.save/load`) both
     // carry their native handle here.  These run on the command thread; per the
     // module header they are NOT sequenced against the audio thread's `process`
@@ -298,8 +284,6 @@ impl PluginInstance {
         }
     }
 
-    // ── Handle access (used by wrappers / future GUI editor) ──────────────────
-
     /// Borrow the native handle for FFI dispatch.  Wrappers pattern-match
     /// the variant they expect; other variants indicate a routing bug at
     /// instantiation time.
@@ -327,9 +311,6 @@ impl PluginInstance {
         }
     }
 
-    // ── Lifecycle (atomic read/write; the wrapper still owns its own copy
-    //    until Phase 2b unifies the source of truth) ──────────────────────────
-
     pub fn set_lifecycle(&self, state: LifecycleState) {
         self.lifecycle
             .store(encode_lifecycle(state), Ordering::Release);
@@ -339,9 +320,6 @@ impl PluginInstance {
         decode_lifecycle(self.lifecycle.load(Ordering::Acquire))
     }
 
-    /// Build a `DeviceInfo` matching the legacy wrapper shape for this
-    /// instance — used while Phase 2 still relies on the per-wrapper
-    /// `DeviceInfo`.  Caller may override defaults (e.g. channel counts).
     pub fn legacy_device_info(&self) -> DeviceInfo {
         DeviceInfo {
             device_id: self.device_id.clone(),
@@ -357,8 +335,6 @@ impl PluginInstance {
     }
 }
 
-// ── Teardown ──────────────────────────────────────────────────────────────────
-//
 // Runs on whichever thread releases the last `Arc<PluginInstance>`:
 //   * Most commonly the snapshot drop-ring worker (when the old
 //     `CompiledGraph` retires).
@@ -381,36 +357,25 @@ impl Drop for PluginInstance {
                 let proc = processor.as_ptr();
                 let comp = component.as_ptr();
                 unsafe {
-                    // Deactivate and terminate before releasing.
                     ((*(*proc).vtbl).set_processing)(proc, 0);
                     ((*(*comp).vtbl).set_active)(comp, 0);
                     ((*(*comp).vtbl).terminate)(comp);
-                    // Release IAudioProcessor ref (often the same object as
-                    // IComponent — release decrements its independent ref).
+                    // IAudioProcessor and IComponent may be the same COM object;
+                    // release each independently.
                     ((*(*proc).vtbl).release)(proc as *mut _);
-                    // Release IComponent ref.
                     ((*(*comp).vtbl).release)(comp as *mut _);
                 }
-                // _lib Arc drops next → FreeLibrary when last consumer is gone.
             }
 
             NativeHandle::Clap { plugin, .. } => {
                 let p = *plugin;
                 unsafe {
-                    // The wrapper is responsible for calling stop_processing /
-                    // deactivate at suspend time; here we only need to destroy
-                    // the instance.  Calling stop_processing on an inactive
-                    // plugin would violate the CLAP state machine.
                     ((*p).destroy)(p);
                 }
-                // _host Box drops → free the host struct.
-                // _lib  Arc drops → FreeLibrary when last consumer is gone.
             }
         }
     }
 }
-
-// ── Lifecycle encoding ────────────────────────────────────────────────────────
 
 const LC_CREATED: u8 = 0;
 const LC_LOADED: u8 = 1;
@@ -459,7 +424,6 @@ mod tests {
         inst.drain_params(|c| got.push((c.native_id, c.normalised)));
         assert_eq!(got, vec![(7, 0.25), (9, 0.75)]);
 
-        // Drained empty afterwards.
         let mut n = 0;
         inst.drain_params(|_| n += 1);
         assert_eq!(n, 0);
@@ -485,7 +449,6 @@ mod tests {
     fn instance_id_is_stable_for_an_instances_lifetime() {
         let inst = PluginInstance::new_internal("echoes.gain", "Gain");
         let first = inst.instance_id();
-        // Repeated reads + an unrelated state mutation never move the identity.
         inst.set_lifecycle(LifecycleState::Suspended);
         assert_eq!(inst.instance_id(), first);
         assert_eq!(inst.instance_id(), first);

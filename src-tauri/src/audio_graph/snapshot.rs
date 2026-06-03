@@ -43,8 +43,6 @@ use std::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
 
 use crate::audio_graph::scheduler::GraphScheduler;
 
-// ── Drop ring (audio thread → command thread) ────────────────────────────────
-
 /// How many "dead" schedulers we can stash before the command thread drains
 /// them.  In steady-state operation the depth is 0 or 1: every audio swap
 /// requires a preceding `enqueue`, and every `enqueue` drains the ring.
@@ -117,8 +115,6 @@ impl DropRing {
     }
 }
 
-// ── RuntimeSnapshot ──────────────────────────────────────────────────────────
-
 /// Shared between the command thread (writer) and the audio thread (reader).
 ///
 /// Holds *at most one* pending `GraphScheduler`.  If the command thread
@@ -153,8 +149,6 @@ impl RuntimeSnapshot {
         }
     }
 
-    // ── Command-thread write path ─────────────────────────────────────────────
-
     /// Enqueue a new scheduler.  Called on the command thread.
     ///
     /// Two pieces of housekeeping happen here:
@@ -176,8 +170,6 @@ impl RuntimeSnapshot {
             unsafe { drop(Box::from_raw(old_ptr)) };
         }
     }
-
-    // ── Audio-thread read path ────────────────────────────────────────────────
 
     /// Non-blocking, allocation-free, drop-free swap.
     ///

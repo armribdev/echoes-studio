@@ -45,15 +45,13 @@ use super::ffi::{
     CLAP_PROCESS_ERROR,
 };
 
-// ── No-op output events (plugins can push events out; we ignore them for now) ──
+// Plugins can push output events; we discard them until Phase 4 MIDI output.
 unsafe extern "C" fn out_try_push(
     _: *const ClapOutputEvents,
     _: *const super::ffi::ClapEventHeader,
 ) -> bool {
     true
 }
-
-// ── ClapWrapperNode ────────────────────────────────────────────────────────────
 
 pub struct ClapWrapperNode {
     node_id: NodeId,
@@ -158,10 +156,8 @@ impl AudioNode for ClapWrapperNode {
 
         let p = self.plugin_ptr();
         unsafe {
-            // Initialize the plugin instance if not already done
             ((*p).init)(p);
 
-            // Activate (sets sample rate + block size bounds)
             let ok = ((*p).activate)(p, ctx.sample_rate as f64, 1, ctx.max_block_size as u32);
             self.active = ok;
 
@@ -217,9 +213,7 @@ impl AudioNode for ClapWrapperNode {
         // clap_instrument.rs for the detailed rationale).
         let nf = transport.block_size;
 
-        // ── Drain pending parameter changes (ADR-007) ─────────────────────────
-        // CLAP carries plain values, so denormalise via the ranges enumerated
-        // at `prepare` (unknown ids fall back to a 0..1 identity range).
+        // CLAP carries plain values; denormalise via ranges enumerated at `prepare` (ADR-007).
         self.param_events.clear();
         {
             let param_events = &mut self.param_events;
@@ -233,7 +227,6 @@ impl AudioNode for ClapWrapperNode {
             });
         }
 
-        // Populate channel pointer arrays (no allocation)
         for c in 0..nc {
             self.in_channel_ptrs[c] = if !inputs.is_empty() {
                 // CLAP spec: hosts may pass const data as the input; safe cast.
@@ -244,7 +237,6 @@ impl AudioNode for ClapWrapperNode {
             self.out_channel_ptrs[c] = outputs[0].channel_mut(c).as_mut_ptr();
         }
 
-        // Build ClapAudioBuffer structs (stack, no alloc)
         self.in_audio_buf = ClapAudioBuffer {
             data32: self.in_channel_ptrs.as_mut_ptr(),
             data64: std::ptr::null_mut(),
@@ -341,8 +333,6 @@ impl Device for ClapWrapperNode {
     }
     fn load_state(&mut self, _: &DeviceState) {}
 
-    // ── Lifecycle (Phase 2b: single source of truth = instance atomic) ─────────
-    //
     // Invalid transitions are silently ignored at this layer — the host-side
     // API surfaces errors to callers.  No FFI side effect in Phase 2b: CLAP
     // suspend/resume would require start_processing/stop_processing toggles,

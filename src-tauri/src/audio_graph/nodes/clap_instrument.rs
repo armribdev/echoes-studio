@@ -39,7 +39,6 @@ use crate::plugin_formats::clap::ffi::{
     CLAP_PROCESS_ERROR,
 };
 
-// ── No-op output events (the plugin may push events out; we ignore them) ───────
 unsafe extern "C" fn out_try_push(_: *const ClapOutputEvents, _: *const ClapEventHeader) -> bool {
     true
 }
@@ -62,8 +61,6 @@ pub fn fill_clap_notes(events: &MidiEventList, list: &mut FixedEventList) {
         }
     }
 }
-
-// ── ClapInstrument ─────────────────────────────────────────────────────────────
 
 pub struct ClapInstrument {
     /// Shared, refcounted handle to the live CLAP plugin (host owns a clone).

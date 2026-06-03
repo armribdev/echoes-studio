@@ -39,8 +39,6 @@ use crate::plugin_system::registry::{PluginManifest, PluginRegistry};
 use crate::plugin_system::state::DeviceState;
 use crate::plugin_system::wrapper::{DeviceFormat, PassThroughDevice};
 
-// ── Host error ────────────────────────────────────────────────────────────────
-
 #[derive(Debug)]
 pub enum HostError {
     DeviceNotFound(String),
@@ -62,21 +60,12 @@ impl std::fmt::Display for HostError {
     }
 }
 
-// ── Device record ─────────────────────────────────────────────────────────────
-//
-// Phase 2a: long-lived ownership root for one device — carries the host-side
-// `Arc<PluginInstance>` clone so the host can address the live instance.
-//
-// Phase 2b: the per-record `lifecycle` field is gone.  The instance's atomic
-// is the single source of truth; this record only keeps the transitional
-// `saved_state` blob (retired by Phase 3 / 4 once SPSC + FFI state lands).
-
+// Phase 2b: per-record `lifecycle` removed; instance atomic is the single source of truth.
+// `saved_state` blob is transitional — retired by Phase 3/4 once SPSC + FFI state lands.
 struct DeviceRecord {
     instance: Arc<PluginInstance>,
     saved_state: DeviceState,
 }
-
-// ── PluginHost ────────────────────────────────────────────────────────────────
 
 pub struct PluginHost {
     registry: PluginRegistry,
@@ -98,8 +87,6 @@ impl PluginHost {
         }
     }
 
-    // ── Staged plugin state (ADR-010 race-free restore) ──────────────────────────
-
     /// Stage plugin state blobs to be applied during the next compile, at
     /// instantiation time (before any node is published to the audio thread).
     /// Called on the command thread by the project-load path, immediately before
@@ -114,8 +101,6 @@ impl PluginHost {
     pub fn clear_pending_state_blobs(&mut self) {
         self.pending_state_blobs.clear();
     }
-
-    // ── Registry ───────────────────────────────────────────────────────────────
 
     pub fn registry(&self) -> &PluginRegistry {
         &self.registry
@@ -133,8 +118,6 @@ impl PluginHost {
             .map(|m| m.num_sidechain_inputs)
             .unwrap_or(0)
     }
-
-    // ── Plugin scanning ────────────────────────────────────────────────────────
 
     /// Scan standard system directories for VST3 and CLAP plugins.
     ///
@@ -165,8 +148,6 @@ impl PluginHost {
             .collect()
     }
 
-    // ── Instantiation ─────────────────────────────────────────────────────────
-
     /// Instantiate a plugin and return the audio-side `Box<dyn AudioNode>`
     /// the graph compiler embeds in `CompiledGraph.processors`.
     ///
@@ -179,11 +160,7 @@ impl PluginHost {
         plugin_id: &str,
         sandboxed: bool,
     ) -> Result<Box<dyn AudioNode>, HostError> {
-        // ADR-015 step 6b: the per-device sandbox opt-in reaches its decision
-        // point here.  It is **inert** until step 6d wires the out-of-process
-        // bridge — every plugin is instantiated in-process regardless.  The
-        // parameter is threaded now so 6d only has to add the branch, not
-        // re-plumb the project → graph → compiler → host chain.
+        // Inert until ADR-015 step 6d wires the out-of-process bridge.
         let _ = sandboxed;
 
         let manifest = self
@@ -218,13 +195,6 @@ impl PluginHost {
             }
         };
 
-        // Phase 2b: lifecycle now lives exclusively on the instance.  The
-        // legacy host-side state machine jumped straight to `Running` after
-        // instantiation; we preserve that observable behaviour by stamping
-        // the atomic here (the wrapper's `prepare` will later re-stamp it,
-        // which is idempotent).  Phase 4 will introduce the proper
-        // Created → Loaded → Initialized → Running sequence once state load
-        // / save lands on the host API.
         instance.set_lifecycle(LifecycleState::Running);
 
         // ADR-010 race-free state restore: if the project-load path staged a blob
@@ -250,8 +220,6 @@ impl PluginHost {
 
         Ok(device)
     }
-
-    // ── VST3 instantiation ────────────────────────────────────────────────────
 
     fn instantiate_vst3(
         &self,
@@ -291,8 +259,6 @@ impl PluginHost {
         Ok((instance, node))
     }
 
-    // ── CLAP instantiation ────────────────────────────────────────────────────
-
     fn instantiate_clap(
         &self,
         node_id: NodeId,
@@ -325,7 +291,6 @@ impl PluginHost {
 
         let (lib, entry) = ClapLibrary::load(dll).map_err(HostError::InstantiationFailed)?;
 
-        // Get factory
         let factory_ptr = unsafe {
             ((*entry).get_factory)(CLAP_PLUGIN_FACTORY_ID.as_ptr() as *const std::ffi::c_char)
         };
@@ -339,7 +304,6 @@ impl PluginHost {
         // Build host struct (heap-stable for plugin lifetime)
         let host = crate::plugin_formats::clap::ffi::make_host();
 
-        // Create plugin instance
         let clap_id_cstr: Vec<u8> = clap_id.bytes().chain(std::iter::once(0)).collect();
         let plugin = unsafe {
             ((*factory).create_plugin)(
@@ -363,8 +327,6 @@ impl PluginHost {
             lib,
         ))
     }
-
-    // ── Instrument instantiation (Phase 5c) ────────────────────────────────────
 
     /// Instantiate a plugin as a MIDI **instrument** generator, returning a
     /// `Box<dyn InstrumentDevice>` the compiler embeds as the inner device of
@@ -403,8 +365,6 @@ impl PluginHost {
         }
     }
 
-    // ── Parameter routing ─────────────────────────────────────────────────────
-
     /// Push a normalised parameter change to a live plugin (ADR-007).
     ///
     /// `native_id` is the format-native parameter identifier (VST3 `ParamID`,
@@ -427,15 +387,6 @@ impl PluginHost {
             .ok_or_else(|| HostError::DeviceNotFound(device_id.to_string()))?;
         Ok(record.instance.push_param(native_id, normalised))
     }
-
-    // ── Lifecycle management ───────────────────────────────────────────────────
-    //
-    // Phase 2b: the instance atomic is the only state store.  Each command
-    // reads the current value, validates the target via `transition`, then
-    // stores the new value back.  The read-validate-store sequence is safe
-    // because lifecycle mutations are command-thread only — the audio thread
-    // never writes to `instance.lifecycle`, it only reads it (and even that
-    // is not yet wired on the hot path).
 
     pub fn suspend_device(&mut self, device_id: &str) -> Result<(), HostError> {
         let record = self
@@ -461,15 +412,8 @@ impl PluginHost {
 
     pub fn destroy_device(&mut self, device_id: &str) {
         if let Some(record) = self.records.get(device_id) {
-            // `Destroyed` is reachable from any non-terminal state via
-            // `transition`'s catch-all rule for `Error`; we use unconditional
-            // store here because destroy is a forced teardown, not a
-            // negotiable transition.
             record.instance.set_lifecycle(LifecycleState::Destroyed);
         }
-        // Dropping the record releases the host-side `Arc<PluginInstance>`
-        // clone.  If the audio side has already retired its clone, the last
-        // `Arc::drop` here runs `PluginInstance::drop` and tears the FFI down.
         self.records.remove(device_id);
     }
 
@@ -502,8 +446,6 @@ impl PluginHost {
         });
     }
 
-    // ── State serialisation ───────────────────────────────────────────────────
-
     /// Serialise a device's live state (Phase 4b / ADR-010).
     ///
     /// VST3 devices return their processor state via FFI
@@ -518,32 +460,21 @@ impl PluginHost {
         }
     }
 
-    // State *restore* is no longer a post-compile call (it raced the audio
-    // thread's `process()` on the shared `IComponent` — ADR-010).  The project-
-    // load path now stages blobs via `set_pending_state_blobs`, and `instantiate`
-    // applies them to each instance before it enters a snapshot.
-
     /// Iterate the device IDs of all currently-instantiated plugins.  Used by
     /// the project-save path to harvest live plugin state.
     pub fn device_ids(&self) -> impl Iterator<Item = &str> {
         self.records.keys().map(String::as_str)
     }
 
-    // ── Introspection ─────────────────────────────────────────────────────────
-
     pub fn device_count(&self) -> usize {
         self.records.len()
     }
 
     pub fn lifecycle_of(&self, device_id: &str) -> Option<LifecycleState> {
-        // Phase 2b: read the authoritative atomic.
         self.records.get(device_id).map(|r| r.instance.lifecycle())
     }
 
     /// Borrow the shared instance for an already-instantiated device.
-    ///
-    /// Returns a clone of the host-side `Arc` so callers (Phase 2c GUI editor,
-    /// future tests) can address the live plugin without duplicating it.
     pub fn instance(&self, device_id: &str) -> Option<Arc<PluginInstance>> {
         self.records.get(device_id).map(|r| Arc::clone(&r.instance))
     }
@@ -554,8 +485,6 @@ impl Default for PluginHost {
         Self::new()
     }
 }
-
-// ── Serialisable plugin info (for the frontend) ───────────────────────────────
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct PluginInfo {
@@ -615,10 +544,6 @@ mod tests {
         assert_eq!(host.sidechain_input_ports("echoes.gain"), 0);
     }
 
-    /// Proof of the full instantiation lifecycle on the internal-format path
-    /// (no real plugin DLL needed): create → register → activate(`prepare`) →
-    /// `process` callback.  `echoes.gain` is a built-in registered at
-    /// `PluginHost::new()` and instantiates as a `PassThroughDevice`.
     #[test]
     fn instantiated_internal_plugin_node_processes_audio() {
         use crate::audio_graph::buffer::AudioBuffer;
@@ -626,23 +551,19 @@ mod tests {
 
         let mut host = PluginHost::new();
 
-        // create
         let mut node = host
             .instantiate(NodeId(1), "echoes.gain", false)
             .expect("instantiation must succeed for a registered device");
 
-        // register (addressable by the host)
         assert_eq!(host.device_count(), 1);
         assert!(host.instance("echoes.gain").is_some());
 
-        // activate
         node.prepare(PrepareContext {
             sample_rate: 48_000.0,
             max_block_size: 16,
             num_channels: 2,
         });
 
-        // process callback — audio must pass through unchanged
         let mut input = AudioBuffer::new(2, 4);
         input.channel_mut(0).copy_from_slice(&[1.0, 2.0, 3.0, 4.0]);
         input.channel_mut(1).copy_from_slice(&[5.0, 6.0, 7.0, 8.0]);

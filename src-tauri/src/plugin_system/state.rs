@@ -88,8 +88,6 @@ impl DeviceState {
     }
 }
 
-// ── Base64 (RFC 4648, standard alphabet) ────────────────────────────────────
-//
 // Plugin state chunks (VST3) are stored in the project file as base64 strings
 // (audit B3).  The project carries no `base64` crate dependency, so we provide
 // a minimal, self-contained codec — round-trip tested below.  Compact relative

@@ -41,8 +41,6 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use crate::plugin_system::instance::PluginInstance;
 
-// ── Win32 bindings ────────────────────────────────────────────────────────────
-
 #[allow(non_snake_case)]
 mod user32 {
     use std::ffi::c_void;
@@ -144,8 +142,6 @@ mod user32 {
     }
 }
 
-// ── Constants ─────────────────────────────────────────────────────────────────
-
 const WM_NCCREATE: u32 = 0x0081;
 const WM_CLOSE: u32 = 0x0010;
 const WM_TIMER: u32 = 0x0113;
@@ -170,8 +166,6 @@ const TIMER_INTERVAL_MS: u32 = 16;
 /// or pathological plugins writing into `GWLP_USERDATA`).
 const USERDATA_MAGIC: u64 = 0xEC_E0_5E_50_15_00_F1_00;
 
-// ── Per-window data stored in GWLP_USERDATA ───────────────────────────────────
-
 struct WindowUserData {
     magic: u64,
     effect_id: String,
@@ -183,8 +177,6 @@ struct WindowUserData {
     /// `Option` so it can be `.take()`-n out before invocation.
     cleanup: Option<Box<dyn FnOnce()>>,
 }
-
-// ── WndProc ───────────────────────────────────────────────────────────────────
 
 /// Safely read the userdata for this HWND, validating the magic sentinel.
 unsafe fn userdata<'a>(hwnd: *mut c_void) -> Option<&'a mut WindowUserData> {
@@ -205,7 +197,7 @@ unsafe extern "system" fn plugin_wnd_proc(
     wparam: usize,
     lparam: isize,
 ) -> isize {
-    // ── WM_NCCREATE: install USERDATA before any other message ──
+    // WM_NCCREATE: install USERDATA before any other message.
     // Without this, `attached` / `set_parent` could send messages (paint,
     // resize, focus, even WM_CLOSE) with USERDATA=0, and `DefWindowProc`
     // would destroy the window under the plugin's feet → UAF.
@@ -257,8 +249,6 @@ unsafe extern "system" fn plugin_wnd_proc(
     user32::DefWindowProcW(hwnd, msg, wparam, lparam)
 }
 
-// ── Window class registration (once per process) ──────────────────────────────
-
 fn ensure_class_registered() {
     static REGISTERED: OnceLock<()> = OnceLock::new();
     REGISTERED.get_or_init(|| unsafe {
@@ -283,8 +273,6 @@ fn ensure_class_registered() {
         user32::RegisterClassExW(&wc);
     });
 }
-
-// ── Helpers ───────────────────────────────────────────────────────────────────
 
 fn wto16(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
@@ -373,8 +361,6 @@ unsafe fn show_and_start_timer(hwnd: *mut c_void) {
     user32::SetTimer(hwnd, TIMER_ID_DRAIN, TIMER_INTERVAL_MS, null_mut());
 }
 
-// ── CLAP host extensions and shared state ─────────────────────────────────────
-//
 // Phase 2c: the audio-side `PluginHost::instantiate_clap` builds a *bare*
 // ClapHost (see `clap::ffi::make_host`), so the plugin's create-time host
 // pointer does NOT route to the GUI HWND.  The vtable callbacks below
@@ -435,8 +421,6 @@ unsafe extern "C" fn clap_host_request_process(_host: *const ClapHost) {
     // No-op: GUI-only instance is never activated for processing.
 }
 
-// ── clap.log host extension ──
-
 #[allow(dead_code)] // Phase 2c park
 unsafe extern "C" fn clap_host_log_log(
     _host: *const ClapHost,
@@ -464,8 +448,6 @@ unsafe extern "C" fn clap_host_log_log(
 static CLAP_LOG_VTBL: ClapHostLog = ClapHostLog {
     log: clap_host_log_log,
 };
-
-// ── clap.gui host extension ──
 
 #[allow(dead_code)] // Phase 2c park
 unsafe extern "C" fn clap_host_gui_resize_hints_changed(_host: *const ClapHost) {}
@@ -522,8 +504,6 @@ static CLAP_HOST_GUI_VTBL: ClapHostGui = ClapHostGui {
     closed: clap_host_gui_closed,
 };
 
-// ── host_get_extension router ──
-
 #[allow(dead_code)] // Phase 2c park
 unsafe extern "C" fn gui_host_get_extension(
     _host: *const ClapHost,
@@ -541,8 +521,6 @@ unsafe extern "C" fn gui_host_get_extension(
     }
     null()
 }
-
-// ── VST3 host-side COM objects ────────────────────────────────────────────────
 
 use crate::plugin_formats::vst3::ffi::{
     FUnknown, IComponentHandlerVtbl, IHostApplicationVtbl, IPlugFrameVtbl, IPlugView, TResult,
@@ -564,8 +542,6 @@ unsafe extern "C" fn vst3_refcount_release(_: *mut FUnknown) -> u32 {
     1
 }
 
-// ── IHostApplication ──
-//
 // Phase 2c park: the audio-side `instantiate_processor` currently passes a
 // null host context to `IComponent::initialize` (single shared instance, so
 // the GUI can no longer hand its own context).  The vtable below is retained
@@ -647,8 +623,6 @@ fn host_app_as_funknown() -> *mut FUnknown {
     &HOST_APP as *const HostApplication as *mut FUnknown
 }
 
-// ── IComponentHandler ──
-
 unsafe extern "C" fn handler_qi(
     this: *mut FUnknown,
     iid: *const Tuid,
@@ -704,7 +678,6 @@ fn component_handler_as_funknown() -> *mut FUnknown {
     &COMPONENT_HANDLER as *const ComponentHandler as *mut FUnknown
 }
 
-// ── IPlugFrame ──
 // Per-editor instance so `resizeView` can route to the right container HWND.
 
 #[repr(C)]
@@ -763,7 +736,6 @@ fn make_plug_frame() -> Box<PlugFrame> {
     })
 }
 
-// ── VST3 editor ───────────────────────────────────────────────────────────────
 
 /// Open a VST3 native editor window (main thread only).
 ///
@@ -932,8 +904,6 @@ pub unsafe fn open_vst3_editor(
     Ok(hwnd as usize)
 }
 
-// ── CLAP editor ───────────────────────────────────────────────────────────────
-
 /// Open a CLAP native editor window (main thread only).
 ///
 /// # Safety
@@ -1077,8 +1047,6 @@ pub unsafe fn open_clap_editor(
 
     Ok(hwnd as usize)
 }
-
-// ── Programmatic close ────────────────────────────────────────────────────────
 
 /// Post `WM_CLOSE` to the plugin window from any thread.
 /// The WndProc handles cleanup on the main thread.

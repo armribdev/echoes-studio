@@ -3,8 +3,6 @@
 //! All types here are stack-allocated and `Copy` so the real-time path can
 //! use them without allocation.
 
-// ── MIDI event ────────────────────────────────────────────────────────────────
-
 #[derive(Debug, Clone, Copy)]
 pub struct MidiEvent {
     /// Sample offset within the current block (0 ≤ offset < block_size).
@@ -17,8 +15,6 @@ pub enum MidiEventKind {
     NoteOn { pitch: u8, velocity: u8 },
     NoteOff { pitch: u8 },
 }
-
-// ── MidiEventList ─────────────────────────────────────────────────────────────
 
 const MAX_EVENTS_PER_BLOCK: usize = 256;
 const EMPTY_EVENT: MidiEvent = MidiEvent {
@@ -83,8 +79,6 @@ impl MidiEventList {
     }
 }
 
-// ── MidiNoteSnapshot ──────────────────────────────────────────────────────────
-
 /// A MIDI note stored in beat space for runtime tempo conversion.
 ///
 /// Created at graph compile time (non-RT) from `AppMidiClip` note data.
@@ -123,8 +117,6 @@ pub fn beats_to_sample(clip_start_sec: f64, beats: f32, bpm: f32, sample_rate: f
     let secs = clip_start_sec + beats as f64 * (60.0 / bpm as f64);
     (secs * sample_rate as f64) as u64
 }
-
-// ── Tests (ADR-012 / Phase 5b — BP-3 bit-identical lock) ──────────────────────
 
 #[cfg(test)]
 mod tests {

@@ -21,8 +21,6 @@
 
 use std::collections::HashMap;
 
-// ── Parameter ID ──────────────────────────────────────────────────────────────
-
 /// Stable, opaque string identifier for a parameter within a device.
 /// Chosen by the device author; must be unique per device.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -39,8 +37,6 @@ impl std::fmt::Display for ParamKey {
         write!(f, "{}", self.0)
     }
 }
-
-// ── Parameter range ───────────────────────────────────────────────────────────
 
 /// Defines the numeric range and mapping of a parameter.
 #[derive(Debug, Clone)]
@@ -122,8 +118,6 @@ impl ParameterRange {
     }
 }
 
-// ── Parameter ─────────────────────────────────────────────────────────────────
-
 /// A single automatable, modulatable parameter.
 #[derive(Debug, Clone)]
 pub struct Param {
@@ -170,8 +164,6 @@ impl Param {
         self.value = self.range.denormalise(n);
     }
 }
-
-// ── ParameterMap ──────────────────────────────────────────────────────────────
 
 /// The complete set of parameters for one device.
 #[derive(Debug, Default, Clone)]

@@ -34,8 +34,6 @@ use crate::project::{
     ReverbParams, TrackEffect,
 };
 
-// ── Command result ────────────────────────────────────────────────────────────
-
 /// Returned by `send_command` / `send_batch` to the UI.
 ///
 /// `rename_all = "camelCase"` keeps the JSON keys in sync with the TypeScript
@@ -69,8 +67,6 @@ impl CommandResult {
     }
 }
 
-// ── Public Tauri commands ─────────────────────────────────────────────────────
-
 /// Send a single typed command to the engine.
 #[tauri::command]
 pub fn send_command(
@@ -100,7 +96,6 @@ pub fn send_batch(
         })
         .collect();
 
-    // After all commands, do a single graph recompile
     recompile_if_needed(&state);
     crate::menu_state::refresh_menu(&app, &state);
 
@@ -116,7 +111,6 @@ pub fn get_snapshot(state: tauri::State<'_, AppState>) -> Result<serde_json::Val
 }
 
 /// Return the audio graph topology derived from the current project.
-/// Read-only — used by the Graph view UI.
 #[tauri::command]
 pub fn get_graph_snapshot(state: tauri::State<'_, AppState>) -> Result<GraphSnapshotDto, String> {
     let project = state.project.lock().map_err(|e| e.to_string())?;
@@ -146,7 +140,6 @@ pub fn undo(
     let dto = project.to_dto();
     let snapshot_val = serde_json::to_value(&dto).map_err(|e| e.to_string())?;
 
-    // Notify the UI that the entire project was replaced
     let engine_event = EngineEvent::new(ev::PROJECT_RESET, "", snapshot_val.clone());
     let _ = app.emit("engine-event", &engine_event);
 
@@ -192,8 +185,6 @@ pub fn redo(
     Ok(snapshot_val)
 }
 
-// ── Command dispatch ──────────────────────────────────────────────────────────
-
 fn process_command(
     app: &tauri::AppHandle,
     state: &tauri::State<'_, AppState>,
@@ -203,9 +194,7 @@ fn process_command(
     let project_id = command.project_id.clone();
 
     match command.command_type.as_str() {
-        // ── Transport (runtime, not persisted) ────────────────────────────────
         cmd::PLAY => {
-            // Update the CPAL engine atomically — no lock needed
             state.transport.play();
             let ev = EngineEvent::new(ev::PLAY_STARTED, &project_id, json!({}));
             let _ = app.emit("engine-event", &ev);
@@ -216,9 +205,7 @@ fn process_command(
         }
 
         cmd::STOP => {
-            // Reset position to 0 and stop playback atomically
             state.transport.stop();
-            // Emit the current position (0) so the frontend playhead snaps back
             let ev_stop = EngineEvent::new(ev::PLAY_STOPPED, &project_id, json!({}));
             let ev_pos = EngineEvent::new(
                 ev::POSITION_UPDATED,
@@ -249,7 +236,6 @@ fn process_command(
         cmd::SEEK => {
             let p: SeekPayload = serde_json::from_value(command.payload)
                 .map_err(|e| format!("SEEK payload invalid: {e}"))?;
-            // Update the CPAL engine cursor atomically
             state.transport.seek(p.position);
             let ev = EngineEvent::new(
                 ev::POSITION_UPDATED,
@@ -263,13 +249,11 @@ fn process_command(
             ))
         }
 
-        // ── Project structural commands (event-sourced) ───────────────────────
         cmd::CREATE_TRACK => {
             let p: CreateTrackPayload = serde_json::from_value(command.payload)
                 .map_err(|e| format!("CREATE_TRACK payload invalid: {e}"))?;
             let track_id = generate_id();
 
-            // 1. Mutate project
             {
                 let mut project = state.project.lock().map_err(|e| e.to_string())?;
                 project.tracks.push(AppTrack {
@@ -289,16 +273,12 @@ fn process_command(
                 });
             }
 
-            // 2. Persist event
             let event_payload = json!({ "id": track_id, "name": p.name });
             let project_event = ProjectEvent::new(ev::TRACK_CREATED, event_payload.clone());
             append_and_maybe_snapshot(state, project_event)?;
 
-            // 3. Emit to UI
             let engine_ev = EngineEvent::new(ev::TRACK_CREATED, &project_id, event_payload);
             let _ = app.emit("engine-event", &engine_ev);
-
-            // 4. Structural change → recompile
             recompile_if_needed(state);
 
             Ok(CommandResult::ok(
@@ -352,8 +332,7 @@ fn process_command(
                 }
             }
 
-            // Hot-path: write the new values into the live atomics so the
-            // audio thread picks them up at the next block without a recompile.
+            // Hot-path: live atomics updated directly, no recompile.
             if let Some(vol) = p.volume {
                 let linear = (vol / 100.0).clamp(0.0, 2.0);
                 state.live_params.set_track_volume(&p.track_id, linear);
@@ -429,9 +408,6 @@ fn process_command(
                 }
             }
 
-            // Hot-path: update the per-track solo flags and the global any_solo
-            // flag atomically.  Every TrackGainNode picks the new state up at
-            // its next block read.
             state
                 .live_params
                 .set_track_solo_exclusive(&p.track_id, p.solo);
@@ -492,7 +468,6 @@ fn process_command(
                 track.clips.push(clip);
             }
 
-            // Persist structural event (no audio data — that lives in the cache)
             let event_payload = json!({
                 "track_id": p.track_id,
                 "clip_id": clip_id,
@@ -503,7 +478,7 @@ fn process_command(
             let project_event = ProjectEvent::new(ev::CLIP_ADDED, event_payload.clone());
             append_and_maybe_snapshot(state, project_event)?;
 
-            // Emit full ClipDto to UI (includes samples for waveform rendering)
+            // Full ClipDto includes samples for waveform rendering.
             let engine_payload = json!({
                 "track_id": p.track_id,
                 "clip": clip_dto,
@@ -708,10 +683,7 @@ fn process_command(
             let p: UpdateEffectPayload = serde_json::from_value(command.payload)
                 .map_err(|e| format!("UPDATE_EFFECT payload invalid: {e}"))?;
 
-            // Dual-path: a parameter-only edit of an enabled effect is delivered
-            // hot — through the EQ `ParameterBlock` (ADR-009) or the plugin SPSC
-            // queue (ADR-007) — with no recompile.  A structural change
-            // (enable/disable toggle) still recompiles.
+            // Parameter-only edits are hot-delivered (ADR-009/ADR-007); enable/disable toggles recompile.
             let (updated_effect, hot, structural) = {
                 let mut project = state.project.lock().map_err(|e| e.to_string())?;
                 let track = project
@@ -736,11 +708,7 @@ fn process_command(
                     effect.params = merge_effect_params(&effect.params, raw)?;
                 }
 
-                // Classify the hot action for an enabled effect.
                 let hot = if effect.enabled {
-                    // All internal effects now carry a `ParameterBlock`
-                    // (ADR-009), so a parameter-only edit is delivered hot for
-                    // every variant — no recompile fallback remains for these.
                     match &effect.params {
                         EffectParams::Eq(eq) => HotEffectUpdate::Eq(eq.clone()),
                         EffectParams::Compressor(c) => HotEffectUpdate::Compressor(c.clone()),
@@ -790,10 +758,7 @@ fn process_command(
                         state.live_params.write_effect_block(&p.effect_id, &values)
                     }
                     HotEffectUpdate::Plugin(device_id, params) => {
-                        // Push each normalised (native_id, value) to the live
-                        // plugin's SPSC ring.  Succeeds only if the device is
-                        // already instantiated in the active graph; otherwise
-                        // fall back to recompile (which instantiates it).
+                        // Falls back to recompile if the device isn't yet instantiated in the graph.
                         if let Ok(mut engine) = state.audio_engine.lock() {
                             let mut all_ok = !params.is_empty();
                             for (native_id, value) in params {
@@ -826,7 +791,6 @@ fn process_command(
             ))
         }
 
-        // ── Modulation commands ───────────────────────────────────────────────
         cmd::ADD_MODULATOR => {
             let p: AddModulatorPayload = serde_json::from_value(command.payload)
                 .map_err(|e| format!("ADD_MODULATOR payload invalid: {e}"))?;
@@ -1207,8 +1171,6 @@ fn process_command(
     }
 }
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
 fn append_and_maybe_snapshot(
     state: &tauri::State<'_, AppState>,
     event: ProjectEvent,
@@ -1220,12 +1182,9 @@ fn append_and_maybe_snapshot(
     store.append(event);
 
     if store.should_snapshot() {
-        // Snapshot the current project state for fast future replay
-        drop(store); // release event_store lock before taking project lock
+        drop(store); // release before acquiring project lock (lock order: project → store)
         let project_snapshot = {
             let project = state.project.lock().map_err(|e| e.to_string())?;
-            // We can't move out of a MutexGuard, so we reconstruct from DTO
-            // This is a deep clone — acceptable at snapshot intervals
             snapshot_project(&project)
         };
         let mut store = state.event_store.lock().map_err(|e| e.to_string())?;
@@ -1235,15 +1194,11 @@ fn append_and_maybe_snapshot(
     Ok(())
 }
 
-/// Public entry point for `main.rs` to seed the event store when loading a
-/// project from disk.
 pub fn snapshot_project_for_store(project: &AppProject) -> AppProject {
     snapshot_project(project)
 }
 
-/// Build a lightweight AppProject copy for snapshotting.
-/// Audio data is NOT cloned into the snapshot — it lives in AudioDataCache.
-/// During replay, the cache is consulted to avoid disk reads.
+/// Shallow project copy for snapshotting — audio data stays in `AudioDataCache`.
 fn snapshot_project(project: &AppProject) -> AppProject {
     AppProject {
         name: project.name.clone(),
@@ -1290,31 +1245,19 @@ fn snapshot_project(project: &AppProject) -> AppProject {
     }
 }
 
-/// Classifies how an `UPDATE_EFFECT` parameter edit is delivered to the audio
-/// thread without a recompile (see the `UPDATE_EFFECT` handler).
 enum HotEffectUpdate {
-    /// Not hot-deliverable — fall back to recompile.
     None,
-    /// Internal EQ effect: write the natural-unit values into its
-    /// `ParameterBlock` (ADR-009).
     Eq(EqParams),
-    /// Internal compressor effect: write the natural-unit values into its
-    /// `ParameterBlock` (ADR-009).
     Compressor(CompressorParams),
-    /// Internal reverb effect: write the natural-unit values into its
-    /// `ParameterBlock` (ADR-009).
     Reverb(ReverbParams),
-    /// Internal delay effect: write the natural-unit values into its
-    /// `ParameterBlock` (ADR-009).
     Delay(DelayParams),
-    /// External plugin: push normalised `(native_id, value)` pairs into the
-    /// instance's SPSC ring, keyed by `device_id` (= plugin_id) (ADR-007).
+    /// Push normalised `(native_id, value)` pairs into the plugin's SPSC ring (ADR-007).
     Plugin(String, Vec<(u32, f32)>),
 }
 
 fn default_params_for_kind(kind: &str) -> Option<EffectParams> {
-    // Plugin effects: kind = "plugin:<plugin_id>|<name>|<format>"
-    // Encoded as pipe-separated triple so ADD_EFFECT carries name + format for the UI.
+    // Plugin kind encodes identity as "plugin:<id>|<name>|<format>" so ADD_EFFECT
+    // carries name and format for the UI without a separate lookup.
     if let Some(rest) = kind.strip_prefix("plugin:") {
         let mut parts = rest.splitn(3, '|');
         let plugin_id = parts.next().unwrap_or("").to_string();
@@ -1355,17 +1298,13 @@ fn merge_effect_params(
             serde_json::from_value::<DelayParams>(raw).map(EffectParams::Delay)
         }
         EffectParams::Plugin(p) => {
-            // Plugin params are a Vec<(u32, f32)>; update in place or replace entirely.
             serde_json::from_value::<PluginParams>(raw).map(|updated| {
                 EffectParams::Plugin(PluginParams {
                     plugin_id: p.plugin_id.clone(),
                     name: p.name.clone(),
                     format: p.format.clone(),
                     params: updated.params,
-                    // Identity/config fields stay with the existing effect; the
-                    // merge payload only carries param values.  Preserve the
-                    // sandbox opt-in (ADR-015).
-                    sandboxed: p.sandboxed,
+                    sandboxed: p.sandboxed, // preserve sandbox opt-in (ADR-015)
                 })
             })
         }
@@ -1374,9 +1313,7 @@ fn merge_effect_params(
 }
 
 /// Rebuild `AppState::project` from the event store (snapshot + events).
-/// Called after undo/redo.
 pub fn rebuild_project_from_store(state: &tauri::State<'_, AppState>) -> Result<(), String> {
-    // Collect what we need while holding the store lock
     let (base_project, events_to_replay): (AppProject, Vec<super::events::ProjectEvent>) = {
         let store = state.event_store.lock().map_err(|e| e.to_string())?;
         let (_snap_idx, snap_opt, events) = store.replay_plan();
@@ -1389,18 +1326,13 @@ pub fn rebuild_project_from_store(state: &tauri::State<'_, AppState>) -> Result<
         (base, events.to_vec())
     };
 
-    // Apply events — mute/solo are now event-sourced so no extra mixer restore needed
     let rebuilt = apply_events(state, base_project, &events_to_replay)?;
-
-    // Write back
     let mut project = state.project.lock().map_err(|e| e.to_string())?;
     *project = rebuilt;
 
     Ok(())
 }
 
-/// Apply a sequence of project events to a base project, using the audio cache
-/// to avoid re-reading audio files.
 fn apply_events(
     state: &tauri::State<'_, AppState>,
     mut project: AppProject,
@@ -1416,7 +1348,6 @@ fn apply_events(
                     .as_str()
                     .unwrap_or("Track")
                     .to_string();
-                // Only add if not already present (idempotent)
                 if !project.tracks.iter().any(|t| t.id == id) {
                     project.tracks.push(AppTrack {
                         id,
@@ -1486,16 +1417,13 @@ fn apply_events(
                 let end = event.payload["end"].as_f64().unwrap_or(0.0);
 
                 if let Some(track) = project.tracks.iter_mut().find(|t| t.id == track_id) {
-                    // Skip if clip already present (idempotent replay)
                     if track.clips.iter().any(|c| c.id == clip_id) {
                         continue;
                     }
 
-                    // Try cache first (avoids disk read on undo/redo)
                     let audio_data = if let Some(cached) = state.audio_cache.get(&clip_id) {
                         Some(cached)
                     } else {
-                        // Cache miss — load from disk and cache
                         match AudioClip::from_file(&file_path) {
                             Ok(audio) => {
                                 let data = audio.into_clip_data();
@@ -1612,7 +1540,6 @@ fn apply_events(
                 }
             }
 
-            // ── Modulation ─────────────────────────────────────────────────────
             ev::MODULATOR_ADDED => {
                 let track_id = event.payload["track_id"].as_str().unwrap_or("");
                 if let Some(raw) = event.payload.get("modulator") {
@@ -1633,7 +1560,6 @@ fn apply_events(
                 let mod_id = event.payload["modulator_id"].as_str().unwrap_or("");
                 if let Some(track) = project.tracks.iter_mut().find(|t| t.id == track_id) {
                     track.modulators.retain(|m| m.id != mod_id);
-                    // Remove orphaned routes
                     track.mod_routes.retain(|r| r.modulator_id != mod_id);
                 }
             }
@@ -1766,16 +1692,7 @@ fn apply_events(
     Ok(project)
 }
 
-/// Trigger audio graph recompilation.
-///
-/// Builds a new `GraphScheduler` from the current project and enqueues it
-/// for atomic pickup by the audio thread at the next block boundary.
-///
-/// Must be called **outside** of any Mutex locks to avoid deadlocks.
-///
-/// Canonical lock order: **project → engine**. This matches
-/// `render_project_to_stereo` in `main.rs`; reversing it here would create
-/// an AB-BA deadlock with the offline render path.
+/// Lock order: project → engine. Reversing causes AB-BA deadlock with the offline render path.
 fn recompile_if_needed(state: &tauri::State<'_, AppState>) {
     let compile_done = if let Ok(project) = state.project.lock() {
         if let Ok(mut engine) = state.audio_engine.lock() {

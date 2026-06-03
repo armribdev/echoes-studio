@@ -26,8 +26,6 @@
 use crate::audio_graph::modulation::ModulationMap;
 use crate::audio_graph::node::NodeId;
 
-// ── Connection ─────────────────────────────────────────────────────────────────
-
 /// Describes where a single input port receives its audio.
 #[derive(Debug, Clone, Copy)]
 pub struct InputConnection {
@@ -43,8 +41,6 @@ pub struct InputConnection {
     /// samples of delay so signals stay phase-aligned.  Zero means no delay.
     pub delay_samples: u32,
 }
-
-// ── Step ──────────────────────────────────────────────────────────────────────
 
 /// One unit of work in the execution plan.
 ///
@@ -66,8 +62,6 @@ pub struct ExecutionStep {
     /// Pre-computed to avoid querying the node on the audio thread.
     pub num_outputs: usize,
 }
-
-// ── Plan ──────────────────────────────────────────────────────────────────────
 
 /// Fully compiled, immutable execution plan.
 ///
@@ -175,9 +169,6 @@ impl ExecutionPlan {
     }
 }
 
-// ── Build helpers (used by GraphCompiler) ─────────────────────────────────────
-
-/// Builder for an `ExecutionPlan`.  Used exclusively by `GraphCompiler`.
 pub struct ExecutionPlanBuilder {
     steps: Vec<ExecutionStep>,
     modulation: ModulationMap,

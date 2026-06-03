@@ -24,15 +24,11 @@ use crate::audio_graph::modulation::{
 use crate::audio_graph::node::{NodeId, PortId, PortKind};
 use crate::project::{AppProject, EffectParams, ModulationTargetRef, ModulatorParams};
 
-// ── Node ID allocation ─────────────────────────────────────────────────────────
-
 static NEXT_NODE_ID: AtomicU64 = AtomicU64::new(1);
 
 fn alloc_node_id() -> NodeId {
     NodeId(NEXT_NODE_ID.fetch_add(1, Ordering::Relaxed))
 }
-
-// ── Node kinds ─────────────────────────────────────────────────────────────────
 
 /// Describes the DSP role of a graph node.
 ///
@@ -104,8 +100,6 @@ pub enum NodeKind {
     /// dedicated input port.  This avoids the "all-to-port-0 overwrite" bug.
     Master { num_inputs: usize },
 
-    // ── Insert effects ─────────────────────────────────────────────────────────
-    //
     // `effect_id` is the project-level effect identifier.  The compiler uses it
     // to look up the matching `LiveParams::ParameterBlock` (ADR-009) so hot
     // parameter edits reach the node without a recompile.  Only `Eq` consumes a
@@ -129,16 +123,12 @@ pub enum NodeKind {
     },
 }
 
-// ── Graph node ────────────────────────────────────────────────────────────────
-
 #[derive(Debug, Clone)]
 pub struct GraphNode {
     pub id: NodeId,
     pub kind: NodeKind,
     pub label: String,
 }
-
-// ── Edge ──────────────────────────────────────────────────────────────────────
 
 /// A directed connection from one port to another.
 ///
@@ -163,8 +153,6 @@ pub struct Edge {
     pub kind: PortKind,
 }
 
-// ── AudioGraph ────────────────────────────────────────────────────────────────
-
 /// The complete audio graph topology (editor-side, non-real-time).
 pub struct AudioGraph {
     pub(crate) nodes: HashMap<NodeId, GraphNode>,
@@ -184,8 +172,6 @@ impl AudioGraph {
             modulation: ModulationMap::new(),
         }
     }
-
-    // ── Mutation ───────────────────────────────────────────────────────────────
 
     pub fn add_node(&mut self, kind: NodeKind, label: impl Into<String>) -> NodeId {
         let id = alloc_node_id();
@@ -267,8 +253,6 @@ impl AudioGraph {
         self.edges.retain(|e| e != edge);
     }
 
-    // ── Query ──────────────────────────────────────────────────────────────────
-
     pub fn node(&self, id: NodeId) -> Option<&GraphNode> {
         self.nodes.get(&id)
     }
@@ -304,8 +288,6 @@ impl AudioGraph {
         self.modulation.all_routes()
     }
 
-    // ── Project builder ────────────────────────────────────────────────────────
-
     /// Construct a signal-flow graph from an `AppProject`.
     ///
     /// Signal flow per track:
@@ -318,7 +300,6 @@ impl AudioGraph {
     pub fn from_project(project: &AppProject) -> Self {
         let mut graph = AudioGraph::new();
 
-        // ── Master node ─────────────────────────────────────────────────────────
         let num_track_inputs = project.tracks.len().max(1);
         let master_id = graph.add_node(
             NodeKind::Master {
@@ -329,7 +310,6 @@ impl AudioGraph {
 
         let any_solo = project.tracks.iter().any(|t| t.solo);
 
-        // ── Per-track chain ─────────────────────────────────────────────────────
         for (port_idx, track) in project.tracks.iter().enumerate() {
             let track_node = if !track.midi_clips.is_empty() {
                 graph.add_node(
@@ -408,7 +388,6 @@ impl AudioGraph {
             graph.connect(gain_node, 0, meter_node, 0);
             graph.connect(meter_node, 0, master_id, port_idx as u32);
 
-            // ── Modulator nodes (audio-graph sources, no audio edges) ────────────
             // modulator_id (project) → NodeId (graph)
             let mut mod_node_ids: HashMap<String, NodeId> = HashMap::new();
 
@@ -428,7 +407,6 @@ impl AudioGraph {
                 mod_node_ids.insert(modulator.id.clone(), node_id);
             }
 
-            // ── Modulation routes ────────────────────────────────────────────────
             for route in &track.mod_routes {
                 let source_node_id = match mod_node_ids.get(&route.modulator_id) {
                     Some(&id) => id,

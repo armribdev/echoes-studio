@@ -50,8 +50,6 @@ use super::ffi::{
     K_RESULT_OK, SPEAKER_STEREO,
 };
 
-// ── VstWrapperNode ─────────────────────────────────────────────────────────────
-
 pub struct VstWrapperNode {
     node_id: NodeId,
     info: DeviceInfo,
@@ -144,7 +142,6 @@ impl AudioNode for VstWrapperNode {
     fn prepare(&mut self, ctx: PrepareContext) {
         self.num_channels = ctx.num_channels;
 
-        // Pre-allocate pointer scratch (stable for the life of this prepared node)
         self.in_channel_ptrs = vec![std::ptr::null_mut(); ctx.num_channels];
         self.out_channel_ptrs = vec![std::ptr::null_mut(); ctx.num_channels];
 
@@ -155,14 +152,12 @@ impl AudioNode for VstWrapperNode {
         let proc = proc_nn.as_ptr();
         let comp = comp_nn.as_ptr();
 
-        // Inform plugin of bus arrangement (stereo in + stereo out)
         let mut in_arr = SPEAKER_STEREO;
         let mut out_arr = SPEAKER_STEREO;
         unsafe {
             ((*(*proc).vtbl).set_bus_arrangements)(proc, &mut in_arr, 1, &mut out_arr, 1);
         }
 
-        // Activate main I/O buses on the component side
         unsafe {
             // kAudio=0, kInput=0, index 0, activate=true(1)
             ((*(*comp).vtbl).activate_bus)(comp, 0, 0, 0, 1);
@@ -171,7 +166,6 @@ impl AudioNode for VstWrapperNode {
             ((*(*comp).vtbl).set_active)(comp, 1);
         }
 
-        // Setup processing parameters
         let setup = ProcessSetup {
             process_mode: 0,         // realtime
             symbolic_sample_size: 0, // float32
@@ -208,7 +202,7 @@ impl AudioNode for VstWrapperNode {
         // (`num_frames` = MAX_BLOCK_FRAMES); see clap_instrument.rs rationale.
         let nf = transport.block_size;
 
-        // ── Drain pending parameter changes (ADR-007) ─────────────────────────
+        // ADR-007: drain pending parameter changes.
         // VST3 `IParameterChanges` carries normalised values directly, so the
         // queued `normalised` field maps 1:1.  No allocation: the list lives in
         // `self.param_changes`, reset and refilled in place each block.
@@ -240,12 +234,10 @@ impl AudioNode for VstWrapperNode {
             };
         }
 
-        // Populate output channel pointer array.
         for c in 0..nc {
             self.out_channel_ptrs[c] = outputs[0].channel_mut(c).as_mut_ptr();
         }
 
-        // Build AudioBusBuffers (no allocation — just setting fields).
         self.in_bus = AudioBusBuffers {
             num_channels: nc as i32,
             silence_flags: if inputs.is_empty() { u64::MAX } else { 0 },
@@ -327,8 +319,6 @@ impl Device for VstWrapperNode {
     }
     fn load_state(&mut self, _state: &DeviceState) {}
 
-    // ── Lifecycle (Phase 2b: single source of truth = instance atomic) ─────────
-    //
     // Mutations validate the requested transition against the current atomic
     // value via `lifecycle::transition`.  Invalid transitions are silently
     // ignored at this layer — the host-side API is what surfaces errors to

@@ -26,8 +26,6 @@ use std::sync::{Arc, Mutex};
 use crate::audio_graph::parameter_block::ParameterBlock;
 use crate::project::AppProject;
 
-// ── Per-target cells ──────────────────────────────────────────────────────────
-
 /// Per-track parameter cells held by `TrackGainNode`.
 pub struct TrackParams {
     /// Linear volume multiplier (0.0..1.0), stored as `f32::to_bits()`.
@@ -103,8 +101,6 @@ impl RouteCells {
     }
 }
 
-// ── LiveParams registry ──────────────────────────────────────────────────────
-
 #[derive(Default)]
 struct LiveParamsInner {
     tracks: HashMap<String, Arc<TrackParams>>,
@@ -139,8 +135,6 @@ impl LiveParams {
             master_soft_clip: Arc::new(AtomicBool::new(false)),
         }
     }
-
-    // ── Lookup / insert (used by compiler and hot-path handlers) ─────────────
 
     /// Return the cells for `track_id`, creating them seeded with the project
     /// values if absent.
@@ -235,8 +229,6 @@ impl LiveParams {
     pub fn set_master_soft_clip(&self, enabled: bool) {
         self.master_soft_clip.store(enabled, Ordering::Relaxed);
     }
-
-    // ── Hot-path setters (called by gateway handlers) ────────────────────────
 
     /// Write a new volume to the track's atomic cell (no recompile).
     /// Returns false if no cell exists yet (track not in the active graph).
@@ -348,8 +340,6 @@ impl LiveParams {
         inner.tracks.get(track_id).cloned()
     }
 
-    // ── Compile-time sync ────────────────────────────────────────────────────
-
     /// Drop registry entries no longer present in the project, and refresh
     /// `any_solo`.  Called from the compiler so the registry mirrors the
     /// project's live structural state.
@@ -388,7 +378,6 @@ impl LiveParams {
             .routes
             .retain(|id, _| live_route_ids.contains(id.as_str()));
 
-        // Drop hot-parameter blocks whose effect is no longer in the project.
         let live_effect_ids: std::collections::HashSet<&str> = project
             .tracks
             .iter()

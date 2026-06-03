@@ -20,14 +20,12 @@ fn main() {
         .plugin(tauri_plugin_dialog::init())
         .manage(AppState::new())
         .setup(|app| {
-            // ── Native audio engine ───────────────────────────────────────────
             // Start the CPAL output stream as early as possible so the engine
             // is ready before any project is loaded.  Failure is logged but
             // non-fatal: the app continues and offline export still works
             // (it drives the graph directly, without needing the live stream).
             start_native_audio(app);
 
-            // ── Debug auto-load ───────────────────────────────────────────────
             let mut initial_title = "Sans titre".to_string();
 
             #[cfg(debug_assertions)]
@@ -78,14 +76,12 @@ fn main() {
 
             windows_theme::force_dark_popups();
 
-            // Create the three controlled items disabled from the start.
             let save_item =
                 MenuItem::with_id(app, "save", "Enregistrer", false, Some("CmdOrCtrl+S"))?;
             let undo_item = MenuItem::with_id(app, "undo", "Annuler", false, Some("CmdOrCtrl+Z"))?;
             let redo_item =
                 MenuItem::with_id(app, "redo", "Rétablir", false, Some("CmdOrCtrl+Shift+Z"))?;
 
-            // Clone so the menu can own one copy while the closures own another.
             let save_h = save_item.clone();
             let undo_h = undo_item.clone();
             let redo_h = redo_item.clone();
@@ -159,27 +155,21 @@ fn main() {
             });
         })
         .invoke_handler(tauri::generate_handler![
-            // ── Read-only helpers ─────────────────────────────────────────────
             get_audio_clip_duration,
             get_project,
             list_plugins,
             scan_plugins,
-            // ── Plugin native GUI ─────────────────────────────────────────────
             open_plugin_editor,
             close_plugin_editor,
-            // ── Gateway commands (all mutations go here) ──────────────────────
             send_command,
             send_batch,
             get_snapshot,
             get_graph_snapshot,
             undo,
             redo,
-            // ── Keyboard shortcut bridge ──────────────────────────────────────
             menu_action,
-            // ── Export ────────────────────────────────────────────────────────
             export_wav,
             export_mp3,
-            // ── Audio settings ────────────────────────────────────────────────
             get_audio_devices,
             get_device_sample_rates,
             get_device_channels,
@@ -189,8 +179,6 @@ fn main() {
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
-
-// ── Window title ─────────────────────────────────────────────────────────────
 
 fn apply_native_dark_theme(app: &tauri::AppHandle) {
     app.set_theme(Some(Theme::Dark));
@@ -207,8 +195,6 @@ fn set_window_title(app: &tauri::AppHandle, project_name: &str) {
         let _ = window.set_title(&title);
     }
 }
-
-// ── Project file loading ──────────────────────────────────────────────────────
 
 fn load_project_from_file(path: &std::path::Path) -> Result<AppProject, String> {
     let json = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
@@ -269,8 +255,6 @@ fn apply_loaded_project(
     let _ = app.emit("project-loaded", dto);
     menu_state::refresh_menu(app, state);
 }
-
-// ── Native menu event handler ─────────────────────────────────────────────────
 
 fn handle_menu_event(app: &tauri::AppHandle, menu_id: &str) {
     let state = app.state::<AppState>();
@@ -425,8 +409,6 @@ fn handle_menu_event(app: &tauri::AppHandle, menu_id: &str) {
     }
 }
 
-// ── Tauri commands ────────────────────────────────────────────────────────────
-
 /// Keyboard shortcut bridge — mirrors every native menu accelerator so the
 /// frontend keymap module can invoke the exact same logic.
 ///
@@ -576,17 +558,7 @@ fn render_project_to_stereo(
     )
 }
 
-/// Write a stereo mixdown as a WAV file at the requested bit depth.
-///
-/// | `bit_depth` | WAV format            | Notes                          |
-/// |-------------|-----------------------|--------------------------------|
-/// | 16          | 16-bit PCM (int)      | CD quality, widest compat      |
-/// | 24          | 24-bit PCM (int)      | Pro standard for delivery      |
-/// | 32          | 32-bit float          | Archival / stem exports        |
-///
-/// The project is rendered offline by the same Rust audio engine that drives
-/// live playback (see `audio_engine::offline`).  The path is chosen by the
-/// user via the JS save dialog before this command is invoked.
+/// Write a stereo mixdown as a WAV file.  `bit_depth` may be 16, 24, or 32.
 #[tauri::command]
 fn export_wav(
     state: tauri::State<'_, AppState>,
@@ -655,18 +627,8 @@ fn export_wav(
     }
 }
 
-/// Encode a stereo mixdown as an MP3 file using LAME.
-///
-/// | `bitrate_kbps` | Notes                                              |
-/// |----------------|----------------------------------------------------|
-/// | 128            | Standard streaming quality (~1 MB/min)             |
-/// | 192            | High quality — recommended for distribution        |
-/// | 320            | Maximum quality — archival / professional delivery |
-///
-/// The project is rendered offline by the same Rust audio engine that drives
-/// live playback (see `audio_engine::offline`).  Encoding is done entirely in
-/// Rust via LAME compiled from source (`mp3lame-encoder` crate) — no system
-/// library dependency required.
+/// Encode a stereo mixdown as an MP3 file using LAME.  `bitrate_kbps` is
+/// typically 128, 192, or 320.
 #[tauri::command]
 fn export_mp3(
     state: tauri::State<'_, AppState>,
@@ -685,7 +647,6 @@ fn export_mp3(
         path
     };
 
-    // Convert f32 [-1.0, 1.0] → i16 PCM
     let left_i16: Vec<i16> = samples_left
         .iter()
         .map(|s| (s.clamp(-1.0, 1.0) * 32_767.0) as i16)
@@ -739,13 +700,8 @@ fn export_mp3(
     std::fs::write(&path, &mp3_out).map_err(|e| e.to_string())
 }
 
-// ── Plugin native GUI commands ────────────────────────────────────────────────
-
-/// Open the native GUI window for a VST3 or CLAP plugin effect.
-///
-/// Creates a fresh GUI-only plugin instance (separate from the audio node),
-/// embeds it in a Win32 container window, and shows it.  Idempotent: if the
-/// editor for `effect_id` is already open, returns immediately.
+/// Open the native GUI window for a plugin effect.
+/// Idempotent: returns immediately if the editor is already open.
 #[tauri::command]
 fn open_plugin_editor(
     plugin_id: String,
@@ -754,18 +710,12 @@ fn open_plugin_editor(
     app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
 ) -> Result<(), String> {
-    // Idempotency check
     if let Ok(editors) = state.open_plugin_editors.lock() {
         if editors.contains_key(&effect_id) {
             return Ok(());
         }
     }
 
-    // Phase 2c: fetch the shared `Arc<PluginInstance>` from the host (the
-    // device was already instantiated when the effect was added — graph
-    // compile + prepare runs synchronously on the command thread, so the
-    // audio-side prepare has completed before the user can click "Open
-    // editor").  No more re-loading the DLL.
     let (instance, format) = {
         let engine = state.audio_engine.lock().map_err(|e| e.to_string())?;
         let format = engine
@@ -782,8 +732,7 @@ fn open_plugin_editor(
 
     let open_editors = std::sync::Arc::clone(&state.open_plugin_editors);
 
-    // The GUI APIs (IPlugView::attached, clap_gui.set_parent, …) and
-    // Win32 window creation must all happen on the Win32 main thread.
+    // IPlugView/clap_gui and Win32 window creation must happen on the main thread.
     let (tx, rx) = std::sync::mpsc::channel::<Result<usize, String>>();
 
     app.run_on_main_thread(move || {
@@ -817,9 +766,6 @@ fn open_plugin_editor(
 }
 
 /// Programmatically close the native GUI window for a plugin effect.
-///
-/// Posts `WM_CLOSE` to the window; the WndProc runs the cleanup closure and
-/// removes the entry from `open_plugin_editors` on the main thread.
 #[tauri::command]
 fn close_plugin_editor(effect_id: String, state: tauri::State<'_, AppState>) -> Result<(), String> {
     let hwnd = state
@@ -836,27 +782,20 @@ fn close_plugin_editor(effect_id: String, state: tauri::State<'_, AppState>) -> 
     Ok(())
 }
 
-// ── Native audio bootstrap ────────────────────────────────────────────────────
-
 /// Start the CPAL audio engine during Tauri `setup`.
 ///
-/// Uses a dedicated function so the compiler can clearly track the lifetime of
-/// the temporary `tauri::State` (avoids the "does not live long enough" error
-/// that occurs when the match arm's `MutexGuard<PoisonError<…>>` outlives the
-/// `State` in an anonymous block).
+/// Extracted into a function so the compiler can track the `tauri::State`
+/// lifetime — the `MutexGuard` temporary must not outlive `State`.
 fn start_native_audio(app: &mut tauri::App) {
     let app_handle = app.handle().clone();
     let state = app.state::<AppState>();
 
-    // Read stored settings (default on first launch, persisted after that).
     let settings = state
         .audio_settings
         .lock()
         .map(|s| s.clone())
         .unwrap_or_default();
 
-    // Build a minimal initial project — the real graph is pushed by
-    // `recompile_audio_graph` once a project is loaded or created.
     let init_project = AppProject::new();
 
     if let Ok(mut engine) = state.audio_engine.lock() {
@@ -864,18 +803,11 @@ fn start_native_audio(app: &mut tauri::App) {
             eprintln!("[audio] Impossible d'activer le moteur natif : {e}");
         }
     };
-    // Note: the semicolon above is intentional.  It forces the MutexGuard
-    // temporary (inside the Result returned by .lock()) to drop before `state`
-    // is dropped at function exit, satisfying the borrow checker.
 }
 
-// ── Audio settings commands ───────────────────────────────────────────────────
 
-/// Return the list of available input and output audio devices.
-///
-/// The frontend uses this to populate the device pickers in the Settings panel.
-/// Device IDs are the CPAL device names; `"default"` is prepended as a
-/// special sentinel that always resolves to the system default.
+/// Return available input and output audio devices.
+/// `"default"` always resolves to the system default device.
 #[tauri::command]
 fn get_audio_devices() -> Result<audio_settings::AudioDeviceList, String> {
     use cpal::traits::{DeviceTrait, HostTrait};
@@ -915,14 +847,8 @@ fn get_audio_devices() -> Result<audio_settings::AudioDeviceList, String> {
     Ok(audio_settings::AudioDeviceList { inputs, outputs })
 }
 
-/// Return which of the four candidate sample rates are supported by a device.
-///
-/// Candidate list: 44 100, 48 000, 88 200, 96 000 Hz — the same values shown
-/// in the Settings panel.  The frontend uses the result to grey out unsupported
-/// pills so the user can only pick rates the device actually handles.
-///
-/// If the device cannot be queried (permissions, driver issue, etc.) all four
-/// candidates are returned so the UI stays fully enabled rather than crashing.
+/// Return which of [44100, 48000, 88200, 96000] Hz are supported by the device.
+/// Falls back to all four candidates when the device cannot be queried.
 #[tauri::command]
 fn get_device_sample_rates(device_id: String) -> Vec<u32> {
     use cpal::traits::{DeviceTrait, HostTrait};
@@ -948,7 +874,6 @@ fn get_device_sample_rates(device_id: String) -> Vec<u32> {
         return CANDIDATES.to_vec();
     };
 
-    // Collect ranges once — `supported_output_configs()` is an iterator.
     let ranges: Vec<_> = ranges.collect();
     if ranges.is_empty() {
         return CANDIDATES.to_vec();
@@ -982,11 +907,7 @@ fn get_device_sample_rates(device_id: String) -> Vec<u32> {
     }
 }
 
-/// Return the native channel count of a device.
-///
-/// For output devices the default output config is queried; for input devices
-/// the default input config.  Falls back to 2 (stereo) on any error so the UI
-/// always shows a sensible value.
+/// Return the native channel count of a device.  Falls back to 2 on error.
 #[tauri::command]
 fn get_device_channels(device_id: String, is_input: bool) -> u16 {
     use cpal::traits::{DeviceTrait, HostTrait};
@@ -1022,36 +943,21 @@ fn get_device_channels(device_id: String, is_input: bool) -> u16 {
     }
 }
 
-/// Apply new audio settings: persist them and, only if necessary, restart the
-/// CPAL stream.
-///
-/// A stream restart (brief ~50 ms audio interruption) is triggered **only**
-/// when a parameter that cannot be changed atomically differs from the current
-/// value:
-///   - output or input device
-///   - sample rate
-///   - buffer size
-///
-/// `output_channels` is handled by an atomic inside the callback and was
-/// already applied by `set_active_output_channels` during the live-preview
-/// phase — so saving never causes a glitch when only the channel count changed.
-///
-/// Returns an error string if the device is unavailable or the stream cannot
-/// be opened; the UI should surface this as a notification.
+/// Apply new audio settings: persist them and restart the CPAL stream only
+/// when the device, sample rate, or buffer size changed.  Output channel count
+/// is handled atomically without a restart.
 #[tauri::command]
 fn apply_audio_settings(
     settings: audio_settings::AudioSettings,
     app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
 ) -> Result<(), String> {
-    // Read current settings before overwriting so we can diff them.
     let current = state
         .audio_settings
         .lock()
         .map(|s| s.clone())
         .unwrap_or_default();
 
-    // Persist for future app launches / restarts.
     if let Ok(mut s) = state.audio_settings.lock() {
         *s = settings.clone();
     }
@@ -1060,25 +966,18 @@ fn apply_audio_settings(
         .live_params
         .set_master_soft_clip(settings.master_soft_clip);
 
-    // Determine whether a stream restart is actually needed.
     let needs_restart = current.output_device != settings.output_device
         || current.input_device != settings.input_device
         || current.sample_rate != settings.sample_rate
         || current.buffer_size != settings.buffer_size;
 
     if needs_restart {
-        // Full restart: device / sample rate / buffer changed.
-        // `start_stream_with_settings` also seeds the active-channels atomic,
-        // so output_channels is always consistent after a restart.
         let init_project = AppProject::new();
         if let Ok(mut engine) = state.audio_engine.lock() {
             engine.start_stream_with_settings(&init_project, app, &settings)?;
         }
         recompile_audio_graph(&state);
     } else {
-        // No restart needed: only `output_channels` (or no change at all).
-        // The live-preview already applied it atomically, but we set it again
-        // to guarantee consistency even if the preview path was skipped.
         if let Ok(engine) = state.audio_engine.lock() {
             engine.set_active_output_channels(settings.output_channels as usize);
         }
@@ -1088,13 +987,6 @@ fn apply_audio_settings(
 }
 
 /// Update the active output channel count without restarting the CPAL stream.
-///
-/// Changes take effect within one audio callback block (~5 ms at typical
-/// buffer sizes) — no stream interruption, no audio glitch.
-///
-/// Used by the Settings panel to give a live preview of mono/stereo routing
-/// as the user clicks +/−, and to revert instantly if they cancel.
-///
 /// `count = 0` restores the "use all hardware channels" default.
 #[tauri::command]
 fn set_active_output_channels(count: u16, state: tauri::State<'_, AppState>) {
@@ -1103,16 +995,8 @@ fn set_active_output_channels(count: u16, state: tauri::State<'_, AppState>) {
     }
 }
 
-// ── Audio graph recompilation helper ─────────────────────────────────────────
-
-/// Recompile the audio graph from the current project state and push the new
-/// scheduler to the CPAL audio thread.
-///
-/// Must be called **outside** any held Mutex locks to avoid deadlocks.
-/// Mirrors the logic in `engine_gateway::api::recompile_if_needed` but is
-/// accessible from `main.rs` (where that private function is not visible).
-///
-/// Canonical lock order: **project → engine** (matches `render_project_to_stereo`).
+/// Recompile the audio graph and push the new scheduler to the audio thread.
+/// Must be called outside any held Mutex locks (canonical lock order: project → engine).
 fn recompile_audio_graph(state: &tauri::State<'_, AppState>) {
     if let Ok(project) = state.project.lock() {
         if let Ok(mut engine) = state.audio_engine.lock() {

@@ -61,8 +61,6 @@ impl std::fmt::Display for LifecycleState {
     }
 }
 
-// ── Transition ─────────────────────────────────────────────────────────────────
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LifecycleError {
     InvalidTransition {

@@ -50,8 +50,6 @@ use crate::engine_gateway::events::{
 use crate::plugin_system::PluginHost;
 use crate::project::AppProject;
 
-// ── SendStream wrapper ────────────────────────────────────────────────────────
-
 /// Wraps `cpal::Stream` to implement `Send`.
 ///
 /// On Windows, CPAL marks `Stream` as `!Send` via `PhantomData<*mut ()>`.
@@ -66,8 +64,6 @@ use crate::project::AppProject;
 struct SendStream(cpal::Stream);
 // SAFETY: see doc comment above.
 unsafe impl Send for SendStream {}
-
-// ── Constants ─────────────────────────────────────────────────────────────────
 
 /// Maximum number of frames per audio block.
 ///
@@ -87,8 +83,6 @@ const _: () = assert!(MAX_METER_CHANNELS == crate::engine_gateway::events::METER
 ///
 /// Real backends jitter slightly even under normal load; this avoids false positives.
 const XRUN_SLACK_MIN: Duration = Duration::from_micros(2_000);
-
-// ── XrunStats ─────────────────────────────────────────────────────────────────
 
 /// Lock-free underrun counter shared between the audio callback (writer) and
 /// the position reporter (reader → UI telemetry).
@@ -149,8 +143,6 @@ fn log_new_xruns(last_reported: &mut u64, current: u64) {
     *last_reported = current;
 }
 
-// ── ChannelLevels ─────────────────────────────────────────────────────────────
-
 /// Per-channel peak levels shared lock-free between the audio callback (writer)
 /// and the position reporter (reader → Tauri event).
 ///
@@ -189,8 +181,6 @@ impl ChannelLevels {
         std::array::from_fn(|i| f32::from_bits(self.input[i].load(Ordering::Relaxed)))
     }
 }
-
-// ── AudioEngine ───────────────────────────────────────────────────────────────
 
 /// The real-time audio engine.  Held behind `Mutex<AudioEngine>` in `AppState`.
 pub struct AudioEngine {
@@ -247,9 +237,8 @@ impl AudioEngine {
             snapshot: Arc::new(RuntimeSnapshot::new()),
             transport,
             _stream: None,
-            // Start with `true` so a stale reporter from a previous engine
-            // instance (if any) would see the stop signal.
-            reporter_stop: Arc::new(AtomicBool::new(true)),
+        // `true` so any stale reporter from a previous engine instance exits.
+        reporter_stop: Arc::new(AtomicBool::new(true)),
             levels: ChannelLevels::new(),
             meter_cells: Arc::new(Mutex::new(HashMap::new())),
             active_output_channels: Arc::new(AtomicUsize::new(0)),
@@ -270,8 +259,6 @@ impl AudioEngine {
     pub fn set_active_output_channels(&self, count: usize) {
         self.active_output_channels.store(count, Ordering::Relaxed);
     }
-
-    // ── Graph compilation ─────────────────────────────────────────────────────
 
     /// Compile a new `GraphScheduler` from `project` and enqueue it for atomic
     /// pickup by the audio callback.
@@ -296,8 +283,6 @@ impl AudioEngine {
         self.snapshot.enqueue(scheduler);
     }
 
-    // ── Stream lifecycle ──────────────────────────────────────────────────────
-
     /// Stop any running stream and signal the position reporter to exit.
     ///
     /// Dropping `_stream` stops the CPAL audio callback immediately (it drains
@@ -320,15 +305,12 @@ impl AudioEngine {
         app: tauri::AppHandle,
         settings: &AudioSettings,
     ) -> Result<(), String> {
-        // ── 1. Stop existing stream ───────────────────────────────────────────
-        self.stop_stream();
+            self.stop_stream();
 
-        // ── 2. Find the requested output device ───────────────────────────────
         let host = cpal::default_host();
         let device = find_output_device(&host, &settings.output_device)
             .ok_or_else(|| "Aucun périphérique de sortie audio trouvé".to_string())?;
 
-        // ── 3. Build a stream config that honours the requested sample rate ────
         let (base_cfg, fmt) = resolve_stream_config(&device, settings.sample_rate)?;
         let actual_sr = base_cfg.sample_rate.0;
         let hw_channels = base_cfg.channels as usize;
@@ -352,7 +334,6 @@ impl AudioEngine {
             fmt,
         );
 
-        // ── 4. Propagate sample rate and compile initial graph ─────────────────
         self.transport.set_sample_rate(actual_sr as f32);
 
         let compile_cfg = CompileConfig {
@@ -373,9 +354,6 @@ impl AudioEngine {
         }
         self.snapshot.enqueue(initial_scheduler);
 
-        // ── 5. Build the CPAL stream (try Fixed buffer, fall back to Default) ──
-        // Seed the active-channels atomic with the value from settings so the
-        // first block already uses the correct routing.
         self.active_output_channels
             .store(active_channels, Ordering::Relaxed);
         self.xrun_stats.reset();
@@ -434,7 +412,6 @@ impl AudioEngine {
             .play()
             .map_err(|e| format!("Impossible de démarrer le flux audio : {e}"))?;
 
-        // ── 6. Spawn position reporter ────────────────────────────────────────
         self.reporter_stop = Arc::new(AtomicBool::new(false));
         let stop = Arc::clone(&self.reporter_stop);
         let reporter_transport = Arc::clone(&self.transport);
@@ -461,9 +438,6 @@ impl AudioEngine {
         Ok(())
     }
 
-    /// Convenience wrapper — starts the stream using default settings.
-    ///
-    /// Used during application startup before the user has configured anything.
     pub fn start_stream(
         &mut self,
         project: &AppProject,
@@ -481,8 +455,6 @@ impl Default for AudioEngine {
         )
     }
 }
-
-// ── Device helpers ────────────────────────────────────────────────────────────
 
 /// Return the output device matching `name`, or the system default.
 ///
@@ -527,13 +499,11 @@ fn resolve_stream_config(
     device: &cpal::Device,
     requested_sr: u32,
 ) -> Result<(cpal::StreamConfig, cpal::SampleFormat), String> {
-    // Collect once — the iterator is consumed on first pass.
     let ranges: Vec<_> = device
         .supported_output_configs()
         .map(|it| it.collect::<Vec<_>>())
         .unwrap_or_default();
 
-    // Closure: find the first range that matches `sr` AND `fmt`.
     let find = |sr: cpal::SampleRate, fmt: cpal::SampleFormat| {
         ranges
             .iter()
@@ -547,14 +517,12 @@ fn resolve_stream_config(
 
     let req = cpal::SampleRate(requested_sr);
 
-    // ── Pass 1 — requested SR, preferred formats ──────────────────────────────
     for fmt in [cpal::SampleFormat::F32, cpal::SampleFormat::I16] {
         if let Some(found) = find(req, fmt) {
             return Ok(found);
         }
     }
 
-    // ── Pass 2 — requested SR, any format (rare exotic device) ───────────────
     if let Some(range) = ranges
         .iter()
         .find(|r| r.min_sample_rate() <= req && r.max_sample_rate() >= req)
@@ -567,7 +535,6 @@ fn resolve_stream_config(
         return Ok((range.with_sample_rate(req).into(), fmt));
     }
 
-    // ── Passes 3 & 4 — requested SR unavailable, fall back to device default ──
     let default_cfg = device
         .default_output_config()
         .map_err(|e| format!("Impossible d'obtenir la configuration audio : {e}"))?;
@@ -578,19 +545,15 @@ fn resolve_stream_config(
         requested_sr, fallback_sr.0
     );
 
-    // Pass 3 — device-default SR, preferred formats
     for fmt in [cpal::SampleFormat::F32, cpal::SampleFormat::I16] {
         if let Some(found) = find(fallback_sr, fmt) {
             return Ok(found);
         }
     }
 
-    // Pass 4 — absolute last resort
     let fmt = default_cfg.sample_format();
     Ok((default_cfg.into(), fmt))
 }
-
-// ── Stream builder ────────────────────────────────────────────────────────────
 
 /// Dispatch to the correct sample-type variant of `build_stream`.
 fn build_typed_stream(
@@ -672,20 +635,14 @@ fn build_stream<T>(
 where
     T: SizedSample + FromSample<f32> + Send + 'static,
 {
-    // Pre-allocate the stereo mix buffer once — reused for every block.
     let mut mix_buf = vec![0.0_f32; MAX_BLOCK_FRAMES * 2];
-    // Box the scheduler so swaps move pointers, not the (heavy) struct itself,
-    // and so the displaced scheduler can be handed back to the command thread
-    // for deallocation without ever calling `drop` on the audio thread.
+    // Boxed so pointer swaps displace the old scheduler without drop on the audio thread.
     let mut scheduler = Box::new(GraphScheduler::empty(transport.sample_rate()));
     // ITU-R BS.775 / Pro Tools standard: −3 dB for stereo→mono downmix.
-    // Precomputed outside the closure — it's a constant, no per-block cost.
     let mono_gain: f32 = 1.0 / 2.0_f32.sqrt();
-    // XRun detection state — lives in the closure, never shared across threads.
     let mut prev_callback: Option<cpal::StreamInstant> = None;
     let mut prev_frames: usize = 0;
-    // FTZ/DAZ must be set per-thread; do it on first callback invocation. CPAL
-    // owns the audio thread so this is the earliest hook we have.
+    // FTZ/DAZ must be set per-thread; earliest hook is the first callback.
     let mut denormal_guard_set = false;
     let xrun_stats_cb = Arc::clone(&xrun_stats);
     let xrun_stats_err = Arc::clone(&xrun_stats);
@@ -693,7 +650,6 @@ where
     let stream = device
         .build_output_stream(
             config,
-            // ── Audio callback (real-time thread) ─────────────────────────────
             move |data: &mut [T], info: &cpal::OutputCallbackInfo| {
                 if !denormal_guard_set {
                     enable_flush_to_zero();
@@ -731,19 +687,13 @@ where
                     return;
                 }
 
-                // Atomically swap in a new scheduler if one is pending.  The
-                // displaced scheduler (if any) is handed back to the command
-                // thread via `RuntimeSnapshot`'s internal drop ring — the
-                // audio thread never deallocates.
                 snapshot.try_swap(&mut scheduler);
 
                 let info = transport.snapshot(frames);
 
-                // Render the graph into the stereo mix buffer [L0, R0, L1, R1, …]
                 let mix = &mut mix_buf[..frames * 2];
                 scheduler.process_block(&info, mix);
 
-                // ── Read active channels atomically (live-updatable) ──────────
                 let raw_active = ch_ctrl.load(Ordering::Relaxed);
                 let active = if raw_active == 0 {
                     hw_channels
@@ -752,7 +702,6 @@ where
                 };
                 let mono = active == 1;
 
-                // ── Peak metering (single pass) ───────────────────────────────
                 let (mut peak_l, mut peak_r) = (0.0_f32, 0.0_f32);
                 for f in 0..frames {
                     let s_l = mix[f * 2].abs();
@@ -768,14 +717,12 @@ where
                     levels.set_output(ch, if ch % 2 == 0 { peak_l } else { peak_r });
                 }
 
-                // Advance the transport cursor after rendering.
                 if info.is_playing {
                     transport
                         .position_samples
                         .fetch_add(frames as u64, Ordering::Relaxed);
                 }
 
-                // ── Write to device buffer ────────────────────────────────────
                 // Mono: ITU-R BS.775 downmix (L+R)×(1/√2) broadcast to all hw
                 //       channels so both ears hear the mono mix.
                 // Stereo/multi: L→even channels, R→odd channels.
@@ -808,7 +755,6 @@ where
                     }
                 }
             },
-            // ── Error callback ─────────────────────────────────────────────────
             move |err| {
                 xrun_stats_err.record();
                 eprintln!("[audio] Erreur de flux : {err}");
@@ -819,8 +765,6 @@ where
 
     Ok(stream)
 }
-
-// ── Position reporter ─────────────────────────────────────────────────────────
 
 /// Reusable telemetry buffers for the ~30 Hz reporter (no per-tick `json!` / `Map::new`).
 struct PositionReporterState {

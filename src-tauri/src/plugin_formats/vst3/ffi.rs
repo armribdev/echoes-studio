@@ -16,8 +16,6 @@
 use std::ffi::c_void;
 use std::path::Path;
 
-// ── Primitive types ────────────────────────────────────────────────────────────
-
 /// VST3 result code (0 = OK, 1 = FALSE, negative = error).
 pub type TResult = i32;
 /// 16-byte interface / class identifier.
@@ -26,7 +24,6 @@ pub type Tuid = [u8; 16];
 pub const K_RESULT_OK: TResult = 0;
 pub const K_RESULT_FALSE: TResult = 1;
 
-// ── Interface IDs ──────────────────────────────────────────────────────────────
 // Derived from the VST3 SDK using FUID::toTUID() big-endian serialisation.
 
 /// Steinberg's FUnknown IID (non-COM-compatible, modern SDK convention).
@@ -44,14 +41,10 @@ pub const IID_IAUDIO_PROCESSOR: Tuid = [
     0x42, 0x04, 0x3F, 0x99, 0xB7, 0xDA, 0x45, 0x3C, 0xA5, 0x69, 0xE7, 0x9D, 0x9A, 0xAE, 0xC3, 0x3D,
 ];
 
-// ── Speaker arrangements ───────────────────────────────────────────────────────
-
 /// L | R  (bits 0 and 1)
 pub const SPEAKER_STEREO: u64 = 0x0000_0003;
 /// Mono center (bit 19 = kSpeakerM)
 pub const SPEAKER_MONO: u64 = 0x0008_0000;
-
-// ── PClassInfo ─────────────────────────────────────────────────────────────────
 
 pub const CATEGORY_AUDIO_MODULE: &[u8] = b"Audio Module Class";
 pub const CATEGORY_COMPONENT: &[u8] = b"Component Controller Class";
@@ -87,8 +80,6 @@ impl PClassInfo {
     }
 }
 
-// ── FUnknown (vtable index 0–2) ────────────────────────────────────────────────
-
 /// Base COM object — only the vtable pointer at offset 0.
 #[repr(C)]
 pub struct FUnknown {
@@ -102,8 +93,6 @@ pub struct FUnknownVtbl {
     pub add_ref: unsafe extern "C" fn(*mut FUnknown) -> u32,
     pub release: unsafe extern "C" fn(*mut FUnknown) -> u32,
 }
-
-// ── IPluginFactory (vtable index 0–6) ─────────────────────────────────────────
 
 #[repr(C)]
 pub struct IPluginFactory {
@@ -129,7 +118,6 @@ pub struct IPluginFactoryVtbl {
     ) -> TResult,
 }
 
-// ── IComponent (vtable index 0–13) ────────────────────────────────────────────
 // Extends FUnknown (0–2) + IPluginBase (3–4) + IComponent own methods (5–13).
 
 #[repr(C)]
@@ -160,7 +148,6 @@ pub struct IComponentVtbl {
     pub get_state: unsafe extern "C" fn(*mut IComponent, *mut c_void) -> TResult,
 }
 
-// ── IAudioProcessor (vtable index 0–10) ───────────────────────────────────────
 // Extends FUnknown (0–2) only.
 
 #[repr(C)]
@@ -223,8 +210,6 @@ pub struct IAudioProcessorVtbl {
     pub get_tail_samples: unsafe extern "C" fn(*mut IAudioProcessor) -> u32,
 }
 
-// ── IParameterChanges / IParamValueQueue (host → plugin parameter transport) ──
-//
 // ADR-007.  The host fills these structures each block from the SPSC parameter
 // ring and hands them to the plugin via `ProcessData::input_param_changes`.
 // The plugin only *reads* them (getParameterCount → getParameterData → per
@@ -284,8 +269,6 @@ pub struct HostParameterChanges {
     pub queues: [HostParamValueQueue; MAX_PARAM_QUEUES],
     pub count: i32,
 }
-
-// ── Vtable implementations ─────────────────────────────────────────────────────
 
 unsafe extern "C" fn pvq_query_interface(
     _this: *mut HostParamValueQueue,
@@ -464,8 +447,6 @@ impl HostParameterChanges {
     }
 }
 
-// ── Loaded library ─────────────────────────────────────────────────────────────
-
 /// Thin kernel32 wrapper — avoids dependency on a specific windows-sys HMODULE type.
 #[cfg(windows)]
 mod win32 {
@@ -556,7 +537,6 @@ impl Vst3Library {
     }
 }
 
-// ── IEditController (vtable index 0–17) ───────────────────────────────────────
 // Extends FUnknown (0–2) + IPluginBase (3–4) + IEditController own methods (5–17).
 
 /// IEditController — UI/parameter controller interface, main-thread only.
@@ -596,8 +576,6 @@ pub struct IEditControllerVtbl {
     // (17) createView — the one we call
     pub create_view: unsafe extern "C" fn(*mut IEditController, *const u8) -> *mut IPlugView,
 }
-
-// ── IPlugView (vtable index 0–14) ─────────────────────────────────────────────
 
 pub const IID_IPLUG_VIEW: Tuid = [
     0x5B, 0xC3, 0x25, 0x07, 0xD0, 0x60, 0x49, 0xEA, 0x84, 0x00, 0x4B, 0x4C, 0x80, 0xCF, 0xCE, 0x37,
@@ -650,7 +628,6 @@ const _: () = assert!(
     "IEditControllerVtbl layout drift",
 );
 
-// ── IHostApplication ──────────────────────────────────────────────────────────
 // Minimal host context passed to IComponent::initialize.  Plugins QI for this
 // to fetch the host name and to ask the host to create auxiliary objects
 // (IMessage, IAttributeList).  Returning kResultFalse for unsupported requests
@@ -672,7 +649,6 @@ pub struct IHostApplicationVtbl {
         unsafe extern "C" fn(*mut FUnknown, *const Tuid, *const Tuid, *mut *mut c_void) -> TResult,
 }
 
-// ── IComponentHandler ────────────────────────────────────────────────────────
 // Plugins call this to notify the host of parameter edits (begin/perform/end)
 // and to request a component restart.  Many plugins assume the handler is
 // non-null and crash on the first knob touch without one.
@@ -693,7 +669,6 @@ pub struct IComponentHandlerVtbl {
     pub restart_component: unsafe extern "C" fn(*mut FUnknown, i32) -> TResult,
 }
 
-// ── IPlugFrame ────────────────────────────────────────────────────────────────
 // Set on the IPlugView so the plugin can request a resize of its container.
 
 pub const IID_IPLUG_FRAME: Tuid = [
@@ -708,8 +683,6 @@ pub struct IPlugFrameVtbl {
     pub release: unsafe extern "C" fn(*mut FUnknown) -> u32,
     pub resize_view: unsafe extern "C" fn(*mut FUnknown, *mut IPlugView, *mut ViewRect) -> TResult,
 }
-
-// ── Plugin enumeration helper ─────────────────────────────────────────────────
 
 /// Enumerate all audio-module classes in a loaded factory.
 ///
@@ -778,8 +751,6 @@ pub unsafe fn instantiate_processor(
     Ok((comp, processor as *mut IAudioProcessor))
 }
 
-// ── IBStream (host-implemented; backs IComponent::get/set_state) ──────────────
-//
 // Phase 4b (ADR-010).  `IComponent::getState` asks the host for an `IBStream`
 // to *write* the plugin's processor state into; `setState` asks for one to
 // *read* it back from.  The VST3 SDK ships a concrete `MemoryStream`, but we do

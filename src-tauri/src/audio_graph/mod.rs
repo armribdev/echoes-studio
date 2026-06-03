@@ -45,8 +45,6 @@ pub mod snapshot;
 pub mod snapshot_dto;
 pub mod worker_pool;
 
-// ── Convenience re-exports ────────────────────────────────────────────────────
-
 pub use buffer::AudioBuffer;
 pub use compiler::{CompileConfig, CompileError, CompiledGraph, GraphCompiler, MeterCell};
 pub use execution_plan::ExecutionPlan;

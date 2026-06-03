@@ -18,8 +18,6 @@ const TWO_PI: f32 = std::f32::consts::TAU;
 /// Master gain to avoid clipping with many voices.
 const VOICE_SCALE: f32 = 0.15;
 
-// ── ADSR ──────────────────────────────────────────────────────────────────────
-
 #[derive(Clone, Copy)]
 struct Adsr {
     attack_secs: f32,
@@ -47,8 +45,6 @@ enum Stage {
     Sustain,
     Release,
 }
-
-// ── Voice ─────────────────────────────────────────────────────────────────────
 
 struct Voice {
     active: bool,
@@ -81,8 +77,6 @@ impl Voice {
         }
     }
 }
-
-// ── PolySynth ─────────────────────────────────────────────────────────────────
 
 pub struct PolySynth {
     voices: [Voice; MAX_VOICES],

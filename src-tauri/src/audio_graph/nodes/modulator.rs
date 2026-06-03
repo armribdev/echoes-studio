@@ -11,8 +11,6 @@ use crate::audio_graph::live_params::ModulatorCells;
 use crate::audio_graph::node::{AudioNode, NodeId, PrepareContext, TransportInfo};
 use crate::project::LfoWaveform;
 
-// ── LFO ───────────────────────────────────────────────────────────────────────
-
 /// LFO with selectable waveform.  Output is normalised to −1…+1.
 ///
 /// Phase accumulates across blocks; `reset()` returns it to 0.

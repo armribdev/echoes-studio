@@ -11,8 +11,6 @@ use std::path::PathBuf;
 
 use crate::plugin_system::wrapper::DeviceFormat;
 
-// ── Manifest ──────────────────────────────────────────────────────────────────
-
 /// Static metadata about a discovered plugin.
 ///
 /// Populated by the scanner without loading the plugin binary.
@@ -65,8 +63,6 @@ impl PluginManifest {
     }
 }
 
-// ── Registry ──────────────────────────────────────────────────────────────────
-
 pub struct PluginRegistry {
     manifests: HashMap<String, PluginManifest>,
 }
@@ -79,8 +75,6 @@ impl PluginRegistry {
         registry.register_builtins();
         registry
     }
-
-    // ── Built-in registration ──────────────────────────────────────────────────
 
     fn register_builtins(&mut self) {
         // These match the `NodeKind` entries the compiler can build.
@@ -98,8 +92,6 @@ impl PluginRegistry {
         }
     }
 
-    // ── Mutation ───────────────────────────────────────────────────────────────
-
     pub fn add(&mut self, manifest: PluginManifest) {
         self.manifests.insert(manifest.id.clone(), manifest);
     }
@@ -112,8 +104,6 @@ impl PluginRegistry {
         // Windows: scan *.vst3 bundles
         // macOS:   scan ~/Library/Audio/Plug-Ins/VST3 and .component
     }
-
-    // ── Query ──────────────────────────────────────────────────────────────────
 
     pub fn get(&self, id: &str) -> Option<&PluginManifest> {
         self.manifests.get(id)

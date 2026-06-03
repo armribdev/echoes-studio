@@ -18,8 +18,6 @@ use crate::project::generate_id;
 /// Channel count for output/input peak arrays in telemetry payloads.
 pub const METER_CHANNEL_COUNT: usize = 16;
 
-// ── Event type constants ──────────────────────────────────────────────────────
-
 pub mod ev {
     // Project events — persisted in EventStore
     pub const TRACK_CREATED: &str = "TRACK_CREATED";
@@ -64,8 +62,6 @@ pub mod ev {
     pub const LATENCY_WARNING: &str = "LATENCY_WARNING";
 }
 
-// ── Project event (stored in EventStore) ─────────────────────────────────────
-
 /// A structural project change. These events are appended to the event store
 /// and can be replayed to reconstruct any past project state.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -91,8 +87,6 @@ impl ProjectEvent {
         }
     }
 }
-
-// ── Telemetry payloads (position reporter, ~30 Hz) ───────────────────────────
 
 /// Peak levels emitted while transport is stopped (`LEVELS_UPDATED`) or piggybacked
 /// on `POSITION_UPDATED` while playing.
@@ -130,8 +124,6 @@ pub struct TelemetryEngineEvent<P: Serialize> {
     pub timestamp: u64,
     pub payload: P,
 }
-
-// ── Engine event (sent to UI via Tauri emit) ──────────────────────────────────
 
 /// A message from the engine to the frontend. Project events are wrapped in
 /// this envelope before being emitted so the frontend has full context
@@ -179,8 +171,6 @@ impl EngineEvent {
         }
     }
 }
-
-// ── Helpers ───────────────────────────────────────────────────────────────────
 
 fn now_ms() -> u64 {
     SystemTime::now()

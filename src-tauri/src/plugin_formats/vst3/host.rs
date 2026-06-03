@@ -92,8 +92,6 @@ impl Default for Vst3Host {
     }
 }
 
-// ── Path helpers ───────────────────────────────────────────────────────────────
-
 fn vst3_search_paths() -> Vec<PathBuf> {
     let mut paths = Vec::new();
     if let Ok(pf) = std::env::var("PROGRAMFILES") {

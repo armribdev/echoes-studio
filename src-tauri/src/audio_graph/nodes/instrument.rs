@@ -16,8 +16,6 @@ use crate::audio_graph::buffer::AudioBuffer;
 use crate::audio_graph::midi::{MidiEvent, MidiEventKind, MidiEventList, MidiNoteSnapshot};
 use crate::audio_graph::node::{AudioNode, NodeId, PrepareContext, TransportInfo};
 
-// ── InstrumentDevice trait ────────────────────────────────────────────────────
-
 /// Anything that turns MIDI events into audio.
 ///
 /// Implemented by `PolySynth` (built-in) and future VST3/AU wrappers.
@@ -38,8 +36,6 @@ pub trait InstrumentDevice: Send + 'static {
 
     fn reset(&mut self);
 }
-
-// ── InstrumentNode ────────────────────────────────────────────────────────────
 
 pub struct InstrumentNode {
     id: NodeId,
@@ -163,8 +159,6 @@ impl AudioNode for InstrumentNode {
         self.was_playing = false;
     }
 }
-
-// ── Tests (ADR-012 / Phase 5b — per-block tempo resolution, BP-3) ─────────────
 
 #[cfg(test)]
 mod tests {

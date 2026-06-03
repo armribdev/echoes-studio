@@ -6,12 +6,8 @@ use crate::audio_graph::oversampling::Oversample2x;
 use crate::audio_graph::parameter_block::ParameterBlock;
 use crate::project::CompressorParams;
 
-// ── Hot-parameter block layout (ADR-009) ──────────────────────────────────────
-//
-// Cell order for the compressor's `ParameterBlock`.  Shared by the compiler
-// (which seeds the block), the gateway (which writes cells on a knob turn via
-// `compressor_block_values`), and `CompressorNode` (which reads them per
-// block).  Values are stored in natural units (dB, ratio, ms).
+// Cell order for `ParameterBlock` (ADR-009): shared by compiler, gateway, and `CompressorNode`.
+// Values in natural units (dB, ratio, ms).
 pub const COMP_PARAM_COUNT: usize = 6;
 pub const COMP_THRESHOLD_DB: usize = 0;
 pub const COMP_RATIO: usize = 1;

@@ -17,8 +17,6 @@
 
 use crate::audio_graph::buffer::AudioBuffer;
 
-// ── Identifiers ────────────────────────────────────────────────────────────────
-
 /// Stable, opaque identifier for a node in the graph.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct NodeId(pub u64);
@@ -40,8 +38,6 @@ pub struct PortId {
     /// 0-based port index.
     pub port: u32,
 }
-
-// ── PortKind (Phase 1 declaration — not yet enforced by the compiler) ─────────
 
 /// Bipolar / unipolar polarity hint for modulation ports.
 ///
@@ -84,8 +80,6 @@ impl PortKind {
     }
 }
 
-// ── Context types ──────────────────────────────────────────────────────────────
-
 /// Passed to [`AudioNode::prepare`] when the session initialises or when the
 /// audio device configuration changes.
 ///
@@ -127,8 +121,6 @@ impl TransportInfo {
     }
 }
 
-// ── AudioNode trait ────────────────────────────────────────────────────────────
-
 /// The fundamental DSP processing unit.
 ///
 /// Implementors cover everything from raw audio clips to VST3 wrappers.
@@ -144,8 +136,6 @@ impl TransportInfo {
 /// - `inputs`:  one `&AudioBuffer` per input port  (may be a silence buffer if unconnected)
 /// - `outputs`: one `&mut AudioBuffer` per output port (pre-zeroed by the scheduler)
 pub trait AudioNode: Send + 'static {
-    // ── Identity ───────────────────────────────────────────────────────────────
-
     fn node_id(&self) -> NodeId;
 
     /// Human-readable label for debugging / UI display.
@@ -153,12 +143,8 @@ pub trait AudioNode: Send + 'static {
         "AudioNode"
     }
 
-    // ── Port declaration ───────────────────────────────────────────────────────
-
     fn num_input_ports(&self) -> usize;
     fn num_output_ports(&self) -> usize;
-
-    // ── Lifecycle ──────────────────────────────────────────────────────────────
 
     /// Called once before streaming begins and whenever device parameters change.
     ///
@@ -184,8 +170,6 @@ pub trait AudioNode: Send + 'static {
     ///
     /// Called on transport stop or when the node is deactivated.
     fn reset(&mut self);
-
-    // ── Modulation hooks ───────────────────────────────────────────────────────
 
     /// Reset per-block modulation accumulators to zero.
     ///
@@ -219,8 +203,6 @@ pub trait AudioNode: Send + 'static {
     ///
     /// Default: no-op.
     fn apply_modulation(&mut self, _param_id: u32, _delta: f32) {}
-
-    // ── Optional metadata ──────────────────────────────────────────────────────
 
     /// Intrinsic processing latency in samples (default 0).
     ///

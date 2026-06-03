@@ -6,8 +6,6 @@
 
 use serde::{Deserialize, Serialize};
 
-// ── Device list (sent to frontend) ────────────────────────────────────────────
-
 /// One audio device entry in the device picker.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -25,8 +23,6 @@ pub struct AudioDeviceList {
     pub inputs: Vec<AudioDeviceInfo>,
     pub outputs: Vec<AudioDeviceInfo>,
 }
-
-// ── Audio settings (received from frontend) ───────────────────────────────────
 
 /// Engine configuration sent from the Settings panel.
 ///
