@@ -44,7 +44,7 @@ pub struct SharedTransport {
 
 impl SharedTransport {
     pub fn new(sample_rate: f32, bpm: f32) -> Arc<Self> {
-        Arc::new(SharedTransport {
+        Arc::new(Self {
             is_playing: AtomicBool::new(false),
             position_samples: AtomicU64::new(0),
             duration_samples: AtomicU64::new(0),

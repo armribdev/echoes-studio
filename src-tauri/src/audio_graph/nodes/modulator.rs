@@ -28,7 +28,7 @@ pub struct LfoNode {
 
 impl LfoNode {
     pub fn new(id: NodeId, rate_hz: f32, waveform: LfoWaveform) -> Self {
-        LfoNode {
+        Self {
             id,
             rate_hz,
             rate_cells: None,

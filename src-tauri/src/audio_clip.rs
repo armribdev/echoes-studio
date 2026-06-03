@@ -28,6 +28,10 @@ pub struct AudioClipData {
     pub peaks_4096: Vec<[f32; 2]>,
 }
 
+const PEAK_CHUNK_64: usize = 64;
+const PEAK_CHUNK_512: usize = 512;
+const PEAK_CHUNK_4096: usize = 4096;
+
 pub(crate) fn serialize_arc_vec_f32<S>(v: &Arc<Vec<f32>>, ser: S) -> Result<S::Ok, S::Error>
 where
     S: serde::Serializer,
@@ -127,9 +131,9 @@ impl AudioClip {
     }
 
     pub fn into_clip_data(self) -> AudioClipData {
-        let peaks_64 = compute_peaks(&self.raw_samples, 64);
-        let peaks_512 = compute_peaks(&self.raw_samples, 512);
-        let peaks_4096 = compute_peaks(&self.raw_samples, 4096);
+        let peaks_64 = compute_peaks(&self.raw_samples, PEAK_CHUNK_64);
+        let peaks_512 = compute_peaks(&self.raw_samples, PEAK_CHUNK_512);
+        let peaks_4096 = compute_peaks(&self.raw_samples, PEAK_CHUNK_4096);
         AudioClipData {
             raw_samples: Arc::new(self.raw_samples),
             sample_rate: self.raw_sample_rate,

@@ -19,12 +19,18 @@
 //!   / `Arc<RouteParams>` handles embedded in nodes.  It reads the inner
 //!   `AtomicU32` / `AtomicBool` fields directly — lock-free, allocation-free.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
 
 use crate::audio_graph::parameter_block::ParameterBlock;
 use crate::project::AppProject;
+
+fn write_parameter_cells(block: &ParameterBlock, values: &[f32]) {
+    for (i, v) in values.iter().enumerate() {
+        block.set(i, *v);
+    }
+}
 
 pub struct TrackParams {
     pub volume: AtomicU32,
@@ -35,7 +41,7 @@ pub struct TrackParams {
 
 impl TrackParams {
     fn new(volume: f32, pan: f32, muted: bool, solo: bool) -> Arc<Self> {
-        Arc::new(TrackParams {
+        Arc::new(Self {
             volume: AtomicU32::new(volume.to_bits()),
             pan: AtomicU32::new(pan.to_bits()),
             muted: AtomicBool::new(muted),
@@ -65,7 +71,7 @@ pub struct ModulatorCells {
 
 impl ModulatorCells {
     fn new(rate_hz: f32) -> Arc<Self> {
-        Arc::new(ModulatorCells {
+        Arc::new(Self {
             rate_hz: AtomicU32::new(rate_hz.to_bits()),
         })
     }
@@ -82,7 +88,7 @@ pub struct RouteCells {
 
 impl RouteCells {
     fn new(depth: f32) -> Arc<Self> {
-        Arc::new(RouteCells {
+        Arc::new(Self {
             depth: AtomicU32::new(depth.to_bits()),
         })
     }
@@ -114,12 +120,30 @@ impl Default for LiveParams {
 }
 
 impl LiveParams {
+    fn lock_inner(&self) -> MutexGuard<'_, LiveParamsInner> {
+        match self.inner.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        }
+    }
+
     pub fn new() -> Self {
-        LiveParams {
+        Self {
             inner: Mutex::new(LiveParamsInner::default()),
             any_solo: Arc::new(AtomicBool::new(false)),
             master_soft_clip: Arc::new(AtomicBool::new(false)),
         }
+    }
+
+    fn with_track<F>(&self, track_id: &str, write: F) -> bool
+    where
+        F: FnOnce(&TrackParams),
+    {
+        let Some(cells) = self.lookup_track(track_id) else {
+            return false;
+        };
+        write(&cells);
+        true
     }
 
     pub fn get_or_init_track(
@@ -130,10 +154,7 @@ impl LiveParams {
         muted: bool,
         solo: bool,
     ) -> Arc<TrackParams> {
-        let mut inner = match self.inner.lock() {
-            Ok(g) => g,
-            Err(p) => p.into_inner(),
-        };
+        let mut inner = self.lock_inner();
         if let Some(existing) = inner.tracks.get(track_id) {
             return Arc::clone(existing);
         }
@@ -145,10 +166,7 @@ impl LiveParams {
     }
 
     pub fn get_or_init_modulator(&self, id: &str, rate_hz: f32) -> Arc<ModulatorCells> {
-        let mut inner = match self.inner.lock() {
-            Ok(g) => g,
-            Err(p) => p.into_inner(),
-        };
+        let mut inner = self.lock_inner();
         if let Some(existing) = inner.modulators.get(id) {
             return Arc::clone(existing);
         }
@@ -158,14 +176,9 @@ impl LiveParams {
     }
 
     pub fn get_or_init_effect_block(&self, effect_id: &str, values: &[f32]) -> Arc<ParameterBlock> {
-        let mut inner = match self.inner.lock() {
-            Ok(g) => g,
-            Err(p) => p.into_inner(),
-        };
+        let mut inner = self.lock_inner();
         if let Some(existing) = inner.effect_params.get(effect_id) {
-            for (i, v) in values.iter().enumerate() {
-                existing.set(i, *v);
-            }
+            write_parameter_cells(existing, values);
             return Arc::clone(existing);
         }
         let block = ParameterBlock::new(values);
@@ -181,10 +194,7 @@ impl LiveParams {
     }
 
     pub fn get_or_init_route(&self, id: &str, depth: f32) -> Arc<RouteCells> {
-        let mut inner = match self.inner.lock() {
-            Ok(g) => g,
-            Err(p) => p.into_inner(),
-        };
+        let mut inner = self.lock_inner();
         if let Some(existing) = inner.routes.get(id) {
             return Arc::clone(existing);
         }
@@ -206,37 +216,25 @@ impl LiveParams {
     }
 
     pub fn set_track_volume(&self, track_id: &str, volume: f32) -> bool {
-        if let Some(cells) = self.lookup_track(track_id) {
+        self.with_track(track_id, |cells| {
             cells.volume.store(volume.to_bits(), Ordering::Relaxed);
-            true
-        } else {
-            false
-        }
+        })
     }
 
     pub fn set_track_pan(&self, track_id: &str, pan: f32) -> bool {
-        if let Some(cells) = self.lookup_track(track_id) {
+        self.with_track(track_id, |cells| {
             cells.pan.store(pan.to_bits(), Ordering::Relaxed);
-            true
-        } else {
-            false
-        }
+        })
     }
 
     pub fn set_track_muted(&self, track_id: &str, muted: bool) -> bool {
-        if let Some(cells) = self.lookup_track(track_id) {
+        self.with_track(track_id, |cells| {
             cells.muted.store(muted, Ordering::Relaxed);
-            true
-        } else {
-            false
-        }
+        })
     }
 
     pub fn set_track_solo_exclusive(&self, track_id: &str, solo: bool) {
-        let inner = match self.inner.lock() {
-            Ok(g) => g,
-            Err(p) => p.into_inner(),
-        };
+        let inner = self.lock_inner();
         if solo {
             for (id, cells) in inner.tracks.iter() {
                 cells.solo.store(id == track_id, Ordering::Relaxed);
@@ -255,55 +253,43 @@ impl LiveParams {
     }
 
     pub fn set_modulator_rate(&self, id: &str, rate_hz: f32) -> bool {
-        let inner = match self.inner.lock() {
-            Ok(g) => g,
-            Err(p) => p.into_inner(),
+        let inner = self.lock_inner();
+        let Some(cells) = inner.modulators.get(id) else {
+            return false;
         };
-        if let Some(cells) = inner.modulators.get(id) {
-            cells.rate_hz.store(rate_hz.to_bits(), Ordering::Relaxed);
-            true
-        } else {
-            false
-        }
+        cells.rate_hz.store(rate_hz.to_bits(), Ordering::Relaxed);
+        true
     }
 
     pub fn set_route_depth(&self, id: &str, depth: f32) -> bool {
-        let inner = match self.inner.lock() {
-            Ok(g) => g,
-            Err(p) => p.into_inner(),
+        let inner = self.lock_inner();
+        let Some(cells) = inner.routes.get(id) else {
+            return false;
         };
-        if let Some(cells) = inner.routes.get(id) {
-            cells.depth.store(depth.to_bits(), Ordering::Relaxed);
-            true
-        } else {
-            false
-        }
+        cells.depth.store(depth.to_bits(), Ordering::Relaxed);
+        true
     }
 
     /// Write one cell of an effect's hot-parameter block (no recompile).
     /// Returns false if no block exists yet (effect not in the active graph) —
     /// the caller then falls back to the legacy recompile path (ADR-009, T4).
     pub fn set_effect_param(&self, effect_id: &str, idx: usize, value: f32) -> bool {
-        if let Some(block) = self.effect_block(effect_id) {
-            block.set(idx, value);
-            true
-        } else {
-            false
-        }
+        let Some(block) = self.effect_block(effect_id) else {
+            return false;
+        };
+        block.set(idx, value);
+        true
     }
 
     /// Write every cell of an effect's hot-parameter block in one call
     /// (no recompile).  `values` must be in the node's cell order.  Returns
     /// false if no block is registered — caller falls back to recompile.
     pub fn write_effect_block(&self, effect_id: &str, values: &[f32]) -> bool {
-        if let Some(block) = self.effect_block(effect_id) {
-            for (i, v) in values.iter().enumerate() {
-                block.set(i, *v);
-            }
-            true
-        } else {
-            false
-        }
+        let Some(block) = self.effect_block(effect_id) else {
+            return false;
+        };
+        write_parameter_cells(&block, values);
+        true
     }
 
     fn lookup_track(&self, track_id: &str) -> Option<Arc<TrackParams>> {
@@ -320,18 +306,15 @@ impl LiveParams {
     /// handlers, so the values agree.  Skipping the writes also avoids
     /// clobbering an in-flight command racing with the recompile.
     pub fn prune_to_project(&self, project: &AppProject) {
-        let mut inner = match self.inner.lock() {
-            Ok(g) => g,
-            Err(p) => p.into_inner(),
-        };
+        let mut inner = self.lock_inner();
 
-        let live_track_ids: std::collections::HashSet<&str> =
+        let live_track_ids: HashSet<&str> =
             project.tracks.iter().map(|t| t.id.as_str()).collect();
         inner
             .tracks
             .retain(|id, _| live_track_ids.contains(id.as_str()));
 
-        let live_mod_ids: std::collections::HashSet<&str> = project
+        let live_mod_ids: HashSet<&str> = project
             .tracks
             .iter()
             .flat_map(|t| t.modulators.iter().map(|m| m.id.as_str()))
@@ -340,7 +323,7 @@ impl LiveParams {
             .modulators
             .retain(|id, _| live_mod_ids.contains(id.as_str()));
 
-        let live_route_ids: std::collections::HashSet<&str> = project
+        let live_route_ids: HashSet<&str> = project
             .tracks
             .iter()
             .flat_map(|t| t.mod_routes.iter().map(|r| r.id.as_str()))
@@ -349,7 +332,7 @@ impl LiveParams {
             .routes
             .retain(|id, _| live_route_ids.contains(id.as_str()));
 
-        let live_effect_ids: std::collections::HashSet<&str> = project
+        let live_effect_ids: HashSet<&str> = project
             .tracks
             .iter()
             .flat_map(|t| t.effects.iter().map(|e| e.id.as_str()))

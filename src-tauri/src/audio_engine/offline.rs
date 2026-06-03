@@ -39,6 +39,7 @@ use crate::project::AppProject;
 /// max out throughput; chosen to match the live engine's `MAX_BLOCK_FRAMES`
 /// so node `prepare()` allocations are sized identically.
 const OFFLINE_BLOCK_SIZE: usize = 4096;
+const OFFLINE_NUM_CHANNELS: usize = 2;
 
 /// Render the entire project to a stereo interleaved buffer pair.
 ///
@@ -55,7 +56,7 @@ pub fn render_project_offline(
     let config = CompileConfig {
         sample_rate: sample_rate as f32,
         max_block_size: OFFLINE_BLOCK_SIZE,
-        num_channels: 2,
+        num_channels: OFFLINE_NUM_CHANNELS,
     };
 
     // Same denormal mitigation as the live audio thread — DSP feedback paths

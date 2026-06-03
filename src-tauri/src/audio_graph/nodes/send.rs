@@ -15,7 +15,7 @@ pub struct SendNode {
 
 impl SendNode {
     pub fn new(id: NodeId, gain: f32) -> Self {
-        SendNode { id, gain }
+        Self { id, gain }
     }
 }
 

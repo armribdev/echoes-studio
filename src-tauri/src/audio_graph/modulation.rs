@@ -36,7 +36,7 @@ pub struct ParamId {
 
 impl ParamId {
     pub fn new(node: NodeId, name: impl Into<String>) -> Self {
-        ParamId {
+        Self {
             node,
             name: name.into(),
         }
@@ -84,7 +84,7 @@ pub struct ModulationMap {
 
 impl ModulationMap {
     pub fn new() -> Self {
-        ModulationMap { routes: Vec::new() }
+        Self::default()
     }
 
     pub fn add_route(&mut self, route: ModulationRoute) {

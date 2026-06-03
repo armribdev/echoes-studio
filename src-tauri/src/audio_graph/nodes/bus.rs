@@ -13,7 +13,7 @@ pub struct BusNode {
 
 impl BusNode {
     pub fn new(id: NodeId, num_inputs: usize) -> Self {
-        BusNode {
+        Self {
             id,
             num_inputs: num_inputs.max(1),
         }

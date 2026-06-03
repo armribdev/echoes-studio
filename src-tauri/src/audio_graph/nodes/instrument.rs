@@ -58,7 +58,7 @@ impl InstrumentNode {
         notes: Arc<Vec<MidiNoteSnapshot>>,
         device: Box<dyn InstrumentDevice>,
     ) -> Self {
-        InstrumentNode {
+        Self {
             id,
             notes,
             device,

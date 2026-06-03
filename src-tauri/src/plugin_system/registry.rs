@@ -46,7 +46,7 @@ impl PluginManifest {
         name: impl Into<String>,
         vendor: impl Into<String>,
     ) -> Self {
-        PluginManifest {
+        Self {
             id: id.into(),
             name: name.into(),
             vendor: vendor.into(),
@@ -69,7 +69,7 @@ pub struct PluginRegistry {
 
 impl PluginRegistry {
     pub fn new() -> Self {
-        let mut registry = PluginRegistry {
+        let mut registry = Self {
             manifests: HashMap::new(),
         };
         registry.register_builtins();

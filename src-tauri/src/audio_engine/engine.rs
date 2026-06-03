@@ -79,6 +79,10 @@ const MAX_METER_CHANNELS: usize = 16;
 
 const _: () = assert!(MAX_METER_CHANNELS == crate::engine_gateway::events::METER_CHANNEL_COUNT);
 
+const ZERO_METER_LEVELS: [f32; MAX_METER_CHANNELS] = [0.0; MAX_METER_CHANNELS];
+
+const DEFAULT_COMPILE_NUM_CHANNELS: usize = 2;
+
 /// Minimum slack added to the expected block duration before declaring an XRun.
 ///
 /// Real backends jitter slightly even under normal load; this avoids false positives.
@@ -92,7 +96,7 @@ pub struct XrunStats {
 
 impl XrunStats {
     pub fn new() -> Arc<Self> {
-        Arc::new(XrunStats {
+        Arc::new(Self {
             total: AtomicU64::new(0),
         })
     }
@@ -157,7 +161,7 @@ struct ChannelLevels {
 
 impl ChannelLevels {
     fn new() -> Arc<Self> {
-        Arc::new(ChannelLevels {
+        Arc::new(Self {
             output: Box::new(std::array::from_fn(|_| AtomicU32::new(0))),
             input: Box::new(std::array::from_fn(|_| AtomicU32::new(0))),
         })
@@ -233,12 +237,12 @@ pub struct AudioEngine {
 
 impl AudioEngine {
     pub fn new(transport: Arc<SharedTransport>, live_params: Arc<LiveParams>) -> Self {
-        AudioEngine {
+        Self {
             snapshot: Arc::new(RuntimeSnapshot::new()),
             transport,
             _stream: None,
-        // `true` so any stale reporter from a previous engine instance exits.
-        reporter_stop: Arc::new(AtomicBool::new(true)),
+            // `true` so any stale reporter from a previous engine instance exits.
+            reporter_stop: Arc::new(AtomicBool::new(true)),
             levels: ChannelLevels::new(),
             meter_cells: Arc::new(Mutex::new(HashMap::new())),
             active_output_channels: Arc::new(AtomicUsize::new(0)),
@@ -268,7 +272,7 @@ impl AudioEngine {
         let config = CompileConfig {
             sample_rate: self.transport.sample_rate(),
             max_block_size: MAX_BLOCK_FRAMES,
-            num_channels: 2,
+            num_channels: DEFAULT_COMPILE_NUM_CHANNELS,
         };
         let (scheduler, cells, duration_samples) = AudioGraphCompiler::compile_scheduler(
             project,
@@ -338,7 +342,7 @@ impl AudioEngine {
         let compile_cfg = CompileConfig {
             sample_rate: actual_sr as f32,
             max_block_size: MAX_BLOCK_FRAMES,
-            num_channels: 2,
+            num_channels: DEFAULT_COMPILE_NUM_CHANNELS,
         };
         let (initial_scheduler, initial_cells, initial_duration) =
             AudioGraphCompiler::compile_scheduler(
@@ -775,15 +779,15 @@ impl PositionReporterState {
     fn new() -> Self {
         Self {
             levels: LevelsUpdatedPayload {
-                output: [0.0; MAX_METER_CHANNELS],
-                input: [0.0; MAX_METER_CHANNELS],
+                output: ZERO_METER_LEVELS,
+                input: ZERO_METER_LEVELS,
                 tracks: HashMap::new(),
                 xruns: 0,
             },
             position: PositionUpdatedPayload {
                 position: 0.0,
-                output: [0.0; MAX_METER_CHANNELS],
-                input: [0.0; MAX_METER_CHANNELS],
+                output: ZERO_METER_LEVELS,
+                input: ZERO_METER_LEVELS,
                 tracks: HashMap::new(),
                 xruns: 0,
             },

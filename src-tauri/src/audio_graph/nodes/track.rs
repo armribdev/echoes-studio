@@ -30,6 +30,9 @@ pub struct ClipData {
     pub native_sample_rate: u32,
 }
 
+const DEFAULT_ENGINE_SAMPLE_RATE: f32 = 48_000.0;
+const DEFAULT_OUTPUT_CHANNELS: usize = 2;
+
 pub struct TrackNode {
     id: NodeId,
     clips: Vec<ClipData>,
@@ -39,11 +42,11 @@ pub struct TrackNode {
 
 impl TrackNode {
     pub fn new(id: NodeId, clips: Vec<ClipData>) -> Self {
-        TrackNode {
+        Self {
             id,
             clips,
-            engine_sample_rate: 48_000.0,
-            num_channels: 2,
+            engine_sample_rate: DEFAULT_ENGINE_SAMPLE_RATE,
+            num_channels: DEFAULT_OUTPUT_CHANNELS,
         }
     }
 }

@@ -74,7 +74,7 @@ impl GraphSnapshotDto {
         let mod_edges: Vec<ModEdgeDto> =
             graph.modulation_routes().iter().map(route_to_dto).collect();
 
-        GraphSnapshotDto {
+        Self {
             nodes,
             audio_edges,
             mod_edges,

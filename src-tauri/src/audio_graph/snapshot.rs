@@ -65,7 +65,7 @@ struct DropRing {
 
 impl DropRing {
     fn new() -> Self {
-        DropRing {
+        Self {
             slots: [
                 AtomicPtr::new(ptr::null_mut()),
                 AtomicPtr::new(ptr::null_mut()),
@@ -143,7 +143,7 @@ unsafe impl Sync for RuntimeSnapshot {}
 
 impl RuntimeSnapshot {
     pub fn new() -> Self {
-        RuntimeSnapshot {
+        Self {
             pending: AtomicPtr::new(ptr::null_mut()),
             drop_ring: DropRing::new(),
         }

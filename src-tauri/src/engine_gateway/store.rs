@@ -28,7 +28,7 @@ pub struct EventStore {
 
 impl EventStore {
     pub fn new() -> Self {
-        EventStore {
+        Self {
             events: Vec::new(),
             head: 0,
             snapshot: None,
@@ -66,22 +66,20 @@ impl EventStore {
 
     /// Move head back one position. Returns true if undo was possible.
     pub fn undo(&mut self) -> bool {
-        if self.can_undo() {
-            self.head -= 1;
-            true
-        } else {
-            false
+        if !self.can_undo() {
+            return false;
         }
+        self.head -= 1;
+        true
     }
 
     /// Move head forward one position. Returns true if redo was possible.
     pub fn redo(&mut self) -> bool {
-        if self.can_redo() {
-            self.head += 1;
-            true
-        } else {
-            false
+        if !self.can_redo() {
+            return false;
         }
+        self.head += 1;
+        true
     }
 
     /// Events that form the current state: `events[0..head]`.

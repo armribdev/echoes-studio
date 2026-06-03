@@ -86,7 +86,7 @@ impl ParamQueue {
                 sample_offset: 0,
             }));
         }
-        ParamQueue {
+        Self {
             buf: v.into_boxed_slice(),
             capacity,
             mask: capacity - 1,

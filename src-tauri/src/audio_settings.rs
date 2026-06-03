@@ -50,7 +50,7 @@ pub struct AudioSettings {
 
 impl Default for AudioSettings {
     fn default() -> Self {
-        AudioSettings {
+        Self {
             output_device: "default".to_string(),
             input_device: "default".to_string(),
             sample_rate: 48_000,

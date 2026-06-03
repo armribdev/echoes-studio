@@ -79,7 +79,7 @@ pub struct ProjectEvent {
 
 impl ProjectEvent {
     pub fn new(event_type: &str, payload: serde_json::Value) -> Self {
-        ProjectEvent {
+        Self {
             id: generate_id(),
             event_type: event_type.to_string(),
             timestamp: now_ms(),
@@ -151,7 +151,7 @@ impl EngineEvent {
 
     /// Build an engine event from any serializable payload (avoids `json!` macros).
     pub fn with_payload<P: Serialize>(event_type: &str, project_id: &str, payload: P) -> Self {
-        EngineEvent {
+        Self {
             id: generate_id(),
             project_id: project_id.to_string(),
             event_type: event_type.to_string(),
@@ -162,7 +162,7 @@ impl EngineEvent {
 
     /// Wrap a stored ProjectEvent as an EngineEvent for emission to the UI.
     pub fn from_project_event(project_event: &ProjectEvent, project_id: &str) -> Self {
-        EngineEvent {
+        Self {
             id: generate_id(),
             project_id: project_id.to_string(),
             event_type: project_event.event_type.clone(),

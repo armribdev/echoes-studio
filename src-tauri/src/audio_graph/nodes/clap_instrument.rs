@@ -90,7 +90,7 @@ impl ClapInstrument {
             instance.clap_plugin().is_some(),
             "ClapInstrument requires a CLAP PluginInstance"
         );
-        ClapInstrument {
+        Self {
             instance,
             out_channel_ptrs: Vec::new(),
             out_audio_buf: unsafe { std::mem::zeroed() },

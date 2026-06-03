@@ -76,7 +76,7 @@ pub struct PluginHost {
 
 impl PluginHost {
     pub fn new() -> Self {
-        PluginHost {
+        Self {
             registry: PluginRegistry::new(),
             records: HashMap::new(),
             pending_state_blobs: HashMap::new(),

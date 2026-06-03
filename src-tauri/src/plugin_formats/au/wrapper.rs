@@ -30,7 +30,7 @@ pub struct AuWrapperNode {
 impl AuWrapperNode {
     pub fn new(node_id: NodeId, device_id: impl Into<String>, name: impl Into<String>) -> Self {
         let id = device_id.into();
-        AuWrapperNode {
+        Self {
             node_id,
             info: DeviceInfo {
                 device_id: id.clone(),

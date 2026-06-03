@@ -33,7 +33,7 @@ pub struct AudioGraphSnapshot {
 
 impl AudioGraphSnapshot {
     pub fn empty(sample_rate: u32) -> Self {
-        AudioGraphSnapshot {
+        Self {
             sample_rate,
             tracks: vec![],
         }

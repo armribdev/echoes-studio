@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use crate::audio_graph::buffer::AudioBuffer;
 use crate::audio_graph::node::{AudioNode, NodeId, PrepareContext, TransportInfo};
-use crate::audio_graph::oversampling::Oversample2x;
+use crate::audio_graph::oversampling::{Oversample2x, OVERSAMPLE_FACTOR};
 use crate::audio_graph::parameter_block::ParameterBlock;
 use crate::project::EqParams;
 
@@ -46,6 +46,7 @@ fn eq_params_from_block(block: &ParameterBlock) -> EqParams {
 // Direct Form II Transposed biquad — no allocation per sample.
 // RBJ Audio EQ Cookbook: S = 1 → steepest monotonically increasing/decreasing shelf.
 const DEFAULT_SHELF_SLOPE: f32 = 1.0;
+const DEFAULT_ENGINE_SAMPLE_RATE: f32 = 48_000.0;
 
 #[derive(Clone, Copy, Default)]
 struct Biquad {
@@ -89,7 +90,7 @@ impl Biquad {
         let a0 = (a + 1.0) + (a - 1.0) * cos_w + 2.0 * a_sqrt * alpha;
         let a1 = -2.0 * ((a - 1.0) + (a + 1.0) * cos_w);
         let a2 = (a + 1.0) + (a - 1.0) * cos_w - 2.0 * a_sqrt * alpha;
-        Biquad {
+        Self {
             b0: b0 / a0,
             b1: b1 / a0,
             b2: b2 / a0,
@@ -110,7 +111,7 @@ impl Biquad {
         let a0 = 1.0 + alpha / a;
         let a1 = -2.0 * w.cos();
         let a2 = 1.0 - alpha / a;
-        Biquad {
+        Self {
             b0: b0 / a0,
             b1: b1 / a0,
             b2: b2 / a0,
@@ -133,7 +134,7 @@ impl Biquad {
         let a0 = (a + 1.0) - (a - 1.0) * cos_w + 2.0 * a_sqrt * alpha;
         let a1 = 2.0 * ((a - 1.0) - (a + 1.0) * cos_w);
         let a2 = (a + 1.0) - (a - 1.0) * cos_w - 2.0 * a_sqrt * alpha;
-        Biquad {
+        Self {
             b0: b0 / a0,
             b1: b1 / a0,
             b2: b2 / a0,
@@ -168,14 +169,14 @@ pub struct EqNode {
 
 impl EqNode {
     pub fn new(id: NodeId, params: EqParams) -> Self {
-        EqNode {
+        Self {
             id,
             params,
             low: Biquad::default(),
             mid: Biquad::default(),
             high: Biquad::default(),
             oversample: Oversample2x::default(),
-            sr_os: 96_000.0,
+            sr_os: DEFAULT_ENGINE_SAMPLE_RATE * OVERSAMPLE_FACTOR as f32,
             block: None,
         }
     }

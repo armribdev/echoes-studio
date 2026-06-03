@@ -28,7 +28,7 @@ pub struct ParamKey(pub String);
 
 impl ParamKey {
     pub fn new(key: impl Into<String>) -> Self {
-        ParamKey(key.into())
+        Self(key.into())
     }
 }
 
@@ -59,7 +59,7 @@ pub enum ParameterMapping {
 
 impl ParameterRange {
     pub fn linear(min: f32, max: f32, default: f32) -> Self {
-        ParameterRange {
+        Self {
             min,
             max,
             default,
@@ -72,7 +72,7 @@ impl ParameterRange {
     }
 
     pub fn gain_db(min_db: f32, max_db: f32, default_db: f32) -> Self {
-        ParameterRange {
+        Self {
             min: min_db,
             max: max_db,
             default: default_db,
@@ -139,7 +139,7 @@ pub struct Param {
 impl Param {
     pub fn new(key: impl Into<String>, name: impl Into<String>, range: ParameterRange) -> Self {
         let range_default = range.default;
-        Param {
+        Self {
             key: ParamKey::new(key),
             name: name.into(),
             value: range_default,

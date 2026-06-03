@@ -14,7 +14,7 @@ pub struct EqParams {
 
 impl Default for EqParams {
     fn default() -> Self {
-        EqParams {
+        Self {
             low_gain_db: 0.0,
             low_freq: 250.0,
             mid_gain_db: 0.0,
@@ -38,7 +38,7 @@ pub struct CompressorParams {
 
 impl Default for CompressorParams {
     fn default() -> Self {
-        CompressorParams {
+        Self {
             threshold_db: -18.0,
             ratio: 4.0,
             attack_ms: 10.0,
@@ -60,7 +60,7 @@ pub struct ReverbParams {
 
 impl Default for ReverbParams {
     fn default() -> Self {
-        ReverbParams {
+        Self {
             room_size: 0.5,
             damping: 0.5,
             wet: 0.33,
@@ -81,7 +81,7 @@ pub struct DelayParams {
 
 impl Default for DelayParams {
     fn default() -> Self {
-        DelayParams {
+        Self {
             delay_ms: 250.0,
             feedback: 0.4,
             wet: 0.3,
@@ -157,7 +157,7 @@ fn default_lfo_rate() -> f32 {
 
 impl Default for LfoParams {
     fn default() -> Self {
-        LfoParams {
+        Self {
             rate_hz: 1.0,
             waveform: LfoWaveform::Sine,
         }
@@ -297,7 +297,7 @@ pub struct AppProject {
 
 impl AppProject {
     pub fn new() -> Self {
-        AppProject {
+        Self {
             name: "Sans titre".to_string(),
             bpm: 120.0,
             numerator: 4,
@@ -423,7 +423,7 @@ impl AppProject {
                 crate::plugin_system::state::decode_base64(&v).map(|bytes| (k, bytes))
             })
             .collect();
-        Ok(AppProject {
+        Ok(Self {
             name: pf.name,
             bpm: pf.bpm,
             numerator: pf.numerator,
@@ -494,7 +494,7 @@ pub struct CachedAudioData {
 
 impl AudioDataCache {
     pub fn new() -> Self {
-        AudioDataCache(Mutex::new(HashMap::new()))
+        Self(Mutex::new(HashMap::new()))
     }
 
     pub fn get(&self, clip_id: &str) -> Option<Arc<CachedAudioData>> {
@@ -538,6 +538,9 @@ pub struct AppState {
 }
 
 impl AppState {
+    const DEFAULT_SAMPLE_RATE: f32 = 48_000.0;
+    const DEFAULT_BPM: f32 = 120.0;
+
     pub fn new() -> Self {
         // Seed the event store with the initial empty project so that the
         // first undo always has a valid snapshot to return to instead of
@@ -545,11 +548,14 @@ impl AppState {
         let mut event_store = crate::engine_gateway::store::EventStore::new();
         event_store.init_from_project(AppProject::new());
 
-        let transport = crate::audio_engine::transport::SharedTransport::new(48_000.0, 120.0);
+        let transport = crate::audio_engine::transport::SharedTransport::new(
+            Self::DEFAULT_SAMPLE_RATE,
+            Self::DEFAULT_BPM,
+        );
 
         let live_params = Arc::new(crate::audio_graph::live_params::LiveParams::new());
 
-        AppState {
+        Self {
             project: Mutex::new(AppProject::new()),
             project_path: Mutex::new(None),
             event_store: Mutex::new(event_store),

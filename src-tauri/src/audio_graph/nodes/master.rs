@@ -32,7 +32,7 @@ pub struct MasterNode {
 
 impl MasterNode {
     pub fn new(id: NodeId, num_inputs: usize, soft_clip_enabled: Arc<AtomicBool>) -> Self {
-        MasterNode {
+        Self {
             id,
             num_inputs: num_inputs.max(1),
             soft_clip_enabled,

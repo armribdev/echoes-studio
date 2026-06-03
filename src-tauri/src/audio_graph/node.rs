@@ -67,7 +67,7 @@ pub enum PortKind {
 impl PortKind {
     /// Default for legacy connections that pre-date `PortKind` typing.
     pub const fn default_audio_stereo() -> Self {
-        PortKind::Audio { channels: 2 }
+        Self::Audio { channels: 2 }
     }
 }
 
@@ -89,14 +89,17 @@ pub struct TransportInfo {
 }
 
 impl TransportInfo {
+    const DEFAULT_BPM: f32 = 120.0;
+    const DEFAULT_BLOCK_SIZE: usize = 512;
+
     pub fn stopped(sample_rate: f32) -> Self {
-        TransportInfo {
+        Self {
             is_playing: false,
             position_samples: 0,
             position_seconds: 0.0,
-            bpm: 120.0,
+            bpm: Self::DEFAULT_BPM,
             sample_rate,
-            block_size: 512,
+            block_size: Self::DEFAULT_BLOCK_SIZE,
         }
     }
 }

@@ -8,9 +8,13 @@
 use crate::audio_graph::buffer::AudioBuffer;
 use crate::audio_graph::node::{AudioNode, NodeId, PrepareContext, TransportInfo};
 
+const PAN_POSITION_MIN: f32 = -1.0;
+const PAN_POSITION_MAX: f32 = 1.0;
+const PAN_ANGLE_QUARTER_SCALE: f32 = 0.25;
+
 pub struct PanNode {
     id: NodeId,
-    position: f32, // −1 … +1
+    position: f32,
     gain_l: f32,
     gain_r: f32,
 }
@@ -28,9 +32,9 @@ impl PanNode {
     }
 
     pub fn set_position(&mut self, position: f32) {
-        self.position = position.clamp(-1.0, 1.0);
-        // Equal-power law: angle ∈ [0, π/2]
-        let angle = (self.position + 1.0) * 0.25 * std::f32::consts::PI;
+        self.position = position.clamp(PAN_POSITION_MIN, PAN_POSITION_MAX);
+        let angle =
+            (self.position - PAN_POSITION_MIN) * PAN_ANGLE_QUARTER_SCALE * std::f32::consts::PI;
         self.gain_l = angle.cos();
         self.gain_r = angle.sin();
     }

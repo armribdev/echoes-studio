@@ -96,7 +96,7 @@ impl VstWrapperNode {
             "VstWrapperNode requires a VST3 PluginInstance"
         );
         let info = instance.legacy_device_info();
-        VstWrapperNode {
+        Self {
             node_id,
             info,
             params: ParameterMap::new(),

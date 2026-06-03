@@ -160,7 +160,7 @@ pub struct PluginInstance {
 
 impl PluginInstance {
     pub fn new_internal(device_id: impl Into<String>, name: impl Into<String>) -> Arc<Self> {
-        Arc::new(PluginInstance {
+        Arc::new(Self {
             instance_id: next_instance_id(),
             device_id: device_id.into(),
             name: name.into(),
@@ -183,7 +183,7 @@ impl PluginInstance {
         processor: NonNull<IAudioProcessor>,
         lib: Arc<Vst3Library>,
     ) -> Arc<Self> {
-        Arc::new(PluginInstance {
+        Arc::new(Self {
             instance_id: next_instance_id(),
             device_id: device_id.into(),
             name: name.into(),
@@ -207,7 +207,7 @@ impl PluginInstance {
         host: Box<ClapHost>,
         lib: Arc<ClapLibrary>,
     ) -> Arc<Self> {
-        Arc::new(PluginInstance {
+        Arc::new(Self {
             instance_id: next_instance_id(),
             device_id: device_id.into(),
             name: name.into(),

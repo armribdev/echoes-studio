@@ -35,7 +35,7 @@ impl AudioBuffer {
             num_channels > 0 && num_frames > 0,
             "AudioBuffer: dimensions must be > 0"
         );
-        AudioBuffer {
+        Self {
             data: vec![0.0_f32; num_channels * num_frames],
             num_channels,
             num_frames,
@@ -44,7 +44,7 @@ impl AudioBuffer {
 
     /// A single-channel, single-frame silence buffer used as a no-op sentinel.
     pub fn silence() -> Self {
-        AudioBuffer::new(1, 1)
+        Self::new(1, 1)
     }
 
     /// Immutable slice for channel `ch`.

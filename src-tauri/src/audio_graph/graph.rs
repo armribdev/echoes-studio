@@ -172,7 +172,7 @@ pub struct AudioGraph {
 
 impl AudioGraph {
     pub fn new() -> Self {
-        AudioGraph {
+        Self {
             nodes: HashMap::new(),
             edges: Vec::new(),
             master_id: None,

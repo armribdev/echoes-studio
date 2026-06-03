@@ -88,7 +88,7 @@ pub struct PolySynth {
 
 impl PolySynth {
     pub fn new() -> Self {
-        PolySynth {
+        Self {
             voices: [const { Voice::idle() }; MAX_VOICES],
             adsr: Adsr::default(),
             sample_rate: 48_000.0,

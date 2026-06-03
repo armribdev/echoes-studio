@@ -60,7 +60,7 @@ impl ParameterBlock {
     /// fixed for the life of the block.
     pub fn new(values: &[f32]) -> Arc<Self> {
         let cells = values.iter().map(|v| AtomicU32::new(v.to_bits())).collect();
-        Arc::new(ParameterBlock { cells })
+        Arc::new(Self { cells })
     }
 
     /// Number of parameter cells.

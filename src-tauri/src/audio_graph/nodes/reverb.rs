@@ -111,7 +111,7 @@ pub struct ReverbNode {
 
 impl ReverbNode {
     pub fn new(id: NodeId, params: ReverbParams) -> Self {
-        ReverbNode {
+        Self {
             id,
             params,
             combs_l: Vec::new(),

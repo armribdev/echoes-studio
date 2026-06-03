@@ -29,7 +29,7 @@ pub struct TrackGainNode {
 
 impl TrackGainNode {
     pub fn new(id: NodeId, params: Arc<TrackParams>, any_solo: Arc<AtomicBool>) -> Self {
-        TrackGainNode {
+        Self {
             id,
             params,
             any_solo,
@@ -94,7 +94,7 @@ impl AudioNode for TrackGainNode {
     }
 
     fn reset(&mut self) {
-        self.mod_delta = 0.0;
+        self.reset_modulation();
     }
 
     fn reset_modulation(&mut self) {

@@ -23,7 +23,7 @@ pub struct MeterNode {
 impl MeterNode {
     /// Create a node that writes its per-block peak into the provided atomics.
     pub fn new(id: NodeId, peak_l: Arc<AtomicU32>, peak_r: Arc<AtomicU32>) -> Self {
-        MeterNode {
+        Self {
             id,
             peak_l_out: peak_l,
             peak_r_out: peak_r,
@@ -58,17 +58,16 @@ impl AudioNode for MeterNode {
 
         output.copy_from(input);
 
-        let frames = input.num_frames;
         let mut peak_l = 0.0_f32;
         let mut peak_r = 0.0_f32;
 
         if input.num_channels >= 1 {
-            for &s in input.channel(0).iter().take(frames) {
+            for &s in input.channel(0) {
                 peak_l = peak_l.max(s.abs());
             }
         }
         if input.num_channels >= 2 {
-            for &s in input.channel(1).iter().take(frames) {
+            for &s in input.channel(1) {
                 peak_r = peak_r.max(s.abs());
             }
         } else {

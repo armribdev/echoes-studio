@@ -72,7 +72,7 @@ impl BridgedNode {
         plugin_dll: PathBuf,
         plugin_id: String,
     ) -> Self {
-        BridgedNode {
+        Self {
             node_id,
             bridge_exe,
             plugin_dll,

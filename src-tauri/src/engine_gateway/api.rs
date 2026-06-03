@@ -50,7 +50,7 @@ pub struct CommandResult {
 
 impl CommandResult {
     fn ok(command_id: String, events: Vec<serde_json::Value>) -> Self {
-        CommandResult {
+        Self {
             success: true,
             command_id,
             events,
@@ -58,7 +58,7 @@ impl CommandResult {
         }
     }
     fn err(command_id: String, msg: String) -> Self {
-        CommandResult {
+        Self {
             success: false,
             command_id,
             events: vec![],
@@ -1195,6 +1195,38 @@ pub fn snapshot_project_for_store(project: &AppProject) -> AppProject {
     snapshot_project(project)
 }
 
+fn snapshot_clip(c: &AppClip) -> AppClip {
+    AppClip {
+        id: c.id.clone(),
+        start: c.start,
+        end: c.end,
+        file_path: c.file_path.clone(),
+        raw_samples: c.raw_samples.clone(),
+        sample_rate: c.sample_rate,
+        peaks_64: c.peaks_64.clone(),
+        peaks_512: c.peaks_512.clone(),
+        peaks_4096: c.peaks_4096.clone(),
+    }
+}
+
+fn snapshot_track(t: &AppTrack) -> AppTrack {
+    AppTrack {
+        id: t.id.clone(),
+        name: t.name.clone(),
+        volume: t.volume,
+        pan: t.pan,
+        muted: t.muted,
+        solo: t.solo,
+        effects: t.effects.clone(),
+        modulators: t.modulators.clone(),
+        mod_routes: t.mod_routes.clone(),
+        midi_notes: t.midi_notes.clone(),
+        midi_clips: t.midi_clips.clone(),
+        instrument: t.instrument.clone(),
+        clips: t.clips.iter().map(snapshot_clip).collect(),
+    }
+}
+
 /// Shallow project copy for snapshotting — audio data stays in `AudioDataCache`.
 fn snapshot_project(project: &AppProject) -> AppProject {
     AppProject {
@@ -1202,39 +1234,7 @@ fn snapshot_project(project: &AppProject) -> AppProject {
         bpm: project.bpm,
         numerator: project.numerator,
         denominator: project.denominator,
-        tracks: project
-            .tracks
-            .iter()
-            .map(|t| crate::project::AppTrack {
-                id: t.id.clone(),
-                name: t.name.clone(),
-                volume: t.volume,
-                pan: t.pan,
-                muted: t.muted,
-                solo: t.solo,
-                effects: t.effects.clone(),
-                modulators: t.modulators.clone(),
-                mod_routes: t.mod_routes.clone(),
-                midi_notes: t.midi_notes.clone(),
-                midi_clips: t.midi_clips.clone(),
-                instrument: t.instrument.clone(),
-                clips: t
-                    .clips
-                    .iter()
-                    .map(|c| AppClip {
-                        id: c.id.clone(),
-                        start: c.start,
-                        end: c.end,
-                        file_path: c.file_path.clone(),
-                        raw_samples: c.raw_samples.clone(),
-                        sample_rate: c.sample_rate,
-                        peaks_64: c.peaks_64.clone(),
-                        peaks_512: c.peaks_512.clone(),
-                        peaks_4096: c.peaks_4096.clone(),
-                    })
-                    .collect(),
-            })
-            .collect(),
+        tracks: project.tracks.iter().map(snapshot_track).collect(),
         // Plugin binary state mirrors live plugin internals and is restored
         // separately (project load → compile → setState), not via the event
         // store.  Undo/redo snapshots therefore keep this empty.
@@ -1294,17 +1294,12 @@ fn merge_effect_params(
         EffectParams::Delay(_) => {
             serde_json::from_value::<DelayParams>(raw).map(EffectParams::Delay)
         }
-        EffectParams::Plugin(p) => {
-            serde_json::from_value::<PluginParams>(raw).map(|updated| {
-                EffectParams::Plugin(PluginParams {
-                    plugin_id: p.plugin_id.clone(),
-                    name: p.name.clone(),
-                    format: p.format.clone(),
-                    params: updated.params,
-                    sandboxed: p.sandboxed, // preserve sandbox opt-in (ADR-015)
-                })
+        EffectParams::Plugin(p) => serde_json::from_value::<PluginParams>(raw).map(|updated| {
+            EffectParams::Plugin(PluginParams {
+                params: updated.params,
+                ..p.clone()
             })
-        }
+        }),
     }
     .map_err(|e| format!("Effect params invalid: {e}"))
 }

@@ -60,6 +60,8 @@ use crate::audio_graph::worker_pool::WorkerPool;
 
 const MIN_INPUT_PTR_SCRATCH: usize = 32;
 const POOL_MIN_LEVEL_WIDTH: usize = 2; // wider levels use the pool; single-step stays inline
+const EMPTY_SCHEDULER_CHANNELS: usize = 2;
+const EMPTY_SCHEDULER_BLOCK_SIZE: usize = 512;
 
 /// PDC ring per input port; pre-allocated at scheduler construction.
 struct DelayLine {
@@ -74,7 +76,7 @@ impl DelayLine {
     fn new(num_channels: usize, delay: usize, max_block: usize) -> Self {
         debug_assert!(delay > 0, "DelayLine with zero delay is wasteful — skip it");
         let cap = delay + max_block;
-        DelayLine {
+        Self {
             rings: (0..num_channels).map(|_| vec![0.0; cap]).collect(),
             cap,
             delay,
@@ -254,7 +256,7 @@ impl GraphScheduler {
             None
         };
 
-        GraphScheduler {
+        Self {
             plan,
             processors,
             output_buffers,
@@ -272,11 +274,11 @@ impl GraphScheduler {
 
     pub fn empty(sample_rate: f32) -> Self {
         let plan = Arc::new(ExecutionPlan::empty(sample_rate));
-        GraphScheduler {
+        Self {
             plan,
             processors: Vec::new(),
             output_buffers: Vec::new(),
-            silence_buffer: AudioBuffer::new(2, 512),
+            silence_buffer: AudioBuffer::new(EMPTY_SCHEDULER_CHANNELS, EMPTY_SCHEDULER_BLOCK_SIZE),
             worker_scratch: vec![vec![std::ptr::null(); MIN_INPUT_PTR_SCRATCH]],
             mod_actions_by_step: Vec::new(),
             delay_lines: Vec::new(),

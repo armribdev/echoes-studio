@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use crate::audio_graph::buffer::AudioBuffer;
 use crate::audio_graph::node::{AudioNode, NodeId, PrepareContext, TransportInfo};
-use crate::audio_graph::oversampling::Oversample2x;
+use crate::audio_graph::oversampling::{Oversample2x, OVERSAMPLE_FACTOR};
 use crate::audio_graph::parameter_block::ParameterBlock;
 use crate::project::CompressorParams;
 
@@ -15,6 +15,8 @@ pub const COMP_ATTACK_MS: usize = 2;
 pub const COMP_RELEASE_MS: usize = 3;
 pub const COMP_MAKEUP_DB: usize = 4;
 pub const COMP_KNEE_DB: usize = 5;
+
+const DEFAULT_ENGINE_SAMPLE_RATE: f32 = 48_000.0;
 
 /// Flatten `CompressorParams` into the `ParameterBlock` cell order above.
 pub fn compressor_block_values(p: &CompressorParams) -> [f32; COMP_PARAM_COUNT] {
@@ -66,7 +68,7 @@ pub struct CompressorNode {
 
 impl CompressorNode {
     pub fn new(id: NodeId, params: CompressorParams) -> Self {
-        CompressorNode {
+        Self {
             id,
             params,
             envelope: 0.0,
@@ -75,7 +77,7 @@ impl CompressorNode {
             makeup_linear: 1.0,
             oversample: Oversample2x::default(),
             env_scratch: Vec::new(),
-            sr_os: 96_000.0,
+            sr_os: DEFAULT_ENGINE_SAMPLE_RATE * OVERSAMPLE_FACTOR as f32,
             block: None,
         }
     }

@@ -15,7 +15,7 @@ pub struct GainNode {
 
 impl GainNode {
     pub fn new(id: NodeId, gain: f32) -> Self {
-        GainNode {
+        Self {
             id,
             gain,
             mod_delta: 0.0,
@@ -70,7 +70,7 @@ impl AudioNode for GainNode {
     }
 
     fn reset(&mut self) {
-        self.mod_delta = 0.0;
+        self.reset_modulation();
     }
 
     fn reset_modulation(&mut self) {

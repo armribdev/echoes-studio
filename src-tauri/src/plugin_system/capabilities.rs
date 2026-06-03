@@ -189,7 +189,7 @@ impl DeviceCapabilities {
             }
         };
 
-        DeviceCapabilities {
+        Self {
             audio_input_buses: mk_audio_bus(info.num_inputs, "In"),
             audio_output_buses: mk_audio_bus(info.num_outputs, "Out"),
             midi_input_ports: mk_midi_port(info.has_midi_input, "MIDI In"),

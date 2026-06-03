@@ -102,7 +102,7 @@ impl ClapWrapperNode {
             "ClapWrapperNode requires a CLAP PluginInstance"
         );
         let info = instance.legacy_device_info();
-        ClapWrapperNode {
+        Self {
             node_id,
             info,
             params: ParameterMap::new(),

@@ -43,6 +43,10 @@ fn zero_cell() -> Arc<AtomicU32> {
     Arc::new(AtomicU32::new(0.0_f32.to_bits()))
 }
 
+const DEFAULT_SAMPLE_RATE: f32 = 48_000.0;
+const DEFAULT_MAX_BLOCK_SIZE: usize = 512;
+const DEFAULT_NUM_CHANNELS: usize = 2;
+
 /// Parameters that vary per audio device session.
 #[derive(Debug, Clone, Copy)]
 pub struct CompileConfig {
@@ -53,10 +57,10 @@ pub struct CompileConfig {
 
 impl Default for CompileConfig {
     fn default() -> Self {
-        CompileConfig {
-            sample_rate: 48_000.0,
-            max_block_size: 512,
-            num_channels: 2,
+        Self {
+            sample_rate: DEFAULT_SAMPLE_RATE,
+            max_block_size: DEFAULT_MAX_BLOCK_SIZE,
+            num_channels: DEFAULT_NUM_CHANNELS,
         }
     }
 }

@@ -20,7 +20,7 @@ pub struct WasmWrapperNode {
 impl WasmWrapperNode {
     pub fn new(node_id: NodeId, device_id: impl Into<String>, name: impl Into<String>) -> Self {
         let id = device_id.into();
-        WasmWrapperNode {
+        Self {
             node_id,
             info: DeviceInfo {
                 device_id: id.clone(),

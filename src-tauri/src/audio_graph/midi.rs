@@ -32,7 +32,7 @@ pub struct MidiEventList {
 
 impl MidiEventList {
     pub fn new() -> Self {
-        MidiEventList {
+        Self {
             events: [EMPTY_EVENT; MAX_EVENTS_PER_BLOCK],
             len: 0,
         }

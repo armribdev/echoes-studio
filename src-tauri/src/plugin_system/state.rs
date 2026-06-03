@@ -44,7 +44,7 @@ pub enum StateData {
 impl DeviceState {
     /// Create an empty state (device has no persistent data).
     pub fn empty(device_id: &str) -> Self {
-        DeviceState {
+        Self {
             device_id: device_id.to_string(),
             format: StateFormat::Empty,
             data: StateData::Empty,
@@ -53,7 +53,7 @@ impl DeviceState {
 
     /// Create a JSON state from a serialisable value.
     pub fn from_json(device_id: &str, value: serde_json::Value) -> Self {
-        DeviceState {
+        Self {
             device_id: device_id.to_string(),
             format: StateFormat::Json,
             data: StateData::Json(value),
@@ -62,7 +62,7 @@ impl DeviceState {
 
     /// Create a binary state (e.g. VST3 chunk).
     pub fn from_binary(device_id: &str, bytes: Vec<u8>) -> Self {
-        DeviceState {
+        Self {
             device_id: device_id.to_string(),
             format: StateFormat::Binary,
             data: StateData::Binary(bytes),

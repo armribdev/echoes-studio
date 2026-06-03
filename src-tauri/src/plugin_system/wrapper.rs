@@ -126,7 +126,7 @@ pub struct PassThroughDevice {
 impl PassThroughDevice {
     pub fn new(node_id: NodeId, device_id: impl Into<String>, name: impl Into<String>) -> Self {
         let device_id_str = device_id.into();
-        PassThroughDevice {
+        Self {
             node_id,
             info: DeviceInfo {
                 device_id: device_id_str,

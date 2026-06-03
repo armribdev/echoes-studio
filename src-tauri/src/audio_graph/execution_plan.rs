@@ -10,6 +10,9 @@
 use crate::audio_graph::modulation::ModulationMap;
 use crate::audio_graph::node::NodeId;
 
+const DEFAULT_MAX_BLOCK_SIZE: usize = 512;
+const DEFAULT_NUM_CHANNELS: usize = 2;
+
 /// Upstream source and PDC delay for one input port.
 #[derive(Debug, Clone, Copy)]
 pub struct InputConnection {
@@ -50,12 +53,12 @@ pub struct ExecutionPlan {
 
 impl ExecutionPlan {
     pub fn empty(sample_rate: f32) -> Self {
-        ExecutionPlan {
+        Self {
             steps: Vec::new(),
             modulation: ModulationMap::new(),
             sample_rate,
-            max_block_size: 512,
-            num_channels: 2,
+            max_block_size: DEFAULT_MAX_BLOCK_SIZE,
+            num_channels: DEFAULT_NUM_CHANNELS,
             step_latencies: Vec::new(),
             step_cumulative_latency: Vec::new(),
             step_levels: Vec::new(),
@@ -72,11 +75,7 @@ impl ExecutionPlan {
 
     /// Last step index (master output), or `None` if empty.
     pub fn master_step(&self) -> Option<usize> {
-        if self.steps.is_empty() {
-            None
-        } else {
-            Some(self.steps.len() - 1)
-        }
+        self.steps.len().checked_sub(1)
     }
 
     pub fn total_output_slots(&self) -> usize {
@@ -102,7 +101,7 @@ pub struct ExecutionPlanBuilder {
 
 impl ExecutionPlanBuilder {
     pub fn new(sample_rate: f32, max_block_size: usize, num_channels: usize) -> Self {
-        ExecutionPlanBuilder {
+        Self {
             steps: Vec::new(),
             modulation: ModulationMap::new(),
             sample_rate,

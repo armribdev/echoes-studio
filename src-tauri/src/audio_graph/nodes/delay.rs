@@ -15,6 +15,8 @@ pub const DELAY_WET: usize = 2;
 pub const DELAY_DRY: usize = 3;
 pub const DELAY_PING_PONG: usize = 4;
 
+const DEFAULT_ENGINE_SAMPLE_RATE: f32 = 48_000.0;
+
 /// Flatten `DelayParams` into the `ParameterBlock` cell order above.
 pub fn delay_block_values(p: &DelayParams) -> [f32; DELAY_PARAM_COUNT] {
     [
@@ -63,13 +65,13 @@ pub struct DelayNode {
 
 impl DelayNode {
     pub fn new(id: NodeId, params: DelayParams) -> Self {
-        DelayNode {
+        Self {
             id,
             params,
             buf: Vec::new(),
             write_pos: 0,
             delay_samples: 0,
-            sample_rate: 48_000.0,
+            sample_rate: DEFAULT_ENGINE_SAMPLE_RATE,
             block: None,
         }
     }
