@@ -43,7 +43,7 @@
 //! introduce GUI calls and must coordinate via the lifecycle state machine.
 
 use std::ptr::NonNull;
-use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::atomic::{AtomicU8, AtomicU64, Ordering};
 use std::sync::Arc;
 
 use crate::plugin_formats::clap::ffi::{ClapHost, ClapLibrary, ClapPlugin};
@@ -55,6 +55,31 @@ use crate::plugin_system::wrapper::{DeviceFormat, DeviceInfo};
 /// Capacity of the per-instance parameter SPSC ring (ADR-007).  1024 slots ≈
 /// 17 s of edits at a 60 Hz UI — far more than the drain interval needs.
 const PARAM_QUEUE_CAPACITY: usize = 1024;
+
+// ── Instance identity ─────────────────────────────────────────────────────────
+//
+// Every `PluginInstance` is stamped at construction with a process-unique,
+// monotonically increasing `instance_id`.  Unlike `device_id` — which is the
+// project-side *plugin type* identifier (e.g. the VST3 FUID / CLAP id, shared by
+// every use of that plugin) — `instance_id` identifies *this one live instance*:
+//
+//   * **Unique:** `fetch_add` on a global atomic never hands out the same value
+//     twice within a process run, so two instances of the *same* plugin type
+//     (and therefore the same `device_id`) still carry distinct identities.
+//   * **Stable & invariant:** assigned once in the constructor, never mutated and
+//     never recycled — the field has no setter.
+//
+// This is the foundation for addressing a specific instance instead of a plugin
+// *type*; the project/graph/gateway layers must carry it end-to-end before the
+// `device_id` collision (R-2) can be fully closed (see module note below).
+static NEXT_INSTANCE_ID: AtomicU64 = AtomicU64::new(1);
+
+/// Hand out the next process-unique instance identity.
+fn next_instance_id() -> u64 {
+    // Relaxed is sufficient: we only need uniqueness, not ordering against other
+    // memory — and this runs off the audio thread at construction time.
+    NEXT_INSTANCE_ID.fetch_add(1, Ordering::Relaxed)
+}
 
 // ── Native handle ─────────────────────────────────────────────────────────────
 
@@ -104,7 +129,15 @@ unsafe impl Sync for NativeHandle {}
 ///
 /// All fields except `lifecycle` are immutable after construction.
 pub struct PluginInstance {
-    /// Stable project-side identifier (e.g. `"vst3://<dll>?<cid>"`).
+    /// Process-unique, stable identity for **this live instance** (see the
+    /// "Instance identity" note above).  Distinct from `device_id`, which names
+    /// the plugin *type* and is shared across every use of the same plugin.
+    /// Assigned once at construction; immutable and never recycled.
+    instance_id: u64,
+
+    /// Stable project-side identifier (e.g. `"vst3://<dll>?<cid>"`).  This is the
+    /// plugin **type** id — two instances of the same plugin share it, so it is
+    /// **not** a unique instance handle (use [`instance_id`](Self::instance_id)).
     pub device_id: String,
 
     /// Human-readable name (from the plugin manifest).
@@ -135,6 +168,7 @@ impl PluginInstance {
     /// Construct an internal (PassThrough) instance with no FFI handle.
     pub fn new_internal(device_id: impl Into<String>, name: impl Into<String>) -> Arc<Self> {
         Arc::new(PluginInstance {
+            instance_id: next_instance_id(),
             device_id: device_id.into(),
             name: name.into(),
             vendor: "Internal".to_string(),
@@ -157,6 +191,7 @@ impl PluginInstance {
         lib: Arc<Vst3Library>,
     ) -> Arc<Self> {
         Arc::new(PluginInstance {
+            instance_id: next_instance_id(),
             device_id: device_id.into(),
             name: name.into(),
             vendor: String::new(),
@@ -181,6 +216,7 @@ impl PluginInstance {
         lib: Arc<ClapLibrary>,
     ) -> Arc<Self> {
         Arc::new(PluginInstance {
+            instance_id: next_instance_id(),
             device_id: device_id.into(),
             name: name.into(),
             vendor: vendor.into(),
@@ -193,6 +229,17 @@ impl PluginInstance {
             lifecycle: AtomicU8::new(encode_lifecycle(LifecycleState::Created)),
             param_queue: ParamQueue::with_capacity(PARAM_QUEUE_CAPACITY),
         })
+    }
+
+    // ── Identity ───────────────────────────────────────────────────────────────
+
+    /// Process-unique, stable identity for this live instance.  Two instances of
+    /// the same plugin type (same [`device_id`](Self::device_id)) return
+    /// **different** values; a given instance returns the **same** value for its
+    /// whole lifetime.  Use this — not `device_id` — whenever a caller must point
+    /// at one specific instance rather than a plugin type.
+    pub fn instance_id(&self) -> u64 {
+        self.instance_id
     }
 
     // ── Parameter transport (ADR-007) ─────────────────────────────────────────
@@ -416,5 +463,31 @@ mod tests {
         let mut n = 0;
         inst.drain_params(|_| n += 1);
         assert_eq!(n, 0);
+    }
+
+    #[test]
+    fn instance_id_is_unique_even_for_the_same_device_id() {
+        // Two instances of the *same* plugin type (identical `device_id`) — the
+        // exact R-2 collision scenario (same plugin on two tracks).  Their
+        // instance identities must differ.
+        let a = PluginInstance::new_internal("echoes.gain", "Gain");
+        let b = PluginInstance::new_internal("echoes.gain", "Gain");
+
+        assert_eq!(a.device_id, b.device_id, "same plugin type → same device_id");
+        assert_ne!(
+            a.instance_id(),
+            b.instance_id(),
+            "same device_id must NOT collapse the instance identity"
+        );
+    }
+
+    #[test]
+    fn instance_id_is_stable_for_an_instances_lifetime() {
+        let inst = PluginInstance::new_internal("echoes.gain", "Gain");
+        let first = inst.instance_id();
+        // Repeated reads + an unrelated state mutation never move the identity.
+        inst.set_lifecycle(LifecycleState::Suspended);
+        assert_eq!(inst.instance_id(), first);
+        assert_eq!(inst.instance_id(), first);
     }
 }
