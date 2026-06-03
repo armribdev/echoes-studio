@@ -42,3 +42,10 @@ doc when they disagree; update `state_index.md`.
 **Symptom:** relying on `catch_unwind` to contain a bad plugin.
 **Avoid:** it doesn't catch C++ SEH. Use the opt-in sandbox (ADR-015) for
 untrusted plugins.
+
+## 8. Wrong `Self` in struct literals (safe-refactor passes)
+**Symptom:** `E0411` in free functions, or `E0308` / wrong fields when `Self` is
+used in `impl AppProject { fn to_dto() -> ProjectDto { Self { … } } }` or in a
+closure that must build `MidiClipDto` / `DeviceRecord`.
+**Avoid:** follow [`.claude/rules/rust_self_rules.md`](../rules/rust_self_rules.md);
+run `cargo build` after each batch; grep `-> OtherType` + `Self {`.

@@ -32,6 +32,7 @@ Short strict rules live in [`.claude/rules/`](.claude/rules/) and point into
 - [`architecture_rules.md`](.claude/rules/architecture_rules.md) — hard invariants + when an ADR is required
 - [`migration_rules.md`](.claude/rules/migration_rules.md) — C-1…C-10 (no rewrite, C-2 gate)
 - [`documentation_rules.md`](.claude/rules/documentation_rules.md) · [`doc_sync_rules.md`](.claude/rules/doc_sync_rules.md) · [`change_impact_mapping.md`](.claude/rules/change_impact_mapping.md)
+- [`rust_self_rules.md`](.claude/rules/rust_self_rules.md) — `Self` vs explicit struct names (safe Rust refactors)
 
 **Workflow:** before/after any architectural or engine change, follow
 [`completion_protocol.md`](.claude/rules/completion_protocol.md) — read
@@ -73,6 +74,10 @@ Write simple, readable and maintainable code. Prioritize clarity over cleverness
 - Use clear and descriptive names.
 - Avoid abbreviations.
 - Prefer consistency across the project.
+
+### Rust `Self` (struct literals)
+- During safe refactors, follow [`.claude/rules/rust_self_rules.md`](.claude/rules/rust_self_rules.md).
+- `Self` is only the type of the current `impl` block — not the function’s return type, not nested DTOs in closures, not free functions.
 
 ### Functions
 - Small and focused (one responsibility).

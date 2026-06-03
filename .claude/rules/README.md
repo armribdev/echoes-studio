@@ -14,6 +14,7 @@ explanations live in `docs/active/`. These files are referenced from the root
 | `doc_sync_rules.md` | Keeping docs in sync with code after every change |
 | `change_impact_mapping.md` | Code area → docs/ADRs to update (sync lookup table) |
 | `completion_protocol.md` | Before/while/after-change checklist |
+| `rust_self_rules.md` | When `Self { … }` is safe vs must use an explicit type (safe refactors) |
 
 Companion index (not a rule): `../state_index.md` — subsystem → source-of-truth →
 code → status.

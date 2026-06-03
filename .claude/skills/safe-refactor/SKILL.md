@@ -22,6 +22,7 @@ offline render bit-identical.
    `state_index.md`.
 
 ## Checklist
+- [ ] Struct literals: [`.claude/rules/rust_self_rules.md`](../../rules/rust_self_rules.md) — `Self` only when building the `impl` target type (see pitfalls table).
 - [ ] No public contract / `NodeKind` / serialized shape changed silently.
 - [ ] Topological-sort tiebreak (`NodeId`) and `src_step < step` invariant intact.
 - [ ] No format type leaked from `plugin_formats` into `audio_graph`.
