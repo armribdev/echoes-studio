@@ -151,12 +151,16 @@ impl PluginHost {
     /// Instantiate a plugin and return the audio-side `Box<dyn AudioNode>`
     /// the graph compiler embeds in `CompiledGraph.processors`.
     ///
-    /// The host keeps its own `Arc<PluginInstance>` clone in `instances` so
-    /// later lifecycle / parameter / state calls can address the live
-    /// instance directly (ADR-007).
+    /// The host keeps its own `Arc<PluginInstance>` clone in `records`, keyed by
+    /// `instance_key` (the stable per-placement id, e.g. project `effect.id`) so
+    /// two instances of the *same* plugin type no longer overwrite each other in
+    /// the map.  Lifecycle / parameter / state calls still address by `plugin_id`
+    /// (the type) via `record_by_device_id` until per-instance UI addressing
+    /// lands (audit point 2, step 4); ADR-007.
     pub fn instantiate(
         &mut self,
         node_id: NodeId,
+        instance_key: &str,
         plugin_id: &str,
         sandboxed: bool,
     ) -> Result<Box<dyn AudioNode>, HostError> {
@@ -211,7 +215,7 @@ impl PluginHost {
         };
 
         self.records.insert(
-            plugin_id.to_string(),
+            instance_key.to_string(),
             DeviceRecord {
                 instance,
                 saved_state,
@@ -338,6 +342,7 @@ impl PluginHost {
     /// return `Err` so the caller falls back to the built-in `PolySynth`.
     pub fn instantiate_instrument(
         &mut self,
+        instance_key: &str,
         plugin_id: &str,
     ) -> Result<Box<dyn InstrumentDevice>, HostError> {
         let manifest = self
@@ -351,7 +356,7 @@ impl PluginHost {
                 let instance = self.create_clap_instance(plugin_id, &manifest)?;
                 instance.set_lifecycle(LifecycleState::Running);
                 self.records.insert(
-                    plugin_id.to_string(),
+                    instance_key.to_string(),
                     DeviceRecord {
                         instance: Arc::clone(&instance),
                         saved_state: DeviceState::empty(plugin_id),
@@ -363,6 +368,20 @@ impl PluginHost {
                 "instrument format {other:?} not supported yet (CLAP only in Phase 5c)"
             ))),
         }
+    }
+
+    /// Resolve a device record by plugin **type** id (`device_id`).
+    ///
+    /// Records are now keyed by the per-placement `instance_key`, but the
+    /// UI/IPC surface still addresses plugins by `device_id` (audit point 2,
+    /// step 4 migrates that).  With one instance per type (the only case that
+    /// worked before this change) the match is unambiguous and preserves the
+    /// previous `records.get(device_id)` semantics; with duplicates it returns
+    /// one matching instance — no worse than the prior last-wins behaviour.
+    fn record_by_device_id(&self, device_id: &str) -> Option<&DeviceRecord> {
+        self.records
+            .values()
+            .find(|r| r.instance.device_id == device_id)
     }
 
     /// Push a normalised parameter change to a live plugin (ADR-007).
@@ -382,16 +401,14 @@ impl PluginHost {
         normalised: f32,
     ) -> Result<bool, HostError> {
         let record = self
-            .records
-            .get(device_id)
+            .record_by_device_id(device_id)
             .ok_or_else(|| HostError::DeviceNotFound(device_id.to_string()))?;
         Ok(record.instance.push_param(native_id, normalised))
     }
 
     pub fn suspend_device(&mut self, device_id: &str) -> Result<(), HostError> {
         let record = self
-            .records
-            .get(device_id)
+            .record_by_device_id(device_id)
             .ok_or_else(|| HostError::DeviceNotFound(device_id.to_string()))?;
         let next = transition(record.instance.lifecycle(), LifecycleState::Suspended)
             .map_err(HostError::LifecycleError)?;
@@ -401,8 +418,7 @@ impl PluginHost {
 
     pub fn resume_device(&mut self, device_id: &str) -> Result<(), HostError> {
         let record = self
-            .records
-            .get(device_id)
+            .record_by_device_id(device_id)
             .ok_or_else(|| HostError::DeviceNotFound(device_id.to_string()))?;
         let next = transition(record.instance.lifecycle(), LifecycleState::Running)
             .map_err(HostError::LifecycleError)?;
@@ -411,10 +427,20 @@ impl PluginHost {
     }
 
     pub fn destroy_device(&mut self, device_id: &str) {
-        if let Some(record) = self.records.get(device_id) {
-            record.instance.set_lifecycle(LifecycleState::Destroyed);
+        // Records are keyed by `instance_key`; remove every record whose
+        // instance is of this plugin type.
+        let keys: Vec<String> = self
+            .records
+            .iter()
+            .filter(|(_, r)| r.instance.device_id == device_id)
+            .map(|(k, _)| k.clone())
+            .collect();
+        for key in keys {
+            if let Some(record) = self.records.get(&key) {
+                record.instance.set_lifecycle(LifecycleState::Destroyed);
+            }
+            self.records.remove(&key);
         }
-        self.records.remove(device_id);
     }
 
     /// Release host-side records for devices that are no longer present in the
@@ -435,8 +461,11 @@ impl PluginHost {
     /// their existing record untouched, so a plugin that survives a recompile is
     /// never disturbed (no FFI churn, bit-identical).
     pub fn retain_devices(&mut self, active: &HashSet<String>) {
-        self.records.retain(|device_id, record| {
-            let keep = active.contains(device_id);
+        // Records are keyed by `instance_key`; `active` is the set of
+        // `device_id`s (plugin types) the new graph still references, so match
+        // on the instance's type rather than on the map key.
+        self.records.retain(|_instance_key, record| {
+            let keep = active.contains(&record.instance.device_id);
             if !keep {
                 // Mark terminal; the actual FFI teardown happens in
                 // `PluginInstance::drop` once the last `Arc` is released off-RT.
@@ -453,17 +482,20 @@ impl PluginHost {
     /// Phase 4c, internal) fall back to the transitional `saved_state` cache so
     /// the returned `DeviceState` is never lost.
     pub fn save_device_state(&self, device_id: &str) -> Option<DeviceState> {
-        let record = self.records.get(device_id)?;
+        let record = self.record_by_device_id(device_id)?;
         match record.instance.save_state_blob() {
             Some(bytes) => Some(DeviceState::from_binary(device_id, bytes)),
             None => Some(record.saved_state.clone()),
         }
     }
 
-    /// Iterate the device IDs of all currently-instantiated plugins.  Used by
-    /// the project-save path to harvest live plugin state.
+    /// Iterate the device (plugin **type**) IDs of all currently-instantiated
+    /// plugins.  Used by the project-save path to harvest live plugin state,
+    /// which is keyed by `device_id` in the project file (unchanged here).  May
+    /// yield the same `device_id` more than once when a plugin type is used on
+    /// several tracks; the consumer de-duplicates via its `device_id`-keyed map.
     pub fn device_ids(&self) -> impl Iterator<Item = &str> {
-        self.records.keys().map(String::as_str)
+        self.records.values().map(|r| r.instance.device_id.as_str())
     }
 
     pub fn device_count(&self) -> usize {
@@ -471,12 +503,14 @@ impl PluginHost {
     }
 
     pub fn lifecycle_of(&self, device_id: &str) -> Option<LifecycleState> {
-        self.records.get(device_id).map(|r| r.instance.lifecycle())
+        self.record_by_device_id(device_id)
+            .map(|r| r.instance.lifecycle())
     }
 
     /// Borrow the shared instance for an already-instantiated device.
     pub fn instance(&self, device_id: &str) -> Option<Arc<PluginInstance>> {
-        self.records.get(device_id).map(|r| Arc::clone(&r.instance))
+        self.record_by_device_id(device_id)
+            .map(|r| Arc::clone(&r.instance))
     }
 }
 
@@ -552,7 +586,7 @@ mod tests {
         let mut host = PluginHost::new();
 
         let mut node = host
-            .instantiate(NodeId(1), "echoes.gain", false)
+            .instantiate(NodeId(1), "echoes.gain", "echoes.gain", false)
             .expect("instantiation must succeed for a registered device");
 
         assert_eq!(host.device_count(), 1);
@@ -580,8 +614,10 @@ mod tests {
     #[test]
     fn retain_devices_prunes_removed_records() {
         let mut host = PluginHost::new();
-        host.instantiate(NodeId(1), "echoes.gain", false).unwrap();
-        host.instantiate(NodeId(2), "echoes.pan", false).unwrap();
+        host.instantiate(NodeId(1), "echoes.gain", "echoes.gain", false)
+            .unwrap();
+        host.instantiate(NodeId(2), "echoes.pan", "echoes.pan", false)
+            .unwrap();
         assert_eq!(host.device_count(), 2);
 
         let mut active = HashSet::new();
@@ -591,6 +627,23 @@ mod tests {
         assert_eq!(host.device_count(), 1);
         assert!(host.instance("echoes.gain").is_some());
         assert!(host.instance("echoes.pan").is_none());
+    }
+
+    /// Audit point 2 (host-map level): two instances of the **same** plugin
+    /// type used on two tracks no longer overwrite each other — they carry
+    /// distinct `instance_key`s, so both records survive.  Previously the map was
+    /// keyed by `device_id`, collapsing them to one.
+    #[test]
+    fn same_device_id_on_two_tracks_keeps_both_records() {
+        let mut host = PluginHost::new();
+        host.instantiate(NodeId(1), "track-a:fx0", "echoes.gain", false)
+            .unwrap();
+        host.instantiate(NodeId(2), "track-b:fx0", "echoes.gain", false)
+            .unwrap();
+
+        assert_eq!(host.device_count(), 2, "two placements → two records");
+        // The legacy device_id-addressed path still resolves to one of them.
+        assert!(host.instance("echoes.gain").is_some());
     }
 
     /// ADR-010 race-free restore: a blob staged before the compile is applied to
@@ -606,7 +659,8 @@ mod tests {
         staged.insert("echoes.gain".to_string(), blob.clone());
         host.set_pending_state_blobs(staged);
 
-        host.instantiate(NodeId(1), "echoes.gain", false).unwrap();
+        host.instantiate(NodeId(1), "echoes.gain", "echoes.gain", false)
+            .unwrap();
 
         let restored = host
             .save_device_state("echoes.gain")
@@ -629,7 +683,8 @@ mod tests {
         host.set_pending_state_blobs(staged);
         host.clear_pending_state_blobs();
 
-        host.instantiate(NodeId(1), "echoes.gain", false).unwrap();
+        host.instantiate(NodeId(1), "echoes.gain", "echoes.gain", false)
+            .unwrap();
 
         let restored = host.save_device_state("echoes.gain").unwrap();
         assert_eq!(

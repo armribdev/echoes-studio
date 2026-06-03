@@ -567,8 +567,14 @@ impl GraphCompiler {
                 // instantiate it (CLAP only for now); on any failure fall back
                 // to the built-in PolySynth so the graph still compiles and the
                 // legacy/bit-identical path is preserved.
+                // One instrument per track → the track id is the stable,
+                // per-placement instance key.  Namespaced so it can never
+                // collide with an effect's `effect_id` in the host records map.
+                let instr_key = format!("instrument:{track_id}");
                 let device: Box<dyn InstrumentDevice> = match instrument_id {
-                    Some(device_id) => match plugin_host.instantiate_instrument(device_id) {
+                    Some(device_id) => match plugin_host
+                        .instantiate_instrument(&instr_key, device_id)
+                    {
                         Ok(dev) => dev,
                         Err(e) => {
                             eprintln!(
@@ -656,6 +662,7 @@ impl GraphCompiler {
             }
 
             NodeKind::Plugin {
+                instance_key,
                 device_id,
                 sandboxed,
             } => {
@@ -673,7 +680,7 @@ impl GraphCompiler {
                     );
                 }
 
-                match plugin_host.instantiate(id, device_id, *sandboxed) {
+                match plugin_host.instantiate(id, instance_key, device_id, *sandboxed) {
                     Ok(node) => node,
                     Err(e) => {
                         eprintln!(
@@ -820,6 +827,7 @@ mod tests {
         let master = g.add_node(NodeKind::Master { num_inputs: 1 }, "Master");
         let plug = g.add_node(
             NodeKind::Plugin {
+                instance_key: "fx0".into(),
                 device_id: "echoes.gain".into(),
                 sandboxed: false,
             },
@@ -867,6 +875,7 @@ mod tests {
         let m1 = g1.add_node(NodeKind::Master { num_inputs: 1 }, "Master");
         let p1 = g1.add_node(
             NodeKind::Plugin {
+                instance_key: "fx0".into(),
                 device_id: "echoes.gain".into(),
                 sandboxed: false,
             },

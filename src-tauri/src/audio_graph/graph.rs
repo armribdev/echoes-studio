@@ -69,6 +69,13 @@ pub enum NodeKind {
 
     /// Wraps an external or internal plugin.
     Plugin {
+        /// Stable, per-placement instance key (= project `effect.id`).  Unlike
+        /// `device_id` (the plugin *type*, shared by every use), this is unique
+        /// per plugin slot and stable across recompiles, so the `PluginHost` can
+        /// key its instance records by it instead of by type — the foundation
+        /// for de-duplicating same-plugin-on-two-tracks and for instance reuse
+        /// (engine audit points 1-2).
+        instance_key: String,
         /// Opaque device ID looked up in `PluginHost`.
         device_id: String,
         /// Per-device out-of-process sandbox opt-in (ADR-015, Phase 6).
@@ -360,6 +367,7 @@ impl AudioGraph {
                         params: p.clone(),
                     },
                     EffectParams::Plugin(p) => NodeKind::Plugin {
+                        instance_key: effect.id.clone(),
                         device_id: p.plugin_id.clone(),
                         sandboxed: p.sandboxed,
                     },

@@ -125,15 +125,30 @@ called. **Plugins are never initialized or destroyed from the audio thread.**
 
 ### Record teardown on recompile
 
-The host keeps one `Arc<PluginInstance>` clone per device in its `records` map.
+The host keeps one `Arc<PluginInstance>` clone per **plugin placement** in its
+`records` map, keyed by the per-instance `instance_key` — the project `effect.id`
+(or `instrument:{track_id}` for a track instrument) — **not** by `device_id` (the
+plugin *type*). This is what lets the same plugin used on two tracks live as two
+distinct records instead of one silently overwriting the other (engine audit
+point 2). The UI/IPC surface still addresses plugins by `device_id`;
+`PluginHost::record_by_device_id` resolves type → record, which is unambiguous in
+the common one-instance-per-type case and matches the previous lookup semantics.
+
 After every successful compile, `GraphCompiler::compile` calls
 `PluginHost::retain_devices(active)` with the set of `device_id`s the new graph
-still references; records for devices the user removed are dropped (marked
-`Destroyed`). This releases the host-side clone so the FFI handle is torn down
-once the retiring `CompiledGraph` frees its audio-side clone through the snapshot
-drop ring — always off the audio thread (ADR-007 removal path). Devices that
-survive a recompile keep their existing record untouched (no FFI churn,
-bit-identical).
+still references (matched against each record's `instance.device_id`); records for
+plugin types the user removed entirely are dropped (marked `Destroyed`). This
+releases the host-side clone so the FFI handle is torn down once the retiring
+`CompiledGraph` frees its audio-side clone through the snapshot drop ring — always
+off the audio thread (ADR-007 removal path).
+
+> **Known cost — engine audit point 1 (not yet fixed).** `instantiate` still
+> rebuilds every plugin instance on *every* structural recompile; it does **not**
+> yet reuse a live instance across compiles, so a structural edit re-creates the
+> FFI handle and loses the plugin's internal DSP state. The `instance_key` keying
+> above is the foundation that makes that reuse safe (a separate, pending step) —
+> it is required because reuse keyed by `device_id` would be unsound as soon as a
+> plugin type is duplicated.
 
 ---
 

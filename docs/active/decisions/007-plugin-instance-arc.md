@@ -266,6 +266,37 @@ C-1 (zero mutex / zero alloc / zero syscall in `process`) is preserved.
   matches on a `u8`-sized tag. Trait objects would add a vtable indirection
   and obscure the format-specific FFI cleanup logic.
 
+## Update — 2026-06-03 (records keyed by `instance_key`)
+
+Phase 2a keyed `PluginHost.records` by `device_id` (the plugin *type*), which
+collapsed two instances of the same plugin onto one record — the **R-2**
+collision flagged in
+[`audits/engine-architecture-audit-2026-06-03.md`](../audits/engine-architecture-audit-2026-06-03.md)
+(points 1-2). The map is now keyed by a stable **per-placement** `instance_key`
+(project `effect.id`, or `instrument:{track_id}` for a track instrument), carried
+on `NodeKind::Plugin` and passed to `PluginHost::instantiate` /
+`instantiate_instrument`.
+
+What changed, and what deliberately did **not**:
+
+- **Changed (engine-internal only):** `records` key; `retain_devices` now matches
+  on each record's `instance.device_id`; the `device_id`-addressed methods
+  (`push_plugin_param`, `save_device_state`, `instance`, `lifecycle_of`,
+  `suspend/resume/destroy_device`) resolve via the new `record_by_device_id`
+  helper. Behaviour is identical in the one-instance-per-type case.
+- **Unchanged (out of scope here):** the project file format
+  (`plugin_state_blobs` stays keyed by `device_id`) and the UI/IPC parameter
+  protocol. Fully per-instance addressing — so two duplicates can be targeted
+  independently from the UI and persisted separately — remains a follow-up
+  (audit point 2, "step 4"), which touches the serialized format (C-4 migration)
+  and the IPC surface and therefore needs its own ADR.
+- **Not yet done:** instance *reuse* across recompiles (audit point 1). The new
+  key is its prerequisite; reuse additionally requires avoiding a double
+  `activate` in the format wrappers and is gated on that work.
+
+C-1/C-2/C-5/C-6 are unaffected: all of this runs on the command thread at compile
+time; the `process` path and the determinism guarantees are untouched.
+
 ## Follow-ups
 
 - **Phase 2b** — fold `LifecycleState` into the instance's `AtomicU8`;
