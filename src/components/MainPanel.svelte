@@ -36,7 +36,9 @@
 	import {
 		ARRANGE_POINTER_DRAG_THRESHOLD,
 		ARRANGE_TRACK_HEIGHT,
+		arrangeTrackIndexFromY,
 		clipsInArrangeSelbox,
+		isNewArrangeTrackRow,
 		trackIndexFromArrangeY,
 	} from '../frontend/arrangeInteraction';
 	import { ev, isEngineEvent, type TrackCreatedPayload } from '../shared/protocol/events';
@@ -97,6 +99,28 @@
 			}
 		}
 		if (tracks.length > 0) selectTrackIndex(tracks.length - 1);
+	}
+
+	function trackIdFromCreateResult(result: CommandResult): string | null {
+		for (const raw of result.events) {
+			if (!isEngineEvent(raw) || raw.type !== ev.TRACK_CREATED) continue;
+			return (raw.payload as TrackCreatedPayload).id;
+		}
+		return null;
+	}
+
+	async function ensureTrackForClipPlacement(trackIndex: number): Promise<string | null> {
+		if (!isNewArrangeTrackRow(trackIndex, tracks.length) && tracks[trackIndex]?.id) {
+			return tracks[trackIndex].id;
+		}
+		try {
+			const result = await createTrack(`Piste ${tracks.length + 1}`);
+			selectTrackFromCreateResult(result);
+			return trackIdFromCreateResult(result) ?? tracks[tracks.length - 1]?.id ?? null;
+		} catch (e: unknown) {
+			notify(`Erreur création piste : ${(e as Error)?.message ?? String(e)}`, 'error');
+			return null;
+		}
 	}
 
 	$: {
@@ -192,7 +216,7 @@
 				const x = winX - rect.left;
 				const y = winY - rect.top + tracksEl.scrollTop;
 				if (x < 0 || x > rect.width || y < 0) { fileDragPreview = null; return; }
-				const trackIndex = Math.min(Math.max(0, Math.floor(y / ARRANGE_TRACK_HEIGHT)), tracks.length - 1);
+				const trackIndex = arrangeTrackIndexFromY(y, tracks.length);
 				fileDragPreview = { trackIndex, startSec: Math.max(0, x / scale), durationSec: pendingDragDuration ?? fileDragPreview?.durationSec ?? null };
 			}
 
@@ -235,13 +259,11 @@
 					const startSec = preview?.startSec ?? 0;
 
 					const doImport = (dur: number) => {
-						const trackId = tracks[trackIndex]?.id;
-						if (!trackId) { fileDragPreview = null; return; }
-
-						// Dispatch through the gateway — Rust loads the audio, emits CLIP_ADDED,
-						// the store subscription updates `tracks`, and the $: reactive block
-						// prepares the AudioBuffer automatically.
-						addClip(trackId, filePath, startSec, startSec + dur)
+						ensureTrackForClipPlacement(trackIndex)
+							.then((trackId) => {
+								if (!trackId) { fileDragPreview = null; return; }
+								return addClip(trackId, filePath, startSec, startSec + dur);
+							})
 							.then(() => { fileDragPreview = null; })
 							.catch((err) => { notify(`Erreur import : ${err?.message ?? err}`, 'error'); fileDragPreview = null; });
 					};
@@ -282,15 +304,16 @@
 					}
 				}),
 				listen<string>('audio-file-picked', async ({ payload: filePath }) => {
-					const targetTrack = tracks[0];
-					if (!targetTrack) {
-						notify('Créez d\'abord une piste avant d\'importer.', 'error');
-						return;
-					}
 					try {
 						const dur = await invoke<number>('get_audio_clip_duration', { filePath });
 						const startSec = $transport.position;
-						await addClip(targetTrack.id, filePath, startSec, startSec + dur);
+						const trackIndex =
+							selectedTrackIndex !== null && tracks[selectedTrackIndex]
+								? selectedTrackIndex
+								: tracks.length;
+						const trackId = await ensureTrackForClipPlacement(trackIndex);
+						if (!trackId) return;
+						await addClip(trackId, filePath, startSec, startSec + dur);
 						const filename = filePath.split(/[\\/]/).pop() ?? filePath;
 						notify(`Importé : ${filename}`, 'success');
 					} catch (err: unknown) {
@@ -938,6 +961,7 @@
 			{#if fileDragPreview}
 				<div
 					class="clip-ghost"
+					class:clip-ghost--new-track={isNewArrangeTrackRow(fileDragPreview.trackIndex, tracks.length)}
 					style="top: {fileDragPreview.trackIndex * ARRANGE_TRACK_HEIGHT}px; left: {fileDragPreview.startSec * scale}px; width: {fileDragPreview.durationSec != null ? fileDragPreview.durationSec * scale : 150}px;"
 				></div>
 			{/if}
@@ -1183,6 +1207,11 @@
 		pointer-events: none;
 		border: 2px dashed rgba(255, 255, 255, 0.6);
 		z-index: 5;
+
+		&--new-track {
+			background-color: rgba(107, 203, 119, 0.12);
+			border-color: rgba(107, 203, 119, 0.75);
+		}
 	}
 
 	// ── Empty state ───────────────────────────────────────────────────────────

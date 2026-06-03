@@ -8,6 +8,18 @@ export function trackIndexFromArrangeY(y: number, trackCount: number): number | 
 	return Math.min(Math.max(0, Math.floor(y / ARRANGE_TRACK_HEIGHT)), trackCount - 1);
 }
 
+/** Track row for arrange hit-testing; `trackCount` means a new row below existing tracks. */
+export function arrangeTrackIndexFromY(y: number, trackCount: number): number {
+	if (trackCount <= 0) return 0;
+	const row = Math.floor(y / ARRANGE_TRACK_HEIGHT);
+	if (row >= trackCount) return trackCount;
+	return Math.max(0, row);
+}
+
+export function isNewArrangeTrackRow(trackIndex: number, trackCount: number): boolean {
+	return trackCount === 0 || trackIndex >= trackCount;
+}
+
 export type ArrangeSelbox = { x0: number; y0: number; x1: number; y1: number };
 
 export function clipsInArrangeSelbox(
