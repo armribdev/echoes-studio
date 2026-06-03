@@ -119,10 +119,18 @@ pub struct ClapHost {
     pub vendor: *const c_char,
     pub url: *const c_char,
     pub version: *const c_char,
+    // ── Callback order is ABI-load-bearing ──────────────────────────────────────
+    // CLAP 1.x `clap_host` declares these four function pointers in this exact
+    // order: get_extension, request_restart, request_process, request_callback.
+    // `#[repr(C)]` lays them out by declaration order, so any other order makes
+    // the plugin call the wrong slot — e.g. its first `get_extension(...)` during
+    // `init()` lands on `request_restart`, whose garbage return value is then
+    // dereferenced as an "extension" pointer → STATUS_ACCESS_VIOLATION (Vital and
+    // every CLAP that probes extensions on init).  Do not reorder.
+    pub get_extension: unsafe extern "C" fn(*const ClapHost, *const c_char) -> *const c_void,
     pub request_restart: unsafe extern "C" fn(*const ClapHost),
     pub request_process: unsafe extern "C" fn(*const ClapHost),
     pub request_callback: unsafe extern "C" fn(*const ClapHost),
-    pub get_extension: unsafe extern "C" fn(*const ClapHost, *const c_char) -> *const c_void,
 }
 
 // No-op host callbacks — extensions not yet implemented.
@@ -131,6 +139,33 @@ pub unsafe extern "C" fn host_request_process(_: *const ClapHost) {}
 pub unsafe extern "C" fn host_request_callback(_: *const ClapHost) {}
 pub unsafe extern "C" fn host_get_extension(_: *const ClapHost, _: *const c_char) -> *const c_void {
     std::ptr::null()
+}
+
+#[cfg(test)]
+mod host_abi_tests {
+    use super::*;
+    use std::mem::offset_of;
+
+    /// Guards the CLAP 1.x `clap_host` callback order. A wrong order routes the
+    /// plugin's `get_extension(...)` call (made during `init()`) to a different
+    /// slot, returning a garbage pointer that the plugin dereferences →
+    /// STATUS_ACCESS_VIOLATION on instantiation. Must stay get_extension <
+    /// request_restart < request_process < request_callback.
+    #[test]
+    fn clap_host_callback_order_matches_abi() {
+        assert!(
+            offset_of!(ClapHost, get_extension) < offset_of!(ClapHost, request_restart),
+            "get_extension must precede request_restart (CLAP ABI)"
+        );
+        assert!(
+            offset_of!(ClapHost, request_restart) < offset_of!(ClapHost, request_process),
+            "request_restart must precede request_process (CLAP ABI)"
+        );
+        assert!(
+            offset_of!(ClapHost, request_process) < offset_of!(ClapHost, request_callback),
+            "request_process must precede request_callback (CLAP ABI)"
+        );
+    }
 }
 
 // Constant C strings for the host descriptor.
@@ -148,10 +183,11 @@ pub fn make_host() -> Box<ClapHost> {
         vendor: HOST_VENDOR.as_ptr() as *const c_char,
         url: HOST_URL.as_ptr() as *const c_char,
         version: HOST_VERSION.as_ptr() as *const c_char,
+        // Order matches the `ClapHost` field order (= CLAP ABI). See note there.
+        get_extension: host_get_extension,
         request_restart: host_request_restart,
         request_process: host_request_process,
         request_callback: host_request_callback,
-        get_extension: host_get_extension,
     })
 }
 

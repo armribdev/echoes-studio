@@ -204,14 +204,18 @@ impl AudioNode for ClapWrapperNode {
         &mut self,
         inputs: &[&AudioBuffer],
         outputs: &mut [AudioBuffer],
-        _transport: &TransportInfo,
+        transport: &TransportInfo,
     ) {
         if outputs.is_empty() || !self.active {
             return;
         }
 
         let nc = self.num_channels;
-        let nf = outputs[0].num_frames;
+        // Current block size, not the buffer's allocated capacity
+        // (`num_frames` = MAX_BLOCK_FRAMES).  Passing the full capacity advances
+        // the plugin past the real block and corrupts its output (see
+        // clap_instrument.rs for the detailed rationale).
+        let nf = transport.block_size;
 
         // ── Drain pending parameter changes (ADR-007) ─────────────────────────
         // CLAP carries plain values, so denormalise via the ranges enumerated

@@ -197,14 +197,16 @@ impl AudioNode for VstWrapperNode {
         &mut self,
         inputs: &[&AudioBuffer],
         outputs: &mut [AudioBuffer],
-        _transport: &TransportInfo,
+        transport: &TransportInfo,
     ) {
         if outputs.is_empty() {
             return;
         }
 
         let nc = self.num_channels;
-        let nf = outputs[0].num_frames;
+        // Current block size, not the buffer's allocated capacity
+        // (`num_frames` = MAX_BLOCK_FRAMES); see clap_instrument.rs rationale.
+        let nf = transport.block_size;
 
         // ── Drain pending parameter changes (ADR-007) ─────────────────────────
         // VST3 `IParameterChanges` carries normalised values directly, so the

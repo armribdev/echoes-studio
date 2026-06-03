@@ -23,7 +23,7 @@
 //! 6. **Prepare nodes** — call `node.prepare(ctx)` for each node.
 //! 7. **Return** `(ExecutionPlan, Vec<Box<dyn AudioNode>>)`.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::{atomic::AtomicU32, Arc};
 
 use crate::audio_graph::execution_plan::{
@@ -265,6 +265,34 @@ impl GraphCompiler {
         // 7. Parallel execution levels — groups of steps that can be processed
         // concurrently because they share no transitive dependency (R1).
         Self::compute_execution_levels(&mut plan);
+
+        // 8. Sync the plugin host's device records with the live graph.
+        //    `build_node` (above) inserts/refreshes a record for every plugin or
+        //    instrument node it instantiates; here we drop records for devices
+        //    the new graph no longer references, so a removed plugin's FFI handle
+        //    is torn down once the retiring graph releases its audio-side clone
+        //    (ADR-007 removal path — previously this had no caller and records
+        //    leaked).  Command-thread only; no DSP change, bit-identical (C-2).
+        let mut active_devices: HashSet<String> = HashSet::new();
+        for graph_node in graph.nodes.values() {
+            match &graph_node.kind {
+                NodeKind::Plugin { device_id, .. } => {
+                    active_devices.insert(device_id.clone());
+                }
+                NodeKind::Instrument { track_id } => {
+                    if let Some(device_id) = project
+                        .tracks
+                        .iter()
+                        .find(|t| &t.id == track_id)
+                        .and_then(|t| t.instrument.as_ref())
+                    {
+                        active_devices.insert(device_id.clone());
+                    }
+                }
+                _ => {}
+            }
+        }
+        plugin_host.retain_devices(&active_devices);
 
         let plan = Arc::new(plan);
 
@@ -830,5 +858,96 @@ mod tests {
             GraphCompiler::validate_port_kinds(&g),
             Err(CompileError::UnsupportedPortKind { .. })
         ));
+    }
+
+    // ── Plugin lifecycle through the real compile + schedule pipeline ──────────
+
+    /// End-to-end runtime proof: a `NodeKind::Plugin` is (1) instantiated by the
+    /// host, (2) registered, (3) inserted into the compiled plan as a processor,
+    /// and (4) executed by the scheduler without panic.  Uses the built-in
+    /// `echoes.gain` (PassThroughDevice) so no real plugin DLL is required.
+    #[test]
+    fn plugin_node_is_instantiated_inserted_and_scheduled() {
+        use crate::audio_graph::node::TransportInfo;
+        use crate::audio_graph::scheduler::GraphScheduler;
+        use crate::plugin_system::PluginHost;
+        use crate::project::AppProject;
+
+        let mut host = PluginHost::new();
+        let live = LiveParams::new();
+        let project = AppProject::new();
+
+        let mut g = AudioGraph::new();
+        let master = g.add_node(NodeKind::Master { num_inputs: 1 }, "Master");
+        let plug = g.add_node(
+            NodeKind::Plugin {
+                device_id: "echoes.gain".into(),
+                sandboxed: false,
+            },
+            "plug",
+        );
+        g.connect(plug, 0, master, 0);
+
+        let compiled =
+            GraphCompiler::compile(&g, &project, CompileConfig::default(), &live, &mut host)
+                .expect("compile must succeed");
+
+        // (1)+(2) created and registered with the host.
+        assert!(host.instance("echoes.gain").is_some());
+        // (3) present in the plan as a real processor.
+        assert!(compiled.processors.iter().any(|n| n.label() == "PassThrough"));
+
+        // (4) the scheduler runs every step (including the plugin) without panic.
+        let mut sched = GraphScheduler::new(compiled);
+        let block = 16usize;
+        let mut out = vec![0.0_f32; block * 2];
+        let transport = TransportInfo {
+            is_playing: true,
+            position_samples: 0,
+            position_seconds: 0.0,
+            bpm: 120.0,
+            sample_rate: 48_000.0,
+            block_size: block,
+        };
+        sched.process_block(&transport, &mut out);
+    }
+
+    /// Recompiling a graph that no longer contains the plugin must prune the
+    /// host record (the teardown path that previously leaked).
+    #[test]
+    fn recompile_without_plugin_prunes_host_record() {
+        use crate::plugin_system::PluginHost;
+        use crate::project::AppProject;
+
+        let mut host = PluginHost::new();
+        let live = LiveParams::new();
+        let project = AppProject::new();
+
+        // Graph A — with the plugin.
+        let mut g1 = AudioGraph::new();
+        let m1 = g1.add_node(NodeKind::Master { num_inputs: 1 }, "Master");
+        let p1 = g1.add_node(
+            NodeKind::Plugin {
+                device_id: "echoes.gain".into(),
+                sandboxed: false,
+            },
+            "plug",
+        );
+        g1.connect(p1, 0, m1, 0);
+        GraphCompiler::compile(&g1, &project, CompileConfig::default(), &live, &mut host)
+            .expect("compile A");
+        assert!(host.instance("echoes.gain").is_some());
+
+        // Graph B — plugin removed.
+        let mut g2 = AudioGraph::new();
+        g2.add_node(NodeKind::Master { num_inputs: 1 }, "Master");
+        GraphCompiler::compile(&g2, &project, CompileConfig::default(), &live, &mut host)
+            .expect("compile B");
+
+        assert!(
+            host.instance("echoes.gain").is_none(),
+            "stale plugin record must be pruned on recompile"
+        );
+        assert_eq!(host.device_count(), 0);
     }
 }

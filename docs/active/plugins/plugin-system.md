@@ -123,6 +123,18 @@ The `PluginHost` enforces valid transitions on the command thread. Invalid
 transitions are rejected with `LifecycleError` before any format-specific API is
 called. **Plugins are never initialized or destroyed from the audio thread.**
 
+### Record teardown on recompile
+
+The host keeps one `Arc<PluginInstance>` clone per device in its `records` map.
+After every successful compile, `GraphCompiler::compile` calls
+`PluginHost::retain_devices(active)` with the set of `device_id`s the new graph
+still references; records for devices the user removed are dropped (marked
+`Destroyed`). This releases the host-side clone so the FFI handle is torn down
+once the retiring `CompiledGraph` frees its audio-side clone through the snapshot
+drop ring — always off the audio thread (ADR-007 removal path). Devices that
+survive a recompile keep their existing record untouched (no FFI churn,
+bit-identical).
+
 ---
 
 ## Parameter System

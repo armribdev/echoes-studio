@@ -20,7 +20,7 @@
 //!    last `Arc::drop` (whichever thread holds it) runs `PluginInstance::drop`
 //!    and tears the FFI handle down.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::ptr::NonNull;
 use std::sync::Arc;
 
@@ -436,6 +436,35 @@ impl PluginHost {
         self.records.remove(device_id);
     }
 
+    /// Release host-side records for devices that are no longer present in the
+    /// freshly compiled graph (`active` = the set of `device_id`s the new graph
+    /// still references).
+    ///
+    /// Called on the command thread at the end of every successful compile.
+    /// This is the runtime wiring for the "user removed the plugin entirely"
+    /// path described in ADR-007: previously `destroy_device` had **no caller**,
+    /// so the host kept its `Arc<PluginInstance>` clone for removed devices for
+    /// the whole process lifetime — the FFI handle was never torn down and the
+    /// `Destroyed` lifecycle transition was never reached.
+    ///
+    /// Dropping the host clone here does **not** tear the plugin down on the
+    /// audio thread: the retiring `CompiledGraph` still holds the audio-side
+    /// clone, so `PluginInstance::drop` runs only when that graph is freed
+    /// through the snapshot drop ring (off-RT).  Devices still in `active` keep
+    /// their existing record untouched, so a plugin that survives a recompile is
+    /// never disturbed (no FFI churn, bit-identical).
+    pub fn retain_devices(&mut self, active: &HashSet<String>) {
+        self.records.retain(|device_id, record| {
+            let keep = active.contains(device_id);
+            if !keep {
+                // Mark terminal; the actual FFI teardown happens in
+                // `PluginInstance::drop` once the last `Arc` is released off-RT.
+                record.instance.set_lifecycle(LifecycleState::Destroyed);
+            }
+            keep
+        });
+    }
+
     // ── State serialisation ───────────────────────────────────────────────────
 
     /// Serialise a device's live state (Phase 4b / ADR-010).
@@ -557,5 +586,62 @@ mod tests {
         assert_eq!(host.sidechain_input_ports("clap:does-not-exist"), 0);
         // Built-in device has no aux bus → 0 (bit-identical).
         assert_eq!(host.sidechain_input_ports("echoes.gain"), 0);
+    }
+
+    /// Proof of the full instantiation lifecycle on the internal-format path
+    /// (no real plugin DLL needed): create → register → activate(`prepare`) →
+    /// `process` callback.  `echoes.gain` is a built-in registered at
+    /// `PluginHost::new()` and instantiates as a `PassThroughDevice`.
+    #[test]
+    fn instantiated_internal_plugin_node_processes_audio() {
+        use crate::audio_graph::buffer::AudioBuffer;
+        use crate::audio_graph::node::{AudioNode, PrepareContext, TransportInfo};
+
+        let mut host = PluginHost::new();
+
+        // create
+        let mut node = host
+            .instantiate(NodeId(1), "echoes.gain", false)
+            .expect("instantiation must succeed for a registered device");
+
+        // register (addressable by the host)
+        assert_eq!(host.device_count(), 1);
+        assert!(host.instance("echoes.gain").is_some());
+
+        // activate
+        node.prepare(PrepareContext {
+            sample_rate: 48_000.0,
+            max_block_size: 16,
+            num_channels: 2,
+        });
+
+        // process callback — audio must pass through unchanged
+        let mut input = AudioBuffer::new(2, 4);
+        input.channel_mut(0).copy_from_slice(&[1.0, 2.0, 3.0, 4.0]);
+        input.channel_mut(1).copy_from_slice(&[5.0, 6.0, 7.0, 8.0]);
+        let inputs = [&input];
+        let mut outputs = vec![AudioBuffer::new(2, 4)];
+        node.process(&inputs, &mut outputs, &TransportInfo::stopped(48_000.0));
+
+        assert_eq!(outputs[0].channel(0), &[1.0, 2.0, 3.0, 4.0]);
+        assert_eq!(outputs[0].channel(1), &[5.0, 6.0, 7.0, 8.0]);
+    }
+
+    /// `retain_devices` drops records absent from the active set (the teardown
+    /// path that was previously dead) and leaves surviving devices untouched.
+    #[test]
+    fn retain_devices_prunes_removed_records() {
+        let mut host = PluginHost::new();
+        host.instantiate(NodeId(1), "echoes.gain", false).unwrap();
+        host.instantiate(NodeId(2), "echoes.pan", false).unwrap();
+        assert_eq!(host.device_count(), 2);
+
+        let mut active = HashSet::new();
+        active.insert("echoes.gain".to_string());
+        host.retain_devices(&active);
+
+        assert_eq!(host.device_count(), 1);
+        assert!(host.instance("echoes.gain").is_some());
+        assert!(host.instance("echoes.pan").is_none());
     }
 }

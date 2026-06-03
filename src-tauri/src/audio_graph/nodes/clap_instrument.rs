@@ -122,10 +122,13 @@ impl InstrumentDevice for ClapInstrument {
 
         let p = self.plugin_ptr();
         unsafe {
-            ((*p).init)(p);
-            let ok = ((*p).activate)(p, sample_rate as f64, 1, max_block_size as u32);
-            self.active = ok;
-            if ok {
+            // CLAP lifecycle: init → activate → start_processing.  `init` must
+            // precede (and may gate) `activate`, so don't activate an
+            // uninitialised plugin.
+            let init_ok = ((*p).init)(p);
+            self.active =
+                init_ok && ((*p).activate)(p, sample_rate as f64, 1, max_block_size as u32);
+            if self.active {
                 ((*p).start_processing)(p);
             }
         }
@@ -135,7 +138,7 @@ impl InstrumentDevice for ClapInstrument {
         &mut self,
         events: &MidiEventList,
         outputs: &mut [AudioBuffer],
-        _transport: &TransportInfo,
+        transport: &TransportInfo,
     ) {
         if outputs.is_empty() || !self.active {
             return;
@@ -149,7 +152,13 @@ impl InstrumentDevice for ClapInstrument {
         fill_clap_notes(events, &mut self.note_events);
 
         let nc = self.num_channels;
-        let nf = outputs[0].num_frames;
+        // Frame count MUST be the current block size, not the buffer's allocated
+        // capacity (`num_frames` = MAX_BLOCK_FRAMES).  Telling the plugin to
+        // render the full 4096-frame capacity every callback advances its clock
+        // far past the real block (e.g. 8× at a 512-frame device buffer), so the
+        // synth races ahead and renders garbage that is mostly discarded — heard
+        // as "no sound" / glitching.  Matches `PolySynth`, which uses block_size.
+        let nf = transport.block_size;
         for c in 0..nc {
             self.out_channel_ptrs[c] = outputs[0].channel_mut(c).as_mut_ptr();
         }
