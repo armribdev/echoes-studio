@@ -11,5 +11,3 @@ pub mod ffi;
 pub mod host;
 pub mod wrapper;
 
-pub use host::Vst3Host;
-pub use wrapper::VstWrapperNode;

@@ -161,7 +161,7 @@ mod tests {
         let mut input = AudioBuffer::new(1, 4);
         input.channel_mut(0).copy_from_slice(&[0.5, -0.3, 0.9, 1.2]);
         let input_ref = &input;
-        let mut output = AudioBuffer::new(1, 4);
+        let output = AudioBuffer::new(1, 4);
         let transport = TransportInfo::stopped(48_000.0);
         let mut outputs = [output];
         node.process(&[input_ref], &mut outputs, &transport);
@@ -184,7 +184,7 @@ mod tests {
         let mut input = AudioBuffer::new(1, 8);
         input.channel_mut(0).fill(0.5);
         let input_ref = &input;
-        let mut output = AudioBuffer::new(1, 8);
+        let output = AudioBuffer::new(1, 8);
         let transport = TransportInfo::stopped(48_000.0);
         let mut outputs = [output];
         node.process(&[input_ref], &mut outputs, &transport);

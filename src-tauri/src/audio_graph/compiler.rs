@@ -31,7 +31,6 @@ use crate::audio_graph::execution_plan::{
 };
 use crate::audio_graph::graph::{AudioGraph, NodeKind};
 use crate::audio_graph::live_params::LiveParams;
-use crate::audio_graph::modulation::ModulationMap;
 use crate::audio_graph::node::{AudioNode, NodeId, PortId, PortKind, PrepareContext};
 use crate::plugin_system::PluginHost;
 use crate::project::AppProject;
@@ -296,20 +295,16 @@ impl GraphCompiler {
 
         for i in 0..n {
             let mut arrival: u32 = 0;
-            for conn_opt in &plan.steps[i].input_connections {
-                if let Some(conn) = conn_opt {
-                    let src_lat = plan.step_cumulative_latency[conn.src_step];
-                    if src_lat > arrival {
-                        arrival = src_lat;
-                    }
+            for conn in plan.steps[i].input_connections.iter().flatten() {
+                let src_lat = plan.step_cumulative_latency[conn.src_step];
+                if src_lat > arrival {
+                    arrival = src_lat;
                 }
             }
 
-            for conn_opt in plan.steps[i].input_connections.iter_mut() {
-                if let Some(conn) = conn_opt {
-                    let src_lat = plan.step_cumulative_latency[conn.src_step];
-                    conn.delay_samples = arrival.saturating_sub(src_lat);
-                }
+            for conn in plan.steps[i].input_connections.iter_mut().flatten() {
+                let src_lat = plan.step_cumulative_latency[conn.src_step];
+                conn.delay_samples = arrival.saturating_sub(src_lat);
             }
 
             plan.step_cumulative_latency[i] = plan.step_latencies[i].saturating_add(arrival);
@@ -359,12 +354,10 @@ impl GraphCompiler {
 
         for i in 0..n {
             let mut lvl: u32 = 0;
-            for conn_opt in &plan.steps[i].input_connections {
-                if let Some(conn) = conn_opt {
-                    let dl = plan.step_levels[conn.src_step].saturating_add(1);
-                    if dl > lvl {
-                        lvl = dl;
-                    }
+            for conn in plan.steps[i].input_connections.iter().flatten() {
+                let dl = plan.step_levels[conn.src_step].saturating_add(1);
+                if dl > lvl {
+                    lvl = dl;
                 }
             }
             for &src in &mod_deps[i] {

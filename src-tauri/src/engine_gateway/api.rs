@@ -12,8 +12,9 @@
 //! from the nearest snapshot + the events after it.
 
 use serde::Serialize;
-use serde_json::json;
-use std::sync::Arc;
+use serde_json::{json, Value};
+use std::sync::atomic::Ordering;
+use std::sync::{Arc, MutexGuard};
 use tauri::Emitter;
 
 use super::commands::{
@@ -26,7 +27,7 @@ use super::commands::{
     UpdateTrackPayload,
 };
 use super::events::{ev, EngineEvent, ProjectEvent};
-use crate::audio_clip::AudioClip;
+use crate::audio_clip::{AudioClip, AudioClipData};
 use crate::audio_graph::GraphSnapshotDto;
 use crate::project::{
     generate_id, AppClip, AppMidiClip, AppProject, AppState, AppTrack, CachedAudioData,
@@ -106,14 +107,13 @@ pub fn send_batch(
 /// undo/redo.
 #[tauri::command]
 pub fn get_snapshot(state: tauri::State<'_, AppState>) -> Result<serde_json::Value, String> {
-    let project = state.project.lock().map_err(|e| e.to_string())?;
-    serde_json::to_value(project.to_dto()).map_err(|e| e.to_string())
+    project_dto_json(&state)
 }
 
 /// Return the audio graph topology derived from the current project.
 #[tauri::command]
 pub fn get_graph_snapshot(state: tauri::State<'_, AppState>) -> Result<GraphSnapshotDto, String> {
-    let project = state.project.lock().map_err(|e| e.to_string())?;
+    let project = lock_project(&state)?;
     Ok(GraphSnapshotDto::from_project(&project))
 }
 
@@ -127,28 +127,7 @@ pub fn undo(
         let mut store = state.event_store.lock().map_err(|e| e.to_string())?;
         store.undo()
     };
-
-    if !moved {
-        let project = state.project.lock().map_err(|e| e.to_string())?;
-        return serde_json::to_value(project.to_dto()).map_err(|e| e.to_string());
-    }
-
-    rebuild_project_from_store(&state)?;
-    recompile_if_needed(&state);
-
-    let project = state.project.lock().map_err(|e| e.to_string())?;
-    let dto = project.to_dto();
-    let snapshot_val = serde_json::to_value(&dto).map_err(|e| e.to_string())?;
-
-    let engine_event = EngineEvent::new(ev::PROJECT_RESET, "", snapshot_val.clone());
-    let _ = app.emit("engine-event", &engine_event);
-
-    state
-        .dirty
-        .store(true, std::sync::atomic::Ordering::Relaxed);
-    crate::menu_state::refresh_menu(&app, &state);
-
-    Ok(snapshot_val)
+    finish_history_step(&app, &state, moved)
 }
 
 /// Redo the next project-structural event. Returns the new project snapshot.
@@ -161,28 +140,439 @@ pub fn redo(
         let mut store = state.event_store.lock().map_err(|e| e.to_string())?;
         store.redo()
     };
+    finish_history_step(&app, &state, moved)
+}
 
+// --- Project lock helpers ---
+
+fn lock_project<'a>(
+    state: &'a tauri::State<'a, AppState>,
+) -> Result<MutexGuard<'a, AppProject>, String> {
+    state.project.lock().map_err(|e| e.to_string())
+}
+
+fn with_project_mut<'a, R, F>(
+    state: &'a tauri::State<'a, AppState>,
+    f: F,
+) -> Result<R, String>
+where
+    F: FnOnce(&mut AppProject) -> Result<R, String>,
+{
+    let mut project = lock_project(state)?;
+    f(&mut project)
+}
+
+fn find_track_mut<'a>(project: &'a mut AppProject, track_id: &str) -> Option<&'a mut AppTrack> {
+    project.tracks.iter_mut().find(|t| t.id == track_id)
+}
+
+fn require_track_mut<'a>(
+    project: &'a mut AppProject,
+    track_id: &str,
+) -> Result<&'a mut AppTrack, String> {
+    find_track_mut(project, track_id)
+        .ok_or_else(|| format!("Track {} not found", track_id))
+}
+
+fn require_audio_clip_mut<'a>(
+    track: &'a mut AppTrack,
+    clip_id: &str,
+) -> Result<&'a mut AppClip, String> {
+    track
+        .clips
+        .iter_mut()
+        .find(|c| c.id == clip_id)
+        .ok_or_else(|| format!("Clip {clip_id} not found"))
+}
+
+fn require_effect_mut<'a>(
+    track: &'a mut AppTrack,
+    effect_id: &str,
+) -> Result<&'a mut TrackEffect, String> {
+    track
+        .effects
+        .iter_mut()
+        .find(|e| e.id == effect_id)
+        .ok_or_else(|| format!("Effect {effect_id} not found"))
+}
+
+fn require_midi_clip_mut<'a>(
+    track: &'a mut AppTrack,
+    clip_id: &str,
+) -> Result<&'a mut AppMidiClip, String> {
+    track
+        .midi_clips
+        .iter_mut()
+        .find(|c| c.id == clip_id)
+        .ok_or_else(|| format!("MidiClip {clip_id} not found"))
+}
+
+fn apply_exclusive_solo(project: &mut AppProject, track_id: &str, solo: bool) {
+    if solo {
+        for track in project.tracks.iter_mut() {
+            track.solo = track.id == track_id;
+        }
+    } else if let Some(track) = find_track_mut(project, track_id) {
+        track.solo = false;
+    }
+}
+
+fn empty_app_track(id: String, name: String) -> AppTrack {
+    AppTrack {
+        id,
+        name,
+        volume: 80.0,
+        pan: 0.0,
+        muted: false,
+        solo: false,
+        clips: vec![],
+        effects: vec![],
+        modulators: vec![],
+        mod_routes: vec![],
+        midi_notes: vec![],
+        midi_clips: vec![],
+        instrument: None,
+    }
+}
+
+fn mark_dirty(state: &tauri::State<'_, AppState>) {
+    state.dirty.store(true, Ordering::Relaxed);
+}
+
+fn project_dto_json(state: &tauri::State<'_, AppState>) -> Result<Value, String> {
+    let project = lock_project(state)?;
+    serde_json::to_value(project.to_dto()).map_err(|e| e.to_string())
+}
+
+/// Shared tail for undo/redo after the event-store head has moved.
+fn finish_history_step(
+    app: &tauri::AppHandle,
+    state: &tauri::State<'_, AppState>,
+    moved: bool,
+) -> Result<Value, String> {
     if !moved {
-        let project = state.project.lock().map_err(|e| e.to_string())?;
-        return serde_json::to_value(project.to_dto()).map_err(|e| e.to_string());
+        return project_dto_json(state);
     }
 
-    rebuild_project_from_store(&state)?;
-    recompile_if_needed(&state);
+    rebuild_project_from_store(state)?;
+    recompile_if_needed(state);
 
-    let project = state.project.lock().map_err(|e| e.to_string())?;
-    let dto = project.to_dto();
-    let snapshot_val = serde_json::to_value(&dto).map_err(|e| e.to_string())?;
-
+    let snapshot_val = project_dto_json(state)?;
     let engine_event = EngineEvent::new(ev::PROJECT_RESET, "", snapshot_val.clone());
-    let _ = app.emit("engine-event", &engine_event);
-
-    state
-        .dirty
-        .store(true, std::sync::atomic::Ordering::Relaxed);
-    crate::menu_state::refresh_menu(&app, &state);
+    emit_engine_event(app, &engine_event);
+    mark_dirty(state);
+    crate::menu_state::refresh_menu(app, state);
 
     Ok(snapshot_val)
+}
+
+// --- Engine event emission ---
+
+struct ProjectCommit<'a> {
+    state: &'a tauri::State<'a, AppState>,
+    app: &'a tauri::AppHandle,
+    project_id: &'a str,
+    command_id: String,
+}
+
+fn emit_engine_event(app: &tauri::AppHandle, engine_ev: &EngineEvent) {
+    let _ = app.emit("engine-event", engine_ev);
+}
+
+fn ok_single_event(command_id: String, engine_ev: &EngineEvent) -> CommandResult {
+    CommandResult::ok(
+        command_id,
+        vec![serde_json::to_value(engine_ev).unwrap_or_default()],
+    )
+}
+
+fn ok_transport_events(command_id: String, events: &[EngineEvent]) -> CommandResult {
+    CommandResult::ok(
+        command_id,
+        events
+            .iter()
+            .map(|ev| serde_json::to_value(ev).unwrap_or_default())
+            .collect(),
+    )
+}
+
+fn emit_and_ok(
+    app: &tauri::AppHandle,
+    command_id: String,
+    project_id: &str,
+    event_type: &str,
+    payload: Value,
+) -> CommandResult {
+    let engine_ev = EngineEvent::new(event_type, project_id, payload);
+    emit_engine_event(app, &engine_ev);
+    ok_single_event(command_id, &engine_ev)
+}
+
+/// Append to the event store, emit, return the engine event (no recompile).
+fn snapshot_emit(
+    ctx: &ProjectCommit<'_>,
+    event_type: &str,
+    payload: Value,
+) -> Result<EngineEvent, String> {
+    append_and_maybe_snapshot(ctx.state, ProjectEvent::new(event_type, payload.clone()))?;
+    let engine_ev = EngineEvent::new(event_type, ctx.project_id, payload);
+    emit_engine_event(ctx.app, &engine_ev);
+    Ok(engine_ev)
+}
+
+/// Persist a project event, emit the matching engine event, optionally recompile.
+fn commit_project_change(
+    ctx: &ProjectCommit<'_>,
+    event_type: &str,
+    store_payload: Value,
+    engine_payload: Value,
+    recompile: bool,
+) -> Result<CommandResult, String> {
+    append_and_maybe_snapshot(ctx.state, ProjectEvent::new(event_type, store_payload))?;
+    let engine_ev = EngineEvent::new(event_type, ctx.project_id, engine_payload);
+    emit_engine_event(ctx.app, &engine_ev);
+    if recompile {
+        recompile_if_needed(ctx.state);
+    }
+    Ok(ok_single_event(ctx.command_id.clone(), &engine_ev))
+}
+
+fn commit_same_payload(
+    ctx: &ProjectCommit<'_>,
+    event_type: &str,
+    payload: Value,
+    recompile: bool,
+) -> Result<CommandResult, String> {
+    commit_project_change(ctx, event_type, payload.clone(), payload, recompile)
+}
+
+/// Snapshot + recompile before emit (modulator/route structural adds/removes).
+fn commit_recompile_before_emit(
+    ctx: &ProjectCommit<'_>,
+    event_type: &str,
+    payload: Value,
+) -> Result<CommandResult, String> {
+    append_and_maybe_snapshot(ctx.state, ProjectEvent::new(event_type, payload.clone()))?;
+    recompile_if_needed(ctx.state);
+    let engine_ev = EngineEvent::new(event_type, ctx.project_id, payload);
+    emit_engine_event(ctx.app, &engine_ev);
+    Ok(ok_single_event(ctx.command_id.clone(), &engine_ev))
+}
+
+fn cached_audio_from_clip_data(data: AudioClipData) -> Arc<CachedAudioData> {
+    Arc::new(CachedAudioData {
+        raw_samples: data.raw_samples,
+        sample_rate: data.sample_rate,
+        peaks_64: data.peaks_64,
+        peaks_512: data.peaks_512,
+        peaks_4096: data.peaks_4096,
+    })
+}
+
+fn insert_cached_clip(
+    state: &tauri::State<'_, AppState>,
+    clip_id: &str,
+    cached: Arc<CachedAudioData>,
+) -> Arc<CachedAudioData> {
+    state
+        .audio_cache
+        .insert(clip_id.to_string(), Arc::clone(&cached));
+    cached
+}
+
+fn cache_audio_clip(
+    state: &tauri::State<'_, AppState>,
+    clip_id: &str,
+    file_path: &str,
+) -> Result<Arc<CachedAudioData>, String> {
+    let audio = AudioClip::from_file(file_path)
+        .map_err(|e| format!("Failed to load audio '{file_path}': {e}"))?;
+    Ok(insert_cached_clip(
+        state,
+        clip_id,
+        cached_audio_from_clip_data(audio.into_clip_data()),
+    ))
+}
+
+fn resolve_clip_audio(
+    state: &tauri::State<'_, AppState>,
+    clip_id: &str,
+    file_path: &str,
+) -> Option<Arc<CachedAudioData>> {
+    if let Some(cached) = state.audio_cache.get(clip_id) {
+        return Some(cached);
+    }
+    match AudioClip::from_file(file_path) {
+        Ok(audio) => Some(insert_cached_clip(
+            state,
+            clip_id,
+            cached_audio_from_clip_data(audio.into_clip_data()),
+        )),
+        Err(e) => {
+            eprintln!("[audio] Clip introuvable '{file_path}': {e}");
+            None
+        }
+    }
+}
+
+fn app_clip_from_audio(
+    clip_id: String,
+    start: f64,
+    end: f64,
+    file_path: String,
+    data: &CachedAudioData,
+) -> AppClip {
+    AppClip {
+        id: clip_id,
+        start,
+        end,
+        file_path,
+        raw_samples: Arc::clone(&data.raw_samples),
+        sample_rate: data.sample_rate,
+        peaks_64: data.peaks_64.clone(),
+        peaks_512: data.peaks_512.clone(),
+        peaks_4096: data.peaks_4096.clone(),
+    }
+}
+
+// --- apply_events payload helpers ---
+
+fn payload_str(payload: &Value, key: &str) -> String {
+    payload[key].as_str().unwrap_or("").to_string()
+}
+
+fn payload_str_default(payload: &Value, key: &str, default: &str) -> String {
+    payload[key].as_str().unwrap_or(default).to_string()
+}
+
+enum HotEffectUpdate {
+    None,
+    Eq(EqParams),
+    Compressor(CompressorParams),
+    Reverb(ReverbParams),
+    Delay(DelayParams),
+    /// Push normalised `(native_id, value)` pairs into the plugin's SPSC ring (ADR-007).
+    Plugin(String, Vec<(u32, f32)>),
+}
+
+fn hot_effect_update_from(effect: &TrackEffect) -> HotEffectUpdate {
+    if !effect.enabled {
+        return HotEffectUpdate::None;
+    }
+    match &effect.params {
+        EffectParams::Eq(eq) => HotEffectUpdate::Eq(eq.clone()),
+        EffectParams::Compressor(c) => HotEffectUpdate::Compressor(c.clone()),
+        EffectParams::Reverb(r) => HotEffectUpdate::Reverb(r.clone()),
+        EffectParams::Delay(d) => HotEffectUpdate::Delay(d.clone()),
+        EffectParams::Plugin(pp) => {
+            HotEffectUpdate::Plugin(pp.plugin_id.clone(), pp.params.clone())
+        }
+    }
+}
+
+fn apply_hot_effect_update(
+    state: &tauri::State<'_, AppState>,
+    effect_id: &str,
+    hot: &HotEffectUpdate,
+) -> bool {
+    match hot {
+        HotEffectUpdate::Eq(eq) => {
+            let values = crate::audio_graph::nodes::eq::eq_block_values(eq);
+            state.live_params.write_effect_block(effect_id, &values)
+        }
+        HotEffectUpdate::Compressor(c) => {
+            let values = crate::audio_graph::nodes::compressor::compressor_block_values(c);
+            state.live_params.write_effect_block(effect_id, &values)
+        }
+        HotEffectUpdate::Reverb(r) => {
+            let values = crate::audio_graph::nodes::reverb::reverb_block_values(r);
+            state.live_params.write_effect_block(effect_id, &values)
+        }
+        HotEffectUpdate::Delay(d) => {
+            let values = crate::audio_graph::nodes::delay::delay_block_values(d);
+            state.live_params.write_effect_block(effect_id, &values)
+        }
+        HotEffectUpdate::Plugin(device_id, params) => {
+            if let Ok(engine) = state.audio_engine.lock() {
+                let mut all_ok = !params.is_empty();
+                for (native_id, value) in params {
+                    match engine
+                        .plugin_host
+                        .push_plugin_param(device_id, *native_id, *value)
+                    {
+                        Ok(_) => {}
+                        Err(_) => {
+                            all_ok = false;
+                            break;
+                        }
+                    }
+                }
+                all_ok
+            } else {
+                false
+            }
+        }
+        HotEffectUpdate::None => false,
+    }
+}
+
+fn patch_effect(
+    effect: &mut TrackEffect,
+    enabled: Option<bool>,
+    params: Option<serde_json::Value>,
+) -> Result<(HotEffectUpdate, bool), String> {
+    let mut structural = false;
+    if let Some(en) = enabled {
+        if effect.enabled != en {
+            structural = true;
+        }
+        effect.enabled = en;
+    }
+    if let Some(raw) = params {
+        effect.params = merge_effect_params(&effect.params, raw)?;
+    }
+    Ok((hot_effect_update_from(effect), structural))
+}
+
+fn build_modulator(p: &AddModulatorPayload) -> Result<crate::project::ProjectModulator, String> {
+    use crate::project::{LfoParams, ModulatorParams, ProjectModulator};
+    let params = match p.kind.as_str() {
+        "lfo" => ModulatorParams::Lfo(LfoParams {
+            rate_hz: p.rate_hz.unwrap_or(1.0),
+            ..Default::default()
+        }),
+        other => return Err(format!("Unknown modulator kind: {other}")),
+    };
+    Ok(ProjectModulator {
+        id: generate_id(),
+        params,
+    })
+}
+
+fn build_modulation_route(
+    p: &AddModulationRoutePayload,
+) -> Result<crate::project::ProjectModulationRoute, String> {
+    use crate::project::{ModulationTargetRef, ProjectModulationRoute};
+    let target = match p.target_kind.as_str() {
+        "track_gain" => ModulationTargetRef::TrackGain {
+            track_id: p.track_id.clone(),
+        },
+        "effect_param" => ModulationTargetRef::EffectParam {
+            track_id: p.track_id.clone(),
+            effect_id: p
+                .effect_id
+                .clone()
+                .ok_or("effect_id required for effect_param target")?,
+            param: p.param.clone(),
+        },
+        other => return Err(format!("Unknown target kind: {other}")),
+    };
+    Ok(ProjectModulationRoute {
+        id: generate_id(),
+        modulator_id: p.modulator_id.clone(),
+        target,
+        depth: p.depth,
+    })
 }
 
 fn process_command(
@@ -192,15 +582,22 @@ fn process_command(
 ) -> Result<CommandResult, String> {
     let command_id = command.id.clone();
     let project_id = command.project_id.clone();
+    let ctx = ProjectCommit {
+        state,
+        app,
+        project_id: &project_id,
+        command_id,
+    };
 
     match command.command_type.as_str() {
         cmd::PLAY => {
             state.transport.play();
-            let ev = EngineEvent::new(ev::PLAY_STARTED, &project_id, json!({}));
-            let _ = app.emit("engine-event", &ev);
-            Ok(CommandResult::ok(
-                command_id,
-                vec![serde_json::to_value(&ev).unwrap_or_default()],
+            Ok(emit_and_ok(
+                app,
+                ctx.command_id.clone(),
+                &project_id,
+                ev::PLAY_STARTED,
+                json!({}),
             ))
         }
 
@@ -212,24 +609,19 @@ fn process_command(
                 &project_id,
                 json!({ "position": 0.0 }),
             );
-            let _ = app.emit("engine-event", &ev_stop);
-            let _ = app.emit("engine-event", &ev_pos);
-            Ok(CommandResult::ok(
-                command_id,
-                vec![
-                    serde_json::to_value(&ev_stop).unwrap_or_default(),
-                    serde_json::to_value(&ev_pos).unwrap_or_default(),
-                ],
-            ))
+            emit_engine_event(app, &ev_stop);
+            emit_engine_event(app, &ev_pos);
+            Ok(ok_transport_events(ctx.command_id.clone(), &[ev_stop, ev_pos]))
         }
 
         cmd::PAUSE => {
             state.transport.pause();
-            let ev = EngineEvent::new(ev::PLAY_STOPPED, &project_id, json!({ "pause": true }));
-            let _ = app.emit("engine-event", &ev);
-            Ok(CommandResult::ok(
-                command_id,
-                vec![serde_json::to_value(&ev).unwrap_or_default()],
+            Ok(emit_and_ok(
+                app,
+                ctx.command_id.clone(),
+                &project_id,
+                ev::PLAY_STOPPED,
+                json!({ "pause": true }),
             ))
         }
 
@@ -237,15 +629,12 @@ fn process_command(
             let p: SeekPayload = serde_json::from_value(command.payload)
                 .map_err(|e| format!("SEEK payload invalid: {e}"))?;
             state.transport.seek(p.position);
-            let ev = EngineEvent::new(
-                ev::POSITION_UPDATED,
+            Ok(emit_and_ok(
+                app,
+                ctx.command_id.clone(),
                 &project_id,
+                ev::POSITION_UPDATED,
                 json!({ "position": p.position }),
-            );
-            let _ = app.emit("engine-event", &ev);
-            Ok(CommandResult::ok(
-                command_id,
-                vec![serde_json::to_value(&ev).unwrap_or_default()],
             ))
         }
 
@@ -254,73 +643,44 @@ fn process_command(
                 .map_err(|e| format!("CREATE_TRACK payload invalid: {e}"))?;
             let track_id = generate_id();
 
-            {
-                let mut project = state.project.lock().map_err(|e| e.to_string())?;
-                project.tracks.push(AppTrack {
-                    id: track_id.clone(),
-                    name: p.name.clone(),
-                    volume: 80.0,
-                    pan: 0.0,
-                    muted: false,
-                    solo: false,
-                    clips: vec![],
-                    effects: vec![],
-                    modulators: vec![],
-                    mod_routes: vec![],
-                    midi_notes: vec![],
-                    midi_clips: vec![],
-                    instrument: None,
-                });
-            }
+            with_project_mut(state, |project| {
+                project
+                    .tracks
+                    .push(empty_app_track(track_id.clone(), p.name.clone()));
+                Ok(())
+            })?;
 
-            let event_payload = json!({ "id": track_id, "name": p.name });
-            let project_event = ProjectEvent::new(ev::TRACK_CREATED, event_payload.clone());
-            append_and_maybe_snapshot(state, project_event)?;
-
-            let engine_ev = EngineEvent::new(ev::TRACK_CREATED, &project_id, event_payload);
-            let _ = app.emit("engine-event", &engine_ev);
-            recompile_if_needed(state);
-
-            Ok(CommandResult::ok(
-                command_id,
-                vec![serde_json::to_value(&engine_ev).unwrap_or_default()],
-            ))
+            commit_same_payload(
+                &ctx,
+                ev::TRACK_CREATED,
+                json!({ "id": track_id, "name": p.name }),
+                true,
+            )
         }
 
         cmd::DELETE_TRACK => {
             let p: DeleteTrackPayload = serde_json::from_value(command.payload)
                 .map_err(|e| format!("DELETE_TRACK payload invalid: {e}"))?;
 
-            {
-                let mut project = state.project.lock().map_err(|e| e.to_string())?;
+            with_project_mut(state, |project| {
                 project.tracks.retain(|t| t.id != p.track_id);
-            }
+                Ok(())
+            })?;
 
-            let event_payload = json!({ "id": p.track_id });
-            let project_event = ProjectEvent::new(ev::TRACK_DELETED, event_payload.clone());
-            append_and_maybe_snapshot(state, project_event)?;
-
-            let engine_ev = EngineEvent::new(ev::TRACK_DELETED, &project_id, event_payload);
-            let _ = app.emit("engine-event", &engine_ev);
-            recompile_if_needed(state);
-
-            Ok(CommandResult::ok(
-                command_id,
-                vec![serde_json::to_value(&engine_ev).unwrap_or_default()],
-            ))
+            commit_same_payload(
+                &ctx,
+                ev::TRACK_DELETED,
+                json!({ "id": p.track_id }),
+                true,
+            )
         }
 
         cmd::UPDATE_TRACK => {
             let p: UpdateTrackPayload = serde_json::from_value(command.payload)
                 .map_err(|e| format!("UPDATE_TRACK payload invalid: {e}"))?;
 
-            {
-                let mut project = state.project.lock().map_err(|e| e.to_string())?;
-                let track = project
-                    .tracks
-                    .iter_mut()
-                    .find(|t| t.id == p.track_id)
-                    .ok_or_else(|| format!("Track {} not found", p.track_id))?;
+            with_project_mut(state, |project| {
+                let track = require_track_mut(project, &p.track_id)?;
                 if let Some(name) = p.name.as_ref() {
                     track.name = name.clone();
                 }
@@ -330,7 +690,8 @@ fn process_command(
                 if let Some(pan) = p.pan {
                     track.pan = pan;
                 }
-            }
+                Ok(())
+            })?;
 
             // Hot-path: live atomics updated directly, no recompile.
             if let Some(vol) = p.volume {
@@ -341,245 +702,157 @@ fn process_command(
                 state.live_params.set_track_pan(&p.track_id, pan);
             }
 
-            let event_payload = json!({
-                "id": p.track_id,
-                "name": p.name,
-                "volume": p.volume,
-                "pan": p.pan,
-            });
-            let project_event = ProjectEvent::new(ev::TRACK_UPDATED, event_payload.clone());
-            append_and_maybe_snapshot(state, project_event)?;
-
-            let engine_ev = EngineEvent::new(ev::TRACK_UPDATED, &project_id, event_payload);
-            let _ = app.emit("engine-event", &engine_ev);
-
-            Ok(CommandResult::ok(
-                command_id,
-                vec![serde_json::to_value(&engine_ev).unwrap_or_default()],
-            ))
+            commit_same_payload(
+                &ctx,
+                ev::TRACK_UPDATED,
+                json!({
+                    "id": p.track_id,
+                    "name": p.name,
+                    "volume": p.volume,
+                    "pan": p.pan,
+                }),
+                false,
+            )
         }
 
         cmd::MUTE_TRACK => {
             let p: MuteTrackPayload = serde_json::from_value(command.payload)
                 .map_err(|e| format!("MUTE_TRACK payload invalid: {e}"))?;
 
-            {
-                let mut project = state.project.lock().map_err(|e| e.to_string())?;
-                let track = project
-                    .tracks
-                    .iter_mut()
-                    .find(|t| t.id == p.track_id)
-                    .ok_or_else(|| format!("Track {} not found", p.track_id))?;
-                track.muted = p.muted;
-            }
+            with_project_mut(state, |project| {
+                require_track_mut(project, &p.track_id)?.muted = p.muted;
+                Ok(())
+            })?;
 
             // Hot-path: flip the atomic mute flag; no recompile.
             state.live_params.set_track_muted(&p.track_id, p.muted);
 
-            let event_payload = json!({ "id": p.track_id, "muted": p.muted });
-            let project_event = ProjectEvent::new(ev::TRACK_MUTED, event_payload.clone());
-            append_and_maybe_snapshot(state, project_event)?;
-
-            let engine_ev = EngineEvent::new(ev::TRACK_MUTED, &project_id, event_payload);
-            let _ = app.emit("engine-event", &engine_ev);
-
-            Ok(CommandResult::ok(
-                command_id,
-                vec![serde_json::to_value(&engine_ev).unwrap_or_default()],
-            ))
+            commit_same_payload(
+                &ctx,
+                ev::TRACK_MUTED,
+                json!({ "id": p.track_id, "muted": p.muted }),
+                false,
+            )
         }
 
         cmd::SOLO_TRACK => {
             let p: SoloTrackPayload = serde_json::from_value(command.payload)
                 .map_err(|e| format!("SOLO_TRACK payload invalid: {e}"))?;
 
-            {
-                let mut project = state.project.lock().map_err(|e| e.to_string())?;
+            with_project_mut(state, |project| {
                 if !project.tracks.iter().any(|t| t.id == p.track_id) {
                     return Err(format!("Track {} not found", p.track_id));
                 }
-                // Exclusive solo: at most one track can be solo at a time.
-                if p.solo {
-                    for track in project.tracks.iter_mut() {
-                        track.solo = track.id == p.track_id;
-                    }
-                } else if let Some(track) = project.tracks.iter_mut().find(|t| t.id == p.track_id) {
-                    track.solo = false;
-                }
-            }
+                apply_exclusive_solo(project, &p.track_id, p.solo);
+                Ok(())
+            })?;
 
             state
                 .live_params
                 .set_track_solo_exclusive(&p.track_id, p.solo);
 
-            let event_payload = json!({ "id": p.track_id, "solo": p.solo });
-            let project_event = ProjectEvent::new(ev::TRACK_SOLOED, event_payload.clone());
-            append_and_maybe_snapshot(state, project_event)?;
-
-            let engine_ev = EngineEvent::new(ev::TRACK_SOLOED, &project_id, event_payload);
-            let _ = app.emit("engine-event", &engine_ev);
-
-            Ok(CommandResult::ok(
-                command_id,
-                vec![serde_json::to_value(&engine_ev).unwrap_or_default()],
-            ))
+            commit_same_payload(
+                &ctx,
+                ev::TRACK_SOLOED,
+                json!({ "id": p.track_id, "solo": p.solo }),
+                false,
+            )
         }
 
         cmd::ADD_CLIP => {
             let p: AddClipPayload = serde_json::from_value(command.payload)
                 .map_err(|e| format!("ADD_CLIP payload invalid: {e}"))?;
 
-            let audio = AudioClip::from_file(&p.file_path)
-                .map_err(|e| format!("Failed to load audio '{}': {e}", p.file_path))?;
-            let data = audio.into_clip_data();
             let clip_id = generate_id();
-
-            let cached = Arc::new(CachedAudioData {
-                raw_samples: data.raw_samples.clone(),
-                sample_rate: data.sample_rate,
-                peaks_64: data.peaks_64.clone(),
-                peaks_512: data.peaks_512.clone(),
-                peaks_4096: data.peaks_4096.clone(),
-            });
-            state.audio_cache.insert(clip_id.clone(), cached);
-
-            let clip = AppClip {
-                id: clip_id.clone(),
-                start: p.start,
-                end: p.end,
-                file_path: p.file_path.clone(),
-                raw_samples: data.raw_samples,
-                sample_rate: data.sample_rate,
-                peaks_64: data.peaks_64,
-                peaks_512: data.peaks_512,
-                peaks_4096: data.peaks_4096,
-            };
+            let cached = cache_audio_clip(state, &clip_id, &p.file_path)?;
+            let clip = app_clip_from_audio(
+                clip_id.clone(),
+                p.start,
+                p.end,
+                p.file_path.clone(),
+                &cached,
+            );
             let clip_dto = clip.to_dto();
 
-            {
-                let mut project = state.project.lock().map_err(|e| e.to_string())?;
-                let track = project
-                    .tracks
-                    .iter_mut()
-                    .find(|t| t.id == p.track_id)
-                    .ok_or_else(|| format!("Track {} not found", p.track_id))?;
-                track.clips.push(clip);
-            }
+            with_project_mut(state, |project| {
+                require_track_mut(project, &p.track_id)?.clips.push(clip);
+                Ok(())
+            })?;
 
-            let event_payload = json!({
-                "track_id": p.track_id,
-                "clip_id": clip_id,
-                "file_path": p.file_path,
-                "start": p.start,
-                "end": p.end,
-            });
-            let project_event = ProjectEvent::new(ev::CLIP_ADDED, event_payload.clone());
-            append_and_maybe_snapshot(state, project_event)?;
-
-            let engine_payload = json!({
-                "track_id": p.track_id,
-                "clip": clip_dto,
-            });
-            let engine_ev = EngineEvent::new(ev::CLIP_ADDED, &project_id, engine_payload);
-            let _ = app.emit("engine-event", &engine_ev);
-            recompile_if_needed(state);
-
-            Ok(CommandResult::ok(
-                command_id,
-                vec![serde_json::to_value(&engine_ev).unwrap_or_default()],
-            ))
+            commit_project_change(
+                &ctx,
+                ev::CLIP_ADDED,
+                json!({
+                    "track_id": p.track_id,
+                    "clip_id": clip_id,
+                    "file_path": p.file_path,
+                    "start": p.start,
+                    "end": p.end,
+                }),
+                json!({ "track_id": p.track_id, "clip": clip_dto }),
+                true,
+            )
         }
 
         cmd::MOVE_CLIP => {
             let p: MoveClipPayload = serde_json::from_value(command.payload)
                 .map_err(|e| format!("MOVE_CLIP payload invalid: {e}"))?;
 
-            {
-                let mut project = state.project.lock().map_err(|e| e.to_string())?;
-                let track = project
-                    .tracks
-                    .iter_mut()
-                    .find(|t| t.id == p.track_id)
-                    .ok_or_else(|| format!("Track {} not found", p.track_id))?;
-                let clip = track
-                    .clips
-                    .iter_mut()
-                    .find(|c| c.id == p.clip_id)
-                    .ok_or_else(|| format!("Clip {} not found", p.clip_id))?;
+            with_project_mut(state, |project| {
+                let track = require_track_mut(project, &p.track_id)?;
+                let clip = require_audio_clip_mut(track, &p.clip_id)?;
                 clip.start = p.start;
                 clip.end = p.end;
-            }
+                Ok(())
+            })?;
 
-            let event_payload = json!({
-                "track_id": p.track_id,
-                "clip_id": p.clip_id,
-                "start": p.start,
-                "end": p.end,
-            });
-            let project_event = ProjectEvent::new(ev::CLIP_MOVED, event_payload.clone());
-            append_and_maybe_snapshot(state, project_event)?;
-
-            let engine_ev = EngineEvent::new(ev::CLIP_MOVED, &project_id, event_payload);
-            let _ = app.emit("engine-event", &engine_ev);
-            recompile_if_needed(state);
-
-            Ok(CommandResult::ok(
-                command_id,
-                vec![serde_json::to_value(&engine_ev).unwrap_or_default()],
-            ))
+            commit_same_payload(
+                &ctx,
+                ev::CLIP_MOVED,
+                json!({
+                    "track_id": p.track_id,
+                    "clip_id": p.clip_id,
+                    "start": p.start,
+                    "end": p.end,
+                }),
+                true,
+            )
         }
 
         cmd::REMOVE_CLIP => {
             let p: RemoveClipPayload = serde_json::from_value(command.payload)
                 .map_err(|e| format!("REMOVE_CLIP payload invalid: {e}"))?;
 
-            {
-                let mut project = state.project.lock().map_err(|e| e.to_string())?;
-                let track = project
-                    .tracks
-                    .iter_mut()
-                    .find(|t| t.id == p.track_id)
-                    .ok_or_else(|| format!("Track {} not found", p.track_id))?;
-                track.clips.retain(|c| c.id != p.clip_id);
-            }
+            with_project_mut(state, |project| {
+                require_track_mut(project, &p.track_id)?
+                    .clips
+                    .retain(|c| c.id != p.clip_id);
+                Ok(())
+            })?;
 
-            let event_payload = json!({
-                "track_id": p.track_id,
-                "clip_id": p.clip_id,
-            });
-            let project_event = ProjectEvent::new(ev::CLIP_REMOVED, event_payload.clone());
-            append_and_maybe_snapshot(state, project_event)?;
-
-            let engine_ev = EngineEvent::new(ev::CLIP_REMOVED, &project_id, event_payload);
-            let _ = app.emit("engine-event", &engine_ev);
-            recompile_if_needed(state);
-
-            Ok(CommandResult::ok(
-                command_id,
-                vec![serde_json::to_value(&engine_ev).unwrap_or_default()],
-            ))
+            commit_same_payload(
+                &ctx,
+                ev::CLIP_REMOVED,
+                json!({ "track_id": p.track_id, "clip_id": p.clip_id }),
+                true,
+            )
         }
 
         cmd::UPDATE_PROJECT_NAME => {
             let p: UpdateProjectNamePayload = serde_json::from_value(command.payload)
                 .map_err(|e| format!("UPDATE_PROJECT_NAME payload invalid: {e}"))?;
 
-            {
-                let mut project = state.project.lock().map_err(|e| e.to_string())?;
+            with_project_mut(state, |project| {
                 project.name = p.name.clone();
-            }
+                Ok(())
+            })?;
 
-            let event_payload = json!({ "name": p.name });
-            let project_event = ProjectEvent::new(ev::PROJECT_NAME_UPDATED, event_payload.clone());
-            append_and_maybe_snapshot(state, project_event)?;
-
-            let engine_ev = EngineEvent::new(ev::PROJECT_NAME_UPDATED, &project_id, event_payload);
-            let _ = app.emit("engine-event", &engine_ev);
-
-            Ok(CommandResult::ok(
-                command_id,
-                vec![serde_json::to_value(&engine_ev).unwrap_or_default()],
-            ))
+            commit_same_payload(
+                &ctx,
+                ev::PROJECT_NAME_UPDATED,
+                json!({ "name": p.name }),
+                false,
+            )
         }
 
         cmd::UPDATE_TEMPO => {
@@ -590,25 +863,19 @@ fn process_command(
             // operations such as looping — currently informational).
             state.transport.set_bpm(p.bpm);
 
-            {
-                let mut project = state.project.lock().map_err(|e| e.to_string())?;
+            with_project_mut(state, |project| {
                 project.bpm = p.bpm;
                 project.numerator = p.numerator;
                 project.denominator = p.denominator;
-            }
+                Ok(())
+            })?;
 
-            let event_payload =
-                json!({ "bpm": p.bpm, "numerator": p.numerator, "denominator": p.denominator });
-            let project_event = ProjectEvent::new(ev::TEMPO_UPDATED, event_payload.clone());
-            append_and_maybe_snapshot(state, project_event)?;
-
-            let engine_ev = EngineEvent::new(ev::TEMPO_UPDATED, &project_id, event_payload);
-            let _ = app.emit("engine-event", &engine_ev);
-
-            Ok(CommandResult::ok(
-                command_id,
-                vec![serde_json::to_value(&engine_ev).unwrap_or_default()],
-            ))
+            commit_same_payload(
+                &ctx,
+                ev::TEMPO_UPDATED,
+                json!({ "bpm": p.bpm, "numerator": p.numerator, "denominator": p.denominator }),
+                false,
+            )
         }
 
         cmd::ADD_EFFECT => {
@@ -623,57 +890,41 @@ fn process_command(
                 params,
             };
 
-            {
-                let mut project = state.project.lock().map_err(|e| e.to_string())?;
-                let track = project
-                    .tracks
-                    .iter_mut()
-                    .find(|t| t.id == p.track_id)
-                    .ok_or_else(|| format!("Track {} not found", p.track_id))?;
-                track.effects.push(effect.clone());
-            }
+            with_project_mut(state, |project| {
+                require_track_mut(project, &p.track_id)?
+                    .effects
+                    .push(effect.clone());
+                Ok(())
+            })?;
 
-            let effect_val = serde_json::to_value(&effect).unwrap_or_default();
-            let event_payload = json!({ "track_id": p.track_id, "effect": effect_val });
-            let project_event = ProjectEvent::new(ev::EFFECT_ADDED, event_payload.clone());
-            append_and_maybe_snapshot(state, project_event)?;
-
-            let engine_ev = EngineEvent::new(ev::EFFECT_ADDED, &project_id, event_payload);
-            let _ = app.emit("engine-event", &engine_ev);
-            recompile_if_needed(state);
-
-            Ok(CommandResult::ok(
-                command_id,
-                vec![serde_json::to_value(&engine_ev).unwrap_or_default()],
-            ))
+            commit_same_payload(
+                &ctx,
+                ev::EFFECT_ADDED,
+                json!({
+                    "track_id": p.track_id,
+                    "effect": serde_json::to_value(&effect).unwrap_or_default(),
+                }),
+                true,
+            )
         }
 
         cmd::REMOVE_EFFECT => {
             let p: RemoveEffectPayload = serde_json::from_value(command.payload)
                 .map_err(|e| format!("REMOVE_EFFECT payload invalid: {e}"))?;
 
-            {
-                let mut project = state.project.lock().map_err(|e| e.to_string())?;
-                let track = project
-                    .tracks
-                    .iter_mut()
-                    .find(|t| t.id == p.track_id)
-                    .ok_or_else(|| format!("Track {} not found", p.track_id))?;
-                track.effects.retain(|e| e.id != p.effect_id);
-            }
+            with_project_mut(state, |project| {
+                require_track_mut(project, &p.track_id)?
+                    .effects
+                    .retain(|e| e.id != p.effect_id);
+                Ok(())
+            })?;
 
-            let event_payload = json!({ "track_id": p.track_id, "effect_id": p.effect_id });
-            let project_event = ProjectEvent::new(ev::EFFECT_REMOVED, event_payload.clone());
-            append_and_maybe_snapshot(state, project_event)?;
-
-            let engine_ev = EngineEvent::new(ev::EFFECT_REMOVED, &project_id, event_payload);
-            let _ = app.emit("engine-event", &engine_ev);
-            recompile_if_needed(state);
-
-            Ok(CommandResult::ok(
-                command_id,
-                vec![serde_json::to_value(&engine_ev).unwrap_or_default()],
-            ))
+            commit_same_payload(
+                &ctx,
+                ev::EFFECT_REMOVED,
+                json!({ "track_id": p.track_id, "effect_id": p.effect_id }),
+                true,
+            )
         }
 
         cmd::UPDATE_EFFECT => {
@@ -681,349 +932,166 @@ fn process_command(
                 .map_err(|e| format!("UPDATE_EFFECT payload invalid: {e}"))?;
 
             // Parameter-only edits are hot-delivered (ADR-009/ADR-007); enable/disable toggles recompile.
-            let (updated_effect, hot, structural) = {
-                let mut project = state.project.lock().map_err(|e| e.to_string())?;
-                let track = project
-                    .tracks
-                    .iter_mut()
-                    .find(|t| t.id == p.track_id)
-                    .ok_or_else(|| format!("Track {} not found", p.track_id))?;
-                let effect = track
-                    .effects
-                    .iter_mut()
-                    .find(|e| e.id == p.effect_id)
-                    .ok_or_else(|| format!("Effect {} not found", p.effect_id))?;
-
-                let mut structural = false;
-                if let Some(en) = p.enabled {
-                    if effect.enabled != en {
-                        structural = true;
-                    }
-                    effect.enabled = en;
-                }
-                if let Some(raw) = p.params {
-                    effect.params = merge_effect_params(&effect.params, raw)?;
-                }
-
-                let hot = if effect.enabled {
-                    match &effect.params {
-                        EffectParams::Eq(eq) => HotEffectUpdate::Eq(eq.clone()),
-                        EffectParams::Compressor(c) => HotEffectUpdate::Compressor(c.clone()),
-                        EffectParams::Reverb(r) => HotEffectUpdate::Reverb(r.clone()),
-                        EffectParams::Delay(d) => HotEffectUpdate::Delay(d.clone()),
-                        EffectParams::Plugin(pp) => {
-                            HotEffectUpdate::Plugin(pp.plugin_id.clone(), pp.params.clone())
-                        }
-                    }
-                } else {
-                    HotEffectUpdate::None
-                };
-
-                (
+            let (updated_effect, hot, structural) = with_project_mut(state, |project| {
+                let track = require_track_mut(project, &p.track_id)?;
+                let effect = require_effect_mut(track, &p.effect_id)?;
+                let (hot, structural) = patch_effect(effect, p.enabled, p.params)?;
+                Ok((
                     serde_json::to_value(&*effect).unwrap_or_default(),
                     hot,
                     structural,
-                )
-            };
+                ))
+            })?;
 
-            let event_payload = json!({ "track_id": p.track_id, "effect_id": p.effect_id, "effect": updated_effect });
-            let project_event = ProjectEvent::new(ev::EFFECT_UPDATED, event_payload.clone());
-            append_and_maybe_snapshot(state, project_event)?;
+            let event_payload =
+                json!({ "track_id": p.track_id, "effect_id": p.effect_id, "effect": updated_effect });
+            let engine_ev = snapshot_emit(&ctx, ev::EFFECT_UPDATED, event_payload)?;
 
-            let engine_ev = EngineEvent::new(ev::EFFECT_UPDATED, &project_id, event_payload);
-            let _ = app.emit("engine-event", &engine_ev);
-
-            let applied_hot = if structural {
-                false
-            } else {
-                match &hot {
-                    HotEffectUpdate::Eq(eq) => {
-                        let values = crate::audio_graph::nodes::eq::eq_block_values(eq);
-                        state.live_params.write_effect_block(&p.effect_id, &values)
-                    }
-                    HotEffectUpdate::Compressor(c) => {
-                        let values =
-                            crate::audio_graph::nodes::compressor::compressor_block_values(c);
-                        state.live_params.write_effect_block(&p.effect_id, &values)
-                    }
-                    HotEffectUpdate::Reverb(r) => {
-                        let values = crate::audio_graph::nodes::reverb::reverb_block_values(r);
-                        state.live_params.write_effect_block(&p.effect_id, &values)
-                    }
-                    HotEffectUpdate::Delay(d) => {
-                        let values = crate::audio_graph::nodes::delay::delay_block_values(d);
-                        state.live_params.write_effect_block(&p.effect_id, &values)
-                    }
-                    HotEffectUpdate::Plugin(device_id, params) => {
-                        // Falls back to recompile if the device isn't yet instantiated in the graph.
-                        if let Ok(mut engine) = state.audio_engine.lock() {
-                            let mut all_ok = !params.is_empty();
-                            for (native_id, value) in params {
-                                match engine
-                                    .plugin_host
-                                    .push_plugin_param(device_id, *native_id, *value)
-                                {
-                                    Ok(_) => {}
-                                    Err(_) => {
-                                        all_ok = false;
-                                        break;
-                                    }
-                                }
-                            }
-                            all_ok
-                        } else {
-                            false
-                        }
-                    }
-                    HotEffectUpdate::None => false,
-                }
-            };
-            if !applied_hot {
+            if !structural && !apply_hot_effect_update(state, &p.effect_id, &hot) {
                 recompile_if_needed(state);
             }
 
-            Ok(CommandResult::ok(
-                command_id,
-                vec![serde_json::to_value(&engine_ev).unwrap_or_default()],
-            ))
+            Ok(ok_single_event(ctx.command_id.clone(), &engine_ev))
         }
 
         cmd::ADD_MODULATOR => {
             let p: AddModulatorPayload = serde_json::from_value(command.payload)
                 .map_err(|e| format!("ADD_MODULATOR payload invalid: {e}"))?;
 
-            let modulator = {
-                use crate::project::{LfoParams, ModulatorParams, ProjectModulator};
-                let params = match p.kind.as_str() {
-                    "lfo" => ModulatorParams::Lfo(LfoParams {
-                        rate_hz: p.rate_hz.unwrap_or(1.0),
-                        ..Default::default()
-                    }),
-                    other => return Err(format!("Unknown modulator kind: {other}")),
-                };
-                ProjectModulator {
-                    id: generate_id(),
-                    params,
-                }
-            };
-
+            let modulator = build_modulator(&p)?;
             let mod_value = serde_json::to_value(&modulator).unwrap_or_default();
-            {
-                let mut project = state.project.lock().map_err(|e| e.to_string())?;
-                let track = project
-                    .tracks
-                    .iter_mut()
-                    .find(|t| t.id == p.track_id)
-                    .ok_or_else(|| format!("Track {} not found", p.track_id))?;
-                track.modulators.push(modulator);
-            }
+            with_project_mut(state, |project| {
+                require_track_mut(project, &p.track_id)?
+                    .modulators
+                    .push(modulator);
+                Ok(())
+            })?;
 
-            let event_payload = json!({ "track_id": p.track_id, "modulator": mod_value });
-            let project_event = ProjectEvent::new(ev::MODULATOR_ADDED, event_payload.clone());
-            append_and_maybe_snapshot(state, project_event)?;
-            recompile_if_needed(state);
-
-            let engine_ev = EngineEvent::new(ev::MODULATOR_ADDED, &project_id, event_payload);
-            let _ = app.emit("engine-event", &engine_ev);
-            Ok(CommandResult::ok(
-                command_id,
-                vec![serde_json::to_value(&engine_ev).unwrap_or_default()],
-            ))
+            commit_recompile_before_emit(
+                &ctx,
+                ev::MODULATOR_ADDED,
+                json!({ "track_id": p.track_id, "modulator": mod_value }),
+            )
         }
 
         cmd::REMOVE_MODULATOR => {
             let p: RemoveModulatorPayload = serde_json::from_value(command.payload)
                 .map_err(|e| format!("REMOVE_MODULATOR payload invalid: {e}"))?;
-            {
-                let mut project = state.project.lock().map_err(|e| e.to_string())?;
-                let track = project
-                    .tracks
-                    .iter_mut()
-                    .find(|t| t.id == p.track_id)
-                    .ok_or_else(|| format!("Track {} not found", p.track_id))?;
+            with_project_mut(state, |project| {
+                let track = require_track_mut(project, &p.track_id)?;
                 track.modulators.retain(|m| m.id != p.modulator_id);
-                track
-                    .mod_routes
-                    .retain(|r| r.modulator_id != p.modulator_id);
-            }
-            let event_payload = json!({ "track_id": p.track_id, "modulator_id": p.modulator_id });
-            let project_event = ProjectEvent::new(ev::MODULATOR_REMOVED, event_payload.clone());
-            append_and_maybe_snapshot(state, project_event)?;
-            recompile_if_needed(state);
-            let engine_ev = EngineEvent::new(ev::MODULATOR_REMOVED, &project_id, event_payload);
-            let _ = app.emit("engine-event", &engine_ev);
-            Ok(CommandResult::ok(
-                command_id,
-                vec![serde_json::to_value(&engine_ev).unwrap_or_default()],
-            ))
+                track.mod_routes.retain(|r| r.modulator_id != p.modulator_id);
+                Ok(())
+            })?;
+            commit_recompile_before_emit(
+                &ctx,
+                ev::MODULATOR_REMOVED,
+                json!({ "track_id": p.track_id, "modulator_id": p.modulator_id }),
+            )
         }
 
         cmd::UPDATE_MODULATOR => {
             let p: UpdateModulatorPayload = serde_json::from_value(command.payload)
                 .map_err(|e| format!("UPDATE_MODULATOR payload invalid: {e}"))?;
-            {
-                let mut project = state.project.lock().map_err(|e| e.to_string())?;
-                let track = project
-                    .tracks
-                    .iter_mut()
-                    .find(|t| t.id == p.track_id)
-                    .ok_or_else(|| format!("Track {} not found", p.track_id))?;
-                if let Some(m) = track.modulators.iter_mut().find(|x| x.id == p.modulator_id) {
-                    if let Some(rate) = p.rate_hz {
-                        if let crate::project::ModulatorParams::Lfo(ref mut lp) = m.params {
-                            lp.rate_hz = rate;
-                        }
+            if let Some(rate) = p.rate_hz {
+                with_project_mut(state, |project| {
+                    let track = require_track_mut(project, &p.track_id)?;
+                    if let Some(m) = track.modulators.iter_mut().find(|x| x.id == p.modulator_id) {
+                        let crate::project::ModulatorParams::Lfo(ref mut lp) = m.params;
+                        lp.rate_hz = rate;
                     }
-                }
+                    Ok(())
+                })?;
             }
             // Hot-path: update the LFO rate atomic, no recompile.
             if let Some(rate) = p.rate_hz {
                 state.live_params.set_modulator_rate(&p.modulator_id, rate);
             }
-            let event_payload = json!({ "track_id": p.track_id, "modulator_id": p.modulator_id, "rate_hz": p.rate_hz });
-            let project_event = ProjectEvent::new(ev::MODULATOR_UPDATED, event_payload.clone());
-            append_and_maybe_snapshot(state, project_event)?;
-            let engine_ev = EngineEvent::new(ev::MODULATOR_UPDATED, &project_id, event_payload);
-            let _ = app.emit("engine-event", &engine_ev);
-            Ok(CommandResult::ok(
-                command_id,
-                vec![serde_json::to_value(&engine_ev).unwrap_or_default()],
-            ))
+            commit_same_payload(
+                &ctx,
+                ev::MODULATOR_UPDATED,
+                json!({
+                    "track_id": p.track_id,
+                    "modulator_id": p.modulator_id,
+                    "rate_hz": p.rate_hz,
+                }),
+                false,
+            )
         }
 
         cmd::ADD_MODULATION_ROUTE => {
             let p: AddModulationRoutePayload = serde_json::from_value(command.payload)
                 .map_err(|e| format!("ADD_MODULATION_ROUTE payload invalid: {e}"))?;
 
-            let route = {
-                use crate::project::{ModulationTargetRef, ProjectModulationRoute};
-                let target = match p.target_kind.as_str() {
-                    "track_gain" => ModulationTargetRef::TrackGain {
-                        track_id: p.track_id.clone(),
-                    },
-                    "effect_param" => ModulationTargetRef::EffectParam {
-                        track_id: p.track_id.clone(),
-                        effect_id: p
-                            .effect_id
-                            .ok_or("effect_id required for effect_param target")?,
-                        param: p.param,
-                    },
-                    other => return Err(format!("Unknown target kind: {other}")),
-                };
-                ProjectModulationRoute {
-                    id: generate_id(),
-                    modulator_id: p.modulator_id,
-                    target,
-                    depth: p.depth,
-                }
-            };
-
+            let route = build_modulation_route(&p)?;
             let route_value = serde_json::to_value(&route).unwrap_or_default();
-            {
-                let mut project = state.project.lock().map_err(|e| e.to_string())?;
-                let track = project
-                    .tracks
-                    .iter_mut()
-                    .find(|t| t.id == p.track_id)
-                    .ok_or_else(|| format!("Track {} not found", p.track_id))?;
-                track.mod_routes.push(route);
-            }
-            let event_payload = json!({ "track_id": p.track_id, "route": route_value });
-            let project_event =
-                ProjectEvent::new(ev::MODULATION_ROUTE_ADDED, event_payload.clone());
-            append_and_maybe_snapshot(state, project_event)?;
-            recompile_if_needed(state);
-            let engine_ev =
-                EngineEvent::new(ev::MODULATION_ROUTE_ADDED, &project_id, event_payload);
-            let _ = app.emit("engine-event", &engine_ev);
-            Ok(CommandResult::ok(
-                command_id,
-                vec![serde_json::to_value(&engine_ev).unwrap_or_default()],
-            ))
+            with_project_mut(state, |project| {
+                require_track_mut(project, &p.track_id)?
+                    .mod_routes
+                    .push(route);
+                Ok(())
+            })?;
+            commit_recompile_before_emit(
+                &ctx,
+                ev::MODULATION_ROUTE_ADDED,
+                json!({ "track_id": p.track_id, "route": route_value }),
+            )
         }
 
         cmd::REMOVE_MODULATION_ROUTE => {
             let p: RemoveModulationRoutePayload = serde_json::from_value(command.payload)
                 .map_err(|e| format!("REMOVE_MODULATION_ROUTE payload invalid: {e}"))?;
-            {
-                let mut project = state.project.lock().map_err(|e| e.to_string())?;
-                let track = project
-                    .tracks
-                    .iter_mut()
-                    .find(|t| t.id == p.track_id)
-                    .ok_or_else(|| format!("Track {} not found", p.track_id))?;
-                track.mod_routes.retain(|r| r.id != p.route_id);
-            }
-            let event_payload = json!({ "track_id": p.track_id, "route_id": p.route_id });
-            let project_event =
-                ProjectEvent::new(ev::MODULATION_ROUTE_REMOVED, event_payload.clone());
-            append_and_maybe_snapshot(state, project_event)?;
-            recompile_if_needed(state);
-            let engine_ev =
-                EngineEvent::new(ev::MODULATION_ROUTE_REMOVED, &project_id, event_payload);
-            let _ = app.emit("engine-event", &engine_ev);
-            Ok(CommandResult::ok(
-                command_id,
-                vec![serde_json::to_value(&engine_ev).unwrap_or_default()],
-            ))
+            with_project_mut(state, |project| {
+                require_track_mut(project, &p.track_id)?
+                    .mod_routes
+                    .retain(|r| r.id != p.route_id);
+                Ok(())
+            })?;
+            commit_recompile_before_emit(
+                &ctx,
+                ev::MODULATION_ROUTE_REMOVED,
+                json!({ "track_id": p.track_id, "route_id": p.route_id }),
+            )
         }
 
         cmd::SET_MODULATION_DEPTH => {
             let p: SetModulationDepthPayload = serde_json::from_value(command.payload)
                 .map_err(|e| format!("SET_MODULATION_DEPTH payload invalid: {e}"))?;
-            {
-                let mut project = state.project.lock().map_err(|e| e.to_string())?;
-                let track = project
-                    .tracks
-                    .iter_mut()
-                    .find(|t| t.id == p.track_id)
-                    .ok_or_else(|| format!("Track {} not found", p.track_id))?;
+            with_project_mut(state, |project| {
+                let track = require_track_mut(project, &p.track_id)?;
                 if let Some(route) = track.mod_routes.iter_mut().find(|r| r.id == p.route_id) {
                     route.depth = p.depth;
                 }
-            }
+                Ok(())
+            })?;
             // Hot-path: update the per-route depth atomic, no recompile.
             state.live_params.set_route_depth(&p.route_id, p.depth);
-            let event_payload =
-                json!({ "track_id": p.track_id, "route_id": p.route_id, "depth": p.depth });
-            let project_event =
-                ProjectEvent::new(ev::MODULATION_DEPTH_CHANGED, event_payload.clone());
-            append_and_maybe_snapshot(state, project_event)?;
-            let engine_ev =
-                EngineEvent::new(ev::MODULATION_DEPTH_CHANGED, &project_id, event_payload);
-            let _ = app.emit("engine-event", &engine_ev);
-            Ok(CommandResult::ok(
-                command_id,
-                vec![serde_json::to_value(&engine_ev).unwrap_or_default()],
-            ))
+            commit_same_payload(
+                &ctx,
+                ev::MODULATION_DEPTH_CHANGED,
+                json!({ "track_id": p.track_id, "route_id": p.route_id, "depth": p.depth }),
+                false,
+            )
         }
 
         cmd::SET_MIDI_NOTES => {
             let p: SetMidiNotesPayload = serde_json::from_value(command.payload)
                 .map_err(|e| format!("SET_MIDI_NOTES payload invalid: {e}"))?;
 
-            {
-                let mut project = state.project.lock().map_err(|e| e.to_string())?;
-                let track = project
-                    .tracks
-                    .iter_mut()
-                    .find(|t| t.id == p.track_id)
-                    .ok_or_else(|| format!("Track {} not found", p.track_id))?;
-                track.midi_notes = p.notes.clone();
-            }
+            with_project_mut(state, |project| {
+                require_track_mut(project, &p.track_id)?.midi_notes = p.notes.clone();
+                Ok(())
+            })?;
 
-            let notes_val = serde_json::to_value(&p.notes).unwrap_or_default();
-            let event_payload = json!({ "track_id": p.track_id, "notes": notes_val });
-            let project_event = ProjectEvent::new(ev::MIDI_NOTES_SET, event_payload.clone());
-            append_and_maybe_snapshot(state, project_event)?;
-
-            let engine_ev = EngineEvent::new(ev::MIDI_NOTES_SET, &project_id, event_payload);
-            let _ = app.emit("engine-event", &engine_ev);
-
-            Ok(CommandResult::ok(
-                command_id,
-                vec![serde_json::to_value(&engine_ev).unwrap_or_default()],
-            ))
+            commit_same_payload(
+                &ctx,
+                ev::MIDI_NOTES_SET,
+                json!({
+                    "track_id": p.track_id,
+                    "notes": serde_json::to_value(&p.notes).unwrap_or_default(),
+                }),
+                false,
+            )
         }
 
         cmd::ADD_MIDI_CLIP => {
@@ -1043,125 +1111,88 @@ fn process_command(
                 notes: vec![],
             };
 
-            {
-                let mut project = state.project.lock().map_err(|e| e.to_string())?;
-                let track = project
-                    .tracks
-                    .iter_mut()
-                    .find(|t| t.id == p.track_id)
-                    .ok_or_else(|| format!("Track {} not found", p.track_id))?;
-                track.midi_clips.push(clip);
-            }
+            with_project_mut(state, |project| {
+                require_track_mut(project, &p.track_id)?
+                    .midi_clips
+                    .push(clip);
+                Ok(())
+            })?;
 
-            let event_payload = json!({ "track_id": p.track_id, "clip": serde_json::to_value(&clip_dto).unwrap_or_default() });
-            let project_event = ProjectEvent::new(ev::MIDI_CLIP_ADDED, event_payload.clone());
-            append_and_maybe_snapshot(state, project_event)?;
-
-            let engine_ev = EngineEvent::new(ev::MIDI_CLIP_ADDED, &project_id, event_payload);
-            let _ = app.emit("engine-event", &engine_ev);
-            recompile_if_needed(state);
-
-            Ok(CommandResult::ok(
-                command_id,
-                vec![serde_json::to_value(&engine_ev).unwrap_or_default()],
-            ))
+            commit_same_payload(
+                &ctx,
+                ev::MIDI_CLIP_ADDED,
+                json!({
+                    "track_id": p.track_id,
+                    "clip": serde_json::to_value(&clip_dto).unwrap_or_default(),
+                }),
+                true,
+            )
         }
 
         cmd::REMOVE_MIDI_CLIP => {
             let p: RemoveMidiClipPayload = serde_json::from_value(command.payload)
                 .map_err(|e| format!("REMOVE_MIDI_CLIP payload invalid: {e}"))?;
 
-            {
-                let mut project = state.project.lock().map_err(|e| e.to_string())?;
-                let track = project
-                    .tracks
-                    .iter_mut()
-                    .find(|t| t.id == p.track_id)
-                    .ok_or_else(|| format!("Track {} not found", p.track_id))?;
-                track.midi_clips.retain(|c| c.id != p.clip_id);
-            }
+            with_project_mut(state, |project| {
+                require_track_mut(project, &p.track_id)?
+                    .midi_clips
+                    .retain(|c| c.id != p.clip_id);
+                Ok(())
+            })?;
 
-            let event_payload = json!({ "track_id": p.track_id, "clip_id": p.clip_id });
-            let project_event = ProjectEvent::new(ev::MIDI_CLIP_REMOVED, event_payload.clone());
-            append_and_maybe_snapshot(state, project_event)?;
-
-            let engine_ev = EngineEvent::new(ev::MIDI_CLIP_REMOVED, &project_id, event_payload);
-            let _ = app.emit("engine-event", &engine_ev);
-            recompile_if_needed(state);
-
-            Ok(CommandResult::ok(
-                command_id,
-                vec![serde_json::to_value(&engine_ev).unwrap_or_default()],
-            ))
+            commit_same_payload(
+                &ctx,
+                ev::MIDI_CLIP_REMOVED,
+                json!({ "track_id": p.track_id, "clip_id": p.clip_id }),
+                true,
+            )
         }
 
         cmd::MOVE_MIDI_CLIP => {
             let p: MoveMidiClipPayload = serde_json::from_value(command.payload)
                 .map_err(|e| format!("MOVE_MIDI_CLIP payload invalid: {e}"))?;
 
-            {
-                let mut project = state.project.lock().map_err(|e| e.to_string())?;
-                let track = project
-                    .tracks
-                    .iter_mut()
-                    .find(|t| t.id == p.track_id)
-                    .ok_or_else(|| format!("Track {} not found", p.track_id))?;
-                let clip = track
-                    .midi_clips
-                    .iter_mut()
-                    .find(|c| c.id == p.clip_id)
-                    .ok_or_else(|| format!("MidiClip {} not found", p.clip_id))?;
+            with_project_mut(state, |project| {
+                let track = require_track_mut(project, &p.track_id)?;
+                let clip = require_midi_clip_mut(track, &p.clip_id)?;
                 clip.start = p.start;
                 clip.end = p.end;
-            }
+                Ok(())
+            })?;
 
-            let event_payload = json!({ "track_id": p.track_id, "clip_id": p.clip_id, "start": p.start, "end": p.end });
-            let project_event = ProjectEvent::new(ev::MIDI_CLIP_MOVED, event_payload.clone());
-            append_and_maybe_snapshot(state, project_event)?;
-
-            let engine_ev = EngineEvent::new(ev::MIDI_CLIP_MOVED, &project_id, event_payload);
-            let _ = app.emit("engine-event", &engine_ev);
-            recompile_if_needed(state);
-
-            Ok(CommandResult::ok(
-                command_id,
-                vec![serde_json::to_value(&engine_ev).unwrap_or_default()],
-            ))
+            commit_same_payload(
+                &ctx,
+                ev::MIDI_CLIP_MOVED,
+                json!({
+                    "track_id": p.track_id,
+                    "clip_id": p.clip_id,
+                    "start": p.start,
+                    "end": p.end,
+                }),
+                true,
+            )
         }
 
         cmd::SET_CLIP_MIDI_NOTES => {
             let p: SetClipMidiNotesPayload = serde_json::from_value(command.payload)
                 .map_err(|e| format!("SET_CLIP_MIDI_NOTES payload invalid: {e}"))?;
 
-            {
-                let mut project = state.project.lock().map_err(|e| e.to_string())?;
-                let track = project
-                    .tracks
-                    .iter_mut()
-                    .find(|t| t.id == p.track_id)
-                    .ok_or_else(|| format!("Track {} not found", p.track_id))?;
-                let clip = track
-                    .midi_clips
-                    .iter_mut()
-                    .find(|c| c.id == p.clip_id)
-                    .ok_or_else(|| format!("MidiClip {} not found", p.clip_id))?;
-                clip.notes = p.notes.clone();
-            }
+            with_project_mut(state, |project| {
+                let track = require_track_mut(project, &p.track_id)?;
+                require_midi_clip_mut(track, &p.clip_id)?.notes = p.notes.clone();
+                Ok(())
+            })?;
 
-            let notes_val = serde_json::to_value(&p.notes).unwrap_or_default();
-            let event_payload =
-                json!({ "track_id": p.track_id, "clip_id": p.clip_id, "notes": notes_val });
-            let project_event = ProjectEvent::new(ev::MIDI_CLIP_NOTES_SET, event_payload.clone());
-            append_and_maybe_snapshot(state, project_event)?;
-
-            let engine_ev = EngineEvent::new(ev::MIDI_CLIP_NOTES_SET, &project_id, event_payload);
-            let _ = app.emit("engine-event", &engine_ev);
-            recompile_if_needed(state);
-
-            Ok(CommandResult::ok(
-                command_id,
-                vec![serde_json::to_value(&engine_ev).unwrap_or_default()],
-            ))
+            commit_same_payload(
+                &ctx,
+                ev::MIDI_CLIP_NOTES_SET,
+                json!({
+                    "track_id": p.track_id,
+                    "clip_id": p.clip_id,
+                    "notes": serde_json::to_value(&p.notes).unwrap_or_default(),
+                }),
+                true,
+            )
         }
 
         other => Err(format!("Unknown command type: {other}")),
@@ -1172,18 +1203,13 @@ fn append_and_maybe_snapshot(
     state: &tauri::State<'_, AppState>,
     event: ProjectEvent,
 ) -> Result<(), String> {
-    state
-        .dirty
-        .store(true, std::sync::atomic::Ordering::Relaxed);
+    mark_dirty(state);
     let mut store = state.event_store.lock().map_err(|e| e.to_string())?;
     store.append(event);
 
     if store.should_snapshot() {
         drop(store); // release before acquiring project lock (lock order: project → store)
-        let project_snapshot = {
-            let project = state.project.lock().map_err(|e| e.to_string())?;
-            snapshot_project(&project)
-        };
+        let project_snapshot = snapshot_project(&*lock_project(state)?);
         let mut store = state.event_store.lock().map_err(|e| e.to_string())?;
         store.take_snapshot(project_snapshot);
     }
@@ -1240,16 +1266,6 @@ fn snapshot_project(project: &AppProject) -> AppProject {
         // store.  Undo/redo snapshots therefore keep this empty.
         plugin_state_blobs: std::collections::HashMap::new(),
     }
-}
-
-enum HotEffectUpdate {
-    None,
-    Eq(EqParams),
-    Compressor(CompressorParams),
-    Reverb(ReverbParams),
-    Delay(DelayParams),
-    /// Push normalised `(native_id, value)` pairs into the plugin's SPSC ring (ADR-007).
-    Plugin(String, Vec<(u32, f32)>),
 }
 
 fn default_params_for_kind(kind: &str) -> Option<EffectParams> {
@@ -1319,10 +1335,335 @@ pub fn rebuild_project_from_store(state: &tauri::State<'_, AppState>) -> Result<
     };
 
     let rebuilt = apply_events(state, base_project, &events_to_replay)?;
-    let mut project = state.project.lock().map_err(|e| e.to_string())?;
-    *project = rebuilt;
+    *lock_project(state)? = rebuilt;
 
     Ok(())
+}
+
+fn apply_track_created(project: &mut AppProject, payload: &Value) {
+    let id = payload_str(payload, "id");
+    if project.tracks.iter().any(|t| t.id == id) {
+        return;
+    }
+    project.tracks.push(empty_app_track(
+        id,
+        payload_str_default(payload, "name", "Track"),
+    ));
+}
+
+fn apply_track_deleted(project: &mut AppProject, payload: &Value) {
+    let id = payload_str(payload, "id");
+    project.tracks.retain(|t| t.id != id);
+}
+
+fn apply_track_updated(project: &mut AppProject, payload: &Value) {
+    let id = payload_str(payload, "id");
+    let Some(track) = find_track_mut(project, &id) else {
+        return;
+    };
+    if let Some(name) = payload["name"].as_str() {
+        track.name = name.to_string();
+    }
+    if let Some(vol) = payload["volume"].as_f64() {
+        track.volume = vol as f32;
+    }
+    if let Some(pan) = payload["pan"].as_f64() {
+        track.pan = pan as f32;
+    }
+}
+
+fn apply_track_muted(project: &mut AppProject, payload: &Value) {
+    let id = payload_str(payload, "id");
+    let Some(track) = find_track_mut(project, &id) else {
+        return;
+    };
+    track.muted = payload["muted"].as_bool().unwrap_or(false);
+}
+
+fn apply_track_soloed(project: &mut AppProject, payload: &Value) {
+    apply_exclusive_solo(
+        project,
+        &payload_str(payload, "id"),
+        payload["solo"].as_bool().unwrap_or(false),
+    );
+}
+
+fn apply_clip_added(
+    state: &tauri::State<'_, AppState>,
+    project: &mut AppProject,
+    payload: &Value,
+) {
+    let track_id = payload_str(payload, "track_id");
+    let clip_id = payload_str(payload, "clip_id");
+    let file_path = payload_str(payload, "file_path");
+    let start = payload["start"].as_f64().unwrap_or(0.0);
+    let end = payload["end"].as_f64().unwrap_or(0.0);
+
+    let Some(track) = find_track_mut(project, &track_id) else {
+        return;
+    };
+    if track.clips.iter().any(|c| c.id == clip_id) {
+        return;
+    }
+    let Some(data) = resolve_clip_audio(state, &clip_id, &file_path) else {
+        return;
+    };
+    track.clips.push(app_clip_from_audio(
+        clip_id,
+        start,
+        end,
+        file_path,
+        &data,
+    ));
+}
+
+fn apply_clip_moved(project: &mut AppProject, payload: &Value) {
+    let track_id = payload_str(payload, "track_id");
+    let clip_id = payload_str(payload, "clip_id");
+    let start = payload["start"].as_f64().unwrap_or(0.0);
+    let end = payload["end"].as_f64().unwrap_or(0.0);
+    let Some(track) = find_track_mut(project, &track_id) else {
+        return;
+    };
+    let Some(clip) = track.clips.iter_mut().find(|c| c.id == clip_id) else {
+        return;
+    };
+    clip.start = start;
+    clip.end = end;
+}
+
+fn apply_clip_removed(project: &mut AppProject, payload: &Value) {
+    let track_id = payload_str(payload, "track_id");
+    let clip_id = payload_str(payload, "clip_id");
+    let Some(track) = find_track_mut(project, &track_id) else {
+        return;
+    };
+    track.clips.retain(|c| c.id != clip_id);
+}
+
+fn apply_project_name_updated(project: &mut AppProject, payload: &Value) {
+    if let Some(name) = payload["name"].as_str() {
+        project.name = name.to_string();
+    }
+}
+
+fn apply_tempo_updated(project: &mut AppProject, payload: &Value) {
+    if let Some(bpm) = payload["bpm"].as_f64() {
+        project.bpm = bpm as f32;
+    }
+    if let Some(n) = payload["numerator"].as_u64() {
+        project.numerator = n as u8;
+    }
+    if let Some(d) = payload["denominator"].as_u64() {
+        project.denominator = d as u8;
+    }
+}
+
+fn apply_effect_added(project: &mut AppProject, payload: &Value) {
+    let track_id = payload_str(payload, "track_id");
+    let Some(raw_effect) = payload.get("effect") else {
+        return;
+    };
+    let Ok(effect) = serde_json::from_value::<TrackEffect>(raw_effect.clone()) else {
+        return;
+    };
+    let Some(track) = find_track_mut(project, &track_id) else {
+        return;
+    };
+    if !track.effects.iter().any(|e| e.id == effect.id) {
+        track.effects.push(effect);
+    }
+}
+
+fn apply_effect_removed(project: &mut AppProject, payload: &Value) {
+    let track_id = payload_str(payload, "track_id");
+    let effect_id = payload_str(payload, "effect_id");
+    let Some(track) = find_track_mut(project, &track_id) else {
+        return;
+    };
+    track.effects.retain(|e| e.id != effect_id);
+}
+
+fn apply_effect_updated(project: &mut AppProject, payload: &Value) {
+    let track_id = payload_str(payload, "track_id");
+    let effect_id = payload_str(payload, "effect_id");
+    let Some(track) = find_track_mut(project, &track_id) else {
+        return;
+    };
+    let Some(effect) = track.effects.iter_mut().find(|e| e.id == effect_id) else {
+        return;
+    };
+    let Some(raw_effect) = payload.get("effect") else {
+        return;
+    };
+    let Ok(updated) = serde_json::from_value::<TrackEffect>(raw_effect.clone()) else {
+        return;
+    };
+    effect.enabled = updated.enabled;
+    effect.params = updated.params;
+}
+
+fn apply_modulator_added(project: &mut AppProject, payload: &Value) {
+    let track_id = payload_str(payload, "track_id");
+    let Some(raw) = payload.get("modulator") else {
+        return;
+    };
+    let Ok(m) = serde_json::from_value::<crate::project::ProjectModulator>(raw.clone()) else {
+        return;
+    };
+    let Some(track) = find_track_mut(project, &track_id) else {
+        return;
+    };
+    if !track.modulators.iter().any(|x| x.id == m.id) {
+        track.modulators.push(m);
+    }
+}
+
+fn apply_modulator_removed(project: &mut AppProject, payload: &Value) {
+    let track_id = payload_str(payload, "track_id");
+    let mod_id = payload_str(payload, "modulator_id");
+    let Some(track) = find_track_mut(project, &track_id) else {
+        return;
+    };
+    track.modulators.retain(|m| m.id != mod_id);
+    track.mod_routes.retain(|r| r.modulator_id != mod_id);
+}
+
+fn apply_modulator_updated(project: &mut AppProject, payload: &Value) {
+    let track_id = payload_str(payload, "track_id");
+    let mod_id = payload_str(payload, "modulator_id");
+    let Some(track) = find_track_mut(project, &track_id) else {
+        return;
+    };
+    let Some(m) = track.modulators.iter_mut().find(|x| x.id == mod_id) else {
+        return;
+    };
+    if let Some(rate) = payload["rate_hz"].as_f64() {
+        let crate::project::ModulatorParams::Lfo(ref mut p) = m.params;
+        p.rate_hz = rate as f32;
+    }
+}
+
+fn apply_modulation_route_added(project: &mut AppProject, payload: &Value) {
+    let track_id = payload_str(payload, "track_id");
+    let Some(raw) = payload.get("route") else {
+        return;
+    };
+    let Ok(route) =
+        serde_json::from_value::<crate::project::ProjectModulationRoute>(raw.clone())
+    else {
+        return;
+    };
+    let Some(track) = find_track_mut(project, &track_id) else {
+        return;
+    };
+    if !track.mod_routes.iter().any(|r| r.id == route.id) {
+        track.mod_routes.push(route);
+    }
+}
+
+fn apply_modulation_route_removed(project: &mut AppProject, payload: &Value) {
+    let track_id = payload_str(payload, "track_id");
+    let route_id = payload_str(payload, "route_id");
+    let Some(track) = find_track_mut(project, &track_id) else {
+        return;
+    };
+    track.mod_routes.retain(|r| r.id != route_id);
+}
+
+fn apply_modulation_depth_changed(project: &mut AppProject, payload: &Value) {
+    let track_id = payload_str(payload, "track_id");
+    let route_id = payload_str(payload, "route_id");
+    let Some(depth) = payload["depth"].as_f64() else {
+        return;
+    };
+    let Some(track) = find_track_mut(project, &track_id) else {
+        return;
+    };
+    let Some(route) = track.mod_routes.iter_mut().find(|r| r.id == route_id) else {
+        return;
+    };
+    route.depth = depth as f32;
+}
+
+fn apply_midi_notes_set(project: &mut AppProject, payload: &Value) {
+    let track_id = payload_str(payload, "track_id");
+    let Some(raw_notes) = payload.get("notes") else {
+        return;
+    };
+    let Ok(notes) = serde_json::from_value::<Vec<MidiNote>>(raw_notes.clone()) else {
+        return;
+    };
+    let Some(track) = find_track_mut(project, &track_id) else {
+        return;
+    };
+    track.midi_notes = notes;
+}
+
+fn apply_midi_clip_added(project: &mut AppProject, payload: &Value) {
+    let track_id = payload_str(payload, "track_id");
+    let Some(raw_clip) = payload.get("clip") else {
+        return;
+    };
+    let (Some(id), Some(start), Some(end)) = (
+        raw_clip["id"].as_str().map(|s| s.to_string()),
+        raw_clip["start"].as_f64(),
+        raw_clip["end"].as_f64(),
+    ) else {
+        return;
+    };
+    let Some(track) = find_track_mut(project, &track_id) else {
+        return;
+    };
+    if track.midi_clips.iter().any(|c| c.id == id) {
+        return;
+    }
+    track.midi_clips.push(AppMidiClip {
+        id,
+        start,
+        end,
+        notes: vec![],
+    });
+}
+
+fn apply_midi_clip_removed(project: &mut AppProject, payload: &Value) {
+    let track_id = payload_str(payload, "track_id");
+    let clip_id = payload_str(payload, "clip_id");
+    let Some(track) = find_track_mut(project, &track_id) else {
+        return;
+    };
+    track.midi_clips.retain(|c| c.id != clip_id);
+}
+
+fn apply_midi_clip_moved(project: &mut AppProject, payload: &Value) {
+    let track_id = payload_str(payload, "track_id");
+    let clip_id = payload_str(payload, "clip_id");
+    let start = payload["start"].as_f64().unwrap_or(0.0);
+    let end = payload["end"].as_f64().unwrap_or(0.0);
+    let Some(track) = find_track_mut(project, &track_id) else {
+        return;
+    };
+    if let Ok(clip) = require_midi_clip_mut(track, &clip_id) {
+        clip.start = start;
+        clip.end = end;
+    }
+}
+
+fn apply_midi_clip_notes_set(project: &mut AppProject, payload: &Value) {
+    let track_id = payload_str(payload, "track_id");
+    let clip_id = payload_str(payload, "clip_id");
+    let Some(raw_notes) = payload.get("notes") else {
+        return;
+    };
+    let Ok(notes) = serde_json::from_value::<Vec<MidiNote>>(raw_notes.clone()) else {
+        return;
+    };
+    let Some(track) = find_track_mut(project, &track_id) else {
+        return;
+    };
+    if let Ok(clip) = require_midi_clip_mut(track, &clip_id) {
+        clip.notes = notes;
+    }
 }
 
 fn apply_events(
@@ -1334,350 +1675,39 @@ fn apply_events(
 
     for event in events {
         match event.event_type.as_str() {
-            ev::TRACK_CREATED => {
-                let id = event.payload["id"].as_str().unwrap_or("").to_string();
-                let name = event.payload["name"]
-                    .as_str()
-                    .unwrap_or("Track")
-                    .to_string();
-                if !project.tracks.iter().any(|t| t.id == id) {
-                    project.tracks.push(AppTrack {
-                        id,
-                        name,
-                        volume: 80.0,
-                        pan: 0.0,
-                        muted: false,
-                        solo: false,
-                        clips: vec![],
-                        effects: vec![],
-                        modulators: vec![],
-                        mod_routes: vec![],
-                        midi_notes: vec![],
-                        midi_clips: vec![],
-                        instrument: None,
-                    });
-                }
-            }
-
-            ev::TRACK_DELETED => {
-                let id = event.payload["id"].as_str().unwrap_or("");
-                project.tracks.retain(|t| t.id != id);
-            }
-
-            ev::TRACK_UPDATED => {
-                let id = event.payload["id"].as_str().unwrap_or("");
-                if let Some(track) = project.tracks.iter_mut().find(|t| t.id == id) {
-                    if let Some(name) = event.payload["name"].as_str() {
-                        track.name = name.to_string();
-                    }
-                    if let Some(vol) = event.payload["volume"].as_f64() {
-                        track.volume = vol as f32;
-                    }
-                    if let Some(pan) = event.payload["pan"].as_f64() {
-                        track.pan = pan as f32;
-                    }
-                }
-            }
-
-            ev::TRACK_MUTED => {
-                let id = event.payload["id"].as_str().unwrap_or("");
-                if let Some(track) = project.tracks.iter_mut().find(|t| t.id == id) {
-                    track.muted = event.payload["muted"].as_bool().unwrap_or(false);
-                }
-            }
-
-            ev::TRACK_SOLOED => {
-                let id = event.payload["id"].as_str().unwrap_or("");
-                let solo = event.payload["solo"].as_bool().unwrap_or(false);
-                if solo {
-                    for track in project.tracks.iter_mut() {
-                        track.solo = track.id == id;
-                    }
-                } else if let Some(track) = project.tracks.iter_mut().find(|t| t.id == id) {
-                    track.solo = false;
-                }
-            }
-
-            ev::CLIP_ADDED => {
-                let track_id = event.payload["track_id"].as_str().unwrap_or("");
-                let clip_id = event.payload["clip_id"].as_str().unwrap_or("").to_string();
-                let file_path = event.payload["file_path"]
-                    .as_str()
-                    .unwrap_or("")
-                    .to_string();
-                let start = event.payload["start"].as_f64().unwrap_or(0.0);
-                let end = event.payload["end"].as_f64().unwrap_or(0.0);
-
-                if let Some(track) = project.tracks.iter_mut().find(|t| t.id == track_id) {
-                    if track.clips.iter().any(|c| c.id == clip_id) {
-                        continue;
-                    }
-
-                    let audio_data = if let Some(cached) = state.audio_cache.get(&clip_id) {
-                        Some(cached)
-                    } else {
-                        match AudioClip::from_file(&file_path) {
-                            Ok(audio) => {
-                                let data = audio.into_clip_data();
-                                let cached = Arc::new(CachedAudioData {
-                                    raw_samples: data.raw_samples,
-                                    sample_rate: data.sample_rate,
-                                    peaks_64: data.peaks_64,
-                                    peaks_512: data.peaks_512,
-                                    peaks_4096: data.peaks_4096,
-                                });
-                                state
-                                    .audio_cache
-                                    .insert(clip_id.clone(), Arc::clone(&cached));
-                                Some(cached)
-                            }
-                            Err(e) => {
-                                eprintln!("[audio] Clip introuvable '{}': {e}", file_path);
-                                None
-                            }
-                        }
-                    };
-
-                    if let Some(data) = audio_data {
-                        track.clips.push(AppClip {
-                            id: clip_id,
-                            start,
-                            end,
-                            file_path,
-                            raw_samples: data.raw_samples.clone(),
-                            sample_rate: data.sample_rate,
-                            peaks_64: data.peaks_64.clone(),
-                            peaks_512: data.peaks_512.clone(),
-                            peaks_4096: data.peaks_4096.clone(),
-                        });
-                    }
-                }
-            }
-
-            ev::CLIP_MOVED => {
-                let track_id = event.payload["track_id"].as_str().unwrap_or("");
-                let clip_id = event.payload["clip_id"].as_str().unwrap_or("");
-                let start = event.payload["start"].as_f64().unwrap_or(0.0);
-                let end = event.payload["end"].as_f64().unwrap_or(0.0);
-
-                if let Some(track) = project.tracks.iter_mut().find(|t| t.id == track_id) {
-                    if let Some(clip) = track.clips.iter_mut().find(|c| c.id == clip_id) {
-                        clip.start = start;
-                        clip.end = end;
-                    }
-                }
-            }
-
-            ev::CLIP_REMOVED => {
-                let track_id = event.payload["track_id"].as_str().unwrap_or("");
-                let clip_id = event.payload["clip_id"].as_str().unwrap_or("");
-                if let Some(track) = project.tracks.iter_mut().find(|t| t.id == track_id) {
-                    track.clips.retain(|c| c.id != clip_id);
-                }
-            }
-
+            ev::TRACK_CREATED => apply_track_created(&mut project, &event.payload),
+            ev::TRACK_DELETED => apply_track_deleted(&mut project, &event.payload),
+            ev::TRACK_UPDATED => apply_track_updated(&mut project, &event.payload),
+            ev::TRACK_MUTED => apply_track_muted(&mut project, &event.payload),
+            ev::TRACK_SOLOED => apply_track_soloed(&mut project, &event.payload),
+            ev::CLIP_ADDED => apply_clip_added(state, &mut project, &event.payload),
+            ev::CLIP_MOVED => apply_clip_moved(&mut project, &event.payload),
+            ev::CLIP_REMOVED => apply_clip_removed(&mut project, &event.payload),
             ev::PROJECT_NAME_UPDATED => {
-                if let Some(name) = event.payload["name"].as_str() {
-                    project.name = name.to_string();
-                }
+                apply_project_name_updated(&mut project, &event.payload)
             }
-
-            ev::TEMPO_UPDATED => {
-                if let Some(bpm) = event.payload["bpm"].as_f64() {
-                    project.bpm = bpm as f32;
-                }
-                if let Some(n) = event.payload["numerator"].as_u64() {
-                    project.numerator = n as u8;
-                }
-                if let Some(d) = event.payload["denominator"].as_u64() {
-                    project.denominator = d as u8;
-                }
-            }
-
-            ev::EFFECT_ADDED => {
-                let track_id = event.payload["track_id"].as_str().unwrap_or("");
-                if let Some(raw_effect) = event.payload.get("effect") {
-                    if let Ok(effect) = serde_json::from_value::<TrackEffect>(raw_effect.clone()) {
-                        if let Some(track) = project.tracks.iter_mut().find(|t| t.id == track_id) {
-                            if !track.effects.iter().any(|e| e.id == effect.id) {
-                                track.effects.push(effect);
-                            }
-                        }
-                    }
-                }
-            }
-
-            ev::EFFECT_REMOVED => {
-                let track_id = event.payload["track_id"].as_str().unwrap_or("");
-                let effect_id = event.payload["effect_id"].as_str().unwrap_or("");
-                if let Some(track) = project.tracks.iter_mut().find(|t| t.id == track_id) {
-                    track.effects.retain(|e| e.id != effect_id);
-                }
-            }
-
-            ev::EFFECT_UPDATED => {
-                let track_id = event.payload["track_id"].as_str().unwrap_or("");
-                let effect_id = event.payload["effect_id"].as_str().unwrap_or("");
-                if let Some(track) = project.tracks.iter_mut().find(|t| t.id == track_id) {
-                    if let Some(effect) = track.effects.iter_mut().find(|e| e.id == effect_id) {
-                        if let Some(raw_effect) = event.payload.get("effect") {
-                            if let Ok(updated) =
-                                serde_json::from_value::<TrackEffect>(raw_effect.clone())
-                            {
-                                effect.enabled = updated.enabled;
-                                effect.params = updated.params;
-                            }
-                        }
-                    }
-                }
-            }
-
-            ev::MODULATOR_ADDED => {
-                let track_id = event.payload["track_id"].as_str().unwrap_or("");
-                if let Some(raw) = event.payload.get("modulator") {
-                    if let Ok(m) =
-                        serde_json::from_value::<crate::project::ProjectModulator>(raw.clone())
-                    {
-                        if let Some(track) = project.tracks.iter_mut().find(|t| t.id == track_id) {
-                            if !track.modulators.iter().any(|x| x.id == m.id) {
-                                track.modulators.push(m);
-                            }
-                        }
-                    }
-                }
-            }
-
-            ev::MODULATOR_REMOVED => {
-                let track_id = event.payload["track_id"].as_str().unwrap_or("");
-                let mod_id = event.payload["modulator_id"].as_str().unwrap_or("");
-                if let Some(track) = project.tracks.iter_mut().find(|t| t.id == track_id) {
-                    track.modulators.retain(|m| m.id != mod_id);
-                    track.mod_routes.retain(|r| r.modulator_id != mod_id);
-                }
-            }
-
-            ev::MODULATOR_UPDATED => {
-                let track_id = event.payload["track_id"].as_str().unwrap_or("");
-                let mod_id = event.payload["modulator_id"].as_str().unwrap_or("");
-                if let Some(track) = project.tracks.iter_mut().find(|t| t.id == track_id) {
-                    if let Some(m) = track.modulators.iter_mut().find(|x| x.id == mod_id) {
-                        if let Some(rate) = event.payload["rate_hz"].as_f64() {
-                            if let crate::project::ModulatorParams::Lfo(ref mut p) = m.params {
-                                p.rate_hz = rate as f32;
-                            }
-                        }
-                    }
-                }
-            }
-
+            ev::TEMPO_UPDATED => apply_tempo_updated(&mut project, &event.payload),
+            ev::EFFECT_ADDED => apply_effect_added(&mut project, &event.payload),
+            ev::EFFECT_REMOVED => apply_effect_removed(&mut project, &event.payload),
+            ev::EFFECT_UPDATED => apply_effect_updated(&mut project, &event.payload),
+            ev::MODULATOR_ADDED => apply_modulator_added(&mut project, &event.payload),
+            ev::MODULATOR_REMOVED => apply_modulator_removed(&mut project, &event.payload),
+            ev::MODULATOR_UPDATED => apply_modulator_updated(&mut project, &event.payload),
             ev::MODULATION_ROUTE_ADDED => {
-                let track_id = event.payload["track_id"].as_str().unwrap_or("");
-                if let Some(raw) = event.payload.get("route") {
-                    if let Ok(route) = serde_json::from_value::<
-                        crate::project::ProjectModulationRoute,
-                    >(raw.clone())
-                    {
-                        if let Some(track) = project.tracks.iter_mut().find(|t| t.id == track_id) {
-                            if !track.mod_routes.iter().any(|r| r.id == route.id) {
-                                track.mod_routes.push(route);
-                            }
-                        }
-                    }
-                }
+                apply_modulation_route_added(&mut project, &event.payload)
             }
-
             ev::MODULATION_ROUTE_REMOVED => {
-                let track_id = event.payload["track_id"].as_str().unwrap_or("");
-                let route_id = event.payload["route_id"].as_str().unwrap_or("");
-                if let Some(track) = project.tracks.iter_mut().find(|t| t.id == track_id) {
-                    track.mod_routes.retain(|r| r.id != route_id);
-                }
+                apply_modulation_route_removed(&mut project, &event.payload)
             }
-
             ev::MODULATION_DEPTH_CHANGED => {
-                let track_id = event.payload["track_id"].as_str().unwrap_or("");
-                let route_id = event.payload["route_id"].as_str().unwrap_or("");
-                if let Some(depth) = event.payload["depth"].as_f64() {
-                    if let Some(track) = project.tracks.iter_mut().find(|t| t.id == track_id) {
-                        if let Some(route) = track.mod_routes.iter_mut().find(|r| r.id == route_id)
-                        {
-                            route.depth = depth as f32;
-                        }
-                    }
-                }
+                apply_modulation_depth_changed(&mut project, &event.payload)
             }
-
-            ev::MIDI_NOTES_SET => {
-                let track_id = event.payload["track_id"].as_str().unwrap_or("");
-                if let Some(raw_notes) = event.payload.get("notes") {
-                    if let Ok(notes) = serde_json::from_value::<Vec<MidiNote>>(raw_notes.clone()) {
-                        if let Some(track) = project.tracks.iter_mut().find(|t| t.id == track_id) {
-                            track.midi_notes = notes;
-                        }
-                    }
-                }
-            }
-
-            ev::MIDI_CLIP_ADDED => {
-                let track_id = event.payload["track_id"].as_str().unwrap_or("");
-                if let Some(raw_clip) = event.payload.get("clip") {
-                    if let (Some(id), Some(start), Some(end)) = (
-                        raw_clip["id"].as_str().map(|s| s.to_string()),
-                        raw_clip["start"].as_f64(),
-                        raw_clip["end"].as_f64(),
-                    ) {
-                        if let Some(track) = project.tracks.iter_mut().find(|t| t.id == track_id) {
-                            if !track.midi_clips.iter().any(|c| c.id == id) {
-                                track.midi_clips.push(AppMidiClip {
-                                    id,
-                                    start,
-                                    end,
-                                    notes: vec![],
-                                });
-                            }
-                        }
-                    }
-                }
-            }
-
-            ev::MIDI_CLIP_REMOVED => {
-                let track_id = event.payload["track_id"].as_str().unwrap_or("");
-                let clip_id = event.payload["clip_id"].as_str().unwrap_or("");
-                if let Some(track) = project.tracks.iter_mut().find(|t| t.id == track_id) {
-                    track.midi_clips.retain(|c| c.id != clip_id);
-                }
-            }
-
-            ev::MIDI_CLIP_MOVED => {
-                let track_id = event.payload["track_id"].as_str().unwrap_or("");
-                let clip_id = event.payload["clip_id"].as_str().unwrap_or("");
-                let start = event.payload["start"].as_f64().unwrap_or(0.0);
-                let end = event.payload["end"].as_f64().unwrap_or(0.0);
-                if let Some(track) = project.tracks.iter_mut().find(|t| t.id == track_id) {
-                    if let Some(clip) = track.midi_clips.iter_mut().find(|c| c.id == clip_id) {
-                        clip.start = start;
-                        clip.end = end;
-                    }
-                }
-            }
-
-            ev::MIDI_CLIP_NOTES_SET => {
-                let track_id = event.payload["track_id"].as_str().unwrap_or("");
-                let clip_id = event.payload["clip_id"].as_str().unwrap_or("");
-                if let Some(raw_notes) = event.payload.get("notes") {
-                    if let Ok(notes) = serde_json::from_value::<Vec<MidiNote>>(raw_notes.clone()) {
-                        if let Some(track) = project.tracks.iter_mut().find(|t| t.id == track_id) {
-                            if let Some(clip) =
-                                track.midi_clips.iter_mut().find(|c| c.id == clip_id)
-                            {
-                                clip.notes = notes;
-                            }
-                        }
-                    }
-                }
-            }
-
-            _ => {} // Unknown events are ignored (forward-compat)
+            ev::MIDI_NOTES_SET => apply_midi_notes_set(&mut project, &event.payload),
+            ev::MIDI_CLIP_ADDED => apply_midi_clip_added(&mut project, &event.payload),
+            ev::MIDI_CLIP_REMOVED => apply_midi_clip_removed(&mut project, &event.payload),
+            ev::MIDI_CLIP_MOVED => apply_midi_clip_moved(&mut project, &event.payload),
+            ev::MIDI_CLIP_NOTES_SET => apply_midi_clip_notes_set(&mut project, &event.payload),
+            _ => {}
         }
     }
 

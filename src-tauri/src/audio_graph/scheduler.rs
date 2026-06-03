@@ -382,10 +382,8 @@ impl GraphScheduler {
         }
         self.silence_buffer.clear();
         for step_lines in &mut self.delay_lines {
-            for dl_opt in step_lines.iter_mut() {
-                if let Some(dl) = dl_opt {
-                    dl.reset();
-                }
+            for dl in step_lines.iter_mut().flatten() {
+                dl.reset();
             }
         }
     }
@@ -702,11 +700,9 @@ mod tests {
                 .filter_map(|c| c.as_ref().map(|c| plan.step_cumulative_latency[c.src_step]))
                 .max()
                 .unwrap_or(0);
-            for conn_opt in plan.steps[i].input_connections.iter_mut() {
-                if let Some(conn) = conn_opt {
-                    let src_lat = plan.step_cumulative_latency[conn.src_step];
-                    conn.delay_samples = arrival.saturating_sub(src_lat);
-                }
+            for conn in plan.steps[i].input_connections.iter_mut().flatten() {
+                let src_lat = plan.step_cumulative_latency[conn.src_step];
+                conn.delay_samples = arrival.saturating_sub(src_lat);
             }
             plan.step_cumulative_latency[i] = plan.step_latencies[i].saturating_add(arrival);
         }
