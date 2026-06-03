@@ -22,6 +22,22 @@ doc **before** changing that subsystem.
 | Migration (current→target) | [`docs/active/migration/`](docs/active/migration/) |
 | Architecture decisions | [`docs/active/decisions/000-index.md`](docs/active/decisions/000-index.md) |
 
+## Operating rules (`.claude/`)
+
+Short strict rules live in [`.claude/rules/`](.claude/rules/) and point into
+`docs/active/` for detail. Load them when relevant:
+
+- [`rt_audio_rules.md`](.claude/rules/rt_audio_rules.md) — audio-thread law
+- [`threading_rules.md`](.claude/rules/threading_rules.md) — thread ownership
+- [`architecture_rules.md`](.claude/rules/architecture_rules.md) — hard invariants + when an ADR is required
+- [`migration_rules.md`](.claude/rules/migration_rules.md) — C-1…C-10 (no rewrite, C-2 gate)
+- [`documentation_rules.md`](.claude/rules/documentation_rules.md) · [`doc_sync_rules.md`](.claude/rules/doc_sync_rules.md) · [`change_impact_mapping.md`](.claude/rules/change_impact_mapping.md)
+
+**Workflow:** before/after any architectural or engine change, follow
+[`completion_protocol.md`](.claude/rules/completion_protocol.md) — read
+[`state_index.md`](.claude/state_index.md) + relevant ADRs first, then sync the
+impacted docs (`doc_sync_rules.md`) after.
+
 ## Non-negotiable rules
 
 - **Audio callback:** no allocation, no locks, no I/O, no `drop`, no Tauri emit.
