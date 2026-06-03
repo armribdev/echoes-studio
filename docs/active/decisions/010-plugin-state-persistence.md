@@ -51,16 +51,20 @@ had no concrete stream to pass.
 
 3. **Host API does the real thing.** `PluginHost::save_device_state` returns a
    `DeviceState::Binary` from FFI (falling back to the `saved_state` cache for
-   formats without an FFI path); `load_device_state` pushes the blob via
-   `setState`. `device_ids()` lets the save path enumerate live devices.
+   formats without an FFI path). `device_ids()` lets the save path enumerate live
+   devices. **State restore is no longer a post-compile call** (see *Restore is
+   race-free* below): the project-load path stages blobs via
+   `set_pending_state_blobs`, and `instantiate` applies them to each instance
+   before it enters a snapshot.
 
 4. **Project file carries the blobs.** `ProjectFile.plugin_state_blobs:
    HashMap<device_id, base64>` with `#[serde(default)]` (backward compatible — a
    pre-4b save loads with an empty map → previous behaviour). On save the live
-   state is harvested from the host before serialisation; on load it is applied
-   **after** the graph compiles (the instances must exist first). Base64 (a
-   ~40-line self-contained RFC 4648 codec in `state.rs`, round-trip tested) keeps
-   large synth chunks compact and adds no dependency.
+   state is harvested from the host before serialisation; on load it is **staged
+   on the host and applied during instantiation** (before any node is published
+   to the audio thread). Base64 (a ~40-line self-contained RFC 4648 codec in
+   `state.rs`, round-trip tested) keeps large synth chunks compact and adds no
+   dependency.
 
 ### Module map
 
@@ -95,28 +99,37 @@ None on the audio thread. `getState`/`setState` run on the command thread
 (project save / open). No allocation, lock, or syscall is added to
 `process_block`.
 
-## Threading caveat (residual risk, documented)
+## Threading caveat — restore now race-free; save still residual
 
-VST3 mandates single-threaded plugin access, but these FFI calls are **not**
-sequenced against the audio thread's `process()` on the same instance — the
-command thread and audio thread both reach the shared `IComponent`. The
-operating invariant is that save/load happen while the **transport is stopped**
-(explicit project save, project open), where no `process` is in flight for the
-instance. A proper between-blocks barrier (or applying `setState` at instantiate
-time, before the node enters the snapshot) is deferred — it would require
-threading the blob map through the compiler signature, which is out of this
-sub-phase's scope (C-7: compiler extended, not rewritten).
+VST3 mandates single-threaded plugin access. The two FFI directions are no
+longer equivalent in their exposure:
 
-> **⚠ Blocking debt — surfaced 2026-06-03 (architecture review).** This invariant
-> is a **convention, not enforced by any code**. It holds today only because the
-> sole save/load triggers are user-initiated and happen at rest. **The first
-> feature that writes plugin state while the transport may be running — most
-> obviously autosave-during-playback, expected for "sessions énormes" we don't
-> want to lose — makes this a genuine data race on the shared `IComponent`
-> (corruption / crash on an untrusted plugin).** Treat the race-free option
-> (apply `setState` at instantiate, before the node enters the snapshot) as a
-> **prerequisite** for any such feature, not an optional follow-up. Do not ship
-> autosave-during-playback on top of the current code.
+**Restore (`setState`) — race-free (implemented 2026-06-03).** State is no longer
+pushed onto a live, snapshotted instance after the compile. The project-load path
+stages the blobs (`PluginHost::set_pending_state_blobs`) and `instantiate` applies
+each blob to its freshly-created instance **before the node enters any snapshot**
+— so no `process()` can be in flight for that instance when `setState` runs. This
+closes the load-direction race for **all** triggers, not just transport-stopped
+ones. (It also turned out **not** to require threading the blob map through the
+compiler signature, as this section previously assumed: the staging map lives on
+the host, which the compiler already holds `&mut`. C-7 untouched — no compiler
+signature change.) Locked by `host::tests::staged_state_is_applied_at_instantiation`
+and `cleared_staged_state_is_not_applied`.
+
+**Save (`getState`) — residual risk (still open).** The save path
+(`save_device_state`) reads `IComponent::getState` / `clap.state.save` on the
+command thread while the instance **is** live in the snapshot. It is **not**
+sequenced against the audio thread's `process()`. It holds today only by the
+convention that explicit project save happens at rest.
+
+> **⚠ Remaining debt — the save direction.** The save-side `getState` is still a
+> **convention, not enforced by code**. **Autosave-during-playback** (expected for
+> "sessions énormes" we don't want to lose) would read `getState` concurrently
+> with `process()` on the shared `IComponent` — a genuine data race on an
+> untrusted plugin. Before shipping autosave-during-playback, give the save path a
+> between-blocks barrier (or a command-thread shadow of the last serialised state
+> harvested at a safe point). The pre-snapshot trick used for restore does not
+> apply to save, because a save must read an *already-live* instance.
 
 ## Compatibility
 
@@ -134,17 +147,20 @@ sub-phase's scope (C-7: compiler extended, not rewritten).
   multi-MB preset; rejected for file bloat.
 - **Adding the `base64` crate.** A 40-line codec avoids a new dependency for a
   trivial need.
-- **Applying `setState` at instantiate time** (the race-free option). Correct,
-  but requires changing the compiler/`instantiate` signature to carry the blob
-  map — deferred to a focused follow-up to keep this sub-phase contained.
+- **Applying `setState` at instantiate time** (the race-free option). Was
+  deferred here on the assumption it needed a compiler/`instantiate` signature
+  change. **Implemented 2026-06-03** via a host-side staging map instead (no
+  signature change) — see the threading caveat. Restore is now race-free.
 
 ## Technical debt added
 
 - **AU / WASM state unimplemented**: they return `None`/`false` and fall back to
   the empty cache. (CLAP closed in 4c.)
-- **State save/load not barrier-synchronised** against `process` (see caveat) —
-  applies to CLAP identically: `clap.state.save/load` are `[main-thread]` and are
-  called on the command thread while the transport is stopped.
+- **State *save* not barrier-synchronised** against `process` (see caveat) —
+  applies to CLAP identically (`clap.state.save` is `[main-thread]`). *Restore*
+  is now race-free (applied at instantiation); only the save-side `getState`
+  remains a convention, and is the prerequisite to close before
+  autosave-during-playback.
 - **Controller-only state not persisted** (single-component assumption, VST3).
 - **CLAP state not verified against a real plugin in CI** — the round-trip test
   exercises the host stream callbacks only; smoke-testing Surge XT / a CLAP synth
@@ -155,6 +171,7 @@ sub-phase's scope (C-7: compiler extended, not rewritten).
 Phase 4 (state) is complete for VST3 + CLAP. The remaining Phase 4 surface is
 already shipped (4a single instance). Subsequent work moves to Phase 5
 (PortKind + MIDI + automation); see [`docs/active/migration/migration_plan.md`](../migration/migration_plan.md) §5.
-A focused follow-up may apply `setState`/`clap.state.load` at instantiate time
-(the race-free option deferred in *Alternatives rejected*) once the compiler can
-carry the blob map.
+State **restore** at instantiate (the race-free option) is now implemented. The
+open follow-up is the **save** direction: barrier-synchronise `getState` against
+`process` (or harvest a command-thread shadow at a safe point) before any
+autosave-during-playback feature.

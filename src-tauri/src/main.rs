@@ -238,22 +238,28 @@ fn apply_loaded_project(
         *p = Some(file_path);
     }
 
-    // Recompile the audio graph so the engine knows about the loaded clips.
-    // Without this the scheduler stays at the empty-project state and produces
-    // silence even though the UI shows the correct tracks and clips.
-    recompile_audio_graph(state);
-
-    // Restore plugin internal state now that the compile has instantiated the
-    // devices (Phase 4b / ADR-010).  Off-RT; project open implies a stopped
-    // transport, so `setState` does not race the audio thread here.
+    // Stage plugin state so the upcoming compile applies it *at instantiation*,
+    // before any node enters a snapshot — rather than pushing `setState` onto the
+    // already-snapshotted instances afterwards, which raced the audio thread on
+    // the shared handle (ADR-010 race-free restore).
     if !plugin_state_blobs.is_empty() {
         if let Ok(mut engine) = state.audio_engine.lock() {
-            for (id, bytes) in &plugin_state_blobs {
-                engine.plugin_host.load_device_state(
-                    plugin_system::state::DeviceState::from_binary(id, bytes.clone()),
-                );
-            }
+            engine
+                .plugin_host
+                .set_pending_state_blobs(plugin_state_blobs);
         }
+    }
+
+    // Recompile the audio graph so the engine knows about the loaded clips.
+    // Without this the scheduler stays at the empty-project state and produces
+    // silence even though the UI shows the correct tracks and clips.  The staged
+    // plugin state is consumed here, during instantiation.
+    recompile_audio_graph(state);
+
+    // Drop the staged blobs: they have been applied; a later structural recompile
+    // must not re-apply this loaded state over the instance's live state.
+    if let Ok(mut engine) = state.audio_engine.lock() {
+        engine.plugin_host.clear_pending_state_blobs();
     }
 
     state

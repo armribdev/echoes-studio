@@ -81,6 +81,12 @@ struct DeviceRecord {
 pub struct PluginHost {
     registry: PluginRegistry,
     records: HashMap<String, DeviceRecord>,
+    /// Plugin state blobs staged before a project-load compile, keyed by
+    /// `device_id`.  `instantiate` applies the matching blob to a freshly-created
+    /// instance **before the node enters any snapshot**, so `setState` cannot race
+    /// the audio thread's `process()` (ADR-010 race-free restore).  Empty for
+    /// ordinary recompiles — only the project-load path stages and then clears it.
+    pending_state_blobs: HashMap<String, Vec<u8>>,
 }
 
 impl PluginHost {
@@ -88,7 +94,25 @@ impl PluginHost {
         PluginHost {
             registry: PluginRegistry::new(),
             records: HashMap::new(),
+            pending_state_blobs: HashMap::new(),
         }
+    }
+
+    // ── Staged plugin state (ADR-010 race-free restore) ──────────────────────────
+
+    /// Stage plugin state blobs to be applied during the next compile, at
+    /// instantiation time (before any node is published to the audio thread).
+    /// Called on the command thread by the project-load path, immediately before
+    /// the recompile it pairs with.
+    pub fn set_pending_state_blobs(&mut self, blobs: HashMap<String, Vec<u8>>) {
+        self.pending_state_blobs = blobs;
+    }
+
+    /// Drop any staged state blobs.  Called after the project-load compile so a
+    /// later structural recompile never re-applies stale loaded state over the
+    /// instance's live state.
+    pub fn clear_pending_state_blobs(&mut self) {
+        self.pending_state_blobs.clear();
     }
 
     // ── Registry ───────────────────────────────────────────────────────────────
@@ -203,11 +227,24 @@ impl PluginHost {
         // / save lands on the host API.
         instance.set_lifecycle(LifecycleState::Running);
 
+        // ADR-010 race-free state restore: if the project-load path staged a blob
+        // for this device, apply it now — the instance is brand-new and not yet in
+        // any snapshot, so `setState` cannot race the audio thread's `process()`.
+        // The blob is also cached in `saved_state` so formats with no FFI state
+        // path (internal/AU/WASM) still round-trip it on the next save.
+        let saved_state = match self.pending_state_blobs.get(plugin_id) {
+            Some(bytes) => {
+                let _ = instance.load_state_blob(bytes);
+                DeviceState::from_binary(plugin_id, bytes.clone())
+            }
+            None => DeviceState::empty(plugin_id),
+        };
+
         self.records.insert(
             plugin_id.to_string(),
             DeviceRecord {
                 instance,
-                saved_state: DeviceState::empty(plugin_id),
+                saved_state,
             },
         );
 
@@ -481,20 +518,10 @@ impl PluginHost {
         }
     }
 
-    /// Restore a device's state.  For VST3 the blob is pushed into the live
-    /// plugin via `IComponent::setState`; the blob is also cached so formats
-    /// not yet wired to FFI keep their previous behaviour.
-    pub fn load_device_state(&mut self, state: DeviceState) {
-        let id = state.device_id.clone();
-        if let Some(record) = self.records.get_mut(&id) {
-            if let Some(bytes) = state.as_binary() {
-                if !record.instance.load_state_blob(bytes) {
-                    eprintln!("[plugin] setState rejected/ignored for '{id}'");
-                }
-            }
-            record.saved_state = state;
-        }
-    }
+    // State *restore* is no longer a post-compile call (it raced the audio
+    // thread's `process()` on the shared `IComponent` — ADR-010).  The project-
+    // load path now stages blobs via `set_pending_state_blobs`, and `instantiate`
+    // applies them to each instance before it enters a snapshot.
 
     /// Iterate the device IDs of all currently-instantiated plugins.  Used by
     /// the project-save path to harvest live plugin state.
@@ -643,5 +670,51 @@ mod tests {
         assert_eq!(host.device_count(), 1);
         assert!(host.instance("echoes.gain").is_some());
         assert!(host.instance("echoes.pan").is_none());
+    }
+
+    /// ADR-010 race-free restore: a blob staged before the compile is applied to
+    /// the instance *at instantiation* (before it could enter a snapshot) and is
+    /// retained so a later save round-trips it.  Exercised on the internal path
+    /// (no FFI), where the blob lands in the record cache.
+    #[test]
+    fn staged_state_is_applied_at_instantiation() {
+        let mut host = PluginHost::new();
+        let blob = vec![1u8, 2, 3, 4];
+
+        let mut staged = HashMap::new();
+        staged.insert("echoes.gain".to_string(), blob.clone());
+        host.set_pending_state_blobs(staged);
+
+        host.instantiate(NodeId(1), "echoes.gain", false).unwrap();
+
+        let restored = host
+            .save_device_state("echoes.gain")
+            .expect("device is instantiated");
+        assert_eq!(
+            restored.as_binary(),
+            Some(blob.as_slice()),
+            "staged blob must be applied/retained at instantiation"
+        );
+    }
+
+    /// After the staged blobs are cleared, a fresh instantiation must NOT re-apply
+    /// stale loaded state — the guard that keeps a later structural recompile from
+    /// stamping old loaded state over the instance's live state.
+    #[test]
+    fn cleared_staged_state_is_not_applied() {
+        let mut host = PluginHost::new();
+        let mut staged = HashMap::new();
+        staged.insert("echoes.gain".to_string(), vec![9u8, 9, 9]);
+        host.set_pending_state_blobs(staged);
+        host.clear_pending_state_blobs();
+
+        host.instantiate(NodeId(1), "echoes.gain", false).unwrap();
+
+        let restored = host.save_device_state("echoes.gain").unwrap();
+        assert_eq!(
+            restored.as_binary(),
+            None,
+            "no staged blob → no state applied (empty record)"
+        );
     }
 }
