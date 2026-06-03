@@ -2,10 +2,8 @@
 
 ## Status
 
-**Accepted — implemented 2026-06-03 for CLAP + internal formats.** VST3 reuse is
-deferred (gated out of the reuse path — see "Scope of edit" and Follow-ups): its
-`set_active` / `set_processing` lifecycle still lives in the wrapper `prepare` and
-must move to the instance before VST3 can be reused safely. Fixes **point 1** of
+**Accepted — implemented 2026-06-03 for CLAP, VST3 + internal formats.** AU/WASM
+are pass-through stubs with no live instance to reuse. Fixes **point 1** of
 [`audits/engine-architecture-audit-2026-06-03.md`](../audits/engine-architecture-audit-2026-06-03.md).
 Builds on the per-instance records keying landed in the
 [ADR-007 update (2026-06-03)](007-plugin-instance-arc.md#update--2026-06-03-records-keyed-by-instance_key).
@@ -52,6 +50,12 @@ So reuse requires moving the **activation lifecycle** (`activate`/`deactivate`,
 `start`/`stop_processing`) out of the per-wrapper `Drop`/`prepare` and onto the
 **shared `PluginInstance`**, owned by the host.
 
+VST3 is the simpler case: its wrapper already has **no `Drop`** (teardown lives in
+`PluginInstance::Drop`), so only the *new* wrapper's `prepare` could double-activate.
+Moving `setActive`/`setProcessing` into `PluginInstance::vst3_ensure_active`
+(idempotent) closes that, and the existing `Drop` (`setProcessing(0)` →
+`setActive(0)` → `terminate` → `release`) is unchanged.
+
 ---
 
 ## Decision
@@ -64,44 +68,48 @@ instead of rebuilding it, when **all** hold (`PluginHost::reuse_existing`):
 2. a record exists under the node's `instance_key`, and its `device_id` (type)
    matches the requested node (the slot still hosts the same plugin);
 3. the instance is not in a terminal lifecycle state (`Destroyed`/`Error`);
-4. the format is **reuse-safe** — Internal or CLAP today (VST3/AU/WASM fall
-   through to the current full re-instantiate path).
+4. the format is **reuse-safe** — Internal, CLAP, or VST3 (AU/WASM are
+   pass-through stubs and fall through to the current path).
 
 When reusing, build a fresh wrapper around `Arc::clone(existing.instance)` — **no
 new native handle** — so the plugin's internal DSP state is preserved.
 
-### Activation lifecycle moved to the instance (CLAP)
+### Activation lifecycle moved to the instance
 
-`PluginInstance` now owns CLAP activation
-([`instance.rs`](../../../src-tauri/src/plugin_system/instance.rs)):
+`PluginInstance` now owns the activation lifecycle
+([`instance.rs`](../../../src-tauri/src/plugin_system/instance.rs)) for both
+formats, each idempotent: no-op when already active at the same config;
+deactivate + reactivate on a config change.
 
-- `clap_ensure_active(sample_rate, max_block)` — idempotent: no-op when already
-  active at the same config; `stop_processing + deactivate` then reactivate on a
-  config change; `init` (once) + `activate` + `start_processing` otherwise. Runs
-  on the command thread during `prepare`.
-- `PluginInstance::Drop` performs `stop_processing + deactivate` (if active)
-  before `destroy`.
-- The CLAP **wrapper** (`ClapWrapperNode`) and **instrument** (`ClapInstrument`)
-  `prepare` now call `clap_ensure_active`; their `Drop` impls were removed — a
-  displaced wrapper no longer touches the shared plugin.
+- **CLAP** — `clap_ensure_active(sample_rate, max_block)`: `init` (once) +
+  `activate` + `start_processing`. `PluginInstance::Drop` performs
+  `stop_processing + deactivate` (if active) before `destroy`. The CLAP
+  **wrapper** (`ClapWrapperNode`) and **instrument** (`ClapInstrument`) `prepare`
+  call it; their `Drop` impls were removed.
+- **VST3** — `vst3_ensure_active(sample_rate, max_block)`: `setBusArrangements` +
+  `activateBus` ×2 + `setActive(1)` + `setupProcessing` + `setProcessing(1)`. The
+  wrapper `prepare` calls it; the wrapper has no `Drop` (teardown was already in
+  `PluginInstance::Drop`), so the displaced-wrapper case was already safe.
 
-Only one graph is live at a time (atomic snapshot swap), so the old and new
-wrappers never call `process` on the shared instance concurrently; the displaced
-wrapper's drop does no FFI at all.
+Both run on the command thread during `prepare`. Only one graph is live at a time
+(atomic snapshot swap), so old and new wrappers never call `process` on the shared
+instance concurrently; a displaced wrapper's drop does no FFI on the plugin.
 
 ### Scope of edit
 
 - [`plugin_system/instance.rs`](../../../src-tauri/src/plugin_system/instance.rs)
-  — `ClapActivation` state + `clap_ensure_active` + CLAP `Drop` teardown.
+  — `ActivationState` (per format) + `clap_ensure_active` / `vst3_ensure_active`
+  + CLAP `Drop` teardown.
 - [`plugin_formats/clap/wrapper.rs`](../../../src-tauri/src/plugin_formats/clap/wrapper.rs),
-  [`audio_graph/nodes/clap_instrument.rs`](../../../src-tauri/src/audio_graph/nodes/clap_instrument.rs)
-  — `prepare` delegates activation to the instance; no `Drop` FFI.
+  [`audio_graph/nodes/clap_instrument.rs`](../../../src-tauri/src/audio_graph/nodes/clap_instrument.rs),
+  [`plugin_formats/vst3/wrapper.rs`](../../../src-tauri/src/plugin_formats/vst3/wrapper.rs)
+  — `prepare` delegates activation to the instance; CLAP `Drop` FFI removed.
 - [`plugin_system/host.rs`](../../../src-tauri/src/plugin_system/host.rs) —
   `reuse_existing` short-circuit in `instantiate` / `instantiate_instrument`.
 - The compiler call site is unchanged (`instantiate` still returns
   `Box<dyn AudioNode>`, C-7).
 
-Migrated **variant by variant** (C-3): CLAP + internal now; VST3 deferred.
+Migrated **variant by variant** (C-3): internal, CLAP, then VST3.
 
 ---
 
@@ -123,7 +131,7 @@ on the command thread (`prepare`) / drop-ring worker (teardown).
 
 - **C-2 (bit-identical offline).** Preserved — single-compile render path
   unchanged. Reuse is a live-recompile optimisation only.
-- **C-3 (variant-by-variant).** CLAP + internal migrated; VST3 deferred.
+- **C-3 (variant-by-variant).** Internal, CLAP and VST3 migrated.
 - **C-4 (saved projects).** No file-format change.
 - **C-6 (one live instance per device).** Reinforced — reuse guarantees the same
   shared `Arc<PluginInstance>` survives recompiles instead of being rebuilt.
@@ -149,21 +157,21 @@ on the command thread (`prepare`) / drop-ring worker (teardown).
 ## Consequences
 
 - **Positive.** Removes the dominant per-edit CPU spike and the plugin-state loss
-  for CLAP; reinforces C-6; completes the wrapper→instance lifecycle unification
-  ADR-007 deferred to Phase 2b/4 (CLAP side).
-- **Risk.** The activation-lifecycle migration (CLAP) is the delicate part: a
-  mistake deactivates a live instance. Mitigation: the C-2 offline harness stays
-  green + per-format smoke test (load a CLAP effect, edit graph structure
+  for CLAP and VST3; reinforces C-6; completes the wrapper→instance lifecycle
+  unification ADR-007 deferred to Phase 2b/4.
+- **Risk.** The activation-lifecycle migration is the delicate part: a mistake
+  deactivates a live instance. Mitigation: the C-2 offline harness stays green +
+  per-format smoke test (load a CLAP/VST3 effect, edit graph structure
   mid-playback, assert no click / no crash and tail continuity).
 - **Reversibility.** Reuse is a guarded branch in `instantiate`; disabling the
-  branch restores the current re-instantiate behaviour.
+  branch (or dropping a format from the reuse-safe match) restores the
+  re-instantiate behaviour.
 
 ## Follow-ups
 
-- **VST3 reuse.** Move VST3 `setActive`/`setProcessing` out of the wrapper
-  `prepare` into the instance (mirroring CLAP), then add `DeviceFormat::Vst3` to
-  the reuse-safe set in `reuse_existing`.
 - Pairs with **ADR-017** (per-instance addressing) for the full closure of audit
   points 1-2.
-- Sample-rate / buffer-size change is handled in `clap_ensure_active`
-  (deactivate + reactivate); an in-place re-`setup` is a later optimisation.
+- Sample-rate / buffer-size change is handled in `clap_ensure_active` /
+  `vst3_ensure_active` (deactivate + reactivate); an in-place re-`setup` is a
+  later optimisation.
+- AU/WASM gain reuse once they host a real instance (today pass-through stubs).

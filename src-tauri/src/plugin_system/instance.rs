@@ -47,7 +47,9 @@ use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU8, AtomicU64, Ordering};
 use std::sync::Arc;
 
 use crate::plugin_formats::clap::ffi::{ClapHost, ClapLibrary, ClapPlugin};
-use crate::plugin_formats::vst3::ffi::{IAudioProcessor, IComponent, Vst3Library};
+use crate::plugin_formats::vst3::ffi::{
+    IAudioProcessor, IComponent, ProcessSetup, Vst3Library, SPEAKER_STEREO,
+};
 use crate::plugin_system::lifecycle::LifecycleState;
 use crate::plugin_system::param_queue::{ParamChange, ParamQueue};
 use crate::plugin_system::wrapper::{DeviceFormat, DeviceInfo};
@@ -113,15 +115,18 @@ pub enum NativeHandle {
 unsafe impl Send for NativeHandle {}
 unsafe impl Sync for NativeHandle {}
 
-// ── CLAP activation state (ADR-016) ───────────────────────────────────────────
+// ── Activation state (ADR-016) ────────────────────────────────────────────────
 //
-// The CLAP `init → activate → start_processing` / `stop_processing → deactivate`
-// lifecycle is owned **by the instance**, not the wrapper, so it survives a
+// The plugin activation lifecycle (CLAP `init → activate → start_processing`;
+// VST3 `setBusArrangements → activateBus → setActive → setupProcessing →
+// setProcessing`) is owned **by the instance**, not the wrapper, so it survives a
 // wrapper rebuild when a graph is recompiled and the same live instance is
 // reused.  All transitions run on the command thread (graph prepare) or the
 // drop-ring worker (teardown) — never the audio thread.
 
-struct ClapActivation {
+struct ActivationState {
+    /// CLAP only: `init` must run exactly once before `activate`.  Unused (and
+    /// always `false`) for VST3, whose component is initialised at creation.
     initialized: AtomicBool,
     active: AtomicBool,
     /// Sample rate (`f32::to_bits`) the plugin was activated at; activation is
@@ -131,9 +136,9 @@ struct ClapActivation {
     block: AtomicU32,
 }
 
-impl ClapActivation {
+impl ActivationState {
     fn new() -> Self {
-        ClapActivation {
+        ActivationState {
             initialized: AtomicBool::new(false),
             active: AtomicBool::new(false),
             sr_bits: AtomicU32::new(0),
@@ -186,9 +191,11 @@ pub struct PluginInstance {
     /// wrapper drains it at the top of `process` — the sole consumer.
     param_queue: ParamQueue,
 
-    /// CLAP activation lifecycle (ADR-016).  Owned here so it survives wrapper
-    /// rebuilds on recompile.  Unused for non-CLAP handles.
-    clap_activation: ClapActivation,
+    /// Plugin activation lifecycle (ADR-016).  Owned here so it survives wrapper
+    /// rebuilds on recompile.  One per format that supports reuse; the unused one
+    /// for a given handle stays inert.
+    clap_activation: ActivationState,
+    vst3_activation: ActivationState,
 }
 
 impl PluginInstance {
@@ -202,7 +209,8 @@ impl PluginInstance {
             handle: NativeHandle::Internal,
             lifecycle: AtomicU8::new(encode_lifecycle(LifecycleState::Running)),
             param_queue: ParamQueue::with_capacity(PARAM_QUEUE_CAPACITY),
-            clap_activation: ClapActivation::new(),
+            clap_activation: ActivationState::new(),
+            vst3_activation: ActivationState::new(),
         })
     }
 
@@ -230,7 +238,8 @@ impl PluginInstance {
             },
             lifecycle: AtomicU8::new(encode_lifecycle(LifecycleState::Created)),
             param_queue: ParamQueue::with_capacity(PARAM_QUEUE_CAPACITY),
-            clap_activation: ClapActivation::new(),
+            clap_activation: ActivationState::new(),
+            vst3_activation: ActivationState::new(),
         })
     }
 
@@ -255,7 +264,8 @@ impl PluginInstance {
             },
             lifecycle: AtomicU8::new(encode_lifecycle(LifecycleState::Created)),
             param_queue: ParamQueue::with_capacity(PARAM_QUEUE_CAPACITY),
-            clap_activation: ClapActivation::new(),
+            clap_activation: ActivationState::new(),
+            vst3_activation: ActivationState::new(),
         })
     }
 
@@ -390,6 +400,66 @@ impl PluginInstance {
             }
             ok
         }
+    }
+
+    /// Idempotently bring the VST3 component/processor to the active, processing
+    /// state, owned by the instance so it survives wrapper rebuilds on recompile
+    /// (ADR-016 reuse).  Mirrors [`clap_ensure_active`]:
+    ///
+    /// - Already active at the same `(sample_rate, max_block)` → no-op.
+    /// - Already active at a different config → `setProcessing(0)` +
+    ///   `setActive(0)`, then re-setup.
+    /// - Not active → `setBusArrangements` + `activateBus` ×2 + `setActive(1)` +
+    ///   `setupProcessing` + `setProcessing(1)`.
+    ///
+    /// No-op (`false`) for non-VST3 handles.  Runs on the command thread during
+    /// graph prepare — never the audio thread.
+    pub fn vst3_ensure_active(&self, sample_rate: f32, max_block: u32) -> bool {
+        let (comp, proc) = match &self.handle {
+            NativeHandle::Vst3 {
+                component,
+                processor,
+                ..
+            } => (component.as_ptr(), processor.as_ptr()),
+            _ => return false,
+        };
+        let sr_bits = sample_rate.to_bits();
+        let act = &self.vst3_activation;
+
+        if act.active.load(Ordering::Acquire) {
+            if act.sr_bits.load(Ordering::Relaxed) == sr_bits
+                && act.block.load(Ordering::Relaxed) == max_block
+            {
+                return true;
+            }
+            unsafe {
+                ((*(*proc).vtbl).set_processing)(proc, 0);
+                ((*(*comp).vtbl).set_active)(comp, 0);
+            }
+            act.active.store(false, Ordering::Release);
+        }
+
+        unsafe {
+            let mut in_arr = SPEAKER_STEREO;
+            let mut out_arr = SPEAKER_STEREO;
+            ((*(*proc).vtbl).set_bus_arrangements)(proc, &mut in_arr, 1, &mut out_arr, 1);
+            // kAudio=0; input bus (dir=0) and output bus (dir=1), index 0, on.
+            ((*(*comp).vtbl).activate_bus)(comp, 0, 0, 0, 1);
+            ((*(*comp).vtbl).activate_bus)(comp, 0, 1, 0, 1);
+            ((*(*comp).vtbl).set_active)(comp, 1);
+            let setup = ProcessSetup {
+                process_mode: 0,
+                symbolic_sample_size: 0,
+                max_samples_per_block: max_block as i32,
+                sample_rate: sample_rate as f64,
+            };
+            ((*(*proc).vtbl).setup_processing)(proc, &setup);
+            ((*(*proc).vtbl).set_processing)(proc, 1);
+        }
+        act.sr_bits.store(sr_bits, Ordering::Relaxed);
+        act.block.store(max_block, Ordering::Relaxed);
+        act.active.store(true, Ordering::Release);
+        true
     }
 
     /// Convenience: extract the CLAP plugin pointer if this instance is CLAP.

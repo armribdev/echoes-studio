@@ -147,14 +147,14 @@ off the audio thread (ADR-007 removal path).
 > **Instance reuse (engine audit point 1 — ADR-016, 2026-06-03).** `instantiate`
 > reuses the live instance held under a placement's `instance_key` instead of
 > rebuilding it, when the slot still hosts the same plugin type and the format is
-> reuse-safe (**CLAP + internal** today; VST3 deferred). A reused node is a fresh
-> wrapper around the shared `Arc<PluginInstance>` — no new native handle — so the
-> plugin's internal DSP state survives a structural recompile. The CLAP
-> `init → activate → start_processing` / `stop_processing → deactivate` lifecycle
-> is owned by `PluginInstance` (`clap_ensure_active` + its `Drop`), not the
-> wrapper, so a displaced wrapper never deactivates an instance the new graph
-> still shares. State-restoring compiles (project load, staged blobs) skip reuse
-> so the blob is applied to a fresh instance at instantiation (ADR-010).
+> reuse-safe (**internal, CLAP, VST3**; AU/WASM are stubs). A reused node is a
+> fresh wrapper around the shared `Arc<PluginInstance>` — no new native handle —
+> so the plugin's internal DSP state survives a structural recompile. The plugin
+> activation lifecycle is owned by `PluginInstance` (`clap_ensure_active` /
+> `vst3_ensure_active` + the CLAP `Drop`), not the wrapper, so a displaced wrapper
+> never deactivates an instance the new graph still shares. State-restoring
+> compiles (project load, staged blobs) skip reuse so the blob is applied to a
+> fresh instance at instantiation (ADR-010).
 
 ---
 

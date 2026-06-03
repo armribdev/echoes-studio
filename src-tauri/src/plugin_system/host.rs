@@ -144,7 +144,8 @@ impl PluginHost {
     ///   them at instantiation — ADR-010 race-free restore),
     /// - no record exists for the key, or the slot now hosts a different type,
     /// - the instance is terminal (`Destroyed`/`Error`), or
-    /// - the format isn't reuse-safe yet (VST3/AU/WASM — ADR-016 follow-up).
+    /// - the format isn't reuse-safe yet (AU/WASM — ADR-016 follow-up).
+    ///   CLAP, VST3 and internal are reuse-safe.
     fn reuse_existing(
         &self,
         node_id: NodeId,
@@ -171,6 +172,7 @@ impl PluginHost {
                 &inst.name,
             ))),
             DeviceFormat::Clap => Some(Box::new(ClapWrapperNode::new(node_id, Arc::clone(inst)))),
+            DeviceFormat::Vst3 => Some(Box::new(VstWrapperNode::new(node_id, Arc::clone(inst)))),
             _ => None,
         }
     }

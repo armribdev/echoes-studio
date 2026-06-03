@@ -46,8 +46,7 @@ use crate::plugin_system::state::DeviceState;
 use crate::plugin_system::wrapper::{Device, DeviceInfo};
 
 use super::ffi::{
-    AudioBusBuffers, HostParameterChanges, IAudioProcessor, IComponent, ProcessData, ProcessSetup,
-    K_RESULT_OK, SPEAKER_STEREO,
+    AudioBusBuffers, HostParameterChanges, IAudioProcessor, IComponent, ProcessData, K_RESULT_OK,
 };
 
 pub struct VstWrapperNode {
@@ -148,36 +147,20 @@ impl AudioNode for VstWrapperNode {
         // Pre-allocate the parameter-change list (ADR-007) — heap, off-RT.
         self.param_changes = Some(HostParameterChanges::boxed());
 
-        let (comp_nn, proc_nn) = self.handles();
+        // Activation lifecycle is owned by the shared instance (ADR-016) so it
+        // survives a wrapper rebuild when the live instance is reused across a
+        // recompile.  Idempotent: an already-active instance is left untouched
+        // (no double `setActive`).
+        self.instance
+            .vst3_ensure_active(ctx.sample_rate, ctx.max_block_size as u32);
+
+        // Query intrinsic latency after setup so the value reflects the
+        // configured sample rate / block size.  VST3 spec: callable from the
+        // main thread; the host must re-query if `restart` fires `kLatencyChanged`
+        // (handled when Phase 6 wires restart).
+        let (_, proc_nn) = self.handles();
         let proc = proc_nn.as_ptr();
-        let comp = comp_nn.as_ptr();
-
-        let mut in_arr = SPEAKER_STEREO;
-        let mut out_arr = SPEAKER_STEREO;
         unsafe {
-            ((*(*proc).vtbl).set_bus_arrangements)(proc, &mut in_arr, 1, &mut out_arr, 1);
-        }
-
-        unsafe {
-            ((*(*comp).vtbl).activate_bus)(comp, 0, 0, 0, 1);
-            ((*(*comp).vtbl).activate_bus)(comp, 0, 1, 0, 1);
-            ((*(*comp).vtbl).set_active)(comp, 1);
-        }
-
-        let setup = ProcessSetup {
-            process_mode: 0,         // realtime
-            symbolic_sample_size: 0, // float32
-            max_samples_per_block: ctx.max_block_size as i32,
-            sample_rate: ctx.sample_rate as f64,
-        };
-        unsafe {
-            ((*(*proc).vtbl).setup_processing)(proc, &setup);
-            ((*(*proc).vtbl).set_processing)(proc, 1);
-
-            // Query intrinsic latency after setup so the value reflects the
-            // configured sample rate / block size.  VST3 spec: callable from
-            // the main thread; the host must re-query if `restart` is fired
-            // with `kLatencyChanged` (handled when Phase 6 wires restart).
             self.reported_latency = ((*(*proc).vtbl).get_latency_samples)(proc);
         }
 
