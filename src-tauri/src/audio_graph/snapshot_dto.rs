@@ -257,6 +257,7 @@ mod tests {
             midi_notes: vec![],
             midi_clips: vec![],
             instrument: None,
+            automation_lanes: vec![],
         });
         let snap = GraphSnapshotDto::from_project(&project);
         assert!(!snap.audio_edges.is_empty());

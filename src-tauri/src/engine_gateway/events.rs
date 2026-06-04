@@ -45,6 +45,11 @@ pub mod ev {
     pub const MODULATION_ROUTE_REMOVED: &str = "MODULATION_ROUTE_REMOVED";
     pub const MODULATION_DEPTH_CHANGED: &str = "MODULATION_DEPTH_CHANGED";
 
+    // Automation — persisted
+    pub const AUTOMATION_LANE_ADDED: &str = "AUTOMATION_LANE_ADDED";
+    pub const AUTOMATION_LANE_REMOVED: &str = "AUTOMATION_LANE_REMOVED";
+    pub const AUTOMATION_CLIP_UPDATED: &str = "AUTOMATION_CLIP_UPDATED";
+
     // MIDI — persisted
     pub const MIDI_NOTES_SET: &str = "MIDI_NOTES_SET";
     pub const MIDI_CLIP_ADDED: &str = "MIDI_CLIP_ADDED";

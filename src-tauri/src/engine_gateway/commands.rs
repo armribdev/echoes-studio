@@ -60,6 +60,10 @@ pub mod cmd {
     pub const REMOVE_NODE: &str = "REMOVE_NODE";
     pub const CONNECT_NODES: &str = "CONNECT_NODES";
 
+    pub const ADD_AUTOMATION_LANE: &str = "ADD_AUTOMATION_LANE";
+    pub const REMOVE_AUTOMATION_LANE: &str = "REMOVE_AUTOMATION_LANE";
+    pub const UPDATE_AUTOMATION_CLIP: &str = "UPDATE_AUTOMATION_CLIP";
+
     pub const ADD_MODULATOR: &str = "ADD_MODULATOR";
     pub const REMOVE_MODULATOR: &str = "REMOVE_MODULATOR";
     pub const UPDATE_MODULATOR: &str = "UPDATE_MODULATOR";
@@ -307,4 +311,30 @@ pub struct SetClipMidiNotesPayload {
     pub track_id: String,
     pub clip_id: String,
     pub notes: Vec<crate::project::MidiNote>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AddAutomationLanePayload {
+    pub track_id: String,
+    /// `"track_gain"` | `"effect_param"` | `"plugin_param"`
+    pub target_kind: String,
+    pub effect_id: Option<String>,
+    /// Parameter name or native_id string (for plugin_param).
+    pub param: String,
+    #[serde(default)]
+    pub interpolation: crate::project::InterpolationMode,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct RemoveAutomationLanePayload {
+    pub track_id: String,
+    pub lane_id: String,
+}
+
+/// Replace or create one clip within an automation lane.
+#[derive(Debug, Deserialize)]
+pub struct UpdateAutomationClipPayload {
+    pub track_id: String,
+    pub lane_id: String,
+    pub clip: crate::project::AutomationClip,
 }

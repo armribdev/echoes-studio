@@ -28,6 +28,7 @@
 //! - [`snapshot`]       — `RuntimeSnapshot`: lock-free atomic scheduler swap
 //! - [`nodes`]          — concrete `AudioNode` implementations
 
+pub mod automation;
 pub mod buffer;
 pub mod compiler;
 pub mod denormal;

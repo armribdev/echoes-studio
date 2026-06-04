@@ -235,6 +235,46 @@ pub struct ProjectModulator {
     pub params: ModulatorParams,
 }
 
+/// Interpolation between consecutive automation points.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum InterpolationMode {
+    #[default]
+    Linear,
+    /// Hold the previous point's value until the next point (staircase).
+    Step,
+}
+
+/// A single time+value knot on an automation curve.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AutomationPoint {
+    /// Position on the project timeline in seconds.
+    pub time_s: f64,
+    /// Normalised parameter value [0..1].
+    pub value: f32,
+}
+
+/// A clip of automation data placed on the timeline.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AutomationClip {
+    pub id: String,
+    pub start_s: f64,
+    pub end_s: f64,
+    #[serde(default)]
+    pub points: Vec<AutomationPoint>,
+}
+
+/// One automation lane — drives a single parameter target from one or more clips.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AutomationLane {
+    pub id: String,
+    pub target: ModulationTargetRef,
+    #[serde(default)]
+    pub clips: Vec<AutomationClip>,
+    #[serde(default)]
+    pub interpolation: InterpolationMode,
+}
+
 /// Identifies the parameter that a modulation route targets.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -347,6 +387,8 @@ pub struct AppTrack {
     /// bit-identical).  When `Some(device_id)`, the compiler instantiates that
     /// plugin as the instrument node's generator.
     pub instrument: Option<String>,
+    /// Automation lanes — each drives one parameter from pre-recorded curves.
+    pub automation_lanes: Vec<AutomationLane>,
 }
 
 fn default_midi_grid_beats() -> f32 {
@@ -608,6 +650,7 @@ impl AppProject {
                         })
                         .collect(),
                     instrument: t.instrument.clone(),
+                    automation_lanes: t.automation_lanes.clone(),
                 })
                 .collect(),
             // New per-instance format (ADR-017): keyed by `instance_key`.
@@ -670,6 +713,7 @@ impl AppProject {
                 midi_notes: tf.midi_notes,
                 midi_clips,
                 instrument: tf.instrument,
+                automation_lanes: tf.automation_lanes,
             });
         }
         // Plugin state: prefer the per-instance format (ADR-017); fall back to
@@ -762,6 +806,7 @@ impl AppTrack {
                 })
                 .collect(),
             instrument: self.instrument.clone(),
+            automation_lanes: self.automation_lanes.clone(),
         }
     }
 }
@@ -937,6 +982,8 @@ pub struct TrackFile {
     pub midi_clips: Vec<MidiClipFile>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub instrument: Option<String>,
+    #[serde(default)]
+    pub automation_lanes: Vec<AutomationLane>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -1000,6 +1047,7 @@ pub struct TrackDto {
     pub midi_notes: Vec<MidiNote>,
     pub midi_clips: Vec<MidiClipDto>,
     pub instrument: Option<String>,
+    pub automation_lanes: Vec<AutomationLane>,
 }
 
 #[derive(Serialize, Clone)]
@@ -1044,6 +1092,7 @@ mod tests {
                 notes: vec![],
             }],
             instrument: None,
+            automation_lanes: vec![],
         });
         assert_eq!(project.timeline_end_secs(), 12.5);
     }
@@ -1079,6 +1128,7 @@ mod tests {
             midi_notes: vec![],
             midi_clips: vec![],
             instrument: Some("clap://surge.dll?org.surge-synth.surge-xt".into()),
+            automation_lanes: vec![],
         });
 
         let file = project.to_file();
@@ -1114,6 +1164,7 @@ mod tests {
             midi_notes: vec![],
             midi_clips: vec![],
             instrument: None,
+            automation_lanes: vec![],
         }
     }
 

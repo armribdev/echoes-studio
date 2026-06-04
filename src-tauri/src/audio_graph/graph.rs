@@ -18,6 +18,9 @@
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use std::sync::Arc;
+
+use crate::audio_graph::automation::{AutomationAction, CompiledAutomationCurve};
 use crate::audio_graph::modulation::{
     ModulationMap, ModulationRoute, ModulationSource, ModulationTarget, ModulatorKind, ParamId,
 };
@@ -175,6 +178,8 @@ pub struct AudioGraph {
     pub master_id: Option<NodeId>,
     /// Modulation routing table — built by `from_project`, consumed by the compiler.
     pub(crate) modulation: ModulationMap,
+    /// Resolved automation actions — built by `from_project`, consumed by the compiler.
+    pub(crate) automation_actions: Vec<AutomationAction>,
 }
 
 impl AudioGraph {
@@ -184,6 +189,7 @@ impl AudioGraph {
             edges: Vec::new(),
             master_id: None,
             modulation: ModulationMap::new(),
+            automation_actions: Vec::new(),
         }
     }
 
@@ -502,6 +508,34 @@ impl AudioGraph {
                         depth: route.depth,
                     },
                     route_id: Some(route.id.clone()),
+                });
+            }
+
+            // Resolve automation lanes to NodeId-level actions.
+            for lane in &track.automation_lanes {
+                let curve = Arc::new(CompiledAutomationCurve::from_lane(lane));
+                if curve.is_empty() {
+                    continue;
+                }
+                let (target_node_id, param_name) = match &lane.target {
+                    ModulationTargetRef::TrackGain { .. } => (gain_node, "gain".to_string()),
+                    ModulationTargetRef::EffectParam { effect_id, param, .. } => {
+                        match effect_node_ids.get(effect_id) {
+                            Some(&id) => (id, param.clone()),
+                            None => continue,
+                        }
+                    }
+                    ModulationTargetRef::PluginParam { effect_id, native_id } => {
+                        match effect_node_ids.get(effect_id) {
+                            Some(&id) => (id, format!("plugin_native:{native_id}")),
+                            None => continue,
+                        }
+                    }
+                };
+                graph.automation_actions.push(AutomationAction {
+                    target_node_id,
+                    param_name,
+                    curve,
                 });
             }
         }

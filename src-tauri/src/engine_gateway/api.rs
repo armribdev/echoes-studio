@@ -18,12 +18,13 @@ use std::sync::{Arc, MutexGuard};
 use tauri::Emitter;
 
 use super::commands::{
-    cmd, AddClipPayload, AddEffectPayload, AddMidiClipPayload, AddModulationRoutePayload,
-    AddModulatorPayload, BatchCommand, CommandEnvelope, CreateTrackPayload, DeleteTrackPayload,
-    MoveClipPayload, MoveMidiClipPayload, MuteTrackPayload, RemoveClipPayload, RemoveEffectPayload,
-    RemoveMidiClipPayload, RemoveModulationRoutePayload, RemoveModulatorPayload, SeekPayload,
-    SetClipMidiNotesPayload, SetMidiNotesPayload, SetModulationDepthPayload,
-    SetTrackInstrumentPayload, SoloTrackPayload, UpdateEffectPayload, UpdateModulatorPayload,
+    cmd, AddAutomationLanePayload, AddClipPayload, AddEffectPayload, AddMidiClipPayload,
+    AddModulationRoutePayload, AddModulatorPayload, BatchCommand, CommandEnvelope,
+    CreateTrackPayload, DeleteTrackPayload, MoveClipPayload, MoveMidiClipPayload, MuteTrackPayload,
+    RemoveAutomationLanePayload, RemoveClipPayload, RemoveEffectPayload, RemoveMidiClipPayload,
+    RemoveModulationRoutePayload, RemoveModulatorPayload, SeekPayload, SetClipMidiNotesPayload,
+    SetMidiNotesPayload, SetModulationDepthPayload, SetTrackInstrumentPayload, SoloTrackPayload,
+    UpdateAutomationClipPayload, UpdateEffectPayload, UpdateModulatorPayload,
     UpdateProjectNamePayload, UpdateTempoPayload, UpdateTrackPayload,
 };
 use crate::plugin_system::wrapper::DeviceFormat;
@@ -233,6 +234,7 @@ fn empty_app_track(id: String, name: String) -> AppTrack {
         midi_notes: vec![],
         midi_clips: vec![],
         instrument: None,
+        automation_lanes: vec![],
     }
 }
 
@@ -596,6 +598,34 @@ fn build_modulation_route(
         modulator_id: p.modulator_id.clone(),
         target,
         depth: p.depth,
+    })
+}
+
+fn build_automation_lane(
+    p: &AddAutomationLanePayload,
+) -> Result<crate::project::AutomationLane, String> {
+    use crate::project::{AutomationLane, ModulationTargetRef};
+    let target = match p.target_kind.as_str() {
+        "track_gain" => ModulationTargetRef::TrackGain {
+            track_id: p.track_id.clone(),
+        },
+        "effect_param" => ModulationTargetRef::EffectParam {
+            track_id: p.track_id.clone(),
+            effect_id: p.effect_id.clone().ok_or("effect_id required for effect_param target")?,
+            param: p.param.clone(),
+        },
+        "plugin_param" => ModulationTargetRef::PluginParam {
+            effect_id: p.effect_id.clone().ok_or("effect_id required for plugin_param target")?,
+            native_id: p.param.parse::<u32>()
+                .map_err(|_| "param must be a native_id (u32) for plugin_param".to_string())?,
+        },
+        other => return Err(format!("Unknown automation target kind: {other}")),
+    };
+    Ok(AutomationLane {
+        id: generate_id(),
+        target,
+        clips: vec![],
+        interpolation: p.interpolation.clone(),
     })
 }
 
@@ -1437,6 +1467,65 @@ fn process_command(
             )
         }
 
+        cmd::ADD_AUTOMATION_LANE => {
+            let p: AddAutomationLanePayload = serde_json::from_value(command.payload)
+                .map_err(|e| format!("ADD_AUTOMATION_LANE payload invalid: {e}"))?;
+            let lane = build_automation_lane(&p)?;
+            let lane_value = serde_json::to_value(&lane).unwrap_or_default();
+            with_project_mut(state, |project| {
+                require_track_mut(project, &p.track_id)?
+                    .automation_lanes
+                    .push(lane);
+                Ok(())
+            })?;
+            commit_recompile_before_emit(
+                &ctx,
+                ev::AUTOMATION_LANE_ADDED,
+                json!({ "track_id": p.track_id, "lane": lane_value }),
+            )
+        }
+
+        cmd::REMOVE_AUTOMATION_LANE => {
+            let p: RemoveAutomationLanePayload = serde_json::from_value(command.payload)
+                .map_err(|e| format!("REMOVE_AUTOMATION_LANE payload invalid: {e}"))?;
+            with_project_mut(state, |project| {
+                require_track_mut(project, &p.track_id)?
+                    .automation_lanes
+                    .retain(|l| l.id != p.lane_id);
+                Ok(())
+            })?;
+            commit_recompile_before_emit(
+                &ctx,
+                ev::AUTOMATION_LANE_REMOVED,
+                json!({ "track_id": p.track_id, "lane_id": p.lane_id }),
+            )
+        }
+
+        cmd::UPDATE_AUTOMATION_CLIP => {
+            let p: UpdateAutomationClipPayload = serde_json::from_value(command.payload)
+                .map_err(|e| format!("UPDATE_AUTOMATION_CLIP payload invalid: {e}"))?;
+            let clip_value = serde_json::to_value(&p.clip).unwrap_or_default();
+            with_project_mut(state, |project| {
+                let track = require_track_mut(project, &p.track_id)?;
+                let lane = track
+                    .automation_lanes
+                    .iter_mut()
+                    .find(|l| l.id == p.lane_id)
+                    .ok_or_else(|| format!("Automation lane {} not found", p.lane_id))?;
+                if let Some(existing) = lane.clips.iter_mut().find(|c| c.id == p.clip.id) {
+                    *existing = p.clip;
+                } else {
+                    lane.clips.push(p.clip);
+                }
+                Ok(())
+            })?;
+            commit_recompile_before_emit(
+                &ctx,
+                ev::AUTOMATION_CLIP_UPDATED,
+                json!({ "track_id": p.track_id, "lane_id": p.lane_id, "clip": clip_value }),
+            )
+        }
+
         other => Err(format!("Unknown command type: {other}")),
     }
 }
@@ -1492,6 +1581,7 @@ fn snapshot_track(t: &AppTrack) -> AppTrack {
         midi_notes: t.midi_notes.clone(),
         midi_clips: t.midi_clips.clone(),
         instrument: t.instrument.clone(),
+        automation_lanes: t.automation_lanes.clone(),
         clips: t.clips.iter().map(snapshot_clip).collect(),
     }
 }
@@ -2053,6 +2143,41 @@ fn apply_midi_clip_notes_set(project: &mut AppProject, payload: &Value) {
     }
 }
 
+fn apply_automation_lane_added(project: &mut AppProject, payload: &Value) {
+    let track_id = payload_str(payload, "track_id");
+    let Some(raw) = payload.get("lane") else { return };
+    let Ok(lane) = serde_json::from_value::<crate::project::AutomationLane>(raw.clone()) else {
+        return;
+    };
+    let Some(track) = find_track_mut(project, &track_id) else { return };
+    if !track.automation_lanes.iter().any(|l| l.id == lane.id) {
+        track.automation_lanes.push(lane);
+    }
+}
+
+fn apply_automation_lane_removed(project: &mut AppProject, payload: &Value) {
+    let track_id = payload_str(payload, "track_id");
+    let lane_id = payload_str(payload, "lane_id");
+    let Some(track) = find_track_mut(project, &track_id) else { return };
+    track.automation_lanes.retain(|l| l.id != lane_id);
+}
+
+fn apply_automation_clip_updated(project: &mut AppProject, payload: &Value) {
+    let track_id = payload_str(payload, "track_id");
+    let lane_id = payload_str(payload, "lane_id");
+    let Some(raw) = payload.get("clip") else { return };
+    let Ok(clip) = serde_json::from_value::<crate::project::AutomationClip>(raw.clone()) else {
+        return;
+    };
+    let Some(track) = find_track_mut(project, &track_id) else { return };
+    let Some(lane) = track.automation_lanes.iter_mut().find(|l| l.id == lane_id) else { return };
+    if let Some(existing) = lane.clips.iter_mut().find(|c| c.id == clip.id) {
+        *existing = clip;
+    } else {
+        lane.clips.push(clip);
+    }
+}
+
 fn apply_events(
     state: &tauri::State<'_, AppState>,
     mut project: AppProject,
@@ -2090,6 +2215,13 @@ fn apply_events(
             }
             ev::MODULATION_DEPTH_CHANGED => {
                 apply_modulation_depth_changed(&mut project, &event.payload)
+            }
+            ev::AUTOMATION_LANE_ADDED => apply_automation_lane_added(&mut project, &event.payload),
+            ev::AUTOMATION_LANE_REMOVED => {
+                apply_automation_lane_removed(&mut project, &event.payload)
+            }
+            ev::AUTOMATION_CLIP_UPDATED => {
+                apply_automation_clip_updated(&mut project, &event.payload)
             }
             ev::MIDI_NOTES_SET => apply_midi_notes_set(&mut project, &event.payload),
             ev::MIDI_CLIP_ADDED => apply_midi_clip_added(&mut project, &event.payload),

@@ -51,6 +51,7 @@ use std::collections::HashMap;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::Arc;
 
+use crate::audio_graph::automation::CompiledAutomationCurve;
 use crate::audio_graph::buffer::AudioBuffer;
 use crate::audio_graph::compiler::CompiledGraph;
 use crate::audio_graph::execution_plan::ExecutionPlan;
@@ -118,11 +119,16 @@ impl DelayLine {
 }
 
 struct CompiledModAction {
+    /// Index of the modulator node step.  Unused when `automation_curve` is `Some`.
     source_step: usize,
+    /// Output port on the modulator node.  Unused when `automation_curve` is `Some`.
     source_port: usize,
     param_id: u32,
     depth_cells: Option<Arc<RouteCells>>,
     static_depth: f32,
+    /// When `Some`, the action is driven by an automation curve evaluated at
+    /// the current transport position rather than a live modulator output buffer.
+    automation_curve: Option<Arc<CompiledAutomationCurve>>,
 }
 
 #[derive(Clone, Copy)]
@@ -229,7 +235,23 @@ impl GraphScheduler {
                 param_id,
                 depth_cells,
                 static_depth: route.target.depth,
+                automation_curve: None,
             });
+        }
+
+        // Automation actions: evaluated at transport position rather than from
+        // a modulator output buffer.  Depth is 1.0 (curve value delivered directly).
+        for action in compiled.automation_actions {
+            if action.target_step < num_steps {
+                mod_actions_by_step[action.target_step].push(CompiledModAction {
+                    source_step: 0,
+                    source_port: 0,
+                    param_id: action.param_id,
+                    depth_cells: None,
+                    static_depth: 1.0,
+                    automation_curve: Some(action.curve),
+                });
+            }
         }
 
         let delay_lines: Vec<Vec<Option<DelayLine>>> = plan
@@ -444,18 +466,20 @@ unsafe fn process_one_step(worker_id: usize, step_idx: usize, ws: Workspace) {
     // between blocks, the previous block's `mod_delta` must not persist.
     processor.reset_modulation();
     for action in actions {
-        let src_bufs = &*ws.output_buffers_ptr.add(action.source_step);
-        let mod_signal: f32 =
+        let mod_signal: f32 = if let Some(curve) = &action.automation_curve {
+            // Automation: evaluate pre-compiled curve at the current transport position.
+            // RT-safe: binary search on a Box<[...]>, no allocation.
+            curve.evaluate(transport.position_seconds as f32)
+        } else {
+            // Modulation: sample first frame of the modulator's output buffer
+            // (block-rate, up to one block of latency — BP-7 placeholder).
+            let src_bufs = &*ws.output_buffers_ptr.add(action.source_step);
             if action.source_port < src_bufs.len() && src_bufs[action.source_port].num_frames > 0 {
-                // PROVISIONAL (Phase 3): block-rate modulation — samples the
-                // first sample of the modulator's output buffer per block.  Up to
-                // one block of latency; not suitable for audio-rate modulation
-                // (FM, ring-mod).  Replace with sample-accurate interleaved
-                // dispatch when needed.
                 src_bufs[action.source_port].channel(0)[0]
             } else {
                 0.0
-            };
+            }
+        };
         let depth = match &action.depth_cells {
             Some(cells) => cells.depth(),
             None => action.static_depth,
@@ -716,6 +740,7 @@ mod tests {
             processors,
             meter_cells: HashMap::new(),
             route_cells: HashMap::new(),
+            automation_actions: Vec::new(),
         }
     }
 

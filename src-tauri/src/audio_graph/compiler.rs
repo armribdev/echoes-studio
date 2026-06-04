@@ -31,6 +31,7 @@ use crate::audio_graph::execution_plan::{
 };
 use crate::audio_graph::graph::{AudioGraph, NodeKind};
 use crate::audio_graph::live_params::LiveParams;
+use crate::audio_graph::automation::SchedulerAutomationAction;
 use crate::audio_graph::node::{AudioNode, NodeId, PluginModEntry, PortId, PortKind, PrepareContext};
 use crate::plugin_system::PluginHost;
 use crate::project::AppProject;
@@ -114,6 +115,8 @@ pub struct CompiledGraph {
     /// Per-route depth cells indexed by project route_id, used by the
     /// scheduler so live depth changes don't require a recompile.
     pub route_cells: HashMap<String, Arc<crate::audio_graph::live_params::RouteCells>>,
+    /// Pre-compiled automation actions, consumed by `GraphScheduler::new`.
+    pub automation_actions: Vec<SchedulerAutomationAction>,
 }
 
 pub struct GraphCompiler;
@@ -316,6 +319,21 @@ impl GraphCompiler {
             }
         }
 
+        // Resolve automation actions: NodeId → step index + param_id.
+        let automation_actions: Vec<SchedulerAutomationAction> = graph
+            .automation_actions
+            .iter()
+            .filter_map(|action| {
+                let step = *step_index.get(&action.target_node_id)?;
+                let param_id = processors[step].param_id(&action.param_name)?;
+                Some(SchedulerAutomationAction {
+                    target_step: step,
+                    param_id,
+                    curve: Arc::clone(&action.curve),
+                })
+            })
+            .collect();
+
         Self::compute_latency_compensation(&mut plan, &processors);
         Self::compute_execution_levels(&mut plan);
 
@@ -348,6 +366,7 @@ impl GraphCompiler {
             processors,
             meter_cells,
             route_cells,
+            automation_actions,
         })
     }
 
