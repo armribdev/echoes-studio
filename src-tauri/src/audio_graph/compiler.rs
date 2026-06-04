@@ -337,27 +337,31 @@ impl GraphCompiler {
         Self::compute_latency_compensation(&mut plan, &processors);
         Self::compute_execution_levels(&mut plan);
 
-        // ADR-007 removal path: drop host records for devices no longer in the graph.
-        let mut active_devices: HashSet<String> = HashSet::new();
+        // ADR-007 removal path: drop host records for placements no longer in the graph.
+        // Keyed by instance_key (per-placement id), not device_id: two placements of the
+        // same plugin type have distinct keys, so removing one does not keep the other's
+        // orphaned record alive.
+        let mut active_keys: HashSet<String> = HashSet::new();
         for graph_node in graph.nodes.values() {
             match &graph_node.kind {
-                NodeKind::Plugin { device_id, .. } => {
-                    active_devices.insert(device_id.clone());
+                NodeKind::Plugin { instance_key, .. } => {
+                    active_keys.insert(instance_key.clone());
                 }
                 NodeKind::Instrument { track_id } => {
-                    if let Some(device_id) = project
+                    let has_plugin = project
                         .tracks
                         .iter()
                         .find(|t| &t.id == track_id)
                         .and_then(|t| t.instrument.as_ref())
-                    {
-                        active_devices.insert(device_id.clone());
+                        .is_some();
+                    if has_plugin {
+                        active_keys.insert(format!("instrument:{track_id}"));
                     }
                 }
                 _ => {}
             }
         }
-        plugin_host.retain_devices(&active_devices);
+        plugin_host.retain_devices(&active_keys);
 
         let plan = Arc::new(plan);
 

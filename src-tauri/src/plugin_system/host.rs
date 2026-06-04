@@ -529,14 +529,13 @@ impl PluginHost {
     /// their existing record untouched, so a plugin that survives a recompile is
     /// never disturbed (no FFI churn, bit-identical).
     pub fn retain_devices(&mut self, active: &HashSet<String>) {
-        // Records are keyed by `instance_key`; `active` is the set of
-        // `device_id`s (plugin types) the new graph still references, so match
-        // on the instance's type rather than on the map key.
-        self.records.retain(|_instance_key, record| {
-            let keep = active.contains(&record.instance.device_id);
+        // Match on instance_key (the map key), not device_id: comparing by device_id
+        // would keep orphaned records when two placements of the same plugin type exist
+        // and only one is removed — the shared device_id would still appear in `active`
+        // via the surviving placement, preventing the removed placement's FFI teardown.
+        self.records.retain(|instance_key, record| {
+            let keep = active.contains(instance_key);
             if !keep {
-                // Mark terminal; the actual FFI teardown happens in
-                // `PluginInstance::drop` once the last `Arc` is released off-RT.
                 record.instance.set_lifecycle(LifecycleState::Destroyed);
             }
             keep
