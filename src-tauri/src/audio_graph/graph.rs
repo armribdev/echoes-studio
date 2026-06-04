@@ -318,7 +318,22 @@ impl AudioGraph {
         let any_solo = project.tracks.iter().any(|t| t.solo);
 
         for (port_idx, track) in project.tracks.iter().enumerate() {
-            let track_node = if !track.midi_clips.is_empty() {
+            let track_node = if !track.clips.is_empty() && !track.midi_clips.is_empty() {
+                // Track has both audio and MIDI clips — run each through its own
+                // source node then sum them through a Bus before the FX chain.
+                let audio_node = graph.add_node(
+                    NodeKind::Track { track_id: track.id.clone() },
+                    format!("{} [clips]", track.name),
+                );
+                let instr_node = graph.add_node(
+                    NodeKind::Instrument { track_id: track.id.clone() },
+                    format!("{} [instrument]", track.name),
+                );
+                let bus_node = graph.add_node(NodeKind::Bus, format!("{} [bus]", track.name));
+                graph.connect(audio_node, 0, bus_node, 0);
+                graph.connect(instr_node, 0, bus_node, 1);
+                bus_node
+            } else if !track.midi_clips.is_empty() {
                 graph.add_node(
                     NodeKind::Instrument {
                         track_id: track.id.clone(),
