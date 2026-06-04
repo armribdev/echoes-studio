@@ -38,6 +38,7 @@ use std::sync::Arc;
 
 use crate::audio_graph::buffer::AudioBuffer;
 use crate::audio_graph::node::{AudioNode, NodeId, PrepareContext, TransportInfo};
+use crate::plugin_formats::crash_guard;
 use crate::plugin_system::capabilities::DeviceCapabilities;
 use crate::plugin_system::instance::PluginInstance;
 use crate::plugin_system::lifecycle::{transition, LifecycleState};
@@ -48,6 +49,17 @@ use crate::plugin_system::wrapper::{Device, DeviceInfo};
 use super::ffi::{
     AudioBusBuffers, HostParameterChanges, IAudioProcessor, IComponent, ProcessData, K_RESULT_OK,
 };
+
+// Stack context passed to the SEH trampoline — no heap allocation.
+struct Vst3ProcessCtx {
+    proc_ptr: *mut IAudioProcessor,
+    data_ptr: *mut ProcessData,
+}
+
+unsafe extern "C" fn vst3_process_trampoline(raw: *mut c_void) -> i32 {
+    let ctx = &*(raw as *const Vst3ProcessCtx);
+    ((*(*ctx.proc_ptr).vtbl).process)(ctx.proc_ptr, ctx.data_ptr)
+}
 
 pub struct VstWrapperNode {
     node_id: NodeId,
@@ -79,6 +91,11 @@ pub struct VstWrapperNode {
     /// `IAudioProcessor::getLatencySamples`; queried off-RT by the graph
     /// compiler through `latency_samples()`.
     reported_latency: u32,
+
+    /// Set to `true` after the first SEH exception from the plugin's
+    /// `process()`.  All subsequent calls return immediately with silence,
+    /// keeping the audio thread safe until the graph is next recompiled.
+    crashed: bool,
 
     /// Pre-allocated modulation entries for plugin parameters (injected by the
     /// compiler via `inject_plugin_mod_entries`).  Iterated on the audio thread
@@ -112,6 +129,7 @@ impl VstWrapperNode {
             num_channels: 2,
             param_changes: None,
             reported_latency: 0,
+            crashed: false,
             mod_entries: Vec::new(),
         }
     }
@@ -179,7 +197,7 @@ impl AudioNode for VstWrapperNode {
         outputs: &mut [AudioBuffer],
         transport: &TransportInfo,
     ) {
-        if outputs.is_empty() {
+        if self.crashed || outputs.is_empty() {
             return;
         }
 
@@ -258,8 +276,19 @@ impl AudioNode for VstWrapperNode {
         // Non-atomic load through Arc::deref → identical cost to a field read.
         let (_, proc_nn) = self.handles();
         let proc = proc_nn.as_ptr();
-        let r = unsafe { ((*(*proc).vtbl).process)(proc, &mut data) };
+        let mut ctx = Vst3ProcessCtx { proc_ptr: proc, data_ptr: &mut data };
+        let r = unsafe {
+            crash_guard::guarded(
+                vst3_process_trampoline,
+                &mut ctx as *mut Vst3ProcessCtx as *mut c_void,
+            )
+        };
 
+        if r == crash_guard::CAUGHT {
+            // SEH exception from the plugin: mute permanently until next recompile.
+            self.crashed = true;
+            return;
+        }
         if r != K_RESULT_OK && !inputs.is_empty() {
             outputs[0].copy_from(inputs[0]);
         }

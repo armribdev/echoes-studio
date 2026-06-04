@@ -23,6 +23,7 @@ resolver = "2"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
+cc = "1"
 
 [dependencies]
 # Shared transport core for the out-of-process plugin sandbox (ADR-015).  The

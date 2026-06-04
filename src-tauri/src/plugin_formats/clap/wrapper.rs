@@ -28,10 +28,12 @@
 //!   safety claim).
 
 use std::collections::HashMap;
+use std::ffi::c_void;
 use std::sync::Arc;
 
 use crate::audio_graph::buffer::AudioBuffer;
 use crate::audio_graph::node::{AudioNode, NodeId, PrepareContext, TransportInfo};
+use crate::plugin_formats::crash_guard;
 use crate::plugin_system::capabilities::DeviceCapabilities;
 use crate::plugin_system::instance::PluginInstance;
 use crate::plugin_system::lifecycle::{transition, LifecycleState};
@@ -44,6 +46,17 @@ use super::ffi::{
     ClapPluginParams, ClapProcess, FixedParamEventList, CLAP_EXT_LATENCY, CLAP_EXT_PARAMS,
     CLAP_PROCESS_ERROR,
 };
+
+// Stack context passed to the SEH trampoline — no heap allocation.
+struct ClapProcessCtx {
+    plugin: *const ClapPlugin,
+    process: *const ClapProcess,
+}
+
+unsafe extern "C" fn clap_process_trampoline(raw: *mut c_void) -> i32 {
+    let ctx = &*(raw as *const ClapProcessCtx);
+    ((*ctx.plugin).process)(ctx.plugin, ctx.process)
+}
 
 // Plugins can push output events; we discard them until Phase 4 MIDI output.
 unsafe extern "C" fn out_try_push(
@@ -81,6 +94,11 @@ pub struct ClapWrapperNode {
 
     num_channels: usize,
     active: bool,
+
+    /// Set to `true` after the first SEH exception from the plugin's
+    /// `process()`.  All subsequent calls return immediately with silence,
+    /// keeping the audio thread safe until the graph is next recompiled.
+    crashed: bool,
 
     /// Cached intrinsic latency (samples).  Read once at `prepare()` via the
     /// `clap.latency` extension; queried by the graph compiler off the audio
@@ -124,6 +142,7 @@ impl ClapWrapperNode {
             param_ranges: HashMap::new(),
             num_channels: 2,
             active: false,
+            crashed: false,
             reported_latency: 0,
             mod_entries: Vec::new(),
         }
@@ -203,7 +222,7 @@ impl AudioNode for ClapWrapperNode {
         outputs: &mut [AudioBuffer],
         transport: &TransportInfo,
     ) {
-        if outputs.is_empty() || !self.active {
+        if self.crashed || outputs.is_empty() || !self.active {
             return;
         }
 
@@ -274,8 +293,19 @@ impl AudioNode for ClapWrapperNode {
         };
 
         let p = self.plugin_ptr();
-        let status = unsafe { ((*p).process)(p, &process) };
+        let mut ctx = ClapProcessCtx { plugin: p, process: &process };
+        let status = unsafe {
+            crash_guard::guarded(
+                clap_process_trampoline,
+                &mut ctx as *mut ClapProcessCtx as *mut c_void,
+            )
+        };
 
+        if status == crash_guard::CAUGHT {
+            // SEH exception from the plugin: mute permanently until next recompile.
+            self.crashed = true;
+            return;
+        }
         if status == CLAP_PROCESS_ERROR && !inputs.is_empty() {
             outputs[0].copy_from(inputs[0]);
         }

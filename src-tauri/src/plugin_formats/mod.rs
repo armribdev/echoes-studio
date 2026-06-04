@@ -14,5 +14,6 @@
 
 pub mod au;
 pub mod clap;
+pub(crate) mod crash_guard;
 pub mod internal;
 pub mod vst3;
