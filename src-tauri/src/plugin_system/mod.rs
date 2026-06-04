@@ -37,4 +37,7 @@ pub mod registry;
 pub mod state;
 pub mod wrapper;
 
+#[cfg(test)]
+mod ffi_lifecycle_tests;
+
 pub use host::PluginHost;
