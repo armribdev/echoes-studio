@@ -33,11 +33,11 @@ and **TDR Nova** (VST3) on Windows 11.
 
 | | Test | CLAP (Surge XT Effects) | VST3 (TDR Nova) |
 |--|------|--------------------------|------------------|
-| T1 | Activation `Created → activate → start_processing` | ✅ `active=true` | ⛔ blocked before activation (see finding) |
-| T2 | Real audio block through `process` vtable | ✅ output finite | ⛔ |
-| T3 | Sample-rate reinit (48k→44.1k) | ✅ reactivated | ⛔ |
-| T4 | Block-size change (512→256) | ✅ re-init | ⛔ |
-| T5 | Teardown / no leak | ✅ `strong_count=1`, `Destroyed`, real FFI release, no crash | ⛔ |
+| T1 | Activation `Created → activate → start_processing` | ✅ `active=true` | ✅ `active=true` (after F1 fix) |
+| T2 | Real audio block through `process` vtable | ✅ output finite | ✅ output finite |
+| T3 | Sample-rate reinit (48k→44.1k) | ✅ reactivated | ✅ reactivated |
+| T4 | Block-size change (512→256) | ✅ re-init | ✅ re-init |
+| T5 | Teardown / no leak | ✅ `strong_count=1`, `Destroyed`, real FFI release, no crash | ✅ `strong_count=1`, `Destroyed`, real FFI release, no crash |
 
 ### CLAP — real cycle log
 
@@ -56,9 +56,13 @@ and native teardown (`PluginInstance::Drop`) are correct, including idempotent
 re-activation on sample-rate and block-size changes. Lacune A and Lacune C are
 **validated for CLAP**.
 
-## Finding F1 — VST3 cannot be instantiated on Windows (interface IID byte order)
+## Finding F1 — VST3 could not be instantiated on Windows (interface IID byte order) — FIXED
 
-Every real VST3 fails at instantiation:
+> **Status: fixed and verified.** The VST3 lifecycle test (T1–T5) now passes
+> against a real plugin. The original failure and root cause are kept below for
+> the record.
+
+Before the fix, every real VST3 failed at instantiation:
 
 ```text
 [ffi-harness] DIVERGENCE: …\TDR Nova.vst3 failed to instantiate
@@ -99,49 +103,58 @@ pub const IID_ICOMPONENT: Tuid =
   which never crosses the VST3 FFI boundary. No test had ever driven a real VST3
   through `createInstance` — exactly Lacune A.
 
-### Impact
+### Impact (pre-fix)
 
-- **VST3 hosting is non-functional on Windows.** No third-party VST3 can be
-  instantiated, activated, processed, or torn down. Lacune A / Lacune C for VST3
-  are **not validatable** until F1 is fixed; the VST3 lifecycle test is
-  `#[ignore]`d with this reason and will enforce T1–T5 automatically once it is.
-- CLAP is unaffected (CLAP is a pure C ABI with no COM byte-order rule).
+- VST3 hosting was non-functional on Windows: no third-party VST3 could be
+  instantiated, activated, processed, or torn down.
+- CLAP was unaffected (CLAP is a pure C ABI with no COM byte-order rule).
 
-### Proposed minimal patch (NOT applied — out of scope: touches `plugin_formats`)
+### Fix applied
 
-Per the validation constraints (test/harness layer only, no plugin-system
-change), this is a proposal for the engine owner, not an applied change:
+Minimal, scoped to the two interface IIDs on the instantiation/activation path,
+in [`plugin_formats/vst3/ffi.rs`](../src-tauri/src/plugin_formats/vst3/ffi.rs):
 
-- Smallest fix: under `#[cfg(windows)]`, store every **interface** IID used in
-  `queryInterface` / `createInstance` in COM byte order (or apply a `com_swap`
-  helper at the constant definitions). The harness already contains a verified
-  `com_swap` (reverse `[0..4]`, `[4..6]`, `[6..8]`; keep `[8..16]`).
-- Affected constants (all queried by IID): `IID_ICOMPONENT`,
-  `IID_IAUDIO_PROCESSOR`, `IID_IEDIT_CONTROLLER`, `IID_IBSTREAM`,
-  `IID_ICOMPONENT_HANDLER`, `IID_IPLUG_VIEW`, `IID_IPLUG_FRAME`,
-  `IID_IHOST_APPLICATION`. `IID_FUNKNOWN`/`IID_IPLUGIN_FACTORY` are not used in an
-  IID comparison on the failing path but should be converted for consistency.
-- **Class CIDs must NOT be swapped** — they already arrive in COM order.
-- This is a behaviour fix on a documented boundary; it should be recorded against
-  the open audit item **V4** (and likely warrants an ADR note since it changes the
-  VST3 instantiation contract).
+```rust
+const fn interface_iid(be: Tuid) -> Tuid {
+    if cfg!(windows) {
+        // GUID byte order: reverse Data1[0..4], Data2[4..6], Data3[6..8]; keep Data4.
+        [be[3],be[2],be[1],be[0], be[5],be[4], be[7],be[6], be[8],be[9],be[10],be[11],be[12],be[13],be[14],be[15]]
+    } else { be }
+}
+pub const IID_ICOMPONENT: Tuid = interface_iid([/* big-endian literal */]);
+pub const IID_IAUDIO_PROCESSOR: Tuid = interface_iid([/* big-endian literal */]);
+```
+
+- The literals stay in readable big-endian form; the swap is `cfg(windows)`-only,
+  so non-Windows behaviour is unchanged.
+- **Class CIDs are not swapped** — they arrive from `getClassInfo` already in COM
+  order and round-trip unchanged.
+- **Scope deliberately limited** (per "touch only what is necessary"): only the
+  two IIDs exercised and verified end-to-end by this harness were changed. The
+  sibling interface IIDs used off this path — `IID_IEDIT_CONTROLLER`,
+  `IID_IBSTREAM`, `IID_ICOMPONENT_HANDLER`, `IID_IPLUG_VIEW`, `IID_IPLUG_FRAME`,
+  `IID_IHOST_APPLICATION` — carry the **same** defect and will likewise need
+  `interface_iid()` (plus their own validation) before VST3 state save/load (ADR-010)
+  and the VST3 editor GUI work on Windows. Tracked under open audit item **V4**.
 
 ## Divergences: bypass/mock path vs. real FFI
 
 | Aspect | Existing suite (internal/pass-through) | Real FFI (this harness) |
 |--------|----------------------------------------|--------------------------|
 | Boundary crossed | none (`PassThroughDevice`) | real `LoadLibrary` + factory + `process` vtable |
-| Activation | not exercised | CLAP: real `init/activate/start_processing` ✅ · VST3: blocked by F1 |
-| SR / block re-init | not exercised | CLAP: real deactivate→reactivate ✅ |
-| Teardown | `Drop` is a no-op for `Internal` | CLAP: real `stop/deactivate/destroy` ✅ · VST3: blocked |
-| VST3 instantiation | never tested | **fails (F1)** — would have stayed hidden |
+| Activation | not exercised | CLAP + VST3: real activate/start_processing ✅ |
+| SR / block re-init | not exercised | CLAP + VST3: real deactivate→reactivate ✅ |
+| Teardown | `Drop` is a no-op for `Internal` | CLAP + VST3: real release sequence ✅ |
+| VST3 instantiation | never tested | was broken (F1) — found, root-caused, **fixed**, now verified |
 | Bridge passthrough test | synthetic CLAP vtable (no DLL) | real `.clap` loaded from disk |
 
 ## Risks detected
 
-1. **R1 (critical) — VST3 hosting broken on Windows (F1).** Ships today as a
-   non-working format; users cannot load any VST3. Blocks all VST3 lifecycle
-   validation.
+1. **R1 (was critical) — VST3 hosting broken on Windows (F1). RESOLVED** for the
+   instantiation/activation/process/teardown path. Residual: the off-path
+   interface IIDs (state save/load, editor GUI, host context) still need the same
+   `interface_iid()` treatment + validation (audit V4) before those features work
+   on Windows.
 2. **R2 — teardown "no leak" is structural, not absolute.** T5 proves the last
    `Arc` is the only remaining reference and that `PluginInstance::Drop` runs the
    real release sequence without crash/hang. It does **not** use an OS handle /
@@ -160,6 +173,8 @@ change), this is a proposal for the engine owner, not an applied change:
 ## Status
 
 - CLAP real lifecycle (T1–T5): **PASS**.
-- VST3 real lifecycle (T1–T5): **BLOCKED by F1** (engine defect), reproduced and
-  root-caused; test `#[ignore]`d pending the engine fix.
-- No production code modified. Harness is additive and test-gated.
+- VST3 real lifecycle (T1–T5): **PASS** (after the F1 fix).
+- Full suite: **70 passed, 0 failed, 0 ignored**.
+- Engine change: minimal byte-order fix to two VST3 interface IIDs
+  (`cfg(windows)`-gated, [`vst3/ffi.rs`](../src-tauri/src/plugin_formats/vst3/ffi.rs)).
+  No graph, scheduler, threading, or plugin-system design was changed.

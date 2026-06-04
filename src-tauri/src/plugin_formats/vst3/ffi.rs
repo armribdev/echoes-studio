@@ -26,6 +26,22 @@ pub const K_RESULT_FALSE: TResult = 1;
 
 // Derived from the VST3 SDK using FUID::toTUID() big-endian serialisation.
 
+/// Windows VST3 is COM-compatible and matches interface IIDs in GUID byte order
+/// (`Data1`/`Data2`/`Data3` little-endian, `Data4` unchanged).  The literals
+/// below are the platform-neutral big-endian form; on Windows the first three
+/// groups must be byte-swapped or `createInstance`/`queryInterface` return
+/// E_NOINTERFACE for every plugin (see docs/ffi_lifecycle_validation.md, F1).
+const fn interface_iid(be: Tuid) -> Tuid {
+    if cfg!(windows) {
+        [
+            be[3], be[2], be[1], be[0], be[5], be[4], be[7], be[6], be[8], be[9], be[10], be[11],
+            be[12], be[13], be[14], be[15],
+        ]
+    } else {
+        be
+    }
+}
+
 /// Steinberg's FUnknown IID (non-COM-compatible, modern SDK convention).
 pub const IID_FUNKNOWN: Tuid = [
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46,
@@ -34,12 +50,12 @@ pub const IID_FUNKNOWN: Tuid = [
 pub const IID_IPLUGIN_FACTORY: Tuid = [
     0x7A, 0x4D, 0x81, 0x1C, 0x52, 0x11, 0x4A, 0x1F, 0xAE, 0xD9, 0xD2, 0xEE, 0x0D, 0xB2, 0x5A, 0x41,
 ];
-pub const IID_ICOMPONENT: Tuid = [
+pub const IID_ICOMPONENT: Tuid = interface_iid([
     0xE8, 0x31, 0xFF, 0x31, 0xF2, 0xD5, 0x43, 0x01, 0x92, 0x8E, 0xBB, 0xEE, 0x25, 0x69, 0x78, 0x02,
-];
-pub const IID_IAUDIO_PROCESSOR: Tuid = [
+]);
+pub const IID_IAUDIO_PROCESSOR: Tuid = interface_iid([
     0x42, 0x04, 0x3F, 0x99, 0xB7, 0xDA, 0x45, 0x3C, 0xA5, 0x69, 0xE7, 0x9D, 0x9A, 0xAE, 0xC3, 0x3D,
-];
+]);
 
 /// L | R  (bits 0 and 1)
 pub const SPEAKER_STEREO: u64 = 0x0000_0003;

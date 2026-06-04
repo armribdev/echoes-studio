@@ -359,13 +359,9 @@ fn vst3_iid_byteorder_probe(path: &Path) -> Option<String> {
     }
 }
 
-// Blocked by an engine defect this harness uncovered: VST3 interface IIDs are
-// encoded in platform-neutral big-endian order, but Windows VST3 requires COM
-// byte order, so `createInstance(IComponent)` returns E_NOINTERFACE for every
-// VST3.  Kept `#[ignore]` so the suite stays green; run with `--ignored
-// --nocapture` to reproduce + see the byte-order probe.  Remove `#[ignore]` once
-// the engine IIDs are fixed — the full lifecycle assertions then enforce it.
-#[ignore = "blocked: engine VST3 IIDs use non-COM byte order on Windows (E_NOINTERFACE); see docs/ffi_lifecycle_validation.md"]
+// Full real-VST3 lifecycle (T1–T5).  Unblocked once the engine's interface IIDs
+// were corrected to COM byte order on Windows (finding F1); the byte-order probe
+// in the all-failed branch remains as a regression explainer.
 #[test]
 fn vst3_real_instance_full_lifecycle() {
     let candidates = discover_all("ECHOES_TEST_VST3", "vst3");
