@@ -531,6 +531,25 @@ impl Vst3Library {
         });
         Ok((lib, factory))
     }
+
+    /// Re-obtain the plugin factory from the already-mapped DLL.  The module is
+    /// kept alive by this `Vst3Library`, so `GetPluginFactory` is safe to call
+    /// again; the returned factory carries a ref the caller must release.
+    ///
+    /// # Safety
+    /// Call off the audio thread.  The DLL must still be loaded (guaranteed
+    /// while `self` is alive).
+    pub unsafe fn factory(&self) -> Option<*mut IPluginFactory> {
+        let factory_fn = win32::GetProcAddress(self.handle, b"GetPluginFactory\0".as_ptr())?;
+        type GetPluginFactoryFn = unsafe extern "C" fn() -> *mut IPluginFactory;
+        let get_factory: GetPluginFactoryFn = std::mem::transmute(factory_fn);
+        let factory = get_factory();
+        if factory.is_null() {
+            None
+        } else {
+            Some(factory)
+        }
+    }
 }
 
 #[cfg(windows)]
@@ -556,9 +575,12 @@ impl Vst3Library {
 // Extends FUnknown (0–2) + IPluginBase (3–4) + IEditController own methods (5–17).
 
 /// IEditController — UI/parameter controller interface, main-thread only.
-pub const IID_IEDIT_CONTROLLER: Tuid = [
+/// Passed to the plugin's `queryInterface` / `createInstance`, so it must carry
+/// COM byte order on Windows like `IID_ICOMPONENT` (F1/V4 — the GUI half of the
+/// IID byte-order defect; without the swap QI/createInstance return E_NOINTERFACE).
+pub const IID_IEDIT_CONTROLLER: Tuid = interface_iid([
     0xDC, 0xD7, 0xBB, 0xE3, 0x77, 0x42, 0x44, 0x8D, 0xA8, 0x74, 0xAA, 0xCC, 0x97, 0x9C, 0x9D, 0x2C,
-];
+]);
 
 #[repr(C)]
 pub struct IEditController {
@@ -575,8 +597,10 @@ pub struct IEditControllerVtbl {
     // IPluginBase (3–4)
     pub initialize: unsafe extern "C" fn(*mut IEditController, *mut FUnknown) -> TResult,
     pub terminate: unsafe extern "C" fn(*mut IEditController) -> TResult,
-    // IEditController own — methods 5–16 unused by us; *const c_void as placeholder
-    pub _pad5: *const c_void,  // setComponentState
+    // IEditController own — methods 5–16 mostly unused; *const c_void as placeholder
+    // (5) setComponentState — typed so a separate controller can be synced to the
+    // processor's current state (dual-component plugins, audit V4).
+    pub set_component_state: unsafe extern "C" fn(*mut IEditController, *mut c_void) -> TResult,
     pub _pad6: *const c_void,  // setState
     pub _pad7: *const c_void,  // getState
     pub _pad8: *const c_void,  // getParameterCount
@@ -644,14 +668,174 @@ const _: () = assert!(
     "IEditControllerVtbl layout drift",
 );
 
+// Dual-component plugins (audit V4) expose IComponent and IEditController as two
+// distinct COM objects.  They are wired together through IConnectionPoint so the
+// processor and controller can exchange IMessage notifications.
+
+pub const IID_ICONNECTION_POINT: Tuid = interface_iid([
+    0x70, 0xA4, 0x15, 0x6F, 0x6E, 0x6E, 0x65, 0x63, 0x74, 0x69, 0x6F, 0x6E, 0x50, 0x6F, 0x69, 0x6E,
+]);
+
+#[repr(C)]
+pub struct IConnectionPoint {
+    pub vtbl: *const IConnectionPointVtbl,
+}
+
+#[repr(C)]
+pub struct IConnectionPointVtbl {
+    // FUnknown (0–2)
+    pub query_interface:
+        unsafe extern "C" fn(*mut IConnectionPoint, *const Tuid, *mut *mut c_void) -> TResult,
+    pub add_ref: unsafe extern "C" fn(*mut IConnectionPoint) -> u32,
+    pub release: unsafe extern "C" fn(*mut IConnectionPoint) -> u32,
+    // IConnectionPoint (3–5)
+    pub connect: unsafe extern "C" fn(*mut IConnectionPoint, *mut IConnectionPoint) -> TResult,
+    pub disconnect: unsafe extern "C" fn(*mut IConnectionPoint, *mut IConnectionPoint) -> TResult,
+    pub notify: unsafe extern "C" fn(*mut IConnectionPoint, *mut c_void) -> TResult,
+}
+
+/// A separately-created `IEditController` for a dual-component VST3, plus the
+/// two `IConnectionPoint`s wiring it to the processor's `IComponent` (null when
+/// the plugin exposes none).  Returned by [`create_separate_controller`] and
+/// torn down by [`teardown_separate_controller`].
+pub struct SeparateController {
+    pub controller: *mut IEditController,
+    comp_connection: *mut IConnectionPoint,
+    ctrl_connection: *mut IConnectionPoint,
+}
+
+/// Create and wire the `IEditController` for a dual-component plugin: read the
+/// controller class id from the component, instantiate it through the factory,
+/// initialise it with the host context, connect the two halves, and sync the
+/// controller to the processor's current state (`getState` → `setComponentState`).
+///
+/// # Safety
+/// `comp` must be a valid, initialised `IComponent` from `library`.  Call on the
+/// command/main thread, never the audio thread.
+pub unsafe fn create_separate_controller(
+    library: &Vst3Library,
+    comp: *mut IComponent,
+    host_context: *mut FUnknown,
+) -> Result<SeparateController, String> {
+    let mut ctrl_cid: Tuid = [0u8; 16];
+    let r = ((*(*comp).vtbl).get_controller_class_id)(comp, ctrl_cid.as_mut_ptr());
+    if r != K_RESULT_OK {
+        return Err(format!("getControllerClassId failed: {r}"));
+    }
+
+    let factory = library
+        .factory()
+        .ok_or_else(|| "GetPluginFactory returned null".to_string())?;
+
+    let mut ctrl_raw: *mut c_void = std::ptr::null_mut();
+    let r = ((*(*factory).vtbl).create_instance)(
+        factory,
+        ctrl_cid.as_ptr(),
+        IID_IEDIT_CONTROLLER.as_ptr(),
+        &mut ctrl_raw,
+    );
+    ((*(*factory).vtbl).release)(factory);
+    if r != K_RESULT_OK || ctrl_raw.is_null() {
+        return Err(format!("createInstance(IEditController) failed: {r}"));
+    }
+    let ctrl = ctrl_raw as *mut IEditController;
+
+    let r = ((*(*ctrl).vtbl).initialize)(ctrl, host_context);
+    if r != K_RESULT_OK && r != K_RESULT_FALSE {
+        ((*(*ctrl).vtbl).release)(ctrl as *mut _);
+        return Err(format!("IEditController::initialize failed: {r}"));
+    }
+
+    sync_controller_state(comp, ctrl);
+
+    let (comp_connection, ctrl_connection) = connect_component_controller(comp, ctrl);
+
+    Ok(SeparateController {
+        controller: ctrl,
+        comp_connection,
+        ctrl_connection,
+    })
+}
+
+/// Reverse [`create_separate_controller`]: disconnect the two halves, terminate
+/// the controller, and release every ref this host added.
+///
+/// # Safety
+/// `sc` must come from [`create_separate_controller`] and not have been torn
+/// down already.  Call on the command/main thread.
+pub unsafe fn teardown_separate_controller(sc: SeparateController) {
+    if !sc.comp_connection.is_null() && !sc.ctrl_connection.is_null() {
+        ((*(*sc.comp_connection).vtbl).disconnect)(sc.comp_connection, sc.ctrl_connection);
+        ((*(*sc.ctrl_connection).vtbl).disconnect)(sc.ctrl_connection, sc.comp_connection);
+    }
+    if !sc.comp_connection.is_null() {
+        ((*(*sc.comp_connection).vtbl).release)(sc.comp_connection);
+    }
+    if !sc.ctrl_connection.is_null() {
+        ((*(*sc.ctrl_connection).vtbl).release)(sc.ctrl_connection);
+    }
+    ((*(*sc.controller).vtbl).terminate)(sc.controller);
+    ((*(*sc.controller).vtbl).release)(sc.controller as *mut _);
+}
+
+/// Copy the processor's current state into the controller so the editor opens
+/// with the right values (`IComponent::getState` → `IEditController::setComponentState`).
+/// Best-effort: a plugin that reports no state simply leaves the controller at
+/// its defaults.
+unsafe fn sync_controller_state(comp: *mut IComponent, ctrl: *mut IEditController) {
+    let mut stream = HostStream::empty();
+    let ib = stream.as_mut() as *mut HostStream as *mut c_void;
+    if ((*(*comp).vtbl).get_state)(comp, ib) != K_RESULT_OK {
+        return;
+    }
+    stream.pos = 0;
+    ((*(*ctrl).vtbl).set_component_state)(ctrl, ib);
+}
+
+/// Wire the processor and controller halves together via `IConnectionPoint`
+/// (peer-to-peer).  Returns the two connection points so the caller can
+/// disconnect/release them on teardown; either is null when the plugin exposes
+/// no connection point on that half.
+unsafe fn connect_component_controller(
+    comp: *mut IComponent,
+    ctrl: *mut IEditController,
+) -> (*mut IConnectionPoint, *mut IConnectionPoint) {
+    let comp_cp = query_connection_point((*comp).vtbl as *const _, comp as *mut c_void);
+    let ctrl_cp = query_connection_point((*ctrl).vtbl as *const _, ctrl as *mut c_void);
+    if !comp_cp.is_null() && !ctrl_cp.is_null() {
+        ((*(*comp_cp).vtbl).connect)(comp_cp, ctrl_cp);
+        ((*(*ctrl_cp).vtbl).connect)(ctrl_cp, comp_cp);
+    }
+    (comp_cp, ctrl_cp)
+}
+
+/// `queryInterface(IConnectionPoint)` on a COM object reached through its
+/// FUnknown-compatible vtable head.  Returns null when unsupported.
+unsafe fn query_connection_point(
+    vtbl: *const FUnknownVtbl,
+    object: *mut c_void,
+) -> *mut IConnectionPoint {
+    let mut out: *mut c_void = std::ptr::null_mut();
+    let r = ((*vtbl).query_interface)(
+        object as *mut FUnknown,
+        IID_ICONNECTION_POINT.as_ptr() as *const Tuid,
+        &mut out,
+    );
+    if r == K_RESULT_OK && !out.is_null() {
+        out as *mut IConnectionPoint
+    } else {
+        std::ptr::null_mut()
+    }
+}
+
 // Minimal host context passed to IComponent::initialize.  Plugins QI for this
 // to fetch the host name and to ask the host to create auxiliary objects
 // (IMessage, IAttributeList).  Returning kResultFalse for unsupported requests
 // is the documented fall-back; well-behaved plugins must accept it.
 
-pub const IID_IHOST_APPLICATION: Tuid = [
+pub const IID_IHOST_APPLICATION: Tuid = interface_iid([
     0x58, 0xE5, 0x95, 0xCD, 0x9A, 0x2C, 0x44, 0x49, 0xAD, 0xCA, 0xED, 0xA9, 0x96, 0xDC, 0xEA, 0xA0,
-];
+]);
 
 #[repr(C)]
 pub struct IHostApplicationVtbl {
@@ -669,9 +853,9 @@ pub struct IHostApplicationVtbl {
 // and to request a component restart.  Many plugins assume the handler is
 // non-null and crash on the first knob touch without one.
 
-pub const IID_ICOMPONENT_HANDLER: Tuid = [
+pub const IID_ICOMPONENT_HANDLER: Tuid = interface_iid([
     0x93, 0xA0, 0xBE, 0xA3, 0x94, 0xB8, 0xB4, 0x85, 0xBC, 0xBE, 0x57, 0xDB, 0x18, 0xA5, 0x2D, 0xB7,
-];
+]);
 
 #[repr(C)]
 pub struct IComponentHandlerVtbl {
@@ -687,9 +871,9 @@ pub struct IComponentHandlerVtbl {
 
 // Set on the IPlugView so the plugin can request a resize of its container.
 
-pub const IID_IPLUG_FRAME: Tuid = [
+pub const IID_IPLUG_FRAME: Tuid = interface_iid([
     0x36, 0x7F, 0xAF, 0x01, 0xAF, 0xA9, 0x46, 0x93, 0x8D, 0x4D, 0xA2, 0xA0, 0xED, 0x05, 0x70, 0xE6,
-];
+]);
 
 #[repr(C)]
 pub struct IPlugFrameVtbl {
@@ -780,11 +964,11 @@ pub unsafe fn instantiate_processor(
 // count (the host owns the box outright), matching the pattern used by
 // `HostParameterChanges` and the GUI-side COM stubs.
 
-/// Steinberg `IBStream` IID (`FUID::toTUID()` big-endian — same convention as
-/// every other IID in this file).
-pub const IID_IBSTREAM: Tuid = [
+/// Steinberg `IBStream` IID.  The plugin queries our host stream against it, so
+/// it carries COM byte order on Windows like the other interface IIDs.
+pub const IID_IBSTREAM: Tuid = interface_iid([
     0xC3, 0xBF, 0x6E, 0xA2, 0x30, 0x99, 0x47, 0x52, 0x9B, 0x6B, 0xF9, 0x90, 0x1E, 0xE3, 0x3E, 0x9B,
-];
+]);
 
 /// `IBStream::IStreamSeekMode`
 const K_IB_SEEK_SET: i32 = 0;

@@ -376,6 +376,16 @@ impl PluginInstance {
         }
     }
 
+    /// Clone the VST3 library Arc if this instance is VST3.  Used by the editor
+    /// to re-obtain the factory for dual-component plugins (audit V4); the DLL
+    /// stays mapped as long as the returned Arc lives.
+    pub fn vst3_library(&self) -> Option<Arc<Vst3Library>> {
+        match &self.handle {
+            NativeHandle::Vst3 { _lib, .. } => Some(Arc::clone(_lib)),
+            _ => None,
+        }
+    }
+
     /// Idempotently bring the CLAP plugin to the active, processing state
     /// (`init → activate → start_processing`), owned by the instance so it
     /// survives wrapper rebuilds on recompile (ADR-016 reuse).

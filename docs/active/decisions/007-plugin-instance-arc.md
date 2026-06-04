@@ -65,8 +65,10 @@ keeps another; (Phase 2c will give the GUI a third).
    - `enum NativeHandle { Internal, Vst3 { component, processor, _lib }, Clap { plugin, _host, _lib } }`
    - Constructors `new_internal`, `new_vst3`, `new_clap` — each returns an
      `Arc<Self>`.
-   - Accessors `handle()`, `vst3_handles()`, `clap_plugin()` — pattern-match
-     the variant the caller expects.
+   - Accessors `handle()`, `vst3_handles()`, `vst3_library()`, `clap_plugin()` —
+     pattern-match the variant the caller expects. (`vst3_library()` clones the
+     `Arc<Vst3Library>` so the editor can re-obtain the factory for
+     dual-component plugins — audit V4.)
    - Lifecycle helpers `set_lifecycle()` / `lifecycle()` — atomic, encoded
      into a `u8`.
    - **`Drop`** — performs the format-specific FFI teardown when the **last**

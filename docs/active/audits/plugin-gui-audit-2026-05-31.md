@@ -13,7 +13,7 @@ Légende : ✅ Corrigé — ⚠️ Non corrigé (dette documentée)
 
 L'architecture actuelle « instance audio + instance GUI séparées » est **non-spec** pour VST3 comme pour CLAP. L'implémentation cumulait au moins **7 bugs de safety/lifecycle distincts** qui, isolément, suffisent à produire un access violation. La cause **directe** du crash CLAP était l'absence d'appel à `clap_entry.init()`.
 
-Les bugs bloquants (C1, W1, W2, A2, A3, A4, V1, V2, V3, V5, CL1, CL2, CL4) ont tous été corrigés au commit de ce jour. Reste une dette d'architecture (A1) et deux améliorations non bloquantes (CL3, CL5, W3).
+Les bugs bloquants (C1, W1, W2, A2, A3, A4, V1, V2, V3, V5, CL1, CL2, CL4) ont tous été corrigés au commit de ce jour. V4 (dual-component) a été corrigé le 2026-06-04. Reste une dette d'architecture (A1) et des améliorations non bloquantes (CL3, CL5, W3).
 
 ---
 
@@ -87,9 +87,24 @@ Container créé sans `SetThreadDpiAwarenessContext(PER_MONITOR_AWARE_V2)`. Sur 
 
 **Correctif appliqué** : `PlugFrame` alloué par éditeur (`make_plug_frame()`), `set_frame` appelé avant `attached()`. `frame_resize_view` route vers `resize_to_client(container_hwnd, ...)` via `AtomicPtr<c_void>` câblé après `CreateWindowExW`. `set_frame(null)` dans le cleanup avant `removed()`.
 
-### V4 — Modèle « single-component » exclusif ⚠️ Non corrigé
+### V4 — Modèle « single-component » exclusif ✅ Corrigé (2026-06-04)
 
-Plugins dual-component (Steinberg pro, NI) rejetés sans message explicite. Non bloquant pour les plugins JUCE/open-source courants.
+Plugins dual-component (Steinberg pro, NI, **TDR Nova**) rejetés à l'ouverture de
+l'éditeur : `IEditController not available via QI (single-component only)`.
+
+**Correctif appliqué** :
+- [vst3/ffi.rs](../../../src-tauri/src/plugin_formats/vst3/ffi.rs) : `set_component_state`
+  typé (slot 5 de `IEditControllerVtbl`), `IConnectionPoint` (+IID), `Vst3Library::factory()`
+  (réobtient la factory depuis la DLL déjà mappée), et `create_separate_controller` /
+  `teardown_separate_controller`. La création suit la spec : `getControllerClassId` →
+  `factory.createInstance(cid, IEditController)` → `initialize(host)` →
+  `getState`→`setComponentState` (sync état processeur) → `IConnectionPoint.connect` ×2.
+- [instance.rs](../../../src-tauri/src/plugin_system/instance.rs) : accesseur `vst3_library()`
+  (clone l'`Arc<Vst3Library>` pour garder la DLL mappée).
+- [gui.rs](../../../src-tauri/src/plugin_system/gui.rs) : `open_vst3_editor` tente d'abord le
+  QI single-component ; en échec, crée un contrôleur séparé via `host_app_as_funknown()`
+  comme contexte host. Le teardown correspondant (disconnect + terminate + release) est
+  routé selon le chemin emprunté.
 
 ### V5 — Vtable `IEditController` / `IPlugView` sans assert de taille ✅ Corrigé
 
@@ -144,8 +159,7 @@ En pratique Tauri exécute les commandes sur tokio off-main. Aucun deadlock obse
 ## Plan de correction résiduel
 
 1. **W3** : `SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2)` + `gui.set_scale`.
-2. **V4** : Support dual-component VST3 (`getControllerClassId` + `createInstance` séparé).
-3. **A1** : Refonte instance unique (lourde, planifier en ADR dédié).
+2. **A1** : Refonte instance unique (lourde, planifier en ADR dédié).
 
 ---
 

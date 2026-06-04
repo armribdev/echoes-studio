@@ -756,7 +756,10 @@ pub unsafe fn open_vst3_editor(
     effect_id: &str,
     open_editors: Arc<Mutex<HashMap<String, usize>>>,
 ) -> Result<usize, String> {
-    use crate::plugin_formats::vst3::ffi::{IEditController, IID_IEDIT_CONTROLLER};
+    use crate::plugin_formats::vst3::ffi::{
+        create_separate_controller, teardown_separate_controller, IEditController, SeparateController,
+        IID_IEDIT_CONTROLLER,
+    };
 
     // MUST NOT call `initialize` again — already done at instantiation (VST3 spec).
     let (comp_nn, _proc_nn) = instance
@@ -764,32 +767,53 @@ pub unsafe fn open_vst3_editor(
         .ok_or_else(|| "VST3 GUI: shared instance has no VST3 handles".to_string())?;
     let comp = comp_nn.as_ptr();
 
-    // Single-component model only; QI ref released in editor cleanup.
+    // Single-component plugins expose IEditController through QI on the
+    // component.  Dual-component plugins (audit V4) don't — fall back to
+    // creating, initialising, and connecting a separate controller.  `separate`
+    // is `Some` only in that case and owns the extra teardown.
     let mut ctrl_raw: *mut c_void = null_mut();
     let r = ((*(*comp).vtbl).query_interface)(
         comp,
         IID_IEDIT_CONTROLLER.as_ptr() as *const Tuid,
         &mut ctrl_raw,
     );
-    if r != K_RESULT_OK || ctrl_raw.is_null() {
-        return Err(
-            "VST3 GUI: IEditController not available via QI (single-component only)".into(),
-        );
-    }
-    let ctrl = ctrl_raw as *mut IEditController;
+    let (ctrl, mut separate): (*mut IEditController, Option<SeparateController>) =
+        if r == K_RESULT_OK && !ctrl_raw.is_null() {
+            (ctrl_raw as *mut IEditController, None)
+        } else {
+            let library = instance
+                .vst3_library()
+                .ok_or_else(|| "VST3 GUI: shared instance has no VST3 library".to_string())?;
+            let sc = create_separate_controller(&library, comp, host_app_as_funknown())
+                .map_err(|e| format!("VST3 GUI: dual-component controller setup failed: {e}"))?;
+            (sc.controller, Some(sc))
+        };
+
+    // Release the controller using whichever teardown matches how it was
+    // acquired: the QI'd ref is a plain release; a separate controller needs
+    // disconnect + terminate + release of every ref we added.
+    let release_controller = |separate: &mut Option<SeparateController>, ctrl: *mut IEditController| {
+        unsafe {
+            if let Some(sc) = separate.take() {
+                teardown_separate_controller(sc);
+            } else {
+                ((*(*ctrl).vtbl).release)(ctrl as *mut _);
+            }
+        }
+    };
 
     // Many plugins crash without a non-null component handler.
     let _ = ((*(*ctrl).vtbl).set_component_handler)(ctrl, component_handler_as_funknown());
 
     let view = ((*(*ctrl).vtbl).create_view)(ctrl, b"editor\0".as_ptr());
     if view.is_null() {
-        ((*(*ctrl).vtbl).release)(ctrl as *mut _);
+        release_controller(&mut separate, ctrl);
         return Err("VST3 GUI: IEditController::createView returned null".into());
     }
 
     if ((*(*view).vtbl).is_platform_type_supported)(view, b"HWND\0".as_ptr()) != K_RESULT_OK {
         ((*(*view).vtbl).release)(view as *mut _);
-        ((*(*ctrl).vtbl).release)(ctrl as *mut _);
+        release_controller(&mut separate, ctrl);
         return Err("VST3 GUI: plugin view does not support HWND".into());
     }
 
@@ -812,9 +836,11 @@ pub unsafe fn open_vst3_editor(
     // captured here so the plugin stays live until the editor closes.  The
     // closure does NOT call `terminate` on IComponent and does NOT release
     // its primary ref — those are owned by `PluginInstance::Drop`.  It only
-    // tears down the editor-side resources (view, frame, the QI'd ctrl ref).
+    // tears down the editor-side resources (view, frame, the controller ref —
+    // plus the separate-controller wiring when this is a dual-component plugin).
     let frame_owned = plug_frame;
     let instance_owned = instance.clone();
+    let mut separate_owned = separate;
     let cleanup: Box<dyn FnOnce()> = Box::new(move || {
         let _frame = frame_owned;
         let _instance = instance_owned; // keep plugin alive through teardown
@@ -823,10 +849,11 @@ pub unsafe fn open_vst3_editor(
             // Drop our frame ref before releasing ctrl — set_frame(null).
             let _ = ((*(*view).vtbl).set_frame)(view, null_mut());
             ((*(*view).vtbl).release)(view as *mut _);
-            // Release the QI-added IEditController ref (primary IComponent
-            // ref is held by PluginInstance).
-            ((*(*ctrl).vtbl).release)(ctrl as *mut _);
         }
+        // Release the controller (and, for dual-component, disconnect +
+        // terminate it).  The primary IComponent ref is held by
+        // PluginInstance and untouched here.
+        release_controller(&mut separate_owned, ctrl);
         // _instance Arc drops last — if this was the last clone, the host
         // already released its own clone earlier, and PluginInstance::Drop
         // now runs terminate + release on the IComponent.

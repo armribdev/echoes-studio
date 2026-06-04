@@ -12,8 +12,9 @@ sees only `AudioNode` / `Device`.
 - **CLAP:** call `clap_entry.init()` before any other entry point (skipping it is
   the documented Vital-crash root cause). Keep `ClapHost` pinned.
 - **VST3:** initialize the component; set `IComponentHandler` + `IPlugFrame`
-  before showing an editor. Dual-component plugins must not be silently rejected
-  (audit V4, open).
+  before showing an editor. Dual-component plugins are handled by creating a
+  separate `IEditController` (`create_separate_controller`, audit V4 done) — do
+  not regress to QI-only.
 - Parameter changes delivered via the format's sample-accurate mechanism, never a
   direct setter from the audio thread.
 
