@@ -51,13 +51,13 @@ impl AudioNode for GainNode {
         &mut self,
         inputs: &[&AudioBuffer],
         outputs: &mut [AudioBuffer],
-        _transport: &TransportInfo,
+        transport: &TransportInfo,
     ) {
         let input = &inputs[0];
         let output = &mut outputs[0];
 
         let channels = output.num_channels.min(input.num_channels);
-        let frames = output.num_frames.min(input.num_frames);
+        let frames = transport.block_size.min(output.num_frames).min(input.num_frames);
         let gain = (self.gain + self.mod_delta).max(0.0);
 
         for ch in 0..channels {

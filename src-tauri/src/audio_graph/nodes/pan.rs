@@ -64,20 +64,20 @@ impl AudioNode for PanNode {
         &mut self,
         inputs: &[&AudioBuffer],
         outputs: &mut [AudioBuffer],
-        _transport: &TransportInfo,
+        transport: &TransportInfo,
     ) {
         let input = &inputs[0];
         let output = &mut outputs[0];
 
         if output.num_channels < 2 {
-            let frames = output.num_frames.min(input.num_frames);
+            let frames = transport.block_size.min(output.num_frames).min(input.num_frames);
             let in_ch = input.channel(0);
             let out_ch = output.channel_mut(0);
             out_ch[..frames].copy_from_slice(&in_ch[..frames]);
             return;
         }
 
-        let frames = output.num_frames.min(input.num_frames);
+        let frames = transport.block_size.min(output.num_frames).min(input.num_frames);
 
         if input.num_channels >= 2 {
             let in_l = input.channel(0);

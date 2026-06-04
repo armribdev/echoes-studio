@@ -84,14 +84,14 @@ impl AudioNode for MasterNode {
         &mut self,
         inputs: &[&AudioBuffer],
         outputs: &mut [AudioBuffer],
-        _transport: &TransportInfo,
+        transport: &TransportInfo,
     ) {
         let output = &mut outputs[0];
         output.clear();
 
         for input in inputs {
             let channels = output.num_channels.min(input.num_channels);
-            let frames = output.num_frames.min(input.num_frames);
+            let frames = transport.block_size.min(output.num_frames).min(input.num_frames);
             for ch in 0..channels {
                 let in_ch = input.channel(ch);
                 let out_ch = output.channel_mut(ch);
@@ -102,7 +102,7 @@ impl AudioNode for MasterNode {
         }
 
         let apply_clip = self.soft_clip_enabled.load(Ordering::Relaxed);
-        let frames = output.num_frames;
+        let frames = transport.block_size.min(output.num_frames);
         if apply_clip {
             if output.num_channels >= 2 {
                 let (ch_l, ch_r) = output.two_channels_mut(0, 1);

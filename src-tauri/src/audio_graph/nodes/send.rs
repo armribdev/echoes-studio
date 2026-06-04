@@ -39,12 +39,12 @@ impl AudioNode for SendNode {
         &mut self,
         inputs: &[&AudioBuffer],
         outputs: &mut [AudioBuffer],
-        _transport: &TransportInfo,
+        transport: &TransportInfo,
     ) {
         let input = &inputs[0];
         let output = &mut outputs[0];
         let channels = output.num_channels.min(input.num_channels);
-        let frames = output.num_frames.min(input.num_frames);
+        let frames = transport.block_size.min(output.num_frames).min(input.num_frames);
         for ch in 0..channels {
             let in_ch = input.channel(ch);
             let out_ch = output.channel_mut(ch);
