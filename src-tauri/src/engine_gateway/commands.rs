@@ -211,9 +211,10 @@ pub struct UpdateEffectPayload {
 #[derive(Debug, Deserialize)]
 pub struct AddModulatorPayload {
     pub track_id: String,
-    /// `"lfo"` — only kind supported for now.
+    /// `"lfo"` | `"macro"`
     pub kind: String,
     pub rate_hz: Option<f32>,
+    pub value: Option<f32>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -227,6 +228,7 @@ pub struct UpdateModulatorPayload {
     pub track_id: String,
     pub modulator_id: String,
     pub rate_hz: Option<f32>,
+    pub value: Option<f32>,
 }
 
 #[derive(Debug, Deserialize)]

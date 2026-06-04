@@ -540,11 +540,14 @@ fn patch_effect(
 }
 
 fn build_modulator(p: &AddModulatorPayload) -> Result<crate::project::ProjectModulator, String> {
-    use crate::project::{LfoParams, ModulatorParams, ProjectModulator};
+    use crate::project::{LfoParams, MacroParams, ModulatorParams, ProjectModulator};
     let params = match p.kind.as_str() {
         "lfo" => ModulatorParams::Lfo(LfoParams {
             rate_hz: p.rate_hz.unwrap_or(1.0),
             ..Default::default()
+        }),
+        "macro" => ModulatorParams::Macro(MacroParams {
+            value: p.value.unwrap_or(0.0),
         }),
         other => return Err(format!("Unknown modulator kind: {other}")),
     };
@@ -1119,19 +1122,32 @@ fn process_command(
         cmd::UPDATE_MODULATOR => {
             let p: UpdateModulatorPayload = serde_json::from_value(command.payload)
                 .map_err(|e| format!("UPDATE_MODULATOR payload invalid: {e}"))?;
-            if let Some(rate) = p.rate_hz {
+            if p.rate_hz.is_some() || p.value.is_some() {
                 with_project_mut(state, |project| {
                     let track = require_track_mut(project, &p.track_id)?;
                     if let Some(m) = track.modulators.iter_mut().find(|x| x.id == p.modulator_id) {
-                        let crate::project::ModulatorParams::Lfo(ref mut lp) = m.params;
-                        lp.rate_hz = rate;
+                        match &mut m.params {
+                            crate::project::ModulatorParams::Lfo(ref mut lp) => {
+                                if let Some(rate) = p.rate_hz {
+                                    lp.rate_hz = rate;
+                                }
+                            }
+                            crate::project::ModulatorParams::Macro(ref mut mp) => {
+                                if let Some(value) = p.value {
+                                    mp.value = value;
+                                }
+                            }
+                        }
                     }
                     Ok(())
                 })?;
             }
-            // Hot-path: update the LFO rate atomic, no recompile.
+            // Hot-path: update atomics, no recompile.
             if let Some(rate) = p.rate_hz {
                 state.live_params.set_modulator_rate(&p.modulator_id, rate);
+            }
+            if let Some(value) = p.value {
+                state.live_params.set_macro_value(&p.modulator_id, value);
             }
             commit_same_payload(
                 &ctx,
@@ -1140,6 +1156,7 @@ fn process_command(
                     "track_id": p.track_id,
                     "modulator_id": p.modulator_id,
                     "rate_hz": p.rate_hz,
+                    "value": p.value,
                 }),
                 false,
             )
@@ -1837,9 +1854,17 @@ fn apply_modulator_updated(project: &mut AppProject, payload: &Value) {
     let Some(m) = track.modulators.iter_mut().find(|x| x.id == mod_id) else {
         return;
     };
-    if let Some(rate) = payload["rate_hz"].as_f64() {
-        let crate::project::ModulatorParams::Lfo(ref mut p) = m.params;
-        p.rate_hz = rate as f32;
+    match &mut m.params {
+        crate::project::ModulatorParams::Lfo(ref mut p) => {
+            if let Some(rate) = payload["rate_hz"].as_f64() {
+                p.rate_hz = rate as f32;
+            }
+        }
+        crate::project::ModulatorParams::Macro(ref mut p) => {
+            if let Some(value) = payload["value"].as_f64() {
+                p.value = value as f32;
+            }
+        }
     }
 }
 

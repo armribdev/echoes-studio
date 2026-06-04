@@ -7,7 +7,7 @@
 use std::sync::Arc;
 
 use crate::audio_graph::buffer::AudioBuffer;
-use crate::audio_graph::live_params::ModulatorCells;
+use crate::audio_graph::live_params::{MacroCells, ModulatorCells};
 use crate::audio_graph::node::{AudioNode, NodeId, PrepareContext, TransportInfo};
 use crate::project::LfoWaveform;
 
@@ -70,10 +70,61 @@ impl LfoNode {
     }
 }
 
+/// Macro knob — fans a single user-controlled value (0…1) out to multiple targets.
+///
+/// The value is held constant for the entire block; the command thread updates it
+/// via `MacroCells` without triggering a recompile.
+pub struct MacroNode {
+    id: NodeId,
+    value_cells: Arc<MacroCells>,
+}
+
+impl MacroNode {
+    pub fn new(id: NodeId, value_cells: Arc<MacroCells>) -> Self {
+        Self { id, value_cells }
+    }
+}
+
+impl AudioNode for MacroNode {
+    fn node_id(&self) -> NodeId {
+        self.id
+    }
+    fn label(&self) -> &str {
+        "Macro"
+    }
+    fn num_input_ports(&self) -> usize {
+        0
+    }
+    fn num_output_ports(&self) -> usize {
+        1
+    }
+
+    fn prepare(&mut self, _ctx: PrepareContext) {}
+
+    fn process(
+        &mut self,
+        _inputs: &[&AudioBuffer],
+        outputs: &mut [AudioBuffer],
+        transport: &TransportInfo,
+    ) {
+        if outputs.is_empty() {
+            return;
+        }
+        let output = &mut outputs[0];
+        let block_size = transport.block_size.min(output.num_frames);
+        let value = self.value_cells.value();
+        output.channel_mut(0)[..block_size].fill(value);
+        output.mono_to_all_channels();
+    }
+
+    fn reset(&mut self) {}
+}
+
 impl AudioNode for LfoNode {
     fn node_id(&self) -> NodeId {
         self.id
     }
+
     fn label(&self) -> &str {
         "LFO"
     }
@@ -117,5 +168,48 @@ impl AudioNode for LfoNode {
 
     fn reset(&mut self) {
         self.phase = 0.0;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::audio_graph::live_params::MacroCells;
+    use std::sync::atomic::AtomicU32;
+    use std::sync::Arc;
+
+    fn make_macro_cells(value: f32) -> Arc<MacroCells> {
+        Arc::new(MacroCells {
+            value: AtomicU32::new(value.to_bits()),
+        })
+    }
+
+    #[test]
+    fn macro_node_fills_output_with_value() {
+        let cells = make_macro_cells(0.75);
+        let mut node = MacroNode::new(NodeId(1), Arc::clone(&cells));
+        let mut output = crate::audio_graph::buffer::AudioBuffer::new(2, 64);
+        let t = crate::audio_graph::node::TransportInfo::stopped(48_000.0);
+        node.process(&[], std::slice::from_mut(&mut output), &t);
+        assert!(
+            output.channel(0).iter().all(|&s| (s - 0.75).abs() < 1e-6),
+            "macro output must equal the cell value"
+        );
+    }
+
+    #[test]
+    fn macro_node_tracks_live_cell_update() {
+        use std::sync::atomic::Ordering;
+        let cells = make_macro_cells(0.0);
+        let mut node = MacroNode::new(NodeId(1), Arc::clone(&cells));
+        let mut output = crate::audio_graph::buffer::AudioBuffer::new(1, 32);
+        let t = crate::audio_graph::node::TransportInfo::stopped(48_000.0);
+
+        cells.value.store(0.5_f32.to_bits(), Ordering::Relaxed);
+        node.process(&[], std::slice::from_mut(&mut output), &t);
+        assert!(
+            (output.channel(0)[0] - 0.5).abs() < 1e-6,
+            "macro must reflect cell update without recompile"
+        );
     }
 }

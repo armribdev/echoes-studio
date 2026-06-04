@@ -22,7 +22,7 @@ use crate::audio_graph::modulation::{
     ModulationMap, ModulationRoute, ModulationSource, ModulationTarget, ModulatorKind, ParamId,
 };
 use crate::audio_graph::node::{NodeId, PortId, PortKind};
-use crate::project::{AppProject, EffectParams, ModulationTargetRef, ModulatorParams};
+use crate::project::{AppProject, EffectParams, LfoWaveform, ModulationTargetRef, ModulatorParams};
 
 static NEXT_NODE_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -88,14 +88,15 @@ pub enum NodeKind {
     /// Modulation source (LFO, envelope, macro, audio-rate).
     Modulator {
         /// Project-level modulator ID — used by the compiler to look up the
-        /// matching `LiveParams::ModulatorCells` so rate changes don't trigger
-        /// a recompile.
+        /// matching `LiveParams` cells so parameter changes don't trigger a recompile.
         modulator_id: String,
         kind: crate::audio_graph::modulation::ModulatorKind,
-        /// Oscillation rate in Hz (used by LFO kind; ignored by others).
+        /// Oscillation rate in Hz (LFO only; ignored by other kinds).
         rate_hz: f32,
-        /// Waveform shape (used by LFO kind; ignored by others).
+        /// Waveform shape (LFO only; ignored by other kinds).
         waveform: crate::project::LfoWaveform,
+        /// Initial value used to seed `MacroCells` (Macro only; ignored by LFO).
+        initial_value: f32,
     },
 
     /// Peak / RMS meter (side-effect: writes to a meter ring-buffer for the UI).
@@ -413,8 +414,9 @@ impl AudioGraph {
             let mut mod_node_ids: HashMap<String, NodeId> = HashMap::new();
 
             for modulator in &track.modulators {
-                let (kind, rate_hz, waveform) = match &modulator.params {
-                    ModulatorParams::Lfo(p) => (ModulatorKind::Lfo, p.rate_hz, p.waveform.clone()),
+                let (kind, rate_hz, waveform, initial_value) = match &modulator.params {
+                    ModulatorParams::Lfo(p) => (ModulatorKind::Lfo, p.rate_hz, p.waveform.clone(), 0.0f32),
+                    ModulatorParams::Macro(p) => (ModulatorKind::Macro, 0.0f32, LfoWaveform::default(), p.value),
                 };
                 let node_id = graph.add_node(
                     NodeKind::Modulator {
@@ -422,6 +424,7 @@ impl AudioGraph {
                         kind,
                         rate_hz,
                         waveform,
+                        initial_value,
                     },
                     format!("{} [mod:{}]", track.name, modulator.id),
                 );

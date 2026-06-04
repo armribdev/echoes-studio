@@ -164,11 +164,24 @@ impl Default for LfoParams {
     }
 }
 
-/// Per-track modulation source (LFO, Envelope, …).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MacroParams {
+    #[serde(default)]
+    pub value: f32,
+}
+
+impl Default for MacroParams {
+    fn default() -> Self {
+        Self { value: 0.0 }
+    }
+}
+
+/// Per-track modulation source (LFO, Envelope, Macro, …).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ModulatorParams {
     Lfo(LfoParams),
+    Macro(MacroParams),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

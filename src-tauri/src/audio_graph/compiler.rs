@@ -661,6 +661,7 @@ impl GraphCompiler {
                 kind,
                 rate_hz,
                 waveform,
+                initial_value,
             } => {
                 use crate::audio_graph::modulation::ModulatorKind;
                 match kind {
@@ -671,11 +672,15 @@ impl GraphCompiler {
                                 .with_rate_cells(cells),
                         )
                     }
+                    ModulatorKind::Macro => {
+                        let cells = live_params.get_or_init_macro(modulator_id, *initial_value);
+                        Box::new(nodes::modulator::MacroNode::new(id, cells))
+                    }
                     _ => Box::new(nodes::modulator::LfoNode::new(
-                            id,
-                            0.0,
-                            crate::project::LfoWaveform::Sine,
-                        )),
+                        id,
+                        0.0,
+                        crate::project::LfoWaveform::Sine,
+                    )),
                 }
             }
 

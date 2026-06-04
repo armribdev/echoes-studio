@@ -99,10 +99,30 @@ impl RouteCells {
     }
 }
 
+/// Atomic value cell for a Macro modulator knob.  Written by the command thread,
+/// read lock-free by `MacroNode::process` on the audio thread.
+pub struct MacroCells {
+    pub value: AtomicU32,
+}
+
+impl MacroCells {
+    fn new(value: f32) -> Arc<Self> {
+        Arc::new(Self {
+            value: AtomicU32::new(value.to_bits()),
+        })
+    }
+
+    #[inline]
+    pub fn value(&self) -> f32 {
+        f32::from_bits(self.value.load(Ordering::Relaxed))
+    }
+}
+
 #[derive(Default)]
 struct LiveParamsInner {
     tracks: HashMap<String, Arc<TrackParams>>,
     modulators: HashMap<String, Arc<ModulatorCells>>,
+    macros: HashMap<String, Arc<MacroCells>>,
     routes: HashMap<String, Arc<RouteCells>>,
     effect_params: HashMap<String, Arc<ParameterBlock>>,
 }
@@ -191,6 +211,25 @@ impl LiveParams {
     pub fn effect_block(&self, effect_id: &str) -> Option<Arc<ParameterBlock>> {
         let inner = self.inner.lock().ok()?;
         inner.effect_params.get(effect_id).cloned()
+    }
+
+    pub fn get_or_init_macro(&self, id: &str, value: f32) -> Arc<MacroCells> {
+        let mut inner = self.lock_inner();
+        if let Some(existing) = inner.macros.get(id) {
+            return Arc::clone(existing);
+        }
+        let cells = MacroCells::new(value);
+        inner.macros.insert(id.to_string(), Arc::clone(&cells));
+        cells
+    }
+
+    pub fn set_macro_value(&self, id: &str, value: f32) -> bool {
+        let inner = self.lock_inner();
+        let Some(cells) = inner.macros.get(id) else {
+            return false;
+        };
+        cells.value.store(value.to_bits(), Ordering::Relaxed);
+        true
     }
 
     pub fn get_or_init_route(&self, id: &str, depth: f32) -> Arc<RouteCells> {
@@ -321,6 +360,9 @@ impl LiveParams {
             .collect();
         inner
             .modulators
+            .retain(|id, _| live_mod_ids.contains(id.as_str()));
+        inner
+            .macros
             .retain(|id, _| live_mod_ids.contains(id.as_str()));
 
         let live_route_ids: HashSet<&str> = project
