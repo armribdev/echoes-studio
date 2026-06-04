@@ -226,6 +226,12 @@ impl PluginHost {
             }
         };
 
+        // VST3/CLAP instances start at `Created`; step through the intermediate
+        // states so future defensive checks on `Initialized` are reachable.
+        if instance.lifecycle() == LifecycleState::Created {
+            instance.set_lifecycle(LifecycleState::Loaded);
+            instance.set_lifecycle(LifecycleState::Initialized);
+        }
         instance.set_lifecycle(LifecycleState::Running);
 
         let saved_state = self.restore_state_for(instance_key, plugin_id, &instance);
@@ -418,6 +424,9 @@ impl PluginHost {
         match manifest.format {
             DeviceFormat::Clap => {
                 let instance = self.create_clap_instance(plugin_id, &manifest)?;
+                // Same as `instantiate`: step through intermediate states before Running.
+                instance.set_lifecycle(LifecycleState::Loaded);
+                instance.set_lifecycle(LifecycleState::Initialized);
                 instance.set_lifecycle(LifecycleState::Running);
                 let saved_state = self.restore_state_for(instance_key, plugin_id, &instance);
                 self.records.insert(
