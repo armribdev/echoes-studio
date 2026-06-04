@@ -18,6 +18,7 @@
 use std::sync::{atomic::{AtomicU32, Ordering}, Arc};
 
 use crate::audio_graph::buffer::AudioBuffer;
+use crate::audio_graph::live_params::EnvelopeCells;
 
 /// Pre-allocated slot for one modulated plugin parameter.
 ///
@@ -166,6 +167,11 @@ pub trait AudioNode: Send + 'static {
     /// modulation entries for external plugin parameters.  Default no-op for
     /// non-plugin nodes.
     fn inject_plugin_mod_entries(&mut self, _entries: Vec<PluginModEntry>) {}
+
+    /// Called once at compile time to inject `EnvelopeCells` references for all
+    /// envelope modulators on the same track.  The node writes the gate state to
+    /// these cells on each NoteOn / NoteOff.  Default no-op for non-instrument nodes.
+    fn inject_envelope_cells(&mut self, _cells: Vec<Arc<EnvelopeCells>>) {}
 
     fn latency_samples(&self) -> u32 {
         0

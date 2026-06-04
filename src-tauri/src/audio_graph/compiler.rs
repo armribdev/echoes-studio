@@ -238,6 +238,37 @@ impl GraphCompiler {
             processors.push(node);
         }
 
+        // Wire EnvelopeCells from envelope modulators to InstrumentNodes on the same track.
+        // Both sides hold the same Arc, allowing the InstrumentNode to write the gate
+        // state on the audio thread and the EnvelopeNode to read it lock-free.
+        {
+            use crate::project::ModulatorParams;
+
+            let mut track_to_envelope_cells: HashMap<
+                &str,
+                Vec<Arc<crate::audio_graph::live_params::EnvelopeCells>>,
+            > = HashMap::new();
+            for track in &project.tracks {
+                for m in &track.modulators {
+                    if let ModulatorParams::Envelope(params) = &m.params {
+                        let cells = live_params.get_or_init_envelope(&m.id, params);
+                        track_to_envelope_cells
+                            .entry(track.id.as_str())
+                            .or_default()
+                            .push(cells);
+                    }
+                }
+            }
+
+            for (step_idx, &node_id) in order.iter().enumerate() {
+                if let NodeKind::Instrument { track_id } = &graph.nodes[&node_id].kind {
+                    if let Some(cells) = track_to_envelope_cells.get(track_id.as_str()) {
+                        processors[step_idx].inject_envelope_cells(cells.clone());
+                    }
+                }
+            }
+        }
+
         // Inject plugin modulation entries into plugin wrapper nodes.
         // For each modulation route targeting a Plugin node (identified by the
         // "plugin_native:{id}" sentinel in param.name), create a shadow cell in
@@ -709,6 +740,7 @@ impl GraphCompiler {
                 rate_hz,
                 waveform,
                 initial_value,
+                initial_envelope,
             } => {
                 use crate::audio_graph::modulation::ModulatorKind;
                 match kind {
@@ -722,6 +754,10 @@ impl GraphCompiler {
                     ModulatorKind::Macro => {
                         let cells = live_params.get_or_init_macro(modulator_id, *initial_value);
                         Box::new(nodes::modulator::MacroNode::new(id, cells))
+                    }
+                    ModulatorKind::Envelope => {
+                        let cells = live_params.get_or_init_envelope(modulator_id, initial_envelope);
+                        Box::new(nodes::modulator::EnvelopeNode::new(id, cells))
                     }
                     _ => Box::new(nodes::modulator::LfoNode::new(
                         id,

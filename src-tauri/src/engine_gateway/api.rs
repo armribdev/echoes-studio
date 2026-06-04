@@ -545,7 +545,7 @@ fn patch_effect(
 }
 
 fn build_modulator(p: &AddModulatorPayload) -> Result<crate::project::ProjectModulator, String> {
-    use crate::project::{LfoParams, MacroParams, ModulatorParams, ProjectModulator};
+    use crate::project::{EnvelopeParams, LfoParams, MacroParams, ModulatorParams, ProjectModulator};
     let params = match p.kind.as_str() {
         "lfo" => ModulatorParams::Lfo(LfoParams {
             rate_hz: p.rate_hz.unwrap_or(1.0),
@@ -554,6 +554,7 @@ fn build_modulator(p: &AddModulatorPayload) -> Result<crate::project::ProjectMod
         "macro" => ModulatorParams::Macro(MacroParams {
             value: p.value.unwrap_or(0.0),
         }),
+        "envelope" => ModulatorParams::Envelope(EnvelopeParams::default()),
         other => return Err(format!("Unknown modulator kind: {other}")),
     };
     Ok(ProjectModulator {
@@ -1137,7 +1138,13 @@ fn process_command(
         cmd::UPDATE_MODULATOR => {
             let p: UpdateModulatorPayload = serde_json::from_value(command.payload)
                 .map_err(|e| format!("UPDATE_MODULATOR payload invalid: {e}"))?;
-            if p.rate_hz.is_some() || p.value.is_some() {
+            let has_update = p.rate_hz.is_some()
+                || p.value.is_some()
+                || p.attack_ms.is_some()
+                || p.decay_ms.is_some()
+                || p.sustain_level.is_some()
+                || p.release_ms.is_some();
+            if has_update {
                 with_project_mut(state, |project| {
                     let track = require_track_mut(project, &p.track_id)?;
                     if let Some(m) = track.modulators.iter_mut().find(|x| x.id == p.modulator_id) {
@@ -1152,6 +1159,12 @@ fn process_command(
                                     mp.value = value;
                                 }
                             }
+                            crate::project::ModulatorParams::Envelope(ref mut ep) => {
+                                if let Some(v) = p.attack_ms { ep.attack_ms = v; }
+                                if let Some(v) = p.decay_ms { ep.decay_ms = v; }
+                                if let Some(v) = p.sustain_level { ep.sustain_level = v; }
+                                if let Some(v) = p.release_ms { ep.release_ms = v; }
+                            }
                         }
                     }
                     Ok(())
@@ -1164,6 +1177,19 @@ fn process_command(
             if let Some(value) = p.value {
                 state.live_params.set_macro_value(&p.modulator_id, value);
             }
+            if p.attack_ms.is_some()
+                || p.decay_ms.is_some()
+                || p.sustain_level.is_some()
+                || p.release_ms.is_some()
+            {
+                state.live_params.set_envelope_params(
+                    &p.modulator_id,
+                    p.attack_ms,
+                    p.decay_ms,
+                    p.sustain_level,
+                    p.release_ms,
+                );
+            }
             commit_same_payload(
                 &ctx,
                 ev::MODULATOR_UPDATED,
@@ -1172,6 +1198,10 @@ fn process_command(
                     "modulator_id": p.modulator_id,
                     "rate_hz": p.rate_hz,
                     "value": p.value,
+                    "attack_ms": p.attack_ms,
+                    "decay_ms": p.decay_ms,
+                    "sustain_level": p.sustain_level,
+                    "release_ms": p.release_ms,
                 }),
                 false,
             )
@@ -1879,6 +1909,12 @@ fn apply_modulator_updated(project: &mut AppProject, payload: &Value) {
             if let Some(value) = payload["value"].as_f64() {
                 p.value = value as f32;
             }
+        }
+        crate::project::ModulatorParams::Envelope(ref mut p) => {
+            if let Some(v) = payload["attack_ms"].as_f64() { p.attack_ms = v as f32; }
+            if let Some(v) = payload["decay_ms"].as_f64() { p.decay_ms = v as f32; }
+            if let Some(v) = payload["sustain_level"].as_f64() { p.sustain_level = v as f32; }
+            if let Some(v) = payload["release_ms"].as_f64() { p.release_ms = v as f32; }
         }
     }
 }

@@ -24,7 +24,7 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use crate::audio_graph::parameter_block::ParameterBlock;
-use crate::project::AppProject;
+use crate::project::{AppProject, EnvelopeParams};
 
 fn write_parameter_cells(block: &ParameterBlock, values: &[f32]) {
     for (i, v) in values.iter().enumerate() {
@@ -99,6 +99,52 @@ impl RouteCells {
     }
 }
 
+/// Atomic gate + ADSR parameter cells for one Envelope modulator.
+///
+/// `gate` is set by the `InstrumentNode` on the audio thread when a note starts
+/// or ends on the same track.  All ADSR params are written by the command thread
+/// and read lock-free by `EnvelopeNode::process`.
+pub struct EnvelopeCells {
+    /// `true` = at least one note is sounding; `false` = all notes released.
+    pub gate: AtomicBool,
+    pub attack_ms: AtomicU32,
+    pub decay_ms: AtomicU32,
+    pub sustain_level: AtomicU32,
+    pub release_ms: AtomicU32,
+}
+
+impl EnvelopeCells {
+    pub fn new(p: &EnvelopeParams) -> Arc<Self> {
+        Arc::new(Self {
+            gate: AtomicBool::new(false),
+            attack_ms: AtomicU32::new(p.attack_ms.to_bits()),
+            decay_ms: AtomicU32::new(p.decay_ms.to_bits()),
+            sustain_level: AtomicU32::new(p.sustain_level.to_bits()),
+            release_ms: AtomicU32::new(p.release_ms.to_bits()),
+        })
+    }
+
+    #[inline]
+    pub fn attack_ms_value(&self) -> f32 {
+        f32::from_bits(self.attack_ms.load(Ordering::Relaxed))
+    }
+
+    #[inline]
+    pub fn decay_ms_value(&self) -> f32 {
+        f32::from_bits(self.decay_ms.load(Ordering::Relaxed))
+    }
+
+    #[inline]
+    pub fn sustain_value(&self) -> f32 {
+        f32::from_bits(self.sustain_level.load(Ordering::Relaxed))
+    }
+
+    #[inline]
+    pub fn release_ms_value(&self) -> f32 {
+        f32::from_bits(self.release_ms.load(Ordering::Relaxed))
+    }
+}
+
 /// Atomic value cell for a Macro modulator knob.  Written by the command thread,
 /// read lock-free by `MacroNode::process` on the audio thread.
 pub struct MacroCells {
@@ -118,11 +164,11 @@ impl MacroCells {
     }
 }
 
-#[derive(Default)]
 struct LiveParamsInner {
     tracks: HashMap<String, Arc<TrackParams>>,
     modulators: HashMap<String, Arc<ModulatorCells>>,
     macros: HashMap<String, Arc<MacroCells>>,
+    envelopes: HashMap<String, Arc<EnvelopeCells>>,
     routes: HashMap<String, Arc<RouteCells>>,
     effect_params: HashMap<String, Arc<ParameterBlock>>,
     /// Baseline normalised values for modulated plugin parameters.
@@ -130,6 +176,20 @@ struct LiveParamsInner {
     /// Written by the command thread when a parameter change is pushed
     /// (via `set_plugin_param_shadow`); read lock-free by plugin wrappers in `process()`.
     plugin_param_shadows: HashMap<String, HashMap<u32, Arc<AtomicU32>>>,
+}
+
+impl Default for LiveParamsInner {
+    fn default() -> Self {
+        Self {
+            tracks: HashMap::new(),
+            modulators: HashMap::new(),
+            macros: HashMap::new(),
+            envelopes: HashMap::new(),
+            routes: HashMap::new(),
+            effect_params: HashMap::new(),
+            plugin_param_shadows: HashMap::new(),
+        }
+    }
 }
 
 pub struct LiveParams {
@@ -234,6 +294,50 @@ impl LiveParams {
             return false;
         };
         cells.value.store(value.to_bits(), Ordering::Relaxed);
+        true
+    }
+
+    pub fn get_or_init_envelope(&self, id: &str, params: &EnvelopeParams) -> Arc<EnvelopeCells> {
+        let mut inner = self.lock_inner();
+        if let Some(existing) = inner.envelopes.get(id) {
+            return Arc::clone(existing);
+        }
+        let cells = EnvelopeCells::new(params);
+        inner.envelopes.insert(id.to_string(), Arc::clone(&cells));
+        cells
+    }
+
+    pub fn get_envelope(&self, id: &str) -> Option<Arc<EnvelopeCells>> {
+        let inner = self.lock_inner();
+        inner.envelopes.get(id).cloned()
+    }
+
+    /// Hot-update ADSR params (no recompile).  The `EnvelopeNode` reads these
+    /// each block so changes take effect within one block.
+    pub fn set_envelope_params(
+        &self,
+        id: &str,
+        attack_ms: Option<f32>,
+        decay_ms: Option<f32>,
+        sustain_level: Option<f32>,
+        release_ms: Option<f32>,
+    ) -> bool {
+        let inner = self.lock_inner();
+        let Some(cells) = inner.envelopes.get(id) else {
+            return false;
+        };
+        if let Some(v) = attack_ms {
+            cells.attack_ms.store(v.to_bits(), Ordering::Relaxed);
+        }
+        if let Some(v) = decay_ms {
+            cells.decay_ms.store(v.to_bits(), Ordering::Relaxed);
+        }
+        if let Some(v) = sustain_level {
+            cells.sustain_level.store(v.to_bits(), Ordering::Relaxed);
+        }
+        if let Some(v) = release_ms {
+            cells.release_ms.store(v.to_bits(), Ordering::Relaxed);
+        }
         true
     }
 
@@ -397,6 +501,9 @@ impl LiveParams {
             .retain(|id, _| live_mod_ids.contains(id.as_str()));
         inner
             .macros
+            .retain(|id, _| live_mod_ids.contains(id.as_str()));
+        inner
+            .envelopes
             .retain(|id, _| live_mod_ids.contains(id.as_str()));
 
         let live_route_ids: HashSet<&str> = project

@@ -10,9 +10,11 @@
 //! today and with a VST3 wrapper tomorrow — the graph runtime never sees the
 //! difference.
 
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 use crate::audio_graph::buffer::AudioBuffer;
+use crate::audio_graph::live_params::EnvelopeCells;
 use crate::audio_graph::midi::{MidiEvent, MidiEventKind, MidiEventList, MidiNoteSnapshot};
 use crate::audio_graph::node::{AudioNode, NodeId, PrepareContext, TransportInfo};
 
@@ -55,6 +57,10 @@ pub struct InstrumentNode {
     /// don't hang. A count handles same-pitch polyphony correctly where a
     /// plain bitset would clear too early.
     active_pitch_count: [u8; 128],
+    /// Envelope modulators on the same track.  Injected at compile time;
+    /// the node writes the gate state after processing each block so that
+    /// `EnvelopeNode::process` sees the correct gate on the next block.
+    envelope_cells: Vec<Arc<EnvelopeCells>>,
 }
 
 impl InstrumentNode {
@@ -71,6 +77,7 @@ impl InstrumentNode {
             next_expected_block_start: 0,
             was_playing: false,
             active_pitch_count: [0u8; 128],
+            envelope_cells: Vec::new(),
         }
     }
 }
@@ -193,6 +200,15 @@ impl AudioNode for InstrumentNode {
         }
 
         self.was_playing = transport.is_playing;
+
+        // Notify envelope modulators: gate = any note still sounding this block.
+        if !self.envelope_cells.is_empty() {
+            let any_active = self.active_pitch_count.iter().any(|&c| c > 0);
+            for cells in &self.envelope_cells {
+                cells.gate.store(any_active, Ordering::Relaxed);
+            }
+        }
+
         self.device
             .process_midi(&self.event_buf, outputs, transport);
     }
@@ -202,6 +218,14 @@ impl AudioNode for InstrumentNode {
         self.next_expected_block_start = 0;
         self.was_playing = false;
         self.active_pitch_count = [0u8; 128];
+        // Release envelopes on graph reset so they don't hang in Sustain.
+        for cells in &self.envelope_cells {
+            cells.gate.store(false, Ordering::Relaxed);
+        }
+    }
+
+    fn inject_envelope_cells(&mut self, cells: Vec<Arc<EnvelopeCells>>) {
+        self.envelope_cells = cells;
     }
 }
 

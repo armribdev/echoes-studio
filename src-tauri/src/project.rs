@@ -176,12 +176,43 @@ impl Default for MacroParams {
     }
 }
 
+/// ADSR envelope modulator parameters.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EnvelopeParams {
+    #[serde(default = "default_env_attack_ms")]
+    pub attack_ms: f32,
+    #[serde(default = "default_env_decay_ms")]
+    pub decay_ms: f32,
+    /// Sustain level [0..1].
+    #[serde(default = "default_env_sustain")]
+    pub sustain_level: f32,
+    #[serde(default = "default_env_release_ms")]
+    pub release_ms: f32,
+}
+
+fn default_env_attack_ms() -> f32 { 10.0 }
+fn default_env_decay_ms() -> f32 { 100.0 }
+fn default_env_sustain() -> f32 { 0.7 }
+fn default_env_release_ms() -> f32 { 200.0 }
+
+impl Default for EnvelopeParams {
+    fn default() -> Self {
+        Self {
+            attack_ms: default_env_attack_ms(),
+            decay_ms: default_env_decay_ms(),
+            sustain_level: default_env_sustain(),
+            release_ms: default_env_release_ms(),
+        }
+    }
+}
+
 /// Per-track modulation source (LFO, Envelope, Macro, …).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ModulatorParams {
     Lfo(LfoParams),
     Macro(MacroParams),
+    Envelope(EnvelopeParams),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

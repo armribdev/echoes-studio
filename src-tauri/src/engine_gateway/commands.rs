@@ -227,8 +227,15 @@ pub struct RemoveModulatorPayload {
 pub struct UpdateModulatorPayload {
     pub track_id: String,
     pub modulator_id: String,
+    /// LFO rate (Hz).
     pub rate_hz: Option<f32>,
+    /// Macro value [0..1].
     pub value: Option<f32>,
+    /// Envelope ADSR params (ms / normalised level).
+    pub attack_ms: Option<f32>,
+    pub decay_ms: Option<f32>,
+    pub sustain_level: Option<f32>,
+    pub release_ms: Option<f32>,
 }
 
 #[derive(Debug, Deserialize)]

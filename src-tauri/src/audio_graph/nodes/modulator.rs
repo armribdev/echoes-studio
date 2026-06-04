@@ -7,7 +7,9 @@
 use std::sync::Arc;
 
 use crate::audio_graph::buffer::AudioBuffer;
-use crate::audio_graph::live_params::{MacroCells, ModulatorCells};
+use std::sync::atomic::Ordering;
+
+use crate::audio_graph::live_params::{EnvelopeCells, MacroCells, ModulatorCells};
 use crate::audio_graph::node::{AudioNode, NodeId, PrepareContext, TransportInfo};
 use crate::project::LfoWaveform;
 
@@ -67,6 +69,147 @@ impl LfoNode {
                 }
             }
         }
+    }
+}
+
+/// ADSR envelope modulator.  Output is in 0…1.
+///
+/// The gate signal comes from the `InstrumentNode` on the same track via
+/// `EnvelopeCells::gate` (written on the audio thread at block boundaries).
+/// All ADSR params are hot-editable through `EnvelopeCells` atomics.
+pub struct EnvelopeNode {
+    id: NodeId,
+    cells: Arc<EnvelopeCells>,
+    phase: AdsrPhase,
+    /// Current envelope amplitude (0..1).  Audio-thread-exclusive — no atomic needed.
+    level: f32,
+    gate_was_on: bool,
+    /// Release rate (level/sample) captured at the gate falling edge.
+    release_rate: f32,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum AdsrPhase {
+    Idle,
+    Attack,
+    Decay,
+    Sustain,
+    Release,
+}
+
+impl EnvelopeNode {
+    pub fn new(id: NodeId, cells: Arc<EnvelopeCells>) -> Self {
+        Self {
+            id,
+            cells,
+            phase: AdsrPhase::Idle,
+            level: 0.0,
+            gate_was_on: false,
+            release_rate: 0.0,
+        }
+    }
+}
+
+impl AudioNode for EnvelopeNode {
+    fn node_id(&self) -> NodeId {
+        self.id
+    }
+    fn label(&self) -> &str {
+        "Envelope"
+    }
+    fn num_input_ports(&self) -> usize {
+        0
+    }
+    fn num_output_ports(&self) -> usize {
+        1
+    }
+
+    fn prepare(&mut self, _ctx: PrepareContext) {}
+
+    fn process(
+        &mut self,
+        _inputs: &[&AudioBuffer],
+        outputs: &mut [AudioBuffer],
+        transport: &TransportInfo,
+    ) {
+        if outputs.is_empty() {
+            return;
+        }
+        let output = &mut outputs[0];
+        let block_size = transport.block_size.min(output.num_frames);
+        let sr = transport.sample_rate;
+
+        // Read gate + ADSR params (block-rate, Relaxed — no ordering guarantee needed).
+        let gate_on = self.cells.gate.load(Ordering::Relaxed);
+        let attack_ms = self.cells.attack_ms_value();
+        let decay_ms = self.cells.decay_ms_value();
+        let sustain = self.cells.sustain_value().clamp(0.0, 1.0);
+        let release_ms = self.cells.release_ms_value();
+
+        // Derived rates (per-sample increments/decrements).
+        let attack_rate = if attack_ms > 0.0 {
+            1.0 / (attack_ms * 0.001 * sr)
+        } else {
+            f32::INFINITY
+        };
+        let decay_rate = if decay_ms > 0.0 {
+            (1.0 - sustain) / (decay_ms * 0.001 * sr)
+        } else {
+            f32::INFINITY
+        };
+
+        // Detect block-boundary gate transitions.
+        if gate_on && !self.gate_was_on {
+            self.phase = AdsrPhase::Attack;
+            self.level = 0.0;
+        } else if !gate_on && self.gate_was_on {
+            let release_samples = (release_ms * 0.001 * sr).max(1.0);
+            self.release_rate = self.level / release_samples;
+            self.phase = AdsrPhase::Release;
+        }
+        self.gate_was_on = gate_on;
+
+        let ch0 = output.channel_mut(0);
+        for i in 0..block_size {
+            match self.phase {
+                AdsrPhase::Idle => {
+                    self.level = 0.0;
+                }
+                AdsrPhase::Attack => {
+                    self.level += attack_rate;
+                    if self.level >= 1.0 {
+                        self.level = 1.0;
+                        self.phase = AdsrPhase::Decay;
+                    }
+                }
+                AdsrPhase::Decay => {
+                    self.level -= decay_rate;
+                    if self.level <= sustain {
+                        self.level = sustain;
+                        self.phase = AdsrPhase::Sustain;
+                    }
+                }
+                AdsrPhase::Sustain => {
+                    self.level = sustain;
+                }
+                AdsrPhase::Release => {
+                    self.level -= self.release_rate;
+                    if self.level <= 0.0 {
+                        self.level = 0.0;
+                        self.phase = AdsrPhase::Idle;
+                    }
+                }
+            }
+            ch0[i] = self.level;
+        }
+        output.mono_to_all_channels();
+    }
+
+    fn reset(&mut self) {
+        self.phase = AdsrPhase::Idle;
+        self.level = 0.0;
+        self.gate_was_on = false;
+        self.release_rate = 0.0;
     }
 }
 
@@ -211,5 +354,93 @@ mod tests {
             (output.channel(0)[0] - 0.5).abs() < 1e-6,
             "macro must reflect cell update without recompile"
         );
+    }
+
+    fn make_envelope_cells(
+        attack_ms: f32,
+        decay_ms: f32,
+        sustain: f32,
+        release_ms: f32,
+    ) -> Arc<EnvelopeCells> {
+        use crate::project::EnvelopeParams;
+        EnvelopeCells::new(&EnvelopeParams {
+            attack_ms,
+            decay_ms,
+            sustain_level: sustain,
+            release_ms,
+        })
+    }
+
+    fn run_block(node: &mut EnvelopeNode, sr: f32, block: usize) -> Vec<f32> {
+        let mut output = crate::audio_graph::buffer::AudioBuffer::new(1, block);
+        let t = crate::audio_graph::node::TransportInfo {
+            is_playing: true,
+            position_samples: 0,
+            position_seconds: 0.0,
+            bpm: 120.0,
+            sample_rate: sr,
+            block_size: block,
+        };
+        node.process(&[], std::slice::from_mut(&mut output), &t);
+        output.channel(0).to_vec()
+    }
+
+    #[test]
+    fn envelope_idle_outputs_zero() {
+        let cells = make_envelope_cells(10.0, 100.0, 0.7, 200.0);
+        let mut node = EnvelopeNode::new(NodeId(10), Arc::clone(&cells));
+        let out = run_block(&mut node, 48_000.0, 64);
+        assert!(out.iter().all(|&s| s == 0.0), "no gate → output must be zero");
+    }
+
+    #[test]
+    fn envelope_attack_ramps_to_one() {
+        // attack_ms = 1.0 ms at 48 kHz ≈ 48 samples; block = 128 samples.
+        let cells = make_envelope_cells(1.0, 1000.0, 0.5, 1000.0);
+        cells.gate.store(true, Ordering::Relaxed);
+        let mut node = EnvelopeNode::new(NodeId(11), Arc::clone(&cells));
+        let out = run_block(&mut node, 48_000.0, 128);
+        // Level must reach 1.0 within the first 60 samples.
+        let peak_idx = out.iter().take(60).position(|&s| (s - 1.0).abs() < 1e-5)
+            .expect("envelope must reach 1.0 within ~60 samples for 1ms attack");
+        // Decay must start after the peak.
+        if peak_idx + 2 < out.len() {
+            assert!(
+                out[peak_idx + 2] < 1.0,
+                "decay must have started a couple samples after the attack peak"
+            );
+        }
+    }
+
+    #[test]
+    fn envelope_release_decays_to_zero() {
+        // attack = 0ms (instant), decay = 0ms (instant), sustain = 1.0
+        // So gate-on → immediately at 1.0
+        let cells = make_envelope_cells(0.0, 0.0, 1.0, 10.0); // 10ms release at 48kHz = 480 samples
+        cells.gate.store(true, Ordering::Relaxed);
+        let mut node = EnvelopeNode::new(NodeId(12), Arc::clone(&cells));
+        run_block(&mut node, 48_000.0, 64); // sustain block
+
+        // Gate off → release
+        cells.gate.store(false, Ordering::Relaxed);
+        let out = run_block(&mut node, 48_000.0, 512);
+        // After 480 samples the release should be complete.
+        assert!(
+            out[479] < 0.01,
+            "envelope must reach zero within release_ms"
+        );
+        assert_eq!(out[511], 0.0, "output must be exactly zero after Idle");
+    }
+
+    #[test]
+    fn envelope_reset_returns_to_idle() {
+        let cells = make_envelope_cells(100.0, 100.0, 0.5, 100.0);
+        cells.gate.store(true, Ordering::Relaxed);
+        let mut node = EnvelopeNode::new(NodeId(13), Arc::clone(&cells));
+        run_block(&mut node, 48_000.0, 64);
+        node.reset();
+        cells.gate.store(false, Ordering::Relaxed);
+        let out = run_block(&mut node, 48_000.0, 64);
+        assert!(out.iter().all(|&s| s == 0.0), "after reset envelope must stay silent");
     }
 }
