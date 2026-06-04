@@ -570,7 +570,14 @@ impl PluginHost {
     /// separately.  Used by the project-save path; only non-empty blobs are
     /// returned (VST3/CLAP via FFI `getState`; other formats via the cached
     /// `saved_state`).
-    pub fn collect_plugin_states(&self) -> Vec<(String, Vec<u8>)> {
+    pub fn collect_plugin_states(&self, transport_stopped: bool) -> Vec<(String, Vec<u8>)> {
+        // ADR-010 caveat: getState FFI is not sequenced vs the audio thread's
+        // process(); harvesting during playback can tear the blob. Project-save,
+        // the only caller, runs transport-stopped — assert it to keep it that way.
+        debug_assert!(
+            transport_stopped,
+            "collect_plugin_states called during playback — see ADR-010 state caveat"
+        );
         self.records
             .iter()
             .filter_map(|(key, record)| {

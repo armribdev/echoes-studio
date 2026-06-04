@@ -410,9 +410,13 @@ fn handle_menu_event(app: &tauri::AppHandle, menu_id: &str) {
                 // `instance_key` (ADR-017).  Off-RT; assumes the transport is
                 // stopped during save.
                 if let Ok(engine) = state.audio_engine.lock() {
+                    let transport_stopped = !engine
+                        .transport
+                        .is_playing
+                        .load(std::sync::atomic::Ordering::Relaxed);
                     project.plugin_states = engine
                         .plugin_host
-                        .collect_plugin_states()
+                        .collect_plugin_states(transport_stopped)
                         .into_iter()
                         .collect();
                 }
