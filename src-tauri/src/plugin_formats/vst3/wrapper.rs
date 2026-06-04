@@ -287,6 +287,9 @@ impl AudioNode for VstWrapperNode {
         if r == crash_guard::CAUGHT {
             // SEH exception from the plugin: mute permanently until next recompile.
             self.crashed = true;
+            // Mark the shared instance as Error so reuse_existing won't hand the
+            // corrupted handle to the next graph compile; forces a fresh FFI instantiation.
+            self.instance.set_lifecycle(LifecycleState::Error);
             return;
         }
         if r != K_RESULT_OK && !inputs.is_empty() {
