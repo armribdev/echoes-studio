@@ -505,7 +505,12 @@ fn apply_hot_effect_update(
                         .plugin_host
                         .push_plugin_param(effect_id, *native_id, *value)
                     {
-                        Ok(_) => {}
+                        Ok(_) => {
+                            // Keep the modulation baseline shadow in sync so
+                            // plugin wrappers can compute `shadow + mod_delta`
+                            // without querying the plugin (which is not RT-safe).
+                            state.live_params.set_plugin_param_shadow(effect_id, *native_id, *value);
+                        }
                         Err(_) => {
                             all_ok = false;
                             break;
@@ -572,6 +577,16 @@ fn build_modulation_route(
                 .clone()
                 .ok_or("effect_id required for effect_param target")?,
             param: p.param.clone(),
+        },
+        "plugin_param" => ModulationTargetRef::PluginParam {
+            effect_id: p
+                .effect_id
+                .clone()
+                .ok_or("effect_id required for plugin_param target")?,
+            native_id: p
+                .param
+                .parse::<u32>()
+                .map_err(|_| "param must be a native_id (u32) for plugin_param target".to_string())?,
         },
         other => return Err(format!("Unknown target kind: {other}")),
     };

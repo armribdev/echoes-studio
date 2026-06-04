@@ -79,6 +79,11 @@ pub struct VstWrapperNode {
     /// `IAudioProcessor::getLatencySamples`; queried off-RT by the graph
     /// compiler through `latency_samples()`.
     reported_latency: u32,
+
+    /// Pre-allocated modulation entries for plugin parameters (injected by the
+    /// compiler via `inject_plugin_mod_entries`).  Iterated on the audio thread
+    /// in `process()` — no allocation, no resize.
+    mod_entries: Vec<crate::audio_graph::node::PluginModEntry>,
 }
 
 // SAFETY: see module-level doc.  Raw pointers are reached via Arc-shared
@@ -107,6 +112,7 @@ impl VstWrapperNode {
             num_channels: 2,
             param_changes: None,
             reported_latency: 0,
+            mod_entries: Vec::new(),
         }
     }
 
@@ -193,6 +199,14 @@ impl AudioNode for VstWrapperNode {
                     change.normalised as f64,
                 );
             });
+            // Modulation: add scaled deltas on top of command-thread baseline values.
+            // `mod_entries` is pre-allocated; no allocation on the audio thread.
+            for entry in &self.mod_entries {
+                if entry.delta != 0.0 {
+                    let effective = (entry.shadow_value() + entry.delta).clamp(0.0, 1.0);
+                    pc.push(entry.native_id, 0, effective as f64);
+                }
+            }
             if pc.count > 0 {
                 pc.as_mut() as *mut HostParameterChanges as *mut c_void
             } else {
@@ -249,6 +263,33 @@ impl AudioNode for VstWrapperNode {
         if r != K_RESULT_OK && !inputs.is_empty() {
             outputs[0].copy_from(inputs[0]);
         }
+    }
+
+    fn param_id(&self, name: &str) -> Option<u32> {
+        name.strip_prefix("plugin_native:")
+            .and_then(|s| s.parse::<u32>().ok())
+    }
+
+    fn reset_modulation(&mut self) {
+        for entry in &mut self.mod_entries {
+            entry.delta = 0.0;
+        }
+    }
+
+    fn apply_modulation(&mut self, param_id: u32, delta: f32) {
+        for entry in &mut self.mod_entries {
+            if entry.native_id == param_id {
+                entry.delta += delta;
+                return;
+            }
+        }
+    }
+
+    fn inject_plugin_mod_entries(
+        &mut self,
+        entries: Vec<crate::audio_graph::node::PluginModEntry>,
+    ) {
+        self.mod_entries = entries;
     }
 
     fn reset(&mut self) {

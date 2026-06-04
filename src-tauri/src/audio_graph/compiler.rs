@@ -31,7 +31,7 @@ use crate::audio_graph::execution_plan::{
 };
 use crate::audio_graph::graph::{AudioGraph, NodeKind};
 use crate::audio_graph::live_params::LiveParams;
-use crate::audio_graph::node::{AudioNode, NodeId, PortId, PortKind, PrepareContext};
+use crate::audio_graph::node::{AudioNode, NodeId, PluginModEntry, PortId, PortKind, PrepareContext};
 use crate::plugin_system::PluginHost;
 use crate::project::AppProject;
 
@@ -236,6 +236,53 @@ impl GraphCompiler {
             let mut node = node;
             node.prepare(prepare_ctx);
             processors.push(node);
+        }
+
+        // Inject plugin modulation entries into plugin wrapper nodes.
+        // For each modulation route targeting a Plugin node (identified by the
+        // "plugin_native:{id}" sentinel in param.name), create a shadow cell in
+        // LiveParams and hand a pre-allocated Vec<PluginModEntry> to the wrapper.
+        // This allocates once here (command thread) so process() is allocation-free.
+        {
+            let node_instance_keys: HashMap<NodeId, &str> = graph
+                .nodes
+                .values()
+                .filter_map(|n| {
+                    if let NodeKind::Plugin { instance_key, .. } = &n.kind {
+                        Some((n.id, instance_key.as_str()))
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+
+            let mut entries_by_step: HashMap<usize, HashMap<u32, PluginModEntry>> = HashMap::new();
+            for route in graph.modulation.all_routes() {
+                let target_node_id = route.target.param.node;
+                let Some(&instance_key) = node_instance_keys.get(&target_node_id) else {
+                    continue;
+                };
+                let Some(native_id) = route
+                    .target
+                    .param
+                    .name
+                    .strip_prefix("plugin_native:")
+                    .and_then(|s| s.parse::<u32>().ok())
+                else {
+                    continue;
+                };
+                let step = step_index[&target_node_id];
+                let shadow = live_params.get_or_init_plugin_param_shadow(instance_key, native_id, 0.5);
+                entries_by_step
+                    .entry(step)
+                    .or_default()
+                    .entry(native_id)
+                    .or_insert_with(|| PluginModEntry { native_id, delta: 0.0, shadow });
+            }
+            for (step, map) in entries_by_step {
+                let entries: Vec<PluginModEntry> = map.into_values().collect();
+                processors[step].inject_plugin_mod_entries(entries);
+            }
         }
 
         Self::compute_latency_compensation(&mut plan, &processors);

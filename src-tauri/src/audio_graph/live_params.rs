@@ -125,6 +125,11 @@ struct LiveParamsInner {
     macros: HashMap<String, Arc<MacroCells>>,
     routes: HashMap<String, Arc<RouteCells>>,
     effect_params: HashMap<String, Arc<ParameterBlock>>,
+    /// Baseline normalised values for modulated plugin parameters.
+    /// Outer key = effect `instance_key`; inner key = `native_id`.
+    /// Written by the command thread when a parameter change is pushed
+    /// (via `set_plugin_param_shadow`); read lock-free by plugin wrappers in `process()`.
+    plugin_param_shadows: HashMap<String, HashMap<u32, Arc<AtomicU32>>>,
 }
 
 pub struct LiveParams {
@@ -230,6 +235,35 @@ impl LiveParams {
         };
         cells.value.store(value.to_bits(), Ordering::Relaxed);
         true
+    }
+
+    /// Returns the `Arc<AtomicU32>` shadow cell for the given `(instance_key, native_id)` pair,
+    /// creating it with `initial` if it does not exist yet.  Called from the compiler (command thread).
+    pub fn get_or_init_plugin_param_shadow(
+        &self,
+        instance_key: &str,
+        native_id: u32,
+        initial: f32,
+    ) -> Arc<AtomicU32> {
+        let mut inner = self.lock_inner();
+        let cell = inner
+            .plugin_param_shadows
+            .entry(instance_key.to_string())
+            .or_default()
+            .entry(native_id)
+            .or_insert_with(|| Arc::new(AtomicU32::new(initial.to_bits())));
+        Arc::clone(cell)
+    }
+
+    /// Update the baseline shadow for `(instance_key, native_id)` when the command thread
+    /// pushes a new normalised value via `push_plugin_param`.
+    pub fn set_plugin_param_shadow(&self, instance_key: &str, native_id: u32, normalised: f32) {
+        let inner = self.lock_inner();
+        if let Some(params) = inner.plugin_param_shadows.get(instance_key) {
+            if let Some(cell) = params.get(&native_id) {
+                cell.store(normalised.to_bits(), Ordering::Relaxed);
+            }
+        }
     }
 
     pub fn get_or_init_route(&self, id: &str, depth: f32) -> Arc<RouteCells> {
@@ -382,8 +416,49 @@ impl LiveParams {
         inner
             .effect_params
             .retain(|id, _| live_effect_ids.contains(id.as_str()));
+        inner
+            .plugin_param_shadows
+            .retain(|id, _| live_effect_ids.contains(id.as_str()));
 
         let any_solo = project.tracks.iter().any(|t| t.solo);
         self.any_solo.store(any_solo, Ordering::Relaxed);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn plugin_param_shadow_init_and_update() {
+        let lp = LiveParams::new();
+
+        let shadow = lp.get_or_init_plugin_param_shadow("effect-1", 42, 0.5);
+        assert!((f32::from_bits(shadow.load(Ordering::Relaxed)) - 0.5).abs() < 1e-6);
+
+        lp.set_plugin_param_shadow("effect-1", 42, 0.8);
+        assert!((f32::from_bits(shadow.load(Ordering::Relaxed)) - 0.8).abs() < 1e-6);
+    }
+
+    #[test]
+    fn plugin_param_shadow_deduplicates_per_native_id() {
+        let lp = LiveParams::new();
+        let a = lp.get_or_init_plugin_param_shadow("effect-1", 10, 0.3);
+        let b = lp.get_or_init_plugin_param_shadow("effect-1", 10, 0.9);
+        // Second call must return the same Arc — value not reset.
+        assert!(Arc::ptr_eq(&a, &b));
+        assert!((f32::from_bits(a.load(Ordering::Relaxed)) - 0.3).abs() < 1e-6);
+    }
+
+    #[test]
+    fn plugin_param_shadow_scoped_per_instance_key() {
+        let lp = LiveParams::new();
+        let a = lp.get_or_init_plugin_param_shadow("effect-A", 1, 0.2);
+        let b = lp.get_or_init_plugin_param_shadow("effect-B", 1, 0.7);
+        assert!(!Arc::ptr_eq(&a, &b));
+        lp.set_plugin_param_shadow("effect-A", 1, 1.0);
+        assert!((f32::from_bits(a.load(Ordering::Relaxed)) - 1.0).abs() < 1e-6);
+        // effect-B must be unaffected
+        assert!((f32::from_bits(b.load(Ordering::Relaxed)) - 0.7).abs() < 1e-6);
     }
 }

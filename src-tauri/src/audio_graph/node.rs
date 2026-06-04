@@ -15,7 +15,31 @@
 //!
 //! `prepare` is called on a non-real-time thread and **may** allocate.
 
+use std::sync::{atomic::{AtomicU32, Ordering}, Arc};
+
 use crate::audio_graph::buffer::AudioBuffer;
+
+/// Pre-allocated slot for one modulated plugin parameter.
+///
+/// Allocated at graph compile time; iterated by plugin wrappers on the audio thread.
+/// `delta` is accumulated each block via `apply_modulation` and reset by
+/// `reset_modulation`.  `shadow` holds the command-thread baseline normalised value [0..1].
+pub struct PluginModEntry {
+    pub native_id: u32,
+    /// Accumulated modulation delta for this block.  Written and read exclusively
+    /// on the audio thread — no synchronisation needed.
+    pub delta: f32,
+    /// Baseline normalised value tracked by the command thread.  Shared with
+    /// `LiveParams::plugin_param_shadows`; updated when a parameter change is pushed.
+    pub shadow: Arc<AtomicU32>,
+}
+
+impl PluginModEntry {
+    #[inline]
+    pub fn shadow_value(&self) -> f32 {
+        f32::from_bits(self.shadow.load(Ordering::Relaxed))
+    }
+}
 
 /// Stable, opaque identifier for a node in the graph.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -137,6 +161,11 @@ pub trait AudioNode: Send + 'static {
 
     /// `delta` is `signal * depth`; summed per parameter before `process`.
     fn apply_modulation(&mut self, _param_id: u32, _delta: f32) {}
+
+    /// Called once at compile time by the `GraphCompiler` to inject pre-allocated
+    /// modulation entries for external plugin parameters.  Default no-op for
+    /// non-plugin nodes.
+    fn inject_plugin_mod_entries(&mut self, _entries: Vec<PluginModEntry>) {}
 
     fn latency_samples(&self) -> u32 {
         0

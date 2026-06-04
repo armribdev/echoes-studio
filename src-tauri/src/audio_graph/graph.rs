@@ -439,7 +439,8 @@ impl AudioGraph {
 
                 let target_node_id = match &route.target {
                     ModulationTargetRef::TrackGain { .. } => gain_node,
-                    ModulationTargetRef::EffectParam { effect_id, .. } => {
+                    ModulationTargetRef::EffectParam { effect_id, .. }
+                    | ModulationTargetRef::PluginParam { effect_id, .. } => {
                         match effect_node_ids.get(effect_id) {
                             Some(&id) => id,
                             None => continue, // effect not enabled or not found
@@ -450,6 +451,10 @@ impl AudioGraph {
                 let param_name = match &route.target {
                     ModulationTargetRef::TrackGain { .. } => "gain".to_string(),
                     ModulationTargetRef::EffectParam { param, .. } => param.clone(),
+                    // Sentinel prefix resolved by plugin wrappers in `param_id()`.
+                    ModulationTargetRef::PluginParam { native_id, .. } => {
+                        format!("plugin_native:{native_id}")
+                    }
                 };
 
                 graph.modulation.add_route(ModulationRoute {

@@ -203,6 +203,9 @@ pub enum ModulationTargetRef {
         effect_id: String,
         param: String,
     },
+    /// A native parameter on an external plugin (VST3 / CLAP).
+    /// `native_id` is the format-native parameter identifier (VST3 `ParamID`, CLAP `clap_id`).
+    PluginParam { effect_id: String, native_id: u32 },
 }
 
 /// One modulation connection stored in the project.

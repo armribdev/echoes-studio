@@ -86,6 +86,11 @@ pub struct ClapWrapperNode {
     /// `clap.latency` extension; queried by the graph compiler off the audio
     /// thread through `latency_samples()`.
     reported_latency: u32,
+
+    /// Pre-allocated modulation entries for plugin parameters (injected by the
+    /// compiler via `inject_plugin_mod_entries`).  Iterated on the audio thread
+    /// in `process()` — no allocation, no resize.
+    mod_entries: Vec<crate::audio_graph::node::PluginModEntry>,
 }
 
 // SAFETY: see module-level doc.  CLAP pointers are reached via Arc-shared
@@ -120,6 +125,7 @@ impl ClapWrapperNode {
             num_channels: 2,
             active: false,
             reported_latency: 0,
+            mod_entries: Vec::new(),
         }
     }
 
@@ -217,6 +223,18 @@ impl AudioNode for ClapWrapperNode {
                 param_events.push_param_value(change.sample_offset, change.native_id, plain as f64);
             });
         }
+        // Modulation: add scaled deltas on top of command-thread baseline values.
+        // `mod_entries` is pre-allocated; no allocation on the audio thread.
+        for entry in &self.mod_entries {
+            if entry.delta != 0.0 {
+                let effective = (entry.shadow_value() + entry.delta).clamp(0.0, 1.0);
+                let plain = match self.param_ranges.get(&entry.native_id) {
+                    Some((min, max)) => min + effective * (max - min),
+                    None => effective,
+                };
+                self.param_events.push_param_value(0, entry.native_id, plain as f64);
+            }
+        }
 
         for c in 0..nc {
             self.in_channel_ptrs[c] = if !inputs.is_empty() {
@@ -270,6 +288,33 @@ impl AudioNode for ClapWrapperNode {
                 ((*p).reset)(p);
             }
         }
+    }
+
+    fn param_id(&self, name: &str) -> Option<u32> {
+        name.strip_prefix("plugin_native:")
+            .and_then(|s| s.parse::<u32>().ok())
+    }
+
+    fn reset_modulation(&mut self) {
+        for entry in &mut self.mod_entries {
+            entry.delta = 0.0;
+        }
+    }
+
+    fn apply_modulation(&mut self, param_id: u32, delta: f32) {
+        for entry in &mut self.mod_entries {
+            if entry.native_id == param_id {
+                entry.delta += delta;
+                return;
+            }
+        }
+    }
+
+    fn inject_plugin_mod_entries(
+        &mut self,
+        entries: Vec<crate::audio_graph::node::PluginModEntry>,
+    ) {
+        self.mod_entries = entries;
     }
 
     /// Plain field read; populated once in `prepare()` via the `clap.latency`
