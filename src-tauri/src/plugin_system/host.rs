@@ -228,19 +228,7 @@ impl PluginHost {
 
         instance.set_lifecycle(LifecycleState::Running);
 
-        // ADR-010 race-free state restore: if the project-load path staged a blob
-        // for this placement, apply it now — the instance is brand-new and not yet
-        // in any snapshot, so `setState` cannot race the audio thread's
-        // `process()`.  Keyed by `instance_key` (ADR-017) so duplicates of the
-        // same plugin type restore their own state.  The blob is also cached in
-        // `saved_state` so formats with no FFI state path round-trip it on save.
-        let saved_state = match self.pending_state_blobs.get(instance_key) {
-            Some(bytes) => {
-                let _ = instance.load_state_blob(bytes);
-                DeviceState::from_binary(plugin_id, bytes.clone())
-            }
-            None => DeviceState::empty(plugin_id),
-        };
+        let saved_state = self.restore_state_for(instance_key, plugin_id, &instance);
 
         self.records.insert(
             instance_key.to_string(),
@@ -251,6 +239,39 @@ impl PluginHost {
         );
 
         Ok(device)
+    }
+
+    /// Decide and apply the state a freshly-created instance for `instance_key`
+    /// must start from, and return the `DeviceState` to cache on its record.
+    ///
+    /// Priority (R-4):
+    /// 1. **Project-load staged blob** (`pending_state_blobs`, keyed by
+    ///    `instance_key` per ADR-017): applied now — the instance is brand-new and
+    ///    not yet in any snapshot, so `setState` cannot race the audio thread
+    ///    (ADR-010 race-free restore).
+    /// 2. **Controlled re-instantiation:** carry the previous instance's state
+    ///    forward when this placement still hosts the same plugin type, so state
+    ///    survives a rebuild (terminal instance, non-reuse-safe format) instead of
+    ///    reverting to the default preset. The previous record is about to be
+    ///    overwritten by the caller, so no state is duplicated.
+    /// 3. Otherwise empty.
+    fn restore_state_for(
+        &self,
+        instance_key: &str,
+        plugin_id: &str,
+        instance: &PluginInstance,
+    ) -> DeviceState {
+        if let Some(bytes) = self.pending_state_blobs.get(instance_key) {
+            let _ = instance.load_state_blob(bytes);
+            return DeviceState::from_binary(plugin_id, bytes.clone());
+        }
+        if let Some(previous) = self.records.get(instance_key) {
+            let cached = previous.saved_state.as_binary();
+            if let Some(bytes) = instance.restore_from(&previous.instance, cached) {
+                return DeviceState::from_binary(plugin_id, bytes);
+            }
+        }
+        DeviceState::empty(plugin_id)
     }
 
     fn instantiate_vst3(
@@ -398,11 +419,12 @@ impl PluginHost {
             DeviceFormat::Clap => {
                 let instance = self.create_clap_instance(plugin_id, &manifest)?;
                 instance.set_lifecycle(LifecycleState::Running);
+                let saved_state = self.restore_state_for(instance_key, plugin_id, &instance);
                 self.records.insert(
                     instance_key.to_string(),
                     DeviceRecord {
                         instance: Arc::clone(&instance),
-                        saved_state: DeviceState::empty(plugin_id),
+                        saved_state,
                     },
                 );
                 Ok(Box::new(ClapInstrument::new(instance)))
@@ -810,6 +832,66 @@ mod tests {
             restored.as_binary(),
             Some(blob.as_slice()),
             "staged blob must be applied/retained at instantiation"
+        );
+    }
+
+    /// R-4: state must survive a controlled re-instantiation, not only a project
+    /// reload. A staged blob seeds the first instance; once the staged blobs are
+    /// cleared, forcing a rebuild that bypasses ADR-016 reuse (terminal instance)
+    /// must carry that state into the new instance instead of reverting to default.
+    #[test]
+    fn state_survives_controlled_reinstantiation() {
+        let mut host = PluginHost::new();
+        let blob = vec![1u8, 2, 3, 4];
+
+        // Project load: stage and apply the blob to the first instance, then clear.
+        let mut staged = HashMap::new();
+        staged.insert("fx0".to_string(), blob.clone());
+        host.set_pending_state_blobs(staged);
+        host.instantiate(NodeId(1), "fx0", "echoes.gain", false)
+            .unwrap();
+        host.clear_pending_state_blobs();
+        let first_id = host.instance_by_key("fx0").unwrap().instance_id();
+
+        // Force a rebuild that reuse cannot short-circuit (terminal instance).
+        host.instance_by_key("fx0")
+            .unwrap()
+            .set_lifecycle(LifecycleState::Destroyed);
+        host.instantiate(NodeId(2), "fx0", "echoes.gain", false)
+            .unwrap();
+        let second_id = host.instance_by_key("fx0").unwrap().instance_id();
+
+        assert_ne!(
+            first_id, second_id,
+            "a terminal instance must be rebuilt, not reused"
+        );
+        assert_eq!(
+            host.save_device_state("echoes.gain").unwrap().as_binary(),
+            Some(blob.as_slice()),
+            "state must survive re-instantiation, not just project load"
+        );
+    }
+
+    /// A controlled re-instantiation where the placement now hosts a *different*
+    /// plugin type must NOT carry the old state across types.
+    #[test]
+    fn reinstantiation_does_not_carry_state_across_types() {
+        let mut host = PluginHost::new();
+        let mut staged = HashMap::new();
+        staged.insert("fx0".to_string(), vec![5u8, 6, 7]);
+        host.set_pending_state_blobs(staged);
+        host.instantiate(NodeId(1), "fx0", "echoes.gain", false)
+            .unwrap();
+        host.clear_pending_state_blobs();
+
+        // Same placement key, different plugin type → no carry.
+        host.instantiate(NodeId(2), "fx0", "echoes.pan", false)
+            .unwrap();
+
+        assert_eq!(
+            host.save_device_state("echoes.pan").unwrap().as_binary(),
+            None,
+            "state must not leak across plugin types on the same placement"
         );
     }
 

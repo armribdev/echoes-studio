@@ -110,7 +110,21 @@ stages the blobs (`PluginHost::set_pending_state_blobs`) and `instantiate` appli
 each blob to its freshly-created instance **before the node enters any snapshot**
 — so no `process()` can be in flight for that instance when `setState` runs. This
 closes the load-direction race for **all** triggers, not just transport-stopped
-ones. (It also turned out **not** to require threading the blob map through the
+ones.
+
+**Restore is not load-only (R-4, 2026-06-04).** The restore trigger was widened
+from "project load only" to "every valid instantiation". `instantiate` now routes
+through `PluginHost::restore_state_for`, which after the staged-blob case carries
+the *previous* instance's state into the rebuilt one when the placement still
+hosts the same plugin type (`PluginInstance::restore_from`). ADR-016 instance
+reuse already preserves state on the common knob-turn recompile; this covers the
+rebuild paths reuse declines (terminal instance, non-reuse-safe format) so state
+survives a controlled re-instantiation, not only a reload — and it also makes the
+CLAP-**instrument** path restore staged state at load (previously dropped). The
+applied blob is to the brand-new instance (pre-snapshot — race-free); reading the
+previous instance's live state inherits the save-side caveat below. Locked by
+`host::tests::state_survives_controlled_reinstantiation` and
+`reinstantiation_does_not_carry_state_across_types`. (It also turned out **not** to require threading the blob map through the
 compiler signature, as this section previously assumed: the staging map lives on
 the host, which the compiler already holds `&mut`. C-7 untouched — no compiler
 signature change.) Locked by `host::tests::staged_state_is_applied_at_instantiation`

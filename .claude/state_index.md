@@ -26,7 +26,7 @@ _Last full review: 2026-06-03. Each row's date is when its status was last verif
 | Plugin system core | `plugins/plugin-system.md` | `plugin_system/{host,lifecycle,instance,registry}.rs` | stable | 2026-06-03 |
 | Plugin parameters / transport | `plugins/plugin-system.md` (+ ADR-008/009) | `plugin_system/{param_queue,parameter}.rs` | stable | 2026-06-03 |
 | Plugin capabilities / PDC | `plugins/plugin-system.md` (+ ADR-006/014) | `plugin_system/capabilities.rs` | partial (sidechain foundation) | 2026-06-03 |
-| Plugin state persistence | `plugins/plugin-system.md` (+ ADR-010) | `plugin_system/state.rs` | stable | 2026-06-03 |
+| Plugin state persistence | `plugins/plugin-system.md` (+ ADR-010) | `plugin_system/state.rs` | stable (R-4: restore carried across controlled re-instantiation) | 2026-06-04 |
 | Plugin wrappers (VST3/AU/CLAP/internal) | `plugins/plugin-wrapper-system.md` | `plugin_system/wrapper.rs`, `plugin_formats/` | in-migration (VST3/CLAP active; AU partial) | 2026-06-03 |
 | Plugin editor/GUI hosting | `plugins/plugin-wrapper-system.md`, `audits/plugin-gui-audit-2026-05-31.md` | `plugin_system/gui.rs` | in-migration | 2026-06-03 |
 | Plugin sandbox (out-of-process) | `plugins/plugin-wrapper-system.md` (+ ADR-015) | `plugin_system/{bridge,bridged_node}.rs` | in-migration (ADR-015 Phase 6) | 2026-06-03 |

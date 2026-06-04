@@ -229,7 +229,11 @@ handles its own migration.
 `plugin_states` map, keyed by `instance_key`, so two instances of the same plugin
 type keep distinct presets. `PluginHost::collect_plugin_states` harvests it at
 save (keyed by placement); restore stages it by `instance_key` and applies it at
-instantiation (ADR-010 race-free). Projects saved before ADR-017 carry a legacy
+instantiation (ADR-010 race-free). **Restore is not load-only:** a controlled
+re-instantiation (e.g. a terminal instance rebuilt, or a non-reuse-safe format)
+carries the previous instance's state forward via `PluginInstance::restore_from`
+(same plugin type only), so settings survive a rebuild and not just a project
+reload (R-4). Projects saved before ADR-017 carry a legacy
 `plugin_state_blobs` map keyed by `device_id`; `AppProject::from_file` maps those
 onto the matching placements (C-4 backward compat), and new saves stop writing the
 legacy field.

@@ -330,6 +330,33 @@ impl PluginInstance {
         }
     }
 
+    /// Carry persisted state from a `previous` instance of the **same plugin
+    /// type** into this freshly-created one (R-4 — state must survive a
+    /// controlled re-instantiation, not only a project reload).
+    ///
+    /// The `previous` instance's *live* FFI state is preferred (it reflects edits
+    /// made since load); `cached` is the host's last-serialised blob, used as a
+    /// fallback for formats with no live FFI state path (internal/AU/WASM).
+    /// Returns the bytes actually carried so the host can re-cache them, or `None`
+    /// when the types differ or there is nothing to carry — never carries state
+    /// across plugin types.
+    ///
+    /// Runs on the command thread at instantiation, before this instance enters
+    /// any snapshot, so applying it cannot race the audio thread's `process()`
+    /// on *this* instance (same race-free property as ADR-010 restore). Reading
+    /// `previous`'s live state inherits ADR-010's documented save-side caveat.
+    pub fn restore_from(&self, previous: &PluginInstance, cached: Option<&[u8]>) -> Option<Vec<u8>> {
+        if self.device_id != previous.device_id {
+            return None;
+        }
+        let bytes = previous
+            .save_state_blob()
+            .filter(|b| !b.is_empty())
+            .or_else(|| cached.filter(|c| !c.is_empty()).map(<[u8]>::to_vec))?;
+        let _ = self.load_state_blob(&bytes);
+        Some(bytes)
+    }
+
     /// Borrow the native handle for FFI dispatch.  Wrappers pattern-match
     /// the variant they expect; other variants indicate a routing bug at
     /// instantiation time.
@@ -609,6 +636,40 @@ mod tests {
             b.instance_id(),
             "same device_id must NOT collapse the instance identity"
         );
+    }
+
+    #[test]
+    fn restore_from_carries_cached_state_for_the_same_type() {
+        // A controlled replacement: a fresh instance pulls the previous
+        // instance's state. Internal devices have no live FFI state, so the
+        // host-cached blob is what gets carried.
+        let previous = PluginInstance::new_internal("echoes.gain", "Gain");
+        let next = PluginInstance::new_internal("echoes.gain", "Gain");
+        let carried = next.restore_from(&previous, Some(&[7u8, 8, 9]));
+        assert_eq!(
+            carried,
+            Some(vec![7, 8, 9]),
+            "same-type re-instantiation must carry the previous state forward"
+        );
+    }
+
+    #[test]
+    fn restore_from_refuses_across_plugin_types() {
+        let previous = PluginInstance::new_internal("echoes.gain", "Gain");
+        let next = PluginInstance::new_internal("echoes.pan", "Pan");
+        assert_eq!(
+            next.restore_from(&previous, Some(&[1u8, 2, 3])),
+            None,
+            "state must never cross plugin types"
+        );
+    }
+
+    #[test]
+    fn restore_from_returns_none_with_nothing_to_carry() {
+        let previous = PluginInstance::new_internal("echoes.gain", "Gain");
+        let next = PluginInstance::new_internal("echoes.gain", "Gain");
+        assert_eq!(next.restore_from(&previous, None), None);
+        assert_eq!(next.restore_from(&previous, Some(&[])), None);
     }
 
     #[test]

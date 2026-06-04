@@ -1,8 +1,12 @@
 //! Plugin state serialisation — persists device state in project files.
 //!
 //! Each device provides a `DeviceState` blob that is stored in the project
-//! file alongside project-structural events.  On project load, `load_state`
-//! is called to restore the exact plugin settings.
+//! file alongside project-structural events.  State is restored at **instance
+//! construction** (`PluginHost::restore_state_for`), not via a post-compile
+//! call: the project-load path stages blobs and `instantiate` applies them
+//! before the node enters any snapshot (ADR-010 race-free restore), and a
+//! controlled re-instantiation carries the previous instance's state forward
+//! (R-4) so settings survive a rebuild, not only a project reload.
 //!
 //! ## Format
 //!
