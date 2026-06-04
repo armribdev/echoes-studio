@@ -20,6 +20,60 @@ export function isNewArrangeTrackRow(trackIndex: number, trackCount: number): bo
 	return trackCount === 0 || trackIndex >= trackCount;
 }
 
+const ARRANGE_MIN_VISIBLE_BARS = 8;
+const ARRANGE_VISIBLE_BARS_AFTER_LAST_CLIP = 4;
+
+function maxClipEndSec(tracks: Track[]): number {
+	let maxEnd = 0;
+	for (const track of tracks) {
+		for (const clip of track.clips) {
+			if (clip.end > maxEnd) maxEnd = clip.end;
+		}
+		for (const clip of track.midi_clips ?? []) {
+			if (clip.end > maxEnd) maxEnd = clip.end;
+		}
+	}
+	return maxEnd;
+}
+
+/** Dernière mesure visible : max(8, fin du dernier clip en mesures + 4). */
+export function arrangeVisibleMaxBars(tracks: Track[], bpm: number, numerator: number): number {
+	const barSec = (numerator * 60) / bpm;
+	const maxClipEndBar = maxClipEndSec(tracks) / barSec;
+	return Math.max(ARRANGE_MIN_VISIBLE_BARS, maxClipEndBar + ARRANGE_VISIBLE_BARS_AFTER_LAST_CLIP);
+}
+
+/** px/beat au dézoom max : toute la timeline (max bars) remplit le viewport. */
+export function arrangeMinPxPerBeat(
+	viewportWidthPx: number,
+	maxBars: number,
+	numerator: number,
+): number {
+	const totalBeats = maxBars * numerator;
+	if (viewportWidthPx <= 0 || totalBeats <= 0) return 0;
+	return viewportWidthPx / totalBeats;
+}
+
+/** Échelle px/s au dézoom max (Ctrl+molette et scrollbar ne peuvent pas aller en dessous). */
+export function arrangeMinScale(
+	viewportWidthPx: number,
+	maxBars: number,
+	numerator: number,
+	bpm: number,
+): number {
+	const pxPerBeat = arrangeMinPxPerBeat(viewportWidthPx, maxBars, numerator);
+	return (pxPerBeat * bpm) / 60;
+}
+
+export function arrangeMinLogScale(
+	viewportWidthPx: number,
+	maxBars: number,
+	numerator: number,
+	bpm: number,
+): number {
+	return Math.log(Math.max(arrangeMinScale(viewportWidthPx, maxBars, numerator, bpm), 1e-9));
+}
+
 export type ArrangeSelbox = { x0: number; y0: number; x1: number; y1: number };
 
 export function clipsInArrangeSelbox(

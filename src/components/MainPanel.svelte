@@ -31,12 +31,14 @@
 	} from '../frontend/pianoRoll/clipEditor';
 	import TimeRuler from './TimeRuler.svelte';
 	import Playhead from './Playhead.svelte';
-	import { defaultArrangeMaxBars } from '../frontend/timeRuler/ticks';
+	import ZoomScrollbar from './ZoomScrollbar.svelte';
 	import { startTransportScrub } from '../frontend/transportScrub';
 	import {
 		ARRANGE_POINTER_DRAG_THRESHOLD,
 		ARRANGE_TRACK_HEIGHT,
 		arrangeTrackIndexFromY,
+		arrangeMinLogScale,
+		arrangeVisibleMaxBars,
 		clipsInArrangeSelbox,
 		isNewArrangeTrackRow,
 		trackIndexFromArrangeY,
@@ -73,6 +75,7 @@
 	onDestroy(() => scrubCleanup?.());
 	onDestroy(cleanupTracksPointer);
 	onDestroy(() => instrumentsResizeObserver?.disconnect());
+	onDestroy(() => tracksResizeObserver?.disconnect());
 	onDestroy(() => {
 		window.removeEventListener('mousemove', onResizeMove);
 		window.removeEventListener('mouseup', onResizeEnd);
@@ -146,6 +149,7 @@
 	}
 
 	let logScale: number = Math.log(80);
+	let pendingArrangeFitZoom = false;
 	$: scale = Math.exp(logScale);
 
 	// ── Audio engine (native CPAL) ────────────────────────────────────────────
@@ -176,6 +180,10 @@
 		// Seed the engine store — the subscription above will update `tracks` reactively,
 		// which in turn triggers the $: buffer-preparation block for all clips.
 		projectEventStore.seedFromSnapshot(dto);
+
+		pendingArrangeFitZoom = true;
+		await tick();
+		requestAnimationFrame(() => tryPendingArrangeFitZoom());
 
 		// Window title — set from frontend so the window is guaranteed to exist
 		getCurrentWindow().setTitle(`${dto.name} — Echoes Studio`).catch(console.error);
@@ -218,7 +226,7 @@
 				const winX = physX / dpr;
 				const winY = physY / dpr;
 				const rect = tracksEl.getBoundingClientRect();
-				const x = winX - rect.left;
+				const x = winX - rect.left + tracksEl.scrollLeft;
 				const y = winY - rect.top + tracksEl.scrollTop;
 				if (x < 0 || x > rect.width || y < 0) { fileDragPreview = null; return; }
 				const trackIndex = arrangeTrackIndexFromY(y, tracks.length);
@@ -338,8 +346,11 @@
 	});
 
 	$: pxPerBeat = (60 / $tempo.bpm) * scale;
-	$: arrangeMaxBars = defaultArrangeMaxBars($tempo.bpm, $tempo.numerator);
+	$: arrangeMaxBars = arrangeVisibleMaxBars(tracks, $tempo.bpm, $tempo.numerator);
+	$: arrangeTotalBeats = arrangeMaxBars * $tempo.numerator;
+	$: arrangeContentWidthPx = arrangeTotalBeats * pxPerBeat;
 	$: playheadX = $transport.position * scale;
+	$: playheadMarkerX = playheadX - tracksScrollLeft;
 
 	$: if (instrumentsEl) {
 		updateInstrumentsOverflow();
@@ -351,6 +362,32 @@
 	}
 
 	$: tracks.length, instrumentsEl, void tick().then(updateInstrumentsOverflow);
+
+	$: if (tracksEl && !tracksResizeObserver) {
+		updateArrangeScrollbars();
+		if (typeof ResizeObserver !== 'undefined') {
+			tracksResizeObserver = new ResizeObserver(() => {
+				updateArrangeScrollbars();
+				tryPendingArrangeFitZoom();
+			});
+			tracksResizeObserver.observe(tracksEl);
+		}
+	}
+
+	$: if (pendingArrangeFitZoom && tracksEl) {
+		void tick().then(tryPendingArrangeFitZoom);
+	}
+
+	$: scale, arrangeContentWidthPx, arrangeMaxBars, rulerViewportWidth, tracksEl, void tick().then(() => {
+		if (!tracksEl) return;
+		enforceArrangeMinZoom();
+		const maxScroll = Math.max(0, tracksEl.scrollWidth - tracksEl.clientWidth);
+		if (tracksEl.scrollLeft > maxScroll) {
+			tracksEl.scrollLeft = maxScroll;
+			tracksScrollLeft = maxScroll;
+		}
+		updateArrangeScrollbars();
+	});
 
 	let tracksEl: HTMLElement;
 	let instrumentsEl: HTMLDivElement | undefined;
@@ -400,20 +437,141 @@
 
 	let tracksPointer: TracksPointerState = { kind: 'none' };
 	let tracksScrollTop = 0;
+	let tracksScrollLeft = 0;
+	let rulerViewportWidth = 0;
+	let hScrollStart = 0;
+	let hScrollEnd = 1;
+	let tracksResizeObserver: ResizeObserver | undefined;
+
+	function arrangeContentX(clientX: number, originEl: HTMLElement): number {
+		const rect = originEl.getBoundingClientRect();
+		const scroll = originEl === tracksEl ? tracksEl.scrollLeft : tracksScrollLeft;
+		return clientX - rect.left + scroll;
+	}
 
 	function tracksContentCoords(event: MouseEvent): { x: number; y: number } {
 		if (!tracksEl) return { x: 0, y: 0 };
 		const rect = tracksEl.getBoundingClientRect();
 		return {
-			x: event.clientX - rect.left,
+			x: event.clientX - rect.left + tracksEl.scrollLeft,
 			y: event.clientY - rect.top + tracksEl.scrollTop,
 		};
 	}
 
 	function positionFromClientX(clientX: number, altKey: boolean): number {
 		if (!tracksEl) return 0;
-		const originLeft = tracksEl.getBoundingClientRect().left;
-		return snap(Math.max(0, (clientX - originLeft) / scale), altKey);
+		return snap(Math.max(0, arrangeContentX(clientX, tracksEl) / scale), altKey);
+	}
+
+	function updateArrangeScrollbars() {
+		if (!tracksEl) return;
+		const totalW = tracksEl.scrollWidth;
+		const vpW = tracksEl.clientWidth;
+		rulerViewportWidth = vpW;
+		hScrollStart = totalW > vpW ? tracksScrollLeft / totalW : 0;
+		hScrollEnd = totalW > vpW ? Math.min(1, (tracksScrollLeft + vpW) / totalW) : 1;
+	}
+
+	function onTracksScroll() {
+		if (!tracksEl) return;
+		tracksScrollTop = tracksEl.scrollTop;
+		tracksScrollLeft = tracksEl.scrollLeft;
+		updateArrangeScrollbars();
+	}
+
+	function arrangeLogScaleFloor(): number {
+		if (!tracksEl || tracksEl.clientWidth <= 0) return Math.log(10);
+		return arrangeMinLogScale(
+			tracksEl.clientWidth,
+			arrangeMaxBars,
+			$tempo.numerator,
+			$tempo.bpm,
+		);
+	}
+
+	function clampArrangeLogScale(value: number): number {
+		return Math.min(LOG_MAX, Math.max(arrangeLogScaleFloor(), value));
+	}
+
+	function applyArrangeMaxDezoom(): boolean {
+		if (!tracksEl || tracksEl.clientWidth <= 0) return false;
+		logScale = arrangeLogScaleFloor();
+		tracksEl.scrollLeft = 0;
+		tracksScrollLeft = 0;
+		hScrollStart = 0;
+		hScrollEnd = 1;
+		updateArrangeScrollbars();
+		return true;
+	}
+
+	function tryPendingArrangeFitZoom() {
+		if (!pendingArrangeFitZoom) return;
+		if (applyArrangeMaxDezoom()) pendingArrangeFitZoom = false;
+	}
+
+	function enforceArrangeMinZoom() {
+		if (!tracksEl) return;
+		const floor = arrangeLogScaleFloor();
+		if (logScale >= floor) return;
+		logScale = floor;
+		tracksEl.scrollLeft = 0;
+		tracksScrollLeft = 0;
+	}
+
+	function onArrangeHScrollChange(e: CustomEvent<{ start: number; end: number; cause: string }>) {
+		if (!tracksEl) return;
+		const { start: ns, end: ne, cause } = e.detail;
+		const totalBeats = arrangeTotalBeats;
+		const vpW = tracksEl.clientWidth;
+		const bpm = $tempo.bpm;
+		const leftBeat = ns * totalBeats;
+		const rightBeat = ne * totalBeats;
+		const spanBeats = rightBeat - leftBeat;
+		if (spanBeats <= 0 || vpW <= 0) return;
+
+		const clampedLog = clampArrangeLogScale(Math.log((vpW / spanBeats) * bpm / 60));
+		const clampedPxPerBeat = (Math.exp(clampedLog) * 60) / bpm;
+		const clampedSpanBeats = vpW / clampedPxPerBeat;
+		const atMinZoom = clampedLog <= arrangeLogScaleFloor() + 1e-9;
+
+		let clampedLeftBeat: number;
+		let clampedRightBeat: number;
+
+		if (atMinZoom) {
+			clampedLeftBeat = 0;
+			clampedRightBeat = totalBeats;
+		} else if (cause === 'resize-start') {
+			clampedRightBeat = Math.min(totalBeats, rightBeat);
+			clampedLeftBeat = Math.max(0, clampedRightBeat - clampedSpanBeats);
+		} else if (cause === 'resize-end') {
+			clampedLeftBeat = Math.max(0, leftBeat);
+			clampedRightBeat = Math.min(totalBeats, clampedLeftBeat + clampedSpanBeats);
+		} else {
+			const center = (leftBeat + rightBeat) * 0.5;
+			clampedLeftBeat = Math.max(
+				0,
+				Math.min(center - clampedSpanBeats * 0.5, totalBeats - clampedSpanBeats),
+			);
+			clampedRightBeat = clampedLeftBeat + clampedSpanBeats;
+		}
+
+		const newScrollLeft = atMinZoom ? 0 : clampedLeftBeat * clampedPxPerBeat;
+		hScrollStart = clampedLeftBeat / totalBeats;
+		hScrollEnd = clampedRightBeat / totalBeats;
+
+		if (Math.abs(clampedLog - logScale) < 0.001) {
+			tracksEl.scrollLeft = newScrollLeft;
+			tracksScrollLeft = newScrollLeft;
+			updateArrangeScrollbars();
+		} else {
+			logScale = clampedLog;
+			tick().then(() => {
+				if (!tracksEl) return;
+				tracksEl.scrollLeft = newScrollLeft;
+				tracksScrollLeft = newScrollLeft;
+				updateArrangeScrollbars();
+			});
+		}
 	}
 
 	function seekToClientX(clientX: number, altKey: boolean) {
@@ -499,11 +657,10 @@
 	}
 
 	function beginScrub(event: MouseEvent, originEl: HTMLElement) {
-		const originLeft = originEl.getBoundingClientRect().left;
 		scrubCleanup?.();
 		scrubCleanup = startTransportScrub(
 			event,
-			(clientX, altKey) => snap(Math.max(0, (clientX - originLeft) / scale), altKey),
+			(clientX, altKey) => snap(Math.max(0, arrangeContentX(clientX, originEl) / scale), altKey),
 			(positionSec) => {
 				scrubCleanup = null;
 				seek(positionSec).catch(console.error);
@@ -665,7 +822,7 @@
 		if (!midiDragging || !tracksEl) return;
 		const rect = tracksEl.getBoundingClientRect();
 		const { clipId, offsetPx, origEnd, origStart } = midiDragging;
-		const rawStart = Math.max(0, (e.clientX - rect.left - offsetPx) / scale);
+		const rawStart = Math.max(0, (e.clientX - rect.left + tracksEl.scrollLeft - offsetPx) / scale);
 		const newStart = snap(rawStart, e.altKey);
 		const duration = origEnd - origStart;
 
@@ -769,7 +926,7 @@
 		if (!dragging || !tracksEl) return;
 		const rect = tracksEl.getBoundingClientRect();
 		const { clipIndex, offsetPx } = dragging;
-		const rawStart = Math.max(0, (e.clientX - rect.left - offsetPx) / scale);
+		const rawStart = Math.max(0, (e.clientX - rect.left + tracksEl.scrollLeft - offsetPx) / scale);
 
 		const y = e.clientY - rect.top + tracksEl.scrollTop;
 		const newTrackIndex = Math.max(0, Math.min(tracks.length - 1, Math.floor(y / ARRANGE_TRACK_HEIGHT)));
@@ -865,13 +1022,12 @@
 	function onResizeMove(e: MouseEvent) {
 		if (!resizing || !tracksEl) return;
 		const { edge, trackIndex, origStart, origEnd, origOffset, maxSourceDuration } = resizing;
-		const originLeft = tracksEl.getBoundingClientRect().left;
 		const minWidth = MIN_CLIP_PX / scale;
 		const origin = origStart - origOffset;
 
 		const excludeClip =
 			resizing.kind === 'audio' ? { trackIndex, clipIndex: resizing.clipIndex! } : undefined;
-		const posSec = snap(Math.max(0, (e.clientX - originLeft) / scale), e.altKey, excludeClip);
+		const posSec = snap(Math.max(0, arrangeContentX(e.clientX, tracksEl) / scale), e.altKey, excludeClip);
 
 		let newStart = origStart;
 		let newEnd = origEnd;
@@ -996,33 +1152,22 @@
 	}
 
 	// ── Zoom controls ─────────────────────────────────────────────────────────
-	const LOG_MIN = Math.log(10);
 	const LOG_MAX = Math.log(2000);
 	const ZOOM_STEP = 0.12;
-
-	function zoomIn() {
-		logScale = Math.min(LOG_MAX, logScale + ZOOM_STEP);
-	}
-
-	function zoomOut() {
-		logScale = Math.max(LOG_MIN, logScale - ZOOM_STEP);
-	}
-
-	function handleZoomWidgetWheel(e: WheelEvent) {
-		e.preventDefault();
-		const delta = e.deltaY < 0 ? ZOOM_STEP : -ZOOM_STEP;
-		logScale = Math.min(Math.max(LOG_MIN, logScale + delta), LOG_MAX);
-	}
 
 	function handleTracksWheel(e: WheelEvent) {
 		if (e.ctrlKey || e.altKey) {
 			e.preventDefault();
 			const delta = e.deltaY < 0 ? ZOOM_STEP : -ZOOM_STEP;
-			logScale = Math.min(Math.max(LOG_MIN, logScale + delta), LOG_MAX);
+			const next = clampArrangeLogScale(logScale + delta);
+			if (next <= arrangeLogScaleFloor() + 1e-9 && tracksEl) {
+				tracksEl.scrollLeft = 0;
+				tracksScrollLeft = 0;
+			}
+			logScale = next;
+			updateArrangeScrollbars();
 		}
 	}
-
-	$: zoomPercent = Math.round((logScale - LOG_MIN) / (LOG_MAX - LOG_MIN) * 100);
 
 
 </script>
@@ -1057,21 +1202,6 @@
 {/if}
 
 <div class="container">
-	<!-- svelte-ignore a11y-no-static-element-interactions -->
-	<div class="zoom-ctrl" on:wheel={handleZoomWidgetWheel}>
-		<button class="zoom-btn" on:click={zoomOut} title="Dézoomer">−</button>
-		<input
-			type="range"
-			class="zoom-slider"
-			bind:value={logScale}
-			min={LOG_MIN}
-			max={LOG_MAX}
-			step={0.01}
-		/>
-		<button class="zoom-btn" on:click={zoomIn} title="Zoomer">+</button>
-		<span class="zoom-value">{Math.round(scale)}</span>
-	</div>
-
 	<div class="left-panel">
 		<div class="ruler-spacer"></div>
 		<div class="instruments" bind:this={instrumentsEl}>
@@ -1118,30 +1248,35 @@
 			bind:rulerEl={arrangeRulerEl}
 			pxPerBeat={pxPerBeat}
 			numerator={$tempo.numerator}
+			scrollPx={tracksScrollLeft}
+			viewportWidthPx={rulerViewportWidth}
 			maxBars={arrangeMaxBars}
 			on:mousedown={handleRulerMouseDown}
 		/>
 
-		<Playhead x={playheadX} />
+		<Playhead x={playheadMarkerX} />
 
-		<!-- svelte-ignore a11y-no-static-element-interactions a11y-click-events-have-key-events -->
-		<div
-			class="tracks"
-			class:is-dragging={dragging || midiDragging}
-			class:is-resizing={resizing}
-			class:is-file-dragging={fileDragPreview}
-			class:is-selbox-dragging={tracksPointer.kind === 'selbox'}
-			bind:this={tracksEl}
-			on:drop={handleDrop}
-			on:dragover={handleDragOver}
-			on:dragenter={handleDragEnter}
-			on:dragleave={handleDragLeave}
-			on:mousedown={handleTracksMouseDown}
-			on:wheel={handleTracksWheel}
-			on:scroll={() => {
-				if (tracksEl) tracksScrollTop = tracksEl.scrollTop;
-			}}
-		>
+		<div class="tracks-column">
+			<!-- svelte-ignore a11y-no-static-element-interactions a11y-click-events-have-key-events -->
+			<div
+				class="tracks"
+				class:is-dragging={dragging || midiDragging}
+				class:is-resizing={resizing}
+				class:is-file-dragging={fileDragPreview}
+				class:is-selbox-dragging={tracksPointer.kind === 'selbox'}
+				bind:this={tracksEl}
+				on:drop={handleDrop}
+				on:dragover={handleDragOver}
+				on:dragenter={handleDragEnter}
+				on:dragleave={handleDragLeave}
+				on:mousedown={handleTracksMouseDown}
+				on:wheel={handleTracksWheel}
+				on:scroll={onTracksScroll}
+			>
+				<div
+					class="tracks-inner"
+					style="width: {arrangeContentWidthPx}px; min-width: {arrangeContentWidthPx}px"
+				>
 			{#if tracks.length === 0}
 				<div class="empty-tracks">
 					<svg class="empty-tracks-icon" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
@@ -1194,6 +1329,14 @@
 					on:trackdblclick={handleTrackDoubleClick}
 				/>
 			{/each}
+				</div>
+			</div>
+			<ZoomScrollbar
+				orientation="h"
+				start={hScrollStart}
+				end={hScrollEnd}
+				on:change={onArrangeHScrollChange}
+			/>
 		</div>
 	</div>
 
@@ -1208,103 +1351,6 @@
 		min-height: 0;
 		position: relative;
 		overflow: hidden;
-	}
-
-	// ── Zoom control widget ───────────────────────────────────────────────────
-	.zoom-ctrl {
-		position: absolute;
-		right: 8px;
-		bottom: 8px;
-		z-index: 20;
-		display: flex;
-		align-items: center;
-		gap: 4px;
-		user-select: none;
-		opacity: 0.4;
-		transition: opacity 0.2s;
-
-		&:hover {
-			opacity: 1;
-		}
-	}
-
-	.zoom-btn {
-		background: none;
-		border: none;
-		color: rgba(247, 247, 249, 0.7);
-		font-size: 13px;
-		font-family: monospace;
-		width: 14px;
-		height: 14px;
-		padding: 0;
-		cursor: pointer;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		flex-shrink: 0;
-		line-height: 1;
-		transition: color 0.1s;
-
-		&:hover { color: $text-color; }
-		&:active { color: $accent-color; }
-	}
-
-	.zoom-slider {
-		width: 90px;
-		flex-shrink: 0;
-		-webkit-appearance: none;
-		appearance: none;
-		height: 11px;
-		background: transparent;
-		outline: none;
-		cursor: pointer;
-
-		&::-webkit-slider-runnable-track {
-			height: 2px;
-			border-radius: 1px;
-			background: rgba(255, 255, 255, 0.15);
-		}
-
-		&::-webkit-slider-thumb {
-			-webkit-appearance: none;
-			appearance: none;
-			margin-top: -4px;
-			width: 10px;
-			height: 10px;
-			border-radius: 50%;
-			background: rgba(247, 247, 249, 0.6);
-			cursor: pointer;
-			transition: background 0.1s, transform 0.1s;
-
-			&:hover {
-				background: $accent-color;
-				transform: scale(1.2);
-			}
-		}
-
-		&::-moz-range-track {
-			height: 2px;
-			border-radius: 1px;
-			background: rgba(255, 255, 255, 0.15);
-		}
-
-		&::-moz-range-thumb {
-			width: 10px;
-			height: 10px;
-			border-radius: 50%;
-			background: rgba(247, 247, 249, 0.6);
-			border: none;
-			cursor: pointer;
-		}
-	}
-
-	.zoom-value {
-		font-size: 9px;
-		color: rgba(247, 247, 249, 0.4);
-		font-family: 'SF Mono', 'Fira Code', ui-monospace, monospace;
-		line-height: 1;
-		min-width: 26px;
-		text-align: right;
 	}
 
 	// ── Left panel ────────────────────────────────────────────────────────────
@@ -1370,12 +1416,24 @@
 		overflow: hidden;
 	}
 
+	.tracks-column {
+		flex: 1;
+		min-height: 0;
+		display: flex;
+		flex-direction: column;
+	}
+
 	.tracks {
 		flex: 1;
-		overflow-y: auto;
-		overflow-x: hidden;
+		min-height: 0;
+		overflow: auto;
 		position: relative;
 		cursor: crosshair;
+		scrollbar-width: none;
+
+		&::-webkit-scrollbar {
+			display: none;
+		}
 
 		&.is-dragging {
 			cursor: grabbing;
@@ -1395,6 +1453,11 @@
 			cursor: crosshair;
 			user-select: none;
 		}
+	}
+
+	.tracks-inner {
+		position: relative;
+		min-height: 100%;
 	}
 
 	.arrange-selbox {
