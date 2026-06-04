@@ -28,6 +28,7 @@ pub mod ev {
     pub const TRACK_INSTRUMENT_SET: &str = "TRACK_INSTRUMENT_SET";
     pub const CLIP_ADDED: &str = "CLIP_ADDED";
     pub const CLIP_MOVED: &str = "CLIP_MOVED";
+    pub const CLIP_MOVED_TO_TRACK: &str = "CLIP_MOVED_TO_TRACK";
     pub const CLIP_REMOVED: &str = "CLIP_REMOVED";
     pub const PROJECT_NAME_UPDATED: &str = "PROJECT_NAME_UPDATED";
     pub const TEMPO_UPDATED: &str = "TEMPO_UPDATED";
@@ -49,6 +50,7 @@ pub mod ev {
     pub const MIDI_CLIP_ADDED: &str = "MIDI_CLIP_ADDED";
     pub const MIDI_CLIP_REMOVED: &str = "MIDI_CLIP_REMOVED";
     pub const MIDI_CLIP_MOVED: &str = "MIDI_CLIP_MOVED";
+    pub const MIDI_CLIP_MOVED_TO_TRACK: &str = "MIDI_CLIP_MOVED_TO_TRACK";
     pub const MIDI_CLIP_NOTES_SET: &str = "MIDI_CLIP_NOTES_SET";
 
     // Transport runtime events — NOT persisted

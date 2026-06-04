@@ -186,6 +186,7 @@ export function moveClip(
   start: number,
   end: number,
   offset?: number,
+  targetTrackId?: string,
 ): Promise<CommandResult> {
   return dispatch<MoveClipPayload>(cmd.MOVE_CLIP, {
     track_id: trackId,
@@ -193,6 +194,7 @@ export function moveClip(
     start,
     end,
     offset,
+    target_track_id: targetTrackId,
   });
 }
 
@@ -394,8 +396,16 @@ export function moveMidiClip(
   start: number,
   end: number,
   offset?: number,
+  targetTrackId?: string,
 ): Promise<CommandResult> {
-  return dispatch<MoveMidiClipPayload>(cmd.MOVE_MIDI_CLIP, { track_id: trackId, clip_id: clipId, start, end, offset });
+  return dispatch<MoveMidiClipPayload>(cmd.MOVE_MIDI_CLIP, {
+    track_id: trackId,
+    clip_id: clipId,
+    start,
+    end,
+    offset,
+    target_track_id: targetTrackId,
+  });
 }
 
 export function setClipMidiNotes(

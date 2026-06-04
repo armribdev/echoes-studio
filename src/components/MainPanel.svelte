@@ -7,7 +7,7 @@
 	import { invoke } from '@tauri-apps/api/core';
 	import { listen } from '@tauri-apps/api/event';
 	import { getCurrentWindow } from '@tauri-apps/api/window';
-	import { onMount, onDestroy } from 'svelte';
+	import { onMount, onDestroy, tick } from 'svelte';
 	import { transport } from '../stores/transport';
 	import { selection } from '../stores/selection';
 	import { tempo } from '../stores/tempo';
@@ -72,6 +72,7 @@
 
 	onDestroy(() => scrubCleanup?.());
 	onDestroy(cleanupTracksPointer);
+	onDestroy(() => instrumentsResizeObserver?.disconnect());
 	onDestroy(() => {
 		window.removeEventListener('mousemove', onResizeMove);
 		window.removeEventListener('mouseup', onResizeEnd);
@@ -340,10 +341,32 @@
 	$: arrangeMaxBars = defaultArrangeMaxBars($tempo.bpm, $tempo.numerator);
 	$: playheadX = $transport.position * scale;
 
+	$: if (instrumentsEl) {
+		updateInstrumentsOverflow();
+		instrumentsResizeObserver?.disconnect();
+		if (typeof ResizeObserver !== 'undefined') {
+			instrumentsResizeObserver = new ResizeObserver(updateInstrumentsOverflow);
+			instrumentsResizeObserver.observe(instrumentsEl);
+		}
+	}
+
+	$: tracks.length, instrumentsEl, void tick().then(updateInstrumentsOverflow);
+
 	let tracksEl: HTMLElement;
+	let instrumentsEl: HTMLDivElement | undefined;
+	let instrumentsOverflow = false;
+	let instrumentsResizeObserver: ResizeObserver | undefined;
 	let arrangeRulerEl: HTMLDivElement;
-	let dragging: { trackIndex: number; clipIndex: number; offsetPx: number } | null = null;
-	let midiDragging: { trackIndex: number; clipId: string; offsetPx: number; origStart: number; origEnd: number } | null = null;
+
+	function updateInstrumentsOverflow() {
+		if (!instrumentsEl) {
+			instrumentsOverflow = false;
+			return;
+		}
+		instrumentsOverflow = instrumentsEl.scrollHeight > instrumentsEl.clientHeight + 1;
+	}
+	let dragging: { origTrackIndex: number; trackIndex: number; clipIndex: number; offsetPx: number } | null = null;
+	let midiDragging: { origTrackIndex: number; trackIndex: number; clipId: string; offsetPx: number; origStart: number; origEnd: number } | null = null;
 	let resizing:
 		| {
 				kind: 'audio' | 'midi';
@@ -633,7 +656,7 @@
 		const track = tracks[trackIndex];
 		const clip = track?.midi_clips?.find((c) => c.id === clipId);
 		if (!clip) return;
-		midiDragging = { trackIndex, clipId, offsetPx, origStart: clip.start, origEnd: clip.end };
+		midiDragging = { origTrackIndex: trackIndex, trackIndex, clipId, offsetPx, origStart: clip.start, origEnd: clip.end };
 		window.addEventListener('mousemove', onMidiDragMove);
 		window.addEventListener('mouseup', onMidiDragEnd);
 	}
@@ -641,28 +664,51 @@
 	function onMidiDragMove(e: MouseEvent) {
 		if (!midiDragging || !tracksEl) return;
 		const rect = tracksEl.getBoundingClientRect();
-		const { trackIndex, clipId, offsetPx, origEnd, origStart } = midiDragging;
+		const { clipId, offsetPx, origEnd, origStart } = midiDragging;
 		const rawStart = Math.max(0, (e.clientX - rect.left - offsetPx) / scale);
 		const newStart = snap(rawStart, e.altKey);
 		const duration = origEnd - origStart;
-		const track = tracks[trackIndex];
-		if (!track) return;
-		tracks[trackIndex] = {
-			...track,
-			midi_clips: track.midi_clips.map((c) =>
-				c.id === clipId ? { ...c, start: newStart, end: newStart + duration } : c
-			),
-		};
+
+		const y = e.clientY - rect.top + tracksEl.scrollTop;
+		const newTrackIndex = Math.max(0, Math.min(tracks.length - 1, Math.floor(y / ARRANGE_TRACK_HEIGHT)));
+		const prevTrackIndex = midiDragging.trackIndex;
+
+		if (newTrackIndex !== prevTrackIndex) {
+			const prevTrack = tracks[prevTrackIndex];
+			const clip = prevTrack?.midi_clips?.find((c) => c.id === clipId);
+			if (!clip) return;
+			const updatedClip = { ...clip, start: newStart, end: newStart + duration };
+			tracks[prevTrackIndex] = {
+				...prevTrack,
+				midi_clips: prevTrack.midi_clips.filter((c) => c.id !== clipId),
+			};
+			tracks[newTrackIndex] = {
+				...tracks[newTrackIndex],
+				midi_clips: [...tracks[newTrackIndex].midi_clips, updatedClip],
+			};
+			midiDragging = { ...midiDragging, trackIndex: newTrackIndex };
+		} else {
+			const track = tracks[newTrackIndex];
+			if (!track) return;
+			tracks[newTrackIndex] = {
+				...track,
+				midi_clips: track.midi_clips.map((c) =>
+					c.id === clipId ? { ...c, start: newStart, end: newStart + duration } : c
+				),
+			};
+		}
 		tracks = tracks;
 	}
 
 	function onMidiDragEnd() {
 		if (midiDragging) {
-			const { trackIndex, clipId } = midiDragging;
-			const track = tracks[trackIndex];
-			const clip = track?.midi_clips?.find((c) => c.id === clipId);
-			if (track && clip) {
-				moveMidiClip(track.id, clipId, clip.start, clip.end, clip.offset).catch(console.error);
+			const { origTrackIndex, trackIndex, clipId } = midiDragging;
+			const srcTrack = tracks[origTrackIndex];
+			const dstTrack = tracks[trackIndex];
+			const clip = dstTrack?.midi_clips?.find((c) => c.id === clipId);
+			if (dstTrack && clip) {
+				const targetTrackId = origTrackIndex !== trackIndex ? dstTrack.id : undefined;
+				moveMidiClip(srcTrack?.id ?? dstTrack.id, clipId, clip.start, clip.end, clip.offset, targetTrackId).catch(console.error);
 			}
 		}
 		midiDragging = null;
@@ -714,7 +760,7 @@
 
 	function onClipDragStart(e: CustomEvent<{ offsetPx: number; trackIndex: number; clipIndex: number }>) {
 		selectTrackIndex(e.detail.trackIndex);
-		dragging = e.detail;
+		dragging = { origTrackIndex: e.detail.trackIndex, ...e.detail };
 		window.addEventListener('mousemove', onDragMove);
 		window.addEventListener('mouseup', onDragEnd);
 	}
@@ -722,22 +768,44 @@
 	function onDragMove(e: MouseEvent) {
 		if (!dragging || !tracksEl) return;
 		const rect = tracksEl.getBoundingClientRect();
-		const { trackIndex, clipIndex } = dragging;
-		const rawStart = Math.max(0, (e.clientX - rect.left - dragging.offsetPx) / scale);
-		const newStart = snap(rawStart, e.altKey, { trackIndex, clipIndex });
-		const clip = tracks[trackIndex].clips[clipIndex];
-		const duration = clip.end - clip.start;
-		tracks[trackIndex].clips[clipIndex] = { ...clip, start: newStart, end: newStart + duration };
+		const { clipIndex, offsetPx } = dragging;
+		const rawStart = Math.max(0, (e.clientX - rect.left - offsetPx) / scale);
+
+		const y = e.clientY - rect.top + tracksEl.scrollTop;
+		const newTrackIndex = Math.max(0, Math.min(tracks.length - 1, Math.floor(y / ARRANGE_TRACK_HEIGHT)));
+		const prevTrackIndex = dragging.trackIndex;
+
+		if (newTrackIndex !== prevTrackIndex) {
+			const clip = tracks[prevTrackIndex]?.clips[clipIndex];
+			if (!clip) return;
+			const newStart = snap(rawStart, e.altKey);
+			const duration = clip.end - clip.start;
+			const updatedClip = { ...clip, start: newStart, end: newStart + duration };
+			const prevClips = [...tracks[prevTrackIndex].clips];
+			prevClips.splice(clipIndex, 1);
+			tracks[prevTrackIndex] = { ...tracks[prevTrackIndex], clips: prevClips };
+			const newClips = [...tracks[newTrackIndex].clips, updatedClip];
+			tracks[newTrackIndex] = { ...tracks[newTrackIndex], clips: newClips };
+			dragging = { ...dragging, trackIndex: newTrackIndex, clipIndex: newClips.length - 1 };
+		} else {
+			const newStart = snap(rawStart, e.altKey, { trackIndex: newTrackIndex, clipIndex });
+			const clip = tracks[newTrackIndex]?.clips[clipIndex];
+			if (!clip) return;
+			const duration = clip.end - clip.start;
+			tracks[newTrackIndex].clips[clipIndex] = { ...clip, start: newStart, end: newStart + duration };
+		}
 		tracks = tracks;
 	}
 
 	function onDragEnd() {
 		if (dragging) {
-			const { trackIndex, clipIndex } = dragging;
-			const track = tracks[trackIndex];
-			const clip = track?.clips[clipIndex];
-			if (track && clip) {
-				moveClip(track.id, clip.id, clip.start, clip.end, clip.offset).catch(console.error);
+			const { origTrackIndex, trackIndex, clipIndex } = dragging;
+			const srcTrack = tracks[origTrackIndex];
+			const dstTrack = tracks[trackIndex];
+			const clip = dstTrack?.clips[clipIndex];
+			if (dstTrack && clip) {
+				const targetTrackId = origTrackIndex !== trackIndex ? dstTrack.id : undefined;
+				moveClip(srcTrack?.id ?? dstTrack.id, clip.id, clip.start, clip.end, clip.offset, targetTrackId).catch(console.error);
 			}
 		}
 		dragging = null;
@@ -1006,7 +1074,7 @@
 
 	<div class="left-panel">
 		<div class="ruler-spacer"></div>
-		<div class="instruments">
+		<div class="instruments" bind:this={instrumentsEl}>
 			{#each tracks as track, trackIndex}
 				<TrackStrip
 					{track}
@@ -1037,7 +1105,7 @@
 				/>
 			{/each}
 		</div>
-		<div class="left-panel-footer">
+		<div class="left-panel-footer" class:has-scroll-separator={instrumentsOverflow}>
 			<button type="button" class="add-track-btn" on:click={handleCreateTrack}>
 				<span class="add-track-icon">+</span> Nouvelle piste
 			</button>
@@ -1264,7 +1332,10 @@
 	.left-panel-footer {
 		flex-shrink: 0;
 		padding: 8px;
-		border-top: 1px solid $border-color;
+
+		&.has-scroll-separator {
+			border-top: 1px solid $border-color;
+		}
 	}
 
 	.add-track-btn {

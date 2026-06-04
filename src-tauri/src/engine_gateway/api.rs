@@ -845,27 +845,72 @@ fn process_command(
             let p: MoveClipPayload = serde_json::from_value(command.payload)
                 .map_err(|e| format!("MOVE_CLIP payload invalid: {e}"))?;
 
-            let offset = with_project_mut(state, |project| {
-                let track = require_track_mut(project, &p.track_id)?;
-                let clip = require_audio_clip_mut(track, &p.clip_id)?;
-                clip.start = p.start;
-                clip.end = p.end;
-                clip.offset = p.offset.unwrap_or(clip.offset);
-                Ok(clip.offset)
-            })?;
+            let dst = p.target_track_id.as_deref()
+                .filter(|t| *t != p.track_id.as_str())
+                .map(str::to_owned);
 
-            commit_same_payload(
-                &ctx,
-                ev::CLIP_MOVED,
-                json!({
-                    "track_id": p.track_id,
-                    "clip_id": p.clip_id,
-                    "start": p.start,
-                    "end": p.end,
-                    "offset": offset,
-                }),
-                true,
-            )
+            if let Some(ref dst_id) = dst {
+                let (clip_dto, file_path, offset) = with_project_mut(state, |project| {
+                    let src_idx = project.tracks.iter().position(|t| t.id == p.track_id)
+                        .ok_or_else(|| format!("Track {} not found", p.track_id))?;
+                    let clip_idx = project.tracks[src_idx].clips.iter()
+                        .position(|c| c.id == p.clip_id)
+                        .ok_or_else(|| format!("Clip {} not found", p.clip_id))?;
+                    let mut clip = project.tracks[src_idx].clips.remove(clip_idx);
+                    clip.start = p.start;
+                    clip.end = p.end;
+                    clip.offset = p.offset.unwrap_or(clip.offset);
+                    let offset = clip.offset;
+                    let file_path = clip.file_path.clone();
+                    let clip_dto = clip.to_dto();
+                    let dst_idx = project.tracks.iter().position(|t| t.id.as_str() == dst_id)
+                        .ok_or_else(|| format!("Target track {dst_id} not found"))?;
+                    project.tracks[dst_idx].clips.push(clip);
+                    Ok((clip_dto, file_path, offset))
+                })?;
+
+                commit_project_change(
+                    &ctx,
+                    ev::CLIP_MOVED_TO_TRACK,
+                    json!({
+                        "from_track_id": p.track_id,
+                        "to_track_id": dst_id,
+                        "clip_id": p.clip_id,
+                        "file_path": file_path,
+                        "start": p.start,
+                        "end": p.end,
+                        "offset": offset,
+                    }),
+                    json!({
+                        "from_track_id": p.track_id,
+                        "to_track_id": dst_id,
+                        "clip": serde_json::to_value(&clip_dto).unwrap_or_default(),
+                    }),
+                    true,
+                )
+            } else {
+                let offset = with_project_mut(state, |project| {
+                    let track = require_track_mut(project, &p.track_id)?;
+                    let clip = require_audio_clip_mut(track, &p.clip_id)?;
+                    clip.start = p.start;
+                    clip.end = p.end;
+                    clip.offset = p.offset.unwrap_or(clip.offset);
+                    Ok(clip.offset)
+                })?;
+
+                commit_same_payload(
+                    &ctx,
+                    ev::CLIP_MOVED,
+                    json!({
+                        "track_id": p.track_id,
+                        "clip_id": p.clip_id,
+                        "start": p.start,
+                        "end": p.end,
+                        "offset": offset,
+                    }),
+                    true,
+                )
+            }
         }
 
         cmd::REMOVE_CLIP => {
@@ -1235,27 +1280,67 @@ fn process_command(
             let p: MoveMidiClipPayload = serde_json::from_value(command.payload)
                 .map_err(|e| format!("MOVE_MIDI_CLIP payload invalid: {e}"))?;
 
-            let offset = with_project_mut(state, |project| {
-                let track = require_track_mut(project, &p.track_id)?;
-                let clip = require_midi_clip_mut(track, &p.clip_id)?;
-                clip.start = p.start;
-                clip.end = p.end;
-                clip.offset = p.offset.unwrap_or(clip.offset);
-                Ok(clip.offset)
-            })?;
+            let dst = p.target_track_id.as_deref()
+                .filter(|t| *t != p.track_id.as_str())
+                .map(str::to_owned);
 
-            commit_same_payload(
-                &ctx,
-                ev::MIDI_CLIP_MOVED,
-                json!({
-                    "track_id": p.track_id,
-                    "clip_id": p.clip_id,
-                    "start": p.start,
-                    "end": p.end,
-                    "offset": offset,
-                }),
-                true,
-            )
+            if let Some(ref dst_id) = dst {
+                let clip_dto = with_project_mut(state, |project| {
+                    let src_idx = project.tracks.iter().position(|t| t.id == p.track_id)
+                        .ok_or_else(|| format!("Track {} not found", p.track_id))?;
+                    let clip_idx = project.tracks[src_idx].midi_clips.iter()
+                        .position(|c| c.id == p.clip_id)
+                        .ok_or_else(|| format!("MidiClip {} not found", p.clip_id))?;
+                    let mut clip = project.tracks[src_idx].midi_clips.remove(clip_idx);
+                    clip.start = p.start;
+                    clip.end = p.end;
+                    clip.offset = p.offset.unwrap_or(clip.offset);
+                    let clip_dto = MidiClipDto {
+                        id: clip.id.clone(),
+                        start: clip.start,
+                        end: clip.end,
+                        offset: clip.offset,
+                        notes: clip.notes.clone(),
+                    };
+                    let dst_idx = project.tracks.iter().position(|t| t.id.as_str() == dst_id)
+                        .ok_or_else(|| format!("Target track {dst_id} not found"))?;
+                    project.tracks[dst_idx].midi_clips.push(clip);
+                    Ok(clip_dto)
+                })?;
+
+                commit_same_payload(
+                    &ctx,
+                    ev::MIDI_CLIP_MOVED_TO_TRACK,
+                    json!({
+                        "from_track_id": p.track_id,
+                        "to_track_id": dst_id,
+                        "clip": serde_json::to_value(&clip_dto).unwrap_or_default(),
+                    }),
+                    true,
+                )
+            } else {
+                let offset = with_project_mut(state, |project| {
+                    let track = require_track_mut(project, &p.track_id)?;
+                    let clip = require_midi_clip_mut(track, &p.clip_id)?;
+                    clip.start = p.start;
+                    clip.end = p.end;
+                    clip.offset = p.offset.unwrap_or(clip.offset);
+                    Ok(clip.offset)
+                })?;
+
+                commit_same_payload(
+                    &ctx,
+                    ev::MIDI_CLIP_MOVED,
+                    json!({
+                        "track_id": p.track_id,
+                        "clip_id": p.clip_id,
+                        "start": p.start,
+                        "end": p.end,
+                        "offset": offset,
+                    }),
+                    true,
+                )
+            }
         }
 
         cmd::SET_CLIP_MIDI_NOTES => {
@@ -1553,6 +1638,81 @@ fn apply_clip_moved(project: &mut AppProject, payload: &Value) {
     clip.offset = payload["offset"].as_f64().unwrap_or(clip.offset);
 }
 
+fn apply_clip_moved_to_track(
+    state: &tauri::State<'_, AppState>,
+    project: &mut AppProject,
+    payload: &Value,
+) {
+    let from_id = payload_str(payload, "from_track_id");
+    let to_id = payload_str(payload, "to_track_id");
+    let clip_id = payload_str(payload, "clip_id");
+    let file_path = payload_str(payload, "file_path");
+    let start = payload["start"].as_f64().unwrap_or(0.0);
+    let end = payload["end"].as_f64().unwrap_or(0.0);
+    let offset = payload["offset"].as_f64().unwrap_or(0.0);
+
+    let src_idx = match project.tracks.iter().position(|t| t.id == from_id) {
+        Some(i) => i,
+        None => return,
+    };
+    let clip_idx = match project.tracks[src_idx].clips.iter().position(|c| c.id == clip_id) {
+        Some(i) => i,
+        None => {
+            // Clip not in source — may need to recreate from file (cold replay after restart)
+            let Some(data) = resolve_clip_audio(state, &clip_id, &file_path) else { return; };
+            let clip = app_clip_from_audio(clip_id, start, end, file_path, &data);
+            let mut clip = clip;
+            clip.offset = offset;
+            let dst_idx = match project.tracks.iter().position(|t| t.id == to_id) {
+                Some(i) => i,
+                None => return,
+            };
+            if !project.tracks[dst_idx].clips.iter().any(|c| c.id == clip.id) {
+                project.tracks[dst_idx].clips.push(clip);
+            }
+            return;
+        }
+    };
+    let mut clip = project.tracks[src_idx].clips.remove(clip_idx);
+    clip.start = start;
+    clip.end = end;
+    clip.offset = offset;
+    let dst_idx = match project.tracks.iter().position(|t| t.id == to_id) {
+        Some(i) => i,
+        None => return,
+    };
+    if !project.tracks[dst_idx].clips.iter().any(|c| c.id == clip.id) {
+        project.tracks[dst_idx].clips.push(clip);
+    }
+}
+
+fn apply_midi_clip_moved_to_track(project: &mut AppProject, payload: &Value) {
+    let from_id = payload_str(payload, "from_track_id");
+    let to_id = payload_str(payload, "to_track_id");
+    let clip_val = &payload["clip"];
+    let clip_id = clip_val["id"].as_str().unwrap_or("").to_string();
+
+    let src_idx = match project.tracks.iter().position(|t| t.id == from_id) {
+        Some(i) => i,
+        None => return,
+    };
+    let clip_idx = match project.tracks[src_idx].midi_clips.iter().position(|c| c.id == clip_id) {
+        Some(i) => i,
+        None => return,
+    };
+    let mut clip = project.tracks[src_idx].midi_clips.remove(clip_idx);
+    clip.start = clip_val["start"].as_f64().unwrap_or(clip.start);
+    clip.end = clip_val["end"].as_f64().unwrap_or(clip.end);
+    clip.offset = clip_val["offset"].as_f64().unwrap_or(clip.offset);
+    let dst_idx = match project.tracks.iter().position(|t| t.id == to_id) {
+        Some(i) => i,
+        None => return,
+    };
+    if !project.tracks[dst_idx].midi_clips.iter().any(|c| c.id == clip.id) {
+        project.tracks[dst_idx].midi_clips.push(clip);
+    }
+}
+
 fn apply_clip_removed(project: &mut AppProject, payload: &Value) {
     let track_id = payload_str(payload, "track_id");
     let clip_id = payload_str(payload, "clip_id");
@@ -1824,6 +1984,7 @@ fn apply_events(
             ev::TRACK_INSTRUMENT_SET => apply_track_instrument_set(&mut project, &event.payload),
             ev::CLIP_ADDED => apply_clip_added(state, &mut project, &event.payload),
             ev::CLIP_MOVED => apply_clip_moved(&mut project, &event.payload),
+            ev::CLIP_MOVED_TO_TRACK => apply_clip_moved_to_track(state, &mut project, &event.payload),
             ev::CLIP_REMOVED => apply_clip_removed(&mut project, &event.payload),
             ev::PROJECT_NAME_UPDATED => {
                 apply_project_name_updated(&mut project, &event.payload)
@@ -1848,6 +2009,7 @@ fn apply_events(
             ev::MIDI_CLIP_ADDED => apply_midi_clip_added(&mut project, &event.payload),
             ev::MIDI_CLIP_REMOVED => apply_midi_clip_removed(&mut project, &event.payload),
             ev::MIDI_CLIP_MOVED => apply_midi_clip_moved(&mut project, &event.payload),
+            ev::MIDI_CLIP_MOVED_TO_TRACK => apply_midi_clip_moved_to_track(&mut project, &event.payload),
             ev::MIDI_CLIP_NOTES_SET => apply_midi_clip_notes_set(&mut project, &event.payload),
             _ => {}
         }

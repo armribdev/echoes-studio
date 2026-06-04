@@ -131,6 +131,8 @@ export interface MoveClipPayload {
   end: number;
   /** Source-file trim offset in seconds. Omit on a plain move (offset preserved). */
   offset?: number;
+  /** Destination track ID. Omit or same as track_id for a same-track move. */
+  target_track_id?: string;
 }
 
 export interface RemoveClipPayload {
@@ -237,6 +239,8 @@ export interface MoveMidiClipPayload {
   end: number;
   /** Left-trim offset in seconds. Omit on a plain move (offset preserved). */
   offset?: number;
+  /** Destination track ID. Omit or same as track_id for a same-track move. */
+  target_track_id?: string;
 }
 
 export interface SetClipMidiNotesPayload {

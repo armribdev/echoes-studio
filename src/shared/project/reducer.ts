@@ -188,6 +188,26 @@ export function applyEvent(state: ProjectState, event: EngineEvent): ProjectStat
       };
     }
 
+    case ev.CLIP_MOVED_TO_TRACK: {
+      const p = event.payload as { from_track_id: string; to_track_id: string; clip: Clip };
+      const clip: ClipState = { ...p.clip, trackId: p.to_track_id };
+      return {
+        ...state,
+        tracks: state.tracks.map((t) => {
+          if (t.id === p.from_track_id) {
+            return { ...t, clips: t.clips.filter((c) => c.id !== clip.id) };
+          }
+          if (t.id === p.to_track_id) {
+            return {
+              ...t,
+              clips: t.clips.some((c) => c.id === clip.id) ? t.clips : [...t.clips, clip],
+            };
+          }
+          return t;
+        }),
+      };
+    }
+
     case ev.CLIP_REMOVED: {
       const p = event.payload as { track_id: string; clip_id: string };
       return {
@@ -418,6 +438,27 @@ export function applyEvent(state: ProjectState, event: EngineEvent): ProjectStat
                 ),
               },
         ),
+      };
+    }
+
+    case ev.MIDI_CLIP_MOVED_TO_TRACK: {
+      const p = event.payload as { from_track_id: string; to_track_id: string; clip: MidiClip };
+      return {
+        ...state,
+        tracks: state.tracks.map((t) => {
+          if (t.id === p.from_track_id) {
+            return { ...t, midi_clips: t.midi_clips.filter((c) => c.id !== p.clip.id) };
+          }
+          if (t.id === p.to_track_id) {
+            return {
+              ...t,
+              midi_clips: t.midi_clips.some((c) => c.id === p.clip.id)
+                ? t.midi_clips
+                : [...t.midi_clips, p.clip],
+            };
+          }
+          return t;
+        }),
       };
     }
 

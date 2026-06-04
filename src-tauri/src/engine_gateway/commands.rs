@@ -132,6 +132,9 @@ pub struct MoveClipPayload {
     /// preserved); `Some` on a left-edge resize.
     #[serde(default)]
     pub offset: Option<f64>,
+    /// Destination track. `None` or same as `track_id` = same-track move.
+    #[serde(default)]
+    pub target_track_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -281,6 +284,9 @@ pub struct MoveMidiClipPayload {
     /// on a plain move (offset preserved); `Some` on a left-edge resize.
     #[serde(default)]
     pub offset: Option<f64>,
+    /// Destination track. `None` or same as `track_id` = same-track move.
+    #[serde(default)]
+    pub target_track_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
