@@ -229,6 +229,10 @@ pub struct UpdateModulatorPayload {
     pub modulator_id: String,
     /// LFO rate (Hz).
     pub rate_hz: Option<f32>,
+    /// LFO tempo sync.
+    pub tempo_sync: Option<bool>,
+    /// LFO beats per cycle (used when tempo_sync is true).
+    pub beat_division: Option<f32>,
     /// Macro value [0..1].
     pub value: Option<f32>,
     /// Envelope ADSR params (ms / normalised level).

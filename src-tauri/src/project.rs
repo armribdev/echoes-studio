@@ -149,9 +149,20 @@ pub struct LfoParams {
     pub rate_hz: f32,
     #[serde(default)]
     pub waveform: LfoWaveform,
+    /// When true, `beat_division` governs rate; `rate_hz` is ignored.
+    #[serde(default)]
+    pub tempo_sync: bool,
+    /// Number of beats per LFO cycle.  `1.0` = one cycle per beat,
+    /// `4.0` = one cycle per bar (4/4), `0.5` = two cycles per beat.
+    #[serde(default = "default_lfo_beat_division")]
+    pub beat_division: f32,
 }
 
 fn default_lfo_rate() -> f32 {
+    1.0
+}
+
+fn default_lfo_beat_division() -> f32 {
     1.0
 }
 
@@ -160,6 +171,8 @@ impl Default for LfoParams {
         Self {
             rate_hz: 1.0,
             waveform: LfoWaveform::Sine,
+            tempo_sync: false,
+            beat_division: 1.0,
         }
     }
 }

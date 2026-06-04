@@ -741,11 +741,18 @@ impl GraphCompiler {
                 waveform,
                 initial_value,
                 initial_envelope,
+                tempo_sync,
+                beat_division,
             } => {
                 use crate::audio_graph::modulation::ModulatorKind;
                 match kind {
                     ModulatorKind::Lfo => {
-                        let cells = live_params.get_or_init_modulator(modulator_id, *rate_hz);
+                        let cells = live_params.get_or_init_modulator(
+                            modulator_id,
+                            *rate_hz,
+                            *tempo_sync,
+                            *beat_division,
+                        );
                         Box::new(
                             nodes::modulator::LfoNode::new(id, *rate_hz, waveform.clone())
                                 .with_rate_cells(cells),

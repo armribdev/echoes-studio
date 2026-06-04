@@ -99,6 +99,10 @@ pub enum NodeKind {
         initial_value: f32,
         /// ADSR seed params (Envelope only; default for other kinds).
         initial_envelope: EnvelopeParams,
+        /// Whether the LFO rate is derived from BPM (LFO only).
+        tempo_sync: bool,
+        /// Beats per LFO cycle when `tempo_sync` is true (LFO only).
+        beat_division: f32,
     },
 
     /// Peak / RMS meter (side-effect: writes to a meter ring-buffer for the UI).
@@ -416,7 +420,7 @@ impl AudioGraph {
             let mut mod_node_ids: HashMap<String, NodeId> = HashMap::new();
 
             for modulator in &track.modulators {
-                let (kind, rate_hz, waveform, initial_value, initial_envelope) =
+                let (kind, rate_hz, waveform, initial_value, initial_envelope, tempo_sync, beat_division) =
                     match &modulator.params {
                         ModulatorParams::Lfo(p) => (
                             ModulatorKind::Lfo,
@@ -424,6 +428,8 @@ impl AudioGraph {
                             p.waveform.clone(),
                             0.0f32,
                             EnvelopeParams::default(),
+                            p.tempo_sync,
+                            p.beat_division,
                         ),
                         ModulatorParams::Macro(p) => (
                             ModulatorKind::Macro,
@@ -431,6 +437,8 @@ impl AudioGraph {
                             LfoWaveform::default(),
                             p.value,
                             EnvelopeParams::default(),
+                            false,
+                            1.0f32,
                         ),
                         ModulatorParams::Envelope(p) => (
                             ModulatorKind::Envelope,
@@ -438,6 +446,8 @@ impl AudioGraph {
                             LfoWaveform::default(),
                             0.0f32,
                             p.clone(),
+                            false,
+                            1.0f32,
                         ),
                     };
                 let node_id = graph.add_node(
@@ -448,6 +458,8 @@ impl AudioGraph {
                         waveform,
                         initial_value,
                         initial_envelope,
+                        tempo_sync,
+                        beat_division,
                     },
                     format!("{} [mod:{}]", track.name, modulator.id),
                 );

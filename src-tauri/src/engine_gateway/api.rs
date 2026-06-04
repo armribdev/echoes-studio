@@ -1139,6 +1139,8 @@ fn process_command(
             let p: UpdateModulatorPayload = serde_json::from_value(command.payload)
                 .map_err(|e| format!("UPDATE_MODULATOR payload invalid: {e}"))?;
             let has_update = p.rate_hz.is_some()
+                || p.tempo_sync.is_some()
+                || p.beat_division.is_some()
                 || p.value.is_some()
                 || p.attack_ms.is_some()
                 || p.decay_ms.is_some()
@@ -1150,9 +1152,9 @@ fn process_command(
                     if let Some(m) = track.modulators.iter_mut().find(|x| x.id == p.modulator_id) {
                         match &mut m.params {
                             crate::project::ModulatorParams::Lfo(ref mut lp) => {
-                                if let Some(rate) = p.rate_hz {
-                                    lp.rate_hz = rate;
-                                }
+                                if let Some(rate) = p.rate_hz { lp.rate_hz = rate; }
+                                if let Some(v) = p.tempo_sync { lp.tempo_sync = v; }
+                                if let Some(v) = p.beat_division { lp.beat_division = v; }
                             }
                             crate::project::ModulatorParams::Macro(ref mut mp) => {
                                 if let Some(value) = p.value {
@@ -1173,6 +1175,12 @@ fn process_command(
             // Hot-path: update atomics, no recompile.
             if let Some(rate) = p.rate_hz {
                 state.live_params.set_modulator_rate(&p.modulator_id, rate);
+            }
+            if let Some(v) = p.tempo_sync {
+                state.live_params.set_modulator_tempo_sync(&p.modulator_id, v);
+            }
+            if let Some(v) = p.beat_division {
+                state.live_params.set_modulator_beat_division(&p.modulator_id, v);
             }
             if let Some(value) = p.value {
                 state.live_params.set_macro_value(&p.modulator_id, value);
@@ -1197,6 +1205,8 @@ fn process_command(
                     "track_id": p.track_id,
                     "modulator_id": p.modulator_id,
                     "rate_hz": p.rate_hz,
+                    "tempo_sync": p.tempo_sync,
+                    "beat_division": p.beat_division,
                     "value": p.value,
                     "attack_ms": p.attack_ms,
                     "decay_ms": p.decay_ms,
@@ -1901,9 +1911,9 @@ fn apply_modulator_updated(project: &mut AppProject, payload: &Value) {
     };
     match &mut m.params {
         crate::project::ModulatorParams::Lfo(ref mut p) => {
-            if let Some(rate) = payload["rate_hz"].as_f64() {
-                p.rate_hz = rate as f32;
-            }
+            if let Some(rate) = payload["rate_hz"].as_f64() { p.rate_hz = rate as f32; }
+            if let Some(v) = payload["tempo_sync"].as_bool() { p.tempo_sync = v; }
+            if let Some(v) = payload["beat_division"].as_f64() { p.beat_division = v as f32; }
         }
         crate::project::ModulatorParams::Macro(ref mut p) => {
             if let Some(value) = payload["value"].as_f64() {

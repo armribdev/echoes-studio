@@ -67,18 +67,34 @@ impl TrackParams {
 
 pub struct ModulatorCells {
     pub rate_hz: AtomicU32,
+    /// When true, `beat_division` governs the LFO rate; `rate_hz` is ignored.
+    pub tempo_sync: AtomicBool,
+    /// Beats per LFO cycle.  `1.0` = one cycle per beat.
+    pub beat_division: AtomicU32,
 }
 
 impl ModulatorCells {
-    fn new(rate_hz: f32) -> Arc<Self> {
+    fn new(rate_hz: f32, tempo_sync: bool, beat_division: f32) -> Arc<Self> {
         Arc::new(Self {
             rate_hz: AtomicU32::new(rate_hz.to_bits()),
+            tempo_sync: AtomicBool::new(tempo_sync),
+            beat_division: AtomicU32::new(beat_division.to_bits()),
         })
     }
 
     #[inline]
     pub fn rate_hz(&self) -> f32 {
         f32::from_bits(self.rate_hz.load(Ordering::Relaxed))
+    }
+
+    #[inline]
+    pub fn tempo_sync(&self) -> bool {
+        self.tempo_sync.load(Ordering::Relaxed)
+    }
+
+    #[inline]
+    pub fn beat_division(&self) -> f32 {
+        f32::from_bits(self.beat_division.load(Ordering::Relaxed))
     }
 }
 
@@ -250,12 +266,18 @@ impl LiveParams {
         cells
     }
 
-    pub fn get_or_init_modulator(&self, id: &str, rate_hz: f32) -> Arc<ModulatorCells> {
+    pub fn get_or_init_modulator(
+        &self,
+        id: &str,
+        rate_hz: f32,
+        tempo_sync: bool,
+        beat_division: f32,
+    ) -> Arc<ModulatorCells> {
         let mut inner = self.lock_inner();
         if let Some(existing) = inner.modulators.get(id) {
             return Arc::clone(existing);
         }
-        let cells = ModulatorCells::new(rate_hz);
+        let cells = ModulatorCells::new(rate_hz, tempo_sync, beat_division);
         inner.modulators.insert(id.to_string(), Arc::clone(&cells));
         cells
     }
@@ -435,6 +457,24 @@ impl LiveParams {
             return false;
         };
         cells.rate_hz.store(rate_hz.to_bits(), Ordering::Relaxed);
+        true
+    }
+
+    pub fn set_modulator_tempo_sync(&self, id: &str, tempo_sync: bool) -> bool {
+        let inner = self.lock_inner();
+        let Some(cells) = inner.modulators.get(id) else {
+            return false;
+        };
+        cells.tempo_sync.store(tempo_sync, Ordering::Relaxed);
+        true
+    }
+
+    pub fn set_modulator_beat_division(&self, id: &str, beat_division: f32) -> bool {
+        let inner = self.lock_inner();
+        let Some(cells) = inner.modulators.get(id) else {
+            return false;
+        };
+        cells.beat_division.store(beat_division.to_bits(), Ordering::Relaxed);
         true
     }
 
