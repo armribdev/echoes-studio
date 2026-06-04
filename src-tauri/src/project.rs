@@ -463,6 +463,19 @@ pub struct AppProject {
 }
 
 impl AppProject {
+    /// Latest timeline boundary in seconds (max of all audio and MIDI clip ends).
+    pub fn timeline_end_secs(&self) -> f64 {
+        self.tracks
+            .iter()
+            .flat_map(|t| {
+                t.clips
+                    .iter()
+                    .map(|c| c.end)
+                    .chain(t.midi_clips.iter().map(|c| c.end))
+            })
+            .fold(0.0_f64, f64::max)
+    }
+
     pub fn new() -> Self {
         Self {
             name: "Sans titre".to_string(),
@@ -960,6 +973,33 @@ pub struct ClipDto {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn timeline_end_secs_includes_midi_clips() {
+        let mut project = AppProject::new();
+        project.tracks.push(AppTrack {
+            id: "t1".into(),
+            name: "MIDI".into(),
+            volume: 80.0,
+            pan: 0.0,
+            muted: false,
+            solo: false,
+            clips: vec![],
+            effects: vec![],
+            modulators: vec![],
+            mod_routes: vec![],
+            midi_notes: vec![],
+            midi_clips: vec![AppMidiClip {
+                id: "mc1".into(),
+                start: 0.0,
+                end: 12.5,
+                offset: 0.0,
+                notes: vec![],
+            }],
+            instrument: None,
+        });
+        assert_eq!(project.timeline_end_secs(), 12.5);
+    }
 
     /// C-4: a saved project from before Phase 5c (no `instrument` field) loads
     /// with `instrument == None` → the track keeps the built-in PolySynth.

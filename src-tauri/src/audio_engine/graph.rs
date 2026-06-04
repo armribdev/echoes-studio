@@ -55,13 +55,8 @@ impl AudioGraphCompiler {
         live_params: &LiveParams,
         plugin_host: &mut PluginHost,
     ) -> (GraphScheduler, HashMap<String, MeterCell>, u64) {
-        let duration_secs = project
-            .tracks
-            .iter()
-            .flat_map(|t| t.clips.iter())
-            .map(|c| c.end)
-            .fold(0.0_f64, f64::max);
-        let duration_samples = (duration_secs * config.sample_rate as f64) as u64;
+        let duration_samples =
+            (project.timeline_end_secs() * config.sample_rate as f64) as u64;
 
         // Keep existing atomics intact: an in-flight hot-path command racing
         // this recompile must not be clobbered.

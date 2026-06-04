@@ -31,7 +31,8 @@ pub struct SharedTransport {
     /// project.  Incremented by the audio callback each block.
     pub position_samples: AtomicU64,
 
-    /// End of the last clip in samples.  `0` means no clips → no auto-stop.
+    /// End of the timeline in samples (latest audio or MIDI clip end).  `0` means
+    /// no clips → no auto-stop.
     /// Updated every time the graph is recompiled.
     pub duration_samples: AtomicU64,
 

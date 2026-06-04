@@ -879,7 +879,7 @@ fn position_reporter(
             let pos = transport.position_samples.load(Ordering::Relaxed);
             let dur = transport.duration_samples.load(Ordering::Relaxed);
 
-            // Auto-stop when playhead reaches the end of the last clip.
+            // Auto-stop when playhead reaches the end of the timeline.
             if dur > 0 && pos >= dur {
                 transport.stop();
                 let _ = app.emit(
