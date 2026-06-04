@@ -61,8 +61,9 @@ impl MidiEventList {
         self.len == 0
     }
 
-    /// Sort events by sample offset (ascending).  At equal offsets, NoteOn
-    /// precedes NoteOff so a zero-length note still triggers correctly.
+    /// Sort events by sample offset (ascending).  At equal offsets, NoteOff
+    /// precedes NoteOn so that a re-triggered note (NoteOff + NoteOn at the
+    /// same offset, e.g. after a seek) releases cleanly before retriggering.
     ///
     /// In-place — no allocation.
     #[inline]
@@ -70,8 +71,8 @@ impl MidiEventList {
         self.events[..self.len].sort_by(|a, b| {
             a.offset.cmp(&b.offset).then_with(|| {
                 let priority = |event: &MidiEvent| match event.kind {
-                    MidiEventKind::NoteOn { .. } => 0,
-                    MidiEventKind::NoteOff { .. } => 1,
+                    MidiEventKind::NoteOff { .. } => 0,
+                    MidiEventKind::NoteOn { .. } => 1,
                 };
                 priority(a).cmp(&priority(b))
             })

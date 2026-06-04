@@ -50,6 +50,10 @@ pub struct InstrumentNode {
     next_expected_block_start: u64,
     /// Previous block's `is_playing` — detects play/pause transitions.
     was_playing: bool,
+    /// Bitmask of pitches that have been NoteOn'd but not yet NoteOff'd.
+    /// Cleared on seek/pause so hanging notes receive a NoteOff before
+    /// the device is given new events.
+    active_pitches: u128,
 }
 
 impl InstrumentNode {
@@ -65,6 +69,7 @@ impl InstrumentNode {
             event_buf: MidiEventList::new(),
             next_expected_block_start: 0,
             was_playing: false,
+            active_pitches: 0,
         }
     }
 }
@@ -104,12 +109,21 @@ impl AudioNode for InstrumentNode {
             let discontinuity = !self.was_playing || block_start != self.next_expected_block_start;
 
             if discontinuity {
-                self.device.reset();
+                // Release any pitches sounding before the discontinuity so
+                // plugins receive a proper NoteOff instead of hanging forever.
+                for pitch in 0u8..=127 {
+                    if self.active_pitches & (1u128 << pitch) != 0 {
+                        self.event_buf.push(MidiEvent {
+                            offset: 0,
+                            kind: MidiEventKind::NoteOff { pitch },
+                        });
+                    }
+                }
+                self.active_pitches = 0;
+
                 for note in self.notes.iter() {
                     let start_sample = note.start_sample(bpm, sample_rate).max(note.window_start_sample);
                     let end_sample = note.end_sample(bpm, sample_rate).min(note.window_end_sample);
-                    // Note already started but not yet ended — emit a catch-up
-                    // NoteOn at the beginning of this block (seek / resume).
                     if start_sample < end_sample && start_sample < block_start && block_start < end_sample {
                         self.event_buf.push(MidiEvent {
                             offset: 0,
@@ -118,6 +132,7 @@ impl AudioNode for InstrumentNode {
                                 velocity: note.velocity,
                             },
                         });
+                        self.active_pitches |= 1u128 << note.pitch;
                     }
                 }
             }
@@ -137,12 +152,14 @@ impl AudioNode for InstrumentNode {
                             velocity: note.velocity,
                         },
                     });
+                    self.active_pitches |= 1u128 << note.pitch;
                 }
                 if end_sample >= block_start && end_sample < block_end {
                     self.event_buf.push(MidiEvent {
                         offset: (end_sample - block_start) as u32,
                         kind: MidiEventKind::NoteOff { pitch: note.pitch },
                     });
+                    self.active_pitches &= !(1u128 << note.pitch);
                 }
             }
 
@@ -166,6 +183,7 @@ impl AudioNode for InstrumentNode {
                         });
                     }
                 }
+                self.active_pitches = 0;
             }
             self.next_expected_block_start = transport.position_samples;
         }
@@ -179,6 +197,7 @@ impl AudioNode for InstrumentNode {
         self.device.reset();
         self.next_expected_block_start = 0;
         self.was_playing = false;
+        self.active_pitches = 0;
     }
 }
 
