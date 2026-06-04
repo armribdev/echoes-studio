@@ -7,6 +7,7 @@
  */
 
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
+import { get } from 'svelte/store';
 import { transport } from '../../stores/transport';
 import { trackLevels } from '../../stores/trackLevels';
 import {
@@ -29,7 +30,7 @@ export function connectTransportBridge(): () => void {
         break;
       case ev.POSITION_UPDATED: {
         const p = payload.payload as PositionUpdatedPayload;
-        if (typeof p.position === 'number' && p.position >= 0) {
+        if (typeof p.position === 'number' && p.position >= 0 && !get(transport).isScrubbing) {
           transport.update((t) => ({ ...t, position: p.position }));
         }
         if (p.tracks) {

@@ -11,7 +11,7 @@ export function startTransportScrub(
 	event.preventDefault();
 
 	let lastPosition = positionFromPointer(event.clientX, event.altKey);
-	transport.update((t) => ({ ...t, position: lastPosition }));
+	transport.update((t) => ({ ...t, position: lastPosition, isScrubbing: true }));
 
 	const onMove = (e: MouseEvent) => {
 		lastPosition = positionFromPointer(e.clientX, e.altKey);
@@ -26,6 +26,7 @@ export function startTransportScrub(
 	const cleanup = () => {
 		window.removeEventListener('mousemove', onMove);
 		window.removeEventListener('mouseup', onUp);
+		transport.update((t) => ({ ...t, isScrubbing: false }));
 	};
 
 	window.addEventListener('mousemove', onMove);
