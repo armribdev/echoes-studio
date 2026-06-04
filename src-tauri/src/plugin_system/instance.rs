@@ -543,8 +543,13 @@ impl Drop for PluginInstance {
                 let proc = processor.as_ptr();
                 let comp = component.as_ptr();
                 unsafe {
-                    ((*(*proc).vtbl).set_processing)(proc, 0);
-                    ((*(*comp).vtbl).set_active)(comp, 0);
+                    // Only stop/deactivate if the plugin was activated: calling
+                    // setProcessing(0)/setActive(0) on an unactivated component
+                    // violates the VST3 spec and crashes strict implementations.
+                    if self.vst3_activation.active.load(Ordering::Acquire) {
+                        ((*(*proc).vtbl).set_processing)(proc, 0);
+                        ((*(*comp).vtbl).set_active)(comp, 0);
+                    }
                     ((*(*comp).vtbl).terminate)(comp);
                     // IAudioProcessor and IComponent may be the same COM object;
                     // release each independently.
