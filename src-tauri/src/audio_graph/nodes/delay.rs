@@ -61,6 +61,9 @@ pub struct DelayNode {
     /// from `self.params` directly each block.  `None` keeps the pre-ADR-009
     /// behaviour (parameters frozen at `prepare`).
     block: Option<Arc<ParameterBlock>>,
+
+    /// Per-parameter modulation deltas accumulated by the scheduler each block.
+    mod_deltas: [f32; DELAY_PARAM_COUNT],
 }
 
 impl DelayNode {
@@ -73,6 +76,7 @@ impl DelayNode {
             delay_samples: 0,
             sample_rate: DEFAULT_ENGINE_SAMPLE_RATE,
             block: None,
+            mod_deltas: [0.0; DELAY_PARAM_COUNT],
         }
     }
 
@@ -121,17 +125,23 @@ impl AudioNode for DelayNode {
     }
 
     fn process(&mut self, inputs: &[&AudioBuffer], outputs: &mut [AudioBuffer], t: &TransportInfo) {
-        // ADR-009: pull live parameter values from the hot block.  Recompute the
-        // read offset only when delay_ms changed (no realloc, no lock).
-        // feedback/wet/ping_pong are read from self.params below each block.
-        let next = self.block.as_ref().map(|b| delay_params_from_block(b));
-        if let Some(next) = next {
-            if delay_block_values(&next) != delay_block_values(&self.params) {
-                let recompute = next.delay_ms != self.params.delay_ms;
-                self.params = next;
-                if recompute {
-                    self.recompute_delay_samples();
-                }
+        // ADR-009 + modulation: read live block values, add any modulation deltas,
+        // and recompute the read offset only when delay_ms effectively changed.
+        // ping_pong is a bool encoded as float (< 0.5 = false, >= 0.5 = true).
+        let base = self.block.as_ref().map(|b| delay_params_from_block(b)).unwrap_or_else(|| self.params.clone());
+        let ping_pong_float = (if base.ping_pong { 1.0_f32 } else { 0.0 }) + self.mod_deltas[DELAY_PING_PONG];
+        let effective = DelayParams {
+            delay_ms:  base.delay_ms  + self.mod_deltas[DELAY_DELAY_MS],
+            feedback:  base.feedback  + self.mod_deltas[DELAY_FEEDBACK],
+            wet:       base.wet       + self.mod_deltas[DELAY_WET],
+            dry:       base.dry       + self.mod_deltas[DELAY_DRY],
+            ping_pong: ping_pong_float >= 0.5,
+        };
+        if delay_block_values(&effective) != delay_block_values(&self.params) {
+            let recompute = effective.delay_ms != self.params.delay_ms;
+            self.params = effective;
+            if recompute {
+                self.recompute_delay_samples();
             }
         }
 
@@ -191,11 +201,60 @@ impl AudioNode for DelayNode {
         self.buf.fill(0.0);
         self.write_pos = 0;
     }
+
+    fn param_id(&self, name: &str) -> Option<u32> {
+        match name {
+            "delay_ms"  => Some(DELAY_DELAY_MS as u32),
+            "feedback"  => Some(DELAY_FEEDBACK as u32),
+            "wet"       => Some(DELAY_WET as u32),
+            "dry"       => Some(DELAY_DRY as u32),
+            "ping_pong" => Some(DELAY_PING_PONG as u32),
+            _ => None,
+        }
+    }
+
+    fn apply_modulation(&mut self, param_id: u32, delta: f32) {
+        let idx = param_id as usize;
+        if idx < DELAY_PARAM_COUNT {
+            self.mod_deltas[idx] += delta;
+        }
+    }
+
+    fn reset_modulation(&mut self) {
+        self.mod_deltas = [0.0; DELAY_PARAM_COUNT];
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn modulation_delta_applied_to_params() {
+        use crate::audio_graph::node::AudioNode;
+
+        let params = DelayParams::default();
+        let block = ParameterBlock::new(&delay_block_values(&params));
+        let mut node = DelayNode::new(NodeId(1), params.clone()).with_block(Arc::clone(&block));
+        node.prepare(PrepareContext {
+            sample_rate: 48_000.0,
+            max_block_size: 64,
+            num_channels: 2,
+        });
+
+        node.apply_modulation(DELAY_FEEDBACK as u32, 0.2);
+
+        let input = AudioBuffer::new(2, 64);
+        let mut output = AudioBuffer::new(2, 64);
+        let t = TransportInfo::stopped(48_000.0);
+        node.process(&[&input], std::slice::from_mut(&mut output), &t);
+
+        assert!((node.params.feedback - (params.feedback + 0.2)).abs() < 1e-6);
+
+        node.reset_modulation();
+        node.process(&[&input], std::slice::from_mut(&mut output), &t);
+        assert!((node.params.feedback - params.feedback).abs() < 1e-6, "delta must clear after reset");
+    }
 
     #[test]
     fn hot_block_changes_delay_without_prepare() {

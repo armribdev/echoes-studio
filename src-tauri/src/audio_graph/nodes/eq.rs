@@ -165,6 +165,10 @@ pub struct EqNode {
     /// change — so a knob turn never triggers a recompile.  `None` keeps the
     /// pre-ADR-009 behaviour (coefficients frozen at `prepare`).
     block: Option<Arc<ParameterBlock>>,
+
+    /// Per-parameter modulation deltas accumulated by the scheduler each block.
+    /// Zeroed by `reset_modulation()` before the scheduler applies new routes.
+    mod_deltas: [f32; EQ_PARAM_COUNT],
 }
 
 impl EqNode {
@@ -178,6 +182,7 @@ impl EqNode {
             oversample: Oversample2x::default(),
             sr_os: DEFAULT_ENGINE_SAMPLE_RATE * OVERSAMPLE_FACTOR as f32,
             block: None,
+            mod_deltas: [0.0; EQ_PARAM_COUNT],
         }
     }
 
@@ -243,15 +248,21 @@ impl AudioNode for EqNode {
     }
 
     fn process(&mut self, inputs: &[&AudioBuffer], outputs: &mut [AudioBuffer], t: &TransportInfo) {
-        // ADR-009: pull live parameter values from the hot block and recompute
-        // the biquads only when they actually changed.  No allocation, no lock:
-        // `ParameterBlock::get` is one relaxed atomic load per parameter.
-        let next = self.block.as_ref().map(|b| eq_params_from_block(b));
-        if let Some(next) = next {
-            if eq_block_values(&next) != eq_block_values(&self.params) {
-                self.params = next;
-                self.recompute_coeffs();
-            }
+        // ADR-009 + modulation: read live block values, add any modulation deltas,
+        // and recompute biquads only when the effective params actually change.
+        let base = self.block.as_ref().map(|b| eq_params_from_block(b)).unwrap_or_else(|| self.params.clone());
+        let effective = EqParams {
+            low_gain_db:  base.low_gain_db  + self.mod_deltas[EQ_LOW_GAIN_DB],
+            low_freq:     base.low_freq     + self.mod_deltas[EQ_LOW_FREQ],
+            mid_gain_db:  base.mid_gain_db  + self.mod_deltas[EQ_MID_GAIN_DB],
+            mid_freq:     base.mid_freq     + self.mod_deltas[EQ_MID_FREQ],
+            mid_q:        base.mid_q        + self.mod_deltas[EQ_MID_Q],
+            high_gain_db: base.high_gain_db + self.mod_deltas[EQ_HIGH_GAIN_DB],
+            high_freq:    base.high_freq    + self.mod_deltas[EQ_HIGH_FREQ],
+        };
+        if eq_block_values(&effective) != eq_block_values(&self.params) {
+            self.params = effective;
+            self.recompute_coeffs();
         }
 
         let input = &inputs[0];
@@ -281,6 +292,30 @@ impl AudioNode for EqNode {
         self.mid.reset();
         self.high.reset();
         self.oversample.reset();
+    }
+
+    fn param_id(&self, name: &str) -> Option<u32> {
+        match name {
+            "low_gain_db"  => Some(EQ_LOW_GAIN_DB as u32),
+            "low_freq"     => Some(EQ_LOW_FREQ as u32),
+            "mid_gain_db"  => Some(EQ_MID_GAIN_DB as u32),
+            "mid_freq"     => Some(EQ_MID_FREQ as u32),
+            "mid_q"        => Some(EQ_MID_Q as u32),
+            "high_gain_db" => Some(EQ_HIGH_GAIN_DB as u32),
+            "high_freq"    => Some(EQ_HIGH_FREQ as u32),
+            _ => None,
+        }
+    }
+
+    fn apply_modulation(&mut self, param_id: u32, delta: f32) {
+        let idx = param_id as usize;
+        if idx < EQ_PARAM_COUNT {
+            self.mod_deltas[idx] += delta;
+        }
+    }
+
+    fn reset_modulation(&mut self) {
+        self.mod_deltas = [0.0; EQ_PARAM_COUNT];
     }
 }
 
@@ -369,6 +404,33 @@ mod tests {
             node.params.low_gain_db, 12.0,
             "cached params follow the block"
         );
+    }
+
+    #[test]
+    fn modulation_delta_applied_to_params() {
+        use crate::audio_graph::node::AudioNode;
+
+        let params = EqParams::default();
+        let block = ParameterBlock::new(&eq_block_values(&params));
+        let mut node = EqNode::new(NodeId(1), params.clone()).with_block(Arc::clone(&block));
+        node.prepare(PrepareContext {
+            sample_rate: 48_000.0,
+            max_block_size: 64,
+            num_channels: 2,
+        });
+
+        node.apply_modulation(EQ_LOW_GAIN_DB as u32, 6.0);
+
+        let input = AudioBuffer::new(2, 64);
+        let mut output = AudioBuffer::new(2, 64);
+        let t = TransportInfo::stopped(48_000.0);
+        node.process(&[&input], std::slice::from_mut(&mut output), &t);
+
+        assert_eq!(node.params.low_gain_db, params.low_gain_db + 6.0);
+
+        node.reset_modulation();
+        node.process(&[&input], std::slice::from_mut(&mut output), &t);
+        assert_eq!(node.params.low_gain_db, params.low_gain_db, "delta must clear after reset");
     }
 
     #[test]

@@ -107,6 +107,9 @@ pub struct ReverbNode {
     /// from `self.params` directly each block.  `None` keeps the pre-ADR-009
     /// behaviour (coefficients frozen at `prepare`).
     block: Option<Arc<ParameterBlock>>,
+
+    /// Per-parameter modulation deltas accumulated by the scheduler each block.
+    mod_deltas: [f32; REVERB_PARAM_COUNT],
 }
 
 impl ReverbNode {
@@ -119,6 +122,7 @@ impl ReverbNode {
             allpass_l: Vec::new(),
             allpass_r: Vec::new(),
             block: None,
+            mod_deltas: [0.0; REVERB_PARAM_COUNT],
         }
     }
 
@@ -188,18 +192,22 @@ impl AudioNode for ReverbNode {
     }
 
     fn process(&mut self, inputs: &[&AudioBuffer], outputs: &mut [AudioBuffer], t: &TransportInfo) {
-        // ADR-009: pull live parameter values from the hot block.  Re-apply the
-        // comb coefficients only when room_size/damping changed (no realloc, no
-        // lock).  wet/dry/width are read from self.params below each block.
-        let next = self.block.as_ref().map(|b| reverb_params_from_block(b));
-        if let Some(next) = next {
-            if reverb_block_values(&next) != reverb_block_values(&self.params) {
-                let recompute =
-                    next.room_size != self.params.room_size || next.damping != self.params.damping;
-                self.params = next;
-                if recompute {
-                    self.apply_coeffs();
-                }
+        // ADR-009 + modulation: read live block values, add any modulation deltas,
+        // and re-apply comb coefficients only when room_size/damping effectively changed.
+        let base = self.block.as_ref().map(|b| reverb_params_from_block(b)).unwrap_or_else(|| self.params.clone());
+        let effective = ReverbParams {
+            room_size: base.room_size + self.mod_deltas[REVERB_ROOM_SIZE],
+            damping:   base.damping   + self.mod_deltas[REVERB_DAMPING],
+            wet:       base.wet       + self.mod_deltas[REVERB_WET],
+            dry:       base.dry       + self.mod_deltas[REVERB_DRY],
+            width:     base.width     + self.mod_deltas[REVERB_WIDTH],
+        };
+        if reverb_block_values(&effective) != reverb_block_values(&self.params) {
+            let recompute = effective.room_size != self.params.room_size
+                || effective.damping != self.params.damping;
+            self.params = effective;
+            if recompute {
+                self.apply_coeffs();
             }
         }
 
@@ -268,11 +276,60 @@ impl AudioNode for ReverbNode {
             a.buf.fill(0.0);
         }
     }
+
+    fn param_id(&self, name: &str) -> Option<u32> {
+        match name {
+            "room_size" => Some(REVERB_ROOM_SIZE as u32),
+            "damping"   => Some(REVERB_DAMPING as u32),
+            "wet"       => Some(REVERB_WET as u32),
+            "dry"       => Some(REVERB_DRY as u32),
+            "width"     => Some(REVERB_WIDTH as u32),
+            _ => None,
+        }
+    }
+
+    fn apply_modulation(&mut self, param_id: u32, delta: f32) {
+        let idx = param_id as usize;
+        if idx < REVERB_PARAM_COUNT {
+            self.mod_deltas[idx] += delta;
+        }
+    }
+
+    fn reset_modulation(&mut self) {
+        self.mod_deltas = [0.0; REVERB_PARAM_COUNT];
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn modulation_delta_applied_to_params() {
+        use crate::audio_graph::node::AudioNode;
+
+        let params = ReverbParams::default();
+        let block = ParameterBlock::new(&reverb_block_values(&params));
+        let mut node = ReverbNode::new(NodeId(1), params.clone()).with_block(Arc::clone(&block));
+        node.prepare(PrepareContext {
+            sample_rate: 48_000.0,
+            max_block_size: 64,
+            num_channels: 2,
+        });
+
+        node.apply_modulation(REVERB_WET as u32, 0.3);
+
+        let input = AudioBuffer::new(2, 64);
+        let mut output = AudioBuffer::new(2, 64);
+        let t = TransportInfo::stopped(48_000.0);
+        node.process(&[&input], std::slice::from_mut(&mut output), &t);
+
+        assert!((node.params.wet - (params.wet + 0.3)).abs() < 1e-6);
+
+        node.reset_modulation();
+        node.process(&[&input], std::slice::from_mut(&mut output), &t);
+        assert!((node.params.wet - params.wet).abs() < 1e-6, "delta must clear after reset");
+    }
 
     #[test]
     fn hot_block_changes_coeffs_without_prepare() {

@@ -10,6 +10,14 @@ export interface PluginInfo {
 	is_instrument: boolean;
 }
 
+/** Built-in insert effects shown alongside scanned plugins in the effect picker. */
+export const BUILTIN_EFFECT_PLUGINS: PluginInfo[] = [
+	{ id: 'eq', name: 'EQ 3-bandes', vendor: 'Echoes Studio', format: 'Internal', categories: ['EQ'], is_instrument: false },
+	{ id: 'compressor', name: 'Compresseur', vendor: 'Echoes Studio', format: 'Internal', categories: ['Dynamics'], is_instrument: false },
+	{ id: 'reverb', name: 'Réverb', vendor: 'Echoes Studio', format: 'Internal', categories: ['Reverb'], is_instrument: false },
+	{ id: 'delay', name: 'Délai', vendor: 'Echoes Studio', format: 'Internal', categories: ['Delay'], is_instrument: false },
+];
+
 // All discovered plugins (populated at app init + on manual rescan).
 export const plugins = writable<PluginInfo[]>([]);
 export const pluginsLoading = writable(false);
