@@ -6,6 +6,7 @@
 	export let id: string;
 	export let start: number;
 	export let end: number;
+	export let offset: number = 0;
 	export let scale: number;
 	export let sample_rate: number;
 	export let peaks_64: [number, number][];
@@ -14,6 +15,7 @@
 
 	const dispatch = createEventDispatcher<{
 		clipdragstart: { offsetPx: number };
+		clipresizestart: { edge: 'left' | 'right'; clientX: number };
 		clipcontextmenu: { id: string; x: number; y: number };
 	}>();
 
@@ -21,12 +23,12 @@
 	let canvas: HTMLCanvasElement;
 	let syncWorker: Worker;
 	let workerReady = false;
-	const bitmapCache = new Map<number, ImageBitmap>();
-	let latestBucket = -1;
+	const bitmapCache = new Map<string, ImageBitmap>();
+	let latestKey = '';
 
 	// Not reactive — accessed only inside functions so Svelte doesn't track them as $: dependencies
 	let _lastW = 0;
-	let _lastBucket = -1;
+	let _lastKey = '';
 	let _drawnBitmap: ImageBitmap | null = null;
 
 	$: selected = $selection.ids.has(id);
@@ -35,22 +37,28 @@
 		return Math.round(Math.log2(s) * 8);
 	}
 
-	// Returns true (and updates tracking) only when canvas size or zoom level actually changed.
-	// Called from a $: block — using a function means Svelte won't track _lastW/_lastBucket
-	// as reactive dependencies, so drag frames that change only `start` are skipped entirely.
-	function needsRender(w: number, bucket: number): boolean {
-		if (w === _lastW && bucket === _lastBucket) return false;
+	// Cache/render key: same zoom bucket + same trim offset → same waveform pixels.
+	function renderKey(bucket: number, off: number): string {
+		return `${bucket}|${off.toFixed(6)}`;
+	}
+
+	// Returns true (and updates tracking) only when canvas size, zoom level, or trim
+	// offset actually changed. Called from a $: block — using a function means Svelte
+	// won't track _lastW/_lastKey as reactive dependencies, so drag frames that change
+	// only `start` (a plain move) are skipped entirely.
+	function needsRender(w: number, key: string): boolean {
+		if (w === _lastW && key === _lastKey) return false;
 		_lastW = w;
-		_lastBucket = bucket;
+		_lastKey = key;
 		return true;
 	}
 
 	const loadWorker = async () => {
 		const SyncWorker = await import('$lib/waveform.worker?worker');
 		syncWorker = new SyncWorker.default();
-		syncWorker.onmessage = ({ data }: MessageEvent<{ bitmap: ImageBitmap; bucket: number }>) => {
-			bitmapCache.set(data.bucket, data.bitmap);
-			if (data.bucket === latestBucket) drawBitmap(data.bitmap);
+		syncWorker.onmessage = ({ data }: MessageEvent<{ bitmap: ImageBitmap; key: string }>) => {
+			bitmapCache.set(data.key, data.bitmap);
+			if (data.key === latestKey) drawBitmap(data.bitmap);
 		};
 		workerReady = true;
 	};
@@ -71,8 +79,9 @@
 	function requestRender(targetWidth: number) {
 		if (!syncWorker || !canvas.height) return;
 		const bucket = scaleBucket(scale);
-		latestBucket = bucket;
-		const cached = bitmapCache.get(bucket);
+		const key = renderKey(bucket, offset);
+		latestKey = key;
+		const cached = bitmapCache.get(key);
 		if (cached && cached.width === targetWidth) {
 			drawBitmap(cached);
 			return;
@@ -85,7 +94,8 @@
 			scale,
 			width: targetWidth,
 			height: canvas.height,
-			bucket
+			key,
+			offset
 		});
 	}
 
@@ -100,8 +110,8 @@
 	// not the canvas dimensions or zoom level.
 	$: if (canvas && workerReady) {
 		const w = Math.max(1, Math.ceil((end - start) * scale));
-		const bucket = scaleBucket(scale);
-		if (needsRender(w, bucket)) requestRender(w);
+		const key = renderKey(scaleBucket(scale), offset);
+		if (needsRender(w, key)) requestRender(w);
 	}
 
 	function onContextMenu(e: MouseEvent) {
@@ -127,6 +137,14 @@
 		const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
 		dispatch('clipdragstart', { offsetPx: e.clientX - rect.left });
 	}
+
+	function onResizeHandleDown(edge: 'left' | 'right', e: MouseEvent) {
+		e.stopPropagation();
+		e.preventDefault();
+		keyboardFocus.setTimeline();
+		selection.select(id, { additive: e.ctrlKey || e.metaKey });
+		dispatch('clipresizestart', { edge, clientX: e.clientX });
+	}
 </script>
 
 <div
@@ -142,6 +160,10 @@
 	on:keydown={onKeyDown}
 >
 	<canvas bind:this={canvas}></canvas>
+	<!-- svelte-ignore a11y-no-static-element-interactions -->
+	<div class="resize-handle resize-handle--left" on:mousedown={(e) => onResizeHandleDown('left', e)}></div>
+	<!-- svelte-ignore a11y-no-static-element-interactions -->
+	<div class="resize-handle resize-handle--right" on:mousedown={(e) => onResizeHandleDown('right', e)}></div>
 </div>
 
 <style lang="scss">
@@ -169,6 +191,23 @@
 		canvas {
 			display: block;
 			background-color: inherit;
+		}
+
+		.resize-handle {
+			position: absolute;
+			top: 0;
+			bottom: 0;
+			width: 6px;
+			cursor: ew-resize;
+			z-index: 2;
+
+			&--left {
+				left: 0;
+			}
+
+			&--right {
+				right: 0;
+			}
 		}
 	}
 </style>

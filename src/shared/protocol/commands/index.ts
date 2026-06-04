@@ -129,6 +129,8 @@ export interface MoveClipPayload {
   clip_id: string;
   start: number;
   end: number;
+  /** Source-file trim offset in seconds. Omit on a plain move (offset preserved). */
+  offset?: number;
 }
 
 export interface RemoveClipPayload {
@@ -233,6 +235,8 @@ export interface MoveMidiClipPayload {
   clip_id: string;
   start: number;
   end: number;
+  /** Left-trim offset in seconds. Omit on a plain move (offset preserved). */
+  offset?: number;
 }
 
 export interface SetClipMidiNotesPayload {

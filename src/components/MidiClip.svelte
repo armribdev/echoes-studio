@@ -7,6 +7,7 @@
 	export let id: string;
 	export let start: number;
 	export let end: number;
+	export let offset: number = 0;
 	export let scale: number;
 	export let notes: MidiNote[];
 	export let color: string = '#6c63ff';
@@ -14,6 +15,7 @@
 
 	const dispatch = createEventDispatcher<{
 		midiclip_dragstart: { offsetPx: number };
+		midiclip_resizestart: { edge: 'left' | 'right'; clientX: number };
 		midiclip_contextmenu: { id: string; x: number; y: number };
 		midiclip_dblclick: { id: string };
 		midiclip_activate: { id: string };
@@ -29,8 +31,8 @@
 	$: selected = $selection.ids.has(id);
 	$: width = Math.max(2, (end - start) * scale);
 
-	// Re-render whenever notes, width, bpm, or color change.
-	$: if (canvas) scheduleRender(notes, width, bpm, color, selected);
+	// Re-render whenever notes, width, bpm, color, or trim offset change.
+	$: if (canvas) scheduleRender(notes, width, bpm, color, selected, offset);
 
 	function scheduleRender(..._deps: unknown[]) {
 		cancelAnimationFrame(rafId);
@@ -72,12 +74,16 @@
 		const clipDurationBeats = (end - start) * bpm / 60;
 		const beatRange = clipDurationBeats || 1;
 
+		// Notes anchor to the content origin (`start - offset`); a left-trim shifts
+		// them left within the visible window by `offset` seconds worth of beats.
+		const offsetBeats = offset * bpm / 60;
+
 		const r = parseInt(color.slice(1, 3), 16);
 		const g = parseInt(color.slice(3, 5), 16);
 		const b = parseInt(color.slice(5, 7), 16);
 
 		for (const note of notes) {
-			const x = (note.start / beatRange) * W;
+			const x = ((note.start - offsetBeats) / beatRange) * W;
 			const w = Math.max(1.5, (note.duration / beatRange) * W - 0.5);
 			const y = ((maxP - note.pitch) / pitchRange) * (H - 2) + 1;
 			const h = Math.max(1.5, (H - 2) / pitchRange);
@@ -105,6 +111,14 @@
 
 		const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
 		dispatch('midiclip_dragstart', { offsetPx: e.clientX - rect.left });
+	}
+
+	function onResizeHandleDown(edge: 'left' | 'right', e: MouseEvent) {
+		e.stopPropagation();
+		e.preventDefault();
+		selection.select(id, { additive: e.ctrlKey || e.metaKey });
+		dispatch('midiclip_activate', { id });
+		dispatch('midiclip_resizestart', { edge, clientX: e.clientX });
 	}
 
 	function onDblClick(e: MouseEvent) {
@@ -154,6 +168,10 @@
 		</svg>
 	</div>
 	<canvas bind:this={canvas} class="midi-clip__canvas"></canvas>
+	<!-- svelte-ignore a11y-no-static-element-interactions -->
+	<div class="resize-handle resize-handle--left" on:mousedown={(e) => onResizeHandleDown('left', e)}></div>
+	<!-- svelte-ignore a11y-no-static-element-interactions -->
+	<div class="resize-handle resize-handle--right" on:mousedown={(e) => onResizeHandleDown('right', e)}></div>
 </div>
 
 <style lang="scss">
@@ -194,6 +212,23 @@
 			position: absolute;
 			inset: 14px 2px 4px;
 			display: block;
+		}
+
+		.resize-handle {
+			position: absolute;
+			top: 0;
+			bottom: 0;
+			width: 6px;
+			cursor: ew-resize;
+			z-index: 2;
+
+			&--left {
+				left: 0;
+			}
+
+			&--right {
+				right: 0;
+			}
 		}
 	}
 </style>

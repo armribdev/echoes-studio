@@ -172,7 +172,7 @@ export function applyEvent(state: ProjectState, event: EngineEvent): ProjectStat
     }
 
     case ev.CLIP_MOVED: {
-      const p = event.payload as { track_id: string; clip_id: string; start: number; end: number };
+      const p = event.payload as { track_id: string; clip_id: string; start: number; end: number; offset?: number };
       return {
         ...state,
         tracks: state.tracks.map((t) =>
@@ -181,7 +181,7 @@ export function applyEvent(state: ProjectState, event: EngineEvent): ProjectStat
             : {
                 ...t,
                 clips: t.clips.map((c) =>
-                  c.id !== p.clip_id ? c : { ...c, start: p.start, end: p.end },
+                  c.id !== p.clip_id ? c : { ...c, start: p.start, end: p.end, offset: p.offset ?? c.offset },
                 ),
               },
         ),
@@ -405,7 +405,7 @@ export function applyEvent(state: ProjectState, event: EngineEvent): ProjectStat
     }
 
     case ev.MIDI_CLIP_MOVED: {
-      const p = event.payload as { track_id: string; clip_id: string; start: number; end: number };
+      const p = event.payload as { track_id: string; clip_id: string; start: number; end: number; offset?: number };
       return {
         ...state,
         tracks: state.tracks.map((t) =>
@@ -414,7 +414,7 @@ export function applyEvent(state: ProjectState, event: EngineEvent): ProjectStat
             : {
                 ...t,
                 midi_clips: t.midi_clips.map((c) =>
-                  c.id !== p.clip_id ? c : { ...c, start: p.start, end: p.end },
+                  c.id !== p.clip_id ? c : { ...c, start: p.start, end: p.end, offset: p.offset ?? c.offset },
                 ),
               },
         ),

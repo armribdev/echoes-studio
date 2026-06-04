@@ -95,6 +95,12 @@ pub struct MidiNoteSnapshot {
     pub start_beats: f32,
     /// Note end in beats, relative to `clip_start_sec`.
     pub end_beats: f32,
+    /// Playable window start (clip `start`) in engine samples — tempo-independent.
+    /// Notes starting before this are trimmed away (left-trim).
+    pub window_start_sample: u64,
+    /// Playable window end (clip `end`) in engine samples — tempo-independent.
+    /// Notes are silenced past this edge (right-trim).
+    pub window_end_sample: u64,
 }
 
 impl MidiNoteSnapshot {
@@ -151,6 +157,8 @@ mod tests {
             clip_start_sec: 0.0,
             start_beats: 1.0,
             end_beats: 2.0,
+            window_start_sample: 0,
+            window_end_sample: u64::MAX,
         };
         assert_eq!(note.start_sample(120.0, 48_000.0), 24_000);
         assert_eq!(note.end_sample(120.0, 48_000.0), 48_000);

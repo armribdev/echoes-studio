@@ -106,11 +106,11 @@ impl AudioNode for InstrumentNode {
             if discontinuity {
                 self.device.reset();
                 for note in self.notes.iter() {
-                    let start_sample = note.start_sample(bpm, sample_rate);
-                    let end_sample = note.end_sample(bpm, sample_rate);
+                    let start_sample = note.start_sample(bpm, sample_rate).max(note.window_start_sample);
+                    let end_sample = note.end_sample(bpm, sample_rate).min(note.window_end_sample);
                     // Note already started but not yet ended — emit a catch-up
                     // NoteOn at the beginning of this block (seek / resume).
-                    if start_sample < block_start && block_start < end_sample {
+                    if start_sample < end_sample && start_sample < block_start && block_start < end_sample {
                         self.event_buf.push(MidiEvent {
                             offset: 0,
                             kind: MidiEventKind::NoteOn {
@@ -123,8 +123,12 @@ impl AudioNode for InstrumentNode {
             }
 
             for note in self.notes.iter() {
-                let start_sample = note.start_sample(bpm, sample_rate);
-                let end_sample = note.end_sample(bpm, sample_rate);
+                // Clamp the note to the clip's playable window (trim).
+                let start_sample = note.start_sample(bpm, sample_rate).max(note.window_start_sample);
+                let end_sample = note.end_sample(bpm, sample_rate).min(note.window_end_sample);
+                if start_sample >= end_sample {
+                    continue;
+                }
                 if start_sample >= block_start && start_sample < block_end {
                     self.event_buf.push(MidiEvent {
                         offset: (start_sample - block_start) as u32,
@@ -153,9 +157,9 @@ impl AudioNode for InstrumentNode {
                 let bpm = transport.bpm;
                 let sample_rate = transport.sample_rate;
                 for note in self.notes.iter() {
-                    let start_sample = note.start_sample(bpm, sample_rate);
-                    let end_sample = note.end_sample(bpm, sample_rate);
-                    if start_sample <= pause_point && pause_point < end_sample {
+                    let start_sample = note.start_sample(bpm, sample_rate).max(note.window_start_sample);
+                    let end_sample = note.end_sample(bpm, sample_rate).min(note.window_end_sample);
+                    if start_sample < end_sample && start_sample <= pause_point && pause_point < end_sample {
                         self.event_buf.push(MidiEvent {
                             offset: 0,
                             kind: MidiEventKind::NoteOff { pitch: note.pitch },
@@ -211,6 +215,8 @@ mod tests {
             clip_start_sec: 0.0,
             start_beats: 1.0,
             end_beats: 2.0,
+            window_start_sample: 0,
+            window_end_sample: u64::MAX,
         }
     }
 

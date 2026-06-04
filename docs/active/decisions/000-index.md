@@ -41,14 +41,15 @@ lives there.
 | [015](015-plugin-sandbox.md) | Out-of-process plugin sandbox, opt-in per device | Plugins / sandboxing |
 | [016](016-plugin-instance-reuse.md) | Plugin instance reuse across recompiles | Plugins / RT safety |
 | [017](017-per-instance-plugin-addressing.md) | Per-instance plugin addressing & state persistence | Plugins / state / UI boundary |
+| [018](018-clip-source-offset-trim.md) | Clip source offset & trim (audio + MIDI window) | State / MIDI scheduling |
 
 ---
 
 ## By theme
 
-- **Graph / DSP core:** 001, 011, 012
+- **Graph / DSP core:** 001, 011, 012, 018
 - **Threading / RT safety:** 004, 007, 008, 016
-- **State / persistence:** 002, 010, 017
+- **State / persistence:** 002, 010, 017, 018
 - **Architecture boundary:** 005, 017
 - **Plugins:** 003, 006, 007, 008, 010, 013, 014, 015, 016, 017
 - **Modulation / parameters:** 009

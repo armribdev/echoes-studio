@@ -21,8 +21,8 @@ _Last full review: 2026-06-03. Each row's date is when its status was last verif
 | Transport | `threading/realtime-safety.md` | `audio_engine/transport.rs` | stable | 2026-06-03 |
 | Offline render (C-2 harness) | `migration/*` | `audio_engine/offline.rs` | stable | 2026-06-03 |
 | Modulation | `modulation/modulation-system.md` | `audio_graph/{modulation,parameter_block,live_params}.rs` | scaffolded (no runtime routes yet) | 2026-06-03 |
-| MIDI | `architecture/audio-graph.md` (+ ADR-012) | `audio_graph/midi.rs` | in-migration (Phase 5b) | 2026-06-03 |
-| State management / event sourcing | `architecture/state-management.md` | `engine_gateway/{store,commands,events,api}.rs`, `project.rs` | stable | 2026-06-03 |
+| MIDI | `architecture/audio-graph.md` (+ ADR-012, ADR-018) | `audio_graph/midi.rs` | in-migration (Phase 5b; clip-window cull ADR-018) | 2026-06-04 |
+| State management / event sourcing | `architecture/state-management.md` | `engine_gateway/{store,commands,events,api}.rs`, `project.rs` | stable (clip `offset`/trim ADR-018) | 2026-06-04 |
 | Plugin system core | `plugins/plugin-system.md` | `plugin_system/{host,lifecycle,instance,registry}.rs` | stable | 2026-06-03 |
 | Plugin parameters / transport | `plugins/plugin-system.md` (+ ADR-008/009) | `plugin_system/{param_queue,parameter}.rs` | stable | 2026-06-03 |
 | Plugin capabilities / PDC | `plugins/plugin-system.md` (+ ADR-006/014) | `plugin_system/capabilities.rs` | partial (sidechain foundation) | 2026-06-03 |

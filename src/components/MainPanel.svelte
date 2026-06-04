@@ -72,6 +72,10 @@
 
 	onDestroy(() => scrubCleanup?.());
 	onDestroy(cleanupTracksPointer);
+	onDestroy(() => {
+		window.removeEventListener('mousemove', onResizeMove);
+		window.removeEventListener('mouseup', onResizeEnd);
+	});
 
 	let contextMenu: { x: number; y: number; trackId: string; trackName: string; trackIndex: number } | null = null;
 	let clipContextMenu: { x: number; y: number } | null = null;
@@ -340,6 +344,19 @@
 	let arrangeRulerEl: HTMLDivElement;
 	let dragging: { trackIndex: number; clipIndex: number; offsetPx: number } | null = null;
 	let midiDragging: { trackIndex: number; clipId: string; offsetPx: number; origStart: number; origEnd: number } | null = null;
+	let resizing:
+		| {
+				kind: 'audio' | 'midi';
+				edge: 'left' | 'right';
+				trackIndex: number;
+				clipIndex?: number;
+				clipId: string;
+				origStart: number;
+				origEnd: number;
+				origOffset: number;
+				maxSourceDuration: number;
+		  }
+		| null = null;
 	let midiClipContextTarget: string | null = null;
 	let fileDragPreview: { trackIndex: number; startSec: number; durationSec: number | null } | null = null;
 	let pendingDragDuration: number | null = null;
@@ -645,7 +662,7 @@
 			const track = tracks[trackIndex];
 			const clip = track?.midi_clips?.find((c) => c.id === clipId);
 			if (track && clip) {
-				moveMidiClip(track.id, clipId, clip.start, clip.end).catch(console.error);
+				moveMidiClip(track.id, clipId, clip.start, clip.end, clip.offset).catch(console.error);
 			}
 		}
 		midiDragging = null;
@@ -720,12 +737,125 @@
 			const track = tracks[trackIndex];
 			const clip = track?.clips[clipIndex];
 			if (track && clip) {
-				moveClip(track.id, clip.id, clip.start, clip.end).catch(console.error);
+				moveClip(track.id, clip.id, clip.start, clip.end, clip.offset).catch(console.error);
 			}
 		}
 		dragging = null;
 		window.removeEventListener('mousemove', onDragMove);
 		window.removeEventListener('mouseup', onDragEnd);
+	}
+
+	// ── Clip resize (trim) ──────────────────────────────────────────────────────
+	// Left edge: hide leading content (content origin `start - offset` stays put);
+	// right edge: trim/extend the tail. Audio clamps the tail to the source length.
+	const MIN_CLIP_PX = 8;
+
+	function onClipResizeStart(
+		e: CustomEvent<{ edge: 'left' | 'right'; clientX: number; trackIndex: number; clipIndex: number }>,
+	) {
+		const { edge, trackIndex, clipIndex } = e.detail;
+		selectTrackIndex(trackIndex);
+		const clip = tracks[trackIndex]?.clips[clipIndex];
+		if (!clip) return;
+		const sourceDuration = (clip.peaks_64.length * 64) / clip.sample_rate;
+		resizing = {
+			kind: 'audio',
+			edge,
+			trackIndex,
+			clipIndex,
+			clipId: clip.id,
+			origStart: clip.start,
+			origEnd: clip.end,
+			origOffset: clip.offset,
+			maxSourceDuration: sourceDuration,
+		};
+		window.addEventListener('mousemove', onResizeMove);
+		window.addEventListener('mouseup', onResizeEnd);
+	}
+
+	function onMidiClipResizeStart(
+		e: CustomEvent<{ edge: 'left' | 'right'; clientX: number; trackIndex: number; clipId: string }>,
+	) {
+		const { edge, trackIndex, clipId } = e.detail;
+		selectTrackIndex(trackIndex);
+		const clip = tracks[trackIndex]?.midi_clips?.find((c) => c.id === clipId);
+		if (!clip) return;
+		resizing = {
+			kind: 'midi',
+			edge,
+			trackIndex,
+			clipId,
+			origStart: clip.start,
+			origEnd: clip.end,
+			origOffset: clip.offset,
+			maxSourceDuration: Infinity,
+		};
+		window.addEventListener('mousemove', onResizeMove);
+		window.addEventListener('mouseup', onResizeEnd);
+	}
+
+	function onResizeMove(e: MouseEvent) {
+		if (!resizing || !tracksEl) return;
+		const { edge, trackIndex, origStart, origEnd, origOffset, maxSourceDuration } = resizing;
+		const originLeft = tracksEl.getBoundingClientRect().left;
+		const minWidth = MIN_CLIP_PX / scale;
+		const origin = origStart - origOffset;
+
+		const excludeClip =
+			resizing.kind === 'audio' ? { trackIndex, clipIndex: resizing.clipIndex! } : undefined;
+		const posSec = snap(Math.max(0, (e.clientX - originLeft) / scale), e.altKey, excludeClip);
+
+		let newStart = origStart;
+		let newEnd = origEnd;
+		let newOffset = origOffset;
+
+		if (edge === 'left') {
+			const minStart = Math.max(0, origin);
+			newStart = Math.min(Math.max(posSec, minStart), origEnd - minWidth);
+			newOffset = newStart - origin;
+		} else {
+			const maxEnd = resizing.kind === 'audio' ? origin + maxSourceDuration : Infinity;
+			newEnd = Math.min(Math.max(posSec, origStart + minWidth), maxEnd);
+		}
+
+		applyResizeOptimistic(newStart, newEnd, newOffset);
+	}
+
+	function applyResizeOptimistic(start: number, end: number, offset: number) {
+		if (!resizing) return;
+		const { trackIndex } = resizing;
+		const track = tracks[trackIndex];
+		if (!track) return;
+		if (resizing.kind === 'audio') {
+			const { clipIndex } = resizing;
+			const clip = track.clips[clipIndex!];
+			if (!clip) return;
+			track.clips[clipIndex!] = { ...clip, start, end, offset };
+		} else {
+			track.midi_clips = track.midi_clips.map((c) =>
+				c.id === resizing!.clipId ? { ...c, start, end, offset } : c,
+			);
+		}
+		tracks = tracks;
+	}
+
+	function onResizeEnd() {
+		if (resizing) {
+			const { trackIndex } = resizing;
+			const track = tracks[trackIndex];
+			if (track) {
+				if (resizing.kind === 'audio') {
+					const clip = track.clips[resizing.clipIndex!];
+					if (clip) moveClip(track.id, clip.id, clip.start, clip.end, clip.offset).catch(console.error);
+				} else {
+					const clip = track.midi_clips?.find((c) => c.id === resizing!.clipId);
+					if (clip) moveMidiClip(track.id, clip.id, clip.start, clip.end, clip.offset).catch(console.error);
+				}
+			}
+		}
+		resizing = null;
+		window.removeEventListener('mousemove', onResizeMove);
+		window.removeEventListener('mouseup', onResizeEnd);
 	}
 
 	// Tauri intercepts OS file drops before WebView2 sees them — these stubs
@@ -930,6 +1060,7 @@
 		<div
 			class="tracks"
 			class:is-dragging={dragging || midiDragging}
+			class:is-resizing={resizing}
 			class:is-file-dragging={fileDragPreview}
 			class:is-selbox-dragging={tracksPointer.kind === 'selbox'}
 			bind:this={tracksEl}
@@ -985,8 +1116,10 @@
 					bpm={$tempo.bpm}
 					trackColor={TRACK_COLORS[trackIndex % TRACK_COLORS.length]}
 					on:clipdragstart={onClipDragStart}
+					on:clipresizestart={onClipResizeStart}
 					on:clipcontextmenu={handleClipContextMenu}
 					on:midiclip_dragstart={onMidiClipDragStart}
+					on:midiclip_resizestart={onMidiClipResizeStart}
 					on:midiclip_dblclick={onMidiClipDblClick}
 					on:midiclip_activate={onMidiClipActivate}
 					on:midiclip_contextmenu={onMidiClipContextMenu}
@@ -1175,6 +1308,11 @@
 
 		&.is-dragging {
 			cursor: grabbing;
+			user-select: none;
+		}
+
+		&.is-resizing {
+			cursor: ew-resize;
 			user-select: none;
 		}
 

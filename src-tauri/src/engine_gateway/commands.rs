@@ -128,6 +128,10 @@ pub struct MoveClipPayload {
     pub clip_id: String,
     pub start: f64,
     pub end: f64,
+    /// Source-file trim offset in seconds. `None` on a plain move (offset
+    /// preserved); `Some` on a left-edge resize.
+    #[serde(default)]
+    pub offset: Option<f64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -273,6 +277,10 @@ pub struct MoveMidiClipPayload {
     pub clip_id: String,
     pub start: f64,
     pub end: f64,
+    /// Left-trim offset in seconds (content hidden past the left edge). `None`
+    /// on a plain move (offset preserved); `Some` on a left-edge resize.
+    #[serde(default)]
+    pub offset: Option<f64>,
 }
 
 #[derive(Debug, Deserialize)]

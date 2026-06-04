@@ -61,6 +61,11 @@ uses these counts to size the `input_connections` array and pre-allocate
 - A node with 0 outputs is a **sink** (conceptually the `MasterNode`, though it
   declares 1 output for the scheduler's working buffer).
 
+`TrackNode` plays each clip's source starting at `offset` seconds into the file
+(the clip's left-trim), and `InstrumentNode` clamps each MIDI note to the clip's
+playable window `[start, end]`. Both stem from the clip `offset` field — see
+`decisions/018-clip-source-offset-trim.md`.
+
 ---
 
 ## Routing Philosophy

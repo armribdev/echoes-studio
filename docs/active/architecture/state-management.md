@@ -24,7 +24,7 @@ what the user *decided* about their project, not what the audio engine is doing.
 | Event | Why |
 |-------|-----|
 | `TRACK_CREATED` / `TRACK_DELETED` | Structural, undoable |
-| `CLIP_ADDED` / `CLIP_MOVED` / `CLIP_REMOVED` | Structural, undoable |
+| `CLIP_ADDED` / `CLIP_MOVED` / `CLIP_REMOVED` | Structural, undoable (`CLIP_MOVED` also carries the trim `offset` — ADR-018) |
 | `TRACK_UPDATED` (name, volume, pan) | Structural, undoable |
 | `TRACK_MUTED` / `TRACK_SOLOED` | Structural, undoable |
 | `TEMPO_UPDATED` | Structural, affects rendering |
@@ -178,3 +178,4 @@ The round-trip is always Rust → frontend, never frontend → Rust for state.
 - `../snapshot-rebuild-flow.md` — full command → compile → swap sequence
 - `decisions/002-event-sourcing-scope.md` — why event sourcing is bounded
 - `decisions/005-ui-engine-separation.md` — why UI and DSP share no state
+- `decisions/018-clip-source-offset-trim.md` — the clip `offset` (trim) field

@@ -8,20 +8,23 @@ interface RenderMessage {
 	scale: number;
 	width: number;
 	height: number;
-	bucket: number;
+	/** Cache key echoed back to the caller (encodes zoom bucket + trim offset). */
+	key: string;
+	/** Seconds skipped at the clip's left edge (left-trim). */
+	offset: number;
 }
 
 onmessage = function (event: MessageEvent<RenderMessage>) {
-	const { peaks_64, peaks_512, peaks_4096, sample_rate, scale, width, height, bucket } =
+	const { peaks_64, peaks_512, peaks_4096, sample_rate, scale, width, height, key, offset } =
 		event.data;
 
 	const canvas = new OffscreenCanvas(width, height);
 	const ctx = canvas.getContext('2d')!;
 
-	drawWaveform(ctx, peaks_64, peaks_512, peaks_4096, sample_rate, scale);
+	drawWaveform(ctx, peaks_64, peaks_512, peaks_4096, sample_rate, scale, offset);
 
 	const bitmap = canvas.transferToImageBitmap();
-	postMessage({ bitmap, bucket }, [bitmap] as unknown as Transferable[]);
+	postMessage({ bitmap, key }, [bitmap] as unknown as Transferable[]);
 };
 
 function selectPeaks(
@@ -43,7 +46,8 @@ function drawWaveform(
 	peaks_512: Peaks,
 	peaks_4096: Peaks,
 	sample_rate: number,
-	scale: number
+	scale: number,
+	offset: number
 ) {
 	const W = ctx.canvas.width;
 	const H = ctx.canvas.height;
@@ -55,8 +59,8 @@ function drawWaveform(
 	const secPerChunk = chunkSize / sample_rate;
 
 	for (let px = 0; px < W; px++) {
-		const timeStart = px / scale;
-		const timeEnd = (px + 1) / scale;
+		const timeStart = offset + px / scale;
+		const timeEnd = offset + (px + 1) / scale;
 
 		const chunkStart = Math.floor(timeStart / secPerChunk);
 		const chunkEnd = Math.floor(timeEnd / secPerChunk);

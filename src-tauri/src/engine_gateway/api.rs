@@ -427,6 +427,7 @@ fn app_clip_from_audio(
         id: clip_id,
         start,
         end,
+        offset: 0.0,
         file_path,
         raw_samples: Arc::clone(&data.raw_samples),
         sample_rate: data.sample_rate,
@@ -844,12 +845,13 @@ fn process_command(
             let p: MoveClipPayload = serde_json::from_value(command.payload)
                 .map_err(|e| format!("MOVE_CLIP payload invalid: {e}"))?;
 
-            with_project_mut(state, |project| {
+            let offset = with_project_mut(state, |project| {
                 let track = require_track_mut(project, &p.track_id)?;
                 let clip = require_audio_clip_mut(track, &p.clip_id)?;
                 clip.start = p.start;
                 clip.end = p.end;
-                Ok(())
+                clip.offset = p.offset.unwrap_or(clip.offset);
+                Ok(clip.offset)
             })?;
 
             commit_same_payload(
@@ -860,6 +862,7 @@ fn process_command(
                     "clip_id": p.clip_id,
                     "start": p.start,
                     "end": p.end,
+                    "offset": offset,
                 }),
                 true,
             )
@@ -1180,12 +1183,14 @@ fn process_command(
                 id: clip_id.clone(),
                 start: p.start,
                 end: p.end,
+                offset: 0.0,
                 notes: vec![],
             };
             let clip_dto = MidiClipDto {
                 id: clip.id.clone(),
                 start: clip.start,
                 end: clip.end,
+                offset: clip.offset,
                 notes: vec![],
             };
 
@@ -1230,12 +1235,13 @@ fn process_command(
             let p: MoveMidiClipPayload = serde_json::from_value(command.payload)
                 .map_err(|e| format!("MOVE_MIDI_CLIP payload invalid: {e}"))?;
 
-            with_project_mut(state, |project| {
+            let offset = with_project_mut(state, |project| {
                 let track = require_track_mut(project, &p.track_id)?;
                 let clip = require_midi_clip_mut(track, &p.clip_id)?;
                 clip.start = p.start;
                 clip.end = p.end;
-                Ok(())
+                clip.offset = p.offset.unwrap_or(clip.offset);
+                Ok(clip.offset)
             })?;
 
             commit_same_payload(
@@ -1246,6 +1252,7 @@ fn process_command(
                     "clip_id": p.clip_id,
                     "start": p.start,
                     "end": p.end,
+                    "offset": offset,
                 }),
                 true,
             )
@@ -1304,6 +1311,7 @@ fn snapshot_clip(c: &AppClip) -> AppClip {
         id: c.id.clone(),
         start: c.start,
         end: c.end,
+        offset: c.offset,
         file_path: c.file_path.clone(),
         raw_samples: c.raw_samples.clone(),
         sample_rate: c.sample_rate,
@@ -1542,6 +1550,7 @@ fn apply_clip_moved(project: &mut AppProject, payload: &Value) {
     };
     clip.start = start;
     clip.end = end;
+    clip.offset = payload["offset"].as_f64().unwrap_or(clip.offset);
 }
 
 fn apply_clip_removed(project: &mut AppProject, payload: &Value) {
@@ -1752,6 +1761,7 @@ fn apply_midi_clip_added(project: &mut AppProject, payload: &Value) {
         id,
         start,
         end,
+        offset: raw_clip["offset"].as_f64().unwrap_or(0.0),
         notes: vec![],
     });
 }
@@ -1776,6 +1786,7 @@ fn apply_midi_clip_moved(project: &mut AppProject, payload: &Value) {
     if let Ok(clip) = require_midi_clip_mut(track, &clip_id) {
         clip.start = start;
         clip.end = end;
+        clip.offset = payload["offset"].as_f64().unwrap_or(clip.offset);
     }
 }
 

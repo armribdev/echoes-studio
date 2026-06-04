@@ -79,6 +79,8 @@ export interface MidiClip {
 	/** Position on the timeline in seconds. */
 	start: number;
 	end: number;
+	/** Seconds of content hidden past the left edge (left-trim). Defaults to 0. */
+	offset: number;
 	notes: MidiNote[];
 }
 
@@ -104,6 +106,8 @@ export interface Clip {
 	id: string;
 	start: number;
 	end: number;
+	/** Seconds skipped into the source file before playback (left-trim). Defaults to 0. */
+	offset: number;
 	file_path: string;
 	raw_samples: number[];
 	sample_rate: number;

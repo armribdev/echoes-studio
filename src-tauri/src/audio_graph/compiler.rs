@@ -518,13 +518,22 @@ impl GraphCompiler {
 
                 if let Some(track) = project.tracks.iter().find(|t| &t.id == track_id) {
                     for clip in &track.midi_clips {
+                        // Notes anchor to the content origin (`start - offset`) so a
+                        // left-trim hides leading notes without moving the rest. The
+                        // playable window `[start, end]` (seconds, tempo-independent)
+                        // gates which notes sound.
+                        let content_origin = clip.start - clip.offset;
+                        let window_start_sample = (clip.start * engine_sample_rate as f64) as u64;
+                        let window_end_sample = (clip.end * engine_sample_rate as f64) as u64;
                         for note in &clip.notes {
                             notes.push(MidiNoteSnapshot {
                                 pitch: note.pitch,
                                 velocity: note.velocity,
-                                clip_start_sec: clip.start,
+                                clip_start_sec: content_origin,
                                 start_beats: note.start,
                                 end_beats: note.start + note.duration,
+                                window_start_sample,
+                                window_end_sample,
                             });
                         }
                     }
@@ -563,6 +572,7 @@ impl GraphCompiler {
                             .map(|c| nodes::track::ClipData {
                                 start_sample: (c.start * engine_sample_rate as f64) as u64,
                                 end_sample: (c.end * engine_sample_rate as f64) as u64,
+                                offset_sample: (c.offset * engine_sample_rate as f64) as u64,
                                 samples: StdArc::clone(&c.raw_samples),
                                 native_sample_rate: c.sample_rate,
                             })

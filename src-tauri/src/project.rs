@@ -224,6 +224,10 @@ pub struct AppMidiClip {
     pub id: String,
     pub start: f64,
     pub end: f64,
+    /// Seconds of content hidden past the left edge (left-trim). The note
+    /// content origin sits at `start - offset`; the playable window is
+    /// `[start, end]`. `0.0` for untrimmed clips.
+    pub offset: f64,
     pub notes: Vec<MidiNote>,
 }
 
@@ -248,6 +252,9 @@ pub struct AppClip {
     pub id: String,
     pub start: f64,
     pub end: f64,
+    /// Seconds skipped into the source file before playback begins (left-trim).
+    /// `0.0` plays the file from its first sample at the clip's left edge.
+    pub offset: f64,
     pub file_path: String,
     /// Decoded mono f32 samples.  Wrapped in `Arc` so multiple consumers
     /// (project, audio cache, audio thread via the graph compiler) can share
@@ -508,6 +515,7 @@ impl AppProject {
                             id: c.id.clone(),
                             start: c.start,
                             end: c.end,
+                            offset: c.offset,
                             file_path: c.file_path.clone(),
                         })
                         .collect(),
@@ -522,6 +530,7 @@ impl AppProject {
                             id: mc.id.clone(),
                             start: mc.start,
                             end: mc.end,
+                            offset: mc.offset,
                             notes: mc.notes.clone(),
                         })
                         .collect(),
@@ -553,6 +562,7 @@ impl AppProject {
                     id: cf.id,
                     start: cf.start,
                     end: cf.end,
+                    offset: cf.offset,
                     file_path: cf.file_path,
                     raw_samples: data.raw_samples,
                     sample_rate: data.sample_rate,
@@ -569,6 +579,7 @@ impl AppProject {
                     id: mc.id,
                     start: mc.start,
                     end: mc.end,
+                    offset: mc.offset,
                     notes: mc.notes,
                 })
                 .collect();
@@ -673,6 +684,7 @@ impl AppTrack {
                     id: mc.id.clone(),
                     start: mc.start,
                     end: mc.end,
+                    offset: mc.offset,
                     notes: mc.notes.clone(),
                 })
                 .collect(),
@@ -687,6 +699,7 @@ impl AppClip {
             id: self.id.clone(),
             start: self.start,
             end: self.end,
+            offset: self.offset,
             file_path: self.file_path.clone(),
             raw_samples: Arc::clone(&self.raw_samples),
             sample_rate: self.sample_rate,
@@ -859,6 +872,8 @@ pub struct MidiClipFile {
     pub start: f64,
     pub end: f64,
     #[serde(default)]
+    pub offset: f64,
+    #[serde(default)]
     pub notes: Vec<MidiNote>,
 }
 
@@ -867,6 +882,8 @@ pub struct ClipFile {
     pub id: String,
     pub start: f64,
     pub end: f64,
+    #[serde(default)]
+    pub offset: f64,
     pub file_path: String,
 }
 
@@ -891,6 +908,7 @@ pub struct MidiClipDto {
     pub id: String,
     pub start: f64,
     pub end: f64,
+    pub offset: f64,
     pub notes: Vec<MidiNote>,
 }
 
@@ -916,6 +934,7 @@ pub struct ClipDto {
     pub id: String,
     pub start: f64,
     pub end: f64,
+    pub offset: f64,
     pub file_path: String,
     #[serde(serialize_with = "crate::audio_clip::serialize_arc_vec_f32")]
     pub raw_samples: Arc<Vec<f32>>,

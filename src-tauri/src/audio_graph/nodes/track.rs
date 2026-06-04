@@ -22,6 +22,9 @@ pub struct ClipData {
     pub start_sample: u64,
     /// Clip end in the project timeline, in samples at the engine sample rate.
     pub end_sample: u64,
+    /// Source-file samples skipped before playback (left-trim), in engine-rate
+    /// samples. `0` plays the file from its first sample at the clip's left edge.
+    pub offset_sample: u64,
     /// Decoded mono f32 samples (−1.0 … +1.0).
     /// Shared via `Arc` so multiple snapshots can reference the same data.
     pub samples: Arc<Vec<f32>>,
@@ -114,7 +117,8 @@ impl AudioNode for TrackNode {
 
             let out_ch0 = output.channel_mut(0);
             for frame in start_frame..end_frame {
-                let local_offset = overlap_start - clip.start_sample + (frame - start_frame) as u64;
+                let local_offset =
+                    overlap_start - clip.start_sample + clip.offset_sample + (frame - start_frame) as u64;
                 let src_pos = local_offset as f64 * sr_ratio;
                 let idx0 = src_pos as usize;
                 if idx0 < clip.samples.len() {
