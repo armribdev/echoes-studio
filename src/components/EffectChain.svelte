@@ -1,4 +1,4 @@
-<!-- EffectChain.svelte — per-track insert effects panel (built-in + VST3/CLAP) -->
+<!-- EffectChain.svelte — per-track insert effects panel -->
 <script lang="ts">
 	import Knob from './Knob.svelte';
 	import PluginPicker from './PluginPicker.svelte';
@@ -14,7 +14,6 @@
 	export let compact = false;
 
 	let expanded:    Record<string, boolean> = {};
-	let showAddMenu  = false;
 	let showPicker   = false;
 	// effect_ids that currently have an open native editor window
 	let openEditors: Set<string> = new Set();
@@ -27,23 +26,17 @@
 		expanded = expanded;
 	}
 
-	// ── Built-in effects ───────────────────────────────────────────────────────
-
-	async function handleAddBuiltin(kind: string) {
-		showAddMenu = false;
-		try { await addEffect(trackId, kind); }
-		catch (e) { notify(`Erreur ajout effet : ${(e as Error)?.message ?? e}`, 'error'); }
-	}
-
-	// ── Plugin effects (VST3 / CLAP) ──────────────────────────────────────────
-
 	async function handlePickPlugin(p: PluginInfo) {
-		showPicker   = false;
-		showAddMenu  = false;
-		// Encode name + format into the kind string so the backend can cache them.
-		const kind = `plugin:${p.id}|${p.name}|${p.format}`;
+		showPicker = false;
+		const kind =
+			p.format === 'Internal'
+				? p.id
+				: `plugin:${p.id}|${p.name}|${p.format}`;
 		try { await addEffect(trackId, kind); }
-		catch (e) { notify(`Erreur ajout plugin : ${(e as Error)?.message ?? e}`, 'error'); }
+		catch (e) {
+			const msg = (e as Error)?.message ?? e;
+			notify(`Erreur ajout ${p.format === 'Internal' ? 'effet' : 'plugin'} : ${msg}`, 'error');
+		}
 	}
 
 	async function handleRemoveEffect(effectId: string) {
@@ -118,26 +111,9 @@
 {/if}
 
 <div class="fx-panel" class:compact>
-	<div class="fx-header" style:z-index={showAddMenu ? 10 : 1}>
+	<div class="fx-header">
 		<span class="fx-title">{compact ? 'FX' : 'Effets'}</span>
-		<div class="add-wrap">
-			<button class="add-btn" type="button" on:click|stopPropagation={() => (showAddMenu = !showAddMenu)} title="Ajouter">+</button>
-			{#if showAddMenu}
-				<div class="add-menu" on:pointerdown|stopPropagation>
-					{#each Object.entries(BUILTIN_LABELS) as [kind, label]}
-						<button class="menu-item" type="button" on:click={() => handleAddBuiltin(kind)}>{label}</button>
-					{/each}
-					<div class="menu-separator"></div>
-					<button class="menu-item menu-item--plugin" type="button" on:click={() => { showAddMenu = false; showPicker = true; }}>
-						<span>VST3 / CLAP…</span>
-						<span class="menu-badges">
-							<span class="badge" style:background="#1571ff">VST3</span>
-							<span class="badge" style:background="#22c55e">CLAP</span>
-						</span>
-					</button>
-				</div>
-			{/if}
-		</div>
+		<button class="add-btn" type="button" on:click|stopPropagation={() => (showPicker = true)} title="Ajouter">+</button>
 	</div>
 
 	{#if effects.length === 0}
@@ -302,8 +278,6 @@
 		color: $text-muted; text-transform: uppercase;
 	}
 
-	.add-wrap { position: relative; }
-
 	.add-btn {
 		width: 18px; height: 18px;
 		border: 1px solid $border-subtle; border-radius: 3px;
@@ -311,33 +285,6 @@
 		font-size: 14px; line-height: 1; cursor: pointer;
 		display: flex; align-items: center; justify-content: center; padding: 0;
 		&:hover { background: rgba(21,113,255,0.15); color: $text-color; border-color: rgba(21,113,255,0.4); }
-	}
-
-	.add-menu {
-		position: absolute; right: 0; top: calc(100% + 4px);
-		background: #2a2a32; border: 1px solid $border-color;
-		border-radius: $radius-md; z-index: 100; min-width: 150px;
-		overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.4);
-	}
-
-	.menu-item {
-		display: flex; align-items: center; width: 100%; padding: 6px 10px;
-		background: transparent; border: none; color: $text-color;
-		font-size: 11px; font-family: inherit; text-align: left; cursor: pointer;
-		gap: 6px;
-		&:hover { background: $surface-hover; }
-		&--plugin { justify-content: space-between; }
-	}
-
-	.menu-separator {
-		height: 1px; background: $border-faint; margin: 3px 0;
-	}
-
-	.menu-badges { display: flex; gap: 3px; }
-
-	.badge {
-		font-size: 7px; font-family: $font-mono; font-weight: 700;
-		letter-spacing: 0.04em; padding: 1px 4px; border-radius: 2px; color: #fff;
 	}
 
 	.empty {

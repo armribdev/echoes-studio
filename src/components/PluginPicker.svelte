@@ -1,7 +1,7 @@
-<!-- PluginPicker.svelte — modal to browse and insert a VST3/CLAP plugin -->
+<!-- PluginPicker.svelte — modal central pour parcourir et insérer un plugin -->
 <script lang="ts">
 	import { createEventDispatcher, onMount } from 'svelte';
-	import { plugins, pluginsLoading, rescanPlugins } from '../stores/plugins';
+	import { BUILTIN_EFFECT_PLUGINS, plugins, pluginsLoading, rescanPlugins } from '../stores/plugins';
 	import type { PluginInfo } from '../stores/plugins';
 
 	const dispatch = createEventDispatcher<{ pick: PluginInfo; cancel: void }>();
@@ -12,7 +12,10 @@
 	let query = '';
 	let inputEl: HTMLInputElement;
 
-	$: filtered = $plugins
+	$: catalog =
+		mode === 'effect' ? [...BUILTIN_EFFECT_PLUGINS, ...$plugins] : $plugins;
+
+	$: filtered = catalog
 		.filter((p) => {
 			if (mode === 'instrument' && !(p.is_instrument ?? false)) return false;
 			if (mode === 'effect' && (p.is_instrument ?? false)) return false;
@@ -39,6 +42,7 @@
 	}
 
 	const FORMAT_COLOR: Record<string, string> = {
+		Internal: '#8b5cf6',
 		VST3: '#1571ff',
 		CLAP: '#22c55e',
 		AU:   '#f59e0b',
