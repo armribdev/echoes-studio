@@ -88,6 +88,14 @@ const DEFAULT_COMPILE_NUM_CHANNELS: usize = 2;
 /// Real backends jitter slightly even under normal load; this avoids false positives.
 const XRUN_SLACK_MIN: Duration = Duration::from_micros(2_000);
 
+/// Wall-clock window after stream start during which XRun detection is suppressed.
+///
+/// The backend pre-fills its ring buffer and the first non-empty graph is swapped
+/// in cold (cold caches, first `process_block`), so the earliest callbacks have
+/// irregular timing that would otherwise count as false XRuns. A fixed block count
+/// is fragile across buffer sizes; a short time window covers the transient.
+const XRUN_WARMUP: Duration = Duration::from_millis(250);
+
 /// Lock-free underrun counter shared between the audio callback (writer) and
 /// the position reporter (reader → UI telemetry).
 pub struct XrunStats {
@@ -645,6 +653,7 @@ where
     let mono_gain: f32 = 1.0 / 2.0_f32.sqrt();
     let mut prev_callback: Option<cpal::StreamInstant> = None;
     let mut prev_frames: usize = 0;
+    let mut first_callback: Option<cpal::StreamInstant> = None;
     // FTZ/DAZ must be set per-thread; earliest hook is the first callback.
     let mut denormal_guard_set = false;
     let xrun_stats_cb = Arc::clone(&xrun_stats);
@@ -666,19 +675,30 @@ where
                     return;
                 };
 
-                if let Some(prev) = prev_callback {
-                    if let Some(elapsed) = info.timestamp().callback.duration_since(&prev) {
-                        let sample_rate = transport.sample_rate();
-                        if sample_rate > 0.0 {
-                            let expected =
-                                Duration::from_secs_f64(prev_frames as f64 / sample_rate as f64);
-                            if is_callback_xrun(elapsed, expected) {
-                                xrun_stats_cb.record();
+                let now = info.timestamp().callback;
+                let warming_up = first_callback
+                    .and_then(|start| now.duration_since(&start))
+                    .map(|since_start| since_start < XRUN_WARMUP)
+                    .unwrap_or(true);
+                if first_callback.is_none() {
+                    first_callback = Some(now);
+                }
+                if !warming_up {
+                    if let Some(prev) = prev_callback {
+                        if let Some(elapsed) = now.duration_since(&prev) {
+                            let sample_rate = transport.sample_rate();
+                            if sample_rate > 0.0 {
+                                let expected = Duration::from_secs_f64(
+                                    prev_frames as f64 / sample_rate as f64,
+                                );
+                                if is_callback_xrun(elapsed, expected) {
+                                    xrun_stats_cb.record();
+                                }
                             }
                         }
                     }
                 }
-                prev_callback = Some(info.timestamp().callback);
+                prev_callback = Some(now);
                 prev_frames = frames;
 
                 if frames > MAX_BLOCK_FRAMES {
