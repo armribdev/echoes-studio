@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use crate::audio_graph::buffer::AudioBuffer;
+use crate::audio_graph::mod_smooth::ModSmooth;
 use crate::audio_graph::node::{AudioNode, NodeId, PrepareContext, TransportInfo};
 use crate::audio_graph::oversampling::{Oversample2x, OVERSAMPLE_FACTOR};
 use crate::audio_graph::parameter_block::ParameterBlock;
@@ -166,9 +167,9 @@ pub struct EqNode {
     /// pre-ADR-009 behaviour (coefficients frozen at `prepare`).
     block: Option<Arc<ParameterBlock>>,
 
-    /// Per-parameter modulation deltas accumulated by the scheduler each block.
-    /// Zeroed by `reset_modulation()` before the scheduler applies new routes.
-    mod_deltas: [f32; EQ_PARAM_COUNT],
+    /// One-pole smoother for per-parameter modulation deltas.
+    /// Eliminates zipper noise when modulation sources change between blocks.
+    mod_smooth: ModSmooth<EQ_PARAM_COUNT>,
 }
 
 impl EqNode {
@@ -182,7 +183,7 @@ impl EqNode {
             oversample: Oversample2x::default(),
             sr_os: DEFAULT_ENGINE_SAMPLE_RATE * OVERSAMPLE_FACTOR as f32,
             block: None,
-            mod_deltas: [0.0; EQ_PARAM_COUNT],
+            mod_smooth: ModSmooth::new(),
         }
     }
 
@@ -245,20 +246,22 @@ impl AudioNode for EqNode {
         }
         self.recompute_coeffs();
         self.oversample.prepare(ctx.max_block_size, ctx.sample_rate);
+        self.mod_smooth.prepare(ctx.sample_rate, ctx.max_block_size);
     }
 
     fn process(&mut self, inputs: &[&AudioBuffer], outputs: &mut [AudioBuffer], t: &TransportInfo) {
         // ADR-009 + modulation: read live block values, add any modulation deltas,
         // and recompute biquads only when the effective params actually change.
         let base = self.block.as_ref().map(|b| eq_params_from_block(b)).unwrap_or_else(|| self.params.clone());
+        let deltas = self.mod_smooth.advance();
         let effective = EqParams {
-            low_gain_db:  base.low_gain_db  + self.mod_deltas[EQ_LOW_GAIN_DB],
-            low_freq:     base.low_freq     + self.mod_deltas[EQ_LOW_FREQ],
-            mid_gain_db:  base.mid_gain_db  + self.mod_deltas[EQ_MID_GAIN_DB],
-            mid_freq:     base.mid_freq     + self.mod_deltas[EQ_MID_FREQ],
-            mid_q:        base.mid_q        + self.mod_deltas[EQ_MID_Q],
-            high_gain_db: base.high_gain_db + self.mod_deltas[EQ_HIGH_GAIN_DB],
-            high_freq:    base.high_freq    + self.mod_deltas[EQ_HIGH_FREQ],
+            low_gain_db:  base.low_gain_db  + deltas[EQ_LOW_GAIN_DB],
+            low_freq:     base.low_freq     + deltas[EQ_LOW_FREQ],
+            mid_gain_db:  base.mid_gain_db  + deltas[EQ_MID_GAIN_DB],
+            mid_freq:     base.mid_freq     + deltas[EQ_MID_FREQ],
+            mid_q:        base.mid_q        + deltas[EQ_MID_Q],
+            high_gain_db: base.high_gain_db + deltas[EQ_HIGH_GAIN_DB],
+            high_freq:    base.high_freq    + deltas[EQ_HIGH_FREQ],
         };
         if eq_block_values(&effective) != eq_block_values(&self.params) {
             self.params = effective;
@@ -292,6 +295,7 @@ impl AudioNode for EqNode {
         self.mid.reset();
         self.high.reset();
         self.oversample.reset();
+        self.mod_smooth.reset();
     }
 
     fn param_id(&self, name: &str) -> Option<u32> {
@@ -308,14 +312,11 @@ impl AudioNode for EqNode {
     }
 
     fn apply_modulation(&mut self, param_id: u32, delta: f32) {
-        let idx = param_id as usize;
-        if idx < EQ_PARAM_COUNT {
-            self.mod_deltas[idx] += delta;
-        }
+        self.mod_smooth.add_target(param_id as usize, delta);
     }
 
     fn reset_modulation(&mut self) {
-        self.mod_deltas = [0.0; EQ_PARAM_COUNT];
+        self.mod_smooth.reset_target();
     }
 }
 
@@ -419,18 +420,30 @@ mod tests {
             num_channels: 2,
         });
 
-        node.apply_modulation(EQ_LOW_GAIN_DB as u32, 6.0);
-
         let input = AudioBuffer::new(2, 64);
         let mut output = AudioBuffer::new(2, 64);
         let t = TransportInfo::stopped(48_000.0);
-        node.process(&[&input], std::slice::from_mut(&mut output), &t);
 
-        assert_eq!(node.params.low_gain_db, params.low_gain_db + 6.0);
+        // Run until the smoothed delta converges to the target.
+        for _ in 0..200 {
+            node.reset_modulation();
+            node.apply_modulation(EQ_LOW_GAIN_DB as u32, 6.0);
+            node.process(&[&input], std::slice::from_mut(&mut output), &t);
+        }
+        assert!(
+            (node.params.low_gain_db - (params.low_gain_db + 6.0)).abs() < 1e-3,
+            "smoothed delta must converge to target"
+        );
 
-        node.reset_modulation();
-        node.process(&[&input], std::slice::from_mut(&mut output), &t);
-        assert_eq!(node.params.low_gain_db, params.low_gain_db, "delta must clear after reset");
+        // Remove modulation — smoothed must decay back to zero.
+        for _ in 0..200 {
+            node.reset_modulation();
+            node.process(&[&input], std::slice::from_mut(&mut output), &t);
+        }
+        assert!(
+            (node.params.low_gain_db - params.low_gain_db).abs() < 1e-3,
+            "smoothed delta must decay to zero when modulation is removed"
+        );
     }
 
     #[test]

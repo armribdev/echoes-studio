@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use crate::audio_graph::buffer::AudioBuffer;
 use crate::audio_graph::denormal::ANTI_DENORMAL;
+use crate::audio_graph::mod_smooth::ModSmooth;
 use crate::audio_graph::node::{AudioNode, NodeId, PrepareContext, TransportInfo};
 use crate::audio_graph::parameter_block::ParameterBlock;
 use crate::project::DelayParams;
@@ -62,8 +63,7 @@ pub struct DelayNode {
     /// behaviour (parameters frozen at `prepare`).
     block: Option<Arc<ParameterBlock>>,
 
-    /// Per-parameter modulation deltas accumulated by the scheduler each block.
-    mod_deltas: [f32; DELAY_PARAM_COUNT],
+    mod_smooth: ModSmooth<DELAY_PARAM_COUNT>,
 }
 
 impl DelayNode {
@@ -76,7 +76,7 @@ impl DelayNode {
             delay_samples: 0,
             sample_rate: DEFAULT_ENGINE_SAMPLE_RATE,
             block: None,
-            mod_deltas: [0.0; DELAY_PARAM_COUNT],
+            mod_smooth: ModSmooth::new(),
         }
     }
 
@@ -122,6 +122,7 @@ impl AudioNode for DelayNode {
         }
         self.recompute_delay_samples();
         self.write_pos = 0;
+        self.mod_smooth.prepare(ctx.sample_rate, ctx.max_block_size);
     }
 
     fn process(&mut self, inputs: &[&AudioBuffer], outputs: &mut [AudioBuffer], t: &TransportInfo) {
@@ -129,12 +130,13 @@ impl AudioNode for DelayNode {
         // and recompute the read offset only when delay_ms effectively changed.
         // ping_pong is a bool encoded as float (< 0.5 = false, >= 0.5 = true).
         let base = self.block.as_ref().map(|b| delay_params_from_block(b)).unwrap_or_else(|| self.params.clone());
-        let ping_pong_float = (if base.ping_pong { 1.0_f32 } else { 0.0 }) + self.mod_deltas[DELAY_PING_PONG];
+        let deltas = self.mod_smooth.advance();
+        let ping_pong_float = (if base.ping_pong { 1.0_f32 } else { 0.0 }) + deltas[DELAY_PING_PONG];
         let effective = DelayParams {
-            delay_ms:  base.delay_ms  + self.mod_deltas[DELAY_DELAY_MS],
-            feedback:  base.feedback  + self.mod_deltas[DELAY_FEEDBACK],
-            wet:       base.wet       + self.mod_deltas[DELAY_WET],
-            dry:       base.dry       + self.mod_deltas[DELAY_DRY],
+            delay_ms:  base.delay_ms  + deltas[DELAY_DELAY_MS],
+            feedback:  base.feedback  + deltas[DELAY_FEEDBACK],
+            wet:       base.wet       + deltas[DELAY_WET],
+            dry:       base.dry       + deltas[DELAY_DRY],
             ping_pong: ping_pong_float >= 0.5,
         };
         if delay_block_values(&effective) != delay_block_values(&self.params) {
@@ -200,6 +202,7 @@ impl AudioNode for DelayNode {
     fn reset(&mut self) {
         self.buf.fill(0.0);
         self.write_pos = 0;
+        self.mod_smooth.reset();
     }
 
     fn param_id(&self, name: &str) -> Option<u32> {
@@ -214,14 +217,11 @@ impl AudioNode for DelayNode {
     }
 
     fn apply_modulation(&mut self, param_id: u32, delta: f32) {
-        let idx = param_id as usize;
-        if idx < DELAY_PARAM_COUNT {
-            self.mod_deltas[idx] += delta;
-        }
+        self.mod_smooth.add_target(param_id as usize, delta);
     }
 
     fn reset_modulation(&mut self) {
-        self.mod_deltas = [0.0; DELAY_PARAM_COUNT];
+        self.mod_smooth.reset_target();
     }
 }
 
@@ -242,18 +242,28 @@ mod tests {
             num_channels: 2,
         });
 
-        node.apply_modulation(DELAY_FEEDBACK as u32, 0.2);
-
         let input = AudioBuffer::new(2, 64);
         let mut output = AudioBuffer::new(2, 64);
         let t = TransportInfo::stopped(48_000.0);
-        node.process(&[&input], std::slice::from_mut(&mut output), &t);
 
-        assert!((node.params.feedback - (params.feedback + 0.2)).abs() < 1e-6);
+        for _ in 0..200 {
+            node.reset_modulation();
+            node.apply_modulation(DELAY_FEEDBACK as u32, 0.2);
+            node.process(&[&input], std::slice::from_mut(&mut output), &t);
+        }
+        assert!(
+            (node.params.feedback - (params.feedback + 0.2)).abs() < 1e-3,
+            "smoothed delta must converge to target"
+        );
 
-        node.reset_modulation();
-        node.process(&[&input], std::slice::from_mut(&mut output), &t);
-        assert!((node.params.feedback - params.feedback).abs() < 1e-6, "delta must clear after reset");
+        for _ in 0..200 {
+            node.reset_modulation();
+            node.process(&[&input], std::slice::from_mut(&mut output), &t);
+        }
+        assert!(
+            (node.params.feedback - params.feedback).abs() < 1e-3,
+            "smoothed delta must decay to zero when modulation is removed"
+        );
     }
 
     #[test]
