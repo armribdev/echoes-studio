@@ -219,13 +219,66 @@ impl Default for EnvelopeParams {
     }
 }
 
-/// Per-track modulation source (LFO, Envelope, Macro, …).
+/// Detection mode for the audio follower modulator.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum FollowerMode {
+    /// Root-mean-square amplitude over the sliding window.
+    #[default]
+    Rms,
+    /// Mean absolute value over the sliding window.
+    Peak,
+}
+
+/// Parameters for the audio-follower modulator.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AudioFollowerParams {
+    /// Sliding window length in milliseconds (default 50 ms).
+    #[serde(default = "default_follower_window_ms")]
+    pub window_ms: f32,
+    #[serde(default)]
+    pub mode: FollowerMode,
+    /// Envelope attack in milliseconds (default 10 ms).
+    #[serde(default = "default_follower_attack_ms")]
+    pub attack_ms: f32,
+    /// Envelope release in milliseconds (default 100 ms).
+    #[serde(default = "default_follower_release_ms")]
+    pub release_ms: f32,
+    /// Tap from a specific effect in the chain.  `None` = track post-FX output.
+    #[serde(default)]
+    pub source_effect_id: Option<String>,
+}
+
+fn default_follower_window_ms() -> f32 {
+    50.0
+}
+fn default_follower_attack_ms() -> f32 {
+    10.0
+}
+fn default_follower_release_ms() -> f32 {
+    100.0
+}
+
+impl Default for AudioFollowerParams {
+    fn default() -> Self {
+        Self {
+            window_ms: default_follower_window_ms(),
+            mode: FollowerMode::default(),
+            attack_ms: default_follower_attack_ms(),
+            release_ms: default_follower_release_ms(),
+            source_effect_id: None,
+        }
+    }
+}
+
+/// Per-track modulation source (LFO, Envelope, Macro, AudioFollower).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ModulatorParams {
     Lfo(LfoParams),
     Macro(MacroParams),
     Envelope(EnvelopeParams),
+    AudioFollower(AudioFollowerParams),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

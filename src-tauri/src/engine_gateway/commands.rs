@@ -244,6 +244,8 @@ pub struct UpdateModulatorPayload {
     pub decay_ms: Option<f32>,
     pub sustain_level: Option<f32>,
     pub release_ms: Option<f32>,
+    /// AudioFollower window length (ms).
+    pub window_ms: Option<f32>,
 }
 
 #[derive(Debug, Deserialize)]

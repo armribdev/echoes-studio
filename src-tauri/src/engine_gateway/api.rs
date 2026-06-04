@@ -547,7 +547,7 @@ fn patch_effect(
 }
 
 fn build_modulator(p: &AddModulatorPayload) -> Result<crate::project::ProjectModulator, String> {
-    use crate::project::{EnvelopeParams, LfoParams, MacroParams, ModulatorParams, ProjectModulator};
+    use crate::project::{AudioFollowerParams, EnvelopeParams, LfoParams, MacroParams, ModulatorParams, ProjectModulator};
     let params = match p.kind.as_str() {
         "lfo" => ModulatorParams::Lfo(LfoParams {
             rate_hz: p.rate_hz.unwrap_or(1.0),
@@ -557,6 +557,7 @@ fn build_modulator(p: &AddModulatorPayload) -> Result<crate::project::ProjectMod
             value: p.value.unwrap_or(0.0),
         }),
         "envelope" => ModulatorParams::Envelope(EnvelopeParams::default()),
+        "audio_follower" => ModulatorParams::AudioFollower(AudioFollowerParams::default()),
         other => return Err(format!("Unknown modulator kind: {other}")),
     };
     Ok(ProjectModulator {
@@ -1175,7 +1176,8 @@ fn process_command(
                 || p.attack_ms.is_some()
                 || p.decay_ms.is_some()
                 || p.sustain_level.is_some()
-                || p.release_ms.is_some();
+                || p.release_ms.is_some()
+                || p.window_ms.is_some();
             if has_update {
                 with_project_mut(state, |project| {
                     let track = require_track_mut(project, &p.track_id)?;
@@ -1196,6 +1198,11 @@ fn process_command(
                                 if let Some(v) = p.decay_ms { ep.decay_ms = v; }
                                 if let Some(v) = p.sustain_level { ep.sustain_level = v; }
                                 if let Some(v) = p.release_ms { ep.release_ms = v; }
+                            }
+                        crate::project::ModulatorParams::AudioFollower(ref mut fp) => {
+                                if let Some(v) = p.window_ms { fp.window_ms = v; }
+                                if let Some(v) = p.attack_ms { fp.attack_ms = v; }
+                                if let Some(v) = p.release_ms { fp.release_ms = v; }
                             }
                         }
                     }
@@ -1242,6 +1249,7 @@ fn process_command(
                     "decay_ms": p.decay_ms,
                     "sustain_level": p.sustain_level,
                     "release_ms": p.release_ms,
+                    "window_ms": p.window_ms,
                 }),
                 false,
             )
@@ -2014,6 +2022,11 @@ fn apply_modulator_updated(project: &mut AppProject, payload: &Value) {
             if let Some(v) = payload["attack_ms"].as_f64() { p.attack_ms = v as f32; }
             if let Some(v) = payload["decay_ms"].as_f64() { p.decay_ms = v as f32; }
             if let Some(v) = payload["sustain_level"].as_f64() { p.sustain_level = v as f32; }
+            if let Some(v) = payload["release_ms"].as_f64() { p.release_ms = v as f32; }
+        }
+        crate::project::ModulatorParams::AudioFollower(ref mut p) => {
+            if let Some(v) = payload["window_ms"].as_f64() { p.window_ms = v as f32; }
+            if let Some(v) = payload["attack_ms"].as_f64() { p.attack_ms = v as f32; }
             if let Some(v) = payload["release_ms"].as_f64() { p.release_ms = v as f32; }
         }
     }

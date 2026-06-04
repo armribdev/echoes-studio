@@ -555,7 +555,10 @@ impl GraphCompiler {
             NodeKind::Gain { .. } => 1,
             NodeKind::Pan { .. } => 1,
             NodeKind::Plugin { .. } => 2,    // default stereo in
-            NodeKind::Modulator { .. } => 0, // modulator = source
+            NodeKind::Modulator { kind, .. } => match kind {
+                crate::audio_graph::modulation::ModulatorKind::AudioFollower => 1,
+                _ => 0,
+            },
             NodeKind::Meter { .. } => 1,
             NodeKind::Master { num_inputs } => *num_inputs,
             NodeKind::Eq { .. }
@@ -760,6 +763,7 @@ impl GraphCompiler {
                 waveform,
                 initial_value,
                 initial_envelope,
+                initial_follower,
                 tempo_sync,
                 beat_division,
             } => {
@@ -784,6 +788,9 @@ impl GraphCompiler {
                     ModulatorKind::Envelope => {
                         let cells = live_params.get_or_init_envelope(modulator_id, initial_envelope);
                         Box::new(nodes::modulator::EnvelopeNode::new(id, cells))
+                    }
+                    ModulatorKind::AudioFollower => {
+                        Box::new(nodes::modulator::AudioFollowerNode::new(id, initial_follower.clone()))
                     }
                     _ => Box::new(nodes::modulator::LfoNode::new(
                         id,

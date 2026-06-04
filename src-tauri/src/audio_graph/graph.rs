@@ -25,7 +25,7 @@ use crate::audio_graph::modulation::{
     ModulationMap, ModulationRoute, ModulationSource, ModulationTarget, ModulatorKind, ParamId,
 };
 use crate::audio_graph::node::{NodeId, PortId, PortKind};
-use crate::project::{AppProject, EffectParams, EnvelopeParams, LfoWaveform, ModulationTargetRef, ModulatorParams};
+use crate::project::{AppProject, AudioFollowerParams, EffectParams, EnvelopeParams, LfoWaveform, ModulationTargetRef, ModulatorParams};
 
 static NEXT_NODE_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -102,6 +102,8 @@ pub enum NodeKind {
         initial_value: f32,
         /// ADSR seed params (Envelope only; default for other kinds).
         initial_envelope: EnvelopeParams,
+        /// AudioFollower seed params (AudioFollower only; default for other kinds).
+        initial_follower: AudioFollowerParams,
         /// Whether the LFO rate is derived from BPM (LFO only).
         tempo_sync: bool,
         /// Beats per LFO cycle when `tempo_sync` is true (LFO only).
@@ -426,7 +428,7 @@ impl AudioGraph {
             let mut mod_node_ids: HashMap<String, NodeId> = HashMap::new();
 
             for modulator in &track.modulators {
-                let (kind, rate_hz, waveform, initial_value, initial_envelope, tempo_sync, beat_division) =
+                let (kind, rate_hz, waveform, initial_value, initial_envelope, initial_follower, tempo_sync, beat_division) =
                     match &modulator.params {
                         ModulatorParams::Lfo(p) => (
                             ModulatorKind::Lfo,
@@ -434,6 +436,7 @@ impl AudioGraph {
                             p.waveform.clone(),
                             0.0f32,
                             EnvelopeParams::default(),
+                            AudioFollowerParams::default(),
                             p.tempo_sync,
                             p.beat_division,
                         ),
@@ -443,6 +446,7 @@ impl AudioGraph {
                             LfoWaveform::default(),
                             p.value,
                             EnvelopeParams::default(),
+                            AudioFollowerParams::default(),
                             false,
                             1.0f32,
                         ),
@@ -451,6 +455,17 @@ impl AudioGraph {
                             0.0f32,
                             LfoWaveform::default(),
                             0.0f32,
+                            p.clone(),
+                            AudioFollowerParams::default(),
+                            false,
+                            1.0f32,
+                        ),
+                        ModulatorParams::AudioFollower(p) => (
+                            ModulatorKind::AudioFollower,
+                            0.0f32,
+                            LfoWaveform::default(),
+                            0.0f32,
+                            EnvelopeParams::default(),
                             p.clone(),
                             false,
                             1.0f32,
@@ -464,12 +479,22 @@ impl AudioGraph {
                         waveform,
                         initial_value,
                         initial_envelope,
+                        initial_follower,
                         tempo_sync,
                         beat_division,
                     },
                     format!("{} [mod:{}]", track.name, modulator.id),
                 );
                 mod_node_ids.insert(modulator.id.clone(), node_id);
+
+                // AudioFollower taps audio from the track signal chain.
+                if let ModulatorParams::AudioFollower(p) = &modulator.params {
+                    let source = p.source_effect_id
+                        .as_deref()
+                        .and_then(|eff_id| effect_node_ids.get(eff_id).copied())
+                        .unwrap_or(last_node);
+                    graph.connect(source, 0, node_id, 0);
+                }
             }
 
             for route in &track.mod_routes {

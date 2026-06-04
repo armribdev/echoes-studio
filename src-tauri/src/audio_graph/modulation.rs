@@ -138,4 +138,6 @@ pub enum ModulatorKind {
     Macro,
     /// Audio-rate modulation (e.g. ring modulation, FM).
     AudioRate,
+    /// Amplitude follower — converts an audio signal's RMS/Peak level to 0..1.
+    AudioFollower,
 }

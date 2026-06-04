@@ -11,7 +11,7 @@ use std::sync::atomic::Ordering;
 
 use crate::audio_graph::live_params::{EnvelopeCells, MacroCells, ModulatorCells};
 use crate::audio_graph::node::{AudioNode, NodeId, PrepareContext, TransportInfo};
-use crate::project::LfoWaveform;
+use crate::project::{AudioFollowerParams, FollowerMode, LfoWaveform};
 
 /// LFO with selectable waveform.  Output is normalised to −1…+1.
 ///
@@ -265,6 +265,147 @@ impl AudioNode for MacroNode {
     }
 
     fn reset(&mut self) {}
+}
+
+/// Amplitude follower — converts a live audio signal's level to a 0..1 modulation signal.
+///
+/// Uses a sliding ring buffer (allocated in `prepare`) for windowed RMS or mean-abs
+/// measurement, followed by a one-pole attack/release envelope.  The ring buffer size
+/// is fixed at `prepare` time and never resized on the audio thread.
+pub struct AudioFollowerNode {
+    id: NodeId,
+    mode: FollowerMode,
+    window_ms: f32,
+    attack_ms: f32,
+    release_ms: f32,
+    /// Ring buffer for windowed measurement; empty until `prepare` is called.
+    ring: Box<[f32]>,
+    /// Running sum of ring contents (squared for RMS, abs for Peak).
+    ring_sum: f32,
+    head: usize,
+    /// Smoothed output level [0..1].
+    level: f32,
+    /// One-pole coefficient for rising edge (fast attack).
+    attack_coeff: f32,
+    /// One-pole coefficient for falling edge (slow release).
+    release_coeff: f32,
+}
+
+impl AudioFollowerNode {
+    pub fn new(id: NodeId, params: AudioFollowerParams) -> Self {
+        Self {
+            id,
+            mode: params.mode,
+            window_ms: params.window_ms,
+            attack_ms: params.attack_ms,
+            release_ms: params.release_ms,
+            ring: Box::new([]),
+            ring_sum: 0.0,
+            head: 0,
+            level: 0.0,
+            attack_coeff: 0.0,
+            release_coeff: 0.0,
+        }
+    }
+}
+
+/// One-pole smoothing coefficient: fraction of the gap closed per sample.
+fn one_pole_coeff(ms: f32, sr: f32) -> f32 {
+    if ms <= 0.0 {
+        1.0
+    } else {
+        1.0 - (-1.0_f32 / (ms * 0.001 * sr)).exp()
+    }
+}
+
+impl AudioNode for AudioFollowerNode {
+    fn node_id(&self) -> NodeId {
+        self.id
+    }
+    fn label(&self) -> &str {
+        "AudioFollower"
+    }
+    fn num_input_ports(&self) -> usize {
+        1
+    }
+    fn num_output_ports(&self) -> usize {
+        1
+    }
+
+    fn prepare(&mut self, ctx: PrepareContext) {
+        let window = ((self.window_ms * 0.001 * ctx.sample_rate) as usize).max(1);
+        self.ring = vec![0.0f32; window].into_boxed_slice();
+        self.ring_sum = 0.0;
+        self.head = 0;
+        self.level = 0.0;
+        self.attack_coeff = one_pole_coeff(self.attack_ms, ctx.sample_rate);
+        self.release_coeff = one_pole_coeff(self.release_ms, ctx.sample_rate);
+    }
+
+    fn process(
+        &mut self,
+        inputs: &[&AudioBuffer],
+        outputs: &mut [AudioBuffer],
+        transport: &TransportInfo,
+    ) {
+        if outputs.is_empty() {
+            return;
+        }
+        let output = &mut outputs[0];
+        let block_size = transport.block_size.min(output.num_frames);
+        let ring_len = self.ring.len();
+
+        if ring_len == 0 {
+            output.channel_mut(0)[..block_size].fill(0.0);
+            output.mono_to_all_channels();
+            return;
+        }
+
+        let input_ch0: &[f32] = inputs.first().map(|b| b.channel(0)).unwrap_or(&[]);
+        let ch0_out = output.channel_mut(0);
+
+        for i in 0..block_size {
+            let x = if i < input_ch0.len() { input_ch0[i] } else { 0.0 };
+
+            let measure = match self.mode {
+                FollowerMode::Rms => x * x,
+                FollowerMode::Peak => x.abs(),
+            };
+
+            self.ring_sum -= self.ring[self.head];
+            self.ring[self.head] = measure;
+            self.ring_sum += measure;
+            self.head += 1;
+            if self.head >= ring_len {
+                self.head = 0;
+            }
+
+            let mean = (self.ring_sum / ring_len as f32).max(0.0);
+            let instant = match self.mode {
+                FollowerMode::Rms => mean.sqrt(),
+                FollowerMode::Peak => mean,
+            };
+
+            let coeff = if instant > self.level {
+                self.attack_coeff
+            } else {
+                self.release_coeff
+            };
+            self.level += coeff * (instant - self.level);
+            self.level = self.level.clamp(0.0, 1.0);
+
+            ch0_out[i] = self.level;
+        }
+
+        output.mono_to_all_channels();
+    }
+
+    fn reset(&mut self) {
+        self.ring.fill(0.0);
+        self.ring_sum = 0.0;
+        self.head = 0;
+        self.level = 0.0;
+    }
 }
 
 impl AudioNode for LfoNode {
@@ -571,5 +712,107 @@ mod tests {
         cells.gate.store(false, Ordering::Relaxed);
         let out = run_block(&mut node, 48_000.0, 64);
         assert!(out.iter().all(|&s| s == 0.0), "after reset envelope must stay silent");
+    }
+
+    fn run_follower_block(
+        node: &mut AudioFollowerNode,
+        input: &[f32],
+        sr: f32,
+        block: usize,
+    ) -> Vec<f32> {
+        let mut in_buf = crate::audio_graph::buffer::AudioBuffer::new(1, block);
+        let ch = in_buf.channel_mut(0);
+        for (i, s) in input.iter().enumerate().take(block) {
+            ch[i] = *s;
+        }
+        let mut out_buf = crate::audio_graph::buffer::AudioBuffer::new(1, block);
+        let t = crate::audio_graph::node::TransportInfo {
+            is_playing: true,
+            position_samples: 0,
+            position_seconds: 0.0,
+            bpm: 120.0,
+            sample_rate: sr,
+            block_size: block,
+        };
+        node.process(&[&in_buf], std::slice::from_mut(&mut out_buf), &t);
+        out_buf.channel(0).to_vec()
+    }
+
+    #[test]
+    fn follower_silence_outputs_zero() {
+        let params = AudioFollowerParams {
+            window_ms: 10.0,
+            mode: FollowerMode::Rms,
+            attack_ms: 1.0,
+            release_ms: 100.0,
+            source_effect_id: None,
+        };
+        let mut node = AudioFollowerNode::new(NodeId(30), params);
+        node.prepare(crate::audio_graph::node::PrepareContext {
+            sample_rate: 48_000.0,
+            max_block_size: 512,
+            num_channels: 2,
+        });
+        let silence = vec![0.0f32; 512];
+        let out = run_follower_block(&mut node, &silence, 48_000.0, 512);
+        assert!(
+            out.iter().all(|&s| s == 0.0),
+            "silent input must produce zero output"
+        );
+    }
+
+    #[test]
+    fn follower_rms_rises_on_sine_input() {
+        let params = AudioFollowerParams {
+            window_ms: 5.0,
+            mode: FollowerMode::Rms,
+            attack_ms: 1.0,
+            release_ms: 500.0,
+            source_effect_id: None,
+        };
+        let sr = 48_000.0_f32;
+        let mut node = AudioFollowerNode::new(NodeId(31), params);
+        node.prepare(crate::audio_graph::node::PrepareContext {
+            sample_rate: sr,
+            max_block_size: 2048,
+            num_channels: 2,
+        });
+        // Full-scale 1 kHz sine, 1024 samples.
+        let input: Vec<f32> = (0..1024)
+            .map(|i| (2.0 * std::f32::consts::PI * 1000.0 * i as f32 / sr).sin())
+            .collect();
+        let out = run_follower_block(&mut node, &input, sr, 1024);
+        // RMS of a full-scale sine is 0.707; after window fills the output must be significant.
+        assert!(
+            out[1023] > 0.3,
+            "follower must report significant level for full-scale sine (got {})",
+            out[1023]
+        );
+    }
+
+    #[test]
+    fn follower_reset_clears_state() {
+        let params = AudioFollowerParams {
+            window_ms: 5.0,
+            mode: FollowerMode::Peak,
+            attack_ms: 0.0,
+            release_ms: 1000.0,
+            source_effect_id: None,
+        };
+        let sr = 48_000.0_f32;
+        let mut node = AudioFollowerNode::new(NodeId(32), params);
+        node.prepare(crate::audio_graph::node::PrepareContext {
+            sample_rate: sr,
+            max_block_size: 512,
+            num_channels: 2,
+        });
+        let loud = vec![1.0f32; 512];
+        run_follower_block(&mut node, &loud, sr, 512);
+
+        node.reset();
+
+        let silence = vec![0.0f32; 512];
+        let out = run_follower_block(&mut node, &silence, sr, 512);
+        assert_eq!(out[0], 0.0, "level must be 0 after reset");
     }
 }
