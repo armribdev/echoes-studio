@@ -226,13 +226,19 @@ impl PluginHost {
             }
         };
 
-        // VST3/CLAP instances start at `Created`; step through the intermediate
-        // states so future defensive checks on `Initialized` are reachable.
-        if instance.lifecycle() == LifecycleState::Created {
-            instance.set_lifecycle(LifecycleState::Loaded);
-            instance.set_lifecycle(LifecycleState::Initialized);
+        // Advance to Running through the validated state machine.
+        // VST3/CLAP start at Created; Internal/AU/WASM already at Running — invalid
+        // transitions (already past that step) are silently skipped; AlreadyDestroyed is fatal.
+        let mut state = instance.lifecycle();
+        for target in [LifecycleState::Loaded, LifecycleState::Initialized, LifecycleState::Running] {
+            match transition(state, target) {
+                Ok(next) => { instance.set_lifecycle(next); state = next; }
+                Err(LifecycleError::AlreadyDestroyed) => {
+                    return Err(HostError::LifecycleError(LifecycleError::AlreadyDestroyed));
+                }
+                Err(LifecycleError::InvalidTransition { .. }) => {}
+            }
         }
-        instance.set_lifecycle(LifecycleState::Running);
 
         let saved_state = self.restore_state_for(instance_key, plugin_id, &instance);
 
@@ -424,10 +430,11 @@ impl PluginHost {
         match manifest.format {
             DeviceFormat::Clap => {
                 let instance = self.create_clap_instance(plugin_id, &manifest)?;
-                // Same as `instantiate`: step through intermediate states before Running.
-                instance.set_lifecycle(LifecycleState::Loaded);
-                instance.set_lifecycle(LifecycleState::Initialized);
-                instance.set_lifecycle(LifecycleState::Running);
+                let mut state = instance.lifecycle();
+                for target in [LifecycleState::Loaded, LifecycleState::Initialized, LifecycleState::Running] {
+                    state = transition(state, target).map_err(HostError::LifecycleError)?;
+                    instance.set_lifecycle(state);
+                }
                 let saved_state = self.restore_state_for(instance_key, plugin_id, &instance);
                 self.records.insert(
                     instance_key.to_string(),
