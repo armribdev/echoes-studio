@@ -217,7 +217,7 @@
 	function resetSection() {
 		if (activeSection === 'audio') draft.audio = { inputDevice: 'default', outputDevice: 'default', sampleRate: 48000, bufferSize: 256, inputChannels: 2, outputChannels: 2, masterSoftClip: false };
 		else if (activeSection === 'project') draft.project = { defaultFolder: '', autoSave: true, autoSaveIntervalSec: 60, autoSaveMaxBackups: 5, defaultBpm: 120, defaultNumerator: 4, defaultDenominator: 4, exportBitDepth: 32, exportMp3Bitrate: 320 };
-		else if (activeSection === 'interface') draft.interface = { showMinimap: false };
+		else if (activeSection === 'interface') draft.interface = { showMinimap: false, showArrangeGrid: false };
 		draft = { ...draft };
 	}
 
@@ -705,6 +705,12 @@
 					bind:checked={draft.interface.showMinimap}
 					label="Mini-carte de la timeline"
 					description="Vue d'ensemble navigable au-dessus de la timeline"
+				/>
+
+				<Toggle
+					bind:checked={draft.interface.showArrangeGrid}
+					label="Grille temporelle"
+					description="Lignes de temps et de mesures dans la zone des pistes"
 				/>
 			</div>
 				{/if}

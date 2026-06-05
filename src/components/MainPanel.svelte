@@ -32,6 +32,8 @@
 	import TimeRuler from './TimeRuler.svelte';
 	import Playhead from './Playhead.svelte';
 	import ZoomScrollbar from './ZoomScrollbar.svelte';
+	import ArrangeGrid from './ArrangeGrid.svelte';
+	import { preferences } from '../stores/preferences';
 	import { startTransportScrub } from '../frontend/transportScrub';
 	import {
 		ARRANGE_POINTER_DRAG_THRESHOLD,
@@ -349,6 +351,7 @@
 	$: arrangeMaxBars = arrangeVisibleMaxBars(tracks, $tempo.bpm, $tempo.numerator);
 	$: arrangeTotalBeats = arrangeMaxBars * $tempo.numerator;
 	$: arrangeContentWidthPx = arrangeTotalBeats * pxPerBeat;
+	$: arrangeGridHeight = Math.max(tracks.length * ARRANGE_TRACK_HEIGHT, tracksInnerEl?.offsetHeight ?? 0);
 	$: playheadX = $transport.position * scale;
 	$: playheadMarkerX = playheadX - tracksScrollLeft;
 
@@ -390,6 +393,7 @@
 	});
 
 	let tracksEl: HTMLElement;
+	let tracksInnerEl: HTMLDivElement | undefined;
 	let instrumentsEl: HTMLDivElement | undefined;
 	let instrumentsOverflow = false;
 	let instrumentsResizeObserver: ResizeObserver | undefined;
@@ -1275,8 +1279,19 @@
 			>
 				<div
 					class="tracks-inner"
+					bind:this={tracksInnerEl}
 					style="width: {arrangeContentWidthPx}px; min-width: {arrangeContentWidthPx}px"
 				>
+			{#if $preferences.interface.showArrangeGrid}
+				<ArrangeGrid
+					widthPx={arrangeContentWidthPx}
+					heightPx={arrangeGridHeight}
+					pxPerBeat={pxPerBeat}
+					numerator={$tempo.numerator}
+					totalBeats={arrangeTotalBeats}
+					gridBeats={$midiGridBeats}
+				/>
+			{/if}
 			{#if tracks.length === 0}
 				<div class="empty-tracks">
 					<svg class="empty-tracks-icon" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">

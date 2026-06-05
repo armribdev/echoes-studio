@@ -27,6 +27,8 @@ export interface ProjectPreferences {
 
 export interface InterfacePreferences {
 	showMinimap: boolean;
+	/** Vertical beat/bar grid in the tracks arrange area. */
+	showArrangeGrid: boolean;
 }
 
 export interface Preferences {
@@ -60,7 +62,8 @@ function defaultPreferences(): Preferences {
 			exportMp3Bitrate: 320
 		},
 		interface: {
-			showMinimap: false
+			showMinimap: false,
+			showArrangeGrid: false
 		}
 	};
 }
