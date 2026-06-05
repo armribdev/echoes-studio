@@ -45,6 +45,7 @@
 use std::ptr::NonNull;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU8, AtomicU64, Ordering};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use crate::plugin_formats::clap::ffi::{ClapHost, ClapLibrary, ClapPlugin};
 use crate::plugin_formats::vst3::ffi::{
@@ -147,6 +148,52 @@ impl ActivationState {
     }
 }
 
+// ── FFI access gate (between-blocks FFI fence — step 0 foundation) ─────────────
+//
+// VST3/CLAP mandate single-threaded instance access.  The audio thread enters
+// the gate around the wrapper's `process()` FFI call; off-RT callers (state
+// save/load, GUI) acquire it before touching the same instance.  This is a
+// non-blocking mutual exclusion: the RT side never waits — it skips its block
+// when an off-RT holder owns the instance — while the off-RT side spins within a
+// bounded budget and otherwise gives up (its caller falls back to a cached blob).
+// Because the RT side never blocks, there is no priority inversion.
+//
+// STEP 0: primitive only — no caller yet.  Wired into the wrappers (RT side) and
+// the host state paths (off-RT side) in later steps.
+const GATE_IDLE: u8 = 0;
+const GATE_RT: u8 = 1;
+const GATE_OFFRT: u8 = 2;
+
+/// Time an off-RT state harvest spends trying to claim a live instance's FFI gate
+/// between two audio blocks before falling back to a cached blob.  Shared by the
+/// project-save path and R-4 re-instantiation.  A few ms spans a block period at
+/// typical buffer sizes; when stopped the gate is free, so acquisition is immediate.
+pub(crate) const FFI_GATE_HARVEST_BUDGET: Duration = Duration::from_millis(3);
+
+/// RAII release for the audio-thread side of the FFI gate.  Dropping it returns
+/// the gate to `GATE_IDLE`, guaranteeing release on every exit path (including
+/// the SEH-caught and early-return paths in the wrappers).
+pub struct RtFfiGuard<'a> {
+    gate: &'a AtomicU8,
+}
+
+impl Drop for RtFfiGuard<'_> {
+    fn drop(&mut self) {
+        self.gate.store(GATE_IDLE, Ordering::Release);
+    }
+}
+
+/// RAII release for the off-RT (command / GUI thread) side of the FFI gate.
+pub struct OffRtFfiGuard<'a> {
+    gate: &'a AtomicU8,
+}
+
+impl Drop for OffRtFfiGuard<'_> {
+    fn drop(&mut self) {
+        self.gate.store(GATE_IDLE, Ordering::Release);
+    }
+}
+
 /// Shared, refcounted handle to one live plugin instance.
 ///
 /// Held by:
@@ -196,6 +243,11 @@ pub struct PluginInstance {
     /// for a given handle stays inert.
     clap_activation: ActivationState,
     vst3_activation: ActivationState,
+
+    /// Non-blocking FFI access gate (step 0).  Serialises the audio thread's
+    /// `process()` FFI against off-RT FFI (state save/load, GUI) on this same
+    /// instance.  `GATE_IDLE` / `GATE_RT` / `GATE_OFFRT`.
+    ffi_gate: AtomicU8,
 }
 
 impl PluginInstance {
@@ -211,6 +263,7 @@ impl PluginInstance {
             param_queue: ParamQueue::with_capacity(PARAM_QUEUE_CAPACITY),
             clap_activation: ActivationState::new(),
             vst3_activation: ActivationState::new(),
+            ffi_gate: AtomicU8::new(GATE_IDLE),
         })
     }
 
@@ -240,6 +293,7 @@ impl PluginInstance {
             param_queue: ParamQueue::with_capacity(PARAM_QUEUE_CAPACITY),
             clap_activation: ActivationState::new(),
             vst3_activation: ActivationState::new(),
+            ffi_gate: AtomicU8::new(GATE_IDLE),
         })
     }
 
@@ -266,6 +320,7 @@ impl PluginInstance {
             param_queue: ParamQueue::with_capacity(PARAM_QUEUE_CAPACITY),
             clap_activation: ActivationState::new(),
             vst3_activation: ActivationState::new(),
+            ffi_gate: AtomicU8::new(GATE_IDLE),
         })
     }
 
@@ -294,12 +349,12 @@ impl PluginInstance {
     }
 
     // VST3 (`IComponent::get/setState`) and CLAP (`clap.state.save/load`) both
-    // carry their native handle here.  These run on the command thread; per the
-    // module header they are NOT sequenced against the audio thread's `process`
-    // on the same instance.  In practice save/load happen while the transport is
-    // stopped (explicit project save / project open), where no `process` is in
-    // flight for this instance — that is the operating invariant until a proper
-    // between-blocks barrier lands.  Internal devices (and AU/WASM) return
+    // carry their native handle here.  These run on the command thread and are
+    // NOT sequenced against the audio thread's `process` on the same instance:
+    // the **caller** must hold the FFI gate (`offrt_try_acquire`) around them
+    // whenever the instance may be live, so they cannot race `process`.  Callers
+    // that omit the gate must guarantee no block is in flight (e.g. a brand-new
+    // instance not yet in any snapshot).  Internal devices (and AU/WASM) return
     // `None` / `false`.
 
     /// Serialise the live plugin's processor state.  `None` when the format has
@@ -342,15 +397,20 @@ impl PluginInstance {
     /// across plugin types.
     ///
     /// Runs on the command thread at instantiation, before this instance enters
-    /// any snapshot, so applying it cannot race the audio thread's `process()`
-    /// on *this* instance (same race-free property as ADR-010 restore). Reading
-    /// `previous`'s live state inherits ADR-010's documented save-side caveat.
+    /// any snapshot, so applying it to *this* instance cannot race the audio
+    /// thread's `process()` (same race-free property as ADR-010 restore).  The
+    /// read of `previous`'s live state *can* race — `previous` may still be live
+    /// in the outgoing graph — so it is fenced by `previous`'s FFI gate; if a
+    /// block is in flight and the gate cannot be claimed in time, we fall back to
+    /// the cached blob rather than read concurrently with `process()`.
     pub fn restore_from(&self, previous: &PluginInstance, cached: Option<&[u8]>) -> Option<Vec<u8>> {
         if self.device_id != previous.device_id {
             return None;
         }
-        let bytes = previous
-            .save_state_blob()
+        let live = previous
+            .offrt_try_acquire(FFI_GATE_HARVEST_BUDGET)
+            .and_then(|_gate| previous.save_state_blob());
+        let bytes = live
             .filter(|b| !b.is_empty())
             .or_else(|| cached.filter(|c| !c.is_empty()).map(<[u8]>::to_vec))?;
         let _ = self.load_state_blob(&bytes);
@@ -516,6 +576,43 @@ impl PluginInstance {
         decode_lifecycle(self.lifecycle.load(Ordering::Acquire))
     }
 
+    /// Audio-thread side of the FFI gate (step 0).  Non-blocking: returns
+    /// `Some(guard)` when the instance is idle (the common case), `None` when an
+    /// off-RT caller currently holds it — in which case the wrapper must skip its
+    /// FFI for this block.  Never waits, so it can never invert priority.
+    pub fn rt_try_enter(&self) -> Option<RtFfiGuard<'_>> {
+        match self.ffi_gate.compare_exchange(
+            GATE_IDLE,
+            GATE_RT,
+            Ordering::Acquire,
+            Ordering::Relaxed,
+        ) {
+            Ok(_) => Some(RtFfiGuard { gate: &self.ffi_gate }),
+            Err(_) => None,
+        }
+    }
+
+    /// Off-RT side of the FFI gate (step 0; command / GUI thread).  Spins up to
+    /// `budget` to claim exclusive FFI access between two audio blocks; returns
+    /// `None` on timeout so the caller can fall back to a cached blob.  Only the
+    /// off-RT side ever waits — the audio thread is never made to block.
+    pub fn offrt_try_acquire(&self, budget: Duration) -> Option<OffRtFfiGuard<'_>> {
+        let deadline = Instant::now() + budget;
+        loop {
+            if self
+                .ffi_gate
+                .compare_exchange(GATE_IDLE, GATE_OFFRT, Ordering::Acquire, Ordering::Relaxed)
+                .is_ok()
+            {
+                return Some(OffRtFfiGuard { gate: &self.ffi_gate });
+            }
+            if Instant::now() >= deadline {
+                return None;
+            }
+            std::hint::spin_loop();
+        }
+    }
+
     pub fn legacy_device_info(&self) -> DeviceInfo {
         DeviceInfo {
             device_id: self.device_id.clone(),
@@ -620,6 +717,84 @@ fn decode_lifecycle(code: u8) -> LifecycleState {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ffi_gate_offrt_holder_blocks_rt_until_released() {
+        let inst = PluginInstance::new_internal("echoes.gain", "Gain");
+        let held = inst
+            .offrt_try_acquire(Duration::from_millis(1))
+            .expect("idle gate must be acquirable");
+        // While off-RT holds the gate, the audio thread must be denied (it skips).
+        assert!(
+            inst.rt_try_enter().is_none(),
+            "RT must not enter while an off-RT caller holds the instance"
+        );
+        drop(held);
+        // Once released, the audio thread acquires immediately.
+        assert!(
+            inst.rt_try_enter().is_some(),
+            "RT must acquire once the gate is released"
+        );
+    }
+
+    #[test]
+    fn ffi_gate_rt_holder_makes_offrt_time_out() {
+        let inst = PluginInstance::new_internal("echoes.gain", "Gain");
+        let held = inst.rt_try_enter().expect("idle gate must be acquirable");
+        // The audio thread holds it: off-RT must give up within its budget so its
+        // caller can fall back to a cached blob (never the other way around).
+        assert!(
+            inst.offrt_try_acquire(Duration::from_millis(2)).is_none(),
+            "off-RT must time out while the audio thread holds the gate"
+        );
+        drop(held);
+        assert!(
+            inst.offrt_try_acquire(Duration::from_millis(2)).is_some(),
+            "off-RT must acquire once the audio thread releases"
+        );
+    }
+
+    #[test]
+    fn ffi_gate_never_grants_concurrent_access_under_contention() {
+        use std::sync::atomic::AtomicUsize;
+        use std::thread;
+
+        let inst = PluginInstance::new_internal("echoes.gain", "Gain");
+        // Counts threads currently inside the gate; must never exceed 1.
+        let inside = Arc::new(AtomicUsize::new(0));
+        let violations = Arc::new(AtomicUsize::new(0));
+
+        let inst_off = Arc::clone(&inst);
+        let inside_off = Arc::clone(&inside);
+        let viol_off = Arc::clone(&violations);
+        let off = thread::spawn(move || {
+            for _ in 0..200_000 {
+                if let Some(_g) = inst_off.offrt_try_acquire(Duration::from_millis(5)) {
+                    if inside_off.fetch_add(1, Ordering::AcqRel) != 0 {
+                        viol_off.fetch_add(1, Ordering::Relaxed);
+                    }
+                    inside_off.fetch_sub(1, Ordering::AcqRel);
+                }
+            }
+        });
+
+        // RT-like hammering: never blocks, skips on contention.
+        for _ in 0..200_000 {
+            if let Some(_g) = inst.rt_try_enter() {
+                if inside.fetch_add(1, Ordering::AcqRel) != 0 {
+                    violations.fetch_add(1, Ordering::Relaxed);
+                }
+                inside.fetch_sub(1, Ordering::AcqRel);
+            }
+        }
+        off.join().unwrap();
+
+        assert_eq!(
+            violations.load(Ordering::Relaxed),
+            0,
+            "RT and off-RT were inside the FFI gate at the same time"
+        );
+    }
 
     #[test]
     fn param_queue_push_then_drain_roundtrips() {

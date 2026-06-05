@@ -99,7 +99,7 @@ None on the audio thread. `getState`/`setState` run on the command thread
 (project save / open). No allocation, lock, or syscall is added to
 `process_block`.
 
-## Threading caveat — restore now race-free; save still residual
+## Threading caveat — restore race-free; save fenced on the project-save path
 
 VST3 mandates single-threaded plugin access. The two FFI directions are no
 longer equivalent in their exposure:
@@ -122,7 +122,8 @@ rebuild paths reuse declines (terminal instance, non-reuse-safe format) so state
 survives a controlled re-instantiation, not only a reload — and it also makes the
 CLAP-**instrument** path restore staged state at load (previously dropped). The
 applied blob is to the brand-new instance (pre-snapshot — race-free); reading the
-previous instance's live state inherits the save-side caveat below. Locked by
+previous instance's live state is fenced by its FFI gate (see save caveat below,
+2026-06-05). Locked by
 `host::tests::state_survives_controlled_reinstantiation` and
 `reinstantiation_does_not_carry_state_across_types`. (It also turned out **not** to require threading the blob map through the
 compiler signature, as this section previously assumed: the staging map lives on
@@ -130,20 +131,25 @@ the host, which the compiler already holds `&mut`. C-7 untouched — no compiler
 signature change.) Locked by `host::tests::staged_state_is_applied_at_instantiation`
 and `cleared_staged_state_is_not_applied`.
 
-**Save (`getState`) — residual risk (still open).** The save path
-(`save_device_state`) reads `IComponent::getState` / `clap.state.save` on the
-command thread while the instance **is** live in the snapshot. It is **not**
-sequenced against the audio thread's `process()`. It holds today only by the
-convention that explicit project save happens at rest.
+**Save (`getState`) — live reads now fenced (2026-06-05).** The
+between-blocks barrier foreshadowed below has landed as a per-instance,
+non-blocking **FFI gate** (`PluginInstance::{rt_try_enter, offrt_try_acquire}`).
+The audio thread claims the gate around its `process()` FFI (skipping that block
+with a transparent bypass if an off-RT caller holds it — it never waits, so no
+priority inversion); off-RT harvests claim the same gate before each live
+`getState`, falling back to the cached blob if a block is in flight and the gate
+cannot be claimed within a short budget. **Every** current live-FFI reader is
+routed through it: the project-save harvest (`collect_plugin_states`), the R-4
+re-instantiation read of the previous instance (`PluginInstance::restore_from`),
+`save_device_state`, and the wrappers' `prepare`-time introspection (VST3
+`getLatencySamples`; CLAP `clap.latency` + param enumeration), which on a reuse
+recompile would otherwise run while the outgoing graph still processes the
+instance. This makes the save direction safe **even during playback** — closing
+the data race for autosave-during-playback and for re-instantiation while playing.
 
-> **⚠ Remaining debt — the save direction.** The save-side `getState` is still a
-> **convention, not enforced by code**. **Autosave-during-playback** (expected for
-> "sessions énormes" we don't want to lose) would read `getState` concurrently
-> with `process()` on the shared `IComponent` — a genuine data race on an
-> untrusted plugin. Before shipping autosave-during-playback, give the save path a
-> between-blocks barrier (or a command-thread shadow of the last serialised state
-> harvested at a safe point). The pre-snapshot trick used for restore does not
-> apply to save, because a save must read an *already-live* instance.
+> **Note — future callers.** The save direction is fully fenced today. Any new
+> live-FFI caller (e.g. a GUI `getState`/`setState`) must hold the gate via
+> `offrt_try_acquire` — it is the reusable primitive for this.
 
 ## Compatibility
 
@@ -170,11 +176,12 @@ convention that explicit project save happens at rest.
 
 - **AU / WASM state unimplemented**: they return `None`/`false` and fall back to
   the empty cache. (CLAP closed in 4c.)
-- **State *save* not barrier-synchronised** against `process` (see caveat) —
-  applies to CLAP identically (`clap.state.save` is `[main-thread]`). *Restore*
-  is now race-free (applied at instantiation); only the save-side `getState`
-  remains a convention, and is the prerequisite to close before
-  autosave-during-playback.
+- **State *save*** live reads are all fenced by the per-instance FFI gate
+  (`collect_plugin_states`, `restore_from`'s previous-instance read,
+  `save_device_state`, and the wrappers' `prepare` introspection), VST3 and CLAP
+  alike (`clap.state.save` is `[main-thread]`) — safe during playback. *Restore*
+  is race-free (applied at instantiation). No save-direction residual remains;
+  future live-FFI callers (GUI) must reuse the gate.
 - **Controller-only state not persisted** (single-component assumption, VST3).
 - **CLAP state not verified against a real plugin in CI** — the round-trip test
   exercises the host stream callbacks only; smoke-testing Surge XT / a CLAP synth
@@ -185,7 +192,9 @@ convention that explicit project save happens at rest.
 Phase 4 (state) is complete for VST3 + CLAP. The remaining Phase 4 surface is
 already shipped (4a single instance). Subsequent work moves to Phase 5
 (PortKind + MIDI + automation); see [`docs/active/migration/migration_plan.md`](../migration/migration_plan.md) §5.
-State **restore** at instantiate (the race-free option) is now implemented. The
-open follow-up is the **save** direction: barrier-synchronise `getState` against
-`process` (or harvest a command-thread shadow at a safe point) before any
-autosave-during-playback feature.
+State **restore** at instantiate (the race-free option) is now implemented, and
+the **save** direction's live reads are all fenced via the per-instance FFI gate
+(2026-06-05) — `collect_plugin_states`, `restore_from`, `save_device_state`, and
+the wrappers' `prepare` introspection — safe during playback. No save-direction
+follow-up remains; future live-FFI callers (GUI editor get/setState) must hold
+the gate.

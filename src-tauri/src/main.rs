@@ -407,16 +407,12 @@ fn handle_menu_event(app: &tauri::AppHandle, menu_id: &str) {
                 let mut project = state.project.lock().unwrap();
                 // Harvest live plugin state so the saved file carries the current
                 // presets (Phase 4b / ADR-010).  Keyed per placement by
-                // `instance_key` (ADR-017).  Off-RT; assumes the transport is
-                // stopped during save.
+                // `instance_key` (ADR-017).  Off-RT; each live getState is fenced
+                // by the instance FFI gate, so this is safe even during playback.
                 if let Ok(engine) = state.audio_engine.lock() {
-                    let transport_stopped = !engine
-                        .transport
-                        .is_playing
-                        .load(std::sync::atomic::Ordering::Relaxed);
                     project.plugin_states = engine
                         .plugin_host
-                        .collect_plugin_states(transport_stopped)
+                        .collect_plugin_states()
                         .into_iter()
                         .collect();
                 }

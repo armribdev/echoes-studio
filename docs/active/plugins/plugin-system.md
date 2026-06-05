@@ -228,8 +228,10 @@ handles its own migration.
 **Per-instance persistence (ADR-017).** Saved state lives in the project file's
 `plugin_states` map, keyed by `instance_key`, so two instances of the same plugin
 type keep distinct presets. `PluginHost::collect_plugin_states` harvests it at
-save (keyed by placement); restore stages it by `instance_key` and applies it at
-instantiation (ADR-010 race-free). **Restore is not load-only:** a controlled
+save (keyed by placement), fencing each live `getState` with the per-instance FFI
+gate (`offrt_try_acquire`) so the harvest is safe even during playback and never
+races the audio thread's `process()` (ADR-010); restore stages it by
+`instance_key` and applies it at instantiation (ADR-010 race-free). **Restore is not load-only:** a controlled
 re-instantiation (e.g. a terminal instance rebuilt, or a non-reuse-safe format)
 carries the previous instance's state forward via `PluginInstance::restore_from`
 (same plugin type only), so settings survive a rebuild and not just a project

@@ -40,7 +40,7 @@ use crate::audio_graph::buffer::AudioBuffer;
 use crate::audio_graph::node::{AudioNode, NodeId, PrepareContext, TransportInfo};
 use crate::plugin_formats::crash_guard;
 use crate::plugin_system::capabilities::DeviceCapabilities;
-use crate::plugin_system::instance::PluginInstance;
+use crate::plugin_system::instance::{PluginInstance, FFI_GATE_HARVEST_BUDGET};
 use crate::plugin_system::lifecycle::{transition, LifecycleState};
 use crate::plugin_system::parameter::ParameterMap;
 use crate::plugin_system::state::DeviceState;
@@ -182,10 +182,18 @@ impl AudioNode for VstWrapperNode {
         // configured sample rate / block size.  VST3 spec: callable from the
         // main thread; the host must re-query if `restart` fires `kLatencyChanged`
         // (handled when Phase 6 wires restart).
-        let (_, proc_nn) = self.handles();
-        let proc = proc_nn.as_ptr();
-        unsafe {
-            self.reported_latency = ((*(*proc).vtbl).get_latency_samples)(proc);
+        //
+        // On a recompile that reuses a live instance (ADR-016), this runs while
+        // the outgoing graph may still `process()` it.  Fence the getter with the
+        // instance FFI gate so it can't race `process()`; if a block is in flight
+        // and the gate can't be claimed in time, keep the current latency (a
+        // transient — corrected on a later recompile).
+        if let Some(_gate) = self.instance.offrt_try_acquire(FFI_GATE_HARVEST_BUDGET) {
+            let (_, proc_nn) = self.handles();
+            let proc = proc_nn.as_ptr();
+            unsafe {
+                self.reported_latency = ((*(*proc).vtbl).get_latency_samples)(proc);
+            }
         }
 
         self.instance.set_lifecycle(LifecycleState::Running);
@@ -200,6 +208,24 @@ impl AudioNode for VstWrapperNode {
         if self.crashed || outputs.is_empty() {
             return;
         }
+
+        // FFI access gate (step 1): claim exclusive access to the shared instance
+        // for this block.  If an off-RT caller (state save/load, GUI) currently
+        // holds it, skip the plugin FFI and bypass the audio so the two never run
+        // concurrently — the VST3 single-threaded contract.  Non-blocking: the
+        // audio thread never waits.  Held until the end of `process` so it is
+        // released on every exit path, including the SEH-caught path below.
+        // Until an off-RT caller exists (step 2+) this always succeeds, so the
+        // bypass branch is unreachable and behaviour is unchanged.
+        let _ffi_gate = match self.instance.rt_try_enter() {
+            Some(guard) => guard,
+            None => {
+                if !inputs.is_empty() {
+                    outputs[0].copy_from(inputs[0]);
+                }
+                return;
+            }
+        };
 
         let nc = self.num_channels;
         let nf = transport.block_size; // real block, not MAX_BLOCK_FRAMES capacity

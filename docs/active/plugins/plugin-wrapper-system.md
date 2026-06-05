@@ -188,6 +188,27 @@ format; migration across plugin versions is the plugin's responsibility.
 
 ---
 
+## FFI Access Gate (single-threaded contract)
+
+VST3/CLAP mandate single-threaded instance access. A reused instance (ADR-016)
+can be touched by the audio thread (`process()`) and an off-RT caller at the same
+time — during a recompile-while-playing, or a project save. A per-instance,
+non-blocking gate (`PluginInstance::{rt_try_enter, offrt_try_acquire}`) serialises
+them:
+
+- The audio thread claims the gate around its `process()` FFI; if an off-RT caller
+  holds it, the wrapper **bypasses** that block (input→output) and returns — it
+  never waits, so there is no priority inversion.
+- Off-RT callers (`getState`/`setState`, and the wrappers' `prepare`-time
+  introspection — VST3 `getLatencySamples`, CLAP `clap.latency` + param
+  enumeration) claim the gate before their FFI, with a short spin budget, and fall
+  back to a cached value on timeout.
+
+Rationale and the state-direction specifics live in
+`../decisions/010-plugin-state-persistence.md`.
+
+---
+
 ## Crash Containment
 
 VST3, AU, and CLAP plugins run in-process by default. A crashing plugin takes

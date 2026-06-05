@@ -33,7 +33,7 @@ use crate::plugin_formats::clap::wrapper::ClapWrapperNode;
 use crate::plugin_formats::vst3::ffi::{instantiate_processor, Vst3Library};
 use crate::plugin_formats::vst3::host::decode_plugin_id as vst3_decode_id;
 use crate::plugin_formats::vst3::wrapper::VstWrapperNode;
-use crate::plugin_system::instance::PluginInstance;
+use crate::plugin_system::instance::{PluginInstance, FFI_GATE_HARVEST_BUDGET};
 use crate::plugin_system::lifecycle::{transition, LifecycleError, LifecycleState};
 use crate::plugin_system::registry::{PluginManifest, PluginRegistry};
 use crate::plugin_system::state::DeviceState;
@@ -566,7 +566,14 @@ impl PluginHost {
     /// the returned `DeviceState` is never lost.
     pub fn save_device_state(&self, device_id: &str) -> Option<DeviceState> {
         let record = self.record_by_device_id(device_id)?;
-        match record.instance.save_state_blob() {
+        // Fence the live getState with the instance FFI gate (ADR-010) so it never
+        // races the audio thread's process(); fall back to the cached blob if a
+        // block is in flight and the gate cannot be claimed in time.
+        let live = record
+            .instance
+            .offrt_try_acquire(FFI_GATE_HARVEST_BUDGET)
+            .and_then(|_gate| record.instance.save_state_blob());
+        match live {
             Some(bytes) => Some(DeviceState::from_binary(device_id, bytes)),
             None => Some(record.saved_state.clone()),
         }
@@ -577,18 +584,26 @@ impl PluginHost {
     /// separately.  Used by the project-save path; only non-empty blobs are
     /// returned (VST3/CLAP via FFI `getState`; other formats via the cached
     /// `saved_state`).
-    pub fn collect_plugin_states(&self, transport_stopped: bool) -> Vec<(String, Vec<u8>)> {
-        // ADR-010 caveat: getState FFI is not sequenced vs the audio thread's
-        // process(); harvesting during playback can tear the blob. Project-save,
-        // the only caller, runs transport-stopped — assert it to keep it that way.
-        debug_assert!(
-            transport_stopped,
-            "collect_plugin_states called during playback — see ADR-010 state caveat"
-        );
+    ///
+    /// Safe to call during playback: each live `getState` is fenced by the
+    /// instance's FFI gate (ADR-010 follow-up), falling back to the cached blob
+    /// when a block is in flight and the gate cannot be claimed in time.
+    pub fn collect_plugin_states(&self) -> Vec<(String, Vec<u8>)> {
+        // ADR-010: the getState FFI must not run concurrently with the audio
+        // thread's process() on the same instance (single-threaded VST3/CLAP
+        // contract). We claim each instance's FFI gate before the live getState;
+        // when stopped the gate is free and acquisition is immediate, so the live
+        // path is taken (behaviour unchanged). When a block is in flight and we
+        // cannot claim the gate within the budget, we fall back to the record's
+        // cached blob rather than race process().
         self.records
             .iter()
             .filter_map(|(key, record)| {
-                let ds = match record.instance.save_state_blob() {
+                let live = record
+                    .instance
+                    .offrt_try_acquire(FFI_GATE_HARVEST_BUDGET)
+                    .and_then(|_gate| record.instance.save_state_blob());
+                let ds = match live {
                     Some(bytes) => DeviceState::from_binary(&record.instance.device_id, bytes),
                     None => record.saved_state.clone(),
                 };

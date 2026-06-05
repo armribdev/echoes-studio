@@ -35,7 +35,7 @@ use crate::audio_graph::buffer::AudioBuffer;
 use crate::audio_graph::node::{AudioNode, NodeId, PrepareContext, TransportInfo};
 use crate::plugin_formats::crash_guard;
 use crate::plugin_system::capabilities::DeviceCapabilities;
-use crate::plugin_system::instance::PluginInstance;
+use crate::plugin_system::instance::{PluginInstance, FFI_GATE_HARVEST_BUDGET};
 use crate::plugin_system::lifecycle::{transition, LifecycleState};
 use crate::plugin_system::parameter::ParameterMap;
 use crate::plugin_system::state::DeviceState;
@@ -186,27 +186,35 @@ impl AudioNode for ClapWrapperNode {
             .instance
             .clap_ensure_active(ctx.sample_rate, ctx.max_block_size as u32);
 
+        // On a recompile that reuses a live instance (ADR-016), this introspection
+        // (`[main-thread]` getters) runs while the outgoing graph may still
+        // `process()` it.  Fence the whole block with the instance FFI gate so it
+        // can't race `process()`; if a block is in flight and the gate can't be
+        // claimed in time, skip introspection this compile (latency/ranges keep
+        // their current values — a transient corrected on a later recompile).
         if self.active {
-            let p = self.plugin_ptr();
-            unsafe {
-                // `clap.latency` is valid only after activate (main thread / prepare).
-                let ext_ptr = ((*p).get_extension)(p, CLAP_EXT_LATENCY.as_ptr() as *const _);
-                if !ext_ptr.is_null() {
-                    let ext = ext_ptr as *const ClapPluginLatency;
-                    self.reported_latency = ((*ext).get)(p);
-                }
+            if let Some(_gate) = self.instance.offrt_try_acquire(FFI_GATE_HARVEST_BUDGET) {
+                let p = self.plugin_ptr();
+                unsafe {
+                    // `clap.latency` is valid only after activate (main thread / prepare).
+                    let ext_ptr = ((*p).get_extension)(p, CLAP_EXT_LATENCY.as_ptr() as *const _);
+                    if !ext_ptr.is_null() {
+                        let ext = ext_ptr as *const ClapPluginLatency;
+                        self.reported_latency = ((*ext).get)(p);
+                    }
 
-                // ADR-007: plain ranges for denormalising queued params.
-                self.param_ranges.clear();
-                let params_ptr = ((*p).get_extension)(p, CLAP_EXT_PARAMS.as_ptr() as *const _);
-                if !params_ptr.is_null() {
-                    let params = params_ptr as *const ClapPluginParams;
-                    let count = ((*params).count)(p);
-                    for idx in 0..count {
-                        let mut info: ClapParamInfo = std::mem::zeroed();
-                        if ((*params).get_info)(p, idx, &mut info) {
-                            self.param_ranges
-                                .insert(info.id, (info.min_value as f32, info.max_value as f32));
+                    // ADR-007: plain ranges for denormalising queued params.
+                    self.param_ranges.clear();
+                    let params_ptr = ((*p).get_extension)(p, CLAP_EXT_PARAMS.as_ptr() as *const _);
+                    if !params_ptr.is_null() {
+                        let params = params_ptr as *const ClapPluginParams;
+                        let count = ((*params).count)(p);
+                        for idx in 0..count {
+                            let mut info: ClapParamInfo = std::mem::zeroed();
+                            if ((*params).get_info)(p, idx, &mut info) {
+                                self.param_ranges
+                                    .insert(info.id, (info.min_value as f32, info.max_value as f32));
+                            }
                         }
                     }
                 }
@@ -225,6 +233,24 @@ impl AudioNode for ClapWrapperNode {
         if self.crashed || outputs.is_empty() || !self.active {
             return;
         }
+
+        // FFI access gate (step 1): claim exclusive access to the shared instance
+        // for this block.  If an off-RT caller (state save/load, GUI) currently
+        // holds it, skip the plugin FFI and bypass the audio so the two never run
+        // concurrently — the CLAP single-threaded contract.  Non-blocking: the
+        // audio thread never waits.  Held until the end of `process` so it is
+        // released on every exit path, including the SEH-caught path below.
+        // Until an off-RT caller exists (step 2+) this always succeeds, so the
+        // bypass branch is unreachable and behaviour is unchanged.
+        let _ffi_gate = match self.instance.rt_try_enter() {
+            Some(guard) => guard,
+            None => {
+                if !inputs.is_empty() {
+                    outputs[0].copy_from(inputs[0]);
+                }
+                return;
+            }
+        };
 
         let nc = self.num_channels;
         let nf = transport.block_size; // real block, not MAX_BLOCK_FRAMES capacity
