@@ -46,7 +46,7 @@ symphonia = { version = "0.5", default-features = false, features = [
 mp3lame-encoder = "0.1"
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.59", features = ["Win32_System_LibraryLoader"] }
+windows-sys = { version = "0.59", features = ["Win32_System_LibraryLoader", "Win32_System_Threading"] }
 
 [features]
 # this feature is used for production builds or when `devPath` points to the filesystem and the built-in dev server is disabled.

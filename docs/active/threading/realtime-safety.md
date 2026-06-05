@@ -217,6 +217,19 @@ Prevention strategy:
 - The audio thread also **never deallocates**: displaced schedulers ride the
   drop ring back to the command thread.
 
+### Parallel worker pool (opt-in)
+
+When parallel level execution is enabled (`ECHOES_AUDIO_WORKERS > 0`, see
+`../dsp/dsp-runtime.md`), the audio thread spin-waits on a completion barrier for
+the worker threads. To keep that wait from becoming an inversion, each worker
+raises its own scheduling priority at start-up (Windows:
+`THREAD_PRIORITY_TIME_CRITICAL`, best-effort; no-op on other platforms) so a
+normal-priority thread cannot preempt it mid-block. Workers also enable FTZ/DAZ
+once at start-up, matching the audio thread, and a spurious `park()` return
+re-parks instead of panicking (a dead worker would otherwise stall every later
+block on the barrier). This is a mitigation, not full RT scheduling — MMCSS
+"Pro Audio" / `SCHED_FIFO` is a later, dedicated change.
+
 ---
 
 ## Stack Usage

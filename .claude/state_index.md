@@ -14,9 +14,9 @@ _Last full review: 2026-06-03. Each row's date is when its status was last verif
 |-----------|----------------------------------|------|--------|----------|
 | Graph-first model & pipeline | `architecture/audio-graph.md` | `audio_graph/{graph,node,mod}.rs` | stable | 2026-06-03 |
 | Graph compiler | `dsp/graph-compiler.md` | `audio_graph/{compiler,execution_plan}.rs` | stable | 2026-06-03 |
-| DSP runtime / scheduler | `dsp/dsp-runtime.md` | `audio_graph/{scheduler,worker_pool,buffer}.rs` | stable | 2026-06-03 |
+| DSP runtime / scheduler | `dsp/dsp-runtime.md` | `audio_graph/{scheduler,worker_pool,buffer}.rs` | stable | 2026-06-05 |
 | Immutable snapshot swap | `architecture/snapshot-rebuild-flow.md` | `audio_graph/snapshot*.rs`, `audio_engine/snapshot.rs` | stable | 2026-06-03 |
-| Real-time safety | `threading/realtime-safety.md` | (cross-cutting; audio thread) | stable | 2026-06-03 |
+| Real-time safety | `threading/realtime-safety.md` | (cross-cutting; audio thread) | stable | 2026-06-05 |
 | Threading model | `threading/threading-model.md` | `audio_engine/engine.rs`, `engine_gateway/` | stable | 2026-06-03 |
 | Transport | `threading/realtime-safety.md` | `audio_engine/transport.rs` | stable | 2026-06-03 |
 | Offline render (C-2 harness) | `migration/*` | `audio_engine/offline.rs` | stable | 2026-06-03 |

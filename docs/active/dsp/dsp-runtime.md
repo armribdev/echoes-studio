@@ -117,6 +117,35 @@ When a new `GraphScheduler` replaces the old one:
 
 ---
 
+## Parallel Level Execution (opt-in)
+
+By default the scheduler runs steps sequentially on the audio thread. When
+`ECHOES_AUDIO_WORKERS > 0` (env var, default `0`), the compiler groups
+independent steps into `plan.levels` and a pre-spawned `WorkerPool`
+(`audio_graph/worker_pool.rs`) processes each level in parallel. The audio
+thread joins the pool as the last worker and spin-waits on a completion barrier
+between levels.
+
+Determinism is unchanged: every step within a level writes its own output
+buffer, so execution order across workers cannot affect the result (the
+`parallel_pool_produces_same_output_as_sequential` test guards this).
+
+Each worker, **once at start-up** (off the audio path), mirrors the audio
+callback thread so worker-run DSP behaves identically:
+- enables FTZ/DAZ (`enable_flush_to_zero`) — MXCSR is per-thread, so without this
+  a denormal on a worker would not be flushed (CPU spike) **and** could diverge
+  from the FTZ-enabled sequential path;
+- raises its scheduling priority (Windows: `THREAD_PRIORITY_TIME_CRITICAL`,
+  best-effort; no-op elsewhere) so a normal-priority thread cannot preempt it
+  mid-block while the audio thread spin-waits (see
+  `../threading/realtime-safety.md` → Priority Inversion Prevention).
+
+A spurious `park()` wake-up with no published job re-parks instead of panicking,
+so a worker can never die and stall every later dispatch on the barrier. Full RT
+priority (MMCSS "Pro Audio" / `SCHED_FIFO`) is a later, dedicated change.
+
+---
+
 ## Runtime Isolation Rules
 
 1. The audio thread never reads from `AppProject`. It only reads from the

@@ -18,11 +18,16 @@
 //! ## Real-time safety
 //!
 //! - No allocations on dispatch or in the worker loop.
-//! - Workers `park()` between dispatches — no busy-wait while idle.
+//! - Workers `park()` between dispatches — no busy-wait while idle.  A spurious
+//!   `park()` return (no job published) re-parks instead of panicking.
+//! - Each worker, once at start-up, raises its thread priority and enables
+//!   FTZ/DAZ — matching the audio callback thread.  A normal-priority thread
+//!   can no longer preempt a worker mid-block (the audio thread spin-waits on
+//!   them), and denormals are flushed identically on every thread that runs
+//!   DSP, so parallel output stays consistent with sequential.
 //! - The audio thread spin-waits on completion: workers run DSP that should
 //!   never block; an OS preemption of a worker briefly stalls the callback
-//!   but never deadlocks.  Worker threads inherit the process priority —
-//!   raising them to RT is left to a separate change.
+//!   but never deadlocks.
 //! - Shutdown: drop sets `shutdown = true`, unparks each worker, joins.
 
 use std::cell::UnsafeCell;
@@ -31,6 +36,8 @@ use std::sync::{
     Arc,
 };
 use std::thread::{self, JoinHandle};
+
+use crate::audio_graph::denormal::enable_flush_to_zero;
 
 /// Per-step function pointer invoked by both the audio thread and worker
 /// threads.  `worker_id` runs from `0 .. num_workers` for pool threads and
@@ -186,7 +193,34 @@ impl<Ctx: Copy + Send + Sync + 'static> Drop for WorkerPool<Ctx> {
     }
 }
 
+/// Raise the calling worker's scheduling priority so a normal-priority thread
+/// cannot preempt it mid-block.  The audio thread spin-waits on the workers at
+/// the level barrier; a descheduled worker would stall the whole callback
+/// (priority inversion).  Best-effort: a failure leaves the inherited priority
+/// (the previous behaviour) and never panics.
+#[cfg(windows)]
+fn raise_worker_thread_priority() {
+    use windows_sys::Win32::System::Threading::{
+        GetCurrentThread, SetThreadPriority, THREAD_PRIORITY_TIME_CRITICAL,
+    };
+    // SAFETY: `GetCurrentThread` returns a pseudo-handle valid for this thread;
+    // `SetThreadPriority` has no preconditions and we deliberately ignore the
+    // result (priority elevation is an optimisation, not a correctness gate).
+    unsafe {
+        SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_TIME_CRITICAL);
+    }
+}
+
+#[cfg(not(windows))]
+fn raise_worker_thread_priority() {}
+
 fn worker_loop<Ctx: Copy + Send + Sync + 'static>(id: usize, shared: Arc<PoolShared<Ctx>>) {
+    // Per-thread audio-DSP setup, done once: flush denormals to zero (MXCSR is
+    // per-thread) and lift this worker above normal-priority threads.  Both
+    // mirror the audio callback thread so worker-run DSP behaves identically.
+    enable_flush_to_zero();
+    raise_worker_thread_priority();
+
     loop {
         thread::park();
 
@@ -196,7 +230,13 @@ fn worker_loop<Ctx: Copy + Send + Sync + 'static>(id: usize, shared: Arc<PoolSha
 
         // Snapshot the job.  Safety: the dispatcher placed it before unparking
         // us, and won't mutate it again until every worker bumps `workers_done`.
-        let job = unsafe { (*shared.job.get()).expect("worker unparked without a job") };
+        // `park()` may also return spuriously (no job published) — re-park
+        // rather than panic, otherwise a dead worker would stall every later
+        // dispatch on the completion barrier.
+        let job = match unsafe { *shared.job.get() } {
+            Some(job) => job,
+            None => continue,
+        };
 
         loop {
             let idx = shared.next_idx.fetch_add(1, Ordering::Relaxed);
