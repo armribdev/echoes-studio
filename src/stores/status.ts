@@ -9,6 +9,14 @@ export interface StatusMessage {
 
 export const statusMessage = writable<StatusMessage | null>(null);
 
+export interface PianoRollStatusInfo {
+	hoverLabel: string;
+	noteMeta: string;
+	clipMeta: string;
+}
+
+export const pianoRollStatusInfo = writable<PianoRollStatusInfo | null>(null);
+
 let _clearTimer: ReturnType<typeof setTimeout> | null = null;
 
 /**

@@ -33,6 +33,7 @@
 	import { startTransportScrub } from '../frontend/transportScrub';
 	import { shouldHandlePianoRollShortcuts, hasNoModifiers } from '../frontend/shortcuts/context';
 	import { keyboardFocus } from '../stores/keyboardFocus';
+	import { pianoRollStatusInfo } from '../stores/status';
 	import { closeEditor, enterEditFromPreview } from '../frontend/pianoRoll/clipEditor';
 	import { bottomPanel } from '../stores/bottomPanel';
 	import {
@@ -51,7 +52,6 @@
 	const VEL_H         = 72;
 	const VEL_BAR_MIN   = 3;
 	const MIN_DURATION  = 0.0625;
-	const DEFAULT_ZOOM  = 80;
 
 	const NOTE_NAMES = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
 	const BLACK_KEYS = new Set([1,3,6,8,10]);
@@ -536,8 +536,6 @@
 		? `${NOTE_NAMES[hoverPitch % 12]}${Math.floor(hoverPitch / 12) - 1}  ${beatLabel(hoverBeat)}`
 		: '';
 
-	$: zoomLabel = `${(zoom / DEFAULT_ZOOM).toFixed(1)}×`;
-
 	$: clipMetaLabel = (() => {
 		const num = $tempo.numerator || 4;
 		const bars = clipDurationBeats / num;
@@ -549,6 +547,20 @@
 	})();
 
 	$: noteMetaLabel = `${notes.length} note${notes.length !== 1 ? 's' : ''}`;
+
+	$: pianoRollStatusInfo.set(
+		open
+			? {
+					hoverLabel: posLabel,
+					noteMeta: noteMetaLabel,
+					clipMeta: clipMetaLabel,
+				}
+			: null,
+	);
+
+	onDestroy(() => {
+		pianoRollStatusInfo.set(null);
+	});
 
 	// ── Dessin (grille + notes en couches) ────────────────────────────────────
 
@@ -1306,21 +1318,7 @@
 				{/each}
 			</select>
 
-			<div class="chrome-divider"></div>
-
-			<div class="zoom-group" aria-label="Zoom horizontal">
-				<button class="zoom-btn" on:click={zoomOut} title="Dézoomer">−</button>
-				<span class="zoom-val">{zoomLabel}</span>
-				<button class="zoom-btn" on:click={zoomIn} title="Zoomer">+</button>
-			</div>
-
 			<div class="chrome-spacer"></div>
-
-			{#if posLabel}
-				<span class="pos-readout">{posLabel}</span>
-			{/if}
-
-			<span class="meta-chip">{noteMetaLabel} · {clipMetaLabel}</span>
 
 			<button class="chrome-close" on:click={closeEditor} title="Fermer (Tab)" aria-label="Fermer">
 				<svg viewBox="0 0 10 10" width="10" height="10" fill="none" aria-hidden="true">
@@ -1333,7 +1331,6 @@
 	<div class="chrome chrome--preview" style="--track-color: {trackColor}">
 		<div class="chrome-inner">
 			<div class="chrome-spacer"></div>
-			<span class="meta-chip">{noteMetaLabel} · {clipMetaLabel}</span>
 			<button class="edit-btn" on:click={enterEditFromPreview}>
 				Éditer
 			</button>
@@ -1543,15 +1540,6 @@
 		}
 	}
 
-	.meta-chip {
-		font-size: 10px;
-		font-variant-numeric: tabular-nums;
-		color: #555568;
-		white-space: nowrap;
-		flex-shrink: 0;
-		letter-spacing: 0.01em;
-	}
-
 	.q-select {
 		height: 22px;
 		padding: 0 6px;
@@ -1598,54 +1586,6 @@
 			background: rgba(21, 113, 255, 0.2);
 			color: #6aadff;
 		}
-	}
-
-	.zoom-group {
-		display: flex;
-		align-items: center;
-		gap: 2px;
-		flex-shrink: 0;
-	}
-
-	.zoom-btn {
-		width: 20px;
-		height: 20px;
-		padding: 0;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		background: rgba(255, 255, 255, 0.04);
-		border: 1px solid rgba(255, 255, 255, 0.08);
-		border-radius: 4px;
-		color: #b8b8c8;
-		font-size: 14px;
-		line-height: 1;
-		cursor: pointer;
-		transition: background 0.12s;
-
-		&:hover { background: rgba(255, 255, 255, 0.09); }
-	}
-
-	.zoom-val {
-		font-size: 10px;
-		font-weight: 600;
-		font-variant-numeric: tabular-nums;
-		color: #666678;
-		min-width: 28px;
-		text-align: center;
-	}
-
-	.pos-readout {
-		font-size: 10px;
-		font-weight: 600;
-		font-variant-numeric: tabular-nums;
-		letter-spacing: 0.02em;
-		color: #9090b8;
-		white-space: nowrap;
-		flex-shrink: 0;
-		background: rgba(21, 113, 255, 0.1);
-		padding: 2px 7px;
-		border-radius: 4px;
 	}
 
 	// ── Corps ─────────────────────────────────────────────────────────────────

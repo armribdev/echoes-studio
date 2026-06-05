@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { statusMessage } from '../stores/status';
+	import { statusMessage, pianoRollStatusInfo } from '../stores/status';
 	import { viewMode } from '../stores/viewMode';
 </script>
 
@@ -29,6 +29,17 @@
 		>
 			Graph
 		</button>
+	</div>
+
+	<div class="status-right">
+		{#if $pianoRollStatusInfo}
+			{#if $pianoRollStatusInfo.hoverLabel}
+				<span class="piano-hover">{$pianoRollStatusInfo.hoverLabel}</span>
+			{/if}
+			<span class="piano-meta">
+				{$pianoRollStatusInfo.noteMeta} · {$pianoRollStatusInfo.clipMeta}
+			</span>
+		{/if}
 	</div>
 </div>
 
@@ -86,6 +97,31 @@
 		&:hover:not(.active) {
 			color: rgba(247, 247, 249, 0.48);
 		}
+	}
+
+	.status-right {
+		grid-column: 3;
+		justify-self: end;
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		min-width: 0;
+		overflow: hidden;
+		white-space: nowrap;
+	}
+
+	.piano-hover {
+		font-size: 11px;
+		font-family: 'SF Mono', 'Fira Code', ui-monospace, monospace;
+		font-variant-numeric: tabular-nums;
+		letter-spacing: 0.02em;
+		color: rgba(170, 170, 200, 0.85);
+	}
+
+	.piano-meta {
+		font-size: 11px;
+		font-variant-numeric: tabular-nums;
+		color: rgba(247, 247, 249, 0.38);
 	}
 
 	.message {
