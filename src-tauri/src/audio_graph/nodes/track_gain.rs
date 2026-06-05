@@ -12,6 +12,7 @@
 //! gain.  The command thread can write these atomics directly without
 //! triggering a recompile.
 
+use std::f32::consts::TAU;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
@@ -19,22 +20,35 @@ use crate::audio_graph::buffer::AudioBuffer;
 use crate::audio_graph::live_params::TrackParams;
 use crate::audio_graph::node::{AudioNode, NodeId, PrepareContext, TransportInfo};
 
+/// Per-sample gain-smoothing cutoff (ADR-019 Tranche 2).  De-zippers volume
+/// modulation/automation and fader moves, and de-clicks mute/solo toggles.
+/// ~12 Hz ≈ 13 ms; derived from the sample rate only (block-size independent).
+const GAIN_SMOOTH_CUTOFF_HZ: f32 = 12.0;
+
 pub struct TrackGainNode {
     id: NodeId,
     params: Arc<TrackParams>,
     any_solo: Arc<AtomicBool>,
     /// Accumulated modulation delta for the current block (reset each block).
     mod_delta: f32,
+    /// Per-sample smoothed gain; ramps toward `current_gain() + mod_delta`.
+    smoothed_gain: f32,
+    /// One-pole coefficient set in `prepare` from the sample rate.
+    gain_coeff: f32,
 }
 
 impl TrackGainNode {
     pub fn new(id: NodeId, params: Arc<TrackParams>, any_solo: Arc<AtomicBool>) -> Self {
-        Self {
+        let mut node = Self {
             id,
             params,
             any_solo,
             mod_delta: 0.0,
-        }
+            smoothed_gain: 0.0,
+            gain_coeff: 0.0,
+        };
+        node.smoothed_gain = node.current_gain();
+        node
     }
 
     /// Compute the linear gain for this block from the atomic cells.
@@ -69,7 +83,10 @@ impl AudioNode for TrackGainNode {
         1
     }
 
-    fn prepare(&mut self, _ctx: PrepareContext) {}
+    fn prepare(&mut self, ctx: PrepareContext) {
+        self.gain_coeff = 1.0 - (-TAU * GAIN_SMOOTH_CUTOFF_HZ / ctx.sample_rate).exp();
+        self.smoothed_gain = self.current_gain();
+    }
 
     fn process(
         &mut self,
@@ -82,19 +99,24 @@ impl AudioNode for TrackGainNode {
 
         let channels = output.num_channels.min(input.num_channels);
         let frames = transport.block_size.min(output.num_frames).min(input.num_frames);
-        let gain = (self.current_gain() + self.mod_delta).max(0.0);
+        let target = (self.current_gain() + self.mod_delta).max(0.0);
+        let coeff = self.gain_coeff;
 
-        for ch in 0..channels {
-            let in_ch = input.channel(ch);
-            let out_ch = output.channel_mut(ch);
-            for i in 0..frames {
-                out_ch[i] = in_ch[i] * gain;
+        // Frame-outer so the smoothed gain advances once per frame, shared across
+        // channels.  When already at target (static volume, no mod) the step is
+        // exactly 0, so a static track stays bit-identical.
+        for i in 0..frames {
+            self.smoothed_gain += coeff * (target - self.smoothed_gain);
+            let g = self.smoothed_gain;
+            for ch in 0..channels {
+                output.channel_mut(ch)[i] = input.channel(ch)[i] * g;
             }
         }
     }
 
     fn reset(&mut self) {
         self.reset_modulation();
+        self.smoothed_gain = self.current_gain();
     }
 
     fn reset_modulation(&mut self) {

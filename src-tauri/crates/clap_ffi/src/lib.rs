@@ -251,6 +251,12 @@ pub struct ClapEventNote {
 // Fixed-capacity event list (no allocation in process).
 pub const MAX_EVENTS: usize = 256;
 
+/// Capacity of the param-value event list.  Each modulated param can carry one
+/// sub-block point per `MODULATION_CONTROL_PERIOD` (32) over a full
+/// `MAX_BLOCK_FRAMES` (4096) block — up to 128 points (ADR-019).  Sized so
+/// several modulated params at the offline block size never drop points.
+pub const MAX_PARAM_EVENTS: usize = 1024;
+
 #[repr(C)]
 pub struct ClapInputEvents {
     pub ctx: *mut c_void,
@@ -371,7 +377,7 @@ pub struct ClapEventParamValue {
 /// Fixed-capacity list of parameter-value events with a `clap_input_events`
 /// vtable.  No allocation in `process`; reset and refilled in place each block.
 pub struct FixedParamEventList {
-    pub events: [ClapEventParamValue; MAX_EVENTS],
+    pub events: [ClapEventParamValue; MAX_PARAM_EVENTS],
     pub count: usize,
     pub input_events_vtable: ClapInputEvents,
 }
@@ -398,7 +404,7 @@ impl FixedParamEventList {
 
     /// Append a parameter change (plain value).  Silently drops if full.
     pub fn push_param_value(&mut self, time: u32, param_id: u32, value: f64) {
-        if self.count >= MAX_EVENTS {
+        if self.count >= MAX_PARAM_EVENTS {
             return;
         }
         self.events[self.count] = ClapEventParamValue {

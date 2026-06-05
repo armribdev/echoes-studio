@@ -279,6 +279,16 @@ impl AudioNode for ClapWrapperNode {
                 };
                 self.param_events.push_param_value(0, entry.native_id, plain as f64);
             }
+            // ADR-019: interior sub-block points at their real sample offset.
+            for k in 0..entry.point_count {
+                let (offset, val) = entry.points[k];
+                let effective = (entry.shadow_value() + val).clamp(0.0, 1.0);
+                let plain = match self.param_ranges.get(&entry.native_id) {
+                    Some((min, max)) => min + effective * (max - min),
+                    None => effective,
+                };
+                self.param_events.push_param_value(offset, entry.native_id, plain as f64);
+            }
         }
 
         for c in 0..nc {
@@ -357,6 +367,7 @@ impl AudioNode for ClapWrapperNode {
     fn reset_modulation(&mut self) {
         for entry in &mut self.mod_entries {
             entry.delta = 0.0;
+            entry.point_count = 0;
         }
     }
 
@@ -364,6 +375,24 @@ impl AudioNode for ClapWrapperNode {
         for entry in &mut self.mod_entries {
             if entry.native_id == param_id {
                 entry.delta += delta;
+                return;
+            }
+        }
+    }
+
+    fn apply_modulation_at(&mut self, param_id: u32, sample_offset: u32, value: f32) {
+        for entry in &mut self.mod_entries {
+            if entry.native_id == param_id {
+                for k in 0..entry.point_count {
+                    if entry.points[k].0 == sample_offset {
+                        entry.points[k].1 += value;
+                        return;
+                    }
+                }
+                if entry.point_count < entry.points.len() {
+                    entry.points[entry.point_count] = (sample_offset, value);
+                    entry.point_count += 1;
+                }
                 return;
             }
         }

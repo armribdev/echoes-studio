@@ -32,7 +32,9 @@ use crate::audio_graph::execution_plan::{
 use crate::audio_graph::graph::{AudioGraph, NodeKind};
 use crate::audio_graph::live_params::LiveParams;
 use crate::audio_graph::automation::SchedulerAutomationAction;
-use crate::audio_graph::node::{AudioNode, NodeId, PluginModEntry, PortId, PortKind, PrepareContext};
+use crate::audio_graph::node::{
+    AudioNode, NodeId, PluginModEntry, PortId, PortKind, PrepareContext, MAX_CONTROL_POINTS,
+};
 use crate::plugin_system::PluginHost;
 use crate::project::AppProject;
 
@@ -311,7 +313,13 @@ impl GraphCompiler {
                     .entry(step)
                     .or_default()
                     .entry(native_id)
-                    .or_insert_with(|| PluginModEntry { native_id, delta: 0.0, shadow });
+                    .or_insert_with(|| PluginModEntry {
+                        native_id,
+                        delta: 0.0,
+                        shadow,
+                        points: [(0, 0.0); MAX_CONTROL_POINTS],
+                        point_count: 0,
+                    });
             }
             for (step, map) in entries_by_step {
                 let entries: Vec<PluginModEntry> = map.into_values().collect();

@@ -262,9 +262,11 @@ pub struct IParameterChangesVtbl {
 }
 
 /// Max distinct parameters carried in one block, and max value points per
-/// parameter per block.  Both comfortably exceed a 60 Hz UI / automation load.
+/// parameter per block.  `MAX_POINTS_PER_QUEUE` covers one sub-block modulation
+/// point per `MODULATION_CONTROL_PERIOD` over a full `MAX_BLOCK_FRAMES` block
+/// (ADR-019: ceil(4096 / 32) = 128) plus UI edits.
 pub const MAX_PARAM_QUEUES: usize = 128;
-pub const MAX_POINTS_PER_QUEUE: usize = 16;
+pub const MAX_POINTS_PER_QUEUE: usize = 128;
 
 /// One parameter's value points for the current block.  `#[repr(C)]` keeps the
 /// `vtbl` at offset 0 so the plugin can dispatch through it; the remaining

@@ -174,6 +174,9 @@ Tracked debt for when the automation path (Phase 5e) is built on this queue:
    with C-10 (no flag may gate determinism). Resolve by making sample-accurate
    the single deterministic behaviour, or by proving both flag states are
    independently bit-reproducible — not by leaving two renders behind a toggle.
+   → Resolution proposed in [`019-sub-block-modulation.md`](019-sub-block-modulation.md)
+   (sub-block delivery as the single behaviour, no flag); annotate as resolved
+   here once that ADR is merged.
 4. **Fixed caps silently drop.** `MAX_PARAM_QUEUES = 128` is a hard cap; a synth
    with >128 simultaneously-automated params overflows silently.
 

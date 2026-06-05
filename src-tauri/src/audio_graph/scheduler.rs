@@ -56,7 +56,7 @@ use crate::audio_graph::buffer::AudioBuffer;
 use crate::audio_graph::compiler::CompiledGraph;
 use crate::audio_graph::execution_plan::ExecutionPlan;
 use crate::audio_graph::live_params::RouteCells;
-use crate::audio_graph::node::{AudioNode, NodeId, TransportInfo};
+use crate::audio_graph::node::{AudioNode, NodeId, TransportInfo, MODULATION_CONTROL_PERIOD};
 use crate::audio_graph::worker_pool::WorkerPool;
 
 const MIN_INPUT_PTR_SCRATCH: usize = 32;
@@ -415,6 +415,36 @@ fn step_thunk(worker_id: usize, step_idx: usize, ws: Workspace) {
     unsafe { process_one_step(worker_id, step_idx, ws) }
 }
 
+/// Evaluate a modulation route's raw signal at `frame_offset` within the block
+/// (ADR-019).  Automation curves evaluate at the absolute transport position;
+/// modulator routes read the source buffer at that frame.  No allocation.
+///
+/// # Safety
+/// Same contract as `process_one_step`: `ws` is valid for the current block and
+/// `action.source_step` indexes an already-written earlier-level output.
+#[inline]
+unsafe fn eval_mod_signal(
+    action: &CompiledModAction,
+    ws: Workspace,
+    frame_offset: usize,
+    pos: u64,
+    sr: f32,
+) -> f32 {
+    if let Some(curve) = &action.automation_curve {
+        let t = (pos as f64 + frame_offset as f64) / sr as f64;
+        curve.evaluate(t as f32)
+    } else {
+        let src_bufs = &*ws.output_buffers_ptr.add(action.source_step);
+        if action.source_port < src_bufs.len()
+            && src_bufs[action.source_port].num_frames > frame_offset
+        {
+            src_bufs[action.source_port].channel(0)[frame_offset]
+        } else {
+            0.0
+        }
+    }
+}
+
 /// # Safety
 /// `step_idx` is exclusive per level; lower levels finished; `ws` valid for `process_block`.
 unsafe fn process_one_step(worker_id: usize, step_idx: usize, ws: Workspace) {
@@ -461,30 +491,33 @@ unsafe fn process_one_step(worker_id: usize, step_idx: usize, ws: Workspace) {
     let actions: &[CompiledModAction] = &*ws.mod_actions_ptr.add(step_idx);
     let processor = &mut *ws.processors_ptr.add(step_idx);
 
-    // Always reset before re-summing modulation contributions for this block:
-    // if a route is removed (or its actions list otherwise shrinks to empty)
-    // between blocks, the previous block's `mod_delta` must not persist.
+    // ADR-019: sub-block modulation on an absolute control grid.  Reset first so a
+    // route removed between blocks can't leak its previous `mod_delta`/points.
+    // Offset 0 keeps the legacy block-start scalar via `apply_modulation` (internal
+    // nodes honour only this, staying bit-identical); interior grid boundaries —
+    // absolute multiples of MODULATION_CONTROL_PERIOD — go through
+    // `apply_modulation_at`, which only plugin wrappers consume.
     processor.reset_modulation();
+    let pos = transport.position_samples;
+    let nf = transport.block_size;
+    let sr = transport.sample_rate;
     for action in actions {
-        let mod_signal: f32 = if let Some(curve) = &action.automation_curve {
-            // Automation: evaluate pre-compiled curve at the current transport position.
-            // RT-safe: binary search on a Box<[...]>, no allocation.
-            curve.evaluate(transport.position_seconds as f32)
-        } else {
-            // Modulation: sample first frame of the modulator's output buffer
-            // (block-rate, up to one block of latency — BP-7 placeholder).
-            let src_bufs = &*ws.output_buffers_ptr.add(action.source_step);
-            if action.source_port < src_bufs.len() && src_bufs[action.source_port].num_frames > 0 {
-                src_bufs[action.source_port].channel(0)[0]
-            } else {
-                0.0
-            }
-        };
         let depth = match &action.depth_cells {
             Some(cells) => cells.depth(),
             None => action.static_depth,
         };
-        processor.apply_modulation(action.param_id, mod_signal * depth);
+
+        let v0 = eval_mod_signal(action, ws, 0, pos, sr) * depth;
+        processor.apply_modulation(action.param_id, v0);
+
+        let period = MODULATION_CONTROL_PERIOD;
+        let rem = (pos as usize) % period;
+        let mut offset = if rem == 0 { period } else { period - rem };
+        while offset < nf {
+            let v = eval_mod_signal(action, ws, offset, pos, sr) * depth;
+            processor.apply_modulation_at(action.param_id, offset as u32, v);
+            offset += period;
+        }
     }
 
     // Phase 1 / P0-5: catch Rust panics so a buggy

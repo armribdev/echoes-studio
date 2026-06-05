@@ -250,6 +250,12 @@ impl AudioNode for VstWrapperNode {
                     let effective = (entry.shadow_value() + entry.delta).clamp(0.0, 1.0);
                     pc.push(entry.native_id, 0, effective as f64);
                 }
+                // ADR-019: interior sub-block points at their real sample offset.
+                for k in 0..entry.point_count {
+                    let (offset, val) = entry.points[k];
+                    let effective = (entry.shadow_value() + val).clamp(0.0, 1.0);
+                    pc.push(entry.native_id, offset as i32, effective as f64);
+                }
             }
             if pc.count > 0 {
                 pc.as_mut() as *mut HostParameterChanges as *mut c_void
@@ -331,6 +337,7 @@ impl AudioNode for VstWrapperNode {
     fn reset_modulation(&mut self) {
         for entry in &mut self.mod_entries {
             entry.delta = 0.0;
+            entry.point_count = 0;
         }
     }
 
@@ -338,6 +345,24 @@ impl AudioNode for VstWrapperNode {
         for entry in &mut self.mod_entries {
             if entry.native_id == param_id {
                 entry.delta += delta;
+                return;
+            }
+        }
+    }
+
+    fn apply_modulation_at(&mut self, param_id: u32, sample_offset: u32, value: f32) {
+        for entry in &mut self.mod_entries {
+            if entry.native_id == param_id {
+                for k in 0..entry.point_count {
+                    if entry.points[k].0 == sample_offset {
+                        entry.points[k].1 += value;
+                        return;
+                    }
+                }
+                if entry.point_count < entry.points.len() {
+                    entry.points[entry.point_count] = (sample_offset, value);
+                    entry.point_count += 1;
+                }
                 return;
             }
         }

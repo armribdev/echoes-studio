@@ -20,6 +20,15 @@ use std::sync::{atomic::{AtomicU32, Ordering}, Arc};
 use crate::audio_graph::buffer::AudioBuffer;
 use crate::audio_graph::live_params::EnvelopeCells;
 
+/// Sub-block modulation control period in samples (ADR-019).  Modulation is
+/// sampled at absolute sample positions that are multiples of this period, so
+/// the modulated render is deterministic for a given block size.
+pub const MODULATION_CONTROL_PERIOD: usize = 32;
+
+/// Upper bound on interior control points per parameter per block:
+/// `ceil(MAX_BLOCK_FRAMES / MODULATION_CONTROL_PERIOD)` with `MAX_BLOCK_FRAMES = 4096`.
+pub const MAX_CONTROL_POINTS: usize = 128;
+
 /// Pre-allocated slot for one modulated plugin parameter.
 ///
 /// Allocated at graph compile time; iterated by plugin wrappers on the audio thread.
@@ -33,6 +42,11 @@ pub struct PluginModEntry {
     /// Baseline normalised value tracked by the command thread.  Shared with
     /// `LiveParams::plugin_param_shadows`; updated when a parameter change is pushed.
     pub shadow: Arc<AtomicU32>,
+    /// Interior sub-block modulation points for this block (ADR-019):
+    /// `(sample_offset, accumulated value)`.  Written by `apply_modulation_at`,
+    /// reset by `reset_modulation`.  Offset 0 rides on `delta` instead.
+    pub points: [(u32, f32); MAX_CONTROL_POINTS],
+    pub point_count: usize,
 }
 
 impl PluginModEntry {
@@ -162,6 +176,12 @@ pub trait AudioNode: Send + 'static {
 
     /// `delta` is `signal * depth`; summed per parameter before `process`.
     fn apply_modulation(&mut self, _param_id: u32, _delta: f32) {}
+
+    /// Sub-block modulation point at `sample_offset` within the current block
+    /// (ADR-019).  Default ignores it — only nodes that deliver sample-accurate
+    /// parameter events (plugin wrappers) override this.  Offset 0 is delivered
+    /// via `apply_modulation`, so the default scalar path stays bit-identical.
+    fn apply_modulation_at(&mut self, _param_id: u32, _sample_offset: u32, _value: f32) {}
 
     /// Called once at compile time by the `GraphCompiler` to inject pre-allocated
     /// modulation entries for external plugin parameters.  Default no-op for

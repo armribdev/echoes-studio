@@ -42,6 +42,7 @@ lives there.
 | [016](016-plugin-instance-reuse.md) | Plugin instance reuse across recompiles | Plugins / RT safety |
 | [017](017-per-instance-plugin-addressing.md) | Per-instance plugin addressing & state persistence | Plugins / state / UI boundary |
 | [018](018-clip-source-offset-trim.md) | Clip source offset & trim (audio + MIDI window) | State / MIDI scheduling |
+| [019](019-sub-block-modulation.md) | Sub-block deterministic modulation & automation (absolute control grid) | Modulation / scheduling / determinism |
 
 ---
 
@@ -52,7 +53,8 @@ lives there.
 - **State / persistence:** 002, 010, 017, 018
 - **Architecture boundary:** 005, 017
 - **Plugins:** 003, 006, 007, 008, 010, 013, 014, 015, 016, 017
-- **Modulation / parameters:** 009
+- **Modulation / parameters:** 009, 019
+- **Scheduling / determinism:** 019
 
 > Note: several ADRs span more than one theme; listed under each that applies.
 

@@ -111,10 +111,33 @@ for each route targeting this node:
 ```
 
 The result is clamped to the parameter's `ParameterRange` by the scheduler. The
-node receives the per-frame parameter curve in a `ParameterBlock` (future:
-sample-accurate interpolation). The modulation application step runs between the
-modulator's `process()` and the target's `process()`, so the modulator's output
-is always fresh for the current block.
+modulation application step runs between the modulator's `process()` and the
+target's `process()`, so the modulator's output is always fresh for the current
+block.
+
+### Sub-block delivery (ADR-019, Tranche 1)
+
+The scheduler does **not** sample one value per block. It evaluates each route on
+an **absolute control grid** of period `MODULATION_CONTROL_PERIOD = 32` samples
+(`node.rs`): at offset 0 plus every offset where `(position_samples + offset)`
+is a multiple of the period.
+
+- **Offset 0** is delivered via `AudioNode::apply_modulation` exactly as before —
+  internal nodes honour only this and stay bit-identical (their per-sample
+  `mod_smooth` ramp toward the block target is unchanged).
+- **Interior grid points** are delivered via the defaulted
+  `AudioNode::apply_modulation_at(param_id, sample_offset, value)`. The default is
+  a no-op; only the VST3 / CLAP wrappers override it, recording the points into
+  `PluginModEntry` and emitting one format-native param event per point at its
+  real `sample_offset`. This removes plugin-parameter zipper.
+
+Because the grid is keyed to the absolute sample position, the delivered point
+sequence is deterministic for a given block size (C-2). `GainNode` /
+`TrackGainNode` add a per-sample one-pole gain smoother (ADR-019 Tranche 2) that
+de-zippers modulated/automated gain and de-clicks fader/mute moves. The internal
+effects (`Eq/Compressor/Reverb/Delay`) still ramp via their block-rate
+`mod_smooth` — moving them to grid-rate targets is Tranche 3 (variant by variant).
+`PanNode`/`MasterNode` are not modulation targets.
 
 ### Modulation depth and units
 
