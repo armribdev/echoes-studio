@@ -2,8 +2,7 @@ use std::sync::Arc;
 
 use crate::audio_graph::buffer::AudioBuffer;
 use crate::audio_graph::denormal::ANTI_DENORMAL;
-use crate::audio_graph::mod_smooth::ModSmooth;
-use crate::audio_graph::node::{AudioNode, NodeId, PrepareContext, TransportInfo};
+use crate::audio_graph::node::{AudioNode, NodeId, PrepareContext, TransportInfo, MAX_CONTROL_POINTS};
 use crate::audio_graph::parameter_block::ParameterBlock;
 use crate::project::ReverbParams;
 
@@ -109,7 +108,14 @@ pub struct ReverbNode {
     /// behaviour (coefficients frozen at `prepare`).
     block: Option<Arc<ParameterBlock>>,
 
-    mod_smooth: ModSmooth<REVERB_PARAM_COUNT>,
+    /// Sub-block modulation on the absolute control grid (ADR-019 Tranche 3).
+    /// `base_delta` is the block-start (offset 0) param-delta; `seg_*` hold the
+    /// interior grid points used to re-apply coeffs / wet-dry mix mid-block.
+    /// Reset each block.
+    base_delta: [f32; REVERB_PARAM_COUNT],
+    seg_offset: [u32; MAX_CONTROL_POINTS],
+    seg_delta: [[f32; REVERB_PARAM_COUNT]; MAX_CONTROL_POINTS],
+    seg_count: usize,
 }
 
 impl ReverbNode {
@@ -122,7 +128,10 @@ impl ReverbNode {
             allpass_l: Vec::new(),
             allpass_r: Vec::new(),
             block: None,
-            mod_smooth: ModSmooth::new(),
+            base_delta: [0.0; REVERB_PARAM_COUNT],
+            seg_offset: [0; MAX_CONTROL_POINTS],
+            seg_delta: [[0.0; REVERB_PARAM_COUNT]; MAX_CONTROL_POINTS],
+            seg_count: 0,
         }
     }
 
@@ -189,76 +198,81 @@ impl AudioNode for ReverbNode {
             self.params = reverb_params_from_block(block);
         }
         self.apply_coeffs();
-        self.mod_smooth.prepare(ctx.sample_rate, ctx.max_block_size);
     }
 
     fn process(&mut self, inputs: &[&AudioBuffer], outputs: &mut [AudioBuffer], t: &TransportInfo) {
-        // ADR-009 + modulation: read live block values, add any modulation deltas,
-        // and re-apply comb coefficients only when room_size/damping effectively changed.
+        // ADR-009 + ADR-019 Tranche 3: read live block values, then apply
+        // modulation per control segment on the absolute grid, re-applying comb
+        // coefficients per segment only when room_size/damping change.
         let base = self.block.as_ref().map(|b| reverb_params_from_block(b)).unwrap_or_else(|| self.params.clone());
-        let deltas = self.mod_smooth.advance();
-        let effective = ReverbParams {
-            room_size: base.room_size + deltas[REVERB_ROOM_SIZE],
-            damping:   base.damping   + deltas[REVERB_DAMPING],
-            wet:       base.wet       + deltas[REVERB_WET],
-            dry:       base.dry       + deltas[REVERB_DRY],
-            width:     base.width     + deltas[REVERB_WIDTH],
-        };
-        if reverb_block_values(&effective) != reverb_block_values(&self.params) {
-            let recompute = effective.room_size != self.params.room_size
-                || effective.damping != self.params.damping;
-            self.params = effective;
-            if recompute {
-                self.apply_coeffs();
-            }
-        }
 
         let input = &inputs[0];
         let output = &mut outputs[0];
         let frames = t.block_size.min(output.num_frames).min(input.num_frames);
         let channels = output.num_channels.min(input.num_channels);
 
-        let wet = self.params.wet;
-        let dry = 1.0 - wet;
-        let width = self.params.width;
-        let wet1 = wet * (width / 2.0 + 0.5);
-        let wet2 = wet * (0.5 - width / 2.0);
-
-        for i in 0..frames {
-            let in_l = if channels > 0 {
-                input.channel(0)[i]
+        let mut frame = 0usize;
+        for k in 0..=self.seg_count {
+            let seg_end = if k < self.seg_count {
+                (self.seg_offset[k] as usize).min(frames)
             } else {
-                0.0
+                frames
             };
-            let in_r = if channels > 1 {
-                input.channel(1)[i]
-            } else {
-                in_l
+            if seg_end <= frame {
+                continue;
+            }
+            let delta = if k == 0 { self.base_delta } else { self.seg_delta[k - 1] };
+            let effective = ReverbParams {
+                room_size: base.room_size + delta[REVERB_ROOM_SIZE],
+                damping:   base.damping   + delta[REVERB_DAMPING],
+                wet:       base.wet       + delta[REVERB_WET],
+                dry:       base.dry       + delta[REVERB_DRY],
+                width:     base.width     + delta[REVERB_WIDTH],
             };
-            let mono = (in_l + in_r) * 0.015; // Freeverb input gain
-
-            let mut out_l = 0.0_f32;
-            let mut out_r = 0.0_f32;
-
-            for c in &mut self.combs_l {
-                out_l += c.process(mono);
-            }
-            for c in &mut self.combs_r {
-                out_r += c.process(mono);
-            }
-            for a in &mut self.allpass_l {
-                out_l = a.process(out_l);
-            }
-            for a in &mut self.allpass_r {
-                out_r = a.process(out_r);
+            if reverb_block_values(&effective) != reverb_block_values(&self.params) {
+                let recompute = effective.room_size != self.params.room_size
+                    || effective.damping != self.params.damping;
+                self.params = effective;
+                if recompute {
+                    self.apply_coeffs();
+                }
             }
 
-            if channels > 0 {
-                output.channel_mut(0)[i] = out_l * wet1 + out_r * wet2 + in_l * dry;
+            let wet = self.params.wet;
+            let dry = 1.0 - wet;
+            let width = self.params.width;
+            let wet1 = wet * (width / 2.0 + 0.5);
+            let wet2 = wet * (0.5 - width / 2.0);
+
+            for i in frame..seg_end {
+                let in_l = if channels > 0 { input.channel(0)[i] } else { 0.0 };
+                let in_r = if channels > 1 { input.channel(1)[i] } else { in_l };
+                let mono = (in_l + in_r) * 0.015; // Freeverb input gain
+
+                let mut out_l = 0.0_f32;
+                let mut out_r = 0.0_f32;
+
+                for c in &mut self.combs_l {
+                    out_l += c.process(mono);
+                }
+                for c in &mut self.combs_r {
+                    out_r += c.process(mono);
+                }
+                for a in &mut self.allpass_l {
+                    out_l = a.process(out_l);
+                }
+                for a in &mut self.allpass_r {
+                    out_r = a.process(out_r);
+                }
+
+                if channels > 0 {
+                    output.channel_mut(0)[i] = out_l * wet1 + out_r * wet2 + in_l * dry;
+                }
+                if channels > 1 {
+                    output.channel_mut(1)[i] = out_r * wet1 + out_l * wet2 + in_r * dry;
+                }
             }
-            if channels > 1 {
-                output.channel_mut(1)[i] = out_r * wet1 + out_l * wet2 + in_r * dry;
-            }
+            frame = seg_end;
         }
     }
 
@@ -277,7 +291,8 @@ impl AudioNode for ReverbNode {
         for a in &mut self.allpass_r {
             a.buf.fill(0.0);
         }
-        self.mod_smooth.reset();
+        self.base_delta = [0.0; REVERB_PARAM_COUNT];
+        self.seg_count = 0;
     }
 
     fn param_id(&self, name: &str) -> Option<u32> {
@@ -292,11 +307,37 @@ impl AudioNode for ReverbNode {
     }
 
     fn apply_modulation(&mut self, param_id: u32, delta: f32) {
-        self.mod_smooth.add_target(param_id as usize, delta);
+        let p = param_id as usize;
+        if p < REVERB_PARAM_COUNT {
+            self.base_delta[p] += delta;
+        }
+    }
+
+    fn apply_modulation_at(&mut self, param_id: u32, sample_offset: u32, value: f32) {
+        let p = param_id as usize;
+        if p >= REVERB_PARAM_COUNT {
+            return;
+        }
+        // Grid offsets arrive ascending and are deduplicated, so `seg_offset`
+        // stays sorted — the segment loop relies on that.
+        for k in 0..self.seg_count {
+            if self.seg_offset[k] == sample_offset {
+                self.seg_delta[k][p] += value;
+                return;
+            }
+        }
+        if self.seg_count < MAX_CONTROL_POINTS {
+            let k = self.seg_count;
+            self.seg_offset[k] = sample_offset;
+            self.seg_delta[k] = [0.0; REVERB_PARAM_COUNT];
+            self.seg_delta[k][p] = value;
+            self.seg_count += 1;
+        }
     }
 
     fn reset_modulation(&mut self) {
-        self.mod_smooth.reset_target();
+        self.base_delta = [0.0; REVERB_PARAM_COUNT];
+        self.seg_count = 0;
     }
 }
 
@@ -339,6 +380,36 @@ mod tests {
             (node.params.wet - params.wet).abs() < 1e-3,
             "smoothed delta must decay to zero when modulation is removed"
         );
+    }
+
+    #[test]
+    fn interior_grid_point_reapplies_coeffs_mid_block() {
+        let params = ReverbParams::default();
+        let block = ParameterBlock::new(&reverb_block_values(&params));
+        let mut node = ReverbNode::new(NodeId(1), params.clone()).with_block(Arc::clone(&block));
+        node.prepare(PrepareContext {
+            sample_rate: 48_000.0,
+            max_block_size: 64,
+            num_channels: 2,
+        });
+
+        let input = AudioBuffer::new(2, 64);
+        let mut output = AudioBuffer::new(2, 64);
+        let t = TransportInfo::stopped(48_000.0);
+
+        node.reset_modulation();
+        node.apply_modulation_at(REVERB_ROOM_SIZE as u32, 32, 0.5); // room_size +0.5 from frame 32
+        node.process(&[&input], std::slice::from_mut(&mut output), &t);
+
+        // The last segment (frames 32..64) ran with room_size +0.5, so the comb
+        // feedback reflects the interior grid point.
+        let expected = 0.84 * (params.room_size + 0.5);
+        assert!(
+            (node.combs_l[0].feedback - expected).abs() < 1e-4,
+            "comb feedback must follow the interior grid point, got {}",
+            node.combs_l[0].feedback
+        );
+        assert!((node.params.room_size - (params.room_size + 0.5)).abs() < 1e-4);
     }
 
     #[test]
