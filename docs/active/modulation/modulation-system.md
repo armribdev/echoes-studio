@@ -134,10 +134,11 @@ is a multiple of the period.
 Because the grid is keyed to the absolute sample position, the delivered point
 sequence is deterministic for a given block size (C-2). `GainNode` /
 `TrackGainNode` add a per-sample one-pole gain smoother (ADR-019 Tranche 2) that
-de-zippers modulated/automated gain and de-clicks fader/mute moves. The internal
-effects (`Eq/Compressor/Reverb/Delay`) still ramp via their block-rate
-`mod_smooth` — moving them to grid-rate targets is Tranche 3 (variant by variant).
-`PanNode`/`MasterNode` are not modulation targets.
+de-zippers modulated/automated gain and de-clicks fader/mute moves. `DelayNode`
+(Tranche 3, variant 1) consumes the interior grid points and segments its
+`process` loop at the absolute grid; `Compressor/Reverb/Eq` still ramp via their
+block-rate `mod_smooth` until their Tranche 3 step lands. `PanNode`/`MasterNode`
+are not modulation targets.
 
 ### Modulation depth and units
 

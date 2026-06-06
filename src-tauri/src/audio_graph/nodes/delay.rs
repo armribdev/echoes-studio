@@ -2,8 +2,7 @@ use std::sync::Arc;
 
 use crate::audio_graph::buffer::AudioBuffer;
 use crate::audio_graph::denormal::ANTI_DENORMAL;
-use crate::audio_graph::mod_smooth::ModSmooth;
-use crate::audio_graph::node::{AudioNode, NodeId, PrepareContext, TransportInfo};
+use crate::audio_graph::node::{AudioNode, NodeId, PrepareContext, TransportInfo, MAX_CONTROL_POINTS};
 use crate::audio_graph::parameter_block::ParameterBlock;
 use crate::project::DelayParams;
 
@@ -63,7 +62,15 @@ pub struct DelayNode {
     /// behaviour (parameters frozen at `prepare`).
     block: Option<Arc<ParameterBlock>>,
 
-    mod_smooth: ModSmooth<DELAY_PARAM_COUNT>,
+    /// Sub-block modulation on the absolute control grid (ADR-019 Tranche 3).
+    /// `base_delta` is the block-start (offset 0) param-delta; `seg_*` hold the
+    /// interior grid points: `seg_offset[k]` is the frame offset, `seg_delta[k]`
+    /// the accumulated param-deltas applied from that offset onward.  All reset
+    /// each block by `reset_modulation`.
+    base_delta: [f32; DELAY_PARAM_COUNT],
+    seg_offset: [u32; MAX_CONTROL_POINTS],
+    seg_delta: [[f32; DELAY_PARAM_COUNT]; MAX_CONTROL_POINTS],
+    seg_count: usize,
 }
 
 impl DelayNode {
@@ -76,7 +83,10 @@ impl DelayNode {
             delay_samples: 0,
             sample_rate: DEFAULT_ENGINE_SAMPLE_RATE,
             block: None,
-            mod_smooth: ModSmooth::new(),
+            base_delta: [0.0; DELAY_PARAM_COUNT],
+            seg_offset: [0; MAX_CONTROL_POINTS],
+            seg_delta: [[0.0; DELAY_PARAM_COUNT]; MAX_CONTROL_POINTS],
+            seg_count: 0,
         }
     }
 
@@ -122,30 +132,14 @@ impl AudioNode for DelayNode {
         }
         self.recompute_delay_samples();
         self.write_pos = 0;
-        self.mod_smooth.prepare(ctx.sample_rate, ctx.max_block_size);
     }
 
     fn process(&mut self, inputs: &[&AudioBuffer], outputs: &mut [AudioBuffer], t: &TransportInfo) {
-        // ADR-009 + modulation: read live block values, add any modulation deltas,
-        // and recompute the read offset only when delay_ms effectively changed.
-        // ping_pong is a bool encoded as float (< 0.5 = false, >= 0.5 = true).
+        // ADR-009 + ADR-019 Tranche 3: read live block values, then apply
+        // modulation per control segment on the absolute grid.  The read offset
+        // is recomputed only when delay_ms effectively changes (preserves the
+        // ring).  ping_pong is a bool encoded as float (< 0.5 = false).
         let base = self.block.as_ref().map(|b| delay_params_from_block(b)).unwrap_or_else(|| self.params.clone());
-        let deltas = self.mod_smooth.advance();
-        let ping_pong_float = (if base.ping_pong { 1.0_f32 } else { 0.0 }) + deltas[DELAY_PING_PONG];
-        let effective = DelayParams {
-            delay_ms:  base.delay_ms  + deltas[DELAY_DELAY_MS],
-            feedback:  base.feedback  + deltas[DELAY_FEEDBACK],
-            wet:       base.wet       + deltas[DELAY_WET],
-            dry:       base.dry       + deltas[DELAY_DRY],
-            ping_pong: ping_pong_float >= 0.5,
-        };
-        if delay_block_values(&effective) != delay_block_values(&self.params) {
-            let recompute = effective.delay_ms != self.params.delay_ms;
-            self.params = effective;
-            if recompute {
-                self.recompute_delay_samples();
-            }
-        }
 
         let input = &inputs[0];
         let output = &mut outputs[0];
@@ -156,53 +150,78 @@ impl AudioNode for DelayNode {
             return;
         }
 
-        let wet = self.params.wet;
-        let dry = 1.0 - wet;
-        let feedback = self.params.feedback;
-        let ping_pong = self.params.ping_pong;
-
-        for i in 0..frames {
-            let read_pos = (self.write_pos + cap - self.delay_samples.min(cap - 1)) % cap;
-            let del_l = self.buf[read_pos * 2];
-            let del_r = self.buf[read_pos * 2 + 1];
-
-            let in_l = if channels > 0 {
-                input.channel(0)[i]
+        // Segment k spans [start_k, end_k): start_0 = 0 with `base_delta`, then
+        // each interior grid point at `seg_offset[k-1]` switches to `seg_delta[k-1]`.
+        let mut frame = 0usize;
+        for k in 0..=self.seg_count {
+            let seg_end = if k < self.seg_count {
+                (self.seg_offset[k] as usize).min(frames)
             } else {
-                0.0
+                frames
             };
-            let in_r = if channels > 1 {
-                input.channel(1)[i]
-            } else {
-                in_l
+            if seg_end <= frame {
+                continue;
+            }
+            let delta = if k == 0 { self.base_delta } else { self.seg_delta[k - 1] };
+
+            let ping_pong_float = (if base.ping_pong { 1.0_f32 } else { 0.0 }) + delta[DELAY_PING_PONG];
+            let effective = DelayParams {
+                delay_ms:  base.delay_ms  + delta[DELAY_DELAY_MS],
+                feedback:  base.feedback  + delta[DELAY_FEEDBACK],
+                wet:       base.wet       + delta[DELAY_WET],
+                dry:       base.dry       + delta[DELAY_DRY],
+                ping_pong: ping_pong_float >= 0.5,
             };
-
-            // Write to delay buffer: feedback from delay out, cross-channel if ping-pong.
-            // ANTI_DENORMAL on each write keeps the recursive state out of the
-            // sub-normal range during long silences (otherwise: x86 CPU spike).
-            if ping_pong {
-                self.buf[self.write_pos * 2] = in_l + del_r * feedback + ANTI_DENORMAL;
-                self.buf[self.write_pos * 2 + 1] = in_r + del_l * feedback + ANTI_DENORMAL;
-            } else {
-                self.buf[self.write_pos * 2] = in_l + del_l * feedback + ANTI_DENORMAL;
-                self.buf[self.write_pos * 2 + 1] = in_r + del_r * feedback + ANTI_DENORMAL;
+            if delay_block_values(&effective) != delay_block_values(&self.params) {
+                let recompute = effective.delay_ms != self.params.delay_ms;
+                self.params = effective;
+                if recompute {
+                    self.recompute_delay_samples();
+                }
             }
 
-            self.write_pos = (self.write_pos + 1) % cap;
+            let wet = self.params.wet;
+            let dry = 1.0 - wet;
+            let feedback = self.params.feedback;
+            let ping_pong = self.params.ping_pong;
 
-            if channels > 0 {
-                output.channel_mut(0)[i] = in_l * dry + del_l * wet;
+            for i in frame..seg_end {
+                let read_pos = (self.write_pos + cap - self.delay_samples.min(cap - 1)) % cap;
+                let del_l = self.buf[read_pos * 2];
+                let del_r = self.buf[read_pos * 2 + 1];
+
+                let in_l = if channels > 0 { input.channel(0)[i] } else { 0.0 };
+                let in_r = if channels > 1 { input.channel(1)[i] } else { in_l };
+
+                // Write to delay buffer: feedback from delay out, cross-channel if ping-pong.
+                // ANTI_DENORMAL on each write keeps the recursive state out of the
+                // sub-normal range during long silences (otherwise: x86 CPU spike).
+                if ping_pong {
+                    self.buf[self.write_pos * 2] = in_l + del_r * feedback + ANTI_DENORMAL;
+                    self.buf[self.write_pos * 2 + 1] = in_r + del_l * feedback + ANTI_DENORMAL;
+                } else {
+                    self.buf[self.write_pos * 2] = in_l + del_l * feedback + ANTI_DENORMAL;
+                    self.buf[self.write_pos * 2 + 1] = in_r + del_r * feedback + ANTI_DENORMAL;
+                }
+
+                self.write_pos = (self.write_pos + 1) % cap;
+
+                if channels > 0 {
+                    output.channel_mut(0)[i] = in_l * dry + del_l * wet;
+                }
+                if channels > 1 {
+                    output.channel_mut(1)[i] = in_r * dry + del_r * wet;
+                }
             }
-            if channels > 1 {
-                output.channel_mut(1)[i] = in_r * dry + del_r * wet;
-            }
+            frame = seg_end;
         }
     }
 
     fn reset(&mut self) {
         self.buf.fill(0.0);
         self.write_pos = 0;
-        self.mod_smooth.reset();
+        self.base_delta = [0.0; DELAY_PARAM_COUNT];
+        self.seg_count = 0;
     }
 
     fn param_id(&self, name: &str) -> Option<u32> {
@@ -217,11 +236,37 @@ impl AudioNode for DelayNode {
     }
 
     fn apply_modulation(&mut self, param_id: u32, delta: f32) {
-        self.mod_smooth.add_target(param_id as usize, delta);
+        let p = param_id as usize;
+        if p < DELAY_PARAM_COUNT {
+            self.base_delta[p] += delta;
+        }
+    }
+
+    fn apply_modulation_at(&mut self, param_id: u32, sample_offset: u32, value: f32) {
+        let p = param_id as usize;
+        if p >= DELAY_PARAM_COUNT {
+            return;
+        }
+        // Grid offsets arrive ascending and are deduplicated, so `seg_offset`
+        // stays sorted — the segment loop relies on that.
+        for k in 0..self.seg_count {
+            if self.seg_offset[k] == sample_offset {
+                self.seg_delta[k][p] += value;
+                return;
+            }
+        }
+        if self.seg_count < MAX_CONTROL_POINTS {
+            let k = self.seg_count;
+            self.seg_offset[k] = sample_offset;
+            self.seg_delta[k] = [0.0; DELAY_PARAM_COUNT];
+            self.seg_delta[k][p] = value;
+            self.seg_count += 1;
+        }
     }
 
     fn reset_modulation(&mut self) {
-        self.mod_smooth.reset_target();
+        self.base_delta = [0.0; DELAY_PARAM_COUNT];
+        self.seg_count = 0;
     }
 }
 
@@ -264,6 +309,46 @@ mod tests {
             (node.params.feedback - params.feedback).abs() < 1e-3,
             "smoothed delta must decay to zero when modulation is removed"
         );
+    }
+
+    #[test]
+    fn interior_grid_point_changes_param_mid_block() {
+        // wet 0.5 for [0,32), then 0.9 from frame 32; an empty 10 ms delay line
+        // means out = in * (1 - wet), so the wet step is directly observable.
+        let params = DelayParams {
+            delay_ms: 10.0,
+            feedback: 0.0,
+            wet: 0.5,
+            ..DelayParams::default()
+        };
+        let block = ParameterBlock::new(&delay_block_values(&params));
+        let mut node = DelayNode::new(NodeId(1), params).with_block(Arc::clone(&block));
+        node.prepare(PrepareContext {
+            sample_rate: 48_000.0,
+            max_block_size: 64,
+            num_channels: 2,
+        });
+
+        let mut input = AudioBuffer::new(2, 64);
+        input.channel_mut(0).fill(1.0);
+        input.channel_mut(1).fill(1.0);
+        let mut output = AudioBuffer::new(2, 64);
+        let t = TransportInfo {
+            is_playing: true,
+            position_samples: 0,
+            position_seconds: 0.0,
+            bpm: 120.0,
+            sample_rate: 48_000.0,
+            block_size: 64,
+        };
+
+        node.reset_modulation();
+        node.apply_modulation_at(DELAY_WET as u32, 32, 0.4); // wet → 0.9 from frame 32
+        node.process(&[&input], std::slice::from_mut(&mut output), &t);
+
+        let out = output.channel(0);
+        assert!((out[0] - 0.5).abs() < 1e-4, "segment 0 wet 0.5 → dry 0.5, got {}", out[0]);
+        assert!((out[40] - 0.1).abs() < 1e-4, "segment 1 wet 0.9 → dry 0.1, got {}", out[40]);
     }
 
     #[test]

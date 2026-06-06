@@ -2,11 +2,19 @@
 
 ## Status
 
-**Accepted — Tranches 1 & 2 implemented (2026-06-05).** Tranche 3 (internal
-effects) follows (see §Implementation tranches). Drafted following the 2026-06-05
-engine audit (finding #4a: block-rate modulation → zipper noise) with the user's
-explicit acceptance that **existing modulated projects may re-render differently**
-(the bit-identical break below is sanctioned, not silent).
+**Accepted — Tranches 1 & 2 done; Tranche 3 in progress (Delay landed,
+2026-06-05).** Drafted following the 2026-06-05 engine audit (finding #4a:
+block-rate modulation → zipper noise) with the user's explicit acceptance that
+**existing modulated projects may re-render differently** (the bit-identical
+break below is sanctioned, not silent).
+
+Tranche 3 — Delay landed: `DelayNode` consumes the interior grid points via
+`apply_modulation_at` and **segments its `process` loop** at the absolute grid,
+recomputing effective params per segment. The block-rate `ModSmooth` was
+**dropped from Delay**: the grid is continuous across blocks and 32-sample steps
+of a smooth modulator are inaudible, so no extra smoother is needed (simpler than
+the originally-planned control-rate `ModSmooth`). Unmodulated delay is
+bit-identical. Compressor / Reverb / EQ still pending.
 
 Tranche 2 landed: `GainNode` and `TrackGainNode` gained a per-sample one-pole
 gain smoother (coeff from the sample rate → block-size independent) that de-zippers
@@ -158,12 +166,14 @@ de-zippering is in scope, achieved **without** changing `process` arity.
    smoother tracks the block-rate target, not interior grid points: its ~13 ms
    time constant integrates over many 32-sample points, so the difference is
    inaudible and the code stays minimal.
-3. **Tranche 3 (variant by variant, C-3).** `Eq / Compressor / Reverb / Delay`:
-   control-rate `ModSmooth` + segmented `process` loop, one effect per step
-   (Delay → Compressor → Reverb → EQ last, EQ being the costliest). Each step
-   re-validates RT and re-baselines the golden render. Deferred behind Tranche 2
-   because the block-rate smoother already de-zippers these — modest payoff,
-   moderate DSP surgery.
+3. **Tranche 3 (variant by variant, C-3).** Internal effects consume the interior
+   grid points (`apply_modulation_at`) and **segment their `process` loop** at the
+   absolute grid, recomputing effective params per segment. No per-effect smoother
+   is needed (the grid is continuous across blocks; 32-sample steps are inaudible).
+   One effect per step: **Delay ✅ (2026-06-05)** → Compressor → Reverb → EQ last
+   (EQ costliest — oversampled biquads recomputed per segment). Each step
+   re-validates RT and re-baselines the golden render. Lower payoff than Tranches
+   1–2 (the block-rate smoother already de-zippers these), so done incrementally.
 
 ## Real-time impact
 
