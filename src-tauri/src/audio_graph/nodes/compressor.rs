@@ -1,8 +1,7 @@
 use std::sync::Arc;
 
 use crate::audio_graph::buffer::AudioBuffer;
-use crate::audio_graph::mod_smooth::ModSmooth;
-use crate::audio_graph::node::{AudioNode, NodeId, PrepareContext, TransportInfo};
+use crate::audio_graph::node::{AudioNode, NodeId, PrepareContext, TransportInfo, MAX_CONTROL_POINTS};
 use crate::audio_graph::oversampling::{Oversample2x, OVERSAMPLE_FACTOR};
 use crate::audio_graph::parameter_block::ParameterBlock;
 use crate::project::CompressorParams;
@@ -66,7 +65,13 @@ pub struct CompressorNode {
     /// the pre-ADR-009 behaviour (coefficients frozen at `prepare`).
     block: Option<Arc<ParameterBlock>>,
 
-    mod_smooth: ModSmooth<COMP_PARAM_COUNT>,
+    /// Sub-block modulation on the absolute control grid (ADR-019 Tranche 3).
+    /// `base_delta` is the block-start (offset 0) param-delta; `seg_*` hold the
+    /// interior grid points used to recompute coeffs mid-block.  Reset each block.
+    base_delta: [f32; COMP_PARAM_COUNT],
+    seg_offset: [u32; MAX_CONTROL_POINTS],
+    seg_delta: [[f32; COMP_PARAM_COUNT]; MAX_CONTROL_POINTS],
+    seg_count: usize,
 }
 
 impl CompressorNode {
@@ -82,7 +87,10 @@ impl CompressorNode {
             env_scratch: Vec::new(),
             sr_os: DEFAULT_ENGINE_SAMPLE_RATE * OVERSAMPLE_FACTOR as f32,
             block: None,
-            mod_smooth: ModSmooth::new(),
+            base_delta: [0.0; COMP_PARAM_COUNT],
+            seg_offset: [0; MAX_CONTROL_POINTS],
+            seg_delta: [[0.0; COMP_PARAM_COUNT]; MAX_CONTROL_POINTS],
+            seg_count: 0,
         }
     }
 
@@ -142,53 +150,69 @@ impl AudioNode for CompressorNode {
         self.recompute_coeffs();
         self.oversample.prepare(ctx.max_block_size, ctx.sample_rate);
         self.env_scratch.resize(ctx.max_block_size, 0.0);
-        self.mod_smooth.prepare(ctx.sample_rate, ctx.max_block_size);
     }
 
     fn process(&mut self, inputs: &[&AudioBuffer], outputs: &mut [AudioBuffer], t: &TransportInfo) {
-        // ADR-009 + modulation: read live block values, add any modulation deltas,
-        // and recompute time-constants only when the effective params actually change.
+        // ADR-009 + ADR-019 Tranche 3: read live block values, then apply
+        // modulation per control segment on the absolute grid, recomputing
+        // time-constants per segment only when the effective params change.
         let base = self.block.as_ref().map(|b| compressor_params_from_block(b)).unwrap_or_else(|| self.params.clone());
-        let deltas = self.mod_smooth.advance();
-        let effective = CompressorParams {
-            threshold_db: base.threshold_db + deltas[COMP_THRESHOLD_DB],
-            ratio:        base.ratio        + deltas[COMP_RATIO],
-            attack_ms:    base.attack_ms    + deltas[COMP_ATTACK_MS],
-            release_ms:   base.release_ms   + deltas[COMP_RELEASE_MS],
-            makeup_db:    base.makeup_db    + deltas[COMP_MAKEUP_DB],
-            knee_db:      base.knee_db      + deltas[COMP_KNEE_DB],
-        };
-        if compressor_block_values(&effective) != compressor_block_values(&self.params) {
-            self.params = effective;
-            self.recompute_coeffs();
-        }
 
         let input = &inputs[0];
         let output = &mut outputs[0];
         let frames = t.block_size.min(output.num_frames).min(input.num_frames);
         let channels = output.num_channels.min(input.num_channels).min(2);
 
-        for i in 0..frames {
-            let mut peak = 0.0_f32;
-            for ch in 0..channels {
-                peak = peak.max(input.channel(ch)[i].abs());
+        // Phase 1 — envelope detection, segmented at the control grid so the
+        // detector/makeup track sub-block modulation.  Fills `env_scratch`.
+        let mut frame = 0usize;
+        for k in 0..=self.seg_count {
+            let seg_end = if k < self.seg_count {
+                (self.seg_offset[k] as usize).min(frames)
+            } else {
+                frames
+            };
+            if seg_end <= frame {
+                continue;
             }
-            let peak_db = if peak > 1e-6 {
-                20.0 * peak.log10()
-            } else {
-                -120.0
+            let delta = if k == 0 { self.base_delta } else { self.seg_delta[k - 1] };
+            let effective = CompressorParams {
+                threshold_db: base.threshold_db + delta[COMP_THRESHOLD_DB],
+                ratio:        base.ratio        + delta[COMP_RATIO],
+                attack_ms:    base.attack_ms    + delta[COMP_ATTACK_MS],
+                release_ms:   base.release_ms   + delta[COMP_RELEASE_MS],
+                makeup_db:    base.makeup_db    + delta[COMP_MAKEUP_DB],
+                knee_db:      base.knee_db      + delta[COMP_KNEE_DB],
             };
-            let gain_db = self.compute_gain_db(peak_db);
-            let gain_linear = 10.0_f32.powf(gain_db / 20.0);
-            let coeff = if gain_linear < self.envelope {
-                self.attack_coeff
-            } else {
-                self.release_coeff
-            };
-            self.envelope = coeff * self.envelope + (1.0 - coeff) * gain_linear;
-            self.env_scratch[i] = self.envelope * self.makeup_linear;
+            if compressor_block_values(&effective) != compressor_block_values(&self.params) {
+                self.params = effective;
+                self.recompute_coeffs();
+            }
+
+            for i in frame..seg_end {
+                let mut peak = 0.0_f32;
+                for ch in 0..channels {
+                    peak = peak.max(input.channel(ch)[i].abs());
+                }
+                let peak_db = if peak > 1e-6 {
+                    20.0 * peak.log10()
+                } else {
+                    -120.0
+                };
+                let gain_db = self.compute_gain_db(peak_db);
+                let gain_linear = 10.0_f32.powf(gain_db / 20.0);
+                let coeff = if gain_linear < self.envelope {
+                    self.attack_coeff
+                } else {
+                    self.release_coeff
+                };
+                self.envelope = coeff * self.envelope + (1.0 - coeff) * gain_linear;
+                self.env_scratch[i] = self.envelope * self.makeup_linear;
+            }
+            frame = seg_end;
         }
 
+        // Phase 2 — apply the per-sample gain through the oversampler.
         for ch in 0..channels {
             let in_ch = input.channel(ch);
             let out_ch = output.channel_mut(ch);
@@ -205,7 +229,8 @@ impl AudioNode for CompressorNode {
     fn reset(&mut self) {
         self.envelope = 0.0;
         self.oversample.reset();
-        self.mod_smooth.reset();
+        self.base_delta = [0.0; COMP_PARAM_COUNT];
+        self.seg_count = 0;
     }
 
     fn param_id(&self, name: &str) -> Option<u32> {
@@ -221,11 +246,37 @@ impl AudioNode for CompressorNode {
     }
 
     fn apply_modulation(&mut self, param_id: u32, delta: f32) {
-        self.mod_smooth.add_target(param_id as usize, delta);
+        let p = param_id as usize;
+        if p < COMP_PARAM_COUNT {
+            self.base_delta[p] += delta;
+        }
+    }
+
+    fn apply_modulation_at(&mut self, param_id: u32, sample_offset: u32, value: f32) {
+        let p = param_id as usize;
+        if p >= COMP_PARAM_COUNT {
+            return;
+        }
+        // Grid offsets arrive ascending and are deduplicated, so `seg_offset`
+        // stays sorted — the segment loop relies on that.
+        for k in 0..self.seg_count {
+            if self.seg_offset[k] == sample_offset {
+                self.seg_delta[k][p] += value;
+                return;
+            }
+        }
+        if self.seg_count < MAX_CONTROL_POINTS {
+            let k = self.seg_count;
+            self.seg_offset[k] = sample_offset;
+            self.seg_delta[k] = [0.0; COMP_PARAM_COUNT];
+            self.seg_delta[k][p] = value;
+            self.seg_count += 1;
+        }
     }
 
     fn reset_modulation(&mut self) {
-        self.mod_smooth.reset_target();
+        self.base_delta = [0.0; COMP_PARAM_COUNT];
+        self.seg_count = 0;
     }
 }
 
@@ -267,6 +318,39 @@ mod tests {
         assert!(
             (node.params.threshold_db - params.threshold_db).abs() < 1e-3,
             "smoothed delta must decay to zero when modulation is removed"
+        );
+    }
+
+    #[test]
+    fn interior_grid_point_recomputes_coeffs_mid_block() {
+        let params = CompressorParams::default();
+        let block = ParameterBlock::new(&compressor_block_values(&params));
+        let mut node = CompressorNode::new(NodeId(1), params.clone()).with_block(Arc::clone(&block));
+        node.prepare(PrepareContext {
+            sample_rate: 48_000.0,
+            max_block_size: 64,
+            num_channels: 2,
+        });
+
+        let input = AudioBuffer::new(2, 64);
+        let mut output = AudioBuffer::new(2, 64);
+        let t = TransportInfo::stopped(48_000.0);
+
+        node.reset_modulation();
+        node.apply_modulation_at(COMP_MAKEUP_DB as u32, 32, 6.0); // makeup +6 dB from frame 32
+        node.process(&[&input], std::slice::from_mut(&mut output), &t);
+
+        // The last segment (frames 32..64) ran with makeup +6 dB, so the cached
+        // params and the derived linear gain reflect the interior grid point.
+        assert!(
+            (node.params.makeup_db - (params.makeup_db + 6.0)).abs() < 1e-4,
+            "interior grid point must reach the cached params, got {}",
+            node.params.makeup_db
+        );
+        let expected = 10.0_f32.powf((params.makeup_db + 6.0) / 20.0);
+        assert!(
+            (node.makeup_linear - expected).abs() < 1e-4,
+            "coeffs must be recomputed for the interior segment"
         );
     }
 
