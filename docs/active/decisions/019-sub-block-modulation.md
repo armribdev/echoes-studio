@@ -2,21 +2,24 @@
 
 ## Status
 
-**Accepted — Tranches 1 & 2 done; Tranche 3 in progress (Delay + Compressor +
-Reverb landed; EQ pending).** Drafted following the 2026-06-05 engine audit
-(finding #4a: block-rate modulation → zipper noise) with the user's explicit
-acceptance that **existing modulated projects may re-render differently** (the
-bit-identical break below is sanctioned, not silent).
+**Accepted — fully implemented (Tranches 1, 2 & 3 done, 2026-06-07).** Drafted
+following the 2026-06-05 engine audit (finding #4a: block-rate modulation →
+zipper noise) with the user's explicit acceptance that **existing modulated
+projects may re-render differently** (the bit-identical break below is sanctioned,
+not silent).
 
-Tranche 3 — Delay, Compressor & Reverb landed: each consumes the interior grid
-points via `apply_modulation_at` and **segments its `process` loop** at the
+Tranche 3 — Delay, Compressor, Reverb & EQ all landed: each consumes the interior
+grid points via `apply_modulation_at` and **segments its `process` loop** at the
 absolute grid, recomputing effective params per segment (Compressor segments its
 phase-1 envelope detection, phase-2 oversampled gain unchanged; Reverb re-applies
-comb feedback/damping + wet-dry mix per segment). The block-rate `ModSmooth` was
-**dropped** from all three: the grid is continuous across blocks and 32-sample
-steps of a smooth modulator are inaudible, so no extra smoother is needed (simpler
-than the originally-planned control-rate `ModSmooth`). Unmodulated output is
-bit-identical. EQ still pending.
+comb feedback/damping + wet-dry mix per segment; EQ recomputes its 3 biquads per
+segment and calls `Oversample2x::process_channel` on consecutive sub-slices —
+seamless because the oversampler state lives in the node and `recompute_coeffs`
+preserves the biquad state). The block-rate `ModSmooth` was **dropped** from all
+four (the grid is continuous across blocks and 32-sample steps are inaudible, so
+no extra smoother is needed). `ModSmooth` (`mod_smooth.rs`) is now unused by
+production code but kept (referenced by ADR-009, reusable). Unmodulated output is
+bit-identical.
 
 Tranche 2 landed: `GainNode` and `TrackGainNode` gained a per-sample one-pole
 gain smoother (coeff from the sample rate → block-size independent) that de-zippers
@@ -172,10 +175,11 @@ de-zippering is in scope, achieved **without** changing `process` arity.
    grid points (`apply_modulation_at`) and **segment their `process` loop** at the
    absolute grid, recomputing effective params per segment. No per-effect smoother
    is needed (the grid is continuous across blocks; 32-sample steps are inaudible).
-   One effect per step: **Delay ✅ · Compressor ✅ · Reverb ✅** → EQ last
-   (EQ costliest — oversampled biquads recomputed per segment). Each step
-   re-validates RT and re-baselines the golden render. Lower payoff than Tranches
-   1–2 (the block-rate smoother already de-zippers these), so done incrementally.
+   One effect per step: **Delay ✅ · Compressor ✅ · Reverb ✅ · EQ ✅** (all done
+   2026-06-07; EQ costliest — oversampled biquads recomputed per segment). Each
+   step re-validated RT and is covered by a mid-block sub-block test. Lower payoff
+   than Tranches 1–2 (the block-rate smoother already de-zippered these), so done
+   incrementally.
 
 ## Real-time impact
 

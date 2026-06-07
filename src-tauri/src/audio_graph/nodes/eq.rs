@@ -1,8 +1,7 @@
 use std::sync::Arc;
 
 use crate::audio_graph::buffer::AudioBuffer;
-use crate::audio_graph::mod_smooth::ModSmooth;
-use crate::audio_graph::node::{AudioNode, NodeId, PrepareContext, TransportInfo};
+use crate::audio_graph::node::{AudioNode, NodeId, PrepareContext, TransportInfo, MAX_CONTROL_POINTS};
 use crate::audio_graph::oversampling::{Oversample2x, OVERSAMPLE_FACTOR};
 use crate::audio_graph::parameter_block::ParameterBlock;
 use crate::project::EqParams;
@@ -167,9 +166,13 @@ pub struct EqNode {
     /// pre-ADR-009 behaviour (coefficients frozen at `prepare`).
     block: Option<Arc<ParameterBlock>>,
 
-    /// One-pole smoother for per-parameter modulation deltas.
-    /// Eliminates zipper noise when modulation sources change between blocks.
-    mod_smooth: ModSmooth<EQ_PARAM_COUNT>,
+    /// Sub-block modulation on the absolute control grid (ADR-019 Tranche 3).
+    /// `base_delta` is the block-start (offset 0) param-delta; `seg_*` hold the
+    /// interior grid points used to recompute the biquads mid-block.  Reset each block.
+    base_delta: [f32; EQ_PARAM_COUNT],
+    seg_offset: [u32; MAX_CONTROL_POINTS],
+    seg_delta: [[f32; EQ_PARAM_COUNT]; MAX_CONTROL_POINTS],
+    seg_count: usize,
 }
 
 impl EqNode {
@@ -183,7 +186,10 @@ impl EqNode {
             oversample: Oversample2x::default(),
             sr_os: DEFAULT_ENGINE_SAMPLE_RATE * OVERSAMPLE_FACTOR as f32,
             block: None,
-            mod_smooth: ModSmooth::new(),
+            base_delta: [0.0; EQ_PARAM_COUNT],
+            seg_offset: [0; MAX_CONTROL_POINTS],
+            seg_delta: [[0.0; EQ_PARAM_COUNT]; MAX_CONTROL_POINTS],
+            seg_count: 0,
         }
     }
 
@@ -246,47 +252,65 @@ impl AudioNode for EqNode {
         }
         self.recompute_coeffs();
         self.oversample.prepare(ctx.max_block_size, ctx.sample_rate);
-        self.mod_smooth.prepare(ctx.sample_rate, ctx.max_block_size);
     }
 
     fn process(&mut self, inputs: &[&AudioBuffer], outputs: &mut [AudioBuffer], t: &TransportInfo) {
-        // ADR-009 + modulation: read live block values, add any modulation deltas,
-        // and recompute biquads only when the effective params actually change.
+        // ADR-009 + ADR-019 Tranche 3: read live block values, then apply
+        // modulation per control segment on the absolute grid, recomputing the
+        // biquads per segment only when the effective params change.  Consecutive
+        // `process_channel` calls on sub-slices are seamless — the oversampler's
+        // per-channel state lives in `self`, and `recompute_coeffs` preserves the
+        // biquad state, so an unmodulated block (one segment) is bit-identical.
         let base = self.block.as_ref().map(|b| eq_params_from_block(b)).unwrap_or_else(|| self.params.clone());
-        let deltas = self.mod_smooth.advance();
-        let effective = EqParams {
-            low_gain_db:  base.low_gain_db  + deltas[EQ_LOW_GAIN_DB],
-            low_freq:     base.low_freq     + deltas[EQ_LOW_FREQ],
-            mid_gain_db:  base.mid_gain_db  + deltas[EQ_MID_GAIN_DB],
-            mid_freq:     base.mid_freq     + deltas[EQ_MID_FREQ],
-            mid_q:        base.mid_q        + deltas[EQ_MID_Q],
-            high_gain_db: base.high_gain_db + deltas[EQ_HIGH_GAIN_DB],
-            high_freq:    base.high_freq    + deltas[EQ_HIGH_FREQ],
-        };
-        if eq_block_values(&effective) != eq_block_values(&self.params) {
-            self.params = effective;
-            self.recompute_coeffs();
-        }
 
         let input = &inputs[0];
         let output = &mut outputs[0];
         let channels = output.num_channels.min(input.num_channels).min(2);
         let frames = t.block_size.min(output.num_frames).min(input.num_frames);
-        let Self {
-            low,
-            mid,
-            high,
-            oversample,
-            ..
-        } = self;
-        for ch in 0..channels {
-            let in_ch = input.channel(ch);
-            let out_ch = output.channel_mut(ch);
-            oversample.process_channel(ch, in_ch, out_ch, frames, |x| {
-                let s = low.process(x, ch);
-                let s = mid.process(s, ch);
-                high.process(s, ch)
-            });
+
+        let mut frame = 0usize;
+        for k in 0..=self.seg_count {
+            let seg_end = if k < self.seg_count {
+                (self.seg_offset[k] as usize).min(frames)
+            } else {
+                frames
+            };
+            if seg_end <= frame {
+                continue;
+            }
+            let delta = if k == 0 { self.base_delta } else { self.seg_delta[k - 1] };
+            let effective = EqParams {
+                low_gain_db:  base.low_gain_db  + delta[EQ_LOW_GAIN_DB],
+                low_freq:     base.low_freq     + delta[EQ_LOW_FREQ],
+                mid_gain_db:  base.mid_gain_db  + delta[EQ_MID_GAIN_DB],
+                mid_freq:     base.mid_freq     + delta[EQ_MID_FREQ],
+                mid_q:        base.mid_q        + delta[EQ_MID_Q],
+                high_gain_db: base.high_gain_db + delta[EQ_HIGH_GAIN_DB],
+                high_freq:    base.high_freq    + delta[EQ_HIGH_FREQ],
+            };
+            if eq_block_values(&effective) != eq_block_values(&self.params) {
+                self.params = effective;
+                self.recompute_coeffs();
+            }
+
+            let len = seg_end - frame;
+            let Self {
+                low,
+                mid,
+                high,
+                oversample,
+                ..
+            } = &mut *self;
+            for ch in 0..channels {
+                let in_ch = &input.channel(ch)[frame..seg_end];
+                let out_ch = &mut output.channel_mut(ch)[frame..seg_end];
+                oversample.process_channel(ch, in_ch, out_ch, len, |x| {
+                    let s = low.process(x, ch);
+                    let s = mid.process(s, ch);
+                    high.process(s, ch)
+                });
+            }
+            frame = seg_end;
         }
     }
 
@@ -295,7 +319,8 @@ impl AudioNode for EqNode {
         self.mid.reset();
         self.high.reset();
         self.oversample.reset();
-        self.mod_smooth.reset();
+        self.base_delta = [0.0; EQ_PARAM_COUNT];
+        self.seg_count = 0;
     }
 
     fn param_id(&self, name: &str) -> Option<u32> {
@@ -312,11 +337,37 @@ impl AudioNode for EqNode {
     }
 
     fn apply_modulation(&mut self, param_id: u32, delta: f32) {
-        self.mod_smooth.add_target(param_id as usize, delta);
+        let p = param_id as usize;
+        if p < EQ_PARAM_COUNT {
+            self.base_delta[p] += delta;
+        }
+    }
+
+    fn apply_modulation_at(&mut self, param_id: u32, sample_offset: u32, value: f32) {
+        let p = param_id as usize;
+        if p >= EQ_PARAM_COUNT {
+            return;
+        }
+        // Grid offsets arrive ascending and are deduplicated, so `seg_offset`
+        // stays sorted — the segment loop relies on that.
+        for k in 0..self.seg_count {
+            if self.seg_offset[k] == sample_offset {
+                self.seg_delta[k][p] += value;
+                return;
+            }
+        }
+        if self.seg_count < MAX_CONTROL_POINTS {
+            let k = self.seg_count;
+            self.seg_offset[k] = sample_offset;
+            self.seg_delta[k] = [0.0; EQ_PARAM_COUNT];
+            self.seg_delta[k][p] = value;
+            self.seg_count += 1;
+        }
     }
 
     fn reset_modulation(&mut self) {
-        self.mod_smooth.reset_target();
+        self.base_delta = [0.0; EQ_PARAM_COUNT];
+        self.seg_count = 0;
     }
 }
 
@@ -373,6 +424,39 @@ mod tests {
             gain_db / 2.0
         );
     }
+    #[test]
+    fn interior_grid_point_recomputes_biquads_mid_block() {
+        use crate::audio_graph::node::AudioNode;
+
+        let params = EqParams::default();
+        let block = ParameterBlock::new(&eq_block_values(&params));
+        let mut node = EqNode::new(NodeId(1), params.clone()).with_block(Arc::clone(&block));
+        node.prepare(PrepareContext {
+            sample_rate: 48_000.0,
+            max_block_size: 64,
+            num_channels: 2,
+        });
+        let b0_base = node.low.b0;
+
+        let input = AudioBuffer::new(2, 64);
+        let mut output = AudioBuffer::new(2, 64);
+        let t = TransportInfo::stopped(48_000.0);
+
+        node.reset_modulation();
+        node.apply_modulation_at(EQ_LOW_GAIN_DB as u32, 32, 6.0); // low shelf +6 dB from frame 32
+        node.process(&[&input], std::slice::from_mut(&mut output), &t);
+
+        assert!(
+            (node.params.low_gain_db - (params.low_gain_db + 6.0)).abs() < 1e-4,
+            "interior grid point must reach the cached params, got {}",
+            node.params.low_gain_db
+        );
+        assert_ne!(
+            node.low.b0, b0_base,
+            "low-shelf biquad must be recomputed for the interior segment"
+        );
+    }
+
     #[test]
     fn hot_block_changes_coefficients_without_prepare() {
         use crate::audio_graph::node::{AudioNode, PrepareContext};
