@@ -264,8 +264,8 @@ no extra per-sample cost.
 
 ## Follow-ups
 
-- **Tranche 2** — grid-rate `mod_smooth` targets for internal effects.
-- **Tranche 3** — sub-block modulation for `Gain/TrackGain/Pan/Master`.
-- **Harness** — regenerate offline golden references; add a modulated project to
-  the cross-OS golden master (migration V1).
-- **ADR-008** — annotate known-risk #3 as resolved by this ADR once merged.
+- ~~Tranches 2 & 3~~ — done 2026-06-07 (see §Status).
+- ~~ADR-008 known-risk #3~~ — annotated as resolved 2026-09-23.
+- **Harness — open.** There are no offline golden references to regenerate: the
+  migration V1 golden master has never been built. It must be built, and must
+  include a modulated project, before C-2 is actually enforced for this ADR.

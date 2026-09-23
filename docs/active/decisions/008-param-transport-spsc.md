@@ -138,16 +138,18 @@ overflow degrades to drop-newest, never to a blocking or allocating path.
   targets (`ModulationTargetRef::PluginParam`, Phase 5e) which simply push onto
   the same ring.
 - **Limits / debt.**
-  - `sample_offset` is always `0` (block-rate, BP-7). Sample-accurate
-    scheduling is deferred behind a feature flag (target §8.4).
+  - `sample_offset` was always `0` (block-rate, BP-7). _Superseded 2026-06-07
+    by ADR-019:_ modulation points are delivered at their grid `sample_offset`,
+    with no feature flag.
   - The gateway pushes the **whole** `params` vec on each edit (idempotent;
     a 60 Hz knob still pushes a handful of entries). A per-edit diff is a later
     optimisation.
   - CLAP note input is temporarily not wired through the wrapper (the input
     event list now carries param events). Notes return in Phase 5c, which will
     merge note + param events into one time-sorted stream.
-  - `MAX_PARAM_QUEUES = 128` / `MAX_POINTS_PER_QUEUE = 16` are fixed caps;
-    excess silently drops (acceptable for Phase 3 block-rate edits).
+  - `MAX_PARAM_QUEUES = 128` / `MAX_POINTS_PER_QUEUE` are fixed caps;
+    excess silently drops. ADR-019 raised `MAX_POINTS_PER_QUEUE` from 16 to 128
+    so a full offline block of grid points fits.
 - **Reversibility.** Additive. Reverting restores the (inert) JSON-blob path;
   the wrapper drains simply pass null again.
 
@@ -174,9 +176,9 @@ Tracked debt for when the automation path (Phase 5e) is built on this queue:
    with C-10 (no flag may gate determinism). Resolve by making sample-accurate
    the single deterministic behaviour, or by proving both flag states are
    independently bit-reproducible — not by leaving two renders behind a toggle.
-   → Resolution proposed in [`019-sub-block-modulation.md`](019-sub-block-modulation.md)
-   (sub-block delivery as the single behaviour, no flag); annotate as resolved
-   here once that ADR is merged.
+   → **Resolved 2026-06-07** by [`019-sub-block-modulation.md`](019-sub-block-modulation.md):
+   sub-block delivery on an absolute 32-sample grid is the single behaviour, with
+   no flag. `sample_offset` now carries the real grid offset.
 4. **Fixed caps silently drop.** `MAX_PARAM_QUEUES = 128` is a hard cap; a synth
    with >128 simultaneously-automated params overflows silently.
 
