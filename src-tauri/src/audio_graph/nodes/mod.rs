@@ -11,6 +11,7 @@
 //! | gain     | GainNode      | 1      | 1       | Linear gain / track volume             |
 //! | pan      | PanNode       | 1      | 1       | Equal-power stereo panner              |
 //! | bus      | BusNode       | N      | 1       | Sum N inputs (group / master bus)      |
+//! | bypass   | BypassNode    | =inner | =inner  | Disabled plugin: kept alive, audio passes through |
 //! | master   | MasterNode    | N      | 1*      | Final mix + soft-clip + metering       |
 //! | send     | SendNode      | 1      | 1       | Tap signal at gain → return bus        |
 //! | meter    | MeterNode     | 1      | 1       | Pass-through + peak/RMS measurement    |
@@ -20,6 +21,7 @@
 //!  (0 outputs) so the scheduler uses the special `write_master_output` path.
 
 pub mod bus;
+pub mod bypass;
 pub mod clap_instrument;
 pub mod compressor;
 pub mod delay;

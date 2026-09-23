@@ -126,7 +126,7 @@ The scheduler relies on this to safely share buffer references without aliasing.
 | `Bus`               | `BusNode(N inputs)`            | constant           |
 | `Master`            | `MasterNode(N inputs)`         | constant           |
 | `Meter { id }`      | `MeterNode(id)`                | meter ID string    |
-| `Plugin { id }`     | `PluginHost::instantiate(id)`  | plugin system      |
+| `Plugin { id }`     | `PluginHost::instantiate(id)`, wrapped in `BypassNode` when `bypassed` (ADR-020) | plugin system      |
 
 For unknown plugin IDs, `build_node` logs a warning and returns a
 `PassThroughDevice` (silence pass-through) so compilation always succeeds.

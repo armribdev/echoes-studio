@@ -608,6 +608,40 @@ impl GraphCompiler {
     ///
     /// `engine_sample_rate` is passed so clip positions are computed in the
     /// correct sample-rate space (avoids the old hardcoded-48 kHz bug).
+    fn build_plugin_node(
+        id: NodeId,
+        instance_key: &str,
+        device_id: &str,
+        sandboxed: bool,
+        plugin_host: &mut PluginHost,
+    ) -> Box<dyn AudioNode> {
+        use crate::audio_graph::nodes;
+
+        if sandboxed {
+            if let Some(node) = crate::plugin_system::bridged_node::BridgedNode::try_new(
+                id,
+                device_id,
+                plugin_host,
+            ) {
+                return node;
+            }
+            eprintln!(
+                "[audio] Plugin '{device_id}' marked sandboxed but cannot be bridged — \
+                 using in-process host"
+            );
+        }
+
+        match plugin_host.instantiate(id, instance_key, device_id, sandboxed) {
+            Ok(node) => node,
+            Err(e) => {
+                eprintln!(
+                    "[audio] Plugin '{device_id}' instantiation failed ({e}) — pass-through utilisé"
+                );
+                Box::new(nodes::gain::GainNode::new(id, 1.0))
+            }
+        }
+    }
+
     fn build_node(
         id: NodeId,
         kind: &NodeKind,
@@ -742,29 +776,13 @@ impl GraphCompiler {
                 instance_key,
                 device_id,
                 sandboxed,
+                bypassed,
             } => {
-                if *sandboxed {
-                    if let Some(node) = crate::plugin_system::bridged_node::BridgedNode::try_new(
-                        id,
-                        device_id,
-                        plugin_host,
-                    ) {
-                        return node;
-                    }
-                    eprintln!(
-                        "[audio] Plugin '{device_id}' marked sandboxed but cannot be bridged — \
-                         using in-process host"
-                    );
-                }
-
-                match plugin_host.instantiate(id, instance_key, device_id, *sandboxed) {
-                    Ok(node) => node,
-                    Err(e) => {
-                        eprintln!(
-                            "[audio] Plugin '{device_id}' instantiation failed ({e}) — pass-through utilisé"
-                        );
-                        Box::new(nodes::gain::GainNode::new(id, 1.0))
-                    }
+                let node = Self::build_plugin_node(id, instance_key, device_id, *sandboxed, plugin_host);
+                if *bypassed {
+                    Box::new(nodes::bypass::BypassNode::new(node))
+                } else {
+                    node
                 }
             }
 
@@ -925,6 +943,7 @@ mod tests {
                 instance_key: "fx0".into(),
                 device_id: "echoes.gain".into(),
                 sandboxed: false,
+                bypassed: false,
             },
             "plug",
         );
@@ -970,6 +989,7 @@ mod tests {
                 instance_key: "fx0".into(),
                 device_id: "echoes.gain".into(),
                 sandboxed: false,
+                bypassed: false,
             },
             "plug",
         );
@@ -988,5 +1008,63 @@ mod tests {
             "stale plugin record must be pruned on recompile"
         );
         assert_eq!(host.device_count(), 0);
+    }
+
+    /// ADR-020: disabling a plugin effect must keep its instance and settings.
+    #[test]
+    fn disabled_plugin_stays_loaded_and_keeps_its_state() {
+        use crate::plugin_system::PluginHost;
+        use crate::project::{AppProject, AppTrack, EffectParams, PluginParams, TrackEffect};
+        use std::collections::HashMap;
+
+        let mut project = AppProject::new();
+        project.tracks.push(AppTrack {
+            id: "t1".into(),
+            name: "t1".into(),
+            volume: 80.0,
+            pan: 0.0,
+            muted: false,
+            solo: false,
+            clips: vec![],
+            effects: vec![TrackEffect {
+                id: "fx0".into(),
+                enabled: true,
+                params: EffectParams::Plugin(PluginParams {
+                    plugin_id: "echoes.gain".into(),
+                    name: "Gain".into(),
+                    format: "Internal".into(),
+                    params: vec![],
+                    sandboxed: false,
+                }),
+            }],
+            modulators: vec![],
+            mod_routes: vec![],
+            midi_notes: vec![],
+            midi_clips: vec![],
+            instrument: None,
+            automation_lanes: vec![],
+        });
+
+        let mut host = PluginHost::new();
+        let live = LiveParams::new();
+        host.set_pending_state_blobs(HashMap::from([("fx0".to_string(), vec![1u8, 2, 3])]));
+        let compile = |project: &AppProject, host: &mut PluginHost| {
+            GraphCompiler::compile(&AudioGraph::from_project(project), project, CompileConfig::default(), &live, host)
+                .expect("compile must succeed")
+        };
+        compile(&project, &mut host);
+        host.clear_pending_state_blobs();
+        let live_instance = host.instance_by_key("fx0").expect("plugin loaded").instance_id();
+
+        project.tracks[0].effects[0].enabled = false;
+        let compiled = compile(&project, &mut host);
+
+        assert!(compiled.processors.iter().any(|n| n.label() == "BypassNode"));
+        assert_eq!(
+            host.instance_by_key("fx0").map(|i| i.instance_id()),
+            Some(live_instance),
+            "disabling must keep the same live instance"
+        );
+        assert_eq!(host.collect_plugin_states(), vec![("fx0".to_string(), vec![1, 2, 3])]);
     }
 }

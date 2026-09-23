@@ -1124,7 +1124,7 @@ fn process_command(
                 json!({ "track_id": p.track_id, "effect_id": p.effect_id, "effect": updated_effect });
             let engine_ev = snapshot_emit(&ctx, ev::EFFECT_UPDATED, event_payload)?;
 
-            if !structural && !apply_hot_effect_update(state, &p.effect_id, &hot) {
+            if structural || !apply_hot_effect_update(state, &p.effect_id, &hot) {
                 recompile_if_needed(app, state);
             }
 

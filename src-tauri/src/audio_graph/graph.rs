@@ -86,6 +86,9 @@ pub enum NodeKind {
         /// decision point.  **Accepted but inert** until step 6d branches on
         /// it; today every plugin is instantiated in-process regardless.
         sandboxed: bool,
+        /// Disabled in the effect chain: the plugin stays loaded (settings,
+        /// editor) but audio passes through it untouched (ADR-020).
+        bypassed: bool,
     },
 
     /// Modulation source (LFO, envelope, macro, audio-rate).
@@ -375,7 +378,9 @@ impl AudioGraph {
 
             let mut last_node = track_node;
             for effect in &track.effects {
-                if !effect.enabled {
+                // Disabled plugins stay in the graph so their instance survives (ADR-020).
+                let is_plugin = matches!(effect.params, EffectParams::Plugin(_));
+                if !effect.enabled && !is_plugin {
                     continue;
                 }
                 let kind = match &effect.params {
@@ -399,6 +404,7 @@ impl AudioGraph {
                         instance_key: effect.id.clone(),
                         device_id: p.plugin_id.clone(),
                         sandboxed: p.sandboxed,
+                        bypassed: !effect.enabled,
                     },
                 };
                 let fx_node = graph.add_node(kind, format!("{} [fx:{}]", track.name, effect.id));

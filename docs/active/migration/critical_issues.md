@@ -382,6 +382,11 @@ Statut : seuls les problèmes **encore présents dans le code** sont listés. Le
 - **Cause probable** : combinaison de 3.1, 3.4, 3.11.
 
 ### 6.4 Pas de bypass d'effet / plugin sans recompile
+
+> **Mise à jour 2026-09-23 (ADR-020)** : un plugin désactivé reste désormais
+> chargé (`BypassNode`) et garde ses réglages. Reste ouvert : le toggle déclenche
+> toujours une recompile.
+
 - **Référence audit** : P2-1
 - **Description** : `effect.enabled = false` est résolu **au compile** (le node n'est pas créé). Toggler bypass = recompile.
 - **Impact réel** : A/B testing rapide impossible (pop / coupure / xrun probable à chaque toggle).

@@ -43,16 +43,17 @@ lives there.
 | [017](017-per-instance-plugin-addressing.md) | Per-instance plugin addressing & state persistence | Plugins / state / UI boundary |
 | [018](018-clip-source-offset-trim.md) | Clip source offset & trim (audio + MIDI window) | State / MIDI scheduling |
 | [019](019-sub-block-modulation.md) | Sub-block deterministic modulation & automation (absolute control grid) | Modulation / scheduling / determinism |
+| [020](020-disabled-plugins-stay-loaded.md) | Disabled plugin effects stay loaded (`BypassNode`) | Plugins / graph / persistence |
 
 ---
 
 ## By theme
 
-- **Graph / DSP core:** 001, 011, 012, 018
+- **Graph / DSP core:** 001, 011, 012, 018, 020
 - **Threading / RT safety:** 004, 007, 008, 016
-- **State / persistence:** 002, 010, 017, 018
+- **State / persistence:** 002, 010, 017, 018, 020
 - **Architecture boundary:** 005, 017
-- **Plugins:** 003, 006, 007, 008, 010, 013, 014, 015, 016, 017
+- **Plugins:** 003, 006, 007, 008, 010, 013, 014, 015, 016, 017, 020
 - **Modulation / parameters:** 009, 019
 - **Scheduling / determinism:** 019
 

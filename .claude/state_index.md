@@ -27,7 +27,7 @@ _Last full review: 2026-06-03. Each row's date is when its status was last verif
 | Plugin parameters / transport | `plugins/plugin-system.md` (+ ADR-008/009) | `plugin_system/{param_queue,parameter}.rs` | stable | 2026-06-03 |
 | Plugin capabilities / PDC | `plugins/plugin-system.md` (+ ADR-006/014) | `plugin_system/capabilities.rs` | partial (sidechain foundation) | 2026-06-03 |
 | Plugin state persistence | `plugins/plugin-system.md` (+ ADR-010) | `plugin_system/state.rs` | stable (R-4: restore carried across controlled re-instantiation; missing plugins keep their state on save) | 2026-09-23 |
-| Plugin wrappers (VST3/AU/CLAP/internal) | `plugins/plugin-wrapper-system.md` | `plugin_system/wrapper.rs`, `plugin_formats/` | in-migration (VST3/CLAP active; AU partial; CLAP gets host transport, VST3 does not yet; missing plugins reported to UI, missing instrument = silence) | 2026-09-23 |
+| Plugin wrappers (VST3/AU/CLAP/internal) | `plugins/plugin-wrapper-system.md` | `plugin_system/wrapper.rs`, `plugin_formats/` | in-migration (VST3/CLAP active; AU partial; CLAP gets host transport, VST3 does not yet; missing plugins reported to UI, missing instrument = silence; disabled plugins stay loaded, ADR-020) | 2026-09-23 |
 | Plugin editor/GUI hosting | `plugins/plugin-wrapper-system.md`, `audits/plugin-gui-audit-2026-05-31.md` | `plugin_system/gui.rs` | in-migration (V4 dual-component done) | 2026-06-04 |
 | Plugin sandbox (out-of-process) | `plugins/plugin-wrapper-system.md` (+ ADR-015) | `plugin_system/{bridge,bridged_node}.rs` | in-migration (ADR-015 Phase 6) | 2026-06-03 |
 
