@@ -62,9 +62,14 @@ scheduler without a rebake or recompile.
 4. **[`audio_engine/transport.rs`](../../../src-tauri/src/audio_engine/transport.rs)**
    - `SharedTransport.bpm_bits: AtomicU32`; `snapshot(block_size)` reads it into
      `TransportInfo.bpm`. The audio callback sees the live BPM each block.
+     _Updated 2026-09-23:_ the setter is now `set_tempo(bpm, time_signature)`,
+     and `AudioEngine::update_from_project` also calls it on every recompile.
+     Before that, project load and undo/redo left the live BPM stale until the
+     next `UPDATE_TEMPO`, so MIDI played at the wrong tempo after opening a
+     project.
 
 5. **[`engine_gateway/api.rs`](../../../src-tauri/src/engine_gateway/api.rs)**
-   - `UPDATE_TEMPO` calls `transport.set_bpm` + updates `project.bpm`, and
+   - `UPDATE_TEMPO` calls `transport.set_tempo` + updates `project.bpm`, and
      **does not recompile**. The new BPM flows to the next block's snapshot.
 
 ### Test lock (the Phase 5b deliverable)
@@ -85,7 +90,7 @@ scheduler without a rebake or recompile.
 |---|---|---|
 | `start_sample` / `end_sample` per note per block | a few f64 mul/add + cast | none — bounded by note count, no alloc |
 | `TransportInfo.bpm` read | one `Relaxed` atomic load at snapshot | none |
-| `UPDATE_TEMPO` | `set_bpm` atomic store (off-RT) | none — no recompile |
+| `UPDATE_TEMPO` | `set_tempo` atomic stores (off-RT) | none — no recompile |
 
 C-1 preserved: resolution is pure arithmetic over a pre-allocated, `Arc`-shared
 note list; the `CaptureDevice` `Mutex` exists only under `#[cfg(test)]`.

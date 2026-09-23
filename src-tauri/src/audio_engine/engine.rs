@@ -42,6 +42,7 @@ use tauri::Emitter;
 use crate::audio_engine::graph::AudioGraphCompiler;
 use crate::audio_engine::transport::SharedTransport;
 use crate::audio_graph::denormal::enable_flush_to_zero;
+use crate::audio_graph::node::TimeSignature;
 use crate::audio_graph::{CompileConfig, GraphScheduler, LiveParams, MeterCell, RuntimeSnapshot};
 use crate::audio_settings::AudioSettings;
 use crate::engine_gateway::events::{
@@ -289,6 +290,11 @@ impl AudioEngine {
             &mut self.plugin_host,
         );
         self.transport.set_duration(duration_samples);
+        // Also covers project load and undo/redo, which never go through UPDATE_TEMPO.
+        self.transport.set_tempo(
+            project.bpm,
+            TimeSignature::new(project.numerator, project.denominator),
+        );
         if let Ok(mut map) = self.meter_cells.lock() {
             *map = cells;
         }

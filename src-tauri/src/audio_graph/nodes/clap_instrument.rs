@@ -38,6 +38,7 @@ use crate::plugin_formats::clap::ffi::{
     ClapAudioBuffer, ClapEventHeader, ClapOutputEvents, ClapPlugin, ClapProcess, FixedEventList,
     CLAP_PROCESS_ERROR,
 };
+use crate::plugin_formats::clap::transport::clap_transport_event;
 
 unsafe extern "C" fn out_try_push(_: *const ClapOutputEvents, _: *const ClapEventHeader) -> bool {
     true
@@ -162,10 +163,11 @@ impl InstrumentDevice for ClapInstrument {
             constant_mask: 0,
         };
 
+        let transport_event = clap_transport_event(transport);
         let process = ClapProcess {
             steady_time: -1,
             frames_count: nf as u32,
-            transport: std::ptr::null(),
+            transport: &transport_event,
             audio_inputs: std::ptr::null(), // generator: no audio input bus
             audio_outputs: &mut self.out_audio_buf,
             audio_inputs_count: 0,

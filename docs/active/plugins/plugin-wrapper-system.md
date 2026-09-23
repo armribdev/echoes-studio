@@ -98,14 +98,21 @@ When the host calls `set_parameter_normalised("gain", 0.75)`:
 
 ### Transport sync
 
+> **Not implemented yet (verified 2026-09-23):** the VST3 wrapper passes
+> `process_context = null`, so VST3 plugins get no tempo or position. The CLAP
+> path below is the reference to copy.
+
 ```rust
+let position = transport.musical_position();   // shared, format-agnostic
 let ctx = ProcessContext {
     state:              if transport.is_playing { kPlaying } else { 0 },
     sampleRate:         transport.sample_rate as f64,
     projectTimeSamples: transport.position_samples as i64,
+    projectTimeMusic:   position.beats,
+    barPositionMusic:   position.bar_start_beats,
     tempo:              transport.bpm as f64,
-    timeSigNumerator:   transport.time_sig_numerator,
-    timeSigDenominator: transport.time_sig_denominator,
+    timeSigNumerator:   transport.time_signature.numerator,
+    timeSigDenominator: transport.time_signature.denominator,
     // ...
 };
 ```
@@ -160,6 +167,15 @@ string keys; audio uses `clap_process` with `clap_audio_buffer` arrays. CLAP
 instruments and capability negotiation are covered by
 `../decisions/013-clap-plugin-instruments.md` and
 `../decisions/014-capability-driven-port-sizing.md`.
+
+**Transport.** Every in-process `clap_process` call (effect wrapper and
+instrument) carries a `clap_event_transport` built on the stack by
+`plugin_formats/clap/transport.rs::clap_transport_event`: tempo, position in
+beats and seconds, bar start / bar number, time signature, playing flag. The
+musical math lives in `TransportInfo::musical_position` (`audio_graph/node.rs`)
+so the VST3 `ProcessContext` can reuse it. Not covered: loop points (Echoes has
+no loop), `steady_time`, and the out-of-process bridge (`plugin_host_bridge`
+still passes no transport).
 
 ---
 

@@ -2,5 +2,6 @@
 
 pub mod ffi;
 pub mod host;
+pub mod transport;
 pub mod wrapper;
 

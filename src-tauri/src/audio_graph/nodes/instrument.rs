@@ -299,6 +299,7 @@ mod tests {
             position_samples: 0,
             position_seconds: 0.0,
             bpm: 120.0,
+            time_signature: crate::audio_graph::node::TimeSignature::default(),
             sample_rate: 48_000.0,
             block_size: 48_001, // covers both NoteOn (24_000) and NoteOff (48_000)
         };
@@ -325,6 +326,7 @@ mod tests {
             position_samples: 0,
             position_seconds: 0.0,
             bpm: 120.0,
+            time_signature: crate::audio_graph::node::TimeSignature::default(),
             sample_rate: 48_000.0,
             block_size: 30_000,
         };
@@ -336,6 +338,7 @@ mod tests {
             position_samples: 30_000,
             position_seconds: 30_000.0 / 48_000.0,
             bpm: 120.0,
+            time_signature: crate::audio_graph::node::TimeSignature::default(),
             sample_rate: 48_000.0,
             block_size: 512,
         };
@@ -363,6 +366,7 @@ mod tests {
             position_samples: 0,
             position_seconds: 0.0,
             bpm: 120.0,
+            time_signature: crate::audio_graph::node::TimeSignature::default(),
             sample_rate: 48_000.0,
             block_size: 1_000,
         };
@@ -381,6 +385,7 @@ mod tests {
             position_samples: 1_000,
             position_seconds: 1_000.0 / 48_000.0,
             bpm: 240.0,
+            time_signature: crate::audio_graph::node::TimeSignature::default(),
             sample_rate: 48_000.0,
             block_size: 20_000, // frames 1_000..21_000
         };

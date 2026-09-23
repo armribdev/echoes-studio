@@ -251,7 +251,7 @@ closure must capture:
 - `Arc<RuntimeSnapshot>` — for atomic scheduler swap via `try_swap`
 - `Box<GraphScheduler>` — the working scheduler, owned locally by the closure
   and updated in place by `try_swap`
-- `Arc<SharedTransport>` — atomics for position / playing / sample-rate / BPM
+- `Arc<SharedTransport>` — atomics for position / playing / sample-rate / BPM / time signature
 - `Arc<AtomicUsize>` — active output channel count
 - `Arc<ChannelLevels>` — per-channel peak cells (AtomicU32)
 

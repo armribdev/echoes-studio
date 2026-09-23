@@ -510,6 +510,7 @@ mod tests {
             position_samples: pos,
             position_seconds: pos as f64 / sr as f64,
             bpm,
+            time_signature: crate::audio_graph::node::TimeSignature::default(),
             sample_rate: sr,
             block_size: block,
         }
@@ -648,6 +649,7 @@ mod tests {
             position_samples: 0,
             position_seconds: 0.0,
             bpm: 120.0,
+            time_signature: crate::audio_graph::node::TimeSignature::default(),
             sample_rate: sr,
             block_size: block,
         };
@@ -731,6 +733,7 @@ mod tests {
             position_samples: 0,
             position_seconds: 0.0,
             bpm: 120.0,
+            time_signature: crate::audio_graph::node::TimeSignature::default(),
             sample_rate: sr,
             block_size: block,
         };

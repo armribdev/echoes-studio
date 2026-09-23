@@ -1003,9 +1003,10 @@ fn process_command(
             let p: UpdateTempoPayload = serde_json::from_value(command.payload)
                 .map_err(|e| format!("UPDATE_TEMPO payload invalid: {e}"))?;
 
-            // Keep the CPAL transport BPM in sync (used by nodes for bar-aligned
-            // operations such as looping — currently informational).
-            state.transport.set_bpm(p.bpm);
+            state.transport.set_tempo(
+                p.bpm,
+                crate::audio_graph::node::TimeSignature::new(p.numerator, p.denominator),
+            );
 
             with_project_mut(state, |project| {
                 project.bpm = p.bpm;

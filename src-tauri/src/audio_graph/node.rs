@@ -117,12 +117,49 @@ pub struct PrepareContext {
     pub num_channels: usize,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TimeSignature {
+    pub numerator: u8,
+    pub denominator: u8,
+}
+
+impl TimeSignature {
+    /// Falls back to 4/4 when either part is 0, so bar math never divides by zero.
+    pub fn new(numerator: u8, denominator: u8) -> Self {
+        if numerator == 0 || denominator == 0 {
+            return Self::default();
+        }
+        Self { numerator, denominator }
+    }
+
+    pub fn quarter_notes_per_bar(self) -> f64 {
+        self.numerator as f64 * 4.0 / self.denominator as f64
+    }
+}
+
+impl Default for TimeSignature {
+    fn default() -> Self {
+        Self { numerator: 4, denominator: 4 }
+    }
+}
+
+/// Block-start position on the musical timeline, in quarter notes — the unit
+/// both CLAP and VST3 expect from their host.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MusicalPosition {
+    pub beats: f64,
+    pub bar_start_beats: f64,
+    /// Bar 0 starts at the beginning of the project.
+    pub bar_number: i32,
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct TransportInfo {
     pub is_playing: bool,
     pub position_samples: u64,
     pub position_seconds: f64,
     pub bpm: f32,
+    pub time_signature: TimeSignature,
     pub sample_rate: f32,
     pub block_size: usize,
 }
@@ -137,8 +174,21 @@ impl TransportInfo {
             position_samples: 0,
             position_seconds: 0.0,
             bpm: Self::DEFAULT_BPM,
+            time_signature: TimeSignature::default(),
             sample_rate,
             block_size: Self::DEFAULT_BLOCK_SIZE,
+        }
+    }
+
+    /// The project has a single tempo, so beats are a linear function of time.
+    pub fn musical_position(&self) -> MusicalPosition {
+        let beats = self.position_seconds * self.bpm as f64 / 60.0;
+        let bar_length = self.time_signature.quarter_notes_per_bar();
+        let bar_index = (beats / bar_length).floor();
+        MusicalPosition {
+            beats,
+            bar_start_beats: bar_index * bar_length,
+            bar_number: bar_index as i32,
         }
     }
 }

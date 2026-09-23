@@ -33,6 +33,7 @@ use std::sync::Arc;
 
 use crate::audio_graph::buffer::AudioBuffer;
 use crate::audio_graph::node::{AudioNode, NodeId, PrepareContext, TransportInfo};
+use crate::plugin_formats::clap::transport::clap_transport_event;
 use crate::plugin_formats::crash_guard;
 use crate::plugin_system::capabilities::DeviceCapabilities;
 use crate::plugin_system::instance::{PluginInstance, FFI_GATE_HARVEST_BUDGET};
@@ -316,10 +317,11 @@ impl AudioNode for ClapWrapperNode {
             constant_mask: 0,
         };
 
+        let transport_event = clap_transport_event(transport);
         let process = ClapProcess {
             steady_time: -1,
             frames_count: nf as u32,
-            transport: std::ptr::null(),
+            transport: &transport_event,
             audio_inputs: &self.in_audio_buf,
             audio_outputs: &mut self.out_audio_buf,
             audio_inputs_count: if inputs.is_empty() { 0 } else { 1 },

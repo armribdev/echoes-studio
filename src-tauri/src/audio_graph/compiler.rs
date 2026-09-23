@@ -945,6 +945,7 @@ mod tests {
             position_samples: 0,
             position_seconds: 0.0,
             bpm: 120.0,
+            time_signature: crate::audio_graph::node::TimeSignature::default(),
             sample_rate: 48_000.0,
             block_size: block,
         };

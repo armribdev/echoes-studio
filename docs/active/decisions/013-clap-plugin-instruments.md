@@ -151,6 +151,9 @@ thread.
 
 ## Follow-ups
 
+- ~~**Host transport**~~ — done 2026-09-23: instruments and CLAP effects receive
+  a `clap_event_transport` (tempo, beats, bars, time signature, playing state).
+  The musical math is shared in `TransportInfo::musical_position` for VST3i.
 - **Real-plugin acceptance** — smoke test a CLAP synth (Surge XT) end-to-end;
   add the Rust mock plugin (B4) for CI coverage.
 - **Instrument param automation** — merged note+param CLAP input list.

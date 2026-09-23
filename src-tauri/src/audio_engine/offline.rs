@@ -28,7 +28,7 @@
 
 use crate::audio_engine::graph::AudioGraphCompiler;
 use crate::audio_graph::denormal::enable_flush_to_zero;
-use crate::audio_graph::node::TransportInfo;
+use crate::audio_graph::node::{TimeSignature, TransportInfo};
 use crate::audio_graph::{CompileConfig, LiveParams};
 use crate::plugin_system::PluginHost;
 use crate::project::AppProject;
@@ -94,6 +94,7 @@ pub(crate) fn render_project_in_blocks(
 
     let mut mix_buf = vec![0.0_f32; OFFLINE_BLOCK_SIZE * 2];
     let bpm = project.bpm;
+    let time_signature = TimeSignature::new(project.numerator, project.denominator);
     let sr_f32 = sample_rate as f32;
     let mut position: u64 = 0;
 
@@ -106,6 +107,7 @@ pub(crate) fn render_project_in_blocks(
             position_samples: position,
             position_seconds: position as f64 / sample_rate as f64,
             bpm,
+            time_signature,
             sample_rate: sr_f32,
             block_size: block,
         };

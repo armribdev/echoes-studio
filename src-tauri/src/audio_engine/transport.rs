@@ -20,7 +20,7 @@
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 
-use crate::audio_graph::node::TransportInfo;
+use crate::audio_graph::node::{TimeSignature, TransportInfo};
 
 /// Atomic transport state shared between the command thread and the CPAL callback.
 pub struct SharedTransport {
@@ -39,6 +39,9 @@ pub struct SharedTransport {
     /// BPM stored as the bit-pattern of an `f32`.
     bpm_bits: AtomicU32,
 
+    /// Time signature packed as `numerator << 8 | denominator`.
+    time_signature_bits: AtomicU32,
+
     /// Device sample rate stored as the bit-pattern of an `f32`.
     sample_rate_bits: AtomicU32,
 }
@@ -50,6 +53,7 @@ impl SharedTransport {
             position_samples: AtomicU64::new(0),
             duration_samples: AtomicU64::new(0),
             bpm_bits: AtomicU32::new(bpm.to_bits()),
+            time_signature_bits: AtomicU32::new(pack_time_signature(TimeSignature::default())),
             sample_rate_bits: AtomicU32::new(sample_rate.to_bits()),
         })
     }
@@ -70,8 +74,18 @@ impl SharedTransport {
     }
 
     #[inline]
-    pub fn set_bpm(&self, bpm: f32) {
+    pub fn time_signature(&self) -> TimeSignature {
+        let bits = self.time_signature_bits.load(Ordering::Relaxed);
+        TimeSignature::new((bits >> 8) as u8, bits as u8)
+    }
+
+    /// The two stores are independent; a block may briefly see a new tempo with
+    /// the old signature, which only affects the bar positions sent to plugins.
+    #[inline]
+    pub fn set_tempo(&self, bpm: f32, time_signature: TimeSignature) {
         self.bpm_bits.store(bpm.to_bits(), Ordering::Relaxed);
+        self.time_signature_bits
+            .store(pack_time_signature(time_signature), Ordering::Relaxed);
     }
 
     #[inline]
@@ -114,8 +128,13 @@ impl SharedTransport {
             position_samples: pos,
             position_seconds: pos as f64 / sr as f64,
             bpm: self.bpm(),
+            time_signature: self.time_signature(),
             sample_rate: sr,
             block_size,
         }
     }
+}
+
+fn pack_time_signature(time_signature: TimeSignature) -> u32 {
+    (time_signature.numerator as u32) << 8 | time_signature.denominator as u32
 }
