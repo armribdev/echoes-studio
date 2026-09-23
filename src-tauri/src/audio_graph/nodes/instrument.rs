@@ -101,6 +101,21 @@ impl InstrumentNode {
     }
 }
 
+impl InstrumentNode {
+    /// NoteOff at offset 0 for every pitch a NoteOn was sent for and not yet released.
+    fn release_sounding_notes(&mut self) {
+        for (pitch, count) in self.active_pitch_count.iter_mut().enumerate() {
+            if *count > 0 {
+                self.event_buf.push(MidiEvent {
+                    offset: 0,
+                    kind: MidiEventKind::NoteOff { pitch: pitch as u8 },
+                });
+                *count = 0;
+            }
+        }
+    }
+}
+
 impl AudioNode for InstrumentNode {
     fn node_id(&self) -> NodeId {
         self.id
@@ -136,17 +151,7 @@ impl AudioNode for InstrumentNode {
             let discontinuity = !self.was_playing || block_start != self.next_expected_block_start;
 
             if discontinuity {
-                // Release any pitches sounding before the discontinuity so
-                // plugins receive a proper NoteOff instead of hanging forever.
-                for (pitch, count) in self.active_pitch_count.iter_mut().enumerate() {
-                    if *count > 0 {
-                        self.event_buf.push(MidiEvent {
-                            offset: 0,
-                            kind: MidiEventKind::NoteOff { pitch: pitch as u8 },
-                        });
-                        *count = 0;
-                    }
-                }
+                self.release_sounding_notes();
 
                 for note in self.notes.iter() {
                     let start_sample = note.start_sample(bpm, sample_rate).max(note.window_start_sample);
@@ -196,24 +201,11 @@ impl AudioNode for InstrumentNode {
             self.event_buf.sort_by_offset();
             self.next_expected_block_start = block_end;
         } else {
-            // Play → pause: release notes still sounding at the pause point so
-            // voices fade out instead of ringing until the transport later
-            // crosses their end. Reuses the NoteOff path (PolySynth + CLAP).
+            // Play → pause/stop: the playhead may already be reset (Stop, end of
+            // song), so release what was actually turned on, not what the notes
+            // say should sound at the current position.
             if self.was_playing {
-                let pause_point = transport.position_samples;
-                let bpm = transport.bpm;
-                let sample_rate = transport.sample_rate;
-                for note in self.notes.iter() {
-                    let start_sample = note.start_sample(bpm, sample_rate).max(note.window_start_sample);
-                    let end_sample = note.end_sample(bpm, sample_rate).min(note.window_end_sample);
-                    if start_sample < end_sample && start_sample <= pause_point && pause_point < end_sample {
-                        self.event_buf.push(MidiEvent {
-                            offset: 0,
-                            kind: MidiEventKind::NoteOff { pitch: note.pitch },
-                        });
-                    }
-                }
-                self.active_pitch_count = [0u8; 128];
+                self.release_sounding_notes();
             }
             self.next_expected_block_start = transport.position_samples;
         }
@@ -416,5 +408,52 @@ mod tests {
             .find(|e| matches!(e.kind, MidiEventKind::NoteOn { .. }))
             .expect("NoteOn emitted at the new tempo");
         assert_eq!(note_on.offset, 11_000);
+    }
+
+    fn transport_at(is_playing: bool, position_samples: u64, block_size: usize) -> TransportInfo {
+        TransportInfo {
+            is_playing,
+            position_samples,
+            position_seconds: position_samples as f64 / 48_000.0,
+            bpm: 120.0,
+            time_signature: crate::audio_graph::node::TimeSignature::default(),
+            sample_rate: 48_000.0,
+            block_size,
+        }
+    }
+
+    fn released_pitch(captured: &Arc<Mutex<Vec<MidiEvent>>>, pitch: u8) -> bool {
+        captured
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|e| matches!(e.kind, MidiEventKind::NoteOff { pitch: p } if p == pitch))
+    }
+
+    /// Stop resets the playhead to 0, so the stop block no longer "sees" the
+    /// sounding note at its position; the note must still be released.
+    #[test]
+    fn stop_while_note_sounding_emits_note_off() {
+        let captured = Arc::new(Mutex::new(Vec::new()));
+        let mut node = make_node(captured.clone());
+
+        run_block(&mut node, &transport_at(true, 0, 30_000));
+        run_block(&mut node, &transport_at(false, 0, 512));
+
+        assert!(released_pitch(&captured, 60), "Stop must release the sounding note");
+    }
+
+    /// The note ends exactly where a block ends and the song auto-stops before
+    /// the next block: its NoteOff must not be lost (stuck last note).
+    #[test]
+    fn note_ending_on_the_last_block_boundary_is_released_at_stop() {
+        let captured = Arc::new(Mutex::new(Vec::new()));
+        let mut node = make_node(captured.clone());
+
+        run_block(&mut node, &transport_at(true, 0, 48_000));
+        assert!(!released_pitch(&captured, 60), "the NoteOff falls on the next block");
+        run_block(&mut node, &transport_at(false, 0, 512));
+
+        assert!(released_pitch(&captured, 60), "auto-stop must release the last note");
     }
 }

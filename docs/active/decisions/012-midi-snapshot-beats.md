@@ -58,6 +58,12 @@ scheduler without a rebake or recompile.
      `NoteOn`. On a play→pause transition it emits a `NoteOff` for notes still
      sounding at the pause point, so voices release instead of ringing until the
      transport later crosses their end.
+     _Fixed 2026-09-23:_ the release now uses the set of pitches actually turned
+     on (`active_pitch_count`), not the notes found at the current position. Stop
+     and end-of-song auto-stop reset the playhead to 0 before the stop block, so
+     the old position-based check missed the sounding notes: stuck notes after
+     Stop, and an intermittent stuck last note when a note ended exactly on the
+     last block boundary before the ~30 Hz auto-stop fired.
 
 4. **[`audio_engine/transport.rs`](../../../src-tauri/src/audio_engine/transport.rs)**
    - `SharedTransport.bpm_bits: AtomicU32`; `snapshot(block_size)` reads it into
