@@ -13,7 +13,7 @@ table for step 1 of the sync procedure.
 | `audio_graph/modulation.rs`, `parameter_block.rs`, `live_params.rs` | `modulation/modulation-system.md`, `plugins/plugin-system.md` | 009 |
 | `audio_graph/midi.rs` | `architecture/audio-graph.md` | 012 |
 | `audio_engine/transport.rs` | `threading/realtime-safety.md`, `threading/threading-model.md` | — |
-| `audio_engine/offline.rs` | `migration/*` (bit-identical C-2), `dsp/dsp-runtime.md` | — |
+| `audio_engine/offline.rs`, `render_harness.rs` | `migration/*` (bit-identical C-2), `dsp/dsp-runtime.md` | 019 |
 | `audio_engine/engine.rs`, `graph.rs` | `threading/threading-model.md`, `architecture/audio-graph.md` | 004, 005 |
 | `plugin_system/host.rs`, `lifecycle.rs`, `instance.rs`, `registry.rs` | `plugins/plugin-system.md` | 003, 007, 013 |
 | `plugin_system/param_queue.rs`, `parameter.rs` | `plugins/plugin-system.md`, `plugins/plugin-wrapper-system.md` | 008, 009 |

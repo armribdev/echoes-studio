@@ -6,22 +6,100 @@
 use std::f32::consts::TAU;
 
 use crate::audio_graph::buffer::AudioBuffer;
-use crate::audio_graph::node::{AudioNode, NodeId, PrepareContext, TransportInfo};
+use crate::audio_graph::node::{AudioNode, NodeId, PrepareContext, TransportInfo, MAX_CONTROL_POINTS};
 
 /// Per-sample gain-smoothing cutoff (ADR-019 Tranche 2).  Removes zipper on
 /// modulated/automated gain without audible lag.  ~12 Hz ≈ 13 ms time constant.
 /// Derived from the sample rate only, so the ramp is block-size independent.
 const GAIN_SMOOTH_CUTOFF_HZ: f32 = 12.0;
 
+/// One-pole gain smoother driven by modulation on the absolute control grid
+/// (ADR-019).  The target switches at each grid point, so the ramp depends only
+/// on absolute sample positions, never on where block boundaries fall.
+pub(crate) struct SmoothedGain {
+    smoothed: f32,
+    coeff: f32,
+    /// Delta from the block start up to the first interior grid point.
+    base_delta: f32,
+    point_offsets: [u32; MAX_CONTROL_POINTS],
+    point_deltas: [f32; MAX_CONTROL_POINTS],
+    point_count: usize,
+}
+
+impl SmoothedGain {
+    pub(crate) fn new(initial_gain: f32) -> Self {
+        Self {
+            smoothed: initial_gain,
+            coeff: 0.0,
+            base_delta: 0.0,
+            point_offsets: [0; MAX_CONTROL_POINTS],
+            point_deltas: [0.0; MAX_CONTROL_POINTS],
+            point_count: 0,
+        }
+    }
+
+    pub(crate) fn prepare(&mut self, sample_rate: f32, gain: f32) {
+        self.coeff = 1.0 - (-TAU * GAIN_SMOOTH_CUTOFF_HZ / sample_rate).exp();
+        self.smoothed = gain;
+    }
+
+    pub(crate) fn snap_to(&mut self, gain: f32) {
+        self.smoothed = gain;
+    }
+
+    pub(crate) fn clear_modulation(&mut self) {
+        self.base_delta = 0.0;
+        self.point_count = 0;
+    }
+
+    pub(crate) fn add_block_start_delta(&mut self, delta: f32) {
+        self.base_delta += delta;
+    }
+
+    /// Grid offsets arrive ascending per route; routes sharing an offset sum.
+    pub(crate) fn add_delta_at(&mut self, sample_offset: u32, delta: f32) {
+        let points = &self.point_offsets[..self.point_count];
+        if let Some(k) = points.iter().position(|&offset| offset == sample_offset) {
+            self.point_deltas[k] += delta;
+        } else if self.point_count < MAX_CONTROL_POINTS {
+            self.point_offsets[self.point_count] = sample_offset;
+            self.point_deltas[self.point_count] = delta;
+            self.point_count += 1;
+        }
+    }
+
+    /// Frame-outer so the smoothed gain advances once per frame, shared across
+    /// channels.  At target (static gain, no modulation) the step is exactly 0,
+    /// so an unmodulated render stays bit-identical.
+    pub(crate) fn process(&mut self, gain: f32, input: &AudioBuffer, output: &mut AudioBuffer, frames: usize) {
+        let channels = output.num_channels.min(input.num_channels);
+        let mut frame = 0;
+        for k in 0..=self.point_count {
+            let segment_end = if k < self.point_count {
+                (self.point_offsets[k] as usize).min(frames)
+            } else {
+                frames
+            };
+            if segment_end <= frame {
+                continue;
+            }
+            let delta = if k == 0 { self.base_delta } else { self.point_deltas[k - 1] };
+            let target = (gain + delta).max(0.0);
+            for i in frame..segment_end {
+                self.smoothed += self.coeff * (target - self.smoothed);
+                for ch in 0..channels {
+                    output.channel_mut(ch)[i] = input.channel(ch)[i] * self.smoothed;
+                }
+            }
+            frame = segment_end;
+        }
+    }
+}
+
 pub struct GainNode {
     id: NodeId,
     gain: f32,
-    /// Accumulated modulation delta for the current block (reset each block).
-    mod_delta: f32,
-    /// Per-sample smoothed gain; ramps toward `gain + mod_delta` (anti-zipper).
-    smoothed_gain: f32,
-    /// One-pole coefficient set in `prepare` from the sample rate.
-    gain_coeff: f32,
+    smoother: SmoothedGain,
 }
 
 impl GainNode {
@@ -29,9 +107,7 @@ impl GainNode {
         Self {
             id,
             gain,
-            mod_delta: 0.0,
-            smoothed_gain: gain,
-            gain_coeff: 0.0,
+            smoother: SmoothedGain::new(gain),
         }
     }
 
@@ -59,8 +135,7 @@ impl AudioNode for GainNode {
     }
 
     fn prepare(&mut self, ctx: PrepareContext) {
-        self.gain_coeff = 1.0 - (-TAU * GAIN_SMOOTH_CUTOFF_HZ / ctx.sample_rate).exp();
-        self.smoothed_gain = self.gain;
+        self.smoother.prepare(ctx.sample_rate, self.gain);
     }
 
     fn process(
@@ -69,33 +144,19 @@ impl AudioNode for GainNode {
         outputs: &mut [AudioBuffer],
         transport: &TransportInfo,
     ) {
-        let input = &inputs[0];
+        let input = inputs[0];
         let output = &mut outputs[0];
-
-        let channels = output.num_channels.min(input.num_channels);
         let frames = transport.block_size.min(output.num_frames).min(input.num_frames);
-        let target = (self.gain + self.mod_delta).max(0.0);
-        let coeff = self.gain_coeff;
-
-        // Frame-outer so the smoothed gain advances once per frame, shared across
-        // channels.  When already at target (static gain) the step is exactly 0,
-        // so an unmodulated node stays bit-identical.
-        for i in 0..frames {
-            self.smoothed_gain += coeff * (target - self.smoothed_gain);
-            let g = self.smoothed_gain;
-            for ch in 0..channels {
-                output.channel_mut(ch)[i] = input.channel(ch)[i] * g;
-            }
-        }
+        self.smoother.process(self.gain, input, output, frames);
     }
 
     fn reset(&mut self) {
         self.reset_modulation();
-        self.smoothed_gain = self.gain;
+        self.smoother.snap_to(self.gain);
     }
 
     fn reset_modulation(&mut self) {
-        self.mod_delta = 0.0;
+        self.smoother.clear_modulation();
     }
 
     fn param_id(&self, name: &str) -> Option<u32> {
@@ -107,12 +168,18 @@ impl AudioNode for GainNode {
 
     fn apply_modulation(&mut self, param_id: u32, delta: f32) {
         if param_id == PARAM_GAIN {
-            self.mod_delta += delta;
+            self.smoother.add_block_start_delta(delta);
+        }
+    }
+
+    fn apply_modulation_at(&mut self, param_id: u32, sample_offset: u32, value: f32) {
+        if param_id == PARAM_GAIN {
+            self.smoother.add_delta_at(sample_offset, value);
         }
     }
 }
 
-const PARAM_GAIN: u32 = 0;
+pub(crate) const PARAM_GAIN: u32 = 0;
 
 #[cfg(test)]
 mod tests {

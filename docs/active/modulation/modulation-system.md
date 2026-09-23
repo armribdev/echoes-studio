@@ -122,23 +122,24 @@ an **absolute control grid** of period `MODULATION_CONTROL_PERIOD = 32` samples
 (`node.rs`): at offset 0 plus every offset where `(position_samples + offset)`
 is a multiple of the period.
 
-- **Offset 0** is delivered via `AudioNode::apply_modulation` exactly as before —
-  internal nodes honour only this and stay bit-identical (their per-sample
-  `mod_smooth` ramp toward the block target is unchanged).
+- **Block start** is delivered via `AudioNode::apply_modulation`. When the
+  block starts off-grid, the scheduler re-delivers the held signal of the
+  previous grid point (`CompiledModAction::held_signal`) instead of sampling a
+  new value.
 - **Interior grid points** are delivered via the defaulted
   `AudioNode::apply_modulation_at(param_id, sample_offset, value)`. The default is
-  a no-op; only the VST3 / CLAP wrappers override it, recording the points into
-  `PluginModEntry` and emitting one format-native param event per point at its
-  real `sample_offset`. This removes plugin-parameter zipper.
+  a no-op. The VST3 / CLAP wrappers record the points into `PluginModEntry` and
+  emit one format-native param event per point at its real `sample_offset`.
+  Internal nodes split their processing at these offsets.
 
-Because the grid is keyed to the absolute sample position, the delivered point
-sequence is deterministic for a given block size (C-2). `GainNode` /
-`TrackGainNode` add a per-sample one-pole gain smoother (ADR-019 Tranche 2) that
-de-zippers modulated/automated gain and de-clicks fader/mute moves. All four
-internal effects (`Delay`, `Compressor`, `Reverb`, `Eq`, Tranche 3) consume the
-interior grid points and segment their `process` loop at the absolute grid, so
-modulation follows the curve at 32-sample resolution and is block-size independent.
-`PanNode`/`MasterNode` are not modulation targets.
+The value in force at any frame is therefore the signal at the latest absolute
+grid point, whatever the block size, so a modulated render is bit-identical
+across block sizes (offline == live, C-2). `render_harness.rs` enforces this.
+`GainNode` / `TrackGainNode` share `SmoothedGain`, a per-sample one-pole
+smoother whose target switches at each grid point. It de-zippers
+modulated/automated gain and de-clicks fader/mute moves. All four internal
+effects (`Delay`, `Compressor`, `Reverb`, `Eq`) segment their `process` loop at
+the grid points. `PanNode`/`MasterNode` are not modulation targets.
 
 ### Modulation depth and units
 
@@ -181,7 +182,7 @@ evaluates every route on the absolute control grid (ADR-019, Tranches 1–3 done
 | Target | Sub-block delivery |
 |--------|--------------------|
 | VST3 / CLAP plugin params | one native param event per grid point at its `sample_offset` |
-| `GainNode` / `TrackGainNode` | block-rate target + per-sample one-pole gain smoother |
+| `GainNode` / `TrackGainNode` | per-sample one-pole smoother whose target switches at each grid point |
 | `Delay` / `Compressor` / `Reverb` / `Eq` | `process` loop segmented at grid points, params recomputed per segment |
 | `PanNode` / `MasterNode` | not modulation targets |
 
@@ -189,9 +190,11 @@ The block-rate `ModSmooth` (`nodes/mod_smooth.rs`) is no longer used by
 production code; it is kept because ADR-009 references it. Projects without
 modulation or automation render exactly as before ADR-019.
 
-**Open gap:** no golden-master test covers a modulated render yet (migration
-harness V1 — see `migration/migration_plan.md` §V1), so the block-size
-independence claimed by ADR-019 is covered only by per-node unit tests.
+**Verification:** `audio_engine/render_harness.rs` renders modulated and
+automated reference projects at several block sizes and checks them against
+golden hashes. **Open gap:** the scheduler is never reset on a live seek, so the
+first ≤ 31 samples after a seek can use a stale held value (see ADR-019
+Follow-ups).
 
 ---
 

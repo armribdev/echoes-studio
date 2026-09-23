@@ -538,6 +538,12 @@ Cohérent avec *« ~44 j avec bridge »* de l'audit (légère réévaluation à 
 - 5–10 projets de référence rendus en `.wav` → SHA256 figé.
 - CI rejoue à chaque PR. Diff → rouge.
 - Couvre C-2.
+- **Statut 2026-09-23 : livré** sous une forme plus légère, dans
+  `src-tauri/src/audio_engine/render_harness.rs`. Il contient 4 projets
+  synthétiques (mix statique, effets modulés, gain modulé, automation), sans
+  fichier audio. Il vérifie l'indépendance à la taille de bloc (offline == live)
+  et compare un hash FNV-1a figé, pas un `.wav` + SHA256. Restent ouverts : CI
+  (aucune n'existe), vérification cross-OS, projets avec plugins réels.
 
 ### V2 — Suite XRun longue durée (à partir de Phase 1)
 - Projet « stress » (32 effets + 8 plugins + automation), buffer 256, 48 kHz, 30 min.

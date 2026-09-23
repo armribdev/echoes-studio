@@ -16,7 +16,7 @@ every shipped step independently correct.
    **C-2 bit-identical**, **C-7 extend-not-rewrite**, **C-4 backward compat**,
    **C-9 sandbox opt-in**).
 3. Ensure the C-2 offline harness covers the affected area **before** changing
-   it; extend `audio_engine/offline.rs` first if not.
+   it; extend `audio_engine/render_harness.rs` first if not.
 4. Implement the smallest increment. New routing (MIDI/modulation/ports) defaults
    to a no-op shape so legacy projects stay bit-identical (ADR-011/012).
 5. If the step introduces a new decision, write the next ADR and add it to

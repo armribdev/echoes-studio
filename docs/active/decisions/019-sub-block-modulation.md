@@ -2,11 +2,34 @@
 
 ## Status
 
-**Accepted — fully implemented (Tranches 1, 2 & 3 done, 2026-06-07).** Drafted
+**Accepted — fully implemented (Tranches 1, 2 & 3 done, 2026-06-07; amended
+2026-09-23, see below).** Drafted
 following the 2026-06-05 engine audit (finding #4a: block-rate modulation →
 zipper noise) with the user's explicit acceptance that **existing modulated
 projects may re-render differently** (the bit-identical break below is sanctioned,
 not silent).
+
+**Amendment 2026-09-23 — block-size independence made real.** The new offline
+render harness
+([`render_harness.rs`](../../../src-tauri/src/audio_engine/render_harness.rs))
+showed that the modulated render was **not** block-size independent, despite
+the §Decision claim. There were two causes, both fixed:
+
+1. **Off-grid block starts.** The scheduler sampled a fresh value at offset 0
+   even when `position_samples` was not on the grid, which added a point that a
+   larger block does not have. The scheduler now keeps the raw signal of each
+   route's latest grid point (`CompiledModAction::held_signal`) and reuses it
+   when a block starts off-grid. Grid-aligned blocks (every block size that is a
+   multiple of 32, including the 4096-frame offline export) are unchanged.
+2. **Gain smoother on a block-rate target.** The Tranche 2 choice below ("tracks
+   the block-rate target") made gain modulation depend on block boundaries.
+   `GainNode` / `TrackGainNode` now share `SmoothedGain`, which switches its
+   target at each grid point. This **changes the export** of projects that
+   modulate or automate track gain. The change is covered by this ADR's
+   re-baselining of modulated projects.
+
+The harness now proves bit-identical output for block sizes 4096, 512, 441, 64
+and 37, with and without the worker pool.
 
 Tranche 3 — Delay, Compressor, Reverb & EQ all landed: each consumes the interior
 grid points via `apply_modulation_at` and **segments its `process` loop** at the
@@ -168,9 +191,9 @@ de-zippering is in scope, achieved **without** changing `process` arity.
    (`gain + mod_delta`); coeff from the sample rate (block-size independent).
    Removes the raw-`mod_delta` zipper and de-clicks fader/mute/solo. `PanNode` /
    `MasterNode` excluded — not modulation targets (no `apply_modulation`). The
-   smoother tracks the block-rate target, not interior grid points: its ~13 ms
-   time constant integrates over many 32-sample points, so the difference is
-   inaudible and the code stays minimal.
+   smoother originally tracked the block-rate target only; _superseded
+   2026-09-23_: it now follows the interior grid points, because the block-rate
+   target made the render depend on the block size (see the amendment above).
 3. **Tranche 3 (variant by variant, C-3).** Internal effects consume the interior
    grid points (`apply_modulation_at`) and **segment their `process` loop** at the
    absolute grid, recomputing effective params per segment. No per-effect smoother
@@ -266,6 +289,10 @@ no extra per-sample cost.
 
 - ~~Tranches 2 & 3~~ — done 2026-06-07 (see §Status).
 - ~~ADR-008 known-risk #3~~ — annotated as resolved 2026-09-23.
-- **Harness — open.** There are no offline golden references to regenerate: the
-  migration V1 golden master has never been built. It must be built, and must
-  include a modulated project, before C-2 is actually enforced for this ADR.
+- ~~Harness~~ — built 2026-09-23 (`audio_engine/render_harness.rs`), with
+  modulated and automated reference projects. Golden hashes are recorded on
+  Windows x86_64 only; the cross-OS check is still open.
+- **Seek reset.** `GraphScheduler::reset` (which clears the held grid values) is
+  never called in production. After a live seek, a held value from before the
+  jump can apply to the first ≤ 31 samples until the next grid point. This is
+  live-only and inaudible, but it is not yet deterministic.

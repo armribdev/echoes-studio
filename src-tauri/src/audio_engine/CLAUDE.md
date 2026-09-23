@@ -9,9 +9,10 @@ plumbing, and the offline (non-realtime) render path.
   path. See `.claude/rules/rt_audio_rules.md` + `threading_rules.md`.
 - Transport is **read from atomics inside the block** and passed down as
   `TransportInfo` — never polled mid-graph.
-- `offline.rs` is the deterministic export renderer that C-2 depends on. Keep it
-  deterministic. It has **no golden-master tests yet** (migration harness V1 is
-  not built), so C-2 is currently guarded only by per-node unit tests.
+- `offline.rs` is the deterministic export renderer; `render_harness.rs` is the
+  C-2 gate (block-size independence + golden hashes). Keep it green; add a
+  reference project before changing an RT path it doesn't cover. Update a golden
+  hash only for an ADR-sanctioned render change.
 - Displaced schedulers are freed on the **command thread** via the drop ring,
   never dropped in the callback.
 

@@ -34,5 +34,7 @@
 pub mod engine;
 pub mod graph;
 pub mod offline;
+#[cfg(test)]
+mod render_harness;
 pub mod snapshot;
 pub mod transport;

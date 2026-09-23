@@ -33,8 +33,9 @@
 //! `process_one_step`, every read/write is gated by the level invariant
 //! enforced by `GraphCompiler::compute_execution_levels`:
 //!
-//! - `processors[step_idx]`, `output_buffers[step_idx]`, `delay_lines[step_idx]`
-//!   are mutated only by the worker assigned to that `step_idx`.
+//! - `processors[step_idx]`, `output_buffers[step_idx]`, `delay_lines[step_idx]`,
+//!   `mod_actions_by_step[step_idx]` are mutated only by the worker assigned to
+//!   that `step_idx`.
 //! - Audio inputs reference `output_buffers[src_step]` for `src_step` in a
 //!   strictly *earlier* level — already fully written and synchronised by the
 //!   pool's level-completion barrier.
@@ -129,6 +130,10 @@ struct CompiledModAction {
     /// When `Some`, the action is driven by an automation curve evaluated at
     /// the current transport position rather than a live modulator output buffer.
     automation_curve: Option<Arc<CompiledAutomationCurve>>,
+    /// Raw signal at the most recent grid point, carried across blocks so a
+    /// block starting off-grid continues that point instead of sampling a new
+    /// one (keeps the render block-size independent, ADR-019).
+    held_signal: Option<f32>,
 }
 
 #[derive(Clone, Copy)]
@@ -137,7 +142,7 @@ struct Workspace {
     processors_ptr: *mut Box<dyn AudioNode>,
     output_buffers_ptr: *mut Vec<AudioBuffer>,
     delay_lines_ptr: *mut Vec<Option<DelayLine>>,
-    mod_actions_ptr: *const Vec<CompiledModAction>,
+    mod_actions_ptr: *mut Vec<CompiledModAction>,
     silence_ptr: *const AudioBuffer,
     worker_scratch_ptr: *mut Vec<*const AudioBuffer>,
     transport_ptr: *const TransportInfo,
@@ -236,6 +241,7 @@ impl GraphScheduler {
                 depth_cells,
                 static_depth: route.target.depth,
                 automation_curve: None,
+                held_signal: None,
             });
         }
 
@@ -250,6 +256,7 @@ impl GraphScheduler {
                     depth_cells: None,
                     static_depth: 1.0,
                     automation_curve: Some(action.curve),
+                    held_signal: None,
                 });
             }
         }
@@ -330,7 +337,7 @@ impl GraphScheduler {
             processors_ptr: self.processors.as_mut_ptr(),
             output_buffers_ptr: self.output_buffers.as_mut_ptr(),
             delay_lines_ptr: self.delay_lines.as_mut_ptr(),
-            mod_actions_ptr: self.mod_actions_by_step.as_ptr(),
+            mod_actions_ptr: self.mod_actions_by_step.as_mut_ptr(),
             silence_ptr: &self.silence_buffer,
             worker_scratch_ptr: self.worker_scratch.as_mut_ptr(),
             transport_ptr: transport as *const TransportInfo,
@@ -407,6 +414,9 @@ impl GraphScheduler {
             for dl in step_lines.iter_mut().flatten() {
                 dl.reset();
             }
+        }
+        for action in self.mod_actions_by_step.iter_mut().flatten() {
+            action.held_signal = None;
         }
     }
 }
@@ -488,36 +498,40 @@ unsafe fn process_one_step(worker_id: usize, step_idx: usize, ws: Workspace) {
         buf.clear();
     }
 
-    let actions: &[CompiledModAction] = &*ws.mod_actions_ptr.add(step_idx);
+    let actions: &mut [CompiledModAction] = &mut *ws.mod_actions_ptr.add(step_idx);
     let processor = &mut *ws.processors_ptr.add(step_idx);
 
     // ADR-019: sub-block modulation on an absolute control grid.  Reset first so a
     // route removed between blocks can't leak its previous `mod_delta`/points.
-    // Offset 0 keeps the legacy block-start scalar via `apply_modulation` (internal
-    // nodes honour only this, staying bit-identical); interior grid boundaries —
-    // absolute multiples of MODULATION_CONTROL_PERIOD — go through
-    // `apply_modulation_at`, which only plugin wrappers consume.
+    // The block-start value goes through `apply_modulation`; interior grid
+    // boundaries — absolute multiples of MODULATION_CONTROL_PERIOD — go through
+    // `apply_modulation_at`.  An off-grid block start reuses the held value of the
+    // previous grid point, so every frame sees the same value whatever the block size.
     processor.reset_modulation();
     let pos = transport.position_samples;
     let nf = transport.block_size;
     let sr = transport.sample_rate;
-    for action in actions {
+    let period = MODULATION_CONTROL_PERIOD;
+    let rem = (pos as usize) % period;
+    for action in actions.iter_mut() {
         let depth = match &action.depth_cells {
             Some(cells) => cells.depth(),
             None => action.static_depth,
         };
 
-        let v0 = eval_mod_signal(action, ws, 0, pos, sr) * depth;
-        processor.apply_modulation(action.param_id, v0);
+        let mut signal = match action.held_signal {
+            Some(held) if rem != 0 => held,
+            _ => eval_mod_signal(action, ws, 0, pos, sr),
+        };
+        processor.apply_modulation(action.param_id, signal * depth);
 
-        let period = MODULATION_CONTROL_PERIOD;
-        let rem = (pos as usize) % period;
         let mut offset = if rem == 0 { period } else { period - rem };
         while offset < nf {
-            let v = eval_mod_signal(action, ws, offset, pos, sr) * depth;
-            processor.apply_modulation_at(action.param_id, offset as u32, v);
+            signal = eval_mod_signal(action, ws, offset, pos, sr);
+            processor.apply_modulation_at(action.param_id, offset as u32, signal * depth);
             offset += period;
         }
+        action.held_signal = Some(signal);
     }
 
     // Phase 1 / P0-5: catch Rust panics so a buggy

@@ -21,7 +21,7 @@ brick attaches to a current brick that is kept, extended, or replaced in place.
 
 **Operating rules:**
 - **C-2 is the gate.** Any engine change must keep the bit-identical offline
-  render harness green (`audio_engine/offline.rs`). If the harness doesn't cover
+  render harness green (`audio_engine/render_harness.rs`). If the harness doesn't cover
   your area yet, extend it **before** the change.
 - Work in the order defined by `docs/active/migration/migration_plan.md`. Each
   phase is independently shippable and references its ADR.

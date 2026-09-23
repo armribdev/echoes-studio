@@ -17,7 +17,7 @@ Prove a change cannot allocate, lock, block, drop, or panic on the audio path.
 3. Walk the checklist below against the diff.
 4. Confirm any new buffers/scratch are allocated in `prepare()` or at compile
    time, not in `process()`.
-5. Confirm the bit-identical offline harness (`audio_engine/offline.rs`) still
+5. Confirm the bit-identical offline harness (`audio_engine/render_harness.rs`) still
    passes (migration C-2).
 
 ## Checklist (any "yes" = block)

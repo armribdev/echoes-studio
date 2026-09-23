@@ -53,6 +53,24 @@ pub fn render_project_offline(
     plugin_host: &mut PluginHost,
     sample_rate: u32,
 ) -> Result<(Vec<f32>, Vec<f32>), String> {
+    render_project_in_blocks(project, live_params, plugin_host, sample_rate, OFFLINE_BLOCK_SIZE)
+}
+
+/// Same as [`render_project_offline`] but processes `block_size` frames per
+/// `process_block` call (at most `OFFLINE_BLOCK_SIZE`), the way the live
+/// engine receives device-sized buffers.  Nodes are still prepared for
+/// `OFFLINE_BLOCK_SIZE`, so a determinism check only varies the block size.
+pub(crate) fn render_project_in_blocks(
+    project: &AppProject,
+    live_params: &LiveParams,
+    plugin_host: &mut PluginHost,
+    sample_rate: u32,
+    block_size: usize,
+) -> Result<(Vec<f32>, Vec<f32>), String> {
+    assert!(
+        (1..=OFFLINE_BLOCK_SIZE).contains(&block_size),
+        "block_size must be in 1..={OFFLINE_BLOCK_SIZE}"
+    );
     let config = CompileConfig {
         sample_rate: sample_rate as f32,
         max_block_size: OFFLINE_BLOCK_SIZE,
@@ -81,7 +99,7 @@ pub fn render_project_offline(
 
     while (position as usize) < total_frames {
         let remaining = total_frames - position as usize;
-        let block = remaining.min(OFFLINE_BLOCK_SIZE);
+        let block = remaining.min(block_size);
 
         let info = TransportInfo {
             is_playing: true,
