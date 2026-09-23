@@ -4,7 +4,14 @@
 	import PluginPicker from './PluginPicker.svelte';
 	import type { TrackEffect, EqParams, CompressorParams, ReverbParams, DelayParams } from '../types/global';
 	import type { PluginInfo } from '../stores/plugins';
-	import { loadPlugins, plugins } from '../stores/plugins';
+	import {
+		loadPlugins,
+		plugins,
+		rescanPlugins,
+		unavailablePlugins,
+		UNAVAILABLE_REASON_LABEL,
+		type UnavailableReason,
+	} from '../stores/plugins';
 	import { addEffect, removeEffect, updateEffect } from '../frontend/commands/dispatcher';
 	import { notify } from '../stores/status';
 	import { invoke } from '@tauri-apps/api/core';
@@ -76,6 +83,26 @@
 		}
 	}
 
+	const UNAVAILABLE_HELP: Record<UnavailableReason, string> = {
+		not_installed:
+			"Ce plugin n'est pas installé sur cet ordinateur : le son passe sans être traité. Ses réglages sont conservés. Réinstallez-le puis réessayez.",
+		unsupported_format:
+			"Echoes ne sait pas encore utiliser ce format : le son passe sans être traité.",
+		load_failed:
+			"Le plugin n'a pas pu démarrer : le son passe sans être traité. Ses réglages sont conservés.",
+	};
+
+	let retrying = false;
+
+	async function handleRetry() {
+		retrying = true;
+		try {
+			await rescanPlugins();
+		} finally {
+			retrying = false;
+		}
+	}
+
 	const BUILTIN_LABELS: Record<string, string> = {
 		eq: 'EQ 3-bandes', compressor: 'Compresseur', reverb: 'Réverb', delay: 'Délai',
 	};
@@ -121,7 +148,8 @@
 	{/if}
 
 	{#each effects as effect (effect.id)}
-		<div class="slot" class:bypassed={!effect.enabled}>
+		{@const unavailable = $unavailablePlugins.get(effect.id)}
+		<div class="slot" class:bypassed={!effect.enabled} class:unavailable>
 			<div class="slot-head">
 				<button class="bypass" class:on={effect.enabled} type="button"
 					on:click|stopPropagation={() => handleToggle(effect)} title="Bypass">
@@ -132,6 +160,11 @@
 					{#if effectFormat(effect)}
 						<span class="fmt-badge" style:background={FORMAT_COLOR[effectFormat(effect) ?? ''] ?? '#555'}>
 							{effectFormat(effect)}
+						</span>
+					{/if}
+					{#if unavailable}
+						<span class="missing-badge" title={UNAVAILABLE_HELP[unavailable.reason]}>
+							{UNAVAILABLE_REASON_LABEL[unavailable.reason]}
 						</span>
 					{/if}
 					<svg class="chevron" class:open={expanded[effect.id]} width="8" height="5" viewBox="0 0 8 5">
@@ -215,6 +248,18 @@
 								{p.ping_pong ? 'ON' : 'OFF'}
 							</button>
 							<span class="val"></span>
+						</div>
+
+					{:else if unavailable}
+						<div class="missing-row">
+							{#if !compact}
+								<p class="missing-help">{UNAVAILABLE_HELP[unavailable.reason]}</p>
+							{/if}
+							{#if unavailable.reason !== 'unsupported_format'}
+								<button class="retry-btn" type="button" on:click={handleRetry} disabled={retrying}>
+									{retrying ? 'Recherche…' : 'Réessayer'}
+								</button>
+							{/if}
 						</div>
 
 					{:else if effect.params.kind === 'plugin'}
@@ -326,6 +371,37 @@
 		font-size: 7px; font-family: $font-mono; font-weight: 700;
 		letter-spacing: 0.04em; padding: 1px 4px; border-radius: 2px;
 		color: #fff; flex-shrink: 0;
+	}
+
+	.slot.unavailable .slot-name {
+		color: $text-faint;
+		text-decoration: line-through;
+	}
+
+	.missing-badge {
+		font-size: 7px; font-family: $font-mono; font-weight: 700;
+		padding: 1px 4px; border-radius: 2px; flex-shrink: 0; white-space: nowrap;
+		border: 1px solid rgba(255, 65, 54, 0.5);
+		background: rgba(255, 65, 54, 0.12);
+		color: #ff6b61;
+	}
+
+	.missing-row {
+		display: flex; flex-direction: column; align-items: flex-start; gap: 6px;
+		padding: 4px 2px;
+	}
+
+	.missing-help {
+		margin: 0; font-size: 9px; line-height: 1.35; color: $text-subtle;
+	}
+
+	.retry-btn {
+		padding: 3px 10px;
+		border: 1px solid $border-subtle; border-radius: 4px;
+		background: transparent; color: $text-subtle;
+		font-size: 10px; font-family: $font-mono; cursor: pointer;
+		&:hover:not(:disabled) { background: rgba(21,113,255,0.15); color: $text-color; border-color: rgba(21,113,255,0.4); }
+		&:disabled { cursor: default; opacity: 0.6; }
 	}
 
 	.chevron {
