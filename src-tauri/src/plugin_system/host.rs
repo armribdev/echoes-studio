@@ -72,6 +72,9 @@ pub struct PluginHost {
     records: HashMap<String, DeviceRecord>,
     /// ADR-010: blobs applied at instantiate before snapshot (project-load only).
     pending_state_blobs: HashMap<String, Vec<u8>>,
+    /// State of placements whose plugin failed to load, kept verbatim so a save
+    /// does not erase it and a later successful load restores it.
+    unavailable_states: HashMap<String, DeviceState>,
 }
 
 impl PluginHost {
@@ -80,6 +83,7 @@ impl PluginHost {
             registry: PluginRegistry::new(),
             records: HashMap::new(),
             pending_state_blobs: HashMap::new(),
+            unavailable_states: HashMap::new(),
         }
     }
 
@@ -185,6 +189,21 @@ impl PluginHost {
         plugin_id: &str,
         sandboxed: bool,
     ) -> Result<Box<dyn AudioNode>, HostError> {
+        let result = self.instantiate_placement(node_id, instance_key, plugin_id, sandboxed);
+        match result {
+            Ok(_) => self.forget_unavailable_state(instance_key),
+            Err(_) => self.keep_unavailable_state(instance_key, plugin_id),
+        }
+        result
+    }
+
+    fn instantiate_placement(
+        &mut self,
+        node_id: NodeId,
+        instance_key: &str,
+        plugin_id: &str,
+        sandboxed: bool,
+    ) -> Result<Box<dyn AudioNode>, HostError> {
         // Inert until ADR-015 step 6d wires the out-of-process bridge.
         let _ = sandboxed;
 
@@ -253,6 +272,31 @@ impl PluginHost {
         Ok(device)
     }
 
+    /// Keeps the placement's last known state while its plugin is missing: the
+    /// project-load blob, or the state kept by an earlier failed attempt.  A live
+    /// record, if any, is still harvested by `collect_plugin_states`.
+    fn keep_unavailable_state(&mut self, instance_key: &str, plugin_id: &str) {
+        let staged = self
+            .pending_state_blobs
+            .get(instance_key)
+            .map(|bytes| DeviceState::from_binary(plugin_id, bytes.clone()));
+        let kept = self
+            .unavailable_states
+            .get(instance_key)
+            .filter(|state| state.device_id == plugin_id)
+            .cloned();
+        match staged.or(kept) {
+            Some(state) => {
+                self.unavailable_states.insert(instance_key.to_string(), state);
+            }
+            None => self.forget_unavailable_state(instance_key),
+        }
+    }
+
+    fn forget_unavailable_state(&mut self, instance_key: &str) {
+        self.unavailable_states.remove(instance_key);
+    }
+
     /// Decide and apply the state a freshly-created instance for `instance_key`
     /// must start from, and return the `DeviceState` to cache on its record.
     ///
@@ -276,6 +320,16 @@ impl PluginHost {
         if let Some(bytes) = self.pending_state_blobs.get(instance_key) {
             let _ = instance.load_state_blob(bytes);
             return DeviceState::from_binary(plugin_id, bytes.clone());
+        }
+        if let Some(state) = self
+            .unavailable_states
+            .get(instance_key)
+            .filter(|state| state.device_id == plugin_id)
+        {
+            if let Some(bytes) = state.as_binary() {
+                let _ = instance.load_state_blob(bytes);
+                return state.clone();
+            }
         }
         if let Some(previous) = self.records.get(instance_key) {
             let cached = previous.saved_state.as_binary();
@@ -400,6 +454,19 @@ impl PluginHost {
     /// Only CLAP is wired in this phase (C-3 variant-by-variant).  Other formats
     /// return `Err` so the caller falls back to the built-in `PolySynth`.
     pub fn instantiate_instrument(
+        &mut self,
+        instance_key: &str,
+        plugin_id: &str,
+    ) -> Result<Box<dyn InstrumentDevice>, HostError> {
+        let result = self.instantiate_instrument_placement(instance_key, plugin_id);
+        match result {
+            Ok(_) => self.forget_unavailable_state(instance_key),
+            Err(_) => self.keep_unavailable_state(instance_key, plugin_id),
+        }
+        result
+    }
+
+    fn instantiate_instrument_placement(
         &mut self,
         instance_key: &str,
         plugin_id: &str,
@@ -556,6 +623,8 @@ impl PluginHost {
             }
             keep
         });
+        self.unavailable_states
+            .retain(|instance_key, _| active.contains(instance_key));
     }
 
     /// Serialise a device's live state (Phase 4b / ADR-010).
@@ -614,6 +683,12 @@ impl PluginHost {
                     Some((key.clone(), bytes.to_vec()))
                 }
             })
+            .chain(
+                self.unavailable_states
+                    .iter()
+                    .filter(|(key, _)| !self.records.contains_key(*key))
+                    .filter_map(|(key, state)| Some((key.clone(), state.as_binary()?.to_vec()))),
+            )
             .collect()
     }
 
@@ -952,5 +1027,85 @@ mod tests {
             None,
             "no staged blob → no state applied (empty record)"
         );
+    }
+
+    fn internal_manifest(id: &str) -> PluginManifest {
+        PluginManifest {
+            format: DeviceFormat::Internal,
+            ..manifest_with_sidechain(id, 0)
+        }
+    }
+
+    fn stage(host: &mut PluginHost, instance_key: &str, blob: &[u8]) {
+        let mut staged = HashMap::new();
+        staged.insert(instance_key.to_string(), blob.to_vec());
+        host.set_pending_state_blobs(staged);
+    }
+
+    fn saved_blob(host: &PluginHost, instance_key: &str) -> Option<Vec<u8>> {
+        host.collect_plugin_states()
+            .into_iter()
+            .find(|(key, _)| key == instance_key)
+            .map(|(_, bytes)| bytes)
+    }
+
+    #[test]
+    fn missing_effect_keeps_its_state_for_the_next_save() {
+        let mut host = PluginHost::new();
+        stage(&mut host, "fx-missing", &[7, 7, 7]);
+        assert!(host.instantiate(NodeId(1), "fx-missing", "clap:not-installed", false).is_err());
+        host.clear_pending_state_blobs();
+
+        assert_eq!(saved_blob(&host, "fx-missing"), Some(vec![7, 7, 7]));
+    }
+
+    #[test]
+    fn missing_instrument_keeps_its_state_across_recompiles() {
+        let mut host = PluginHost::new();
+        stage(&mut host, "instrument:t1", &[1, 2, 3]);
+        assert!(host.instantiate_instrument("instrument:t1", "clap:not-installed").is_err());
+        host.clear_pending_state_blobs();
+        assert!(host.instantiate_instrument("instrument:t1", "clap:not-installed").is_err());
+
+        assert_eq!(saved_blob(&host, "instrument:t1"), Some(vec![1, 2, 3]));
+    }
+
+    #[test]
+    fn removed_placement_drops_the_kept_state() {
+        let mut host = PluginHost::new();
+        stage(&mut host, "fx-missing", &[7]);
+        let _ = host.instantiate(NodeId(1), "fx-missing", "clap:not-installed", false);
+        host.clear_pending_state_blobs();
+
+        host.retain_devices(&HashSet::new());
+        assert_eq!(saved_blob(&host, "fx-missing"), None);
+    }
+
+    #[test]
+    fn switching_to_another_missing_plugin_drops_the_old_state() {
+        let mut host = PluginHost::new();
+        stage(&mut host, "instrument:t1", &[1, 2, 3]);
+        let _ = host.instantiate_instrument("instrument:t1", "clap:first");
+        host.clear_pending_state_blobs();
+
+        let _ = host.instantiate_instrument("instrument:t1", "clap:second");
+        assert_eq!(saved_blob(&host, "instrument:t1"), None);
+    }
+
+    #[test]
+    fn plugin_found_later_gets_its_kept_state_back() {
+        let mut host = PluginHost::new();
+        stage(&mut host, "fx0", &[4, 5, 6]);
+        assert!(host.instantiate(NodeId(1), "fx0", "test:late", false).is_err());
+        host.clear_pending_state_blobs();
+
+        host.registry_mut().add(internal_manifest("test:late"));
+        host.instantiate(NodeId(2), "fx0", "test:late", false)
+            .expect("plugin is now available");
+
+        let restored = host.save_device_state("test:late").expect("device is instantiated");
+        assert_eq!(restored.as_binary(), Some([4u8, 5, 6].as_slice()));
+        assert_eq!(saved_blob(&host, "fx0"), Some(vec![4, 5, 6]), "saved once, from the live record");
+        assert_eq!(host.collect_plugin_states().len(), 1);
     }
 }

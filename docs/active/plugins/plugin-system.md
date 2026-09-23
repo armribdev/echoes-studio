@@ -235,7 +235,18 @@ races the audio thread's `process()` (ADR-010); restore stages it by
 re-instantiation (e.g. a terminal instance rebuilt, or a non-reuse-safe format)
 carries the previous instance's state forward via `PluginInstance::restore_from`
 (same plugin type only), so settings survive a rebuild and not just a project
-reload (R-4). Projects saved before ADR-017 carry a legacy
+reload (R-4).
+
+**Missing plugins keep their state (2026-09-23).** When a placement's plugin
+fails to load (not installed, failed to instantiate — effect or instrument),
+the host keeps that placement's last known state in `unavailable_states`: the
+project-load blob, or what an earlier failed attempt kept. `collect_plugin_states`
+saves it unchanged, so saving a project with a missing plugin no longer erases
+its preset. If the plugin loads later in the session, `restore_state_for`
+applies the kept state. The kept state is dropped when the placement is removed
+(`retain_devices`) or switched to a different plugin. Before this fix, the save
+harvested only live instances and silently discarded the state of every missing
+plugin. Projects saved before ADR-017 carry a legacy
 `plugin_state_blobs` map keyed by `device_id`; `AppProject::from_file` maps those
 onto the matching placements (C-4 backward compat), and new saves stop writing the
 legacy field.

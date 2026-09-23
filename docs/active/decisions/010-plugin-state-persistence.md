@@ -62,7 +62,9 @@ had no concrete stream to pass.
    pre-4b save loads with an empty map → previous behaviour). On save the live
    state is harvested from the host before serialisation; on load it is **staged
    on the host and applied during instantiation** (before any node is published
-   to the audio thread). Base64 (a ~40-line self-contained RFC 4648 codec in
+   to the audio thread). _Amended 2026-09-23:_ a placement whose plugin fails to
+   load keeps its blob in the host (`unavailable_states`) and is saved
+   unchanged; see `plugins/plugin-system.md` §Per-instance persistence. Base64 (a ~40-line self-contained RFC 4648 codec in
    `state.rs`, round-trip tested) keeps large synth chunks compact and adds no
    dependency.
 
