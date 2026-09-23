@@ -62,7 +62,7 @@ fn main() {
                             // after ECHOES_DEBUG_PROJECT auto-load).
                             {
                                 let state = app.state::<AppState>();
-                                recompile_audio_graph(&state);
+                                recompile_audio_graph(app.handle(), &state);
                             }
                         }
                         Err(e) => eprintln!("[debug] Échec chargement {path_str}: {e}"),
@@ -218,6 +218,7 @@ fn main() {
             get_audio_clip_duration,
             get_project,
             list_plugins,
+            get_unavailable_plugins,
             scan_plugins,
             open_plugin_editor,
             close_plugin_editor,
@@ -301,7 +302,7 @@ fn apply_loaded_project(
     // Without this the scheduler stays at the empty-project state and produces
     // silence even though the UI shows the correct tracks and clips.  The staged
     // plugin state is consumed here, during instantiation.
-    recompile_audio_graph(state);
+    recompile_audio_graph(app, state);
 
     // Drop the staged blobs: they have been applied; a later structural recompile
     // must not re-apply this loaded state over the instance's live state.
@@ -333,7 +334,7 @@ fn handle_menu_event(app: &tauri::AppHandle, menu_id: &str) {
             if let Ok(mut p) = state.project_path.lock() {
                 *p = None;
             }
-            recompile_audio_graph(&state);
+            recompile_audio_graph(&app, &state);
             state
                 .dirty
                 .store(false, std::sync::atomic::Ordering::Relaxed);
@@ -593,13 +594,30 @@ fn list_plugins(
 }
 
 /// Re-scan plugin directories on demand (e.g. after installing a new plugin).
+/// Recompiles afterwards so a plugin installed since the project was opened
+/// loads right away instead of staying unavailable.
 #[tauri::command]
 fn scan_plugins(
+    app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
 ) -> Result<Vec<plugin_system::host::PluginInfo>, String> {
-    let mut engine = state.audio_engine.lock().map_err(|e| e.to_string())?;
-    engine.plugin_host.scan_plugins();
-    Ok(engine.plugin_host.list_plugins())
+    let list = {
+        let mut engine = state.audio_engine.lock().map_err(|e| e.to_string())?;
+        engine.plugin_host.scan_plugins();
+        engine.plugin_host.list_plugins()
+    };
+    recompile_audio_graph(&app, &state);
+    Ok(list)
+}
+
+/// Placements whose plugin could not be loaded; updates arrive through the
+/// `plugin-availability` event after every recompile.
+#[tauri::command]
+fn get_unavailable_plugins(
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<plugin_system::host::UnavailablePlugin>, String> {
+    let engine = state.audio_engine.lock().map_err(|e| e.to_string())?;
+    Ok(engine.plugin_host.unavailable_plugins())
 }
 
 /// Full project snapshot for initial frontend hydration.
@@ -1067,9 +1085,9 @@ fn apply_audio_settings(
     if needs_restart {
         let init_project = AppProject::new();
         if let Ok(mut engine) = state.audio_engine.lock() {
-            engine.start_stream_with_settings(&init_project, app, &settings)?;
+            engine.start_stream_with_settings(&init_project, app.clone(), &settings)?;
         }
-        recompile_audio_graph(&state);
+        recompile_audio_graph(&app, &state);
     } else {
         if let Ok(engine) = state.audio_engine.lock() {
             engine.set_active_output_channels(settings.output_channels as usize);
@@ -1090,10 +1108,6 @@ fn set_active_output_channels(count: u16, state: tauri::State<'_, AppState>) {
 
 /// Recompile the audio graph and push the new scheduler to the audio thread.
 /// Must be called outside any held Mutex locks (canonical lock order: project → engine).
-fn recompile_audio_graph(state: &tauri::State<'_, AppState>) {
-    if let Ok(project) = state.project.lock() {
-        if let Ok(mut engine) = state.audio_engine.lock() {
-            engine.update_from_project(&project);
-        }
-    }
+fn recompile_audio_graph(app: &tauri::AppHandle, state: &tauri::State<'_, AppState>) {
+    engine_gateway::api::recompile_if_needed(app, state);
 }

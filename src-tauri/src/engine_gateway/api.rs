@@ -99,7 +99,7 @@ pub fn send_batch(
         })
         .collect();
 
-    recompile_if_needed(&state);
+    recompile_if_needed(&app, &state);
     crate::menu_state::refresh_menu(&app, &state);
 
     Ok(results)
@@ -258,7 +258,7 @@ fn finish_history_step(
     }
 
     rebuild_project_from_store(state)?;
-    recompile_if_needed(state);
+    recompile_if_needed(app, state);
 
     let snapshot_val = project_dto_json(state)?;
     let engine_event = EngineEvent::new(ev::PROJECT_RESET, "", snapshot_val.clone());
@@ -335,7 +335,7 @@ fn commit_project_change(
     let engine_ev = EngineEvent::new(event_type, ctx.project_id, engine_payload);
     emit_engine_event(ctx.app, &engine_ev);
     if recompile {
-        recompile_if_needed(ctx.state);
+        recompile_if_needed(ctx.app, ctx.state);
     }
     Ok(ok_single_event(ctx.command_id.clone(), &engine_ev))
 }
@@ -356,7 +356,7 @@ fn commit_recompile_before_emit(
     payload: Value,
 ) -> Result<CommandResult, String> {
     append_and_maybe_snapshot(ctx.state, ProjectEvent::new(event_type, payload.clone()))?;
-    recompile_if_needed(ctx.state);
+    recompile_if_needed(ctx.app, ctx.state);
     let engine_ev = EngineEvent::new(event_type, ctx.project_id, payload);
     emit_engine_event(ctx.app, &engine_ev);
     Ok(ok_single_event(ctx.command_id.clone(), &engine_ev))
@@ -1125,7 +1125,7 @@ fn process_command(
             let engine_ev = snapshot_emit(&ctx, ev::EFFECT_UPDATED, event_payload)?;
 
             if !structural && !apply_hot_effect_update(state, &p.effect_id, &hot) {
-                recompile_if_needed(state);
+                recompile_if_needed(app, state);
             }
 
             Ok(ok_single_event(ctx.command_id.clone(), &engine_ev))
@@ -2250,20 +2250,24 @@ fn apply_events(
     Ok(project)
 }
 
-/// Lock order: project → engine. Reversing causes AB-BA deadlock with the offline render path.
-fn recompile_if_needed(state: &tauri::State<'_, AppState>) {
-    let compile_done = if let Ok(project) = state.project.lock() {
-        if let Ok(mut engine) = state.audio_engine.lock() {
+/// Recompiles the audio graph, then tells the UI which plugins could not be
+/// loaded.  Lock order: project → engine. Reversing causes AB-BA deadlock with
+/// the offline render path.
+pub fn recompile_if_needed(app: &tauri::AppHandle, state: &tauri::State<'_, AppState>) {
+    let unavailable = match (state.project.lock(), state.audio_engine.lock()) {
+        (Ok(project), Ok(mut engine)) => {
             engine.update_from_project(&project);
-            true
-        } else {
-            false
+            Some(engine.plugin_host.unavailable_plugins())
         }
-    } else {
-        false
+        _ => None,
     };
 
-    if !compile_done {
-        eprintln!("[audio] Recompilation ignorée : verrous non disponibles");
+    match unavailable {
+        Some(list) => {
+            let _ = app.emit(PLUGIN_AVAILABILITY_EVENT, list);
+        }
+        None => eprintln!("[audio] Recompilation ignorée : verrous non disponibles"),
     }
 }
+
+pub const PLUGIN_AVAILABILITY_EVENT: &str = "plugin-availability";

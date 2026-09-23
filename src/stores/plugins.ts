@@ -1,5 +1,6 @@
-import { writable, derived } from 'svelte/store';
+import { writable, derived, readable } from 'svelte/store';
 import { invoke } from '@tauri-apps/api/core';
+import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 
 export interface PluginInfo {
 	id: string;
@@ -60,4 +61,50 @@ export function filteredPlugins(query: string) {
 			)
 			.sort((a, b) => a.name.localeCompare(b.name));
 	});
+}
+
+export type UnavailableReason = 'not_installed' | 'unsupported_format' | 'load_failed';
+
+export interface UnavailablePlugin {
+	/** Effect id, or `instrument:{trackId}` for a track's instrument. */
+	instance_key: string;
+	plugin_id: string;
+	reason: UnavailableReason;
+}
+
+export const UNAVAILABLE_REASON_LABEL: Record<UnavailableReason, string> = {
+	not_installed: 'Introuvable',
+	unsupported_format: 'Format non pris en charge',
+	load_failed: 'Échec du chargement',
+};
+
+/** Plugins the engine could not load, keyed by instance key. */
+export const unavailablePlugins = readable<Map<string, UnavailablePlugin>>(new Map(), (set) => {
+	const apply = (list: UnavailablePlugin[]) => set(new Map(list.map((p) => [p.instance_key, p])));
+	let unlisten: UnlistenFn | null = null;
+	let stopped = false;
+	let eventReceived = false;
+	listen<UnavailablePlugin[]>('plugin-availability', ({ payload }) => {
+		eventReceived = true;
+		apply(payload);
+	}).then((fn) => {
+		if (stopped) fn();
+		else unlisten = fn;
+	});
+	invoke<UnavailablePlugin[]>('get_unavailable_plugins')
+		.then((list) => {
+			// A newer pushed list wins over this initial query.
+			if (!eventReceived) apply(list);
+		})
+		.catch((e) => console.error('[plugins] get_unavailable_plugins failed:', e));
+	return () => {
+		stopped = true;
+		unlisten?.();
+	};
+});
+
+/** Readable fallback name when the plugin is not in the scanned list, e.g. `clap:com.u-he.Diva` → `Diva`. */
+export function pluginDisplayName(pluginId: string): string {
+	const bare = pluginId.replace(/^[a-z0-9]+:/i, '');
+	return bare.split('.').pop() || bare;
 }

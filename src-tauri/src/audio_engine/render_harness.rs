@@ -336,3 +336,25 @@ fn renders_match_golden_hashes() {
         .collect();
     assert!(mismatches.is_empty(), "golden render changed:\n{}", mismatches.join("\n"));
 }
+
+#[test]
+fn missing_instrument_plugin_is_silent_and_reported() {
+    let mut track = midi_track();
+    track.effects.clear();
+    track.instrument = Some("clap:not-installed".into());
+    let project = project_with(vec![track]);
+
+    let live_params = LiveParams::new();
+    let mut host = PluginHost::new();
+    let (left, right) = render_project_in_blocks(&project, &live_params, &mut host, SAMPLE_RATE, 512)
+        .expect("project must render");
+
+    assert!(
+        left.iter().chain(&right).all(|s| *s == 0.0),
+        "a missing instrument must not be replaced by another sound"
+    );
+    let unavailable = host.unavailable_plugins();
+    assert_eq!(unavailable.len(), 1);
+    assert_eq!(unavailable[0].instance_key, "instrument:midi");
+    assert_eq!(unavailable[0].reason, crate::plugin_system::host::UnavailableReason::NotInstalled);
+}

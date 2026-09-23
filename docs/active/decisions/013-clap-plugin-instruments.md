@@ -122,7 +122,13 @@ thread.
 
 ## Known risk — surfaced 2026-06-03 (architecture review), not yet closed
 
-1. **Silent `PolySynth` fallback is a fidelity hazard.** A saved project whose
+1. **Silent `PolySynth` fallback is a fidelity hazard.** _Resolved 2026-09-23:_
+   a chosen instrument that fails to load now becomes a `SilentInstrument`
+   (the track is muted, never re-voiced). The host reports it through
+   `PluginHost::unavailable_plugins` and the `plugin-availability` event, and
+   the instrument panel shows the reason with a retry button. `PolySynth` is
+   used only when no instrument is chosen. The instrument picker offers CLAP
+   instruments only until VST3i lands. Original text: A saved project whose
    CLAP synth fails to instantiate (missing DLL, version mismatch) plays a
    `PolySynth` **silently** — the render is wrong with no signal to the user.
    Robust against crashing, but "your instrument was substituted without telling

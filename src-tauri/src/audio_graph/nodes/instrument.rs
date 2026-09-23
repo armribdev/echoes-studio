@@ -39,6 +39,25 @@ pub trait InstrumentDevice: Send + 'static {
     fn reset(&mut self);
 }
 
+/// Stands in for an instrument plugin that could not be loaded: the track stays
+/// silent instead of playing a different sound.  The scheduler clears the
+/// output buffers before `process`, so doing nothing yields silence.
+pub struct SilentInstrument;
+
+impl InstrumentDevice for SilentInstrument {
+    fn prepare(&mut self, _sample_rate: f32, _max_block_size: usize, _num_channels: usize) {}
+
+    fn process_midi(
+        &mut self,
+        _events: &MidiEventList,
+        _outputs: &mut [AudioBuffer],
+        _transport: &TransportInfo,
+    ) {
+    }
+
+    fn reset(&mut self) {}
+}
+
 pub struct InstrumentNode {
     id: NodeId,
     /// All notes for this instrument, in any order.

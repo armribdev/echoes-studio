@@ -24,6 +24,8 @@ use std::collections::{HashMap, HashSet};
 use std::ptr::NonNull;
 use std::sync::Arc;
 
+use serde::Serialize;
+
 use crate::audio_graph::node::{AudioNode, NodeId};
 use crate::audio_graph::nodes::clap_instrument::ClapInstrument;
 use crate::audio_graph::nodes::instrument::InstrumentDevice;
@@ -45,6 +47,7 @@ pub enum HostError {
     PluginNotFound(String),
     LifecycleError(LifecycleError),
     InstantiationFailed(String),
+    UnsupportedFormat(String),
     ParameterNotFound(String),
 }
 
@@ -55,9 +58,44 @@ impl std::fmt::Display for HostError {
             HostError::PluginNotFound(id) => write!(f, "plugin not in registry: {id}"),
             HostError::LifecycleError(e) => write!(f, "lifecycle error: {e}"),
             HostError::InstantiationFailed(e) => write!(f, "instantiation failed: {e}"),
+            HostError::UnsupportedFormat(e) => write!(f, "unsupported format: {e}"),
             HostError::ParameterNotFound(k) => write!(f, "parameter not found: {k}"),
         }
     }
+}
+
+/// Why a placement's plugin could not be loaded; shown to the user.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum UnavailableReason {
+    NotInstalled,
+    UnsupportedFormat,
+    LoadFailed,
+}
+
+impl UnavailableReason {
+    fn from_error(error: &HostError) -> Self {
+        match error {
+            HostError::PluginNotFound(_) => Self::NotInstalled,
+            HostError::UnsupportedFormat(_) => Self::UnsupportedFormat,
+            _ => Self::LoadFailed,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct UnavailablePlugin {
+    pub instance_key: String,
+    pub plugin_id: String,
+    pub reason: UnavailableReason,
+}
+
+/// A placement whose plugin failed to load.  `state` is kept verbatim so a save
+/// does not erase it and a later successful load restores it.
+struct UnavailablePlacement {
+    plugin_id: String,
+    reason: UnavailableReason,
+    state: Option<DeviceState>,
 }
 
 // Phase 2b: per-record `lifecycle` removed; instance atomic is the single source of truth.
@@ -72,9 +110,7 @@ pub struct PluginHost {
     records: HashMap<String, DeviceRecord>,
     /// ADR-010: blobs applied at instantiate before snapshot (project-load only).
     pending_state_blobs: HashMap<String, Vec<u8>>,
-    /// State of placements whose plugin failed to load, kept verbatim so a save
-    /// does not erase it and a later successful load restores it.
-    unavailable_states: HashMap<String, DeviceState>,
+    unavailable: HashMap<String, UnavailablePlacement>,
 }
 
 impl PluginHost {
@@ -83,7 +119,7 @@ impl PluginHost {
             registry: PluginRegistry::new(),
             records: HashMap::new(),
             pending_state_blobs: HashMap::new(),
-            unavailable_states: HashMap::new(),
+            unavailable: HashMap::new(),
         }
     }
 
@@ -190,9 +226,9 @@ impl PluginHost {
         sandboxed: bool,
     ) -> Result<Box<dyn AudioNode>, HostError> {
         let result = self.instantiate_placement(node_id, instance_key, plugin_id, sandboxed);
-        match result {
-            Ok(_) => self.forget_unavailable_state(instance_key),
-            Err(_) => self.keep_unavailable_state(instance_key, plugin_id),
+        match &result {
+            Ok(_) => self.mark_available(instance_key),
+            Err(error) => self.mark_unavailable(instance_key, plugin_id, UnavailableReason::from_error(error)),
         }
         result
     }
@@ -275,26 +311,49 @@ impl PluginHost {
     /// Keeps the placement's last known state while its plugin is missing: the
     /// project-load blob, or the state kept by an earlier failed attempt.  A live
     /// record, if any, is still harvested by `collect_plugin_states`.
-    fn keep_unavailable_state(&mut self, instance_key: &str, plugin_id: &str) {
+    fn mark_unavailable(&mut self, instance_key: &str, plugin_id: &str, reason: UnavailableReason) {
         let staged = self
             .pending_state_blobs
             .get(instance_key)
             .map(|bytes| DeviceState::from_binary(plugin_id, bytes.clone()));
         let kept = self
-            .unavailable_states
-            .get(instance_key)
-            .filter(|state| state.device_id == plugin_id)
+            .kept_state(instance_key, plugin_id)
             .cloned();
-        match staged.or(kept) {
-            Some(state) => {
-                self.unavailable_states.insert(instance_key.to_string(), state);
-            }
-            None => self.forget_unavailable_state(instance_key),
-        }
+        self.unavailable.insert(
+            instance_key.to_string(),
+            UnavailablePlacement {
+                plugin_id: plugin_id.to_string(),
+                reason,
+                state: staged.or(kept),
+            },
+        );
     }
 
-    fn forget_unavailable_state(&mut self, instance_key: &str) {
-        self.unavailable_states.remove(instance_key);
+    fn mark_available(&mut self, instance_key: &str) {
+        self.unavailable.remove(instance_key);
+    }
+
+    fn kept_state(&self, instance_key: &str, plugin_id: &str) -> Option<&DeviceState> {
+        self.unavailable
+            .get(instance_key)
+            .filter(|placement| placement.plugin_id == plugin_id)?
+            .state
+            .as_ref()
+    }
+
+    /// Placements whose plugin is currently not loaded, sorted by `instance_key`.
+    pub fn unavailable_plugins(&self) -> Vec<UnavailablePlugin> {
+        let mut list: Vec<UnavailablePlugin> = self
+            .unavailable
+            .iter()
+            .map(|(instance_key, placement)| UnavailablePlugin {
+                instance_key: instance_key.clone(),
+                plugin_id: placement.plugin_id.clone(),
+                reason: placement.reason,
+            })
+            .collect();
+        list.sort_by(|a, b| a.instance_key.cmp(&b.instance_key));
+        list
     }
 
     /// Decide and apply the state a freshly-created instance for `instance_key`
@@ -321,11 +380,7 @@ impl PluginHost {
             let _ = instance.load_state_blob(bytes);
             return DeviceState::from_binary(plugin_id, bytes.clone());
         }
-        if let Some(state) = self
-            .unavailable_states
-            .get(instance_key)
-            .filter(|state| state.device_id == plugin_id)
-        {
+        if let Some(state) = self.kept_state(instance_key, plugin_id) {
             if let Some(bytes) = state.as_binary() {
                 let _ = instance.load_state_blob(bytes);
                 return state.clone();
@@ -459,9 +514,9 @@ impl PluginHost {
         plugin_id: &str,
     ) -> Result<Box<dyn InstrumentDevice>, HostError> {
         let result = self.instantiate_instrument_placement(instance_key, plugin_id);
-        match result {
-            Ok(_) => self.forget_unavailable_state(instance_key),
-            Err(_) => self.keep_unavailable_state(instance_key, plugin_id),
+        match &result {
+            Ok(_) => self.mark_available(instance_key),
+            Err(error) => self.mark_unavailable(instance_key, plugin_id, UnavailableReason::from_error(error)),
         }
         result
     }
@@ -512,7 +567,7 @@ impl PluginHost {
                 );
                 Ok(Box::new(ClapInstrument::new(instance)))
             }
-            other => Err(HostError::InstantiationFailed(format!(
+            other => Err(HostError::UnsupportedFormat(format!(
                 "instrument format {other:?} not supported yet (CLAP only in Phase 5c)"
             ))),
         }
@@ -623,7 +678,7 @@ impl PluginHost {
             }
             keep
         });
-        self.unavailable_states
+        self.unavailable
             .retain(|instance_key, _| active.contains(instance_key));
     }
 
@@ -684,10 +739,12 @@ impl PluginHost {
                 }
             })
             .chain(
-                self.unavailable_states
+                self.unavailable
                     .iter()
                     .filter(|(key, _)| !self.records.contains_key(*key))
-                    .filter_map(|(key, state)| Some((key.clone(), state.as_binary()?.to_vec()))),
+                    .filter_map(|(key, placement)| {
+                        Some((key.clone(), placement.state.as_ref()?.as_binary()?.to_vec()))
+                    }),
             )
             .collect()
     }

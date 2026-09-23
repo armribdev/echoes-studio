@@ -622,7 +622,7 @@ impl GraphCompiler {
         match kind {
             NodeKind::Instrument { track_id } => {
                 use crate::audio_graph::midi::MidiNoteSnapshot;
-                use crate::audio_graph::nodes::instrument::{InstrumentDevice, InstrumentNode};
+                use crate::audio_graph::nodes::instrument::{InstrumentDevice, InstrumentNode, SilentInstrument};
                 use crate::audio_graph::nodes::poly_synth::PolySynth;
 
                 let mut notes: Vec<MidiNoteSnapshot> = Vec::new();
@@ -652,7 +652,9 @@ impl GraphCompiler {
                     instrument_id = track.instrument.as_deref();
                 }
 
-                // Phase 5c: CLAP instrument or PolySynth fallback; key `instrument:{track_id}`.
+                // Phase 5c: CLAP instrument, built-in PolySynth when none is chosen.
+                // A chosen plugin that fails to load stays silent (the host reports
+                // it as unavailable) rather than being swapped for another sound.
                 let instr_key = format!("instrument:{track_id}");
                 let device: Box<dyn InstrumentDevice> = match instrument_id {
                     Some(device_id) => match plugin_host
@@ -660,10 +662,8 @@ impl GraphCompiler {
                     {
                         Ok(dev) => dev,
                         Err(e) => {
-                            eprintln!(
-                                "[audio] Instrument '{device_id}' instantiation failed ({e}) — PolySynth utilisé"
-                            );
-                            Box::new(PolySynth::new())
+                            eprintln!("[audio] Instrument '{device_id}' unavailable ({e}) — track silent");
+                            Box::new(SilentInstrument)
                         }
                     },
                     None => Box::new(PolySynth::new()),

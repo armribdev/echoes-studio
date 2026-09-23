@@ -1,7 +1,15 @@
 <script lang="ts">
 	import PluginPicker from './PluginPicker.svelte';
 	import type { PluginInfo } from '../stores/plugins';
-	import { loadPlugins, plugins } from '../stores/plugins';
+	import {
+		loadPlugins,
+		plugins,
+		pluginDisplayName,
+		rescanPlugins,
+		unavailablePlugins,
+		UNAVAILABLE_REASON_LABEL,
+		type UnavailableReason,
+	} from '../stores/plugins';
 	import { invoke } from '@tauri-apps/api/core';
 	import { setTrackInstrument } from '../frontend/commands/dispatcher';
 	import { notify } from '../stores/status';
@@ -32,9 +40,35 @@
 		? $plugins.find((p) => p.id === instrument)
 		: null;
 
+	$: unavailable = instrument ? $unavailablePlugins.get(editorKey) : undefined;
+
 	$: label = activePlugin
 		? activePlugin.name
-		: 'PolySynth (intégré)';
+		: instrument
+			? pluginDisplayName(instrument)
+			: 'PolySynth (intégré)';
+
+	$: canOpenEditor = !!instrument && !!activePlugin && !unavailable;
+
+	const UNAVAILABLE_HELP: Record<UnavailableReason, string> = {
+		not_installed:
+			"Ce plugin n'est pas installé sur cet ordinateur : la piste est muette. Ses réglages sont conservés. Réinstallez-le puis réessayez, ou choisissez un autre instrument.",
+		unsupported_format:
+			"Echoes ne sait pas encore utiliser ce format comme instrument : la piste est muette. Choisissez un instrument CLAP.",
+		load_failed:
+			"Le plugin n'a pas pu démarrer : la piste est muette. Ses réglages sont conservés.",
+	};
+
+	let retrying = false;
+
+	async function handleRetry() {
+		retrying = true;
+		try {
+			await rescanPlugins();
+		} finally {
+			retrying = false;
+		}
+	}
 
 	async function handlePick(p: PluginInfo) {
 		showPicker = false;
@@ -62,7 +96,7 @@
 	}
 
 	async function handleToggleEditor() {
-		if (!instrument || !activePlugin) return;
+		if (!canOpenEditor || !instrument || !activePlugin) return;
 		try {
 			if (editorOpen) {
 				await invoke('close_plugin_editor', { effectId: editorKey });
@@ -108,15 +142,20 @@
 		</button>
 	</div>
 
-	<div class="instr-slot">
-		<span class="instr-name" title={label}>{label}</span>
+	<div class="instr-slot" class:unavailable>
+		<span class="instr-name" title={instrument ?? label}>{label}</span>
+		{#if unavailable}
+			<span class="missing-badge" title={UNAVAILABLE_HELP[unavailable.reason]}>
+				{UNAVAILABLE_REASON_LABEL[unavailable.reason]}
+			</span>
+		{/if}
 		{#if activePlugin}
 			<span
 				class="fmt-badge"
 				style:background={FORMAT_COLOR[activePlugin.format] ?? '#555'}
 			>{activePlugin.format}</span>
 		{/if}
-		{#if instrument && activePlugin}
+		{#if canOpenEditor}
 			<button
 				class="gui-btn"
 				class:active={editorOpen}
@@ -130,7 +169,18 @@
 		{/if}
 	</div>
 
-	{#if !compact && instrument && activePlugin}
+	{#if unavailable}
+		<div class="missing-row">
+			{#if !compact}
+				<p class="missing-help">{UNAVAILABLE_HELP[unavailable.reason]}</p>
+			{/if}
+			{#if unavailable.reason !== 'unsupported_format'}
+				<button class="retry-btn" type="button" on:click={handleRetry} disabled={retrying}>
+					{retrying ? 'Recherche…' : 'Réessayer'}
+				</button>
+			{/if}
+		</div>
+	{:else if !compact && canOpenEditor}
 		<div class="editor-row">
 			<button
 				class="open-editor-btn"
@@ -288,6 +338,60 @@
 		flex-shrink: 0;
 		&:hover {
 			color: #ff4136;
+		}
+	}
+
+	.instr-slot.unavailable .instr-name {
+		color: $text-faint;
+		text-decoration: line-through;
+	}
+
+	.missing-badge {
+		flex-shrink: 0;
+		padding: 1px 5px;
+		border: 1px solid rgba(255, 65, 54, 0.5);
+		border-radius: 3px;
+		background: rgba(255, 65, 54, 0.12);
+		color: #ff6b61;
+		font-size: 8px;
+		font-family: $font-mono;
+		font-weight: 700;
+		white-space: nowrap;
+	}
+
+	.missing-row {
+		display: flex;
+		flex-direction: column;
+		align-items: flex-start;
+		gap: 6px;
+		padding: 6px 8px 8px;
+		border-bottom: 1px solid $border-faint;
+	}
+
+	.missing-help {
+		margin: 0;
+		font-size: 9px;
+		line-height: 1.35;
+		color: $text-subtle;
+	}
+
+	.retry-btn {
+		padding: 3px 10px;
+		border: 1px solid $border-subtle;
+		border-radius: 4px;
+		background: transparent;
+		color: $text-subtle;
+		font-size: 10px;
+		font-family: $font-mono;
+		cursor: pointer;
+		&:hover:not(:disabled) {
+			background: rgba(21, 113, 255, 0.15);
+			color: $text-color;
+			border-color: rgba(21, 113, 255, 0.4);
+		}
+		&:disabled {
+			cursor: default;
+			opacity: 0.6;
 		}
 	}
 

@@ -18,6 +18,8 @@
 	$: filtered = catalog
 		.filter((p) => {
 			if (mode === 'instrument' && !(p.is_instrument ?? false)) return false;
+			// The engine can only host CLAP instruments so far (ADR-013).
+			if (mode === 'instrument' && p.format !== 'CLAP') return false;
 			if (mode === 'effect' && (p.is_instrument ?? false)) return false;
 			if (!query) return true;
 			const q = query.toLowerCase();
