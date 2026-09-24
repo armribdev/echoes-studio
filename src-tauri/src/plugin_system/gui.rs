@@ -114,12 +114,14 @@ mod user32 {
         pub fn GetWindowLongPtrW(hWnd: *mut c_void, nIndex: i32) -> isize;
         pub fn SetWindowLongPtrW(hWnd: *mut c_void, nIndex: i32, dwNewLong: isize) -> isize;
         pub fn PostMessageW(hWnd: *mut c_void, Msg: u32, wParam: usize, lParam: isize) -> i32;
-        pub fn AdjustWindowRectEx(
+        pub fn AdjustWindowRectExForDpi(
             lpRect: *mut RECT,
             dwStyle: u32,
             bMenu: i32,
             dwExStyle: u32,
+            dpi: u32,
         ) -> i32;
+        pub fn GetDpiForWindow(hWnd: *mut c_void) -> u32;
         pub fn SetWindowPos(
             hWnd: *mut c_void,
             hWndInsertAfter: *mut c_void,
@@ -147,15 +149,21 @@ mod user32 {
 const WM_NCCREATE: u32 = 0x0081;
 const WM_CLOSE: u32 = 0x0010;
 const WM_TIMER: u32 = 0x0113;
+const WM_DPICHANGED: u32 = 0x02E0;
+const USER_DEFAULT_SCREEN_DPI: u32 = 96;
 const GWLP_USERDATA: i32 = -21;
 const WS_CAPTION: u32 = 0x00C0_0000;
 const WS_SYSMENU: u32 = 0x0008_0000;
 const WS_POPUP: u32 = 0x8000_0000;
 const WS_EX_TOOLWINDOW: u32 = 0x0000_0080;
+const CONTAINER_STYLE: u32 = WS_POPUP | WS_CAPTION | WS_SYSMENU;
+const CONTAINER_EX_STYLE: u32 = WS_EX_TOOLWINDOW;
 const SW_SHOW: i32 = 5;
 const CW_USEDEFAULT: i32 = 0x8000_0000u32 as i32;
 /// SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE
 const SWP_RESIZE_ONLY: u32 = 0x0002 | 0x0004 | 0x0010;
+/// SWP_NOZORDER | SWP_NOACTIVATE
+const SWP_MOVE_AND_RESIZE: u32 = 0x0004 | 0x0010;
 const CLASS_NAME: &str = "EchoesPluginWindow";
 
 const TIMER_ID_DRAIN: usize = 1;
@@ -173,6 +181,9 @@ struct WindowUserData {
     /// Called on each `WM_TIMER` and `WM_APP_DRAIN` — drains pending
     /// main-thread tasks (CLAP `on_main_thread`).  No-op for VST3.
     tick: Box<dyn Fn()>,
+    /// Called on `WM_DPICHANGED` with the window's new DPI: hands the new
+    /// scale to the plugin and fits the window to its resulting size.
+    on_dpi_changed: Box<dyn Fn(*mut c_void, u32)>,
     /// Plugin-specific teardown (destroy GUI, destroy plugin, drop FFI Arcs).
     /// `Option` so it can be `.take()`-n out before invocation.
     cleanup: Option<Box<dyn FnOnce()>>,
@@ -222,6 +233,24 @@ unsafe extern "system" fn plugin_wnd_proc(
         CLAP_GUI_RESIZE_MESSAGE => {
             if userdata(hwnd).is_some() {
                 resize_to_client(hwnd, wparam as i32, lparam as i32);
+                return 0;
+            }
+        }
+        WM_DPICHANGED => {
+            if let Some(ud) = userdata(hwnd) {
+                // Take Windows' suggested placement on the new monitor, then
+                // let the plugin pick its exact size at the new scale.
+                let suggested = &*(lparam as *const user32::RECT);
+                user32::SetWindowPos(
+                    hwnd,
+                    null_mut(),
+                    suggested.left,
+                    suggested.top,
+                    suggested.right - suggested.left,
+                    suggested.bottom - suggested.top,
+                    SWP_MOVE_AND_RESIZE,
+                );
+                (ud.on_dpi_changed)(hwnd, (wparam & 0xFFFF) as u32);
                 return 0;
             }
         }
@@ -298,32 +327,20 @@ unsafe fn create_container(
 ) -> Result<*mut c_void, String> {
     ensure_class_registered();
 
-    let style = WS_POPUP | WS_CAPTION | WS_SYSMENU;
-    let ex_style = WS_EX_TOOLWINDOW;
-
-    // Expand from desired client size to window size (title bar + borders)
-    let mut wr = user32::RECT {
-        left: 0,
-        top: 0,
-        right: client_w.max(200),
-        bottom: client_h.max(100),
-    };
-    user32::AdjustWindowRectEx(&mut wr, style, 0, ex_style);
-    let ww = wr.right - wr.left;
-    let wh = wr.bottom - wr.top;
-
     let title_w = wto16(title);
     let class_w = wto16(CLASS_NAME);
 
+    // Created at zero size: the frame thickness depends on the DPI of the
+    // monitor the window lands on, only known once the HWND exists.
     let hwnd = user32::CreateWindowExW(
-        ex_style,
+        CONTAINER_EX_STYLE,
         class_w.as_ptr(),
         title_w.as_ptr(),
-        style,
+        CONTAINER_STYLE,
         CW_USEDEFAULT,
         CW_USEDEFAULT,
-        ww,
-        wh,
+        0,
+        0,
         null_mut(),
         null_mut(),
         user32::GetModuleHandleW(std::ptr::null()),
@@ -331,25 +348,40 @@ unsafe fn create_container(
     );
 
     if hwnd.is_null() {
-        Err("Win32 CreateWindowExW failed for plugin container".into())
-    } else {
-        Ok(hwnd)
+        return Err("Win32 CreateWindowExW failed for plugin container".into());
+    }
+    resize_to_client(hwnd, client_w, client_h);
+    Ok(hwnd)
+}
+
+fn window_dpi(hwnd: *mut c_void) -> u32 {
+    match unsafe { user32::GetDpiForWindow(hwnd) } {
+        0 => USER_DEFAULT_SCREEN_DPI,
+        dpi => dpi,
     }
 }
 
-/// Resize the window so the *client* area matches the given dimensions.
-/// Called from the host-side resize handlers (CLAP `host_gui.request_resize`,
-/// VST3 `IPlugFrame::resizeView`).
+fn scale_for_dpi(dpi: u32) -> f64 {
+    dpi as f64 / USER_DEFAULT_SCREEN_DPI as f64
+}
+
+/// Resize the window so the *client* area matches the given dimensions
+/// (physical pixels).  Called from the host-side resize handlers (CLAP
+/// `host_gui.request_resize`, VST3 `IPlugFrame::resizeView`).
 unsafe fn resize_to_client(hwnd: *mut c_void, client_w: i32, client_h: i32) {
-    let style = WS_POPUP | WS_CAPTION | WS_SYSMENU;
-    let ex_style = WS_EX_TOOLWINDOW;
     let mut wr = user32::RECT {
         left: 0,
         top: 0,
         right: client_w.max(200),
         bottom: client_h.max(100),
     };
-    user32::AdjustWindowRectEx(&mut wr, style, 0, ex_style);
+    user32::AdjustWindowRectExForDpi(
+        &mut wr,
+        CONTAINER_STYLE,
+        0,
+        CONTAINER_EX_STYLE,
+        window_dpi(hwnd),
+    );
     user32::SetWindowPos(
         hwnd,
         null_mut(),
@@ -368,12 +400,28 @@ unsafe fn show_and_start_timer(hwnd: *mut c_void) {
     user32::SetTimer(hwnd, TIMER_ID_DRAIN, TIMER_INTERVAL_MS, null_mut());
 }
 
-use crate::plugin_formats::clap::ffi::ClapPlugin;
+use crate::plugin_formats::clap::ffi::{ClapGuiExtension, ClapPlugin};
+
+/// Hands the monitor scale to the plugin (a plugin that reads the DPI itself
+/// ignores it), then fits the window to the size it reports at that scale.
+unsafe fn fit_clap_gui_to_dpi(
+    gui: *const ClapGuiExtension,
+    plugin: *const ClapPlugin,
+    hwnd: *mut c_void,
+    dpi: u32,
+) {
+    let _ = ((*gui).set_scale)(plugin, scale_for_dpi(dpi));
+    let (mut width, mut height) = (0u32, 0u32);
+    if ((*gui).get_size)(plugin, &mut width, &mut height) {
+        resize_to_client(hwnd, width as i32, height as i32);
+    }
+}
 
 use crate::plugin_formats::vst3::ffi::{
-    FUnknown, IComponentHandlerVtbl, IHostApplicationVtbl, IPlugFrameVtbl, IPlugView, TResult,
-    Tuid, ViewRect, IID_FUNKNOWN, IID_ICOMPONENT_HANDLER, IID_IHOST_APPLICATION, IID_IPLUG_FRAME,
-    K_RESULT_FALSE, K_RESULT_OK,
+    FUnknown, IComponentHandlerVtbl, IHostApplicationVtbl, IPlugFrameVtbl, IPlugView,
+    IPlugViewContentScaleSupport, TResult, Tuid, ViewRect, IID_FUNKNOWN, IID_ICOMPONENT_HANDLER,
+    IID_IHOST_APPLICATION, IID_IPLUG_FRAME, IID_IPLUG_VIEW_CONTENT_SCALE_SUPPORT, K_RESULT_FALSE,
+    K_RESULT_OK,
 };
 
 fn tuid_eq(a: *const Tuid, b: &Tuid) -> bool {
@@ -584,6 +632,33 @@ fn make_plug_frame() -> Box<PlugFrame> {
     })
 }
 
+/// Hands the monitor scale to the view (if it supports it), then fits the
+/// window to the size the view reports at that scale.
+unsafe fn fit_vst3_view_to_dpi(view: *mut IPlugView, hwnd: *mut c_void, dpi: u32) {
+    let mut scale_support: *mut c_void = null_mut();
+    let found = ((*(*view).vtbl).query_interface)(
+        view,
+        &IID_IPLUG_VIEW_CONTENT_SCALE_SUPPORT,
+        &mut scale_support,
+    );
+    if found == K_RESULT_OK && !scale_support.is_null() {
+        let scale_support = scale_support as *mut IPlugViewContentScaleSupport;
+        let vtbl = &*(*scale_support).vtbl;
+        let _ = (vtbl.set_content_scale_factor)(scale_support, scale_for_dpi(dpi) as f32);
+        (vtbl.release)(scale_support);
+    }
+
+    let mut rect = ViewRect {
+        left: 0,
+        top: 0,
+        right: 0,
+        bottom: 0,
+    };
+    if ((*(*view).vtbl).get_size)(view, &mut rect) == K_RESULT_OK {
+        resize_to_client(hwnd, rect.right - rect.left, rect.bottom - rect.top);
+    }
+}
+
 
 /// Open a VST3 native editor window (main thread only).
 ///
@@ -707,12 +782,15 @@ pub unsafe fn open_vst3_editor(
         // now runs terminate + release on the IComponent.
     });
     let tick: Box<dyn Fn()> = Box::new(|| {});
+    let on_dpi_changed: Box<dyn Fn(*mut c_void, u32)> =
+        Box::new(move |hwnd, dpi| unsafe { fit_vst3_view_to_dpi(view, hwnd, dpi) });
 
     let userdata = Box::new(WindowUserData {
         magic: USERDATA_MAGIC,
         effect_id: effect_id.to_string(),
         open_editors: Arc::clone(&open_editors),
         tick,
+        on_dpi_changed,
         cleanup: Some(cleanup),
     });
     let userdata_raw = Box::into_raw(userdata);
@@ -739,17 +817,7 @@ pub unsafe fn open_vst3_editor(
         return Err(format!("VST3 GUI: IPlugView::attached failed: {attach_r}"));
     }
 
-    let mut rect2 = ViewRect {
-        left: 0,
-        top: 0,
-        right: probe_w,
-        bottom: probe_h,
-    };
-    if ((*(*view).vtbl).get_size)(view, &mut rect2) == K_RESULT_OK {
-        let cw = (rect2.right - rect2.left).max(100);
-        let ch = (rect2.bottom - rect2.top).max(100);
-        resize_to_client(hwnd, cw, ch);
-    }
+    fit_vst3_view_to_dpi(view, hwnd, window_dpi(hwnd));
 
     show_and_start_timer(hwnd);
 
@@ -776,9 +844,7 @@ pub unsafe fn open_clap_editor(
     effect_id: &str,
     open_editors: Arc<Mutex<HashMap<String, usize>>>,
 ) -> Result<usize, String> {
-    use crate::plugin_formats::clap::ffi::{
-        ClapGuiExtension, ClapWindow, CLAP_EXT_GUI, CLAP_WINDOW_API_WIN32,
-    };
+    use crate::plugin_formats::clap::ffi::{ClapWindow, CLAP_EXT_GUI, CLAP_WINDOW_API_WIN32};
 
     let plugin = instance
         .clap_plugin()
@@ -854,11 +920,15 @@ pub unsafe fn open_clap_editor(
         }
     });
 
+    let on_dpi_changed: Box<dyn Fn(*mut c_void, u32)> =
+        Box::new(move |hwnd, dpi| unsafe { fit_clap_gui_to_dpi(gui, plugin, hwnd, dpi) });
+
     let userdata = Box::new(WindowUserData {
         magic: USERDATA_MAGIC,
         effect_id: effect_id.to_string(),
         open_editors: Arc::clone(&open_editors),
         tick,
+        on_dpi_changed,
         cleanup: Some(cleanup),
     });
     let userdata_raw = Box::into_raw(userdata);
@@ -878,6 +948,8 @@ pub unsafe fn open_clap_editor(
     if let Some(context) = instance.clap_host_context() {
         context.set_gui_hwnd(hwnd);
     }
+
+    fit_clap_gui_to_dpi(gui, plugin, hwnd, window_dpi(hwnd));
 
     let clap_win = ClapWindow {
         api: CLAP_WINDOW_API_WIN32.as_ptr() as *const c_char,

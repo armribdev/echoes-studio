@@ -218,12 +218,12 @@ Statut : seuls les problèmes **encore présents dans le code** sont listés. Le
 - **Sévérité** : ~~critical~~ → low (résiduel CL5 uniquement)
 - **Cause probable (historique)** : modèle initial « instance audio + instance GUI séparées ».
 
-### 3.12 Plugin GUI : pas de gestion DPI
+### 3.12 Plugin GUI : pas de gestion DPI — ✅ Corrigé (2026-09-25)
 - **Référence audit** : W3 (GUI audit)
-- **Description** : Container Win32 créé sans `SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2)`. `gui.set_scale` jamais appelé.
-- **Impact réel** : sur écran 4K @ 200 % : fenêtre plugin minuscule, hit-testing décalé.
-- **Sévérité** : medium
-- **Cause probable** : feature non implémentée.
+- **Description (historique)** : `gui.set_scale` (CLAP) / `setContentScaleFactor` (VST3) jamais appelés, cadre de fenêtre calculé au DPI système.
+- **Correctif** : échelle transmise au plugin à l'ouverture et sur `WM_DPICHANGED`, cadre calculé au DPI de la fenêtre — détail dans l'audit GUI (W3).
+- **Sévérité** : ~~medium~~ → n/a
+- **Cause probable (historique)** : feature non implémentée.
 
 ### 3.13 Plugin GUI : VST3 dual-component rejetés silencieusement
 - **Référence audit** : V4 (GUI audit)
@@ -487,7 +487,8 @@ Statut : seuls les problèmes **encore présents dans le code** sont listés. Le
 ## Synthèse par sévérité
 
 > Comptage mis à jour 2026-09-25 : 3.11 et 6.3 (double instance audio/GUI)
-> corrigés depuis (ADR-016) — retirés de la colonne *critical*. Le reste du
+> corrigés depuis (ADR-016) — retirés de la colonne *critical* ; 3.12 (DPI)
+> corrigé — retiré de la colonne *medium*. Le reste du
 > tableau n'a pas été revérifié ligne par ligne dans cette passe ; d'autres
 > entrées sont probablement obsolètes aussi (voir la note en tête de fichier).
 
@@ -495,13 +496,13 @@ Statut : seuls les problèmes **encore présents dans le code** sont listés. Le
 |---------------------------------|---------:|-------:|----:|------:|
 | 1. Audio Thread Safety          | 3        | 3      | 1   | 7     |
 | 2. Architecture DSP             | 3        | 5      | 1   | 9     |
-| 3. Plugin System                | 8        | 6      | 2   | 16    |
+| 3. Plugin System                | 8        | 5      | 2   | 15    |
 | 4. Performance                  | 1        | 3      | 2   | 6     |
 | 5. Modulation / Automation      | 3        | 3      | 1   | 7     |
 | 6. UX vs Engine mismatch        | 1        | 3      | 1   | 5     |
 | 7. Latency / PDC                | 1        | 1      | 1   | 3     |
 | 8. Crash safety                 | 4        | 1      | 2   | 7     |
-| **Total**                       | **24**   | **25** | **11** | **60** |
+| **Total**                       | **24**   | **24** | **11** | **59** |
 
 ---
 

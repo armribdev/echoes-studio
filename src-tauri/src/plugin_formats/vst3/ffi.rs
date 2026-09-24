@@ -670,6 +670,30 @@ const _: () = assert!(
     "IEditControllerVtbl layout drift",
 );
 
+/// Optional `IPlugView` companion (Windows only): the host passes the monitor
+/// scale, since Win32 view sizes are in physical pixels.
+pub const IID_IPLUG_VIEW_CONTENT_SCALE_SUPPORT: Tuid = interface_iid([
+    0x65, 0xED, 0x96, 0x90, 0x8A, 0xC4, 0x45, 0x25, 0x8A, 0xAD, 0xEF, 0x7A, 0x72, 0xEA, 0x70, 0x3F,
+]);
+
+#[repr(C)]
+pub struct IPlugViewContentScaleSupport {
+    pub vtbl: *const IPlugViewContentScaleSupportVtbl,
+}
+
+#[repr(C)]
+pub struct IPlugViewContentScaleSupportVtbl {
+    pub query_interface: unsafe extern "C" fn(
+        *mut IPlugViewContentScaleSupport,
+        *const Tuid,
+        *mut *mut c_void,
+    ) -> TResult,
+    pub add_ref: unsafe extern "C" fn(*mut IPlugViewContentScaleSupport) -> u32,
+    pub release: unsafe extern "C" fn(*mut IPlugViewContentScaleSupport) -> u32,
+    pub set_content_scale_factor:
+        unsafe extern "C" fn(*mut IPlugViewContentScaleSupport, f32) -> TResult,
+}
+
 // Dual-component plugins (audit V4) expose IComponent and IEditController as two
 // distinct COM objects.  They are wired together through IConnectionPoint so the
 // processor and controller can exchange IMessage notifications.

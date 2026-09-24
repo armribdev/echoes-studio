@@ -221,6 +221,19 @@ still passes no transport).
 
 ---
 
+## Editor Windows — DPI (Windows)
+
+The process is per-monitor DPI aware v2 (set by tao at startup), and Win32
+plugin GUIs size themselves in physical pixels, so `plugin_system/gui.rs` tells
+each plugin the monitor scale (`dpi / 96`): CLAP `clap.gui.set_scale` before
+`set_parent`, VST3 `IPlugViewContentScaleSupport::setContentScaleFactor` after
+`attached` (optional interface). The window then fits the size the plugin
+reports, with the frame computed at the window's own DPI. `WM_DPICHANGED`
+(window dragged to a monitor with another scale) repeats scale → size. A
+plugin that reads the DPI itself ignores the host scale.
+
+---
+
 ## Latency Handling
 
 Plugins that introduce latency (look-ahead compressors, linear-phase EQs) must

@@ -67,9 +67,19 @@ Spec CLAP : `request_callback` peut être appelée depuis n'importe quel thread.
 
 **Correctif appliqué** : magic sentinel `USERDATA_MAGIC = 0xEC_E0_5E_50_15_00_F1_00` en tête de `WindowUserData`, validé par `userdata()` avant chaque déréférencement. `Box::from_raw` sur GWLP_USERDATA ne se fait qu'après vérification du magic.
 
-### W3 — Pas de gestion DPI ⚠️ Non corrigé
+### W3 — Pas de gestion DPI ✅ Corrigé (2026-09-25)
 
-Container créé sans `SetThreadDpiAwarenessContext(PER_MONITOR_AWARE_V2)`. Sur écran 4K @ 200% : fenêtre minuscule, hit-testing décalé. Non bloquant, à traiter indépendamment.
+Le plugin n'était jamais informé de l'échelle de l'écran (`gui.set_scale` / `setContentScaleFactor` jamais appelés) et le cadre de fenêtre était calculé au DPI système (`AdjustWindowRectEx`). Sur écran 4K @ 200% : fenêtre minuscule, hit-testing décalé.
+
+`SetThreadDpiAwarenessContext` s'est révélé inutile : tao (Tauri) met déjà le processus en `PER_MONITOR_AWARE_V2` au démarrage, donc le conteneur l'est aussi.
+
+**Correctif appliqué** ([gui.rs](../../../src-tauri/src/plugin_system/gui.rs)) :
+- DPI lu par fenêtre (`GetDpiForWindow`), cadre calculé avec `AdjustWindowRectExForDpi` (création + tout redimensionnement).
+- CLAP : `set_scale(dpi/96)` puis `get_size` → resize, **avant** `set_parent` (ordre de la spec). Un plugin qui lit le DPI lui-même renvoie `false` et l'ignore.
+- VST3 : QI de `IPlugViewContentScaleSupport` ([vst3/ffi.rs](../../../src-tauri/src/plugin_formats/vst3/ffi.rs)) → `setContentScaleFactor` après `attached`, puis `getSize` → resize. Interface optionnelle : absente = pas d'appel.
+- `WM_DPICHANGED` (fenêtre déplacée vers un écran d'une autre échelle) : placement suggéré par Windows, puis même séquence échelle → taille.
+
+À valider à la main : Vital (CLAP) et un VST3 JUCE sur écran 150–200 %, et déplacement entre deux écrans d'échelles différentes.
 
 ---
 
@@ -168,7 +178,7 @@ En pratique Tauri exécute les commandes sur tokio off-main. Aucun deadlock obse
 
 ## Plan de correction résiduel
 
-1. **W3** : `SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2)` + `gui.set_scale`.
+1. ~~**W3**~~ corrigé (2026-09-25).
 2. ~~**A1**~~ (ADR-016) et ~~**CL3**~~ (2026-09-25) corrigés. CL5 reste cosmétique : l'adresse d'une `Box` est stable tant qu'elle n'est pas réallouée.
 
 ---
