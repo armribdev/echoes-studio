@@ -134,9 +134,11 @@ TrackNode ──► TrackGainNode ──► MasterNode
 `TrackGainNode` reads volume and pan from live atomics and ramps both per
 sample. A fader or pan drag streams those atomics (`set_track_mix`) and only
 records a project event when the gesture ends, so the graph is not rebuilt.
-The fader (volume × mute × solo) ramps in dB at 4 Hz; volume modulation and
-automation ride on top of it with the faster ADR-019 smoother (12 Hz, linear),
-so an LFO on the volume keeps its full depth and sharp edges.
+The volume fader ramps in dB at 4 Hz; volume modulation and automation ride on
+top of it with the faster ADR-019 smoother (12 Hz, linear), so an LFO on the
+volume keeps its full depth and sharp edges. Mute/solo is a separate gate
+(also a 4 Hz dB ramp) applied **after** modulation, so a muted or solo'd-out
+track is silent whatever modulates its volume.
 
 Future routing (sends, buses, plugins) adds more nodes and edges without
 changing downstream stages.

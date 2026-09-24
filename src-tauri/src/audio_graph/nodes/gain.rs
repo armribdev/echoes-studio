@@ -90,6 +90,12 @@ impl SmoothedGain {
         self.smoothed
     }
 
+    /// True once a ramp has fully landed on `target` (the next step is a no-op).
+    #[inline]
+    pub(crate) fn is_settled_at(&self, target: f32) -> bool {
+        self.smoothed == target
+    }
+
     /// One sample of a decibel ramp. Once settled, returns `target_lin` exactly
     /// so a resting fader stays bit-identical.
     #[inline]

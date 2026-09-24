@@ -24,10 +24,12 @@ pub struct TrackGainNode {
     id: NodeId,
     params: Arc<TrackParams>,
     any_solo: Arc<AtomicBool>,
-    /// Fader, mute and solo: slow ramp in dB so a fast move does not click.
+    /// Volume fader: slow ramp in dB so a fast move does not click.
     fader: SmoothedGain,
     /// Volume modulation/automation on top of the fader, at ADR-019 speed.
     smoother: SmoothedGain,
+    /// Mute/solo, applied after modulation so a muted track stays silent.
+    gate: SmoothedGain,
     /// Equal-power balance, smoothed so a pan move does not step the signal.
     pan_l: SmoothedGain,
     pan_r: SmoothedGain,
@@ -41,33 +43,29 @@ impl TrackGainNode {
             any_solo,
             fader: SmoothedGain::new(0.0),
             smoother: SmoothedGain::new(0.0),
+            gate: SmoothedGain::new(1.0),
             pan_l: SmoothedGain::new(1.0),
             pan_r: SmoothedGain::new(1.0),
         };
-        let gain = node.current_gain();
-        node.fader.snap_to(gain);
-        node.smoother.snap_to(gain);
+        let volume = node.params.volume();
+        node.fader.snap_to(volume);
+        node.smoother.snap_to(volume);
+        node.gate.snap_to(node.gate_target());
         let (left, right) = balance_gains(node.params.pan());
         node.pan_l.snap_to(left);
         node.pan_r.snap_to(right);
         node
     }
 
-    /// Compute the linear gain for this block from the atomic cells.
-    ///
-    /// Logic: `volume × mute_gate × solo_gate`.
-    /// - mute_gate = 0 if muted, else 1.
-    /// - solo_gate = 1 if no track is solo'd, or this track is solo'd; else 0.
+    /// 0 when muted, or when another track is solo'd and this one is not; else 1.
     #[inline]
-    fn current_gain(&self) -> f32 {
-        let volume = self.params.volume();
-        if self.params.muted() {
-            return 0.0;
+    fn gate_target(&self) -> f32 {
+        let soloed_out = self.any_solo.load(Ordering::Relaxed) && !self.params.solo();
+        if self.params.muted() || soloed_out {
+            0.0
+        } else {
+            1.0
         }
-        if self.any_solo.load(Ordering::Relaxed) && !self.params.solo() {
-            return 0.0;
-        }
-        volume
     }
 }
 
@@ -92,10 +90,12 @@ impl AudioNode for TrackGainNode {
     }
 
     fn prepare(&mut self, ctx: PrepareContext) {
-        let gain = self.current_gain();
-        self.smoother.prepare(ctx.sample_rate, gain);
-        self.fader.prepare(ctx.sample_rate, gain);
+        let volume = self.params.volume();
+        self.smoother.prepare(ctx.sample_rate, volume);
+        self.fader.prepare(ctx.sample_rate, volume);
         self.fader.set_cutoff(ctx.sample_rate, FADER_SMOOTH_CUTOFF_HZ);
+        self.gate.prepare(ctx.sample_rate, self.gate_target());
+        self.gate.set_cutoff(ctx.sample_rate, FADER_SMOOTH_CUTOFF_HZ);
         let (left, right) = balance_gains(self.params.pan());
         self.pan_l.prepare(ctx.sample_rate, left);
         self.pan_r.prepare(ctx.sample_rate, right);
@@ -110,8 +110,19 @@ impl AudioNode for TrackGainNode {
         let input = inputs[0];
         let output = &mut outputs[0];
         let frames = transport.block_size.min(output.num_frames).min(input.num_frames);
-        let gain = self.current_gain();
-        self.smoother.process_over_fader(&mut self.fader, gain, input, output, frames);
+        let volume = self.params.volume();
+        self.smoother.process_over_fader(&mut self.fader, volume, input, output, frames);
+        let gate_target = self.gate_target();
+        // A settled open gate would multiply by exactly 1.0: skip it.
+        if !(gate_target == 1.0 && self.gate.is_settled_at(1.0)) {
+            let channels = output.num_channels;
+            for i in 0..frames {
+                let gate = self.gate.advance_db(gate_target);
+                for ch in 0..channels {
+                    output.channel_mut(ch)[i] *= gate;
+                }
+            }
+        }
         let (target_l, target_r) = balance_gains(self.params.pan());
         if output.num_channels >= 2 {
             let (out_l, out_r) = output.two_channels_mut(0, 1);
@@ -126,9 +137,10 @@ impl AudioNode for TrackGainNode {
 
     fn reset(&mut self) {
         self.reset_modulation();
-        let gain = self.current_gain();
-        self.fader.snap_to(gain);
-        self.smoother.snap_to(gain);
+        let volume = self.params.volume();
+        self.fader.snap_to(volume);
+        self.smoother.snap_to(volume);
+        self.gate.snap_to(self.gate_target());
         let (left, right) = balance_gains(self.params.pan());
         self.pan_l.snap_to(left);
         self.pan_r.snap_to(right);
@@ -221,6 +233,35 @@ mod tests {
 
         assert!(out[0] > 0.999, "fader move stepped the signal to {}", out[0]);
         assert!(out[FRAMES_13_MS - 1] > 0.3, "fader ramp is too fast: {}", out[FRAMES_13_MS - 1]);
+    }
+
+    #[test]
+    fn muted_track_stays_silent_under_volume_modulation() {
+        let live = LiveParams::new();
+        let cells = live.get_or_init_track("t", 1.0, 0.0, true, false);
+        let mut node = TrackGainNode::new(NodeId(1), cells, Arc::clone(&live.any_solo));
+        node.prepare(PrepareContext {
+            sample_rate: 48_000.0,
+            max_block_size: FRAMES_13_MS,
+            num_channels: 1,
+        });
+        node.apply_modulation(PARAM_GAIN, 1.0);
+
+        let out = render_ones(&mut node);
+
+        assert!(out.iter().all(|&s| s == 0.0), "a muted track leaked {:?}", out.iter().find(|&&s| s != 0.0));
+    }
+
+    #[test]
+    fn mute_toggle_fades_instead_of_clicking() {
+        let live = LiveParams::new();
+        let mut node = node_at_unity(&live);
+        live.set_track_muted("t", true);
+
+        let out = render_ones(&mut node);
+
+        assert!(out[0] > 0.99, "mute cut the signal to {} on the first sample", out[0]);
+        assert!(out[FRAMES_13_MS - 1] < 0.1, "mute fade is too slow: {}", out[FRAMES_13_MS - 1]);
     }
 
     #[test]

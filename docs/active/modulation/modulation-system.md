@@ -139,10 +139,11 @@ grid point, whatever the block size, so a modulated render is bit-identical
 across block sizes (offline == live, C-2). `render_harness.rs` enforces this.
 `GainNode` / `TrackGainNode` share `SmoothedGain`, a per-sample one-pole
 smoother (12 Hz) whose target switches at each grid point. It de-zippers
-modulated/automated gain. In `TrackGainNode` its base is the fader
-(volume × mute × solo), itself ramped in dB at 4 Hz to de-click fader/mute
-moves; at rest the fader contributes its exact value, so modulated renders are
-unchanged from ADR-019 (`SmoothedGain::process_over_fader`). All four internal
+modulated/automated gain. In `TrackGainNode` its base is the volume fader,
+itself ramped in dB at 4 Hz to de-click fader moves; at rest the fader
+contributes its exact value, so modulated renders are unchanged from ADR-019
+(`SmoothedGain::process_over_fader`). Mute/solo is a gate multiplied in after
+modulation, so modulation can never make a muted track audible. All four internal
 effects (`Delay`, `Compressor`, `Reverb`, `Eq`) segment their `process` loop at
 the grid points. `PanNode`/`MasterNode` are not modulation targets.
 
