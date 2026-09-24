@@ -213,9 +213,9 @@ Statut : seuls les problèmes **encore présents dans le code** sont listés. Le
 - **Référence audit** : A1 (GUI audit), CL3, CL5
 - **Description** : `open_plugin_editor` créait une **nouvelle** `ClapPlugin` / `IComponent` dans une fenêtre Win32 séparée, distincte de celle utilisée par le thread audio.
 - **Correctif appliqué** : `open_clap_editor` / `open_vst3_editor` ([gui.rs](../../../src-tauri/src/plugin_system/gui.rs)) prennent désormais l'`Arc<PluginInstance>` partagé avec le moteur audio (ADR-016, réutilisation d'instance) — plus de double instantiation. Un knob bougé dans le GUI natif agit sur l'instance réellement traitée par le thread audio.
-- **Reste ouvert (CL3, non bloquant)** : l'instance audio est créée avec un host CLAP minimal (`make_host`, sans extensions). Un plugin qui appelle `host->request_resize` (auto-resize) ou `clap.log` depuis son GUI n'a personne pour répondre — les callbacks existent (`gui.rs`) mais sont parqués (`#[allow(dead_code)]`), en attente de la Phase 4 (enrichir le host audio partagé plutôt que d'ajouter une seconde instance).
-- **CL5** (`Box<ClapHost>` sans `Pin`) : toujours non traité, sévérité low, inchangé.
-- **Sévérité** : ~~critical~~ → low (résiduel CL3/CL5 uniquement)
+- **CL3** : ✅ corrigé 2026-09-25 — chaque plugin CLAP a son `ClapHostContext` (HWND de l'éditeur, drain `request_callback`), et le host expose `clap.gui` (`request_resize`) et `clap.log`. Voir `plugins/plugin-wrapper-system.md`.
+- **CL5** (`Box<ClapHost>` sans `Pin`) : non traité, cosmétique (adresse d'une `Box` stable).
+- **Sévérité** : ~~critical~~ → low (résiduel CL5 uniquement)
 - **Cause probable (historique)** : modèle initial « instance audio + instance GUI séparées ».
 
 ### 3.12 Plugin GUI : pas de gestion DPI

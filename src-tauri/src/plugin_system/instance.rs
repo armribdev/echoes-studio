@@ -48,7 +48,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use crate::audio_graph::plugin_params::ValueModulatedParam;
-use crate::plugin_formats::clap::ffi::{ClapHost, ClapLibrary, ClapPlugin};
+use crate::plugin_formats::clap::ffi::{ClapHost, ClapHostContext, ClapLibrary, ClapPlugin};
 use crate::plugin_formats::vst3::ffi::{
     IAudioProcessor, IComponent, ProcessSetup, Vst3Library, SPEAKER_STEREO,
 };
@@ -101,12 +101,12 @@ pub enum NativeHandle {
         _lib: Arc<Vst3Library>,
     },
 
-    /// Live CLAP plugin instance.  `_host` is heap-stable for the lifetime
+    /// Live CLAP plugin instance.  `host` is heap-stable for the lifetime
     /// of `plugin` (CLAP spec: the host pointer passed to `create_plugin`
     /// must outlive the plugin).
     Clap {
         plugin: *const ClapPlugin,
-        _host: Box<ClapHost>,
+        host: Box<ClapHost>,
         _lib: Arc<ClapLibrary>,
     },
 }
@@ -331,7 +331,7 @@ impl PluginInstance {
             format: DeviceFormat::Clap,
             handle: NativeHandle::Clap {
                 plugin,
-                _host: host,
+                host,
                 _lib: lib,
             },
             lifecycle: AtomicU8::new(encode_lifecycle(LifecycleState::Created)),
@@ -664,6 +664,14 @@ impl PluginInstance {
     pub fn clap_plugin(&self) -> Option<*const ClapPlugin> {
         match &self.handle {
             NativeHandle::Clap { plugin, .. } => Some(*plugin),
+            _ => None,
+        }
+    }
+
+    /// Host state the CLAP plugin's callbacks see (editor window, drain flag).
+    pub fn clap_host_context(&self) -> Option<&ClapHostContext> {
+        match &self.handle {
+            NativeHandle::Clap { host, .. } => host.context(),
             _ => None,
         }
     }

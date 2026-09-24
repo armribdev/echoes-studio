@@ -29,7 +29,7 @@ Le raisonnement du commentaire original était inversé : Vital crashe parce qu'
 
 ## Bugs structurels (architecture)
 
-### A1 — Deux instances de plugin par effet ⚠️ Non corrigé (dette)
+### A1 — Deux instances de plugin par effet ✅ Corrigé (ADR-016 : l'éditeur réutilise l'`Arc<PluginInstance>` audio)
 
 Ni VST3 ni CLAP ne supportent ce modèle. Conséquences :
 - Aucune sync paramètres ↔ audio : un knob bougé dans le GUI n'affecte pas l'audio
@@ -130,9 +130,19 @@ const _: () = assert!(size_of::<IEditControllerVtbl>() == 18 * size_of::<usize>(
 3. `plugin.destroy` → garantit l'absence de callbacks après cette ligne
 4. Drop des captures (`shared_for_cleanup`, `host_owned`, `lib_owned`, `clap_id_owned`) — ordre de drop Rust (inverse de déclaration)
 
-### CL3 — `make_host` réinventé à chaque ouverture ⚠️ Non corrigé
+### CL3 — `make_host` réinventé à chaque ouverture ✅ Corrigé (2026-09-25)
 
-Lié à A1 (instance unique) — sera corrigé avec la refonte unifiée.
+Après A1 (instance partagée), le problème restant était l'inverse : le plugin
+gardait le host « nu » de l'instance audio, donc `request_resize` / `clap.log`
+n'avaient aucune destination, et `request_callback` passait par un HWND
+**global** unique (deux éditeurs CLAP ouverts → le premier ne recevait plus
+son `on_main_thread`).
+
+**Correctif appliqué** : `ClapHostContext` par instance derrière `host_data`
+([clap_ffi](../../../src-tauri/crates/clap_ffi/src/lib.rs)), HWND de l'éditeur
+enregistré par `open_clap_editor` ([gui.rs](../../../src-tauri/src/plugin_system/gui.rs)),
+extensions host `clap.gui` et `clap.log` exposées. Le code « parqué » de gui.rs
+a été supprimé.
 
 ### CL4 — `clap_id_c` liberé avant `destroy` ✅ Corrigé
 
@@ -159,7 +169,7 @@ En pratique Tauri exécute les commandes sur tokio off-main. Aucun deadlock obse
 ## Plan de correction résiduel
 
 1. **W3** : `SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2)` + `gui.set_scale`.
-2. **A1** : Refonte instance unique (lourde, planifier en ADR dédié).
+2. ~~**A1**~~ (ADR-016) et ~~**CL3**~~ (2026-09-25) corrigés. CL5 reste cosmétique : l'adresse d'une `Box` est stable tant qu'elle n'est pas réallouée.
 
 ---
 

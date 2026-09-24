@@ -27,18 +27,20 @@
 //!
 //! Plugins may call `host->request_callback` from *any* thread.  The callback
 //! synchronously dispatching `on_main_thread` would violate CLAP's threading
-//! contract and crash on worker-thread calls.  We instead `PostMessageW` a
-//! `WM_APP_DRAIN` to the container HWND; the main thread's WndProc drains via
-//! the same `tick` closure used by `WM_TIMER`.
+//! contract and crash on worker-thread calls.  The host instead posts
+//! `CLAP_GUI_DRAIN_MESSAGE` to the editor HWND stored in that plugin's own
+//! `ClapHostContext`; the WndProc drains via the `tick` closure.  Plugin-initiated
+//! `clap.gui` resizes arrive the same way (`CLAP_GUI_RESIZE_MESSAGE`).
 
 #![cfg(windows)]
 
 use std::collections::HashMap;
 use std::ffi::{c_char, c_void};
-use std::ptr::{null, null_mut};
+use std::ptr::null_mut;
 use std::sync::atomic::{AtomicPtr, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
+use crate::plugin_formats::clap::ffi::{CLAP_GUI_DRAIN_MESSAGE, CLAP_GUI_RESIZE_MESSAGE};
 use crate::plugin_system::instance::PluginInstance;
 
 #[allow(non_snake_case)]
@@ -145,8 +147,6 @@ mod user32 {
 const WM_NCCREATE: u32 = 0x0081;
 const WM_CLOSE: u32 = 0x0010;
 const WM_TIMER: u32 = 0x0113;
-/// `WM_APP + 1` — posted by `host->request_callback` from any thread.
-const WM_APP_DRAIN: u32 = 0x8000 + 1;
 const GWLP_USERDATA: i32 = -21;
 const WS_CAPTION: u32 = 0x00C0_0000;
 const WS_SYSMENU: u32 = 0x0008_0000;
@@ -213,11 +213,15 @@ unsafe extern "system" fn plugin_wnd_proc(
     }
 
     match msg {
-        WM_APP_DRAIN => {
+        CLAP_GUI_DRAIN_MESSAGE => {
             if let Some(ud) = userdata(hwnd) {
-                let _ = crate::plugin_formats::clap::ffi::take_clap_gui_drain();
                 (ud.tick)();
-                crate::plugin_formats::clap::ffi::rearm_clap_gui_drain();
+                return 0;
+            }
+        }
+        CLAP_GUI_RESIZE_MESSAGE => {
+            if userdata(hwnd).is_some() {
+                resize_to_client(hwnd, wparam as i32, lparam as i32);
                 return 0;
             }
         }
@@ -364,166 +368,7 @@ unsafe fn show_and_start_timer(hwnd: *mut c_void) {
     user32::SetTimer(hwnd, TIMER_ID_DRAIN, TIMER_INTERVAL_MS, null_mut());
 }
 
-// Phase 2c: the audio-side `PluginHost::instantiate_clap` builds a *bare*
-// ClapHost (see `clap::ffi::make_host`), so the plugin's create-time host
-// pointer does NOT route to the GUI HWND.  The vtable callbacks below
-// (`clap_host_request_callback`, `gui_host_get_extension`, the log + gui
-// extensions, …) are therefore parked dead-code for the audio-shared path;
-// they remain validated by review and ready for Phase 4, when the audio host
-// will be enriched with a runtime-bindable `ClapHostShared` block so the
-// plugin can reach `request_resize` / `on_main_thread` of the editor window.
-// `dead_code` is allowed on each parked item rather than the whole module so
-// we still catch genuinely dead helpers in the active code path.
-
-use crate::plugin_formats::clap::ffi::{
-    ClapHost, ClapHostGui, ClapHostLog, ClapLogSeverity, ClapPlugin, CLAP_EXT_HOST_GUI,
-    CLAP_EXT_LOG, CLAP_LOG_DEBUG, CLAP_LOG_ERROR, CLAP_LOG_FATAL, CLAP_LOG_HOST_MISBEHAVING,
-    CLAP_LOG_INFO, CLAP_LOG_PLUGIN_MISBEHAVING, CLAP_LOG_WARNING,
-};
-
-/// State shared between the CLAP host vtable callbacks (called from any thread)
-/// and the main-thread WndProc.  Lives behind an `Arc` so multiple paths can
-/// hold it without lifetime acrobatics.
-struct ClapHostShared {
-    /// Plugin pointer, written once after `create_plugin` succeeds and reset
-    /// to null at the start of cleanup so any in-flight `tick` no-ops safely.
-    plugin: AtomicPtr<ClapPlugin>,
-    /// Container HWND, written after `CreateWindowExW`; `request_callback`
-    /// posts to it.
-    host_hwnd: AtomicPtr<c_void>,
-}
-
-#[allow(dead_code)] // Phase 2c park — see section header
-unsafe extern "C" fn clap_host_request_callback(host: *const ClapHost) {
-    if host.is_null() {
-        return;
-    }
-    let data = (*host).host_data;
-    if data.is_null() {
-        return;
-    }
-    let shared = &*(data as *const ClapHostShared);
-    let hwnd = shared.host_hwnd.load(Ordering::Acquire);
-    if hwnd.is_null() {
-        return;
-    }
-    // PostMessage is thread-safe and queues into the target thread's queue —
-    // the only sound way to honour `on_main_thread`'s [main-thread] contract
-    // when `request_callback` may be invoked from a plugin worker thread.
-    user32::PostMessageW(hwnd, WM_APP_DRAIN, 0, 0);
-}
-
-#[allow(dead_code)] // Phase 2c park
-unsafe extern "C" fn clap_host_request_restart(_host: *const ClapHost) {
-    // No-op: restart requires deactivate/activate on the audio thread, which
-    // is out of scope for the GUI-only path.
-}
-
-#[allow(dead_code)] // Phase 2c park
-unsafe extern "C" fn clap_host_request_process(_host: *const ClapHost) {
-    // No-op: GUI-only instance is never activated for processing.
-}
-
-#[allow(dead_code)] // Phase 2c park
-unsafe extern "C" fn clap_host_log_log(
-    _host: *const ClapHost,
-    severity: ClapLogSeverity,
-    msg: *const c_char,
-) {
-    if msg.is_null() {
-        return;
-    }
-    let s = std::ffi::CStr::from_ptr(msg).to_string_lossy();
-    let label = match severity {
-        CLAP_LOG_DEBUG => "DBG",
-        CLAP_LOG_INFO => "INF",
-        CLAP_LOG_WARNING => "WRN",
-        CLAP_LOG_ERROR => "ERR",
-        CLAP_LOG_FATAL => "FTL",
-        CLAP_LOG_HOST_MISBEHAVING => "HOST!",
-        CLAP_LOG_PLUGIN_MISBEHAVING => "PLUG!",
-        _ => "???",
-    };
-    eprintln!("[clap.{label}] {s}");
-}
-
-#[allow(dead_code)] // Phase 2c park
-static CLAP_LOG_VTBL: ClapHostLog = ClapHostLog {
-    log: clap_host_log_log,
-};
-
-#[allow(dead_code)] // Phase 2c park
-unsafe extern "C" fn clap_host_gui_resize_hints_changed(_host: *const ClapHost) {}
-
-#[allow(dead_code)] // Phase 2c park
-unsafe extern "C" fn clap_host_gui_request_resize(host: *const ClapHost, w: u32, h: u32) -> bool {
-    if host.is_null() {
-        return false;
-    }
-    let data = (*host).host_data;
-    if data.is_null() {
-        return false;
-    }
-    let shared = &*(data as *const ClapHostShared);
-    let hwnd = shared.host_hwnd.load(Ordering::Acquire);
-    if hwnd.is_null() {
-        return false;
-    }
-    resize_to_client(hwnd, w.max(1) as i32, h.max(1) as i32);
-    true
-}
-
-#[allow(dead_code)] // Phase 2c park
-unsafe extern "C" fn clap_host_gui_request_show(_host: *const ClapHost) -> bool {
-    true
-}
-#[allow(dead_code)] // Phase 2c park
-unsafe extern "C" fn clap_host_gui_request_hide(_host: *const ClapHost) -> bool {
-    true
-}
-
-#[allow(dead_code)] // Phase 2c park
-unsafe extern "C" fn clap_host_gui_closed(host: *const ClapHost, _was_destroyed: bool) {
-    if host.is_null() {
-        return;
-    }
-    let data = (*host).host_data;
-    if data.is_null() {
-        return;
-    }
-    let shared = &*(data as *const ClapHostShared);
-    let hwnd = shared.host_hwnd.load(Ordering::Acquire);
-    if !hwnd.is_null() {
-        user32::PostMessageW(hwnd, WM_CLOSE, 0, 0);
-    }
-}
-
-#[allow(dead_code)] // Phase 2c park
-static CLAP_HOST_GUI_VTBL: ClapHostGui = ClapHostGui {
-    resize_hints_changed: clap_host_gui_resize_hints_changed,
-    request_resize: clap_host_gui_request_resize,
-    request_show: clap_host_gui_request_show,
-    request_hide: clap_host_gui_request_hide,
-    closed: clap_host_gui_closed,
-};
-
-#[allow(dead_code)] // Phase 2c park
-unsafe extern "C" fn gui_host_get_extension(
-    _host: *const ClapHost,
-    id: *const c_char,
-) -> *const c_void {
-    if id.is_null() {
-        return null();
-    }
-    let id_bytes = std::ffi::CStr::from_ptr(id).to_bytes_with_nul();
-    if id_bytes == CLAP_EXT_LOG {
-        return &CLAP_LOG_VTBL as *const _ as *const c_void;
-    }
-    if id_bytes == CLAP_EXT_HOST_GUI {
-        return &CLAP_HOST_GUI_VTBL as *const _ as *const c_void;
-    }
-    null()
-}
+use crate::plugin_formats::clap::ffi::ClapPlugin;
 
 use crate::plugin_formats::vst3::ffi::{
     FUnknown, IComponentHandlerVtbl, IHostApplicationVtbl, IPlugFrameVtbl, IPlugView, TResult,
@@ -919,17 +764,12 @@ pub unsafe fn open_vst3_editor(
 ///
 /// # Safety
 ///
-/// Must be called on the Win32 main thread.  Phase 2c: the editor reuses the
-/// audio-side ClapPlugin pointer through `instance.clap_plugin()` — closes A1
-/// of the plugin-GUI audit.  `plugin.init()` was already called by
-/// `ClapWrapperNode::prepare` during graph compile and MUST NOT be called
-/// again (CLAP spec).
-///
-/// **Known limitation (Phase 2c minimal)**: the shared plugin was created with
-/// the audio host (bare `make_host`, no extensions).  Plugins that rely on
-/// host-side callbacks (clap.gui `request_resize`, clap.log) will not see
-/// those wired here — Phase 4 will enrich the audio host with a runtime-
-/// bindable `ClapHostShared` block.
+/// Must be called on the Win32 main thread.  The editor reuses the audio-side
+/// ClapPlugin pointer through `instance.clap_plugin()` (A1 of the plugin-GUI
+/// audit).  `plugin.init()` was already called by `ClapWrapperNode::prepare`
+/// during graph compile and MUST NOT be called again (CLAP spec).  The window
+/// is registered in the instance's `ClapHostContext`, so that plugin's
+/// `request_callback` and `clap.gui` resize requests reach this window (CL3).
 pub unsafe fn open_clap_editor(
     instance: Arc<PluginInstance>,
     name: &str,
@@ -944,13 +784,12 @@ pub unsafe fn open_clap_editor(
         .clap_plugin()
         .ok_or_else(|| "CLAP GUI: shared instance has no CLAP plugin pointer".to_string())?;
 
-    // Local shared state used by `tick` so a racing teardown can stop further
-    // `on_main_thread` calls.  Not connected to the plugin's host vtable in
-    // Phase 2c (that's Phase 4 territory).
-    let shared = Arc::new(ClapHostShared {
-        plugin: AtomicPtr::new(plugin as *mut ClapPlugin),
-        host_hwnd: AtomicPtr::new(null_mut()),
-    });
+    if instance.clap_host_context().is_none() {
+        return Err("CLAP GUI: shared instance has no host context".into());
+    }
+
+    // Nulled at the start of cleanup so a racing `tick` stops calling the plugin.
+    let live_plugin = Arc::new(AtomicPtr::new(plugin as *mut ClapPlugin));
 
     let gui_raw = ((*plugin).get_extension)(plugin, CLAP_EXT_GUI.as_ptr() as *const c_char);
     if gui_raw.is_null() {
@@ -979,37 +818,39 @@ pub unsafe fn open_clap_editor(
     let _ = ((*gui).get_size)(plugin, &mut pw, &mut ph);
 
     // Cleanup order:
-    //   1. shared.plugin = null    → tick no-ops if it races
+    //   1. live_plugin = null, context hwnd = null → no more ticks or posts to this window
     //   2. gui.hide / gui.destroy  → release GUI resources only
     //                                 (plugin instance survives — owned by Arc)
-    //   3. _instance Arc drops     → if last clone, PluginInstance::Drop runs
-    //                                 plugin.destroy (CLAP spec teardown).
-    let shared_for_cleanup = Arc::clone(&shared);
-    let instance_owned = instance.clone();
+    //   3. instance Arc clones drop (here and in `tick`) → if last, PluginInstance::Drop
+    //      runs plugin.destroy (CLAP spec teardown).
+    let live_plugin_for_cleanup = Arc::clone(&live_plugin);
+    let instance_for_cleanup = Arc::clone(&instance);
     let cleanup: Box<dyn FnOnce()> = Box::new(move || {
-        // Stop tick from invoking the plugin once we start tearing down.
-        shared_for_cleanup
-            .plugin
-            .store(null_mut(), Ordering::Release);
-        crate::plugin_formats::clap::ffi::set_clap_gui_hwnd(null_mut());
+        live_plugin_for_cleanup.store(null_mut(), Ordering::Release);
+        if let Some(context) = instance_for_cleanup.clap_host_context() {
+            context.set_gui_hwnd(null_mut());
+        }
         unsafe {
             let _ = ((*gui).hide)(plugin);
             ((*gui).destroy)(plugin);
         }
-        drop(shared_for_cleanup);
-        // _instance Arc drops here — see header comment.
-        drop(instance_owned);
     });
 
-    // tick: drain on_main_thread.  Reads plugin via AtomicPtr — sees null
-    // once cleanup has begun.
-    let shared_for_tick = Arc::clone(&shared);
+    let instance_for_tick = Arc::clone(&instance);
     let tick: Box<dyn Fn()> = Box::new(move || {
-        let p = shared_for_tick.plugin.load(Ordering::Acquire);
-        if !p.is_null() {
-            unsafe {
-                ((*p).on_main_thread)(p);
-            }
+        let p = live_plugin.load(Ordering::Acquire);
+        if p.is_null() {
+            return;
+        }
+        let context = instance_for_tick.clap_host_context();
+        if let Some(context) = context {
+            context.clear_gui_drain();
+        }
+        unsafe {
+            ((*p).on_main_thread)(p);
+        }
+        if let Some(context) = context {
+            context.rearm_gui_drain();
         }
     });
 
@@ -1034,8 +875,9 @@ pub unsafe fn open_clap_editor(
     };
 
     // From this point on, ANY error path triggers cleanup via WM_CLOSE.
-    shared.host_hwnd.store(hwnd, Ordering::Release);
-    crate::plugin_formats::clap::ffi::set_clap_gui_hwnd(hwnd);
+    if let Some(context) = instance.clap_host_context() {
+        context.set_gui_hwnd(hwnd);
+    }
 
     let clap_win = ClapWindow {
         api: CLAP_WINDOW_API_WIN32.as_ptr() as *const c_char,

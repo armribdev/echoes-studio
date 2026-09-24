@@ -23,6 +23,7 @@ table for step 1 of the sync procedure.
 | `plugin_system/capabilities.rs` | `plugins/plugin-system.md`, `plugins/plugin-wrapper-system.md` | 006, 014 |
 | `plugin_system/bridge.rs`, `bridged_node.rs` | `plugins/plugin-wrapper-system.md` (sandbox) | 015 |
 | `plugin_system/gui.rs` | `plugins/plugin-wrapper-system.md`, `audits/plugin-gui-audit-2026-05-31.md` | — |
+| `crates/clap_ffi` (CLAP ABI + host callbacks/extensions) | `plugins/plugin-wrapper-system.md`, `audits/plugin-gui-audit-2026-05-31.md` | 013, 015 |
 | `plugin_system/wrapper.rs`, `plugin_formats/{vst3,au,clap,internal}/` | `plugins/plugin-wrapper-system.md` | 003, 013 |
 | `engine_gateway/{api,commands,events,store}.rs` | `architecture/state-management.md`, `threading/threading-model.md` | 002, 005 |
 | `main.rs` (save / load, unsaved-changes flag, plugin-edit watcher) | `plugins/plugin-wrapper-system.md` (unsaved-changes flag), `architecture/state-management.md` | 010 |

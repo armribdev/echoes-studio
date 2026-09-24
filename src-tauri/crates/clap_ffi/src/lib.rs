@@ -133,69 +133,113 @@ pub struct ClapHost {
     pub request_callback: unsafe extern "C" fn(*const ClapHost),
 }
 
-// No-op host callbacks — extensions not yet implemented.
 pub unsafe extern "C" fn host_request_restart(_: *const ClapHost) {}
 pub unsafe extern "C" fn host_request_process(_: *const ClapHost) {}
-pub unsafe extern "C" fn host_request_callback(_: *const ClapHost) {
-    let hwnd = CLAP_GUI_HWND.load(std::sync::atomic::Ordering::Acquire);
-    if hwnd.is_null() {
-        return;
-    }
-    // One posted drain at a time. A synth GUI can request a callback every
-    // block; posting each one floods the UI thread and crackles the audio.
-    if CLAP_GUI_DRAIN_PENDING.swap(true, std::sync::atomic::Ordering::AcqRel) {
-        return;
-    }
-    post_gui_drain(hwnd);
-}
-
-static CLAP_GUI_HWND: std::sync::atomic::AtomicPtr<std::ffi::c_void> =
-    std::sync::atomic::AtomicPtr::new(std::ptr::null_mut());
-static CLAP_GUI_DRAIN_PENDING: std::sync::atomic::AtomicBool =
-    std::sync::atomic::AtomicBool::new(false);
-
-/// `WM_APP + 1`, same value as the editor window's drain message.
-const WM_APP_DRAIN: u32 = 0x8000 + 1;
-
-/// Editor window that receives `request_callback`. Null when no CLAP GUI is open.
-pub fn set_clap_gui_hwnd(hwnd: *mut std::ffi::c_void) {
-    CLAP_GUI_HWND.store(hwnd, std::sync::atomic::Ordering::Release);
-    if hwnd.is_null() {
-        CLAP_GUI_DRAIN_PENDING.store(false, std::sync::atomic::Ordering::Release);
+pub unsafe extern "C" fn host_request_callback(host: *const ClapHost) {
+    if let Some(context) = host_context(host) {
+        context.request_gui_drain();
     }
 }
 
-/// Cleared by the editor before it runs `on_main_thread`, so a request that
-/// arrives during the drain is posted again.
-pub fn take_clap_gui_drain() -> bool {
-    CLAP_GUI_DRAIN_PENDING.swap(false, std::sync::atomic::Ordering::AcqRel)
+/// Posted to a plugin's editor window: run its `on_main_thread`.
+pub const CLAP_GUI_DRAIN_MESSAGE: u32 = 0x8000 + 1;
+/// Posted to a plugin's editor window: resize the client area to (wparam, lparam).
+pub const CLAP_GUI_RESIZE_MESSAGE: u32 = 0x8000 + 2;
+const WM_CLOSE: u32 = 0x0010;
+
+/// Per-plugin host state behind `clap_host.host_data`, owned by its `ClapHost`,
+/// so host callbacks reach the editor of the plugin that made them.
+pub struct ClapHostContext {
+    gui_hwnd: std::sync::atomic::AtomicPtr<c_void>,
+    gui_drain_pending: std::sync::atomic::AtomicBool,
 }
 
-/// If `request_callback` fired during `on_main_thread`, the coalesce skipped
-/// the post. Queue one more drain.
-pub fn rearm_clap_gui_drain() {
-    if !CLAP_GUI_DRAIN_PENDING.load(std::sync::atomic::Ordering::Acquire) {
-        return;
-    }
-    let hwnd = CLAP_GUI_HWND.load(std::sync::atomic::Ordering::Acquire);
-    if !hwnd.is_null() {
-        post_gui_drain(hwnd);
-    }
-}
-
-fn post_gui_drain(hwnd: *mut std::ffi::c_void) {
-    #[cfg(windows)]
-    unsafe {
-        unsafe extern "system" {
-            fn PostMessageW(hwnd: *mut std::ffi::c_void, msg: u32, wparam: usize, lparam: isize) -> i32;
+impl ClapHostContext {
+    fn new() -> Self {
+        Self {
+            gui_hwnd: std::sync::atomic::AtomicPtr::new(std::ptr::null_mut()),
+            gui_drain_pending: std::sync::atomic::AtomicBool::new(false),
         }
-        PostMessageW(hwnd, WM_APP_DRAIN, 0, 0);
     }
-    #[cfg(not(windows))]
-    {
-        let _ = hwnd;
+
+    /// Editor window of this plugin. Null when its editor is closed.
+    pub fn set_gui_hwnd(&self, hwnd: *mut c_void) {
+        self.gui_hwnd.store(hwnd, std::sync::atomic::Ordering::Release);
+        if hwnd.is_null() {
+            self.gui_drain_pending.store(false, std::sync::atomic::Ordering::Release);
+        }
+    }
+
+    /// Called by the editor before it runs `on_main_thread`, so a request that
+    /// arrives during the drain is posted again.
+    pub fn clear_gui_drain(&self) {
+        self.gui_drain_pending.store(false, std::sync::atomic::Ordering::Release);
+    }
+
+    /// If `request_callback` fired during `on_main_thread`, the coalesce skipped
+    /// the post. Queue one more drain.
+    pub fn rearm_gui_drain(&self) {
+        if self.gui_drain_pending.load(std::sync::atomic::Ordering::Acquire) {
+            self.post_to_gui(CLAP_GUI_DRAIN_MESSAGE, 0, 0);
+        }
+    }
+
+    fn request_gui_drain(&self) {
+        if self.gui_hwnd.load(std::sync::atomic::Ordering::Acquire).is_null() {
+            return;
+        }
+        // One posted drain at a time. A synth GUI can request a callback every
+        // block; posting each one floods the UI thread and crackles the audio.
+        if self.gui_drain_pending.swap(true, std::sync::atomic::Ordering::AcqRel) {
+            return;
+        }
+        self.post_to_gui(CLAP_GUI_DRAIN_MESSAGE, 0, 0);
+    }
+
+    /// Non-blocking from any thread. False when no editor is open.
+    fn post_to_gui(&self, message: u32, wparam: usize, lparam: isize) -> bool {
+        let hwnd = self.gui_hwnd.load(std::sync::atomic::Ordering::Acquire);
+        if hwnd.is_null() {
+            return false;
+        }
+        #[cfg(windows)]
+        unsafe {
+            #[link(name = "user32")]
+            unsafe extern "system" {
+                fn PostMessageW(hwnd: *mut c_void, msg: u32, wparam: usize, lparam: isize) -> i32;
+            }
+            PostMessageW(hwnd, message, wparam, lparam) != 0
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = (message, wparam, lparam);
+            false
+        }
     }
 }
+
+impl ClapHost {
+    pub fn context(&self) -> Option<&ClapHostContext> {
+        unsafe { (self.host_data as *const ClapHostContext).as_ref() }
+    }
+}
+
+// `host_data` is only ever null or the context allocated by `make_host`.
+impl Drop for ClapHost {
+    fn drop(&mut self) {
+        if !self.host_data.is_null() {
+            drop(unsafe { Box::from_raw(self.host_data as *mut ClapHostContext) });
+        }
+    }
+}
+
+unsafe fn host_context<'a>(host: *const ClapHost) -> Option<&'a ClapHostContext> {
+    if host.is_null() {
+        return None;
+    }
+    ((*host).host_data as *const ClapHostContext).as_ref()
+}
+
 pub unsafe extern "C" fn host_get_extension(_: *const ClapHost, id: *const c_char) -> *const c_void {
     if id.is_null() {
         return std::ptr::null();
@@ -207,7 +251,67 @@ pub unsafe extern "C" fn host_get_extension(_: *const ClapHost, id: *const c_cha
     if id == CLAP_EXT_THREAD_CHECK {
         return &HOST_THREAD_CHECK as *const ClapHostThreadCheck as *const c_void;
     }
+    if id == CLAP_EXT_HOST_GUI {
+        return &HOST_GUI as *const ClapHostGui as *const c_void;
+    }
+    if id == CLAP_EXT_LOG {
+        return &HOST_LOG as *const ClapHostLog as *const c_void;
+    }
     std::ptr::null()
+}
+
+static HOST_GUI: ClapHostGui = ClapHostGui {
+    resize_hints_changed: host_gui_resize_hints_changed,
+    request_resize: host_gui_request_resize,
+    request_show: host_gui_request_show,
+    request_hide: host_gui_request_hide,
+    closed: host_gui_closed,
+};
+
+unsafe extern "C" fn host_gui_resize_hints_changed(_: *const ClapHost) {}
+
+// Posted rather than resized in place: `request_resize` is callable from any
+// thread, and the window belongs to the Win32 UI thread.
+unsafe extern "C" fn host_gui_request_resize(host: *const ClapHost, width: u32, height: u32) -> bool {
+    host_context(host).is_some_and(|context| {
+        context.post_to_gui(CLAP_GUI_RESIZE_MESSAGE, width as usize, height as isize)
+    })
+}
+
+// The editor is embedded and always visible while open; the host cannot show or hide it on demand.
+unsafe extern "C" fn host_gui_request_show(_: *const ClapHost) -> bool {
+    false
+}
+
+unsafe extern "C" fn host_gui_request_hide(_: *const ClapHost) -> bool {
+    false
+}
+
+unsafe extern "C" fn host_gui_closed(host: *const ClapHost, _was_destroyed: bool) {
+    if let Some(context) = host_context(host) {
+        context.post_to_gui(WM_CLOSE, 0, 0);
+    }
+}
+
+static HOST_LOG: ClapHostLog = ClapHostLog { log: host_log };
+
+unsafe extern "C" fn host_log(_: *const ClapHost, severity: ClapLogSeverity, message: *const c_char) {
+    // Printing allocates and does I/O, which the audio callback must never do.
+    if message.is_null() || host_is_audio_thread(std::ptr::null()) {
+        return;
+    }
+    let label = match severity {
+        CLAP_LOG_DEBUG => "DBG",
+        CLAP_LOG_INFO => "INF",
+        CLAP_LOG_WARNING => "WRN",
+        CLAP_LOG_ERROR => "ERR",
+        CLAP_LOG_FATAL => "FTL",
+        CLAP_LOG_HOST_MISBEHAVING => "HOST!",
+        CLAP_LOG_PLUGIN_MISBEHAVING => "PLUG!",
+        _ => "???",
+    };
+    let text = std::ffi::CStr::from_ptr(message).to_string_lossy();
+    eprintln!("[clap.{label}] {text}");
 }
 
 /// `clap.thread-check` — lets a plugin stay off the message lock inside
@@ -330,6 +434,35 @@ mod host_abi_tests {
             assert!(!ext.is_null());
         }
     }
+
+    #[test]
+    fn host_exposes_gui_and_log_extensions() {
+        let host = make_host();
+        unsafe {
+            for id in [CLAP_EXT_HOST_GUI, CLAP_EXT_LOG] {
+                let ext = host_get_extension(&*host, id.as_ptr() as *const c_char);
+                assert!(!ext.is_null());
+            }
+        }
+    }
+
+    #[test]
+    fn each_host_has_its_own_context() {
+        let first = make_host();
+        let second = make_host();
+        let first_context = first.context().unwrap() as *const ClapHostContext;
+        let second_context = second.context().unwrap() as *const ClapHostContext;
+        assert_ne!(first_context, second_context);
+    }
+
+    #[test]
+    fn resize_request_is_refused_without_an_open_editor() {
+        let host = make_host();
+        unsafe {
+            assert!(!host_gui_request_resize(&*host, 640, 480));
+            assert!(!host_gui_request_resize(std::ptr::null(), 640, 480));
+        }
+    }
 }
 
 // Constant C strings for the host descriptor.
@@ -342,7 +475,7 @@ static HOST_VERSION: &[u8] = b"0.1.0\0";
 pub fn make_host() -> Box<ClapHost> {
     Box::new(ClapHost {
         clap_version: CLAP_VERSION_1,
-        host_data: std::ptr::null_mut(),
+        host_data: Box::into_raw(Box::new(ClapHostContext::new())) as *mut c_void,
         name: HOST_NAME.as_ptr() as *const c_char,
         vendor: HOST_VENDOR.as_ptr() as *const c_char,
         url: HOST_URL.as_ptr() as *const c_char,

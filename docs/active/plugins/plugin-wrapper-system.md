@@ -196,6 +196,18 @@ modulation or save. `PluginInstance::save_state_blob` flushes
 value-modulated parameters back to their base (`clap.params.flush`, under the
 FFI gate) before `clap.state.save`.
 
+**Per-instance host context (CL3, 2026-09-25).** `make_host` (`crates/clap_ffi`)
+gives every plugin its own `ClapHostContext` behind `clap_host.host_data`,
+owned and freed by that `ClapHost` (which outlives the plugin). It holds the
+plugin's editor HWND (set by `open_clap_editor`, cleared on close) and the
+`request_callback` coalescing flag, so two open CLAP editors no longer share
+one global window slot. `get_extension` also answers `clap.gui` (host side:
+`request_resize` posts `CLAP_GUI_RESIZE_MESSAGE` to that HWND and the WndProc
+resizes the container; `closed` posts `WM_CLOSE`; `request_show/hide` return
+false because the editor is embedded) and `clap.log` (stderr, dropped on the
+audio thread). All of these callbacks only post messages — nothing blocks,
+whatever thread the plugin calls from.
+
 **Transport.** Every in-process `clap_process` call (effect wrapper and
 instrument) carries a `clap_event_transport` built on the stack by
 `plugin_formats/clap/transport.rs::clap_transport_event`: tempo, position in
