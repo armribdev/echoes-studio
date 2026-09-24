@@ -758,7 +758,8 @@ impl GraphCompiler {
                     .find(|t| &t.id == track_id)
                     .map(|t| {
                         let v = (t.volume / 100.0).clamp(0.0, 2.0);
-                        (v, t.pan, t.muted, t.solo)
+                        let pan = (t.pan / 100.0).clamp(-1.0, 1.0);
+                        (v, pan, t.muted, t.solo)
                     })
                     .unwrap_or((*gain, 0.0, false, false));
                 let cells = live_params.get_or_init_track(track_id, volume, pan, muted, solo);

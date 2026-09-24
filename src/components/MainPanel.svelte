@@ -16,7 +16,7 @@
 	import { pianoRollStore } from '../stores/pianoRoll';
 	import { normalizeMidiGridBeats } from '../lib/midiGrid';
 	import { projectEventStore } from '../shared/project/eventStore';
-	import { addClip, moveClip, removeClip, updateTrack, muteTrack, soloTrack, seek, createTrack, deleteTrack, addMidiClip, moveMidiClip, removeMidiClip } from '../frontend/commands/dispatcher';
+	import { addClip, moveClip, removeClip, updateTrack, setTrackMixLive, muteTrack, soloTrack, seek, createTrack, deleteTrack, addMidiClip, moveMidiClip, removeMidiClip } from '../frontend/commands/dispatcher';
 	import { clipboard } from '../stores/clipboard';
 	import type { ClipboardEntry } from '../stores/clipboard';
 	import { get } from 'svelte/store';
@@ -1136,10 +1136,23 @@
 	function handleDragOver(event: DragEvent) { event.preventDefault(); }
 	function handleDrop(event: DragEvent) { event.preventDefault(); }
 
-	function handleVolumeRelease(trackIndex: number) {
+	function handleVolumeChange(trackIndex: number, volume: number) {
 		const track = tracks[trackIndex];
 		if (!track) return;
-		updateTrack(track.id, { name: track.name, volume: track.volume }).catch(console.error);
+		setTrackMixLive(track.id, volume, undefined);
+	}
+
+	function handlePanChange(trackIndex: number) {
+		const track = tracks[trackIndex];
+		if (!track) return;
+		setTrackMixLive(track.id, undefined, track.pan);
+	}
+
+	function handleVolumeRelease(trackIndex: number, volume: number) {
+		const track = tracks[trackIndex];
+		if (!track) return;
+		tracks[trackIndex].volume = volume;
+		updateTrack(track.id, { volume }).catch(console.error);
 	}
 
 	function handlePanRelease(trackIndex: number) {
@@ -1257,7 +1270,7 @@
 					{track}
 					selected={selectedTrackIndex === trackIndex}
 					color={TRACK_COLORS[trackIndex % TRACK_COLORS.length]}
-					bind:volume={tracks[trackIndex].volume}
+					volume={track.volume}
 					bind:pan={tracks[trackIndex].pan}
 					peakL={($trackLevels[track.id]?.[0]) ?? 0}
 					peakR={($trackLevels[track.id]?.[1]) ?? 0}
@@ -1265,7 +1278,9 @@
 					on:contextmenu={(e) => { contextMenu = { x: e.detail.clientX, y: e.detail.clientY, trackId: track.id, trackName: track.name, trackIndex }; }}
 					on:mutetoggle={() => handleMuteToggle(trackIndex)}
 					on:solotoggle={() => handleSoloToggle(trackIndex)}
-					on:volumerelease={() => handleVolumeRelease(trackIndex)}
+					on:volumechange={(e) => handleVolumeChange(trackIndex, e.detail)}
+					on:volumerelease={(e) => handleVolumeRelease(trackIndex, e.detail)}
+					on:panchange={() => handlePanChange(trackIndex)}
 					on:panrelease={() => handlePanRelease(trackIndex)}
 					on:rename={(e) => { tracks[trackIndex] = { ...tracks[trackIndex], name: e.detail.name }; tracks = tracks; updateTrack(tracks[trackIndex].id, { name: e.detail.name, volume: tracks[trackIndex].volume }).catch(console.error); }}
 				on:openpianoroll={() => {

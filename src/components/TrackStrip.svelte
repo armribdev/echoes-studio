@@ -14,13 +14,31 @@
 	export let volume: number;
 	export let pan: number;
 
+	let volDrag = false;
+	let localVolume = volume;
+	$: if (!volDrag) localVolume = volume;
+
+	function onVolumeChange(value: number) {
+		volDrag = true;
+		localVolume = value;
+		dispatch('volumechange', value);
+	}
+
+	function onVolumeRelease(value: number) {
+		volDrag = false;
+		localVolume = value;
+		dispatch('volumerelease', value);
+	}
+
 	const dispatch = createEventDispatcher<{
 		select: void;
 		contextmenu: MouseEvent;
 		mutetoggle: void;
 		solotoggle: void;
-		volumerelease: void;
+		volumerelease: number;
+		volumechange: number;
 		panrelease: void;
+		panchange: void;
 		rename: { name: string };
 		openpianoroll: void;
 	}>();
@@ -89,17 +107,19 @@
 					max={100}
 					defaultValue={0}
 					bind:value={pan}
+					on:change={() => dispatch('panchange')}
 					on:release={() => dispatch('panrelease')}
 				/>
 			</div>
 			<div class="ctrl-vol">
 				<span class="ctrl-label">VOL</span>
 				<FaderMeter
-					bind:value={volume}
+					bind:value={localVolume}
 					{peakL}
 					{peakR}
 					defaultValue={75}
-					on:release={() => dispatch('volumerelease')}
+					on:change={(e) => onVolumeChange(e.detail)}
+					on:release={(e) => onVolumeRelease(e.detail)}
 				/>
 			</div>
 		</div>

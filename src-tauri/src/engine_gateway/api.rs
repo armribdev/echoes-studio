@@ -71,6 +71,30 @@ impl CommandResult {
     }
 }
 
+/// UI pan is −100…+100. The audio thread stores −1…+1.
+fn normalize_pan(pan: f32) -> f32 {
+    (pan / 100.0).clamp(-1.0, 1.0)
+}
+
+/// Hot mix update. Writes the live atomics only — no project event, no
+/// recompile — so a fader or pan drag cannot rebuild the graph.
+#[tauri::command]
+pub fn set_track_mix(
+    state: tauri::State<'_, AppState>,
+    track_id: String,
+    volume: Option<f32>,
+    pan: Option<f32>,
+) -> Result<(), String> {
+    if let Some(vol) = volume {
+        let linear = (vol / 100.0).clamp(0.0, 2.0);
+        state.live_params.set_track_volume(&track_id, linear);
+    }
+    if let Some(pan) = pan {
+        state.live_params.set_track_pan(&track_id, normalize_pan(pan));
+    }
+    Ok(())
+}
+
 /// Send a single typed command to the engine.
 #[tauri::command]
 pub fn send_command(
@@ -762,7 +786,7 @@ fn process_command(
                 state.live_params.set_track_volume(&p.track_id, linear);
             }
             if let Some(pan) = p.pan {
-                state.live_params.set_track_pan(&p.track_id, pan);
+                state.live_params.set_track_pan(&p.track_id, normalize_pan(pan));
             }
 
             commit_same_payload(

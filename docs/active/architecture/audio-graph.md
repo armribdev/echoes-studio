@@ -125,6 +125,10 @@ directed acyclic graph (DAG). Each track becomes:
 
 ```
 TrackNode ──► TrackGainNode ──► MasterNode
+
+`TrackGainNode` reads volume and pan from live atomics and ramps both per
+sample. A fader or pan drag streams those atomics (`set_track_mix`) and only
+records a project event when the gesture ends, so the graph is not rebuilt.
 ```
 
 Future routing (sends, buses, plugins) adds more nodes and edges without

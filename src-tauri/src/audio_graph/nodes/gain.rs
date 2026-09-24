@@ -13,11 +13,17 @@ use crate::audio_graph::node::{AudioNode, NodeId, PrepareContext, TransportInfo,
 /// Derived from the sample rate only, so the ramp is block-size independent.
 const GAIN_SMOOTH_CUTOFF_HZ: f32 = 12.0;
 
+/// Track fader. Slower than the modulation smoother, and applied in dB so a
+/// loud plugin (full-scale harmonics) does not click on a fast move.
+pub(crate) const FADER_SMOOTH_CUTOFF_HZ: f32 = 4.0;
+
 /// One-pole gain smoother driven by modulation on the absolute control grid
 /// (ADR-019).  The target switches at each grid point, so the ramp depends only
 /// on absolute sample positions, never on where block boundaries fall.
 pub(crate) struct SmoothedGain {
     smoothed: f32,
+    /// Decibel state for `process_db`. Snapped to the linear gain in `prepare`.
+    db: f32,
     coeff: f32,
     /// Delta from the block start up to the first interior grid point.
     base_delta: f32,
@@ -30,6 +36,7 @@ impl SmoothedGain {
     pub(crate) fn new(initial_gain: f32) -> Self {
         Self {
             smoothed: initial_gain,
+            db: lin_to_db(initial_gain),
             coeff: 0.0,
             base_delta: 0.0,
             point_offsets: [0; MAX_CONTROL_POINTS],
@@ -39,12 +46,20 @@ impl SmoothedGain {
     }
 
     pub(crate) fn prepare(&mut self, sample_rate: f32, gain: f32) {
-        self.coeff = 1.0 - (-TAU * GAIN_SMOOTH_CUTOFF_HZ / sample_rate).exp();
-        self.smoothed = gain;
+        self.set_cutoff(sample_rate, GAIN_SMOOTH_CUTOFF_HZ);
+        self.snap_to(gain);
+    }
+
+    pub(crate) fn set_cutoff(&mut self, sample_rate: f32, cutoff_hz: f32) {
+        if sample_rate <= 0.0 {
+            return;
+        }
+        self.coeff = 1.0 - (-TAU * cutoff_hz / sample_rate).exp();
     }
 
     pub(crate) fn snap_to(&mut self, gain: f32) {
         self.smoothed = gain;
+        self.db = lin_to_db(gain);
     }
 
     pub(crate) fn clear_modulation(&mut self) {
@@ -66,6 +81,30 @@ impl SmoothedGain {
             self.point_deltas[self.point_count] = delta;
             self.point_count += 1;
         }
+    }
+
+    /// One sample of the one-pole. At target the step is exactly 0.
+    #[inline]
+    pub(crate) fn advance(&mut self, target: f32) -> f32 {
+        self.smoothed += self.coeff * (target - self.smoothed);
+        self.smoothed
+    }
+
+    /// One sample of a decibel ramp. Once settled, returns `target_lin` exactly
+    /// so a resting fader stays bit-identical.
+    #[inline]
+    pub(crate) fn advance_db(&mut self, target_lin: f32) -> f32 {
+        let target_lin = target_lin.max(0.0);
+        let target_db = lin_to_db(target_lin);
+        if (self.db - target_db).abs() < 0.01 {
+            self.db = target_db;
+            self.smoothed = target_lin;
+            return target_lin;
+        }
+        self.db += self.coeff * (target_db - self.db);
+        let gain = db_to_lin(self.db);
+        self.smoothed = gain;
+        gain
     }
 
     /// Frame-outer so the smoothed gain advances once per frame, shared across
@@ -94,6 +133,43 @@ impl SmoothedGain {
             frame = segment_end;
         }
     }
+
+    /// Same segmenting as `process`, but the ramp is in decibels.
+    pub(crate) fn process_db(&mut self, gain: f32, input: &AudioBuffer, output: &mut AudioBuffer, frames: usize) {
+        let channels = output.num_channels.min(input.num_channels);
+        let mut frame = 0;
+        for k in 0..=self.point_count {
+            let segment_end = if k < self.point_count {
+                (self.point_offsets[k] as usize).min(frames)
+            } else {
+                frames
+            };
+            if segment_end <= frame {
+                continue;
+            }
+            let delta = if k == 0 { self.base_delta } else { self.point_deltas[k - 1] };
+            let target = (gain + delta).max(0.0);
+            for i in frame..segment_end {
+                let smoothed = self.advance_db(target);
+                for ch in 0..channels {
+                    output.channel_mut(ch)[i] = input.channel(ch)[i] * smoothed;
+                }
+            }
+            frame = segment_end;
+        }
+    }
+}
+
+fn lin_to_db(gain: f32) -> f32 {
+    if gain <= 1.0e-8 {
+        -160.0
+    } else {
+        20.0 * gain.log10()
+    }
+}
+
+fn db_to_lin(db: f32) -> f32 {
+    10.0_f32.powf(db / 20.0)
 }
 
 pub struct GainNode {

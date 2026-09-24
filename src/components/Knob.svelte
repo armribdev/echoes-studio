@@ -19,7 +19,7 @@
 	$: dropCandidate = modTargetKey !== undefined && $modulationDrag !== null;
 	$: dropHover = dropCandidate && $modulationDrag?.hoverKey === modTargetKey;
 
-	const dispatch = createEventDispatcher<{ release: number }>();
+	const dispatch = createEventDispatcher<{ change: number; release: number }>();
 
 	// ── Arc geometry ──────────────────────────────────────────────────────────
 	// The knob sweeps 298.8° (≈300°), starting at 7:30 and ending at 4:30,
@@ -94,6 +94,7 @@
 
 	function applyDrag(deltaY: number): void {
 		value = clamp(startValue - ((max - min) * deltaY) / pixelRange, min, max);
+		dispatch('change', value);
 	}
 
 	function warpCursorToOrigin(): void {
@@ -161,6 +162,7 @@
 	function doubleClick(): void {
 		const reset = defaultValue !== undefined ? defaultValue : (min + max) / 2;
 		value = reset;
+		dispatch('change', value);
 		dispatch('release', value);
 	}
 

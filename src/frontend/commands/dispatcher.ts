@@ -131,6 +131,39 @@ export function deleteTrack(trackId: string): Promise<CommandResult> {
   return dispatch<DeleteTrackPayload>(cmd.DELETE_TRACK, { track_id: trackId });
 }
 
+let mixLiveFlight: Promise<void> | null = null;
+let mixLivePending: { trackId: string; volume?: number; pan?: number } | null = null;
+let mixLiveTimer: ReturnType<typeof setTimeout> | null = null;
+
+/** Stream a fader or pan move to the audio thread. Persisted later by `updateTrack`. */
+export function setTrackMixLive(trackId: string, volume?: number, pan?: number): void {
+  mixLivePending = { trackId, volume, pan };
+  if (mixLiveFlight || mixLiveTimer) return;
+  mixLiveTimer = setTimeout(() => {
+    mixLiveTimer = null;
+    const pump = (): Promise<void> => {
+      const next = mixLivePending;
+      mixLivePending = null;
+      if (!next) {
+        mixLiveFlight = null;
+        return Promise.resolve();
+      }
+      mixLiveFlight = invoke('set_track_mix', {
+        trackId: next.trackId,
+        volume: next.volume ?? null,
+        pan: next.pan ?? null,
+      })
+        .then(() => pump())
+        .catch((err) => {
+          console.error('setTrackMixLive failed:', err);
+          return pump();
+        });
+      return mixLiveFlight;
+    };
+    void pump();
+  }, 32);
+}
+
 export function updateTrack(
   trackId: string,
   changes: { name?: string; volume?: number; pan?: number },

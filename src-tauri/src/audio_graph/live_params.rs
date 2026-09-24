@@ -54,6 +54,12 @@ impl TrackParams {
         f32::from_bits(self.volume.load(Ordering::Relaxed))
     }
 
+    /// Pan position, −1 (hard left) … 0 (centre) … +1 (hard right).
+    #[inline]
+    pub fn pan(&self) -> f32 {
+        f32::from_bits(self.pan.load(Ordering::Relaxed))
+    }
+
     #[inline]
     pub fn muted(&self) -> bool {
         self.muted.load(Ordering::Relaxed)
