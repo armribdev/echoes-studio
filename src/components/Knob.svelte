@@ -2,6 +2,7 @@
 	import { createEventDispatcher, onDestroy } from 'svelte';
 	import { isTauri } from '@tauri-apps/api/core';
 	import { getCurrentWindow, LogicalPosition } from '@tauri-apps/api/window';
+	import { modulationDrag } from '../stores/modulationDrag';
 
 	export let value: number;
 	export let min: number;
@@ -12,6 +13,11 @@
 	export let color: string | undefined = undefined;
 	/** Modulator color to draw as a ring when this parameter is an active modulation target. */
 	export let modColor: string | undefined = undefined;
+	/** Modulation target key; makes this knob a drop target for dragged modulators. */
+	export let modTargetKey: string | undefined = undefined;
+
+	$: dropCandidate = modTargetKey !== undefined && $modulationDrag !== null;
+	$: dropHover = dropCandidate && $modulationDrag?.hoverKey === modTargetKey;
 
 	const dispatch = createEventDispatcher<{ release: number }>();
 
@@ -190,6 +196,10 @@
 <div
 	class="knob"
 	class:dragging
+	class:drop-candidate={dropCandidate}
+	class:drop-hover={dropHover}
+	style:--drop-color={$modulationDrag?.color}
+	data-mod-target={modTargetKey}
 	bind:this={knobEl}
 	on:pointerdown={pointerDown}
 	on:dblclick={doubleClick}
@@ -223,6 +233,16 @@
 
 		&.dragging {
 			cursor: none;
+		}
+
+		&.drop-candidate {
+			box-shadow: 0 0 0 1px color-mix(in srgb, var(--drop-color) 45%, transparent);
+		}
+
+		&.drop-hover {
+			box-shadow: 0 0 0 2px var(--drop-color);
+			background: color-mix(in srgb, var(--drop-color) 20%, transparent);
+			filter: brightness(1.4);
 		}
 	}
 

@@ -2,7 +2,9 @@
 <script lang="ts">
 	import Knob from './Knob.svelte';
 	import ModulationTargetPicker from './ModulationTargetPicker.svelte';
+	import { onDestroy } from 'svelte';
 	import { modulatorColor } from '../frontend/modulation/colors';
+	import { modulationDrag } from '../stores/modulationDrag';
 	import type { TrackEffect, ProjectModulator, ProjectModulationRoute } from '../types/global';
 	import {
 		addModulator,
@@ -123,6 +125,66 @@
 		catch (e) { notify(`Erreur suppression route : ${(e as Error)?.message ?? e}`, 'error'); }
 	}
 
+	// ── Drag a modulator onto a knob to assign it ────────────────────────────
+	const DRAG_THRESHOLD_PX = 4;
+
+	let pendingDrag: { modId: string; color: string; label: string; startX: number; startY: number } | null = null;
+	let ghost: { label: string; color: string; x: number; y: number } | null = null;
+
+	function targetKeyAt(x: number, y: number): string | null {
+		const el = document.elementFromPoint(x, y)?.closest<HTMLElement>('[data-mod-target]');
+		return el?.dataset.modTarget ?? null;
+	}
+	function handleDragStart(e: PointerEvent, modId: string, color: string, label: string) {
+		if (e.button !== 0) return;
+		e.preventDefault();
+		(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+		pendingDrag = { modId, color, label, startX: e.clientX, startY: e.clientY };
+	}
+
+	function handleDragMove(e: PointerEvent) {
+		if (!pendingDrag) return;
+		if (!ghost) {
+			const moved = Math.hypot(e.clientX - pendingDrag.startX, e.clientY - pendingDrag.startY);
+			if (moved < DRAG_THRESHOLD_PX) return;
+			pickerModulatorId = null;
+			document.body.style.cursor = 'grabbing';
+			modulationDrag.set({ modulatorId: pendingDrag.modId, color: pendingDrag.color, hoverKey: null });
+		}
+		ghost = { label: pendingDrag.label, color: pendingDrag.color, x: e.clientX, y: e.clientY };
+		const hoverKey = targetKeyAt(e.clientX, e.clientY);
+		modulationDrag.update((d) => (d && d.hoverKey !== hoverKey ? { ...d, hoverKey } : d));
+	}
+
+	function handleDragEnd(e: PointerEvent) {
+		const drag = pendingDrag;
+		const key = ghost ? targetKeyAt(e.clientX, e.clientY) : null;
+		endDrag();
+		if (drag && key) assignByKey(drag.modId, key);
+	}
+
+	function endDrag() {
+		if (ghost) document.body.style.cursor = '';
+		pendingDrag = null;
+		ghost = null;
+		modulationDrag.set(null);
+	}
+
+	function assignByKey(modId: string, key: string) {
+		const option = options.find((o) => o.key === key && o.listed);
+		if (!option) return;
+		const alreadyRouted = mod_routes.some(
+			(r) => r.modulator_id === modId && findTargetOption(options, r.target)?.key === key,
+		);
+		if (alreadyRouted) {
+			notify('Ce LFO module déjà ce réglage', 'info');
+			return;
+		}
+		handleAssign(modId, option);
+	}
+
+	onDestroy(endDrag);
+
 	async function handleDepthChange(route: ProjectModulationRoute, e: Event) {
 		const slider = parseFloat((e.currentTarget as HTMLInputElement).value);
 		try { await setModulationDepth(trackId, route.id, slider * depthScale(route, options)); }
@@ -148,7 +210,18 @@
 		<div class="slot">
 			<!-- svelte-ignore a11y-no-static-element-interactions -->
 			<div class="slot-head" style:border-left-color={color}>
-				<div class="lfo-icon" aria-hidden="true" style:color>
+				<!-- svelte-ignore a11y-no-static-element-interactions -->
+				<div
+					class="lfo-icon drag-handle"
+					class:dragging={ghost !== null && pendingDrag?.modId === mod.id}
+					aria-hidden="true"
+					style:color
+					title="Glisser sur un réglage pour l'assigner"
+					on:pointerdown={(e) => handleDragStart(e, mod.id, color, `LFO ${i + 1}`)}
+					on:pointermove={handleDragMove}
+					on:pointerup={handleDragEnd}
+					on:pointercancel={endDrag}
+				>
 					<svg width="16" height="10" viewBox="0 0 16 10" fill="none">
 						<path d="M0 5 Q2 0 4 5 Q6 10 8 5 Q10 0 12 5 Q14 10 16 5"
 							stroke="currentColor" stroke-width="1.2" fill="none" stroke-linecap="round"/>
@@ -188,7 +261,7 @@
 	</div>
 
 	{#if mod_routes.length === 0}
-		<p class="empty">{compact ? '—' : 'Aucune route — assignez un LFO à un paramètre'}</p>
+		<p class="empty">{compact ? '—' : "Aucune route — glissez l'onde d'un LFO sur un réglage"}</p>
 	{/if}
 
 	{#each mod_routes as route (route.id)}
@@ -215,6 +288,12 @@
 			</div>
 		</div>
 	{/each}
+
+	{#if ghost}
+		<div class="drag-ghost" style:left="{ghost.x + 12}px" style:top="{ghost.y + 12}px" style:background={ghost.color}>
+			{ghost.label}
+		</div>
+	{/if}
 
 </div>
 
@@ -294,6 +373,28 @@
 		width: 20px;
 		display: flex; align-items: center;
 		color: rgba(21,113,255,0.75);
+	}
+
+	.drag-handle {
+		height: 16px;
+		justify-content: center;
+		cursor: grab;
+		border-radius: 3px;
+		touch-action: none;
+		&:hover { background: color-mix(in srgb, currentColor 18%, transparent); }
+		&.dragging { cursor: grabbing; opacity: 0.5; }
+	}
+
+	.drag-ghost {
+		position: fixed;
+		z-index: 1000;
+		pointer-events: none;
+		padding: 2px 7px;
+		border-radius: 10px;
+		font-size: 9px; font-family: $font-mono; font-weight: 700;
+		color: #fff;
+		box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+		white-space: nowrap;
 	}
 
 	.slot-name {
