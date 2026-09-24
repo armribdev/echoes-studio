@@ -216,6 +216,8 @@ export interface UpdateModulatorPayload {
   release_ms?: number;
   window_ms?: number;
   mode?: 'rms' | 'peak';
+  /** `null` taps the track post-FX output. */
+  source_effect_id?: string | null;
 }
 
 export interface AddModulationRoutePayload {

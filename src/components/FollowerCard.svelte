@@ -1,17 +1,21 @@
-<!-- FollowerCard.svelte — audio follower body: level history display, RMS/peak mode, window/attack/release -->
+<!-- FollowerCard.svelte — audio follower body: level history display, source, RMS/peak mode, window/attack/release -->
 <script lang="ts">
 	import { onDestroy } from 'svelte';
 	import ModulatorCard from './ModulatorCard.svelte';
 	import ParamKnob from './ParamKnob.svelte';
 	import { trackLevels } from '../stores/trackLevels';
 	import { formatMs, kindInfo, updateModulatorOrNotify } from '../frontend/modulation/modulators';
-	import type { FollowerMode, ProjectModulator } from '../types/global';
+	import { effectGroupNames } from '../frontend/modulation/targets';
+	import type { FollowerMode, ProjectModulator, TrackEffect } from '../types/global';
 
 	export let trackId: string;
 	export let mod: ProjectModulator;
 	export let label: string;
 	export let color: string;
 	export let pickerOpen = false;
+	export let effects: TrackEffect[];
+
+	const POST_FX = '';
 
 	const MODES: { id: FollowerMode; label: string; title: string }[] = [
 		{ id: 'rms', label: 'RMS', title: 'Volume moyen (plus doux)' },
@@ -20,6 +24,9 @@
 
 	// Defaults mirror `AudioFollowerParams::default()` in the engine.
 	$: mode = mod.mode ?? 'rms';
+	$: effectNames = effectGroupNames(effects);
+	// A tap on a removed effect falls back to the post-FX output in the engine.
+	$: source = mod.source_effect_id && effectNames.has(mod.source_effect_id) ? mod.source_effect_id : POST_FX;
 	let attack = mod.attack_ms ?? 10;
 	let release = mod.release_ms ?? 100;
 
@@ -83,6 +90,20 @@
 		<span class="mod-readout">Niveau de la piste</span>
 	</div>
 
+	<label class="source">
+		<span>Écoute</span>
+		<select
+			value={source}
+			title="Point de la chaîne d'effets dont le suiveur mesure le volume"
+			on:change={(e) => update({ source_effect_id: e.currentTarget.value || null })}
+		>
+			<option value={POST_FX}>Sortie de piste</option>
+			{#each effects as effect (effect.id)}
+				<option value={effect.id}>Après {effectNames.get(effect.id)}</option>
+			{/each}
+		</select>
+	</label>
+
 	<div class="mod-controls">
 		<div class="modes" role="radiogroup" aria-label="Mode de détection">
 			{#each MODES as m (m.id)}
@@ -107,6 +128,32 @@
 </ModulatorCard>
 
 <style lang="scss">
+	@use '../variables.scss' as *;
+
+	.source {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		font-size: 9px;
+		color: $text-subtle;
+
+		select {
+			flex: 1;
+			min-width: 0;
+			height: 20px;
+			padding: 0 4px;
+			background: rgba(255, 255, 255, 0.04);
+			border: 1px solid rgba(255, 255, 255, 0.08);
+			border-radius: 4px;
+			color: #c8c8d8;
+			font-size: 10px;
+			cursor: pointer;
+
+			&:hover { background: rgba(255, 255, 255, 0.07); border-color: rgba(255, 255, 255, 0.14); }
+			&:focus { outline: none; border-color: var(--mod-color); }
+		}
+	}
+
 	.raw {
 		fill: none;
 		stroke: rgba(255, 255, 255, 0.25);

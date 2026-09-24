@@ -69,6 +69,8 @@ export interface ProjectModulator {
 	release_ms?: number;
 	window_ms?: number;
 	mode?: FollowerMode;
+	/** Follower tap: after this effect, or the track post-FX output when absent. */
+	source_effect_id?: string | null;
 }
 
 export type ModulationTargetRef =

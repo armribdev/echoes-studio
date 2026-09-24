@@ -1243,12 +1243,18 @@ fn process_command(
                 || p.sustain_level.is_some()
                 || p.release_ms.is_some()
                 || p.window_ms.is_some()
-                || p.mode.is_some();
+                || p.mode.is_some()
+                || p.source_effect_id.is_some();
             // Follower params are baked into its node at compile time (no live cells).
             let mut follower_edited = false;
             if has_update {
                 with_project_mut(state, |project| {
                     let track = require_track_mut(project, &p.track_id)?;
+                    if let Some(Some(effect_id)) = &p.source_effect_id {
+                        if !track.effects.iter().any(|e| &e.id == effect_id) {
+                            return Err(format!("Effect {} not found on track {}", effect_id, p.track_id));
+                        }
+                    }
                     if let Some(m) = track.modulators.iter_mut().find(|x| x.id == p.modulator_id) {
                         match &mut m.params {
                             crate::project::ModulatorParams::Lfo(ref mut lp) => {
@@ -1273,10 +1279,12 @@ fn process_command(
                                 if let Some(v) = p.attack_ms { fp.attack_ms = v; }
                                 if let Some(v) = p.release_ms { fp.release_ms = v; }
                                 if let Some(v) = &p.mode { fp.mode = v.clone(); }
+                                if let Some(v) = &p.source_effect_id { fp.source_effect_id = v.clone(); }
                                 follower_edited = p.window_ms.is_some()
                                     || p.attack_ms.is_some()
                                     || p.release_ms.is_some()
-                                    || p.mode.is_some();
+                                    || p.mode.is_some()
+                                    || p.source_effect_id.is_some();
                             }
                         }
                     }
@@ -1309,24 +1317,29 @@ fn process_command(
                     p.release_ms,
                 );
             }
+            let mut event = json!({
+                "track_id": p.track_id,
+                "modulator_id": p.modulator_id,
+                "rate_hz": p.rate_hz,
+                "waveform": p.waveform,
+                "tempo_sync": p.tempo_sync,
+                "beat_division": p.beat_division,
+                "value": p.value,
+                "attack_ms": p.attack_ms,
+                "decay_ms": p.decay_ms,
+                "sustain_level": p.sustain_level,
+                "release_ms": p.release_ms,
+                "window_ms": p.window_ms,
+                "mode": p.mode,
+            });
+            // Only present when edited: a `null` tap means "post-FX", not "unchanged".
+            if let Some(source) = &p.source_effect_id {
+                event["source_effect_id"] = json!(source);
+            }
             commit_same_payload(
                 &ctx,
                 ev::MODULATOR_UPDATED,
-                json!({
-                    "track_id": p.track_id,
-                    "modulator_id": p.modulator_id,
-                    "rate_hz": p.rate_hz,
-                    "waveform": p.waveform,
-                    "tempo_sync": p.tempo_sync,
-                    "beat_division": p.beat_division,
-                    "value": p.value,
-                    "attack_ms": p.attack_ms,
-                    "decay_ms": p.decay_ms,
-                    "sustain_level": p.sustain_level,
-                    "release_ms": p.release_ms,
-                    "window_ms": p.window_ms,
-                    "mode": p.mode,
-                }),
+                event,
                 p.waveform.is_some() || follower_edited,
             )
         }
@@ -2137,6 +2150,9 @@ fn apply_modulator_updated(project: &mut AppProject, payload: &Value) {
             if let Ok(mode) = serde_json::from_value::<crate::project::FollowerMode>(payload["mode"].clone()) {
                 p.mode = mode;
             }
+            if let Some(source) = payload.get("source_effect_id") {
+                p.source_effect_id = source.as_str().map(str::to_string);
+            }
         }
     }
 }
@@ -2484,6 +2500,37 @@ mod tests {
         assert_eq!(p.mode, crate::project::FollowerMode::Peak);
         assert_eq!(p.window_ms, 20.0);
         assert_eq!(p.release_ms, crate::project::AudioFollowerParams::default().release_ms);
+    }
+
+    #[test]
+    fn replayed_follower_source_is_set_cleared_or_kept() {
+        let mut project = project_with_lfo();
+        project.tracks[0].modulators[0].params =
+            ModulatorParams::AudioFollower(crate::project::AudioFollowerParams::default());
+        let source = |project: &AppProject| match &project.tracks[0].modulators[0].params {
+            ModulatorParams::AudioFollower(p) => p.source_effect_id.clone(),
+            _ => panic!("expected an audio follower"),
+        };
+
+        apply_modulator_updated(&mut project, &json!({ "track_id": "t", "modulator_id": "lfo", "source_effect_id": "eq" }));
+        assert_eq!(source(&project).as_deref(), Some("eq"));
+
+        apply_modulator_updated(&mut project, &json!({ "track_id": "t", "modulator_id": "lfo", "window_ms": 20.0 }));
+        assert_eq!(source(&project).as_deref(), Some("eq"));
+
+        apply_modulator_updated(&mut project, &json!({ "track_id": "t", "modulator_id": "lfo", "source_effect_id": null }));
+        assert_eq!(source(&project), None);
+    }
+
+    #[test]
+    fn update_modulator_payload_distinguishes_absent_and_null_source() {
+        let parse = |value: Value| serde_json::from_value::<UpdateModulatorPayload>(value).unwrap().source_effect_id;
+        assert_eq!(parse(json!({ "track_id": "t", "modulator_id": "m" })), None);
+        assert_eq!(parse(json!({ "track_id": "t", "modulator_id": "m", "source_effect_id": null })), Some(None));
+        assert_eq!(
+            parse(json!({ "track_id": "t", "modulator_id": "m", "source_effect_id": "eq" })),
+            Some(Some("eq".to_string()))
+        );
     }
 
     #[test]

@@ -239,10 +239,14 @@ modulation or automation render exactly as before ADR-019.
 | LFO | `rate_hz`, `tempo_sync`, `beat_division` (`ModulatorCells`) | `waveform` — baked into `LfoNode`; the new node restarts its phase |
 | Envelope | `attack_ms`, `decay_ms`, `sustain_level`, `release_ms` (`EnvelopeCells`) | — |
 | Macro | `value` (`MacroCells`) | — |
-| AudioFollower | — | `window_ms`, `attack_ms`, `release_ms`, `mode` — baked into `AudioFollowerNode` (ring buffer sized in `prepare`) |
+| AudioFollower | — | `window_ms`, `attack_ms`, `release_ms`, `mode` — baked into `AudioFollowerNode` (ring buffer sized in `prepare`); `source_effect_id` — rewires the follower's audio input edge |
 
 Every field is replayed from `MODULATOR_UPDATED` events (`apply_modulator_updated`).
-The follower's `source_effect_id` is not editable yet (UI always taps post-FX).
+The follower's `source_effect_id` taps the output of that effect (`null` = track
+post-FX, pre-fader). In `UPDATE_MODULATOR` an absent field leaves it unchanged
+and `null` clears it, so `MODULATOR_UPDATED` only carries the key when it was
+edited. The command rejects an id not on the track; a tap whose effect is later
+removed, or is a disabled internal effect, falls back to post-FX at compile time.
 
 **Verification:** `audio_engine/render_harness.rs` renders modulated and
 automated reference projects at several block sizes and checks them against

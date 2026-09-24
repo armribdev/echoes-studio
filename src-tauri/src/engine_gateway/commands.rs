@@ -263,6 +263,18 @@ pub struct UpdateModulatorPayload {
     pub window_ms: Option<f32>,
     /// AudioFollower detection mode.
     pub mode: Option<crate::project::FollowerMode>,
+    /// AudioFollower tap: absent = unchanged, `null` = track post-FX output, id = after that effect.
+    #[serde(default, deserialize_with = "deserialize_present")]
+    pub source_effect_id: Option<Option<String>>,
+}
+
+/// Maps a present field (even `null`) to `Some`, so "absent" and "cleared" stay distinct.
+fn deserialize_present<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    T::deserialize(deserializer).map(Some)
 }
 
 #[derive(Debug, Deserialize)]

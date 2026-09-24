@@ -109,7 +109,7 @@ export async function fetchPluginParams(placementKey: string): Promise<PluginPar
 }
 
 /** Display names of the track's effects, numbered when a kind appears twice. */
-function effectGroupNames(effects: TrackEffect[]): Map<string, string> {
+export function effectGroupNames(effects: TrackEffect[]): Map<string, string> {
   const names = new Map<string, string>();
   const seen = new Map<string, number>();
   for (const effect of effects) {

@@ -188,7 +188,7 @@
 					on:togglepicker={() => togglePicker(mod.id)}
 					on:remove={() => handleRemoveMod(mod.id)} />
 			{:else if mod.kind === 'audio_follower'}
-				<FollowerCard {...card}
+				<FollowerCard {...card} {effects}
 					on:assign={(e) => assignByKey(mod.id, e.detail)}
 					on:togglepicker={() => togglePicker(mod.id)}
 					on:remove={() => handleRemoveMod(mod.id)} />
