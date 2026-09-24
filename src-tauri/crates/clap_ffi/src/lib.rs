@@ -136,12 +136,133 @@ pub struct ClapHost {
 // No-op host callbacks — extensions not yet implemented.
 pub unsafe extern "C" fn host_request_restart(_: *const ClapHost) {}
 pub unsafe extern "C" fn host_request_process(_: *const ClapHost) {}
-pub unsafe extern "C" fn host_request_callback(_: *const ClapHost) {}
+pub unsafe extern "C" fn host_request_callback(_: *const ClapHost) {
+    let hwnd = CLAP_GUI_HWND.load(std::sync::atomic::Ordering::Acquire);
+    if hwnd.is_null() {
+        return;
+    }
+    // One posted drain at a time. A synth GUI can request a callback every
+    // block; posting each one floods the UI thread and crackles the audio.
+    if CLAP_GUI_DRAIN_PENDING.swap(true, std::sync::atomic::Ordering::AcqRel) {
+        return;
+    }
+    post_gui_drain(hwnd);
+}
+
+static CLAP_GUI_HWND: std::sync::atomic::AtomicPtr<std::ffi::c_void> =
+    std::sync::atomic::AtomicPtr::new(std::ptr::null_mut());
+static CLAP_GUI_DRAIN_PENDING: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// `WM_APP + 1`, same value as the editor window's drain message.
+const WM_APP_DRAIN: u32 = 0x8000 + 1;
+
+/// Editor window that receives `request_callback`. Null when no CLAP GUI is open.
+pub fn set_clap_gui_hwnd(hwnd: *mut std::ffi::c_void) {
+    CLAP_GUI_HWND.store(hwnd, std::sync::atomic::Ordering::Release);
+    if hwnd.is_null() {
+        CLAP_GUI_DRAIN_PENDING.store(false, std::sync::atomic::Ordering::Release);
+    }
+}
+
+/// Cleared by the editor before it runs `on_main_thread`, so a request that
+/// arrives during the drain is posted again.
+pub fn take_clap_gui_drain() -> bool {
+    CLAP_GUI_DRAIN_PENDING.swap(false, std::sync::atomic::Ordering::AcqRel)
+}
+
+/// If `request_callback` fired during `on_main_thread`, the coalesce skipped
+/// the post. Queue one more drain.
+pub fn rearm_clap_gui_drain() {
+    if !CLAP_GUI_DRAIN_PENDING.load(std::sync::atomic::Ordering::Acquire) {
+        return;
+    }
+    let hwnd = CLAP_GUI_HWND.load(std::sync::atomic::Ordering::Acquire);
+    if !hwnd.is_null() {
+        post_gui_drain(hwnd);
+    }
+}
+
+fn post_gui_drain(hwnd: *mut std::ffi::c_void) {
+    #[cfg(windows)]
+    unsafe {
+        unsafe extern "system" {
+            fn PostMessageW(hwnd: *mut std::ffi::c_void, msg: u32, wparam: usize, lparam: isize) -> i32;
+        }
+        PostMessageW(hwnd, WM_APP_DRAIN, 0, 0);
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = hwnd;
+    }
+}
 pub unsafe extern "C" fn host_get_extension(_: *const ClapHost, id: *const c_char) -> *const c_void {
-    if !id.is_null() && std::ffi::CStr::from_ptr(id).to_bytes_with_nul() == CLAP_EXT_STATE {
+    if id.is_null() {
+        return std::ptr::null();
+    }
+    let id = std::ffi::CStr::from_ptr(id).to_bytes_with_nul();
+    if id == CLAP_EXT_STATE {
         return &HOST_STATE as *const ClapHostState as *const c_void;
     }
+    if id == CLAP_EXT_THREAD_CHECK {
+        return &HOST_THREAD_CHECK as *const ClapHostThreadCheck as *const c_void;
+    }
     std::ptr::null()
+}
+
+/// `clap.thread-check` — lets a plugin stay off the message lock inside
+/// `process`. `is_main_thread` is every thread except the audio callback.
+pub const CLAP_EXT_THREAD_CHECK: &[u8] = b"clap.thread-check\0";
+
+#[repr(C)]
+pub struct ClapHostThreadCheck {
+    pub is_main_thread: unsafe extern "C" fn(*const ClapHost) -> bool,
+    pub is_audio_thread: unsafe extern "C" fn(*const ClapHost) -> bool,
+}
+
+static HOST_THREAD_CHECK: ClapHostThreadCheck = ClapHostThreadCheck {
+    is_main_thread: host_is_main_thread,
+    is_audio_thread: host_is_audio_thread,
+};
+
+static AUDIO_THREAD_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+fn current_os_thread_id() -> u64 {
+    #[cfg(windows)]
+    {
+        unsafe extern "system" {
+            fn GetCurrentThreadId() -> u32;
+        }
+        unsafe { GetCurrentThreadId() as u64 }
+    }
+    #[cfg(not(windows))]
+    {
+        // pthread_t is a pointer-sized token on the platforms we build.
+        unsafe extern "C" {
+            fn pthread_self() -> usize;
+        }
+        unsafe { pthread_self() as u64 }
+    }
+}
+
+/// Record the CPAL callback thread. `GetCurrentThreadId` does not allocate.
+pub fn set_clap_audio_thread() {
+    let id = current_os_thread_id();
+    if AUDIO_THREAD_ID.load(std::sync::atomic::Ordering::Relaxed) != id {
+        AUDIO_THREAD_ID.store(id, std::sync::atomic::Ordering::Release);
+    }
+}
+
+unsafe extern "C" fn host_is_main_thread(_: *const ClapHost) -> bool {
+    // Plugin lifecycle and `clap.params` run on the command thread; the editor
+    // runs on the Win32 thread. Both are main-thread work. Only the audio
+    // callback is not.
+    !host_is_audio_thread(std::ptr::null())
+}
+
+unsafe extern "C" fn host_is_audio_thread(_: *const ClapHost) -> bool {
+    let id = AUDIO_THREAD_ID.load(std::sync::atomic::Ordering::Acquire);
+    id != 0 && id == current_os_thread_id()
 }
 
 /// `clap_host_state` — lets a plugin report that its state changed.
@@ -193,6 +314,21 @@ mod host_abi_tests {
             offset_of!(ClapHost, request_process) < offset_of!(ClapHost, request_callback),
             "request_process must precede request_callback (CLAP ABI)"
         );
+    }
+
+    #[test]
+    fn thread_check_audio_thread_is_not_main() {
+        set_clap_audio_thread();
+        let host = make_host();
+        unsafe {
+            assert!(host_is_audio_thread(&*host));
+            assert!(!host_is_main_thread(&*host));
+            let ext = host_get_extension(
+                &*host,
+                CLAP_EXT_THREAD_CHECK.as_ptr() as *const c_char,
+            );
+            assert!(!ext.is_null());
+        }
     }
 }
 

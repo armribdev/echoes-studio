@@ -44,8 +44,8 @@ use crate::plugin_system::state::DeviceState;
 use crate::plugin_system::wrapper::{Device, DeviceInfo};
 
 use super::ffi::{
-    ClapAudioBuffer, ClapOutputEvents, ClapPlugin, ClapPluginLatency, ClapProcess,
-    CLAP_EXT_LATENCY, CLAP_PROCESS_ERROR,
+    set_clap_audio_thread, ClapAudioBuffer, ClapOutputEvents, ClapPlugin, ClapPluginLatency,
+    ClapProcess, CLAP_EXT_LATENCY, CLAP_PROCESS_ERROR,
 };
 
 // Stack context passed to the SEH trampoline — no heap allocation.
@@ -93,7 +93,7 @@ pub struct ClapWrapperNode {
     /// `clap.latency` extension; queried by the graph compiler off the audio
     /// thread through `latency_samples()`.
     reported_latency: u32,
-
+    steady_time: i64,
 }
 
 // SAFETY: see module-level doc.  CLAP pointers are reached via Arc-shared
@@ -127,6 +127,7 @@ impl ClapWrapperNode {
             num_channels: 2,
             active: false,
             crashed: false,
+            steady_time: 0,
             reported_latency: 0,
         }
     }
@@ -203,6 +204,7 @@ impl AudioNode for ClapWrapperNode {
         if self.crashed || outputs.is_empty() || !self.active {
             return;
         }
+        set_clap_audio_thread();
 
         // FFI access gate (step 1): claim exclusive access to the shared instance
         // for this block.  If an off-RT caller (state save/load, GUI) currently
@@ -218,9 +220,11 @@ impl AudioNode for ClapWrapperNode {
                 if !inputs.is_empty() {
                     outputs[0].copy_from(inputs[0]);
                 }
+                self.steady_time = self.steady_time.wrapping_add(transport.block_size as i64);
                 return;
             }
         };
+        self.instance.clap_start_processing();
 
         let nc = self.num_channels;
         let nf = transport.block_size; // real block, not MAX_BLOCK_FRAMES capacity
@@ -256,7 +260,7 @@ impl AudioNode for ClapWrapperNode {
 
         let transport_event = clap_transport_event(transport);
         let process = ClapProcess {
-            steady_time: -1,
+            steady_time: self.steady_time,
             frames_count: nf as u32,
             transport: &transport_event,
             audio_inputs: &self.in_audio_buf,
@@ -276,6 +280,7 @@ impl AudioNode for ClapWrapperNode {
             )
         };
 
+        self.steady_time = self.steady_time.wrapping_add(nf as i64);
         if status == crash_guard::CAUGHT {
             // SEH exception from the plugin: mute permanently until next recompile.
             self.crashed = true;

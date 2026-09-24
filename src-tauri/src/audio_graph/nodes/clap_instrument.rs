@@ -34,8 +34,8 @@ use crate::audio_graph::plugin_params::{PluginParamControl, PluginParamControls}
 use crate::plugin_system::instance::{PluginInstance, FFI_GATE_HARVEST_BUDGET};
 
 use crate::plugin_formats::clap::ffi::{
-    ClapAudioBuffer, ClapEventBuffer, ClapOutputEvents, ClapPlugin, ClapProcess,
-    CLAP_PROCESS_ERROR,
+    set_clap_audio_thread, ClapAudioBuffer, ClapEventBuffer, ClapOutputEvents, ClapPlugin,
+    ClapProcess, CLAP_PROCESS_ERROR,
 };
 use crate::plugin_formats::clap::params::{observe_output_event, read_clap_params, ClapParamEvents};
 use crate::plugin_formats::clap::transport::clap_transport_event;
@@ -71,6 +71,9 @@ pub struct ClapInstrument {
 
     num_channels: usize,
     active: bool,
+    /// Sample counter passed as `steady_time`. Must grow by `frames_count`
+    /// every block so GUI notes (Vital's keyboard) land on a continuous clock.
+    steady_time: i64,
 }
 
 // SAFETY: identical discipline to `ClapWrapperNode` — CLAP access is
@@ -98,6 +101,7 @@ impl ClapInstrument {
             },
             num_channels: 2,
             active: false,
+            steady_time: 0,
         }
     }
 
@@ -139,11 +143,14 @@ impl InstrumentDevice for ClapInstrument {
         if outputs.is_empty() || !self.active {
             return;
         }
+        set_clap_audio_thread();
         // Same FFI gate as the effect wrapper: while an off-RT caller (state
         // save, parameter read) holds it, this block stays silent rather than race it.
         let Some(_ffi_gate) = self.instance.rt_try_enter() else {
+            self.steady_time = self.steady_time.wrapping_add(transport.block_size as i64);
             return;
         };
+        self.instance.clap_start_processing();
 
         self.param_events.fill(&self.instance);
         push_clap_notes(events, &mut self.param_events.buffer);
@@ -172,7 +179,7 @@ impl InstrumentDevice for ClapInstrument {
 
         let transport_event = clap_transport_event(transport);
         let process = ClapProcess {
-            steady_time: -1,
+            steady_time: self.steady_time,
             frames_count: nf as u32,
             transport: &transport_event,
             audio_inputs: std::ptr::null(), // generator: no audio input bus
@@ -185,6 +192,7 @@ impl InstrumentDevice for ClapInstrument {
 
         let p = self.plugin_ptr();
         let status = unsafe { ((*p).process)(p, &process) };
+        self.steady_time = self.steady_time.wrapping_add(nf as i64);
         // On error an instrument has no input to pass through — leave the
         // scheduler-zeroed output as silence.
         let _ = status == CLAP_PROCESS_ERROR;

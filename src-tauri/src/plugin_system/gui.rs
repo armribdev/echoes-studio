@@ -213,12 +213,15 @@ unsafe extern "system" fn plugin_wnd_proc(
     }
 
     match msg {
-        WM_TIMER | WM_APP_DRAIN => {
+        WM_APP_DRAIN => {
             if let Some(ud) = userdata(hwnd) {
+                let _ = crate::plugin_formats::clap::ffi::take_clap_gui_drain();
                 (ud.tick)();
+                crate::plugin_formats::clap::ffi::rearm_clap_gui_drain();
                 return 0;
             }
         }
+        WM_TIMER => return 0,
         WM_CLOSE => {
             let ptr = user32::GetWindowLongPtrW(hwnd, GWLP_USERDATA);
             if ptr != 0 {
@@ -988,6 +991,7 @@ pub unsafe fn open_clap_editor(
         shared_for_cleanup
             .plugin
             .store(null_mut(), Ordering::Release);
+        crate::plugin_formats::clap::ffi::set_clap_gui_hwnd(null_mut());
         unsafe {
             let _ = ((*gui).hide)(plugin);
             ((*gui).destroy)(plugin);
@@ -1031,6 +1035,7 @@ pub unsafe fn open_clap_editor(
 
     // From this point on, ANY error path triggers cleanup via WM_CLOSE.
     shared.host_hwnd.store(hwnd, Ordering::Release);
+    crate::plugin_formats::clap::ffi::set_clap_gui_hwnd(hwnd);
 
     let clap_win = ClapWindow {
         api: CLAP_WINDOW_API_WIN32.as_ptr() as *const c_char,

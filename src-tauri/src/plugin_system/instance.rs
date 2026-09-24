@@ -131,6 +131,9 @@ struct ActivationState {
     /// always `false`) for VST3, whose component is initialised at creation.
     initialized: AtomicBool,
     active: AtomicBool,
+    /// `start_processing` has run on the audio thread. CLAP forbids calling it
+    /// from the command thread.
+    processing: AtomicBool,
     /// Sample rate (`f32::to_bits`) the plugin was activated at; activation is
     /// bound to it, so a config change forces deactivate + reactivate.
     sr_bits: AtomicU32,
@@ -143,6 +146,7 @@ impl ActivationState {
         ActivationState {
             initialized: AtomicBool::new(false),
             active: AtomicBool::new(false),
+            processing: AtomicBool::new(false),
             sr_bits: AtomicU32::new(0),
             block: AtomicU32::new(0),
         }
@@ -508,14 +512,34 @@ impl PluginInstance {
         }
     }
 
-    /// Idempotently bring the CLAP plugin to the active, processing state
-    /// (`init → activate → start_processing`), owned by the instance so it
-    /// survives wrapper rebuilds on recompile (ADR-016 reuse).
+    /// `init` once. Required before `clap.state` or `activate`. Command thread.
+    pub fn clap_ensure_initialized(&self) -> bool {
+        let plugin = match &self.handle {
+            NativeHandle::Clap { plugin, .. } => *plugin,
+            _ => return false,
+        };
+        let act = &self.clap_activation;
+        if act.initialized.load(Ordering::Acquire) {
+            return true;
+        }
+        unsafe {
+            if !((*plugin).init)(plugin) {
+                return false;
+            }
+        }
+        act.initialized.store(true, Ordering::Release);
+        true
+    }
+
+    /// Idempotently bring the CLAP plugin to the active state
+    /// (`init → activate`), owned by the instance so it survives wrapper
+    /// rebuilds on recompile (ADR-016 reuse). `start_processing` is deferred to
+    /// the audio thread (`clap_start_processing`).
     ///
     /// - Already active at the same `(sample_rate, max_block)` → no-op.
     /// - Already active at a different config → `stop_processing + deactivate`,
     ///   then reactivate (CLAP binds these bounds at `activate`).
-    /// - Not active → `init` (once) + `activate` + `start_processing`.
+    /// - Not active → `init` (once) + `activate`.
     ///
     /// No-op (`false`) for non-CLAP handles.  Runs on the command thread during
     /// graph prepare — never the audio thread.  Returns whether the plugin is
@@ -537,27 +561,42 @@ impl PluginInstance {
             // Config changed — tear the processing/active state down before
             // re-activating with the new bounds.
             unsafe {
-                ((*plugin).stop_processing)(plugin);
+                if act.processing.swap(false, Ordering::AcqRel) {
+                    ((*plugin).stop_processing)(plugin);
+                }
                 ((*plugin).deactivate)(plugin);
             }
             act.active.store(false, Ordering::Release);
         }
 
+        if !self.clap_ensure_initialized() {
+            return false;
+        }
         unsafe {
-            if !act.initialized.load(Ordering::Acquire) {
-                if !((*plugin).init)(plugin) {
-                    return false;
-                }
-                act.initialized.store(true, Ordering::Release);
-            }
             let ok = ((*plugin).activate)(plugin, sample_rate as f64, 1, max_block);
             if ok {
-                ((*plugin).start_processing)(plugin);
                 act.sr_bits.store(sr_bits, Ordering::Relaxed);
                 act.block.store(max_block, Ordering::Relaxed);
                 act.active.store(true, Ordering::Release);
             }
             ok
+        }
+    }
+
+    /// `start_processing` once, on the audio thread, before the first `process`.
+    pub fn clap_start_processing(&self) {
+        let plugin = match &self.handle {
+            NativeHandle::Clap { plugin, .. } => *plugin,
+            _ => return,
+        };
+        let act = &self.clap_activation;
+        if !act.active.load(Ordering::Acquire) || act.processing.swap(true, Ordering::AcqRel) {
+            return;
+        }
+        unsafe {
+            if !((*plugin).start_processing)(plugin) {
+                act.processing.store(false, Ordering::Release);
+            }
         }
     }
 
@@ -734,7 +773,9 @@ impl Drop for PluginInstance {
                     // wrappers no longer stop/deactivate in their own `Drop`,
                     // so the instance does it once, before `destroy`.
                     if self.clap_activation.active.load(Ordering::Acquire) {
-                        ((*p).stop_processing)(p);
+                        if self.clap_activation.processing.load(Ordering::Acquire) {
+                            ((*p).stop_processing)(p);
+                        }
                         ((*p).deactivate)(p);
                     }
                     ((*p).destroy)(p);

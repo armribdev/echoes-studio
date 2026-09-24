@@ -124,6 +124,20 @@ impl XrunStats {
     }
 }
 
+/// WASAPI delivers the callback on a normal-priority thread. A synth GUI (Vital)
+/// preempts it and the block arrives late, heard as crackling. One call, no alloc.
+fn raise_audio_thread_priority() {
+    #[cfg(windows)]
+    unsafe {
+        unsafe extern "system" {
+            fn GetCurrentThread() -> *mut std::ffi::c_void;
+            fn SetThreadPriority(thread: *mut std::ffi::c_void, priority: i32) -> i32;
+        }
+        const THREAD_PRIORITY_TIME_CRITICAL: i32 = 15;
+        SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_TIME_CRITICAL);
+    }
+}
+
 /// Returns `true` when the gap between consecutive callbacks exceeds the
 /// expected block duration by more than the allowed slack.
 fn is_callback_xrun(elapsed: Duration, expected_block: Duration) -> bool {
@@ -671,6 +685,7 @@ where
             move |data: &mut [T], info: &cpal::OutputCallbackInfo| {
                 if !denormal_guard_set {
                     enable_flush_to_zero();
+                    raise_audio_thread_priority();
                     denormal_guard_set = true;
                 }
 

@@ -378,6 +378,7 @@ impl PluginHost {
         plugin_id: &str,
         instance: &PluginInstance,
     ) -> DeviceState {
+        let _ = instance.clap_ensure_initialized();
         if let Some(bytes) = self.pending_state_blobs.get(instance_key) {
             let _ = instance.load_state_blob(bytes);
             return DeviceState::from_binary(plugin_id, bytes.clone());

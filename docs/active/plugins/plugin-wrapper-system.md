@@ -180,7 +180,13 @@ the UI. The plugin's output events go to `observe_output_event`, which tracks
 
 **Unsaved-changes flag.** Edits made in a plugin window bypass `send_command`,
 so the plugins report them: the host now answers `get_extension("clap.state")`
-with `clap_host_state.mark_dirty`, and `observe_output_event` treats a
+with `clap_host_state.mark_dirty`, and `get_extension("clap.thread-check")`.
+`is_audio_thread` is the CPAL callback; every other thread counts as main, because
+`clap.params` runs on the command thread and the editor on the Win32 thread.
+Without the audio-thread bit, playing the plugin's keyboard while the editor is
+open takes the message lock inside `process` and crackles. `init` runs before
+any `clap.state` load. `start_processing` runs on the audio thread, on the first
+block, not during graph prepare. `observe_output_event` treats a
 `GESTURE_END` or a `PARAM_VALUE` that cannot be an echo of a host value as an
 edit. Both set a global atomic in `clap_ffi` (`mark_plugin_state_edited`,
 lock-free); `main.rs::watch_plugin_edits` polls it every 250 ms and marks the
@@ -195,8 +201,10 @@ instrument) carries a `clap_event_transport` built on the stack by
 `plugin_formats/clap/transport.rs::clap_transport_event`: tempo, position in
 beats and seconds, bar start / bar number, time signature, playing flag. The
 musical math lives in `TransportInfo::musical_position` (`audio_graph/node.rs`)
-so the VST3 `ProcessContext` can reuse it. Not covered: loop points (Echoes has
-no loop), `steady_time`, and the out-of-process bridge (`plugin_host_bridge`
+so the VST3 `ProcessContext` can reuse it. `steady_time` is a sample counter
+advanced by the block size on every call (including a skipped block), so a
+plugin can place GUI notes on a continuous clock. Not covered: loop points
+(Echoes has no loop) and the out-of-process bridge (`plugin_host_bridge`
 still passes no transport).
 
 ---
