@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { transport } from '../stores/transport';
+	import { loopRegion } from '../stores/loopRegion';
 	import { tempo } from '../stores/tempo';
 	import { play, pause, stop, seek } from '../frontend/commands/dispatcher';
 	import { leftPanel } from '../stores/leftPanel';
@@ -60,6 +61,18 @@
 				<svg width="13" height="13" viewBox="0 0 13 13" fill="none" xmlns="http://www.w3.org/2000/svg">
 					<rect x="1" y="1.5" width="1.6" height="10" rx="0.8" fill="currentColor"/>
 					<path d="M11.5 2L4.5 6.5L11.5 11V2Z" fill="currentColor"/>
+				</svg>
+			</button>
+			<button
+				class="btn btn--loop"
+				class:active={$loopRegion.enabled}
+				on:click={() => loopRegion.toggle()}
+				title="Boucle de lecture"
+				aria-pressed={$loopRegion.enabled}
+			>
+				<svg width="14" height="12" viewBox="0 0 14 12" fill="none" xmlns="http://www.w3.org/2000/svg">
+					<path d="M3.2 2.2H9.2V0.4L12.6 3.2L9.2 6V4.2H3.2V2.2Z" fill="currentColor"/>
+					<path d="M10.8 9.8H4.8V11.6L1.4 8.8L4.8 6V7.8H10.8V9.8Z" fill="currentColor"/>
 				</svg>
 			</button>
 			<button class="btn btn--play" on:click={togglePlayPause} title={$transport.isPlaying ? 'Pause' : 'Lecture'}>
@@ -170,6 +183,10 @@
 		&:hover {
 			background: rgba(255, 255, 255, 0.08);
 			color: $text-color;
+		}
+
+		&--loop.active {
+			color: #4d94ff;
 		}
 
 		&--record {

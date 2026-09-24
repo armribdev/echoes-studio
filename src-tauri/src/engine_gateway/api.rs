@@ -23,6 +23,7 @@ use super::commands::{
     CreateTrackPayload, DeleteTrackPayload, MoveClipPayload, MoveMidiClipPayload, MuteTrackPayload,
     RemoveAutomationLanePayload, RemoveClipPayload, RemoveEffectPayload, RemoveMidiClipPayload,
     RemoveModulationRoutePayload, RemoveModulatorPayload, SeekPayload, SetClipMidiNotesPayload,
+    SetLoopPayload,
     SetMidiNotesPayload, SetModulationDepthPayload, SetTrackInstrumentPayload, SoloTrackPayload,
     UpdateAutomationClipPayload, UpdateEffectPayload, UpdateModulatorPayload,
     UpdateProjectNamePayload, UpdateTempoPayload, UpdateTrackPayload,
@@ -691,6 +692,13 @@ fn process_command(
                 ev::POSITION_UPDATED,
                 json!({ "position": p.position }),
             ))
+        }
+
+        cmd::SET_LOOP => {
+            let p: SetLoopPayload = serde_json::from_value(command.payload)
+                .map_err(|e| format!("SET_LOOP payload invalid: {e}"))?;
+            state.transport.set_loop(p.enabled, p.start, p.end);
+            Ok(ok_transport_events(ctx.command_id, &[]))
         }
 
         cmd::CREATE_TRACK => {

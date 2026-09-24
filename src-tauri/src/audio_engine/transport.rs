@@ -44,6 +44,11 @@ pub struct SharedTransport {
 
     /// Device sample rate stored as the bit-pattern of an `f32`.
     sample_rate_bits: AtomicU32,
+
+    /// When set, playback wraps from `loop_end_samples` back to `loop_start_samples`.
+    loop_enabled: AtomicBool,
+    loop_start_samples: AtomicU64,
+    loop_end_samples: AtomicU64,
 }
 
 impl SharedTransport {
@@ -55,6 +60,9 @@ impl SharedTransport {
             bpm_bits: AtomicU32::new(bpm.to_bits()),
             time_signature_bits: AtomicU32::new(pack_time_signature(TimeSignature::default())),
             sample_rate_bits: AtomicU32::new(sample_rate.to_bits()),
+            loop_enabled: AtomicBool::new(false),
+            loop_start_samples: AtomicU64::new(0),
+            loop_end_samples: AtomicU64::new(0),
         })
     }
 
@@ -115,6 +123,35 @@ impl SharedTransport {
         self.position_samples.store(pos, Ordering::Relaxed);
     }
 
+    /// Enable or move the playback loop. Bounds are in seconds; a region shorter
+    /// than one block is extended so the audio callback cannot spin.
+    pub fn set_loop(&self, enabled: bool, start_seconds: f64, end_seconds: f64) {
+        let sr = self.sample_rate() as f64;
+        let start = (start_seconds.max(0.0) * sr).max(0.0) as u64;
+        let mut end = (end_seconds.max(0.0) * sr).max(0.0) as u64;
+        if end < start.saturating_add(MIN_LOOP_SAMPLES) {
+            end = start + MIN_LOOP_SAMPLES;
+        }
+        self.loop_start_samples.store(start, Ordering::Relaxed);
+        self.loop_end_samples.store(end, Ordering::Relaxed);
+        self.loop_enabled.store(enabled, Ordering::Relaxed);
+    }
+
+    /// Active loop bounds in samples, or `None` when looping is off or invalid.
+    #[inline]
+    pub fn loop_range(&self) -> Option<(u64, u64)> {
+        if !self.loop_enabled.load(Ordering::Relaxed) {
+            return None;
+        }
+        let start = self.loop_start_samples.load(Ordering::Relaxed);
+        let end = self.loop_end_samples.load(Ordering::Relaxed);
+        if end > start {
+            Some((start, end))
+        } else {
+            None
+        }
+    }
+
     /// Snapshot the current transport state into a `TransportInfo` value.
     ///
     /// Called at the start of every audio block (inside the CPAL callback).
@@ -137,4 +174,70 @@ impl SharedTransport {
 
 fn pack_time_signature(time_signature: TimeSignature) -> u32 {
     (time_signature.numerator as u32) << 8 | time_signature.denominator as u32
+}
+
+/// Shortest loop the command thread will install. Keeps a callback from
+/// splitting a hardware block into hundreds of one-sample renders.
+const MIN_LOOP_SAMPLES: u64 = 256;
+
+/// Playback position and frame count for the next render slice.
+///
+/// When `range` is set and playback has reached `end`, the position wraps to
+/// `start` first. The slice then stops at the loop end so the caller can
+/// render the remainder from the start in a following call.
+pub fn playback_chunk(
+    position: u64,
+    frames: usize,
+    playing: bool,
+    range: Option<(u64, u64)>,
+) -> (u64, usize) {
+    if frames == 0 || !playing {
+        return (position, frames);
+    }
+    let Some((start, end)) = range.filter(|(start, end)| end > start) else {
+        return (position, frames);
+    };
+    let len = end - start;
+    let position = if position >= end {
+        start + (position - end) % len
+    } else {
+        position
+    };
+    let until_end = end - position;
+    let chunk = if until_end >= frames as u64 {
+        frames
+    } else {
+        until_end as usize
+    };
+    (position, chunk.max(1).min(frames))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::playback_chunk;
+
+    #[test]
+    fn no_loop_consumes_the_whole_block() {
+        assert_eq!(playback_chunk(100, 64, true, None), (100, 64));
+    }
+
+    #[test]
+    fn stopped_transport_does_not_wrap() {
+        assert_eq!(playback_chunk(500, 64, false, Some((0, 200))), (500, 64));
+    }
+
+    #[test]
+    fn chunk_stops_at_the_loop_end() {
+        assert_eq!(playback_chunk(180, 64, true, Some((100, 200))), (180, 20));
+    }
+
+    #[test]
+    fn position_past_the_end_wraps_before_the_chunk() {
+        assert_eq!(playback_chunk(250, 64, true, Some((100, 200))), (150, 50));
+    }
+
+    #[test]
+    fn playhead_before_the_region_runs_until_the_end() {
+        assert_eq!(playback_chunk(0, 64, true, Some((100, 200))), (0, 64));
+    }
 }

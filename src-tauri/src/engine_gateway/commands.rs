@@ -39,6 +39,7 @@ pub mod cmd {
     pub const STOP: &str = "STOP";
     pub const PAUSE: &str = "PAUSE";
     pub const SEEK: &str = "SEEK";
+    pub const SET_LOOP: &str = "SET_LOOP";
 
     pub const CREATE_TRACK: &str = "CREATE_TRACK";
     pub const DELETE_TRACK: &str = "DELETE_TRACK";
@@ -190,6 +191,13 @@ fn default_midi_ppq_cmd() -> u16 {
 #[derive(Debug, Deserialize)]
 pub struct SeekPayload {
     pub position: f64,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SetLoopPayload {
+    pub enabled: bool,
+    pub start: f64,
+    pub end: f64,
 }
 
 #[derive(Debug, Deserialize)]

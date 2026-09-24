@@ -9,6 +9,7 @@
 	import { getCurrentWindow } from '@tauri-apps/api/window';
 	import { onMount, onDestroy, tick } from 'svelte';
 	import { transport } from '../stores/transport';
+	import { loopRegion } from '../stores/loopRegion';
 	import { selection } from '../stores/selection';
 	import { tempo } from '../stores/tempo';
 	import { projectName, projectPath, midiGridBeats } from '../stores/project';
@@ -31,6 +32,7 @@
 		trackColor,
 	} from '../frontend/pianoRoll/clipEditor';
 	import TimeRuler from './TimeRuler.svelte';
+	import LoopBrace from './LoopBrace.svelte';
 	import Playhead from './Playhead.svelte';
 	import ZoomScrollbar from './ZoomScrollbar.svelte';
 	import ArrangeGrid from './ArrangeGrid.svelte';
@@ -184,6 +186,8 @@
 		// Seed the engine store — the subscription above will update `tracks` reactively,
 		// which in turn triggers the $: buffer-preparation block for all clips.
 		projectEventStore.seedFromSnapshot(dto);
+
+		if (tracks.length > 0) selectTrackIndex(0);
 
 		pendingArrangeFitZoom = true;
 		await tick();
@@ -356,6 +360,43 @@
 	$: arrangeGridHeight = Math.max(tracks.length * ARRANGE_TRACK_HEIGHT, tracksInnerEl?.offsetHeight ?? 0);
 	$: playheadX = $transport.position * scale;
 	$: playheadMarkerX = playheadX - tracksScrollLeft;
+	$: loopStartSec = ($loopRegion.startBeat * 60) / $tempo.bpm;
+	$: loopEndSec = ($loopRegion.endBeat * 60) / $tempo.bpm;
+	$: loopStartPx = loopStartSec * scale - tracksScrollLeft;
+	$: loopEndPx = loopEndSec * scale - tracksScrollLeft;
+
+	let loopDragOrigin: { startBeat: number; endBeat: number } | null = null;
+
+	function loopSecondsFromClientX(clientX: number): number {
+		if (!arrangeRulerEl) return 0;
+		return Math.max(0, arrangeContentX(clientX, arrangeRulerEl) / scale);
+	}
+
+	function onLoopDragStart() {
+		const region = get(loopRegion);
+		loopDragOrigin = { startBeat: region.startBeat, endBeat: region.endBeat };
+	}
+
+	function onLoopDrag(event: CustomEvent<{ kind: 'start' | 'end'; originSec: number; currentSec: number; altKey: boolean }>) {
+		if (!loopDragOrigin) return;
+		const { kind, originSec, currentSec, altKey } = event.detail;
+		const bpm = get(tempo).bpm;
+		const deltaSec = currentSec - originSec;
+		const start = loopDragOrigin.startBeat;
+		const end = loopDragOrigin.endBeat;
+		const startSec = (start * 60) / bpm;
+		const endSec = (end * 60) / bpm;
+		const toBeats = (seconds: number) => (seconds * bpm) / 60;
+		if (kind === 'start') {
+			loopRegion.setBeats(toBeats(snap(Math.max(0, startSec + deltaSec), altKey)), end);
+		} else {
+			loopRegion.setBeats(start, toBeats(snap(Math.max(0, endSec + deltaSec), altKey)));
+		}
+	}
+
+	function onLoopDragEnd() {
+		loopDragOrigin = null;
+	}
 
 	$: if (instrumentsEl) {
 		updateInstrumentsOverflow();
@@ -1260,6 +1301,19 @@
 			on:mousedown={handleRulerMouseDown}
 		/>
 
+		{#if $loopRegion.enabled}
+			<div class="loop-ruler-host">
+				<LoopBrace
+					startPx={loopStartPx}
+					endPx={loopEndPx}
+					secondsFromClientX={loopSecondsFromClientX}
+					on:dragstart={onLoopDragStart}
+					on:drag={onLoopDrag}
+					on:dragend={onLoopDragEnd}
+				/>
+			</div>
+		{/if}
+
 		<Playhead x={playheadMarkerX} />
 
 		<div class="tracks-column">
@@ -1284,6 +1338,12 @@
 					bind:this={tracksInnerEl}
 					style="width: {arrangeContentWidthPx}px; min-width: {arrangeContentWidthPx}px"
 				>
+			{#if $loopRegion.enabled}
+				<div
+					class="loop-shade"
+					style="left: {loopStartSec * scale}px; width: {(loopEndSec - loopStartSec) * scale}px;"
+				></div>
+			{/if}
 			{#if $preferences.interface.showArrangeGrid}
 				<ArrangeGrid
 					widthPx={arrangeContentWidthPx}
@@ -1431,6 +1491,25 @@
 		flex-direction: column;
 		position: relative;
 		overflow: hidden;
+	}
+
+	.loop-ruler-host {
+		position: absolute;
+		top: 0;
+		left: 0;
+		right: 0;
+		height: 22px;
+		z-index: 6;
+		pointer-events: none;
+	}
+
+	.loop-shade {
+		position: absolute;
+		top: 0;
+		bottom: 0;
+		background: rgba(247, 247, 249, 0.06);
+		pointer-events: none;
+		z-index: 1;
 	}
 
 	.tracks-column {

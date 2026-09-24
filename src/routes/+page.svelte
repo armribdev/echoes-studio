@@ -16,6 +16,7 @@
 	import { registerShortcuts } from '../frontend/shortcuts/keymap';
 	import { isEditingText } from '../frontend/shortcuts/context';
 	import { connectTransportBridge } from '../frontend/transport/bridge';
+	import { connectLoopSync } from '../frontend/transport/loopSync';
 	import SettingsPanel from '../components/SettingsPanel.svelte';
 	import ProjectSettingsPanel from '../components/ProjectSettingsPanel.svelte';
 	import MissingPluginsDialog from '../components/MissingPluginsDialog.svelte';
@@ -33,6 +34,7 @@
 	// Register keyboard shortcuts and transport bridge once for the app lifetime.
 	onMount(() => {
 		const disconnectBridge = connectTransportBridge();
+		const disconnectLoop = connectLoopSync();
 		const unregisterShortcuts = registerShortcuts();
 		void graphSnapshot.connect();
 
@@ -86,6 +88,7 @@
 
 		return () => {
 			disconnectBridge();
+			disconnectLoop();
 			unregisterShortcuts();
 			graphSnapshot.disconnect();
 			unsubSelectedTrack();

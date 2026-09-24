@@ -12,7 +12,7 @@
 //! SharedTransport::play()          ──► transport.snapshot() → TransportInfo
 //!                                       scheduler.process_block()
 //!                                       write to CPAL output buffer
-//!                                       position_samples.fetch_add(block)
+//!                                       position_samples advanced per chunk (loop wrap)
 //! ```
 //!
 //! ## Real-time safety contract
@@ -40,7 +40,7 @@ use cpal::{
 use tauri::Emitter;
 
 use crate::audio_engine::graph::AudioGraphCompiler;
-use crate::audio_engine::transport::SharedTransport;
+use crate::audio_engine::transport::{playback_chunk, SharedTransport};
 use crate::audio_graph::denormal::enable_flush_to_zero;
 use crate::audio_graph::node::TimeSignature;
 use crate::audio_graph::{CompileConfig, GraphScheduler, LiveParams, MeterCell, RuntimeSnapshot};
@@ -718,10 +718,31 @@ where
 
                 snapshot.try_swap(&mut scheduler);
 
-                let info = transport.snapshot(frames);
-
-                let mix = &mut mix_buf[..frames * 2];
-                scheduler.process_block(&info, mix);
+                // A loop point inside the block is rendered as two (or more)
+                // slices so notes land on the wrapped position, not a block late.
+                let mut rendered = 0usize;
+                while rendered < frames {
+                    let playing = transport.is_playing.load(Ordering::Relaxed);
+                    let current = transport.position_samples.load(Ordering::Relaxed);
+                    let (position, chunk) =
+                        playback_chunk(current, frames - rendered, playing, transport.loop_range());
+                    if playing && position != current {
+                        transport.position_samples.store(position, Ordering::Relaxed);
+                    }
+                    let info = transport.snapshot(chunk);
+                    let end = rendered + chunk;
+                    scheduler.process_block(&info, &mut mix_buf[rendered * 2..end * 2]);
+                    if playing {
+                        transport
+                            .position_samples
+                            .store(position + chunk as u64, Ordering::Relaxed);
+                    }
+                    rendered = end;
+                    if chunk == 0 {
+                        break;
+                    }
+                }
+                let mix = &mix_buf[..frames * 2];
 
                 let raw_active = ch_ctrl.load(Ordering::Relaxed);
                 let active = if raw_active == 0 {
@@ -744,12 +765,6 @@ where
                 }
                 for ch in 0..active.min(MAX_METER_CHANNELS) {
                     levels.set_output(ch, if ch % 2 == 0 { peak_l } else { peak_r });
-                }
-
-                if info.is_playing {
-                    transport
-                        .position_samples
-                        .fetch_add(frames as u64, Ordering::Relaxed);
                 }
 
                 // Mono: ITU-R BS.775 downmix (L+R)×(1/√2) broadcast to all hw
@@ -886,7 +901,8 @@ fn position_reporter(
             let dur = transport.duration_samples.load(Ordering::Relaxed);
 
             // Auto-stop when playhead reaches the end of the timeline.
-            if dur > 0 && pos >= dur {
+            // An active loop wraps forever, including through silence past the clips.
+            if transport.loop_range().is_none() && dur > 0 && pos >= dur {
                 transport.stop();
                 let _ = app.emit(
                     "engine-event",

@@ -102,6 +102,8 @@ snapshot.try_swap(&mut current_scheduler);
 This is the **only approved scheduler-update path** in the audio callback.
 There is no contention case: every step is a single atomic operation.
 
+Playback loop bounds live on the same atomics. The callback splits a block that crosses the loop end and stores the wrapped position; it does not emit. With the loop on, the reporter does not auto-stop at the end of the timeline.
+
 ### Audio thread → UI thread (meters, transport)
 
 ```rust

@@ -35,6 +35,7 @@ import {
   type RemoveModulationRoutePayload,
   type RemoveModulatorPayload,
   type SeekPayload,
+  type SetLoopPayload,
   type SetModulationDepthPayload,
   type AddModulationRoutePayload,
   type AddModulatorPayload,
@@ -272,6 +273,10 @@ export function pause(): Promise<CommandResult> {
 
 export function seek(position: number): Promise<CommandResult> {
   return dispatch<SeekPayload>(cmd.SEEK, { position });
+}
+
+export function setLoop(enabled: boolean, start: number, end: number): Promise<CommandResult> {
+  return dispatch<SetLoopPayload>(cmd.SET_LOOP, { enabled, start, end });
 }
 
 // ── Effect commands ───────────────────────────────────────────────────────────

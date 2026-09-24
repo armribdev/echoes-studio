@@ -19,6 +19,7 @@ export const cmd = {
   STOP: 'STOP',
   PAUSE: 'PAUSE',
   SEEK: 'SEEK',
+  SET_LOOP: 'SET_LOOP',
 
   // Project structure (event-sourced)
   CREATE_TRACK: 'CREATE_TRACK',
@@ -158,6 +159,14 @@ export interface UpdateTempoPayload {
 
 export interface SeekPayload {
   position: number;
+}
+
+export interface SetLoopPayload {
+  enabled: boolean;
+  /** Loop start, in seconds. */
+  start: number;
+  /** Loop end, in seconds. */
+  end: number;
 }
 
 export interface AddEffectPayload {
