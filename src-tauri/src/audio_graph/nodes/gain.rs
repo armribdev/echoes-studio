@@ -22,7 +22,7 @@ pub(crate) const FADER_SMOOTH_CUTOFF_HZ: f32 = 4.0;
 /// on absolute sample positions, never on where block boundaries fall.
 pub(crate) struct SmoothedGain {
     smoothed: f32,
-    /// Decibel state for `process_db`. Snapped to the linear gain in `prepare`.
+    /// Decibel state for `advance_db`. Snapped to the linear gain in `prepare`.
     db: f32,
     coeff: f32,
     /// Delta from the block start up to the first interior grid point.
@@ -134,8 +134,17 @@ impl SmoothedGain {
         }
     }
 
-    /// Same segmenting as `process`, but the ramp is in decibels.
-    pub(crate) fn process_db(&mut self, gain: f32, input: &AudioBuffer, output: &mut AudioBuffer, frames: usize) {
+    /// Same as `process`, but the base gain is a fader smoothed in dB.  The
+    /// modulation ramp keeps its ADR-019 speed; with the fader at rest
+    /// `advance_db` returns `fader_target` exactly, so this is `process` bit for bit.
+    pub(crate) fn process_over_fader(
+        &mut self,
+        fader: &mut SmoothedGain,
+        fader_target: f32,
+        input: &AudioBuffer,
+        output: &mut AudioBuffer,
+        frames: usize,
+    ) {
         let channels = output.num_channels.min(input.num_channels);
         let mut frame = 0;
         for k in 0..=self.point_count {
@@ -148,11 +157,11 @@ impl SmoothedGain {
                 continue;
             }
             let delta = if k == 0 { self.base_delta } else { self.point_deltas[k - 1] };
-            let target = (gain + delta).max(0.0);
             for i in frame..segment_end {
-                let smoothed = self.advance_db(target);
+                let target = (fader.advance_db(fader_target) + delta).max(0.0);
+                self.smoothed += self.coeff * (target - self.smoothed);
                 for ch in 0..channels {
-                    output.channel_mut(ch)[i] = input.channel(ch)[i] * smoothed;
+                    output.channel_mut(ch)[i] = input.channel(ch)[i] * self.smoothed;
                 }
             }
             frame = segment_end;

@@ -138,8 +138,11 @@ The value in force at any frame is therefore the signal at the latest absolute
 grid point, whatever the block size, so a modulated render is bit-identical
 across block sizes (offline == live, C-2). `render_harness.rs` enforces this.
 `GainNode` / `TrackGainNode` share `SmoothedGain`, a per-sample one-pole
-smoother whose target switches at each grid point. It de-zippers
-modulated/automated gain and de-clicks fader/mute moves. All four internal
+smoother (12 Hz) whose target switches at each grid point. It de-zippers
+modulated/automated gain. In `TrackGainNode` its base is the fader
+(volume × mute × solo), itself ramped in dB at 4 Hz to de-click fader/mute
+moves; at rest the fader contributes its exact value, so modulated renders are
+unchanged from ADR-019 (`SmoothedGain::process_over_fader`). All four internal
 effects (`Delay`, `Compressor`, `Reverb`, `Eq`) segment their `process` loop at
 the grid points. `PanNode`/`MasterNode` are not modulation targets.
 
@@ -220,7 +223,7 @@ evaluates every route on the absolute control grid (ADR-019, Tranches 1–3 done
 | Target | Sub-block delivery |
 |--------|--------------------|
 | VST3 / CLAP plugin params (effects and instruments) | one native event per grid point; modulation offsets the value, automation sets it (ADR-021); CLAP automatable-only params get `base + offset` as values |
-| `GainNode` / `TrackGainNode` | per-sample one-pole smoother whose target switches at each grid point |
+| `GainNode` / `TrackGainNode` | per-sample one-pole smoother (12 Hz) whose target switches at each grid point; in `TrackGainNode` it rides on the dB-smoothed fader |
 | `Delay` / `Compressor` / `Reverb` / `Eq` | `process` loop segmented at grid points, params recomputed per segment and clamped to their range |
 | `PanNode` / `MasterNode` | not modulation targets |
 
