@@ -338,19 +338,24 @@ export function applyEvent(state: ProjectState, event: EngineEvent): ProjectStat
     }
 
     case ev.MODULATOR_UPDATED: {
-      const p = event.payload as { track_id: string; modulator_id: string; rate_hz?: number };
+      const { track_id, modulator_id, ...fields } = event.payload as {
+        track_id: string;
+        modulator_id: string;
+      } & Partial<Record<'rate_hz' | 'waveform' | 'tempo_sync' | 'beat_division', unknown>>;
+      // The engine sends every field, null when unchanged.
+      const changes = Object.fromEntries(
+        (['rate_hz', 'waveform', 'tempo_sync', 'beat_division'] as const)
+          .filter((key) => fields[key] != null)
+          .map((key) => [key, fields[key]]),
+      );
       return {
         ...state,
         tracks: state.tracks.map((t) =>
-          t.id !== p.track_id
+          t.id !== track_id
             ? t
             : {
                 ...t,
-                modulators: t.modulators.map((m) =>
-                  m.id !== p.modulator_id
-                    ? m
-                    : { ...m, ...(p.rate_hz != null ? { rate_hz: p.rate_hz } : {}) },
-                ),
+                modulators: t.modulators.map((m) => (m.id !== modulator_id ? m : { ...m, ...changes })),
               },
         ),
       };

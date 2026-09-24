@@ -1171,6 +1171,7 @@ fn process_command(
             let p: UpdateModulatorPayload = serde_json::from_value(command.payload)
                 .map_err(|e| format!("UPDATE_MODULATOR payload invalid: {e}"))?;
             let has_update = p.rate_hz.is_some()
+                || p.waveform.is_some()
                 || p.tempo_sync.is_some()
                 || p.beat_division.is_some()
                 || p.value.is_some()
@@ -1186,6 +1187,7 @@ fn process_command(
                         match &mut m.params {
                             crate::project::ModulatorParams::Lfo(ref mut lp) => {
                                 if let Some(rate) = p.rate_hz { lp.rate_hz = rate; }
+                                if let Some(w) = &p.waveform { lp.waveform = w.clone(); }
                                 if let Some(v) = p.tempo_sync { lp.tempo_sync = v; }
                                 if let Some(v) = p.beat_division { lp.beat_division = v; }
                             }
@@ -1243,6 +1245,7 @@ fn process_command(
                     "track_id": p.track_id,
                     "modulator_id": p.modulator_id,
                     "rate_hz": p.rate_hz,
+                    "waveform": p.waveform,
                     "tempo_sync": p.tempo_sync,
                     "beat_division": p.beat_division,
                     "value": p.value,
@@ -1252,7 +1255,7 @@ fn process_command(
                     "release_ms": p.release_ms,
                     "window_ms": p.window_ms,
                 }),
-                false,
+                p.waveform.is_some(),
             )
         }
 
@@ -2011,6 +2014,9 @@ fn apply_modulator_updated(project: &mut AppProject, payload: &Value) {
     match &mut m.params {
         crate::project::ModulatorParams::Lfo(ref mut p) => {
             if let Some(rate) = payload["rate_hz"].as_f64() { p.rate_hz = rate as f32; }
+            if let Ok(w) = serde_json::from_value::<crate::project::LfoWaveform>(payload["waveform"].clone()) {
+                p.waveform = w;
+            }
             if let Some(v) = payload["tempo_sync"].as_bool() { p.tempo_sync = v; }
             if let Some(v) = payload["beat_division"].as_f64() { p.beat_division = v as f32; }
         }
@@ -2271,3 +2277,63 @@ pub fn recompile_if_needed(app: &tauri::AppHandle, state: &tauri::State<'_, AppS
 }
 
 pub const PLUGIN_AVAILABILITY_EVENT: &str = "plugin-availability";
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::project::{AppTrack, LfoParams, LfoWaveform, ModulatorParams, ProjectModulator};
+
+    fn project_with_lfo() -> AppProject {
+        let mut project = AppProject::new();
+        project.tracks.push(AppTrack {
+            id: "t".into(),
+            name: "t".into(),
+            volume: 80.0,
+            pan: 0.0,
+            muted: false,
+            solo: false,
+            clips: vec![],
+            effects: vec![],
+            modulators: vec![ProjectModulator {
+                id: "lfo".into(),
+                params: ModulatorParams::Lfo(LfoParams::default()),
+            }],
+            mod_routes: vec![],
+            midi_notes: vec![],
+            midi_clips: vec![],
+            instrument: None,
+            automation_lanes: vec![],
+        });
+        project
+    }
+
+    fn lfo_params(project: &AppProject) -> &LfoParams {
+        match &project.tracks[0].modulators[0].params {
+            ModulatorParams::Lfo(p) => p,
+            other => panic!("expected an LFO, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn replayed_modulator_update_applies_waveform() {
+        let mut project = project_with_lfo();
+        apply_modulator_updated(
+            &mut project,
+            &json!({ "track_id": "t", "modulator_id": "lfo", "rate_hz": null, "waveform": "saw" }),
+        );
+        assert_eq!(lfo_params(&project).waveform, LfoWaveform::Saw);
+        assert_eq!(lfo_params(&project).rate_hz, 1.0);
+    }
+
+    #[test]
+    fn replayed_rate_update_keeps_waveform() {
+        let mut project = project_with_lfo();
+        apply_modulator_updated(&mut project, &json!({ "track_id": "t", "modulator_id": "lfo", "waveform": "square" }));
+        apply_modulator_updated(
+            &mut project,
+            &json!({ "track_id": "t", "modulator_id": "lfo", "rate_hz": 3.0, "waveform": null }),
+        );
+        assert_eq!(lfo_params(&project).waveform, LfoWaveform::Square);
+        assert_eq!(lfo_params(&project).rate_hz, 3.0);
+    }
+}

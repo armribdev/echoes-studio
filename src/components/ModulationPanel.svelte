@@ -1,15 +1,12 @@
 <!-- ModulationPanel.svelte — LFO sources and modulation routes per track -->
 <script lang="ts">
-	import Knob from './Knob.svelte';
+	import LfoCard from './LfoCard.svelte';
 	import ModulationTargetPicker from './ModulationTargetPicker.svelte';
-	import { onDestroy } from 'svelte';
 	import { modulatorColor } from '../frontend/modulation/colors';
-	import { modulationDrag } from '../stores/modulationDrag';
 	import type { TrackEffect, ProjectModulator, ProjectModulationRoute } from '../types/global';
 	import {
 		addModulator,
 		removeModulator,
-		updateModulator,
 		addModulationRoute,
 		removeModulationRoute,
 		setModulationDepth,
@@ -115,59 +112,9 @@
 		catch (e) { notify(`Erreur suppression : ${(e as Error)?.message ?? e}`, 'error'); }
 	}
 
-	async function handleRateChange(modId: string, rate_hz: number) {
-		try { await updateModulator(trackId, modId, { rate_hz }); }
-		catch (e) { notify(`Erreur taux : ${(e as Error)?.message ?? e}`, 'error'); }
-	}
-
 	async function handleRemoveRoute(routeId: string) {
 		try { await removeModulationRoute(trackId, routeId); }
 		catch (e) { notify(`Erreur suppression route : ${(e as Error)?.message ?? e}`, 'error'); }
-	}
-
-	// ── Drag a modulator onto a knob to assign it ────────────────────────────
-	const DRAG_THRESHOLD_PX = 4;
-
-	let pendingDrag: { modId: string; color: string; label: string; startX: number; startY: number } | null = null;
-	let ghost: { label: string; color: string; x: number; y: number } | null = null;
-
-	function targetKeyAt(x: number, y: number): string | null {
-		const el = document.elementFromPoint(x, y)?.closest<HTMLElement>('[data-mod-target]');
-		return el?.dataset.modTarget ?? null;
-	}
-	function handleDragStart(e: PointerEvent, modId: string, color: string, label: string) {
-		if (e.button !== 0) return;
-		e.preventDefault();
-		(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-		pendingDrag = { modId, color, label, startX: e.clientX, startY: e.clientY };
-	}
-
-	function handleDragMove(e: PointerEvent) {
-		if (!pendingDrag) return;
-		if (!ghost) {
-			const moved = Math.hypot(e.clientX - pendingDrag.startX, e.clientY - pendingDrag.startY);
-			if (moved < DRAG_THRESHOLD_PX) return;
-			pickerModulatorId = null;
-			document.body.style.cursor = 'grabbing';
-			modulationDrag.set({ modulatorId: pendingDrag.modId, color: pendingDrag.color, hoverKey: null });
-		}
-		ghost = { label: pendingDrag.label, color: pendingDrag.color, x: e.clientX, y: e.clientY };
-		const hoverKey = targetKeyAt(e.clientX, e.clientY);
-		modulationDrag.update((d) => (d && d.hoverKey !== hoverKey ? { ...d, hoverKey } : d));
-	}
-
-	function handleDragEnd(e: PointerEvent) {
-		const drag = pendingDrag;
-		const key = ghost ? targetKeyAt(e.clientX, e.clientY) : null;
-		endDrag();
-		if (drag && key) assignByKey(drag.modId, key);
-	}
-
-	function endDrag() {
-		if (ghost) document.body.style.cursor = '';
-		pendingDrag = null;
-		ghost = null;
-		modulationDrag.set(null);
 	}
 
 	function assignByKey(modId: string, key: string) {
@@ -182,8 +129,6 @@
 		}
 		handleAssign(modId, option);
 	}
-
-	onDestroy(endDrag);
 
 	async function handleDepthChange(route: ProjectModulationRoute, e: Event) {
 		const slider = parseFloat((e.currentTarget as HTMLInputElement).value);
@@ -206,44 +151,17 @@
 	{/if}
 
 	{#each modulators as mod, i (mod.id)}
-		{@const color = modulatorColor(i)}
 		<div class="slot">
-			<!-- svelte-ignore a11y-no-static-element-interactions -->
-			<div class="slot-head" style:border-left-color={color}>
-				<!-- svelte-ignore a11y-no-static-element-interactions -->
-				<div
-					class="lfo-icon drag-handle"
-					class:dragging={ghost !== null && pendingDrag?.modId === mod.id}
-					aria-hidden="true"
-					style:color
-					title="Glisser sur un réglage pour l'assigner"
-					on:pointerdown={(e) => handleDragStart(e, mod.id, color, `LFO ${i + 1}`)}
-					on:pointermove={handleDragMove}
-					on:pointerup={handleDragEnd}
-					on:pointercancel={endDrag}
-				>
-					<svg width="16" height="10" viewBox="0 0 16 10" fill="none">
-						<path d="M0 5 Q2 0 4 5 Q6 10 8 5 Q10 0 12 5 Q14 10 16 5"
-							stroke="currentColor" stroke-width="1.2" fill="none" stroke-linecap="round"/>
-					</svg>
-				</div>
-				<span class="slot-name" style:color>{compact ? `L${i + 1}` : `LFO ${i + 1}`}</span>
-				{#if !compact}<span class="param-lbl">RATE</span>{/if}
-				<Knob
-					min={0.1}
-					max={20}
-					defaultValue={1}
-					value={mod.rate_hz ?? 1}
-					{color}
-					on:release={(e) => handleRateChange(mod.id, e.detail)}
-				/>
-				<span class="param-val">{(mod.rate_hz ?? 1).toFixed(compact ? 1 : 2)}{compact ? '' : ' Hz'}</span>
-				<button class="assign-btn" type="button" class:active={pickerModulatorId === mod.id}
-					on:mousedown|stopPropagation
-					on:click|stopPropagation={() => togglePicker(mod.id)} title="Brancher ce LFO sur un réglage">Assigner</button>
-				<button class="rm-btn" type="button"
-					on:click|stopPropagation={() => handleRemoveMod(mod.id)} title="Supprimer">×</button>
-			</div>
+			<LfoCard
+				{trackId}
+				{mod}
+				label="LFO {i + 1}"
+				color={modulatorColor(i)}
+				pickerOpen={pickerModulatorId === mod.id}
+				on:assign={(e) => assignByKey(mod.id, e.detail)}
+				on:togglepicker={() => togglePicker(mod.id)}
+				on:remove={() => handleRemoveMod(mod.id)}
+			/>
 			{#if pickerModulatorId === mod.id}
 				<ModulationTargetPicker
 					options={pickerOptions}
@@ -289,12 +207,6 @@
 		</div>
 	{/each}
 
-	{#if ghost}
-		<div class="drag-ghost" style:left="{ghost.x + 12}px" style:top="{ghost.y + 12}px" style:background={ghost.color}>
-			{ghost.label}
-		</div>
-	{/if}
-
 </div>
 
 <style lang="scss">
@@ -304,18 +216,12 @@
 		width: 100%;
 
 		&.compact .section-header { padding: 3px 5px; }
-		&.compact .slot-head,
 		&.compact .route-row { padding: 2px 5px; gap: 3px; }
 		&.compact .empty { padding: 6px 5px; font-size: 9px; }
-		&.compact .lfo-icon { width: 14px; }
-		&.compact .lfo-icon svg { width: 12px; height: 8px; }
-		&.compact .slot-name { min-width: 20px; font-size: 9px; }
-		&.compact .param-val { min-width: 28px; font-size: 8px; }
 		&.compact .depth-slider { width: 40px; }
 		&.compact .depth-val { min-width: 24px; font-size: 8px; }
 		&.compact .route-src { min-width: 22px; font-size: 8px; }
 		&.compact .route-tgt { font-size: 8px; }
-		&.compact .assign-btn { padding: 1px 3px; font-size: 8px; }
 	}
 
 	.section-header {
@@ -360,70 +266,6 @@
 	}
 
 	.slot { border-bottom: 1px solid $border-faint; }
-
-	.slot-head {
-		display: flex; align-items: center; gap: 5px;
-		padding: 4px 6px 4px 4px;
-		border-left: 2px solid transparent;
-		&:hover { background: $surface-1; }
-	}
-
-	.lfo-icon {
-		flex-shrink: 0;
-		width: 20px;
-		display: flex; align-items: center;
-		color: rgba(21,113,255,0.75);
-	}
-
-	.drag-handle {
-		height: 16px;
-		justify-content: center;
-		cursor: grab;
-		border-radius: 3px;
-		touch-action: none;
-		&:hover { background: color-mix(in srgb, currentColor 18%, transparent); }
-		&.dragging { cursor: grabbing; opacity: 0.5; }
-	}
-
-	.drag-ghost {
-		position: fixed;
-		z-index: 1000;
-		pointer-events: none;
-		padding: 2px 7px;
-		border-radius: 10px;
-		font-size: 9px; font-family: $font-mono; font-weight: 700;
-		color: #fff;
-		box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
-		white-space: nowrap;
-	}
-
-	.slot-name {
-		flex-shrink: 0;
-		min-width: 38px;
-		font-size: 10px; font-weight: 500; color: $text-color;
-		user-select: none; white-space: nowrap;
-	}
-
-	.param-lbl {
-		font-size: 8px; font-family: $font-mono; font-weight: 700;
-		color: $text-faint; letter-spacing: 0.05em; text-transform: uppercase;
-		flex-shrink: 0;
-	}
-
-	.param-val {
-		font-size: 9px; font-family: $font-mono; color: $text-subtle;
-		flex-shrink: 0; min-width: 44px;
-	}
-
-	.assign-btn {
-		margin-left: auto;
-		flex-shrink: 0;
-		padding: 1px 5px;
-		border: 1px solid $border-subtle; border-radius: 3px;
-		background: transparent; color: $text-subtle;
-		font-size: 9px; line-height: 1.3; cursor: pointer;
-		&:hover, &.active { background: rgba(21,113,255,0.15); color: $text-color; border-color: rgba(21,113,255,0.4); }
-	}
 
 	.rm-btn {
 		width: 16px; height: 16px; border: none; background: transparent;

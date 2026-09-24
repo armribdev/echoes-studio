@@ -431,8 +431,11 @@ UI knob → Tauri invoke → engine_gateway handler
     │     écrit AppProject ET LiveParams.set_track_volume / set_track_muted / …
     │     PAS de recompile_if_needed
     │
-    ├─ UPDATE_MODULATOR (rate) / SET_MODULATION_DEPTH :
+    ├─ UPDATE_MODULATOR (rate / tempo_sync / beat_division) / SET_MODULATION_DEPTH :
     │     idem (cellule atomique)
+    │
+    ├─ UPDATE_MODULATOR (waveform) :
+    │     écrit AppProject + recompile_if_needed (forme figée dans LfoNode)
     │
     ├─ UPDATE_EFFECT (Eq, Compressor, Reverb, Delay, Plugin) :
     │     écrit AppProject + recompile_if_needed → COMPILE COMPLET

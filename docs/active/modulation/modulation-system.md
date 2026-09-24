@@ -226,6 +226,13 @@ The block-rate `ModSmooth` (`nodes/mod_smooth.rs`) is no longer used by
 production code; it is kept because ADR-009 references it. Projects without
 modulation or automation render exactly as before ADR-019.
 
+**Editing an LFO (`UPDATE_MODULATOR`):** `rate_hz`, `tempo_sync` and
+`beat_division` are hot edits through the modulator's `ModulatorCells` atomics
+(no recompile, phase continues). `waveform` is baked into `LfoNode` at compile
+time, so a shape change recompiles the graph and the new node restarts its
+phase. All four fields are editable from the UI LFO card (`LfoCard.svelte`) and
+replayed from `MODULATOR_UPDATED` events (`apply_modulator_updated`).
+
 **Verification:** `audio_engine/render_harness.rs` renders modulated and
 automated reference projects at several block sizes and checks them against
 golden hashes. **Open gap:** the scheduler is never reset on a live seek, so the

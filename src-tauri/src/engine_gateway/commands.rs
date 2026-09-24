@@ -233,6 +233,8 @@ pub struct UpdateModulatorPayload {
     pub modulator_id: String,
     /// LFO rate (Hz).
     pub rate_hz: Option<f32>,
+    /// LFO shape — baked into the LFO node, so changing it recompiles the graph.
+    pub waveform: Option<crate::project::LfoWaveform>,
     /// LFO tempo sync.
     pub tempo_sync: Option<bool>,
     /// LFO beats per cycle (used when tempo_sync is true).

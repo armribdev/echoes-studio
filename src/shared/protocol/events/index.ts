@@ -178,7 +178,9 @@ export interface ProjectModulator {
   id: string;
   kind: string;
   rate_hz?: number;
-  waveform?: string;
+  waveform?: LfoParams['waveform'];
+  tempo_sync?: boolean;
+  beat_division?: number;
 }
 
 export type ModulationTargetRef =

@@ -320,7 +320,7 @@ export function removeModulator(trackId: string, modulatorId: string): Promise<C
 export function updateModulator(
   trackId: string,
   modulatorId: string,
-  changes: { rate_hz?: number },
+  changes: Pick<UpdateModulatorPayload, 'rate_hz' | 'waveform' | 'tempo_sync' | 'beat_division'>,
 ): Promise<CommandResult> {
   return dispatch<UpdateModulatorPayload>(cmd.UPDATE_MODULATOR, {
     track_id: trackId,

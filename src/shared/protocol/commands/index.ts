@@ -194,6 +194,9 @@ export interface UpdateModulatorPayload {
   track_id: string;
   modulator_id: string;
   rate_hz?: number;
+  waveform?: 'sine' | 'triangle' | 'saw' | 'square';
+  tempo_sync?: boolean;
+  beat_division?: number;
 }
 
 export interface AddModulationRoutePayload {

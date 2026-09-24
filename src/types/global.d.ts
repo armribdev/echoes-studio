@@ -47,11 +47,16 @@ export interface TrackEffect {
 	params: EffectParamsUnion;
 }
 
+export type LfoWaveform = 'sine' | 'triangle' | 'saw' | 'square';
+
 export interface ProjectModulator {
 	id: string;
 	kind: string;
 	rate_hz?: number;
-	waveform?: string;
+	waveform?: LfoWaveform;
+	tempo_sync?: boolean;
+	/** Beats per LFO cycle when `tempo_sync` is on. */
+	beat_division?: number;
 }
 
 export type ModulationTargetRef =
