@@ -1334,6 +1334,7 @@
 		<div class="tracks-column">
 			<!-- svelte-ignore a11y-no-static-element-interactions a11y-click-events-have-key-events -->
 			<div
+				id="arrange-tracks"
 				class="tracks"
 				class:is-dragging={dragging || midiDragging}
 				class:is-resizing={resizing}
@@ -1425,6 +1426,7 @@
 			</div>
 			<ZoomScrollbar
 				orientation="h"
+				controls="arrange-tracks"
 				start={hScrollStart}
 				end={hScrollEnd}
 				on:change={onArrangeHScrollChange}

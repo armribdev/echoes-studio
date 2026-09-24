@@ -10,6 +10,8 @@
 	export let orientation: 'h' | 'v' = 'h';
 	/** Taille minimale du pouce en fraction. */
 	export let minSize = 0.03;
+	/** Id de la région défilée (`aria-controls`). */
+	export let controls: string;
 
 	const dispatch = createEventDispatcher<{
 		change: { start: number; end: number; cause: 'pan' | 'resize-start' | 'resize-end' };
@@ -132,7 +134,6 @@
 		: `top:${start * 100}%;height:${(end - start) * 100}%`;
 </script>
 
-<!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
 <div
 	class="zsb zsb--{orientation}"
 	class:zsb--dragging={dragging !== null}
@@ -142,6 +143,8 @@
 	on:mouseleave={onTrackMouseLeave}
 	style:cursor
 	role="scrollbar"
+	tabindex="0"
+	aria-controls={controls}
 	aria-orientation={isH ? 'horizontal' : 'vertical'}
 	aria-valuenow={Math.round(((start + end) / 2) * 100)}
 	aria-valuemin={0}

@@ -39,7 +39,11 @@
 		selectedIndex = 0;
 	}
 
-	onMount(() => inputEl?.focus());
+	onMount(() => {
+		inputEl?.focus();
+		window.addEventListener('keydown', handleKey);
+		return () => window.removeEventListener('keydown', handleKey);
+	});
 
 	function pick(p: PluginInfo) {
 		dispatch('pick', p);
@@ -70,8 +74,9 @@
 </script>
 
 <!-- Backdrop -->
-<div class="backdrop" on:pointerdown|self={() => dispatch('cancel')} role="presentation">
-	<div class="picker" on:keydown={handleKey} role="dialog" aria-label="Plugin browser">
+<div class="backdrop">
+	<button type="button" class="scrim" aria-label="Fermer" on:click={() => dispatch('cancel')}></button>
+	<div class="picker" role="dialog" aria-modal="true" aria-label="Plugin browser">
 		<div class="header">
 			<span class="title">{pickerTitle}</span>
 			<button class="rescan" type="button" on:click={rescanPlugins} disabled={$pluginsLoading}>
@@ -136,7 +141,18 @@
 		justify-content: center;
 	}
 
+	.scrim {
+		position: absolute;
+		inset: 0;
+		border: none;
+		padding: 0;
+		background: transparent;
+		cursor: default;
+	}
+
 	.picker {
+		position: relative;
+		z-index: 1;
 		width: 420px;
 		max-height: 540px;
 		background: #1e1e26;

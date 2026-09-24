@@ -1606,6 +1606,7 @@
 			<div class="grid-and-vscroll">
 				<!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
 				<div
+					id="piano-roll-grid"
 					class="grid-scroll"
 					class:grid-scroll--edit={editMode}
 					class:grid-scroll--preview={!editMode}
@@ -1630,6 +1631,7 @@
 				{#if editMode}
 				<ZoomScrollbar
 					orientation="v"
+					controls="piano-roll-grid"
 					start={vScrollStart}
 					end={vScrollEnd}
 					on:change={onVScrollChange}
@@ -1653,6 +1655,7 @@
 			<!-- Scrollbar horizontale avec poignées de zoom -->
 			<ZoomScrollbar
 				orientation="h"
+				controls="piano-roll-grid"
 				start={hScrollStart}
 				end={hScrollEnd}
 				on:change={onHScrollChange}
