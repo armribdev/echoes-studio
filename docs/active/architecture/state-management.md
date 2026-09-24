@@ -170,6 +170,12 @@ User action (e.g. drag clip)
 
 The round-trip is always Rust → frontend, never frontend → Rust for state.
 
+**Unsaved changes.** `AppState.dirty` (drives the Save menu item) is set by
+every command, and — since edits inside a plugin window never become commands —
+by the plugins' own edit reports (`main.rs::watch_plugin_edits`, see
+`plugins/plugin-wrapper-system.md`). Load, new and save clear it (`mark_saved`).
+Plugin edits are not events: they are not undoable (ADR-002 scope).
+
 ---
 
 ## Further Reading

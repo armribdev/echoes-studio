@@ -11,6 +11,8 @@ table for step 1 of the sync procedure.
 | `audio_graph/snapshot.rs`, `snapshot_dto.rs`, `audio_engine/snapshot.rs` | `architecture/snapshot-rebuild-flow.md`, `dsp/dsp-runtime.md` | 004 |
 | `audio_graph/buffer.rs`, `denormal.rs`, `oversampling.rs` | `architecture/audio-graph.md` (buffer model), `dsp/dsp-runtime.md` | — |
 | `audio_graph/modulation.rs`, `parameter_block.rs`, `live_params.rs` | `modulation/modulation-system.md`, `plugins/plugin-system.md` | 009 |
+| `audio_graph/nodes/{eq,compressor,reverb,delay}.rs` (`*_RANGES`), `src/frontend/modulation/targets.ts` | `modulation/modulation-system.md` (depth units + bounds) — keep the TS range table in sync with the Rust one | 019, 021 |
+| `audio_graph/plugin_params.rs`, `plugin_formats/clap/params.rs` | `modulation/modulation-system.md`, `plugins/plugin-wrapper-system.md` | 021 |
 | `audio_graph/midi.rs` | `architecture/audio-graph.md` | 012 |
 | `audio_engine/transport.rs` | `threading/realtime-safety.md`, `threading/threading-model.md` | — |
 | `audio_engine/offline.rs`, `render_harness.rs` | `migration/*` (bit-identical C-2), `dsp/dsp-runtime.md` | 019 |
@@ -23,6 +25,7 @@ table for step 1 of the sync procedure.
 | `plugin_system/gui.rs` | `plugins/plugin-wrapper-system.md`, `audits/plugin-gui-audit-2026-05-31.md` | — |
 | `plugin_system/wrapper.rs`, `plugin_formats/{vst3,au,clap,internal}/` | `plugins/plugin-wrapper-system.md` | 003, 013 |
 | `engine_gateway/{api,commands,events,store}.rs` | `architecture/state-management.md`, `threading/threading-model.md` | 002, 005 |
+| `main.rs` (save / load, unsaved-changes flag, plugin-edit watcher) | `plugins/plugin-wrapper-system.md` (unsaved-changes flag), `architecture/state-management.md` | 010 |
 | `project.rs`, `audio_clip.rs`, `audio_settings.rs` | `architecture/state-management.md` | 002 |
 
 **Cross-cutting triggers:**

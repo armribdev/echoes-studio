@@ -3,6 +3,7 @@ use std::sync::Arc;
 use crate::audio_graph::buffer::AudioBuffer;
 use crate::audio_graph::denormal::ANTI_DENORMAL;
 use crate::audio_graph::node::{AudioNode, NodeId, PrepareContext, TransportInfo, MAX_CONTROL_POINTS};
+use crate::audio_graph::nodes::modulated;
 use crate::audio_graph::parameter_block::ParameterBlock;
 use crate::project::DelayParams;
 
@@ -14,6 +15,15 @@ pub const DELAY_FEEDBACK: usize = 1;
 pub const DELAY_WET: usize = 2;
 pub const DELAY_DRY: usize = 3;
 pub const DELAY_PING_PONG: usize = 4;
+
+/// Bounds a modulated value may reach, in cell order (mirrored by the UI's modulation targets).
+pub const DELAY_RANGES: [(f32, f32); DELAY_PARAM_COUNT] = [
+    (10.0, 2000.0),
+    (0.0, 0.95),
+    (0.0, 1.0),
+    (0.0, 1.0),
+    (0.0, 1.0),
+];
 
 const DEFAULT_ENGINE_SAMPLE_RATE: f32 = 48_000.0;
 
@@ -166,10 +176,10 @@ impl AudioNode for DelayNode {
 
             let ping_pong_float = (if base.ping_pong { 1.0_f32 } else { 0.0 }) + delta[DELAY_PING_PONG];
             let effective = DelayParams {
-                delay_ms:  base.delay_ms  + delta[DELAY_DELAY_MS],
-                feedback:  base.feedback  + delta[DELAY_FEEDBACK],
-                wet:       base.wet       + delta[DELAY_WET],
-                dry:       base.dry       + delta[DELAY_DRY],
+                delay_ms:  modulated(base.delay_ms, delta[DELAY_DELAY_MS], DELAY_RANGES[DELAY_DELAY_MS]),
+                feedback:  modulated(base.feedback, delta[DELAY_FEEDBACK], DELAY_RANGES[DELAY_FEEDBACK]),
+                wet:       modulated(base.wet,      delta[DELAY_WET],      DELAY_RANGES[DELAY_WET]),
+                dry:       modulated(base.dry,      delta[DELAY_DRY],      DELAY_RANGES[DELAY_DRY]),
                 ping_pong: ping_pong_float >= 0.5,
             };
             if delay_block_values(&effective) != delay_block_values(&self.params) {

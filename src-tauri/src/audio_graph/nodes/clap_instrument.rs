@@ -34,15 +34,11 @@ use crate::audio_graph::plugin_params::{PluginParamControl, PluginParamControls}
 use crate::plugin_system::instance::{PluginInstance, FFI_GATE_HARVEST_BUDGET};
 
 use crate::plugin_formats::clap::ffi::{
-    ClapAudioBuffer, ClapEventBuffer, ClapEventHeader, ClapOutputEvents, ClapPlugin, ClapProcess,
+    ClapAudioBuffer, ClapEventBuffer, ClapOutputEvents, ClapPlugin, ClapProcess,
     CLAP_PROCESS_ERROR,
 };
-use crate::plugin_formats::clap::params::{read_clap_params, ClapParamEvents};
+use crate::plugin_formats::clap::params::{observe_output_event, read_clap_params, ClapParamEvents};
 use crate::plugin_formats::clap::transport::clap_transport_event;
-
-unsafe extern "C" fn out_try_push(_: *const ClapOutputEvents, _: *const ClapEventHeader) -> bool {
-    true
-}
 
 /// Append the engine's per-block `MidiEventList` as CLAP note events.
 ///
@@ -98,7 +94,7 @@ impl ClapInstrument {
             param_events: ClapParamEvents::new(),
             out_events: ClapOutputEvents {
                 ctx: std::ptr::null_mut(),
-                try_push: out_try_push,
+                try_push: observe_output_event,
             },
             num_channels: 2,
             active: false,
@@ -143,10 +139,16 @@ impl InstrumentDevice for ClapInstrument {
         if outputs.is_empty() || !self.active {
             return;
         }
+        // Same FFI gate as the effect wrapper: while an off-RT caller (state
+        // save, parameter read) holds it, this block stays silent rather than race it.
+        let Some(_ffi_gate) = self.instance.rt_try_enter() else {
+            return;
+        };
 
         self.param_events.fill(&self.instance);
         push_clap_notes(events, &mut self.param_events.buffer);
         self.param_events.buffer.sort();
+        self.out_events.ctx = self.param_events.output_context();
 
         let nc = self.num_channels;
         // Frame count MUST be the current block size, not the buffer's allocated
@@ -215,7 +217,7 @@ impl InstrumentDevice for ClapInstrument {
 mod tests {
     use super::*;
     use crate::audio_graph::midi::MidiEvent;
-    use crate::plugin_formats::clap::ffi::{ClapEventNote, CLAP_EVENT_NOTE_OFF, CLAP_EVENT_NOTE_ON};
+    use crate::plugin_formats::clap::ffi::{ClapEventHeader, ClapEventNote, CLAP_EVENT_NOTE_OFF, CLAP_EVENT_NOTE_ON};
 
     fn notes(list: &ClapEventBuffer) -> Vec<(u16, u32, i16, f64)> {
         (0..list.len())

@@ -1,0 +1,183 @@
+import { invoke } from '@tauri-apps/api/core';
+import type { ModulationTargetKind, ModulationTargetRef, TrackEffect } from '../../types/global';
+
+export interface PluginParamInfo {
+  native_id: number;
+  name: string;
+  module: string;
+  min: number;
+  max: number;
+  default: number;
+  automatable: boolean;
+  modulatable: boolean;
+  hidden: boolean;
+}
+
+export interface ModulationTargetOption {
+  key: string;
+  group: string;
+  module: string;
+  label: string;
+  kind: ModulationTargetKind;
+  effectId?: string;
+  param: string;
+  /** Engine depth for a ±100 % slider: internal effects take depth in plain units. */
+  depthScale: number;
+}
+
+interface InternalParam {
+  param: string;
+  label: string;
+  min: number;
+  max: number;
+}
+
+// Mirrors the `*_RANGES` tables of the Rust effect nodes, which clamp modulated values to them.
+const INTERNAL_PARAMS: Record<string, InternalParam[]> = {
+  eq: [
+    { param: 'low_gain_db', label: 'Gain graves', min: -12, max: 12 },
+    { param: 'low_freq', label: 'Fréquence graves', min: 20, max: 20000 },
+    { param: 'mid_gain_db', label: 'Gain médiums', min: -12, max: 12 },
+    { param: 'mid_freq', label: 'Fréquence médiums', min: 20, max: 20000 },
+    { param: 'mid_q', label: 'Largeur médiums (Q)', min: 0.1, max: 10 },
+    { param: 'high_gain_db', label: 'Gain aigus', min: -12, max: 12 },
+    { param: 'high_freq', label: 'Fréquence aigus', min: 20, max: 20000 },
+  ],
+  compressor: [
+    { param: 'threshold_db', label: 'Seuil', min: -60, max: 0 },
+    { param: 'ratio', label: 'Ratio', min: 1, max: 20 },
+    { param: 'attack_ms', label: 'Attaque', min: 0.1, max: 200 },
+    { param: 'release_ms', label: 'Relâchement', min: 10, max: 2000 },
+    { param: 'makeup_db', label: 'Gain de sortie', min: -6, max: 24 },
+    { param: 'knee_db', label: 'Genou', min: 0, max: 24 },
+  ],
+  reverb: [
+    { param: 'room_size', label: 'Taille', min: 0, max: 1 },
+    { param: 'damping', label: 'Amortissement', min: 0, max: 1 },
+    { param: 'wet', label: 'Mix', min: 0, max: 1 },
+    { param: 'width', label: 'Largeur stéréo', min: 0, max: 1 },
+  ],
+  delay: [
+    { param: 'delay_ms', label: 'Temps', min: 10, max: 2000 },
+    { param: 'feedback', label: 'Répétitions', min: 0, max: 0.95 },
+    { param: 'wet', label: 'Mix', min: 0, max: 1 },
+  ],
+};
+
+const INTERNAL_EFFECT_LABELS: Record<string, string> = {
+  eq: 'EQ', compressor: 'Compresseur', reverb: 'Réverb', delay: 'Délai',
+};
+
+export interface PluginPlacement {
+  key: string;
+  name: string;
+}
+
+export function instrumentPlacementKey(trackId: string): string {
+  return `instrument:${trackId}`;
+}
+
+function pluginEffectName(effect: TrackEffect): string | null {
+  const params = effect.params as { kind: string; params?: { name?: string } };
+  return params.kind === 'plugin' ? params.params?.name ?? 'Plugin' : null;
+}
+
+export function pluginPlacements(
+  trackId: string,
+  effects: TrackEffect[],
+  instrumentName: string | null,
+): PluginPlacement[] {
+  const placements = effects.flatMap((effect) => {
+    const name = pluginEffectName(effect);
+    return name ? [{ key: effect.id, name }] : [];
+  });
+  if (instrumentName) placements.push({ key: instrumentPlacementKey(trackId), name: instrumentName });
+  return placements;
+}
+
+/** Parameters of a loaded plugin placement; empty when the plugin is not loaded. */
+export async function fetchPluginParams(placementKey: string): Promise<PluginParamInfo[]> {
+  try {
+    return await invoke<PluginParamInfo[]>('get_plugin_params', { instanceKey: placementKey });
+  } catch {
+    return [];
+  }
+}
+
+/** Display names of the track's effects, numbered when a kind appears twice. */
+function effectGroupNames(effects: TrackEffect[]): Map<string, string> {
+  const names = new Map<string, string>();
+  const seen = new Map<string, number>();
+  for (const effect of effects) {
+    const base = pluginEffectName(effect) ?? INTERNAL_EFFECT_LABELS[effect.params.kind] ?? effect.params.kind;
+    const count = (seen.get(base) ?? 0) + 1;
+    seen.set(base, count);
+    names.set(effect.id, count > 1 ? `${base} ${count}` : base);
+  }
+  return names;
+}
+
+export function buildTargetOptions(
+  effects: TrackEffect[],
+  placements: PluginPlacement[],
+  paramsByPlacement: Record<string, PluginParamInfo[]>,
+): ModulationTargetOption[] {
+  const options: ModulationTargetOption[] = [
+    { key: 'track_gain', group: 'Piste', module: '', label: 'Volume', kind: 'track_gain', param: 'gain', depthScale: 1 },
+  ];
+  const groupNames = effectGroupNames(effects);
+
+  for (const effect of effects) {
+    for (const p of INTERNAL_PARAMS[effect.params.kind] ?? []) {
+      options.push({
+        key: `${effect.id}/${p.param}`,
+        group: groupNames.get(effect.id) ?? '',
+        module: '',
+        label: p.label,
+        kind: 'effect_param',
+        effectId: effect.id,
+        param: p.param,
+        depthScale: p.max - p.min,
+      });
+    }
+  }
+
+  for (const placement of placements) {
+    const group = groupNames.get(placement.key) ?? placement.name;
+    for (const p of paramsByPlacement[placement.key] ?? []) {
+      // Automatable-only params are modulated by value in the engine (ADR-021 amendment).
+      if (!(p.modulatable || p.automatable) || p.hidden) continue;
+      options.push({
+        key: `${placement.key}/${p.native_id}`,
+        group,
+        module: p.module,
+        label: p.name,
+        kind: 'plugin_param',
+        effectId: placement.key,
+        param: String(p.native_id),
+        depthScale: 1,
+      });
+    }
+  }
+  return options;
+}
+
+export function findTargetOption(
+  options: ModulationTargetOption[],
+  target: ModulationTargetRef,
+): ModulationTargetOption | undefined {
+  switch (target.kind) {
+    case 'track_gain':
+      return options.find((o) => o.kind === 'track_gain');
+    case 'effect_param':
+      return options.find((o) => o.effectId === target.effect_id && o.param === target.param);
+    case 'plugin_param':
+      return options.find((o) => o.effectId === target.effect_id && o.param === String(target.native_id));
+  }
+}
+
+export function matchesSearch(option: ModulationTargetOption, query: string): boolean {
+  const needle = query.trim().toLowerCase();
+  if (!needle) return true;
+  return `${option.group} ${option.module} ${option.label}`.toLowerCase().includes(needle);
+}

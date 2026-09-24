@@ -47,6 +47,7 @@ use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU8, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use crate::audio_graph::plugin_params::ValueModulatedParam;
 use crate::plugin_formats::clap::ffi::{ClapHost, ClapLibrary, ClapPlugin};
 use crate::plugin_formats::vst3::ffi::{
     IAudioProcessor, IComponent, ProcessSetup, Vst3Library, SPEAKER_STEREO,
@@ -253,6 +254,10 @@ pub struct PluginInstance {
     /// keeps a modulation offset until told otherwise, so a recompile that drops
     /// a route must reset it.  Command thread only.
     modulated_params: Mutex<Vec<u32>>,
+    /// Parameters modulated by value because the plugin cannot modulate them
+    /// (ADR-021 amendment); their base is restored before a state save.
+    /// Command thread only.
+    value_modulated_params: Mutex<Vec<ValueModulatedParam>>,
 }
 
 impl PluginInstance {
@@ -270,6 +275,7 @@ impl PluginInstance {
             vst3_activation: ActivationState::new(),
             ffi_gate: AtomicU8::new(GATE_IDLE),
             modulated_params: Mutex::new(Vec::new()),
+            value_modulated_params: Mutex::new(Vec::new()),
         })
     }
 
@@ -301,6 +307,7 @@ impl PluginInstance {
             vst3_activation: ActivationState::new(),
             ffi_gate: AtomicU8::new(GATE_IDLE),
             modulated_params: Mutex::new(Vec::new()),
+            value_modulated_params: Mutex::new(Vec::new()),
         })
     }
 
@@ -329,6 +336,7 @@ impl PluginInstance {
             vst3_activation: ActivationState::new(),
             ffi_gate: AtomicU8::new(GATE_IDLE),
             modulated_params: Mutex::new(Vec::new()),
+            value_modulated_params: Mutex::new(Vec::new()),
         })
     }
 
@@ -339,6 +347,42 @@ impl PluginInstance {
         let released = modulated.iter().copied().filter(|id| !now.contains(id)).collect();
         *modulated = now.to_vec();
         released
+    }
+
+    /// Records the value-modulated parameters and returns the previous ones.
+    /// Command thread only.
+    pub fn replace_value_modulated_params(&self, now: Vec<ValueModulatedParam>) -> Vec<ValueModulatedParam> {
+        let mut params = self.value_modulated_params.lock().unwrap_or_else(|e| e.into_inner());
+        std::mem::replace(&mut *params, now)
+    }
+
+    /// Current plain value of a CLAP parameter, read under the FFI gate.
+    /// `None` for other formats, or when a block is in flight past the budget.
+    pub fn clap_param_value(&self, native_id: u32) -> Option<f64> {
+        let NativeHandle::Clap { plugin, .. } = &self.handle else {
+            return None;
+        };
+        let _gate = self.offrt_try_acquire(FFI_GATE_HARVEST_BUDGET)?;
+        // SAFETY: live CLAP plugin owned by this instance; FFI gate held.
+        unsafe { crate::plugin_formats::clap::params::read_clap_param_value(*plugin, native_id) }
+    }
+
+    /// Puts value-modulated parameters back on their base so a state save
+    /// captures the user's setting, not a point of the modulation.
+    ///
+    /// # Safety
+    /// `plugin` must be this instance's live CLAP plugin and the caller must hold the FFI gate.
+    unsafe fn restore_value_modulated_bases(&self, plugin: *const ClapPlugin) {
+        let bases: Vec<(u32, f64)> = self
+            .value_modulated_params
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .iter()
+            .map(|param| (param.native_id, param.base_plain() as f64))
+            .collect();
+        if !bases.is_empty() {
+            crate::plugin_formats::clap::params::flush_clap_param_values(plugin, &bases);
+        }
     }
 
     /// Process-unique, stable identity for this live instance.  Two instances of
@@ -382,6 +426,7 @@ impl PluginInstance {
                 crate::plugin_formats::vst3::ffi::read_component_state(component.as_ptr())
             },
             NativeHandle::Clap { plugin, .. } => unsafe {
+                self.restore_value_modulated_bases(*plugin);
                 crate::plugin_formats::clap::ffi::read_plugin_state(*plugin)
             },
             _ => None,

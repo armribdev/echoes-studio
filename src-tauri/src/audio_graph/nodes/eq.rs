@@ -3,6 +3,7 @@ use std::sync::Arc;
 use crate::audio_graph::buffer::AudioBuffer;
 use crate::audio_graph::node::{AudioNode, NodeId, PrepareContext, TransportInfo, MAX_CONTROL_POINTS};
 use crate::audio_graph::oversampling::{Oversample2x, OVERSAMPLE_FACTOR};
+use crate::audio_graph::nodes::modulated;
 use crate::audio_graph::parameter_block::ParameterBlock;
 use crate::project::EqParams;
 
@@ -16,6 +17,17 @@ pub const EQ_MID_FREQ: usize = 3;
 pub const EQ_MID_Q: usize = 4;
 pub const EQ_HIGH_GAIN_DB: usize = 5;
 pub const EQ_HIGH_FREQ: usize = 6;
+
+/// Bounds a modulated value may reach, in cell order (mirrored by the UI's modulation targets).
+pub const EQ_RANGES: [(f32, f32); EQ_PARAM_COUNT] = [
+    (-12.0, 12.0),
+    (20.0, 20_000.0),
+    (-12.0, 12.0),
+    (20.0, 20_000.0),
+    (0.1, 10.0),
+    (-12.0, 12.0),
+    (20.0, 20_000.0),
+];
 
 /// Flatten `EqParams` into the `ParameterBlock` cell order above.
 pub fn eq_block_values(p: &EqParams) -> [f32; EQ_PARAM_COUNT] {
@@ -280,13 +292,13 @@ impl AudioNode for EqNode {
             }
             let delta = if k == 0 { self.base_delta } else { self.seg_delta[k - 1] };
             let effective = EqParams {
-                low_gain_db:  base.low_gain_db  + delta[EQ_LOW_GAIN_DB],
-                low_freq:     base.low_freq     + delta[EQ_LOW_FREQ],
-                mid_gain_db:  base.mid_gain_db  + delta[EQ_MID_GAIN_DB],
-                mid_freq:     base.mid_freq     + delta[EQ_MID_FREQ],
-                mid_q:        base.mid_q        + delta[EQ_MID_Q],
-                high_gain_db: base.high_gain_db + delta[EQ_HIGH_GAIN_DB],
-                high_freq:    base.high_freq    + delta[EQ_HIGH_FREQ],
+                low_gain_db:  modulated(base.low_gain_db,  delta[EQ_LOW_GAIN_DB],  EQ_RANGES[EQ_LOW_GAIN_DB]),
+                low_freq:     modulated(base.low_freq,     delta[EQ_LOW_FREQ],     EQ_RANGES[EQ_LOW_FREQ]),
+                mid_gain_db:  modulated(base.mid_gain_db,  delta[EQ_MID_GAIN_DB],  EQ_RANGES[EQ_MID_GAIN_DB]),
+                mid_freq:     modulated(base.mid_freq,     delta[EQ_MID_FREQ],     EQ_RANGES[EQ_MID_FREQ]),
+                mid_q:        modulated(base.mid_q,        delta[EQ_MID_Q],        EQ_RANGES[EQ_MID_Q]),
+                high_gain_db: modulated(base.high_gain_db, delta[EQ_HIGH_GAIN_DB], EQ_RANGES[EQ_HIGH_GAIN_DB]),
+                high_freq:    modulated(base.high_freq,    delta[EQ_HIGH_FREQ],    EQ_RANGES[EQ_HIGH_FREQ]),
             };
             if eq_block_values(&effective) != eq_block_values(&self.params) {
                 self.params = effective;

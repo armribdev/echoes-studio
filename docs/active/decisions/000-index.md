@@ -44,7 +44,7 @@ lives there.
 | [018](018-clip-source-offset-trim.md) | Clip source offset & trim (audio + MIDI window) | State / MIDI scheduling |
 | [019](019-sub-block-modulation.md) | Sub-block deterministic modulation & automation (absolute control grid) | Modulation / scheduling / determinism |
 | [020](020-disabled-plugins-stay-loaded.md) | Disabled plugin effects stay loaded (`BypassNode`) | Plugins / graph / persistence |
-| [021](021-plugin-parameter-modulation-and-automation.md) | Plugin parameters: automation sets, modulation offsets | Plugins / modulation |
+| [021](021-plugin-parameter-modulation-and-automation.md) | Plugin parameters: automation sets, modulation offsets (amended 2026-09-24: automatable-only CLAP params modulated by value) | Plugins / modulation |
 
 ---
 

@@ -205,6 +205,12 @@ deliver sample-accurate automation buffers before each block. See
 `../modulation/modulation-system.md` for how automation and modulation unify at
 the `ParameterBlock` level.
 
+`PluginInstance` also records, on the command thread, which parameters are
+host-modulated (`replace_modulated_params`) and which CLAP parameters are
+modulated by value (`replace_value_modulated_params`, ADR-021 amendment). The
+latter are put back on their base by `save_state_blob` before the CLAP state is
+serialised, so a saved preset never captures a point of an LFO.
+
 ---
 
 ## Opaque Plugin State

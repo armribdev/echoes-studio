@@ -53,6 +53,7 @@
 				<ModulationPanel
 					compact
 					trackId={$selectedTrack.trackId}
+					instrument={$selectedTrack.instrument}
 					modulators={$selectedTrack.modulators}
 					mod_routes={$selectedTrack.mod_routes}
 					effects={$selectedTrack.effects}

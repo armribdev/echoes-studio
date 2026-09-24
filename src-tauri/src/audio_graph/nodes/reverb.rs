@@ -3,6 +3,7 @@ use std::sync::Arc;
 use crate::audio_graph::buffer::AudioBuffer;
 use crate::audio_graph::denormal::ANTI_DENORMAL;
 use crate::audio_graph::node::{AudioNode, NodeId, PrepareContext, TransportInfo, MAX_CONTROL_POINTS};
+use crate::audio_graph::nodes::modulated;
 use crate::audio_graph::parameter_block::ParameterBlock;
 use crate::project::ReverbParams;
 
@@ -13,6 +14,9 @@ pub const REVERB_DAMPING: usize = 1;
 pub const REVERB_WET: usize = 2;
 pub const REVERB_DRY: usize = 3;
 pub const REVERB_WIDTH: usize = 4;
+
+/// Bounds a modulated value may reach, in cell order (mirrored by the UI's modulation targets).
+pub const REVERB_RANGES: [(f32, f32); REVERB_PARAM_COUNT] = [(0.0, 1.0); REVERB_PARAM_COUNT];
 
 /// Flatten `ReverbParams` into the `ParameterBlock` cell order above.
 pub fn reverb_block_values(p: &ReverbParams) -> [f32; REVERB_PARAM_COUNT] {
@@ -223,11 +227,11 @@ impl AudioNode for ReverbNode {
             }
             let delta = if k == 0 { self.base_delta } else { self.seg_delta[k - 1] };
             let effective = ReverbParams {
-                room_size: base.room_size + delta[REVERB_ROOM_SIZE],
-                damping:   base.damping   + delta[REVERB_DAMPING],
-                wet:       base.wet       + delta[REVERB_WET],
-                dry:       base.dry       + delta[REVERB_DRY],
-                width:     base.width     + delta[REVERB_WIDTH],
+                room_size: modulated(base.room_size, delta[REVERB_ROOM_SIZE], REVERB_RANGES[REVERB_ROOM_SIZE]),
+                damping:   modulated(base.damping,   delta[REVERB_DAMPING],   REVERB_RANGES[REVERB_DAMPING]),
+                wet:       modulated(base.wet,       delta[REVERB_WET],       REVERB_RANGES[REVERB_WET]),
+                dry:       modulated(base.dry,       delta[REVERB_DRY],       REVERB_RANGES[REVERB_DRY]),
+                width:     modulated(base.width,     delta[REVERB_WIDTH],     REVERB_RANGES[REVERB_WIDTH]),
             };
             if reverb_block_values(&effective) != reverb_block_values(&self.params) {
                 let recompute = effective.room_size != self.params.room_size

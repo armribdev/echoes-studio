@@ -1,40 +1,90 @@
 <!-- ModulationPanel.svelte — LFO sources and modulation routes per track -->
 <script lang="ts">
 	import Knob from './Knob.svelte';
+	import ModulationTargetPicker from './ModulationTargetPicker.svelte';
 	import type { TrackEffect, ProjectModulator, ProjectModulationRoute } from '../types/global';
 	import {
 		addModulator,
 		removeModulator,
 		updateModulator,
+		addModulationRoute,
 		removeModulationRoute,
 		setModulationDepth,
 	} from '../frontend/commands/dispatcher';
+	import {
+		buildTargetOptions,
+		fetchPluginParams,
+		findTargetOption,
+		pluginPlacements,
+		type ModulationTargetOption,
+		type PluginParamInfo,
+		type PluginPlacement,
+	} from '../frontend/modulation/targets';
+	import { plugins, pluginDisplayName } from '../stores/plugins';
 	import { notify } from '../stores/status';
 
 	export let trackId: string;
+	export let instrument: string | null = null;
 	export let modulators: ProjectModulator[];
 	export let mod_routes: ProjectModulationRoute[];
 	export let effects: TrackEffect[];
 	export let compact = false;
 
-	const EFFECT_LABELS: Record<string, string> = {
-		eq: 'EQ', compressor: 'Comp', reverb: 'Réverb', delay: 'Délai',
-	};
+	const DEFAULT_DEPTH = 0.5;
 
-	const PARAM_LABELS: Record<string, string> = {
-		gain: 'Vol',
-		low_gain_db: 'Low', mid_gain_db: 'Mid', high_gain_db: 'High', mid_q: 'Q',
-		threshold_db: 'Seuil', ratio: 'Ratio', attack_ms: 'Attq', release_ms: 'Rel', makeup_db: 'Mkup',
-		room_size: 'Taille', damping: 'Damp', wet: 'Wet', width: 'Width',
-		delay_ms: 'Time', feedback: 'Fdbk',
-	};
+	let pickerModulatorId: string | null = null;
+	let paramsByPlacement: Record<string, PluginParamInfo[]> = {};
+	let loadingParams = false;
+	let paramsRequest = 0;
 
-	function routeTargetLabel(route: ProjectModulationRoute): string {
-		if (route.target.kind === 'track_gain') return 'Volume';
-		const t = route.target as { kind: 'effect_param'; track_id: string; effect_id: string; param: string };
-		const effect = effects.find((e) => e.id === t.effect_id);
-		const effectLabel = effect ? (EFFECT_LABELS[effect.params.kind] ?? effect.params.kind) : '?';
-		return `${effectLabel} › ${PARAM_LABELS[t.param] ?? t.param}`;
+	$: instrumentName = instrument
+		? ($plugins.find((p) => p.id === instrument)?.name ?? pluginDisplayName(instrument))
+		: null;
+	$: placements = pluginPlacements(trackId, effects, instrumentName);
+	$: placementSignature = placements.map((p) => `${p.key}=${p.name}`).join('|');
+	$: placementSignature, loadPluginParams(placements);
+	$: options = buildTargetOptions(effects, placements, paramsByPlacement);
+
+	async function loadPluginParams(list: PluginPlacement[]) {
+		const request = ++paramsRequest;
+		loadingParams = true;
+		const entries = await Promise.all(list.map(async (p) => [p.key, await fetchPluginParams(p.key)] as const));
+		if (request !== paramsRequest) return;
+		paramsByPlacement = Object.fromEntries(entries);
+		loadingParams = false;
+	}
+
+	function routeTargetLabel(route: ProjectModulationRoute, list: ModulationTargetOption[]): string {
+		const option = findTargetOption(list, route.target);
+		if (option) return option.kind === 'track_gain' ? option.label : `${option.group} › ${option.label}`;
+		if (route.target.kind === 'plugin_param') return `Plugin › réglage ${route.target.native_id}`;
+		return route.target.kind === 'effect_param' ? `Effet › ${route.target.param}` : 'Volume';
+	}
+
+	function depthScale(route: ProjectModulationRoute, list: ModulationTargetOption[]): number {
+		return findTargetOption(list, route.target)?.depthScale ?? 1;
+	}
+
+	function sliderDepth(route: ProjectModulationRoute, list: ModulationTargetOption[]): number {
+		return Math.max(-1, Math.min(1, route.depth / depthScale(route, list)));
+	}
+
+	function formatDepth(slider: number): string {
+		return `${slider >= 0 ? '+' : ''}${(slider * 100).toFixed(0)}${compact ? '' : '%'}`;
+	}
+
+	function togglePicker(modId: string) {
+		pickerModulatorId = pickerModulatorId === modId ? null : modId;
+		if (pickerModulatorId) loadPluginParams(placements);
+	}
+
+	async function handleAssign(modId: string, option: ModulationTargetOption) {
+		pickerModulatorId = null;
+		try {
+			await addModulationRoute(trackId, modId, option.kind, option.param, DEFAULT_DEPTH * option.depthScale, option.effectId);
+		} catch (e) {
+			notify(`Erreur assignation : ${(e as Error)?.message ?? e}`, 'error');
+		}
 	}
 
 	function modNameForRoute(route: ProjectModulationRoute): string {
@@ -62,9 +112,9 @@
 		catch (e) { notify(`Erreur suppression route : ${(e as Error)?.message ?? e}`, 'error'); }
 	}
 
-	async function handleDepthChange(routeId: string, e: Event) {
-		const value = (e.currentTarget as HTMLInputElement).value;
-		try { await setModulationDepth(trackId, routeId, parseFloat(value)); }
+	async function handleDepthChange(route: ProjectModulationRoute, e: Event) {
+		const slider = parseFloat((e.currentTarget as HTMLInputElement).value);
+		try { await setModulationDepth(trackId, route.id, slider * depthScale(route, options)); }
 		catch (err) { notify(`Erreur profondeur : ${(err as Error)?.message ?? err}`, 'error'); }
 	}
 </script>
@@ -102,9 +152,20 @@
 					on:release={(e) => handleRateChange(mod.id, e.detail)}
 				/>
 				<span class="param-val">{(mod.rate_hz ?? 1).toFixed(compact ? 1 : 2)}{compact ? '' : ' Hz'}</span>
+				<button class="assign-btn" type="button" class:active={pickerModulatorId === mod.id}
+					on:mousedown|stopPropagation
+					on:click|stopPropagation={() => togglePicker(mod.id)} title="Brancher ce LFO sur un réglage">Assigner</button>
 				<button class="rm-btn" type="button"
 					on:click|stopPropagation={() => handleRemoveMod(mod.id)} title="Supprimer">×</button>
 			</div>
+			{#if pickerModulatorId === mod.id}
+				<ModulationTargetPicker
+					{options}
+					loading={loadingParams}
+					on:select={(e) => handleAssign(mod.id, e.detail)}
+					on:close={() => (pickerModulatorId = null)}
+				/>
+			{/if}
 		</div>
 	{/each}
 
@@ -123,17 +184,17 @@
 			<div class="route-row">
 				<span class="route-src">{modNameForRoute(route)}</span>
 				<span class="route-arrow">→</span>
-				<span class="route-tgt">{routeTargetLabel(route)}</span>
+				<span class="route-tgt" title={routeTargetLabel(route, options)}>{routeTargetLabel(route, options)}</span>
 				<input
 					class="depth-slider"
 					type="range"
 					min="-1"
 					max="1"
 					step="0.01"
-					value={route.depth}
-					on:change={(e) => handleDepthChange(route.id, e)}
+					value={sliderDepth(route, options)}
+					on:change={(e) => handleDepthChange(route, e)}
 				/>
-				<span class="depth-val">{route.depth >= 0 ? '+' : ''}{(route.depth * 100).toFixed(0)}{compact ? '' : '%'}</span>
+				<span class="depth-val">{formatDepth(sliderDepth(route, options))}</span>
 				<button class="rm-btn" type="button"
 					on:click|stopPropagation={() => handleRemoveRoute(route.id)} title="Supprimer">×</button>
 			</div>
@@ -160,6 +221,7 @@
 		&.compact .depth-val { min-width: 24px; font-size: 8px; }
 		&.compact .route-src { min-width: 22px; font-size: 8px; }
 		&.compact .route-tgt { font-size: 8px; }
+		&.compact .assign-btn { padding: 1px 3px; font-size: 8px; }
 	}
 
 	.section-header {
@@ -236,8 +298,17 @@
 		flex-shrink: 0; min-width: 44px;
 	}
 
-	.rm-btn {
+	.assign-btn {
 		margin-left: auto;
+		flex-shrink: 0;
+		padding: 1px 5px;
+		border: 1px solid $border-subtle; border-radius: 3px;
+		background: transparent; color: $text-subtle;
+		font-size: 9px; line-height: 1.3; cursor: pointer;
+		&:hover, &.active { background: rgba(21,113,255,0.15); color: $text-color; border-color: rgba(21,113,255,0.4); }
+	}
+
+	.rm-btn {
 		width: 16px; height: 16px; border: none; background: transparent;
 		color: $text-faint; font-size: 14px; line-height: 1; cursor: pointer;
 		padding: 0; display: flex; align-items: center; justify-content: center;

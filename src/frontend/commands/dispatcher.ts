@@ -332,7 +332,7 @@ export function updateModulator(
 export function addModulationRoute(
   trackId: string,
   modulatorId: string,
-  targetKind: 'track_gain' | 'effect_param',
+  targetKind: 'track_gain' | 'effect_param' | 'plugin_param',
   param: string,
   depth: number,
   effectId?: string,

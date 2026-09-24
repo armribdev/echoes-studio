@@ -155,6 +155,33 @@ ModulationTarget {
 The modulator's `−1.0 … +1.0` output is scaled by `depth` and added to the base
 value before being passed to the node.
 
+Units differ per target kind (the stored `depth` is always in the engine's unit):
+
+| Target | `depth` unit |
+|--------|--------------|
+| `TrackGain` | linear gain (fader 0…100 → 0…1); the result never goes below 0 |
+| `EffectParam` (internal effect) | plain units (Hz, dB, ms…) |
+| `PluginParam` | normalised (1.0 = the parameter's full range, ADR-021) |
+
+**Bounds on internal effects (2026-09-24).** `Eq`, `Compressor`, `Reverb` and
+`Delay` clamp `base + delta` to a per-parameter range (`EQ_RANGES`,
+`COMP_RANGES`, `REVERB_RANGES`, `DELAY_RANGES`, via `nodes::modulated`), so a
+strong LFO cannot push e.g. delay feedback above 0.95 or an EQ frequency below
+20 Hz. The range is widened to include the base value, so an unmodulated
+parameter — including a legacy out-of-range one — is bit-identical to before.
+Automation deltas on internal nodes go through the same clamp.
+
+**UI convention.** The modulation panel's depth slider means "± % of the
+parameter's range" for every target. The frontend
+(`src/frontend/modulation/targets.ts`, which mirrors the Rust range tables)
+multiplies the slider by `max − min` before sending an `EffectParam` depth, and
+divides back for display; `TrackGain` and `PluginParam` use the slider as is.
+The picker lists the track volume, internal effect params (those the node
+actually uses — `dry` and `ping_pong` are excluded) and plugin params returned
+by `get_plugin_params` with `(modulatable || automatable) && !hidden` —
+automatable-only CLAP parameters (e.g. every Vital parameter) are modulated by
+value (ADR-021 amendment).
+
 ---
 
 ## Automation vs Modulation — The Distinction
@@ -181,14 +208,14 @@ a single per-frame float array regardless of source.
 
 ## Current Status
 
-_Verified 2026-09-23._ The runtime application pass is live: the scheduler
+_Verified 2026-09-24._ The runtime application pass is live: the scheduler
 evaluates every route on the absolute control grid (ADR-019, Tranches 1–3 done).
 
 | Target | Sub-block delivery |
 |--------|--------------------|
-| VST3 / CLAP plugin params (effects and instruments) | one native event per grid point; modulation offsets the value, automation sets it (ADR-021) |
+| VST3 / CLAP plugin params (effects and instruments) | one native event per grid point; modulation offsets the value, automation sets it (ADR-021); CLAP automatable-only params get `base + offset` as values |
 | `GainNode` / `TrackGainNode` | per-sample one-pole smoother whose target switches at each grid point |
-| `Delay` / `Compressor` / `Reverb` / `Eq` | `process` loop segmented at grid points, params recomputed per segment |
+| `Delay` / `Compressor` / `Reverb` / `Eq` | `process` loop segmented at grid points, params recomputed per segment and clamped to their range |
 | `PanNode` / `MasterNode` | not modulation targets |
 
 The block-rate `ModSmooth` (`nodes/mod_smooth.rs`) is no longer used by

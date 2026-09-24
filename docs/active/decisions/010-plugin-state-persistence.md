@@ -140,7 +140,9 @@ The audio thread claims the gate around its `process()` FFI (skipping that block
 with a transparent bypass if an off-RT caller holds it — it never waits, so no
 priority inversion); off-RT harvests claim the same gate before each live
 `getState`, falling back to the cached blob if a block is in flight and the gate
-cannot be claimed within a short budget. **Every** current live-FFI reader is
+cannot be claimed within a short budget. (2026-09-24: the CLAP instrument
+adapter now claims it too; before, a save could race a playing CLAP synth.)
+**Every** current live-FFI reader is
 routed through it: the project-save harvest (`collect_plugin_states`), the R-4
 re-instantiation read of the previous instance (`PluginInstance::restore_from`),
 `save_device_state`, and the wrappers' `prepare`-time introspection (VST3

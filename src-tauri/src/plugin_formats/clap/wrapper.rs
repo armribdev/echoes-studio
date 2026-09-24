@@ -33,7 +33,7 @@ use std::sync::Arc;
 use crate::audio_graph::buffer::AudioBuffer;
 use crate::audio_graph::node::{AudioNode, NodeId, PrepareContext, TransportInfo};
 use crate::audio_graph::plugin_params::{parse_plugin_param_name, PluginParamControl};
-use crate::plugin_formats::clap::params::{read_clap_params, ClapParamEvents};
+use crate::plugin_formats::clap::params::{observe_output_event, read_clap_params, ClapParamEvents};
 use crate::plugin_formats::clap::transport::clap_transport_event;
 use crate::plugin_formats::crash_guard;
 use crate::plugin_system::capabilities::DeviceCapabilities;
@@ -57,14 +57,6 @@ struct ClapProcessCtx {
 unsafe extern "C" fn clap_process_trampoline(raw: *mut c_void) -> i32 {
     let ctx = &*(raw as *const ClapProcessCtx);
     ((*ctx.plugin).process)(ctx.plugin, ctx.process)
-}
-
-// Plugins can push output events; we discard them until Phase 4 MIDI output.
-unsafe extern "C" fn out_try_push(
-    _: *const ClapOutputEvents,
-    _: *const super::ffi::ClapEventHeader,
-) -> bool {
-    true
 }
 
 pub struct ClapWrapperNode {
@@ -130,7 +122,7 @@ impl ClapWrapperNode {
             param_events: ClapParamEvents::new(),
             out_events: ClapOutputEvents {
                 ctx: std::ptr::null_mut(),
-                try_push: out_try_push,
+                try_push: observe_output_event,
             },
             num_channels: 2,
             active: false,
@@ -235,6 +227,7 @@ impl AudioNode for ClapWrapperNode {
 
         self.param_events.fill(&self.instance);
         self.param_events.buffer.sort();
+        self.out_events.ctx = self.param_events.output_context();
 
         for c in 0..nc {
             self.in_channel_ptrs[c] = if !inputs.is_empty() {

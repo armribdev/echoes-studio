@@ -137,8 +137,36 @@ pub struct ClapHost {
 pub unsafe extern "C" fn host_request_restart(_: *const ClapHost) {}
 pub unsafe extern "C" fn host_request_process(_: *const ClapHost) {}
 pub unsafe extern "C" fn host_request_callback(_: *const ClapHost) {}
-pub unsafe extern "C" fn host_get_extension(_: *const ClapHost, _: *const c_char) -> *const c_void {
+pub unsafe extern "C" fn host_get_extension(_: *const ClapHost, id: *const c_char) -> *const c_void {
+    if !id.is_null() && std::ffi::CStr::from_ptr(id).to_bytes_with_nul() == CLAP_EXT_STATE {
+        return &HOST_STATE as *const ClapHostState as *const c_void;
+    }
     std::ptr::null()
+}
+
+/// `clap_host_state` — lets a plugin report that its state changed.
+#[repr(C)]
+pub struct ClapHostState {
+    pub mark_dirty: unsafe extern "C" fn(*const ClapHost),
+}
+
+static HOST_STATE: ClapHostState = ClapHostState { mark_dirty: host_state_mark_dirty };
+
+/// Set when any hosted plugin reports an edit; the app polls it to mark the project unsaved.
+static PLUGIN_STATE_EDITED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+unsafe extern "C" fn host_state_mark_dirty(_: *const ClapHost) {
+    mark_plugin_state_edited();
+}
+
+/// Lock-free: callable from the audio thread.
+pub fn mark_plugin_state_edited() {
+    PLUGIN_STATE_EDITED.store(true, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Returns whether a plugin reported an edit since the last call, and clears it.
+pub fn take_plugin_state_edited() -> bool {
+    PLUGIN_STATE_EDITED.swap(false, std::sync::atomic::Ordering::Relaxed)
 }
 
 #[cfg(test)]
@@ -230,7 +258,18 @@ pub const CLAP_EVENT_PARAM_VALUE: u16 = 5;
 /// the parameter's current value.  Same layout as `clap_event_param_value`, with
 /// the modulation amount (plain units) in `value`.
 pub const CLAP_EVENT_PARAM_MOD: u16 = 6;
+/// `CLAP_EVENT_PARAM_GESTURE_BEGIN` / `_END` — plugin → host: the user starts /
+/// stops dragging a control in the plugin window (`clap_event_param_gesture`).
+pub const CLAP_EVENT_PARAM_GESTURE_BEGIN: u16 = 7;
+pub const CLAP_EVENT_PARAM_GESTURE_END: u16 = 8;
 pub const CLAP_CORE_EVENT_SPACE: u16 = 0;
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct ClapEventParamGesture {
+    pub header: ClapEventHeader,
+    pub param_id: u32,
+}
 
 #[repr(C)]
 #[derive(Clone, Copy)]

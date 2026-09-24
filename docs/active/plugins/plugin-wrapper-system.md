@@ -171,9 +171,24 @@ instruments and capability negotiation are covered by
 **Parameters (ADR-021).** `plugin_formats/clap/params.rs` is shared by the
 effect wrapper and the instrument: it reads `clap.params` at `prepare`, and
 each block fills one time-sorted `ClapEventBuffer` with queued edits and
-automation (`PARAM_VALUE`), modulation (`PARAM_MOD`, modulatable parameters
-only) and, for instruments, notes. `get_plugin_params` exposes the parameter
-list to the UI.
+automation (`PARAM_VALUE`), modulation (`PARAM_MOD` on modulatable parameters;
+`PARAM_VALUE` of `base + offset` on automatable-only ones — ADR-021 amendment)
+and, for instruments, notes. `get_plugin_params` exposes the parameter list to
+the UI. The plugin's output events go to `observe_output_event`, which tracks
+`PARAM_GESTURE_BEGIN/END` and the dragged value of value-modulated parameters
+(everything else is still discarded).
+
+**Unsaved-changes flag.** Edits made in a plugin window bypass `send_command`,
+so the plugins report them: the host now answers `get_extension("clap.state")`
+with `clap_host_state.mark_dirty`, and `observe_output_event` treats a
+`GESTURE_END` or a `PARAM_VALUE` that cannot be an echo of a host value as an
+edit. Both set a global atomic in `clap_ffi` (`mark_plugin_state_edited`,
+lock-free); `main.rs::watch_plugin_edits` polls it every 250 ms and marks the
+project dirty. Loading, creating and saving a project clear it
+(`mark_saved`). Verified with Vital: no false report on load, playback, value
+modulation or save. `PluginInstance::save_state_blob` flushes
+value-modulated parameters back to their base (`clap.params.flush`, under the
+FFI gate) before `clap.state.save`.
 
 **Transport.** Every in-process `clap_process` call (effect wrapper and
 instrument) carries a `clap_event_transport` built on the stack by
@@ -221,7 +236,10 @@ them:
 
 - The audio thread claims the gate around its `process()` FFI; if an off-RT caller
   holds it, the wrapper **bypasses** that block (input→output) and returns — it
-  never waits, so there is no priority inversion.
+  never waits, so there is no priority inversion. The CLAP instrument adapter
+  (`ClapInstrument::process_midi`) takes the same gate since 2026-09-24 (it did
+  not before, so a save could race a playing synth); a skipped block is silent
+  and its notes are dropped.
 - Off-RT callers (`getState`/`setState`, and the wrappers' `prepare`-time
   introspection — VST3 `getLatencySamples`, CLAP `clap.latency` + param
   enumeration) claim the gate before their FFI, with a short spin budget, and fall

@@ -4,8 +4,40 @@
 
 **Accepted — engine side implemented 2026-09-24** (approved by the user after
 the choice was explained in plain terms). The UI to pick a plugin parameter as
-a target is the next step. Extends ADR-007/008 (parameter transport), ADR-013
+a modulation target exists since 2026-09-24 (`ModulationTargetPicker.svelte`). Extends ADR-007/008 (parameter transport), ADR-013
 (CLAP instruments) and ADR-019 (sub-block grid).
+
+**Amendment 2026-09-24 — value modulation for automatable-only CLAP
+parameters** (approved by the user). Vital declares none of its 903 parameters
+`CLAP_PARAM_IS_MODULATABLE`, so no LFO could reach it. For a CLAP parameter that
+is automatable but not modulatable, the host now **moves the parameter**: each
+grid point sends `PARAM_VALUE = base + offset` (normalised, clamped to 0…1).
+This deliberately breaks "modulation never moves the parameter" for those
+parameters only; modulatable parameters keep `PARAM_MOD`.
+
+- **Base.** `ValueModulatedParam.base` (`audio_graph/plugin_params.rs`, the
+  `LiveParams` shadow `Arc`). Seeded from `clap.params.get_value` when the
+  parameter first becomes modulated (under the FFI gate; if the gate is busy
+  the previous shadow value is kept).
+- **User edits.** The plugin's output events reach `observe_output_event`
+  (`plugin_formats/clap/params.rs`). Between `PARAM_GESTURE_BEGIN` and
+  `PARAM_GESTURE_END` the modulation pauses and the dragged `PARAM_VALUE`
+  becomes the new base. Values outside a gesture are ignored, so a plugin that
+  echoes host values cannot make the base drift.
+- **Route removed.** One `PARAM_VALUE` of the base, sent once.
+- **State save.** `PluginInstance::save_state_blob` flushes value-modulated
+  parameters to their base (`clap.params.flush`) before `clap.state.save`, so the
+  saved preset holds the user's setting. The next block resumes the modulation.
+- **Automation wins** over value modulation on the same parameter (as VST3).
+- **RT.** Output-event callback: linear search + atomic store, no allocation.
+  Released list drained with `Vec::drain` (no deallocation). The per-instance
+  list is a command-thread `Mutex`, never touched by the audio thread.
+- **Known limits.** `clap.params.flush` is called from the command thread while
+  the plugin is active; the CLAP spec asks for the audio thread in that case.
+  The FFI gate guarantees it never runs concurrently with `process` (verified
+  with Vital). A preset change made inside the plugin window does not update
+  the base (no gesture), so the next block puts the parameter back on it.
+  VST3 and the out-of-process bridge are unchanged.
 
 ## Context
 

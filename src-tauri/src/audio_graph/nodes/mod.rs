@@ -37,3 +37,29 @@ pub mod reverb;
 pub mod send;
 pub mod track;
 pub mod track_gain;
+
+/// Modulated value held inside `range`, widened to include `base` so an
+/// unmodulated value (and any legacy out-of-range setting) passes through bit-identical.
+pub fn modulated(base: f32, delta: f32, range: (f32, f32)) -> f32 {
+    let (min, max) = range;
+    (base + delta).clamp(min.min(base), max.max(base))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::modulated;
+
+    #[test]
+    fn modulated_value_stays_in_range() {
+        assert_eq!(modulated(0.4, 0.9, (0.0, 0.95)), 0.95);
+        assert_eq!(modulated(1000.0, -5000.0, (20.0, 20_000.0)), 20.0);
+        assert_eq!(modulated(0.4, 0.1, (0.0, 0.95)), 0.5);
+    }
+
+    #[test]
+    fn out_of_range_base_passes_through_unmodulated() {
+        assert_eq!(modulated(1.2, 0.0, (0.0, 0.95)), 1.2);
+        assert_eq!(modulated(1.2, 0.5, (0.0, 0.95)), 1.2);
+        assert_eq!(modulated(1.2, -0.5, (0.0, 0.95)), 1.2 - 0.5);
+    }
+}

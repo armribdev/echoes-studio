@@ -183,7 +183,8 @@ export interface ProjectModulator {
 
 export type ModulationTargetRef =
   | { kind: 'track_gain'; track_id: string }
-  | { kind: 'effect_param'; track_id: string; effect_id: string; param: string };
+  | { kind: 'effect_param'; track_id: string; effect_id: string; param: string }
+  | { kind: 'plugin_param'; effect_id: string; native_id: number };
 
 export interface ProjectModulationRoute {
   id: string;

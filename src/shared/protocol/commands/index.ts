@@ -199,8 +199,10 @@ export interface UpdateModulatorPayload {
 export interface AddModulationRoutePayload {
   track_id: string;
   modulator_id: string;
-  target_kind: 'track_gain' | 'effect_param';
+  target_kind: 'track_gain' | 'effect_param' | 'plugin_param';
+  /** Effect id, or `instrument:{track_id}` for the track's plugin instrument. */
   effect_id?: string;
+  /** Effect param name, or the plugin native_id as text for `plugin_param`. */
   param: string;
   depth: number;
 }

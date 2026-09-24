@@ -252,11 +252,11 @@ pub struct UpdateModulatorPayload {
 pub struct AddModulationRoutePayload {
     pub track_id: String,
     pub modulator_id: String,
-    /// `"track_gain"` | `"effect_param"`
+    /// `"track_gain"` | `"effect_param"` | `"plugin_param"`
     pub target_kind: String,
-    /// Required when target_kind == "effect_param"
+    /// Required for `effect_param` / `plugin_param` (plugin placement key).
     pub effect_id: Option<String>,
-    /// Parameter name (e.g. `"gain"`, `"cutoff"`, `"room_size"`)
+    /// Parameter name (e.g. `"room_size"`), or the plugin `native_id` as text.
     pub param: String,
     pub depth: f32,
 }

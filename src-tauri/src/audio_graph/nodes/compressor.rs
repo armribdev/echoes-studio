@@ -3,6 +3,7 @@ use std::sync::Arc;
 use crate::audio_graph::buffer::AudioBuffer;
 use crate::audio_graph::node::{AudioNode, NodeId, PrepareContext, TransportInfo, MAX_CONTROL_POINTS};
 use crate::audio_graph::oversampling::{Oversample2x, OVERSAMPLE_FACTOR};
+use crate::audio_graph::nodes::modulated;
 use crate::audio_graph::parameter_block::ParameterBlock;
 use crate::project::CompressorParams;
 
@@ -15,6 +16,16 @@ pub const COMP_ATTACK_MS: usize = 2;
 pub const COMP_RELEASE_MS: usize = 3;
 pub const COMP_MAKEUP_DB: usize = 4;
 pub const COMP_KNEE_DB: usize = 5;
+
+/// Bounds a modulated value may reach, in cell order (mirrored by the UI's modulation targets).
+pub const COMP_RANGES: [(f32, f32); COMP_PARAM_COUNT] = [
+    (-60.0, 0.0),
+    (1.0, 20.0),
+    (0.1, 200.0),
+    (10.0, 2000.0),
+    (-6.0, 24.0),
+    (0.0, 24.0),
+];
 
 const DEFAULT_ENGINE_SAMPLE_RATE: f32 = 48_000.0;
 
@@ -177,12 +188,12 @@ impl AudioNode for CompressorNode {
             }
             let delta = if k == 0 { self.base_delta } else { self.seg_delta[k - 1] };
             let effective = CompressorParams {
-                threshold_db: base.threshold_db + delta[COMP_THRESHOLD_DB],
-                ratio:        base.ratio        + delta[COMP_RATIO],
-                attack_ms:    base.attack_ms    + delta[COMP_ATTACK_MS],
-                release_ms:   base.release_ms   + delta[COMP_RELEASE_MS],
-                makeup_db:    base.makeup_db    + delta[COMP_MAKEUP_DB],
-                knee_db:      base.knee_db      + delta[COMP_KNEE_DB],
+                threshold_db: modulated(base.threshold_db, delta[COMP_THRESHOLD_DB], COMP_RANGES[COMP_THRESHOLD_DB]),
+                ratio:        modulated(base.ratio,        delta[COMP_RATIO],        COMP_RANGES[COMP_RATIO]),
+                attack_ms:    modulated(base.attack_ms,    delta[COMP_ATTACK_MS],    COMP_RANGES[COMP_ATTACK_MS]),
+                release_ms:   modulated(base.release_ms,   delta[COMP_RELEASE_MS],   COMP_RANGES[COMP_RELEASE_MS]),
+                makeup_db:    modulated(base.makeup_db,    delta[COMP_MAKEUP_DB],    COMP_RANGES[COMP_MAKEUP_DB]),
+                knee_db:      modulated(base.knee_db,      delta[COMP_KNEE_DB],      COMP_RANGES[COMP_KNEE_DB]),
             };
             if compressor_block_values(&effective) != compressor_block_values(&self.params) {
                 self.params = effective;

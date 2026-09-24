@@ -25,6 +25,7 @@ fn main() {
             // non-fatal: the app continues and offline export still works
             // (it drives the graph directly, without needing the live stream).
             start_native_audio(app);
+            watch_plugin_edits(app.handle().clone());
 
             let mut initial_title = "Sans titre".to_string();
 
@@ -35,35 +36,8 @@ fn main() {
                     match load_project_from_file(&path) {
                         Ok(project) => {
                             initial_title = project.name.clone();
-                            // Seed the event store so undo can return to the
-                            // loaded state instead of wiping back to empty.
-                            {
-                                let state = app.state::<AppState>();
-                                if let Ok(mut store) = state.event_store.lock() {
-                                    store.init_from_project(
-                                        engine_gateway::api::snapshot_project_for_store(&project),
-                                    );
-                                };
-                            }
-                            {
-                                let state = app.state::<AppState>();
-                                if let Ok(mut p) = state.project.lock() {
-                                    *p = project;
-                                };
-                            }
-                            {
-                                let state = app.state::<AppState>();
-                                if let Ok(mut p) = state.project_path.lock() {
-                                    *p = Some(path);
-                                };
-                            }
-                            // Recompile the audio graph so CPAL knows about the
-                            // clips in the loaded project (fixes silent playback
-                            // after ECHOES_DEBUG_PROJECT auto-load).
-                            {
-                                let state = app.state::<AppState>();
-                                recompile_audio_graph(app.handle(), &state);
-                            }
+                            let state = app.state::<AppState>();
+                            install_loaded_project(app.handle(), &state, project, path);
                         }
                         Err(e) => eprintln!("[debug] Échec chargement {path_str}: {e}"),
                     }
@@ -274,6 +248,20 @@ fn apply_loaded_project(
 ) {
     let name = project.name.clone();
     let dto = project.to_dto();
+    install_loaded_project(app, state, project, file_path);
+    set_window_title(app, &name);
+    let _ = app.emit("project-loaded", dto);
+    menu_state::refresh_menu(app, state);
+}
+
+/// Engine side of opening a project — state, staged plugin presets, graph —
+/// shared by the Open menu and the debug auto-load.
+fn install_loaded_project(
+    app: &tauri::AppHandle,
+    state: &tauri::State<'_, AppState>,
+    project: AppProject,
+    file_path: std::path::PathBuf,
+) {
     // Capture plugin state blobs before `project` is moved into AppState — they
     // are re-applied after the graph compiles (the instances must exist first).
     // Keyed per placement by `instance_key` (ADR-017).
@@ -311,12 +299,7 @@ fn apply_loaded_project(
         engine.plugin_host.clear_pending_state_blobs();
     }
 
-    state
-        .dirty
-        .store(false, std::sync::atomic::Ordering::Relaxed);
-    set_window_title(app, &name);
-    let _ = app.emit("project-loaded", dto);
-    menu_state::refresh_menu(app, state);
+    mark_saved(state);
 }
 
 fn handle_menu_event(app: &tauri::AppHandle, menu_id: &str) {
@@ -336,9 +319,7 @@ fn handle_menu_event(app: &tauri::AppHandle, menu_id: &str) {
                 *p = None;
             }
             recompile_audio_graph(&app, &state);
-            state
-                .dirty
-                .store(false, std::sync::atomic::Ordering::Relaxed);
+            mark_saved(&state);
             set_window_title(app, "Sans titre");
             let _ = app.emit("project-loaded", dto);
             menu_state::refresh_menu(app, &state);
@@ -428,9 +409,7 @@ fn handle_menu_event(app: &tauri::AppHandle, menu_id: &str) {
                 if let Ok(mut p) = state.project_path.lock() {
                     *p = Some(save_path.clone());
                 }
-                state
-                    .dirty
-                    .store(false, std::sync::atomic::Ordering::Relaxed);
+                mark_saved(&state);
                 let _ = app.emit("project-saved", save_path.to_string_lossy().to_string());
                 menu_state::refresh_menu(app, &state);
             } else if let Err(e) = write_result {
@@ -911,6 +890,25 @@ fn close_plugin_editor(effect_id: String, state: tauri::State<'_, AppState>) -> 
 ///
 /// Extracted into a function so the compiler can track the `tauri::State`
 /// lifetime — the `MutexGuard` temporary must not outlive `State`.
+/// Edits reported by plugins up to now are part of the loaded or saved project.
+fn mark_saved(state: &tauri::State<'_, AppState>) {
+    plugin_formats::clap::ffi::take_plugin_state_edited();
+    state.dirty.store(false, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Edits made inside a plugin window never go through `send_command`, so the
+/// unsaved-changes flag is raised from the plugins' own reports.
+fn watch_plugin_edits(app: tauri::AppHandle) {
+    std::thread::spawn(move || loop {
+        std::thread::sleep(std::time::Duration::from_millis(250));
+        if plugin_formats::clap::ffi::take_plugin_state_edited() {
+            let state = app.state::<AppState>();
+            state.dirty.store(true, std::sync::atomic::Ordering::Relaxed);
+            menu_state::refresh_menu(&app, &state);
+        }
+    });
+}
+
 fn start_native_audio(app: &mut tauri::App) {
     let app_handle = app.handle().clone();
     let state = app.state::<AppState>();

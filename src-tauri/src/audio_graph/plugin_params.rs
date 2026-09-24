@@ -8,6 +8,8 @@
 //! - **Modulation** is an offset around the parameter's current value, in
 //!   normalised units.  It never moves the parameter itself.
 //! - **Automation** is the absolute normalised value the parameter must take.
+//! - A parameter the plugin can only automate is **value-modulated**: the host
+//!   sends `base + offset` as absolute values (ADR-021 amendment).
 
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
@@ -77,14 +79,20 @@ pub struct PluginParamRange {
     pub min: f32,
     pub max: f32,
     pub modulatable: bool,
+    pub automatable: bool,
 }
 
 impl PluginParamRange {
     /// Used when the plugin did not report the parameter: values pass through as-is.
-    pub const UNKNOWN: Self = Self { min: 0.0, max: 1.0, modulatable: false };
+    pub const UNKNOWN: Self = Self { min: 0.0, max: 1.0, modulatable: false, automatable: false };
 
     pub fn denormalise(&self, normalised: f32) -> f32 {
         self.min + normalised * (self.max - self.min)
+    }
+
+    pub fn normalise(&self, plain: f32) -> f32 {
+        let span = self.max - self.min;
+        if span > 0.0 { ((plain - self.min) / span).clamp(0.0, 1.0) } else { 0.0 }
     }
 
     /// Converts a normalised offset into the plugin's plain units.
@@ -119,6 +127,42 @@ impl PluginParamControl {
 
     pub fn base_value(&self) -> f32 {
         f32::from_bits(self.base.load(Ordering::Relaxed))
+    }
+}
+
+/// A modulated parameter the plugin cannot modulate itself: the host moves it
+/// to `base + offset`, and restores `base` when the modulation stops or the
+/// plugin state is saved.
+#[derive(Clone)]
+pub struct ValueModulatedParam {
+    pub native_id: u32,
+    pub range: PluginParamRange,
+    /// Normalised value the modulation moves around; follows the user's drags
+    /// in the plugin window.  Shared with `LiveParams` across recompiles.
+    pub base: Arc<AtomicU32>,
+    /// The user is dragging this control in the plugin window: modulation pauses.
+    pub editing: bool,
+}
+
+impl ValueModulatedParam {
+    pub fn new(native_id: u32, range: PluginParamRange, base: Arc<AtomicU32>) -> Self {
+        Self { native_id, range, base, editing: false }
+    }
+
+    pub fn base_value(&self) -> f32 {
+        f32::from_bits(self.base.load(Ordering::Relaxed))
+    }
+
+    pub fn set_base(&self, normalised: f32) {
+        self.base.store(normalised.to_bits(), Ordering::Relaxed);
+    }
+
+    pub fn base_plain(&self) -> f32 {
+        self.range.denormalise(self.base_value())
+    }
+
+    pub fn modulated_plain(&self, offset: f32) -> f32 {
+        self.range.denormalise((self.base_value() + offset).clamp(0.0, 1.0))
     }
 }
 
@@ -222,8 +266,19 @@ mod tests {
 
     #[test]
     fn range_converts_to_plain_units() {
-        let range = PluginParamRange { min: 20.0, max: 220.0, modulatable: true };
+        let range = PluginParamRange { min: 20.0, max: 220.0, modulatable: true, automatable: true };
         assert_eq!(range.denormalise(0.5), 120.0);
         assert_eq!(range.plain_offset(-0.25), -50.0);
+        assert_eq!(range.normalise(120.0), 0.5);
+    }
+
+    #[test]
+    fn value_modulation_moves_around_the_base_and_stays_in_range() {
+        let range = PluginParamRange { min: 0.0, max: 200.0, modulatable: false, automatable: true };
+        let param = ValueModulatedParam::new(1, range, Arc::new(AtomicU32::new(0.25f32.to_bits())));
+        assert_eq!(param.base_plain(), 50.0);
+        assert_eq!(param.modulated_plain(0.25), 100.0);
+        assert_eq!(param.modulated_plain(-1.0), 0.0);
+        assert_eq!(param.modulated_plain(1.0), 200.0);
     }
 }
