@@ -256,7 +256,13 @@ After every recompile, `engine_gateway::api::recompile_if_needed` emits the
 (`src/stores/plugins.ts`). `scan_plugins` recompiles after rescanning, so a
 plugin installed mid-session loads without reopening the project. A missing
 **instrument** plays silence (`SilentInstrument`); a missing **effect** still
-passes audio through unprocessed, and is reported the same way. Projects saved before ADR-017 carry a legacy
+passes audio through unprocessed, and is reported the same way.
+
+On `project-loaded`, `MissingPluginsDialog.svelte` queries
+`get_unavailable_plugins` and, if the list is not empty, shows one summary per
+plugin with every track that uses it, plus a "search again" action (rescan +
+recompile). The per-slot badges in the instrument panel and effect chain stay
+visible after the dialog is dismissed. Projects saved before ADR-017 carry a legacy
 `plugin_state_blobs` map keyed by `device_id`; `AppProject::from_file` maps those
 onto the matching placements (C-4 backward compat), and new saves stop writing the
 legacy field.

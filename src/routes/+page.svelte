@@ -18,6 +18,7 @@
 	import { connectTransportBridge } from '../frontend/transport/bridge';
 	import SettingsPanel from '../components/SettingsPanel.svelte';
 	import ProjectSettingsPanel from '../components/ProjectSettingsPanel.svelte';
+	import MissingPluginsDialog from '../components/MissingPluginsDialog.svelte';
 	import GraphView from '../components/GraphView.svelte';
 	import { settingsPanelOpen, preferences } from '../stores/preferences';
 	import { projectSettingsPanelOpen } from '../stores/project';
@@ -119,6 +120,7 @@
 	<ProjectSettingsPanel />
 </div>
 {/if}
+<MissingPluginsDialog />
 
 <style>
 	.app {
