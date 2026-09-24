@@ -47,6 +47,17 @@ div {
 	cursor: default;
 }
 
+button span,
+button div,
+a span,
+a div,
+[role="button"] span,
+[role="button"] div,
+[role="option"] span,
+[role="option"] div {
+	cursor: inherit;
+}
+
 ::-webkit-scrollbar { width: 8px; height: 8px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb {

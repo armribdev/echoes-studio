@@ -11,6 +11,8 @@
 
 	let query = '';
 	let inputEl: HTMLInputElement;
+	let selectedIndex = 0;
+	let itemEls: HTMLButtonElement[] = [];
 
 	$: catalog =
 		mode === 'effect' ? [...BUILTIN_EFFECT_PLUGINS, ...$plugins] : $plugins;
@@ -33,6 +35,10 @@
 
 	$: pickerTitle = mode === 'instrument' ? 'Instruments' : mode === 'effect' ? 'Effets' : 'Plugins';
 
+	$: if (filtered) {
+		selectedIndex = 0;
+	}
+
 	onMount(() => inputEl?.focus());
 
 	function pick(p: PluginInfo) {
@@ -40,7 +46,19 @@
 	}
 
 	function handleKey(e: KeyboardEvent) {
-		if (e.key === 'Escape') dispatch('cancel');
+		if (e.key === 'Escape') {
+			dispatch('cancel');
+		} else if (e.key === 'ArrowDown') {
+			e.preventDefault();
+			selectedIndex = Math.min(selectedIndex + 1, filtered.length - 1);
+			itemEls[selectedIndex]?.scrollIntoView({ block: 'nearest' });
+		} else if (e.key === 'ArrowUp') {
+			e.preventDefault();
+			selectedIndex = Math.max(selectedIndex - 1, 0);
+			itemEls[selectedIndex]?.scrollIntoView({ block: 'nearest' });
+		} else if (e.key === 'Enter' && filtered[selectedIndex]) {
+			pick(filtered[selectedIndex]);
+		}
 	}
 
 	const FORMAT_COLOR: Record<string, string> = {
@@ -81,13 +99,16 @@
 								: 'Aucun plugin détecté'}
 				</p>
 			{:else}
-				{#each filtered as p (p.id)}
+				{#each filtered as p, i (p.id)}
 					<button
 						class="item"
+						class:selected={i === selectedIndex}
 						type="button"
 						role="option"
-						aria-selected="false"
+						aria-selected={i === selectedIndex}
+						bind:this={itemEls[i]}
 						on:click={() => pick(p)}
+						on:pointerenter={() => (selectedIndex = i)}
 					>
 						<span class="plug-name">{p.name}</span>
 						<span class="plug-vendor">{p.vendor || '—'}</span>
@@ -199,6 +220,7 @@
 		text-align: left;
 		cursor: pointer;
 		&:hover { background: $surface-hover; }
+		&.selected { background: $surface-hover; }
 	}
 
 	.plug-name {
