@@ -24,7 +24,8 @@ what the user *decided* about their project, not what the audio engine is doing.
 | Event | Why |
 |-------|-----|
 | `TRACK_CREATED` / `TRACK_DELETED` | Structural, undoable |
-| `CLIP_ADDED` / `CLIP_MOVED` / `CLIP_REMOVED` | Structural, undoable (`CLIP_MOVED` also carries the trim `offset` — ADR-018) |
+| `CLIP_ADDED` / `CLIP_MOVED` / `CLIP_REMOVED` | Structural, undoable (`CLIP_ADDED` and `CLIP_MOVED` carry the trim `offset` — ADR-018) |
+| `MIDI_CLIP_ADDED` | Structural, undoable. The clip may include its notes and left-trim `offset`, so pasting a MIDI clip is one event |
 | `TRACK_UPDATED` (name, volume, pan) | Structural, undoable |
 | `TRACK_MUTED` / `TRACK_SOLOED` | Structural, undoable |
 | `TEMPO_UPDATED` | Structural, affects rendering |

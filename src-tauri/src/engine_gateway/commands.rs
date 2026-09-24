@@ -125,6 +125,9 @@ pub struct AddClipPayload {
     pub file_path: String,
     pub start: f64,
     pub end: f64,
+    /// Source-file trim in seconds. `0` when omitted.
+    #[serde(default)]
+    pub offset: f64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -295,6 +298,12 @@ pub struct AddMidiClipPayload {
     pub track_id: String,
     pub start: f64,
     pub end: f64,
+    /// Left-trim in seconds. `0` when omitted.
+    #[serde(default)]
+    pub offset: f64,
+    /// Seed notes (paste). Empty when omitted; ids are regenerated on insert.
+    #[serde(default)]
+    pub notes: Vec<crate::project::MidiNote>,
 }
 
 #[derive(Debug, Deserialize)]

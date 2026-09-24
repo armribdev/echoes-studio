@@ -199,12 +199,14 @@ export function addClip(
   filePath: string,
   start: number,
   end: number,
+  offset?: number,
 ): Promise<CommandResult> {
   return dispatch<AddClipPayload>(cmd.ADD_CLIP, {
     track_id: trackId,
     file_path: filePath,
     start,
     end,
+    offset,
   });
 }
 
@@ -420,8 +422,15 @@ export function addMidiClip(
   trackId: string,
   start: number,
   end: number,
+  options?: { offset?: number; notes?: AddMidiClipPayload['notes'] },
 ): Promise<CommandResult> {
-  return dispatch<AddMidiClipPayload>(cmd.ADD_MIDI_CLIP, { track_id: trackId, start, end });
+  return dispatch<AddMidiClipPayload>(cmd.ADD_MIDI_CLIP, {
+    track_id: trackId,
+    start,
+    end,
+    offset: options?.offset,
+    notes: options?.notes,
+  });
 }
 
 export function removeMidiClip(trackId: string, clipId: string): Promise<CommandResult> {

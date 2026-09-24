@@ -914,13 +914,15 @@ fn process_command(
 
             let clip_id = generate_id();
             let cached = cache_audio_clip(state, &clip_id, &p.file_path)?;
-            let clip = app_clip_from_audio(
+            let mut clip = app_clip_from_audio(
                 clip_id.clone(),
                 p.start,
                 p.end,
                 p.file_path.clone(),
                 &cached,
             );
+            let offset = p.offset.max(0.0);
+            clip.offset = offset;
             let clip_dto = clip.to_dto();
 
             with_project_mut(state, |project| {
@@ -937,6 +939,7 @@ fn process_command(
                     "file_path": p.file_path,
                     "start": p.start,
                     "end": p.end,
+                    "offset": offset,
                 }),
                 json!({ "track_id": p.track_id, "clip": clip_dto }),
                 true,
@@ -1390,19 +1393,27 @@ fn process_command(
             let p: AddMidiClipPayload = serde_json::from_value(command.payload)
                 .map_err(|e| format!("ADD_MIDI_CLIP payload invalid: {e}"))?;
             let clip_id = generate_id();
+            let notes = p
+                .notes
+                .into_iter()
+                .map(|mut note| {
+                    note.id = generate_id();
+                    note
+                })
+                .collect();
             let clip = AppMidiClip {
                 id: clip_id.clone(),
                 start: p.start,
                 end: p.end,
-                offset: 0.0,
-                notes: vec![],
+                offset: p.offset.max(0.0),
+                notes,
             };
             let clip_dto = MidiClipDto {
                 id: clip.id.clone(),
                 start: clip.start,
                 end: clip.end,
                 offset: clip.offset,
-                notes: vec![],
+                notes: clip.notes.clone(),
             };
 
             with_project_mut(state, |project| {
@@ -1863,13 +1874,9 @@ fn apply_clip_added(
     let Some(data) = resolve_clip_audio(state, &clip_id, &file_path) else {
         return;
     };
-    track.clips.push(app_clip_from_audio(
-        clip_id,
-        start,
-        end,
-        file_path,
-        &data,
-    ));
+    let mut clip = app_clip_from_audio(clip_id, start, end, file_path, &data);
+    clip.offset = payload["offset"].as_f64().unwrap_or(0.0).max(0.0);
+    track.clips.push(clip);
 }
 
 fn apply_clip_moved(project: &mut AppProject, payload: &Value) {
@@ -2189,12 +2196,16 @@ fn apply_midi_clip_added(project: &mut AppProject, payload: &Value) {
     if track.midi_clips.iter().any(|c| c.id == id) {
         return;
     }
+    let notes = raw_clip
+        .get("notes")
+        .and_then(|v| serde_json::from_value(v.clone()).ok())
+        .unwrap_or_default();
     track.midi_clips.push(AppMidiClip {
         id,
         start,
         end,
         offset: raw_clip["offset"].as_f64().unwrap_or(0.0),
-        notes: vec![],
+        notes,
     });
 }
 
@@ -2399,6 +2410,35 @@ mod tests {
         );
         assert_eq!(lfo_params(&project).waveform, LfoWaveform::Saw);
         assert_eq!(lfo_params(&project).rate_hz, 1.0);
+    }
+
+    #[test]
+    fn replayed_midi_clip_added_keeps_notes_and_offset() {
+        let mut project = project_with_lfo();
+        apply_midi_clip_added(
+            &mut project,
+            &json!({
+                "track_id": "t",
+                "clip": {
+                    "id": "c",
+                    "start": 1.0,
+                    "end": 3.0,
+                    "offset": 0.25,
+                    "notes": [{
+                        "id": "n",
+                        "pitch": 60,
+                        "start": 0.0,
+                        "duration": 1.0,
+                        "velocity": 100
+                    }]
+                }
+            }),
+        );
+        let clip = &project.tracks[0].midi_clips[0];
+        assert_eq!(clip.offset, 0.25);
+        assert_eq!(clip.notes.len(), 1);
+        assert_eq!(clip.notes[0].pitch, 60);
+        assert_eq!(clip.notes[0].id, "n");
     }
 
     #[test]

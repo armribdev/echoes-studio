@@ -123,6 +123,8 @@ export interface AddClipPayload {
   file_path: string;
   start: number;
   end: number;
+  /** Source-file trim in seconds. Omit to start at the beginning of the file. */
+  offset?: number;
 }
 
 export interface MoveClipPayload {
@@ -239,6 +241,10 @@ export interface AddMidiClipPayload {
   track_id: string;
   start: number;
   end: number;
+  /** Left-trim offset in seconds. Omit for an untrimmed clip. */
+  offset?: number;
+  /** Notes seeded with the clip (paste). Omit for an empty clip. */
+  notes?: { id: string; pitch: number; start: number; duration: number; velocity: number }[];
 }
 
 export interface RemoveMidiClipPayload {

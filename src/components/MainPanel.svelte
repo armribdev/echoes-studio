@@ -19,6 +19,7 @@
 	import { addClip, moveClip, removeClip, updateTrack, setTrackMixLive, muteTrack, soloTrack, seek, createTrack, deleteTrack, addMidiClip, moveMidiClip, removeMidiClip } from '../frontend/commands/dispatcher';
 	import { clipboard } from '../stores/clipboard';
 	import type { ClipboardEntry } from '../stores/clipboard';
+	import type { CommandResult } from '../shared/protocol/commands';
 	import { get } from 'svelte/store';
 	import { snapPosition, getSnapSubdivisionSec } from '../lib/snapUtils';
 	import { selectedTrack } from '../stores/selectedTrack';
@@ -784,16 +785,33 @@
 			for (const clip of track.clips) {
 				if (sel.has(clip.id)) minStart = Math.min(minStart, clip.start);
 			}
+			for (const clip of track.midi_clips ?? []) {
+				if (sel.has(clip.id)) minStart = Math.min(minStart, clip.start);
+			}
 		}
+		if (!Number.isFinite(minStart)) return;
 		const entries: ClipboardEntry[] = [];
 		for (const track of tracks) {
 			for (const clip of track.clips) {
 				if (sel.has(clip.id)) {
 					entries.push({
+						kind: 'audio',
 						trackId: track.id,
 						filePath: clip.file_path,
 						durationSec: clip.end - clip.start,
 						relativeStart: clip.start - minStart,
+					});
+				}
+			}
+			for (const clip of track.midi_clips ?? []) {
+				if (sel.has(clip.id)) {
+					entries.push({
+						kind: 'midi',
+						trackId: track.id,
+						durationSec: clip.end - clip.start,
+						relativeStart: clip.start - minStart,
+						offset: clip.offset ?? 0,
+						notes: clip.notes.map((n) => ({ ...n })),
 					});
 				}
 			}
@@ -806,6 +824,55 @@
 		deleteSelected();
 	}
 
+	function clipIdFromResult(result: CommandResult): string | null {
+		for (const raw of result.events) {
+			const payload = (raw as { payload?: { clip?: { id?: string } } }).payload;
+			const id = payload?.clip?.id;
+			if (id) return id;
+		}
+		return null;
+	}
+
+	async function duplicateSelected() {
+		const sel = $selection.ids;
+		if (sel.size === 0) return;
+		let minStart = Infinity;
+		let maxEnd = -Infinity;
+		for (const track of tracks) {
+			for (const clip of track.clips) {
+				if (!sel.has(clip.id)) continue;
+				minStart = Math.min(minStart, clip.start);
+				maxEnd = Math.max(maxEnd, clip.end);
+			}
+			for (const clip of track.midi_clips ?? []) {
+				if (!sel.has(clip.id)) continue;
+				minStart = Math.min(minStart, clip.start);
+				maxEnd = Math.max(maxEnd, clip.end);
+			}
+		}
+		if (!Number.isFinite(minStart)) return;
+		const span = maxEnd - minStart;
+		const jobs: Promise<CommandResult>[] = [];
+		for (const track of tracks) {
+			for (const clip of track.clips) {
+				if (!sel.has(clip.id)) continue;
+				const start = clip.start + span;
+				jobs.push(addClip(track.id, clip.file_path, start, start + (clip.end - clip.start), clip.offset ?? 0));
+			}
+			for (const clip of track.midi_clips ?? []) {
+				if (!sel.has(clip.id)) continue;
+				const start = clip.start + span;
+				jobs.push(addMidiClip(track.id, start, start + (clip.end - clip.start), {
+					offset: clip.offset ?? 0,
+					notes: clip.notes.map((n) => ({ ...n })),
+				}));
+			}
+		}
+		const results = await Promise.all(jobs);
+		const ids = results.map(clipIdFromResult).filter((id): id is string => id !== null);
+		if (ids.length > 0) selection.setMany(ids);
+	}
+
 	async function pasteClips() {
 		const entries = get(clipboard);
 		if (entries.length === 0) return;
@@ -815,7 +882,14 @@
 				const targetTrackId = tracks.find((t) => t.id === entry.trackId)?.id ?? tracks[0]?.id;
 				if (!targetTrackId) return Promise.resolve();
 				const start = pastePos + entry.relativeStart;
-				return addClip(targetTrackId, entry.filePath, start, start + entry.durationSec);
+				const end = start + entry.durationSec;
+				if (entry.kind === 'audio') {
+					return addClip(targetTrackId, entry.filePath, start, end);
+				}
+				return addMidiClip(targetTrackId, start, end, {
+					offset: entry.offset,
+					notes: entry.notes,
+				});
 			})
 		);
 	}
@@ -850,6 +924,9 @@
 			} else if (e.key === 'v') {
 				e.preventDefault();
 				pasteClips().catch(console.error);
+			} else if (e.key === 'd') {
+				e.preventDefault();
+				if (!e.repeat) duplicateSelected().catch(console.error);
 			}
 		}
 	}
@@ -1256,6 +1333,7 @@
 		on:cut={() => cutSelected()}
 		on:copy={() => copySelected()}
 		on:paste={() => pasteClips().catch(console.error)}
+		on:duplicate={() => duplicateSelected().catch(console.error)}
 		on:delete={() => deleteSelected()}
 		on:close={() => { clipContextMenu = null; }}
 	/>
