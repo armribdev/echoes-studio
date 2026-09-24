@@ -10,6 +10,7 @@
 	import NumberInput from './NumberInput.svelte';
 	import Button from './Button.svelte';
 	import Icon from './Icon.svelte';
+	import { dismissable } from '../frontend/dismiss';
 	import { listAudioDevices, applyAudioSettings, getSupportedSampleRates, getDeviceChannels, setActiveOutputChannels } from '../lib/audioBackend';
 	import type { AudioDeviceInfo } from '../lib/audioBackend';
 	import { listen } from '@tauri-apps/api/event';
@@ -293,12 +294,7 @@
 		return `${pct.toFixed(1)}%`;
 	}
 
-	function handleKeydown(e: KeyboardEvent) {
-		if (e.key === 'Escape') cancelAndClose();
-	}
-
 	onMount(async () => {
-		window.addEventListener('keydown', handleKeydown);
 		loadDevices();
 
 		unlistenLevels = await listen<{
@@ -316,7 +312,6 @@
 		});
 	});
 	onDestroy(() => {
-		window.removeEventListener('keydown', handleKeydown);
 		cancelAnimationFrame(rafId);
 		unlistenLevels?.();
 	});
@@ -329,10 +324,8 @@
 </script>
 
 {#if $settingsPanelOpen}
-<!-- svelte-ignore a11y-click-events-have-key-events -->
-<!-- svelte-ignore a11y-no-static-element-interactions -->
-<div class="overlay" on:click|self={cancelAndClose}>
-	<div class="panel" role="dialog" aria-modal="true" aria-label="Préférences">
+<div class="overlay">
+	<div class="panel" role="dialog" aria-modal="true" aria-label="Préférences" use:dismissable={cancelAndClose}>
 
 		<!-- ── Header ── -->
 		<div class="panel-header">

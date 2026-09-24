@@ -24,6 +24,7 @@ import { bottomPanel } from '../../stores/bottomPanel';
 import { settingsPanelOpen } from '../../stores/preferences';
 import { cycleEditorFocus, handleEditorEscapeKey } from '../pianoRoll/clipEditor';
 import { viewMode } from '../../stores/viewMode';
+import { dismissTopLayer } from '../dismiss';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -177,6 +178,13 @@ function matches(e: KeyboardEvent, shortcut: Shortcut): boolean {
 export function registerShortcuts(): () => void {
   const handler = (e: KeyboardEvent): void => {
     if (e.repeat) return;
+
+    if (e.key === 'Escape' && dismissTopLayer()) {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      return;
+    }
+
     if (isEditingText(e.target)) return;
 
     // Piano roll : un seul handler (capture) — désélection → aperçu → fermer.

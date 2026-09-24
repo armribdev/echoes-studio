@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { createEventDispatcher, onMount } from 'svelte';
+	import { dismissable } from '../frontend/dismiss';
 
 	export let x = 0;
 	export let y = 0;
@@ -32,24 +33,14 @@
 		dispatch('close');
 	}
 
-	function handleKeydown(e: KeyboardEvent) {
-		if (e.key === 'Escape') close();
-	}
-
 	$: label = selectionCount === 1 ? '1 clip' : `${selectionCount} clips`;
 </script>
 
-<svelte:window on:keydown={handleKeydown} />
-
-<!-- svelte-ignore a11y-no-static-element-interactions a11y-click-events-have-key-events -->
-<div class="backdrop" on:mousedown={close}></div>
-
-<!-- svelte-ignore a11y-no-static-element-interactions -->
 <div
 	class="context-menu"
 	bind:this={menuEl}
+	use:dismissable={close}
 	style="left: {adjustedX}px; top: {adjustedY}px"
-	on:mousedown|stopPropagation={() => {}}
 >
 	<div class="menu-header">{label}</div>
 
@@ -111,12 +102,6 @@
 
 <style lang="scss">
 	@use '../variables.scss' as *;
-
-	.backdrop {
-		position: fixed;
-		inset: 0;
-		z-index: 200;
-	}
 
 	.context-menu {
 		position: fixed;

@@ -11,6 +11,7 @@
 		type UnavailablePlugin,
 		type UnavailableReason,
 	} from '../stores/plugins';
+	import { dismissable } from '../frontend/dismiss';
 
 	interface MissingPlugin {
 		pluginId: string;
@@ -80,10 +81,6 @@
 		missing = [];
 	}
 
-	function handleKey(e: KeyboardEvent) {
-		if (missing.length > 0 && e.key === 'Escape') close();
-	}
-
 	onMount(() => {
 		const unlisten = listen<Project>('project-loaded', async ({ payload }) => {
 			project = payload;
@@ -101,11 +98,9 @@
 	$: count = missing.length;
 </script>
 
-<svelte:window on:keydown={handleKey} />
-
 {#if count > 0}
 	<div class="backdrop" role="presentation">
-		<div class="dialog" role="dialog" aria-modal="true" aria-labelledby="missing-plugins-title">
+		<div class="dialog" role="dialog" aria-modal="true" aria-labelledby="missing-plugins-title" use:dismissable={close}>
 			<h2 id="missing-plugins-title">
 				{count === 1 ? 'Un plugin est indisponible' : `${count} plugins sont indisponibles`}
 			</h2>

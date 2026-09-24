@@ -33,7 +33,6 @@
 		if (!dragStart) return;
 		if (!ghost) {
 			if (Math.hypot(e.clientX - dragStart.x, e.clientY - dragStart.y) < DRAG_THRESHOLD_PX) return;
-			if (pickerOpen) dispatch('togglepicker');
 			document.body.style.cursor = 'grabbing';
 			modulationDrag.set({ modulatorId, color, hoverKey: null });
 		}

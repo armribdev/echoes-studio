@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { createEventDispatcher, onMount } from 'svelte';
 	import { matchesSearch, type ModulationTargetOption } from '../frontend/modulation/targets';
+	import { dismissable } from '../frontend/dismiss';
 
 	export let options: ModulationTargetOption[];
 	export let loading = false;
@@ -8,7 +9,6 @@
 	const dispatch = createEventDispatcher<{ select: ModulationTargetOption; close: void }>();
 
 	let query = '';
-	let root: HTMLDivElement;
 	let searchInput: HTMLInputElement;
 
 	interface ModuleSection { module: string; options: ModulationTargetOption[] }
@@ -36,20 +36,13 @@
 	}
 
 	function handleKeydown(e: KeyboardEvent) {
-		if (e.key === 'Escape') dispatch('close');
 		if (e.key === 'Enter' && visible.length > 0) dispatch('select', visible[0]);
-	}
-
-	function handleWindowMousedown(e: MouseEvent) {
-		if (root && !root.contains(e.target as Node)) dispatch('close');
 	}
 
 	onMount(() => searchInput.focus());
 </script>
 
-<svelte:window on:mousedown={handleWindowMousedown} />
-
-<div class="picker" bind:this={root}>
+<div class="picker" use:dismissable={() => dispatch('close')}>
 	<input
 		class="search"
 		type="text"

@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount, onDestroy, createEventDispatcher } from 'svelte';
+	import { dismissable } from '../frontend/dismiss';
 
 	const dispatch = createEventDispatcher<{ change: string | number }>();
 
@@ -8,8 +9,6 @@
 	export let small = false;
 
 	let open = false;
-	let triggerEl: HTMLButtonElement;
-	let menuEl: HTMLUListElement;
 
 	$: selectedLabel = options.find((o) => o.value === value)?.label ?? String(value);
 
@@ -23,17 +22,8 @@
 		dispatch('change', v);
 	}
 
-	function handleOutside(e: MouseEvent) {
-		if (open && triggerEl && menuEl) {
-			if (!triggerEl.contains(e.target as Node) && !menuEl.contains(e.target as Node)) {
-				open = false;
-			}
-		}
-	}
-
 	function handleKeydown(e: KeyboardEvent) {
 		if (!open) return;
-		if (e.key === 'Escape') { open = false; return; }
 		const idx = options.findIndex((o) => o.value === value);
 		if (e.key === 'ArrowDown') {
 			e.preventDefault();
@@ -47,18 +37,15 @@
 	}
 
 	onMount(() => {
-		document.addEventListener('mousedown', handleOutside);
 		document.addEventListener('keydown', handleKeydown);
 	});
 	onDestroy(() => {
-		document.removeEventListener('mousedown', handleOutside);
 		document.removeEventListener('keydown', handleKeydown);
 	});
 </script>
 
 <div class="cs-wrap" class:cs-wrap--sm={small}>
 	<button
-		bind:this={triggerEl}
 		class="cs-trigger"
 		class:cs-trigger--open={open}
 		on:click={toggle}
@@ -73,7 +60,7 @@
 	</button>
 
 	{#if open}
-		<ul bind:this={menuEl} class="cs-menu" role="listbox">
+		<ul class="cs-menu" role="listbox" use:dismissable={() => (open = false)}>
 			{#each options as opt}
 				<!-- svelte-ignore a11y-click-events-have-key-events -->
 				<li

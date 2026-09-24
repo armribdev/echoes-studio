@@ -3,6 +3,7 @@
 	import { createEventDispatcher, onMount } from 'svelte';
 	import { BUILTIN_EFFECT_PLUGINS, plugins, pluginsLoading, rescanPlugins } from '../stores/plugins';
 	import type { PluginInfo } from '../stores/plugins';
+	import { dismissable } from '../frontend/dismiss';
 
 	const dispatch = createEventDispatcher<{ pick: PluginInfo; cancel: void }>();
 
@@ -50,9 +51,7 @@
 	}
 
 	function handleKey(e: KeyboardEvent) {
-		if (e.key === 'Escape') {
-			dispatch('cancel');
-		} else if (e.key === 'ArrowDown') {
+		if (e.key === 'ArrowDown') {
 			e.preventDefault();
 			selectedIndex = Math.min(selectedIndex + 1, filtered.length - 1);
 			itemEls[selectedIndex]?.scrollIntoView({ block: 'nearest' });
@@ -75,8 +74,7 @@
 
 <!-- Backdrop -->
 <div class="backdrop">
-	<button type="button" class="scrim" aria-label="Fermer" on:click={() => dispatch('cancel')}></button>
-	<div class="picker" role="dialog" aria-modal="true" aria-label="Plugin browser">
+	<div class="picker" role="dialog" aria-modal="true" aria-label="Plugin browser" use:dismissable={() => dispatch('cancel')}>
 		<div class="header">
 			<span class="title">{pickerTitle}</span>
 			<button class="rescan" type="button" on:click={rescanPlugins} disabled={$pluginsLoading}>
@@ -139,15 +137,6 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
-	}
-
-	.scrim {
-		position: absolute;
-		inset: 0;
-		border: none;
-		padding: 0;
-		background: transparent;
-		cursor: default;
 	}
 
 	.picker {

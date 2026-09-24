@@ -1,5 +1,4 @@
 <script lang="ts">
-	import { onMount, onDestroy } from 'svelte';
 	import { get } from 'svelte/store';
 	import { getCurrentWindow } from '@tauri-apps/api/window';
 	import {
@@ -33,6 +32,7 @@
 	import PillGroup from './PillGroup.svelte';
 	import Button from './Button.svelte';
 	import Icon from './Icon.svelte';
+	import { dismissable } from '../frontend/dismiss';
 
 	let draftName = '';
 	let draftMusical: ProjectMusicalFields = musicalFieldsFromDto({
@@ -118,10 +118,6 @@
 		}
 	}
 
-	function handleKeydown(e: KeyboardEvent) {
-		if (e.key === 'Escape') cancelAndClose();
-	}
-
 	function formatPath(path: string | null): string {
 		if (!path) return 'Non enregistré — utilisez Fichier → Enregistrer';
 		const sep = path.includes('\\') ? '\\' : '/';
@@ -130,15 +126,11 @@
 		return `…${sep}${parts.slice(-2).join(sep)}`;
 	}
 
-	onMount(() => window.addEventListener('keydown', handleKeydown));
-	onDestroy(() => window.removeEventListener('keydown', handleKeydown));
 </script>
 
 {#if $projectSettingsPanelOpen}
-<!-- svelte-ignore a11y-click-events-have-key-events -->
-<!-- svelte-ignore a11y-no-static-element-interactions -->
-<div class="overlay" on:click|self={cancelAndClose}>
-	<div class="panel" role="dialog" aria-modal="true" aria-label="Préférences du projet">
+<div class="overlay">
+	<div class="panel" role="dialog" aria-modal="true" aria-label="Préférences du projet" use:dismissable={cancelAndClose}>
 
 		<div class="panel-header">
 			<span class="header-icon"><Icon name="folder" size={14} /></span>

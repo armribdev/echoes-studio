@@ -3,25 +3,16 @@
 	import { createEventDispatcher, onMount } from 'svelte';
 	import { MODULATOR_KINDS } from '../frontend/modulation/modulators';
 	import type { ModulatorKind } from '../types/global';
+	import { dismissable } from '../frontend/dismiss';
 
 	const dispatch = createEventDispatcher<{ select: ModulatorKind; close: void }>();
 
 	let root: HTMLDivElement;
 
-	function handleWindowMousedown(e: MouseEvent) {
-		if (root && !root.contains(e.target as Node)) dispatch('close');
-	}
-
-	function handleKeydown(e: KeyboardEvent) {
-		if (e.key === 'Escape') dispatch('close');
-	}
-
 	onMount(() => root.querySelector('button')?.focus());
 </script>
 
-<svelte:window on:mousedown={handleWindowMousedown} on:keydown={handleKeydown} />
-
-<div class="menu" role="menu" bind:this={root}>
+<div class="menu" role="menu" bind:this={root} use:dismissable={() => dispatch('close')}>
 	{#each MODULATOR_KINDS as info (info.kind)}
 		<button class="item" type="button" role="menuitem" on:click={() => dispatch('select', info.kind)}>
 			<svg width="14" height="8" viewBox="-1 -1 16 10" aria-hidden="true"><path d={info.icon} /></svg>
