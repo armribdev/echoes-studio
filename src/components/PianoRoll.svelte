@@ -32,6 +32,7 @@
 	import { currentProjectMusical, updateProjectMusical } from '../frontend/commands/dispatcher';
 	import { startTransportScrub } from '../frontend/transportScrub';
 	import { shouldHandlePianoRollShortcuts, hasNoModifiers } from '../frontend/shortcuts/context';
+	import { noteClipboard, copyMidiNotes } from '../stores/noteClipboard';
 	import { keyboardFocus } from '../stores/keyboardFocus';
 	import { pianoRollStatusInfo } from '../stores/status';
 	import { closeEditor, enterEditFromPreview } from '../frontend/pianoRoll/clipEditor';
@@ -89,8 +90,24 @@
 	type DragState =
 		| { type: 'none' }
 		| { type: 'create'; noteId: string; pitch: number; startBeat: number; anchorBeat: number }
-		| { type: 'move';   noteId: string; origPitch: number; origStart: number; anchorBeat: number; anchorPitch: number; isGroup: boolean }
-		| { type: 'resize'; noteId: string; origDur: number; anchorBeat: number }
+		| {
+				type: 'move';
+				noteId: string;
+				origPitch: number;
+				origStart: number;
+				anchorBeat: number;
+				anchorPitch: number;
+				isGroup: boolean;
+				origPositions: Map<string, { pitch: number; start: number }>;
+		  }
+		| {
+				type: 'resize';
+				noteId: string;
+				origDur: number;
+				anchorBeat: number;
+				isGroup: boolean;
+				origDurs: Map<string, number>;
+		  }
 		| { type: 'erase' }
 		| { type: 'selbox'; x0: number; y0: number; x1: number; y1: number };
 
@@ -125,6 +142,94 @@
 				? visibleBeatsForEdit(notes, clipDurationBeats)
 				: Math.max(clipDurationBeats, 1)) / ($tempo.numerator || 4),
 		) + 4;
+
+	function copySelectedNotes() {
+		const sel = get(pianoRollStore).selectedNoteIds;
+		copyMidiNotes(pianoRollStore.getNotes().filter((n) => sel.has(n.id)));
+	}
+
+	function cutSelectedNotes() {
+		const sel = get(pianoRollStore).selectedNoteIds;
+		if (sel.size === 0) return;
+		copySelectedNotes();
+		pianoRollStore.deleteSelectedNotes();
+		commitNotes();
+	}
+
+	function selectedNotes(): MidiNote[] {
+		const sel = get(pianoRollStore).selectedNoteIds;
+		return pianoRollStore.getNotes().filter((n) => sel.has(n.id));
+	}
+
+	function nudgeSelected(deltaPitch: number, deltaStart: number) {
+		const notes = selectedNotes();
+		if (notes.length === 0) return;
+		if (deltaStart < 0) {
+			let minStart = notes[0].start;
+			for (const n of notes) minStart = Math.min(minStart, n.start);
+			deltaStart = Math.max(deltaStart, -minStart);
+		}
+		if (deltaPitch !== 0) {
+			let minPitch = notes[0].pitch;
+			let maxPitch = notes[0].pitch;
+			for (const n of notes) {
+				minPitch = Math.min(minPitch, n.pitch);
+				maxPitch = Math.max(maxPitch, n.pitch);
+			}
+			deltaPitch = Math.max(-minPitch, Math.min(127 - maxPitch, deltaPitch));
+		}
+		if (deltaPitch === 0 && deltaStart === 0) return;
+		pianoRollStore.moveSelectedNotes(deltaPitch, deltaStart);
+		commitNotes();
+	}
+
+	function duplicateSelected() {
+		const notes = selectedNotes();
+		if (notes.length === 0) return;
+		let minStart = notes[0].start;
+		let maxEnd = notes[0].start + notes[0].duration;
+		for (const n of notes) {
+			minStart = Math.min(minStart, n.start);
+			maxEnd = Math.max(maxEnd, n.start + n.duration);
+		}
+		const span = maxEnd - minStart;
+		const copies: MidiNote[] = notes.map((n) => ({
+			...n,
+			id: crypto.randomUUID().slice(0, 8),
+			start: n.start + span,
+		}));
+		pianoRollStore.setNotes([...pianoRollStore.getNotes(), ...copies]);
+		pianoRollStore.selectNotes(copies.map((n) => n.id));
+		commitNotes();
+	}
+
+	function quantizeSelected() {
+		const sel = get(pianoRollStore).selectedNoteIds;
+		if (sel.size === 0 || quantize <= 0) return;
+		const notes = pianoRollStore.getNotes().map((n) => {
+			if (!sel.has(n.id)) return n;
+			const start = Math.max(0, Math.round(n.start / quantize) * quantize);
+			return start === n.start ? n : { ...n, start };
+		});
+		pianoRollStore.setNotes(notes);
+		commitNotes();
+	}
+
+	function pasteNotes() {
+		const copied = get(noteClipboard);
+		if (copied.length === 0) return;
+		const origin = Math.max(0, snapBeat(playheadBeat - clipStartBeat, quantize));
+		const pasted: MidiNote[] = copied.map((note) => ({
+			id: crypto.randomUUID().slice(0, 8),
+			pitch: note.pitch,
+			start: origin + note.relativeStart,
+			duration: note.duration,
+			velocity: note.velocity,
+		}));
+		pianoRollStore.setNotes([...pianoRollStore.getNotes(), ...pasted]);
+		pianoRollStore.selectNotes(pasted.map((n) => n.id));
+		commitNotes();
+	}
 
 	async function commitNotes() {
 		const { trackId, clipId } = get(pianoRollStore);
@@ -737,6 +842,37 @@
 		scheduleVelRedraw();
 	}
 
+	function resizeWorkingSelected(origDurs: Map<string, number>, delta: number) {
+		if (!workingNotes) return;
+		workingNotes = workingNotes.map((n) => {
+			const orig = origDurs.get(n.id);
+			if (orig === undefined) return n;
+			return { ...n, duration: Math.max(MIN_DURATION, orig + delta) };
+		});
+		scheduleNotesRedraw();
+		scheduleVelRedraw();
+	}
+
+	function beginResize(hit: MidiNote, beat: number, allowGroup: boolean) {
+		beginWorkingNotes();
+		const sel = get(pianoRollStore).selectedNoteIds;
+		const isGroup = allowGroup && sel.has(hit.id) && sel.size > 1;
+		const origDurs = new Map<string, number>();
+		if (isGroup && workingNotes) {
+			for (const n of workingNotes) {
+				if (sel.has(n.id)) origDurs.set(n.id, n.duration);
+			}
+		}
+		drag = {
+			type: 'resize',
+			noteId: hit.id,
+			origDur: hit.duration,
+			anchorBeat: beat,
+			isGroup,
+			origDurs,
+		};
+	}
+
 	function moveWorkingNote(id: string, pitch: number, start: number) {
 		if (!workingNotes) return;
 		workingNotes = workingNotes.map((n) =>
@@ -747,18 +883,38 @@
 		scheduleNotesRedraw();
 	}
 
-	function moveWorkingSelected(deltaPitch: number, deltaStart: number) {
+	function beginMove(hit: MidiNote, beat: number, pitch: number, isGroup: boolean) {
+		beginWorkingNotes();
+		const origPositions = new Map<string, { pitch: number; start: number }>();
+		if (isGroup && workingNotes) {
+			const sel = get(pianoRollStore).selectedNoteIds;
+			for (const n of workingNotes) {
+				if (sel.has(n.id)) origPositions.set(n.id, { pitch: n.pitch, start: n.start });
+			}
+		}
+		drag = {
+			type: 'move',
+			noteId: hit.id,
+			origPitch: hit.pitch,
+			origStart: hit.start,
+			anchorBeat: beat,
+			anchorPitch: pitch,
+			isGroup,
+			origPositions,
+		};
+	}
+
+	function moveWorkingGroup(
+		origPositions: Map<string, { pitch: number; start: number }>,
+		deltaPitch: number,
+		deltaStart: number,
+	) {
 		if (!workingNotes) return;
-		const sel = get(pianoRollStore).selectedNoteIds;
-		workingNotes = workingNotes.map((n) =>
-			sel.has(n.id)
-				? {
-						...n,
-						pitch: Math.max(0, Math.min(127, n.pitch + deltaPitch)),
-						start: Math.max(0, n.start + deltaStart),
-					}
-				: n,
-		);
+		workingNotes = workingNotes.map((n) => {
+			const orig = origPositions.get(n.id);
+			if (!orig) return n;
+			return { ...n, pitch: orig.pitch + deltaPitch, start: orig.start + deltaStart };
+		});
 		scheduleNotesRedraw();
 	}
 
@@ -806,9 +962,9 @@
 			beginWorkingNotes();
 			if (hit) {
 				if (noteResizeHandle(hit, beat)) {
-					drag = { type: 'resize', noteId: hit.id, origDur: hit.duration, anchorBeat: beat };
+					beginResize(hit, beat, true);
 				} else {
-					drag = { type: 'move', noteId: hit.id, origPitch: hit.pitch, origStart: hit.start, anchorBeat: beat, anchorPitch: pitch, isGroup: false };
+					beginMove(hit, beat, pitch, false);
 				}
 			} else {
 				const sb = snapBeat(beat, quantize);
@@ -823,14 +979,13 @@
 			}
 		} else if (mode === 'select') {
 			if (hit) {
-				beginWorkingNotes();
 				if (noteResizeHandle(hit, beat)) {
-					drag = { type: 'resize', noteId: hit.id, origDur: hit.duration, anchorBeat: beat };
+					beginResize(hit, beat, !(e.ctrlKey || e.metaKey));
 				} else {
 					const isSelected = get(pianoRollStore).selectedNoteIds.has(hit.id);
 					if (!isSelected) pianoRollStore.selectNote(hit.id, e.ctrlKey || e.metaKey);
 					const grp = !(e.ctrlKey || e.metaKey) && get(pianoRollStore).selectedNoteIds.size > 1;
-					drag = { type: 'move', noteId: hit.id, origPitch: hit.pitch, origStart: hit.start, anchorBeat: beat, anchorPitch: pitch, isGroup: grp };
+					beginMove(hit, beat, pitch, grp);
 				}
 			} else {
 				if (!(e.ctrlKey || e.metaKey)) pianoRollStore.clearSelection();
@@ -865,22 +1020,35 @@
 		} else if (drag.type === 'move') {
 			const moveDrag = drag;
 			if (moveDrag.isGroup) {
-				const note = displayNotes().find((n) => n.id === moveDrag.noteId);
-				if (note) {
-					moveWorkingSelected(
-						pitch - moveDrag.anchorPitch,
-						Math.max(-note.start, snapBeat(beat - moveDrag.anchorBeat, quantize)),
-					);
-					drag = { ...moveDrag, anchorBeat: beat, anchorPitch: pitch };
+				const newStart = Math.max(
+					0,
+					snapBeat(beat - (moveDrag.anchorBeat - moveDrag.origStart), quantize),
+				);
+				let deltaStart = newStart - moveDrag.origStart;
+				let deltaPitch = pitch - moveDrag.anchorPitch;
+				let minStart = Infinity;
+				let minPitch = 127;
+				let maxPitch = 0;
+				for (const orig of moveDrag.origPositions.values()) {
+					minStart = Math.min(minStart, orig.start);
+					minPitch = Math.min(minPitch, orig.pitch);
+					maxPitch = Math.max(maxPitch, orig.pitch);
 				}
+				if (minStart + deltaStart < 0) deltaStart = -minStart;
+				deltaPitch = Math.max(-minPitch, Math.min(127 - maxPitch, deltaPitch));
+				moveWorkingGroup(moveDrag.origPositions, deltaPitch, deltaStart);
 			} else {
 				const newStart = Math.max(0, snapBeat(beat - (moveDrag.anchorBeat - moveDrag.origStart), quantize));
 				const newPitch = Math.max(0, Math.min(127, moveDrag.origPitch + (pitch - moveDrag.anchorPitch)));
 				moveWorkingNote(moveDrag.noteId, newPitch, newStart);
 			}
 		} else if (drag.type === 'resize') {
-			const newDur = Math.max(MIN_DURATION, snapBeat(beat - drag.anchorBeat, quantize) + drag.origDur);
-			resizeWorkingNote(drag.noteId, newDur);
+			const delta = snapBeat(beat - drag.anchorBeat, quantize);
+			if (drag.isGroup) {
+				resizeWorkingSelected(drag.origDurs, delta);
+			} else {
+				resizeWorkingNote(drag.noteId, drag.origDur + delta);
+			}
 		} else if (drag.type === 'erase') {
 			const hit = hitTest(beat, pitch);
 			if (hit) eraseWorkingNote(hit.id);
@@ -1109,12 +1277,52 @@
 			if      (e.key === 'd' || e.key === 'D') { pianoRollStore.setMode('draw');   handled = true; }
 			else if (e.key === 'v' || e.key === 'V' || e.key === 's' || e.key === 'S') { pianoRollStore.setMode('select'); handled = true; }
 			else if (e.key === 'e' || e.key === 'E') { pianoRollStore.setMode('erase');  handled = true; }
+			else if (e.key === 'q' || e.key === 'Q') {
+				e.preventDefault();
+				if (!e.repeat) quantizeSelected();
+				handled = true;
+			}
+		}
+
+		if (!handled && e.key.startsWith('Arrow') && !e.ctrlKey && !e.metaKey && !e.altKey) {
+			e.preventDefault();
+			if (e.key === 'ArrowLeft') nudgeSelected(0, -quantize);
+			else if (e.key === 'ArrowRight') nudgeSelected(0, quantize);
+			else if (e.key === 'ArrowUp') nudgeSelected(e.shiftKey ? 12 : 1, 0);
+			else if (e.key === 'ArrowDown') nudgeSelected(e.shiftKey ? -12 : -1, 0);
+			handled = true;
 		}
 
 		if (!handled && (e.key === 'Delete' || e.key === 'Backspace')) {
 			e.preventDefault();
 			pianoRollStore.deleteSelectedNotes();
 			commitNotes();
+			handled = true;
+		}
+		else if (!handled && (e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && (e.key === 'c' || e.key === 'x' || e.key === 'v' || e.key === 'C' || e.key === 'X' || e.key === 'V')) {
+			const key = e.key.toLowerCase();
+			if (key === 'c') {
+				e.preventDefault();
+				copySelectedNotes();
+				handled = true;
+			} else if (key === 'x') {
+				e.preventDefault();
+				cutSelectedNotes();
+				handled = true;
+			} else if (key === 'v') {
+				e.preventDefault();
+				pasteNotes();
+				handled = true;
+			}
+		}
+		else if (!handled && (e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && (e.key === 'd' || e.key === 'D')) {
+			e.preventDefault();
+			if (!e.repeat) duplicateSelected();
+			handled = true;
+		}
+		else if (!handled && (e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && (e.key === 'u' || e.key === 'U')) {
+			e.preventDefault();
+			if (!e.repeat) quantizeSelected();
 			handled = true;
 		}
 		else if (!handled && (e.ctrlKey || e.metaKey) && e.key === 'a') {
