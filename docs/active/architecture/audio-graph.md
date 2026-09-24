@@ -94,7 +94,10 @@ thread never modifies the graph topology.
 
 ## Compilation Pipeline
 
-Every structural project change triggers a full graph recompile:
+Every structural project change triggers a full graph recompile. MIDI note
+content (`SET_CLIP_MIDI_NOTES`) does not: the command thread publishes a new
+note list into the live instrument, and the audio thread adopts it on the next
+block. A selection that does not change notes does not publish anything.
 
 ```
 AppProject (editor state)

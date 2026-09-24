@@ -36,8 +36,9 @@ use crate::audio_graph::plugin_params::{parse_plugin_param_name, PluginParamCont
 use crate::audio_graph::node::{
     AudioNode, NodeId, PortId, PortKind, PrepareContext,
 };
+use crate::audio_graph::midi::MidiNoteSnapshot;
 use crate::plugin_system::PluginHost;
-use crate::project::AppProject;
+use crate::project::{AppProject, AppTrack};
 
 /// Shared peak cells for one track meter: (peak_L, peak_R).
 pub type MeterCell = (Arc<AtomicU32>, Arc<AtomicU32>);
@@ -120,6 +121,29 @@ pub struct CompiledGraph {
     pub route_cells: HashMap<String, Arc<crate::audio_graph::live_params::RouteCells>>,
     /// Pre-compiled automation actions, consumed by `GraphScheduler::new`.
     pub automation_actions: Vec<SchedulerAutomationAction>,
+}
+
+/// Bake one track's MIDI clips into beat-space snapshots. Clip anchors stay in
+/// seconds; the playable window is the clip's `[start, end]` in samples.
+pub fn bake_track_midi_notes(track: &AppTrack, sample_rate: f32) -> Vec<MidiNoteSnapshot> {
+    let mut notes = Vec::new();
+    for clip in &track.midi_clips {
+        let content_origin = clip.start - clip.offset;
+        let window_start_sample = (clip.start * sample_rate as f64) as u64;
+        let window_end_sample = (clip.end * sample_rate as f64) as u64;
+        for note in &clip.notes {
+            notes.push(MidiNoteSnapshot {
+                pitch: note.pitch,
+                velocity: note.velocity,
+                clip_start_sec: content_origin,
+                start_beats: note.start,
+                end_beats: note.start + note.duration,
+                window_start_sample,
+                window_end_sample,
+            });
+        }
+    }
+    notes
 }
 
 pub struct GraphCompiler;
@@ -671,36 +695,18 @@ impl GraphCompiler {
 
         match kind {
             NodeKind::Instrument { track_id } => {
-                use crate::audio_graph::midi::MidiNoteSnapshot;
                 use crate::audio_graph::nodes::instrument::{InstrumentDevice, InstrumentNode, SilentInstrument};
                 use crate::audio_graph::nodes::poly_synth::PolySynth;
 
-                let mut notes: Vec<MidiNoteSnapshot> = Vec::new();
                 let mut instrument_id: Option<&str> = None;
 
-                if let Some(track) = project.tracks.iter().find(|t| &t.id == track_id) {
-                    for clip in &track.midi_clips {
-                        // Notes anchor to the content origin (`start - offset`) so a
-                        // left-trim hides leading notes without moving the rest. The
-                        // playable window `[start, end]` (seconds, tempo-independent)
-                        // gates which notes sound.
-                        let content_origin = clip.start - clip.offset;
-                        let window_start_sample = (clip.start * engine_sample_rate as f64) as u64;
-                        let window_end_sample = (clip.end * engine_sample_rate as f64) as u64;
-                        for note in &clip.notes {
-                            notes.push(MidiNoteSnapshot {
-                                pitch: note.pitch,
-                                velocity: note.velocity,
-                                clip_start_sec: content_origin,
-                                start_beats: note.start,
-                                end_beats: note.start + note.duration,
-                                window_start_sample,
-                                window_end_sample,
-                            });
-                        }
-                    }
+                let notes = if let Some(track) = project.tracks.iter().find(|t| &t.id == track_id) {
                     instrument_id = track.instrument.as_deref();
-                }
+                    bake_track_midi_notes(track, engine_sample_rate)
+                } else {
+                    Vec::new()
+                };
+                let notes = live_params.install_track_notes(track_id, notes);
 
                 // Phase 5c: CLAP instrument, built-in PolySynth when none is chosen.
                 // A chosen plugin that fails to load stays silent (the host reports
@@ -719,7 +725,7 @@ impl GraphCompiler {
                     None => Box::new(PolySynth::new()),
                 };
 
-                Box::new(InstrumentNode::new(id, StdArc::new(notes), device))
+                Box::new(InstrumentNode::from_publisher(id, notes, device))
             }
 
             NodeKind::Track { track_id } => {

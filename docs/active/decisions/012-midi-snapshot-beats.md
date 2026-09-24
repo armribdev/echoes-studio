@@ -77,6 +77,12 @@ scheduler without a rebake or recompile.
 5. **[`engine_gateway/api.rs`](../../../src-tauri/src/engine_gateway/api.rs)**
    - `UPDATE_TEMPO` calls `transport.set_tempo` + updates `project.bpm`, and
      **does not recompile**. The new BPM flows to the next block's snapshot.
+- _Updated 2026-09-24:_ `SET_CLIP_MIDI_NOTES` bakes a new `Vec<MidiNoteSnapshot>`
+  on the command thread and publishes it through `MidiNotePublisher` (same
+  swap/drop-ring shape as `RuntimeSnapshot`). The audio thread adopts the list
+  on the next block and releases only pitches the new list no longer covers.
+  The graph is not rebuilt, so plugin voices keep sounding. Recompile remains
+  the fallback when the track has no publisher yet.
 
 ### Test lock (the Phase 5b deliverable)
 

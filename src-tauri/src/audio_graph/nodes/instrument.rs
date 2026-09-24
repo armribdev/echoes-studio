@@ -15,7 +15,7 @@ use std::sync::Arc;
 
 use crate::audio_graph::buffer::AudioBuffer;
 use crate::audio_graph::live_params::EnvelopeCells;
-use crate::audio_graph::midi::{MidiEvent, MidiEventKind, MidiEventList, MidiNoteSnapshot};
+use crate::audio_graph::midi::{MidiEvent, MidiEventKind, MidiEventList, MidiNotePublisher, MidiNoteSnapshot};
 use crate::audio_graph::node::{AudioNode, NodeId, PrepareContext, TransportInfo};
 use crate::audio_graph::plugin_params::{parse_plugin_param_name, PluginParamControl, PluginParamControls};
 
@@ -71,7 +71,8 @@ pub struct InstrumentNode {
     id: NodeId,
     /// All notes for this instrument, in any order.
     /// Stored in beat space; sample positions are derived per block from transport BPM.
-    notes: Arc<Vec<MidiNoteSnapshot>>,
+    /// Replaced in place when the piano roll edits notes — no graph rebuild.
+    notes: Arc<MidiNotePublisher>,
     device: Box<dyn InstrumentDevice>,
     /// Reused every block — no heap allocation in the RT path.
     event_buf: MidiEventList,
@@ -97,6 +98,14 @@ impl InstrumentNode {
         notes: Arc<Vec<MidiNoteSnapshot>>,
         device: Box<dyn InstrumentDevice>,
     ) -> Self {
+        Self::from_publisher(id, MidiNotePublisher::with_notes(notes.as_ref().clone()), device)
+    }
+
+    pub fn from_publisher(
+        id: NodeId,
+        notes: Arc<MidiNotePublisher>,
+        device: Box<dyn InstrumentDevice>,
+    ) -> Self {
         Self {
             id,
             notes,
@@ -111,6 +120,46 @@ impl InstrumentNode {
 }
 
 impl InstrumentNode {
+    /// Align sounding voices with a note list that just replaced the previous one.
+    /// Pitches that are still covered keep their voices; only the difference is
+    /// turned off or on, so an edit elsewhere does not retrigger the chord.
+    fn reconcile_sounding_notes(&mut self, block_start: u64, bpm: f32, sample_rate: f32) {
+        let mut should_sound = [0u8; 128];
+        let mut velocity = [0u8; 128];
+        for note in self.notes.notes() {
+            let start_sample = note
+                .start_sample(bpm, sample_rate)
+                .max(note.window_start_sample);
+            let end_sample = note
+                .end_sample(bpm, sample_rate)
+                .min(note.window_end_sample);
+            if start_sample < end_sample && start_sample < block_start && block_start < end_sample {
+                let pitch = note.pitch as usize;
+                should_sound[pitch] = should_sound[pitch].saturating_add(1);
+                velocity[pitch] = note.velocity;
+            }
+        }
+        for pitch in 0..128 {
+            while self.active_pitch_count[pitch] > should_sound[pitch] {
+                self.event_buf.push(MidiEvent {
+                    offset: 0,
+                    kind: MidiEventKind::NoteOff { pitch: pitch as u8 },
+                });
+                self.active_pitch_count[pitch] -= 1;
+            }
+            while self.active_pitch_count[pitch] < should_sound[pitch] {
+                self.event_buf.push(MidiEvent {
+                    offset: 0,
+                    kind: MidiEventKind::NoteOn {
+                        pitch: pitch as u8,
+                        velocity: velocity[pitch],
+                    },
+                });
+                self.active_pitch_count[pitch] += 1;
+            }
+        }
+    }
+
     /// NoteOff at offset 0 for every pitch a NoteOn was sent for and not yet released.
     fn release_sounding_notes(&mut self) {
         for (pitch, count) in self.active_pitch_count.iter_mut().enumerate() {
@@ -151,6 +200,7 @@ impl AudioNode for InstrumentNode {
         transport: &TransportInfo,
     ) {
         self.event_buf.clear();
+        let notes_swapped = self.notes.try_swap();
 
         if transport.is_playing {
             let block_start = transport.position_samples;
@@ -162,7 +212,7 @@ impl AudioNode for InstrumentNode {
             if discontinuity {
                 self.release_sounding_notes();
 
-                for note in self.notes.iter() {
+                for note in self.notes.notes() {
                     let start_sample = note.start_sample(bpm, sample_rate).max(note.window_start_sample);
                     let end_sample = note.end_sample(bpm, sample_rate).min(note.window_end_sample);
                     if start_sample < end_sample && start_sample < block_start && block_start < end_sample {
@@ -177,9 +227,11 @@ impl AudioNode for InstrumentNode {
                             self.active_pitch_count[note.pitch as usize].saturating_add(1);
                     }
                 }
+            } else if notes_swapped {
+                self.reconcile_sounding_notes(block_start, bpm, sample_rate);
             }
 
-            for note in self.notes.iter() {
+            for note in self.notes.notes() {
                 // Clamp the note to the clip's playable window (trim).
                 let start_sample = note.start_sample(bpm, sample_rate).max(note.window_start_sample);
                 let end_sample = note.end_sample(bpm, sample_rate).min(note.window_end_sample);
@@ -502,5 +554,50 @@ mod tests {
         run_block(&mut node, &transport_at(false, 0, 512));
 
         assert!(released_pitch(&captured, 60), "auto-stop must release the last note");
+    }
+
+    /// A note-list swap while playing releases a deleted pitch and leaves the
+    /// pitch that is still in the list sounding — no NoteOn, so no click.
+    #[test]
+    fn note_swap_releases_only_the_deleted_pitch() {
+        let captured = Arc::new(Mutex::new(Vec::new()));
+        let publisher = MidiNotePublisher::with_notes(vec![
+            one_beat_note(),
+            MidiNoteSnapshot {
+                pitch: 64,
+                ..one_beat_note()
+            },
+        ]);
+        let mut node = InstrumentNode::from_publisher(
+            NodeId(1),
+            Arc::clone(&publisher),
+            Box::new(CaptureDevice {
+                captured: Arc::clone(&captured),
+            }),
+        );
+        node.prepare(PrepareContext {
+            sample_rate: 48_000.0,
+            max_block_size: 64_000,
+            num_channels: 2,
+        });
+
+        run_block(&mut node, &transport_at(true, 0, 30_000));
+        run_block(&mut node, &transport_at(true, 30_000, 512));
+        publisher.publish(vec![one_beat_note()]);
+        run_block(&mut node, &transport_at(true, 30_512, 512));
+
+        let events = captured.lock().unwrap();
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e.kind, MidiEventKind::NoteOff { pitch: 64 })),
+            "deleted pitch must be released"
+        );
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e.kind, MidiEventKind::NoteOn { pitch: 60, .. })),
+            "the note that stayed must not be retriggered"
+        );
     }
 }

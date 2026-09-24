@@ -1475,7 +1475,27 @@ fn process_command(
                 Ok(())
             })?;
 
-            commit_same_payload(
+            // Note content is not a graph change. Publish into the live
+            // instrument so playback keeps its plugin state. Recompile only
+            // when the track has no slot yet.
+            let sample_rate = state
+                .audio_engine
+                .lock()
+                .map(|engine| engine.transport.sample_rate())
+                .unwrap_or(48_000.0);
+            let baked = lock_project(state).ok().and_then(|project| {
+                project
+                    .tracks
+                    .iter()
+                    .find(|t| t.id == p.track_id)
+                    .map(|track| crate::audio_graph::compiler::bake_track_midi_notes(track, sample_rate))
+            });
+            let published = match baked {
+                Some(notes) => state.live_params.publish_track_notes(&p.track_id, notes),
+                None => false,
+            };
+
+            let result = commit_same_payload(
                 &ctx,
                 ev::MIDI_CLIP_NOTES_SET,
                 json!({
@@ -1483,8 +1503,12 @@ fn process_command(
                     "clip_id": p.clip_id,
                     "notes": serde_json::to_value(&p.notes).unwrap_or_default(),
                 }),
-                true,
-            )
+                false,
+            )?;
+            if !published {
+                recompile_if_needed(ctx.app, ctx.state);
+            }
+            Ok(result)
         }
 
         cmd::ADD_AUTOMATION_LANE => {

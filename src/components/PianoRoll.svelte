@@ -231,6 +231,12 @@
 		commitNotes();
 	}
 
+	function noteSignature(notes: { id: string; pitch: number; start: number; duration: number; velocity: number }[]): string {
+		return notes.map((n) => `${n.id}:${n.pitch}:${n.start}:${n.duration}:${n.velocity}`).join('|');
+	}
+
+	let dragNoteSignature = '';
+
 	async function commitNotes() {
 		const { trackId, clipId } = get(pianoRollStore);
 		if (!trackId || !clipId) return;
@@ -955,6 +961,7 @@
 		if (e.button !== 0 && e.button !== 2) return;
 		e.preventDefault();
 		isDragging = true;
+		dragNoteSignature = noteSignature(pianoRollStore.getNotes());
 		const { beat, pitch, rawX, rawY } = getGridCoords(e);
 		const hit = hitTest(beat, pitch);
 
@@ -1075,16 +1082,16 @@
 		if (drag.type === 'move' && !drag.isGroup) {
 			pianoRollStore.selectNote(drag.noteId, false);
 		}
-		const needsCommit =
+		const edited =
 			drag.type === 'create' ||
 			drag.type === 'move' ||
 			drag.type === 'resize' ||
-			drag.type === 'erase' ||
-			drag.type === 'selbox';
+			drag.type === 'erase';
 		flushWorkingNotes();
+		const notesChanged = noteSignature(pianoRollStore.getNotes()) !== dragNoteSignature;
 		drag = { type: 'none' };
 		isDragging = false;
-		if (needsCommit) commitNotes();
+		if (edited && notesChanged) commitNotes();
 		updateCursor(e);
 	}
 
@@ -1145,6 +1152,7 @@
 		if (!editMode) return;
 		if (e.button !== 0) return;
 		velDragActive = true;
+		dragNoteSignature = noteSignature(pianoRollStore.getNotes());
 		updateVelocity(e);
 	}
 
@@ -1156,7 +1164,7 @@
 	function onVelMouseup() {
 		velDragActive = false;
 		flushWorkingNotes();
-		commitNotes();
+		if (noteSignature(pianoRollStore.getNotes()) !== dragNoteSignature) commitNotes();
 	}
 
 	// ── Scroll synchronisé ────────────────────────────────────────────────────

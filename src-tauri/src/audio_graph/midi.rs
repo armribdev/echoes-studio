@@ -1,7 +1,11 @@
 //! MIDI event types for intra-block note scheduling.
 //!
-//! All types here are stack-allocated and `Copy` so the real-time path can
-//! use them without allocation.
+//! Event types are stack-allocated and `Copy`. The note list itself is a
+//! `Vec` published off the audio thread and swapped in with an atomic pointer.
+
+use std::ptr;
+use std::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
+use std::sync::Arc;
 
 #[derive(Debug, Clone, Copy)]
 pub struct MidiEvent {
@@ -123,6 +127,119 @@ impl MidiNoteSnapshot {
 pub fn beats_to_sample(clip_start_sec: f64, beats: f32, bpm: f32, sample_rate: f32) -> u64 {
     let secs = clip_start_sec + beats as f64 * (60.0 / bpm as f64);
     (secs * sample_rate as f64) as u64
+}
+
+const MIDI_DROP_RING_CAPACITY: usize = 8;
+
+/// Lock-free note list shared by the command thread (writer) and the audio
+/// thread (reader). A note edit publishes a new `Vec` here; the instrument
+/// node picks it up on the next block without rebuilding the graph.
+///
+/// Displaced lists are returned through an SPSC ring and freed on the command
+/// thread. The audio thread never drops them.
+pub struct MidiNotePublisher {
+    pending: AtomicPtr<Vec<MidiNoteSnapshot>>,
+    current: AtomicPtr<Vec<MidiNoteSnapshot>>,
+    slots: [AtomicPtr<Vec<MidiNoteSnapshot>>; MIDI_DROP_RING_CAPACITY],
+    head: AtomicUsize,
+    tail: AtomicUsize,
+}
+
+unsafe impl Send for MidiNotePublisher {}
+unsafe impl Sync for MidiNotePublisher {}
+
+impl MidiNotePublisher {
+    pub fn with_notes(notes: Vec<MidiNoteSnapshot>) -> Arc<Self> {
+        Arc::new(Self {
+            pending: AtomicPtr::new(ptr::null_mut()),
+            current: AtomicPtr::new(Box::into_raw(Box::new(notes))),
+            slots: std::array::from_fn(|_| AtomicPtr::new(ptr::null_mut())),
+            head: AtomicUsize::new(0),
+            tail: AtomicUsize::new(0),
+        })
+    }
+
+    /// Command thread. Replaces the pending list; the audio thread adopts it
+    /// on the next block. A list still waiting in `pending` is dropped here.
+    pub fn publish(&self, notes: Vec<MidiNoteSnapshot>) {
+        self.drain_retired();
+        let new_ptr = Box::into_raw(Box::new(notes));
+        let old_ptr = self.pending.swap(new_ptr, Ordering::AcqRel);
+        if !old_ptr.is_null() {
+            // SAFETY: published by a previous `publish` and never taken by the
+            // audio thread (it would have swapped null into `pending`).
+            unsafe { drop(Box::from_raw(old_ptr)) };
+        }
+    }
+
+    /// Audio thread. Adopts a pending list if one is waiting. The displaced
+    /// list is pushed to the retire ring — never dropped here.
+    pub fn try_swap(&self) -> bool {
+        let new_ptr = self.pending.swap(ptr::null_mut(), Ordering::AcqRel);
+        if new_ptr.is_null() {
+            return false;
+        }
+        let old_ptr = self.current.swap(new_ptr, Ordering::AcqRel);
+        if !old_ptr.is_null() && !self.retire(old_ptr) {
+            // Ring full — leak rather than drop on the audio thread.
+        }
+        true
+    }
+
+    /// Audio thread. The returned slice stays valid for this block: `current`
+    /// is only freed after the node has left the audio thread, or after a
+    /// later `try_swap` has retired it and the command thread has drained.
+    pub fn notes(&self) -> &[MidiNoteSnapshot] {
+        let ptr = self.current.load(Ordering::Acquire);
+        if ptr.is_null() {
+            &[]
+        } else {
+            // SAFETY: `current` is installed by `with_notes` or `try_swap`
+            // from `Box::into_raw`, and is not freed while this thread is
+            // inside `process`.
+            unsafe { &*ptr }
+        }
+    }
+
+    fn retire(&self, ptr: *mut Vec<MidiNoteSnapshot>) -> bool {
+        let head = self.head.load(Ordering::Relaxed);
+        let next = (head + 1) % MIDI_DROP_RING_CAPACITY;
+        if next == self.tail.load(Ordering::Acquire) {
+            return false;
+        }
+        self.slots[head].store(ptr, Ordering::Release);
+        self.head.store(next, Ordering::Release);
+        true
+    }
+
+    fn drain_retired(&self) {
+        let head = self.head.load(Ordering::Acquire);
+        let mut tail = self.tail.load(Ordering::Relaxed);
+        while tail != head {
+            let ptr = self.slots[tail].swap(ptr::null_mut(), Ordering::Acquire);
+            if !ptr.is_null() {
+                // SAFETY: retired by `try_swap` via `Box::into_raw` of the
+                // previous `current`. SPSC: this thread is the only consumer.
+                unsafe { drop(Box::from_raw(ptr)) };
+            }
+            tail = (tail + 1) % MIDI_DROP_RING_CAPACITY;
+        }
+        self.tail.store(tail, Ordering::Release);
+    }
+}
+
+impl Drop for MidiNotePublisher {
+    fn drop(&mut self) {
+        self.drain_retired();
+        for ptr in [
+            self.pending.swap(ptr::null_mut(), Ordering::AcqRel),
+            self.current.swap(ptr::null_mut(), Ordering::AcqRel),
+        ] {
+            if !ptr.is_null() {
+                unsafe { drop(Box::from_raw(ptr)) };
+            }
+        }
+    }
 }
 
 #[cfg(test)]

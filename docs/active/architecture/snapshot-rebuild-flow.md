@@ -14,6 +14,9 @@ The following events trigger `recompile_if_needed()` in `engine_gateway/api.rs`:
 - Project load
 
 Transport commands (`PLAY`, `STOP`, `SEEK`) do **not** trigger recompilation.
+`SET_CLIP_MIDI_NOTES` does not either: it publishes the track's note list to
+the live instrument (`MidiNotePublisher`) and recompiles only when that track
+has no slot yet.
 
 ## Full Rebuild Sequence
 
