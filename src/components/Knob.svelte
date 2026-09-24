@@ -8,6 +8,10 @@
 	export let max: number;
 	export let pixelRange: number = 200;
 	export let defaultValue: number | undefined = undefined;
+	/** Overrides the value-arc color, e.g. to match this control's modulator source. */
+	export let color: string | undefined = undefined;
+	/** Modulator color to draw as a ring when this parameter is an active modulation target. */
+	export let modColor: string | undefined = undefined;
 
 	const dispatch = createEventDispatcher<{ release: number }>();
 
@@ -26,6 +30,8 @@
 	const CY = SIZE / 2;
 	const TRACK_R = 9;
 	const STROKE = 2.5;
+	const RING_R = 12;
+	const RING_STROKE = 1.25;
 
 	const START_CSS = -Math.PI * 0.83;
 	const ROT_RANGE = 2 * Math.PI * 0.83;
@@ -188,10 +194,13 @@
 	on:pointerdown={pointerDown}
 	on:dblclick={doubleClick}
 >
-	<svg width={SIZE} height={SIZE} viewBox="0 0 {SIZE} {SIZE}">
+	<svg width={SIZE} height={SIZE} viewBox="0 0 {SIZE} {SIZE}" overflow="visible">
+		{#if modColor}
+			<circle class="mod-ring" cx={CX} cy={CY} r={RING_R} stroke-width={RING_STROKE} stroke={modColor} />
+		{/if}
 		<path class="track" d={trackPath} stroke-width={STROKE} />
 		{#if valuePath}
-			<path class="value-arc" d={valuePath} stroke-width={STROKE} />
+			<path class="value-arc" d={valuePath} stroke-width={STROKE} stroke={color} />
 		{/if}
 	</svg>
 </div>
@@ -232,6 +241,12 @@
 		fill: none;
 		stroke: $accent-color;
 		stroke-linecap: round;
+	}
+
+	.mod-ring {
+		fill: none;
+		opacity: 0.65;
+		stroke-dasharray: 2 2;
 	}
 
 </style>

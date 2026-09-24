@@ -2,6 +2,7 @@
 <script lang="ts">
 	import Knob from './Knob.svelte';
 	import ModulationTargetPicker from './ModulationTargetPicker.svelte';
+	import { modulatorColor } from '../frontend/modulation/colors';
 	import type { TrackEffect, ProjectModulator, ProjectModulationRoute } from '../types/global';
 	import {
 		addModulator,
@@ -88,9 +89,18 @@
 		}
 	}
 
+	function modIndexForRoute(route: ProjectModulationRoute): number {
+		return modulators.findIndex((m) => m.id === route.modulator_id);
+	}
+
 	function modNameForRoute(route: ProjectModulationRoute): string {
-		const idx = modulators.findIndex((m) => m.id === route.modulator_id);
+		const idx = modIndexForRoute(route);
 		return idx >= 0 ? `LFO ${idx + 1}` : '?';
+	}
+
+	function colorForRoute(route: ProjectModulationRoute): string {
+		const idx = modIndexForRoute(route);
+		return modulatorColor(idx >= 0 ? idx : 0);
 	}
 
 	async function handleAddLfo() {
@@ -134,22 +144,24 @@
 	{/if}
 
 	{#each modulators as mod, i (mod.id)}
+		{@const color = modulatorColor(i)}
 		<div class="slot">
 			<!-- svelte-ignore a11y-no-static-element-interactions -->
-			<div class="slot-head">
-				<div class="lfo-icon" aria-hidden="true">
+			<div class="slot-head" style:border-left-color={color}>
+				<div class="lfo-icon" aria-hidden="true" style:color>
 					<svg width="16" height="10" viewBox="0 0 16 10" fill="none">
 						<path d="M0 5 Q2 0 4 5 Q6 10 8 5 Q10 0 12 5 Q14 10 16 5"
 							stroke="currentColor" stroke-width="1.2" fill="none" stroke-linecap="round"/>
 					</svg>
 				</div>
-				<span class="slot-name">{compact ? `L${i + 1}` : `LFO ${i + 1}`}</span>
+				<span class="slot-name" style:color>{compact ? `L${i + 1}` : `LFO ${i + 1}`}</span>
 				{#if !compact}<span class="param-lbl">RATE</span>{/if}
 				<Knob
 					min={0.1}
 					max={20}
 					defaultValue={1}
 					value={mod.rate_hz ?? 1}
+					{color}
 					on:release={(e) => handleRateChange(mod.id, e.detail)}
 				/>
 				<span class="param-val">{(mod.rate_hz ?? 1).toFixed(compact ? 1 : 2)}{compact ? '' : ' Hz'}</span>
@@ -180,10 +192,11 @@
 	{/if}
 
 	{#each mod_routes as route (route.id)}
+		{@const routeColor = colorForRoute(route)}
 		<div class="slot">
 			<!-- svelte-ignore a11y-no-static-element-interactions -->
-			<div class="route-row">
-				<span class="route-src">{modNameForRoute(route)}</span>
+			<div class="route-row" style:border-left-color={routeColor}>
+				<span class="route-src" style:color={routeColor}>{modNameForRoute(route)}</span>
 				<span class="route-arrow">→</span>
 				<span class="route-tgt" title={routeTargetLabel(route, options)}>{routeTargetLabel(route, options)}</span>
 				<input
@@ -194,6 +207,7 @@
 					step="0.01"
 					value={sliderDepth(route, options)}
 					on:change={(e) => handleDepthChange(route, e)}
+					style:accent-color={routeColor}
 				/>
 				<span class="depth-val">{formatDepth(sliderDepth(route, options))}</span>
 				<button class="rm-btn" type="button"
@@ -270,7 +284,8 @@
 
 	.slot-head {
 		display: flex; align-items: center; gap: 5px;
-		padding: 4px 6px;
+		padding: 4px 6px 4px 4px;
+		border-left: 2px solid transparent;
 		&:hover { background: $surface-1; }
 	}
 
@@ -320,7 +335,8 @@
 	// Routes
 	.route-row {
 		display: flex; align-items: center; gap: 5px;
-		padding: 5px 6px;
+		padding: 5px 6px 5px 4px;
+		border-left: 2px solid transparent;
 		&:hover { background: $surface-1; }
 	}
 
@@ -328,7 +344,6 @@
 		flex-shrink: 0;
 		min-width: 36px;
 		font-size: 9px; font-family: $font-mono; font-weight: 700;
-		color: rgba(21,113,255,0.9);
 	}
 
 	.route-arrow {

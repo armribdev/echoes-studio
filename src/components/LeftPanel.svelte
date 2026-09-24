@@ -46,6 +46,8 @@
 					compact
 					trackId={$selectedTrack.trackId}
 					effects={$selectedTrack.effects}
+					modulators={$selectedTrack.modulators}
+					mod_routes={$selectedTrack.mod_routes}
 				/>
 
 				<div class="section-divider"></div>
