@@ -77,12 +77,14 @@ These live in `audio_graph/modulation.rs`.
 
 ## Modulator Node Types
 
-| Kind        | Description                                          |
-|-------------|------------------------------------------------------|
-| `Lfo`       | Periodic waveform (sine/tri/saw/square); rate in Hz  |
-| `Envelope`  | ADSR / multi-stage, triggered by gate or MIDI        |
-| `Macro`     | User-controlled knob, fans out to multiple targets   |
-| `AudioRate` | Audio-rate (sample-by-sample) modulation signal      |
+| Kind            | Description                                                                 |
+|-----------------|-----------------------------------------------------------------------------|
+| `Lfo`           | Periodic waveform (sine/tri/saw/square); rate in Hz or tempo-synced          |
+| `Envelope`      | ADSR (0…1), gated by the track's `InstrumentNode` (any note held)            |
+| `Macro`         | User-controlled value (0…1), fans out to multiple targets                   |
+| `AudioFollower` | Level (0…1, RMS or peak) of the track's post-FX signal or of one effect     |
+
+All four are exposed in the UI (`ModulationPanel` "+" menu, one card per kind).
 
 Any node acting as a modulation source must:
 1. Implement `AudioNode` normally (produce output on port 0).
@@ -226,12 +228,17 @@ The block-rate `ModSmooth` (`nodes/mod_smooth.rs`) is no longer used by
 production code; it is kept because ADR-009 references it. Projects without
 modulation or automation render exactly as before ADR-019.
 
-**Editing an LFO (`UPDATE_MODULATOR`):** `rate_hz`, `tempo_sync` and
-`beat_division` are hot edits through the modulator's `ModulatorCells` atomics
-(no recompile, phase continues). `waveform` is baked into `LfoNode` at compile
-time, so a shape change recompiles the graph and the new node restarts its
-phase. All four fields are editable from the UI LFO card (`LfoCard.svelte`) and
-replayed from `MODULATOR_UPDATED` events (`apply_modulator_updated`).
+**Editing a modulator (`UPDATE_MODULATOR`):**
+
+| Kind | Hot (atomics, no recompile) | Recompiles |
+|------|-----------------------------|------------|
+| LFO | `rate_hz`, `tempo_sync`, `beat_division` (`ModulatorCells`) | `waveform` — baked into `LfoNode`; the new node restarts its phase |
+| Envelope | `attack_ms`, `decay_ms`, `sustain_level`, `release_ms` (`EnvelopeCells`) | — |
+| Macro | `value` (`MacroCells`) | — |
+| AudioFollower | — | `window_ms`, `attack_ms`, `release_ms`, `mode` — baked into `AudioFollowerNode` (ring buffer sized in `prepare`) |
+
+Every field is replayed from `MODULATOR_UPDATED` events (`apply_modulator_updated`).
+The follower's `source_effect_id` is not editable yet (UI always taps post-FX).
 
 **Verification:** `audio_engine/render_harness.rs` renders modulated and
 automated reference projects at several block sizes and checks them against

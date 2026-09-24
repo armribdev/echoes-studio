@@ -259,6 +259,8 @@ pub struct UpdateModulatorPayload {
     pub release_ms: Option<f32>,
     /// AudioFollower window length (ms).
     pub window_ms: Option<f32>,
+    /// AudioFollower detection mode.
+    pub mode: Option<crate::project::FollowerMode>,
 }
 
 #[derive(Debug, Deserialize)]

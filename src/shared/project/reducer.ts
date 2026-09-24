@@ -13,6 +13,11 @@
 import { ev, type EngineEvent } from '../protocol/events';
 import type { Clip, MidiClip, MidiNote, Project, ProjectModulationRoute, ProjectModulator, Track, TrackEffect } from '../../types/global';
 
+const MODULATOR_FIELDS = [
+  'rate_hz', 'waveform', 'tempo_sync', 'beat_division', 'value',
+  'attack_ms', 'decay_ms', 'sustain_level', 'release_ms', 'window_ms', 'mode',
+] as const satisfies readonly (keyof ProjectModulator)[];
+
 // ── Project state ─────────────────────────────────────────────────────────────
 
 export interface ProjectState {
@@ -341,10 +346,10 @@ export function applyEvent(state: ProjectState, event: EngineEvent): ProjectStat
       const { track_id, modulator_id, ...fields } = event.payload as {
         track_id: string;
         modulator_id: string;
-      } & Partial<Record<'rate_hz' | 'waveform' | 'tempo_sync' | 'beat_division', unknown>>;
+      } & Partial<Record<(typeof MODULATOR_FIELDS)[number], unknown>>;
       // The engine sends every field, null when unchanged.
       const changes = Object.fromEntries(
-        (['rate_hz', 'waveform', 'tempo_sync', 'beat_division'] as const)
+        MODULATOR_FIELDS
           .filter((key) => fields[key] != null)
           .map((key) => [key, fields[key]]),
       );

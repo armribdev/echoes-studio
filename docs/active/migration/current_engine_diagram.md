@@ -434,8 +434,8 @@ UI knob → Tauri invoke → engine_gateway handler
     ├─ UPDATE_MODULATOR (rate / tempo_sync / beat_division) / SET_MODULATION_DEPTH :
     │     idem (cellule atomique)
     │
-    ├─ UPDATE_MODULATOR (waveform) :
-    │     écrit AppProject + recompile_if_needed (forme figée dans LfoNode)
+    ├─ UPDATE_MODULATOR (waveform LFO, réglages AudioFollower) :
+    │     écrit AppProject + recompile_if_needed (valeurs figées dans le nœud)
     │
     ├─ UPDATE_EFFECT (Eq, Compressor, Reverb, Delay, Plugin) :
     │     écrit AppProject + recompile_if_needed → COMPILE COMPLET

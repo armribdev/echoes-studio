@@ -48,15 +48,27 @@ export interface TrackEffect {
 }
 
 export type LfoWaveform = 'sine' | 'triangle' | 'saw' | 'square';
+export type ModulatorKind = 'lfo' | 'envelope' | 'audio_follower' | 'macro';
+export type FollowerMode = 'rms' | 'peak';
 
+/** Flattened `ModulatorParams`: only the fields of `kind` are present. */
 export interface ProjectModulator {
 	id: string;
-	kind: string;
+	kind: ModulatorKind;
 	rate_hz?: number;
 	waveform?: LfoWaveform;
 	tempo_sync?: boolean;
 	/** Beats per LFO cycle when `tempo_sync` is on. */
 	beat_division?: number;
+	/** Macro value, 0…1. */
+	value?: number;
+	attack_ms?: number;
+	decay_ms?: number;
+	/** Envelope sustain level, 0…1. */
+	sustain_level?: number;
+	release_ms?: number;
+	window_ms?: number;
+	mode?: FollowerMode;
 }
 
 export type ModulationTargetRef =

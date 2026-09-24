@@ -1,9 +1,19 @@
-<!-- ModulationPanel.svelte — LFO sources and modulation routes per track -->
+<!-- ModulationPanel.svelte — modulators (LFO, envelope, follower, macro) and their routes per track -->
 <script lang="ts">
 	import LfoCard from './LfoCard.svelte';
+	import EnvelopeCard from './EnvelopeCard.svelte';
+	import FollowerCard from './FollowerCard.svelte';
+	import MacroCard from './MacroCard.svelte';
+	import ModulatorTypeMenu from './ModulatorTypeMenu.svelte';
 	import ModulationTargetPicker from './ModulationTargetPicker.svelte';
 	import { modulatorColor } from '../frontend/modulation/colors';
-	import type { TrackEffect, ProjectModulator, ProjectModulationRoute } from '../types/global';
+	import { modulatorLabel } from '../frontend/modulation/modulators';
+	import type {
+		ModulatorKind,
+		ProjectModulationRoute,
+		ProjectModulator,
+		TrackEffect,
+	} from '../types/global';
 	import {
 		addModulator,
 		removeModulator,
@@ -33,6 +43,7 @@
 	const DEFAULT_DEPTH = 0.5;
 
 	let pickerModulatorId: string | null = null;
+	let typeMenuOpen = false;
 	let paramsByPlacement: Record<string, PluginParamInfo[]> = {};
 	let loadingParams = false;
 	let paramsRequest = 0;
@@ -93,8 +104,8 @@
 	}
 
 	function modNameForRoute(route: ProjectModulationRoute): string {
-		const idx = modIndexForRoute(route);
-		return idx >= 0 ? `LFO ${idx + 1}` : '?';
+		const mod = modulators[modIndexForRoute(route)];
+		return mod ? modulatorLabel(modulators, mod) : '?';
 	}
 
 	function colorForRoute(route: ProjectModulationRoute): string {
@@ -102,8 +113,9 @@
 		return modulatorColor(idx >= 0 ? idx : 0);
 	}
 
-	async function handleAddLfo() {
-		try { await addModulator(trackId, 'lfo', 1.0); }
+	async function handleAddModulator(kind: ModulatorKind) {
+		typeMenuOpen = false;
+		try { await addModulator(trackId, kind); }
 		catch (e) { notify(`Erreur ajout modulateur : ${(e as Error)?.message ?? e}`, 'error'); }
 	}
 
@@ -124,7 +136,7 @@
 			(r) => r.modulator_id === modId && findTargetOption(options, r.target)?.key === key,
 		);
 		if (alreadyRouted) {
-			notify('Ce LFO module déjà ce réglage', 'info');
+			notify('Ce modulateur pilote déjà ce réglage', 'info');
 			return;
 		}
 		handleAssign(modId, option);
@@ -142,8 +154,19 @@
 	<!-- ── Sources ─────────────────────────────────────────────────────────────── -->
 	<div class="section-header">
 		<span class="section-title">{compact ? 'Mod' : 'Modulateurs'}</span>
-		<!-- svelte-ignore a11y-no-static-element-interactions -->
-		<button class="add-btn" type="button" on:click={handleAddLfo} title="Ajouter LFO">+</button>
+		<button
+			class="add-btn"
+			class:active={typeMenuOpen}
+			type="button"
+			title="Ajouter un modulateur"
+			aria-haspopup="menu"
+			aria-expanded={typeMenuOpen}
+			on:mousedown|stopPropagation
+			on:click={() => (typeMenuOpen = !typeMenuOpen)}
+		>+</button>
+		{#if typeMenuOpen}
+			<ModulatorTypeMenu on:select={(e) => handleAddModulator(e.detail)} on:close={() => (typeMenuOpen = false)} />
+		{/if}
 	</div>
 
 	{#if modulators.length === 0}
@@ -151,17 +174,35 @@
 	{/if}
 
 	{#each modulators as mod, i (mod.id)}
+		{@const card = {
+			trackId,
+			mod,
+			label: modulatorLabel(modulators, mod),
+			color: modulatorColor(i),
+			pickerOpen: pickerModulatorId === mod.id,
+		}}
 		<div class="slot">
-			<LfoCard
-				{trackId}
-				{mod}
-				label="LFO {i + 1}"
-				color={modulatorColor(i)}
-				pickerOpen={pickerModulatorId === mod.id}
-				on:assign={(e) => assignByKey(mod.id, e.detail)}
-				on:togglepicker={() => togglePicker(mod.id)}
-				on:remove={() => handleRemoveMod(mod.id)}
-			/>
+			{#if mod.kind === 'envelope'}
+				<EnvelopeCard {...card} hasInstrument={instrument !== null}
+					on:assign={(e) => assignByKey(mod.id, e.detail)}
+					on:togglepicker={() => togglePicker(mod.id)}
+					on:remove={() => handleRemoveMod(mod.id)} />
+			{:else if mod.kind === 'audio_follower'}
+				<FollowerCard {...card}
+					on:assign={(e) => assignByKey(mod.id, e.detail)}
+					on:togglepicker={() => togglePicker(mod.id)}
+					on:remove={() => handleRemoveMod(mod.id)} />
+			{:else if mod.kind === 'macro'}
+				<MacroCard {...card} routeCount={mod_routes.filter((r) => r.modulator_id === mod.id).length}
+					on:assign={(e) => assignByKey(mod.id, e.detail)}
+					on:togglepicker={() => togglePicker(mod.id)}
+					on:remove={() => handleRemoveMod(mod.id)} />
+			{:else}
+				<LfoCard {...card}
+					on:assign={(e) => assignByKey(mod.id, e.detail)}
+					on:togglepicker={() => togglePicker(mod.id)}
+					on:remove={() => handleRemoveMod(mod.id)} />
+			{/if}
 			{#if pickerModulatorId === mod.id}
 				<ModulationTargetPicker
 					options={pickerOptions}
@@ -179,7 +220,7 @@
 	</div>
 
 	{#if mod_routes.length === 0}
-		<p class="empty">{compact ? '—' : "Aucune route — glissez l'onde d'un LFO sur un réglage"}</p>
+		<p class="empty">{compact ? '—' : "Aucune route — glissez l'icône d'un modulateur sur un réglage"}</p>
 	{/if}
 
 	{#each mod_routes as route (route.id)}
@@ -257,7 +298,7 @@
 		background: transparent; color: $text-subtle;
 		font-size: 14px; line-height: 1; cursor: pointer;
 		display: flex; align-items: center; justify-content: center; padding: 0;
-		&:hover { background: rgba(21,113,255,0.15); color: $text-color; border-color: rgba(21,113,255,0.4); }
+		&:hover, &.active { background: rgba(21,113,255,0.15); color: $text-color; border-color: rgba(21,113,255,0.4); }
 	}
 
 	.empty {

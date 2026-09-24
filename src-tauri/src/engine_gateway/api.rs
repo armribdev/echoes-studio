@@ -1234,7 +1234,10 @@ fn process_command(
                 || p.decay_ms.is_some()
                 || p.sustain_level.is_some()
                 || p.release_ms.is_some()
-                || p.window_ms.is_some();
+                || p.window_ms.is_some()
+                || p.mode.is_some();
+            // Follower params are baked into its node at compile time (no live cells).
+            let mut follower_edited = false;
             if has_update {
                 with_project_mut(state, |project| {
                     let track = require_track_mut(project, &p.track_id)?;
@@ -1257,10 +1260,15 @@ fn process_command(
                                 if let Some(v) = p.sustain_level { ep.sustain_level = v; }
                                 if let Some(v) = p.release_ms { ep.release_ms = v; }
                             }
-                        crate::project::ModulatorParams::AudioFollower(ref mut fp) => {
+                            crate::project::ModulatorParams::AudioFollower(ref mut fp) => {
                                 if let Some(v) = p.window_ms { fp.window_ms = v; }
                                 if let Some(v) = p.attack_ms { fp.attack_ms = v; }
                                 if let Some(v) = p.release_ms { fp.release_ms = v; }
+                                if let Some(v) = &p.mode { fp.mode = v.clone(); }
+                                follower_edited = p.window_ms.is_some()
+                                    || p.attack_ms.is_some()
+                                    || p.release_ms.is_some()
+                                    || p.mode.is_some();
                             }
                         }
                     }
@@ -1309,8 +1317,9 @@ fn process_command(
                     "sustain_level": p.sustain_level,
                     "release_ms": p.release_ms,
                     "window_ms": p.window_ms,
+                    "mode": p.mode,
                 }),
-                p.waveform.is_some(),
+                p.waveform.is_some() || follower_edited,
             )
         }
 
@@ -2118,6 +2127,9 @@ fn apply_modulator_updated(project: &mut AppProject, payload: &Value) {
             if let Some(v) = payload["window_ms"].as_f64() { p.window_ms = v as f32; }
             if let Some(v) = payload["attack_ms"].as_f64() { p.attack_ms = v as f32; }
             if let Some(v) = payload["release_ms"].as_f64() { p.release_ms = v as f32; }
+            if let Ok(mode) = serde_json::from_value::<crate::project::FollowerMode>(payload["mode"].clone()) {
+                p.mode = mode;
+            }
         }
     }
 }
@@ -2439,6 +2451,23 @@ mod tests {
         assert_eq!(clip.notes.len(), 1);
         assert_eq!(clip.notes[0].pitch, 60);
         assert_eq!(clip.notes[0].id, "n");
+    }
+
+    #[test]
+    fn replayed_follower_update_applies_mode_and_times() {
+        let mut project = project_with_lfo();
+        project.tracks[0].modulators[0].params =
+            ModulatorParams::AudioFollower(crate::project::AudioFollowerParams::default());
+        apply_modulator_updated(
+            &mut project,
+            &json!({ "track_id": "t", "modulator_id": "lfo", "mode": "peak", "window_ms": 20.0, "release_ms": null }),
+        );
+        let ModulatorParams::AudioFollower(p) = &project.tracks[0].modulators[0].params else {
+            panic!("expected an audio follower");
+        };
+        assert_eq!(p.mode, crate::project::FollowerMode::Peak);
+        assert_eq!(p.window_ms, 20.0);
+        assert_eq!(p.release_ms, crate::project::AudioFollowerParams::default().release_ms);
     }
 
     #[test]

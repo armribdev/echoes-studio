@@ -192,7 +192,7 @@ export interface UpdateEffectPayload {
 
 export interface AddModulatorPayload {
   track_id: string;
-  kind: 'lfo';
+  kind: 'lfo' | 'envelope' | 'audio_follower' | 'macro';
   rate_hz?: number;
 }
 
@@ -208,6 +208,13 @@ export interface UpdateModulatorPayload {
   waveform?: 'sine' | 'triangle' | 'saw' | 'square';
   tempo_sync?: boolean;
   beat_division?: number;
+  value?: number;
+  attack_ms?: number;
+  decay_ms?: number;
+  sustain_level?: number;
+  release_ms?: number;
+  window_ms?: number;
+  mode?: 'rms' | 'peak';
 }
 
 export interface AddModulationRoutePayload {

@@ -338,16 +338,8 @@ export function updateEffect(
 
 // ── Modulation commands ───────────────────────────────────────────────────────
 
-export function addModulator(
-  trackId: string,
-  kind: 'lfo',
-  rateHz = 1.0,
-): Promise<CommandResult> {
-  return dispatch<AddModulatorPayload>(cmd.ADD_MODULATOR, {
-    track_id: trackId,
-    kind,
-    rate_hz: rateHz,
-  });
+export function addModulator(trackId: string, kind: AddModulatorPayload['kind']): Promise<CommandResult> {
+  return dispatch<AddModulatorPayload>(cmd.ADD_MODULATOR, { track_id: trackId, kind });
 }
 
 export function removeModulator(trackId: string, modulatorId: string): Promise<CommandResult> {
@@ -360,7 +352,7 @@ export function removeModulator(trackId: string, modulatorId: string): Promise<C
 export function updateModulator(
   trackId: string,
   modulatorId: string,
-  changes: Pick<UpdateModulatorPayload, 'rate_hz' | 'waveform' | 'tempo_sync' | 'beat_division'>,
+  changes: Omit<UpdateModulatorPayload, 'track_id' | 'modulator_id'>,
 ): Promise<CommandResult> {
   return dispatch<UpdateModulatorPayload>(cmd.UPDATE_MODULATOR, {
     track_id: trackId,
