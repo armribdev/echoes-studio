@@ -296,6 +296,7 @@ impl AudioEngine {
             sample_rate: self.transport.sample_rate(),
             max_block_size: MAX_BLOCK_FRAMES,
             num_channels: DEFAULT_COMPILE_NUM_CHANNELS,
+            audition: true,
         };
         let (scheduler, cells, duration_samples) = AudioGraphCompiler::compile_scheduler(
             project,
@@ -371,6 +372,7 @@ impl AudioEngine {
             sample_rate: actual_sr as f32,
             max_block_size: MAX_BLOCK_FRAMES,
             num_channels: DEFAULT_COMPILE_NUM_CHANNELS,
+            audition: true,
         };
         let (initial_scheduler, initial_cells, initial_duration) =
             AudioGraphCompiler::compile_scheduler(

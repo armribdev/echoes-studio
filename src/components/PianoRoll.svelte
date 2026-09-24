@@ -45,6 +45,7 @@
 	} from '../frontend/pianoRoll/previewLayout';
 	import { previewPanelResizing, editPanelResizing } from '../frontend/pianoRoll/previewRefit';
 	import { fitEditScrollForNotes, pitchRangeScrollTop } from '../frontend/pianoRoll/editScroll';
+	import { auditionPitch, releaseAudition } from '../frontend/pianoRoll/noteAudition';
 	import TimeRuler from './TimeRuler.svelte';
 	import Playhead from './Playhead.svelte';
 	import ZoomScrollbar from './ZoomScrollbar.svelte';
@@ -908,6 +909,7 @@
 			isGroup,
 			origPositions,
 		};
+		if (trackId) auditionPitch(trackId, hit.pitch, hit.velocity);
 	}
 
 	function moveWorkingGroup(
@@ -981,6 +983,7 @@
 					{ id, pitch, start: sb, duration: quantize, velocity: 100 },
 				];
 				drag = { type: 'create', noteId: id, pitch, startBeat: sb, anchorBeat: beat };
+				if (trackId) auditionPitch(trackId, pitch, 100);
 				scheduleNotesRedraw();
 				scheduleVelRedraw();
 			}
@@ -1044,10 +1047,19 @@
 				if (minStart + deltaStart < 0) deltaStart = -minStart;
 				deltaPitch = Math.max(-minPitch, Math.min(127 - maxPitch, deltaPitch));
 				moveWorkingGroup(moveDrag.origPositions, deltaPitch, deltaStart);
+				if (trackId) {
+					const heard = Math.max(0, Math.min(127, moveDrag.origPitch + deltaPitch));
+					const vel = workingNotes?.find((n) => n.id === moveDrag.noteId)?.velocity ?? 100;
+					auditionPitch(trackId, heard, vel);
+				}
 			} else {
 				const newStart = Math.max(0, snapBeat(beat - (moveDrag.anchorBeat - moveDrag.origStart), quantize));
 				const newPitch = Math.max(0, Math.min(127, moveDrag.origPitch + (pitch - moveDrag.anchorPitch)));
 				moveWorkingNote(moveDrag.noteId, newPitch, newStart);
+				if (trackId) {
+					const vel = workingNotes?.find((n) => n.id === moveDrag.noteId)?.velocity ?? 100;
+					auditionPitch(trackId, newPitch, vel);
+				}
 			}
 		} else if (drag.type === 'resize') {
 			const delta = snapBeat(beat - drag.anchorBeat, quantize);
@@ -1092,6 +1104,7 @@
 		drag = { type: 'none' };
 		isDragging = false;
 		if (edited && notesChanged) commitNotes();
+		if (edited) releaseAudition();
 		updateCursor(e);
 	}
 
@@ -1361,9 +1374,9 @@
 
 	function onWindowMouseup() {
 		if (isPanning) isPanning = false;
+		const auditioning = drag.type === 'create' || drag.type === 'move';
 		const needsCommit =
-			drag.type === 'create' ||
-			drag.type === 'move' ||
+			auditioning ||
 			drag.type === 'resize' ||
 			drag.type === 'erase' ||
 			drag.type === 'selbox';
@@ -1378,6 +1391,7 @@
 			commitNotes();
 		}
 		if (needsCommit) commitNotes();
+		if (auditioning) releaseAudition();
 	}
 
 	onMount(() => {
@@ -1386,6 +1400,7 @@
 		window.addEventListener('mouseup',    onWindowMouseup);
 	});
 	onDestroy(() => {
+		releaseAudition();
 		gridViewportObserver?.disconnect();
 		scrubCleanup?.();
 		window.removeEventListener('keydown',   onKeydown);

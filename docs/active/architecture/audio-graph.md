@@ -98,6 +98,10 @@ Every structural project change triggers a full graph recompile. MIDI note
 content (`SET_CLIP_MIDI_NOTES`) does not: the command thread publishes a new
 note list into the live instrument, and the audio thread adopts it on the next
 block. A selection that does not change notes does not publish anything.
+Placing or moving a note in the piano roll also pushes a short audition
+(note on, then note off) through a lock-free queue on that track. The live
+instrument plays it even when the transport is stopped. Offline export does
+not attach the queue, so a render stays independent of audition.
 
 ```
 AppProject (editor state)

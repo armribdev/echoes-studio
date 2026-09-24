@@ -75,6 +75,7 @@ pub(crate) fn render_project_in_blocks(
         sample_rate: sample_rate as f32,
         max_block_size: OFFLINE_BLOCK_SIZE,
         num_channels: OFFLINE_NUM_CHANNELS,
+        audition: false,
     };
 
     // Same denormal mitigation as the live audio thread — DSP feedback paths

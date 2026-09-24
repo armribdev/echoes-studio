@@ -10,7 +10,8 @@ mod project;
 mod windows_theme;
 
 use engine_gateway::api::{
-    get_graph_snapshot, get_snapshot, redo, send_batch, send_command, set_track_mix, undo,
+    get_graph_snapshot, get_snapshot, preview_midi_note, redo, send_batch, send_command, set_track_mix,
+    undo,
 };
 use project::{AppProject, AppState, ProjectDto, ProjectFile, ProjectUiLayout};
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
@@ -202,6 +203,7 @@ fn main() {
             send_command,
             send_batch,
             set_track_mix,
+            preview_midi_note,
             get_snapshot,
             get_graph_snapshot,
             undo,

@@ -95,6 +95,26 @@ pub fn set_track_mix(
     Ok(())
 }
 
+/// Piano-roll audition. Live MIDI only — no project event, no recompile.
+#[tauri::command]
+pub fn preview_midi_note(
+    state: tauri::State<'_, AppState>,
+    track_id: String,
+    pitch: u8,
+    velocity: u8,
+    note_on: bool,
+) -> Result<(), String> {
+    state.live_params.push_preview(
+        &track_id,
+        crate::audio_graph::midi::MidiPreviewMessage {
+            note_on,
+            pitch,
+            velocity,
+        },
+    );
+    Ok(())
+}
+
 /// Send a single typed command to the engine.
 #[tauri::command]
 pub fn send_command(

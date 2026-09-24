@@ -15,7 +15,9 @@ use std::sync::Arc;
 
 use crate::audio_graph::buffer::AudioBuffer;
 use crate::audio_graph::live_params::EnvelopeCells;
-use crate::audio_graph::midi::{MidiEvent, MidiEventKind, MidiEventList, MidiNotePublisher, MidiNoteSnapshot};
+use crate::audio_graph::midi::{
+    MidiEvent, MidiEventKind, MidiEventList, MidiNotePublisher, MidiNoteSnapshot, MidiPreviewQueue,
+};
 use crate::audio_graph::node::{AudioNode, NodeId, PrepareContext, TransportInfo};
 use crate::audio_graph::plugin_params::{parse_plugin_param_name, PluginParamControl, PluginParamControls};
 
@@ -73,6 +75,10 @@ pub struct InstrumentNode {
     /// Stored in beat space; sample positions are derived per block from transport BPM.
     /// Replaced in place when the piano roll edits notes — no graph rebuild.
     notes: Arc<MidiNotePublisher>,
+    /// Piano-roll audition. Independent of transport and of the timeline note list.
+    preview: Option<Arc<MidiPreviewQueue>>,
+    /// Voices opened by audition, so a seek or stop does not release them.
+    preview_count: [u8; 128],
     device: Box<dyn InstrumentDevice>,
     /// Reused every block — no heap allocation in the RT path.
     event_buf: MidiEventList,
@@ -101,6 +107,35 @@ impl InstrumentNode {
         Self::from_publisher(id, MidiNotePublisher::with_notes(notes.as_ref().clone()), device)
     }
 
+    pub fn set_preview(&mut self, queue: Arc<MidiPreviewQueue>) {
+        self.preview = Some(queue);
+    }
+
+    fn drain_preview(&mut self) {
+        let Some(queue) = self.preview.clone() else {
+            return;
+        };
+        queue.drain(|message| {
+            let pitch = message.pitch as usize;
+            if message.note_on {
+                self.event_buf.push(MidiEvent {
+                    offset: 0,
+                    kind: MidiEventKind::NoteOn {
+                        pitch: message.pitch,
+                        velocity: message.velocity,
+                    },
+                });
+                self.preview_count[pitch] = self.preview_count[pitch].saturating_add(1);
+            } else if self.preview_count[pitch] > 0 {
+                self.event_buf.push(MidiEvent {
+                    offset: 0,
+                    kind: MidiEventKind::NoteOff { pitch: message.pitch },
+                });
+                self.preview_count[pitch] -= 1;
+            }
+        });
+    }
+
     pub fn from_publisher(
         id: NodeId,
         notes: Arc<MidiNotePublisher>,
@@ -109,6 +144,8 @@ impl InstrumentNode {
         Self {
             id,
             notes,
+            preview: None,
+            preview_count: [0u8; 128],
             device,
             event_buf: MidiEventList::new(),
             next_expected_block_start: 0,
@@ -259,6 +296,7 @@ impl AudioNode for InstrumentNode {
                 }
             }
 
+            self.drain_preview();
             self.event_buf.sort_by_offset();
             self.next_expected_block_start = block_end;
         } else {
@@ -268,6 +306,7 @@ impl AudioNode for InstrumentNode {
             if self.was_playing {
                 self.release_sounding_notes();
             }
+            self.drain_preview();
             self.next_expected_block_start = transport.position_samples;
         }
 
@@ -275,7 +314,8 @@ impl AudioNode for InstrumentNode {
 
         // Notify envelope modulators: gate = any note still sounding this block.
         if !self.envelope_cells.is_empty() {
-            let any_active = self.active_pitch_count.iter().any(|&c| c > 0);
+            let any_active = self.active_pitch_count.iter().any(|&c| c > 0)
+                || self.preview_count.iter().any(|&c| c > 0);
             for cells in &self.envelope_cells {
                 cells.gate.store(any_active, Ordering::Relaxed);
             }
@@ -290,6 +330,7 @@ impl AudioNode for InstrumentNode {
         self.next_expected_block_start = 0;
         self.was_playing = false;
         self.active_pitch_count = [0u8; 128];
+        self.preview_count = [0u8; 128];
         // Release envelopes on graph reset so they don't hang in Sustain.
         for cells in &self.envelope_cells {
             cells.gate.store(false, Ordering::Relaxed);
@@ -598,6 +639,30 @@ mod tests {
                 .iter()
                 .any(|e| matches!(e.kind, MidiEventKind::NoteOn { pitch: 60, .. })),
             "the note that stayed must not be retriggered"
+        );
+    }
+
+    #[test]
+    fn audition_plays_while_transport_is_stopped() {
+        let captured = Arc::new(Mutex::new(Vec::new()));
+        let mut node = make_node(captured.clone());
+        let queue = Arc::new(crate::audio_graph::midi::MidiPreviewQueue::new());
+        node.set_preview(Arc::clone(&queue));
+        queue.push(crate::audio_graph::midi::MidiPreviewMessage {
+            note_on: true,
+            pitch: 72,
+            velocity: 90,
+        });
+
+        run_block(&mut node, &transport_at(false, 0, 512));
+
+        let events = captured.lock().unwrap();
+        assert!(
+            events.iter().any(|e| matches!(
+                e.kind,
+                MidiEventKind::NoteOn { pitch: 72, velocity: 90 }
+            )),
+            "a placed note must sound even when playback is stopped"
         );
     }
 }

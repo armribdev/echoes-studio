@@ -201,6 +201,9 @@ struct LiveParamsInner {
     /// Latest note list per track. Replaced on each compile; note edits publish
     /// into the slot the live instrument node already holds.
     midi_notes: HashMap<String, Arc<crate::audio_graph::midi::MidiNotePublisher>>,
+    /// Piano-roll audition. Reused across compiles so only the live instrument
+    /// drains it (one consumer).
+    midi_preview: HashMap<String, Arc<crate::audio_graph::midi::MidiPreviewQueue>>,
 }
 
 impl Default for LiveParamsInner {
@@ -214,6 +217,7 @@ impl Default for LiveParamsInner {
             effect_params: HashMap::new(),
             plugin_param_shadows: HashMap::new(),
             midi_notes: HashMap::new(),
+            midi_preview: HashMap::new(),
         }
     }
 }
@@ -580,6 +584,9 @@ impl LiveParams {
         inner
             .midi_notes
             .retain(|id, _| live_track_ids.contains(id.as_str()));
+        inner
+            .midi_preview
+            .retain(|id, _| live_track_ids.contains(id.as_str()));
 
         let any_solo = project.tracks.iter().any(|t| t.solo);
         self.any_solo.store(any_solo, Ordering::Relaxed);
@@ -612,6 +619,31 @@ impl LiveParams {
         };
         publisher.publish(notes);
         true
+    }
+
+    /// Queue the live instrument already drains. Created once per track.
+    pub fn preview_queue(&self, track_id: &str) -> Arc<crate::audio_graph::midi::MidiPreviewQueue> {
+        let mut inner = self.lock_inner();
+        if let Some(queue) = inner.midi_preview.get(track_id) {
+            return Arc::clone(queue);
+        }
+        let queue = Arc::new(crate::audio_graph::midi::MidiPreviewQueue::new());
+        inner
+            .midi_preview
+            .insert(track_id.to_string(), Arc::clone(&queue));
+        queue
+    }
+
+    /// Piano-roll audition. No project event and no recompile.
+    pub fn push_preview(
+        &self,
+        track_id: &str,
+        message: crate::audio_graph::midi::MidiPreviewMessage,
+    ) -> bool {
+        let Some(queue) = self.lock_inner().midi_preview.get(track_id).cloned() else {
+            return false;
+        };
+        queue.push(message)
     }
 }
 

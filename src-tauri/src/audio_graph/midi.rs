@@ -228,6 +228,77 @@ impl MidiNotePublisher {
     }
 }
 
+/// One audition message from the piano roll (command thread → audio thread).
+#[derive(Debug, Clone, Copy)]
+pub struct MidiPreviewMessage {
+    pub note_on: bool,
+    pub pitch: u8,
+    pub velocity: u8,
+}
+
+const PREVIEW_CAPACITY: usize = 64;
+
+/// Lock-free SPSC ring of piano-roll audition messages.
+///
+/// The command thread is the only producer. The live instrument node is the
+/// only consumer, and a recompile reuses the same queue so the new node takes
+/// over after the snapshot swap — the previous node is no longer processed.
+pub struct MidiPreviewQueue {
+    slots: Box<[std::cell::UnsafeCell<MidiPreviewMessage>]>,
+    head: AtomicUsize,
+    tail: AtomicUsize,
+}
+
+unsafe impl Send for MidiPreviewQueue {}
+unsafe impl Sync for MidiPreviewQueue {}
+
+impl MidiPreviewQueue {
+    pub fn new() -> Self {
+        let empty = MidiPreviewMessage {
+            note_on: false,
+            pitch: 0,
+            velocity: 0,
+        };
+        let mut slots = Vec::with_capacity(PREVIEW_CAPACITY);
+        for _ in 0..PREVIEW_CAPACITY {
+            slots.push(std::cell::UnsafeCell::new(empty));
+        }
+        Self {
+            slots: slots.into_boxed_slice(),
+            head: AtomicUsize::new(0),
+            tail: AtomicUsize::new(0),
+        }
+    }
+
+    /// Command thread. Drops the newest message when the ring is full.
+    pub fn push(&self, message: MidiPreviewMessage) -> bool {
+        let tail = self.tail.load(Ordering::Relaxed);
+        let head = self.head.load(Ordering::Acquire);
+        if tail.wrapping_sub(head) >= PREVIEW_CAPACITY {
+            return false;
+        }
+        unsafe {
+            *self.slots[tail % PREVIEW_CAPACITY].get() = message;
+        }
+        self.tail.store(tail.wrapping_add(1), Ordering::Release);
+        true
+    }
+
+    /// Audio thread. Drains every pending message in order.
+    pub fn drain(&self, mut f: impl FnMut(MidiPreviewMessage)) {
+        loop {
+            let head = self.head.load(Ordering::Relaxed);
+            let tail = self.tail.load(Ordering::Acquire);
+            if head == tail {
+                return;
+            }
+            let message = unsafe { *self.slots[head % PREVIEW_CAPACITY].get() };
+            self.head.store(head.wrapping_add(1), Ordering::Release);
+            f(message);
+        }
+    }
+}
+
 impl Drop for MidiNotePublisher {
     fn drop(&mut self) {
         self.drain_retired();

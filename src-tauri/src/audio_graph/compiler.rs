@@ -57,6 +57,9 @@ pub struct CompileConfig {
     pub sample_rate: f32,
     pub max_block_size: usize,
     pub num_channels: usize,
+    /// Live graph only. Offline export stays silent so it does not share the
+    /// audition queue with the audio thread.
+    pub audition: bool,
 }
 
 impl Default for CompileConfig {
@@ -65,6 +68,7 @@ impl Default for CompileConfig {
             sample_rate: DEFAULT_SAMPLE_RATE,
             max_block_size: DEFAULT_MAX_BLOCK_SIZE,
             num_channels: DEFAULT_NUM_CHANNELS,
+            audition: true,
         }
     }
 }
@@ -259,6 +263,7 @@ impl GraphCompiler {
                     &graph_node.kind,
                     project,
                     config.sample_rate,
+                    config.audition,
                     live_params,
                     plugin_host,
                 )
@@ -687,6 +692,7 @@ impl GraphCompiler {
         kind: &NodeKind,
         project: &AppProject,
         engine_sample_rate: f32,
+        audition: bool,
         live_params: &LiveParams,
         plugin_host: &mut PluginHost,
     ) -> Box<dyn AudioNode> {
@@ -725,7 +731,11 @@ impl GraphCompiler {
                     None => Box::new(PolySynth::new()),
                 };
 
-                Box::new(InstrumentNode::from_publisher(id, notes, device))
+                let mut node = InstrumentNode::from_publisher(id, notes, device);
+                if audition {
+                    node.set_preview(live_params.preview_queue(track_id));
+                }
+                Box::new(node)
             }
 
             NodeKind::Track { track_id } => {
