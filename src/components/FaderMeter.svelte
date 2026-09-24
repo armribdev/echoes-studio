@@ -5,6 +5,7 @@
 -->
 <script lang="ts">
 	import { onMount, onDestroy, createEventDispatcher } from 'svelte';
+	import { modulationDrag } from '../stores/modulationDrag';
 
 	/** Gain value, 0–100. */
 	export let value: number = 75;
@@ -14,6 +15,13 @@
 	export let peakR: number = 0;
 	/** Value snapped to on double-click. */
 	export let defaultValue: number = 75;
+	/** Color of the modulator driving this fader; draws a dashed outline when set. */
+	export let modColor: string | undefined = undefined;
+	/** Modulation target key; makes this fader a drop target for dragged modulators. */
+	export let modTargetKey: string | undefined = undefined;
+
+	$: dropCandidate = modTargetKey !== undefined && $modulationDrag !== null;
+	$: dropHover = dropCandidate && $modulationDrag?.hoverKey === modTargetKey;
 
 	const dispatch = createEventDispatcher<{ change: number; release: number }>();
 
@@ -103,6 +111,10 @@
 <div
 	class="fader-meter"
 	class:fader-meter--dragging={dragging}
+	class:drop-candidate={dropCandidate}
+	class:drop-hover={dropHover}
+	style:--drop-color={$modulationDrag?.color}
+	data-mod-target={modTargetKey}
 	bind:this={rail}
 	on:mousedown={onMouseDown}
 	on:dblclick={onDblClick}
@@ -122,6 +134,10 @@
 		<div class="fill" style="width:{pctR}%; background:{colorR};"></div>
 	</div>
 
+	{#if modColor}
+		<div class="mod-ring" style="border-color:{modColor};"></div>
+	{/if}
+
 	<!-- Gain thumb — spans both channels -->
 	<div class="thumb" style="left:{faderPct}%;"></div>
 </div>
@@ -137,6 +153,16 @@
 		user-select: none;
 		outline: none;
 		padding: 1px 0;
+
+		&.drop-candidate {
+			border-radius: 3px;
+			box-shadow: 0 0 0 2px color-mix(in srgb, var(--drop-color) 45%, transparent);
+		}
+
+		&.drop-hover {
+			box-shadow: 0 0 0 3px var(--drop-color);
+			background: color-mix(in srgb, var(--drop-color) 20%, transparent);
+		}
 
 		&:focus-visible .channel {
 			outline: 1px solid rgba(21, 113, 255, 0.5);
@@ -159,6 +185,15 @@
 		opacity: 0.7;
 		pointer-events: none;
 		will-change: width;
+	}
+
+	.mod-ring {
+		position: absolute;
+		inset: -2px -3px;
+		border: 1px dashed;
+		border-radius: 3px;
+		opacity: 0.65;
+		pointer-events: none;
 	}
 
 	.thumb {

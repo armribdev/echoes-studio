@@ -3,6 +3,7 @@
 	import Knob from './Knob.svelte';
 	import { createEventDispatcher } from 'svelte';
 	import type { Track } from '../types/global';
+	import { modulatorColor } from '../frontend/modulation/colors';
 
 	export let track: Track;
 	export let selected: boolean = false;
@@ -17,6 +18,15 @@
 	let volDrag = false;
 	let localVolume = volume;
 	$: if (!volDrag) localVolume = volume;
+
+	$: volumeModColor = trackGainModColor(track);
+
+	function trackGainModColor(t: Track): string | undefined {
+		const route = t.mod_routes?.find((r) => r.target.kind === 'track_gain');
+		if (!route) return undefined;
+		const index = t.modulators?.findIndex((m) => m.id === route.modulator_id) ?? -1;
+		return modulatorColor(index >= 0 ? index : 0);
+	}
 
 	function onVolumeChange(value: number) {
 		volDrag = true;
@@ -118,6 +128,8 @@
 					{peakL}
 					{peakR}
 					defaultValue={75}
+					modColor={volumeModColor}
+					modTargetKey={selected ? 'track_gain' : undefined}
 					on:change={(e) => onVolumeChange(e.detail)}
 					on:release={(e) => onVolumeRelease(e.detail)}
 				/>
