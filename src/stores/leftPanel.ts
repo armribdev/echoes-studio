@@ -38,12 +38,16 @@ function createLeftPanelStore() {
 			update((s) => ({ ...s, open: !s.open }));
 			import('../lib/projectUiLayout').then((m) => m.persistProjectUiLayout());
 		},
-		openForTrack() {
-			update((s) => ({
-				open: true,
-				width: TRACK_INSPECTOR_DEFAULT_WIDTH,
-			}));
-			import('../lib/projectUiLayout').then((m) => m.persistProjectUiLayout());
+		open() {
+			let changed = false;
+			update((s) => {
+				if (s.open) return s;
+				changed = true;
+				return { ...s, open: true };
+			});
+			if (changed) {
+				import('../lib/projectUiLayout').then((m) => m.persistProjectUiLayout());
+			}
 		},
 		setWidth(w: number) {
 			update((s) => ({ ...s, width: clampTrackInspectorWidth(w) }));

@@ -21,6 +21,7 @@
 	import { get } from 'svelte/store';
 	import { snapPosition, getSnapSubdivisionSec } from '../lib/snapUtils';
 	import { selectedTrack } from '../stores/selectedTrack';
+	import { leftPanel } from '../stores/leftPanel';
 	import { shouldHandleTimelineShortcuts } from '../frontend/shortcuts/context';
 	import { keyboardFocus } from '../stores/keyboardFocus';
 	import {
@@ -91,6 +92,7 @@
 		if (trackIndex < 0 || trackIndex >= tracks.length) return;
 		selectedTrackIndex = trackIndex;
 		keyboardFocus.setTimeline();
+		leftPanel.open();
 	}
 
 	function selectTrackFromArrangeY(y: number) {

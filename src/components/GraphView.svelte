@@ -1,7 +1,6 @@
 <!-- GraphView.svelte — read-only audio graph visualization -->
 <script lang="ts">
 	import { onMount, onDestroy, tick } from 'svelte';
-	import { get } from 'svelte/store';
 	import { graphSnapshot } from '../stores/graphSnapshot';
 	import { viewMode, type GraphScope } from '../stores/viewMode';
 	import { selectedTrack } from '../stores/selectedTrack';
@@ -204,7 +203,7 @@
 			mod_routes: t.mod_routes ?? [],
 		});
 
-		if (!get(leftPanel).open) leftPanel.openForTrack();
+		leftPanel.open();
 
 		if (scope === 'project') {
 			viewMode.setGraphScope('track');
