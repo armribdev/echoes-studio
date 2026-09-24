@@ -123,8 +123,8 @@ export async function dispatchBatch(
 
 // ── Track commands ────────────────────────────────────────────────────────────
 
-export function createTrack(name: string): Promise<CommandResult> {
-  return dispatch<CreateTrackPayload>(cmd.CREATE_TRACK, { name });
+export function createTrack(name: string, instrument: string | null = null): Promise<CommandResult> {
+  return dispatch<CreateTrackPayload>(cmd.CREATE_TRACK, { name, instrument });
 }
 
 export function deleteTrack(trackId: string): Promise<CommandResult> {

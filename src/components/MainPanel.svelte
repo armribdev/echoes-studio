@@ -3,6 +3,8 @@
 	import TrackStrip from './TrackStrip.svelte';
 	import TrackContextMenu from './TrackContextMenu.svelte';
 	import ClipContextMenu from './ClipContextMenu.svelte';
+	import PluginPicker from './PluginPicker.svelte';
+	import { instrumentIdOf, type PluginInfo } from '../stores/plugins';
 	import type { Track as TrackType, Project } from '../types/global';
 	import { invoke } from '@tauri-apps/api/core';
 	import { listen } from '@tauri-apps/api/event';
@@ -1250,9 +1252,18 @@
 		soloTrack(track.id, !track.solo).catch(console.error);
 	}
 
-	async function handleCreateTrack() {
+	let showNewTrackPicker = false;
+
+	function handleCreateTrack() {
+		showNewTrackPicker = true;
+	}
+
+	async function handleNewTrackPick(plugin: PluginInfo) {
+		showNewTrackPicker = false;
+		const instrument = instrumentIdOf(plugin);
+		const name = instrument ? plugin.name : `Piste ${tracks.length + 1}`;
 		try {
-			const result = await createTrack(`Piste ${tracks.length + 1}`);
+			const result = await createTrack(name, instrument);
 			selectTrackFromCreateResult(result);
 		} catch (e: unknown) {
 			notify(`Erreur création piste : ${(e as Error)?.message ?? String(e)}`, 'error');
@@ -1310,6 +1321,15 @@
 </script>
 
 <svelte:window on:keydown={handleKeyDown} />
+
+{#if showNewTrackPicker}
+	<PluginPicker
+		mode="instrument"
+		title="Nouvelle piste — instrument"
+		on:pick={(e) => handleNewTrackPick(e.detail)}
+		on:cancel={() => (showNewTrackPicker = false)}
+	/>
+{/if}
 
 {#if contextMenu}
 	<TrackContextMenu

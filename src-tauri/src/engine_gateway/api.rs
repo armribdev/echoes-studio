@@ -283,6 +283,32 @@ fn empty_app_track(id: String, name: String) -> AppTrack {
     }
 }
 
+fn validate_instrument(state: &tauri::State<'_, AppState>, plugin_id: &str) -> Result<(), String> {
+    let engine = state
+        .audio_engine
+        .lock()
+        .map_err(|e| format!("audio engine lock: {e}"))?;
+    let manifest = engine
+        .plugin_host
+        .registry()
+        .get(plugin_id)
+        .ok_or_else(|| format!("Plugin '{plugin_id}' introuvable"))?;
+    if !manifest.is_instrument {
+        return Err(format!(
+            "'{}' n'est pas un instrument — ajoutez-le dans Effets",
+            manifest.name
+        ));
+    }
+    if manifest.format != DeviceFormat::Clap {
+        return Err(format!(
+            "Les instruments {} ne sont pas encore supportés — utilisez la version CLAP de '{}'",
+            format_tag(manifest.format),
+            manifest.name
+        ));
+    }
+    Ok(())
+}
+
 fn mark_dirty(state: &tauri::State<'_, AppState>) {
     state.dirty.store(true, Ordering::Relaxed);
 }
@@ -748,19 +774,22 @@ fn process_command(
         cmd::CREATE_TRACK => {
             let p: CreateTrackPayload = serde_json::from_value(command.payload)
                 .map_err(|e| format!("CREATE_TRACK payload invalid: {e}"))?;
+            if let Some(ref plugin_id) = p.instrument {
+                validate_instrument(state, plugin_id)?;
+            }
             let track_id = generate_id();
 
             with_project_mut(state, |project| {
-                project
-                    .tracks
-                    .push(empty_app_track(track_id.clone(), p.name.clone()));
+                let mut track = empty_app_track(track_id.clone(), p.name.clone());
+                track.instrument = p.instrument.clone();
+                project.tracks.push(track);
                 Ok(())
             })?;
 
             commit_same_payload(
                 &ctx,
                 ev::TRACK_CREATED,
-                json!({ "id": track_id, "name": p.name }),
+                json!({ "id": track_id, "name": p.name, "instrument": p.instrument }),
                 true,
             )
         }
@@ -871,28 +900,7 @@ fn process_command(
                 .map_err(|e| format!("SET_TRACK_INSTRUMENT payload invalid: {e}"))?;
 
             if let Some(ref plugin_id) = p.instrument {
-                let engine = state
-                    .audio_engine
-                    .lock()
-                    .map_err(|e| format!("audio engine lock: {e}"))?;
-                let manifest = engine
-                    .plugin_host
-                    .registry()
-                    .get(plugin_id)
-                    .ok_or_else(|| format!("Plugin '{plugin_id}' introuvable"))?;
-                if !manifest.is_instrument {
-                    return Err(format!(
-                        "'{}' n'est pas un instrument — ajoutez-le dans Effets",
-                        manifest.name
-                    ));
-                }
-                if manifest.format != DeviceFormat::Clap {
-                    return Err(format!(
-                        "Les instruments {} ne sont pas encore supportés — utilisez la version CLAP de '{}'",
-                        format_tag(manifest.format),
-                        manifest.name
-                    ));
-                }
+                validate_instrument(state, plugin_id)?;
             }
 
             with_project_mut(state, |project| {
@@ -1810,10 +1818,9 @@ fn apply_track_created(project: &mut AppProject, payload: &Value) {
     if project.tracks.iter().any(|t| t.id == id) {
         return;
     }
-    project.tracks.push(empty_app_track(
-        id,
-        payload_str_default(payload, "name", "Track"),
-    ));
+    let mut track = empty_app_track(id, payload_str_default(payload, "name", "Track"));
+    track.instrument = payload["instrument"].as_str().map(|s| s.to_string());
+    project.tracks.push(track);
 }
 
 fn apply_track_deleted(project: &mut AppProject, payload: &Value) {
@@ -2422,6 +2429,15 @@ mod tests {
         );
         assert_eq!(lfo_params(&project).waveform, LfoWaveform::Saw);
         assert_eq!(lfo_params(&project).rate_hz, 1.0);
+    }
+
+    #[test]
+    fn replayed_track_created_keeps_instrument() {
+        let mut project = AppProject::new();
+        apply_track_created(&mut project, &json!({ "id": "a", "name": "Vital", "instrument": "vital" }));
+        apply_track_created(&mut project, &json!({ "id": "b", "name": "Piste 2" }));
+        assert_eq!(project.tracks[0].instrument.as_deref(), Some("vital"));
+        assert_eq!(project.tracks[1].instrument, None);
     }
 
     #[test]

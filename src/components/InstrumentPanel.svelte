@@ -2,6 +2,7 @@
 	import PluginPicker from './PluginPicker.svelte';
 	import type { PluginInfo } from '../stores/plugins';
 	import {
+		instrumentIdOf,
 		loadPlugins,
 		plugins,
 		pluginDisplayName,
@@ -73,7 +74,7 @@
 	async function handlePick(p: PluginInfo) {
 		showPicker = false;
 		try {
-			await setTrackInstrument(trackId, p.id);
+			await setTrackInstrument(trackId, instrumentIdOf(p));
 		} catch (e) {
 			notify(`Erreur instrument : ${(e as Error)?.message ?? e}`, 'error');
 		}

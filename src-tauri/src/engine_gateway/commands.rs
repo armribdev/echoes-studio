@@ -85,6 +85,8 @@ pub mod cmd {
 #[derive(Debug, Deserialize)]
 pub struct CreateTrackPayload {
     pub name: String,
+    #[serde(default)]
+    pub instrument: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

@@ -91,11 +91,11 @@ export function applyEvent(state: ProjectState, event: EngineEvent): ProjectStat
   switch (event.type) {
 
     case ev.TRACK_CREATED: {
-      const p = event.payload as { id: string; name: string };
+      const p = event.payload as { id: string; name: string; instrument?: string | null };
       if (state.tracks.some((t) => t.id === p.id)) return state; // idempotent
       return {
         ...state,
-        tracks: [...state.tracks, { id: p.id, name: p.name, volume: 80, pan: 0, muted: false, solo: false, instrument: null, clips: [], effects: [], modulators: [], mod_routes: [], midi_notes: [], midi_clips: [] }],
+        tracks: [...state.tracks, { id: p.id, name: p.name, volume: 80, pan: 0, muted: false, solo: false, instrument: p.instrument ?? null, clips: [], effects: [], modulators: [], mod_routes: [], midi_notes: [], midi_clips: [] }],
       };
     }
 

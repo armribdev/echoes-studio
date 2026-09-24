@@ -19,6 +19,21 @@ export const BUILTIN_EFFECT_PLUGINS: PluginInfo[] = [
 	{ id: 'delay', name: 'Délai', vendor: 'Echoes Studio', format: 'Internal', categories: ['Delay'], is_instrument: false },
 ];
 
+/** Picker entry for the built-in synth, which a track plays when its `instrument` is null. */
+export const BUILTIN_INSTRUMENT_PLUGIN: PluginInfo = {
+	id: 'polysynth',
+	name: 'PolySynth',
+	vendor: 'Echoes Studio',
+	format: 'Internal',
+	categories: ['Synth'],
+	is_instrument: true,
+};
+
+/** The engine's `instrument` id for a picked plugin (`null` = built-in PolySynth). */
+export function instrumentIdOf(plugin: PluginInfo): string | null {
+	return plugin.id === BUILTIN_INSTRUMENT_PLUGIN.id ? null : plugin.id;
+}
+
 // All discovered plugins (populated at app init + on manual rescan).
 export const plugins = writable<PluginInfo[]>([]);
 export const pluginsLoading = writable(false);

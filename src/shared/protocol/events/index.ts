@@ -84,6 +84,7 @@ export interface EngineEvent<P = unknown> {
 export interface TrackCreatedPayload {
   id: string;
   name: string;
+  instrument?: string | null;
 }
 
 export interface TrackDeletedPayload {

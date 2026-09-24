@@ -90,6 +90,7 @@ export interface BatchCommand {
 
 export interface CreateTrackPayload {
   name: string;
+  instrument?: string | null;
 }
 
 export interface DeleteTrackPayload {

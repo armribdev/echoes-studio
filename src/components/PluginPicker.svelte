@@ -1,7 +1,7 @@
 <!-- PluginPicker.svelte — modal central pour parcourir et insérer un plugin -->
 <script lang="ts">
 	import { createEventDispatcher, onMount } from 'svelte';
-	import { BUILTIN_EFFECT_PLUGINS, plugins, pluginsLoading, rescanPlugins } from '../stores/plugins';
+	import { BUILTIN_EFFECT_PLUGINS, BUILTIN_INSTRUMENT_PLUGIN, plugins, pluginsLoading, rescanPlugins } from '../stores/plugins';
 	import type { PluginInfo } from '../stores/plugins';
 	import { dismissable } from '../frontend/dismiss';
 
@@ -15,26 +15,34 @@
 	let selectedIndex = 0;
 	let itemEls: HTMLButtonElement[] = [];
 
-	$: catalog =
-		mode === 'effect' ? [...BUILTIN_EFFECT_PLUGINS, ...$plugins] : $plugins;
+	export let title: string | null = null;
 
-	$: filtered = catalog
+	$: builtins =
+		mode === 'effect' ? BUILTIN_EFFECT_PLUGINS : mode === 'instrument' ? [BUILTIN_INSTRUMENT_PLUGIN] : [];
+
+	$: scanned = $plugins
 		.filter((p) => {
 			if (mode === 'instrument' && !(p.is_instrument ?? false)) return false;
 			// The engine can only host CLAP instruments so far (ADR-013).
 			if (mode === 'instrument' && p.format !== 'CLAP') return false;
 			if (mode === 'effect' && (p.is_instrument ?? false)) return false;
-			if (!query) return true;
-			const q = query.toLowerCase();
-			return (
-				p.name.toLowerCase().includes(q) ||
-				p.vendor.toLowerCase().includes(q) ||
-				p.format.toLowerCase().includes(q)
-			);
+			return true;
 		})
 		.sort((a, b) => a.name.localeCompare(b.name));
 
-	$: pickerTitle = mode === 'instrument' ? 'Instruments' : mode === 'effect' ? 'Effets' : 'Plugins';
+	$: filtered = [...builtins, ...scanned].filter((p) => matchesQuery(p, query));
+
+	$: pickerTitle = title ?? (mode === 'instrument' ? 'Instruments' : mode === 'effect' ? 'Effets' : 'Plugins');
+
+	function matchesQuery(p: PluginInfo, text: string): boolean {
+		if (!text) return true;
+		const q = text.toLowerCase();
+		return (
+			p.name.toLowerCase().includes(q) ||
+			p.vendor.toLowerCase().includes(q) ||
+			p.format.toLowerCase().includes(q)
+		);
+	}
 
 	$: if (filtered) {
 		selectedIndex = 0;
