@@ -21,10 +21,8 @@
 //! ## Differences from the effect wrapper
 //!
 //! - `audio_inputs_count = 0` — an instrument is a pure generator.
-//! - `in_events` carries **note** events (`FixedEventList`) instead of the
-//!   parameter list.  Parameter automation for instruments (a merged
-//!   note+param list) is a documented follow-up; the param ring is drained and
-//!   discarded here so it cannot back up.
+//! - `in_events` carries notes **and** parameter events (queued edits,
+//!   modulation, automation — ADR-021) in one time-sorted list.
 
 use std::sync::Arc;
 
@@ -32,25 +30,26 @@ use crate::audio_graph::buffer::AudioBuffer;
 use crate::audio_graph::midi::{MidiEventKind, MidiEventList};
 use crate::audio_graph::node::TransportInfo;
 use crate::audio_graph::nodes::instrument::InstrumentDevice;
-use crate::plugin_system::instance::PluginInstance;
+use crate::audio_graph::plugin_params::{PluginParamControl, PluginParamControls};
+use crate::plugin_system::instance::{PluginInstance, FFI_GATE_HARVEST_BUDGET};
 
 use crate::plugin_formats::clap::ffi::{
-    ClapAudioBuffer, ClapEventHeader, ClapOutputEvents, ClapPlugin, ClapProcess, FixedEventList,
+    ClapAudioBuffer, ClapEventBuffer, ClapEventHeader, ClapOutputEvents, ClapPlugin, ClapProcess,
     CLAP_PROCESS_ERROR,
 };
+use crate::plugin_formats::clap::params::{read_clap_params, ClapParamEvents};
 use crate::plugin_formats::clap::transport::clap_transport_event;
 
 unsafe extern "C" fn out_try_push(_: *const ClapOutputEvents, _: *const ClapEventHeader) -> bool {
     true
 }
 
-/// Translate the engine's per-block `MidiEventList` into CLAP note events.
+/// Append the engine's per-block `MidiEventList` as CLAP note events.
 ///
 /// Pure — no FFI, no allocation (the list is pre-allocated and bounded).  Kept
 /// separate from `process_midi` so it can be unit-tested without a live plugin.
 /// Velocity maps from the MIDI 0..127 byte to CLAP's 0..1 `f64`.
-pub fn fill_clap_notes(events: &MidiEventList, list: &mut FixedEventList) {
-    list.clear();
+pub fn push_clap_notes(events: &MidiEventList, list: &mut ClapEventBuffer) {
     for ev in events.as_slice() {
         match ev.kind {
             MidiEventKind::NoteOn { pitch, velocity } => {
@@ -70,7 +69,8 @@ pub struct ClapInstrument {
     // Per-block scratch — allocated in `prepare`, stable thereafter.
     out_channel_ptrs: Vec<*mut f32>,
     out_audio_buf: ClapAudioBuffer,
-    note_events: Box<FixedEventList>,
+    /// Notes and parameter events for the block, sorted by time.
+    param_events: ClapParamEvents,
     out_events: ClapOutputEvents,
 
     num_channels: usize,
@@ -95,7 +95,7 @@ impl ClapInstrument {
             instance,
             out_channel_ptrs: Vec::new(),
             out_audio_buf: unsafe { std::mem::zeroed() },
-            note_events: FixedEventList::new(),
+            param_events: ClapParamEvents::new(),
             out_events: ClapOutputEvents {
                 ctx: std::ptr::null_mut(),
                 try_push: out_try_push,
@@ -124,6 +124,14 @@ impl InstrumentDevice for ClapInstrument {
         self.active = self
             .instance
             .clap_ensure_active(sample_rate, max_block_size as u32);
+
+        // Same fencing as the effect wrapper: skip if a block is in flight.
+        if self.active {
+            if let Some(_gate) = self.instance.offrt_try_acquire(FFI_GATE_HARVEST_BUDGET) {
+                let params = unsafe { read_clap_params(self.plugin_ptr()) };
+                self.param_events.set_ranges(&params);
+            }
+        }
     }
 
     fn process_midi(
@@ -136,12 +144,9 @@ impl InstrumentDevice for ClapInstrument {
             return;
         }
 
-        // Instrument param automation (a merged note+param input list) is a
-        // follow-up; drain-and-discard so the producer's ring never backs up.
-        self.instance.drain_params(|_| {});
-
-        // Notes → CLAP events (pre-allocated list, no alloc).
-        fill_clap_notes(events, &mut self.note_events);
+        self.param_events.fill(&self.instance);
+        push_clap_notes(events, &mut self.param_events.buffer);
+        self.param_events.buffer.sort();
 
         let nc = self.num_channels;
         // Frame count MUST be the current block size, not the buffer's allocated
@@ -172,7 +177,7 @@ impl InstrumentDevice for ClapInstrument {
             audio_outputs: &mut self.out_audio_buf,
             audio_inputs_count: 0,
             audio_outputs_count: 1,
-            in_events: &self.note_events.input_events_vtable,
+            in_events: &self.param_events.buffer.input_events_vtable,
             out_events: &self.out_events,
         };
 
@@ -181,6 +186,14 @@ impl InstrumentDevice for ClapInstrument {
         // On error an instrument has no input to pass through — leave the
         // scheduler-zeroed output as silence.
         let _ = status == CLAP_PROCESS_ERROR;
+    }
+
+    fn inject_param_controls(&mut self, controls: Vec<PluginParamControl>) {
+        self.param_events.set_controls(controls, &self.instance);
+    }
+
+    fn param_controls_mut(&mut self) -> Option<&mut PluginParamControls> {
+        Some(self.param_events.controls_mut())
     }
 
     fn reset(&mut self) {
@@ -202,9 +215,20 @@ impl InstrumentDevice for ClapInstrument {
 mod tests {
     use super::*;
     use crate::audio_graph::midi::MidiEvent;
+    use crate::plugin_formats::clap::ffi::{ClapEventNote, CLAP_EVENT_NOTE_OFF, CLAP_EVENT_NOTE_ON};
+
+    fn notes(list: &ClapEventBuffer) -> Vec<(u16, u32, i16, f64)> {
+        (0..list.len())
+            .map(|i| {
+                let header = list.header(i).unwrap();
+                let note = unsafe { &*(header as *const ClapEventHeader as *const ClapEventNote) };
+                (header.r#type, header.time, note.key, note.velocity)
+            })
+            .collect()
+    }
 
     #[test]
-    fn fill_clap_notes_maps_on_and_off() {
+    fn push_clap_notes_maps_on_and_off() {
         let mut events = MidiEventList::new();
         events.push(MidiEvent {
             offset: 24_000,
@@ -218,32 +242,16 @@ mod tests {
             kind: MidiEventKind::NoteOff { pitch: 60 },
         });
 
-        let mut list = FixedEventList::new();
-        fill_clap_notes(&events, &mut list);
+        let mut list = ClapEventBuffer::new();
+        push_clap_notes(&events, &mut list);
+        list.sort();
 
-        assert_eq!(list.count, 2);
-        assert_eq!(list.events[0].header.time, 24_000);
-        assert_eq!(list.events[0].key, 60);
-        assert!((list.events[0].velocity - 1.0).abs() < 1e-9);
-        assert_eq!(list.events[1].header.time, 48_000);
-        assert_eq!(list.events[1].key, 60);
-    }
-
-    #[test]
-    fn fill_clap_notes_clears_previous_block() {
-        let mut list = FixedEventList::new();
-        let mut a = MidiEventList::new();
-        a.push(MidiEvent {
-            offset: 0,
-            kind: MidiEventKind::NoteOn {
-                pitch: 64,
-                velocity: 64,
-            },
-        });
-        fill_clap_notes(&a, &mut list);
-        assert_eq!(list.count, 1);
-        let empty = MidiEventList::new();
-        fill_clap_notes(&empty, &mut list);
-        assert_eq!(list.count, 0);
+        assert_eq!(
+            notes(&list),
+            vec![
+                (CLAP_EVENT_NOTE_ON, 24_000, 60, 1.0),
+                (CLAP_EVENT_NOTE_OFF, 48_000, 60, 0.0),
+            ]
+        );
     }
 }

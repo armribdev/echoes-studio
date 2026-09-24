@@ -111,7 +111,7 @@ thread.
     tests cover note translation, the project round-trip, and the PolySynth
     fallback; final validation is a manual smoke test (plan V5) or the Rust mock
     plugin (audit B4).
-  - **No instrument parameter automation yet.** The param ring is
+  - **No instrument parameter automation yet.** _Resolved 2026-09-24 by ADR-021._ The param ring is
     drained-and-discarded; a merged note+param input list (ADR-008 follow-up)
     is needed to apply automation to instruments.
   - **VST3i not wired** (returns `Err` → PolySynth).
@@ -162,6 +162,7 @@ thread.
   The musical math is shared in `TransportInfo::musical_position` for VST3i.
 - **Real-plugin acceptance** — smoke test a CLAP synth (Surge XT) end-to-end;
   add the Rust mock plugin (B4) for CI coverage.
-- **Instrument param automation** — merged note+param CLAP input list.
+- ~~**Instrument param automation**~~ — done 2026-09-24 (ADR-021): notes and
+  parameter events share one time-sorted `ClapEventBuffer`.
 - **VST3i** — `IEventList` note events, same `InstrumentDevice` adapter shape.
 - **Live MIDI input** — `MidiInputNode` + per-instance MIDI SPSC queue.

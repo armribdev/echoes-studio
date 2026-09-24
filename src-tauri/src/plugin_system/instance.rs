@@ -44,7 +44,7 @@
 
 use std::ptr::NonNull;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU8, AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use crate::plugin_formats::clap::ffi::{ClapHost, ClapLibrary, ClapPlugin};
@@ -248,6 +248,11 @@ pub struct PluginInstance {
     /// `process()` FFI against off-RT FFI (state save/load, GUI) on this same
     /// instance.  `GATE_IDLE` / `GATE_RT` / `GATE_OFFRT`.
     ffi_gate: AtomicU8,
+
+    /// Native ids currently driven by host modulation (ADR-021).  The plugin
+    /// keeps a modulation offset until told otherwise, so a recompile that drops
+    /// a route must reset it.  Command thread only.
+    modulated_params: Mutex<Vec<u32>>,
 }
 
 impl PluginInstance {
@@ -264,6 +269,7 @@ impl PluginInstance {
             clap_activation: ActivationState::new(),
             vst3_activation: ActivationState::new(),
             ffi_gate: AtomicU8::new(GATE_IDLE),
+            modulated_params: Mutex::new(Vec::new()),
         })
     }
 
@@ -294,6 +300,7 @@ impl PluginInstance {
             clap_activation: ActivationState::new(),
             vst3_activation: ActivationState::new(),
             ffi_gate: AtomicU8::new(GATE_IDLE),
+            modulated_params: Mutex::new(Vec::new()),
         })
     }
 
@@ -321,7 +328,17 @@ impl PluginInstance {
             clap_activation: ActivationState::new(),
             vst3_activation: ActivationState::new(),
             ffi_gate: AtomicU8::new(GATE_IDLE),
+            modulated_params: Mutex::new(Vec::new()),
         })
+    }
+
+    /// Records which parameters are now modulated and returns those that no
+    /// longer are, so the caller resets their modulation.  Command thread only.
+    pub fn replace_modulated_params(&self, now: &[u32]) -> Vec<u32> {
+        let mut modulated = self.modulated_params.lock().unwrap_or_else(|e| e.into_inner());
+        let released = modulated.iter().copied().filter(|id| !now.contains(id)).collect();
+        *modulated = now.to_vec();
+        released
     }
 
     /// Process-unique, stable identity for this live instance.  Two instances of

@@ -52,6 +52,10 @@ gain is bit-identical (the smoother step is exactly 0 at target). `PanNode` and
 so they are not modulation targets — the ADR's earlier listing of them was
 aspirational. Suite: 110 tests green (2 new gain tests).
 
+_Note 2026-09-24:_ `PluginModEntry` was replaced by `PluginParamControl`
+(`audio_graph/plugin_params.rs`), which keeps modulation and automation apart
+(ADR-021).
+
 Tranche 1 landed: absolute control grid + sub-block sampling in
 [`scheduler.rs`](../../../src-tauri/src/audio_graph/scheduler.rs) (`eval_mod_signal`),
 the `apply_modulation_at` defaulted trait method + per-param point array on

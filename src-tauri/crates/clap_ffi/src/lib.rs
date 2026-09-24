@@ -226,9 +226,14 @@ pub const CLAP_EVENT_NOTE_ON: u16 = 0;
 pub const CLAP_EVENT_NOTE_OFF: u16 = 1;
 /// `CLAP_EVENT_PARAM_VALUE` — host → plugin parameter change (ADR-007).
 pub const CLAP_EVENT_PARAM_VALUE: u16 = 5;
+/// `CLAP_EVENT_PARAM_MOD` — non-destructive offset added by the plugin on top of
+/// the parameter's current value.  Same layout as `clap_event_param_value`, with
+/// the modulation amount (plain units) in `value`.
+pub const CLAP_EVENT_PARAM_MOD: u16 = 6;
 pub const CLAP_CORE_EVENT_SPACE: u16 = 0;
 
 #[repr(C)]
+#[derive(Clone, Copy)]
 pub struct ClapEventHeader {
     pub size: u32,
     pub time: u32,     // frame offset within current block
@@ -238,6 +243,7 @@ pub struct ClapEventHeader {
 }
 
 #[repr(C)]
+#[derive(Clone, Copy)]
 pub struct ClapEventNote {
     pub header: ClapEventHeader,
     pub note_id: i32, // -1 if unused
@@ -362,6 +368,7 @@ unsafe extern "C" fn fel_get(list: *const ClapInputEvents, index: u32) -> *const
 /// the parameter's **plain** range (CLAP, unlike VST3, does not normalise), so
 /// the wrapper denormalises before pushing.
 #[repr(C)]
+#[derive(Clone, Copy)]
 pub struct ClapEventParamValue {
     pub header: ClapEventHeader,
     pub param_id: u32, // clap_id
@@ -442,12 +449,161 @@ unsafe extern "C" fn fpel_get(list: *const ClapInputEvents, index: u32) -> *cons
     &l.events[index as usize].header as *const ClapEventHeader
 }
 
+// ── Mixed, time-sorted input events ────────────────────────────────────────────
+
+/// Room for a full block of notes plus a full block of parameter events.
+pub const MAX_MIXED_EVENTS: usize = MAX_EVENTS + MAX_PARAM_EVENTS;
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+union ClapEventSlot {
+    header: ClapEventHeader,
+    note: ClapEventNote,
+    param: ClapEventParamValue,
+}
+
+/// Fixed-capacity `clap_input_events` list mixing notes, parameter values and
+/// parameter modulation.  CLAP requires input events sorted by time: call
+/// [`ClapEventBuffer::sort`] after pushing.  No allocation after `new`.
+pub struct ClapEventBuffer {
+    slots: [ClapEventSlot; MAX_MIXED_EVENTS],
+    /// Slot indices in delivery order, set by `sort`.
+    order: [u32; MAX_MIXED_EVENTS],
+    count: usize,
+    pub input_events_vtable: ClapInputEvents,
+}
+
+impl ClapEventBuffer {
+    pub fn new() -> Box<Self> {
+        let mut buffer = Box::new(ClapEventBuffer {
+            slots: unsafe { std::mem::zeroed() },
+            order: [0; MAX_MIXED_EVENTS],
+            count: 0,
+            input_events_vtable: ClapInputEvents {
+                ctx: std::ptr::null_mut(),
+                size: ceb_size,
+                get: ceb_get,
+            },
+        });
+        buffer.input_events_vtable.ctx = buffer.as_mut() as *mut ClapEventBuffer as *mut c_void;
+        buffer
+    }
+
+    pub fn clear(&mut self) {
+        self.count = 0;
+    }
+
+    pub fn len(&self) -> usize {
+        self.count
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.count == 0
+    }
+
+    /// Drops the event when full.
+    fn push(&mut self, slot: ClapEventSlot) {
+        if self.count < MAX_MIXED_EVENTS {
+            self.slots[self.count] = slot;
+            self.order[self.count] = self.count as u32;
+            self.count += 1;
+        }
+    }
+
+    pub fn push_note_on(&mut self, time: u32, channel: i16, key: i16, velocity: f64) {
+        self.push(ClapEventSlot { note: note_event(CLAP_EVENT_NOTE_ON, time, channel, key, velocity) });
+    }
+
+    pub fn push_note_off(&mut self, time: u32, channel: i16, key: i16) {
+        self.push(ClapEventSlot { note: note_event(CLAP_EVENT_NOTE_OFF, time, channel, key, 0.0) });
+    }
+
+    /// Sets the parameter to `value` (plain units).
+    pub fn push_param_value(&mut self, time: u32, param_id: u32, value: f64) {
+        self.push(ClapEventSlot { param: param_event(CLAP_EVENT_PARAM_VALUE, time, param_id, value) });
+    }
+
+    /// Sets the parameter's modulation offset to `amount` (plain units).  The
+    /// offset persists until the next modulation event for that parameter.
+    pub fn push_param_mod(&mut self, time: u32, param_id: u32, amount: f64) {
+        self.push(ClapEventSlot { param: param_event(CLAP_EVENT_PARAM_MOD, time, param_id, amount) });
+    }
+
+    /// Orders events by time; events at the same time keep their push order.
+    pub fn sort(&mut self) {
+        let slots = &self.slots;
+        self.order[..self.count]
+            .sort_unstable_by_key(|&slot| (unsafe { slots[slot as usize].header.time }, slot));
+    }
+
+    /// Event at delivery position `index` (after `sort`).
+    pub fn header(&self, index: usize) -> Option<&ClapEventHeader> {
+        let slot = *self.order[..self.count].get(index)?;
+        Some(unsafe { &self.slots[slot as usize].header })
+    }
+}
+
+fn note_event(r#type: u16, time: u32, channel: i16, key: i16, velocity: f64) -> ClapEventNote {
+    ClapEventNote {
+        header: ClapEventHeader {
+            size: std::mem::size_of::<ClapEventNote>() as u32,
+            time,
+            space_id: CLAP_CORE_EVENT_SPACE,
+            r#type,
+            flags: 0,
+        },
+        note_id: -1,
+        port_index: 0,
+        channel,
+        key,
+        _pad: 0,
+        velocity,
+    }
+}
+
+fn param_event(r#type: u16, time: u32, param_id: u32, value: f64) -> ClapEventParamValue {
+    ClapEventParamValue {
+        header: ClapEventHeader {
+            size: std::mem::size_of::<ClapEventParamValue>() as u32,
+            time,
+            space_id: CLAP_CORE_EVENT_SPACE,
+            r#type,
+            flags: 0,
+        },
+        param_id,
+        cookie: std::ptr::null_mut(),
+        note_id: -1,
+        port_index: -1,
+        channel: -1,
+        key: -1,
+        _pad: 0,
+        value,
+    }
+}
+
+unsafe extern "C" fn ceb_size(list: *const ClapInputEvents) -> u32 {
+    let buffer = (*list).ctx as *const ClapEventBuffer;
+    (*buffer).count as u32
+}
+
+unsafe extern "C" fn ceb_get(list: *const ClapInputEvents, index: u32) -> *const ClapEventHeader {
+    let buffer = &*((*list).ctx as *const ClapEventBuffer);
+    buffer
+        .header(index as usize)
+        .map_or(std::ptr::null(), |header| header as *const ClapEventHeader)
+}
+
 // ── clap.params extension (parameter enumeration) ──────────────────────────────
 
 /// Extension ID for `clap.params` (CLAP 1.x).
 pub const CLAP_EXT_PARAMS: &[u8] = b"clap.params\0";
 
 pub const CLAP_NAME_SIZE: usize = 256;
+
+pub const CLAP_PARAM_IS_HIDDEN: u32 = 1 << 2;
+pub const CLAP_PARAM_IS_READONLY: u32 = 1 << 3;
+pub const CLAP_PARAM_IS_AUTOMATABLE: u32 = 1 << 5;
+pub const CLAP_PARAM_IS_MODULATABLE: u32 = 1 << 10;
 pub const CLAP_PATH_SIZE: usize = 1024;
 
 /// `clap_param_info` — describes one parameter (subset; trailing text fields
@@ -978,5 +1134,65 @@ mod tests {
     fn clap_state_stream_empty_save_is_empty() {
         let out = ClapStateStream::empty();
         assert!(out.data.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod event_buffer_tests {
+    use super::*;
+
+    fn delivered(buffer: &ClapEventBuffer) -> Vec<(u32, u16)> {
+        let list = &buffer.input_events_vtable as *const ClapInputEvents;
+        unsafe {
+            (0..(buffer.input_events_vtable.size)(list))
+                .map(|i| {
+                    let header = &*(buffer.input_events_vtable.get)(list, i);
+                    (header.time, header.r#type)
+                })
+                .collect()
+        }
+    }
+
+    #[test]
+    fn events_are_delivered_sorted_by_time_keeping_push_order() {
+        let mut buffer = ClapEventBuffer::new();
+        buffer.push_param_mod(64, 1, 0.5);
+        buffer.push_note_off(32, 0, 60);
+        buffer.push_note_on(32, 0, 62, 1.0);
+        buffer.push_param_value(0, 1, 0.25);
+        buffer.sort();
+
+        assert_eq!(
+            delivered(&buffer),
+            vec![
+                (0, CLAP_EVENT_PARAM_VALUE),
+                (32, CLAP_EVENT_NOTE_OFF),
+                (32, CLAP_EVENT_NOTE_ON),
+                (64, CLAP_EVENT_PARAM_MOD),
+            ]
+        );
+    }
+
+    #[test]
+    fn param_mod_carries_its_amount() {
+        let mut buffer = ClapEventBuffer::new();
+        buffer.push_param_mod(0, 9, -3.5);
+        buffer.sort();
+        let header = buffer.header(0).unwrap();
+        let event = unsafe { &*(header as *const ClapEventHeader as *const ClapEventParamValue) };
+        assert_eq!(header.size as usize, std::mem::size_of::<ClapEventParamValue>());
+        assert_eq!((event.param_id, event.value), (9, -3.5));
+    }
+
+    #[test]
+    fn clear_empties_and_full_buffer_drops_extra_events() {
+        let mut buffer = ClapEventBuffer::new();
+        for i in 0..(MAX_MIXED_EVENTS + 5) {
+            buffer.push_param_value(i as u32, 0, 0.0);
+        }
+        assert_eq!(buffer.len(), MAX_MIXED_EVENTS);
+        buffer.clear();
+        assert!(buffer.is_empty());
+        assert!(buffer.header(0).is_none());
     }
 }

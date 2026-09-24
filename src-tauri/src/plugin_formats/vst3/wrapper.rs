@@ -38,6 +38,7 @@ use std::sync::Arc;
 
 use crate::audio_graph::buffer::AudioBuffer;
 use crate::audio_graph::node::{AudioNode, NodeId, PrepareContext, TransportInfo};
+use crate::audio_graph::plugin_params::{parse_plugin_param_name, PluginParamControl, PluginParamControls};
 use crate::plugin_formats::crash_guard;
 use crate::plugin_system::capabilities::DeviceCapabilities;
 use crate::plugin_system::instance::{PluginInstance, FFI_GATE_HARVEST_BUDGET};
@@ -97,10 +98,9 @@ pub struct VstWrapperNode {
     /// keeping the audio thread safe until the graph is next recompiled.
     crashed: bool,
 
-    /// Pre-allocated modulation entries for plugin parameters (injected by the
-    /// compiler via `inject_plugin_mod_entries`).  Iterated on the audio thread
-    /// in `process()` — no allocation, no resize.
-    mod_entries: Vec<crate::audio_graph::node::PluginModEntry>,
+    /// Parameters targeted by modulation or automation (ADR-021), injected at
+    /// compile time; pre-allocated, iterated in `process()` without allocation.
+    param_controls: PluginParamControls,
 }
 
 // SAFETY: see module-level doc.  Raw pointers are reached via Arc-shared
@@ -130,7 +130,7 @@ impl VstWrapperNode {
             param_changes: None,
             reported_latency: 0,
             crashed: false,
-            mod_entries: Vec::new(),
+            param_controls: PluginParamControls::default(),
         }
     }
 
@@ -243,18 +243,19 @@ impl AudioNode for VstWrapperNode {
                     change.normalised as f64,
                 );
             });
-            // Modulation: add scaled deltas on top of command-thread baseline values.
-            // `mod_entries` is pre-allocated; no allocation on the audio thread.
-            for entry in &self.mod_entries {
-                if entry.delta != 0.0 {
-                    let effective = (entry.shadow_value() + entry.delta).clamp(0.0, 1.0);
-                    pc.push(entry.native_id, 0, effective as f64);
-                }
-                // ADR-019: interior sub-block points at their real sample offset.
-                for k in 0..entry.point_count {
-                    let (offset, val) = entry.points[k];
-                    let effective = (entry.shadow_value() + val).clamp(0.0, 1.0);
-                    pc.push(entry.native_id, offset as i32, effective as f64);
+            // ADR-021: VST3 has no host modulation, so modulation is added to
+            // the tracked base value.  Automation sets the value outright and,
+            // on the same parameter, takes precedence over modulation.
+            for control in self.param_controls.iter() {
+                if control.automation.is_empty() {
+                    for (offset, value) in control.modulation.iter() {
+                        let effective = (control.base_value() + value).clamp(0.0, 1.0);
+                        pc.push(control.native_id, offset as i32, effective as f64);
+                    }
+                } else {
+                    for (offset, value) in control.automation.iter() {
+                        pc.push(control.native_id, offset as i32, value.clamp(0.0, 1.0) as f64);
+                    }
                 }
             }
             if pc.count > 0 {
@@ -330,49 +331,31 @@ impl AudioNode for VstWrapperNode {
     }
 
     fn param_id(&self, name: &str) -> Option<u32> {
-        name.strip_prefix("plugin_native:")
-            .and_then(|s| s.parse::<u32>().ok())
+        parse_plugin_param_name(name)
     }
 
     fn reset_modulation(&mut self) {
-        for entry in &mut self.mod_entries {
-            entry.delta = 0.0;
-            entry.point_count = 0;
-        }
+        self.param_controls.clear_block();
     }
 
     fn apply_modulation(&mut self, param_id: u32, delta: f32) {
-        for entry in &mut self.mod_entries {
-            if entry.native_id == param_id {
-                entry.delta += delta;
-                return;
-            }
-        }
+        self.param_controls.modulate(param_id, delta);
     }
 
     fn apply_modulation_at(&mut self, param_id: u32, sample_offset: u32, value: f32) {
-        for entry in &mut self.mod_entries {
-            if entry.native_id == param_id {
-                for k in 0..entry.point_count {
-                    if entry.points[k].0 == sample_offset {
-                        entry.points[k].1 += value;
-                        return;
-                    }
-                }
-                if entry.point_count < entry.points.len() {
-                    entry.points[entry.point_count] = (sample_offset, value);
-                    entry.point_count += 1;
-                }
-                return;
-            }
-        }
+        self.param_controls.modulate_at(param_id, sample_offset, value);
     }
 
-    fn inject_plugin_mod_entries(
-        &mut self,
-        entries: Vec<crate::audio_graph::node::PluginModEntry>,
-    ) {
-        self.mod_entries = entries;
+    fn apply_automation(&mut self, param_id: u32, value: f32) {
+        self.param_controls.automate(param_id, value);
+    }
+
+    fn apply_automation_at(&mut self, param_id: u32, sample_offset: u32, value: f32) {
+        self.param_controls.automate_at(param_id, sample_offset, value);
+    }
+
+    fn inject_plugin_param_controls(&mut self, controls: Vec<PluginParamControl>) {
+        self.param_controls = PluginParamControls::new(controls);
     }
 
     fn reset(&mut self) {

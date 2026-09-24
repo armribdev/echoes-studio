@@ -27,12 +27,13 @@
 //! - The shared `Arc<PluginInstance>` is `Send + Sync` (see `instance.rs`
 //!   safety claim).
 
-use std::collections::HashMap;
 use std::ffi::c_void;
 use std::sync::Arc;
 
 use crate::audio_graph::buffer::AudioBuffer;
 use crate::audio_graph::node::{AudioNode, NodeId, PrepareContext, TransportInfo};
+use crate::audio_graph::plugin_params::{parse_plugin_param_name, PluginParamControl};
+use crate::plugin_formats::clap::params::{read_clap_params, ClapParamEvents};
 use crate::plugin_formats::clap::transport::clap_transport_event;
 use crate::plugin_formats::crash_guard;
 use crate::plugin_system::capabilities::DeviceCapabilities;
@@ -43,9 +44,8 @@ use crate::plugin_system::state::DeviceState;
 use crate::plugin_system::wrapper::{Device, DeviceInfo};
 
 use super::ffi::{
-    ClapAudioBuffer, ClapOutputEvents, ClapParamInfo, ClapPlugin, ClapPluginLatency,
-    ClapPluginParams, ClapProcess, FixedParamEventList, CLAP_EXT_LATENCY, CLAP_EXT_PARAMS,
-    CLAP_PROCESS_ERROR,
+    ClapAudioBuffer, ClapOutputEvents, ClapPlugin, ClapPluginLatency, ClapProcess,
+    CLAP_EXT_LATENCY, CLAP_PROCESS_ERROR,
 };
 
 // Stack context passed to the SEH trampoline — no heap allocation.
@@ -84,14 +84,10 @@ pub struct ClapWrapperNode {
     in_audio_buf: ClapAudioBuffer,
     out_audio_buf: ClapAudioBuffer,
 
-    // Fixed-size parameter-event list (no alloc in process), ADR-007.
-    param_events: Box<FixedParamEventList>,
+    /// Parameter ranges, controlled parameters and the per-block input event
+    /// list (ADR-007, ADR-021).  No allocation in `process`.
+    param_events: ClapParamEvents,
     out_events: ClapOutputEvents,
-
-    /// Parameter plain ranges (`native_id → (min, max)`), enumerated once at
-    /// `prepare` via `clap.params`.  Used to denormalise queued values before
-    /// emitting `clap_event_param_value` (CLAP carries plain values).
-    param_ranges: HashMap<u32, (f32, f32)>,
 
     num_channels: usize,
     active: bool,
@@ -106,10 +102,6 @@ pub struct ClapWrapperNode {
     /// thread through `latency_samples()`.
     reported_latency: u32,
 
-    /// Pre-allocated modulation entries for plugin parameters (injected by the
-    /// compiler via `inject_plugin_mod_entries`).  Iterated on the audio thread
-    /// in `process()` — no allocation, no resize.
-    mod_entries: Vec<crate::audio_graph::node::PluginModEntry>,
 }
 
 // SAFETY: see module-level doc.  CLAP pointers are reached via Arc-shared
@@ -135,17 +127,15 @@ impl ClapWrapperNode {
             out_channel_ptrs: Vec::new(),
             in_audio_buf: unsafe { std::mem::zeroed() },
             out_audio_buf: unsafe { std::mem::zeroed() },
-            param_events: FixedParamEventList::new(),
+            param_events: ClapParamEvents::new(),
             out_events: ClapOutputEvents {
                 ctx: std::ptr::null_mut(),
                 try_push: out_try_push,
             },
-            param_ranges: HashMap::new(),
             num_channels: 2,
             active: false,
             crashed: false,
             reported_latency: 0,
-            mod_entries: Vec::new(),
         }
     }
 
@@ -204,20 +194,7 @@ impl AudioNode for ClapWrapperNode {
                         self.reported_latency = ((*ext).get)(p);
                     }
 
-                    // ADR-007: plain ranges for denormalising queued params.
-                    self.param_ranges.clear();
-                    let params_ptr = ((*p).get_extension)(p, CLAP_EXT_PARAMS.as_ptr() as *const _);
-                    if !params_ptr.is_null() {
-                        let params = params_ptr as *const ClapPluginParams;
-                        let count = ((*params).count)(p);
-                        for idx in 0..count {
-                            let mut info: ClapParamInfo = std::mem::zeroed();
-                            if ((*params).get_info)(p, idx, &mut info) {
-                                self.param_ranges
-                                    .insert(info.id, (info.min_value as f32, info.max_value as f32));
-                            }
-                        }
-                    }
+                    self.param_events.set_ranges(&read_clap_params(p));
                 }
             }
         }
@@ -256,41 +233,8 @@ impl AudioNode for ClapWrapperNode {
         let nc = self.num_channels;
         let nf = transport.block_size; // real block, not MAX_BLOCK_FRAMES capacity
 
-        // CLAP carries plain values; denormalise via ranges enumerated at `prepare` (ADR-007).
-        self.param_events.clear();
-        {
-            let param_events = &mut self.param_events;
-            let ranges = &self.param_ranges;
-            self.instance.drain_params(|change| {
-                let plain = match ranges.get(&change.native_id) {
-                    Some((min, max)) => min + change.normalised * (max - min),
-                    None => change.normalised,
-                };
-                param_events.push_param_value(change.sample_offset, change.native_id, plain as f64);
-            });
-        }
-        // Modulation: add scaled deltas on top of command-thread baseline values.
-        // `mod_entries` is pre-allocated; no allocation on the audio thread.
-        for entry in &self.mod_entries {
-            if entry.delta != 0.0 {
-                let effective = (entry.shadow_value() + entry.delta).clamp(0.0, 1.0);
-                let plain = match self.param_ranges.get(&entry.native_id) {
-                    Some((min, max)) => min + effective * (max - min),
-                    None => effective,
-                };
-                self.param_events.push_param_value(0, entry.native_id, plain as f64);
-            }
-            // ADR-019: interior sub-block points at their real sample offset.
-            for k in 0..entry.point_count {
-                let (offset, val) = entry.points[k];
-                let effective = (entry.shadow_value() + val).clamp(0.0, 1.0);
-                let plain = match self.param_ranges.get(&entry.native_id) {
-                    Some((min, max)) => min + effective * (max - min),
-                    None => effective,
-                };
-                self.param_events.push_param_value(offset, entry.native_id, plain as f64);
-            }
-        }
+        self.param_events.fill(&self.instance);
+        self.param_events.buffer.sort();
 
         for c in 0..nc {
             self.in_channel_ptrs[c] = if !inputs.is_empty() {
@@ -326,7 +270,7 @@ impl AudioNode for ClapWrapperNode {
             audio_outputs: &mut self.out_audio_buf,
             audio_inputs_count: if inputs.is_empty() { 0 } else { 1 },
             audio_outputs_count: 1,
-            in_events: &self.param_events.input_events_vtable,
+            in_events: &self.param_events.buffer.input_events_vtable,
             out_events: &self.out_events,
         };
 
@@ -362,49 +306,31 @@ impl AudioNode for ClapWrapperNode {
     }
 
     fn param_id(&self, name: &str) -> Option<u32> {
-        name.strip_prefix("plugin_native:")
-            .and_then(|s| s.parse::<u32>().ok())
+        parse_plugin_param_name(name)
     }
 
     fn reset_modulation(&mut self) {
-        for entry in &mut self.mod_entries {
-            entry.delta = 0.0;
-            entry.point_count = 0;
-        }
+        self.param_events.controls_mut().clear_block();
     }
 
     fn apply_modulation(&mut self, param_id: u32, delta: f32) {
-        for entry in &mut self.mod_entries {
-            if entry.native_id == param_id {
-                entry.delta += delta;
-                return;
-            }
-        }
+        self.param_events.controls_mut().modulate(param_id, delta);
     }
 
     fn apply_modulation_at(&mut self, param_id: u32, sample_offset: u32, value: f32) {
-        for entry in &mut self.mod_entries {
-            if entry.native_id == param_id {
-                for k in 0..entry.point_count {
-                    if entry.points[k].0 == sample_offset {
-                        entry.points[k].1 += value;
-                        return;
-                    }
-                }
-                if entry.point_count < entry.points.len() {
-                    entry.points[entry.point_count] = (sample_offset, value);
-                    entry.point_count += 1;
-                }
-                return;
-            }
-        }
+        self.param_events.controls_mut().modulate_at(param_id, sample_offset, value);
     }
 
-    fn inject_plugin_mod_entries(
-        &mut self,
-        entries: Vec<crate::audio_graph::node::PluginModEntry>,
-    ) {
-        self.mod_entries = entries;
+    fn apply_automation(&mut self, param_id: u32, value: f32) {
+        self.param_events.controls_mut().automate(param_id, value);
+    }
+
+    fn apply_automation_at(&mut self, param_id: u32, sample_offset: u32, value: f32) {
+        self.param_events.controls_mut().automate_at(param_id, sample_offset, value);
+    }
+
+    fn inject_plugin_param_controls(&mut self, controls: Vec<PluginParamControl>) {
+        self.param_events.set_controls(controls, &self.instance);
     }
 
     /// Plain field read; populated once in `prepare()` via the `clap.latency`

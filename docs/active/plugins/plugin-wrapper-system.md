@@ -168,6 +168,13 @@ instruments and capability negotiation are covered by
 `../decisions/013-clap-plugin-instruments.md` and
 `../decisions/014-capability-driven-port-sizing.md`.
 
+**Parameters (ADR-021).** `plugin_formats/clap/params.rs` is shared by the
+effect wrapper and the instrument: it reads `clap.params` at `prepare`, and
+each block fills one time-sorted `ClapEventBuffer` with queued edits and
+automation (`PARAM_VALUE`), modulation (`PARAM_MOD`, modulatable parameters
+only) and, for instruments, notes. `get_plugin_params` exposes the parameter
+list to the UI.
+
 **Transport.** Every in-process `clap_process` call (effect wrapper and
 instrument) carries a `clap_event_transport` built on the stack by
 `plugin_formats/clap/transport.rs::clap_transport_event`: tempo, position in

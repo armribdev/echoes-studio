@@ -25,6 +25,7 @@ use crate::audio_graph::modulation::{
     ModulationMap, ModulationRoute, ModulationSource, ModulationTarget, ModulatorKind, ParamId,
 };
 use crate::audio_graph::node::{NodeId, PortId, PortKind};
+use crate::audio_graph::plugin_params::plugin_param_name;
 use crate::project::{AppProject, AudioFollowerParams, EffectParams, EnvelopeParams, LfoWaveform, ModulationTargetRef, ModulatorParams};
 
 static NEXT_NODE_ID: AtomicU64 = AtomicU64::new(1);
@@ -336,6 +337,7 @@ impl AudioGraph {
         let any_solo = project.tracks.iter().any(|t| t.solo);
 
         for (port_idx, track) in project.tracks.iter().enumerate() {
+            let mut instrument_node = None;
             let track_node = if !track.clips.is_empty() && !track.midi_clips.is_empty() {
                 // Track has both audio and MIDI clips — run each through its own
                 // source node then sum them through a Bus before the FX chain.
@@ -347,17 +349,20 @@ impl AudioGraph {
                     NodeKind::Instrument { track_id: track.id.clone() },
                     format!("{} [instrument]", track.name),
                 );
+                instrument_node = Some(instr_node);
                 let bus_node = graph.add_node(NodeKind::Bus, format!("{} [bus]", track.name));
                 graph.connect(audio_node, 0, bus_node, 0);
                 graph.connect(instr_node, 0, bus_node, 1);
                 bus_node
             } else if !track.midi_clips.is_empty() {
-                graph.add_node(
+                let instr_node = graph.add_node(
                     NodeKind::Instrument {
                         track_id: track.id.clone(),
                     },
                     format!("{} [instrument]", track.name),
-                )
+                );
+                instrument_node = Some(instr_node);
+                instr_node
             } else {
                 graph.add_node(
                     NodeKind::Track {
@@ -374,7 +379,12 @@ impl AudioGraph {
                 (track.volume / 100.0).clamp(0.0, 1.0)
             };
 
+            // Plugin placements a `PluginParam` target can name: effects by id,
+            // and the track's plugin instrument by `instrument:{track_id}`.
             let mut effect_node_ids: HashMap<String, NodeId> = HashMap::new();
+            if let (Some(node), Some(_)) = (instrument_node, &track.instrument) {
+                effect_node_ids.insert(instrument_instance_key(&track.id), node);
+            }
 
             let mut last_node = track_node;
             for effect in &track.effects {
@@ -524,9 +534,7 @@ impl AudioGraph {
                     ModulationTargetRef::TrackGain { .. } => "gain".to_string(),
                     ModulationTargetRef::EffectParam { param, .. } => param.clone(),
                     // Sentinel prefix resolved by plugin wrappers in `param_id()`.
-                    ModulationTargetRef::PluginParam { native_id, .. } => {
-                        format!("plugin_native:{native_id}")
-                    }
+                    ModulationTargetRef::PluginParam { native_id, .. } => plugin_param_name(*native_id),
                 };
 
                 graph.modulation.add_route(ModulationRoute {
@@ -558,7 +566,7 @@ impl AudioGraph {
                     }
                     ModulationTargetRef::PluginParam { effect_id, native_id } => {
                         match effect_node_ids.get(effect_id) {
-                            Some(&id) => (id, format!("plugin_native:{native_id}")),
+                            Some(&id) => (id, plugin_param_name(*native_id)),
                             None => continue,
                         }
                     }
@@ -573,6 +581,12 @@ impl AudioGraph {
 
         graph
     }
+}
+
+/// Placement key of a track's plugin instrument (host records, saved state,
+/// `PluginParam` modulation targets).
+pub fn instrument_instance_key(track_id: &str) -> String {
+    format!("instrument:{track_id}")
 }
 
 impl Default for AudioGraph {

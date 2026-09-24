@@ -17,6 +17,7 @@ use crate::audio_graph::buffer::AudioBuffer;
 use crate::audio_graph::live_params::EnvelopeCells;
 use crate::audio_graph::midi::{MidiEvent, MidiEventKind, MidiEventList, MidiNoteSnapshot};
 use crate::audio_graph::node::{AudioNode, NodeId, PrepareContext, TransportInfo};
+use crate::audio_graph::plugin_params::{parse_plugin_param_name, PluginParamControl, PluginParamControls};
 
 /// Anything that turns MIDI events into audio.
 ///
@@ -37,6 +38,14 @@ pub trait InstrumentDevice: Send + 'static {
     );
 
     fn reset(&mut self);
+
+    /// Plugin instruments receive the parameters targeted by modulation or
+    /// automation (ADR-021).  Default: the device has no controllable parameters.
+    fn inject_param_controls(&mut self, _controls: Vec<PluginParamControl>) {}
+
+    fn param_controls_mut(&mut self) -> Option<&mut PluginParamControls> {
+        None
+    }
 }
 
 /// Stands in for an instrument plugin that could not be loaded: the track stays
@@ -237,6 +246,44 @@ impl AudioNode for InstrumentNode {
 
     fn inject_envelope_cells(&mut self, cells: Vec<Arc<EnvelopeCells>>) {
         self.envelope_cells = cells;
+    }
+
+    fn param_id(&self, name: &str) -> Option<u32> {
+        parse_plugin_param_name(name)
+    }
+
+    fn reset_modulation(&mut self) {
+        if let Some(controls) = self.device.param_controls_mut() {
+            controls.clear_block();
+        }
+    }
+
+    fn apply_modulation(&mut self, param_id: u32, delta: f32) {
+        if let Some(controls) = self.device.param_controls_mut() {
+            controls.modulate(param_id, delta);
+        }
+    }
+
+    fn apply_modulation_at(&mut self, param_id: u32, sample_offset: u32, value: f32) {
+        if let Some(controls) = self.device.param_controls_mut() {
+            controls.modulate_at(param_id, sample_offset, value);
+        }
+    }
+
+    fn apply_automation(&mut self, param_id: u32, value: f32) {
+        if let Some(controls) = self.device.param_controls_mut() {
+            controls.automate(param_id, value);
+        }
+    }
+
+    fn apply_automation_at(&mut self, param_id: u32, sample_offset: u32, value: f32) {
+        if let Some(controls) = self.device.param_controls_mut() {
+            controls.automate_at(param_id, sample_offset, value);
+        }
+    }
+
+    fn inject_plugin_param_controls(&mut self, controls: Vec<PluginParamControl>) {
+        self.device.inject_param_controls(controls);
     }
 }
 

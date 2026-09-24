@@ -31,12 +31,14 @@ use crate::audio_graph::nodes::clap_instrument::ClapInstrument;
 use crate::audio_graph::nodes::instrument::InstrumentDevice;
 use crate::plugin_formats::clap::ffi::{ClapLibrary, CLAP_PLUGIN_FACTORY_ID};
 use crate::plugin_formats::clap::host::decode_plugin_id as clap_decode_id;
+use crate::plugin_formats::clap::params::read_clap_params;
 use crate::plugin_formats::clap::wrapper::ClapWrapperNode;
 use crate::plugin_formats::vst3::ffi::{instantiate_processor, Vst3Library};
 use crate::plugin_formats::vst3::host::decode_plugin_id as vst3_decode_id;
 use crate::plugin_formats::vst3::wrapper::VstWrapperNode;
 use crate::plugin_system::instance::{PluginInstance, FFI_GATE_HARVEST_BUDGET};
 use crate::plugin_system::lifecycle::{transition, LifecycleError, LifecycleState};
+use crate::plugin_system::parameter::PluginParamInfo;
 use crate::plugin_system::registry::{PluginManifest, PluginRegistry};
 use crate::plugin_system::state::DeviceState;
 use crate::plugin_system::wrapper::{DeviceFormat, PassThroughDevice};
@@ -610,6 +612,25 @@ impl PluginHost {
             .get(instance_key)
             .ok_or_else(|| HostError::DeviceNotFound(instance_key.to_string()))?;
         Ok(record.instance.push_param(native_id, normalised))
+    }
+
+    /// Parameters of a loaded placement, as the plugin reports them (ADR-021).
+    /// Only CLAP is wired so far; VST3 reports none yet.  Fails if the plugin
+    /// is busy in a block that outlasts the harvest budget — the caller retries.
+    pub fn plugin_params(&self, instance_key: &str) -> Result<Vec<PluginParamInfo>, HostError> {
+        let instance = &self
+            .records
+            .get(instance_key)
+            .ok_or_else(|| HostError::DeviceNotFound(instance_key.to_string()))?
+            .instance;
+        let Some(plugin) = instance.clap_plugin() else {
+            return Ok(Vec::new());
+        };
+        let _gate = instance
+            .offrt_try_acquire(FFI_GATE_HARVEST_BUDGET)
+            .ok_or_else(|| HostError::InstantiationFailed("plugin busy, retry".into()))?;
+        // SAFETY: live CLAP instance held by its record; FFI gate held above.
+        Ok(unsafe { read_clap_params(plugin) })
     }
 
     pub fn suspend_device(&mut self, device_id: &str) -> Result<(), HostError> {

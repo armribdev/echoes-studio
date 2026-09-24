@@ -23,17 +23,18 @@
 //! 6. **Prepare nodes** — call `node.prepare(ctx)` for each node.
 //! 7. **Return** `(ExecutionPlan, Vec<Box<dyn AudioNode>>)`.
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::sync::{atomic::AtomicU32, Arc};
 
 use crate::audio_graph::execution_plan::{
     ExecutionPlan, ExecutionPlanBuilder, ExecutionStep, InputConnection,
 };
-use crate::audio_graph::graph::{AudioGraph, NodeKind};
+use crate::audio_graph::graph::{instrument_instance_key, AudioGraph, NodeKind};
 use crate::audio_graph::live_params::LiveParams;
 use crate::audio_graph::automation::SchedulerAutomationAction;
+use crate::audio_graph::plugin_params::{parse_plugin_param_name, PluginParamControl};
 use crate::audio_graph::node::{
-    AudioNode, NodeId, PluginModEntry, PortId, PortKind, PrepareContext, MAX_CONTROL_POINTS,
+    AudioNode, NodeId, PortId, PortKind, PrepareContext,
 };
 use crate::plugin_system::PluginHost;
 use crate::project::AppProject;
@@ -274,56 +275,52 @@ impl GraphCompiler {
             }
         }
 
-        // Inject plugin modulation entries into plugin wrapper nodes.
-        // For each modulation route targeting a Plugin node (identified by the
-        // "plugin_native:{id}" sentinel in param.name), create a shadow cell in
-        // LiveParams and hand a pre-allocated Vec<PluginModEntry> to the wrapper.
-        // This allocates once here (command thread) so process() is allocation-free.
+        // ADR-021: hand every plugin node (effect or instrument) the parameters
+        // that modulation routes or automation lanes target — possibly none, so
+        // a wrapper can release parameters that are no longer controlled.
+        // Allocated here, on the command thread, so process() never allocates.
         {
-            let node_instance_keys: HashMap<NodeId, &str> = graph
-                .nodes
-                .values()
-                .filter_map(|n| {
-                    if let NodeKind::Plugin { instance_key, .. } = &n.kind {
-                        Some((n.id, instance_key.as_str()))
-                    } else {
-                        None
-                    }
-                })
-                .collect();
+            let plugin_instance_keys = Self::plugin_instance_keys(graph, project);
+            // `true` for a modulation route, `false` for an automation lane.
+            let targeted_params = graph
+                .modulation
+                .all_routes()
+                .iter()
+                .map(|route| (route.target.param.node, route.target.param.name.as_str(), true))
+                .chain(
+                    graph
+                        .automation_actions
+                        .iter()
+                        .map(|action| (action.target_node_id, action.param_name.as_str(), false)),
+                );
 
-            let mut entries_by_step: HashMap<usize, HashMap<u32, PluginModEntry>> = HashMap::new();
-            for route in graph.modulation.all_routes() {
-                let target_node_id = route.target.param.node;
-                let Some(&instance_key) = node_instance_keys.get(&target_node_id) else {
-                    continue;
-                };
-                let Some(native_id) = route
-                    .target
-                    .param
-                    .name
-                    .strip_prefix("plugin_native:")
-                    .and_then(|s| s.parse::<u32>().ok())
-                else {
-                    continue;
-                };
-                let step = step_index[&target_node_id];
-                let shadow = live_params.get_or_init_plugin_param_shadow(instance_key, native_id, 0.5);
-                entries_by_step
-                    .entry(step)
-                    .or_default()
-                    .entry(native_id)
-                    .or_insert_with(|| PluginModEntry {
-                        native_id,
-                        delta: 0.0,
-                        shadow,
-                        points: [(0, 0.0); MAX_CONTROL_POINTS],
-                        point_count: 0,
-                    });
+            let mut params_by_node: HashMap<NodeId, BTreeMap<u32, bool>> = plugin_instance_keys
+                .keys()
+                .map(|&node_id| (node_id, BTreeMap::new()))
+                .collect();
+            for (node_id, param_name, is_modulation) in targeted_params {
+                if let (Some(params), Some(native_id)) =
+                    (params_by_node.get_mut(&node_id), parse_plugin_param_name(param_name))
+                {
+                    *params.entry(native_id).or_insert(false) |= is_modulation;
+                }
             }
-            for (step, map) in entries_by_step {
-                let entries: Vec<PluginModEntry> = map.into_values().collect();
-                processors[step].inject_plugin_mod_entries(entries);
+
+            for (node_id, params) in params_by_node {
+                let Some(&step) = step_index.get(&node_id) else {
+                    continue;
+                };
+                let instance_key = plugin_instance_keys[&node_id].as_str();
+                let controls = params
+                    .into_iter()
+                    .map(|(native_id, modulated)| {
+                        let base = live_params.get_or_init_plugin_param_shadow(instance_key, native_id, 0.5);
+                        let mut control = PluginParamControl::new(native_id, base);
+                        control.modulated = modulated;
+                        control
+                    })
+                    .collect();
+                processors[step].inject_plugin_param_controls(controls);
             }
         }
 
@@ -363,7 +360,7 @@ impl GraphCompiler {
                         .and_then(|t| t.instrument.as_ref())
                         .is_some();
                     if has_plugin {
-                        active_keys.insert(format!("instrument:{track_id}"));
+                        active_keys.insert(instrument_instance_key(track_id));
                     }
                 }
                 _ => {}
@@ -608,6 +605,25 @@ impl GraphCompiler {
     ///
     /// `engine_sample_rate` is passed so clip positions are computed in the
     /// correct sample-rate space (avoids the old hardcoded-48 kHz bug).
+    /// Plugin placements in the graph, keyed by node: effect plugins by their
+    /// `instance_key`, plugin instruments by `instrument:{track_id}`.
+    fn plugin_instance_keys(graph: &AudioGraph, project: &AppProject) -> HashMap<NodeId, String> {
+        graph
+            .nodes
+            .values()
+            .filter_map(|node| match &node.kind {
+                NodeKind::Plugin { instance_key, .. } => Some((node.id, instance_key.clone())),
+                NodeKind::Instrument { track_id } => project
+                    .tracks
+                    .iter()
+                    .find(|track| &track.id == track_id)
+                    .filter(|track| track.instrument.is_some())
+                    .map(|_| (node.id, instrument_instance_key(track_id))),
+                _ => None,
+            })
+            .collect()
+    }
+
     fn build_plugin_node(
         id: NodeId,
         instance_key: &str,
@@ -689,7 +705,7 @@ impl GraphCompiler {
                 // Phase 5c: CLAP instrument, built-in PolySynth when none is chosen.
                 // A chosen plugin that fails to load stays silent (the host reports
                 // it as unavailable) rather than being swapped for another sound.
-                let instr_key = format!("instrument:{track_id}");
+                let instr_key = instrument_instance_key(track_id);
                 let device: Box<dyn InstrumentDevice> = match instrument_id {
                     Some(device_id) => match plugin_host
                         .instantiate_instrument(&instr_key, device_id)
@@ -1066,5 +1082,69 @@ mod tests {
             "disabling must keep the same live instance"
         );
         assert_eq!(host.collect_plugin_states(), vec![("fx0".to_string(), vec![1, 2, 3])]);
+    }
+
+    /// ADR-021: a `PluginParam` target named `instrument:{track_id}` reaches the
+    /// track's instrument node, for modulation routes and automation lanes.
+    #[test]
+    fn plugin_param_targets_can_name_the_track_instrument() {
+        use crate::project::{
+            AppMidiClip, AppProject, AppTrack, AutomationClip, AutomationLane, AutomationPoint,
+            InterpolationMode, MacroParams, ModulationTargetRef, ModulatorParams,
+            ProjectModulationRoute, ProjectModulator,
+        };
+
+        let target = |native_id| ModulationTargetRef::PluginParam {
+            effect_id: "instrument:t1".into(),
+            native_id,
+        };
+        let mut project = AppProject::new();
+        project.tracks.push(AppTrack {
+            id: "t1".into(),
+            name: "Synth".into(),
+            volume: 80.0,
+            pan: 0.0,
+            muted: false,
+            solo: false,
+            clips: vec![],
+            effects: vec![],
+            modulators: vec![ProjectModulator {
+                id: "macro".into(),
+                params: ModulatorParams::Macro(MacroParams { value: 0.5 }),
+            }],
+            mod_routes: vec![ProjectModulationRoute {
+                id: "route".into(),
+                modulator_id: "macro".into(),
+                target: target(5),
+                depth: 0.2,
+            }],
+            midi_notes: vec![],
+            midi_clips: vec![AppMidiClip { id: "c".into(), start: 0.0, end: 1.0, offset: 0.0, notes: vec![] }],
+            instrument: Some("clap:synth".into()),
+            automation_lanes: vec![AutomationLane {
+                id: "lane".into(),
+                target: target(6),
+                clips: vec![AutomationClip {
+                    id: "clip".into(),
+                    start_s: 0.0,
+                    end_s: 1.0,
+                    points: vec![AutomationPoint { time_s: 0.0, value: 0.3 }],
+                }],
+                interpolation: InterpolationMode::Linear,
+            }],
+        });
+
+        let graph = AudioGraph::from_project(&project);
+        let is_instrument = |id| {
+            matches!(graph.node(id).map(|n| &n.kind), Some(NodeKind::Instrument { track_id }) if track_id == "t1")
+        };
+
+        let route = &graph.modulation_routes()[0];
+        assert!(is_instrument(route.target.param.node));
+        assert_eq!(route.target.param.name, "plugin_native:5");
+
+        let lane = &graph.automation_actions[0];
+        assert!(is_instrument(lane.target_node_id));
+        assert_eq!(lane.param_name, "plugin_native:6");
     }
 }

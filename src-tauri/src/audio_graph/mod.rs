@@ -42,6 +42,7 @@ pub mod node;
 pub mod nodes;
 pub mod oversampling;
 pub mod parameter_block;
+pub mod plugin_params;
 pub mod scheduler;
 pub mod snapshot;
 pub mod snapshot_dto;

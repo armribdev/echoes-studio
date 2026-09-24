@@ -519,16 +519,25 @@ unsafe fn process_one_step(worker_id: usize, step_idx: usize, ws: Workspace) {
             None => action.static_depth,
         };
 
+        let is_automation = action.automation_curve.is_some();
         let mut signal = match action.held_signal {
             Some(held) if rem != 0 => held,
             _ => eval_mod_signal(action, ws, 0, pos, sr),
         };
-        processor.apply_modulation(action.param_id, signal * depth);
+        if is_automation {
+            processor.apply_automation(action.param_id, signal * depth);
+        } else {
+            processor.apply_modulation(action.param_id, signal * depth);
+        }
 
         let mut offset = if rem == 0 { period } else { period - rem };
         while offset < nf {
             signal = eval_mod_signal(action, ws, offset, pos, sr);
-            processor.apply_modulation_at(action.param_id, offset as u32, signal * depth);
+            if is_automation {
+                processor.apply_automation_at(action.param_id, offset as u32, signal * depth);
+            } else {
+                processor.apply_modulation_at(action.param_id, offset as u32, signal * depth);
+            }
             offset += period;
         }
         action.held_signal = Some(signal);
@@ -931,5 +940,92 @@ mod tests {
         for _ in 0..16 {
             let _ = run_one_block(&mut sched, block);
         }
+    }
+
+    /// ADR-021: automation reaches nodes through `apply_automation*`, never the
+    /// modulation methods, so plugins can treat it as an absolute value.
+    #[test]
+    fn automation_is_delivered_through_the_automation_methods() {
+        use crate::audio_graph::automation::{CompiledAutomationCurve, SchedulerAutomationAction};
+        use crate::project::{AutomationClip, AutomationLane, AutomationPoint, InterpolationMode, ModulationTargetRef};
+        use std::sync::Mutex;
+
+        #[derive(Debug, PartialEq)]
+        enum Call {
+            Modulation(u32),
+            Automation(u32),
+        }
+
+        struct Recorder(Arc<Mutex<Vec<Call>>>);
+        impl AudioNode for Recorder {
+            fn node_id(&self) -> NodeId {
+                NodeId(1)
+            }
+            fn num_input_ports(&self) -> usize {
+                0
+            }
+            fn num_output_ports(&self) -> usize {
+                1
+            }
+            fn prepare(&mut self, _ctx: PrepareContext) {}
+            fn reset(&mut self) {}
+            fn process(&mut self, _i: &[&AudioBuffer], _o: &mut [AudioBuffer], _t: &TransportInfo) {}
+            fn apply_modulation(&mut self, _param_id: u32, _delta: f32) {
+                self.0.lock().unwrap().push(Call::Modulation(0));
+            }
+            fn apply_modulation_at(&mut self, _param_id: u32, sample_offset: u32, _value: f32) {
+                self.0.lock().unwrap().push(Call::Modulation(sample_offset));
+            }
+            fn apply_automation(&mut self, _param_id: u32, _value: f32) {
+                self.0.lock().unwrap().push(Call::Automation(0));
+            }
+            fn apply_automation_at(&mut self, _param_id: u32, sample_offset: u32, _value: f32) {
+                self.0.lock().unwrap().push(Call::Automation(sample_offset));
+            }
+        }
+
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let mut plan = ExecutionPlan {
+            steps: vec![ExecutionStep { node_id: NodeId(1), input_connections: vec![], num_outputs: 1 }],
+            modulation: ModulationMap::new(),
+            sample_rate: 48_000.0,
+            max_block_size: 64,
+            num_channels: 2,
+            step_latencies: vec![0],
+            step_cumulative_latency: vec![0],
+            step_levels: vec![0],
+            levels: Vec::new(),
+        };
+        GraphCompiler::compute_execution_levels(&mut plan);
+        let lane = AutomationLane {
+            id: "lane".into(),
+            target: ModulationTargetRef::TrackGain { track_id: "t".into() },
+            clips: vec![AutomationClip {
+                id: "clip".into(),
+                start_s: 0.0,
+                end_s: 1.0,
+                points: vec![AutomationPoint { time_s: 0.0, value: 0.75 }],
+            }],
+            interpolation: InterpolationMode::Linear,
+        };
+        let compiled = CompiledGraph {
+            plan: Arc::new(plan),
+            processors: vec![Box::new(Recorder(Arc::clone(&calls)))],
+            meter_cells: HashMap::new(),
+            route_cells: HashMap::new(),
+            automation_actions: vec![SchedulerAutomationAction {
+                target_step: 0,
+                param_id: 3,
+                curve: Arc::new(CompiledAutomationCurve::from_lane(&lane)),
+            }],
+        };
+
+        let mut sched = GraphScheduler::new(compiled);
+        let mut transport = TransportInfo::stopped(48_000.0);
+        transport.is_playing = true;
+        transport.block_size = 64;
+        sched.run_levels(&transport);
+
+        assert_eq!(*calls.lock().unwrap(), vec![Call::Automation(0), Call::Automation(32)]);
     }
 }

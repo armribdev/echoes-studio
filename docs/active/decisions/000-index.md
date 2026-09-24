@@ -44,6 +44,7 @@ lives there.
 | [018](018-clip-source-offset-trim.md) | Clip source offset & trim (audio + MIDI window) | State / MIDI scheduling |
 | [019](019-sub-block-modulation.md) | Sub-block deterministic modulation & automation (absolute control grid) | Modulation / scheduling / determinism |
 | [020](020-disabled-plugins-stay-loaded.md) | Disabled plugin effects stay loaded (`BypassNode`) | Plugins / graph / persistence |
+| [021](021-plugin-parameter-modulation-and-automation.md) | Plugin parameters: automation sets, modulation offsets | Plugins / modulation |
 
 ---
 
@@ -53,8 +54,8 @@ lives there.
 - **Threading / RT safety:** 004, 007, 008, 016
 - **State / persistence:** 002, 010, 017, 018, 020
 - **Architecture boundary:** 005, 017
-- **Plugins:** 003, 006, 007, 008, 010, 013, 014, 015, 016, 017, 020
-- **Modulation / parameters:** 009, 019
+- **Plugins:** 003, 006, 007, 008, 010, 013, 014, 015, 016, 017, 020, 021
+- **Modulation / parameters:** 009, 019, 021
 - **Scheduling / determinism:** 019
 
 > Note: several ADRs span more than one theme; listed under each that applies.

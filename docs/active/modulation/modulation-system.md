@@ -128,7 +128,7 @@ is a multiple of the period.
   new value.
 - **Interior grid points** are delivered via the defaulted
   `AudioNode::apply_modulation_at(param_id, sample_offset, value)`. The default is
-  a no-op. The VST3 / CLAP wrappers record the points into `PluginModEntry` and
+  a no-op. The VST3 / CLAP wrappers record the points into `PluginParamControl` and
   emit one format-native param event per point at its real `sample_offset`.
   Internal nodes split their processing at these offsets.
 
@@ -159,6 +159,11 @@ value before being passed to the node.
 
 ## Automation vs Modulation — The Distinction
 
+> **Plugin parameters (ADR-021):** automation reaches nodes through
+> `apply_automation*` and **sets** a plugin parameter; modulation **offsets** it
+> around its current value without moving it (CLAP `PARAM_MOD`). Internal
+> nodes still receive automation additively, as described below.
+
 Both deliver per-frame float values to a parameter. They differ in source and
 timing:
 
@@ -181,7 +186,7 @@ evaluates every route on the absolute control grid (ADR-019, Tranches 1–3 done
 
 | Target | Sub-block delivery |
 |--------|--------------------|
-| VST3 / CLAP plugin params | one native param event per grid point at its `sample_offset` |
+| VST3 / CLAP plugin params (effects and instruments) | one native event per grid point; modulation offsets the value, automation sets it (ADR-021) |
 | `GainNode` / `TrackGainNode` | per-sample one-pole smoother whose target switches at each grid point |
 | `Delay` / `Compressor` / `Reverb` / `Eq` | `process` loop segmented at grid points, params recomputed per segment |
 | `PanNode` / `MasterNode` | not modulation targets |

@@ -219,6 +219,7 @@ fn main() {
             get_project,
             list_plugins,
             get_unavailable_plugins,
+            get_plugin_params,
             scan_plugins,
             open_plugin_editor,
             close_plugin_editor,
@@ -608,6 +609,19 @@ fn scan_plugins(
     };
     recompile_audio_graph(&app, &state);
     Ok(list)
+}
+
+/// Parameters of a loaded plugin placement (`effect.id` or `instrument:{track_id}`).
+#[tauri::command]
+fn get_plugin_params(
+    state: tauri::State<'_, AppState>,
+    instance_key: String,
+) -> Result<Vec<plugin_system::parameter::PluginParamInfo>, String> {
+    let engine = state.audio_engine.lock().map_err(|e| e.to_string())?;
+    engine
+        .plugin_host
+        .plugin_params(&instance_key)
+        .map_err(|e| e.to_string())
 }
 
 /// Placements whose plugin could not be loaded; updates arrive through the

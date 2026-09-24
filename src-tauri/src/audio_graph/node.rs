@@ -15,10 +15,11 @@
 //!
 //! `prepare` is called on a non-real-time thread and **may** allocate.
 
-use std::sync::{atomic::{AtomicU32, Ordering}, Arc};
+use std::sync::Arc;
 
 use crate::audio_graph::buffer::AudioBuffer;
 use crate::audio_graph::live_params::EnvelopeCells;
+use crate::audio_graph::plugin_params::PluginParamControl;
 
 /// Sub-block modulation control period in samples (ADR-019).  Modulation is
 /// sampled at absolute sample positions that are multiples of this period, so
@@ -28,33 +29,6 @@ pub const MODULATION_CONTROL_PERIOD: usize = 32;
 /// Upper bound on interior control points per parameter per block:
 /// `ceil(MAX_BLOCK_FRAMES / MODULATION_CONTROL_PERIOD)` with `MAX_BLOCK_FRAMES = 4096`.
 pub const MAX_CONTROL_POINTS: usize = 128;
-
-/// Pre-allocated slot for one modulated plugin parameter.
-///
-/// Allocated at graph compile time; iterated by plugin wrappers on the audio thread.
-/// `delta` is accumulated each block via `apply_modulation` and reset by
-/// `reset_modulation`.  `shadow` holds the command-thread baseline normalised value [0..1].
-pub struct PluginModEntry {
-    pub native_id: u32,
-    /// Accumulated modulation delta for this block.  Written and read exclusively
-    /// on the audio thread — no synchronisation needed.
-    pub delta: f32,
-    /// Baseline normalised value tracked by the command thread.  Shared with
-    /// `LiveParams::plugin_param_shadows`; updated when a parameter change is pushed.
-    pub shadow: Arc<AtomicU32>,
-    /// Interior sub-block modulation points for this block (ADR-019):
-    /// `(sample_offset, accumulated value)`.  Written by `apply_modulation_at`,
-    /// reset by `reset_modulation`.  Offset 0 rides on `delta` instead.
-    pub points: [(u32, f32); MAX_CONTROL_POINTS],
-    pub point_count: usize,
-}
-
-impl PluginModEntry {
-    #[inline]
-    pub fn shadow_value(&self) -> f32 {
-        f32::from_bits(self.shadow.load(Ordering::Relaxed))
-    }
-}
 
 /// Stable, opaque identifier for a node in the graph.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -233,10 +207,21 @@ pub trait AudioNode: Send + 'static {
     /// via `apply_modulation`, so the default scalar path stays bit-identical.
     fn apply_modulation_at(&mut self, _param_id: u32, _sample_offset: u32, _value: f32) {}
 
-    /// Called once at compile time by the `GraphCompiler` to inject pre-allocated
-    /// modulation entries for external plugin parameters.  Default no-op for
-    /// non-plugin nodes.
-    fn inject_plugin_mod_entries(&mut self, _entries: Vec<PluginModEntry>) {}
+    /// Automation value at the block start (ADR-021).  Plugin wrappers treat it
+    /// as the parameter's absolute value; the default keeps the additive
+    /// modulation path, so internal nodes render exactly as before.
+    fn apply_automation(&mut self, param_id: u32, value: f32) {
+        self.apply_modulation(param_id, value);
+    }
+
+    /// Automation value at an interior control-grid offset (ADR-021).
+    fn apply_automation_at(&mut self, param_id: u32, sample_offset: u32, value: f32) {
+        self.apply_modulation_at(param_id, sample_offset, value);
+    }
+
+    /// Called at every compile for plugin nodes, with the plugin parameters that
+    /// modulation or automation targets (possibly none).  Default no-op.
+    fn inject_plugin_param_controls(&mut self, _controls: Vec<PluginParamControl>) {}
 
     /// Called once at compile time to inject `EnvelopeCells` references for all
     /// envelope modulators on the same track.  The node writes the gate state to
