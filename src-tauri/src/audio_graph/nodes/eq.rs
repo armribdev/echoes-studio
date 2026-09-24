@@ -18,6 +18,13 @@ pub const EQ_MID_Q: usize = 4;
 pub const EQ_HIGH_GAIN_DB: usize = 5;
 pub const EQ_HIGH_FREQ: usize = 6;
 
+// Modulation-only targets: the delta is in octaves around the frequency cell
+// (ADR-019 amendment); `low_freq` etc. keep their additive Hz delta.
+pub const EQ_LOW_FREQ_OCTAVES: usize = 7;
+pub const EQ_MID_FREQ_OCTAVES: usize = 8;
+pub const EQ_HIGH_FREQ_OCTAVES: usize = 9;
+const EQ_MODULATION_SLOTS: usize = 10;
+
 /// Bounds a modulated value may reach, in cell order (mirrored by the UI's modulation targets).
 pub const EQ_RANGES: [(f32, f32); EQ_PARAM_COUNT] = [
     (-12.0, 12.0),
@@ -40,6 +47,12 @@ pub fn eq_block_values(p: &EqParams) -> [f32; EQ_PARAM_COUNT] {
         p.high_gain_db,
         p.high_freq,
     ]
+}
+
+/// Frequency moved by `octaves` and `hz`, held in `range`.  With no octave
+/// delta this is exactly `modulated(base, hz, range)`, so Hz routes stay bit-identical.
+fn modulated_frequency(base: f32, hz: f32, octaves: f32, range: (f32, f32)) -> f32 {
+    modulated(base, base * (octaves.exp2() - 1.0) + hz, range)
 }
 
 /// Read the block back into an `EqParams`.
@@ -181,9 +194,9 @@ pub struct EqNode {
     /// Sub-block modulation on the absolute control grid (ADR-019 Tranche 3).
     /// `base_delta` is the block-start (offset 0) param-delta; `seg_*` hold the
     /// interior grid points used to recompute the biquads mid-block.  Reset each block.
-    base_delta: [f32; EQ_PARAM_COUNT],
+    base_delta: [f32; EQ_MODULATION_SLOTS],
     seg_offset: [u32; MAX_CONTROL_POINTS],
-    seg_delta: [[f32; EQ_PARAM_COUNT]; MAX_CONTROL_POINTS],
+    seg_delta: [[f32; EQ_MODULATION_SLOTS]; MAX_CONTROL_POINTS],
     seg_count: usize,
 }
 
@@ -198,9 +211,9 @@ impl EqNode {
             oversample: Oversample2x::default(),
             sr_os: DEFAULT_ENGINE_SAMPLE_RATE * OVERSAMPLE_FACTOR as f32,
             block: None,
-            base_delta: [0.0; EQ_PARAM_COUNT],
+            base_delta: [0.0; EQ_MODULATION_SLOTS],
             seg_offset: [0; MAX_CONTROL_POINTS],
-            seg_delta: [[0.0; EQ_PARAM_COUNT]; MAX_CONTROL_POINTS],
+            seg_delta: [[0.0; EQ_MODULATION_SLOTS]; MAX_CONTROL_POINTS],
             seg_count: 0,
         }
     }
@@ -293,12 +306,12 @@ impl AudioNode for EqNode {
             let delta = if k == 0 { self.base_delta } else { self.seg_delta[k - 1] };
             let effective = EqParams {
                 low_gain_db:  modulated(base.low_gain_db,  delta[EQ_LOW_GAIN_DB],  EQ_RANGES[EQ_LOW_GAIN_DB]),
-                low_freq:     modulated(base.low_freq,     delta[EQ_LOW_FREQ],     EQ_RANGES[EQ_LOW_FREQ]),
+                low_freq:     modulated_frequency(base.low_freq, delta[EQ_LOW_FREQ], delta[EQ_LOW_FREQ_OCTAVES], EQ_RANGES[EQ_LOW_FREQ]),
                 mid_gain_db:  modulated(base.mid_gain_db,  delta[EQ_MID_GAIN_DB],  EQ_RANGES[EQ_MID_GAIN_DB]),
-                mid_freq:     modulated(base.mid_freq,     delta[EQ_MID_FREQ],     EQ_RANGES[EQ_MID_FREQ]),
+                mid_freq:     modulated_frequency(base.mid_freq, delta[EQ_MID_FREQ], delta[EQ_MID_FREQ_OCTAVES], EQ_RANGES[EQ_MID_FREQ]),
                 mid_q:        modulated(base.mid_q,        delta[EQ_MID_Q],        EQ_RANGES[EQ_MID_Q]),
                 high_gain_db: modulated(base.high_gain_db, delta[EQ_HIGH_GAIN_DB], EQ_RANGES[EQ_HIGH_GAIN_DB]),
-                high_freq:    modulated(base.high_freq,    delta[EQ_HIGH_FREQ],    EQ_RANGES[EQ_HIGH_FREQ]),
+                high_freq:    modulated_frequency(base.high_freq, delta[EQ_HIGH_FREQ], delta[EQ_HIGH_FREQ_OCTAVES], EQ_RANGES[EQ_HIGH_FREQ]),
             };
             if eq_block_values(&effective) != eq_block_values(&self.params) {
                 self.params = effective;
@@ -331,7 +344,7 @@ impl AudioNode for EqNode {
         self.mid.reset();
         self.high.reset();
         self.oversample.reset();
-        self.base_delta = [0.0; EQ_PARAM_COUNT];
+        self.base_delta = [0.0; EQ_MODULATION_SLOTS];
         self.seg_count = 0;
     }
 
@@ -344,20 +357,23 @@ impl AudioNode for EqNode {
             "mid_q"        => Some(EQ_MID_Q as u32),
             "high_gain_db" => Some(EQ_HIGH_GAIN_DB as u32),
             "high_freq"    => Some(EQ_HIGH_FREQ as u32),
+            "low_freq_octaves"  => Some(EQ_LOW_FREQ_OCTAVES as u32),
+            "mid_freq_octaves"  => Some(EQ_MID_FREQ_OCTAVES as u32),
+            "high_freq_octaves" => Some(EQ_HIGH_FREQ_OCTAVES as u32),
             _ => None,
         }
     }
 
     fn apply_modulation(&mut self, param_id: u32, delta: f32) {
         let p = param_id as usize;
-        if p < EQ_PARAM_COUNT {
+        if p < EQ_MODULATION_SLOTS {
             self.base_delta[p] += delta;
         }
     }
 
     fn apply_modulation_at(&mut self, param_id: u32, sample_offset: u32, value: f32) {
         let p = param_id as usize;
-        if p >= EQ_PARAM_COUNT {
+        if p >= EQ_MODULATION_SLOTS {
             return;
         }
         // Grid offsets arrive ascending and are deduplicated, so `seg_offset`
@@ -371,14 +387,14 @@ impl AudioNode for EqNode {
         if self.seg_count < MAX_CONTROL_POINTS {
             let k = self.seg_count;
             self.seg_offset[k] = sample_offset;
-            self.seg_delta[k] = [0.0; EQ_PARAM_COUNT];
+            self.seg_delta[k] = [0.0; EQ_MODULATION_SLOTS];
             self.seg_delta[k][p] = value;
             self.seg_count += 1;
         }
     }
 
     fn reset_modulation(&mut self) {
-        self.base_delta = [0.0; EQ_PARAM_COUNT];
+        self.base_delta = [0.0; EQ_MODULATION_SLOTS];
         self.seg_count = 0;
     }
 }
@@ -552,5 +568,29 @@ mod tests {
             (mag_db - gain_db).abs() < 0.5,
             "Nyquist gain {mag_db} dB, expected {gain_db} dB"
         );
+    }
+
+    #[test]
+    fn frequency_modulation_in_octaves_doubles_and_halves() {
+        let range = EQ_RANGES[EQ_MID_FREQ];
+        assert_eq!(modulated_frequency(1000.0, 0.0, 1.0, range), 2000.0);
+        assert_eq!(modulated_frequency(1000.0, 0.0, -1.0, range), 500.0);
+        assert_eq!(modulated_frequency(1000.0, 0.0, 20.0, range), 20_000.0);
+        assert_eq!(modulated_frequency(1000.0, 0.0, -20.0, range), 20.0);
+    }
+
+    #[test]
+    fn frequency_modulation_without_octaves_matches_hz_routes_bit_for_bit() {
+        let range = EQ_RANGES[EQ_MID_FREQ];
+        for (base, hz) in [(1000.0, 600.0), (1000.0, -0.3), (437.5, 12.25), (20.0, -5000.0)] {
+            assert_eq!(modulated_frequency(base, hz, 0.0, range).to_bits(), modulated(base, hz, range).to_bits());
+        }
+    }
+
+    #[test]
+    fn octave_targets_have_their_own_param_ids() {
+        let node = EqNode::new(NodeId(1), EqParams::default());
+        assert_eq!(node.param_id("mid_freq_octaves"), Some(EQ_MID_FREQ_OCTAVES as u32));
+        assert_eq!(node.param_id("mid_freq"), Some(EQ_MID_FREQ as u32));
     }
 }

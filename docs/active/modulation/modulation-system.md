@@ -161,6 +161,7 @@ Units differ per target kind (the stored `depth` is always in the engine's unit)
 |--------|--------------|
 | `TrackGain` | linear gain (fader 0…100 → 0…1); the result never goes below 0 |
 | `EffectParam` (internal effect) | plain units (Hz, dB, ms…) |
+| `EffectParam` on `low_freq_octaves` / `mid_freq_octaves` / `high_freq_octaves` (EQ) | octaves: `freq × 2^delta` (ADR-019 amendment) |
 | `PluginParam` | normalised (1.0 = the parameter's full range, ADR-021) |
 
 **Bounds on internal effects (2026-09-24).** `Eq`, `Compressor`, `Reverb` and
@@ -176,6 +177,9 @@ parameter's range" for every target. The frontend
 (`src/frontend/modulation/targets.ts`, which mirrors the Rust range tables)
 multiplies the slider by `max − min` before sending an `EffectParam` depth, and
 divides back for display; `TrackGain` and `PluginParam` use the slider as is.
+EQ frequencies are offered only as octave targets (scale `log2(max / min)` ≈ 10
+octaves); an existing Hz route on `mid_freq` etc. is still named ("… (Hz)") and
+editable but no longer offered.
 The picker lists the track volume, internal effect params (those the node
 actually uses — `dry` and `ping_pong` are excluded) and plugin params returned
 by `get_plugin_params` with `(modulatable || automatable) && !hidden` —

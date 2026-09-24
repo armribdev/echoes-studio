@@ -23,6 +23,8 @@ export interface ModulationTargetOption {
   param: string;
   /** Engine depth for a ±100 % slider: internal effects take depth in plain units. */
   depthScale: number;
+  /** Offered in the picker; unlisted options only name existing routes. */
+  listed: boolean;
 }
 
 interface InternalParam {
@@ -30,18 +32,20 @@ interface InternalParam {
   label: string;
   min: number;
   max: number;
+  /** Modulated in octaves through the `{param}_octaves` target (ADR-019 amendment). */
+  inOctaves?: true;
 }
 
 // Mirrors the `*_RANGES` tables of the Rust effect nodes, which clamp modulated values to them.
 const INTERNAL_PARAMS: Record<string, InternalParam[]> = {
   eq: [
     { param: 'low_gain_db', label: 'Gain graves', min: -12, max: 12 },
-    { param: 'low_freq', label: 'Fréquence graves', min: 20, max: 20000 },
+    { param: 'low_freq', label: 'Fréquence graves', min: 20, max: 20000, inOctaves: true },
     { param: 'mid_gain_db', label: 'Gain médiums', min: -12, max: 12 },
-    { param: 'mid_freq', label: 'Fréquence médiums', min: 20, max: 20000 },
+    { param: 'mid_freq', label: 'Fréquence médiums', min: 20, max: 20000, inOctaves: true },
     { param: 'mid_q', label: 'Largeur médiums (Q)', min: 0.1, max: 10 },
     { param: 'high_gain_db', label: 'Gain aigus', min: -12, max: 12 },
-    { param: 'high_freq', label: 'Fréquence aigus', min: 20, max: 20000 },
+    { param: 'high_freq', label: 'Fréquence aigus', min: 20, max: 20000, inOctaves: true },
   ],
   compressor: [
     { param: 'threshold_db', label: 'Seuil', min: -60, max: 0 },
@@ -117,28 +121,39 @@ function effectGroupNames(effects: TrackEffect[]): Map<string, string> {
   return names;
 }
 
+function internalOptions(effectId: string, group: string, p: InternalParam): ModulationTargetOption[] {
+  const option: ModulationTargetOption = {
+    key: `${effectId}/${p.param}`,
+    group,
+    module: '',
+    label: p.label,
+    kind: 'effect_param',
+    effectId,
+    param: p.param,
+    depthScale: p.max - p.min,
+    listed: true,
+  };
+  if (!p.inOctaves) return [option];
+  // Routes created before 2026-09-24 keep their Hz depth: still named, no longer offered.
+  return [
+    { ...option, key: `${option.key}_octaves`, param: `${p.param}_octaves`, depthScale: Math.log2(p.max / p.min) },
+    { ...option, label: `${p.label} (Hz)`, listed: false },
+  ];
+}
+
 export function buildTargetOptions(
   effects: TrackEffect[],
   placements: PluginPlacement[],
   paramsByPlacement: Record<string, PluginParamInfo[]>,
 ): ModulationTargetOption[] {
   const options: ModulationTargetOption[] = [
-    { key: 'track_gain', group: 'Piste', module: '', label: 'Volume', kind: 'track_gain', param: 'gain', depthScale: 1 },
+    { key: 'track_gain', group: 'Piste', module: '', label: 'Volume', kind: 'track_gain', param: 'gain', depthScale: 1, listed: true },
   ];
   const groupNames = effectGroupNames(effects);
 
   for (const effect of effects) {
     for (const p of INTERNAL_PARAMS[effect.params.kind] ?? []) {
-      options.push({
-        key: `${effect.id}/${p.param}`,
-        group: groupNames.get(effect.id) ?? '',
-        module: '',
-        label: p.label,
-        kind: 'effect_param',
-        effectId: effect.id,
-        param: p.param,
-        depthScale: p.max - p.min,
-      });
+      options.push(...internalOptions(effect.id, groupNames.get(effect.id) ?? '', p));
     }
   }
 
@@ -156,6 +171,7 @@ export function buildTargetOptions(
         effectId: placement.key,
         param: String(p.native_id),
         depthScale: 1,
+        listed: true,
       });
     }
   }

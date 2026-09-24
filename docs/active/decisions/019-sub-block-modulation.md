@@ -31,6 +31,22 @@ the §Decision claim. There were two causes, both fixed:
 The harness now proves bit-identical output for block sizes 4096, 512, 441, 64
 and 37, with and without the worker pool.
 
+**Amendment 2026-09-24 — internal effects: bounds and EQ frequencies in
+octaves** (approved by the user).
+
+1. **Bounds.** `Eq`, `Compressor`, `Reverb` and `Delay` clamp each modulated
+   value to a per-parameter range (`*_RANGES`, `nodes::modulated`), widened to
+   include the base so unmodulated values are untouched. Golden hashes unchanged.
+2. **Octaves.** A route may target `low_freq_octaves` / `mid_freq_octaves` /
+   `high_freq_octaves` on an EQ: the delta is in octaves and applied as
+   `base × 2^delta` (then clamped to 20 Hz…20 kHz). Routes on `low_freq` etc.
+   keep their additive Hz delta, bit for bit, so existing projects and the
+   `modulated_effects` golden render are unchanged (C-2, C-4). The UI creates
+   only octave routes for EQ frequencies; ±100 % on its slider is ±log2(1000)
+   ≈ ±10 octaves, the full range. New reference project `eq_octave_modulation`
+   (block-size independent, golden hash recorded). Cost: one `exp2` per
+   modulated segment per frequency, no allocation.
+
 Tranche 3 — Delay, Compressor, Reverb & EQ all landed: each consumes the interior
 grid points via `apply_modulation_at` and **segments its `process` loop** at the
 absolute grid, recomputing effective params per segment (Compressor segments its

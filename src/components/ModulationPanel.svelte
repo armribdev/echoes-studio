@@ -44,6 +44,7 @@
 	$: placementSignature = placements.map((p) => `${p.key}=${p.name}`).join('|');
 	$: placementSignature, loadPluginParams(placements);
 	$: options = buildTargetOptions(effects, placements, paramsByPlacement);
+	$: pickerOptions = options.filter((o) => o.listed);
 
 	async function loadPluginParams(list: PluginPlacement[]) {
 		const request = ++paramsRequest;
@@ -160,7 +161,7 @@
 			</div>
 			{#if pickerModulatorId === mod.id}
 				<ModulationTargetPicker
-					{options}
+					options={pickerOptions}
 					loading={loadingParams}
 					on:select={(e) => handleAssign(mod.id, e.detail)}
 					on:close={() => (pickerModulatorId = null)}

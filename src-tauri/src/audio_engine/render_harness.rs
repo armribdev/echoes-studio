@@ -264,22 +264,37 @@ fn automated() -> AppProject {
     project_with(vec![audio, midi])
 }
 
-fn reference_projects() -> [(&'static str, AppProject); 4] {
+/// EQ frequencies modulated in octaves (ADR-019 amendment, 2026-09-24).
+fn eq_octave_modulation() -> AppProject {
+    let mut audio = audio_track();
+    let id = audio.id.clone();
+    audio.modulators.push(lfo("lfo-fast", 7.3, LfoWaveform::Sine));
+    audio.modulators.push(lfo("lfo-slow", 0.9, LfoWaveform::Triangle));
+    audio.mod_routes.extend([
+        effect_route(&id, "lfo-fast", "eq", "mid_freq_octaves", 2.0),
+        effect_route(&id, "lfo-slow", "eq", "low_freq_octaves", -1.0),
+    ]);
+    project_with(vec![audio, midi_track()])
+}
+
+fn reference_projects() -> [(&'static str, AppProject); 5] {
     [
         ("static_mix", static_mix()),
         ("modulated_effects", modulated_effects()),
         ("modulated_gain", modulated_gain()),
         ("automated", automated()),
+        ("eq_octave_modulation", eq_octave_modulation()),
     ]
 }
 
 /// Recorded on Windows x86_64.  Only update a value when an ADR sanctions the
 /// render change, and say so in the commit.
-const GOLDEN_HASHES: [(&str, u64); 4] = [
+const GOLDEN_HASHES: [(&str, u64); 5] = [
     ("static_mix", 0x7dec_d259_cfd9_6694),
     ("modulated_effects", 0x29ea_1120_1ae0_2d53),
     ("modulated_gain", 0x23ef_388b_80d0_9a52),
     ("automated", 0x05de_a39a_39d0_7514),
+    ("eq_octave_modulation", 0xc71b_3d76_d2c0_8257),
 ];
 
 fn assert_block_size_independent(name: &str, project: &AppProject) {
@@ -321,6 +336,11 @@ fn modulated_gain_is_block_size_independent() {
 #[test]
 fn automation_is_block_size_independent() {
     assert_block_size_independent("automated", &automated());
+}
+
+#[test]
+fn eq_octave_modulation_is_block_size_independent() {
+    assert_block_size_independent("eq_octave_modulation", &eq_octave_modulation());
 }
 
 #[test]
