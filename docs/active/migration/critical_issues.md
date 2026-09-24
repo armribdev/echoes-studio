@@ -209,16 +209,14 @@ Statut : seuls les problèmes **encore présents dans le code** sont listés. Le
 - **Sévérité** : medium
 - **Cause probable** : pas de probe au scan.
 
-### 3.11 Deux instances de plugin par effet (audio + GUI)
+### 3.11 Deux instances de plugin par effet (audio + GUI) — ✅ Corrigé (ADR-016, 2026-06-03)
 - **Référence audit** : A1 (GUI audit), CL3, CL5
-- **Description** : `open_plugin_editor` crée une **nouvelle** `ClapPlugin` / `IComponent` dans une fenêtre Win32 séparée. Cette instance est distincte de celle utilisée par le thread audio.
-- **Impact réel** :
-  - Bouger un knob dans le GUI natif n'affecte pas le son.
-  - Aucune sync de paramètres / preset / état.
-  - Double allocation des ressources lourdes (wavetables, samples, IR).
-  - Plugins à enregistrement global (MTS-ESP, iLok) : corruption ou refus de licence.
-- **Sévérité** : critical (modèle non-spec pour VST3 et CLAP)
-- **Cause probable** : modèle initial « instance audio + instance GUI séparées » ; refonte vers `PluginInstance` unique via `Arc` non faite.
+- **Description** : `open_plugin_editor` créait une **nouvelle** `ClapPlugin` / `IComponent` dans une fenêtre Win32 séparée, distincte de celle utilisée par le thread audio.
+- **Correctif appliqué** : `open_clap_editor` / `open_vst3_editor` ([gui.rs](../../../src-tauri/src/plugin_system/gui.rs)) prennent désormais l'`Arc<PluginInstance>` partagé avec le moteur audio (ADR-016, réutilisation d'instance) — plus de double instantiation. Un knob bougé dans le GUI natif agit sur l'instance réellement traitée par le thread audio.
+- **Reste ouvert (CL3, non bloquant)** : l'instance audio est créée avec un host CLAP minimal (`make_host`, sans extensions). Un plugin qui appelle `host->request_resize` (auto-resize) ou `clap.log` depuis son GUI n'a personne pour répondre — les callbacks existent (`gui.rs`) mais sont parqués (`#[allow(dead_code)]`), en attente de la Phase 4 (enrichir le host audio partagé plutôt que d'ajouter une seconde instance).
+- **CL5** (`Box<ClapHost>` sans `Pin`) : toujours non traité, sévérité low, inchangé.
+- **Sévérité** : ~~critical~~ → low (résiduel CL3/CL5 uniquement)
+- **Cause probable (historique)** : modèle initial « instance audio + instance GUI séparées ».
 
 ### 3.12 Plugin GUI : pas de gestion DPI
 - **Référence audit** : W3 (GUI audit)
@@ -372,14 +370,14 @@ Statut : seuls les problèmes **encore présents dans le code** sont listés. Le
 - **Sévérité** : medium
 - **Cause probable** : cf. 3.10 (capabilities pas remontées à l'UI).
 
-### 6.3 Knob plugin dans le GUI natif ≠ knob plugin dans Echoes
+### 6.3 Knob plugin dans le GUI natif ≠ knob plugin dans Echoes — ✅ Corrigé (voir 3.11)
 - **Référence audit** : A1 (GUI audit)
-- **Description** : Deux instances séparées (cf. 3.11). Aucune des deux n'est routée vers le son :
-  - Knob dans le GUI natif → bouge l'**instance GUI** (silencieuse).
-  - Knob dans Echoes → aucun n'existe car `ParameterMap` vide (cf. 3.4).
-- **Impact réel** : aucun knob n'a d'effet audible sur un plugin externe. Inutilisable.
-- **Sévérité** : critical
-- **Cause probable** : combinaison de 3.1, 3.4, 3.11.
+- **Description (historique)** : deux instances séparées (cf. 3.11 avant correctif). Aucune des deux n'était routée vers le son :
+  - Knob dans le GUI natif → bougeait l'**instance GUI** (silencieuse).
+  - Knob dans Echoes → aucun n'existait car `ParameterMap` vide (cf. 3.4, également corrigé depuis — ADR-021).
+- **État actuel** : le GUI natif agit sur l'instance partagée avec le thread audio (3.11) ; `ParameterMap` est peuplée et transporte params/automation/modulation (3.1, 3.4, ADR-021). Les deux chemins sont audibles et cohérents.
+- **Sévérité** : ~~critical~~ → n/a
+- **Cause probable (historique)** : combinaison de 3.1, 3.4, 3.11.
 
 ### 6.4 Pas de bypass d'effet / plugin sans recompile
 
@@ -488,17 +486,22 @@ Statut : seuls les problèmes **encore présents dans le code** sont listés. Le
 
 ## Synthèse par sévérité
 
+> Comptage mis à jour 2026-09-25 : 3.11 et 6.3 (double instance audio/GUI)
+> corrigés depuis (ADR-016) — retirés de la colonne *critical*. Le reste du
+> tableau n'a pas été revérifié ligne par ligne dans cette passe ; d'autres
+> entrées sont probablement obsolètes aussi (voir la note en tête de fichier).
+
 | Catégorie                       | Critical | Medium | Low | Total |
 |---------------------------------|---------:|-------:|----:|------:|
 | 1. Audio Thread Safety          | 3        | 3      | 1   | 7     |
 | 2. Architecture DSP             | 3        | 5      | 1   | 9     |
-| 3. Plugin System                | 9        | 6      | 1   | 16    |
+| 3. Plugin System                | 8        | 6      | 2   | 16    |
 | 4. Performance                  | 1        | 3      | 2   | 6     |
 | 5. Modulation / Automation      | 3        | 3      | 1   | 7     |
-| 6. UX vs Engine mismatch        | 2        | 3      | 1   | 6     |
+| 6. UX vs Engine mismatch        | 1        | 3      | 1   | 5     |
 | 7. Latency / PDC                | 1        | 1      | 1   | 3     |
 | 8. Crash safety                 | 4        | 1      | 2   | 7     |
-| **Total**                       | **26**   | **25** | **10** | **61** |
+| **Total**                       | **24**   | **25** | **11** | **60** |
 
 ---
 
