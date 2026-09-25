@@ -19,7 +19,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use plugin_bridge::protocol::BLOCK_PLUGIN_EDITED;
+use plugin_bridge::protocol::{BLOCK_PLUGIN_EDITED, BLOCK_RESTART_REQUESTED};
 use plugin_bridge::session::{BlockOutcome, BlockRequest};
 
 use crate::audio_graph::buffer::AudioBuffer;
@@ -191,6 +191,11 @@ impl BridgeRoundTrip {
                 self.replay_output_events(event_bytes);
                 if flags & BLOCK_PLUGIN_EDITED != 0 {
                     mark_plugin_state_edited();
+                }
+                if flags & BLOCK_RESTART_REQUESTED != 0 {
+                    if let Some(bridge) = self.instance.bridge() {
+                        bridge.request_restart();
+                    }
                 }
             }
             BlockOutcome::TimedOut if condemned => {

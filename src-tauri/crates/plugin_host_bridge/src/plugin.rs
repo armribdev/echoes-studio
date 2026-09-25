@@ -17,7 +17,7 @@ use clap_ffi::{
     ClapPluginLatency, ClapPluginParams, ClapProcess, CLAP_CORE_EVENT_SPACE, CLAP_EVENT_TRANSPORT,
     CLAP_EXT_LATENCY, CLAP_EXT_PARAMS, CLAP_PLUGIN_FACTORY_ID, CLAP_PROCESS_ERROR,
 };
-use plugin_bridge::protocol::{BLOCK_PASSED_THROUGH, BLOCK_PLUGIN_EDITED};
+use plugin_bridge::protocol::{BLOCK_PASSED_THROUGH, BLOCK_PLUGIN_EDITED, BLOCK_RESTART_REQUESTED};
 use plugin_bridge::session::{BlockContext, BridgeProcessor, EventWriter};
 
 /// How long `activate` waits for the audio thread to stop processing.
@@ -100,10 +100,13 @@ impl LoadedPlugin {
     }
 
     /// Main thread.  Activates at `(sample_rate, max_frames)` — a no-op when
-    /// already active there — and returns the plugin's latency.
+    /// already active there, unless the plugin requested a restart — and
+    /// returns the plugin's latency.
     pub fn activate(&self, sample_rate: f64, max_frames: u32) -> Result<u32, String> {
         let mut config = self.config.lock().unwrap_or_else(|e| e.into_inner());
-        if *config != Some((sample_rate, max_frames)) {
+        let restart = self.host.context().is_some_and(|context| context.take_restart_request());
+        if restart || *config != Some((sample_rate, max_frames)) {
+            *config = None;
             self.reactivate(sample_rate, max_frames)?;
             *config = Some((sample_rate, max_frames));
         }
@@ -316,12 +319,17 @@ impl ClapBlockProcessor {
     }
 }
 
-fn edited_flag() -> u32 {
+/// Reports to the engine what the plugin signalled since the last block.  This
+/// process hosts a single plugin, so the process-wide flags are its own.
+fn signal_flags() -> u32 {
+    let mut flags = 0;
     if clap_ffi::take_plugin_state_edited() {
-        BLOCK_PLUGIN_EDITED
-    } else {
-        0
+        flags |= BLOCK_PLUGIN_EDITED;
     }
+    if clap_ffi::take_plugin_restart_requested() {
+        flags |= BLOCK_RESTART_REQUESTED;
+    }
+    flags
 }
 
 impl BridgeProcessor for ClapBlockProcessor {
@@ -334,7 +342,7 @@ impl BridgeProcessor for ClapBlockProcessor {
     ) -> u32 {
         if !self.ready_to_process() {
             output.copy_from_slice(input);
-            return BLOCK_PASSED_THROUGH | edited_flag();
+            return BLOCK_PASSED_THROUGH | signal_flags();
         }
         if block.reset {
             // SAFETY: audio thread, plugin active and processing.
@@ -389,9 +397,9 @@ impl BridgeProcessor for ClapBlockProcessor {
         };
         if status == CLAP_PROCESS_ERROR {
             output.copy_from_slice(input);
-            return BLOCK_PASSED_THROUGH | edited_flag();
+            return BLOCK_PASSED_THROUGH | signal_flags();
         }
-        edited_flag()
+        signal_flags()
     }
 
     fn idle(&mut self) {

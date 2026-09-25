@@ -179,5 +179,9 @@ These do not change the Phase 1 decision; they record that the guard is a
 - Handle VST3 `restart(kLatencyChanged)` and `clap_host_latency.changed`
   notifications to re-trigger PDC recompile when latency changes at
   runtime (Phase 6 ramp-up).
+  **Update 2026-09-25 — CLAP done** (in-process and sandboxed): the plugin's
+  `request_restart` triggers a recompile that reactivates the reused instance
+  and re-reads `clap.latency` (see ADR-016 update and
+  `plugins/plugin-wrapper-system.md` § Latency Handling). VST3 still open.
 - SEH / structured-exception capture and out-of-process sandbox
   (Phase 6, ADR-010).

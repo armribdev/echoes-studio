@@ -997,6 +997,8 @@ fn mark_saved(state: &tauri::State<'_, AppState>) {
 /// Edits made inside a plugin window never go through `send_command`, so the
 /// unsaved-changes flag is raised from the plugins' own reports.  Sandboxed
 /// plugins that crash are reported the same way, without waiting for a recompile.
+/// A plugin that requests a restart (e.g. its latency changed) is reactivated
+/// by a recompile, which also realigns the delay compensation.
 fn watch_plugin_edits(app: tauri::AppHandle) {
     std::thread::spawn(move || {
         let mut crashes_seen = plugin_system::crash_marker::crash_count();
@@ -1006,6 +1008,9 @@ fn watch_plugin_edits(app: tauri::AppHandle) {
             if plugin_formats::clap::ffi::take_plugin_state_edited() {
                 state.dirty.store(true, std::sync::atomic::Ordering::Relaxed);
                 menu_state::refresh_menu(&app, &state);
+            }
+            if plugin_formats::clap::ffi::take_plugin_restart_requested() {
+                recompile_audio_graph(&app, &state);
             }
             let crashes = plugin_system::crash_marker::crash_count();
             if crashes != crashes_seen {

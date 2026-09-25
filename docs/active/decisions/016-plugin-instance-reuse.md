@@ -167,6 +167,20 @@ on the command thread (`prepare`) / drop-ring worker (teardown).
   branch (or dropping a format from the reuse-safe match) restores the
   re-instantiate behaviour.
 
+## Update — 2026-09-25: plugin-requested restart (CLAP)
+
+A reused CLAP instance can now be reactivated without a config change: when the
+plugin called `request_restart` (to change its latency, which CLAP only allows
+inside `activate`), `clap_ensure_active` deactivates and reactivates it. Unlike
+the config-change path, this happens while the outgoing graph may still be
+processing the instance, so it runs under the FFI gate (`offrt_try_acquire`):
+the outgoing wrapper's blocks pass through for the duration, and if the gate is
+busy the request is re-armed for the next recompile. `processing` is cleared, so
+the audio thread calls `start_processing` again before the next `process`. Any
+activation clears a pending request. The sandboxed equivalent lives in the
+bridge process (ADR-015). Details: `plugins/plugin-wrapper-system.md` § Latency
+Handling.
+
 ## Follow-ups
 
 - Pairs with **ADR-017** (per-instance addressing) for the full closure of audit

@@ -750,6 +750,18 @@ plays velocity × gain for a held note when it has no input): notes and
 parameters reach the sandboxed instrument, the preference moves it in and out
 of the sandbox with its state, and a crash is contained, reported and restarted.
 
+### Restart requests (2026-09-25)
+
+A sandboxed plugin that calls `request_restart` (e.g. its latency changed) is
+reported with the block: `BLOCK_RESTART_REQUESTED` (bridge → engine, bit 4; the
+header layout is unchanged, so no protocol version bump). The engine raises the
+app's restart flag, the plugin-edit watcher recompiles, and
+`BridgedPlugin::activate` sends `Activate` even at the same config; the bridge
+reactivates the plugin with the usual hold handshake and replies with the new
+latency, which PDC picks up. Tests: `plugin_host_bridge/tests/bridge.rs` and
+`plugin_system/sandbox_tests.rs` (the test plugin's « Lookahead » parameter
+switches its latency 64 → 128).
+
 ### Still open
 
 - A per-track « Isoler » choice for an instrument (today: the preference only).

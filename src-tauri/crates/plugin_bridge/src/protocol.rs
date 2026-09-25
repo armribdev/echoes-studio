@@ -33,6 +33,9 @@ pub const BLOCK_PLUGIN_EDITED: u32 = 1 << 1;
 /// Bridge → engine: the plugin could not process this block; the samples are a
 /// copy of the input.
 pub const BLOCK_PASSED_THROUGH: u32 = 1 << 2;
+/// Bridge → engine: the plugin requested a restart (e.g. its latency changed);
+/// the next `Activate` reactivates it and replies with its new latency.
+pub const BLOCK_RESTART_REQUESTED: u32 = 1 << 4;
 
 /// Header prefixed to every audio block, in both directions.
 #[repr(C)]

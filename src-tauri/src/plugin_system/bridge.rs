@@ -11,13 +11,14 @@
 use std::ffi::OsString;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use std::time::Duration;
 
 use plugin_bridge::control::Op;
 use plugin_bridge::session::{AudioPort, BridgeLayout, BridgeProcess};
 
-use crate::plugin_formats::clap::ffi::{read_pod, ClapParamInfo};
+use crate::plugin_formats::clap::ffi::{mark_plugin_restart_requested, read_pod, ClapParamInfo};
 use crate::plugin_formats::clap::params::param_info;
 use crate::plugin_system::parameter::PluginParamInfo;
 
@@ -48,6 +49,8 @@ type Activation = (u32, u32, u32);
 pub struct BridgedPlugin {
     process: BridgeProcess,
     activation: Mutex<Option<Activation>>,
+    /// Set from the audio thread when the plugin requests a restart.
+    restart_requested: AtomicBool,
 }
 
 impl BridgedPlugin {
@@ -64,7 +67,15 @@ impl BridgedPlugin {
         Ok(BridgedPlugin {
             process: BridgeProcess::spawn(bridge_exe, layout, &args, START_TIMEOUT)?,
             activation: Mutex::new(None),
+            restart_requested: AtomicBool::new(false),
         })
+    }
+
+    /// Lock-free: called from the audio thread.  The next [`Self::activate`]
+    /// asks the bridge to reactivate the plugin.
+    pub fn request_restart(&self) {
+        self.restart_requested.store(true, Ordering::Release);
+        mark_plugin_restart_requested();
     }
 
     pub fn audio(&self) -> &AudioPort {
@@ -85,15 +96,18 @@ impl BridgedPlugin {
         reply
     }
 
-    /// Activate at `(sample_rate, max_frames)` unless already active there.
-    /// Returns the plugin's latency, or `None` when activation failed.
+    /// Activate at `(sample_rate, max_frames)` unless already active there and
+    /// no restart is pending.  Returns the plugin's latency, or `None` when
+    /// activation failed.
     pub fn activate(&self, sample_rate: f32, max_frames: u32) -> Option<u32> {
         let mut activation = self.activation.lock().unwrap_or_else(|e| e.into_inner());
+        let restart = self.restart_requested.swap(false, Ordering::AcqRel);
         if let Some((rate, frames, latency)) = *activation {
-            if rate == sample_rate.to_bits() && frames == max_frames {
+            if !restart && rate == sample_rate.to_bits() && frames == max_frames {
                 return Some(latency);
             }
         }
+        *activation = None;
         let mut payload = (sample_rate as f64).to_le_bytes().to_vec();
         payload.extend_from_slice(&max_frames.to_le_bytes());
         let reply = self.request(Op::Activate, &payload).ok()?;

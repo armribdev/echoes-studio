@@ -133,7 +133,11 @@ pub struct ClapHost {
     pub request_callback: unsafe extern "C" fn(*const ClapHost),
 }
 
-pub unsafe extern "C" fn host_request_restart(_: *const ClapHost) {}
+pub unsafe extern "C" fn host_request_restart(host: *const ClapHost) {
+    if let Some(context) = host_context(host) {
+        context.request_restart();
+    }
+}
 pub unsafe extern "C" fn host_request_process(_: *const ClapHost) {}
 pub unsafe extern "C" fn host_request_callback(host: *const ClapHost) {
     if let Some(context) = host_context(host) {
@@ -152,6 +156,7 @@ const WM_CLOSE: u32 = 0x0010;
 pub struct ClapHostContext {
     gui_hwnd: std::sync::atomic::AtomicPtr<c_void>,
     gui_drain_pending: std::sync::atomic::AtomicBool,
+    restart_requested: std::sync::atomic::AtomicBool,
 }
 
 impl ClapHostContext {
@@ -159,7 +164,21 @@ impl ClapHostContext {
         Self {
             gui_hwnd: std::sync::atomic::AtomicPtr::new(std::ptr::null_mut()),
             gui_drain_pending: std::sync::atomic::AtomicBool::new(false),
+            restart_requested: std::sync::atomic::AtomicBool::new(false),
         }
+    }
+
+    /// Lock-free: `request_restart` is callable from any thread, the audio
+    /// thread included.  The app polls [`take_plugin_restart_requested`] to
+    /// recompile, and the recompile reactivates this plugin.
+    pub fn request_restart(&self) {
+        self.restart_requested.store(true, std::sync::atomic::Ordering::Release);
+        mark_plugin_restart_requested();
+    }
+
+    /// Whether the plugin asked for a restart since the last call, and clears it.
+    pub fn take_restart_request(&self) -> bool {
+        self.restart_requested.swap(false, std::sync::atomic::Ordering::AcqRel)
     }
 
     /// Editor window of this plugin. Null when its editor is closed.
@@ -257,7 +276,35 @@ pub unsafe extern "C" fn host_get_extension(_: *const ClapHost, id: *const c_cha
     if id == CLAP_EXT_LOG {
         return &HOST_LOG as *const ClapHostLog as *const c_void;
     }
+    if id == CLAP_EXT_LATENCY {
+        return &HOST_LATENCY as *const ClapHostLatency as *const c_void;
+    }
     std::ptr::null()
+}
+
+/// Host-side `clap.latency`.  `changed` is only allowed during `activate`, and
+/// the host reads the latency after every activation, so there is nothing to do.
+#[repr(C)]
+pub struct ClapHostLatency {
+    pub changed: unsafe extern "C" fn(*const ClapHost),
+}
+
+static HOST_LATENCY: ClapHostLatency = ClapHostLatency { changed: host_latency_changed };
+
+unsafe extern "C" fn host_latency_changed(_: *const ClapHost) {}
+
+/// Set when any hosted plugin requests a restart (e.g. its latency changed).
+static PLUGIN_RESTART_REQUESTED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// Lock-free: callable from the audio thread.
+pub fn mark_plugin_restart_requested() {
+    PLUGIN_RESTART_REQUESTED.store(true, std::sync::atomic::Ordering::Release);
+}
+
+/// Returns whether a plugin requested a restart since the last call, and clears it.
+pub fn take_plugin_restart_requested() -> bool {
+    PLUGIN_RESTART_REQUESTED.swap(false, std::sync::atomic::Ordering::AcqRel)
 }
 
 static HOST_GUI: ClapHostGui = ClapHostGui {
@@ -436,10 +483,21 @@ mod host_abi_tests {
     }
 
     #[test]
-    fn host_exposes_gui_and_log_extensions() {
+    fn a_restart_request_reaches_the_plugin_context_and_the_app() {
+        let host = make_host();
+        let context = host.context().unwrap();
+        unsafe { host_request_restart(&*host) };
+        assert!(take_plugin_restart_requested());
+        assert!(!take_plugin_restart_requested());
+        assert!(context.take_restart_request());
+        assert!(!context.take_restart_request());
+    }
+
+    #[test]
+    fn host_exposes_gui_log_and_latency_extensions() {
         let host = make_host();
         unsafe {
-            for id in [CLAP_EXT_HOST_GUI, CLAP_EXT_LOG] {
+            for id in [CLAP_EXT_HOST_GUI, CLAP_EXT_LOG, CLAP_EXT_LATENCY] {
                 let ext = host_get_extension(&*host, id.as_ptr() as *const c_char);
                 assert!(!ext.is_null());
             }

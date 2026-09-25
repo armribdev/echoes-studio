@@ -13,7 +13,7 @@ use clap_ffi::{
     CLAP_EVENT_PARAM_GESTURE_END, CLAP_EVENT_PARAM_VALUE,
 };
 use plugin_bridge::control::{Op, PayloadReader};
-use plugin_bridge::protocol::BLOCK_PLUGIN_EDITED;
+use plugin_bridge::protocol::{BLOCK_PLUGIN_EDITED, BLOCK_RESTART_REQUESTED};
 use plugin_bridge::session::{
     BlockOutcome, BlockRequest, BridgeLayout, BridgeProcess, DEAD_AFTER_CONSECUTIVE_TIMEOUTS,
 };
@@ -22,6 +22,7 @@ const GAIN: u32 = 0;
 const HANG: u32 = 1;
 const CRASH: u32 = 2;
 const TOUCH: u32 = 3;
+const LOOKAHEAD: u32 = 4;
 const FRAMES: usize = 64;
 const CHANNELS: usize = 2;
 const TIMEOUT: Duration = Duration::from_secs(5);
@@ -176,7 +177,7 @@ fn state_and_parameters_travel_over_the_control_channel() {
 
     let params = bridge.request(Op::Params, &[], TIMEOUT).unwrap();
     let mut reader = PayloadReader::new(&params);
-    assert_eq!(reader.u32().unwrap(), 4);
+    assert_eq!(reader.u32().unwrap(), 5);
     let first: ClapParamInfo = read_pod(&params[4..]).unwrap();
     assert_eq!(
         (first.id, &first.name[..4], first.max_value),
@@ -209,6 +210,30 @@ fn edits_made_in_the_plugin_come_back_with_the_block() {
         kinds,
         [CLAP_EVENT_PARAM_VALUE, CLAP_EVENT_PARAM_GESTURE_END]
     );
+}
+
+#[test]
+fn a_restart_request_comes_back_with_the_block_and_the_next_activate_applies_it() {
+    let bridge = activated();
+    let events = param_events(&[(CLAP_EVENT_PARAM_VALUE, LOOKAHEAD, 1.0)]);
+    let block = process(&bridge, 0, &ramp(), &events, TIMEOUT);
+
+    let BlockOutcome::Processed { flags, .. } = block.outcome else {
+        panic!("block not processed: {:?}", block.outcome);
+    };
+    assert_ne!(flags & BLOCK_RESTART_REQUESTED, 0, "request_restart is forwarded");
+    let later = process(&bridge, 1, &ramp(), &[], TIMEOUT);
+    let BlockOutcome::Processed { flags, .. } = later.outcome else {
+        panic!("block not processed: {:?}", later.outcome);
+    };
+    assert_eq!(flags & BLOCK_RESTART_REQUESTED, 0, "reported once");
+
+    let mut payload = 48_000.0f64.to_le_bytes().to_vec();
+    payload.extend_from_slice(&4096u32.to_le_bytes());
+    let latency = bridge.request(Op::Activate, &payload, TIMEOUT).unwrap();
+    assert_eq!(latency, 128u32.to_le_bytes(), "same config, reactivated anyway");
+    let input = ramp();
+    assert_eq!(process(&bridge, 2, &input, &[], TIMEOUT).output, input, "processing resumes");
 }
 
 #[test]

@@ -417,6 +417,12 @@ Statut : seuls les problèmes **encore présents dans le code** sont listés. Le
 - **Cause probable** : wrappers n'overridént pas `latency_samples`.
 
 ### 7.2 Pas de notification de changement de latence runtime
+
+> **Mise à jour 2026-09-25** : corrigé pour **CLAP** (in-process et isolé) — le
+> `request_restart` du plugin déclenche une recompile qui le réactive et relit
+> sa latence (ADR-006, ADR-016). Reste ouvert : **VST3**
+> (`restartComponent(kLatencyChanged)` ignoré).
+
 - **Référence audit** : plan migration P0-6 (point 6)
 - **Description** : Même quand le wrapper rapportera la latence au `prepare`, il manque la prise en compte de `IComponentHandler::restartComponent(kLatencyChanged)` (VST3) et `clap_host_latency.changed` (CLAP). Ces signaux ne déclenchent rien aujourd'hui.
 - **Impact réel** : un plugin qui change de latence en cours de session (Pro-Q lin-phase ↔ minimum-phase, oversampling toggle, etc.) ne déclenche pas de recompile PDC.

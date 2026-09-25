@@ -6,16 +6,19 @@
 //! - 0 `Gain`  (0..2, modulatable) — saved in the plugin state;
 //! - 1 `Hang`  — once set, every block sleeps for seconds (a hung plugin);
 //! - 2 `Crash` — once set, the next block aborts the process;
-//! - 3 `Touch` — once set, the plugin reports an edit, as a drag in its window would.
+//! - 3 `Touch` — once set, the plugin reports an edit, as a drag in its window would;
+//! - 4 `Lookahead` — switches the latency between 64 and 128 samples: like a
+//!   real plugin, it requests a restart and applies it at the next `activate`.
 //!
-//! Reports 64 samples of latency.  No GUI.
+//! Reports 64 samples of latency by default.  No GUI.
 
 use std::ffi::{c_char, c_void, CStr};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 
 use clap_ffi::{
     ClapEventHeader, ClapEventNote, ClapEventParamGesture, ClapEventParamValue, ClapHost,
-    ClapHostState, ClapIStream, ClapInputEvents, ClapOStream, ClapOutputEvents, ClapParamInfo,
+    ClapHostLatency, ClapHostState, ClapIStream, ClapInputEvents, ClapOStream, ClapOutputEvents,
+    ClapParamInfo,
     ClapPlugin, ClapPluginDescriptor, ClapPluginEntry, ClapPluginFactory, ClapPluginLatency,
     ClapPluginParams, ClapPluginState, ClapProcess, ClapProcessStatus, CLAP_CORE_EVENT_SPACE,
     CLAP_EVENT_NOTE_OFF, CLAP_EVENT_NOTE_ON, CLAP_EVENT_PARAM_GESTURE_END, CLAP_EVENT_PARAM_MOD,
@@ -26,10 +29,12 @@ use clap_ffi::{
 
 pub const PLUGIN_ID: &str = "echoes.test.gain";
 pub const LATENCY: u32 = 64;
+pub const LOOKAHEAD_LATENCY: u32 = 128;
 const GAIN: u32 = 0;
 const HANG: u32 = 1;
 const CRASH: u32 = 2;
 const TOUCH: u32 = 3;
+const LOOKAHEAD: u32 = 4;
 
 struct Descriptor(ClapPluginDescriptor);
 struct Features([*const c_char; 2]);
@@ -103,6 +108,10 @@ struct State {
     hang: AtomicBool,
     crash: bool,
     touch: bool,
+    /// Latency reported since the last `activate`.
+    latency: u32,
+    /// Latency the next `activate` applies.
+    pending_latency: AtomicU32,
 }
 
 unsafe extern "C" fn factory_create(
@@ -121,6 +130,8 @@ unsafe extern "C" fn factory_create(
         hang: AtomicBool::new(false),
         crash: false,
         touch: false,
+        latency: LATENCY,
+        pending_latency: AtomicU32::new(LATENCY),
     });
     Box::into_raw(Box::new(ClapPlugin {
         desc: &DESCRIPTOR.0,
@@ -151,8 +162,26 @@ unsafe extern "C" fn plugin_destroy(plugin: *const ClapPlugin) {
     drop(Box::from_raw(plugin.plugin_data as *mut State));
 }
 
-unsafe extern "C" fn plugin_activate(_: *const ClapPlugin, _: f64, _: u32, _: u32) -> bool {
+unsafe extern "C" fn plugin_activate(plugin: *const ClapPlugin, _: f64, _: u32, _: u32) -> bool {
+    let state = state(plugin);
+    let latency = state.pending_latency.load(Ordering::Acquire);
+    if latency != state.latency {
+        state.latency = latency;
+        let host_latency =
+            ((*state.host).get_extension)(state.host, CLAP_EXT_LATENCY.as_ptr() as *const c_char);
+        if !host_latency.is_null() {
+            ((*(host_latency as *const ClapHostLatency)).changed)(state.host);
+        }
+    }
     true
+}
+
+/// CLAP: an active plugin may only change its latency inside `activate`.
+fn request_latency(state: &State, latency: u32) {
+    if state.pending_latency.swap(latency, Ordering::AcqRel) != latency {
+        // SAFETY: the host outlives the plugin; `request_restart` is thread-safe.
+        unsafe { ((*state.host).request_restart)(state.host) };
+    }
 }
 
 unsafe extern "C" fn plugin_start(_: *const ClapPlugin) -> bool {
@@ -194,6 +223,9 @@ fn apply_param(state: &mut State, header: &ClapEventHeader) {
         (CLAP_EVENT_PARAM_VALUE, HANG) => state.hang.store(on, Ordering::Relaxed),
         (CLAP_EVENT_PARAM_VALUE, CRASH) => state.crash = on,
         (CLAP_EVENT_PARAM_VALUE, TOUCH) => state.touch = on,
+        (CLAP_EVENT_PARAM_VALUE, LOOKAHEAD) => {
+            request_latency(state, if on { LOOKAHEAD_LATENCY } else { LATENCY })
+        }
         _ => {}
     }
 }
@@ -316,7 +348,7 @@ unsafe extern "C" fn plugin_get_extension(
 }
 
 unsafe extern "C" fn params_count(_: *const ClapPlugin) -> u32 {
-    4
+    5
 }
 
 unsafe extern "C" fn params_info(
@@ -334,6 +366,7 @@ unsafe extern "C" fn params_info(
         HANG => (b"Hang", 1.0, 0.0, CLAP_PARAM_IS_AUTOMATABLE),
         CRASH => (b"Crash", 1.0, 0.0, CLAP_PARAM_IS_AUTOMATABLE),
         TOUCH => (b"Touch", 1.0, 0.0, CLAP_PARAM_IS_AUTOMATABLE),
+        LOOKAHEAD => (b"Lookahead", 1.0, 0.0, CLAP_PARAM_IS_AUTOMATABLE),
         _ => return false,
     };
     let info = &mut *info;
@@ -401,6 +434,6 @@ unsafe extern "C" fn state_load(plugin: *const ClapPlugin, stream: *const ClapIS
     true
 }
 
-unsafe extern "C" fn latency_get(_: *const ClapPlugin) -> u32 {
-    LATENCY
+unsafe extern "C" fn latency_get(plugin: *const ClapPlugin) -> u32 {
+    state(plugin).latency
 }

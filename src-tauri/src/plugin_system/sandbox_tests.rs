@@ -20,6 +20,7 @@ const KEY: &str = "fx0";
 const INSTRUMENT_KEY: &str = "instrument:t1";
 const GAIN: u32 = 0;
 const CRASH: u32 = 2;
+const LOOKAHEAD: u32 = 4;
 const FRAMES: usize = 64;
 const NOTE_ON: MidiEventKind = MidiEventKind::NoteOn { pitch: 60, velocity: 127 };
 const NOTE_OFF: MidiEventKind = MidiEventKind::NoteOff { pitch: 60 };
@@ -132,12 +133,39 @@ fn sandboxed_effect_processes_parameters_and_reports_latency() {
     let mut node = prepared(&mut host, true, false);
     assert!(host.instance_by_key(KEY).unwrap().is_sandboxed());
     assert_eq!(node.latency_samples(), 64);
-    assert_eq!(host.plugin_params(KEY).unwrap().len(), 4);
+    assert_eq!(host.plugin_params(KEY).unwrap().len(), 5);
 
     assert!(run_block(&mut node).iter().all(|&s| s == 0.5));
     // Normalised 0.25 of the 0..2 range = gain 0.5.
     assert!(host.push_plugin_param(KEY, GAIN, 0.25).unwrap());
     assert!(run_block(&mut node).iter().all(|&s| s == 0.25));
+}
+
+/// The plugin switches its latency and requests a restart from `process`; the
+/// recompile that follows reactivates the same instance and reads the new value.
+fn a_latency_change_is_applied_by_the_next_recompile(sandboxed: bool) {
+    let mut host = host();
+    let mut node = prepared(&mut host, sandboxed, true);
+    let instance_id = host.instance_by_key(KEY).unwrap().instance_id();
+    assert_eq!(node.latency_samples(), 64);
+
+    assert!(host.push_plugin_param(KEY, LOOKAHEAD, 1.0).unwrap());
+    run_block(&mut node);
+
+    let mut recompiled = prepared(&mut host, sandboxed, true);
+    assert_eq!(recompiled.latency_samples(), 128);
+    assert_eq!(host.instance_by_key(KEY).unwrap().instance_id(), instance_id, "same instance, reactivated");
+    assert!(run_block(&mut recompiled).iter().all(|&s| s == 0.5), "still processing");
+}
+
+#[test]
+fn an_in_process_latency_change_is_applied_by_the_next_recompile() {
+    a_latency_change_is_applied_by_the_next_recompile(false);
+}
+
+#[test]
+fn a_sandboxed_latency_change_is_applied_by_the_next_recompile() {
+    a_latency_change_is_applied_by_the_next_recompile(true);
 }
 
 #[test]

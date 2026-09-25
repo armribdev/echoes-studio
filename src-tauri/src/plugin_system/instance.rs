@@ -619,7 +619,8 @@ impl PluginInstance {
     /// rebuilds on recompile (ADR-016 reuse). `start_processing` is deferred to
     /// the audio thread (`clap_start_processing`).
     ///
-    /// - Already active at the same `(sample_rate, max_block)` → no-op.
+    /// - Already active at the same `(sample_rate, max_block)` → no-op, unless
+    ///   the plugin requested a restart (see [`Self::clap_restart_if_requested`]).
     /// - Already active at a different config → `stop_processing + deactivate`,
     ///   then reactivate (CLAP binds these bounds at `activate`).
     /// - Not active → `init` (once) + `activate`.
@@ -633,38 +634,75 @@ impl PluginInstance {
             NativeHandle::Clap { plugin, .. } => *plugin,
             _ => return false,
         };
-        let sr_bits = sample_rate.to_bits();
         let act = &self.clap_activation;
 
         if act.active.load(Ordering::Acquire) {
-            if act.sr_bits.load(Ordering::Relaxed) == sr_bits
+            if act.sr_bits.load(Ordering::Relaxed) == sample_rate.to_bits()
                 && act.block.load(Ordering::Relaxed) == max_block
             {
-                return true;
+                return self.clap_restart_if_requested(plugin, sample_rate, max_block);
             }
             // Config changed — tear the processing/active state down before
             // re-activating with the new bounds.
-            unsafe {
-                if act.processing.swap(false, Ordering::AcqRel) {
-                    ((*plugin).stop_processing)(plugin);
-                }
-                ((*plugin).deactivate)(plugin);
-            }
-            act.active.store(false, Ordering::Release);
+            self.clap_deactivate(plugin);
         }
 
         if !self.clap_ensure_initialized() {
             return false;
         }
-        unsafe {
-            let ok = ((*plugin).activate)(plugin, sample_rate as f64, 1, max_block);
-            if ok {
-                act.sr_bits.store(sr_bits, Ordering::Relaxed);
-                act.block.store(max_block, Ordering::Relaxed);
-                act.active.store(true, Ordering::Release);
-            }
-            ok
+        self.clap_activate(plugin, sample_rate, max_block)
+    }
+
+    /// Honours the plugin's `request_restart`: an active plugin may only change
+    /// its latency (or ports) during `activate`, so it is deactivated and
+    /// reactivated, and the wrapper then reads the new latency.  Returns whether
+    /// the plugin is active.
+    fn clap_restart_if_requested(
+        &self,
+        plugin: *const ClapPlugin,
+        sample_rate: f32,
+        max_block: u32,
+    ) -> bool {
+        let Some(context) = self.clap_host_context() else {
+            return true;
+        };
+        if !context.take_restart_request() {
+            return true;
         }
+        // The outgoing graph may still be processing this reused instance: while
+        // the gate is held its blocks pass through instead.
+        let Some(_gate) = self.offrt_try_acquire(FFI_GATE_HARVEST_BUDGET) else {
+            context.request_restart();
+            return true;
+        };
+        self.clap_deactivate(plugin);
+        self.clap_activate(plugin, sample_rate, max_block)
+    }
+
+    fn clap_deactivate(&self, plugin: *const ClapPlugin) {
+        let act = &self.clap_activation;
+        unsafe {
+            if act.processing.swap(false, Ordering::AcqRel) {
+                ((*plugin).stop_processing)(plugin);
+            }
+            ((*plugin).deactivate)(plugin);
+        }
+        act.active.store(false, Ordering::Release);
+    }
+
+    fn clap_activate(&self, plugin: *const ClapPlugin, sample_rate: f32, max_block: u32) -> bool {
+        let act = &self.clap_activation;
+        let ok = unsafe { ((*plugin).activate)(plugin, sample_rate as f64, 1, max_block) };
+        if ok {
+            act.sr_bits.store(sample_rate.to_bits(), Ordering::Relaxed);
+            act.block.store(max_block, Ordering::Relaxed);
+            act.active.store(true, Ordering::Release);
+        }
+        // This activation already applies whatever a pending restart asked for.
+        if let Some(context) = self.clap_host_context() {
+            context.take_restart_request();
+        }
+        ok
     }
 
     /// `start_processing` once, on the audio thread, before the first `process`.

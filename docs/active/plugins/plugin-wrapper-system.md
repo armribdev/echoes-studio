@@ -201,7 +201,8 @@ gives every plugin its own `ClapHostContext` behind `clap_host.host_data`,
 owned and freed by that `ClapHost` (which outlives the plugin). It holds the
 plugin's editor HWND (set by `open_clap_editor`, cleared on close) and the
 `request_callback` coalescing flag, so two open CLAP editors no longer share
-one global window slot. `get_extension` also answers `clap.gui` (host side:
+one global window slot. It also holds the plugin's pending `request_restart`
+(see Latency Handling). `get_extension` also answers `clap.gui` (host side:
 `request_resize` posts `CLAP_GUI_RESIZE_MESSAGE` to that HWND and the WndProc
 resizes the container; `closed` posts `WM_CLOSE`; `request_show/hide` return
 false because the editor is embedded) and `clap.log` (stderr, dropped on the
@@ -248,6 +249,30 @@ fn latency_samples(&self) -> u32 {
 The graph compiler collects these values to compute **plugin delay compensation
 (PDC)**: non-latency paths receive delay so all signals align at the master. See
 `../decisions/006-plugin-capabilities-and-pdc.md`.
+
+**Runtime latency changes (CLAP, 2026-09-25).** An active CLAP plugin may only
+change its latency inside `activate`, so it calls `host->request_restart()`
+(any thread, the audio thread included). The host sets a flag in the plugin's
+`ClapHostContext` and a global atomic; `main.rs::watch_plugin_edits` takes it
+(`clap_ffi::take_plugin_restart_requested`) every 250 ms and recompiles. On
+that recompile the reused instance's `clap_ensure_active` sees the request and
+deactivates + reactivates the plugin while holding the FFI gate, so the
+outgoing graph's blocks pass through meanwhile (gate busy → the request is
+re-armed for the next recompile). The wrapper then reads `clap.latency` again
+and the compiler recomputes PDC. As for a sample-rate change, `stop_processing`
+runs on the command thread although CLAP asks for the audio thread; the gate
+guarantees no `process` runs concurrently. The host also answers
+`get_extension("clap.latency")`: its `changed` does nothing, because the
+latency is read after every activation.
+
+Sandboxed plugins: the bridge returns `BLOCK_RESTART_REQUESTED` with the block,
+`BridgedPlugin::request_restart` raises the same global flag, and on the
+recompile `BridgedPlugin::activate` skips its activation cache; the bridge
+reactivates the plugin (same hold handshake as a config change) and replies
+with the new latency.
+
+Not covered: VST3 `restartComponent(kLatencyChanged)` — the component handler
+is still a no-op, so a VST3 latency change waits for the next re-instantiation.
 
 ---
 
