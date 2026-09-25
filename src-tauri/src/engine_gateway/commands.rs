@@ -226,6 +226,10 @@ pub struct UpdateEffectPayload {
     /// Plugin effects only: run the plugin in a sandbox process (ADR-015).
     #[serde(default)]
     pub sandboxed: Option<bool>,
+    /// Plugin effects only: track id sidechaining into this plugin's aux
+    /// input (ADR-014 routing). Absent = unchanged, `null` = clear.
+    #[serde(default, deserialize_with = "deserialize_present")]
+    pub sidechain_source: Option<Option<String>>,
 }
 
 #[derive(Debug, Deserialize)]

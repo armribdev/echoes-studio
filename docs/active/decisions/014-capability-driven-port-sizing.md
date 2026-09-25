@@ -2,17 +2,18 @@
 
 ## Status
 
-Accepted (foundation) + **CLAP introspection/feed landed 2026-09-25** (see the
-update at the bottom). Implements the **compiler** half of **Phase 5d** of
+Accepted (foundation) + **CLAP introspection/feed landed 2026-09-25** + **routing
+landed 2026-09-25** (see the updates at the bottom). Implements the
+**compiler** half of **Phase 5d** of
 [`docs/active/migration/migration_plan.md`](../migration/migration_plan.md) — audit **P0-3**
 (capabilities câblées en dur) and **P1-5** (sidechain inexpressible).
 
 Scope: make the graph compiler size plugin input ports from cached plugin
-metadata instead of a hardcoded constant, and — as of the update below — make
-that metadata real for CLAP and route the aux signal into the plugin. Still
-open: **UI routing** of an aux/return track into the port (no ducking is
-audible yet — the port exists and is fed, but only ever with silence) and
-**VST3 `getBusInfo`** introspection.
+metadata instead of a hardcoded constant, and — as of the updates below — make
+that metadata real for CLAP, route the aux signal into the plugin, and connect
+a track into the aux port. Still open: a **UI control** for
+`sidechain_source` (settable today only via `UPDATE_EFFECT`) and **VST3
+`getBusInfo`** introspection.
 
 ---
 
@@ -79,12 +80,10 @@ change, no allocation/lock added.
   - ~~**Bus introspection not wired**~~ — done for CLAP (2026-09-25, see
     update below); VST3 `getBusInfo` still caches `0`.
   - ~~**Sidechain not functional yet**~~ — the CLAP wrapper now feeds every
-    declared aux bus (2026-09-25); still gated on the routing item below to be
-    audible.
-  - **No routing** — `from_project` does not yet connect an aux track to the
-    sidechain port (needs project/graph wiring + PortKind routing). This is
-    now the *only* thing standing between "the aux port exists and is fed"
-    and "a user can hear ducking".
+    declared aux bus (2026-09-25).
+  - ~~**No routing**~~ — `from_project` now connects a `sidechain_source`
+    track into aux port 1 (2026-09-25, see the update below). No UI control
+    yet — set via `UPDATE_EFFECT`.
   - **Multi-out** — output sizing still fixed at `2`; symmetrical follow-up via
     `num_audio_outputs`, gated on downstream routing for the extra ports.
 - **Reversibility.** Additive. With the field at `0` the behaviour is identical
@@ -106,11 +105,13 @@ change, no allocation/lock added.
   still open.
 - **Wrapper aux feed** — ~~route `inputs[1..]` into the plugin's aux audio
   bus.~~ **done for CLAP (2026-09-25)**, see the update below.
-- **Routing** — connect an aux/return track to the sidechain port in
-  `from_project` (with `PortKind::Audio` aux edges). Still open — this needs a
-  return-bus/aux-send data model the project doesn't have yet (cf. critical
-  issues §2.4, no `ReturnNode` wiring); until it lands, every aux port a
-  plugin declares is real and processed but always reads silence.
+- **Routing** — ~~connect an aux/return track to the sidechain port in
+  `from_project`~~ **done (2026-09-25)**, see the update below. Deliberately
+  *not* the generic return-bus/aux-send model critical issues §2.4 describes
+  (no `ReturnNode` wiring) — a plugin names one source track directly, which
+  covers the standard "duck compressor" case without that larger data model.
+- **UI control** — `sidechain_source` is settable via `UPDATE_EFFECT` but has
+  no picker in `EffectChain.svelte` yet. Still open.
 - **Multi-out** — size outputs from the manifest once downstream routing reads
   the extra ports. Still open.
 
@@ -145,9 +146,10 @@ already landed are now real, CLAP only (VST3 `getBusInfo` untouched):
   `inputs[1..]` (aux) — instead of a single hardcoded buffer. `num_input_ports()`
   returns the real total. Every port is nc-channel like the rest of the graph's
   buffers (no per-port channel model exists anywhere else in the graph either).
-- **Not done**: routing (above) and VST3 `getBusInfo`. Until routing exists, an
-  aux port is real and gets fed to the plugin every block, but always with the
-  scheduler's shared silence buffer — structurally correct, silently inert.
+- **Not done** (at the time of this update): routing, and VST3 `getBusInfo`
+  (still open). Until routing existed, an aux port was real and fed every
+  block, but always with the scheduler's shared silence buffer — structurally
+  correct, silently inert.
 
 Real-FFI proof (both against `crates/test_clap_plugin`, extended to declare
 one aux input bus): `plugin_formats/clap/host.rs::audio_ports_probe_tests`
@@ -155,3 +157,44 @@ one aux input bus): `plugin_formats/clap/host.rs::audio_ports_probe_tests`
 `plugin_formats/clap/wrapper.rs::aux_feed_tests` (the aux buffer's samples
 reach the plugin's `process` call verbatim, proven by summing it into the
 output).
+
+## Update — 2026-09-25: sidechain routing (a track into the aux port)
+
+The remaining open item — connecting a track's audio into the aux port this
+ADR already sizes and feeds — is now real, scoped to a single named source
+track per plugin rather than the full return-bus/aux-send model critical
+issues §2.4 describes:
+
+- **Project schema.** `PluginParams.sidechain_source: Option<String>`
+  (`project.rs`) names the track feeding this plugin's aux port 1. `None` for
+  every project saved before this field existed (C-4); no other schema
+  change, so `renders_match_golden_hashes` (C-2) stayed green untouched.
+- **Command.** `UPDATE_EFFECT` gained `sidechain_source: Option<Option<String>>`
+  (the same present-vs-absent-vs-null idiom as `UpdateModulatorPayload.source_effect_id`)
+  — absent leaves it unchanged, `null` clears it. `patch_effect`
+  (`engine_gateway/api.rs`) rejects a track sidechaining from itself outright
+  (`Err`, no partial state) and marks the edit structural (recompile) when the
+  value actually changes; replay goes through the existing `EFFECT_UPDATED`
+  event, which already carries the whole serialized `PluginParams`, so no new
+  apply/replay path was needed.
+- **Graph wiring.** `AudioGraph::from_project` (`audio_graph/graph.rs`) records
+  each track's post-fader tap (its `TrackGain` node — chosen so muting or
+  lowering the source track also quiets the duck it triggers) in a first pass,
+  then resolves every plugin's `sidechain_source` into a
+  `connect_typed(tap, 0, plugin_node, 1, PortKind::Audio{..})` edge in a
+  second pass, once every tap exists (a source track can be listed after the
+  plugin sidechaining from it). A self-reference or a source that would close
+  a track-level cycle (via chained `sidechain_source` references) is dropped
+  silently rather than failing the whole compile — an unmet routing intent
+  stays inert, the same fallback as a plugin with no declared aux bus. A
+  dangling source track id (never existed, or was deleted) is dropped the same
+  way. Port 1 only: a plugin with more than one declared aux bus gets its
+  first bus fed; further buses are unaddressed by this single-source field.
+- **Not done**: a UI control (`sidechain_source` is only settable via
+  `UPDATE_EFFECT` today) and VST3 `getBusInfo`.
+
+Tests: `audio_graph/graph.rs::sidechain_tests` — edge lands on port 1 from the
+source's `TrackGain` node; `None` adds no edge (C-4); self-reference dropped;
+dangling source dropped; a two-track cycle keeps the first accepted edge and
+drops the second. No end-to-end "load Pro-C 2, hear ducking" manual pass yet —
+the unit tests cover topology, not perceptual audio.

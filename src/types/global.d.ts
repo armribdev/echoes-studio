@@ -50,6 +50,8 @@ export interface PluginEffectParams {
 	params: [number, number][];
 	/** Runs in its own process: a crash does not take Echoes down. */
 	sandboxed: boolean;
+	/** Track id feeding this plugin's aux (sidechain) input, or null/absent for none. */
+	sidechain_source?: string | null;
 }
 
 export interface TrackEffect {

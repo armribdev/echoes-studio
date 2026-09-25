@@ -332,6 +332,10 @@ Achever la séparation DSP/UI : l'UI ne touche plus jamais un état partagé via
 - 5b : bit-identique sur projet à tempo constant + test dédié projet avec `UPDATE_TEMPO` runtime (avant/après doivent diverger d'une manière contrôlée, et la version cible doit garder le grid aligné).
 - 5c : charger Diva sur track MIDI, jouer note, vérifier audio (clôt P0-2 — cf. suggestions audit *Tests de validation*).
 - 5d : charger Pro-C 2 avec sidechain, brancher track aux, vérifier ducking.
+  Routage implémenté 2026-09-25 (ADR-014, `PluginParams.sidechain_source` →
+  `AudioGraph::from_project`), couvert par des tests unitaires de topologie
+  (`audio_graph/graph.rs::sidechain_tests`) ; le test manuel "charger un vrai
+  plugin, entendre le ducking" reste à faire.
 - 5e : ADSR envelope sur Eq freq, vérifier shape audio. Automation Eq freq via clip, vérifier rampe.
 - Stress : 64 lanes automation simultanées, 16 plugins MIDI, pas de XRun.
 

@@ -1060,6 +1060,7 @@ mod tests {
                     format: "Internal".into(),
                     params: vec![],
                     sandboxed: false,
+                    sidechain_source: None,
                 }),
             }],
             modulators: vec![],

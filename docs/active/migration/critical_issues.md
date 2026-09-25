@@ -95,6 +95,7 @@ Statut : seuls les problèmes **encore présents dans le code** sont listés. Le
 - **Impact réel** : envois auxiliaires (reverb send, delay send classiques d'un mixer) inutilisables.
 - **Sévérité** : medium
 - **Cause probable** : nœud créé mais sans contrepartie côté topologie de projet.
+- **Note 2026-09-25** : le cas *sidechain* (une piste alimente l'entrée aux d'un plugin, pas un bus de retour générique) est résolu séparément via `PluginParams.sidechain_source` (ADR-014, voir 3.3) — routage direct piste→port aux, sans modèle `ReturnNode`. Le manque de `ReturnNode`/bus auxiliaire générique (reverb send, delay send classiques) reste entier.
 
 ### 2.5 Pas de containers (Chain, Layer, Split, Multiband)
 - **Référence audit** : P1-6
@@ -159,6 +160,7 @@ Statut : seuls les problèmes **encore présents dans le code** sont listés. Le
   - Plugin multi-out (Kontakt, Battery) : on ne lit qu'une sortie.
 - **Sévérité** : critical
 - **Cause probable** : abstraction `PluginCapabilities` introduite (Phase 1 audit plugin) mais le compileur ne la consulte pas encore.
+- **Mise à jour 2026-09-25 (ADR-014)** : résolu pour le **sidechain CLAP** — `clap.audio-ports` est introspecté au scan (`num_sidechain_inputs` réel), le port aux est câblé et nourri, et `PluginParams.sidechain_source` route une piste source dedans (`AudioGraph::from_project`). Reste ouvert : mono/surround/multi-out et tout VST3 (`getBusInfo` toujours ignoré).
 
 ### 3.4 `ParameterMap` jamais peuplée
 - **Référence audit** : P1-1

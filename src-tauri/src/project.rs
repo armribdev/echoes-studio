@@ -108,6 +108,14 @@ pub struct PluginParams {
     /// projects load in-process, unchanged (C-4).
     #[serde(default)]
     pub sandboxed: bool,
+    /// Track id whose post-fader signal feeds this plugin's first auxiliary
+    /// (sidechain) input bus (ADR-014 routing follow-up). `None` for every
+    /// project saved before this field existed, so the graph stays
+    /// bit-identical (C-4). Silently has no audible effect if the plugin
+    /// declares no aux bus, the track doesn't exist, or the reference would
+    /// create a routing cycle — see `AudioGraph::from_project`.
+    #[serde(default)]
+    pub sidechain_source: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1204,6 +1212,7 @@ mod tests {
                     format: "vst3".into(),
                     params: vec![],
                     sandboxed: false,
+                    sidechain_source: None,
                 }),
             }],
             modulators: vec![],

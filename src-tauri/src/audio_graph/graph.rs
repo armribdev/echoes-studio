@@ -334,6 +334,12 @@ impl AudioGraph {
 
         let any_solo = project.tracks.iter().any(|t| t.solo);
 
+        // Sidechain routing (ADR-014 follow-up): resolved in a second pass once
+        // every track's post-fader tap point is known, since a plugin's source
+        // track can appear later in `project.tracks` than the plugin itself.
+        let mut track_tap_nodes: HashMap<String, NodeId> = HashMap::new();
+        let mut pending_sidechain: Vec<(String, String, NodeId)> = Vec::new();
+
         for (port_idx, track) in project.tracks.iter().enumerate() {
             let mut instrument_node = None;
             let track_node = if !track.clips.is_empty() && !track.midi_clips.is_empty() {
@@ -391,6 +397,10 @@ impl AudioGraph {
                 if !effect.enabled && !is_plugin {
                     continue;
                 }
+                let sidechain_source = match &effect.params {
+                    EffectParams::Plugin(p) => p.sidechain_source.clone(),
+                    _ => None,
+                };
                 let kind = match &effect.params {
                     EffectParams::Eq(p) => NodeKind::Eq {
                         effect_id: effect.id.clone(),
@@ -419,6 +429,9 @@ impl AudioGraph {
                 effect_node_ids.insert(effect.id.clone(), fx_node);
                 graph.connect(last_node, 0, fx_node, 0);
                 last_node = fx_node;
+                if let Some(source_track_id) = sidechain_source {
+                    pending_sidechain.push((source_track_id, track.id.clone(), fx_node));
+                }
             }
 
             let gain_node = graph.add_node(
@@ -434,6 +447,10 @@ impl AudioGraph {
                 },
                 format!("{} [meter]", track.name),
             );
+            // Post-fader tap: what another track's plugin can sidechain from.
+            // Post-fader (not pre-fader) so muting/lowering the source track
+            // also quiets the duck it triggers — the intuitive behaviour.
+            track_tap_nodes.insert(track.id.clone(), gain_node);
 
             graph.connect(last_node, 0, gain_node, 0);
             graph.connect(gain_node, 0, meter_node, 0);
@@ -577,8 +594,54 @@ impl AudioGraph {
             }
         }
 
+        // Wire the sidechain edges collected above, now that every track's tap
+        // point exists. `feeds[a]` lists the tracks `a` already feeds, at the
+        // track level — used only to reject a candidate edge that would close a
+        // cycle (a plugin's aux input port is always index 1, the only aux bus
+        // this single-source field can address). A dangling source track, or a
+        // routing that would cycle, is dropped silently rather than failing the
+        // whole compile: the aux port just keeps reading silence, same as a
+        // plugin with no declared aux bus (ADR-014).
+        let mut feeds: HashMap<String, Vec<String>> = HashMap::new();
+        for (source_track_id, target_track_id, target_node) in &pending_sidechain {
+            if source_track_id == target_track_id {
+                continue;
+            }
+            let Some(&source_tap) = track_tap_nodes.get(source_track_id) else {
+                continue;
+            };
+            if sidechain_would_cycle(&feeds, source_track_id, target_track_id) {
+                continue;
+            }
+            feeds
+                .entry(source_track_id.clone())
+                .or_default()
+                .push(target_track_id.clone());
+            graph.connect_typed(source_tap, 0, *target_node, 1, PortKind::default_audio_stereo());
+        }
+
         graph
     }
+}
+
+/// Would adding the track-level edge `source -> target` close a cycle among
+/// the sidechain edges already accepted into `feeds`? True exactly when
+/// `source` is reachable from `target` by following `feeds`.
+fn sidechain_would_cycle(feeds: &HashMap<String, Vec<String>>, source: &str, target: &str) -> bool {
+    let mut stack = vec![target.to_string()];
+    let mut visited: std::collections::HashSet<String> = std::collections::HashSet::new();
+    while let Some(node) = stack.pop() {
+        if node == source {
+            return true;
+        }
+        if !visited.insert(node.clone()) {
+            continue;
+        }
+        if let Some(next) = feeds.get(&node) {
+            stack.extend(next.iter().cloned());
+        }
+    }
+    false
 }
 
 /// Placement key of a track's plugin instrument (host records, saved state,
@@ -590,5 +653,134 @@ pub fn instrument_instance_key(track_id: &str) -> String {
 impl Default for AudioGraph {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod sidechain_tests {
+    use super::*;
+    use crate::project::{AppProject, AppTrack, EffectParams, PluginParams, TrackEffect};
+
+    fn track(id: &str, effects: Vec<TrackEffect>) -> AppTrack {
+        AppTrack {
+            id: id.into(),
+            name: id.into(),
+            volume: 80.0,
+            pan: 0.0,
+            muted: false,
+            solo: false,
+            clips: vec![],
+            effects,
+            modulators: vec![],
+            mod_routes: vec![],
+            midi_notes: vec![],
+            midi_clips: vec![],
+            instrument: None,
+            automation_lanes: vec![],
+        }
+    }
+
+    fn plugin_effect(id: &str, sidechain_source: Option<&str>) -> TrackEffect {
+        TrackEffect {
+            id: id.into(),
+            enabled: true,
+            params: EffectParams::Plugin(PluginParams {
+                plugin_id: "test.compressor".into(),
+                name: "Comp".into(),
+                format: "clap".into(),
+                params: vec![],
+                sandboxed: false,
+                sidechain_source: sidechain_source.map(str::to_string),
+            }),
+        }
+    }
+
+    fn gain_node_of(graph: &AudioGraph, track_id: &str) -> NodeId {
+        graph
+            .all_nodes()
+            .find(|n| matches!(&n.kind, NodeKind::TrackGain { track_id: t, .. } if t == track_id))
+            .expect("gain node")
+            .id
+    }
+
+    fn plugin_node_of(graph: &AudioGraph, instance_key: &str) -> NodeId {
+        graph
+            .all_nodes()
+            .find(|n| matches!(&n.kind, NodeKind::Plugin { instance_key: k, .. } if k == instance_key))
+            .expect("plugin node")
+            .id
+    }
+
+    fn has_aux_edge(graph: &AudioGraph, from: NodeId, to: NodeId) -> bool {
+        graph
+            .all_edges()
+            .iter()
+            .any(|e| e.from.node == from && e.to.node == to && e.to.port == 1)
+    }
+
+    #[test]
+    fn sidechain_source_wires_post_fader_tap_into_aux_port() {
+        let mut project = AppProject::new();
+        project.tracks.push(track("kick", vec![]));
+        project.tracks.push(track("duck", vec![plugin_effect("fx0", Some("kick"))]));
+
+        let graph = AudioGraph::from_project(&project);
+
+        let kick_tap = gain_node_of(&graph, "kick");
+        let plugin = plugin_node_of(&graph, "fx0");
+        assert!(has_aux_edge(&graph, kick_tap, plugin));
+    }
+
+    #[test]
+    fn sidechain_default_none_adds_no_aux_edge() {
+        // C-4/C-2: every project saved before this field existed has `None`
+        // here, so the topology must be identical to pre-routing behaviour.
+        let mut project = AppProject::new();
+        project.tracks.push(track("kick", vec![]));
+        project.tracks.push(track("duck", vec![plugin_effect("fx0", None)]));
+
+        let graph = AudioGraph::from_project(&project);
+        let plugin = plugin_node_of(&graph, "fx0");
+        assert!(graph.edges_into(plugin).all(|e| e.to.port != 1));
+    }
+
+    #[test]
+    fn sidechain_self_reference_is_dropped() {
+        let mut project = AppProject::new();
+        project.tracks.push(track("t1", vec![plugin_effect("fx0", Some("t1"))]));
+
+        let graph = AudioGraph::from_project(&project);
+        let plugin = plugin_node_of(&graph, "fx0");
+        assert!(graph.edges_into(plugin).all(|e| e.to.port != 1));
+    }
+
+    #[test]
+    fn sidechain_dangling_source_is_dropped() {
+        let mut project = AppProject::new();
+        project.tracks.push(track("t1", vec![plugin_effect("fx0", Some("does-not-exist"))]));
+
+        let graph = AudioGraph::from_project(&project);
+        let plugin = plugin_node_of(&graph, "fx0");
+        assert!(graph.edges_into(plugin).all(|e| e.to.port != 1));
+    }
+
+    #[test]
+    fn sidechain_cycle_is_rejected_keeping_the_first_accepted_edge() {
+        // a's plugin sidechains from b, b's plugin sidechains from a: taken
+        // together this is a cycle, so only the first one seen (track order)
+        // is wired; the second, which would close the loop, is dropped.
+        let mut project = AppProject::new();
+        project.tracks.push(track("a", vec![plugin_effect("fx_a", Some("b"))]));
+        project.tracks.push(track("b", vec![plugin_effect("fx_b", Some("a"))]));
+
+        let graph = AudioGraph::from_project(&project);
+
+        let a_tap = gain_node_of(&graph, "a");
+        let b_tap = gain_node_of(&graph, "b");
+        let fx_a = plugin_node_of(&graph, "fx_a");
+        let fx_b = plugin_node_of(&graph, "fx_b");
+
+        assert!(has_aux_edge(&graph, b_tap, fx_a), "first candidate edge (b -> fx_a) must be accepted");
+        assert!(!has_aux_edge(&graph, a_tap, fx_b), "second candidate edge would close the cycle and must be dropped");
     }
 }

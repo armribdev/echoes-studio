@@ -85,7 +85,11 @@ TrackNodeₙ ──► GainNodeₙ ──┘
 This is not special-cased. It is the result of `AudioGraph::from_project()`
 constructing a DAG of nodes and edges from the `AppProject` model. As routing
 complexity grows (buses, sends, side chains), the graph topology changes
-without changing the execution model.
+without changing the execution model — sidechain is the first case of this:
+a plugin effect's `sidechain_source` (`PluginParams`) adds one extra edge from
+another track's post-fader `TrackGainNode` into the plugin's aux input port,
+resolved in a second pass over `from_project` once every track's tap point
+exists (ADR-014 update, 2026-09-25).
 
 Edges are only added during graph compilation on the command thread. The audio
 thread never modifies the graph topology.

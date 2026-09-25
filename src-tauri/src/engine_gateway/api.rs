@@ -616,6 +616,17 @@ fn patch_effect(
         }
         plugin.sandboxed = sandboxed;
     }
+    if let (Some(source), EffectParams::Plugin(plugin)) = (&p.sidechain_source, &mut effect.params) {
+        if let Some(source_track_id) = source {
+            if source_track_id == &p.track_id {
+                return Err("Un plugin ne peut pas se sidechaîner depuis sa propre piste".to_string());
+            }
+        }
+        if &plugin.sidechain_source != source {
+            structural = true;
+        }
+        plugin.sidechain_source = source.clone();
+    }
     let params = p.params;
     if let Some(raw) = params {
         effect.params = merge_effect_params(&effect.params, raw)?;
@@ -1773,6 +1784,7 @@ fn default_params_for_kind(kind: &str) -> Option<EffectParams> {
                 format,
                 params: vec![],
                 sandboxed: false,
+                sidechain_source: None,
             }));
         }
     }

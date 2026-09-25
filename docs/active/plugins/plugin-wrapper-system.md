@@ -173,9 +173,18 @@ probes `clap.audio-ports` at scan time — a throwaway create → init → query
 destroy cycle, SEH-guarded — so `PluginManifest.num_sidechain_inputs` is the
 plugin's real aux input count, not always `0`. `ClapWrapperNode` builds one
 `ClapAudioBuffer` per input port (main at 0, aux at `1..`) and reports the real
-total from `num_input_ports()`. Not yet wired: nothing in `from_project`/the UI
-connects a track into an aux port, so it is always fed silence — structurally
-correct, not yet audible. VST3 `getBusInfo` introspection is untouched.
+total from `num_input_ports()`. VST3 `getBusInfo` introspection is untouched.
+
+**Sidechain routing (ADR-014 update, 2026-09-25).** `PluginParams.sidechain_source`
+names the track whose post-fader signal feeds a plugin's aux port 1.
+`AudioGraph::from_project` resolves it in a second pass, once every track's
+post-fader tap (`TrackGain` node) is known, so a source track can appear later
+in the project than the plugin sidechaining from it. A self-reference or a
+routing that would close a track-level cycle is dropped silently — the aux
+port just keeps reading silence, same as a plugin with no declared aux bus —
+rather than failing the whole compile; `UPDATE_EFFECT` additionally rejects a
+self-reference outright (`patch_effect`, `engine_gateway/api.rs`). No UI
+control yet — set via `UPDATE_EFFECT { sidechain_source }`.
 
 **Parameters (ADR-021).** `plugin_formats/clap/params.rs` is shared by the
 effect wrapper and the instrument: it reads `clap.params` at `prepare`, and
