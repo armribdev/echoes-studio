@@ -14,20 +14,26 @@
 //!   the audio thread.
 //!
 //! Reports 64 samples of latency by default.  No GUI.
+//!
+//! Declares `clap.audio-ports`: one main stereo input/output plus one
+//! auxiliary stereo input (sidechain), so a test can prove real bus
+//! introspection (ADR-014) end to end — the scanner reads the aux port, and
+//! `process` sums it verbatim into the output whenever the host hands it a
+//! second input port, so a test can detect it landed.
 
 use std::ffi::{c_char, c_void, CStr};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 
 use clap_ffi::{
-    ClapEventHeader, ClapEventNote, ClapEventParamGesture, ClapEventParamValue, ClapHost,
-    ClapHostLatency, ClapHostState, ClapHostThreadCheck, ClapIStream, ClapInputEvents, ClapOStream,
-    ClapOutputEvents, ClapParamInfo,
-    ClapPlugin, ClapPluginDescriptor, ClapPluginEntry, ClapPluginFactory, ClapPluginLatency,
-    ClapPluginParams, ClapPluginState, ClapProcess, ClapProcessStatus, CLAP_CORE_EVENT_SPACE,
+    ClapAudioPortInfo, ClapEventHeader, ClapEventNote, ClapEventParamGesture, ClapEventParamValue,
+    ClapHost, ClapHostLatency, ClapHostState, ClapHostThreadCheck, ClapIStream, ClapInputEvents,
+    ClapOStream, ClapOutputEvents, ClapParamInfo, ClapPlugin, ClapPluginAudioPorts,
+    ClapPluginDescriptor, ClapPluginEntry, ClapPluginFactory, ClapPluginLatency, ClapPluginParams,
+    ClapPluginState, ClapProcess, ClapProcessStatus, CLAP_AUDIO_PORT_IS_MAIN, CLAP_CORE_EVENT_SPACE,
     CLAP_EVENT_NOTE_OFF, CLAP_EVENT_NOTE_ON, CLAP_EVENT_PARAM_GESTURE_END, CLAP_EVENT_PARAM_MOD,
-    CLAP_EVENT_PARAM_VALUE, CLAP_EXT_LATENCY, CLAP_EXT_PARAMS, CLAP_EXT_STATE, CLAP_EXT_THREAD_CHECK,
-    CLAP_PARAM_IS_AUTOMATABLE, CLAP_PARAM_IS_MODULATABLE, CLAP_PLUGIN_FACTORY_ID,
-    CLAP_PROCESS_CONTINUE, CLAP_VERSION_1,
+    CLAP_EVENT_PARAM_VALUE, CLAP_EXT_AUDIO_PORTS, CLAP_EXT_LATENCY, CLAP_EXT_PARAMS, CLAP_EXT_STATE,
+    CLAP_EXT_THREAD_CHECK, CLAP_PARAM_IS_AUTOMATABLE, CLAP_PARAM_IS_MODULATABLE,
+    CLAP_PLUGIN_FACTORY_ID, CLAP_PROCESS_CONTINUE, CLAP_VERSION_1,
 };
 
 pub const PLUGIN_ID: &str = "echoes.test.gain";
@@ -322,6 +328,10 @@ unsafe extern "C" fn plugin_process(
     let gain = (f64::from_bits(state.gain.load(Ordering::Relaxed)) + state.gain_modulation) as f32;
     let frames = process.frames_count as usize;
     let output = &*process.audio_outputs;
+    // Port 1, when the host provides it, is the aux (sidechain) bus declared by
+    // `clap.audio-ports` below — summed in verbatim so a test can prove it was
+    // actually delivered, distinct from the gained main signal.
+    let aux = (process.audio_inputs_count >= 2).then(|| &*process.audio_inputs.add(1));
     for channel in 0..output.channel_count as usize {
         let out = std::slice::from_raw_parts_mut(*output.data32.add(channel), frames);
         if process.audio_inputs_count == 0 {
@@ -330,8 +340,18 @@ unsafe extern "C" fn plugin_process(
         }
         let input = &*process.audio_inputs;
         let source = std::slice::from_raw_parts(*input.data32.add(channel), frames);
-        for (sample, dry) in out.iter_mut().zip(source) {
-            *sample = dry * gain;
+        match aux {
+            Some(aux) => {
+                let aux_source = std::slice::from_raw_parts(*aux.data32.add(channel), frames);
+                for ((sample, dry), sc) in out.iter_mut().zip(source).zip(aux_source) {
+                    *sample = dry * gain + sc;
+                }
+            }
+            None => {
+                for (sample, dry) in out.iter_mut().zip(source) {
+                    *sample = dry * gain;
+                }
+            }
         }
     }
     CLAP_PROCESS_CONTINUE
@@ -353,6 +373,11 @@ static STATE: ClapPluginState = ClapPluginState {
 
 static LATENCY_EXT: ClapPluginLatency = ClapPluginLatency { get: latency_get };
 
+static AUDIO_PORTS: ClapPluginAudioPorts = ClapPluginAudioPorts {
+    count: audio_ports_count,
+    get: audio_ports_get,
+};
+
 unsafe extern "C" fn plugin_get_extension(
     _: *const ClapPlugin,
     id: *const c_char,
@@ -364,9 +389,44 @@ unsafe extern "C" fn plugin_get_extension(
         &STATE as *const ClapPluginState as *const c_void
     } else if id == CLAP_EXT_LATENCY {
         &LATENCY_EXT as *const ClapPluginLatency as *const c_void
+    } else if id == CLAP_EXT_AUDIO_PORTS {
+        &AUDIO_PORTS as *const ClapPluginAudioPorts as *const c_void
     } else {
         std::ptr::null()
     }
+}
+
+/// One main stereo bus per direction, plus one auxiliary stereo input
+/// (sidechain) — exercises the ADR-014 scanner probe end to end.
+unsafe extern "C" fn audio_ports_count(_: *const ClapPlugin, is_input: bool) -> u32 {
+    if is_input {
+        2
+    } else {
+        1
+    }
+}
+
+unsafe extern "C" fn audio_ports_get(
+    _: *const ClapPlugin,
+    index: u32,
+    is_input: bool,
+    info: *mut ClapAudioPortInfo,
+) -> bool {
+    let (name, flags): (&[u8], u32) = match (is_input, index) {
+        (true, 0) => (b"Main In", CLAP_AUDIO_PORT_IS_MAIN),
+        (true, 1) => (b"Sidechain", 0),
+        (false, 0) => (b"Main Out", CLAP_AUDIO_PORT_IS_MAIN),
+        _ => return false,
+    };
+    let info = &mut *info;
+    info.id = index;
+    info.name = [0; clap_ffi::CLAP_NAME_SIZE];
+    info.name[..name.len()].copy_from_slice(name);
+    info.flags = flags;
+    info.channel_count = 2;
+    info.port_type = std::ptr::null();
+    info.in_place_pair = u32::MAX;
+    true
 }
 
 unsafe extern "C" fn params_count(_: *const ClapPlugin) -> u32 {

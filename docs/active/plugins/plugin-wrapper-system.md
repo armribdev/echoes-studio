@@ -168,6 +168,15 @@ instruments and capability negotiation are covered by
 `../decisions/013-clap-plugin-instruments.md` and
 `../decisions/014-capability-driven-port-sizing.md`.
 
+**Sidechain input ports (ADR-014, 2026-09-25).** `plugin_formats/clap/host.rs`
+probes `clap.audio-ports` at scan time — a throwaway create → init → query →
+destroy cycle, SEH-guarded — so `PluginManifest.num_sidechain_inputs` is the
+plugin's real aux input count, not always `0`. `ClapWrapperNode` builds one
+`ClapAudioBuffer` per input port (main at 0, aux at `1..`) and reports the real
+total from `num_input_ports()`. Not yet wired: nothing in `from_project`/the UI
+connects a track into an aux port, so it is always fed silence — structurally
+correct, not yet audible. VST3 `getBusInfo` introspection is untouched.
+
 **Parameters (ADR-021).** `plugin_formats/clap/params.rs` is shared by the
 effect wrapper and the instrument: it reads `clap.params` at `prepare`, and
 each block fills one time-sorted `ClapEventBuffer` with queued edits and

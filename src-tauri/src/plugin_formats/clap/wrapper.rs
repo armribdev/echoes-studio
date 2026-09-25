@@ -70,10 +70,20 @@ pub struct ClapWrapperNode {
     /// Phase 2b: also holds the authoritative `lifecycle` atomic.
     instance: Arc<PluginInstance>,
 
-    // Per-block scratch — pre-allocated in prepare, stable after that
-    in_channel_ptrs: Vec<*mut f32>,
+    /// Auxiliary (sidechain) input port count, from the scan-time
+    /// `clap.audio-ports` probe (ADR-014, `PluginManifest.num_sidechain_inputs`).
+    /// `0` for every plugin that doesn't declare an aux bus — unchanged from
+    /// before this field existed. Fixed for the wrapper's lifetime: a plugin
+    /// swap goes through a fresh `ClapWrapperNode`, not a mutation of this one.
+    num_aux_inputs: usize,
+
+    // Per-block scratch — pre-allocated in prepare, stable after that.
+    // Port 0 is the main bus; ports `1..=num_aux_inputs` are aux buses, each
+    // sized like the main bus (the graph has no per-port channel model — every
+    // `AudioBuffer` in it carries the engine's channel count uniformly).
+    in_port_channel_ptrs: Vec<Vec<*mut f32>>,
     out_channel_ptrs: Vec<*mut f32>,
-    in_audio_buf: ClapAudioBuffer,
+    in_audio_bufs: Vec<ClapAudioBuffer>,
     out_audio_buf: ClapAudioBuffer,
 
     /// Parameter ranges, controlled parameters and the per-block input event
@@ -104,7 +114,11 @@ unsafe impl Send for ClapWrapperNode {}
 impl ClapWrapperNode {
     /// Construct from a shared [`PluginInstance`].  Caller must guarantee the
     /// instance was built with a CLAP native handle (`PluginInstance::new_clap`).
-    pub fn new(node_id: NodeId, instance: Arc<PluginInstance>) -> Self {
+    ///
+    /// `num_aux_inputs` comes from the plugin's scanned manifest
+    /// (`PluginHost::sidechain_input_ports`, ADR-014) — `0` for every plugin
+    /// without a declared aux bus, so callers that don't care can pass `0`.
+    pub fn new(node_id: NodeId, instance: Arc<PluginInstance>, num_aux_inputs: usize) -> Self {
         debug_assert!(
             instance.clap_plugin().is_some(),
             "ClapWrapperNode requires a CLAP PluginInstance"
@@ -115,9 +129,10 @@ impl ClapWrapperNode {
             info,
             params: ParameterMap::new(),
             instance,
-            in_channel_ptrs: Vec::new(),
+            num_aux_inputs,
+            in_port_channel_ptrs: Vec::new(),
             out_channel_ptrs: Vec::new(),
-            in_audio_buf: unsafe { std::mem::zeroed() },
+            in_audio_bufs: Vec::new(),
             out_audio_buf: unsafe { std::mem::zeroed() },
             param_events: ClapParamEvents::new(),
             out_events: ClapOutputEvents {
@@ -151,7 +166,7 @@ impl AudioNode for ClapWrapperNode {
         "ClapWrapperNode"
     }
     fn num_input_ports(&self) -> usize {
-        1
+        1 + self.num_aux_inputs
     }
     fn num_output_ports(&self) -> usize {
         1
@@ -159,7 +174,12 @@ impl AudioNode for ClapWrapperNode {
 
     fn prepare(&mut self, ctx: PrepareContext) {
         self.num_channels = ctx.num_channels;
-        self.in_channel_ptrs = vec![std::ptr::null_mut(); ctx.num_channels];
+        self.in_port_channel_ptrs = (0..1 + self.num_aux_inputs)
+            .map(|_| vec![std::ptr::null_mut(); ctx.num_channels])
+            .collect();
+        self.in_audio_bufs = (0..1 + self.num_aux_inputs)
+            .map(|_| unsafe { std::mem::zeroed() })
+            .collect();
         self.out_channel_ptrs = vec![std::ptr::null_mut(); ctx.num_channels];
 
         // Activation lifecycle is owned by the shared instance (ADR-016) so it
@@ -233,23 +253,32 @@ impl AudioNode for ClapWrapperNode {
         self.param_events.buffer.sort();
         self.out_events.ctx = self.param_events.output_context();
 
-        for c in 0..nc {
-            self.in_channel_ptrs[c] = if !inputs.is_empty() {
-                // CLAP spec: hosts may pass const data as the input; safe cast.
-                inputs[0].channel(c).as_ptr() as *mut f32
-            } else {
-                std::ptr::null_mut()
+        // Port 0 = main bus (from the upstream connection); ports 1.. = aux
+        // buses (sidechain — silence until something is routed into them, cf.
+        // ADR-014 follow-ups). `inputs` always has one `&AudioBuffer` per
+        // declared port — the scheduler substitutes a shared silence buffer for
+        // an unconnected one, it never shortens the slice.
+        for port in 0..1 + self.num_aux_inputs {
+            let src = inputs.get(port).copied();
+            for c in 0..nc {
+                self.in_port_channel_ptrs[port][c] = match src {
+                    // CLAP spec: hosts may pass const data as the input; safe cast.
+                    Some(buf) => buf.channel(c).as_ptr() as *mut f32,
+                    None => std::ptr::null_mut(),
+                };
+            }
+            self.in_audio_bufs[port] = ClapAudioBuffer {
+                data32: self.in_port_channel_ptrs[port].as_mut_ptr(),
+                data64: std::ptr::null_mut(),
+                channel_count: nc as u32,
+                latency: 0,
+                constant_mask: 0,
             };
+        }
+        for c in 0..nc {
             self.out_channel_ptrs[c] = outputs[0].channel_mut(c).as_mut_ptr();
         }
 
-        self.in_audio_buf = ClapAudioBuffer {
-            data32: self.in_channel_ptrs.as_mut_ptr(),
-            data64: std::ptr::null_mut(),
-            channel_count: nc as u32,
-            latency: 0,
-            constant_mask: 0,
-        };
         self.out_audio_buf = ClapAudioBuffer {
             data32: self.out_channel_ptrs.as_mut_ptr(),
             data64: std::ptr::null_mut(),
@@ -263,9 +292,9 @@ impl AudioNode for ClapWrapperNode {
             steady_time: self.steady_time,
             frames_count: nf as u32,
             transport: &transport_event,
-            audio_inputs: &self.in_audio_buf,
+            audio_inputs: self.in_audio_bufs.as_ptr(),
             audio_outputs: &mut self.out_audio_buf,
-            audio_inputs_count: if inputs.is_empty() { 0 } else { 1 },
+            audio_inputs_count: if inputs.is_empty() { 0 } else { self.in_audio_bufs.len() as u32 },
             audio_outputs_count: 1,
             in_events: &self.param_events.buffer.input_events_vtable,
             out_events: &self.out_events,
@@ -400,5 +429,128 @@ impl Device for ClapWrapperNode {
         let mut caps = DeviceCapabilities::from_legacy_info(&self.info);
         caps.reported_latency_samples = self.reported_latency;
         caps
+    }
+}
+
+/// Real-FFI proof that a declared aux (sidechain) input port actually reaches
+/// the plugin's `process` call (ADR-014 follow-up: "wrapper aux feed").
+/// Companion to the scan-time introspection test in
+/// `plugin_formats/clap/host.rs`, which proves the *count* is read correctly;
+/// this proves the *audio* is routed correctly once a wrapper is told about it.
+#[cfg(all(test, windows))]
+mod aux_feed_tests {
+    use std::path::{Path, PathBuf};
+    use std::process::Command;
+    use std::sync::OnceLock;
+
+    use crate::audio_graph::node::NodeId;
+    use crate::plugin_system::host::PluginHost;
+    use crate::plugin_system::registry::PluginManifest;
+    use crate::plugin_system::wrapper::DeviceFormat;
+
+    use super::*;
+
+    const PLUGIN_ID: &str = "clap:echoes.test.gain";
+
+    /// Built once per test run — mirrors `plugin_system::sandbox_tests::artifacts`.
+    fn test_plugin_dll() -> &'static PathBuf {
+        static DLL: OnceLock<PathBuf> = OnceLock::new();
+        DLL.get_or_init(|| {
+            let workspace = Path::new(env!("CARGO_MANIFEST_DIR"));
+            let target = workspace.join("target").join("clap-aux-feed-test");
+            let status = Command::new(env!("CARGO"))
+                .args(["build", "--quiet", "-p", "test_clap_plugin", "--target-dir"])
+                .arg(&target)
+                .current_dir(workspace)
+                .status()
+                .expect("run cargo");
+            assert!(status.success(), "building test_clap_plugin failed");
+            target.join("debug").join("test_clap_plugin.dll")
+        })
+    }
+
+    fn manifest(dll: &Path, num_sidechain_inputs: usize) -> PluginManifest {
+        PluginManifest {
+            id: PLUGIN_ID.into(),
+            name: "Echoes Test Gain".into(),
+            vendor: "Echoes Studio".into(),
+            version: String::new(),
+            format: DeviceFormat::Clap,
+            path: Some(dll.to_path_buf()),
+            categories: vec![],
+            num_audio_inputs: 2,
+            num_audio_outputs: 2,
+            has_midi_input: false,
+            has_midi_output: false,
+            num_sidechain_inputs,
+            is_instrument: false,
+        }
+    }
+
+    /// A wrapper told about one aux input (as `PluginHost::instantiate` would,
+    /// once the scanner reports `num_sidechain_inputs: 1` for a real sidechain
+    /// plugin) must deliver `inputs[1]` to the plugin as its second CLAP audio
+    /// port — not silence, not a duplicate of the main bus.
+    #[test]
+    fn aux_port_signal_reaches_the_plugin_process_call() {
+        let dll = test_plugin_dll();
+        let mut host = PluginHost::new();
+        host.registry_mut().add(manifest(dll, 1));
+
+        let mut node = host
+            .instantiate(NodeId(1), "fx0", PLUGIN_ID, false)
+            .expect("real CLAP instantiation must succeed");
+        node.prepare(PrepareContext {
+            sample_rate: 48_000.0,
+            max_block_size: 64,
+            num_channels: 2,
+            live: true,
+        });
+        assert_eq!(node.num_input_ports(), 2, "main + one declared aux port");
+
+        let frames = 32;
+        let main = AudioBuffer::new(2, frames); // silent
+        let mut aux = AudioBuffer::new(2, frames);
+        for ch in 0..2 {
+            aux.channel_mut(ch).fill(0.3);
+        }
+        let mut outputs = vec![AudioBuffer::new(2, frames)];
+        let transport = TransportInfo {
+            is_playing: true,
+            position_samples: 0,
+            position_seconds: 0.0,
+            bpm: 120.0,
+            time_signature: crate::audio_graph::node::TimeSignature::default(),
+            sample_rate: 48_000.0,
+            block_size: frames,
+        };
+
+        node.process(&[&main, &aux], &mut outputs, &transport);
+
+        // Test plugin: out = main*gain + aux. main is silent and default gain is
+        // 1.0, so a non-silent output can only have come from the aux buffer.
+        for ch in 0..2 {
+            for &s in outputs[0].channel(ch) {
+                assert!(
+                    (s - 0.3).abs() < 1e-6,
+                    "expected the aux port's 0.3 to reach the plugin verbatim, got {s}"
+                );
+            }
+        }
+    }
+
+    /// A wrapper built for a plugin with no declared aux bus keeps the legacy
+    /// single-port shape — no behaviour change for the overwhelming majority of
+    /// plugins that don't have a sidechain input.
+    #[test]
+    fn no_aux_ports_declared_keeps_the_single_port_shape() {
+        let dll = test_plugin_dll();
+        let mut host = PluginHost::new();
+        host.registry_mut().add(manifest(dll, 0));
+
+        let node = host
+            .instantiate(NodeId(1), "fx0", PLUGIN_ID, false)
+            .expect("real CLAP instantiation must succeed");
+        assert_eq!(node.num_input_ports(), 1, "no aux bus declared");
     }
 }

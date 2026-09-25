@@ -269,7 +269,11 @@ impl PluginHost {
             DeviceFormat::Clap if inst.is_sandboxed() => {
                 Some(Box::new(BridgedNode::new(node_id, Arc::clone(inst))))
             }
-            DeviceFormat::Clap => Some(Box::new(ClapWrapperNode::new(node_id, Arc::clone(inst)))),
+            DeviceFormat::Clap => Some(Box::new(ClapWrapperNode::new(
+                node_id,
+                Arc::clone(inst),
+                self.sidechain_input_ports(plugin_id),
+            ))),
             DeviceFormat::Vst3 => Some(Box::new(VstWrapperNode::new(node_id, Arc::clone(inst)))),
             _ => None,
         }
@@ -510,8 +514,11 @@ impl PluginHost {
         manifest: &PluginManifest,
     ) -> Result<(Arc<PluginInstance>, Box<dyn AudioNode>), HostError> {
         let instance = self.create_clap_instance(plugin_id, manifest)?;
-        let node: Box<dyn AudioNode> =
-            Box::new(ClapWrapperNode::new(node_id, Arc::clone(&instance)));
+        let node: Box<dyn AudioNode> = Box::new(ClapWrapperNode::new(
+            node_id,
+            Arc::clone(&instance),
+            manifest.num_sidechain_inputs,
+        ));
         Ok((instance, node))
     }
 

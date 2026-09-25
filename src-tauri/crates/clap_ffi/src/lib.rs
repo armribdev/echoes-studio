@@ -1179,6 +1179,41 @@ pub struct ClapPluginLatency {
     pub get: unsafe extern "C" fn(*const ClapPlugin) -> u32,
 }
 
+// ── clap.audio-ports extension (plugin bus layout — Phase 5d, ADR-014) ────────
+//
+// Queried once, off the audio thread: at scan time (`plugin_formats/clap/host.rs`,
+// a throwaway create → init → query → destroy cycle, SEH-guarded) to populate
+// `PluginManifest.num_sidechain_inputs`. CLAP spec: `count`/`get` are
+// `[main-thread]`.
+
+/// Extension ID for `clap.audio-ports` (CLAP 1.x).
+pub const CLAP_EXT_AUDIO_PORTS: &[u8] = b"clap.audio-ports\0";
+
+/// `clap_audio_port_info_t::flags` — set on the plugin's single primary bus per
+/// direction. A port without this flag is auxiliary (sidechain / aux send).
+pub const CLAP_AUDIO_PORT_IS_MAIN: u32 = 1 << 0;
+
+/// `clap_audio_port_info_t`. `name` and `port_type` are fixed host-facing
+/// display data we don't currently read; `channel_count` and `flags` drive
+/// the aux/main classification.
+#[repr(C)]
+pub struct ClapAudioPortInfo {
+    pub id: u32,
+    pub name: [u8; CLAP_NAME_SIZE],
+    pub flags: u32,
+    pub channel_count: u32,
+    pub port_type: *const c_char,
+    pub in_place_pair: u32,
+}
+
+/// `clap_plugin_audio_ports_t` — plugin-side vtable returned by
+/// `get_extension(CLAP_EXT_AUDIO_PORTS)`.
+#[repr(C)]
+pub struct ClapPluginAudioPorts {
+    pub count: unsafe extern "C" fn(*const ClapPlugin, bool) -> u32,
+    pub get: unsafe extern "C" fn(*const ClapPlugin, u32, bool, *mut ClapAudioPortInfo) -> bool,
+}
+
 // ── clap.state extension (plugin state save/load — Phase 4c, ADR-010) ─────────
 //
 // The CLAP analogue of VST3's `IComponent::get/setState` (sub-phase 4b).  Unlike

@@ -189,7 +189,9 @@ impl GraphCompiler {
                 .get(&node_id)
                 .ok_or(CompileError::MissingNode(node_id))?;
 
-            // Sidechain aux inputs from scan manifest (Phase 5d); 0 until bus introspection.
+            // Sidechain aux inputs from scan manifest (Phase 5d): main bus at port 0,
+            // aux buses at ports 1.. — real for CLAP (`clap.audio-ports` scan-time
+            // probe), still 0 for VST3 (`getBusInfo` introspection not wired yet).
             let num_inputs = {
                 let base = Self::num_inputs_for_kind(&graph_node.kind);
                 match &graph_node.kind {
@@ -594,7 +596,9 @@ impl GraphCompiler {
             NodeKind::Return { .. } => 0, // collects from sends internally
             NodeKind::Gain { .. } => 1,
             NodeKind::Pan { .. } => 1,
-            NodeKind::Plugin { .. } => 2,    // default stereo in
+            // Main bus only; aux/sidechain ports are added on top in `compile`
+            // (`+ plugin_host.sidechain_input_ports(device_id)`, ADR-014).
+            NodeKind::Plugin { .. } => 1,
             NodeKind::Modulator { kind, .. } => match kind {
                 crate::audio_graph::modulation::ModulatorKind::AudioFollower => 1,
                 _ => 0,
