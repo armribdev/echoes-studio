@@ -277,6 +277,9 @@ impl ClapBlockProcessor {
     /// Stops processing if the main thread asked for it or the plugin is not
     /// active.  Returns whether the plugin may process now.
     fn ready_to_process(&mut self) -> bool {
+        // Without it, `clap.thread-check` says no thread is the audio thread and
+        // the plugin reports every `process` as called on the wrong thread.
+        clap_ffi::set_clap_audio_thread();
         let plugin = &self.plugin;
         let may_run = plugin.active.load(Ordering::Acquire) && !plugin.hold.load(Ordering::Acquire);
         let processing = plugin.processing.load(Ordering::Acquire);

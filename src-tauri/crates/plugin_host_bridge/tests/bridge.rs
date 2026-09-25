@@ -23,6 +23,7 @@ const HANG: u32 = 1;
 const CRASH: u32 = 2;
 const TOUCH: u32 = 3;
 const LOOKAHEAD: u32 = 4;
+const WRONG_THREAD: u32 = 5;
 const FRAMES: usize = 64;
 const CHANNELS: usize = 2;
 const TIMEOUT: Duration = Duration::from_secs(5);
@@ -155,6 +156,12 @@ fn processes_audio_with_parameter_changes_and_modulation() {
         scaled(&input, 0.75)
     );
     assert_eq!(bridge.audio().timeout_count(), 0);
+    let wrong_thread = bridge.request(Op::ParamValue, &WRONG_THREAD.to_le_bytes(), TIMEOUT).unwrap();
+    assert_eq!(
+        f64::from_le_bytes(wrong_thread.try_into().unwrap()),
+        0.0,
+        "clap.thread-check reports the bridge's audio loop as the audio thread"
+    );
 }
 
 #[test]
@@ -177,7 +184,7 @@ fn state_and_parameters_travel_over_the_control_channel() {
 
     let params = bridge.request(Op::Params, &[], TIMEOUT).unwrap();
     let mut reader = PayloadReader::new(&params);
-    assert_eq!(reader.u32().unwrap(), 5);
+    assert_eq!(reader.u32().unwrap(), 6);
     let first: ClapParamInfo = read_pod(&params[4..]).unwrap();
     assert_eq!(
         (first.id, &first.name[..4], first.max_value),

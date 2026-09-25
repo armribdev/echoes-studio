@@ -8,7 +8,9 @@
 //! - 2 `Crash` — once set, the next block aborts the process;
 //! - 3 `Touch` — once set, the plugin reports an edit, as a drag in its window would;
 //! - 4 `Lookahead` — switches the latency between 64 and 128 samples: like a
-//!   real plugin, it requests a restart and applies it at the next `activate`.
+//!   real plugin, it requests a restart and applies it at the next `activate`;
+//! - 5 `Wrong thread` — read-only: how many `process` calls the host's
+//!   `clap.thread-check` did not report as the audio thread.
 //!
 //! Reports 64 samples of latency by default.  No GUI.
 
@@ -17,12 +19,12 @@ use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 
 use clap_ffi::{
     ClapEventHeader, ClapEventNote, ClapEventParamGesture, ClapEventParamValue, ClapHost,
-    ClapHostLatency, ClapHostState, ClapIStream, ClapInputEvents, ClapOStream, ClapOutputEvents,
-    ClapParamInfo,
+    ClapHostLatency, ClapHostState, ClapHostThreadCheck, ClapIStream, ClapInputEvents, ClapOStream,
+    ClapOutputEvents, ClapParamInfo,
     ClapPlugin, ClapPluginDescriptor, ClapPluginEntry, ClapPluginFactory, ClapPluginLatency,
     ClapPluginParams, ClapPluginState, ClapProcess, ClapProcessStatus, CLAP_CORE_EVENT_SPACE,
     CLAP_EVENT_NOTE_OFF, CLAP_EVENT_NOTE_ON, CLAP_EVENT_PARAM_GESTURE_END, CLAP_EVENT_PARAM_MOD,
-    CLAP_EVENT_PARAM_VALUE, CLAP_EXT_LATENCY, CLAP_EXT_PARAMS, CLAP_EXT_STATE,
+    CLAP_EVENT_PARAM_VALUE, CLAP_EXT_LATENCY, CLAP_EXT_PARAMS, CLAP_EXT_STATE, CLAP_EXT_THREAD_CHECK,
     CLAP_PARAM_IS_AUTOMATABLE, CLAP_PARAM_IS_MODULATABLE, CLAP_PLUGIN_FACTORY_ID,
     CLAP_PROCESS_CONTINUE, CLAP_VERSION_1,
 };
@@ -35,6 +37,7 @@ const HANG: u32 = 1;
 const CRASH: u32 = 2;
 const TOUCH: u32 = 3;
 const LOOKAHEAD: u32 = 4;
+const WRONG_THREAD: u32 = 5;
 
 struct Descriptor(ClapPluginDescriptor);
 struct Features([*const c_char; 2]);
@@ -112,6 +115,7 @@ struct State {
     latency: u32,
     /// Latency the next `activate` applies.
     pending_latency: AtomicU32,
+    wrong_thread_calls: AtomicU32,
 }
 
 unsafe extern "C" fn factory_create(
@@ -132,6 +136,7 @@ unsafe extern "C" fn factory_create(
         touch: false,
         latency: LATENCY,
         pending_latency: AtomicU32::new(LATENCY),
+        wrong_thread_calls: AtomicU32::new(0),
     });
     Box::into_raw(Box::new(ClapPlugin {
         desc: &DESCRIPTOR.0,
@@ -280,12 +285,22 @@ unsafe fn report_edit(state: &mut State, out: *const ClapOutputEvents) {
     }
 }
 
+/// What a thread-checking plugin (clap-helpers, JUCE) asks before `process`.
+unsafe fn on_audio_thread(state: &State) -> bool {
+    let check =
+        ((*state.host).get_extension)(state.host, CLAP_EXT_THREAD_CHECK.as_ptr() as *const c_char);
+    check.is_null() || ((*(check as *const ClapHostThreadCheck)).is_audio_thread)(state.host)
+}
+
 unsafe extern "C" fn plugin_process(
     plugin: *const ClapPlugin,
     process: *const ClapProcess,
 ) -> ClapProcessStatus {
     let state = state(plugin);
     let process = &*process;
+    if !on_audio_thread(state) {
+        state.wrong_thread_calls.fetch_add(1, Ordering::Relaxed);
+    }
     apply_events(state, process.in_events);
     if state.crash {
         std::process::abort();
@@ -348,7 +363,7 @@ unsafe extern "C" fn plugin_get_extension(
 }
 
 unsafe extern "C" fn params_count(_: *const ClapPlugin) -> u32 {
-    5
+    6
 }
 
 unsafe extern "C" fn params_info(
@@ -367,6 +382,7 @@ unsafe extern "C" fn params_info(
         CRASH => (b"Crash", 1.0, 0.0, CLAP_PARAM_IS_AUTOMATABLE),
         TOUCH => (b"Touch", 1.0, 0.0, CLAP_PARAM_IS_AUTOMATABLE),
         LOOKAHEAD => (b"Lookahead", 1.0, 0.0, CLAP_PARAM_IS_AUTOMATABLE),
+        WRONG_THREAD => (b"Wrong thread", f64::from(u32::MAX), 0.0, 0),
         _ => return false,
     };
     let info = &mut *info;
@@ -383,10 +399,12 @@ unsafe extern "C" fn params_info(
 }
 
 unsafe extern "C" fn params_value(plugin: *const ClapPlugin, id: u32, value: *mut f64) -> bool {
-    if id != GAIN {
-        return false;
-    }
-    *value = f64::from_bits(state(plugin).gain.load(Ordering::Relaxed));
+    let state = state(plugin);
+    *value = match id {
+        GAIN => f64::from_bits(state.gain.load(Ordering::Relaxed)),
+        WRONG_THREAD => f64::from(state.wrong_thread_calls.load(Ordering::Relaxed)),
+        _ => return false,
+    };
     true
 }
 

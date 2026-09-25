@@ -133,7 +133,7 @@ fn sandboxed_effect_processes_parameters_and_reports_latency() {
     let mut node = prepared(&mut host, true, false);
     assert!(host.instance_by_key(KEY).unwrap().is_sandboxed());
     assert_eq!(node.latency_samples(), 64);
-    assert_eq!(host.plugin_params(KEY).unwrap().len(), 5);
+    assert_eq!(host.plugin_params(KEY).unwrap().len(), 6);
 
     assert!(run_block(&mut node).iter().all(|&s| s == 0.5));
     // Normalised 0.25 of the 0..2 range = gain 0.5.

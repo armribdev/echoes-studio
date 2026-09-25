@@ -181,7 +181,8 @@ the UI. The plugin's output events go to `observe_output_event`, which tracks
 **Unsaved-changes flag.** Edits made in a plugin window bypass `send_command`,
 so the plugins report them: the host now answers `get_extension("clap.state")`
 with `clap_host_state.mark_dirty`, and `get_extension("clap.thread-check")`.
-`is_audio_thread` is the CPAL callback; every other thread counts as main, because
+`is_audio_thread` is the CPAL callback (in a sandbox bridge, its audio loop,
+marked in `ClapBlockProcessor::ready_to_process`); every other thread counts as main, because
 `clap.params` runs on the command thread and the editor on the Win32 thread.
 Without the audio-thread bit, playing the plugin's keyboard while the editor is
 open takes the message lock inside `process` and crackles. `init` runs before
