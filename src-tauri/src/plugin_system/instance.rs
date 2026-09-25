@@ -48,7 +48,9 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use crate::audio_graph::plugin_params::ValueModulatedParam;
-use crate::plugin_formats::clap::ffi::{ClapHost, ClapHostContext, ClapLibrary, ClapPlugin};
+use crate::plugin_formats::clap::ffi::{
+    audio_thread_scope, ClapHost, ClapHostContext, ClapLibrary, ClapPlugin,
+};
 use crate::plugin_formats::vst3::ffi::{
     IAudioProcessor, IComponent, ProcessSetup, Vst3Library, SPEAKER_STEREO,
 };
@@ -642,9 +644,11 @@ impl PluginInstance {
             {
                 return self.clap_restart_if_requested(plugin, sample_rate, max_block);
             }
-            // Config changed — tear the processing/active state down before
-            // re-activating with the new bounds.
+            // Config changed — reactivate with the new bounds, fenced from the
+            // outgoing graph's `process` when the gate can be claimed in time.
+            let _gate = self.offrt_try_acquire(FFI_GATE_HARVEST_BUDGET);
             self.clap_deactivate(plugin);
+            return self.clap_activate(plugin, sample_rate, max_block);
         }
 
         if !self.clap_ensure_initialized() {
@@ -681,12 +685,10 @@ impl PluginInstance {
 
     fn clap_deactivate(&self, plugin: *const ClapPlugin) {
         let act = &self.clap_activation;
-        unsafe {
-            if act.processing.swap(false, Ordering::AcqRel) {
-                ((*plugin).stop_processing)(plugin);
-            }
-            ((*plugin).deactivate)(plugin);
+        if act.processing.swap(false, Ordering::AcqRel) {
+            clap_stop_processing(plugin);
         }
+        unsafe { ((*plugin).deactivate)(plugin) };
         act.active.store(false, Ordering::Release);
     }
 
@@ -921,7 +923,7 @@ impl Drop for PluginInstance {
                     // so the instance does it once, before `destroy`.
                     if self.clap_activation.active.load(Ordering::Acquire) {
                         if self.clap_activation.processing.load(Ordering::Acquire) {
-                            ((*p).stop_processing)(p);
+                            clap_stop_processing(p);
                         }
                         ((*p).deactivate)(p);
                     }
@@ -930,6 +932,14 @@ impl Drop for PluginInstance {
             }
         }
     }
+}
+
+/// `stop_processing` belongs to the audio thread. Callers run it off the audio
+/// callback only when no `process` can run concurrently (last reference
+/// dropped, or FFI gate held), so this thread may take the audio role for it.
+fn clap_stop_processing(plugin: *const ClapPlugin) {
+    let _audio_thread = audio_thread_scope();
+    unsafe { ((*plugin).stop_processing)(plugin) };
 }
 
 const LC_CREATED: u8 = 0;

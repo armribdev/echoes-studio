@@ -181,8 +181,14 @@ the UI. The plugin's output events go to `observe_output_event`, which tracks
 **Unsaved-changes flag.** Edits made in a plugin window bypass `send_command`,
 so the plugins report them: the host now answers `get_extension("clap.state")`
 with `clap_host_state.mark_dirty`, and `get_extension("clap.thread-check")`.
-`is_audio_thread` is the CPAL callback (in a sandbox bridge, its audio loop,
-marked in `ClapBlockProcessor::ready_to_process`); every other thread counts as main, because
+`is_audio_thread` is a role, as CLAP defines it (the thread that processes, never
+two at once): a thread holds it only inside `clap_ffi::audio_thread_scope()`,
+a const-initialised thread-local (no allocation), which wraps every
+`start_processing` / `process` / `stop_processing` — the wrappers' `process`,
+the sandbox bridge's audio loop, and the `stop_processing` of a teardown or
+reactivation run off the callback (last reference dropped, or FFI gate held, so
+no `process` can overlap). Plugins that check threads (u-he, clap-helpers) no
+longer report those calls. Every other thread counts as main, because
 `clap.params` runs on the command thread and the editor on the Win32 thread.
 Without the audio-thread bit, playing the plugin's keyboard while the editor is
 open takes the message lock inside `process` and crackles. `init` runs before
@@ -260,9 +266,10 @@ that recompile the reused instance's `clap_ensure_active` sees the request and
 deactivates + reactivates the plugin while holding the FFI gate, so the
 outgoing graph's blocks pass through meanwhile (gate busy → the request is
 re-armed for the next recompile). The wrapper then reads `clap.latency` again
-and the compiler recomputes PDC. As for a sample-rate change, `stop_processing`
-runs on the command thread although CLAP asks for the audio thread; the gate
-guarantees no `process` runs concurrently. The host also answers
+and the compiler recomputes PDC. `stop_processing` runs on the command thread
+inside an audio-thread scope (see the thread-check note above); the gate
+guarantees no `process` runs concurrently. A sample-rate change reactivates
+under the same gate (best effort: it proceeds if the gate stays busy). The host also answers
 `get_extension("clap.latency")`: its `changed` does nothing, because the
 latency is read after every activation.
 

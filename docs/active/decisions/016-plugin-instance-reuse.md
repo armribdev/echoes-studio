@@ -175,7 +175,10 @@ inside `activate`), `clap_ensure_active` deactivates and reactivates it. Unlike
 the config-change path, this happens while the outgoing graph may still be
 processing the instance, so it runs under the FFI gate (`offrt_try_acquire`):
 the outgoing wrapper's blocks pass through for the duration, and if the gate is
-busy the request is re-armed for the next recompile. `processing` is cleared, so
+busy the request is re-armed for the next recompile. A config change
+(sample rate / block size) now reactivates under the same gate too, best
+effort. `stop_processing` runs inside `audio_thread_scope()` so
+`clap.thread-check` reports the caller as the audio thread for that call. `processing` is cleared, so
 the audio thread calls `start_processing` again before the next `process`. Any
 activation clears a pending request. The sandboxed equivalent lives in the
 bridge process (ADR-015). Details: `plugins/plugin-wrapper-system.md` § Latency

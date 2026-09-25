@@ -3,6 +3,7 @@
 //! Both are built into their own target directory on first use.
 
 use std::collections::{HashMap, HashSet};
+use std::ffi::c_char;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::OnceLock;
@@ -11,6 +12,7 @@ use crate::audio_graph::buffer::AudioBuffer;
 use crate::audio_graph::midi::{MidiEvent, MidiEventKind, MidiEventList};
 use crate::audio_graph::node::{AudioNode, NodeId, PrepareContext, TransportInfo};
 use crate::audio_graph::nodes::instrument::InstrumentDevice;
+use crate::plugin_formats::clap::ffi::{ClapPluginParams, CLAP_EXT_PARAMS};
 use crate::plugin_system::host::{PluginHost, PluginIsolation, UnavailableReason};
 use crate::plugin_system::registry::PluginManifest;
 use crate::plugin_system::wrapper::DeviceFormat;
@@ -21,6 +23,7 @@ const INSTRUMENT_KEY: &str = "instrument:t1";
 const GAIN: u32 = 0;
 const CRASH: u32 = 2;
 const LOOKAHEAD: u32 = 4;
+const WRONG_THREAD: u32 = 5;
 const FRAMES: usize = 64;
 const NOTE_ON: MidiEventKind = MidiEventKind::NoteOn { pitch: 60, velocity: 127 };
 const NOTE_OFF: MidiEventKind = MidiEventKind::NoteOff { pitch: 60 };
@@ -166,6 +169,36 @@ fn an_in_process_latency_change_is_applied_by_the_next_recompile() {
 #[test]
 fn a_sandboxed_latency_change_is_applied_by_the_next_recompile() {
     a_latency_change_is_applied_by_the_next_recompile(true);
+}
+
+/// Audio-thread calls the test plugin saw on a thread `clap.thread-check` did
+/// not report as the audio thread.
+fn wrong_thread_calls(host: &PluginHost) -> f64 {
+    let plugin = host.instance_by_key(KEY).unwrap().clap_plugin().expect("in-process CLAP plugin");
+    // SAFETY: live instance held by the host; no block is in flight.
+    unsafe {
+        let params = ((*plugin).get_extension)(plugin, CLAP_EXT_PARAMS.as_ptr() as *const c_char)
+            as *const ClapPluginParams;
+        let mut value = f64::NAN;
+        assert!(((*params).get_value)(plugin, WRONG_THREAD, &mut value));
+        value
+    }
+}
+
+#[test]
+fn stop_processing_off_the_audio_callback_is_seen_as_the_audio_thread() {
+    let mut host = host();
+    let mut node = prepared(&mut host, false, true);
+    assert!(host.push_plugin_param(KEY, LOOKAHEAD, 1.0).unwrap());
+    // Blocks run on their own thread, like the audio callback.
+    std::thread::scope(|scope| {
+        scope.spawn(|| run_block(&mut node));
+    });
+
+    // The restart request makes this recompile stop and reactivate the plugin
+    // from the command thread.
+    let _recompiled = prepared(&mut host, false, true);
+    assert_eq!(wrong_thread_calls(&host), 0.0);
 }
 
 #[test]

@@ -9,8 +9,9 @@
 //! - 3 `Touch` — once set, the plugin reports an edit, as a drag in its window would;
 //! - 4 `Lookahead` — switches the latency between 64 and 128 samples: like a
 //!   real plugin, it requests a restart and applies it at the next `activate`;
-//! - 5 `Wrong thread` — read-only: how many `process` calls the host's
-//!   `clap.thread-check` did not report as the audio thread.
+//! - 5 `Wrong thread` — read-only: how many `start_processing` / `process` /
+//!   `stop_processing` calls the host's `clap.thread-check` did not report as
+//!   the audio thread.
 //!
 //! Reports 64 samples of latency by default.  No GUI.
 
@@ -146,7 +147,7 @@ unsafe extern "C" fn factory_create(
         activate: plugin_activate,
         deactivate: plugin_noop,
         start_processing: plugin_start,
-        stop_processing: plugin_noop,
+        stop_processing: plugin_stop,
         reset: plugin_noop,
         process: plugin_process,
         get_extension: plugin_get_extension,
@@ -189,8 +190,13 @@ fn request_latency(state: &State, latency: u32) {
     }
 }
 
-unsafe extern "C" fn plugin_start(_: *const ClapPlugin) -> bool {
+unsafe extern "C" fn plugin_start(plugin: *const ClapPlugin) -> bool {
+    check_audio_thread(state(plugin));
     true
+}
+
+unsafe extern "C" fn plugin_stop(plugin: *const ClapPlugin) {
+    check_audio_thread(state(plugin));
 }
 
 unsafe extern "C" fn plugin_noop(_: *const ClapPlugin) {}
@@ -285,11 +291,14 @@ unsafe fn report_edit(state: &mut State, out: *const ClapOutputEvents) {
     }
 }
 
-/// What a thread-checking plugin (clap-helpers, JUCE) asks before `process`.
-unsafe fn on_audio_thread(state: &State) -> bool {
+/// What a thread-checking plugin (clap-helpers, JUCE) verifies on every
+/// audio-thread call.
+unsafe fn check_audio_thread(state: &State) {
     let check =
         ((*state.host).get_extension)(state.host, CLAP_EXT_THREAD_CHECK.as_ptr() as *const c_char);
-    check.is_null() || ((*(check as *const ClapHostThreadCheck)).is_audio_thread)(state.host)
+    if !check.is_null() && !((*(check as *const ClapHostThreadCheck)).is_audio_thread)(state.host) {
+        state.wrong_thread_calls.fetch_add(1, Ordering::Relaxed);
+    }
 }
 
 unsafe extern "C" fn plugin_process(
@@ -298,9 +307,7 @@ unsafe extern "C" fn plugin_process(
 ) -> ClapProcessStatus {
     let state = state(plugin);
     let process = &*process;
-    if !on_audio_thread(state) {
-        state.wrong_thread_calls.fetch_add(1, Ordering::Relaxed);
-    }
+    check_audio_thread(state);
     apply_events(state, process.in_events);
     if state.crash {
         std::process::abort();

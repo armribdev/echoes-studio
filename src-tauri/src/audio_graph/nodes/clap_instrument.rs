@@ -34,7 +34,7 @@ use crate::audio_graph::plugin_params::{PluginParamControl, PluginParamControls}
 use crate::plugin_system::instance::{PluginInstance, FFI_GATE_HARVEST_BUDGET};
 
 use crate::plugin_formats::clap::ffi::{
-    set_clap_audio_thread, ClapAudioBuffer, ClapEventBuffer, ClapOutputEvents, ClapPlugin,
+    audio_thread_scope, ClapAudioBuffer, ClapEventBuffer, ClapOutputEvents, ClapPlugin,
     ClapProcess, CLAP_PROCESS_ERROR,
 };
 use crate::plugin_formats::clap::params::{observe_output_event, read_clap_params, ClapParamEvents};
@@ -143,7 +143,7 @@ impl InstrumentDevice for ClapInstrument {
         if outputs.is_empty() || !self.active {
             return;
         }
-        set_clap_audio_thread();
+        let _audio_thread = audio_thread_scope();
         // Same FFI gate as the effect wrapper: while an off-RT caller (state
         // save, parameter read) holds it, this block stays silent rather than race it.
         let Some(_ffi_gate) = self.instance.rt_try_enter() else {

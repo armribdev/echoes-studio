@@ -362,7 +362,9 @@ unsafe extern "C" fn host_log(_: *const ClapHost, severity: ClapLogSeverity, mes
 }
 
 /// `clap.thread-check` — lets a plugin stay off the message lock inside
-/// `process`. `is_main_thread` is every thread except the audio callback.
+/// `process`. The audio thread is a role, not a fixed thread (CLAP: the thread
+/// that processes, which may change, never two at once): a thread holds it
+/// only inside an [`audio_thread_scope`]. Every other thread counts as main.
 pub const CLAP_EXT_THREAD_CHECK: &[u8] = b"clap.thread-check\0";
 
 #[repr(C)]
@@ -376,44 +378,40 @@ static HOST_THREAD_CHECK: ClapHostThreadCheck = ClapHostThreadCheck {
     is_audio_thread: host_is_audio_thread,
 };
 
-static AUDIO_THREAD_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+thread_local! {
+    // Const-initialised and without `Drop`: reading or setting it never
+    // allocates, so the audio callback may use it.
+    static IN_AUDIO_ROLE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
 
-fn current_os_thread_id() -> u64 {
-    #[cfg(windows)]
-    {
-        unsafe extern "system" {
-            fn GetCurrentThreadId() -> u32;
-        }
-        unsafe { GetCurrentThreadId() as u64 }
-    }
-    #[cfg(not(windows))]
-    {
-        // pthread_t is a pointer-sized token on the platforms we build.
-        unsafe extern "C" {
-            fn pthread_self() -> usize;
-        }
-        unsafe { pthread_self() as u64 }
+/// Makes the current thread the plugin's audio thread until the guard drops.
+/// Wrap every `start_processing` / `process` / `stop_processing` call in one.
+/// Off the audio callback (teardown, reactivation), the caller must guarantee
+/// no `process` runs concurrently.
+pub fn audio_thread_scope() -> AudioThreadScope {
+    AudioThreadScope {
+        previous: IN_AUDIO_ROLE.with(|role| role.replace(true)),
     }
 }
 
-/// Record the CPAL callback thread. `GetCurrentThreadId` does not allocate.
-pub fn set_clap_audio_thread() {
-    let id = current_os_thread_id();
-    if AUDIO_THREAD_ID.load(std::sync::atomic::Ordering::Relaxed) != id {
-        AUDIO_THREAD_ID.store(id, std::sync::atomic::Ordering::Release);
+pub struct AudioThreadScope {
+    previous: bool,
+}
+
+impl Drop for AudioThreadScope {
+    fn drop(&mut self) {
+        IN_AUDIO_ROLE.with(|role| role.set(self.previous));
     }
 }
 
 unsafe extern "C" fn host_is_main_thread(_: *const ClapHost) -> bool {
     // Plugin lifecycle and `clap.params` run on the command thread; the editor
-    // runs on the Win32 thread. Both are main-thread work. Only the audio
-    // callback is not.
+    // runs on the Win32 thread. Both are main-thread work.
     !host_is_audio_thread(std::ptr::null())
 }
 
 unsafe extern "C" fn host_is_audio_thread(_: *const ClapHost) -> bool {
-    let id = AUDIO_THREAD_ID.load(std::sync::atomic::Ordering::Acquire);
-    id != 0 && id == current_os_thread_id()
+    IN_AUDIO_ROLE.with(std::cell::Cell::get)
 }
 
 /// `clap_host_state` — lets a plugin report that its state changed.
@@ -468,9 +466,27 @@ mod host_abi_tests {
     }
 
     #[test]
-    fn thread_check_audio_thread_is_not_main() {
-        set_clap_audio_thread();
+    fn the_audio_role_lasts_only_for_its_scope_and_its_thread() {
         let host = make_host();
+        unsafe {
+            assert!(!host_is_audio_thread(&*host));
+            {
+                let _audio = audio_thread_scope();
+                {
+                    let _nested = audio_thread_scope();
+                }
+                assert!(host_is_audio_thread(&*host), "a nested scope keeps the role");
+                let other = std::thread::spawn(|| host_is_audio_thread(std::ptr::null()));
+                assert!(!other.join().unwrap(), "another thread is not the audio thread");
+            }
+            assert!(!host_is_audio_thread(&*host), "the role ends with the scope");
+        }
+    }
+
+    #[test]
+    fn thread_check_audio_thread_is_not_main() {
+        let host = make_host();
+        let _audio = audio_thread_scope();
         unsafe {
             assert!(host_is_audio_thread(&*host));
             assert!(!host_is_main_thread(&*host));

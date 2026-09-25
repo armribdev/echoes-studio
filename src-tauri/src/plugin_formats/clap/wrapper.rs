@@ -44,7 +44,7 @@ use crate::plugin_system::state::DeviceState;
 use crate::plugin_system::wrapper::{Device, DeviceInfo};
 
 use super::ffi::{
-    set_clap_audio_thread, ClapAudioBuffer, ClapOutputEvents, ClapPlugin, ClapPluginLatency,
+    audio_thread_scope, ClapAudioBuffer, ClapOutputEvents, ClapPlugin, ClapPluginLatency,
     ClapProcess, CLAP_EXT_LATENCY, CLAP_PROCESS_ERROR,
 };
 
@@ -204,7 +204,7 @@ impl AudioNode for ClapWrapperNode {
         if self.crashed || outputs.is_empty() || !self.active {
             return;
         }
-        set_clap_audio_thread();
+        let _audio_thread = audio_thread_scope();
 
         // FFI access gate (step 1): claim exclusive access to the shared instance
         // for this block.  If an off-RT caller (state save/load, GUI) currently

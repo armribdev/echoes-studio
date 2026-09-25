@@ -12,7 +12,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use clap_ffi::{
-    read_pod, split_events, ClapAudioBuffer, ClapEventBuffer, ClapEventHeader, ClapEventTransport,
+    audio_thread_scope, read_pod, split_events, ClapAudioBuffer, ClapEventBuffer, ClapEventHeader, ClapEventTransport,
     ClapHost, ClapLibrary, ClapOutputEvents, ClapParamInfo, ClapPlugin, ClapPluginFactory,
     ClapPluginLatency, ClapPluginParams, ClapProcess, CLAP_CORE_EVENT_SPACE, CLAP_EVENT_TRANSPORT,
     CLAP_EXT_LATENCY, CLAP_EXT_PARAMS, CLAP_PLUGIN_FACTORY_ID, CLAP_PROCESS_ERROR,
@@ -227,6 +227,8 @@ impl Drop for LoadedPlugin {
         // SAFETY: CLAP teardown order; no other thread uses the plugin any more.
         unsafe {
             if self.processing.load(Ordering::Acquire) {
+                // The audio thread has exited, so this thread takes its role.
+                let _audio_thread = audio_thread_scope();
                 ((*self.plugin).stop_processing)(self.plugin);
             }
             if self.active.load(Ordering::Acquire) {
@@ -277,9 +279,6 @@ impl ClapBlockProcessor {
     /// Stops processing if the main thread asked for it or the plugin is not
     /// active.  Returns whether the plugin may process now.
     fn ready_to_process(&mut self) -> bool {
-        // Without it, `clap.thread-check` says no thread is the audio thread and
-        // the plugin reports every `process` as called on the wrong thread.
-        clap_ffi::set_clap_audio_thread();
         let plugin = &self.plugin;
         let may_run = plugin.active.load(Ordering::Acquire) && !plugin.hold.load(Ordering::Acquire);
         let processing = plugin.processing.load(Ordering::Acquire);
@@ -343,6 +342,7 @@ impl BridgeProcessor for ClapBlockProcessor {
         output: &mut [f32],
         out_events: &mut EventWriter,
     ) -> u32 {
+        let _audio_thread = audio_thread_scope();
         if !self.ready_to_process() {
             output.copy_from_slice(input);
             return BLOCK_PASSED_THROUGH | signal_flags();
@@ -408,6 +408,7 @@ impl BridgeProcessor for ClapBlockProcessor {
     fn idle(&mut self) {
         let plugin = &self.plugin;
         if plugin.hold.load(Ordering::Acquire) || !plugin.active.load(Ordering::Acquire) {
+            let _audio_thread = audio_thread_scope();
             self.ready_to_process();
         }
     }
