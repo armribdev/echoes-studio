@@ -27,7 +27,7 @@ use crate::audio_graph::plugin_params::{parse_plugin_param_name, PluginParamCont
 /// `InstrumentNode` holds a `Box<dyn InstrumentDevice>` and calls
 /// `process_midi` once per block.
 pub trait InstrumentDevice: Send + 'static {
-    fn prepare(&mut self, sample_rate: f32, max_block_size: usize, num_channels: usize);
+    fn prepare(&mut self, ctx: PrepareContext);
 
     /// Render one block of audio from the provided MIDI events.
     ///
@@ -56,7 +56,7 @@ pub trait InstrumentDevice: Send + 'static {
 pub struct SilentInstrument;
 
 impl InstrumentDevice for SilentInstrument {
-    fn prepare(&mut self, _sample_rate: f32, _max_block_size: usize, _num_channels: usize) {}
+    fn prepare(&mut self, _ctx: PrepareContext) {}
 
     fn process_midi(
         &mut self,
@@ -226,8 +226,7 @@ impl AudioNode for InstrumentNode {
     }
 
     fn prepare(&mut self, ctx: PrepareContext) {
-        self.device
-            .prepare(ctx.sample_rate, ctx.max_block_size, ctx.num_channels);
+        self.device.prepare(ctx);
     }
 
     fn process(
@@ -392,7 +391,7 @@ mod tests {
     }
 
     impl InstrumentDevice for CaptureDevice {
-        fn prepare(&mut self, _sr: f32, _mb: usize, _nc: usize) {}
+        fn prepare(&mut self, _ctx: PrepareContext) {}
         fn process_midi(
             &mut self,
             events: &MidiEventList,

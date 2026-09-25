@@ -566,7 +566,7 @@
 					/>
 					<span class="field-hint">
 						{#if draft.audio.pluginIsolation === 'off'}Tous les plugins tournent dans Echoes : le plus léger, mais un plugin qui plante ferme Echoes.
-						{:else if draft.audio.pluginIsolation === 'chosen'}Seuls les effets marqués « Isoler » tournent à part : leur plantage coupe le plugin, pas Echoes.
+						{:else if draft.audio.pluginIsolation === 'chosen'}Seuls les effets marqués « Isoler » et les plugins toujours isolés tournent à part : leur plantage coupe le plugin, pas Echoes.
 						{:else}Chaque plugin tourne à part : un plantage ne ferme jamais Echoes, au prix d'un peu plus de CPU.{/if}
 						Plugins CLAP uniquement pour l'instant.
 					</span>
@@ -587,7 +587,7 @@
 								</span>
 							{/each}
 						</div>
-						<span class="field-hint">Ajoutez un plugin avec un clic droit sur l'effet → « Toujours isoler ».</span>
+						<span class="field-hint">Ajoutez un plugin avec un clic droit sur l'effet ou l'instrument → « Toujours isoler ».</span>
 					</div>
 				{/if}
 

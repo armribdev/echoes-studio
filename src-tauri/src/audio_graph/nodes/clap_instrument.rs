@@ -28,7 +28,7 @@ use std::sync::Arc;
 
 use crate::audio_graph::buffer::AudioBuffer;
 use crate::audio_graph::midi::{MidiEventKind, MidiEventList};
-use crate::audio_graph::node::TransportInfo;
+use crate::audio_graph::node::{PrepareContext, TransportInfo};
 use crate::audio_graph::nodes::instrument::InstrumentDevice;
 use crate::audio_graph::plugin_params::{PluginParamControl, PluginParamControls};
 use crate::plugin_system::instance::{PluginInstance, FFI_GATE_HARVEST_BUDGET};
@@ -114,16 +114,16 @@ impl ClapInstrument {
 }
 
 impl InstrumentDevice for ClapInstrument {
-    fn prepare(&mut self, sample_rate: f32, max_block_size: usize, num_channels: usize) {
-        self.num_channels = num_channels;
-        self.out_channel_ptrs = vec![std::ptr::null_mut(); num_channels];
+    fn prepare(&mut self, ctx: PrepareContext) {
+        self.num_channels = ctx.num_channels;
+        self.out_channel_ptrs = vec![std::ptr::null_mut(); ctx.num_channels];
 
         // Activation lifecycle is owned by the shared instance (ADR-016) so it
         // survives a wrapper rebuild when the live instance is reused across a
         // recompile.  Idempotent: an already-active instance is left untouched.
         self.active = self
             .instance
-            .clap_ensure_active(sample_rate, max_block_size as u32);
+            .clap_ensure_active(ctx.sample_rate, ctx.max_block_size as u32);
 
         // Same fencing as the effect wrapper: skip if a block is in flight.
         if self.active {

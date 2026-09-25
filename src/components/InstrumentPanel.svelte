@@ -1,5 +1,7 @@
 <script lang="ts">
 	import PluginPicker from './PluginPicker.svelte';
+	import EffectContextMenu from './EffectContextMenu.svelte';
+	import { preferences } from '../stores/preferences';
 	import type { PluginInfo } from '../stores/plugins';
 	import {
 		instrumentIdOf,
@@ -51,6 +53,22 @@
 
 	$: canOpenEditor = !!instrument && !!activePlugin && !unavailable;
 
+	$: isolation = $preferences.audio.pluginIsolation;
+	$: isClap = activePlugin?.format === 'CLAP';
+	/** Whether the engine runs this instrument in its own process, given the preferences. */
+	$: sandboxed =
+		!!instrument &&
+		isClap &&
+		(isolation === 'all' || (isolation === 'chosen' && $preferences.audio.alwaysIsolated.includes(instrument)));
+
+	let contextMenu: { x: number; y: number } | null = null;
+
+	function openContextMenu(event: MouseEvent) {
+		if (!instrument || !isClap) return;
+		event.preventDefault();
+		contextMenu = { x: event.clientX, y: event.clientY };
+	}
+
 	const UNAVAILABLE_HELP: Record<UnavailableReason, string> = {
 		not_installed:
 			"Ce plugin n'est pas installé sur cet ordinateur : la piste est muette. Ses réglages sont conservés. Réinstallez-le puis réessayez, ou choisissez un autre instrument.",
@@ -101,7 +119,8 @@
 	async function handleToggleEditor() {
 		if (!canOpenEditor || !instrument || !activePlugin) return;
 		try {
-			if (editorOpen) {
+			// An isolated plugin's editor is its own window: opening it again brings it to the front.
+			if (editorOpen && !sandboxed) {
 				await invoke('close_plugin_editor', { effectId: editorKey });
 				editorOpen = false;
 			} else {
@@ -110,7 +129,7 @@
 					effectId: editorKey,
 					pluginName: activePlugin.name,
 				});
-				editorOpen = true;
+				editorOpen = !sandboxed;
 			}
 		} catch (e) {
 			notify(`Erreur éditeur : ${(e as Error)?.message ?? e}`, 'error');
@@ -132,6 +151,16 @@
 	/>
 {/if}
 
+{#if contextMenu && instrument}
+	<EffectContextMenu
+		x={contextMenu.x}
+		y={contextMenu.y}
+		pluginId={instrument}
+		pluginName={label}
+		on:close={() => (contextMenu = null)}
+	/>
+{/if}
+
 <div class="instr-panel" class:compact>
 	<div class="instr-header" style:--track-color={trackColor}>
 		{#if compact}
@@ -145,8 +174,12 @@
 		</button>
 	</div>
 
-	<div class="instr-slot" class:unavailable>
+	<!-- svelte-ignore a11y-no-static-element-interactions -->
+	<div class="instr-slot" class:unavailable on:contextmenu={openContextMenu}>
 		<span class="instr-name" title={instrument ?? label}>{label}</span>
+		{#if sandboxed}
+			<span class="sandbox-badge" title="Isolé : un plantage de ce plugin ne ferme pas Echoes">ISO</span>
+		{/if}
 		{#if unavailable}
 			<span class="missing-badge" title={UNAVAILABLE_HELP[unavailable.reason]}>
 				{UNAVAILABLE_REASON_LABEL[unavailable.reason]}
@@ -304,6 +337,18 @@
 		border-radius: 2px;
 		color: #fff;
 		flex-shrink: 0;
+	}
+
+	.sandbox-badge {
+		font-size: 7px;
+		font-family: $font-mono;
+		font-weight: 700;
+		padding: 1px 4px;
+		border-radius: 2px;
+		flex-shrink: 0;
+		border: 1px solid rgba(34, 197, 94, 0.5);
+		background: rgba(34, 197, 94, 0.12);
+		color: #4ade80;
 	}
 
 	.gui-btn {

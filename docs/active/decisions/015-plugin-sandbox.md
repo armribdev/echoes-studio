@@ -2,8 +2,8 @@
 
 ## Status
 
-**Accepted — implemented for CLAP effects (amendment 2026-09-25, at the end of
-this file).**  The sub-phase sections below are the history of how it was
+**Accepted — implemented for CLAP effects and CLAP track instruments
+(amendments 2026-09-25, at the end of this file).**  The sub-phase sections below are the history of how it was
 built; type names in them (`BridgeSession`, `serve_with`, …) predate the
 amendment.  The amendment describes the current design and closes the two
 risks listed in *Known risk*.
@@ -721,10 +721,38 @@ it calls `reload_plugins` (a recompile).  The rebuild restores the **last saved
 state**, never the crashed instance's live state: calling into a plugin whose
 memory may be corrupt could take Echoes down.
 
+### Track instruments (2026-09-25)
+
+A CLAP track instrument runs sandboxed when the isolation preference says so:
+**Tous**, or **Choisis** with the plugin in the « Toujours isoler » list
+(right-click on the instrument, or the crash dialog — which already offered it
+for any CLAP plugin but had no effect on an instrument).  There is no
+per-track « Isoler » flag: that would be a project-format and event change, and
+« this synth is unstable » is a property of the plugin, which the per-type list
+already expresses.
+
+- `PluginHost::instantiate_instrument` asks `isolates(plugin_id, false)` and
+  builds the instance with `create_bridged_instance` (shared with effects).
+  Reuse (ADR-016) requires the same sandbox mode, so a preference change
+  rebuilds the instance and carries its state (`restore_from`).
+- `BridgedInstrument` (`plugin_system/bridged_node.rs`) is the
+  `InstrumentDevice`; it shares the per-block round-trip (`BridgeRoundTrip`)
+  with `BridgedNode`.  The notes join the parameter events in one time-sorted
+  list, the block has no audio input (`BLOCK_HAS_INPUT` clear), and a block that
+  cannot be sent is silent with its notes dropped — as in-process.
+- `InstrumentDevice::prepare` now takes the `PrepareContext`, so the
+  instrument knows it renders offline and waits like an effect (C-2).
+- The bridge process needed no change: it already zeroed the input and passed
+  `audio_inputs_count = 0` for a block without input, and forwards note events.
+
+Tests (`plugin_system/sandbox_tests.rs`, real bridge + test plugin, which now
+plays velocity × gain for a held note when it has no input): notes and
+parameters reach the sandboxed instrument, the preference moves it in and out
+of the sandbox with its state, and a crash is contained, reported and restarted.
+
 ### Still open
 
-- **Instruments** are not sandboxable yet (the track instrument has no flag);
-  the event transport already carries notes.
+- A per-track « Isoler » choice for an instrument (today: the preference only).
 - **VST3** behind the same handle.
 - **Installer**: `tauri build` builds the bridge next to the app binary, but
   the installer does not bundle it yet (`bundle.externalBin`).

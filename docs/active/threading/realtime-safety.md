@@ -202,7 +202,8 @@ snapshot.try_swap(&mut current_scheduler);
 
 ### Sandboxed plugins (ADR-015) — the one bounded wait
 
-A sandboxed plugin's node (`plugin_system/bridged_node.rs`) hands each block to
+A sandboxed plugin's device (`plugin_system/bridged_node.rs`: `BridgedNode`
+for an effect, `BridgedInstrument` for a track instrument) hands each block to
 another process and **waits for the answer on the audio thread**.  This is the
 only wait allowed in the callback, and it is bounded:
 

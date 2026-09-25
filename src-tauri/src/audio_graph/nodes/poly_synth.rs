@@ -10,7 +10,7 @@
 
 use crate::audio_graph::buffer::AudioBuffer;
 use crate::audio_graph::midi::{MidiEventKind, MidiEventList};
-use crate::audio_graph::node::TransportInfo;
+use crate::audio_graph::node::{PrepareContext, TransportInfo};
 use crate::audio_graph::nodes::instrument::InstrumentDevice;
 
 const MAX_VOICES: usize = 16;
@@ -217,9 +217,10 @@ impl PolySynth {
 }
 
 impl InstrumentDevice for PolySynth {
-    fn prepare(&mut self, sample_rate: f32, _max_block_size: usize, num_channels: usize) {
+    fn prepare(&mut self, ctx: PrepareContext) {
+        let sample_rate = ctx.sample_rate;
         self.sample_rate = sample_rate;
-        self.num_channels = num_channels;
+        self.num_channels = ctx.num_channels;
         for v in &mut self.voices {
             if v.active {
                 let freq = Self::pitch_to_freq(v.pitch);

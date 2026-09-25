@@ -437,7 +437,9 @@ Statut : seuls les problèmes **encore présents dans le code** sont listés. Le
 > isolé dans son propre processus (bouton « Isoler »). Son plantage ou blocage
 > ne coupe que ce plugin (silence, signalé « Planté », relancé à la recompile)
 > — 8.1 à 8.4 sont résolus **pour les effets CLAP isolés**. Restent exposés :
-> les plugins non isolés (défaut, C-9), les VST3 et les instruments.
+> les plugins non isolés (défaut, C-9) et les VST3. Les instruments CLAP
+> s'isolent aussi depuis le 2026-09-25, via la préférence (« Tous » ou
+> « Toujours isoler »), sans choix par piste.
 
 ### 8.1 Aucune sandboxing — plugin in-process
 - **Référence audit** : P0-5

@@ -38,7 +38,7 @@ use crate::plugin_formats::vst3::ffi::{instantiate_processor, Vst3Library};
 use crate::plugin_formats::vst3::host::decode_plugin_id as vst3_decode_id;
 use crate::plugin_formats::vst3::wrapper::VstWrapperNode;
 use crate::plugin_system::bridge::{locate_bridge_exe, BridgedPlugin};
-use crate::plugin_system::bridged_node::BridgedNode;
+use crate::plugin_system::bridged_node::{BridgedInstrument, BridgedNode};
 use crate::plugin_system::crash_marker::{self, plugin_tag, PluginThread};
 use crate::plugin_system::instance::{PluginInstance, FFI_GATE_HARVEST_BUDGET};
 use crate::plugin_system::lifecycle::{transition, LifecycleError, LifecycleState};
@@ -515,15 +515,26 @@ impl PluginHost {
         Ok((instance, node))
     }
 
-    /// Start a bridge process hosting the CLAP plugin (ADR-015).  A plugin that
-    /// cannot start sandboxed is reported unavailable, never loaded in-process
-    /// instead: the user sandboxed it because it may crash the app.
     fn instantiate_bridged(
         &self,
         node_id: NodeId,
         plugin_id: &str,
         manifest: &PluginManifest,
     ) -> Result<(Arc<PluginInstance>, Box<dyn AudioNode>), HostError> {
+        let instance = self.create_bridged_instance(plugin_id, manifest)?;
+        let node: Box<dyn AudioNode> = Box::new(BridgedNode::new(node_id, Arc::clone(&instance)));
+        Ok((instance, node))
+    }
+
+    /// Start a bridge process hosting the CLAP plugin (ADR-015).  A plugin that
+    /// cannot start sandboxed is reported unavailable, never loaded in-process
+    /// instead: the user sandboxed it because it may crash the app.  Shared by
+    /// the effect and instrument paths, like [`create_clap_instance`].
+    fn create_bridged_instance(
+        &self,
+        plugin_id: &str,
+        manifest: &PluginManifest,
+    ) -> Result<Arc<PluginInstance>, HostError> {
         let bridge_exe = self
             .bridge_exe
             .as_ref()
@@ -536,9 +547,7 @@ impl PluginHost {
             .ok_or_else(|| HostError::InstantiationFailed("no DLL path in manifest".into()))?;
         let bridged = BridgedPlugin::spawn(bridge_exe, dll, clap_id)
             .map_err(|error| HostError::InstantiationFailed(format!("sandbox: {error}")))?;
-        let instance = PluginInstance::new_bridged(plugin_id, &manifest.name, &manifest.vendor, bridged);
-        let node: Box<dyn AudioNode> = Box::new(BridgedNode::new(node_id, Arc::clone(&instance)));
-        Ok((instance, node))
+        Ok(PluginInstance::new_bridged(plugin_id, &manifest.name, &manifest.vendor, bridged))
     }
 
     /// Load the DLL, create the CLAP plugin, and build the shared
@@ -605,13 +614,17 @@ impl PluginHost {
     ///
     /// Only CLAP is wired in this phase (C-3 variant-by-variant).  Other formats
     /// return `Err` so the caller falls back to the built-in `PolySynth`.
+    ///
+    /// Runs sandboxed per the isolation preference (ADR-015); a track instrument
+    /// has no per-placement choice of its own.
     pub fn instantiate_instrument(
         &mut self,
         instance_key: &str,
         plugin_id: &str,
     ) -> Result<Box<dyn InstrumentDevice>, HostError> {
-        let _running = crash_marker::enter(PluginThread::Control, plugin_tag(plugin_id));
-        let result = self.instantiate_instrument_placement(instance_key, plugin_id);
+        let sandboxed = self.isolates(plugin_id, false);
+        let _running = (!sandboxed).then(|| crash_marker::enter(PluginThread::Control, plugin_tag(plugin_id)));
+        let result = self.instantiate_instrument_placement(instance_key, plugin_id, sandboxed);
         match &result {
             Ok(_) => self.mark_available(instance_key),
             Err(error) => self.mark_unavailable(instance_key, plugin_id, UnavailableReason::from_error(error)),
@@ -623,6 +636,7 @@ impl PluginHost {
         &mut self,
         instance_key: &str,
         plugin_id: &str,
+        sandboxed: bool,
     ) -> Result<Box<dyn InstrumentDevice>, HostError> {
         // ADR-016: reuse the live CLAP instrument for this track instead of
         // rebuilding it, preserving its internal voice/DSP state across recompiles.
@@ -631,12 +645,13 @@ impl PluginHost {
                 let inst = &record.instance;
                 if inst.device_id == plugin_id
                     && inst.format == DeviceFormat::Clap
+                    && inst.is_sandboxed() == sandboxed
                     && !matches!(
                         inst.lifecycle(),
                         LifecycleState::Destroyed | LifecycleState::Error
                     )
                 {
-                    return Ok(Box::new(ClapInstrument::new(Arc::clone(inst))));
+                    return Ok(instrument_device(Arc::clone(inst)));
                 }
             }
         }
@@ -647,28 +662,29 @@ impl PluginHost {
             .ok_or_else(|| HostError::PluginNotFound(plugin_id.to_string()))?
             .clone();
 
-        match manifest.format {
-            DeviceFormat::Clap => {
-                let instance = self.create_clap_instance(plugin_id, &manifest)?;
-                let mut state = instance.lifecycle();
-                for target in [LifecycleState::Loaded, LifecycleState::Initialized, LifecycleState::Running] {
-                    state = transition(state, target).map_err(HostError::LifecycleError)?;
-                    instance.set_lifecycle(state);
-                }
-                let saved_state = self.restore_state_for(instance_key, plugin_id, &instance);
-                self.records.insert(
-                    instance_key.to_string(),
-                    DeviceRecord {
-                        instance: Arc::clone(&instance),
-                        saved_state,
-                    },
-                );
-                Ok(Box::new(ClapInstrument::new(instance)))
+        let instance = match manifest.format {
+            DeviceFormat::Clap if sandboxed => self.create_bridged_instance(plugin_id, &manifest)?,
+            DeviceFormat::Clap => self.create_clap_instance(plugin_id, &manifest)?,
+            other => {
+                return Err(HostError::UnsupportedFormat(format!(
+                    "instrument format {other:?} not supported yet (CLAP only in Phase 5c)"
+                )))
             }
-            other => Err(HostError::UnsupportedFormat(format!(
-                "instrument format {other:?} not supported yet (CLAP only in Phase 5c)"
-            ))),
+        };
+        let mut state = instance.lifecycle();
+        for target in [LifecycleState::Loaded, LifecycleState::Initialized, LifecycleState::Running] {
+            state = transition(state, target).map_err(HostError::LifecycleError)?;
+            instance.set_lifecycle(state);
         }
+        let saved_state = self.restore_state_for(instance_key, plugin_id, &instance);
+        self.records.insert(
+            instance_key.to_string(),
+            DeviceRecord {
+                instance: Arc::clone(&instance),
+                saved_state,
+            },
+        );
+        Ok(instrument_device(instance))
     }
 
     /// Resolve a device record by plugin **type** id (`device_id`).
@@ -912,6 +928,15 @@ pub struct PluginInfo {
 /// flag is ignored and the plugin stays in-process.
 fn runs_sandboxed(format: DeviceFormat, sandboxed: bool) -> bool {
     sandboxed && format == DeviceFormat::Clap
+}
+
+/// The instrument adapter for a live CLAP instance, in-process or sandboxed.
+fn instrument_device(instance: Arc<PluginInstance>) -> Box<dyn InstrumentDevice> {
+    if instance.is_sandboxed() {
+        Box::new(BridgedInstrument::new(instance))
+    } else {
+        Box::new(ClapInstrument::new(instance))
+    }
 }
 
 fn format_tag(fmt: DeviceFormat) -> String {

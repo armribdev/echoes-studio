@@ -1,6 +1,8 @@
 //! A minimal CLAP effect for the plugin-sandbox tests (ADR-015).
 //!
-//! Output = input × (gain + gain modulation).  Parameters:
+//! Output = input × (gain + gain modulation).  Without an audio input (hosted
+//! as an instrument), every sample is the held note's velocity × gain, and
+//! silence once it is released.  Parameters:
 //! - 0 `Gain`  (0..2, modulatable) — saved in the plugin state;
 //! - 1 `Hang`  — once set, every block sleeps for seconds (a hung plugin);
 //! - 2 `Crash` — once set, the next block aborts the process;
@@ -12,13 +14,14 @@ use std::ffi::{c_char, c_void, CStr};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use clap_ffi::{
-    ClapEventHeader, ClapEventParamGesture, ClapEventParamValue, ClapHost, ClapHostState,
-    ClapIStream, ClapInputEvents, ClapOStream, ClapOutputEvents, ClapParamInfo, ClapPlugin,
-    ClapPluginDescriptor, ClapPluginEntry, ClapPluginFactory, ClapPluginLatency, ClapPluginParams,
-    ClapPluginState, ClapProcess, ClapProcessStatus, CLAP_CORE_EVENT_SPACE,
-    CLAP_EVENT_PARAM_GESTURE_END, CLAP_EVENT_PARAM_MOD, CLAP_EVENT_PARAM_VALUE, CLAP_EXT_LATENCY,
-    CLAP_EXT_PARAMS, CLAP_EXT_STATE, CLAP_PARAM_IS_AUTOMATABLE, CLAP_PARAM_IS_MODULATABLE,
-    CLAP_PLUGIN_FACTORY_ID, CLAP_PROCESS_CONTINUE, CLAP_VERSION_1,
+    ClapEventHeader, ClapEventNote, ClapEventParamGesture, ClapEventParamValue, ClapHost,
+    ClapHostState, ClapIStream, ClapInputEvents, ClapOStream, ClapOutputEvents, ClapParamInfo,
+    ClapPlugin, ClapPluginDescriptor, ClapPluginEntry, ClapPluginFactory, ClapPluginLatency,
+    ClapPluginParams, ClapPluginState, ClapProcess, ClapProcessStatus, CLAP_CORE_EVENT_SPACE,
+    CLAP_EVENT_NOTE_OFF, CLAP_EVENT_NOTE_ON, CLAP_EVENT_PARAM_GESTURE_END, CLAP_EVENT_PARAM_MOD,
+    CLAP_EVENT_PARAM_VALUE, CLAP_EXT_LATENCY, CLAP_EXT_PARAMS, CLAP_EXT_STATE,
+    CLAP_PARAM_IS_AUTOMATABLE, CLAP_PARAM_IS_MODULATABLE, CLAP_PLUGIN_FACTORY_ID,
+    CLAP_PROCESS_CONTINUE, CLAP_VERSION_1,
 };
 
 pub const PLUGIN_ID: &str = "echoes.test.gain";
@@ -96,6 +99,7 @@ struct State {
     host: *const ClapHost,
     gain: AtomicU64,
     gain_modulation: f64,
+    note_velocity: f64,
     hang: AtomicBool,
     crash: bool,
     touch: bool,
@@ -113,6 +117,7 @@ unsafe extern "C" fn factory_create(
         host,
         gain: AtomicU64::new(1.0f64.to_bits()),
         gain_modulation: 0.0,
+        note_velocity: 0.0,
         hang: AtomicBool::new(false),
         crash: false,
         touch: false,
@@ -160,9 +165,24 @@ fn apply_event(state: &mut State, header: &ClapEventHeader) {
     if header.space_id != CLAP_CORE_EVENT_SPACE {
         return;
     }
-    if header.r#type != CLAP_EVENT_PARAM_VALUE && header.r#type != CLAP_EVENT_PARAM_MOD {
-        return;
+    match header.r#type {
+        CLAP_EVENT_NOTE_ON | CLAP_EVENT_NOTE_OFF => apply_note(state, header),
+        CLAP_EVENT_PARAM_VALUE | CLAP_EVENT_PARAM_MOD => apply_param(state, header),
+        _ => {}
     }
+}
+
+fn apply_note(state: &mut State, header: &ClapEventHeader) {
+    // SAFETY: both types share the `clap_event_note` layout.
+    let note = unsafe { &*(header as *const ClapEventHeader as *const ClapEventNote) };
+    state.note_velocity = if header.r#type == CLAP_EVENT_NOTE_ON {
+        note.velocity
+    } else {
+        0.0
+    };
+}
+
+fn apply_param(state: &mut State, header: &ClapEventHeader) {
     // SAFETY: both types share the `clap_event_param_value` layout.
     let event = unsafe { &*(header as *const ClapEventHeader as *const ClapEventParamValue) };
     let on = event.value >= 0.5;
@@ -251,7 +271,7 @@ unsafe extern "C" fn plugin_process(
     for channel in 0..output.channel_count as usize {
         let out = std::slice::from_raw_parts_mut(*output.data32.add(channel), frames);
         if process.audio_inputs_count == 0 {
-            out.fill(0.0);
+            out.fill(state.note_velocity as f32 * gain);
             continue;
         }
         let input = &*process.audio_inputs;

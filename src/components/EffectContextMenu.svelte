@@ -1,4 +1,4 @@
-<!-- EffectContextMenu.svelte — right-click menu of a plugin effect -->
+<!-- EffectContextMenu.svelte — right-click menu of a plugin effect or track instrument -->
 <script lang="ts">
 	import { createEventDispatcher, onMount } from 'svelte';
 	import { dismissable } from '../frontend/dismiss';
