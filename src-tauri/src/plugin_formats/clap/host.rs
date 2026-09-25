@@ -5,6 +5,10 @@ use std::path::{Path, PathBuf};
 use crate::plugin_system::registry::{PluginManifest, PluginRegistry};
 use crate::plugin_system::wrapper::DeviceFormat;
 
+/// Bound on vendor-subfolder recursion during a scan (avoids pathological
+/// symlink loops); real installs are 1-2 levels deep.
+const SCAN_MAX_DEPTH: usize = 4;
+
 pub struct ClapHost;
 
 impl ClapHost {
@@ -15,12 +19,18 @@ impl ClapHost {
     pub fn scan(&self, registry: &mut PluginRegistry) {
         for dir in clap_search_paths() {
             if dir.exists() {
-                self.scan_dir(&dir, registry);
+                self.scan_dir(&dir, registry, SCAN_MAX_DEPTH);
             }
         }
     }
 
-    fn scan_dir(&self, dir: &Path, registry: &mut PluginRegistry) {
+    /// Vendors commonly install into a subfolder of the CLAP directory (e.g.
+    /// `Common Files\CLAP\Surge Synth Team\Surge XT.clap`), so this recurses
+    /// a bounded number of levels rather than only scanning the top level.
+    fn scan_dir(&self, dir: &Path, registry: &mut PluginRegistry, depth: usize) {
+        if depth == 0 {
+            return;
+        }
         let entries = match std::fs::read_dir(dir) {
             Ok(e) => e,
             Err(_) => return,
@@ -32,6 +42,8 @@ impl ClapHost {
                 .map_or(false, |e| e.eq_ignore_ascii_case("clap"))
             {
                 self.register_clap(&path, registry);
+            } else if path.is_dir() {
+                self.scan_dir(&path, registry, depth - 1);
             }
         }
     }

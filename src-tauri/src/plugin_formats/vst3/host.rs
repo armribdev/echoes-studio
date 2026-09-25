@@ -5,6 +5,10 @@ use std::path::{Path, PathBuf};
 use crate::plugin_system::registry::{classify_instrument, PluginManifest, PluginRegistry};
 use crate::plugin_system::wrapper::DeviceFormat;
 
+/// Bound on vendor-subfolder recursion during a scan (avoids pathological
+/// symlink loops); real installs are 1-2 levels deep.
+const SCAN_MAX_DEPTH: usize = 4;
+
 pub struct Vst3Host;
 
 impl Vst3Host {
@@ -16,12 +20,18 @@ impl Vst3Host {
     pub fn scan(&self, registry: &mut PluginRegistry) {
         for dir in vst3_search_paths() {
             if dir.exists() {
-                self.scan_dir(&dir, registry);
+                self.scan_dir(&dir, registry, SCAN_MAX_DEPTH);
             }
         }
     }
 
-    fn scan_dir(&self, dir: &Path, registry: &mut PluginRegistry) {
+    /// Vendors commonly install into a subfolder of the VST3 directory, so
+    /// this recurses a bounded number of levels rather than only scanning
+    /// the top level.
+    fn scan_dir(&self, dir: &Path, registry: &mut PluginRegistry, depth: usize) {
+        if depth == 0 {
+            return;
+        }
         let entries = match std::fs::read_dir(dir) {
             Ok(e) => e,
             Err(_) => return,
@@ -31,7 +41,11 @@ impl Vst3Host {
             if let Some(ext) = path.extension() {
                 if ext.eq_ignore_ascii_case("vst3") {
                     self.register_bundle(&path, registry);
+                    continue;
                 }
+            }
+            if path.is_dir() {
+                self.scan_dir(&path, registry, depth - 1);
             }
         }
     }
