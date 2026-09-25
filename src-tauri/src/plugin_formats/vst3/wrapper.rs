@@ -323,6 +323,7 @@ impl AudioNode for VstWrapperNode {
             // Mark the shared instance as Error so reuse_existing won't hand the
             // corrupted handle to the next graph compile; forces a fresh FFI instantiation.
             self.instance.set_lifecycle(LifecycleState::Error);
+            crate::plugin_system::crash_marker::note_crash();
             return;
         }
         if r != K_RESULT_OK && !inputs.is_empty() {

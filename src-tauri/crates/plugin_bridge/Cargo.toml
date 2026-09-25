@@ -18,4 +18,4 @@ publish = false
 # `Win32_Security` is required because `CreateFileMappingW`'s signature
 # references `SECURITY_ATTRIBUTES` (we pass null), so windows-sys only exposes the
 # function when that feature is enabled.
-windows-sys = { version = "0.59", features = ["Win32_System_Memory", "Win32_Foundation", "Win32_Security"] }
+windows-sys = { version = "0.59", features = ["Win32_System_Memory", "Win32_Foundation", "Win32_Security", "Win32_System_Threading"] }

@@ -360,6 +360,7 @@ mod tests {
             sample_rate: 48_000.0,
             max_block_size: 64,
             num_channels: 2,
+            live: true,
         });
 
         let input = AudioBuffer::new(2, 64);
@@ -395,6 +396,7 @@ mod tests {
             sample_rate: 48_000.0,
             max_block_size: 64,
             num_channels: 2,
+            live: true,
         });
 
         let input = AudioBuffer::new(2, 64);
@@ -425,6 +427,7 @@ mod tests {
             sample_rate: 48_000.0,
             max_block_size: 64,
             num_channels: 2,
+            live: true,
         });
 
         let before_feedback = node.combs_l[0].feedback;

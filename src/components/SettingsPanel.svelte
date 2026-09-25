@@ -12,6 +12,7 @@
 	import Icon from './Icon.svelte';
 	import { dismissable } from '../frontend/dismiss';
 	import { listAudioDevices, applyAudioSettings, getSupportedSampleRates, getDeviceChannels, setActiveOutputChannels } from '../lib/audioBackend';
+	import { plugins } from '../stores/plugins';
 	import type { AudioDeviceInfo } from '../lib/audioBackend';
 	import { listen } from '@tauri-apps/api/event';
 	import type { UnlistenFn } from '@tauri-apps/api/event';
@@ -198,7 +199,6 @@
 			applyError = typeof err === 'string' ? err : 'Impossible d\'appliquer les paramètres audio.';
 			// Still save preferences so settings survive restart
 		}
-
 		preferences.set(draft);
 		settingsPanelOpen.set(false);
 		keyboardFocus.setTimeline();
@@ -216,7 +216,7 @@
 	}
 
 	function resetSection() {
-		if (activeSection === 'audio') draft.audio = { inputDevice: 'default', outputDevice: 'default', sampleRate: 48000, bufferSize: 256, inputChannels: 2, outputChannels: 2, masterSoftClip: false };
+		if (activeSection === 'audio') draft.audio = { inputDevice: 'default', outputDevice: 'default', sampleRate: 48000, bufferSize: 256, inputChannels: 2, outputChannels: 2, masterSoftClip: false, pluginIsolation: 'chosen', alwaysIsolated: [] };
 		else if (activeSection === 'project') draft.project = { defaultFolder: '', autoSave: true, autoSaveIntervalSec: 60, autoSaveMaxBackups: 5, defaultBpm: 120, defaultNumerator: 4, defaultDenominator: 4, exportBitDepth: 32, exportMp3Bitrate: 320 };
 		else if (activeSection === 'interface') draft.interface = { showMinimap: false, showArrangeGrid: false };
 		draft = { ...draft };
@@ -550,6 +550,46 @@
 					label="Limiteur master (soft clip)"
 					description="Désactivé : sortie linéaire. Activé : saturation douce tanh sur le signal sommé."
 				/>
+
+				<div class="divider"></div>
+				<h3 class="subsection-title">Isolation des plugins</h3>
+
+				<div class="field">
+					<span class="field-label">Plugins isolés</span>
+					<PillGroup
+						bind:value={draft.audio.pluginIsolation}
+						options={[
+							{ value: 'off', label: 'Aucun' },
+							{ value: 'chosen', label: 'Choisis' },
+							{ value: 'all', label: 'Tous' },
+						]}
+					/>
+					<span class="field-hint">
+						{#if draft.audio.pluginIsolation === 'off'}Tous les plugins tournent dans Echoes : le plus léger, mais un plugin qui plante ferme Echoes.
+						{:else if draft.audio.pluginIsolation === 'chosen'}Seuls les effets marqués « Isoler » tournent à part : leur plantage coupe le plugin, pas Echoes.
+						{:else}Chaque plugin tourne à part : un plantage ne ferme jamais Echoes, au prix d'un peu plus de CPU.{/if}
+						Plugins CLAP uniquement pour l'instant.
+					</span>
+				</div>
+
+				{#if draft.audio.pluginIsolation === 'chosen' && draft.audio.alwaysIsolated.length > 0}
+					<div class="field">
+						<span class="field-label">Toujours isolés</span>
+						<div class="isolated-list">
+							{#each draft.audio.alwaysIsolated as pluginId (pluginId)}
+								<span class="isolated-chip">
+									{$plugins.find((p) => p.id === pluginId)?.name ?? pluginId}
+									<button
+										type="button"
+										title="Ne plus toujours isoler ce plugin"
+										on:click={() => (draft.audio.alwaysIsolated = draft.audio.alwaysIsolated.filter((id) => id !== pluginId))}
+									>×</button>
+								</span>
+							{/each}
+						</div>
+						<span class="field-hint">Ajoutez un plugin avec un clic droit sur l'effet → « Toujours isoler ».</span>
+					</div>
+				{/if}
 
 				<div class="divider"></div>
 				<h3 class="subsection-title">Routage Master</h3>
@@ -1335,5 +1375,34 @@
 		margin-left: auto;
 		display: flex;
 		gap: 8px;
+	}
+
+	.isolated-list {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 5px;
+	}
+
+	.isolated-chip {
+		display: inline-flex;
+		align-items: center;
+		gap: 4px;
+		padding: 2px 4px 2px 8px;
+		font-size: 11px;
+		border: 1px solid rgba(34, 197, 94, 0.45);
+		background: rgba(34, 197, 94, 0.1);
+		border-radius: 10px;
+		color: #4ade80;
+
+		button {
+			border: none;
+			background: none;
+			color: inherit;
+			cursor: pointer;
+			font-size: 13px;
+			line-height: 1;
+			padding: 0 2px;
+			&:hover { color: #ff6b61; }
+		}
 	}
 </style>

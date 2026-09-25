@@ -1,62 +1,51 @@
-//! Spawn + control handshake for the out-of-process bridge (ADR-015, Phase 6d-ii).
+//! Process lifecycle and audio transport of the out-of-process bridge (ADR-015).
 //!
-//! This is the **off-real-time** lifecycle layer that sits between the OS mapping
-//! ([`SharedRegion`](crate::region::SharedRegion)) and the future real-time audio
-//! round-trip (6d-iv).  It answers a single question before any audio crosses the
-//! process boundary: *is the child process alive, attached to the right region,
-//! and speaking the right ABI?*
-//!
-//! ## Control block
-//!
-//! A small fixed header lives at the very start of the shared region, ahead of
-//! any audio/param/event rings (those are carved in later, from
-//! [`CONTROL_BYTES`] onward):
+//! ## Shared region
 //!
 //! ```text
-//!   magic:u32 | protocol:u32 | region_bytes:u32 | status:AtomicU32
+//!   [control block 16 B][audio-in ring][audio-out ring]
+//!   control block: magic:u32 | protocol:u32 | region_bytes:u32 | status:AtomicU32
 //! ```
 //!
-//! `status` is the only mutable field; everything else is stamped once by the
-//! owner before spawn.  The owner and the child hand the `status` atomic back and
-//! forth through the states below.
+//! The engine ([`BridgeProcess`], owner) creates the region, spawns
+//! `plugin_host_bridge`, and waits for the child ([`BridgePeer`]) to report
+//! `READY` — which it does only once its plugin is loaded.  Dropping the
+//! process sets `SHUTDOWN` and reaps the child.
 //!
-//! ## Handshake
+//! ## One audio block
 //!
-//! ```text
-//!   engine (owner)                         plugin_host_bridge (peer)
-//!   ─ create region                        ─ open region (--region-name)
-//!   ─ write magic/proto/bytes, INIT        ─ validate magic + protocol + bytes
-//!   ─ spawn child ───────────────────────► ─ on mismatch → ERROR, exit
-//!   ─ poll status (bounded) ◄───────────── ─ on ok        → READY
-//!   ─ READY ⇒ session live                 ─ poll status for SHUTDOWN
-//!   ─ Drop ⇒ SHUTDOWN ──────────────────►  ─ SHUTDOWN ⇒ return / exit 0
-//!   ─ reap child (grace, then kill)
-//! ```
-//!
-//! Everything here runs on the command thread (engine side) or in the child
-//! process — never the audio thread.  `std::thread::sleep` / `Instant` are fine.
+//! [`AudioPort::process_block`] (engine audio thread) writes the block into the
+//! audio-in ring, signals the wake event, and spins — bounded by a budget — for
+//! the reply with the same sequence.  The bridge's audio thread
+//! ([`BridgePeer::serve_audio`]) sleeps on that event, processes the block, and
+//! pushes the reply.  A block that misses the budget is silence; after
+//! [`DEAD_AFTER_CONSECUTIVE_TIMEOUTS`] such blocks in a row the port is dead and
+//! answers silence at once (a crashed or hung plugin stops costing the audio
+//! thread anything).
 
-use std::io;
+use std::cell::UnsafeCell;
+use std::ffi::OsString;
+use std::io::{self, BufReader};
 use std::path::Path;
-use std::process::{Child, Command};
+use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use std::sync::{mpsc, Mutex};
 use std::time::{Duration, Instant};
 
-use crate::protocol::{BlockHeader, BLOCK_HEADER_BYTES, BLOCK_MAGIC, BRIDGE_PROTOCOL_VERSION};
-use crate::region::SharedRegion;
+use crate::control::{self, Op, STATUS_OK};
+use crate::protocol::{
+    read_samples, write_samples, BlockHeader, BLOCK_HAS_INPUT, BLOCK_HEADER_BYTES, BLOCK_RESET,
+    BRIDGE_PROTOCOL_VERSION,
+};
+use crate::region::{SharedEvent, SharedRegion};
 use crate::shmem::{RingLayout, ShmemRing};
 
-/// Magic stamped in the control block — ASCII `"EsCt"` (Echoes Control), LE.
-/// Distinct from the per-block [`BLOCK_MAGIC`](crate::protocol::BLOCK_MAGIC).
+/// ASCII `"EsCt"` (Echoes Control), little-endian.
 pub const CONTROL_MAGIC: u32 = u32::from_le_bytes(*b"EsCt");
 
-/// Owner has stamped the header; child has not yet acknowledged.
 pub const STATUS_INIT: u32 = 0;
-/// Child opened the region, validated the ABI, and is ready to serve.
 pub const STATUS_READY: u32 = 1;
-/// Owner is asking the child to wind down and exit.
 pub const STATUS_SHUTDOWN: u32 = 2;
-/// Child rejected the handshake (magic / protocol / size mismatch).
 pub const STATUS_ERROR: u32 = 3;
 
 const OFF_MAGIC: usize = 0;
@@ -64,64 +53,86 @@ const OFF_PROTOCOL: usize = 4;
 const OFF_REGION_BYTES: usize = 8;
 const OFF_STATUS: usize = 12;
 
-/// Bytes reserved for the control block at the head of the region.  Audio / param
-/// / event rings (6d-iii) start at this offset.
+/// Bytes of the control block at the head of the region.
 pub const CONTROL_BYTES: usize = 16;
 
-// ── Region layout ───────────────────────────────────────────────────────────
+/// Messages each audio ring can hold.  A synchronous round-trip needs one; the
+/// rest absorbs a reply that arrives after its block timed out.
+const RING_SLOTS: usize = 4;
 
-/// Describes how a device's shared region is carved up, so the engine (owner)
-/// and the bridge (peer) agree on ring offsets and sizes (ADR-015, 6d-iii).
-///
-/// Layout: `[control block][audio-in ring][audio-out ring]`.  Param / event
-/// rings are a later micro-step (same pattern); they would extend this struct.
-#[derive(Debug, Clone, Copy)]
+/// Consecutive timed-out blocks after which the port is declared dead.  A
+/// one-off scheduling hiccup does not repeat eight blocks in a row.
+pub const DEAD_AFTER_CONSECUTIVE_TIMEOUTS: u32 = 8;
+
+/// How long the bridge's audio thread sleeps on the wake event before calling
+/// [`BridgeProcessor::idle`].
+const IDLE_WAIT_MS: u32 = 10;
+
+// ── Layout ──────────────────────────────────────────────────────────────────
+
+/// Shape of a device's shared region; engine and bridge must agree on it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BridgeLayout {
-    /// Frames per processing block.
-    pub block_size: u32,
-    /// Audio channel count (per block, interleaved-by-channel).
-    pub channel_count: u32,
-    /// Slot count for each audio ring (depth of in-flight blocks).
-    pub audio_capacity: usize,
+    /// Largest block the rings can carry.
+    pub max_frames: u32,
+    pub channels: u32,
+    /// Bytes reserved per block for events, in each direction.
+    pub event_capacity: u32,
 }
 
 impl BridgeLayout {
-    pub fn new(block_size: u32, channel_count: u32, audio_capacity: usize) -> Self {
+    pub fn new(max_frames: u32, channels: u32, event_capacity: u32) -> Self {
         BridgeLayout {
-            block_size,
-            channel_count,
-            audio_capacity,
+            max_frames,
+            channels,
+            event_capacity,
         }
     }
 
-    /// Ring shape for one audio ring: each slot holds a [`BlockHeader`] followed
-    /// by `channel_count * block_size` `f32` samples.
-    pub fn audio_ring_layout(&self) -> RingLayout {
-        let samples = self.channel_count as usize * self.block_size as usize;
-        RingLayout::new(self.audio_capacity, BLOCK_HEADER_BYTES + samples * 4)
+    /// Samples in the largest block (all channels).
+    pub fn max_samples(&self) -> usize {
+        self.max_frames as usize * self.channels as usize
     }
 
-    fn audio_ring_bytes(&self) -> usize {
-        self.audio_ring_layout().bytes_required()
+    /// Largest ring message: header + events + samples.
+    pub fn slot_size(&self) -> usize {
+        BLOCK_HEADER_BYTES + self.event_capacity as usize + self.max_samples() * 4
     }
 
-    /// Byte offset of the audio-in ring (engine → bridge) within the region.
-    pub fn audio_in_offset(&self) -> usize {
+    fn ring(&self) -> RingLayout {
+        RingLayout::new(RING_SLOTS, self.slot_size())
+    }
+
+    fn ring_bytes(&self) -> usize {
+        self.ring().bytes_required()
+    }
+
+    fn audio_in_offset(&self) -> usize {
         CONTROL_BYTES
     }
 
-    /// Byte offset of the audio-out ring (bridge → engine) within the region.
-    pub fn audio_out_offset(&self) -> usize {
-        CONTROL_BYTES + self.audio_ring_bytes()
+    fn audio_out_offset(&self) -> usize {
+        CONTROL_BYTES + self.ring_bytes()
     }
 
-    /// Total bytes the shared region must provide.
     pub fn region_bytes(&self) -> usize {
-        CONTROL_BYTES + 2 * self.audio_ring_bytes()
+        CONTROL_BYTES + 2 * self.ring_bytes()
+    }
+
+    /// Command-line arguments that pass this layout to the bridge.
+    pub fn to_args(&self) -> Vec<OsString> {
+        [
+            ("--max-frames", self.max_frames),
+            ("--channels", self.channels),
+            ("--event-capacity", self.event_capacity),
+        ]
+        .into_iter()
+        .flat_map(|(flag, value)| [OsString::from(flag), OsString::from(value.to_string())])
+        .collect()
     }
 }
 
-// ── Control-block accessors (operate on a raw region base) ──────────────────────
+// ── Control block ───────────────────────────────────────────────────────────
 
 /// # Safety
 /// `base` must point to at least [`CONTROL_BYTES`] writable, 4-byte-aligned bytes.
@@ -129,13 +140,13 @@ unsafe fn write_control_init(base: *mut u8, region_bytes: u32) {
     core::ptr::write_unaligned(base.add(OFF_MAGIC) as *mut u32, CONTROL_MAGIC);
     core::ptr::write_unaligned(base.add(OFF_PROTOCOL) as *mut u32, BRIDGE_PROTOCOL_VERSION);
     core::ptr::write_unaligned(base.add(OFF_REGION_BYTES) as *mut u32, region_bytes);
-    (*(base.add(OFF_STATUS) as *const AtomicU32)).store(STATUS_INIT, Ordering::Release);
+    status_cell(base).store(STATUS_INIT, Ordering::Release);
 }
 
-/// Returns `(magic, protocol, region_bytes)` — the immutable header fields.
+/// `(magic, protocol, region_bytes)`.
 ///
 /// # Safety
-/// Same requirements as [`write_control_init`]; the header must be initialised.
+/// Same as [`write_control_init`]; the header must be initialised.
 unsafe fn read_control(base: *mut u8) -> (u32, u32, u32) {
     (
         core::ptr::read_unaligned(base.add(OFF_MAGIC) as *const u32),
@@ -145,521 +156,658 @@ unsafe fn read_control(base: *mut u8) -> (u32, u32, u32) {
 }
 
 /// # Safety
-/// `base` must satisfy the requirements of [`write_control_init`].
-unsafe fn status_load(base: *mut u8) -> u32 {
-    (*(base.add(OFF_STATUS) as *const AtomicU32)).load(Ordering::Acquire)
+/// Same as [`write_control_init`].
+unsafe fn status_cell<'a>(base: *mut u8) -> &'a AtomicU32 {
+    &*(base.add(OFF_STATUS) as *const AtomicU32)
 }
 
-/// # Safety
-/// `base` must satisfy the requirements of [`write_control_init`].
-unsafe fn status_store(base: *mut u8, value: u32) {
-    (*(base.add(OFF_STATUS) as *const AtomicU32)).store(value, Ordering::Release);
+fn unique_region_name() -> String {
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    format!(
+        "echoes_bridge_{}_{}",
+        std::process::id(),
+        COUNTER.fetch_add(1, Ordering::Relaxed)
+    )
 }
 
-// ── Engine side ─────────────────────────────────────────────────────────────
+fn wake_event_name(region_name: &str) -> String {
+    format!("{region_name}_wake")
+}
 
-/// Outcome of one [`BridgeSession::process_block`] round-trip.
+// ── Engine side: audio port ─────────────────────────────────────────────────
+
+/// One block handed to the bridge.
+pub struct BlockRequest<'a> {
+    pub frames: usize,
+    /// Planar input (`channels × frames`), or `None` for a generator.
+    pub input: Option<&'a [f32]>,
+    /// Format-native events for this block (opaque here).
+    pub events: &'a [u8],
+    pub sequence: u64,
+    pub steady_time: i64,
+    /// Clear the plugin's DSP state before processing.
+    pub reset: bool,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BlockOutcome {
-    /// The bridge returned the processed block within the spin budget.
-    Processed,
-    /// The spin budget elapsed (or the input ring was full); silence inserted.
+    /// The bridge answered: `output` holds the processed block and the first
+    /// `event_bytes` of `out_events` its output events.
+    Processed { flags: u32, event_bytes: usize },
+    /// No answer within the budget: `output` is silence.
     TimedOut,
+    /// The watchdog condemned the port: `output` is silence.
+    Dead,
+    /// Not sent — another caller holds the port, or the block does not fit the
+    /// layout.  `output` is untouched; the caller decides what to play.
+    Skipped,
 }
 
-/// A live bridge child process, its shared region, and the engine-side ends of
-/// the audio rings (owner side).
-///
-/// Construction performs the full spawn + handshake; if it returns `Ok`, the
-/// child is attached and `READY`.  Dropping the session asks the child to shut
-/// down and reaps it.
-pub struct BridgeSession {
-    region: SharedRegion,
-    child: Child,
+struct PortScratch {
+    send: Vec<u8>,
+    recv: Vec<u8>,
+}
+
+/// Engine end of the audio rings.  Real-time safe: no allocation, no lock, no
+/// wait beyond the caller's budget; the only kernel call is the non-blocking
+/// wake signal.
+pub struct AudioPort {
     layout: BridgeLayout,
-    /// Engine → bridge audio ring (owner is the **producer**).
     audio_in: ShmemRing,
-    /// Bridge → engine audio ring (owner is the **consumer**).
     audio_out: ShmemRing,
-    /// Region name (kept for diagnostics).
-    name: String,
-    /// Preallocated scratch for [`process_block`](Self::process_block) — sized at
-    /// spawn so the audio-thread round-trip never allocates.
-    send_scratch: Vec<u8>,
-    recv_scratch: Vec<u8>,
-    /// Count of blocks that hit the spin-budget timeout (silence inserted).
-    /// Read off-RT for telemetry; bumped on the audio thread.
+    wake: SharedEvent,
+    /// Non-blocking try-lock: one block in flight at a time (the live graph and
+    /// an offline render may share a device).
+    busy: AtomicBool,
+    scratch: UnsafeCell<PortScratch>,
     timeout_count: AtomicU64,
-    /// Consecutive timeouts since the last successful block (audio-thread only).
-    consecutive_timeouts: u32,
-    /// Watchdog verdict: once a run of `DEAD_AFTER_CONSECUTIVE_TIMEOUTS` blocks
-    /// has timed out, the bridge is declared dead and every later block
-    /// short-circuits to silence (no spin).  Written by the audio thread, read
-    /// off-RT for UI/telemetry.
+    consecutive_timeouts: AtomicU32,
     dead: AtomicBool,
 }
 
-/// Consecutive timed-out blocks after which the watchdog declares the bridge
-/// dead (ADR-015, 6e).  Low enough that a crashed/hung plugin stops burning the
-/// spin budget within a few blocks; high enough that a one-off scheduling hiccup
-/// (which would not repeat consecutively) never trips it.
-pub const DEAD_AFTER_CONSECUTIVE_TIMEOUTS: u32 = 8;
+// SAFETY: the rings' producer/consumer ends and the scratch buffers are only
+// touched by the caller that won `busy`, so they are never used concurrently.
+unsafe impl Send for AudioPort {}
+unsafe impl Sync for AudioPort {}
 
-impl BridgeSession {
-    /// Create the region sized for `layout`, spawn the bridge in **passthrough**
-    /// mode (identity processor), and wait for `READY`.
-    pub fn spawn(
-        bridge_exe: &Path,
-        region_name: &str,
-        layout: &BridgeLayout,
-        ready_timeout: Duration,
-    ) -> io::Result<Self> {
-        Self::spawn_with(bridge_exe, region_name, layout, None, ready_timeout)
-    }
-
-    /// Like [`spawn`](Self::spawn), but the bridge loads and drives a **real CLAP
-    /// plugin** (`dll` + `plugin_id`) instead of the identity passthrough.
-    pub fn spawn_plugin(
-        bridge_exe: &Path,
-        region_name: &str,
-        layout: &BridgeLayout,
-        sample_rate: u32,
-        dll: &Path,
-        plugin_id: &str,
-        ready_timeout: Duration,
-    ) -> io::Result<Self> {
-        Self::spawn_with(
-            bridge_exe,
-            region_name,
-            layout,
-            Some((sample_rate, dll, plugin_id)),
-            ready_timeout,
-        )
-    }
-
-    /// Shared spawn + handshake.  `plugin = Some((sample_rate, dll, id))` selects
-    /// the real-plugin serve mode; `None` selects passthrough.
-    fn spawn_with(
-        bridge_exe: &Path,
-        region_name: &str,
-        layout: &BridgeLayout,
-        plugin: Option<(u32, &Path, &str)>,
-        ready_timeout: Duration,
-    ) -> io::Result<Self> {
-        let region_bytes = layout.region_bytes();
-        let region = SharedRegion::create(region_name, region_bytes)?;
+impl AudioPort {
+    /// Owner side: stamp the control block, initialise both rings in `region`
+    /// and create the wake event.
+    fn create(region: &SharedRegion, region_name: &str, layout: BridgeLayout) -> io::Result<Self> {
         let base = region.as_mut_ptr();
-
-        // Owner initialises every header (control + both ring headers) before the
-        // child can attach.  SAFETY: region is page-aligned and large enough.
+        let ring = layout.ring();
+        let bytes = ring.bytes_required();
+        // SAFETY: the region was sized from `layout` and is page-aligned.
         let (audio_in, audio_out) = unsafe {
-            write_control_init(base, region_bytes as u32);
-            let ring = layout.audio_ring_layout();
-            let bytes = ring.bytes_required();
-            let audio_in = ShmemRing::init(base.add(layout.audio_in_offset()), bytes, ring);
-            let audio_out = ShmemRing::init(base.add(layout.audio_out_offset()), bytes, ring);
-            (audio_in, audio_out)
+            write_control_init(base, layout.region_bytes() as u32);
+            (
+                ShmemRing::init(base.add(layout.audio_in_offset()), bytes, ring),
+                ShmemRing::init(base.add(layout.audio_out_offset()), bytes, ring),
+            )
         };
-
-        let mut command = Command::new(bridge_exe);
-        command
-            .arg("--region-name")
-            .arg(region_name)
-            .arg("--block-size")
-            .arg(layout.block_size.to_string())
-            .arg("--channels")
-            .arg(layout.channel_count.to_string())
-            .arg("--audio-capacity")
-            .arg(layout.audio_capacity.to_string());
-        if let Some((sample_rate, dll, plugin_id)) = plugin {
-            command
-                .arg("--sample-rate")
-                .arg(sample_rate.to_string())
-                .arg("--plugin-dll")
-                .arg(dll)
-                .arg("--plugin-id")
-                .arg(plugin_id);
-        }
-        let mut child = command.spawn()?;
-
-        let deadline = Instant::now() + ready_timeout;
-        loop {
-            // SAFETY: region stays mapped for the duration of this call.
-            match unsafe { status_load(base) } {
-                STATUS_READY => break,
-                STATUS_ERROR => {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    return Err(io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        "bridge rejected control handshake",
-                    ));
-                }
-                _ => {}
-            }
-            if let Some(exit) = child.try_wait()? {
-                return Err(io::Error::new(
-                    io::ErrorKind::BrokenPipe,
-                    format!("bridge exited before handshake ({exit})"),
-                ));
-            }
-            if Instant::now() >= deadline {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err(io::Error::new(
-                    io::ErrorKind::TimedOut,
-                    "bridge did not become ready within timeout",
-                ));
-            }
-            std::thread::sleep(Duration::from_millis(1));
-        }
-
-        let slot = layout.audio_ring_layout().slot_size;
-        Ok(BridgeSession {
-            region,
-            child,
-            layout: *layout,
+        let slot = layout.slot_size();
+        Ok(AudioPort {
+            layout,
             audio_in,
             audio_out,
-            name: region_name.to_string(),
-            send_scratch: vec![0u8; slot],
-            recv_scratch: vec![0u8; slot],
+            wake: SharedEvent::create(&wake_event_name(region_name))?,
+            busy: AtomicBool::new(false),
+            scratch: UnsafeCell::new(PortScratch {
+                send: vec![0; slot],
+                recv: vec![0; slot],
+            }),
             timeout_count: AtomicU64::new(0),
-            consecutive_timeouts: 0,
+            consecutive_timeouts: AtomicU32::new(0),
             dead: AtomicBool::new(false),
         })
     }
 
-    /// Enqueue one input block (`header` + interleaved `samples` bytes) for the
-    /// bridge to process.  Returns `false` if the input ring is full.
-    ///
-    /// **Off-RT helper** (allocates a small scratch buffer): the 6d-iv audio-thread
-    /// proxy will instead format the block into a preallocated scratch and use a
-    /// non-allocating two-part push.
-    pub fn try_send_input(&self, header: &BlockHeader, samples: &[u8]) -> bool {
-        let mut buf = Vec::with_capacity(BLOCK_HEADER_BYTES + samples.len());
-        buf.extend_from_slice(&header.to_bytes());
-        buf.extend_from_slice(samples);
-        self.audio_in.push(&buf)
+    pub fn layout(&self) -> &BridgeLayout {
+        &self.layout
     }
 
-    /// Dequeue one processed output block into `out` (header + samples bytes),
-    /// returning its length, or `None` if no block is ready.
-    pub fn try_recv_output(&self, out: &mut [u8]) -> Option<usize> {
-        self.audio_out.pop(out)
-    }
-
-    /// Byte size of one audio ring slot (header + samples) — the size `out` for
-    /// [`try_recv_output`](Self::try_recv_output) should provide.
-    pub fn audio_slot_size(&self) -> usize {
-        self.layout.audio_ring_layout().slot_size
-    }
-
-    /// **The real-time round-trip (ADR-015, 6d-iv).**  Send one planar `input`
-    /// block to the bridge, wait (bounded by `spin_budget`) for the processed
-    /// output, and write it into `output`.  On timeout, fill `output` with
-    /// silence and return [`BlockOutcome::TimedOut`].
+    /// Send one block and wait, at most `budget`, for its reply.
     ///
-    /// ## Real-time safety
-    ///
-    /// Designed to run on the audio thread:
-    /// - No allocation (formats into the preallocated `send_scratch`).
-    /// - No mutex / no syscall — only the lock-free SPSC rings and a bounded spin
-    ///   on the wall clock (`Instant::now()` is a userspace counter).
-    /// - It *does* wait, by design (out-of-process plugins cannot be synchronous
-    ///   otherwise), but the wait is **bounded**: past `spin_budget` it gives up,
-    ///   inserts silence, and bumps [`timeout_count`](Self::timeout_count) so a
-    ///   stalled/crashed bridge degrades to silence instead of an underrun.
-    /// - **Watchdog (6e):** after [`DEAD_AFTER_CONSECUTIVE_TIMEOUTS`] consecutive
-    ///   timeouts the bridge is marked [`is_dead`](Self::is_dead) and every later
-    ///   block returns silence **immediately** (no spin), so a crashed plugin
-    ///   stops costing CPU on the audio thread.
-    ///
-    /// `input` / `output` are planar (channel-major), length
-    /// `channel_count * block_size`.
+    /// `output` is planar (`channels × frames` samples used); `out_events`
+    /// receives the plugin's output events.
     pub fn process_block(
-        &mut self,
-        input: &[f32],
+        &self,
+        request: &BlockRequest,
         output: &mut [f32],
-        sequence: u64,
-        sample_rate: u32,
-        spin_budget: Duration,
+        out_events: &mut [u8],
+        budget: Duration,
     ) -> BlockOutcome {
-        let frames = self.layout.block_size as usize;
-        let nc = self.layout.channel_count as usize;
-        let n = nc * frames;
-
-        // Dead bridge or malformed buffers → silence, no round-trip.  A dead
-        // bridge does not re-enter the watchdog (it is already condemned).
-        if self.dead.load(Ordering::Relaxed) || input.len() < n || output.len() < n {
-            output.iter_mut().for_each(|s| *s = 0.0);
-            return BlockOutcome::TimedOut;
+        let samples = request.frames * self.layout.channels as usize;
+        let fits = request.frames <= self.layout.max_frames as usize
+            && output.len() >= samples
+            && request.events.len() <= self.layout.event_capacity as usize
+            && request.input.is_none_or(|input| input.len() >= samples);
+        if !fits {
+            return BlockOutcome::Skipped;
         }
-
-        let outcome = self.round_trip(input, output, sequence, sample_rate, spin_budget, n);
+        if self.dead.load(Ordering::Relaxed) {
+            output[..samples].fill(0.0);
+            return BlockOutcome::Dead;
+        }
+        if self.busy.swap(true, Ordering::Acquire) {
+            return BlockOutcome::Skipped;
+        }
+        // SAFETY: `busy` grants exclusive use of the scratch buffers.
+        let scratch = unsafe { &mut *self.scratch.get() };
+        let outcome = self.round_trip(request, &mut output[..samples], out_events, budget, scratch);
+        self.busy.store(false, Ordering::Release);
         self.note_outcome(outcome);
         outcome
     }
 
-    /// One send → bounded-spin → receive cycle.  Returns the outcome; the caller
-    /// records it via [`note_outcome`](Self::note_outcome).
     fn round_trip(
-        &mut self,
-        input: &[f32],
+        &self,
+        request: &BlockRequest,
         output: &mut [f32],
-        sequence: u64,
-        sample_rate: u32,
-        spin_budget: Duration,
-        n: usize,
+        out_events: &mut [u8],
+        budget: Duration,
+        scratch: &mut PortScratch,
     ) -> BlockOutcome {
-        // Drain any stale outputs left by a previous timed-out block, so the
-        // block we are about to read pairs with the one we are about to send.
-        while self.audio_out.pop(&mut self.recv_scratch).is_some() {}
+        // Replies to blocks that already timed out.
+        while self.audio_out.pop(&mut scratch.recv).is_some() {}
 
-        // Format header + planar samples into the preallocated scratch (no alloc).
-        let header = BlockHeader {
-            magic: BLOCK_MAGIC,
-            version: BRIDGE_PROTOCOL_VERSION,
-            block_size: self.layout.block_size,
-            channel_count: self.layout.channel_count,
-            sample_rate,
-            _reserved: 0,
-            sequence,
+        let mut flags = if request.input.is_some() {
+            BLOCK_HAS_INPUT
+        } else {
+            0
         };
-        self.send_scratch[..BLOCK_HEADER_BYTES].copy_from_slice(&header.to_bytes());
-        for (sample, dst) in input[..n]
-            .iter()
-            .zip(self.send_scratch[BLOCK_HEADER_BYTES..].chunks_exact_mut(4))
-        {
-            dst.copy_from_slice(&sample.to_le_bytes());
+        if request.reset {
+            flags |= BLOCK_RESET;
         }
-        let send_len = BLOCK_HEADER_BYTES + n * 4;
-        if !self.audio_in.push(&self.send_scratch[..send_len]) {
-            output[..n].iter_mut().for_each(|s| *s = 0.0);
+        let header = BlockHeader::new(
+            request.frames as u32,
+            self.layout.channels,
+            flags,
+            request.events.len() as u32,
+            request.sequence,
+            request.steady_time,
+        );
+        let events_end = BLOCK_HEADER_BYTES + request.events.len();
+        scratch.send[..BLOCK_HEADER_BYTES].copy_from_slice(&header.to_bytes());
+        scratch.send[BLOCK_HEADER_BYTES..events_end].copy_from_slice(request.events);
+        let mut len = events_end;
+        if let Some(input) = request.input {
+            let end = len + output.len() * 4;
+            write_samples(&input[..output.len()], &mut scratch.send[len..end]);
+            len = end;
+        }
+        if !self.audio_in.push(&scratch.send[..len]) {
+            output.fill(0.0);
             return BlockOutcome::TimedOut;
         }
+        self.wake.signal();
 
-        // Bounded spin for the processed output.
-        let deadline = Instant::now() + spin_budget;
+        let deadline = Instant::now() + budget;
         loop {
-            if let Some(m) = self.audio_out.pop(&mut self.recv_scratch) {
-                let body = &self.recv_scratch[BLOCK_HEADER_BYTES..m];
-                let count = (body.len() / 4).min(n);
-                for (slot, chunk) in output[..count].iter_mut().zip(body.chunks_exact(4)) {
-                    *slot = f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
+            if let Some(received) = self.audio_out.pop(&mut scratch.recv) {
+                let message = &scratch.recv[..received];
+                match BlockHeader::from_bytes(message) {
+                    Some(reply) if reply.sequence == request.sequence => {
+                        return read_reply(&reply, message, output, out_events);
+                    }
+                    _ => continue,
                 }
-                // Zero any tail the bridge did not fill.
-                output[count..n].iter_mut().for_each(|s| *s = 0.0);
-                return BlockOutcome::Processed;
             }
             if Instant::now() >= deadline {
-                output[..n].iter_mut().for_each(|s| *s = 0.0);
+                output.fill(0.0);
                 return BlockOutcome::TimedOut;
             }
             std::hint::spin_loop();
         }
     }
 
-    /// Watchdog bookkeeping: a success clears the consecutive-timeout run; a
-    /// timeout extends it and, past the threshold, condemns the bridge.
-    fn note_outcome(&mut self, outcome: BlockOutcome) {
+    fn note_outcome(&self, outcome: BlockOutcome) {
         match outcome {
-            BlockOutcome::Processed => self.consecutive_timeouts = 0,
+            BlockOutcome::Processed { .. } => self.consecutive_timeouts.store(0, Ordering::Relaxed),
             BlockOutcome::TimedOut => {
                 self.timeout_count.fetch_add(1, Ordering::Relaxed);
-                self.consecutive_timeouts = self.consecutive_timeouts.saturating_add(1);
-                if self.consecutive_timeouts >= DEAD_AFTER_CONSECUTIVE_TIMEOUTS {
+                let run = self.consecutive_timeouts.fetch_add(1, Ordering::Relaxed) + 1;
+                if run >= DEAD_AFTER_CONSECUTIVE_TIMEOUTS {
                     self.dead.store(true, Ordering::Relaxed);
                 }
             }
+            BlockOutcome::Dead | BlockOutcome::Skipped => {}
         }
     }
 
-    /// Number of blocks that timed out (degraded to silence) since spawn.
+    /// Blocks that missed their budget since spawn.
     pub fn timeout_count(&self) -> u64 {
         self.timeout_count.load(Ordering::Relaxed)
     }
 
-    /// Whether the watchdog has condemned the bridge (ADR-015, 6e).  Once dead,
-    /// every `process_block` returns silence immediately.  Readable off-RT for
-    /// UI/telemetry ("plugin disabled").
+    /// Whether the watchdog condemned the port.  Final for this process.
     pub fn is_dead(&self) -> bool {
         self.dead.load(Ordering::Relaxed)
     }
+}
 
-    /// The region's layout.
-    pub fn layout(&self) -> &BridgeLayout {
-        &self.layout
-    }
-
-    /// The region name.
-    pub fn name(&self) -> &str {
-        &self.name
+fn read_reply(
+    reply: &BlockHeader,
+    message: &[u8],
+    output: &mut [f32],
+    out_events: &mut [u8],
+) -> BlockOutcome {
+    let events_end = (BLOCK_HEADER_BYTES + reply.event_bytes as usize).min(message.len());
+    let events = &message[BLOCK_HEADER_BYTES..events_end];
+    let event_bytes = events.len().min(out_events.len());
+    out_events[..event_bytes].copy_from_slice(&events[..event_bytes]);
+    read_samples(&message[events_end..], output);
+    BlockOutcome::Processed {
+        flags: reply.flags,
+        event_bytes,
     }
 }
 
-impl Drop for BridgeSession {
-    fn drop(&mut self) {
-        // Ask the child to wind down, then reap it: grace period, then kill.
-        // SAFETY: region is still mapped until after this Drop completes.
-        unsafe { status_store(self.region.as_mut_ptr(), STATUS_SHUTDOWN) };
+// ── Engine side: process + control channel ──────────────────────────────────
 
+type Reply = io::Result<(u8, Vec<u8>)>;
+
+struct ControlChannel {
+    stdin: Option<ChildStdin>,
+    replies: mpsc::Receiver<Reply>,
+    /// A request that timed out leaves a late reply in the pipe; every later
+    /// reply would be off by one, so the channel is abandoned.
+    broken: bool,
+}
+
+impl ControlChannel {
+    fn request(&mut self, op: Op, payload: &[u8], timeout: Duration) -> io::Result<Vec<u8>> {
+        if self.broken {
+            return Err(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                "bridge control channel closed",
+            ));
+        }
+        let result = self.exchange(op, payload, timeout);
+        if matches!(&result, Err(e) if e.kind() != io::ErrorKind::Other) {
+            self.broken = true;
+        }
+        result
+    }
+
+    fn exchange(&mut self, op: Op, payload: &[u8], timeout: Duration) -> io::Result<Vec<u8>> {
+        let stdin = self
+            .stdin
+            .as_mut()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::BrokenPipe, "bridge stdin closed"))?;
+        control::write_frame(stdin, op as u8, payload)?;
+        match self.replies.recv_timeout(timeout) {
+            Ok(Ok((STATUS_OK, reply))) => Ok(reply),
+            Ok(Ok((_, message))) => Err(io::Error::other(
+                String::from_utf8_lossy(&message).into_owned(),
+            )),
+            Ok(Err(error)) => Err(error),
+            Err(mpsc::RecvTimeoutError::Timeout) => Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                format!("bridge did not answer {op:?} within {timeout:?}"),
+            )),
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                Err(io::Error::new(io::ErrorKind::BrokenPipe, "bridge exited"))
+            }
+        }
+    }
+}
+
+/// A running `plugin_host_bridge` child: its audio port and control channel.
+pub struct BridgeProcess {
+    audio: AudioPort,
+    control: Mutex<ControlChannel>,
+    child: Child,
+    region: SharedRegion,
+}
+
+impl BridgeProcess {
+    /// Create the region, spawn the bridge with `extra_args` (which select the
+    /// plugin), and wait until it reports `READY`.
+    pub fn spawn(
+        bridge_exe: &Path,
+        layout: BridgeLayout,
+        extra_args: &[OsString],
+        ready_timeout: Duration,
+    ) -> io::Result<Self> {
+        let region_name = unique_region_name();
+        let region = SharedRegion::create(&region_name, layout.region_bytes())?;
+        let audio = AudioPort::create(&region, &region_name, layout)?;
+
+        let mut command = Command::new(bridge_exe);
+        command
+            .arg("--region-name")
+            .arg(&region_name)
+            .args(layout.to_args())
+            .args(extra_args)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::inherit());
+        hide_console_window(&mut command);
+        let mut child = command.spawn()?;
+
+        let stdout = child.stdout.take().expect("stdout is piped");
+        let (sender, replies) = mpsc::channel::<Reply>();
+        std::thread::Builder::new()
+            .name("bridge-control-reader".into())
+            .spawn(move || {
+                let mut stdout = BufReader::new(stdout);
+                loop {
+                    let reply = control::read_frame(&mut stdout);
+                    let failed = reply.is_err();
+                    if sender.send(reply).is_err() || failed {
+                        return;
+                    }
+                }
+            })?;
+
+        let control = Mutex::new(ControlChannel {
+            stdin: child.stdin.take(),
+            replies,
+            broken: false,
+        });
+        let process = BridgeProcess {
+            audio,
+            control,
+            child,
+            region,
+        };
+        process.wait_ready(ready_timeout)?;
+        Ok(process)
+    }
+
+    fn status(&self) -> &AtomicU32 {
+        // SAFETY: the region outlives `self` and starts with the control block.
+        unsafe { status_cell(self.region.as_mut_ptr()) }
+    }
+
+    fn wait_ready(&self, timeout: Duration) -> io::Result<()> {
+        let deadline = Instant::now() + timeout;
+        loop {
+            match self.status().load(Ordering::Acquire) {
+                STATUS_READY => return Ok(()),
+                STATUS_ERROR => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "bridge failed to start",
+                    ))
+                }
+                _ => {}
+            }
+            if Instant::now() >= deadline {
+                return Err(io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    "bridge did not become ready",
+                ));
+            }
+            std::thread::sleep(Duration::from_millis(2));
+        }
+    }
+
+    pub fn audio(&self) -> &AudioPort {
+        &self.audio
+    }
+
+    /// Off-RT request/response on the control channel.  A timeout or a dead
+    /// bridge closes the channel for good.
+    pub fn request(&self, op: Op, payload: &[u8], timeout: Duration) -> io::Result<Vec<u8>> {
+        self.control
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .request(op, payload, timeout)
+    }
+
+    /// OS process id of the bridge.
+    pub fn process_id(&self) -> u32 {
+        self.child.id()
+    }
+}
+
+impl Drop for BridgeProcess {
+    fn drop(&mut self) {
+        self.status().store(STATUS_SHUTDOWN, Ordering::Release);
+        self.audio.wake.signal();
+        if let Ok(control) = self.control.get_mut() {
+            control.stdin = None;
+        }
         let deadline = Instant::now() + Duration::from_millis(1000);
         loop {
             match self.child.try_wait() {
-                Ok(Some(_)) => break,
+                Ok(Some(_)) => return,
                 Ok(None) if Instant::now() < deadline => {
-                    std::thread::sleep(Duration::from_millis(2));
+                    std::thread::sleep(Duration::from_millis(2))
                 }
                 _ => {
                     let _ = self.child.kill();
                     let _ = self.child.wait();
-                    break;
+                    return;
                 }
             }
         }
     }
 }
 
-// ── Bridge side: the processing seam ────────────────────────────────────────
-
-/// Per-block context handed to a [`BridgeProcessor`], decoded from the incoming
-/// [`BlockHeader`].
-#[derive(Debug, Clone, Copy)]
-pub struct BlockContext {
-    pub block_size: u32,
-    pub channel_count: u32,
-    pub sample_rate: u32,
+#[cfg(windows)]
+fn hide_console_window(command: &mut Command) {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    command.creation_flags(CREATE_NO_WINDOW);
 }
 
-/// The DSP unit the bridge process loop drives, one block at a time.
-///
-/// This is the seam a **real plugin slots into**: 6d-iii-b-2 implements it for a
-/// loaded VST3/CLAP plugin (its `process()`), keeping the loop and the transport
-/// unchanged.  `input` and `output` are interleaved-by-channel `f32`, length
-/// `channel_count * block_size`.
+#[cfg(not(windows))]
+fn hide_console_window(_: &mut Command) {}
+
+// ── Bridge side ─────────────────────────────────────────────────────────────
+
+/// One block as the bridge's processor sees it.
+pub struct BlockContext<'a> {
+    pub frames: usize,
+    pub channels: usize,
+    pub has_input: bool,
+    pub reset: bool,
+    pub sequence: u64,
+    pub steady_time: i64,
+    /// The engine's events for this block.
+    pub events: &'a [u8],
+}
+
+/// Fixed-capacity sink for a block's output events.
+pub struct EventWriter<'a> {
+    buf: &'a mut [u8],
+    len: usize,
+}
+
+impl<'a> EventWriter<'a> {
+    pub fn new(buf: &'a mut [u8]) -> Self {
+        EventWriter { buf, len: 0 }
+    }
+
+    /// Appends one event; `false` (dropped) when it does not fit.
+    pub fn push(&mut self, event: &[u8]) -> bool {
+        let end = self.len + event.len();
+        let Some(slot) = self.buf.get_mut(self.len..end) else {
+            return false;
+        };
+        slot.copy_from_slice(event);
+        self.len = end;
+        true
+    }
+
+    pub fn len(&self) -> usize {
+        self.len
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+}
+
+/// The DSP the bridge's audio loop drives.
 pub trait BridgeProcessor {
-    /// Process one block: read `input`, write `output` (same length).
-    fn process(&mut self, input: &[f32], output: &mut [f32], ctx: &BlockContext);
+    /// Process one block; `input`/`output` are planar.  Returns `BLOCK_*` reply
+    /// flags.
+    fn process(
+        &mut self,
+        block: &BlockContext,
+        input: &[f32],
+        output: &mut [f32],
+        out_events: &mut EventWriter,
+    ) -> u32;
+
+    /// Called on the audio thread when no block arrived for a while.
+    fn idle(&mut self) {}
 }
 
-/// Identity stand-in: copies input to output unchanged.  This is what runs until
-/// 6d-iii-b-2 loads a real plugin; it makes the transport + loop verifiable
-/// without depending on any installed plugin.
-pub struct PassthroughProcessor;
-
-impl BridgeProcessor for PassthroughProcessor {
-    fn process(&mut self, input: &[f32], output: &mut [f32], _ctx: &BlockContext) {
-        let n = input.len().min(output.len());
-        output[..n].copy_from_slice(&input[..n]);
-    }
+/// Bridge end of a device's region.  `status` may be read from any thread; the
+/// rings belong to the single thread running [`serve_audio`](Self::serve_audio).
+pub struct BridgePeer {
+    layout: BridgeLayout,
+    audio_in: ShmemRing,
+    audio_out: ShmemRing,
+    wake: SharedEvent,
+    serving: AtomicBool,
+    region: SharedRegion,
 }
 
-// ── Bridge side: the process loop ───────────────────────────────────────────
+// SAFETY: the rings are only used inside `serve_audio`, which `serving`
+// restricts to one thread; everything else is atomics or immutable.
+unsafe impl Send for BridgePeer {}
+unsafe impl Sync for BridgePeer {}
 
-/// Bridge-side process loop (ADR-015, 6d-iii): open the region described by
-/// `layout`, validate the control block, attach the audio rings, signal `READY`,
-/// then run [`PassthroughProcessor`] over each block until the owner sets
-/// `SHUTDOWN`.
-///
-/// The processor is the identity stand-in; 6d-iii-b-2 swaps it for a real loaded
-/// plugin via [`serve_with`].  Returns once `SHUTDOWN` is observed, or an error
-/// if the handshake fails.
-pub fn serve(region_name: &str, layout: &BridgeLayout) -> io::Result<()> {
-    serve_with(region_name, layout, &mut PassthroughProcessor)
-}
-
-/// Like [`serve`], but with a caller-supplied processor.  6d-iii-b-2 passes a
-/// real plugin processor here; the loop and transport are identical.
-pub fn serve_with(
-    region_name: &str,
-    layout: &BridgeLayout,
-    processor: &mut dyn BridgeProcessor,
-) -> io::Result<()> {
-    let region_bytes = layout.region_bytes();
-    let region = SharedRegion::open(region_name, region_bytes)?;
-    let base = region.as_mut_ptr();
-
-    // SAFETY: the owner created and initialised the region before spawning us.
-    let (magic, protocol, declared_bytes) = unsafe { read_control(base) };
-    if magic != CONTROL_MAGIC
-        || protocol != BRIDGE_PROTOCOL_VERSION
-        || declared_bytes as usize != region_bytes
-    {
-        unsafe { status_store(base, STATUS_ERROR) };
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!(
-                "control mismatch: magic={magic:#x} proto={protocol} bytes={declared_bytes} \
-                 (expected magic={CONTROL_MAGIC:#x} proto={BRIDGE_PROTOCOL_VERSION} \
-                 bytes={region_bytes})"
-            ),
-        ));
-    }
-
-    // Attach the audio rings the owner initialised.  Owner is the producer of
-    // audio-in (we consume) and the consumer of audio-out (we produce).
-    // SAFETY: offsets/sizes come from the shared layout; headers are valid.
-    let ring = layout.audio_ring_layout();
-    let bytes = ring.bytes_required();
-    let (audio_in, audio_out) = unsafe {
-        (
-            ShmemRing::attach(base.add(layout.audio_in_offset()), bytes),
-            ShmemRing::attach(base.add(layout.audio_out_offset()), bytes),
-        )
-    };
-
-    unsafe { status_store(base, STATUS_READY) };
-
-    // Preallocated buffers — no allocation inside the loop.  The byte scratch
-    // can't be cast to `&[f32]` (a `Vec<u8>` is only 1-aligned), so samples are
-    // copied through the f32 buffers; copies are RT-safe (fixed-size, no alloc).
-    let frames = (layout.channel_count as usize) * (layout.block_size as usize);
-    let mut scratch = vec![0u8; audio_in.slot_size()];
-    let mut in_samples = vec![0.0f32; frames];
-    let mut out_samples = vec![0.0f32; frames];
-
-    loop {
-        if unsafe { status_load(base) } == STATUS_SHUTDOWN {
-            return Ok(());
-        }
-        let Some(n) = audio_in.pop(&mut scratch) else {
-            std::thread::sleep(Duration::from_micros(200));
-            continue;
-        };
-
-        // Torn-region guard: a valid block starts with a `BlockHeader` whose
-        // magic matches.  Drop malformed blocks rather than process garbage.
-        let Some(header) = BlockHeader::from_bytes(&scratch[..n]) else {
-            continue;
-        };
-        if header.magic != BLOCK_MAGIC {
-            continue;
-        }
-
-        let body = &scratch[BLOCK_HEADER_BYTES..n];
-        let count = (body.len() / 4).min(frames);
-        for (slot, chunk) in in_samples[..count].iter_mut().zip(body.chunks_exact(4)) {
-            *slot = f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
-        }
-
-        let ctx = BlockContext {
-            block_size: header.block_size,
-            channel_count: header.channel_count,
-            sample_rate: header.sample_rate,
-        };
-        processor.process(&in_samples[..count], &mut out_samples[..count], &ctx);
-
-        // Re-serialise: echo the header, then the processed samples.  Reuse the
-        // scratch buffer in place (it is large enough for header + samples).
-        scratch[..BLOCK_HEADER_BYTES].copy_from_slice(&header.to_bytes());
-        for (sample, dst) in out_samples[..count]
-            .iter()
-            .zip(scratch[BLOCK_HEADER_BYTES..].chunks_exact_mut(4))
+impl BridgePeer {
+    /// Open the region the engine created and validate its control block.  On
+    /// a mismatch the engine is told (`ERROR`) before the error returns.
+    pub fn open(region_name: &str, layout: BridgeLayout) -> io::Result<Self> {
+        let region = SharedRegion::open(region_name, layout.region_bytes())?;
+        let base = region.as_mut_ptr();
+        // SAFETY: the owner initialised the control block before spawning us.
+        let (magic, protocol, declared) = unsafe { read_control(base) };
+        if magic != CONTROL_MAGIC
+            || protocol != BRIDGE_PROTOCOL_VERSION
+            || declared as usize != layout.region_bytes()
         {
-            dst.copy_from_slice(&sample.to_le_bytes());
+            unsafe { status_cell(base) }.store(STATUS_ERROR, Ordering::Release);
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "control mismatch: magic={magic:#x} protocol={protocol} bytes={declared}, \
+                     expected protocol={BRIDGE_PROTOCOL_VERSION} bytes={}",
+                    layout.region_bytes()
+                ),
+            ));
         }
-        audio_out.push(&scratch[..BLOCK_HEADER_BYTES + count * 4]);
+        let ring_bytes = layout.ring_bytes();
+        // SAFETY: offsets and sizes come from the shared layout.
+        let (audio_in, audio_out) = unsafe {
+            (
+                ShmemRing::attach(base.add(layout.audio_in_offset()), ring_bytes),
+                ShmemRing::attach(base.add(layout.audio_out_offset()), ring_bytes),
+            )
+        };
+        Ok(BridgePeer {
+            layout,
+            audio_in,
+            audio_out,
+            wake: SharedEvent::open(&wake_event_name(region_name))?,
+            serving: AtomicBool::new(false),
+            region,
+        })
+    }
+
+    fn status(&self) -> &AtomicU32 {
+        // SAFETY: see `BridgeProcess::status`.
+        unsafe { status_cell(self.region.as_mut_ptr()) }
+    }
+
+    pub fn signal_ready(&self) {
+        self.status().store(STATUS_READY, Ordering::Release);
+    }
+
+    pub fn signal_error(&self) {
+        self.status().store(STATUS_ERROR, Ordering::Release);
+    }
+
+    pub fn shutdown_requested(&self) -> bool {
+        self.status().load(Ordering::Acquire) == STATUS_SHUTDOWN
+    }
+
+    /// Stop the audio loop from inside the bridge (e.g. the engine went away
+    /// without asking).
+    pub fn request_shutdown(&self) {
+        self.status().store(STATUS_SHUTDOWN, Ordering::Release);
+        self.wake.signal();
+    }
+
+    /// The audio loop: process each block the engine sends until it asks for
+    /// shutdown.  Call from one thread only.
+    pub fn serve_audio(&self, processor: &mut dyn BridgeProcessor) {
+        assert!(
+            !self.serving.swap(true, Ordering::AcqRel),
+            "BridgePeer::serve_audio runs on a single thread"
+        );
+        let layout = self.layout;
+        let slot = layout.slot_size();
+        let event_capacity = layout.event_capacity as usize;
+        let mut received = vec![0u8; slot];
+        let mut reply = vec![0u8; slot];
+        let mut input = vec![0.0f32; layout.max_samples()];
+        let mut output = vec![0.0f32; layout.max_samples()];
+
+        while !self.shutdown_requested() {
+            let Some(length) = self.audio_in.pop(&mut received) else {
+                if !self.wake.wait(IDLE_WAIT_MS) {
+                    processor.idle();
+                }
+                continue;
+            };
+            let message = &received[..length];
+            let Some(header) = BlockHeader::from_bytes(message) else {
+                continue;
+            };
+            let frames = (header.frames as usize).min(layout.max_frames as usize);
+            let samples = frames * layout.channels as usize;
+            let events_end = (BLOCK_HEADER_BYTES + header.event_bytes as usize).min(length);
+            let has_input = header.flags & BLOCK_HAS_INPUT != 0;
+            if has_input {
+                read_samples(&message[events_end..], &mut input[..samples]);
+            } else {
+                input[..samples].fill(0.0);
+            }
+            output[..samples].fill(0.0);
+
+            let block = BlockContext {
+                frames,
+                channels: layout.channels as usize,
+                has_input,
+                reset: header.flags & BLOCK_RESET != 0,
+                sequence: header.sequence,
+                steady_time: header.steady_time,
+                events: &message[BLOCK_HEADER_BYTES..events_end],
+            };
+            let out_events = &mut reply[BLOCK_HEADER_BYTES..BLOCK_HEADER_BYTES + event_capacity];
+            let mut writer = EventWriter::new(out_events);
+            let flags = processor.process(
+                &block,
+                &input[..samples],
+                &mut output[..samples],
+                &mut writer,
+            );
+            let event_bytes = writer.len();
+
+            let reply_header = BlockHeader::new(
+                frames as u32,
+                layout.channels,
+                flags,
+                event_bytes as u32,
+                header.sequence,
+                header.steady_time,
+            );
+            reply[..BLOCK_HEADER_BYTES].copy_from_slice(&reply_header.to_bytes());
+            let samples_start = BLOCK_HEADER_BYTES + event_bytes;
+            let end = samples_start + samples * 4;
+            write_samples(&output[..samples], &mut reply[samples_start..end]);
+            self.audio_out.push(&reply[..end]);
+        }
     }
 }
 
@@ -668,71 +816,176 @@ mod tests {
     use super::*;
     use crate::shmem::OwnedRegion;
 
-    // The control-block layout is region-agnostic, so it can be exercised on a
-    // plain heap region on every platform — no OS mapping or child process.
     #[test]
     fn control_block_roundtrips_on_heap_region() {
         let region = OwnedRegion::new(CONTROL_BYTES);
         let base = region.as_mut_ptr();
-
-        unsafe { write_control_init(base, CONTROL_BYTES as u32) };
-        let (magic, proto, bytes) = unsafe { read_control(base) };
-        assert_eq!(magic, CONTROL_MAGIC);
-        assert_eq!(proto, BRIDGE_PROTOCOL_VERSION);
-        assert_eq!(bytes, CONTROL_BYTES as u32);
-        assert_eq!(unsafe { status_load(base) }, STATUS_INIT);
+        unsafe { write_control_init(base, 1234) };
+        assert_eq!(
+            unsafe { read_control(base) },
+            (CONTROL_MAGIC, BRIDGE_PROTOCOL_VERSION, 1234)
+        );
+        assert_eq!(
+            unsafe { status_cell(base) }.load(Ordering::Acquire),
+            STATUS_INIT
+        );
     }
 
     #[test]
-    fn status_transitions_are_observable() {
-        let region = OwnedRegion::new(CONTROL_BYTES);
-        let base = region.as_mut_ptr();
-        unsafe { write_control_init(base, CONTROL_BYTES as u32) };
+    fn layout_reserves_header_events_and_samples() {
+        let layout = BridgeLayout::new(64, 2, 1000);
+        assert_eq!(layout.slot_size(), BLOCK_HEADER_BYTES + 1000 + 64 * 2 * 4);
+        assert!(layout.region_bytes() > 2 * RING_SLOTS * layout.slot_size());
+    }
 
-        unsafe { status_store(base, STATUS_READY) };
-        assert_eq!(unsafe { status_load(base) }, STATUS_READY);
-        unsafe { status_store(base, STATUS_SHUTDOWN) };
-        assert_eq!(unsafe { status_load(base) }, STATUS_SHUTDOWN);
+    #[test]
+    fn event_writer_refuses_overflow() {
+        let mut buf = [0u8; 6];
+        let mut writer = EventWriter::new(&mut buf);
+        assert!(writer.push(&[1, 2, 3, 4]));
+        assert!(!writer.push(&[5, 6, 7]));
+        assert_eq!(writer.len(), 4);
     }
 
     #[test]
     fn control_magic_is_distinct_from_block_magic() {
         assert_ne!(CONTROL_MAGIC, crate::protocol::BLOCK_MAGIC);
-        assert_eq!(&CONTROL_MAGIC.to_le_bytes(), b"EsCt");
     }
+}
 
-    // A non-identity processor proves the loop actually drives the seam (not just
-    // echoes bytes).  This mirrors how a real plugin's `process()` will be wired.
-    struct GainProcessor(f32);
-    impl BridgeProcessor for GainProcessor {
-        fn process(&mut self, input: &[f32], output: &mut [f32], _ctx: &BlockContext) {
-            for (o, i) in output.iter_mut().zip(input) {
-                *o = i * self.0;
+#[cfg(all(test, windows))]
+mod loop_tests {
+    use super::*;
+    use std::sync::Arc;
+
+    /// ×2 gain; echoes the engine's events back and flags every block.
+    struct Doubler;
+
+    impl BridgeProcessor for Doubler {
+        fn process(
+            &mut self,
+            block: &BlockContext,
+            input: &[f32],
+            output: &mut [f32],
+            out_events: &mut EventWriter,
+        ) -> u32 {
+            for (out, sample) in output.iter_mut().zip(input) {
+                *out = sample * 2.0;
             }
+            out_events.push(block.events);
+            crate::protocol::BLOCK_PLUGIN_EDITED
         }
     }
 
-    fn ctx() -> BlockContext {
-        BlockContext {
-            block_size: 4,
-            channel_count: 1,
-            sample_rate: 48_000,
+    /// Owner and peer in one process, over the real OS region and event.
+    fn connected(layout: BridgeLayout) -> (SharedRegion, AudioPort, Arc<BridgePeer>) {
+        let name = unique_region_name();
+        let region = SharedRegion::create(&name, layout.region_bytes()).unwrap();
+        let port = AudioPort::create(&region, &name, layout).unwrap();
+        let peer = Arc::new(BridgePeer::open(&name, layout).unwrap());
+        (region, port, peer)
+    }
+
+    #[test]
+    fn blocks_round_trip_with_events_and_flags() {
+        let layout = BridgeLayout::new(32, 2, 256);
+        let (region, port, peer) = connected(layout);
+        let server = {
+            let peer = Arc::clone(&peer);
+            std::thread::spawn(move || peer.serve_audio(&mut Doubler))
+        };
+
+        let mut output = vec![0.0f32; 64];
+        let mut out_events = vec![0u8; 256];
+        for sequence in 0..20u64 {
+            let frames = 1 + (sequence as usize * 7) % 32;
+            let input: Vec<f32> = (0..frames * 2)
+                .map(|i| sequence as f32 + i as f32)
+                .collect();
+            let events = [sequence as u8; 5];
+            let request = BlockRequest {
+                frames,
+                input: Some(&input),
+                events: &events,
+                sequence,
+                steady_time: 0,
+                reset: false,
+            };
+            let outcome = port.process_block(
+                &request,
+                &mut output,
+                &mut out_events,
+                Duration::from_secs(2),
+            );
+            assert_eq!(
+                outcome,
+                BlockOutcome::Processed {
+                    flags: crate::protocol::BLOCK_PLUGIN_EDITED,
+                    event_bytes: 5
+                }
+            );
+            let doubled: Vec<f32> = input.iter().map(|s| s * 2.0).collect();
+            assert_eq!(
+                &output[..frames * 2],
+                doubled.as_slice(),
+                "block {sequence}"
+            );
+            assert_eq!(&out_events[..5], &events);
         }
+
+        peer.status().store(STATUS_SHUTDOWN, Ordering::Release);
+        port.wake.signal();
+        server.join().unwrap();
+        drop(region);
     }
 
     #[test]
-    fn passthrough_copies_input_to_output() {
-        let input = [0.1, -0.2, 0.3, -0.4];
-        let mut output = [0.0; 4];
-        PassthroughProcessor.process(&input, &mut output, &ctx());
-        assert_eq!(output, input);
+    fn watchdog_condemns_a_silent_bridge() {
+        let layout = BridgeLayout::new(16, 2, 64);
+        let (_region, port, _peer) = connected(layout);
+        let input = vec![1.0f32; 32];
+        let mut output = vec![1.0f32; 32];
+        let request = BlockRequest {
+            frames: 16,
+            input: Some(&input),
+            events: &[],
+            sequence: 0,
+            steady_time: 0,
+            reset: false,
+        };
+
+        for _ in 0..DEAD_AFTER_CONSECUTIVE_TIMEOUTS {
+            assert!(!port.is_dead());
+            let outcome = port.process_block(&request, &mut output, &mut [], Duration::ZERO);
+            assert_eq!(outcome, BlockOutcome::TimedOut);
+            assert!(output.iter().all(|&s| s == 0.0));
+        }
+        assert!(port.is_dead());
+        output.fill(1.0);
+        assert_eq!(
+            port.process_block(&request, &mut output, &mut [], Duration::from_secs(1)),
+            BlockOutcome::Dead
+        );
+        assert!(output.iter().all(|&s| s == 0.0));
     }
 
     #[test]
-    fn processor_transforms_samples() {
-        let input = [1.0, 2.0, 3.0, 4.0];
-        let mut output = [0.0; 4];
-        GainProcessor(2.0).process(&input, &mut output, &ctx());
-        assert_eq!(output, [2.0, 4.0, 6.0, 8.0]);
+    fn oversized_block_is_skipped_untouched() {
+        let layout = BridgeLayout::new(16, 2, 64);
+        let (_region, port, _peer) = connected(layout);
+        let mut output = vec![3.0f32; 64];
+        let request = BlockRequest {
+            frames: 32,
+            input: None,
+            events: &[],
+            sequence: 0,
+            steady_time: 0,
+            reset: false,
+        };
+        assert_eq!(
+            port.process_block(&request, &mut output, &mut [], Duration::ZERO),
+            BlockOutcome::Skipped
+        );
+        assert!(output.iter().all(|&s| s == 3.0));
     }
 }

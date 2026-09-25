@@ -39,7 +39,18 @@ export type EffectParamsUnion =
 	| { kind: 'eq'; params: EqParams }
 	| { kind: 'compressor'; params: CompressorParams }
 	| { kind: 'reverb'; params: ReverbParams }
-	| { kind: 'delay'; params: DelayParams };
+	| { kind: 'delay'; params: DelayParams }
+	| { kind: 'plugin'; params: PluginEffectParams };
+
+export interface PluginEffectParams {
+	plugin_id: string;
+	name: string;
+	format: string;
+	/** `(native_id, normalised value)` pairs. */
+	params: [number, number][];
+	/** Runs in its own process: a crash does not take Echoes down. */
+	sandboxed: boolean;
+}
 
 export interface TrackEffect {
 	id: string;

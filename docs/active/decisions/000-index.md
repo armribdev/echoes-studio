@@ -38,7 +38,7 @@ lives there.
 | [012](012-midi-snapshot-beats.md) | `MidiNoteSnapshot` in beats, per-block tempo resolution | Graph / MIDI |
 | [013](013-clap-plugin-instruments.md) | CLAP plugin instruments via `InstrumentDevice` adapter | Plugins |
 | [014](014-capability-driven-port-sizing.md) | Capability-driven plugin port sizing (sidechain foundation) | Plugins / routing |
-| [015](015-plugin-sandbox.md) | Out-of-process plugin sandbox, opt-in per device | Plugins / sandboxing |
+| [015](015-plugin-sandbox.md) | Out-of-process plugin sandbox, opt-in per device (amended 2026-09-25: usable for CLAP effects) | Plugins / sandboxing |
 | [016](016-plugin-instance-reuse.md) | Plugin instance reuse across recompiles | Plugins / RT safety |
 | [017](017-per-instance-plugin-addressing.md) | Per-instance plugin addressing & state persistence | Plugins / state / UI boundary |
 | [018](018-clip-source-offset-trim.md) | Clip source offset & trim (audio + MIDI window) | State / MIDI scheduling |

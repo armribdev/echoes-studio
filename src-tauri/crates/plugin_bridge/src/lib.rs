@@ -1,38 +1,20 @@
 //! Shared transport core for the out-of-process plugin sandbox (ADR-015).
 //!
-//! ## Why this is a separate crate
+//! The sandbox hosts an untrusted plugin in a separate process
+//! (`plugin_host_bridge`).  Both the engine and that process link this crate so
+//! they share one definition of the cross-process ABI.
 //!
-//! The Phase 6 sandbox hosts an untrusted plugin in a **separate process**
-//! (`plugin_host_bridge`) and exchanges audio / parameters / events with it over
-//! **shared-memory ring buffers**.  Both sides — the engine (`echoes-studio`) and
-//! the bridge host binary — must agree on the *exact* ring layout and message
-//! ABI.  A binary cannot reuse another binary's private modules, so the only way
-//! to keep **one** source of truth for that ABI is a library crate both depend
-//! on.  This is it.
+//! - [`shmem`]    — SPSC ring living inside a raw byte region.
+//! - [`region`]   — named OS shared memory + the wake event (Windows first).
+//! - [`protocol`] — the per-block message layout.
+//! - [`control`]  — off-real-time request/response frames over the child's pipes.
+//! - [`session`]  — spawn/handshake, the engine's real-time [`session::AudioPort`]
+//!   and the bridge's audio loop.
 //!
-//! On the engine side those rings are drained and filled on the **audio
-//! thread**, so the transport is real-time safe by construction: no allocation,
-//! no lock, fixed-size copies (see [`shmem`]).
-//!
-//! ## Contents
-//!
-//! - [`shmem`]    — [`shmem::ShmemRing`], a region-agnostic SPSC ring living
-//!   inside a raw byte region (OS shared memory in production, an aligned heap
-//!   backing in tests).
-//! - [`region`]   — [`region::SharedRegion`], the named OS shared-memory mapping
-//!   the production rings live in (Windows first; Phase 6d-i).
-//! - [`session`]  — [`session::BridgeSession`] (spawn + handshake) and
-//!   [`session::serve`] (bridge-side attach), the off-RT process lifecycle
-//!   (Phase 6d-ii).
-//! - [`protocol`] — the `#[repr(C)]` POD message types that pin the cross-process
-//!   ABI carried over those rings.
-//!
-//! ## Status (ADR-015 step 6c-ii)
-//!
-//! Extracted from the engine's `plugin_system::bridge` module unchanged; the
-//! engine now re-exports this crate under that path.  Nothing crosses the
-//! real-time / process boundary yet — that is step 6d.
+//! The engine drives [`session::AudioPort`] on its audio thread: no allocation,
+//! no lock, a bounded wait.  Everything else runs off the audio thread.
 
+pub mod control;
 pub mod protocol;
 pub mod region;
 pub mod session;

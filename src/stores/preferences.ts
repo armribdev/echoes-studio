@@ -9,7 +9,13 @@ export interface AudioPreferences {
 	outputChannels: number;
 	/** When true, master bus applies tanh soft-clip before device output. */
 	masterSoftClip: boolean;
+	/** Which plugins run in their own process, so a crash cannot close Echoes. */
+	pluginIsolation: PluginIsolation;
+	/** Plugin ids isolated wherever they are used ("Choisis" mode). */
+	alwaysIsolated: string[];
 }
+
+export type PluginIsolation = 'off' | 'chosen' | 'all';
 
 export interface ProjectPreferences {
 	defaultFolder: string;
@@ -48,7 +54,9 @@ function defaultPreferences(): Preferences {
 			bufferSize: 256,
 			inputChannels: 2,
 			outputChannels: 2,
-			masterSoftClip: false
+			masterSoftClip: false,
+			pluginIsolation: 'chosen',
+			alwaysIsolated: []
 		},
 		project: {
 			defaultFolder: '',

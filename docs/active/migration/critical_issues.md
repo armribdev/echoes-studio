@@ -433,6 +433,12 @@ Statut : seuls les problèmes **encore présents dans le code** sont listés. Le
 
 ## 8. Crash safety
 
+> **Mise à jour 2026-09-25 (ADR-015, amendement)** : un effet CLAP peut être
+> isolé dans son propre processus (bouton « Isoler »). Son plantage ou blocage
+> ne coupe que ce plugin (silence, signalé « Planté », relancé à la recompile)
+> — 8.1 à 8.4 sont résolus **pour les effets CLAP isolés**. Restent exposés :
+> les plugins non isolés (défaut, C-9), les VST3 et les instruments.
+
 ### 8.1 Aucune sandboxing — plugin in-process
 - **Référence audit** : P0-5
 - **Description** : Plugins chargés in-process via `LoadLibrary` (Windows) / `dlopen`. Aucune isolation. Un crash plugin = crash du DAW (perte de session).

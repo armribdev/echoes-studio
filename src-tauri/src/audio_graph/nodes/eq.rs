@@ -463,6 +463,7 @@ mod tests {
             sample_rate: 48_000.0,
             max_block_size: 64,
             num_channels: 2,
+            live: true,
         });
         let b0_base = node.low.b0;
 
@@ -498,6 +499,7 @@ mod tests {
             sample_rate: 48_000.0,
             max_block_size: 64,
             num_channels: 2,
+            live: true,
         });
 
         let before = node.low.b0;
@@ -530,6 +532,7 @@ mod tests {
             sample_rate: 48_000.0,
             max_block_size: 64,
             num_channels: 2,
+            live: true,
         });
 
         let input = AudioBuffer::new(2, 64);

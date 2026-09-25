@@ -2,6 +2,7 @@
 <script lang="ts">
 	import Knob from './Knob.svelte';
 	import PluginPicker from './PluginPicker.svelte';
+	import EffectContextMenu from './EffectContextMenu.svelte';
 	import { modulatorColor } from '../frontend/modulation/colors';
 	import { modulationDrag } from '../stores/modulationDrag';
 	import { slide } from 'svelte/transition';
@@ -20,6 +21,7 @@
 	} from '../stores/plugins';
 	import { addEffect, removeEffect, updateEffect } from '../frontend/commands/dispatcher';
 	import { notify } from '../stores/status';
+	import { preferences } from '../stores/preferences';
 	import { invoke } from '@tauri-apps/api/core';
 
 	export let trackId: string;
@@ -77,10 +79,55 @@
 		catch (e) { notify(`Erreur paramètre : ${(e as Error)?.message ?? e}`, 'error'); }
 	}
 
+	$: isolation = $preferences.audio.pluginIsolation;
+	$: alwaysIsolated = $preferences.audio.alwaysIsolated;
+
+	function pluginId(effect: TrackEffect): string | null {
+		return effect.params.kind === 'plugin' ? effect.params.params.plugin_id : null;
+	}
+
+	function isChosen(effect: TrackEffect): boolean {
+		return effect.params.kind === 'plugin' && effect.params.params.sandboxed;
+	}
+
+	function isAlwaysIsolated(effect: TrackEffect, always = alwaysIsolated): boolean {
+		const id = pluginId(effect);
+		return id !== null && always.includes(id);
+	}
+
+	/** Whether the engine runs this effect in its own process, given the preferences. */
+	function isSandboxed(effect: TrackEffect, mode = isolation, always = alwaysIsolated): boolean {
+		if (effectFormat(effect) !== 'CLAP' || mode === 'off') return false;
+		return mode === 'all' || isChosen(effect) || isAlwaysIsolated(effect, always);
+	}
+
+	let contextMenu: { x: number; y: number; pluginId: string; pluginName: string } | null = null;
+
+	function openContextMenu(event: MouseEvent, effect: TrackEffect) {
+		const id = pluginId(effect);
+		if (id === null || effectFormat(effect) !== 'CLAP') return;
+		event.preventDefault();
+		contextMenu = { x: event.clientX, y: event.clientY, pluginId: id, pluginName: effectLabel(effect) };
+	}
+
+	async function handleToggleSandbox(effect: TrackEffect) {
+		try {
+			if (openEditors.has(effect.id)) {
+				await invoke('close_plugin_editor', { effectId: effect.id });
+				openEditors.delete(effect.id);
+				openEditors = new Set(openEditors);
+			}
+			await updateEffect(trackId, effect.id, { sandboxed: !isChosen(effect) });
+		} catch (e) {
+			notify(`Erreur isolation : ${(e as Error)?.message ?? e}`, 'error');
+		}
+	}
+
 	async function handleOpenEditor(effect: TrackEffect) {
 		// EffectParams::Plugin serialises as { kind: "plugin", params: { plugin_id, name, … } }
 		const p = (effect.params as any).params ?? {};
-		const isOpen = openEditors.has(effect.id);
+		// An isolated plugin's editor is its own window: opening it again brings it to the front.
+		const isOpen = !isSandboxed(effect) && openEditors.has(effect.id);
 		try {
 			if (isOpen) {
 				await invoke('close_plugin_editor', { effectId: effect.id });
@@ -91,7 +138,7 @@
 					effectId:   effect.id,
 					pluginName: p.name ?? 'Plugin',
 				});
-				openEditors.add(effect.id);
+				if (!isSandboxed(effect)) openEditors.add(effect.id);
 			}
 			openEditors = new Set(openEditors); // trigger reactivity
 		} catch (e) {
@@ -106,6 +153,8 @@
 			"Echoes ne sait pas encore utiliser ce format : le son passe sans être traité.",
 		load_failed:
 			"Le plugin n'a pas pu démarrer : le son passe sans être traité. Ses réglages sont conservés.",
+		crashed:
+			"Le plugin a planté : son son est coupé, Echoes continue. Rechargez-le ; il reprend ses derniers réglages enregistrés.",
 	};
 
 	let retrying = false;
@@ -116,6 +165,19 @@
 			await rescanPlugins();
 		} finally {
 			retrying = false;
+		}
+	}
+
+	let reloading = false;
+
+	async function handleReload() {
+		reloading = true;
+		try {
+			await invoke('reload_plugins');
+		} catch (e) {
+			notify(`Erreur rechargement : ${(e as Error)?.message ?? e}`, 'error');
+		} finally {
+			reloading = false;
 		}
 	}
 
@@ -145,6 +207,16 @@
 	function delP(e: TrackEffect) { return (e.params as { kind: 'delay'; params: DelayParams }).params; }
 </script>
 
+{#if contextMenu}
+	<EffectContextMenu
+		x={contextMenu.x}
+		y={contextMenu.y}
+		pluginId={contextMenu.pluginId}
+		pluginName={contextMenu.pluginName}
+		on:close={() => (contextMenu = null)}
+	/>
+{/if}
+
 {#if showPicker}
 	<PluginPicker
 		mode="effect"
@@ -165,8 +237,9 @@
 
 	{#each effects as effect (effect.id)}
 		{@const unavailable = $unavailablePlugins.get(effect.id)}
-		<div class="slot" class:bypassed={!effect.enabled} class:unavailable>
-			<div class="slot-head">
+		<div class="slot" class:bypassed={!effect.enabled} class:unavailable class:crashed={unavailable?.reason === 'crashed'}>
+			<!-- svelte-ignore a11y-no-static-element-interactions -->
+			<div class="slot-head" on:contextmenu={(e) => openContextMenu(e, effect)}>
 				<button class="bypass" class:on={effect.enabled} type="button"
 					on:click|stopPropagation={() => handleToggle(effect)} title="Bypass">
 					<svg width="8" height="8" viewBox="0 0 8 8"><circle cx="4" cy="4" r="3" fill="currentColor"/></svg>
@@ -178,6 +251,9 @@
 							{effectFormat(effect)}
 						</span>
 					{/if}
+					{#if isSandboxed(effect, isolation, alwaysIsolated)}
+						<span class="sandbox-badge" title="Isolé : un plantage de ce plugin ne ferme pas Echoes">ISO</span>
+					{/if}
 					{#if unavailable}
 						<span class="missing-badge" title={UNAVAILABLE_HELP[unavailable.reason]}>
 							{UNAVAILABLE_REASON_LABEL[unavailable.reason]}
@@ -187,6 +263,12 @@
 						<path d="M1 1 L4 4 L7 1" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round"/>
 					</svg>
 				</button>
+				{#if unavailable?.reason === 'crashed'}
+					<button class="reload-btn" type="button" on:click|stopPropagation={handleReload} disabled={reloading}
+						title={UNAVAILABLE_HELP.crashed}>
+						{compact ? '↻' : reloading ? 'Rechargement…' : 'Recharger'}
+					</button>
+				{/if}
 				<button class="rm-btn" type="button" on:click|stopPropagation={() => handleRemoveEffect(effect.id)} title="Supprimer">×</button>
 			</div>
 
@@ -271,7 +353,7 @@
 							{#if !compact}
 								<p class="missing-help">{UNAVAILABLE_HELP[unavailable.reason]}</p>
 							{/if}
-							{#if unavailable.reason !== 'unsupported_format'}
+							{#if unavailable.reason !== 'unsupported_format' && unavailable.reason !== 'crashed'}
 								<button class="retry-btn" type="button" on:click={handleRetry} disabled={retrying}>
 									{retrying ? 'Recherche…' : 'Réessayer'}
 								</button>
@@ -293,6 +375,21 @@
 										? "Fermer l'éditeur"
 										: "Ouvrir l'éditeur"}
 							</button>
+							{#if effectFormat(effect) === 'CLAP' && isolation === 'chosen'}
+								{@const always = isAlwaysIsolated(effect, alwaysIsolated)}
+								<button
+									class="open-editor-btn"
+									class:active={always || isChosen(effect)}
+									type="button"
+									disabled={always}
+									on:click={() => handleToggleSandbox(effect)}
+									title={always
+										? 'Ce plugin est toujours isolé (clic droit sur l\'effet pour changer)'
+										: "Faire tourner cet effet dans un processus séparé : s'il plante, Echoes continue (clic droit : toujours isoler ce plugin)"}
+								>
+									{compact ? 'ISO' : always || isChosen(effect) ? 'Isolé' : 'Isoler'}
+								</button>
+							{/if}
 						</div>
 					{/if}
 				</div>
@@ -394,6 +491,28 @@
 		text-decoration: line-through;
 	}
 
+	.slot.crashed {
+		border-left: 2px solid #ff4136;
+		background: rgba(255, 65, 54, 0.08);
+		opacity: 1;
+		.slot-name { color: #ff8a82; text-decoration: none; }
+	}
+
+	.reload-btn {
+		flex-shrink: 0;
+		padding: 2px 8px;
+		border: 1px solid rgba(255, 65, 54, 0.6);
+		border-radius: 3px;
+		background: rgba(255, 65, 54, 0.18);
+		color: #ffb3ad;
+		font-size: 9px;
+		font-family: $font-mono;
+		font-weight: 700;
+		cursor: pointer;
+		&:hover:not(:disabled) { background: rgba(255, 65, 54, 0.32); color: #fff; }
+		&:disabled { cursor: default; opacity: 0.6; }
+	}
+
 	.missing-badge {
 		font-size: 7px; font-family: $font-mono; font-weight: 700;
 		padding: 1px 4px; border-radius: 2px; flex-shrink: 0; white-space: nowrap;
@@ -439,7 +558,15 @@
 	}
 
 	.plugin-editor-row {
-		display: flex; justify-content: center; padding: 8px 4px;
+		display: flex; justify-content: center; gap: 6px; padding: 8px 4px;
+	}
+
+	.sandbox-badge {
+		font-size: 7px; font-family: $font-mono; font-weight: 700;
+		padding: 1px 4px; border-radius: 2px; flex-shrink: 0;
+		border: 1px solid rgba(34, 197, 94, 0.5);
+		background: rgba(34, 197, 94, 0.12);
+		color: #4ade80;
 	}
 
 	.open-editor-btn {

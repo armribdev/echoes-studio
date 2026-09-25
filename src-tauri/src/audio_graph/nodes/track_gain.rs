@@ -198,6 +198,7 @@ mod tests {
             sample_rate: 48_000.0,
             max_block_size: FRAMES_13_MS,
             num_channels: 1,
+            live: true,
         });
         node
     }
@@ -244,6 +245,7 @@ mod tests {
             sample_rate: 48_000.0,
             max_block_size: FRAMES_13_MS,
             num_channels: 1,
+            live: true,
         });
         node.apply_modulation(PARAM_GAIN, 1.0);
 
@@ -273,6 +275,7 @@ mod tests {
             sample_rate: 48_000.0,
             max_block_size: 8,
             num_channels: 2,
+            live: true,
         });
         live.set_track_pan("t", 1.0);
 

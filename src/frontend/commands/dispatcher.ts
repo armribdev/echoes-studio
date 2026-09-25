@@ -327,7 +327,7 @@ export function removeEffect(trackId: string, effectId: string): Promise<Command
 export function updateEffect(
   trackId: string,
   effectId: string,
-  changes: { enabled?: boolean; params?: Record<string, unknown> },
+  changes: { enabled?: boolean; params?: Record<string, unknown>; sandboxed?: boolean },
 ): Promise<CommandResult> {
   return dispatch<UpdateEffectPayload>(cmd.UPDATE_EFFECT, {
     track_id: trackId,

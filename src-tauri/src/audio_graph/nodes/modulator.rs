@@ -755,6 +755,7 @@ mod tests {
             sample_rate: 48_000.0,
             max_block_size: 512,
             num_channels: 2,
+            live: true,
         });
         let silence = vec![0.0f32; 512];
         let out = run_follower_block(&mut node, &silence, 48_000.0, 512);
@@ -779,6 +780,7 @@ mod tests {
             sample_rate: sr,
             max_block_size: 2048,
             num_channels: 2,
+            live: true,
         });
         // Full-scale 1 kHz sine, 1024 samples.
         let input: Vec<f32> = (0..1024)
@@ -808,6 +810,7 @@ mod tests {
             sample_rate: sr,
             max_block_size: 512,
             num_channels: 2,
+            live: true,
         });
         let loud = vec![1.0f32; 512];
         run_follower_block(&mut node, &loud, sr, 512);

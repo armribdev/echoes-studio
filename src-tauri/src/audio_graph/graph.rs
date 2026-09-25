@@ -82,10 +82,8 @@ pub enum NodeKind {
         instance_key: String,
         /// Opaque device ID looked up in `PluginHost`.
         device_id: String,
-        /// Per-device out-of-process sandbox opt-in (ADR-015, Phase 6).
-        /// Carried from `PluginParams.sandboxed` to the host's `instantiate`
-        /// decision point.  **Accepted but inert** until step 6d branches on
-        /// it; today every plugin is instantiated in-process regardless.
+        /// Host the plugin in a sandbox process (ADR-015), from
+        /// `PluginParams.sandboxed`; `PluginHost::instantiate` decides.
         sandboxed: bool,
         /// Disabled in the effect chain: the plugin stays loaded (settings,
         /// editor) but audio passes through it untouched (ADR-020).

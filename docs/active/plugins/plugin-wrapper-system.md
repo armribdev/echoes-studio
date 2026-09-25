@@ -290,11 +290,23 @@ down the engine. Best-effort mitigations (current):
 1. Validate all plugin-provided pointers before dereferencing.
 2. Wrap `process()` calls in platform signal handlers where feasible.
 
-**Out-of-process hosting** via a subprocess bridge (shared-memory audio rings,
-control handshake, watchdog) is the durable mitigation. It is opt-in and
-documented in `../decisions/015-plugin-sandbox.md`. Until a plugin runs
-sandboxed, the crash-isolation guarantee is "best effort" — document this
-honestly in user-facing plugin support.
+**Out-of-process hosting** is the durable mitigation, opt-in: per CLAP effect
+("Isoler" in the effect chain, `PluginParams.sandboxed`), per plugin type
+(right-click → "Toujours isoler", an app preference), or for every CLAP effect
+through the app preference *Isolation des plugins* (Aucun / Choisis / Tous).
+All three reach the engine through `PluginHost::set_isolation`.  The plugin then runs
+in a `plugin_host_bridge` process behind the same `Arc<PluginInstance>`
+(`NativeHandle::Bridged`): state, parameters, automation, modulation, latency
+and the editor (a window of the bridge process) all work; a crash or hang only
+silences that device, which is reported as crashed and restarted by the next
+recompile.  Design and RT strategy: `../decisions/015-plugin-sandbox.md`
+(amendment 2026-09-25).  Not sandboxable yet: VST3, and plugin instruments.
+A crashed plugin (sandbox condemned, or in-process crash caught by the SEH
+guard) is shown red in the effect chain with « Recharger », which rebuilds it
+from its last saved state.  In-process plugins keep the "best effort" guarantee
+above; when one kills
+Echoes, the next start names it and offers to isolate it (crash marker,
+ADR-015).
 
 ---
 

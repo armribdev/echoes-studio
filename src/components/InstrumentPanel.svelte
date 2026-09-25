@@ -56,6 +56,8 @@
 			"Ce plugin n'est pas installé sur cet ordinateur : la piste est muette. Ses réglages sont conservés. Réinstallez-le puis réessayez, ou choisissez un autre instrument.",
 		unsupported_format:
 			"Echoes ne sait pas encore utiliser ce format comme instrument : la piste est muette. Choisissez un instrument CLAP.",
+		crashed:
+			"Le plugin a planté : la piste est muette. Réessayez pour le recharger.",
 		load_failed:
 			"Le plugin n'a pas pu démarrer : la piste est muette. Ses réglages sont conservés.",
 	};

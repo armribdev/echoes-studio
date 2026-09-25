@@ -293,6 +293,7 @@ mod tests {
             sample_rate: 48_000.0,
             max_block_size: block,
             num_channels: 1,
+            live: true,
         }
     }
 

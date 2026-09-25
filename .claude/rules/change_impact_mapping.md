@@ -21,7 +21,8 @@ table for step 1 of the sync procedure.
 | `plugin_system/param_queue.rs`, `parameter.rs` | `plugins/plugin-system.md`, `plugins/plugin-wrapper-system.md` | 008, 009 |
 | `plugin_system/state.rs` | `plugins/plugin-system.md` | 010 |
 | `plugin_system/capabilities.rs` | `plugins/plugin-system.md`, `plugins/plugin-wrapper-system.md` | 006, 014 |
-| `plugin_system/bridge.rs`, `bridged_node.rs` | `plugins/plugin-wrapper-system.md` (sandbox) | 015 |
+| `plugin_system/crash_marker.rs` | `threading/realtime-safety.md` (crash marker), `plugins/plugin-wrapper-system.md` | 015 |
+| `plugin_system/bridge.rs`, `bridged_node.rs`, `crates/plugin_bridge`, `crates/plugin_host_bridge` | `plugins/plugin-wrapper-system.md` (sandbox), `threading/realtime-safety.md` (bounded wait) | 015 |
 | `plugin_system/gui.rs` | `plugins/plugin-wrapper-system.md`, `audits/plugin-gui-audit-2026-05-31.md` | — |
 | `crates/clap_ffi` (CLAP ABI + host callbacks/extensions) | `plugins/plugin-wrapper-system.md`, `audits/plugin-gui-audit-2026-05-31.md` | 013, 015 |
 | `plugin_system/wrapper.rs`, `plugin_formats/{vst3,au,clap,internal}/` | `plugins/plugin-wrapper-system.md` | 003, 013 |

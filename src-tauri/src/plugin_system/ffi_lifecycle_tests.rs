@@ -149,6 +149,7 @@ fn run_lifecycle(
         sample_rate: 48_000.0,
         max_block_size: 512,
         num_channels: 2,
+        live: true,
     });
     let frames = 256;
     let mut input = AudioBuffer::new(2, frames);

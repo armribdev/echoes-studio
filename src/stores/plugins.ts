@@ -78,7 +78,7 @@ export function filteredPlugins(query: string) {
 	});
 }
 
-export type UnavailableReason = 'not_installed' | 'unsupported_format' | 'load_failed';
+export type UnavailableReason = 'not_installed' | 'unsupported_format' | 'load_failed' | 'crashed';
 
 export interface UnavailablePlugin {
 	/** Effect id, or `instrument:{trackId}` for a track's instrument. */
@@ -91,6 +91,7 @@ export const UNAVAILABLE_REASON_LABEL: Record<UnavailableReason, string> = {
 	not_installed: 'Introuvable',
 	unsupported_format: 'Format non pris en charge',
 	load_failed: 'Échec du chargement',
+	crashed: 'Planté',
 };
 
 /** Plugins the engine could not load, keyed by instance key. */

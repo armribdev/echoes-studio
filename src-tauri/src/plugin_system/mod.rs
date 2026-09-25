@@ -27,6 +27,7 @@
 pub mod bridge;
 pub mod bridged_node;
 pub mod capabilities;
+pub mod crash_marker;
 pub mod gui;
 pub mod host;
 pub mod instance;
@@ -39,5 +40,7 @@ pub mod wrapper;
 
 #[cfg(test)]
 mod ffi_lifecycle_tests;
+#[cfg(all(test, windows))]
+mod sandbox_tests;
 
 pub use host::PluginHost;

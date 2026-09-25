@@ -287,6 +287,7 @@ impl AudioNode for ClapWrapperNode {
             // Mark the shared instance as Error so reuse_existing won't hand the
             // corrupted handle to the next graph compile; forces a fresh FFI instantiation.
             self.instance.set_lifecycle(LifecycleState::Error);
+            crate::plugin_system::crash_marker::note_crash();
             return;
         }
         if status == CLAP_PROCESS_ERROR && !inputs.is_empty() {

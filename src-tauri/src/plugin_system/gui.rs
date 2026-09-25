@@ -41,6 +41,7 @@ use std::sync::atomic::{AtomicPtr, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use crate::plugin_formats::clap::ffi::{CLAP_GUI_DRAIN_MESSAGE, CLAP_GUI_RESIZE_MESSAGE};
+use crate::plugin_system::crash_marker::PluginThread;
 use crate::plugin_system::instance::PluginInstance;
 
 #[allow(non_snake_case)]
@@ -684,6 +685,7 @@ pub unsafe fn open_vst3_editor(
         IID_IEDIT_CONTROLLER,
     };
 
+    let _running = instance.mark(PluginThread::Ui);
     // MUST NOT call `initialize` again — already done at instantiation (VST3 spec).
     let (comp_nn, _proc_nn) = instance
         .vst3_handles()
@@ -767,6 +769,7 @@ pub unsafe fn open_vst3_editor(
     let cleanup: Box<dyn FnOnce()> = Box::new(move || {
         let _frame = frame_owned;
         let _instance = instance_owned; // keep plugin alive through teardown
+        let _running = _instance.mark(PluginThread::Ui);
         unsafe {
             ((*(*view).vtbl).removed)(view);
             // Drop our frame ref before releasing ctrl — set_frame(null).
@@ -782,8 +785,11 @@ pub unsafe fn open_vst3_editor(
         // now runs terminate + release on the IComponent.
     });
     let tick: Box<dyn Fn()> = Box::new(|| {});
-    let on_dpi_changed: Box<dyn Fn(*mut c_void, u32)> =
-        Box::new(move |hwnd, dpi| unsafe { fit_vst3_view_to_dpi(view, hwnd, dpi) });
+    let instance_for_dpi = Arc::clone(&instance);
+    let on_dpi_changed: Box<dyn Fn(*mut c_void, u32)> = Box::new(move |hwnd, dpi| {
+        let _running = instance_for_dpi.mark(PluginThread::Ui);
+        unsafe { fit_vst3_view_to_dpi(view, hwnd, dpi) }
+    });
 
     let userdata = Box::new(WindowUserData {
         magic: USERDATA_MAGIC,
@@ -846,6 +852,7 @@ pub unsafe fn open_clap_editor(
 ) -> Result<usize, String> {
     use crate::plugin_formats::clap::ffi::{ClapWindow, CLAP_EXT_GUI, CLAP_WINDOW_API_WIN32};
 
+    let _running = instance.mark(PluginThread::Ui);
     let plugin = instance
         .clap_plugin()
         .ok_or_else(|| "CLAP GUI: shared instance has no CLAP plugin pointer".to_string())?;
@@ -892,6 +899,7 @@ pub unsafe fn open_clap_editor(
     let live_plugin_for_cleanup = Arc::clone(&live_plugin);
     let instance_for_cleanup = Arc::clone(&instance);
     let cleanup: Box<dyn FnOnce()> = Box::new(move || {
+        let _running = instance_for_cleanup.mark(PluginThread::Ui);
         live_plugin_for_cleanup.store(null_mut(), Ordering::Release);
         if let Some(context) = instance_for_cleanup.clap_host_context() {
             context.set_gui_hwnd(null_mut());
@@ -908,6 +916,7 @@ pub unsafe fn open_clap_editor(
         if p.is_null() {
             return;
         }
+        let _running = instance_for_tick.mark(PluginThread::Ui);
         let context = instance_for_tick.clap_host_context();
         if let Some(context) = context {
             context.clear_gui_drain();
@@ -920,8 +929,11 @@ pub unsafe fn open_clap_editor(
         }
     });
 
-    let on_dpi_changed: Box<dyn Fn(*mut c_void, u32)> =
-        Box::new(move |hwnd, dpi| unsafe { fit_clap_gui_to_dpi(gui, plugin, hwnd, dpi) });
+    let instance_for_dpi = Arc::clone(&instance);
+    let on_dpi_changed: Box<dyn Fn(*mut c_void, u32)> = Box::new(move |hwnd, dpi| {
+        let _running = instance_for_dpi.mark(PluginThread::Ui);
+        unsafe { fit_clap_gui_to_dpi(gui, plugin, hwnd, dpi) }
+    });
 
     let userdata = Box::new(WindowUserData {
         magic: USERDATA_MAGIC,

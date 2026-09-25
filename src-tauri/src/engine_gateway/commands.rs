@@ -223,6 +223,9 @@ pub struct UpdateEffectPayload {
     pub effect_id: String,
     pub enabled: Option<bool>,
     pub params: Option<serde_json::Value>,
+    /// Plugin effects only: run the plugin in a sandbox process (ADR-015).
+    #[serde(default)]
+    pub sandboxed: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]

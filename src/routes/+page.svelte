@@ -20,8 +20,10 @@
 	import SettingsPanel from '../components/SettingsPanel.svelte';
 	import ProjectSettingsPanel from '../components/ProjectSettingsPanel.svelte';
 	import MissingPluginsDialog from '../components/MissingPluginsDialog.svelte';
+	import CrashSuspectDialog from '../components/CrashSuspectDialog.svelte';
 	import GraphView from '../components/GraphView.svelte';
 	import { settingsPanelOpen, preferences } from '../stores/preferences';
+	import { setPluginIsolation } from '../lib/audioBackend';
 	import { projectSettingsPanelOpen } from '../stores/project';
 	import { exportMixdown } from '../lib/exportMixdown';
 	import { notify } from '../stores/status';
@@ -33,6 +35,15 @@
 
 	// Register keyboard shortcuts and transport bridge once for the app lifetime.
 	onMount(() => {
+		let appliedIsolation = '';
+		const unsubIsolation = preferences.subscribe(({ audio }) => {
+			const key = JSON.stringify([audio.pluginIsolation, audio.alwaysIsolated]);
+			if (key === appliedIsolation) return;
+			appliedIsolation = key;
+			setPluginIsolation(audio.pluginIsolation, audio.alwaysIsolated).catch((e) =>
+				notify(`Erreur isolation des plugins : ${(e as Error)?.message ?? String(e)}`, 'error')
+			);
+		});
 		const disconnectBridge = connectTransportBridge();
 		const disconnectLoop = connectLoopSync();
 		const unregisterShortcuts = registerShortcuts();
@@ -92,6 +103,7 @@
 			unregisterShortcuts();
 			graphSnapshot.disconnect();
 			unsubSelectedTrack();
+			unsubIsolation();
 			void unlistenMenu.then((fns) => fns.forEach((fn) => fn()));
 			window.removeEventListener('keydown', handleGlobalKey);
 		};
@@ -124,6 +136,7 @@
 </div>
 {/if}
 <MissingPluginsDialog />
+<CrashSuspectDialog />
 
 <style>
 	.app {

@@ -43,12 +43,11 @@ pub struct SharedRegion {
     len: usize,
 }
 
-// SAFETY: `SharedRegion` owns its mapping exclusively; the contained OS handle
-// and base pointer are not aliased elsewhere.  Moving ownership between threads
-// (e.g. into a `PluginInstance`) is sound — the mapping is process-wide and the
-// type performs no interior mutation.  It is intentionally NOT `Sync`: concurrent
-// access is mediated by the `ShmemRing` SPSC discipline, not by this handle.
+// SAFETY: `SharedRegion` owns its mapping exclusively and performs no interior
+// mutation; `&SharedRegion` only hands out the base pointer and length.  What is
+// done through that pointer is governed by the ring and control-block protocols.
 unsafe impl Send for SharedRegion {}
+unsafe impl Sync for SharedRegion {}
 
 impl SharedRegion {
     /// Create and zero-initialise a new named region of `len` bytes (owner side).
@@ -92,16 +91,63 @@ impl SharedRegion {
     }
 }
 
+/// A named auto-reset event: the engine signals it after queuing a block so the
+/// bridge's audio thread wakes at once instead of polling.
+///
+/// `signal` is a single non-blocking kernel call (no lock is held by another
+/// thread that could make it wait), which is why it is allowed on the audio
+/// thread (ADR-015 amendment 2026-09-25).
+pub struct SharedEvent {
+    inner: imp::Event,
+}
+
+// SAFETY: the OS event handle may be used from any thread.
+unsafe impl Send for SharedEvent {}
+unsafe impl Sync for SharedEvent {}
+
+impl SharedEvent {
+    /// Create a new named event (owner side).
+    pub fn create(name: &str) -> io::Result<Self> {
+        Ok(SharedEvent {
+            inner: imp::Event::create(name)?,
+        })
+    }
+
+    /// Open an event created by the owner (peer side).
+    pub fn open(name: &str) -> io::Result<Self> {
+        Ok(SharedEvent {
+            inner: imp::Event::open(name)?,
+        })
+    }
+
+    /// Wake one waiter.  Non-blocking.
+    #[inline]
+    pub fn signal(&self) {
+        self.inner.signal();
+    }
+
+    /// Block until signalled or `timeout_ms` elapses; `true` when signalled.
+    pub fn wait(&self, timeout_ms: u32) -> bool {
+        self.inner.wait(timeout_ms)
+    }
+}
+
 // ── Windows implementation ──────────────────────────────────────────────────
 
 #[cfg(windows)]
 mod imp {
     use std::io;
 
-    use windows_sys::Win32::Foundation::{CloseHandle, HANDLE, INVALID_HANDLE_VALUE};
+    use windows_sys::Win32::Foundation::{
+        CloseHandle, HANDLE, INVALID_HANDLE_VALUE, WAIT_OBJECT_0,
+    };
     use windows_sys::Win32::System::Memory::{
         CreateFileMappingW, MapViewOfFile, OpenFileMappingW, UnmapViewOfFile, FILE_MAP_ALL_ACCESS,
         MEMORY_MAPPED_VIEW_ADDRESS, PAGE_READWRITE,
+    };
+    use windows_sys::Win32::System::Threading::{
+        CreateEventW, OpenEventW, SetEvent, WaitForSingleObject, EVENT_MODIFY_STATE,
+        SYNCHRONIZATION_SYNCHRONIZE,
     };
 
     /// Owns a file-mapping handle and one mapped view over it.
@@ -187,6 +233,52 @@ mod imp {
             }
         }
     }
+
+    pub struct Event {
+        handle: HANDLE,
+    }
+
+    impl Event {
+        pub fn create(name: &str) -> io::Result<Self> {
+            let name_w = wide(name);
+            // Auto-reset, initially clear.
+            let handle = unsafe { CreateEventW(std::ptr::null(), 0, 0, name_w.as_ptr()) };
+            if handle.is_null() {
+                return Err(io::Error::last_os_error());
+            }
+            Ok(Event { handle })
+        }
+
+        pub fn open(name: &str) -> io::Result<Self> {
+            let name_w = wide(name);
+            let handle = unsafe {
+                OpenEventW(
+                    EVENT_MODIFY_STATE | SYNCHRONIZATION_SYNCHRONIZE,
+                    0,
+                    name_w.as_ptr(),
+                )
+            };
+            if handle.is_null() {
+                return Err(io::Error::last_os_error());
+            }
+            Ok(Event { handle })
+        }
+
+        #[inline]
+        pub fn signal(&self) {
+            unsafe { SetEvent(self.handle) };
+        }
+
+        pub fn wait(&self, timeout_ms: u32) -> bool {
+            unsafe { WaitForSingleObject(self.handle, timeout_ms) == WAIT_OBJECT_0 }
+        }
+    }
+
+    impl Drop for Event {
+        fn drop(&mut self) {
+            unsafe { CloseHandle(self.handle) };
+        }
+    }
 }
 
 // ── Non-Windows stub ────────────────────────────────────────────────────────
@@ -216,6 +308,23 @@ mod imp {
         }
         pub fn base(&self) -> *mut u8 {
             std::ptr::null_mut()
+        }
+    }
+
+    pub struct Event {
+        _never: (),
+    }
+
+    impl Event {
+        pub fn create(_name: &str) -> io::Result<Self> {
+            Err(unsupported())
+        }
+        pub fn open(_name: &str) -> io::Result<Self> {
+            Err(unsupported())
+        }
+        pub fn signal(&self) {}
+        pub fn wait(&self, _timeout_ms: u32) -> bool {
+            false
         }
     }
 }
@@ -267,6 +376,18 @@ mod tests {
         // The mapping does not exist → OS reports not-found, surfaced as an error
         // rather than a panic or a null deref.
         assert!(err.raw_os_error().is_some());
+    }
+
+    #[test]
+    fn event_wakes_a_waiter_on_another_handle() {
+        let name = unique_name("event");
+        let owner = SharedEvent::create(&name).expect("create");
+        let peer = SharedEvent::open(&name).expect("open");
+
+        assert!(!peer.wait(0), "a fresh event is not signalled");
+        owner.signal();
+        assert!(peer.wait(1000));
+        assert!(!peer.wait(0), "auto-reset: one signal wakes one wait");
     }
 
     #[test]

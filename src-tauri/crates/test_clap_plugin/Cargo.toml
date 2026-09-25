@@ -1,0 +1,13 @@
+[package]
+name = "test_clap_plugin"
+version = "0.1.0"
+edition = "2021"
+description = "Minimal CLAP effect used by the plugin-sandbox tests (ADR-015). Not shipped."
+license = "MIT"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+clap_ffi = { path = "../clap_ffi" }

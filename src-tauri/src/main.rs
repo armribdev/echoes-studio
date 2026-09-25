@@ -23,6 +23,10 @@ fn main() {
         .plugin(tauri_plugin_dialog::init())
         .manage(AppState::new())
         .setup(|app| {
+            // Before any plugin code runs, so a crash in it can be attributed.
+            let suspects = open_crash_marker(app);
+            app.manage(CrashSuspects(std::sync::Mutex::new(suspects)));
+
             // Start the CPAL output stream as early as possible so the engine
             // is ready before any project is loaded.  Failure is logged but
             // non-fatal: the app continues and offline export still works
@@ -216,11 +220,69 @@ fn main() {
             get_device_sample_rates,
             get_device_channels,
             apply_audio_settings,
+            set_plugin_isolation,
+            take_crash_suspect,
+            reload_plugins,
             set_active_output_channels,
             sync_project_ui_layout,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|_, event| {
+            if let tauri::RunEvent::Exit = event {
+                plugin_system::crash_marker::mark_clean_exit();
+            }
+        });
+}
+
+/// Plugin tags left running by a previous session that died (see `crash_marker`).
+struct CrashSuspects(std::sync::Mutex<Vec<u64>>);
+
+fn open_crash_marker(app: &tauri::App) -> Vec<u64> {
+    let Ok(dir) = app.path().app_data_dir() else {
+        return Vec::new();
+    };
+    if std::fs::create_dir_all(&dir).is_err() {
+        return Vec::new();
+    }
+    plugin_system::crash_marker::open(&dir.join("plugin-crash-marker.bin"))
+}
+
+/// Restart the plugins that crashed: a recompile rebuilds every instance in
+/// the error state, from its last saved state.
+#[tauri::command]
+fn reload_plugins(app: tauri::AppHandle, state: tauri::State<'_, AppState>) {
+    recompile_audio_graph(&app, &state);
+}
+
+/// A plugin that was running when Echoes last closed unexpectedly.
+#[derive(serde::Serialize)]
+struct CrashSuspect {
+    plugin_id: String,
+    name: String,
+    /// Only CLAP plugins can run isolated so far.
+    can_isolate: bool,
+}
+
+/// The plugin suspected of the previous crash, once per session.
+#[tauri::command]
+fn take_crash_suspect(
+    suspects: tauri::State<'_, CrashSuspects>,
+    state: tauri::State<'_, AppState>,
+) -> Result<Option<CrashSuspect>, String> {
+    let tags = std::mem::take(&mut *suspects.0.lock().map_err(|e| e.to_string())?);
+    let engine = state.audio_engine.lock().map_err(|e| e.to_string())?;
+    let suspect = engine
+        .plugin_host
+        .registry()
+        .all()
+        .find(|manifest| tags.contains(&plugin_system::crash_marker::plugin_tag(&manifest.id)))
+        .map(|manifest| CrashSuspect {
+            plugin_id: manifest.id.clone(),
+            name: manifest.name.clone(),
+            can_isolate: manifest.format == plugin_system::wrapper::DeviceFormat::Clap,
+        });
+    Ok(suspect)
 }
 
 fn apply_native_dark_theme(app: &tauri::AppHandle) {
@@ -608,6 +670,31 @@ fn get_plugin_params(
         .map_err(|e| e.to_string())
 }
 
+/// Which plugins run in a sandbox process (app preference, ADR-015).  A change
+/// recompiles, which moves the affected plugins in or out of their sandbox.
+#[tauri::command]
+fn set_plugin_isolation(
+    mode: plugin_system::host::PluginIsolation,
+    always_isolated: std::collections::HashSet<String>,
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    let changed = state
+        .audio_engine
+        .lock()
+        .map_err(|e| e.to_string())?
+        .plugin_host
+        .set_isolation(mode, always_isolated);
+    if changed {
+        // An open editor would stay attached to the instance the recompile replaces.
+        if let Ok(editors) = state.open_plugin_editors.lock() {
+            editors.values().for_each(|&hwnd| plugin_system::gui::post_close(hwnd));
+        }
+        recompile_audio_graph(&app, &state);
+    }
+    Ok(())
+}
+
 /// Placements whose plugin could not be loaded; updates arrive through the
 /// `plugin-availability` event after every recompile.
 #[tauri::command]
@@ -839,6 +926,12 @@ fn open_plugin_editor(
         (inst, format)
     };
 
+    // A sandboxed plugin's editor lives in its bridge process, which closes it
+    // itself and takes it down with the process when the effect goes away.
+    if let Some(bridged) = instance.bridge() {
+        return bridged.open_editor(&plugin_name);
+    }
+
     let open_editors = std::sync::Arc::clone(&state.open_plugin_editors);
 
     // IPlugView/clap_gui and Win32 window creation must happen on the main thread.
@@ -902,14 +995,26 @@ fn mark_saved(state: &tauri::State<'_, AppState>) {
 }
 
 /// Edits made inside a plugin window never go through `send_command`, so the
-/// unsaved-changes flag is raised from the plugins' own reports.
+/// unsaved-changes flag is raised from the plugins' own reports.  Sandboxed
+/// plugins that crash are reported the same way, without waiting for a recompile.
 fn watch_plugin_edits(app: tauri::AppHandle) {
-    std::thread::spawn(move || loop {
-        std::thread::sleep(std::time::Duration::from_millis(250));
-        if plugin_formats::clap::ffi::take_plugin_state_edited() {
+    std::thread::spawn(move || {
+        let mut crashes_seen = plugin_system::crash_marker::crash_count();
+        loop {
+            std::thread::sleep(std::time::Duration::from_millis(250));
             let state = app.state::<AppState>();
-            state.dirty.store(true, std::sync::atomic::Ordering::Relaxed);
-            menu_state::refresh_menu(&app, &state);
+            if plugin_formats::clap::ffi::take_plugin_state_edited() {
+                state.dirty.store(true, std::sync::atomic::Ordering::Relaxed);
+                menu_state::refresh_menu(&app, &state);
+            }
+            let crashes = plugin_system::crash_marker::crash_count();
+            if crashes != crashes_seen {
+                crashes_seen = crashes;
+                if let Ok(engine) = state.audio_engine.lock() {
+                    let unavailable = engine.plugin_host.unavailable_plugins();
+                    let _ = app.emit(engine_gateway::api::PLUGIN_AVAILABILITY_EVENT, unavailable);
+                }
+            }
         }
     });
 }

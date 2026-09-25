@@ -23,7 +23,7 @@ fn c_text(bytes: &[u8]) -> String {
         .unwrap_or_default()
 }
 
-fn param_info(info: &ClapParamInfo) -> PluginParamInfo {
+pub(crate) fn param_info(info: &ClapParamInfo) -> PluginParamInfo {
     let read_only = info.flags & CLAP_PARAM_IS_READONLY != 0;
     PluginParamInfo {
         native_id: info.id,

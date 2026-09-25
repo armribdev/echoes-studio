@@ -1,125 +1,126 @@
-//! Cross-process wire protocol for the plugin bridge (ADR-015, Phase 6c-i).
+//! Cross-process wire protocol for the plugin bridge (ADR-015).
 //!
-//! These `#[repr(C)]` POD types pin the ABI of the messages the
-//! [`ShmemRing`](super::shmem::ShmemRing) carries between the engine and the
-//! `plugin_host_bridge` process.  They are **declared now** so the layout is
-//! frozen before the rings are wired (6d); no behaviour is attached yet.
+//! One audio block travels as one ring message:
 //!
-//! ABI rules:
-//!   * `#[repr(C)]`, fixed-width integer / `f32` fields only — no `usize`, no
-//!     pointers, no enums-with-payload.  Both processes are the same
-//!     architecture (the bridge is spawned by the engine), but explicit widths
-//!     keep the layout self-documenting and forward-portable.
-//!   * Any change to a struct below is a protocol break → bump
-//!     [`BRIDGE_PROTOCOL_VERSION`] and gate on it at handshake.
+//! ```text
+//!   [BlockHeader 40 B][events: header.event_bytes][samples: channels × frames f32 LE]
+//! ```
+//!
+//! `events` is an opaque byte stream of format-native events (CLAP event structs
+//! for a CLAP plugin): the engine writes the block's transport, parameter and
+//! note events; the bridge answers with the plugin's output events.  This crate
+//! never interprets them, so it stays format-agnostic.
+//!
+//! ABI rules: `#[repr(C)]`, fixed-width fields only.  Any layout change is a
+//! protocol break → bump [`BRIDGE_PROTOCOL_VERSION`].
 
-/// Wire-format version.  The engine writes it into [`BlockHeader::version`];
-/// the bridge rejects a mismatch at handshake (6d).
-pub const BRIDGE_PROTOCOL_VERSION: u32 = 1;
+/// Wire-format version, checked at handshake (control block) and per block.
+pub const BRIDGE_PROTOCOL_VERSION: u32 = 2;
 
-/// Magic stamped at the start of every audio block so a desynced reader can
-/// detect a torn / misaligned region instead of processing garbage.
+/// Stamped at the start of every block so a torn / desynced region is detected.
 /// ASCII `"EsBr"` (Echoes Bridge), little-endian.
 pub const BLOCK_MAGIC: u32 = u32::from_le_bytes(*b"EsBr");
 
-/// Logical role of a ring within one bridged device.  Stored as a `u32` tag in
-/// the handshake; each role gets its own [`ShmemRing`](super::shmem::ShmemRing).
-#[repr(u32)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ChannelRole {
-    /// Engine → bridge: input audio blocks to process.
-    AudioIn = 0,
-    /// Bridge → engine: processed output audio blocks.
-    AudioOut = 1,
-    /// Engine → bridge: parameter changes (drained before `process`).
-    Params = 2,
-    /// Engine → bridge: MIDI / note events for this block.
-    Events = 3,
-}
+/// Engine → bridge: the block carries input audio (an effect).  Absent for a
+/// generator with no audio input.
+pub const BLOCK_HAS_INPUT: u32 = 1 << 0;
+/// Engine → bridge: clear the plugin's DSP state (tails, envelopes) before
+/// this block.
+pub const BLOCK_RESET: u32 = 1 << 3;
+/// Bridge → engine: the plugin reported a state change since the last block
+/// (edit in its window, `clap.state.mark_dirty`).
+pub const BLOCK_PLUGIN_EDITED: u32 = 1 << 1;
+/// Bridge → engine: the plugin could not process this block; the samples are a
+/// copy of the input.
+pub const BLOCK_PASSED_THROUGH: u32 = 1 << 2;
 
-/// Header prefixed to one audio block transferred over an `AudioIn` / `AudioOut`
-/// ring.  Followed by `channel_count * block_size` interleaved-by-channel `f32`
-/// samples in the same message payload.
+/// Header prefixed to every audio block, in both directions.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct BlockHeader {
-    /// [`BLOCK_MAGIC`] — torn-region guard.
+    /// [`BLOCK_MAGIC`].
     pub magic: u32,
-    /// [`BRIDGE_PROTOCOL_VERSION`] at the time the block was produced.
+    /// [`BRIDGE_PROTOCOL_VERSION`].
     pub version: u32,
-    /// Frames in this block (e.g. 256, 512).
-    pub block_size: u32,
-    /// Number of audio channels following the header.
+    /// Frames in this block (≤ the layout's `max_frames`).
+    pub frames: u32,
+    /// Audio channels following the events.
     pub channel_count: u32,
-    /// Engine sample rate, Hz.
-    pub sample_rate: u32,
-    /// Reserved for alignment / future flags; must be 0.
-    pub _reserved: u32,
-    /// Monotonic block counter, for drop / reorder detection across the bridge.
+    /// `BLOCK_*` flags.
+    pub flags: u32,
+    /// Bytes of event data between the header and the samples.
+    pub event_bytes: u32,
+    /// Monotonic block counter; a reply echoes its request's value.
     pub sequence: u64,
+    /// Sample clock of the block's first frame (CLAP `steady_time`).
+    pub steady_time: i64,
 }
 
-/// Serialised size of a [`BlockHeader`] (frozen by the ABI assertion below).
-pub const BLOCK_HEADER_BYTES: usize = 32;
+/// Serialised size of a [`BlockHeader`].
+pub const BLOCK_HEADER_BYTES: usize = 40;
 
-// Compile-time guard: the (de)serialisation transmutes rely on this exact size.
-// A layout change is a protocol break → bump `BRIDGE_PROTOCOL_VERSION`.
 const _: () = assert!(core::mem::size_of::<BlockHeader>() == BLOCK_HEADER_BYTES);
 
 impl BlockHeader {
-    /// Serialise to its fixed-size byte form for a ring slot's header prefix.
+    pub fn new(
+        frames: u32,
+        channel_count: u32,
+        flags: u32,
+        event_bytes: u32,
+        sequence: u64,
+        steady_time: i64,
+    ) -> Self {
+        BlockHeader {
+            magic: BLOCK_MAGIC,
+            version: BRIDGE_PROTOCOL_VERSION,
+            frames,
+            channel_count,
+            flags,
+            event_bytes,
+            sequence,
+            steady_time,
+        }
+    }
+
     pub fn to_bytes(&self) -> [u8; BLOCK_HEADER_BYTES] {
-        // SAFETY: `BlockHeader` is `#[repr(C)]` POD of exactly BLOCK_HEADER_BYTES
-        // (const-asserted), so a bit copy is a valid byte representation.
+        // SAFETY: `#[repr(C)]` POD of exactly BLOCK_HEADER_BYTES (const-asserted).
         unsafe { core::mem::transmute_copy::<BlockHeader, [u8; BLOCK_HEADER_BYTES]>(self) }
     }
 
-    /// Deserialise from the leading bytes of a ring slot.  Returns `None` if
-    /// `bytes` is shorter than a header; the caller still checks [`BlockHeader::magic`].
+    /// `None` when `bytes` is too short or the magic/version do not match.
     pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
-        if bytes.len() < BLOCK_HEADER_BYTES {
-            return None;
-        }
-        let mut arr = [0u8; BLOCK_HEADER_BYTES];
-        arr.copy_from_slice(&bytes[..BLOCK_HEADER_BYTES]);
-        // SAFETY: equal-size by-value transmute of a POD type onto a fresh,
-        // properly-aligned value (the array is align-1 but the result is owned).
-        Some(unsafe { core::mem::transmute::<[u8; BLOCK_HEADER_BYTES], BlockHeader>(arr) })
+        let raw: [u8; BLOCK_HEADER_BYTES] = bytes.get(..BLOCK_HEADER_BYTES)?.try_into().ok()?;
+        // SAFETY: equal-size by-value transmute onto an owned POD value.
+        let header = unsafe { core::mem::transmute::<[u8; BLOCK_HEADER_BYTES], BlockHeader>(raw) };
+        (header.magic == BLOCK_MAGIC && header.version == BRIDGE_PROTOCOL_VERSION).then_some(header)
     }
 }
 
-/// One parameter change carried over a `Params` ring.  ABI-stable mirror of the
-/// engine's in-process `ParamChange` (`plugin_system::param_queue`).
-#[repr(C)]
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct ParamMessage {
-    /// Format-native parameter id (VST3 `ParamID`, CLAP `clap_id`).
-    pub native_id: u32,
-    /// Intra-block frame offset (0 at block-rate, BP-7).
-    pub sample_offset: u32,
-    /// Normalised value in `[0, 1]`.
-    pub normalised: f32,
-    /// Reserved for alignment / future flags; must be 0.
-    pub _reserved: u32,
+/// Encode `samples` as little-endian bytes into `out` (same number of samples).
+pub fn write_samples(samples: &[f32], out: &mut [u8]) {
+    for (sample, dst) in samples.iter().zip(out.chunks_exact_mut(4)) {
+        dst.copy_from_slice(&sample.to_le_bytes());
+    }
+}
+
+/// Decode little-endian `bytes` into `out`; missing samples become silence.
+pub fn read_samples(bytes: &[u8], out: &mut [f32]) {
+    let mut chunks = bytes.chunks_exact(4);
+    for sample in out.iter_mut() {
+        *sample = chunks
+            .next()
+            .map_or(0.0, |c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]));
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::mem::{align_of, size_of};
 
-    // ABI is frozen: these sizes/alignments are part of the protocol.  A change
-    // here is intentional only alongside a `BRIDGE_PROTOCOL_VERSION` bump.
     #[test]
     fn block_header_abi_is_stable() {
-        assert_eq!(size_of::<BlockHeader>(), 32);
-        assert_eq!(align_of::<BlockHeader>(), 8); // u64 sequence drives alignment
-    }
-
-    #[test]
-    fn param_message_abi_is_stable() {
-        assert_eq!(size_of::<ParamMessage>(), 16);
-        assert_eq!(align_of::<ParamMessage>(), 4);
+        assert_eq!(core::mem::size_of::<BlockHeader>(), 40);
+        assert_eq!(core::mem::align_of::<BlockHeader>(), 8);
     }
 
     #[test]
@@ -129,22 +130,25 @@ mod tests {
 
     #[test]
     fn block_header_bytes_roundtrip() {
-        let h = BlockHeader {
-            magic: BLOCK_MAGIC,
-            version: BRIDGE_PROTOCOL_VERSION,
-            block_size: 256,
-            channel_count: 2,
-            sample_rate: 48_000,
-            _reserved: 0,
-            sequence: 42,
-        };
-        let bytes = h.to_bytes();
-        assert_eq!(bytes.len(), BLOCK_HEADER_BYTES);
-        assert_eq!(BlockHeader::from_bytes(&bytes), Some(h));
+        let header = BlockHeader::new(256, 2, BLOCK_HAS_INPUT, 120, 42, -7);
+        assert_eq!(BlockHeader::from_bytes(&header.to_bytes()), Some(header));
     }
 
     #[test]
-    fn from_bytes_rejects_short_input() {
+    fn from_bytes_rejects_short_or_foreign_input() {
         assert_eq!(BlockHeader::from_bytes(&[0u8; 8]), None);
+        let mut bytes = BlockHeader::new(1, 1, 0, 0, 0, 0).to_bytes();
+        bytes[0] ^= 0xFF;
+        assert_eq!(BlockHeader::from_bytes(&bytes), None);
+    }
+
+    #[test]
+    fn samples_roundtrip_and_pad_with_silence() {
+        let samples = [0.5, -1.0, 0.25];
+        let mut bytes = [0u8; 12];
+        write_samples(&samples, &mut bytes);
+        let mut decoded = [9.0f32; 4];
+        read_samples(&bytes, &mut decoded);
+        assert_eq!(decoded, [0.5, -1.0, 0.25, 0.0]);
     }
 }

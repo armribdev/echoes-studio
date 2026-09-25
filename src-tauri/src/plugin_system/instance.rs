@@ -52,6 +52,8 @@ use crate::plugin_formats::clap::ffi::{ClapHost, ClapHostContext, ClapLibrary, C
 use crate::plugin_formats::vst3::ffi::{
     IAudioProcessor, IComponent, ProcessSetup, Vst3Library, SPEAKER_STEREO,
 };
+use crate::plugin_system::bridge::BridgedPlugin;
+use crate::plugin_system::crash_marker::{self, MarkerGuard, PluginThread};
 use crate::plugin_system::lifecycle::LifecycleState;
 use crate::plugin_system::param_queue::{ParamChange, ParamQueue};
 use crate::plugin_system::wrapper::{DeviceFormat, DeviceInfo};
@@ -109,6 +111,11 @@ pub enum NativeHandle {
         host: Box<ClapHost>,
         _lib: Arc<ClapLibrary>,
     },
+
+    /// CLAP plugin hosted in a `plugin_host_bridge` process (ADR-015).  Its
+    /// off-RT calls are requests to that process, so they never touch this
+    /// process's memory and need no FFI gate.
+    Bridged(BridgedPlugin),
 }
 
 // SAFETY (see module doc): VST3/CLAP plugin access is sequenced by the host;
@@ -180,6 +187,7 @@ pub(crate) const FFI_GATE_HARVEST_BUDGET: Duration = Duration::from_millis(3);
 /// the SEH-caught and early-return paths in the wrappers).
 pub struct RtFfiGuard<'a> {
     gate: &'a AtomicU8,
+    _marker: MarkerGuard,
 }
 
 impl Drop for RtFfiGuard<'_> {
@@ -191,6 +199,7 @@ impl Drop for RtFfiGuard<'_> {
 /// RAII release for the off-RT (command / GUI thread) side of the FFI gate.
 pub struct OffRtFfiGuard<'a> {
     gate: &'a AtomicU8,
+    _marker: MarkerGuard,
 }
 
 impl Drop for OffRtFfiGuard<'_> {
@@ -254,6 +263,10 @@ pub struct PluginInstance {
     /// instance.  `GATE_IDLE` / `GATE_RT` / `GATE_OFFRT`.
     ffi_gate: AtomicU8,
 
+    /// `crash_marker` tag of this plugin while it runs in-process; 0 when
+    /// sandboxed (its crash cannot take Echoes down).
+    crash_tag: u64,
+
     /// Native ids currently driven by host modulation (ADR-021).  The plugin
     /// keeps a modulation offset until told otherwise, so a recompile that drops
     /// a route must reset it.  Command thread only.
@@ -266,9 +279,11 @@ pub struct PluginInstance {
 
 impl PluginInstance {
     pub fn new_internal(device_id: impl Into<String>, name: impl Into<String>) -> Arc<Self> {
+        let device_id: String = device_id.into();
+        let crash_tag = crash_marker::plugin_tag(&device_id);
         Arc::new(Self {
             instance_id: next_instance_id(),
-            device_id: device_id.into(),
+            device_id,
             name: name.into(),
             vendor: "Internal".to_string(),
             format: DeviceFormat::Internal,
@@ -278,6 +293,7 @@ impl PluginInstance {
             clap_activation: ActivationState::new(),
             vst3_activation: ActivationState::new(),
             ffi_gate: AtomicU8::new(GATE_IDLE),
+            crash_tag,
             modulated_params: Mutex::new(Vec::new()),
             value_modulated_params: Mutex::new(Vec::new()),
         })
@@ -294,9 +310,11 @@ impl PluginInstance {
         processor: NonNull<IAudioProcessor>,
         lib: Arc<Vst3Library>,
     ) -> Arc<Self> {
+        let device_id: String = device_id.into();
+        let crash_tag = crash_marker::plugin_tag(&device_id);
         Arc::new(Self {
             instance_id: next_instance_id(),
-            device_id: device_id.into(),
+            device_id,
             name: name.into(),
             vendor: String::new(),
             format: DeviceFormat::Vst3,
@@ -310,6 +328,7 @@ impl PluginInstance {
             clap_activation: ActivationState::new(),
             vst3_activation: ActivationState::new(),
             ffi_gate: AtomicU8::new(GATE_IDLE),
+            crash_tag,
             modulated_params: Mutex::new(Vec::new()),
             value_modulated_params: Mutex::new(Vec::new()),
         })
@@ -323,9 +342,11 @@ impl PluginInstance {
         host: Box<ClapHost>,
         lib: Arc<ClapLibrary>,
     ) -> Arc<Self> {
+        let device_id: String = device_id.into();
+        let crash_tag = crash_marker::plugin_tag(&device_id);
         Arc::new(Self {
             instance_id: next_instance_id(),
-            device_id: device_id.into(),
+            device_id,
             name: name.into(),
             vendor: vendor.into(),
             format: DeviceFormat::Clap,
@@ -339,9 +360,53 @@ impl PluginInstance {
             clap_activation: ActivationState::new(),
             vst3_activation: ActivationState::new(),
             ffi_gate: AtomicU8::new(GATE_IDLE),
+            crash_tag,
             modulated_params: Mutex::new(Vec::new()),
             value_modulated_params: Mutex::new(Vec::new()),
         })
+    }
+
+    /// A CLAP plugin running in a sandbox process (ADR-015).
+    pub fn new_bridged(
+        device_id: impl Into<String>,
+        name: impl Into<String>,
+        vendor: impl Into<String>,
+        bridged: BridgedPlugin,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            instance_id: next_instance_id(),
+            device_id: device_id.into(),
+            name: name.into(),
+            vendor: vendor.into(),
+            format: DeviceFormat::Clap,
+            handle: NativeHandle::Bridged(bridged),
+            lifecycle: AtomicU8::new(encode_lifecycle(LifecycleState::Created)),
+            param_queue: ParamQueue::with_capacity(PARAM_QUEUE_CAPACITY),
+            clap_activation: ActivationState::new(),
+            vst3_activation: ActivationState::new(),
+            ffi_gate: AtomicU8::new(GATE_IDLE),
+            crash_tag: 0,
+            modulated_params: Mutex::new(Vec::new()),
+            value_modulated_params: Mutex::new(Vec::new()),
+        })
+    }
+
+    /// The sandbox process of a sandboxed instance.
+    pub fn bridge(&self) -> Option<&BridgedPlugin> {
+        match &self.handle {
+            NativeHandle::Bridged(bridged) => Some(bridged),
+            _ => None,
+        }
+    }
+
+    pub fn is_sandboxed(&self) -> bool {
+        self.bridge().is_some()
+    }
+
+    /// The plugin crashed — caught in-process, or its sandbox was condemned —
+    /// and stays silent until a recompile rebuilds it.
+    pub fn has_crashed(&self) -> bool {
+        self.lifecycle() == LifecycleState::Error || self.bridge().is_some_and(BridgedPlugin::is_dead)
     }
 
     /// Records which parameters are now modulated and returns those that no
@@ -363,6 +428,9 @@ impl PluginInstance {
     /// Current plain value of a CLAP parameter, read under the FFI gate.
     /// `None` for other formats, or when a block is in flight past the budget.
     pub fn clap_param_value(&self, native_id: u32) -> Option<f64> {
+        if let Some(bridged) = self.bridge() {
+            return bridged.param_value(native_id);
+        }
         let NativeHandle::Clap { plugin, .. } = &self.handle else {
             return None;
         };
@@ -377,16 +445,19 @@ impl PluginInstance {
     /// # Safety
     /// `plugin` must be this instance's live CLAP plugin and the caller must hold the FFI gate.
     unsafe fn restore_value_modulated_bases(&self, plugin: *const ClapPlugin) {
-        let bases: Vec<(u32, f64)> = self
-            .value_modulated_params
+        let bases = self.value_modulated_bases();
+        if !bases.is_empty() {
+            crate::plugin_formats::clap::params::flush_clap_param_values(plugin, &bases);
+        }
+    }
+
+    fn value_modulated_bases(&self) -> Vec<(u32, f64)> {
+        self.value_modulated_params
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .iter()
             .map(|param| (param.native_id, param.base_plain() as f64))
-            .collect();
-        if !bases.is_empty() {
-            crate::plugin_formats::clap::params::flush_clap_param_values(plugin, &bases);
-        }
+            .collect()
     }
 
     /// Process-unique, stable identity for this live instance.  Two instances of
@@ -433,7 +504,14 @@ impl PluginInstance {
                 self.restore_value_modulated_bases(*plugin);
                 crate::plugin_formats::clap::ffi::read_plugin_state(*plugin)
             },
-            _ => None,
+            NativeHandle::Bridged(bridged) => {
+                let bases = self.value_modulated_bases();
+                if !bases.is_empty() {
+                    bridged.flush_values(&bases);
+                }
+                bridged.save_state()
+            }
+            NativeHandle::Internal => None,
         }
     }
 
@@ -447,7 +525,8 @@ impl PluginInstance {
             NativeHandle::Clap { plugin, .. } => unsafe {
                 crate::plugin_formats::clap::ffi::write_plugin_state(*plugin, bytes)
             },
-            _ => false,
+            NativeHandle::Bridged(bridged) => bridged.load_state(bytes),
+            NativeHandle::Internal => false,
         }
     }
 
@@ -473,8 +552,11 @@ impl PluginInstance {
         if self.device_id != previous.device_id {
             return None;
         }
-        let live = previous
-            .offrt_try_acquire(FFI_GATE_HARVEST_BUDGET)
+        // A crashed plugin's memory may be corrupt: calling into it again could
+        // take Echoes down.  Its last saved state is the safe choice.
+        let live = (!previous.has_crashed())
+            .then(|| previous.offrt_try_acquire(FFI_GATE_HARVEST_BUDGET))
+            .flatten()
             .and_then(|_gate| previous.save_state_blob());
         let bytes = live
             .filter(|b| !b.is_empty())
@@ -514,6 +596,7 @@ impl PluginInstance {
 
     /// `init` once. Required before `clap.state` or `activate`. Command thread.
     pub fn clap_ensure_initialized(&self) -> bool {
+        let _running = self.mark(PluginThread::Control);
         let plugin = match &self.handle {
             NativeHandle::Clap { plugin, .. } => *plugin,
             _ => return false,
@@ -545,6 +628,7 @@ impl PluginInstance {
     /// graph prepare — never the audio thread.  Returns whether the plugin is
     /// active.
     pub fn clap_ensure_active(&self, sample_rate: f32, max_block: u32) -> bool {
+        let _running = self.mark(PluginThread::Control);
         let plugin = match &self.handle {
             NativeHandle::Clap { plugin, .. } => *plugin,
             _ => return false,
@@ -613,6 +697,7 @@ impl PluginInstance {
     /// No-op (`false`) for non-VST3 handles.  Runs on the command thread during
     /// graph prepare — never the audio thread.
     pub fn vst3_ensure_active(&self, sample_rate: f32, max_block: u32) -> bool {
+        let _running = self.mark(PluginThread::Control);
         let (comp, proc) = match &self.handle {
             NativeHandle::Vst3 {
                 component,
@@ -676,6 +761,12 @@ impl PluginInstance {
         }
     }
 
+    /// Records that `thread` is about to run this plugin's code, until the
+    /// guard drops, so a crash can be attributed at the next start.
+    pub fn mark(&self, thread: PluginThread) -> MarkerGuard {
+        crash_marker::enter(thread, self.crash_tag)
+    }
+
     pub fn set_lifecycle(&self, state: LifecycleState) {
         self.lifecycle
             .store(encode_lifecycle(state), Ordering::Release);
@@ -696,7 +787,10 @@ impl PluginInstance {
             Ordering::Acquire,
             Ordering::Relaxed,
         ) {
-            Ok(_) => Some(RtFfiGuard { gate: &self.ffi_gate }),
+            Ok(_) => Some(RtFfiGuard {
+                gate: &self.ffi_gate,
+                _marker: self.mark(PluginThread::Audio),
+            }),
             Err(_) => None,
         }
     }
@@ -713,7 +807,10 @@ impl PluginInstance {
                 .compare_exchange(GATE_IDLE, GATE_OFFRT, Ordering::Acquire, Ordering::Relaxed)
                 .is_ok()
             {
-                return Some(OffRtFfiGuard { gate: &self.ffi_gate });
+                return Some(OffRtFfiGuard {
+                    gate: &self.ffi_gate,
+                    _marker: self.mark(PluginThread::Control),
+                });
             }
             if Instant::now() >= deadline {
                 return None;
@@ -748,6 +845,7 @@ impl PluginInstance {
 
 impl Drop for PluginInstance {
     fn drop(&mut self) {
+        let _running = self.mark(PluginThread::Control);
         match &self.handle {
             NativeHandle::Internal => {}
 
@@ -773,6 +871,9 @@ impl Drop for PluginInstance {
                     ((*(*comp).vtbl).release)(comp as *mut _);
                 }
             }
+
+            // The bridge process owns the plugin; dropping the handle stops it.
+            NativeHandle::Bridged(_) => {}
 
             NativeHandle::Clap { plugin, .. } => {
                 let p = *plugin;

@@ -6,6 +6,7 @@
  * are the only place in the frontend that should `invoke` those commands.
  */
 
+import type { PluginIsolation } from '../stores/preferences';
 import { invoke } from '@tauri-apps/api/core';
 
 // ── Types (mirror of src-tauri/src/audio_settings.rs) ────────────────────────
@@ -112,6 +113,14 @@ export async function getDeviceChannels(deviceId: string, isInput: boolean): Pro
  */
 export async function applyAudioSettings(settings: AudioSettingsPayload): Promise<void> {
 	await invoke<void>('apply_audio_settings', { settings });
+}
+
+/**
+ * Which plugins run in their own process: the mode, plus the plugin ids isolated
+ * everywhere. A change reloads the affected plugins.
+ */
+export async function setPluginIsolation(mode: PluginIsolation, alwaysIsolated: string[]): Promise<void> {
+	await invoke<void>('set_plugin_isolation', { mode, alwaysIsolated });
 }
 
 /**

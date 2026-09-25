@@ -1,0 +1,257 @@
+//! The real bridge binary hosting the real test CLAP plugin (ADR-015).
+//! Windows-only: the shared region is implemented on Windows only.
+#![cfg(windows)]
+
+use std::ffi::OsString;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+use std::sync::OnceLock;
+use std::time::Duration;
+
+use clap_ffi::{
+    read_pod, split_events, ClapEventBuffer, ClapEventHeader, ClapParamInfo,
+    CLAP_EVENT_PARAM_GESTURE_END, CLAP_EVENT_PARAM_VALUE,
+};
+use plugin_bridge::control::{Op, PayloadReader};
+use plugin_bridge::protocol::BLOCK_PLUGIN_EDITED;
+use plugin_bridge::session::{
+    BlockOutcome, BlockRequest, BridgeLayout, BridgeProcess, DEAD_AFTER_CONSECUTIVE_TIMEOUTS,
+};
+
+const GAIN: u32 = 0;
+const HANG: u32 = 1;
+const CRASH: u32 = 2;
+const TOUCH: u32 = 3;
+const FRAMES: usize = 64;
+const CHANNELS: usize = 2;
+const TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Builds the test plugin into its own target directory, once per test binary.
+fn test_plugin_dll() -> &'static Path {
+    static DLL: OnceLock<PathBuf> = OnceLock::new();
+    DLL.get_or_init(|| {
+        let workspace = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let target = workspace.join("target").join("test-plugin");
+        let status = Command::new(env!("CARGO"))
+            .args(["build", "--quiet", "-p", "test_clap_plugin", "--target-dir"])
+            .arg(&target)
+            .current_dir(&workspace)
+            .status()
+            .expect("run cargo");
+        assert!(status.success(), "building the test plugin failed");
+        target.join("debug").join("test_clap_plugin.dll")
+    })
+}
+
+fn spawn(plugin_id: &str) -> std::io::Result<BridgeProcess> {
+    let args: Vec<OsString> = vec![
+        "--plugin-dll".into(),
+        test_plugin_dll().into(),
+        "--plugin-id".into(),
+        plugin_id.into(),
+    ];
+    BridgeProcess::spawn(
+        Path::new(env!("CARGO_BIN_EXE_plugin_host_bridge")),
+        BridgeLayout::new(4096, CHANNELS as u32, 64 * 1024),
+        &args,
+        TIMEOUT,
+    )
+}
+
+fn activated() -> BridgeProcess {
+    let bridge = spawn("echoes.test.gain").expect("bridge starts");
+    let mut payload = 48_000.0f64.to_le_bytes().to_vec();
+    payload.extend_from_slice(&4096u32.to_le_bytes());
+    let latency = bridge
+        .request(Op::Activate, &payload, TIMEOUT)
+        .expect("activate");
+    assert_eq!(
+        latency,
+        64u32.to_le_bytes(),
+        "the plugin's latency is reported"
+    );
+    bridge
+}
+
+fn param_events(changes: &[(u16, u32, f64)]) -> Vec<u8> {
+    let mut buffer = ClapEventBuffer::new();
+    for &(kind, native_id, value) in changes {
+        if kind == CLAP_EVENT_PARAM_VALUE {
+            buffer.push_param_value(0, native_id, value);
+        } else {
+            buffer.push_param_mod(0, native_id, value);
+        }
+    }
+    buffer.sort();
+    let mut bytes = vec![0u8; 4096];
+    let end = buffer.write_bytes(&mut bytes, 0).unwrap();
+    bytes.truncate(end);
+    bytes
+}
+
+struct Block {
+    output: Vec<f32>,
+    out_events: Vec<u8>,
+    outcome: BlockOutcome,
+}
+
+fn process(
+    bridge: &BridgeProcess,
+    sequence: u64,
+    input: &[f32],
+    events: &[u8],
+    budget: Duration,
+) -> Block {
+    let mut output = vec![9.0f32; FRAMES * CHANNELS];
+    let mut out_events = vec![0u8; 4096];
+    let request = BlockRequest {
+        frames: FRAMES,
+        input: Some(input),
+        events,
+        sequence,
+        steady_time: sequence as i64 * FRAMES as i64,
+        reset: false,
+    };
+    let outcome = bridge
+        .audio()
+        .process_block(&request, &mut output, &mut out_events, budget);
+    if let BlockOutcome::Processed { event_bytes, .. } = outcome {
+        out_events.truncate(event_bytes);
+    }
+    Block {
+        output,
+        out_events,
+        outcome,
+    }
+}
+
+fn ramp() -> Vec<f32> {
+    (0..FRAMES * CHANNELS).map(|i| i as f32 / 100.0).collect()
+}
+
+fn scaled(input: &[f32], gain: f32) -> Vec<f32> {
+    input.iter().map(|s| s * gain).collect()
+}
+
+#[test]
+fn processes_audio_with_parameter_changes_and_modulation() {
+    let bridge = activated();
+    let input = ramp();
+
+    let block = process(&bridge, 0, &input, &[], TIMEOUT);
+    assert!(matches!(block.outcome, BlockOutcome::Processed { .. }));
+    assert_eq!(block.output, input, "unity gain by default");
+
+    let events = param_events(&[(CLAP_EVENT_PARAM_VALUE, GAIN, 0.5)]);
+    assert_eq!(
+        process(&bridge, 1, &input, &events, TIMEOUT).output,
+        scaled(&input, 0.5)
+    );
+
+    let events = param_events(&[(clap_ffi::CLAP_EVENT_PARAM_MOD, GAIN, 0.25)]);
+    assert_eq!(
+        process(&bridge, 2, &input, &events, TIMEOUT).output,
+        scaled(&input, 0.75)
+    );
+    assert_eq!(bridge.audio().timeout_count(), 0);
+}
+
+#[test]
+fn state_and_parameters_travel_over_the_control_channel() {
+    let bridge = activated();
+
+    let mut flush = GAIN.to_le_bytes().to_vec();
+    flush.extend_from_slice(&0.3f64.to_le_bytes());
+    bridge.request(Op::FlushValues, &flush, TIMEOUT).unwrap();
+    let saved = bridge.request(Op::SaveState, &[], TIMEOUT).unwrap();
+    assert_eq!(saved, 0.3f64.to_bits().to_le_bytes());
+
+    bridge
+        .request(Op::LoadState, &1.5f64.to_bits().to_le_bytes(), TIMEOUT)
+        .unwrap();
+    let value = bridge
+        .request(Op::ParamValue, &GAIN.to_le_bytes(), TIMEOUT)
+        .unwrap();
+    assert_eq!(f64::from_le_bytes(value.try_into().unwrap()), 1.5);
+
+    let params = bridge.request(Op::Params, &[], TIMEOUT).unwrap();
+    let mut reader = PayloadReader::new(&params);
+    assert_eq!(reader.u32().unwrap(), 4);
+    let first: ClapParamInfo = read_pod(&params[4..]).unwrap();
+    assert_eq!(
+        (first.id, &first.name[..4], first.max_value),
+        (GAIN, &b"Gain"[..], 2.0)
+    );
+
+    let error = bridge.request(Op::LoadState, &[1, 2], TIMEOUT).unwrap_err();
+    assert_eq!(
+        error.kind(),
+        std::io::ErrorKind::Other,
+        "a plugin refusal keeps the channel open"
+    );
+    assert!(bridge.request(Op::SaveState, &[], TIMEOUT).is_ok());
+}
+
+#[test]
+fn edits_made_in_the_plugin_come_back_with_the_block() {
+    let bridge = activated();
+    let events = param_events(&[(CLAP_EVENT_PARAM_VALUE, TOUCH, 1.0)]);
+    let block = process(&bridge, 0, &ramp(), &events, TIMEOUT);
+
+    let BlockOutcome::Processed { flags, .. } = block.outcome else {
+        panic!("block not processed: {:?}", block.outcome);
+    };
+    assert_ne!(flags & BLOCK_PLUGIN_EDITED, 0, "mark_dirty is forwarded");
+    let kinds: Vec<u16> = split_events(&block.out_events)
+        .map(|event| read_pod::<ClapEventHeader>(event).unwrap().r#type)
+        .collect();
+    assert_eq!(
+        kinds,
+        [CLAP_EVENT_PARAM_VALUE, CLAP_EVENT_PARAM_GESTURE_END]
+    );
+}
+
+#[test]
+fn a_crashing_plugin_only_kills_its_bridge() {
+    let bridge = activated();
+    let input = ramp();
+    let events = param_events(&[(CLAP_EVENT_PARAM_VALUE, CRASH, 1.0)]);
+    let block = process(&bridge, 0, &input, &events, Duration::from_millis(500));
+    assert_eq!(block.outcome, BlockOutcome::TimedOut);
+    assert!(
+        block.output.iter().all(|&s| s == 0.0),
+        "silence instead of the crashed plugin"
+    );
+
+    for sequence in 1..DEAD_AFTER_CONSECUTIVE_TIMEOUTS as u64 {
+        process(&bridge, sequence, &input, &[], Duration::from_millis(20));
+    }
+    assert!(bridge.audio().is_dead());
+    assert!(bridge.request(Op::SaveState, &[], TIMEOUT).is_err());
+}
+
+#[test]
+fn a_hung_plugin_times_out_then_is_condemned() {
+    let bridge = activated();
+    let input = ramp();
+    let events = param_events(&[(CLAP_EVENT_PARAM_VALUE, HANG, 1.0)]);
+    for sequence in 0..DEAD_AFTER_CONSECUTIVE_TIMEOUTS as u64 {
+        let events = if sequence == 0 {
+            events.as_slice()
+        } else {
+            &[]
+        };
+        let block = process(&bridge, sequence, &input, events, Duration::from_millis(20));
+        assert_eq!(block.outcome, BlockOutcome::TimedOut);
+    }
+    assert!(bridge.audio().is_dead());
+    assert_eq!(
+        process(&bridge, 99, &input, &[], TIMEOUT).outcome,
+        BlockOutcome::Dead
+    );
+}
+
+#[test]
+fn an_unknown_plugin_fails_to_start() {
+    assert!(spawn("echoes.test.missing").is_err());
+}

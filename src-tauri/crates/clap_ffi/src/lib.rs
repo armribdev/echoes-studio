@@ -849,6 +849,84 @@ impl ClapEventBuffer {
         let slot = *self.order[..self.count].get(index)?;
         Some(unsafe { &self.slots[slot as usize].header })
     }
+
+    /// Appends the events, in delivery order, as raw CLAP bytes to `out`
+    /// starting at `offset`.  Returns the new end, or `None` when `out` is too
+    /// small (nothing past `offset` is then meaningful).
+    pub fn write_bytes(&self, out: &mut [u8], offset: usize) -> Option<usize> {
+        let mut end = offset;
+        for index in 0..self.count {
+            end = append_event(out, end, self.header(index)?)?;
+        }
+        Some(end)
+    }
+
+    /// Appends one note or parameter event given as raw CLAP bytes (possibly
+    /// unaligned).  Other event types and malformed bytes are ignored.
+    pub fn push_bytes(&mut self, bytes: &[u8]) {
+        let Some(header) = read_pod::<ClapEventHeader>(bytes) else {
+            return;
+        };
+        if header.space_id != CLAP_CORE_EVENT_SPACE {
+            return;
+        }
+        match header.r#type {
+            CLAP_EVENT_NOTE_ON | CLAP_EVENT_NOTE_OFF => {
+                if let Some(note) = read_sized::<ClapEventNote>(bytes, &header) {
+                    self.push(ClapEventSlot { note });
+                }
+            }
+            CLAP_EVENT_PARAM_VALUE | CLAP_EVENT_PARAM_MOD => {
+                if let Some(mut param) = read_sized::<ClapEventParamValue>(bytes, &header) {
+                    param.cookie = std::ptr::null_mut();
+                    self.push(ClapEventSlot { param });
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+/// The raw bytes of one event (`header.size` bytes starting at `header`).
+///
+/// # Safety
+/// `header` must head a complete event of `header.size` bytes, as CLAP
+/// guarantees for events handed over by a plugin or built by this crate.
+pub unsafe fn event_bytes(header: &ClapEventHeader) -> &[u8] {
+    std::slice::from_raw_parts(header as *const ClapEventHeader as *const u8, header.size as usize)
+}
+
+/// Appends `header`'s event to `out` at `offset`, returning the new end.
+pub fn append_event(out: &mut [u8], offset: usize, header: &ClapEventHeader) -> Option<usize> {
+    // SAFETY: every header reachable here heads a complete event.
+    let bytes = unsafe { event_bytes(header) };
+    let end = offset.checked_add(bytes.len())?;
+    out.get_mut(offset..end)?.copy_from_slice(bytes);
+    Some(end)
+}
+
+/// Splits a raw event stream into its events (each slice starts with a header).
+pub fn split_events(mut bytes: &[u8]) -> impl Iterator<Item = &[u8]> {
+    std::iter::from_fn(move || {
+        let header = read_pod::<ClapEventHeader>(bytes)?;
+        let size = header.size as usize;
+        if size < std::mem::size_of::<ClapEventHeader>() || size > bytes.len() {
+            return None;
+        }
+        let (event, rest) = bytes.split_at(size);
+        bytes = rest;
+        Some(event)
+    })
+}
+
+/// Reads a POD event struct from possibly unaligned bytes.
+pub fn read_pod<T>(bytes: &[u8]) -> Option<T> {
+    (bytes.len() >= std::mem::size_of::<T>())
+        .then(|| unsafe { std::ptr::read_unaligned(bytes.as_ptr() as *const T) })
+}
+
+fn read_sized<T>(bytes: &[u8], header: &ClapEventHeader) -> Option<T> {
+    (header.size as usize == std::mem::size_of::<T>()).then(|| read_pod(bytes)).flatten()
 }
 
 fn note_event(r#type: u16, time: u32, channel: i16, key: i16, velocity: f64) -> ClapEventNote {
@@ -1490,6 +1568,42 @@ mod event_buffer_tests {
         let event = unsafe { &*(header as *const ClapEventHeader as *const ClapEventParamValue) };
         assert_eq!(header.size as usize, std::mem::size_of::<ClapEventParamValue>());
         assert_eq!((event.param_id, event.value), (9, -3.5));
+    }
+
+    #[test]
+    fn events_survive_a_raw_byte_roundtrip() {
+        let mut buffer = ClapEventBuffer::new();
+        buffer.push_param_mod(64, 1, 0.5);
+        buffer.push_note_on(32, 0, 62, 1.0);
+        buffer.push_param_value(0, 1, 0.25);
+        buffer.sort();
+
+        let mut bytes = vec![0u8; 4096];
+        let end = buffer.write_bytes(&mut bytes, 3).unwrap();
+        let mut copy = ClapEventBuffer::new();
+        for event in split_events(&bytes[3..end]) {
+            copy.push_bytes(event);
+        }
+        copy.sort();
+        assert_eq!(delivered(&copy), delivered(&buffer));
+    }
+
+    #[test]
+    fn write_bytes_refuses_a_too_small_buffer() {
+        let mut buffer = ClapEventBuffer::new();
+        buffer.push_param_value(0, 1, 0.25);
+        let mut bytes = [0u8; 8];
+        assert_eq!(buffer.write_bytes(&mut bytes, 0), None);
+    }
+
+    #[test]
+    fn split_events_stops_at_a_truncated_event() {
+        let mut buffer = ClapEventBuffer::new();
+        buffer.push_param_value(0, 1, 0.25);
+        let mut bytes = vec![0u8; 256];
+        let end = buffer.write_bytes(&mut bytes, 0).unwrap();
+        assert_eq!(split_events(&bytes[..end - 1]).count(), 0);
+        assert_eq!(split_events(&bytes[..end]).count(), 1);
     }
 
     #[test]

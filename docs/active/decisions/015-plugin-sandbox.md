@@ -2,7 +2,11 @@
 
 ## Status
 
-**Proposed (design ratified) — partially implemented (sub-phase 6a only).**
+**Accepted — implemented for CLAP effects (amendment 2026-09-25, at the end of
+this file).**  The sub-phase sections below are the history of how it was
+built; type names in them (`BridgeSession`, `serve_with`, …) predate the
+amendment.  The amendment describes the current design and closes the two
+risks listed in *Known risk*.
 
 Materialises **ADR-010** of [`docs/active/migration/target_architecture.md`](../migration/target_architecture.md)
 §9 and **Phase 6 — Sandboxing** of [`docs/active/migration/migration_plan.md`](../migration/migration_plan.md)
@@ -526,7 +530,10 @@ watchdog, so a misbehaving sandboxed plugin can no longer take the engine down
 - Automatic respawn/recovery of a condemned device; spin-budget tuning;
   param/MIDI rings to the bridge.
 
-## Known risk — surfaced 2026-06-03 (architecture review), not yet closed
+## Known risk — surfaced 2026-06-03 (architecture review) — closed 2026-09-25
+
+> Items 1 and 2 are resolved by the amendment below; item 3 is mitigated
+> (restart on recompile, crash reported to the UI).
 
 The crash-isolation goal (P0-5) is met and the decomposition is sound. Two
 RT-strategy items must be resolved **before the sandbox is enabled on real
@@ -581,3 +588,144 @@ content** (it is off by default, so non-blocking for current dev):
   rejected — it would touch RT-adjacent boundaries with no consumer, against the
   governance rule. Deferred to 6b where the consumer (instantiate branch)
   actually exists.
+
+## Amendment — 2026-09-25: usable sandbox (state, parameters, editor, RT strategy)
+
+Before this amendment the bridge was reachable only by editing a project file,
+was re-spawned on every recompile, lost the plugin's state on save, ignored
+parameters/automation/modulation, and waited on the audio thread with a 5 ms
+spin against a bridge that polled every 200 µs (so timeouts, then a condemned
+plugin, were the normal case).  What changed:
+
+### A sandboxed plugin is a `PluginInstance`
+
+As the original decision required, the proxy is **a variant of the native
+handle**, not a separate node type chosen by the compiler:
+`NativeHandle::Bridged(BridgedPlugin)` (`plugin_system/{instance,bridge}.rs`).
+`PluginHost::instantiate` builds it when `sandboxed` is set on a CLAP plugin
+(other formats ignore the flag).  Consequences, all through the existing paths:
+
+- **Reuse across recompiles** (ADR-016): the bridge process survives structural
+  edits.  Reuse requires the sandbox mode to match, so toggling it rebuilds the
+  instance and carries the state across (`restore_from`, R-4).
+- **State** (ADR-010): `save_state_blob` / `load_state_blob` become control
+  requests; project save and load work unchanged.
+- **Parameters** (ADR-007/021): the node reuses `ClapParamEvents` — queued
+  edits, automation, modulation, value-modulation, output-event observation —
+  and ships the resulting CLAP events with each block.
+- **Editor**: opened *in the bridge process* (top-level window, per-monitor DPI,
+  same host callbacks as in-process).  A crash in the editor kills only the bridge.
+- **Unsaved-changes flag**: the bridge forwards `mark_dirty` and the plugin's
+  output events with each block.
+- **No silent fallback**: a plugin that cannot start sandboxed is reported
+  unavailable; it is never loaded in-process instead.
+
+### Transport
+
+- **Audio**: one ring message per block, `[header][events][samples]`
+  (protocol v2, `plugin_bridge::protocol`).  Events are opaque CLAP bytes
+  (transport + parameter events in, plugin output events back).
+- **Control**: request/response frames over the child's stdin/stdout
+  (`plugin_bridge::control`): activate, state, parameter list/value/flush,
+  open editor.  Off the audio thread; each request has a timeout, and a timeout
+  closes the channel (a late reply would desynchronise it).
+- **Wake-up**: a named auto-reset event.  The engine signals it after queuing a
+  block; the bridge's audio thread (time-critical priority) sleeps on it.
+
+### Real-time strategy (closes risk 1)
+
+The round-trip stays **synchronous** — no added latency, arbitrary block sizes
+(loop wraps split blocks) — but the wait now fits the block:
+
+- live: bounded spin of **3/4 of the block period**; a late block is silence;
+  8 consecutive late blocks condemn the plugin, which then costs nothing;
+- the only kernel call on the audio thread is the **non-blocking `SetEvent`**
+  (no lock is held by another thread that could make it wait).  This is a
+  deliberate, bounded exception to "no syscall" for the sandbox path only.
+
+The asynchronous pipelined model (+1 block latency) was not adopted: it needs a
+fixed block size to report a constant latency, which the engine does not have.
+
+### Offline render (closes risk 2)
+
+`PrepareContext.live` (new, from `CompileConfig.live`, formerly `audition`)
+tells the node it renders offline.  It then waits up to 10 s per block, so a
+sandboxed plugin renders the same whatever the OS scheduling (C-2).  Projects
+without sandboxed plugins are untouched: the harness stays green with its
+golden hashes.
+
+### Crash handling (mitigates risk 3)
+
+A condemned plugin is reported with `UnavailableReason::Crashed` — pushed to the
+UI within 250 ms (`plugin_system::bridge::crash_count`, polled by the
+plugin-edit watcher) — and restarted by the next recompile ("Redémarrer" in the
+effect chain), from its last cached state.
+
+### Verification
+
+- `plugin_bridge` unit tests: protocol, control frames, the OS event, and the
+  full owner/peer round-trip in one process.
+- `crates/test_clap_plugin`: a real CLAP effect (gain, state, latency, "hang",
+  "crash", "touch" parameters).  `plugin_host_bridge/tests/bridge.rs` and
+  `plugin_system/sandbox_tests.rs` drive it through the real bridge binary:
+  processing, parameter changes and modulation, state round-trip, sandbox
+  toggle keeping state, reuse across recompiles, edits reported, crash and hang
+  contained, crash reported and recovered.
+- Manual (not in CI): a real third-party plugin and its editor.
+
+### Global preference (2026-09-25)
+
+Preferences → Audio → *Isolation des plugins*: **Aucun** (everything
+in-process), **Choisis** (default: the effects marked « Isoler », i.e.
+`PluginParams.sandboxed`, plus the plugins marked « Toujours isoler » —
+right-click on an effect — wherever they are used), **Tous** (every CLAP
+effect).  The "always isolate" list is per plugin type and per machine, like
+the mode.  It is an app
+preference, not a project setting — it says how much this machine trusts its
+plugins — so it lives in the frontend preferences and reaches the engine through
+`set_plugin_isolation` at startup and on change (`PluginHost::set_isolation`).
+A change recompiles and closes open in-process editors.  C-9 holds: the default
+isolates nothing unless the user asks.
+
+### Crash attribution: offering to isolate the culprit (2026-09-25)
+
+When an **in-process** plugin kills Echoes, the next start names it and offers
+« Toujours isoler … » (or, for VST3, explains it cannot be isolated yet).
+
+`plugin_system/crash_marker.rs` maps a 4 KiB file from the app data folder.
+Every call into an in-process plugin marks its tag (FNV-1a of the plugin id) in
+the slot of the calling thread — audio (`rt_try_enter` guard), control
+(`offrt_try_acquire` guard, instantiation, activation, teardown) or UI (editor
+open/close, `on_main_thread`, DPI).  The pages of a file mapping belong to the
+OS, so they survive the crash.  At startup, a session still marked *running*
+with a non-zero slot gives the suspect (`take_crash_suspect`), matched against
+the registry; a normal exit (`RunEvent::Exit`) marks the session clean.  A
+second Echoes instance cannot open the file (exclusive write) and marks nothing.
+
+On the audio thread this is one atomic store per plugin block into the mapped
+page — no lock, no allocation, no kernel call; after the OS writes the page
+back, the next store may take a soft page fault (no I/O).
+
+Blind spots: a crash inside the plugin's own window procedure or on a thread
+the plugin created is not attributed (no marked call is in progress), so no
+suggestion is made — never a wrong one.
+
+### Crashed plugins in the effect chain (2026-09-25)
+
+`PluginInstance::has_crashed` covers both a condemned sandbox and an in-process
+crash caught by the SEH guard (`crash_guard`, lifecycle `Error`); both are
+reported as `UnavailableReason::Crashed` and counted by
+`crash_marker::note_crash` so the UI learns within 250 ms.  The effect block
+turns red with a « Recharger » button in its header, visible even collapsed;
+it calls `reload_plugins` (a recompile).  The rebuild restores the **last saved
+state**, never the crashed instance's live state: calling into a plugin whose
+memory may be corrupt could take Echoes down.
+
+### Still open
+
+- **Instruments** are not sandboxable yet (the track instrument has no flag);
+  the event transport already carries notes.
+- **VST3** behind the same handle.
+- **Installer**: `tauri build` builds the bridge next to the app binary, but
+  the installer does not bundle it yet (`bundle.externalBin`).
+- The live wait still spins a core for the plugin's processing time.

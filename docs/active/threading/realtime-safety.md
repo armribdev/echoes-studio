@@ -200,6 +200,30 @@ for sample in self.delay_line.iter_mut() { ... }
 snapshot.try_swap(&mut current_scheduler);
 ```
 
+### Sandboxed plugins (ADR-015) — the one bounded wait
+
+A sandboxed plugin's node (`plugin_system/bridged_node.rs`) hands each block to
+another process and **waits for the answer on the audio thread**.  This is the
+only wait allowed in the callback, and it is bounded:
+
+- a spin on the shared-memory ring, capped at 3/4 of the block period (live);
+  past it the block is silence, and 8 late blocks in a row condemn the plugin
+  so it costs nothing afterwards;
+- one kernel call, the non-blocking `SetEvent` that wakes the bridge — no other
+  thread holds anything it could wait on;
+- no allocation, no lock: the ring, the scratch buffers and the event lists are
+  sized at `prepare`.
+
+Offline (`PrepareContext.live == false`) the node waits up to 10 s per block so
+the export does not depend on scheduling (C-2).
+
+### Crash marker (ADR-015)
+
+In-process plugin wrappers mark the running plugin in a memory-mapped file
+(`plugin_system/crash_marker.rs`) through the `rt_try_enter` guard: one atomic
+store per block, no lock, no allocation.  The page is file-backed, so after the
+OS writes it back the next store may take a soft page fault (no I/O).
+
 ---
 
 ## Priority Inversion Prevention

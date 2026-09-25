@@ -601,16 +601,22 @@ fn apply_hot_effect_update(
 
 fn patch_effect(
     effect: &mut TrackEffect,
-    enabled: Option<bool>,
-    params: Option<serde_json::Value>,
+    p: UpdateEffectPayload,
 ) -> Result<(HotEffectUpdate, bool), String> {
     let mut structural = false;
-    if let Some(en) = enabled {
+    if let Some(en) = p.enabled {
         if effect.enabled != en {
             structural = true;
         }
         effect.enabled = en;
     }
+    if let (Some(sandboxed), EffectParams::Plugin(plugin)) = (p.sandboxed, &mut effect.params) {
+        if plugin.sandboxed != sandboxed {
+            structural = true;
+        }
+        plugin.sandboxed = sandboxed;
+    }
+    let params = p.params;
     if let Some(raw) = params {
         effect.params = merge_effect_params(&effect.params, raw)?;
     }
@@ -1172,10 +1178,11 @@ fn process_command(
                 .map_err(|e| format!("UPDATE_EFFECT payload invalid: {e}"))?;
 
             // Parameter-only edits are hot-delivered (ADR-009/ADR-007); enable/disable toggles recompile.
+            let (track_id, effect_id) = (p.track_id.clone(), p.effect_id.clone());
             let (updated_effect, hot, structural) = with_project_mut(state, |project| {
-                let track = require_track_mut(project, &p.track_id)?;
-                let effect = require_effect_mut(track, &p.effect_id)?;
-                let (hot, structural) = patch_effect(effect, p.enabled, p.params)?;
+                let track = require_track_mut(project, &track_id)?;
+                let effect = require_effect_mut(track, &effect_id)?;
+                let (hot, structural) = patch_effect(effect, p)?;
                 Ok((
                     serde_json::to_value(&*effect).unwrap_or_default(),
                     hot,
@@ -1184,10 +1191,10 @@ fn process_command(
             })?;
 
             let event_payload =
-                json!({ "track_id": p.track_id, "effect_id": p.effect_id, "effect": updated_effect });
+                json!({ "track_id": track_id, "effect_id": effect_id, "effect": updated_effect });
             let engine_ev = snapshot_emit(&ctx, ev::EFFECT_UPDATED, event_payload)?;
 
-            if structural || !apply_hot_effect_update(state, &p.effect_id, &hot) {
+            if structural || !apply_hot_effect_update(state, &effect_id, &hot) {
                 recompile_if_needed(app, state);
             }
 

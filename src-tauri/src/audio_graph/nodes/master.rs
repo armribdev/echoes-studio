@@ -157,6 +157,7 @@ mod tests {
             sample_rate: 48_000.0,
             max_block_size: 512,
             num_channels: 1,
+            live: true,
         });
         let mut input = AudioBuffer::new(1, 4);
         input.channel_mut(0).copy_from_slice(&[0.5, -0.3, 0.9, 1.2]);
@@ -180,6 +181,7 @@ mod tests {
             sample_rate: 48_000.0,
             max_block_size: 512,
             num_channels: 1,
+            live: true,
         });
         let mut input = AudioBuffer::new(1, 8);
         input.channel_mut(0).fill(0.5);

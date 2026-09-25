@@ -1,172 +1,237 @@
-//! Out-of-process plugin host (ADR-015, Phase 6d-ii).
+//! Out-of-process plugin host (ADR-015).
 //!
-//! In the finished sandbox the engine spawns this binary once per sandboxed
-//! device, hands it the shared-memory region and the target plugin, and the
-//! process runs a real-time loop: attach the rings, load the real VST3/CLAP
-//! plugin, then per block drain params/events, call the plugin's `process`, and
-//! publish the output — with a watchdog (6e) marking it `Dead` on timeout.
+//! The engine spawns one bridge per sandboxed plugin.  The bridge loads the
+//! plugin, then runs two threads until the engine asks it to stop:
+//! - an audio thread that processes the blocks the engine sends over shared
+//!   memory ([`plugin_bridge::session::BridgePeer::serve_audio`]);
+//! - the main thread, which answers control requests on stdin/stdout and runs
+//!   the plugin's editor window.
 //!
-//! **As of 6d-iii** the serve mode runs the ring-driven **process loop** with an
-//! identity pass-through stand-in: it opens the shared region, attaches the audio
-//! rings, signals `READY`, and copies each input block to the output ring until
-//! the engine sets `SHUTDOWN`.  It loads **no real plugin yet** — the VST3/CLAP
-//! FFI load that replaces the identity copy is 6d-iii-b.
-//!
-//! ## CLI (stable)
+//! A crash of the plugin kills only this process; the engine notices the
+//! missing replies and silences the device.
 //!
 //! ```text
-//! plugin_host_bridge --region-name <N> --block-size <B> --channels <C> --audio-capacity <A>
-//!     Serve mode: open the region for this layout, run the process loop until
-//!     the engine sets SHUTDOWN. Exit 0 on clean shutdown, 3 on a region error,
-//!     64 on bad arguments.
-//!
-//! plugin_host_bridge --protocol-version <N>
-//!     N must equal plugin_bridge::protocol::BRIDGE_PROTOCOL_VERSION, else exit 2.
-//!
+//! plugin_host_bridge --region-name <N> --max-frames <F> --channels <C>
+//!                    --event-capacity <E> --plugin-dll <PATH> --plugin-id <ID>
 //! plugin_host_bridge --print-protocol-version
-//!     Print the linked protocol version and exit 0 (engine probe).
 //! ```
 
-mod clap_processor;
+#[cfg(windows)]
+mod editor;
+mod plugin;
 
-use std::path::Path;
+use std::collections::HashMap;
+use std::io::{self, BufReader, Write};
+use std::path::PathBuf;
 use std::process::ExitCode;
+use std::sync::{mpsc, Arc};
 
-use clap_processor::ClapProcessor;
+use plugin::{ClapBlockProcessor, LoadedPlugin};
+use plugin_bridge::control::{self, Op, PayloadReader, STATUS_ERROR, STATUS_OK};
 use plugin_bridge::protocol::BRIDGE_PROTOCOL_VERSION;
-use plugin_bridge::session::{self, BridgeLayout};
+use plugin_bridge::session::{BridgeLayout, BridgePeer};
 
-/// Engine's requested protocol version does not match this binary's.
-const EXIT_PROTOCOL_MISMATCH: u8 = 2;
-/// Serve mode failed (region open / control-block validation / plugin load).
-const EXIT_SERVE_FAILED: u8 = 3;
-/// Malformed / unsupported arguments.
-const EXIT_USAGE: u8 = 64; // EX_USAGE (sysexits.h convention)
+const EXIT_START_FAILED: u8 = 3;
+const EXIT_USAGE: u8 = 64;
+/// Main-loop wait between checks for control requests and shutdown.
+const MAIN_LOOP_WAIT_MS: u32 = 5;
+
+struct Options {
+    region_name: String,
+    layout: BridgeLayout,
+    plugin_dll: PathBuf,
+    plugin_id: String,
+}
+
+fn parse_options(args: &[String]) -> Option<Options> {
+    let values: HashMap<&str, &str> = args
+        .chunks(2)
+        .map(|pair| match pair {
+            [flag, value] => Some((flag.as_str(), value.as_str())),
+            _ => None,
+        })
+        .collect::<Option<_>>()?;
+    let number = |flag: &str| values.get(flag)?.parse::<u32>().ok();
+    Some(Options {
+        region_name: values.get("--region-name")?.to_string(),
+        layout: BridgeLayout::new(
+            number("--max-frames")?,
+            number("--channels")?,
+            number("--event-capacity")?,
+        ),
+        plugin_dll: PathBuf::from(values.get("--plugin-dll")?),
+        plugin_id: values.get("--plugin-id")?.to_string(),
+    })
+}
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let argv: Vec<&str> = args.iter().map(String::as_str).collect();
-
-    match argv.as_slice() {
-        ["--print-protocol-version"] => {
-            println!("{BRIDGE_PROTOCOL_VERSION}");
-            ExitCode::SUCCESS
-        }
-
-        ["--protocol-version", value] => check_protocol(value),
-
-        ["--region-name", name, "--block-size", bs, "--channels", ch, "--audio-capacity", cap] => {
-            serve(name, bs, ch, cap)
-        }
-
-        ["--region-name", name, "--block-size", bs, "--channels", ch, "--audio-capacity", cap, "--sample-rate", sr, "--plugin-dll", dll, "--plugin-id", pid] => {
-            serve_plugin(name, bs, ch, cap, sr, dll, pid)
-        }
-
-        _ => usage(),
+    if args == ["--print-protocol-version"] {
+        println!("{BRIDGE_PROTOCOL_VERSION}");
+        return ExitCode::SUCCESS;
     }
-}
-
-fn check_protocol(value: &str) -> ExitCode {
-    match value.parse::<u32>() {
-        Ok(v) if v == BRIDGE_PROTOCOL_VERSION => {
-            eprintln!("[plugin_host_bridge] handshake OK (protocol v{BRIDGE_PROTOCOL_VERSION}).");
-            ExitCode::SUCCESS
-        }
-        Ok(v) => {
-            eprintln!(
-                "[plugin_host_bridge] protocol mismatch: engine requested v{v}, \
-                 bridge speaks v{BRIDGE_PROTOCOL_VERSION}"
-            );
-            ExitCode::from(EXIT_PROTOCOL_MISMATCH)
-        }
-        Err(_) => {
-            eprintln!("[plugin_host_bridge] invalid --protocol-version value: {value:?}");
-            ExitCode::from(EXIT_USAGE)
-        }
-    }
-}
-
-fn serve(name: &str, block_size: &str, channels: &str, audio_capacity: &str) -> ExitCode {
-    let layout = match (block_size.parse(), channels.parse(), audio_capacity.parse()) {
-        (Ok(bs), Ok(ch), Ok(cap)) => BridgeLayout::new(bs, ch, cap),
-        _ => {
-            eprintln!(
-                "[plugin_host_bridge] invalid layout args: \
-                 block-size={block_size:?} channels={channels:?} audio-capacity={audio_capacity:?}"
-            );
-            return ExitCode::from(EXIT_USAGE);
-        }
-    };
-
-    match session::serve(name, &layout) {
-        Ok(()) => {
-            eprintln!("[plugin_host_bridge] clean shutdown (region '{name}').");
-            ExitCode::SUCCESS
-        }
-        Err(e) => {
-            eprintln!("[plugin_host_bridge] serve failed for region '{name}': {e}");
-            ExitCode::from(EXIT_SERVE_FAILED)
-        }
-    }
-}
-
-/// Serve mode driving a **real loaded CLAP plugin** (ADR-015 6d-iii-b-2).  Loads
-/// the `.clap`, wires it as the processor, and runs the same loop as [`serve`].
-fn serve_plugin(
-    name: &str,
-    block_size: &str,
-    channels: &str,
-    audio_capacity: &str,
-    sample_rate: &str,
-    plugin_dll: &str,
-    plugin_id: &str,
-) -> ExitCode {
-    let (Ok(bs), Ok(ch), Ok(cap), Ok(sr)) = (
-        block_size.parse::<u32>(),
-        channels.parse::<u32>(),
-        audio_capacity.parse::<usize>(),
-        sample_rate.parse::<f64>(),
-    ) else {
-        eprintln!("[plugin_host_bridge] invalid plugin serve args");
+    let Some(options) = parse_options(&args) else {
+        eprintln!("[plugin_host_bridge] invalid arguments: {args:?}");
         return ExitCode::from(EXIT_USAGE);
     };
-    let layout = BridgeLayout::new(bs, ch, cap);
-
-    let mut processor = match ClapProcessor::load(
-        Path::new(plugin_dll),
-        plugin_id,
-        sr,
-        ch as usize,
-        bs as usize,
-    ) {
-        Ok(p) => p,
-        Err(e) => {
-            eprintln!("[plugin_host_bridge] plugin load failed ({plugin_id}): {e}");
-            return ExitCode::from(EXIT_SERVE_FAILED);
-        }
-    };
-
-    match session::serve_with(name, &layout, &mut processor) {
-        Ok(()) => {
-            eprintln!(
-                "[plugin_host_bridge] clean shutdown (region '{name}', plugin '{plugin_id}')."
-            );
-            ExitCode::SUCCESS
-        }
-        Err(e) => {
-            eprintln!("[plugin_host_bridge] serve failed for region '{name}': {e}");
-            ExitCode::from(EXIT_SERVE_FAILED)
+    match run(options) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => {
+            eprintln!("[plugin_host_bridge] {error}");
+            ExitCode::from(EXIT_START_FAILED)
         }
     }
 }
 
-fn usage() -> ExitCode {
-    eprintln!(
-        "usage: plugin_host_bridge --region-name <N> --block-size <B> --channels <C> --audio-capacity <A>\n\
-         \x20      [--sample-rate <SR> --plugin-dll <PATH> --plugin-id <ID>]   (load a real CLAP plugin)\n\
-         \x20      plugin_host_bridge --protocol-version <N>\n\
-         \x20      plugin_host_bridge --print-protocol-version"
+fn run(options: Options) -> Result<(), String> {
+    let peer = Arc::new(
+        BridgePeer::open(&options.region_name, options.layout).map_err(|e| e.to_string())?,
     );
-    ExitCode::from(EXIT_USAGE)
+    #[cfg(windows)]
+    editor::enable_per_monitor_dpi();
+    let plugin = match LoadedPlugin::load(&options.plugin_dll, &options.plugin_id) {
+        Ok(plugin) => Arc::new(plugin),
+        Err(error) => {
+            peer.signal_error();
+            return Err(format!("cannot load '{}': {error}", options.plugin_id));
+        }
+    };
+
+    let audio_thread = {
+        let peer = Arc::clone(&peer);
+        let mut processor =
+            ClapBlockProcessor::new(Arc::clone(&plugin), options.layout.channels as usize);
+        std::thread::Builder::new()
+            .name("bridge-audio".into())
+            .spawn(move || {
+                raise_thread_priority();
+                peer.serve_audio(&mut processor);
+            })
+            .map_err(|e| e.to_string())?
+    };
+    let requests = spawn_request_reader();
+    peer.signal_ready();
+
+    serve_requests(&peer, &plugin, &requests);
+
+    #[cfg(windows)]
+    editor::close();
+    peer.request_shutdown();
+    let _ = audio_thread.join();
+    drop(plugin);
+    Ok(())
 }
+
+/// Reads control requests from stdin on a helper thread; `None` = stdin closed.
+fn spawn_request_reader() -> mpsc::Receiver<Option<(u8, Vec<u8>)>> {
+    let (sender, receiver) = mpsc::channel();
+    std::thread::spawn(move || {
+        let mut stdin = BufReader::new(io::stdin());
+        loop {
+            let request = control::read_frame(&mut stdin).ok();
+            let closed = request.is_none();
+            if sender.send(request).is_err() || closed {
+                return;
+            }
+        }
+    });
+    receiver
+}
+
+/// Main thread: answer requests and run the editor until shutdown.
+fn serve_requests(
+    peer: &BridgePeer,
+    plugin: &LoadedPlugin,
+    requests: &mpsc::Receiver<Option<(u8, Vec<u8>)>>,
+) {
+    let mut stdout = io::stdout().lock();
+    while !peer.shutdown_requested() {
+        loop {
+            match requests.try_recv() {
+                Ok(Some((op, payload))) => {
+                    let (status, reply) = match handle(plugin, op, &payload) {
+                        Ok(reply) => (STATUS_OK, reply),
+                        Err(error) => (STATUS_ERROR, error.into_bytes()),
+                    };
+                    if control::write_frame(&mut stdout, status, &reply).is_err() {
+                        return;
+                    }
+                }
+                Ok(None) | Err(mpsc::TryRecvError::Disconnected) => return,
+                Err(mpsc::TryRecvError::Empty) => break,
+            }
+        }
+        let _ = stdout.flush();
+        wait_for_work();
+    }
+}
+
+fn handle(plugin: &LoadedPlugin, op: u8, payload: &[u8]) -> Result<Vec<u8>, String> {
+    let op = Op::from_u8(op).ok_or_else(|| format!("unknown request {op}"))?;
+    let mut reader = PayloadReader::new(payload);
+    let invalid = |e: io::Error| e.to_string();
+    match op {
+        Op::Activate => {
+            let sample_rate = reader.f64().map_err(invalid)?;
+            let max_frames = reader.u32().map_err(invalid)?;
+            plugin
+                .activate(sample_rate, max_frames)
+                .map(|latency| latency.to_le_bytes().to_vec())
+        }
+        Op::SaveState => plugin.save_state(),
+        Op::LoadState => plugin.load_state(payload).map(|()| Vec::new()),
+        Op::Params => Ok(plugin.params()),
+        Op::ParamValue => {
+            let native_id = reader.u32().map_err(invalid)?;
+            plugin
+                .param_value(native_id)
+                .map(|value| value.to_le_bytes().to_vec())
+        }
+        Op::FlushValues => {
+            let mut values = Vec::new();
+            while !reader.is_empty() {
+                values.push((
+                    reader.u32().map_err(invalid)?,
+                    reader.f64().map_err(invalid)?,
+                ));
+            }
+            plugin.flush_values(&values);
+            Ok(Vec::new())
+        }
+        Op::OpenEditor => open_editor(plugin, &String::from_utf8_lossy(payload)),
+    }
+}
+
+#[cfg(windows)]
+fn open_editor(plugin: &LoadedPlugin, title: &str) -> Result<Vec<u8>, String> {
+    editor::open(plugin, title).map(|hwnd| hwnd.to_le_bytes().to_vec())
+}
+
+#[cfg(not(windows))]
+fn open_editor(_: &LoadedPlugin, _: &str) -> Result<Vec<u8>, String> {
+    Err("plugin editors are only available on Windows".into())
+}
+
+#[cfg(windows)]
+fn wait_for_work() {
+    editor::pump_messages(MAIN_LOOP_WAIT_MS);
+}
+
+#[cfg(not(windows))]
+fn wait_for_work() {
+    std::thread::sleep(std::time::Duration::from_millis(MAIN_LOOP_WAIT_MS as u64));
+}
+
+#[cfg(windows)]
+fn raise_thread_priority() {
+    const THREAD_PRIORITY_TIME_CRITICAL: i32 = 15;
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn GetCurrentThread() -> *mut std::ffi::c_void;
+        fn SetThreadPriority(thread: *mut std::ffi::c_void, priority: i32) -> i32;
+    }
+    unsafe { SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_TIME_CRITICAL) };
+}
+
+#[cfg(not(windows))]
+fn raise_thread_priority() {}

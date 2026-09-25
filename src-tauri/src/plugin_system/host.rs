@@ -21,6 +21,7 @@
 //!    and tears the FFI handle down.
 
 use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
 use std::ptr::NonNull;
 use std::sync::Arc;
 
@@ -36,6 +37,9 @@ use crate::plugin_formats::clap::wrapper::ClapWrapperNode;
 use crate::plugin_formats::vst3::ffi::{instantiate_processor, Vst3Library};
 use crate::plugin_formats::vst3::host::decode_plugin_id as vst3_decode_id;
 use crate::plugin_formats::vst3::wrapper::VstWrapperNode;
+use crate::plugin_system::bridge::{locate_bridge_exe, BridgedPlugin};
+use crate::plugin_system::bridged_node::BridgedNode;
+use crate::plugin_system::crash_marker::{self, plugin_tag, PluginThread};
 use crate::plugin_system::instance::{PluginInstance, FFI_GATE_HARVEST_BUDGET};
 use crate::plugin_system::lifecycle::{transition, LifecycleError, LifecycleState};
 use crate::plugin_system::parameter::PluginParamInfo;
@@ -66,6 +70,21 @@ impl std::fmt::Display for HostError {
     }
 }
 
+/// Which plugins run in a sandbox process (ADR-015).  An app preference, not a
+/// project setting: it describes how much this machine trusts its plugins.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PluginIsolation {
+    /// Every plugin in-process, whatever the effects ask for.
+    Off,
+    /// Only the effects the user isolated (`PluginParams.sandboxed`) and the
+    /// plugins marked "always isolate".
+    #[default]
+    Chosen,
+    /// Every plugin that can be isolated.
+    All,
+}
+
 /// Why a placement's plugin could not be loaded; shown to the user.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -73,6 +92,9 @@ pub enum UnavailableReason {
     NotInstalled,
     UnsupportedFormat,
     LoadFailed,
+    /// A sandboxed plugin crashed or stopped answering; it is silent until the
+    /// project is recompiled, which restarts it.
+    Crashed,
 }
 
 impl UnavailableReason {
@@ -113,6 +135,11 @@ pub struct PluginHost {
     /// ADR-010: blobs applied at instantiate before snapshot (project-load only).
     pending_state_blobs: HashMap<String, Vec<u8>>,
     unavailable: HashMap<String, UnavailablePlacement>,
+    /// `plugin_host_bridge` executable hosting sandboxed plugins (ADR-015).
+    bridge_exe: Option<PathBuf>,
+    isolation: PluginIsolation,
+    /// Plugin ids isolated wherever they are used, in `Chosen` mode.
+    always_isolated: HashSet<String>,
 }
 
 impl PluginHost {
@@ -122,7 +149,32 @@ impl PluginHost {
             records: HashMap::new(),
             pending_state_blobs: HashMap::new(),
             unavailable: HashMap::new(),
+            bridge_exe: locate_bridge_exe(),
+            isolation: PluginIsolation::default(),
+            always_isolated: HashSet::new(),
         }
+    }
+
+    /// Returns whether anything changed (the caller then recompiles).
+    pub fn set_isolation(&mut self, isolation: PluginIsolation, always_isolated: HashSet<String>) -> bool {
+        let changed = self.isolation != isolation || self.always_isolated != always_isolated;
+        self.isolation = isolation;
+        self.always_isolated = always_isolated;
+        changed
+    }
+
+    /// Whether `plugin_id` runs sandboxed, given the effect's own choice.
+    fn isolates(&self, plugin_id: &str, chosen: bool) -> bool {
+        match self.isolation {
+            PluginIsolation::Off => false,
+            PluginIsolation::Chosen => chosen || self.always_isolated.contains(plugin_id),
+            PluginIsolation::All => true,
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_bridge_exe(&mut self, path: PathBuf) {
+        self.bridge_exe = Some(path);
     }
 
     pub fn set_pending_state_blobs(&mut self, blobs: HashMap<String, Vec<u8>>) {
@@ -193,12 +245,13 @@ impl PluginHost {
         node_id: NodeId,
         instance_key: &str,
         plugin_id: &str,
+        sandboxed: bool,
     ) -> Option<Box<dyn AudioNode>> {
         if !self.pending_state_blobs.is_empty() {
             return None;
         }
         let inst = &self.records.get(instance_key)?.instance;
-        if inst.device_id != plugin_id {
+        if inst.device_id != plugin_id || inst.is_sandboxed() != runs_sandboxed(inst.format, sandboxed) {
             return None;
         }
         if matches!(
@@ -213,6 +266,9 @@ impl PluginHost {
                 &inst.device_id,
                 &inst.name,
             ))),
+            DeviceFormat::Clap if inst.is_sandboxed() => {
+                Some(Box::new(BridgedNode::new(node_id, Arc::clone(inst))))
+            }
             DeviceFormat::Clap => Some(Box::new(ClapWrapperNode::new(node_id, Arc::clone(inst)))),
             DeviceFormat::Vst3 => Some(Box::new(VstWrapperNode::new(node_id, Arc::clone(inst)))),
             _ => None,
@@ -227,6 +283,8 @@ impl PluginHost {
         plugin_id: &str,
         sandboxed: bool,
     ) -> Result<Box<dyn AudioNode>, HostError> {
+        let sandboxed = self.isolates(plugin_id, sandboxed);
+        let _running = (!sandboxed).then(|| crash_marker::enter(PluginThread::Control, plugin_tag(plugin_id)));
         let result = self.instantiate_placement(node_id, instance_key, plugin_id, sandboxed);
         match &result {
             Ok(_) => self.mark_available(instance_key),
@@ -242,12 +300,9 @@ impl PluginHost {
         plugin_id: &str,
         sandboxed: bool,
     ) -> Result<Box<dyn AudioNode>, HostError> {
-        // Inert until ADR-015 step 6d wires the out-of-process bridge.
-        let _ = sandboxed;
-
         // ADR-016: reuse a live instance for this placement instead of rebuilding
         // it (no FFI churn, preserves the plugin's internal DSP state).
-        if let Some(node) = self.reuse_existing(node_id, instance_key, plugin_id) {
+        if let Some(node) = self.reuse_existing(node_id, instance_key, plugin_id, sandboxed) {
             return Ok(node);
         }
 
@@ -265,6 +320,8 @@ impl PluginHost {
             }
 
             DeviceFormat::Vst3 => self.instantiate_vst3(node_id, plugin_id, &manifest)?,
+
+            DeviceFormat::Clap if sandboxed => self.instantiate_bridged(node_id, plugin_id, &manifest)?,
 
             DeviceFormat::Clap => self.instantiate_clap(node_id, plugin_id, &manifest)?,
 
@@ -343,8 +400,18 @@ impl PluginHost {
             .as_ref()
     }
 
-    /// Placements whose plugin is currently not loaded, sorted by `instance_key`.
+    /// Placements whose plugin is not loaded or has crashed in its sandbox,
+    /// sorted by `instance_key`.
     pub fn unavailable_plugins(&self) -> Vec<UnavailablePlugin> {
+        let crashed = self
+            .records
+            .iter()
+            .filter(|(_, record)| record.instance.has_crashed())
+            .map(|(instance_key, record)| UnavailablePlugin {
+                instance_key: instance_key.clone(),
+                plugin_id: record.instance.device_id.clone(),
+                reason: UnavailableReason::Crashed,
+            });
         let mut list: Vec<UnavailablePlugin> = self
             .unavailable
             .iter()
@@ -353,6 +420,7 @@ impl PluginHost {
                 plugin_id: placement.plugin_id.clone(),
                 reason: placement.reason,
             })
+            .chain(crashed)
             .collect();
         list.sort_by(|a, b| a.instance_key.cmp(&b.instance_key));
         list
@@ -447,6 +515,32 @@ impl PluginHost {
         Ok((instance, node))
     }
 
+    /// Start a bridge process hosting the CLAP plugin (ADR-015).  A plugin that
+    /// cannot start sandboxed is reported unavailable, never loaded in-process
+    /// instead: the user sandboxed it because it may crash the app.
+    fn instantiate_bridged(
+        &self,
+        node_id: NodeId,
+        plugin_id: &str,
+        manifest: &PluginManifest,
+    ) -> Result<(Arc<PluginInstance>, Box<dyn AudioNode>), HostError> {
+        let bridge_exe = self
+            .bridge_exe
+            .as_ref()
+            .ok_or_else(|| HostError::InstantiationFailed("plugin_host_bridge not found".into()))?;
+        let clap_id = clap_decode_id(plugin_id)
+            .ok_or_else(|| HostError::InstantiationFailed("invalid CLAP plugin_id".into()))?;
+        let dll = manifest
+            .path
+            .as_ref()
+            .ok_or_else(|| HostError::InstantiationFailed("no DLL path in manifest".into()))?;
+        let bridged = BridgedPlugin::spawn(bridge_exe, dll, clap_id)
+            .map_err(|error| HostError::InstantiationFailed(format!("sandbox: {error}")))?;
+        let instance = PluginInstance::new_bridged(plugin_id, &manifest.name, &manifest.vendor, bridged);
+        let node: Box<dyn AudioNode> = Box::new(BridgedNode::new(node_id, Arc::clone(&instance)));
+        Ok((instance, node))
+    }
+
     /// Load the DLL, create the CLAP plugin, and build the shared
     /// `PluginInstance` — **without** building an audio wrapper.  Shared by the
     /// effect path ([`instantiate_clap`]) and the instrument path
@@ -516,6 +610,7 @@ impl PluginHost {
         instance_key: &str,
         plugin_id: &str,
     ) -> Result<Box<dyn InstrumentDevice>, HostError> {
+        let _running = crash_marker::enter(PluginThread::Control, plugin_tag(plugin_id));
         let result = self.instantiate_instrument_placement(instance_key, plugin_id);
         match &result {
             Ok(_) => self.mark_available(instance_key),
@@ -624,6 +719,9 @@ impl PluginHost {
             .get(instance_key)
             .ok_or_else(|| HostError::DeviceNotFound(instance_key.to_string()))?
             .instance;
+        if let Some(bridged) = instance.bridge() {
+            return Ok(bridged.params());
+        }
         let Some(plugin) = instance.clap_plugin() else {
             return Ok(Vec::new());
         };
@@ -810,6 +908,12 @@ pub struct PluginInfo {
     pub is_instrument: bool,
 }
 
+/// Only CLAP plugins can run sandboxed so far (ADR-015); for other formats the
+/// flag is ignored and the plugin stays in-process.
+fn runs_sandboxed(format: DeviceFormat, sandboxed: bool) -> bool {
+    sandboxed && format == DeviceFormat::Clap
+}
+
 fn format_tag(fmt: DeviceFormat) -> String {
     match fmt {
         DeviceFormat::Vst3 => "VST3".into(),
@@ -878,6 +982,7 @@ mod tests {
             sample_rate: 48_000.0,
             max_block_size: 16,
             num_channels: 2,
+            live: true,
         });
 
         let mut input = AudioBuffer::new(2, 4);
@@ -1126,6 +1231,25 @@ mod tests {
             .into_iter()
             .find(|(key, _)| key == instance_key)
             .map(|(_, bytes)| bytes)
+    }
+
+    #[test]
+    fn a_crashed_plugin_is_reported_and_rebuilt_from_its_saved_state() {
+        let mut host = PluginHost::new();
+        stage(&mut host, "fx0", &[3, 1, 4]);
+        host.instantiate(NodeId(1), "fx0", "echoes.gain", false).unwrap();
+        host.clear_pending_state_blobs();
+        let crashed = host.instance_by_key("fx0").unwrap();
+        crashed.set_lifecycle(LifecycleState::Error);
+
+        let unavailable = host.unavailable_plugins();
+        assert_eq!(unavailable.len(), 1);
+        assert_eq!(unavailable[0].reason, UnavailableReason::Crashed);
+
+        host.instantiate(NodeId(2), "fx0", "echoes.gain", false).unwrap();
+        assert_ne!(host.instance_by_key("fx0").unwrap().instance_id(), crashed.instance_id());
+        assert!(host.unavailable_plugins().is_empty(), "the reload clears the crash");
+        assert_eq!(saved_blob(&host, "fx0"), Some(vec![3, 1, 4]));
     }
 
     #[test]

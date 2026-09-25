@@ -89,6 +89,8 @@ pub struct PrepareContext {
     pub sample_rate: f32,
     pub max_block_size: usize,
     pub num_channels: usize,
+    /// The graph feeds the audio device; `false` for an offline export.
+    pub live: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

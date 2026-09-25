@@ -187,6 +187,8 @@ export interface UpdateEffectPayload {
   effect_id: string;
   enabled?: boolean;
   params?: Record<string, unknown>;
+  /** CLAP plugins: run the plugin in its own process (sandbox). */
+  sandboxed?: boolean;
 }
 
 // ── Modulation payloads ───────────────────────────────────────────────────────

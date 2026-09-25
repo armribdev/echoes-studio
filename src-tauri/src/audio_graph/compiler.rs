@@ -57,9 +57,10 @@ pub struct CompileConfig {
     pub sample_rate: f32,
     pub max_block_size: usize,
     pub num_channels: usize,
-    /// Live graph only. Offline export stays silent so it does not share the
-    /// audition queue with the audio thread.
-    pub audition: bool,
+    /// The graph feeds the audio device.  Only the live graph gets the audition
+    /// queue, and only it bounds sandboxed-plugin waits by the block period —
+    /// an offline export waits for every block so the render stays deterministic.
+    pub live: bool,
 }
 
 impl Default for CompileConfig {
@@ -68,7 +69,7 @@ impl Default for CompileConfig {
             sample_rate: DEFAULT_SAMPLE_RATE,
             max_block_size: DEFAULT_MAX_BLOCK_SIZE,
             num_channels: DEFAULT_NUM_CHANNELS,
-            audition: true,
+            live: true,
         }
     }
 }
@@ -234,6 +235,7 @@ impl GraphCompiler {
             sample_rate: config.sample_rate,
             max_block_size: config.max_block_size,
             num_channels: config.num_channels,
+            live: config.live,
         };
 
         let mut processors: Vec<Box<dyn AudioNode>> = Vec::with_capacity(order.len());
@@ -263,7 +265,7 @@ impl GraphCompiler {
                     &graph_node.kind,
                     project,
                     config.sample_rate,
-                    config.audition,
+                    config.live,
                     live_params,
                     plugin_host,
                 )
@@ -662,20 +664,6 @@ impl GraphCompiler {
     ) -> Box<dyn AudioNode> {
         use crate::audio_graph::nodes;
 
-        if sandboxed {
-            if let Some(node) = crate::plugin_system::bridged_node::BridgedNode::try_new(
-                id,
-                device_id,
-                plugin_host,
-            ) {
-                return node;
-            }
-            eprintln!(
-                "[audio] Plugin '{device_id}' marked sandboxed but cannot be bridged — \
-                 using in-process host"
-            );
-        }
-
         match plugin_host.instantiate(id, instance_key, device_id, sandboxed) {
             Ok(node) => node,
             Err(e) => {
@@ -692,7 +680,7 @@ impl GraphCompiler {
         kind: &NodeKind,
         project: &AppProject,
         engine_sample_rate: f32,
-        audition: bool,
+        live: bool,
         live_params: &LiveParams,
         plugin_host: &mut PluginHost,
     ) -> Box<dyn AudioNode> {
@@ -732,7 +720,7 @@ impl GraphCompiler {
                 };
 
                 let mut node = InstrumentNode::from_publisher(id, notes, device);
-                if audition {
+                if live {
                     node.set_preview(live_params.preview_queue(track_id));
                 }
                 Box::new(node)

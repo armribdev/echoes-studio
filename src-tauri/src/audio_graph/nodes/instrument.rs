@@ -428,6 +428,7 @@ mod tests {
             sample_rate: 48_000.0,
             max_block_size: 64_000,
             num_channels: 2,
+            live: true,
         });
         node
     }
@@ -620,6 +621,7 @@ mod tests {
             sample_rate: 48_000.0,
             max_block_size: 64_000,
             num_channels: 2,
+            live: true,
         });
 
         run_block(&mut node, &transport_at(true, 0, 30_000));
