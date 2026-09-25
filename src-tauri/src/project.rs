@@ -118,6 +118,17 @@ pub struct PluginParams {
     pub sidechain_source: Option<String>,
 }
 
+/// An auxiliary output of a multi-out plugin, taken as a track's audio input
+/// (ADR-014 multi-out).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PluginOutputSource {
+    /// Placement of the plugin: an effect id, or `instrument:{track_id}`.
+    pub effect_id: String,
+    /// Plugin output port, `1..` — port 0 is the main output, which already
+    /// flows down the plugin's own track.
+    pub port: u32,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", content = "params", rename_all = "snake_case")]
 pub enum EffectParams {
@@ -442,6 +453,9 @@ pub struct AppTrack {
     /// bit-identical).  When `Some(device_id)`, the compiler instantiates that
     /// plugin as the instrument node's generator.
     pub instrument: Option<String>,
+    /// Plugin output mixed into this track's input, ahead of its effects.
+    /// `None` for every project saved before multi-out existed (C-4).
+    pub input_source: Option<PluginOutputSource>,
     /// Automation lanes — each drives one parameter from pre-recorded curves.
     pub automation_lanes: Vec<AutomationLane>,
 }
@@ -705,6 +719,7 @@ impl AppProject {
                         })
                         .collect(),
                     instrument: t.instrument.clone(),
+                    input_source: t.input_source.clone(),
                     automation_lanes: t.automation_lanes.clone(),
                 })
                 .collect(),
@@ -768,6 +783,7 @@ impl AppProject {
                 midi_notes: tf.midi_notes,
                 midi_clips,
                 instrument: tf.instrument,
+                input_source: tf.input_source,
                 automation_lanes: tf.automation_lanes,
             });
         }
@@ -861,6 +877,7 @@ impl AppTrack {
                 })
                 .collect(),
             instrument: self.instrument.clone(),
+            input_source: self.input_source.clone(),
             automation_lanes: self.automation_lanes.clone(),
         }
     }
@@ -1037,6 +1054,8 @@ pub struct TrackFile {
     pub midi_clips: Vec<MidiClipFile>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub instrument: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_source: Option<PluginOutputSource>,
     #[serde(default)]
     pub automation_lanes: Vec<AutomationLane>,
 }
@@ -1102,6 +1121,7 @@ pub struct TrackDto {
     pub midi_notes: Vec<MidiNote>,
     pub midi_clips: Vec<MidiClipDto>,
     pub instrument: Option<String>,
+    pub input_source: Option<PluginOutputSource>,
     pub automation_lanes: Vec<AutomationLane>,
 }
 
@@ -1147,6 +1167,7 @@ mod tests {
                 notes: vec![],
             }],
             instrument: None,
+            input_source: None,
             automation_lanes: vec![],
         });
         assert_eq!(project.timeline_end_secs(), 12.5);
@@ -1163,6 +1184,25 @@ mod tests {
         }"#;
         let tf: TrackFile = serde_json::from_str(json).expect("deserialize legacy track");
         assert_eq!(tf.instrument, None);
+        assert_eq!(tf.input_source, None);
+    }
+
+    /// A track's plugin-output input survives a save to JSON and a reload.
+    #[test]
+    fn input_source_round_trips_through_a_saved_file() {
+        let mut project = AppProject::new();
+        let mut track = track_with_plugin("snare", "fx0", "clap:comp");
+        track.input_source = Some(PluginOutputSource { effect_id: "instrument:drums".into(), port: 2 });
+        project.tracks.push(track);
+
+        let json = serde_json::to_string(&project.to_file()).expect("serialize");
+        let file: ProjectFile = serde_json::from_str(&json).expect("deserialize");
+        let restored = AppProject::from_file(file).expect("from_file");
+
+        assert_eq!(
+            restored.tracks[0].input_source,
+            Some(PluginOutputSource { effect_id: "instrument:drums".into(), port: 2 })
+        );
     }
 
     /// The instrument device_id survives a file save → load round-trip.
@@ -1183,6 +1223,7 @@ mod tests {
             midi_notes: vec![],
             midi_clips: vec![],
             instrument: Some("clap://surge.dll?org.surge-synth.surge-xt".into()),
+            input_source: None,
             automation_lanes: vec![],
         });
 
@@ -1220,6 +1261,7 @@ mod tests {
             midi_notes: vec![],
             midi_clips: vec![],
             instrument: None,
+            input_source: None,
             automation_lanes: vec![],
         }
     }

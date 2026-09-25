@@ -11,6 +11,8 @@
  *   await dispatch(command);
  */
 
+import type { PluginOutputSource } from '../../../types/global';
+
 // ── Command type constants ────────────────────────────────────────────────────
 
 export const cmd = {
@@ -28,6 +30,7 @@ export const cmd = {
   MUTE_TRACK: 'MUTE_TRACK',
   SOLO_TRACK: 'SOLO_TRACK',
   SET_TRACK_INSTRUMENT: 'SET_TRACK_INSTRUMENT',
+  SET_TRACK_INPUT: 'SET_TRACK_INPUT',
   ADD_CLIP: 'ADD_CLIP',
   MOVE_CLIP: 'MOVE_CLIP',
   REMOVE_CLIP: 'REMOVE_CLIP',
@@ -117,6 +120,12 @@ export interface SoloTrackPayload {
 export interface SetTrackInstrumentPayload {
   track_id: string;
   instrument: string | null;
+}
+
+export interface SetTrackInputPayload {
+  track_id: string;
+  /** Aux output of a multi-out plugin fed into the track; null for none. */
+  input_source: PluginOutputSource | null;
 }
 
 export interface AddClipPayload {

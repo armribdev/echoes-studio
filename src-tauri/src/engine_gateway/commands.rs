@@ -47,6 +47,7 @@ pub mod cmd {
     pub const MUTE_TRACK: &str = "MUTE_TRACK";
     pub const SOLO_TRACK: &str = "SOLO_TRACK";
     pub const SET_TRACK_INSTRUMENT: &str = "SET_TRACK_INSTRUMENT";
+    pub const SET_TRACK_INPUT: &str = "SET_TRACK_INPUT";
     pub const ADD_CLIP: &str = "ADD_CLIP";
     pub const MOVE_CLIP: &str = "MOVE_CLIP";
     pub const REMOVE_CLIP: &str = "REMOVE_CLIP";
@@ -119,6 +120,13 @@ pub struct SetTrackInstrumentPayload {
     pub track_id: String,
     /// `None` → built-in PolySynth.  `Some(plugin_id)` → CLAP instrument (Phase 5c).
     pub instrument: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SetTrackInputPayload {
+    pub track_id: String,
+    /// `None` → no plugin output feeds the track (ADR-014 multi-out).
+    pub input_source: Option<crate::project::PluginOutputSource>,
 }
 
 #[derive(Debug, Deserialize)]

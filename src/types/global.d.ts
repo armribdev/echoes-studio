@@ -119,6 +119,21 @@ export interface MidiClip {
 	notes: MidiNote[];
 }
 
+/** An aux output of a multi-out plugin, taken as a track's audio input. */
+export interface PluginOutputSource {
+	/** Plugin placement: an effect id, or `instrument:{track_id}`. */
+	effect_id: string;
+	/** Plugin output port, from 1 (0 is the main output). */
+	port: number;
+}
+
+/** An aux output a loaded plugin declares (`get_plugin_outputs`). */
+export interface PluginOutputInfo {
+	port: number;
+	name: string;
+	channel_count: number;
+}
+
 export interface Track {
 	/** Stable ID used by the event-sourcing system. Added in architecture v2. */
 	id: string;
@@ -129,6 +144,8 @@ export interface Track {
 	solo: boolean;
 	/** Plugin id (e.g. `clap:…`) or null for built-in PolySynth. */
 	instrument?: string | null;
+	/** Plugin output mixed into the track's input, or null/absent for none. */
+	input_source?: PluginOutputSource | null;
 	clips: Clip[];
 	effects: TrackEffect[];
 	modulators: ProjectModulator[];

@@ -201,6 +201,7 @@ fn main() {
             list_plugins,
             get_unavailable_plugins,
             get_plugin_params,
+            get_plugin_outputs,
             scan_plugins,
             open_plugin_editor,
             close_plugin_editor,
@@ -668,6 +669,16 @@ fn get_plugin_params(
         .plugin_host
         .plugin_params(&instance_key)
         .map_err(|e| e.to_string())
+}
+
+/// Auxiliary outputs of a loaded plugin placement, for the track input picker.
+#[tauri::command]
+fn get_plugin_outputs(
+    state: tauri::State<'_, AppState>,
+    instance_key: String,
+) -> Result<Vec<plugin_system::host::PluginOutputInfo>, String> {
+    let engine = state.audio_engine.lock().map_err(|e| e.to_string())?;
+    Ok(engine.plugin_host.plugin_outputs(&instance_key))
 }
 
 /// Which plugins run in a sandbox process (app preference, ADR-015).  A change

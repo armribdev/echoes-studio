@@ -24,7 +24,8 @@ use super::commands::{
     RemoveAutomationLanePayload, RemoveClipPayload, RemoveEffectPayload, RemoveMidiClipPayload,
     RemoveModulationRoutePayload, RemoveModulatorPayload, SeekPayload, SetClipMidiNotesPayload,
     SetLoopPayload,
-    SetMidiNotesPayload, SetModulationDepthPayload, SetTrackInstrumentPayload, SoloTrackPayload,
+    SetMidiNotesPayload, SetModulationDepthPayload, SetTrackInputPayload, SetTrackInstrumentPayload,
+    SoloTrackPayload,
     UpdateAutomationClipPayload, UpdateEffectPayload, UpdateModulatorPayload,
     UpdateProjectNamePayload, UpdateTempoPayload, UpdateTrackPayload,
 };
@@ -279,6 +280,7 @@ fn empty_app_track(id: String, name: String) -> AppTrack {
         midi_notes: vec![],
         midi_clips: vec![],
         instrument: None,
+        input_source: None,
         automation_lanes: vec![],
     }
 }
@@ -929,6 +931,26 @@ fn process_command(
                 &ctx,
                 ev::TRACK_INSTRUMENT_SET,
                 json!({ "id": p.track_id, "instrument": p.instrument }),
+                true,
+            )
+        }
+
+        cmd::SET_TRACK_INPUT => {
+            let p: SetTrackInputPayload = serde_json::from_value(command.payload)
+                .map_err(|e| format!("SET_TRACK_INPUT payload invalid: {e}"))?;
+            if p.input_source.as_ref().is_some_and(|source| source.port == 0) {
+                return Err("SET_TRACK_INPUT: port 0 is the plugin's main output".into());
+            }
+
+            with_project_mut(state, |project| {
+                require_track_mut(project, &p.track_id)?.input_source = p.input_source.clone();
+                Ok(())
+            })?;
+
+            commit_same_payload(
+                &ctx,
+                ev::TRACK_INPUT_SET,
+                json!({ "id": p.track_id, "input_source": p.input_source }),
                 true,
             )
         }
@@ -1728,6 +1750,7 @@ fn snapshot_track(t: &AppTrack) -> AppTrack {
         midi_notes: t.midi_notes.clone(),
         midi_clips: t.midi_clips.clone(),
         instrument: t.instrument.clone(),
+        input_source: t.input_source.clone(),
         automation_lanes: t.automation_lanes.clone(),
         clips: t.clips.iter().map(snapshot_clip).collect(),
     }
@@ -1900,6 +1923,14 @@ fn apply_track_instrument_set(project: &mut AppProject, payload: &Value) {
     track.instrument = payload["instrument"]
         .as_str()
         .map(|s| s.to_string());
+}
+
+fn apply_track_input_set(project: &mut AppProject, payload: &Value) {
+    let id = payload_str(payload, "id");
+    let Some(track) = find_track_mut(project, &id) else {
+        return;
+    };
+    track.input_source = serde_json::from_value(payload["input_source"].clone()).ok().flatten();
 }
 
 fn apply_clip_added(
@@ -2354,6 +2385,7 @@ fn apply_events(
             ev::TRACK_MUTED => apply_track_muted(&mut project, &event.payload),
             ev::TRACK_SOLOED => apply_track_soloed(&mut project, &event.payload),
             ev::TRACK_INSTRUMENT_SET => apply_track_instrument_set(&mut project, &event.payload),
+            ev::TRACK_INPUT_SET => apply_track_input_set(&mut project, &event.payload),
             ev::CLIP_ADDED => apply_clip_added(state, &mut project, &event.payload),
             ev::CLIP_MOVED => apply_clip_moved(&mut project, &event.payload),
             ev::CLIP_MOVED_TO_TRACK => apply_clip_moved_to_track(state, &mut project, &event.payload),
@@ -2443,6 +2475,7 @@ mod tests {
             midi_notes: vec![],
             midi_clips: vec![],
             instrument: None,
+            input_source: None,
             automation_lanes: vec![],
         });
         project

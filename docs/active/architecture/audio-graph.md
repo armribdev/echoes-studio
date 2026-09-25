@@ -89,7 +89,14 @@ without changing the execution model — sidechain is the first case of this:
 a plugin effect's `sidechain_source` (`PluginParams`) adds one extra edge from
 another track's post-fader `TrackGainNode` into the plugin's aux input port,
 resolved in a second pass over `from_project` once every track's tap point
-exists (ADR-014 update, 2026-09-25).
+exists (ADR-014 update, 2026-09-25). Multi-out is the second: a track's
+`input_source` (`AppTrack`) puts a `BusNode` at the head of that track and
+connects one aux output (port `1..`) of a plugin placement into it, so the
+signal runs through the track's own effects and fader. It is resolved after
+the sidechains; a routing that would close a cycle (exact node reachability)
+is dropped. A plugin node's output count is only known once it is loaded:
+the compiler widens the step to the prepared node's `num_output_ports()` and
+cuts any edge from an output that does not exist (ADR-014 multi-out update).
 
 Edges are only added during graph compilation on the command thread. The audio
 thread never modifies the graph topology.

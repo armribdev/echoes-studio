@@ -28,6 +28,7 @@ what the user *decided* about their project, not what the audio engine is doing.
 | `MIDI_CLIP_ADDED` | Structural, undoable. The clip may include its notes and left-trim `offset`, so pasting a MIDI clip is one event |
 | `TRACK_UPDATED` (name, volume, pan) | Structural, undoable |
 | `TRACK_MUTED` / `TRACK_SOLOED` | Structural, undoable |
+| `TRACK_INPUT_SET` | Structural, undoable, recompiles. Sets `AppTrack.input_source` — an aux output of a multi-out plugin fed into the track (`null` clears it; absent in older projects = none). ADR-014 |
 | `TEMPO_UPDATED` | Structural, affects rendering |
 | `PROJECT_NAME_UPDATED` | Structural |
 | Automation curves (future) | Structural, undoable |

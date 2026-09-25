@@ -913,6 +913,35 @@ impl PluginHost {
             .get(instance_key)
             .map(|r| Arc::clone(&r.instance))
     }
+
+    /// Auxiliary outputs of a loaded placement that a track can take as its
+    /// input (ADR-014 multi-out).  Empty when the placement is not loaded or
+    /// has no aux output.
+    pub fn plugin_outputs(&self, instance_key: &str) -> Vec<PluginOutputInfo> {
+        let Some(record) = self.records.get(instance_key) else {
+            return Vec::new();
+        };
+        record
+            .instance
+            .output_ports()
+            .iter()
+            .enumerate()
+            .skip(1)
+            .map(|(port, info)| PluginOutputInfo {
+                port: port as u32,
+                name: info.name.clone(),
+                channel_count: info.channel_count,
+            })
+            .collect()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct PluginOutputInfo {
+    /// Graph output port, as `PluginOutputSource::port` names it.
+    pub port: u32,
+    pub name: String,
+    pub channel_count: u32,
 }
 
 impl Default for PluginHost {

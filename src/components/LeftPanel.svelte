@@ -5,6 +5,7 @@
 	import InstrumentPanel from './InstrumentPanel.svelte';
 	import ModulationPanel from './ModulationPanel.svelte';
 	import PanelResizeHandle from './PanelResizeHandle.svelte';
+	import TrackInputPicker from './TrackInputPicker.svelte';
 	import { persistProjectUiLayout } from '../lib/projectUiLayout';
 
 	let isResizing = false;
@@ -39,6 +40,8 @@
 					trackName={$selectedTrack.trackName}
 					trackColor={$selectedTrack.trackColor}
 				/>
+
+				<TrackInputPicker trackId={$selectedTrack.trackId} />
 
 				<div class="section-divider"></div>
 

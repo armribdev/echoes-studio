@@ -11,7 +11,7 @@
  */
 
 import { ev, type EngineEvent } from '../protocol/events';
-import type { Clip, MidiClip, MidiNote, Project, ProjectModulationRoute, ProjectModulator, Track, TrackEffect } from '../../types/global';
+import type { Clip, MidiClip, MidiNote, PluginOutputSource, Project, ProjectModulationRoute, ProjectModulator, Track, TrackEffect } from '../../types/global';
 
 const MODULATOR_FIELDS = [
   'rate_hz', 'waveform', 'tempo_sync', 'beat_division', 'value',
@@ -62,6 +62,7 @@ export interface TrackState {
   midi_notes: MidiNote[];
   midi_clips: MidiClip[];
   instrument: string | null;
+  input_source: PluginOutputSource | null;
 }
 
 export function emptyProjectState(): ProjectState {
@@ -95,7 +96,7 @@ export function applyEvent(state: ProjectState, event: EngineEvent): ProjectStat
       if (state.tracks.some((t) => t.id === p.id)) return state; // idempotent
       return {
         ...state,
-        tracks: [...state.tracks, { id: p.id, name: p.name, volume: 80, pan: 0, muted: false, solo: false, instrument: p.instrument ?? null, clips: [], effects: [], modulators: [], mod_routes: [], midi_notes: [], midi_clips: [] }],
+        tracks: [...state.tracks, { id: p.id, name: p.name, volume: 80, pan: 0, muted: false, solo: false, instrument: p.instrument ?? null, input_source: null, clips: [], effects: [], modulators: [], mod_routes: [], midi_notes: [], midi_clips: [] }],
       };
     }
 
@@ -153,6 +154,16 @@ export function applyEvent(state: ProjectState, event: EngineEvent): ProjectStat
         ...state,
         tracks: state.tracks.map((t) =>
           t.id !== p.id ? t : { ...t, instrument: p.instrument ?? null },
+        ),
+      };
+    }
+
+    case ev.TRACK_INPUT_SET: {
+      const p = event.payload as { id: string; input_source: PluginOutputSource | null };
+      return {
+        ...state,
+        tracks: state.tracks.map((t) =>
+          t.id !== p.id ? t : { ...t, input_source: p.input_source ?? null },
         ),
       };
     }
@@ -553,6 +564,7 @@ export function projectFromSnapshot(dto: Project): ProjectState {
       midi_notes: t.midi_notes ?? [],
       midi_clips: t.midi_clips ?? [],
       instrument: t.instrument ?? null,
+      input_source: t.input_source ?? null,
     })),
   };
 }

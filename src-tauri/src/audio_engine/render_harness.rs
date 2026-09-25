@@ -85,6 +85,7 @@ fn empty_track(id: &str) -> AppTrack {
         midi_notes: vec![],
         midi_clips: vec![],
         instrument: None,
+        input_source: None,
         automation_lanes: vec![],
     }
 }

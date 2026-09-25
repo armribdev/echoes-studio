@@ -142,6 +142,16 @@ for node in &mut processors {
 This is the only point where nodes may allocate. Filter coefficients, delay
 lines, FFT buffers — all are allocated here, not in `process()`.
 
+### 7. Output sizing from prepared nodes (ADR-014 multi-out)
+
+A plugin's output ports are only known once it is loaded and prepared, after
+step 4 sized the steps. `size_outputs_from_processors` then raises each step's
+`num_outputs` to its node's `num_output_ports()` when larger (never lowers it —
+only multi-out plugin wrappers exceed their static count), and cuts to `None`
+any input connection whose `src_port` does not exist on its source step, so an
+edge to a missing plugin output reads silence rather than the scheduler's
+clamp onto output 0. Runs before latency compensation and level assignment.
+
 ---
 
 ## ExecutionPlan Structure

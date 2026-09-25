@@ -39,6 +39,7 @@ import {
   type SetModulationDepthPayload,
   type AddModulationRoutePayload,
   type AddModulatorPayload,
+  type SetTrackInputPayload,
   type SetTrackInstrumentPayload,
   type SoloTrackPayload,
   type UpdateEffectPayload,
@@ -189,6 +190,16 @@ export function setTrackInstrument(
   return dispatch<SetTrackInstrumentPayload>(cmd.SET_TRACK_INSTRUMENT, {
     track_id: trackId,
     instrument,
+  });
+}
+
+export function setTrackInput(
+  trackId: string,
+  inputSource: SetTrackInputPayload['input_source'],
+): Promise<CommandResult> {
+  return dispatch<SetTrackInputPayload>(cmd.SET_TRACK_INPUT, {
+    track_id: trackId,
+    input_source: inputSource,
   });
 }
 

@@ -2,7 +2,8 @@
 //!
 //! ## Role in the graph
 //!
-//! `InstrumentNode` is a **source** (0 audio inputs, 1 stereo output).
+//! `InstrumentNode` is a **source** (0 audio inputs, one stereo output per
+//! output its device declares — 1 unless a multi-out plugin says otherwise).
 //! It converts timeline MIDI clips into per-block `MidiEventList` entries and
 //! delegates audio synthesis to an inner `Box<dyn InstrumentDevice>`.
 //!
@@ -27,6 +28,12 @@ use crate::audio_graph::plugin_params::{parse_plugin_param_name, PluginParamCont
 /// `InstrumentNode` holds a `Box<dyn InstrumentDevice>` and calls
 /// `process_midi` once per block.
 pub trait InstrumentDevice: Send + 'static {
+    /// Stereo outputs rendered: the main one, then any auxiliary outputs a
+    /// multi-out plugin declares (ADR-014).  Final once `prepare` has run.
+    fn num_output_ports(&self) -> usize {
+        1
+    }
+
     fn prepare(&mut self, ctx: PrepareContext);
 
     /// Render one block of audio from the provided MIDI events.
@@ -222,7 +229,7 @@ impl AudioNode for InstrumentNode {
         0
     }
     fn num_output_ports(&self) -> usize {
-        1
+        self.device.num_output_ports()
     }
 
     fn prepare(&mut self, ctx: PrepareContext) {

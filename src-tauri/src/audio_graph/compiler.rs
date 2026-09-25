@@ -276,6 +276,7 @@ impl GraphCompiler {
             node.prepare(prepare_ctx);
             processors.push(node);
         }
+        Self::size_outputs_from_processors(&mut plan, &processors);
 
         // Wire EnvelopeCells from envelope modulators to InstrumentNodes on the same track.
         // Both sides hold the same Arc, allowing the InstrumentNode to write the gate
@@ -410,6 +411,30 @@ impl GraphCompiler {
             route_cells,
             automation_actions,
         })
+    }
+
+    /// Widen each step to the outputs its prepared node really has (ADR-014
+    /// multi-out), then disconnect any input reading an output that does not
+    /// exist.
+    ///
+    /// A plugin's output ports are only known once it is loaded, which happens
+    /// after the steps were sized — so steps only ever grow here, never shrink,
+    /// and every non-plugin node keeps its static count.  An edge from a missing
+    /// output (a sandboxed or VST3 plugin, a plugin with fewer outputs than the
+    /// routing asks for) would otherwise be clamped by the scheduler onto the
+    /// main output; it reads silence instead.
+    fn size_outputs_from_processors(plan: &mut ExecutionPlan, processors: &[Box<dyn AudioNode>]) {
+        for (step, processor) in plan.steps.iter_mut().zip(processors) {
+            step.num_outputs = step.num_outputs.max(processor.num_output_ports());
+        }
+        let num_outputs: Vec<usize> = plan.steps.iter().map(|step| step.num_outputs).collect();
+        for step in &mut plan.steps {
+            for connection in &mut step.input_connections {
+                if connection.is_some_and(|c| c.src_port >= num_outputs[c.src_step].max(1)) {
+                    *connection = None;
+                }
+            }
+        }
     }
 
     /// Compute and assign latency compensation delays into `plan.steps[*].input_connections`.
@@ -622,7 +647,9 @@ impl GraphCompiler {
             NodeKind::Return { .. } => 1,
             NodeKind::Gain { .. } => 1,
             NodeKind::Pan { .. } => 1,
-            NodeKind::Plugin { .. } => 2,    // default stereo out
+            // Main bus only; a multi-out plugin's aux outputs are added once it
+            // is loaded (`size_outputs_from_processors`, ADR-014).
+            NodeKind::Plugin { .. } => 1,
             NodeKind::Modulator { .. } => 1, // one modulation output
             NodeKind::Meter { .. } => 1,     // pass-through
             // Master produces one mixed stereo output that the scheduler reads
@@ -1068,6 +1095,7 @@ mod tests {
             midi_notes: vec![],
             midi_clips: vec![],
             instrument: None,
+            input_source: None,
             automation_lanes: vec![],
         });
 
@@ -1131,6 +1159,7 @@ mod tests {
             midi_notes: vec![],
             midi_clips: vec![AppMidiClip { id: "c".into(), start: 0.0, end: 1.0, offset: 0.0, notes: vec![] }],
             instrument: Some("clap:synth".into()),
+            input_source: None,
             automation_lanes: vec![AutomationLane {
                 id: "lane".into(),
                 target: target(6),
@@ -1156,5 +1185,57 @@ mod tests {
         let lane = &graph.automation_actions[0];
         assert!(is_instrument(lane.target_node_id));
         assert_eq!(lane.param_name, "plugin_native:6");
+    }
+
+    use crate::audio_graph::buffer::AudioBuffer;
+    use crate::audio_graph::node::TransportInfo;
+
+    struct MultiOut(usize);
+
+    impl AudioNode for MultiOut {
+        fn node_id(&self) -> NodeId {
+            NodeId(1)
+        }
+        fn num_input_ports(&self) -> usize {
+            0
+        }
+        fn num_output_ports(&self) -> usize {
+            self.0
+        }
+        fn prepare(&mut self, _ctx: PrepareContext) {}
+        fn reset(&mut self) {}
+        fn process(&mut self, _inputs: &[&AudioBuffer], _outputs: &mut [AudioBuffer], _t: &TransportInfo) {}
+    }
+
+    fn reading(src_step: usize, src_port: usize) -> Option<InputConnection> {
+        Some(InputConnection { src_step, src_port, delay_samples: 0 })
+    }
+
+    /// ADR-014 multi-out: a loaded plugin with more outputs than its static
+    /// count widens its step; an input reading an output the plugin does not
+    /// have is cut to silence instead of being clamped onto the main output.
+    #[test]
+    fn steps_grow_to_the_loaded_plugin_outputs_and_missing_outputs_read_silence() {
+        let mut plan = ExecutionPlan::empty(48_000.0);
+        plan.steps = vec![
+            ExecutionStep { node_id: NodeId(1), input_connections: vec![], num_outputs: 1 },
+            ExecutionStep { node_id: NodeId(2), input_connections: vec![], num_outputs: 1 },
+            ExecutionStep {
+                node_id: NodeId(3),
+                input_connections: vec![reading(0, 0), reading(0, 2), reading(1, 1)],
+                num_outputs: 1,
+            },
+        ];
+        let processors: Vec<Box<dyn AudioNode>> =
+            vec![Box::new(MultiOut(3)), Box::new(MultiOut(1)), Box::new(MultiOut(0))];
+
+        GraphCompiler::size_outputs_from_processors(&mut plan, &processors);
+
+        assert_eq!(plan.steps[0].num_outputs, 3, "multi-out plugin widened");
+        assert_eq!(plan.steps[1].num_outputs, 1);
+        assert_eq!(plan.steps[2].num_outputs, 1, "a step never shrinks");
+        let inputs = &plan.steps[2].input_connections;
+        assert!(inputs[0].is_some() && inputs[1].is_some(), "existing outputs stay connected");
+        assert!(inputs[2].is_none(), "output 1 of a single-output node reads silence");
     }
 }

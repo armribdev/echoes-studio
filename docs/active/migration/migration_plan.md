@@ -334,8 +334,12 @@ Achever la séparation DSP/UI : l'UI ne touche plus jamais un état partagé via
 - 5d : charger Pro-C 2 avec sidechain, brancher track aux, vérifier ducking.
   Routage implémenté 2026-09-25 (ADR-014, `PluginParams.sidechain_source` →
   `AudioGraph::from_project`), couvert par des tests unitaires de topologie
-  (`audio_graph/graph.rs::sidechain_tests`) ; le test manuel "charger un vrai
+  (`audio_graph/graph.rs::routing_tests`) ; le test manuel "charger un vrai
   plugin, entendre le ducking" reste à faire.
+- 5d multi-out : charger une boîte à rythmes CLAP multi-sorties, prendre sa
+  sortie « snare » comme entrée d'une autre piste, vérifier qu'on l'entend
+  là. Implémenté 2026-09-25 (ADR-014), couvert par des tests FFI réels
+  contre `test_clap_plugin` ; le test manuel reste à faire.
 - 5e : ADSR envelope sur Eq freq, vérifier shape audio. Automation Eq freq via clip, vérifier rampe.
 - Stress : 64 lanes automation simultanées, 16 plugins MIDI, pas de XRun.
 

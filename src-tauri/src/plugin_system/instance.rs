@@ -44,10 +44,11 @@
 
 use std::ptr::NonNull;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU8, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use crate::audio_graph::plugin_params::ValueModulatedParam;
+use crate::plugin_formats::clap::audio_ports::{read_output_ports, ClapOutputPort};
 use crate::plugin_formats::clap::ffi::{
     audio_thread_scope, ClapHost, ClapHostContext, ClapLibrary, ClapPlugin,
 };
@@ -277,6 +278,10 @@ pub struct PluginInstance {
     /// (ADR-021 amendment); their base is restored before a state save.
     /// Command thread only.
     value_modulated_params: Mutex<Vec<ValueModulatedParam>>,
+    /// CLAP output ports in graph order (ADR-014 multi-out), read once right
+    /// after `init` — before the instance can be in any graph, so the read
+    /// never races `process`.
+    output_ports: OnceLock<Vec<ClapOutputPort>>,
 }
 
 impl PluginInstance {
@@ -298,6 +303,7 @@ impl PluginInstance {
             crash_tag,
             modulated_params: Mutex::new(Vec::new()),
             value_modulated_params: Mutex::new(Vec::new()),
+            output_ports: OnceLock::new(),
         })
     }
 
@@ -333,6 +339,7 @@ impl PluginInstance {
             crash_tag,
             modulated_params: Mutex::new(Vec::new()),
             value_modulated_params: Mutex::new(Vec::new()),
+            output_ports: OnceLock::new(),
         })
     }
 
@@ -365,6 +372,7 @@ impl PluginInstance {
             crash_tag,
             modulated_params: Mutex::new(Vec::new()),
             value_modulated_params: Mutex::new(Vec::new()),
+            output_ports: OnceLock::new(),
         })
     }
 
@@ -390,6 +398,7 @@ impl PluginInstance {
             crash_tag: 0,
             modulated_params: Mutex::new(Vec::new()),
             value_modulated_params: Mutex::new(Vec::new()),
+            output_ports: OnceLock::new(),
         })
     }
 
@@ -611,9 +620,17 @@ impl PluginInstance {
             if !((*plugin).init)(plugin) {
                 return false;
             }
+            let _ = self.output_ports.set(read_output_ports(plugin));
         }
         act.initialized.store(true, Ordering::Release);
         true
+    }
+
+    /// CLAP output ports in graph order (main first).  Empty for other formats,
+    /// a sandboxed plugin, or a plugin without `clap.audio-ports`: those keep
+    /// the single main output.
+    pub fn output_ports(&self) -> &[ClapOutputPort] {
+        self.output_ports.get().map(Vec::as_slice).unwrap_or(&[])
     }
 
     /// Idempotently bring the CLAP plugin to the active state

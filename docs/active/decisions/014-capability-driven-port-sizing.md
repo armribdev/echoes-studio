@@ -3,7 +3,8 @@
 ## Status
 
 Accepted (foundation) + **CLAP introspection/feed landed 2026-09-25** + **routing
-landed 2026-09-25** (see the updates at the bottom). Implements the
+landed 2026-09-25** + **CLAP multi-out landed 2026-09-25** (see the updates at
+the bottom). Implements the
 **compiler** half of **Phase 5d** of
 [`docs/active/migration/migration_plan.md`](../migration/migration_plan.md) — audit **P0-3**
 (capabilities câblées en dur) and **P1-5** (sidechain inexpressible).
@@ -84,8 +85,8 @@ change, no allocation/lock added.
   - ~~**No routing**~~ — `from_project` now connects a `sidechain_source`
     track into aux port 1 (2026-09-25, see the update below). No UI control
     yet — set via `UPDATE_EFFECT`.
-  - **Multi-out** — output sizing still fixed at `2`; symmetrical follow-up via
-    `num_audio_outputs`, gated on downstream routing for the extra ports.
+  - ~~**Multi-out**~~ — done for CLAP (2026-09-25, see the update below),
+    sized from the loaded instance rather than the scan manifest.
 - **Reversibility.** Additive. With the field at `0` the behaviour is identical
   to pre-5d.
 
@@ -112,8 +113,10 @@ change, no allocation/lock added.
   covers the standard "duck compressor" case without that larger data model.
 - **UI control** — `sidechain_source` is settable via `UPDATE_EFFECT` but has
   no picker in `EffectChain.svelte` yet. Still open.
-- **Multi-out** — size outputs from the manifest once downstream routing reads
-  the extra ports. Still open.
+- **Multi-out** — ~~size outputs from the manifest once downstream routing
+  reads the extra ports~~ **done for CLAP (2026-09-25)**, see the update below.
+  Still open: sandboxed plugins and VST3 (one output), and a plugin changing
+  its port layout at runtime (`clap.audio-ports` rescan).
 
 ## Update — 2026-09-25: real CLAP bus introspection + wrapper feed
 
@@ -193,8 +196,81 @@ issues §2.4 describes:
 - **Not done**: a UI control (`sidechain_source` is only settable via
   `UPDATE_EFFECT` today) and VST3 `getBusInfo`.
 
-Tests: `audio_graph/graph.rs::sidechain_tests` — edge lands on port 1 from the
+Tests: `audio_graph/graph.rs::routing_tests` (module renamed from
+`sidechain_tests` when multi-out landed) — edge lands on port 1 from the
 source's `TrackGain` node; `None` adds no edge (C-4); self-reference dropped;
 dangling source dropped; a two-track cycle keeps the first accepted edge and
 drops the second. No end-to-end "load Pro-C 2, hear ducking" manual pass yet —
 the unit tests cover topology, not perceptual audio.
+
+## Update — 2026-09-25: CLAP multi-out (aux outputs into other tracks)
+
+The output half of this ADR, CLAP only. A plugin's extra outputs (a drum
+machine's separate kick/snare outs, a sampler's per-part outs) now reach the
+graph, and another track can take one as its input.
+
+- **Sized from the loaded instance, not the scan manifest** — a deliberate
+  departure from this ADR's original plan for outputs. Multi-out matters
+  mostly for *instruments*, which the scanner deliberately does not probe
+  (probing loads their samples/wavetables at every startup). Instead
+  `PluginInstance` reads `clap.audio-ports` (outputs) once, right after the
+  first `init` (`plugin_system/instance.rs::clap_ensure_initialized`) — the
+  instance is brand-new and in no graph yet, so the read cannot race
+  `process`. The list is kept in *graph order*: the main port first
+  (`CLAP_AUDIO_PORT_IS_MAIN`, else the plugin's first port), then the aux
+  ports.
+- **Compiler: grow, never shrink** (`audio_graph/compiler.rs::size_outputs_from_processors`).
+  The pipeline order is unchanged (C-7): steps are still sized before nodes
+  are built. After the build/prepare loop, and before PDC/levels, each step's
+  `num_outputs` is raised to its prepared node's `num_output_ports()` when
+  larger. Only plugin wrappers can report more than their static count, so
+  every other node keeps its size. Then any input connection whose
+  `src_port` exceeds its source step's outputs is cut to silence — without
+  this, the scheduler's `src_port.min(len-1)` clamp would silently feed the
+  source's *main* output instead. The phantom second output of every plugin
+  node (`num_outputs_for_kind(Plugin) = 2`, never read) is removed (`→ 1`),
+  mirroring the phantom-input fix above.
+- **Wrappers** (`plugin_formats/clap/audio_ports.rs::ClapOutputBuses`, shared by
+  `ClapWrapperNode` and `ClapInstrument`). One `clap_audio_buffer` per
+  declared CLAP output port, in the plugin's index order, bound per block to
+  the graph output of the same role — no allocation in `process`. Previously
+  a multi-out plugin got `audio_outputs_count = 1` whatever it declared, which
+  is out of spec, and sounds it sent to its aux outputs were lost. The main
+  port keeps the engine's channel count (unchanged behaviour); an aux port
+  gets its declared count (≤ the engine's), and a mono aux is spread over
+  both channels after `process`. A declared port the plugin would not
+  describe, or a graph output the scheduler did not provide, is bound to a
+  spare buffer — the plugin never sees a null channel pointer.
+  `InstrumentDevice::num_output_ports()` (default `1`) lets `InstrumentNode`
+  report its device's outputs. Built in `prepare`, since the wrapper is
+  constructed before the plugin's `init`.
+- **Routing** — `AppTrack.input_source: Option<PluginOutputSource { effect_id,
+  port }>` (`project.rs`), where `effect_id` is a placement (an effect id or
+  `instrument:{track_id}`, the same keys as `PluginParam` targets) and `port ≥ 1`.
+  `from_project` puts a `Bus` ("[input]") at the head of such a track —
+  port 0 its own source, port 1 the plugin output — so the aux signal goes
+  through the track's own effects, fader and meter. Resolved after every
+  track is built, and after sidechains; a routing that would close a cycle
+  (checked exactly, by node reachability — e.g. a track taking an output of
+  one of its own effects), port 0, or an unknown placement is dropped
+  silently. `None` (every project saved before this) adds no node (C-4, C-2:
+  `renders_match_golden_hashes` green).
+- **Command** `SET_TRACK_INPUT { track_id, input_source }` → event
+  `TRACK_INPUT_SET` (structural, recompiles); port 0 is rejected. The UI lists
+  choices through the `get_plugin_outputs(instance_key)` Tauri command
+  (`PluginHost::plugin_outputs`: aux ports of a loaded placement, with the
+  plugin's port names) in a `TrackInputPicker` row of the left panel, shown
+  only when some loaded plugin has an aux output.
+- **Not done**: sandboxed plugins (the bridge still passes one output) and
+  VST3 keep a single output — a track routed to one of their aux outputs
+  stays silent; a runtime port-layout change (`clap.audio-ports` rescan
+  after `request_restart`) is not re-read.
+
+Tests: `plugin_formats/clap/audio_ports.rs` (port mapping, spare buffers, mono
+spread); `plugin_formats/clap/wrapper.rs::aux_feed_tests` against
+`crates/test_clap_plugin` (now declaring a mono "Aux Out" = ½ main) — effect
+and instrument nodes expose the aux output with the right samples, and the
+host lists it; `compiler.rs::steps_grow_to_the_loaded_plugin_outputs_and_missing_outputs_read_silence`;
+`graph.rs::routing_tests` (input routing, C-4 default, port 0, own-effect
+cycle, unknown placement); `project.rs` save/load round trip. No manual pass
+with a real multi-out plugin (e.g. a drum machine) yet.

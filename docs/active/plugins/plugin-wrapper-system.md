@@ -186,6 +186,20 @@ rather than failing the whole compile; `UPDATE_EFFECT` additionally rejects a
 self-reference outright (`patch_effect`, `engine_gateway/api.rs`). No UI
 control yet — set via `UPDATE_EFFECT { sidechain_source }`.
 
+**Multi-out (ADR-014 update, 2026-09-25).** `PluginInstance` reads the
+plugin's `clap.audio-ports` outputs once, right after the first `init`
+(main port first, then aux ports — `PluginInstance::output_ports`).
+`ClapWrapperNode` and `ClapInstrument` share `ClapOutputBuses`
+(`plugin_formats/clap/audio_ports.rs`), built in `prepare`: one
+`clap_audio_buffer` per declared port, in CLAP index order, so the plugin now
+gets every output it declared (it used to get exactly one). Graph output 0 is
+the main bus (engine channel count, unchanged); outputs `1..` are aux buses at
+their declared channel count, a mono one spread over both channels. Any port
+without a graph buffer writes into a spare buffer, never a null pointer.
+`PluginHost::plugin_outputs` / the `get_plugin_outputs` command list the aux
+ports with their names; `AppTrack.input_source` routes one into a track (see
+ADR-014). Sandboxed plugins and VST3 still expose one output.
+
 **Parameters (ADR-021).** `plugin_formats/clap/params.rs` is shared by the
 effect wrapper and the instrument: it reads `clap.params` at `prepare`, and
 each block fills one time-sorted `ClapEventBuffer` with queued edits and

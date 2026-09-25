@@ -33,9 +33,10 @@ use crate::audio_graph::nodes::instrument::InstrumentDevice;
 use crate::audio_graph::plugin_params::{PluginParamControl, PluginParamControls};
 use crate::plugin_system::instance::{PluginInstance, FFI_GATE_HARVEST_BUDGET};
 
+use crate::plugin_formats::clap::audio_ports::ClapOutputBuses;
 use crate::plugin_formats::clap::ffi::{
-    audio_thread_scope, ClapAudioBuffer, ClapEventBuffer, ClapOutputEvents, ClapPlugin,
-    ClapProcess, CLAP_PROCESS_ERROR,
+    audio_thread_scope, ClapEventBuffer, ClapOutputEvents, ClapPlugin, ClapProcess,
+    CLAP_PROCESS_ERROR,
 };
 use crate::plugin_formats::clap::params::{observe_output_event, read_clap_params, ClapParamEvents};
 use crate::plugin_formats::clap::transport::clap_transport_event;
@@ -63,13 +64,12 @@ pub struct ClapInstrument {
     instance: Arc<PluginInstance>,
 
     // Per-block scratch — allocated in `prepare`, stable thereafter.
-    out_channel_ptrs: Vec<*mut f32>,
-    out_audio_buf: ClapAudioBuffer,
+    /// Every declared output bus (ADR-014 multi-out: drum machines, samplers).
+    outputs: ClapOutputBuses,
     /// Notes and parameter events for the block, sorted by time.
     param_events: ClapParamEvents,
     out_events: ClapOutputEvents,
 
-    num_channels: usize,
     active: bool,
     /// Sample counter passed as `steady_time`. Must grow by `frames_count`
     /// every block so GUI notes (Vital's keyboard) land on a continuous clock.
@@ -92,14 +92,12 @@ impl ClapInstrument {
         );
         Self {
             instance,
-            out_channel_ptrs: Vec::new(),
-            out_audio_buf: unsafe { std::mem::zeroed() },
+            outputs: ClapOutputBuses::new(&[]),
             param_events: ClapParamEvents::new(),
             out_events: ClapOutputEvents {
                 ctx: std::ptr::null_mut(),
                 try_push: observe_output_event,
             },
-            num_channels: 2,
             active: false,
             steady_time: 0,
         }
@@ -114,16 +112,20 @@ impl ClapInstrument {
 }
 
 impl InstrumentDevice for ClapInstrument {
-    fn prepare(&mut self, ctx: PrepareContext) {
-        self.num_channels = ctx.num_channels;
-        self.out_channel_ptrs = vec![std::ptr::null_mut(); ctx.num_channels];
+    fn num_output_ports(&self) -> usize {
+        self.outputs.num_ports()
+    }
 
+    fn prepare(&mut self, ctx: PrepareContext) {
         // Activation lifecycle is owned by the shared instance (ADR-016) so it
         // survives a wrapper rebuild when the live instance is reused across a
         // recompile.  Idempotent: an already-active instance is left untouched.
         self.active = self
             .instance
             .clap_ensure_active(ctx.sample_rate, ctx.max_block_size as u32);
+
+        self.outputs = ClapOutputBuses::new(self.instance.output_ports());
+        self.outputs.prepare(ctx.num_channels, ctx.max_block_size);
 
         // Same fencing as the effect wrapper: skip if a block is in flight.
         if self.active {
@@ -157,7 +159,6 @@ impl InstrumentDevice for ClapInstrument {
         self.param_events.buffer.sort();
         self.out_events.ctx = self.param_events.output_context();
 
-        let nc = self.num_channels;
         // Frame count MUST be the current block size, not the buffer's allocated
         // capacity (`num_frames` = MAX_BLOCK_FRAMES).  Telling the plugin to
         // render the full 4096-frame capacity every callback advances its clock
@@ -165,17 +166,7 @@ impl InstrumentDevice for ClapInstrument {
         // synth races ahead and renders garbage that is mostly discarded — heard
         // as "no sound" / glitching.  Matches `PolySynth`, which uses block_size.
         let nf = transport.block_size;
-        for c in 0..nc {
-            self.out_channel_ptrs[c] = outputs[0].channel_mut(c).as_mut_ptr();
-        }
-
-        self.out_audio_buf = ClapAudioBuffer {
-            data32: self.out_channel_ptrs.as_mut_ptr(),
-            data64: std::ptr::null_mut(),
-            channel_count: nc as u32,
-            latency: 0,
-            constant_mask: 0,
-        };
+        let (audio_outputs, audio_outputs_count) = self.outputs.bind(outputs);
 
         let transport_event = clap_transport_event(transport);
         let process = ClapProcess {
@@ -183,9 +174,9 @@ impl InstrumentDevice for ClapInstrument {
             frames_count: nf as u32,
             transport: &transport_event,
             audio_inputs: std::ptr::null(), // generator: no audio input bus
-            audio_outputs: &mut self.out_audio_buf,
+            audio_outputs,
             audio_inputs_count: 0,
-            audio_outputs_count: 1,
+            audio_outputs_count,
             in_events: &self.param_events.buffer.input_events_vtable,
             out_events: &self.out_events,
         };
@@ -196,6 +187,7 @@ impl InstrumentDevice for ClapInstrument {
         // On error an instrument has no input to pass through — leave the
         // scheduler-zeroed output as silence.
         let _ = status == CLAP_PROCESS_ERROR;
+        self.outputs.finish(outputs);
     }
 
     fn inject_param_controls(&mut self, controls: Vec<PluginParamControl>) {

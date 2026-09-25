@@ -19,7 +19,8 @@
 //! auxiliary stereo input (sidechain), so a test can prove real bus
 //! introspection (ADR-014) end to end — the scanner reads the aux port, and
 //! `process` sums it verbatim into the output whenever the host hands it a
-//! second input port, so a test can detect it landed.
+//! second input port, so a test can detect it landed.  It also declares one
+//! auxiliary **mono** output (multi-out), carrying half the main output.
 
 use std::ffi::{c_char, c_void, CStr};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
@@ -354,6 +355,14 @@ unsafe extern "C" fn plugin_process(
             }
         }
     }
+    if process.audio_outputs_count >= 2 && output.channel_count > 0 {
+        let aux_out = &*process.audio_outputs.add(1);
+        let main_left = std::slice::from_raw_parts(*output.data32, frames);
+        let aux_left = std::slice::from_raw_parts_mut(*aux_out.data32, frames);
+        for (sample, main) in aux_left.iter_mut().zip(main_left) {
+            *sample = main * 0.5;
+        }
+    }
     CLAP_PROCESS_CONTINUE
 }
 
@@ -397,13 +406,10 @@ unsafe extern "C" fn plugin_get_extension(
 }
 
 /// One main stereo bus per direction, plus one auxiliary stereo input
-/// (sidechain) — exercises the ADR-014 scanner probe end to end.
-unsafe extern "C" fn audio_ports_count(_: *const ClapPlugin, is_input: bool) -> u32 {
-    if is_input {
-        2
-    } else {
-        1
-    }
+/// (sidechain) and one auxiliary mono output (multi-out) — exercises ADR-014
+/// end to end.
+unsafe extern "C" fn audio_ports_count(_: *const ClapPlugin, _is_input: bool) -> u32 {
+    2
 }
 
 unsafe extern "C" fn audio_ports_get(
@@ -412,10 +418,11 @@ unsafe extern "C" fn audio_ports_get(
     is_input: bool,
     info: *mut ClapAudioPortInfo,
 ) -> bool {
-    let (name, flags): (&[u8], u32) = match (is_input, index) {
-        (true, 0) => (b"Main In", CLAP_AUDIO_PORT_IS_MAIN),
-        (true, 1) => (b"Sidechain", 0),
-        (false, 0) => (b"Main Out", CLAP_AUDIO_PORT_IS_MAIN),
+    let (name, flags, channel_count): (&[u8], u32, u32) = match (is_input, index) {
+        (true, 0) => (b"Main In", CLAP_AUDIO_PORT_IS_MAIN, 2),
+        (true, 1) => (b"Sidechain", 0, 2),
+        (false, 0) => (b"Main Out", CLAP_AUDIO_PORT_IS_MAIN, 2),
+        (false, 1) => (b"Aux Out", 0, 1),
         _ => return false,
     };
     let info = &mut *info;
@@ -423,7 +430,7 @@ unsafe extern "C" fn audio_ports_get(
     info.name = [0; clap_ffi::CLAP_NAME_SIZE];
     info.name[..name.len()].copy_from_slice(name);
     info.flags = flags;
-    info.channel_count = 2;
+    info.channel_count = channel_count;
     info.port_type = std::ptr::null();
     info.in_place_pair = u32::MAX;
     true

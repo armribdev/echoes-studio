@@ -26,7 +26,10 @@ use crate::audio_graph::modulation::{
 };
 use crate::audio_graph::node::{NodeId, PortId, PortKind};
 use crate::audio_graph::plugin_params::plugin_param_name;
-use crate::project::{AppProject, AudioFollowerParams, EffectParams, EnvelopeParams, LfoWaveform, ModulationTargetRef, ModulatorParams};
+use crate::project::{
+    AppProject, AudioFollowerParams, EffectParams, EnvelopeParams, LfoWaveform, ModulationTargetRef, ModulatorParams,
+    PluginOutputSource,
+};
 
 static NEXT_NODE_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -339,6 +342,10 @@ impl AudioGraph {
         // track can appear later in `project.tracks` than the plugin itself.
         let mut track_tap_nodes: HashMap<String, NodeId> = HashMap::new();
         let mut pending_sidechain: Vec<(String, String, NodeId)> = Vec::new();
+        // Multi-out (ADR-014): every plugin placement in the project, and the
+        // track inputs waiting for one of their aux outputs.
+        let mut plugin_placements: HashMap<String, NodeId> = HashMap::new();
+        let mut pending_inputs: Vec<(PluginOutputSource, NodeId)> = Vec::new();
 
         for (port_idx, track) in project.tracks.iter().enumerate() {
             let mut instrument_node = None;
@@ -374,6 +381,15 @@ impl AudioGraph {
                     },
                     format!("{} [clips]", track.name),
                 )
+            };
+            let track_node = match &track.input_source {
+                Some(source) => {
+                    let input_node = graph.add_node(NodeKind::Bus, format!("{} [input]", track.name));
+                    graph.connect(track_node, 0, input_node, 0);
+                    pending_inputs.push((source.clone(), input_node));
+                    input_node
+                }
+                None => track_node,
             };
 
             let effectively_muted = track.muted || (any_solo && !track.solo);
@@ -455,6 +471,7 @@ impl AudioGraph {
             graph.connect(last_node, 0, gain_node, 0);
             graph.connect(gain_node, 0, meter_node, 0);
             graph.connect(meter_node, 0, master_id, port_idx as u32);
+            plugin_placements.extend(effect_node_ids.iter().map(|(id, &node)| (id.clone(), node)));
 
             let mut mod_node_ids: HashMap<String, NodeId> = HashMap::new();
 
@@ -620,7 +637,38 @@ impl AudioGraph {
             graph.connect_typed(source_tap, 0, *target_node, 1, PortKind::default_audio_stereo());
         }
 
+        // Plugin aux outputs into track inputs, once every placement exists.
+        // Port 0 is excluded (it already feeds the plugin's own track), and so
+        // is any routing that would close a cycle — e.g. a track taking an
+        // output of one of its own effects.  Both are dropped silently, like an
+        // unknown placement: the input just stays silent.  An output the loaded
+        // plugin turns out not to have is disconnected by the compiler.
+        for (source, input_node) in pending_inputs {
+            let Some(&plugin_node) = plugin_placements.get(&source.effect_id) else {
+                continue;
+            };
+            if source.port == 0 || graph.reaches(input_node, plugin_node) {
+                continue;
+            }
+            graph.connect(plugin_node, source.port, input_node, 1);
+        }
+
         graph
+    }
+
+    /// Whether `to` can be reached from `from` by following audio edges.
+    fn reaches(&self, from: NodeId, to: NodeId) -> bool {
+        let mut stack = vec![from];
+        let mut visited = std::collections::HashSet::new();
+        while let Some(node) = stack.pop() {
+            if node == to {
+                return true;
+            }
+            if visited.insert(node) {
+                stack.extend(self.edges_from(node).map(|edge| edge.to.node));
+            }
+        }
+        false
     }
 }
 
@@ -657,9 +705,9 @@ impl Default for AudioGraph {
 }
 
 #[cfg(test)]
-mod sidechain_tests {
+mod routing_tests {
     use super::*;
-    use crate::project::{AppProject, AppTrack, EffectParams, PluginParams, TrackEffect};
+    use crate::project::{AppMidiClip, AppProject, AppTrack, EffectParams, PluginParams, TrackEffect};
 
     fn track(id: &str, effects: Vec<TrackEffect>) -> AppTrack {
         AppTrack {
@@ -676,6 +724,7 @@ mod sidechain_tests {
             midi_notes: vec![],
             midi_clips: vec![],
             instrument: None,
+            input_source: None,
             automation_lanes: vec![],
         }
     }
@@ -782,5 +831,94 @@ mod sidechain_tests {
 
         assert!(has_aux_edge(&graph, b_tap, fx_a), "first candidate edge (b -> fx_a) must be accepted");
         assert!(!has_aux_edge(&graph, a_tap, fx_b), "second candidate edge would close the cycle and must be dropped");
+    }
+
+    fn drum_track(id: &str) -> AppTrack {
+        let mut track = track(id, vec![]);
+        track.instrument = Some("clap:drums".into());
+        track.midi_clips = vec![AppMidiClip { id: "c".into(), start: 0.0, end: 1.0, offset: 0.0, notes: vec![] }];
+        track
+    }
+
+    fn fed_from(track_id: &str, effect_id: &str, port: u32) -> AppTrack {
+        let mut track = track(track_id, vec![]);
+        track.input_source = Some(PluginOutputSource { effect_id: effect_id.into(), port });
+        track
+    }
+
+    fn input_node_of(graph: &AudioGraph, track_name: &str) -> Option<NodeId> {
+        let label = format!("{track_name} [input]");
+        graph.all_nodes().find(|n| n.label == label).map(|n| n.id)
+    }
+
+    fn instrument_node_of(graph: &AudioGraph, track_id: &str) -> NodeId {
+        graph
+            .all_nodes()
+            .find(|n| matches!(&n.kind, NodeKind::Instrument { track_id: t } if t == track_id))
+            .expect("instrument node")
+            .id
+    }
+
+    fn feeds_input(graph: &AudioGraph, from: NodeId, from_port: u32, input: NodeId) -> bool {
+        graph
+            .all_edges()
+            .iter()
+            .any(|e| e.from.node == from && e.from.port == from_port && e.to.node == input && e.to.port == 1)
+    }
+
+    #[test]
+    fn a_track_input_takes_an_instrument_aux_output() {
+        let mut project = AppProject::new();
+        project.tracks.push(drum_track("drums"));
+        project.tracks.push(fed_from("snare", "instrument:drums", 2));
+
+        let graph = AudioGraph::from_project(&project);
+
+        let input = input_node_of(&graph, "snare").expect("input mixer at the head of the track");
+        assert!(feeds_input(&graph, instrument_node_of(&graph, "drums"), 2, input));
+    }
+
+    #[test]
+    fn a_track_without_input_source_has_no_input_mixer() {
+        // C-4/C-2: every project saved before multi-out keeps its topology.
+        let mut project = AppProject::new();
+        project.tracks.push(drum_track("drums"));
+        project.tracks.push(track("snare", vec![]));
+
+        let graph = AudioGraph::from_project(&project);
+        assert!(input_node_of(&graph, "snare").is_none());
+    }
+
+    #[test]
+    fn the_main_output_cannot_be_taken_as_an_input() {
+        let mut project = AppProject::new();
+        project.tracks.push(drum_track("drums"));
+        project.tracks.push(fed_from("snare", "instrument:drums", 0));
+
+        let graph = AudioGraph::from_project(&project);
+        let input = input_node_of(&graph, "snare").expect("input mixer");
+        assert_eq!(graph.edges_into(input).count(), 1, "only the track's own source");
+    }
+
+    #[test]
+    fn an_input_from_an_own_effect_is_dropped_as_a_cycle() {
+        let mut project = AppProject::new();
+        let mut track = fed_from("t1", "fx0", 1);
+        track.effects = vec![plugin_effect("fx0", None)];
+        project.tracks.push(track);
+
+        let graph = AudioGraph::from_project(&project);
+        let input = input_node_of(&graph, "t1").expect("input mixer");
+        assert!(!feeds_input(&graph, plugin_node_of(&graph, "fx0"), 1, input));
+    }
+
+    #[test]
+    fn an_input_from_an_unknown_placement_is_dropped() {
+        let mut project = AppProject::new();
+        project.tracks.push(fed_from("t1", "gone", 1));
+
+        let graph = AudioGraph::from_project(&project);
+        let input = input_node_of(&graph, "t1").expect("input mixer");
+        assert_eq!(graph.edges_into(input).count(), 1, "only the track's own source");
     }
 }
