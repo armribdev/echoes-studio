@@ -18,7 +18,7 @@ function clampTrackInspectorWidth(w: number): number {
 
 function createLeftPanelStore() {
 	const { subscribe, update } = writable<LeftPanelState>({
-		open: false,
+		open: true,
 		width: TRACK_INSPECTOR_DEFAULT_WIDTH,
 	});
 

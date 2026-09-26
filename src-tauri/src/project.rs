@@ -480,6 +480,10 @@ fn default_midi_ppq() -> u16 {
     960
 }
 
+fn default_left_panel_open() -> bool {
+    true
+}
+
 fn default_left_panel_width() -> u16 {
     168
 }
@@ -499,7 +503,7 @@ fn default_bottom_edit_height() -> u16 {
 /// Disposition des panneaux UI — persistée dans le fichier projet, hors undo.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LeftPanelLayout {
-    #[serde(default)]
+    #[serde(default = "default_left_panel_open")]
     pub open: bool,
     #[serde(default = "default_left_panel_width")]
     pub width: u16,
@@ -508,7 +512,7 @@ pub struct LeftPanelLayout {
 impl Default for LeftPanelLayout {
     fn default() -> Self {
         Self {
-            open: false,
+            open: true,
             width: default_left_panel_width(),
         }
     }
