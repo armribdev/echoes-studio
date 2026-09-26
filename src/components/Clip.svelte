@@ -2,6 +2,7 @@
 	import { onMount, createEventDispatcher } from 'svelte';
 	import { selection } from '../stores/selection';
 	import { keyboardFocus } from '../stores/keyboardFocus';
+	import { arrangeClipFrame } from '../frontend/arrangeInteraction';
 
 	export let id: string;
 	export let start: number;
@@ -32,6 +33,8 @@
 	let _drawnBitmap: ImageBitmap | null = null;
 
 	$: selected = $selection.ids.has(id);
+	$: frame = arrangeClipFrame(start, end, scale);
+	$: canvasCssW = Math.max(1, Math.round(frame.widthPx));
 
 	function scaleBucket(s: number): number {
 		return Math.round(Math.log2(s) * 8);
@@ -100,7 +103,7 @@
 	}
 
 	onMount(() => {
-		canvas.width = Math.max(1, Math.ceil((end - start) * scale));
+		canvas.width = canvasCssW;
 		canvas.height = clipEl.clientHeight;
 		loadWorker();
 	});
@@ -109,7 +112,7 @@
 	// needsRender() filters out drag frames where only position (start/end) changed,
 	// not the canvas dimensions or zoom level.
 	$: if (canvas && workerReady) {
-		const w = Math.max(1, Math.ceil((end - start) * scale));
+		const w = canvasCssW;
 		const key = renderKey(scaleBucket(scale), offset);
 		if (needsRender(w, key)) requestRender(w);
 	}
@@ -153,7 +156,7 @@
 	class:selected
 	role="button"
 	tabindex="0"
-	style="transform: translateX({start * scale}px); width: {(end - start) * scale}px"
+	style="transform: translateX({frame.leftPx}px); width: {frame.widthPx}px"
 	on:mousedown={onMouseDown}
 	on:contextmenu={onContextMenu}
 	on:click|stopPropagation
@@ -190,6 +193,8 @@
 
 		canvas {
 			display: block;
+			width: 100%;
+			height: 100%;
 			background-color: inherit;
 		}
 

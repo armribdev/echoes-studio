@@ -1,8 +1,12 @@
 export interface ArrangeGridDrawParams {
 	ctx: CanvasRenderingContext2D;
+	/** Largeur/hauteur du buffer canvas (pixels device). */
 	width: number;
 	height: number;
+	/** Pixels CSS par beat. */
 	pxPerBeat: number;
+	/** devicePixelRatio — alignement des traits sur la grille device. */
+	dpr: number;
 	numerator: number;
 	totalBeats: number;
 	gridBeats: number;
@@ -22,15 +26,19 @@ function visibleSubdivision(pxPerBeat: number, gridBeats: number): number {
 
 /** Lignes verticales temps/mesures pour la zone pistes (sans interaction). */
 export function drawArrangeGrid(p: ArrangeGridDrawParams): void {
-	const { ctx, width: W, height: H, pxPerBeat, numerator, totalBeats, gridBeats } = p;
+	const { ctx, width: W, height: H, pxPerBeat, dpr, numerator, totalBeats, gridBeats } = p;
 	ctx.clearRect(0, 0, W, H);
 
 	const beatsPerMeasure = numerator || 4;
 	const subdiv = visibleSubdivision(pxPerBeat, gridBeats);
 	const showBeats = pxPerBeat >= 6;
+	const pxPerBeatDev = pxPerBeat * dpr;
+	// ~1 CSS px, centré sur la grille device (pair → entier, impair → .5).
+	const lineWidth = Math.max(1, Math.round(dpr));
+	const xAlign = lineWidth % 2 === 0 ? 0 : 0.5;
 
 	for (let b = 0; b <= totalBeats + subdiv; b += subdiv) {
-		const x = b * pxPerBeat + 0.5;
+		const x = Math.round(b * pxPerBeatDev) + xAlign;
 		if (x > W) break;
 
 		const isMeasure = Math.abs(b % beatsPerMeasure) < 1e-6;
@@ -38,17 +46,15 @@ export function drawArrangeGrid(p: ArrangeGridDrawParams): void {
 
 		if (isMeasure) {
 			ctx.strokeStyle = 'rgba(247, 247, 249, 0.14)';
-			ctx.lineWidth = 1;
 		} else if (isBeat && showBeats) {
 			ctx.strokeStyle = 'rgba(247, 247, 249, 0.08)';
-			ctx.lineWidth = 1;
 		} else if (!isBeat) {
 			ctx.strokeStyle = 'rgba(247, 247, 249, 0.04)';
-			ctx.lineWidth = 1;
 		} else {
 			continue;
 		}
 
+		ctx.lineWidth = lineWidth;
 		ctx.beginPath();
 		ctx.moveTo(x, 0);
 		ctx.lineTo(x, H);

@@ -3,6 +3,18 @@ import type { Track } from '../types/global';
 export const ARRANGE_TRACK_HEIGHT = 100;
 export const ARRANGE_POINTER_DRAG_THRESHOLD = 3;
 
+/** Left accroché aux pixels device ; largeur = durée exacte (évite le crawl des notes au resize). */
+export function arrangeClipFrame(
+	startSec: number,
+	endSec: number,
+	scale: number,
+	dpr = typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1,
+): { leftPx: number; widthPx: number } {
+	const leftPx = Math.round(startSec * scale * dpr) / dpr;
+	const widthPx = Math.max(1 / dpr, (endSec - startSec) * scale);
+	return { leftPx, widthPx };
+}
+
 export function trackIndexFromArrangeY(y: number, trackCount: number): number | null {
 	if (trackCount <= 0) return null;
 	return Math.min(Math.max(0, Math.floor(y / ARRANGE_TRACK_HEIGHT)), trackCount - 1);
@@ -36,11 +48,14 @@ function maxClipEndSec(tracks: Track[]): number {
 	return maxEnd;
 }
 
-/** Dernière mesure visible : max(8, fin du dernier clip en mesures + 4). */
+/** Dernière mesure visible : max(8, ceil(fin clip en mesures) + 4). Ceil évite le thrash de largeur pendant un drag du dernier clip. */
 export function arrangeVisibleMaxBars(tracks: Track[], bpm: number, numerator: number): number {
 	const barSec = (numerator * 60) / bpm;
 	const maxClipEndBar = maxClipEndSec(tracks) / barSec;
-	return Math.max(ARRANGE_MIN_VISIBLE_BARS, maxClipEndBar + ARRANGE_VISIBLE_BARS_AFTER_LAST_CLIP);
+	return Math.max(
+		ARRANGE_MIN_VISIBLE_BARS,
+		Math.ceil(maxClipEndBar) + ARRANGE_VISIBLE_BARS_AFTER_LAST_CLIP,
+	);
 }
 
 /** px/beat au dézoom max : toute la timeline (max bars) remplit le viewport. */

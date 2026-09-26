@@ -3,6 +3,7 @@
 	import { onMount, onDestroy, createEventDispatcher } from 'svelte';
 	import type { MidiNote } from '../types/global';
 	import { selection } from '../stores/selection';
+	import { arrangeClipFrame } from '../frontend/arrangeInteraction';
 
 	export let id: string;
 	export let start: number;
@@ -23,6 +24,7 @@
 	}>();
 
 	const CANVAS_INSET = { top: 14, right: 2, bottom: 4, left: 2 };
+	const dpr = typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1;
 
 	let clipEl: HTMLElement;
 	let canvas: HTMLCanvasElement;
@@ -30,69 +32,76 @@
 	let resizeObserver: ResizeObserver | undefined;
 
 	$: selected = $selection.ids.has(id);
-	$: width = Math.max(2, (end - start) * scale);
+	$: frame = arrangeClipFrame(start, end, scale, dpr);
 
-	// Re-render whenever notes, width, bpm, color, or trim offset change.
-	$: if (canvas) scheduleRender(notes, width, bpm, color, selected, offset);
+	// Re-render whenever notes, frame, bpm, color, or trim offset change.
+	$: if (canvas) scheduleRender(notes, frame.widthPx, bpm, color, selected, offset);
 
 	function scheduleRender(..._deps: unknown[]) {
 		cancelAnimationFrame(rafId);
 		rafId = requestAnimationFrame(renderPreview);
 	}
 
-	function visibleCanvasHeight(): number {
-		return Math.max(1, clipEl.clientHeight - CANVAS_INSET.top - CANVAS_INSET.bottom);
+	function drawSize(): { cssW: number; cssH: number; timeW: number } {
+		const timeW = Math.max(1, frame.widthPx);
+		const cssW = Math.max(1, timeW - CANVAS_INSET.left - CANVAS_INSET.right);
+		const cssH = Math.max(1, (clipEl?.clientHeight ?? 0) - CANVAS_INSET.top - CANVAS_INSET.bottom);
+		return { cssW, cssH, timeW };
 	}
 
-	function syncCanvasSize() {
-		if (!canvas || !clipEl) return;
-		const W = Math.max(1, Math.ceil(width));
-		const H = visibleCanvasHeight();
-		if (canvas.width !== W) canvas.width = W;
-		if (canvas.height !== H) canvas.height = H;
+	function syncCanvasSize(cssW: number, cssH: number) {
+		if (!canvas) return;
+		const w = Math.max(1, Math.round(cssW * dpr));
+		const h = Math.max(1, Math.round(cssH * dpr));
+		if (canvas.width !== w) canvas.width = w;
+		if (canvas.height !== h) canvas.height = h;
+		canvas.style.width = `${cssW}px`;
+		canvas.style.height = `${cssH}px`;
 	}
 
 	function renderPreview() {
 		if (!canvas || !clipEl) return;
-		syncCanvasSize();
-		const W = canvas.width;
-		const H = canvas.height;
+		const { cssW, cssH, timeW } = drawSize();
+		syncCanvasSize(cssW, cssH);
 
 		const ctx = canvas.getContext('2d');
 		if (!ctx) return;
-		ctx.clearRect(0, 0, W, H);
+		ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+		ctx.clearRect(0, 0, cssW, cssH);
 
 		if (notes.length === 0) return;
 
-		// Determine pitch range with a margin so single notes aren't full height
 		const pitches = notes.map((n) => n.pitch);
 		const minP = Math.max(0, Math.min(...pitches) - 3);
 		const maxP = Math.min(127, Math.max(...pitches) + 3);
 		const pitchRange = maxP - minP || 1;
 
-		// Use the actual clip duration in beats so note positions are correct
-		// regardless of how many notes are present or where they sit.
-		const clipDurationBeats = (end - start) * bpm / 60;
+		const clipDurationBeats = ((end - start) * bpm) / 60;
 		const beatRange = clipDurationBeats || 1;
-
-		// Notes anchor to the content origin (`start - offset`); a left-trim shifts
-		// them left within the visible window by `offset` seconds worth of beats.
-		const offsetBeats = offset * bpm / 60;
+		const offsetBeats = (offset * bpm) / 60;
 
 		const r = parseInt(color.slice(1, 3), 16);
 		const g = parseInt(color.slice(3, 5), 16);
 		const b = parseInt(color.slice(5, 7), 16);
 
 		for (const note of notes) {
-			const x = ((note.start - offsetBeats) / beatRange) * W;
-			const w = Math.max(1.5, (note.duration / beatRange) * W - 0.5);
-			const y = ((maxP - note.pitch) / pitchRange) * (H - 2) + 1;
-			const h = Math.max(1.5, (H - 2) / pitchRange);
+			// Map against full clip width (not inset) so positions stay stable while resizing.
+			const xFull = ((note.start - offsetBeats) / beatRange) * timeW;
+			const rawW = Math.max(1.5, (note.duration / beatRange) * timeW - 0.5);
+			const x = xFull - CANVAS_INSET.left;
+			if (x >= cssW || x + rawW <= 0) continue;
+
+			const xDraw = Math.max(0, x);
+			const wDraw = Math.min(cssW - xDraw, rawW - (xDraw - x));
+			if (wDraw <= 0) continue;
+
+			const y = ((maxP - note.pitch) / pitchRange) * (cssH - 2) + 1;
+			const h = Math.max(1.5, (cssH - 2) / pitchRange);
 
 			const alpha = selected ? 1 : 0.55 + (note.velocity / 127) * 0.45;
 			ctx.fillStyle = `rgba(${r},${g},${b},${alpha})`;
 			ctx.beginPath();
-			ctx.roundRect(x, y, w, h, 1);
+			ctx.roundRect(xDraw, y, wDraw, h, 1);
 			ctx.fill();
 		}
 	}
@@ -143,7 +152,6 @@
 	}
 
 	onMount(() => {
-		syncCanvasSize();
 		renderPreview();
 		resizeObserver = new ResizeObserver(() => scheduleRender());
 		resizeObserver.observe(clipEl);
@@ -161,7 +169,7 @@
 	class:selected
 	role="button"
 	tabindex="0"
-	style="transform: translateX({start * scale}px); width: {width}px; --clip-color: {color};"
+	style="transform: translateX({frame.leftPx}px); width: {frame.widthPx}px; --clip-color: {color};"
 	on:mousedown={onMouseDown}
 	on:dblclick={onDblClick}
 	on:contextmenu={onContextMenu}
@@ -221,8 +229,10 @@
 
 		&__canvas {
 			position: absolute;
-			inset: 14px 2px 4px;
+			top: 14px;
+			left: 2px;
 			display: block;
+			pointer-events: none;
 		}
 
 		.resize-handle {
