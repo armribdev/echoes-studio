@@ -16,6 +16,7 @@
 	const dispatch = createEventDispatcher<{
 		midiclip_dragstart: { offsetPx: number; duplicate: boolean };
 		midiclip_resizestart: { edge: 'left' | 'right'; clientX: number };
+		midiclip_repeatstart: { clientX: number };
 		midiclip_contextmenu: { id: string; x: number; y: number };
 		midiclip_dblclick: { id: string };
 		midiclip_activate: { id: string };
@@ -121,6 +122,14 @@
 		dispatch('midiclip_resizestart', { edge, clientX: e.clientX });
 	}
 
+	function onRepeatHandleDown(e: MouseEvent) {
+		e.stopPropagation();
+		e.preventDefault();
+		selection.select(id, { additive: e.ctrlKey || e.metaKey });
+		dispatch('midiclip_activate', { id });
+		dispatch('midiclip_repeatstart', { clientX: e.clientX });
+	}
+
 	function onDblClick(e: MouseEvent) {
 		e.stopPropagation();
 		e.preventDefault();
@@ -172,6 +181,8 @@
 	<div class="resize-handle resize-handle--left" on:mousedown={(e) => onResizeHandleDown('left', e)}></div>
 	<!-- svelte-ignore a11y-no-static-element-interactions -->
 	<div class="resize-handle resize-handle--right" on:mousedown={(e) => onResizeHandleDown('right', e)}></div>
+	<!-- svelte-ignore a11y-no-static-element-interactions -->
+	<div class="repeat-handle" title="Glisser pour répéter" on:mousedown={onRepeatHandleDown}></div>
 </div>
 
 <style lang="scss">
@@ -228,6 +239,33 @@
 
 			&--right {
 				right: 0;
+			}
+		}
+
+		.repeat-handle {
+			position: absolute;
+			top: 0;
+			right: 0;
+			width: 10px;
+			height: 10px;
+			cursor: e-resize;
+			z-index: 3;
+			border-top-right-radius: 4px;
+
+			&::after {
+				content: '';
+				position: absolute;
+				top: 2px;
+				right: 2px;
+				width: 4px;
+				height: 4px;
+				border-radius: 50%;
+				background: color-mix(in srgb, var(--clip-color) 90%, white);
+				opacity: 0;
+			}
+
+			&:hover::after {
+				opacity: 0.8;
 			}
 		}
 	}

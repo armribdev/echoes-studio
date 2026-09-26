@@ -5,7 +5,7 @@
 	import ClipContextMenu from './ClipContextMenu.svelte';
 	import PluginPicker from './PluginPicker.svelte';
 	import { instrumentIdOf, type PluginInfo } from '../stores/plugins';
-	import type { Track as TrackType, Project } from '../types/global';
+	import type { Track as TrackType, Project, MidiNote } from '../types/global';
 	import { invoke } from '@tauri-apps/api/core';
 	import { listen } from '@tauri-apps/api/event';
 	import { getCurrentWindow } from '@tauri-apps/api/window';
@@ -86,6 +86,7 @@
 	onDestroy(cleanupTracksPointer);
 	onDestroy(() => instrumentsResizeObserver?.disconnect());
 	onDestroy(() => tracksResizeObserver?.disconnect());
+	onDestroy(() => { if (autoScrollRafId) cancelAnimationFrame(autoScrollRafId); });
 	onDestroy(() => {
 		window.removeEventListener('mousemove', onResizeMove);
 		window.removeEventListener('mouseup', onResizeEnd);
@@ -362,6 +363,13 @@
 	$: arrangeMaxBars = arrangeVisibleMaxBars(tracks, $tempo.bpm, $tempo.numerator);
 	$: arrangeTotalBeats = arrangeMaxBars * $tempo.numerator;
 	$: arrangeContentWidthPx = arrangeTotalBeats * pxPerBeat;
+	// While repeat-dragging past the current arrangement end, the scrollable area must
+	// grow ahead of the (not-yet-committed) ghost preview, or auto-scroll hits a wall.
+	$: repeatGhostEdgePx = repeating
+		? (repeating.origStart + (repeating.count + 1) * repeating.duration) * scale + repeating.partialPx
+		: 0;
+	$: effectiveContentWidthPx = Math.max(arrangeContentWidthPx, repeatGhostEdgePx + 200);
+	$: effectiveTotalBeats = effectiveContentWidthPx / (pxPerBeat || 1);
 	$: arrangeGridHeight = Math.max(tracks.length * ARRANGE_TRACK_HEIGHT, tracksInnerEl?.offsetHeight ?? 0);
 	$: playheadX = $transport.position * scale;
 	$: playheadMarkerX = playheadX - tracksScrollLeft;
@@ -456,6 +464,20 @@
 	}
 	let dragging: { origTrackIndex: number; trackIndex: number; clipIndex: number; offsetPx: number } | null = null;
 	let midiDragging: { origTrackIndex: number; trackIndex: number; clipId: string; offsetPx: number; origStart: number; origEnd: number } | null = null;
+	let repeating:
+		| {
+				trackIndex: number;
+				trackId: string;
+				origStart: number;
+				duration: number;
+				startClientX: number;
+				startScrollLeft: number;
+				count: number;
+				partialPx: number;
+				offset: number;
+				notes: MidiNote[];
+		  }
+		| null = null;
 	let resizing:
 		| {
 				kind: 'audio' | 'midi';
@@ -935,6 +957,61 @@
 		}
 	}
 
+	// ── Edge auto-scroll while dragging/resizing/repeating ──────────────────────
+	// The active `*Move` handler is replayed every animation frame while auto-scrolling,
+	// using the last known pointer position — not just on real `mousemove` events. Without
+	// this, a pointer held still at the edge (or one that has left the OS window, which
+	// stops delivering `mousemove` entirely) leaves the drag math frozen while the view
+	// keeps scrolling underneath it, so it desyncs from the pointer until the next move.
+	const AUTO_SCROLL_EDGE_PX = 48;
+	const AUTO_SCROLL_MAX_SPEED = 18;
+	let autoScrollRafId = 0;
+	let autoScrollSpeed = 0;
+	let autoScrollLastClientX = 0;
+	let autoScrollLastClientY = 0;
+	let autoScrollActiveMove: ((e: MouseEvent) => void) | null = null;
+
+	function autoScrollTick() {
+		if (autoScrollSpeed !== 0 && tracksEl) {
+			tracksEl.scrollLeft = Math.max(0, tracksEl.scrollLeft + autoScrollSpeed);
+			autoScrollActiveMove?.(
+				new MouseEvent('mousemove', { clientX: autoScrollLastClientX, clientY: autoScrollLastClientY }),
+			);
+		}
+		autoScrollRafId = requestAnimationFrame(autoScrollTick);
+	}
+
+	function beginAutoScroll(onMove: (e: MouseEvent) => void) {
+		autoScrollActiveMove = onMove;
+		if (!autoScrollRafId) autoScrollRafId = requestAnimationFrame(autoScrollTick);
+	}
+
+	function endAutoScroll() {
+		if (autoScrollRafId) cancelAnimationFrame(autoScrollRafId);
+		autoScrollRafId = 0;
+		autoScrollSpeed = 0;
+		autoScrollActiveMove = null;
+	}
+
+	function updateAutoScrollEdge(e: MouseEvent) {
+		autoScrollLastClientX = e.clientX;
+		autoScrollLastClientY = e.clientY;
+		if (!tracksEl) {
+			autoScrollSpeed = 0;
+			return;
+		}
+		const rect = tracksEl.getBoundingClientRect();
+		const leftPenetration = rect.left + AUTO_SCROLL_EDGE_PX - e.clientX;
+		const rightPenetration = e.clientX - (rect.right - AUTO_SCROLL_EDGE_PX);
+		if (leftPenetration > 0) {
+			autoScrollSpeed = -AUTO_SCROLL_MAX_SPEED * Math.min(1, leftPenetration / AUTO_SCROLL_EDGE_PX);
+		} else if (rightPenetration > 0) {
+			autoScrollSpeed = AUTO_SCROLL_MAX_SPEED * Math.min(1, rightPenetration / AUTO_SCROLL_EDGE_PX);
+		} else {
+			autoScrollSpeed = 0;
+		}
+	}
+
 	async function onMidiClipDragStart(
 		e: CustomEvent<{ offsetPx: number; trackIndex: number; clipId: string; duplicate: boolean }>,
 	) {
@@ -966,10 +1043,12 @@
 		};
 		window.addEventListener('mousemove', onMidiDragMove);
 		window.addEventListener('mouseup', onMidiDragEnd);
+		beginAutoScroll(onMidiDragMove);
 	}
 
 	function onMidiDragMove(e: MouseEvent) {
 		if (!midiDragging || !tracksEl) return;
+		updateAutoScrollEdge(e);
 		const rect = tracksEl.getBoundingClientRect();
 		const { clipId, offsetPx, origEnd, origStart } = midiDragging;
 		const rawStart = Math.max(0, (e.clientX - rect.left + tracksEl.scrollLeft - offsetPx) / scale);
@@ -1021,6 +1100,7 @@
 		midiDragging = null;
 		window.removeEventListener('mousemove', onMidiDragMove);
 		window.removeEventListener('mouseup', onMidiDragEnd);
+		endAutoScroll();
 	}
 
 	function onMidiClipActivate(e: CustomEvent<{ id: string; trackIndex: number }>) {
@@ -1070,10 +1150,12 @@
 		dragging = { origTrackIndex: e.detail.trackIndex, ...e.detail };
 		window.addEventListener('mousemove', onDragMove);
 		window.addEventListener('mouseup', onDragEnd);
+		beginAutoScroll(onDragMove);
 	}
 
 	function onDragMove(e: MouseEvent) {
 		if (!dragging || !tracksEl) return;
+		updateAutoScrollEdge(e);
 		const rect = tracksEl.getBoundingClientRect();
 		const { clipIndex, offsetPx } = dragging;
 		const rawStart = Math.max(0, (e.clientX - rect.left + tracksEl.scrollLeft - offsetPx) / scale);
@@ -1118,12 +1200,14 @@
 		dragging = null;
 		window.removeEventListener('mousemove', onDragMove);
 		window.removeEventListener('mouseup', onDragEnd);
+		endAutoScroll();
 	}
 
 	// ── Clip resize (trim) ──────────────────────────────────────────────────────
 	// Left edge: hide leading content (content origin `start - offset` stays put);
 	// right edge: trim/extend the tail. Audio clamps the tail to the source length.
 	const MIN_CLIP_PX = 8;
+	const MIN_REPEAT_PARTIAL_PX = 4;
 
 	function onClipResizeStart(
 		e: CustomEvent<{ edge: 'left' | 'right'; clientX: number; trackIndex: number; clipIndex: number }>,
@@ -1146,6 +1230,7 @@
 		};
 		window.addEventListener('mousemove', onResizeMove);
 		window.addEventListener('mouseup', onResizeEnd);
+		beginAutoScroll(onResizeMove);
 	}
 
 	function onMidiClipResizeStart(
@@ -1167,10 +1252,87 @@
 		};
 		window.addEventListener('mousemove', onResizeMove);
 		window.addEventListener('mouseup', onResizeEnd);
+		beginAutoScroll(onResizeMove);
+	}
+
+	function onMidiClipRepeatStart(e: CustomEvent<{ clientX: number; trackIndex: number; clipId: string }>) {
+		const { clientX, trackIndex, clipId } = e.detail;
+		selectTrackIndex(trackIndex);
+		const track = tracks[trackIndex];
+		const clip = track?.midi_clips?.find((c) => c.id === clipId);
+		if (!track || !clip) return;
+		repeating = {
+			trackIndex,
+			trackId: track.id,
+			origStart: clip.start,
+			duration: clip.end - clip.start,
+			startClientX: clientX,
+			startScrollLeft: tracksEl?.scrollLeft ?? 0,
+			count: 0,
+			partialPx: 0,
+			offset: clip.offset ?? 0,
+			notes: clip.notes.map((n) => ({ ...n })),
+		};
+		window.addEventListener('mousemove', onRepeatMove);
+		window.addEventListener('mouseup', onRepeatEnd);
+		beginAutoScroll(onRepeatMove);
+	}
+
+	function onRepeatMove(e: MouseEvent) {
+		if (!repeating) return;
+		updateAutoScrollEdge(e);
+		const durationPx = repeating.duration * scale;
+		if (durationPx <= 0) return;
+		// Content-space distance dragged = pointer movement *plus* whatever the
+		// auto-scroll has already shifted the view by (scrollLeft can move the
+		// content under a pointer that itself hasn't moved, e.g. while it sits at
+		// the edge or has left the window and stopped emitting `mousemove`).
+		const scrollDelta = (tracksEl?.scrollLeft ?? repeating.startScrollLeft) - repeating.startScrollLeft;
+		const deltaX = Math.max(0, e.clientX - repeating.startClientX + scrollDelta);
+		const count = Math.floor(deltaX / durationPx);
+		const partialPx = deltaX - count * durationPx;
+		if (count !== repeating.count || partialPx !== repeating.partialPx) {
+			repeating = { ...repeating, count, partialPx };
+		}
+	}
+
+	async function onRepeatEnd() {
+		window.removeEventListener('mousemove', onRepeatMove);
+		window.removeEventListener('mouseup', onRepeatEnd);
+		endAutoScroll();
+		if (!repeating) return;
+		const { trackId, origStart, duration, offset, notes, count, partialPx } = repeating;
+		if (count === 0 && partialPx <= MIN_REPEAT_PARTIAL_PX) {
+			repeating = null;
+			return;
+		}
+		// Keep the ghost (and the widened scroll area it drives) alive until the real
+		// clips are committed, so the view doesn't snap back while we await the engine.
+		const jobs: Promise<CommandResult>[] = [];
+		for (let i = 1; i <= count; i++) {
+			const start = origStart + i * duration;
+			jobs.push(addMidiClip(trackId, start, start + duration, { offset, notes: notes.map((n) => ({ ...n })) }));
+		}
+		if (partialPx > MIN_REPEAT_PARTIAL_PX) {
+			// Trailing cut-off repeat, same trim mechanism as a right-edge resize:
+			// the underlying notes are kept whole, only the visible window shrinks.
+			const start = origStart + (count + 1) * duration;
+			jobs.push(addMidiClip(trackId, start, start + partialPx / scale, { offset, notes: notes.map((n) => ({ ...n })) }));
+		}
+		const scrollLeft = tracksEl?.scrollLeft;
+		const results = await Promise.all(jobs);
+		const ids = results.map(clipIdFromResult).filter((id): id is string => id !== null);
+		if (ids.length > 0) selection.setMany(ids);
+		repeating = null;
+		if (tracksEl && scrollLeft != null) {
+			await tick();
+			tracksEl.scrollLeft = scrollLeft;
+		}
 	}
 
 	function onResizeMove(e: MouseEvent) {
 		if (!resizing || !tracksEl) return;
+		updateAutoScrollEdge(e);
 		const { edge, trackIndex, origStart, origEnd, origOffset, maxSourceDuration } = resizing;
 		const minWidth = MIN_CLIP_PX / scale;
 		const origin = origStart - origOffset;
@@ -1230,6 +1392,7 @@
 		resizing = null;
 		window.removeEventListener('mousemove', onResizeMove);
 		window.removeEventListener('mouseup', onResizeEnd);
+		endAutoScroll();
 	}
 
 	// Tauri intercepts OS file drops before WebView2 sees them — these stubs
@@ -1484,7 +1647,7 @@
 				<div
 					class="tracks-inner"
 					bind:this={tracksInnerEl}
-					style="width: {arrangeContentWidthPx}px; min-width: {arrangeContentWidthPx}px"
+					style="width: {effectiveContentWidthPx}px; min-width: {effectiveContentWidthPx}px"
 				>
 			{#if $loopRegion.enabled}
 				<div
@@ -1494,11 +1657,11 @@
 			{/if}
 			{#if $preferences.interface.showArrangeGrid}
 				<ArrangeGrid
-					widthPx={arrangeContentWidthPx}
+					widthPx={effectiveContentWidthPx}
 					heightPx={arrangeGridHeight}
 					pxPerBeat={pxPerBeat}
 					numerator={$tempo.numerator}
-					totalBeats={arrangeTotalBeats}
+					totalBeats={effectiveTotalBeats}
 					gridBeats={$midiGridBeats}
 				/>
 			{/if}
@@ -1524,6 +1687,20 @@
 					style="top: {fileDragPreview.trackIndex * ARRANGE_TRACK_HEIGHT}px; left: {fileDragPreview.startSec * scale}px; width: {fileDragPreview.durationSec != null ? fileDragPreview.durationSec * scale : 150}px;"
 				></div>
 			{/if}
+			{#if repeating}
+				{#each Array(repeating.count) as _, i}
+					<div
+						class="clip-ghost"
+						style="top: {repeating.trackIndex * ARRANGE_TRACK_HEIGHT}px; left: {(repeating.origStart + (i + 1) * repeating.duration) * scale}px; width: {repeating.duration * scale}px;"
+					></div>
+				{/each}
+				{#if repeating.partialPx > MIN_REPEAT_PARTIAL_PX}
+					<div
+						class="clip-ghost"
+						style="top: {repeating.trackIndex * ARRANGE_TRACK_HEIGHT}px; left: {(repeating.origStart + (repeating.count + 1) * repeating.duration) * scale}px; width: {repeating.partialPx}px; opacity: 0.5;"
+					></div>
+				{/if}
+			{/if}
 			{#if tracksPointer.kind === 'selbox'}
 				<div
 					class="arrange-selbox"
@@ -1548,6 +1725,7 @@
 					on:clipcontextmenu={handleClipContextMenu}
 					on:midiclip_dragstart={onMidiClipDragStart}
 					on:midiclip_resizestart={onMidiClipResizeStart}
+					on:midiclip_repeatstart={onMidiClipRepeatStart}
 					on:midiclip_dblclick={onMidiClipDblClick}
 					on:midiclip_activate={onMidiClipActivate}
 					on:midiclip_contextmenu={onMidiClipContextMenu}
