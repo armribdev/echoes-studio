@@ -722,12 +722,8 @@
 		}
 	}
 
-	function snap(
-		positionSec: number,
-		altKey: boolean,
-		excludeClip?: { trackIndex: number; clipIndex: number }
-	): number {
-		return snapPosition(positionSec, altKey, $tempo, scale, $midiGridBeats, tracks, excludeClip);
+	function snap(positionSec: number, altKey: boolean, excludeClipId?: string): number {
+		return snapPosition(positionSec, altKey, $tempo, scale, $midiGridBeats, tracks, excludeClipId);
 	}
 
 	function beginScrub(event: MouseEvent, originEl: HTMLElement) {
@@ -1052,7 +1048,7 @@
 		const rect = tracksEl.getBoundingClientRect();
 		const { clipId, offsetPx, origEnd, origStart } = midiDragging;
 		const rawStart = Math.max(0, (e.clientX - rect.left + tracksEl.scrollLeft - offsetPx) / scale);
-		const newStart = snap(rawStart, e.altKey);
+		const newStart = snap(rawStart, e.altKey, clipId);
 		const duration = origEnd - origStart;
 
 		const y = e.clientY - rect.top + tracksEl.scrollTop;
@@ -1167,7 +1163,7 @@
 		if (newTrackIndex !== prevTrackIndex) {
 			const clip = tracks[prevTrackIndex]?.clips[clipIndex];
 			if (!clip) return;
-			const newStart = snap(rawStart, e.altKey);
+			const newStart = snap(rawStart, e.altKey, clip.id);
 			const duration = clip.end - clip.start;
 			const updatedClip = { ...clip, start: newStart, end: newStart + duration };
 			const prevClips = [...tracks[prevTrackIndex].clips];
@@ -1177,7 +1173,8 @@
 			tracks[newTrackIndex] = { ...tracks[newTrackIndex], clips: newClips };
 			dragging = { ...dragging, trackIndex: newTrackIndex, clipIndex: newClips.length - 1 };
 		} else {
-			const newStart = snap(rawStart, e.altKey, { trackIndex: newTrackIndex, clipIndex });
+			const draggedClipId = tracks[newTrackIndex]?.clips[clipIndex]?.id;
+			const newStart = snap(rawStart, e.altKey, draggedClipId);
 			const clip = tracks[newTrackIndex]?.clips[clipIndex];
 			if (!clip) return;
 			const duration = clip.end - clip.start;
@@ -1337,9 +1334,7 @@
 		const minWidth = MIN_CLIP_PX / scale;
 		const origin = origStart - origOffset;
 
-		const excludeClip =
-			resizing.kind === 'audio' ? { trackIndex, clipIndex: resizing.clipIndex! } : undefined;
-		const posSec = snap(Math.max(0, arrangeContentX(e.clientX, tracksEl) / scale), e.altKey, excludeClip);
+		const posSec = snap(Math.max(0, arrangeContentX(e.clientX, tracksEl) / scale), e.altKey, resizing.clipId);
 
 		let newStart = origStart;
 		let newEnd = origEnd;

@@ -43,7 +43,7 @@ export function snapPosition(
 	scale: number,
 	midiGridBeats: number,
 	tracks: Track[],
-	excludeClip?: { trackIndex: number; clipIndex: number }
+	excludeClipId?: string
 ): number {
 	if (altKey) return positionSec;
 	const thresholdSec = 10 / scale;
@@ -53,12 +53,16 @@ export function snapPosition(
 	const subdivSec = getSnapSubdivisionSec(tempo, scale, midiGridBeats);
 	candidates.push(Math.round(positionSec / subdivSec) * subdivSec);
 
-	for (let ti = 0; ti < tracks.length; ti++) {
-		const clips = tracks[ti].clips;
-		for (let ci = 0; ci < clips.length; ci++) {
-			if (excludeClip && ti === excludeClip.trackIndex && ci === excludeClip.clipIndex) continue;
-			candidates.push(clips[ci].start);
-			candidates.push(clips[ci].end);
+	for (const track of tracks) {
+		for (const clip of track.clips) {
+			if (clip.id === excludeClipId) continue;
+			candidates.push(clip.start);
+			candidates.push(clip.end);
+		}
+		for (const clip of track.midi_clips ?? []) {
+			if (clip.id === excludeClipId) continue;
+			candidates.push(clip.start);
+			candidates.push(clip.end);
 		}
 	}
 
