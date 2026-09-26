@@ -268,9 +268,34 @@ plugin GUIs size themselves in physical pixels, so `plugin_system/gui.rs` tells
 each plugin the monitor scale (`dpi / 96`): CLAP `clap.gui.set_scale` before
 `set_parent`, VST3 `IPlugViewContentScaleSupport::setContentScaleFactor` after
 `attached` (optional interface). The window then fits the size the plugin
-reports, with the frame computed at the window's own DPI. `WM_DPICHANGED`
+reports, plus the drag strip scaled to the window's own DPI. `WM_DPICHANGED`
 (window dragged to a monitor with another scale) repeats scale → size. A
 plugin that reads the DPI itself ignores the host scale.
+
+## Editor Windows — layout (Windows, 2026-09-26)
+
+Both editor windows — in-process (`plugin_system/gui.rs`) and sandboxed
+(`crates/plugin_host_bridge/src/editor.rs`) — share one layout:
+
+- **Borderless** `WS_POPUP` container (no native title bar), with Windows 11
+  rounded corners requested via `DwmSetWindowAttribute`
+  (`DWMWA_WINDOW_CORNER_PREFERENCE`; ignored on Windows 10).
+- An **8 px (logical) drag strip** on top, painted `#222229`
+  (`$panel-background-color`). The container answers `WM_NCHITTEST` with
+  `HTCAPTION`; only the strip can reach it, since the plugin covers the rest.
+- The plugin is embedded in a **child "plugin area" window** below the strip
+  (`plugin_area()` = the container's only child), not in the container itself:
+  CLAP `set_parent` and VST3 `attached` receive that child. Resize messages and
+  the `ClapHostContext` HWND still target the container, whose resize handler
+  sizes both windows.
+- Closing goes through Echoes' editor toggle (`post_close` / bridge `close`);
+  there is no native close button.
+
+A plugin that resizes itself (e.g. Vital's corner handle) sends
+`request_resize` continuously; the host window follows within ~2 ms. Any lag
+in the plugin's *own* redraw during the drag is the plugin's rendering, not
+the host. Such plugins may report `can_resize = false`, so the host does not
+call `set_size` after `request_resize` (the CLAP spec makes it optional).
 
 ---
 

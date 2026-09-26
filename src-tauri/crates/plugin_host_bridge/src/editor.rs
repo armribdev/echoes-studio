@@ -9,6 +9,7 @@
 use std::cell::Cell;
 use std::ffi::{c_char, c_void};
 use std::ptr::null_mut;
+use std::sync::Once;
 
 use clap_ffi::{
     ClapGuiExtension, ClapHostContext, ClapPlugin, ClapWindow, CLAP_EXT_GUI,
@@ -43,6 +44,30 @@ mod user32 {
         pub top: i32,
         pub right: i32,
         pub bottom: i32,
+    }
+
+    #[repr(C)]
+    pub struct POINT {
+        pub x: i32,
+        pub y: i32,
+    }
+
+    #[repr(C)]
+    pub struct PAINTSTRUCT {
+        pub hdc: *mut c_void,
+        pub f_erase: i32,
+        pub rc_paint: RECT,
+        pub f_restore: i32,
+        pub f_inc_update: i32,
+        pub rgb_reserved: [u8; 32],
+    }
+
+    #[repr(C)]
+    pub struct TRACKMOUSEEVENT {
+        pub cb_size: u32,
+        pub dw_flags: u32,
+        pub hwnd_track: *mut c_void,
+        pub dw_hover_time: u32,
     }
 
     #[repr(C)]
@@ -86,14 +111,17 @@ mod user32 {
             cy: i32,
             flags: u32,
         ) -> i32;
-        pub fn AdjustWindowRectExForDpi(
-            rect: *mut RECT,
-            style: u32,
-            menu: i32,
-            ex_style: u32,
-            dpi: u32,
-        ) -> i32;
         pub fn GetDpiForWindow(hwnd: *mut c_void) -> u32;
+        pub fn GetWindow(hwnd: *mut c_void, cmd: u32) -> *mut c_void;
+        pub fn GetClientRect(hwnd: *mut c_void, rect: *mut RECT) -> i32;
+        pub fn GetSystemMetrics(index: i32) -> i32;
+        pub fn ScreenToClient(hwnd: *mut c_void, point: *mut POINT) -> i32;
+        pub fn BeginPaint(hwnd: *mut c_void, paint: *mut PAINTSTRUCT) -> *mut c_void;
+        pub fn EndPaint(hwnd: *mut c_void, paint: *const PAINTSTRUCT) -> i32;
+        pub fn SelectClipRgn(hdc: *mut c_void, region: *mut c_void) -> i32;
+        pub fn InvalidateRect(hwnd: *mut c_void, rect: *const RECT, erase: i32) -> i32;
+        pub fn TrackMouseEvent(event: *mut TRACKMOUSEEVENT) -> i32;
+        pub fn PostMessageW(hwnd: *mut c_void, msg: u32, wparam: usize, lparam: isize) -> i32;
         pub fn SetProcessDpiAwarenessContext(value: isize) -> i32;
         pub fn PeekMessageW(
             msg: *mut MSG,
@@ -117,20 +145,133 @@ mod user32 {
     extern "system" {
         pub fn GetModuleHandleW(name: *const u16) -> *mut c_void;
     }
+
+    #[link(name = "gdi32")]
+    extern "system" {
+        pub fn CreateSolidBrush(color: u32) -> *mut c_void;
+    }
+
+    #[link(name = "dwmapi")]
+    extern "system" {
+        pub fn DwmSetWindowAttribute(
+            hwnd: *mut c_void,
+            attribute: u32,
+            value: *const c_void,
+            size: u32,
+        ) -> i32;
+    }
+}
+
+/// Minimal bindings for the GDI+ flat C API — only what the close glyph needs.
+/// GDI lines have no anti-aliasing; GDI+ is the standard way to get it on
+/// Windows without a graphics library dependency (gdiplus.dll ships with the OS).
+#[allow(non_snake_case)]
+mod gdiplus {
+    use std::ffi::c_void;
+
+    #[repr(C)]
+    pub struct StartupInput {
+        pub gdiplus_version: u32,
+        pub debug_event_callback: *mut c_void,
+        pub suppress_background_thread: i32,
+        pub suppress_external_codecs: i32,
+    }
+
+    #[link(name = "gdiplus")]
+    extern "system" {
+        pub fn GdiplusStartup(
+            token: *mut usize,
+            input: *const StartupInput,
+            output: *mut c_void,
+        ) -> i32;
+        pub fn GdipCreateFromHDC(hdc: *mut c_void, graphics: *mut *mut c_void) -> i32;
+        pub fn GdipDeleteGraphics(graphics: *mut c_void) -> i32;
+        pub fn GdipSetSmoothingMode(graphics: *mut c_void, mode: i32) -> i32;
+        pub fn GdipCreatePen1(argb: u32, width: f32, unit: i32, pen: *mut *mut c_void) -> i32;
+        pub fn GdipSetPenStartCap(pen: *mut c_void, cap: i32) -> i32;
+        pub fn GdipSetPenEndCap(pen: *mut c_void, cap: i32) -> i32;
+        pub fn GdipDeletePen(pen: *mut c_void) -> i32;
+        pub fn GdipDrawLineI(
+            graphics: *mut c_void,
+            pen: *mut c_void,
+            x1: i32,
+            y1: i32,
+            x2: i32,
+            y2: i32,
+        ) -> i32;
+    }
+}
+
+const GDIP_SMOOTHING_ANTIALIAS: i32 = 4;
+const GDIP_UNIT_PIXEL: i32 = 2;
+const GDIP_LINE_CAP_ROUND: i32 = 2;
+
+/// Starts this process's one GDI+ session (idempotent, never torn down —
+/// the OS reclaims it on exit like any other DLL state).
+fn ensure_gdiplus() {
+    static TOKEN: Once = Once::new();
+    TOKEN.call_once(|| unsafe {
+        let input = gdiplus::StartupInput {
+            gdiplus_version: 1,
+            debug_event_callback: null_mut(),
+            suppress_background_thread: 0,
+            suppress_external_codecs: 0,
+        };
+        let mut token: usize = 0;
+        gdiplus::GdiplusStartup(&mut token, &input, null_mut());
+    });
 }
 
 const WM_CLOSE: u32 = 0x0010;
+const WM_NCHITTEST: u32 = 0x0084;
+const WM_LBUTTONUP: u32 = 0x0202;
+const WM_MOUSEMOVE: u32 = 0x0200;
+const WM_MOUSELEAVE: u32 = 0x02A3;
+const WM_PAINT: u32 = 0x000F;
+const TME_LEAVE: u32 = 0x0000_0002;
+const HOVER_DEFAULT: u32 = 0xFFFF_FFFF;
 const WM_DPICHANGED: u32 = 0x02E0;
-const WS_OVERLAPPED_WINDOW_FIXED: u32 = 0x00C0_0000 | 0x0008_0000 | 0x0002_0000; // caption | sysmenu | minimize
+const WS_POPUP: u32 = 0x8000_0000;
+const WS_CHILD: u32 = 0x4000_0000;
+const WS_VISIBLE: u32 = 0x1000_0000;
+const WS_CLIPCHILDREN: u32 = 0x0200_0000;
+const WINDOW_STYLE: u32 = WS_POPUP | WS_CLIPCHILDREN;
+const PLUGIN_AREA_STYLE: u32 = WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN;
+const GW_CHILD: u32 = 5;
+const HTCLIENT: isize = 1;
+const HTCAPTION: isize = 2;
+/// The window is borderless: this strip above the plugin area (logical px,
+/// DPI-scaled) is the only part of it the plugin doesn't cover, and it drags the window.
+const DRAG_STRIP_HEIGHT_LOGICAL: i32 = 18;
+/// Echoes' `$panel-background-color` (#222229) as a Win32 COLORREF (0x00BBGGRR).
+const DRAG_STRIP_COLOR: u32 = 0x0029_2222;
+/// Close button, right-aligned in the drag strip (logical px, DPI-scaled).
+const CLOSE_BUTTON_WIDTH_LOGICAL: i32 = 32;
+/// Keeps the button clear of the window's rounded top-right corner.
+const CLOSE_BUTTON_MARGIN_LOGICAL: i32 = 2;
+/// Muted gray glyph (ARGB), opaque, drawn with GDI+ for anti-aliasing.
+const CLOSE_GLYPH_ARGB: u32 = 0xFF8C_8C8C;
+/// Brighter on hover.
+const CLOSE_GLYPH_HOVER_ARGB: u32 = 0xFFC8_C8C8;
+/// CS_HREDRAW | CS_VREDRAW — repaints the whole strip (and the close button's
+/// new position) whenever the window's width or height changes.
+const CONTAINER_CLASS_STYLE: u32 = 0x0002 | 0x0001;
 const SW_SHOW: i32 = 5;
 const CW_USEDEFAULT: i32 = 0x8000_0000u32 as i32;
 const SWP_RESIZE_ONLY: u32 = 0x0002 | 0x0004 | 0x0010;
 const SWP_MOVE_AND_RESIZE: u32 = 0x0004 | 0x0010;
+/// SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE
+const SWP_MOVE_ONLY: u32 = 0x0001 | 0x0004 | 0x0010;
+const SM_CXSCREEN: i32 = 0;
+const SM_CYSCREEN: i32 = 1;
 const PM_REMOVE: u32 = 0x0001;
 const QS_ALLINPUT: u32 = 0x04FF;
 const DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2: isize = -4;
 const DEFAULT_DPI: u32 = 96;
+const DWMWA_WINDOW_CORNER_PREFERENCE: u32 = 33;
+const DWMWCP_ROUND: u32 = 2;
 const CLASS_NAME: &str = "EchoesSandboxedPluginWindow";
+const PLUGIN_AREA_CLASS_NAME: &str = "EchoesSandboxedPluginArea";
 
 #[derive(Clone, Copy)]
 struct Editor {
@@ -144,6 +285,8 @@ thread_local! {
     // `Cell` of plain pointers: the plugin may re-enter the window procedure
     // from inside any GUI call, so nothing here is ever borrowed across one.
     static EDITOR: Cell<Option<Editor>> = const { Cell::new(None) };
+    // One bridge hosts one plugin, so there is at most one window and one hover flag.
+    static CLOSE_BUTTON_HOVER: Cell<bool> = const { Cell::new(false) };
 }
 
 fn wide(text: &str) -> Vec<u16> {
@@ -200,10 +343,11 @@ pub fn open(plugin: &LoadedPlugin, title: &str) -> Result<u64, String> {
         EDITOR.set(Some(editor));
         (*context).set_gui_hwnd(hwnd);
         fit_to_dpi(&editor, window_dpi(hwnd));
+        center_on_screen(hwnd);
 
         let window = ClapWindow {
             api,
-            specific: hwnd as usize,
+            specific: plugin_area(hwnd) as usize,
         };
         if !((*gui).set_parent)(clap, &window) {
             close();
@@ -230,31 +374,48 @@ pub fn close() {
     }
 }
 
-unsafe fn create_window(title: &str) -> *mut c_void {
-    let class = wide(CLASS_NAME);
-    let instance = user32::GetModuleHandleW(std::ptr::null());
+unsafe fn register_class(
+    name: &[u16],
+    style: u32,
+    wnd_proc: unsafe extern "system" fn(*mut c_void, u32, usize, isize) -> isize,
+    background: *mut c_void,
+) {
     let window_class = user32::WNDCLASSEXW {
         cbSize: std::mem::size_of::<user32::WNDCLASSEXW>() as u32,
-        style: 0,
-        lpfnWndProc: window_proc,
+        style,
+        lpfnWndProc: wnd_proc,
         cbClsExtra: 0,
         cbWndExtra: 0,
-        hInstance: instance,
+        hInstance: user32::GetModuleHandleW(std::ptr::null()),
         hIcon: null_mut(),
         hCursor: null_mut(),
-        hbrBackground: null_mut(),
+        hbrBackground: background,
         lpszMenuName: std::ptr::null(),
-        lpszClassName: class.as_ptr(),
+        lpszClassName: name.as_ptr(),
         hIconSm: null_mut(),
     };
-    // A second registration fails harmlessly: the class already exists.
     user32::RegisterClassExW(&window_class);
+}
+
+/// Borderless top-level window holding the drag strip, with the plugin area
+/// as its only child.  Returns null if either window can't be created.
+unsafe fn create_window(title: &str) -> *mut c_void {
+    let class = wide(CLASS_NAME);
+    let area_class = wide(PLUGIN_AREA_CLASS_NAME);
+    let instance = user32::GetModuleHandleW(std::ptr::null());
+    static REGISTERED: Once = Once::new();
+    REGISTERED.call_once(|| {
+        // Also fills the plugin area wherever the plugin hasn't repainted yet (mid-resize).
+        let background = user32::CreateSolidBrush(DRAG_STRIP_COLOR);
+        register_class(&class, CONTAINER_CLASS_STYLE, window_proc, background);
+        register_class(&area_class, 0, user32::DefWindowProcW, background);
+    });
     let title = wide(title);
-    user32::CreateWindowExW(
+    let hwnd = user32::CreateWindowExW(
         0,
         class.as_ptr(),
         title.as_ptr(),
-        WS_OVERLAPPED_WINDOW_FIXED,
+        WINDOW_STYLE,
         CW_USEDEFAULT,
         CW_USEDEFAULT,
         0,
@@ -263,7 +424,114 @@ unsafe fn create_window(title: &str) -> *mut c_void {
         null_mut(),
         instance,
         null_mut(),
-    )
+    );
+    if hwnd.is_null() {
+        return hwnd;
+    }
+    let area = user32::CreateWindowExW(
+        0,
+        area_class.as_ptr(),
+        std::ptr::null(),
+        PLUGIN_AREA_STYLE,
+        0,
+        0,
+        0,
+        0,
+        hwnd,
+        null_mut(),
+        instance,
+        null_mut(),
+    );
+    if area.is_null() {
+        user32::DestroyWindow(hwnd);
+        return null_mut();
+    }
+    round_corners(hwnd);
+    hwnd
+}
+
+/// Windows 11 only rounds captioned windows by default; earlier versions ignore this.
+unsafe fn round_corners(hwnd: *mut c_void) {
+    let preference = DWMWCP_ROUND;
+    user32::DwmSetWindowAttribute(
+        hwnd,
+        DWMWA_WINDOW_CORNER_PREFERENCE,
+        &preference as *const u32 as *const c_void,
+        std::mem::size_of::<u32>() as u32,
+    );
+}
+
+/// The child window the plugin's GUI is embedded into, below the drag strip.
+fn plugin_area(hwnd: *mut c_void) -> *mut c_void {
+    unsafe { user32::GetWindow(hwnd, GW_CHILD) }
+}
+
+fn drag_strip_height(hwnd: *mut c_void) -> i32 {
+    (DRAG_STRIP_HEIGHT_LOGICAL as f64 * window_dpi(hwnd) as f64 / DEFAULT_DPI as f64).round() as i32
+}
+
+/// Client-coordinate rect of the close button, right-aligned in the drag strip.
+fn close_button_rect(hwnd: *mut c_void) -> user32::RECT {
+    let mut client = user32::RECT { left: 0, top: 0, right: 0, bottom: 0 };
+    unsafe { user32::GetClientRect(hwnd, &mut client) };
+    let scale = window_dpi(hwnd) as f64 / DEFAULT_DPI as f64;
+    let width = (CLOSE_BUTTON_WIDTH_LOGICAL as f64 * scale).round() as i32;
+    let margin = (CLOSE_BUTTON_MARGIN_LOGICAL as f64 * scale).round() as i32;
+    user32::RECT {
+        left: client.right - margin - width,
+        top: 0,
+        right: client.right - margin,
+        bottom: drag_strip_height(hwnd),
+    }
+}
+
+fn point_in_rect(rect: &user32::RECT, x: i32, y: i32) -> bool {
+    x >= rect.left && x < rect.right && y >= rect.top && y < rect.bottom
+}
+
+/// Centers the window on the primary monitor, at its current size.
+unsafe fn center_on_screen(hwnd: *mut c_void) {
+    let mut client = user32::RECT { left: 0, top: 0, right: 0, bottom: 0 };
+    user32::GetClientRect(hwnd, &mut client);
+    let screen_w = user32::GetSystemMetrics(SM_CXSCREEN);
+    let screen_h = user32::GetSystemMetrics(SM_CYSCREEN);
+    let x = ((screen_w - (client.right - client.left)) / 2).max(0);
+    let y = ((screen_h - (client.bottom - client.top)) / 2).max(0);
+    user32::SetWindowPos(hwnd, null_mut(), x, y, 0, 0, SWP_MOVE_ONLY);
+}
+
+/// Draws the × glyph; the strip background itself is erased by the class brush.
+unsafe fn draw_close_button(hwnd: *mut c_void) {
+    ensure_gdiplus();
+    let mut ps: user32::PAINTSTRUCT = std::mem::zeroed();
+    let hdc = user32::BeginPaint(hwnd, &mut ps);
+    // BeginPaint clips drawing to ps.rcPaint, which can be a partial dirty
+    // rect (e.g. a small OS-driven repaint outside our own resize handling);
+    // the glyph must draw in full regardless of what triggered this WM_PAINT.
+    user32::SelectClipRgn(hdc, null_mut());
+
+    let hover = CLOSE_BUTTON_HOVER.get();
+    let rect = close_button_rect(hwnd);
+    // Square glyph centered in the (wider-than-tall) button rect.
+    let cx = (rect.left + rect.right) / 2;
+    let cy = (rect.top + rect.bottom) / 2;
+    let half = ((rect.bottom - rect.top) as f64 * 0.17).round().max(3.0) as i32;
+    let stroke_width = (1.5 * window_dpi(hwnd) as f64 / DEFAULT_DPI as f64).max(1.0) as f32;
+    let color = if hover { CLOSE_GLYPH_HOVER_ARGB } else { CLOSE_GLYPH_ARGB };
+
+    let mut graphics: *mut c_void = null_mut();
+    gdiplus::GdipCreateFromHDC(hdc, &mut graphics);
+    gdiplus::GdipSetSmoothingMode(graphics, GDIP_SMOOTHING_ANTIALIAS);
+    let mut pen: *mut c_void = null_mut();
+    gdiplus::GdipCreatePen1(color, stroke_width, GDIP_UNIT_PIXEL, &mut pen);
+    gdiplus::GdipSetPenStartCap(pen, GDIP_LINE_CAP_ROUND);
+    gdiplus::GdipSetPenEndCap(pen, GDIP_LINE_CAP_ROUND);
+    gdiplus::GdipDrawLineI(graphics, pen, cx - half, cy - half, cx + half, cy + half);
+    gdiplus::GdipDrawLineI(graphics, pen, cx + half, cy - half, cx - half, cy + half);
+    gdiplus::GdipDeletePen(pen);
+    gdiplus::GdipDeleteGraphics(graphics);
+
+    user32::EndPaint(hwnd, &ps);
 }
 
 fn window_dpi(hwnd: *mut c_void) -> u32 {
@@ -273,29 +541,13 @@ fn window_dpi(hwnd: *mut c_void) -> u32 {
     }
 }
 
+/// Size the plugin area to `width` × `height` with the drag strip on top.
 unsafe fn resize_to_client(hwnd: *mut c_void, width: i32, height: i32) {
-    let mut rect = user32::RECT {
-        left: 0,
-        top: 0,
-        right: width.max(200),
-        bottom: height.max(100),
-    };
-    user32::AdjustWindowRectExForDpi(
-        &mut rect,
-        WS_OVERLAPPED_WINDOW_FIXED,
-        0,
-        0,
-        window_dpi(hwnd),
-    );
-    user32::SetWindowPos(
-        hwnd,
-        null_mut(),
-        0,
-        0,
-        rect.right - rect.left,
-        rect.bottom - rect.top,
-        SWP_RESIZE_ONLY,
-    );
+    let width = width.max(200);
+    let height = height.max(100);
+    let strip = drag_strip_height(hwnd);
+    user32::SetWindowPos(hwnd, null_mut(), 0, 0, width, height + strip, SWP_RESIZE_ONLY);
+    user32::SetWindowPos(plugin_area(hwnd), null_mut(), 0, strip, width, height, SWP_MOVE_AND_RESIZE);
 }
 
 /// Hands the monitor scale to the plugin, then fits the window to its size.
@@ -315,6 +567,61 @@ unsafe extern "system" fn window_proc(
 ) -> isize {
     let editor = EDITOR.get().filter(|editor| editor.hwnd == hwnd);
     match (msg, editor) {
+        (WM_NCHITTEST, _) => match user32::DefWindowProcW(hwnd, msg, wparam, lparam) {
+            HTCLIENT => {
+                let mut pt = user32::POINT {
+                    x: (lparam & 0xFFFF) as i16 as i32,
+                    y: ((lparam >> 16) & 0xFFFF) as i16 as i32,
+                };
+                user32::ScreenToClient(hwnd, &mut pt);
+                if point_in_rect(&close_button_rect(hwnd), pt.x, pt.y) {
+                    HTCLIENT
+                } else {
+                    HTCAPTION
+                }
+            }
+            hit => hit,
+        },
+        (WM_LBUTTONUP, _) => {
+            let x = (lparam & 0xFFFF) as i16 as i32;
+            let y = ((lparam >> 16) & 0xFFFF) as i16 as i32;
+            if point_in_rect(&close_button_rect(hwnd), x, y) {
+                user32::PostMessageW(hwnd, WM_CLOSE, 0, 0);
+            }
+            0
+        }
+        (WM_MOUSEMOVE, _) => {
+            // Re-armed on every move: TrackMouseEvent's leave notification is
+            // one-shot, and cheap enough to request unconditionally.
+            let mut track = user32::TRACKMOUSEEVENT {
+                cb_size: std::mem::size_of::<user32::TRACKMOUSEEVENT>() as u32,
+                dw_flags: TME_LEAVE,
+                hwnd_track: hwnd,
+                dw_hover_time: HOVER_DEFAULT,
+            };
+            user32::TrackMouseEvent(&mut track);
+            let x = (lparam & 0xFFFF) as i16 as i32;
+            let y = ((lparam >> 16) & 0xFFFF) as i16 as i32;
+            let over = point_in_rect(&close_button_rect(hwnd), x, y);
+            if over != CLOSE_BUTTON_HOVER.get() {
+                CLOSE_BUTTON_HOVER.set(over);
+                let rect = close_button_rect(hwnd);
+                user32::InvalidateRect(hwnd, &rect, 0);
+            }
+            0
+        }
+        (WM_MOUSELEAVE, _) => {
+            if CLOSE_BUTTON_HOVER.get() {
+                CLOSE_BUTTON_HOVER.set(false);
+                let rect = close_button_rect(hwnd);
+                user32::InvalidateRect(hwnd, &rect, 0);
+            }
+            0
+        }
+        (WM_PAINT, _) => {
+            draw_close_button(hwnd);
+            0
+        }
         (CLAP_GUI_DRAIN_MESSAGE, Some(editor)) => {
             (*editor.context).clear_gui_drain();
             ((*editor.plugin).on_main_thread)(editor.plugin);

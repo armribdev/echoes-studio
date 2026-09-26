@@ -72,6 +72,30 @@ mod user32 {
         pub bottom: i32,
     }
 
+    #[repr(C)]
+    pub struct POINT {
+        pub x: i32,
+        pub y: i32,
+    }
+
+    #[repr(C)]
+    pub struct PAINTSTRUCT {
+        pub hdc: *mut c_void,
+        pub f_erase: i32,
+        pub rc_paint: RECT,
+        pub f_restore: i32,
+        pub f_inc_update: i32,
+        pub rgb_reserved: [u8; 32],
+    }
+
+    #[repr(C)]
+    pub struct TRACKMOUSEEVENT {
+        pub cb_size: u32,
+        pub dw_flags: u32,
+        pub hwnd_track: *mut c_void,
+        pub dw_hover_time: u32,
+    }
+
     /// WM_NCCREATE payload (Windows `CREATESTRUCTW`).  Only the first field
     /// matters for us — `lpCreateParams` carries the `lpParam` we passed to
     /// `CreateWindowExW`, which is our boxed `WindowUserData` raw pointer.
@@ -115,14 +139,16 @@ mod user32 {
         pub fn GetWindowLongPtrW(hWnd: *mut c_void, nIndex: i32) -> isize;
         pub fn SetWindowLongPtrW(hWnd: *mut c_void, nIndex: i32, dwNewLong: isize) -> isize;
         pub fn PostMessageW(hWnd: *mut c_void, Msg: u32, wParam: usize, lParam: isize) -> i32;
-        pub fn AdjustWindowRectExForDpi(
-            lpRect: *mut RECT,
-            dwStyle: u32,
-            bMenu: i32,
-            dwExStyle: u32,
-            dpi: u32,
-        ) -> i32;
         pub fn GetDpiForWindow(hWnd: *mut c_void) -> u32;
+        pub fn GetWindow(hWnd: *mut c_void, uCmd: u32) -> *mut c_void;
+        pub fn GetClientRect(hWnd: *mut c_void, lpRect: *mut RECT) -> i32;
+        pub fn GetSystemMetrics(nIndex: i32) -> i32;
+        pub fn ScreenToClient(hWnd: *mut c_void, lpPoint: *mut POINT) -> i32;
+        pub fn BeginPaint(hWnd: *mut c_void, lpPaint: *mut PAINTSTRUCT) -> *mut c_void;
+        pub fn EndPaint(hWnd: *mut c_void, lpPaint: *const PAINTSTRUCT) -> i32;
+        pub fn SelectClipRgn(hdc: *mut c_void, hrgn: *mut c_void) -> i32;
+        pub fn InvalidateRect(hWnd: *mut c_void, lpRect: *const RECT, bErase: i32) -> i32;
+        pub fn TrackMouseEvent(lpEventTrack: *mut TRACKMOUSEEVENT) -> i32;
         pub fn SetWindowPos(
             hWnd: *mut c_void,
             hWndInsertAfter: *mut c_void,
@@ -145,27 +171,138 @@ mod user32 {
     extern "system" {
         pub fn GetModuleHandleW(lpModuleName: *const u16) -> *mut c_void;
     }
+
+    #[link(name = "gdi32")]
+    extern "system" {
+        pub fn CreateSolidBrush(color: u32) -> *mut c_void;
+    }
+
+    #[link(name = "dwmapi")]
+    extern "system" {
+        pub fn DwmSetWindowAttribute(
+            hWnd: *mut c_void,
+            dwAttribute: u32,
+            pvAttribute: *const c_void,
+            cbAttribute: u32,
+        ) -> i32;
+    }
+}
+
+/// Minimal bindings for the GDI+ flat C API — only what the close glyph needs.
+/// GDI lines have no anti-aliasing; GDI+ is the standard way to get it on
+/// Windows without a graphics library dependency (gdiplus.dll ships with the OS).
+#[allow(non_snake_case)]
+mod gdiplus {
+    use std::ffi::c_void;
+
+    #[repr(C)]
+    pub struct StartupInput {
+        pub gdiplus_version: u32,
+        pub debug_event_callback: *mut c_void,
+        pub suppress_background_thread: i32,
+        pub suppress_external_codecs: i32,
+    }
+
+    #[link(name = "gdiplus")]
+    extern "system" {
+        pub fn GdiplusStartup(
+            token: *mut usize,
+            input: *const StartupInput,
+            output: *mut c_void,
+        ) -> i32;
+        pub fn GdipCreateFromHDC(hdc: *mut c_void, graphics: *mut *mut c_void) -> i32;
+        pub fn GdipDeleteGraphics(graphics: *mut c_void) -> i32;
+        pub fn GdipSetSmoothingMode(graphics: *mut c_void, mode: i32) -> i32;
+        pub fn GdipCreatePen1(argb: u32, width: f32, unit: i32, pen: *mut *mut c_void) -> i32;
+        pub fn GdipSetPenStartCap(pen: *mut c_void, cap: i32) -> i32;
+        pub fn GdipSetPenEndCap(pen: *mut c_void, cap: i32) -> i32;
+        pub fn GdipDeletePen(pen: *mut c_void) -> i32;
+        pub fn GdipDrawLineI(
+            graphics: *mut c_void,
+            pen: *mut c_void,
+            x1: i32,
+            y1: i32,
+            x2: i32,
+            y2: i32,
+        ) -> i32;
+    }
+}
+
+const GDIP_SMOOTHING_ANTIALIAS: i32 = 4;
+const GDIP_UNIT_PIXEL: i32 = 2;
+const GDIP_LINE_CAP_ROUND: i32 = 2;
+
+/// Starts the process's one GDI+ session (idempotent, never torn down —
+/// the OS reclaims it on exit like any other DLL state).
+fn ensure_gdiplus() {
+    static TOKEN: OnceLock<usize> = OnceLock::new();
+    TOKEN.get_or_init(|| unsafe {
+        let input = gdiplus::StartupInput {
+            gdiplus_version: 1,
+            debug_event_callback: null_mut(),
+            suppress_background_thread: 0,
+            suppress_external_codecs: 0,
+        };
+        let mut token: usize = 0;
+        gdiplus::GdiplusStartup(&mut token, &input, null_mut());
+        token
+    });
 }
 
 const WM_NCCREATE: u32 = 0x0081;
+const WM_NCHITTEST: u32 = 0x0084;
 const WM_CLOSE: u32 = 0x0010;
+const WM_LBUTTONUP: u32 = 0x0202;
+const WM_MOUSEMOVE: u32 = 0x0200;
+const WM_MOUSELEAVE: u32 = 0x02A3;
+const WM_PAINT: u32 = 0x000F;
+const TME_LEAVE: u32 = 0x0000_0002;
+const HOVER_DEFAULT: u32 = 0xFFFF_FFFF;
 const WM_TIMER: u32 = 0x0113;
 const WM_DPICHANGED: u32 = 0x02E0;
 const USER_DEFAULT_SCREEN_DPI: u32 = 96;
 const GWLP_USERDATA: i32 = -21;
-const WS_CAPTION: u32 = 0x00C0_0000;
-const WS_SYSMENU: u32 = 0x0008_0000;
 const WS_POPUP: u32 = 0x8000_0000;
+const WS_CHILD: u32 = 0x4000_0000;
+const WS_VISIBLE: u32 = 0x1000_0000;
+const WS_CLIPCHILDREN: u32 = 0x0200_0000;
 const WS_EX_TOOLWINDOW: u32 = 0x0000_0080;
-const CONTAINER_STYLE: u32 = WS_POPUP | WS_CAPTION | WS_SYSMENU;
+const CONTAINER_STYLE: u32 = WS_POPUP | WS_CLIPCHILDREN;
 const CONTAINER_EX_STYLE: u32 = WS_EX_TOOLWINDOW;
+const PLUGIN_AREA_STYLE: u32 = WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN;
+const GW_CHILD: u32 = 5;
+const HTCLIENT: isize = 1;
+const HTCAPTION: isize = 2;
+/// The container is borderless: this strip above the plugin area (logical px,
+/// DPI-scaled) is the only part of it the plugin doesn't cover, and it drags the window.
+const DRAG_STRIP_HEIGHT_LOGICAL: i32 = 18;
+/// `$panel-background-color` (#222229) as a Win32 COLORREF (0x00BBGGRR).
+const DRAG_STRIP_COLOR: u32 = 0x0029_2222;
+/// Close button, right-aligned in the drag strip (logical px, DPI-scaled).
+const CLOSE_BUTTON_WIDTH_LOGICAL: i32 = 32;
+/// Keeps the button clear of the window's rounded top-right corner.
+const CLOSE_BUTTON_MARGIN_LOGICAL: i32 = 2;
+/// Muted gray glyph (ARGB), opaque, drawn with GDI+ for anti-aliasing.
+const CLOSE_GLYPH_ARGB: u32 = 0xFF8C_8C8C;
+/// Brighter on hover.
+const CLOSE_GLYPH_HOVER_ARGB: u32 = 0xFFC8_C8C8;
+/// CS_HREDRAW | CS_VREDRAW — repaints the whole strip (and the close button's
+/// new position) whenever the container's width or height changes.
+const CONTAINER_CLASS_STYLE: u32 = 0x0002 | 0x0001 | 0x0020;
 const SW_SHOW: i32 = 5;
 const CW_USEDEFAULT: i32 = 0x8000_0000u32 as i32;
 /// SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE
 const SWP_RESIZE_ONLY: u32 = 0x0002 | 0x0004 | 0x0010;
 /// SWP_NOZORDER | SWP_NOACTIVATE
 const SWP_MOVE_AND_RESIZE: u32 = 0x0004 | 0x0010;
+/// SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE
+const SWP_MOVE_ONLY: u32 = 0x0001 | 0x0004 | 0x0010;
+const SM_CXSCREEN: i32 = 0;
+const SM_CYSCREEN: i32 = 1;
+const DWMWA_WINDOW_CORNER_PREFERENCE: u32 = 33;
+const DWMWCP_ROUND: u32 = 2;
 const CLASS_NAME: &str = "EchoesPluginWindow";
+const PLUGIN_AREA_CLASS_NAME: &str = "EchoesPluginArea";
 
 const TIMER_ID_DRAIN: usize = 1;
 const TIMER_INTERVAL_MS: u32 = 16;
@@ -185,6 +322,8 @@ struct WindowUserData {
     /// Called on `WM_DPICHANGED` with the window's new DPI: hands the new
     /// scale to the plugin and fits the window to its resulting size.
     on_dpi_changed: Box<dyn Fn(*mut c_void, u32)>,
+    /// Whether the cursor is currently over the close button (drives its hover color).
+    hover: std::cell::Cell<bool>,
     /// Plugin-specific teardown (destroy GUI, destroy plugin, drop FFI Arcs).
     /// `Option` so it can be `.take()`-n out before invocation.
     cleanup: Option<Box<dyn FnOnce()>>,
@@ -225,6 +364,67 @@ unsafe extern "system" fn plugin_wnd_proc(
     }
 
     match msg {
+        WM_NCHITTEST => {
+            return match user32::DefWindowProcW(hwnd, msg, wparam, lparam) {
+                HTCLIENT => {
+                    let mut pt = user32::POINT {
+                        x: (lparam & 0xFFFF) as i16 as i32,
+                        y: ((lparam >> 16) & 0xFFFF) as i16 as i32,
+                    };
+                    user32::ScreenToClient(hwnd, &mut pt);
+                    if point_in_rect(&close_button_rect(hwnd), pt.x, pt.y) {
+                        HTCLIENT
+                    } else {
+                        HTCAPTION
+                    }
+                }
+                hit => hit,
+            };
+        }
+        WM_LBUTTONUP => {
+            let x = (lparam & 0xFFFF) as i16 as i32;
+            let y = ((lparam >> 16) & 0xFFFF) as i16 as i32;
+            if point_in_rect(&close_button_rect(hwnd), x, y) {
+                user32::PostMessageW(hwnd, WM_CLOSE, 0, 0);
+            }
+            return 0;
+        }
+        WM_MOUSEMOVE => {
+            if let Some(ud) = userdata(hwnd) {
+                // Re-armed on every move: TrackMouseEvent's leave notification
+                // is one-shot, and cheap enough to request unconditionally.
+                let mut track = user32::TRACKMOUSEEVENT {
+                    cb_size: std::mem::size_of::<user32::TRACKMOUSEEVENT>() as u32,
+                    dw_flags: TME_LEAVE,
+                    hwnd_track: hwnd,
+                    dw_hover_time: HOVER_DEFAULT,
+                };
+                user32::TrackMouseEvent(&mut track);
+                let x = (lparam & 0xFFFF) as i16 as i32;
+                let y = ((lparam >> 16) & 0xFFFF) as i16 as i32;
+                let over = point_in_rect(&close_button_rect(hwnd), x, y);
+                if over != ud.hover.get() {
+                    ud.hover.set(over);
+                    let rect = close_button_rect(hwnd);
+                    user32::InvalidateRect(hwnd, &rect, 0);
+                }
+            }
+            return 0;
+        }
+        WM_MOUSELEAVE => {
+            if let Some(ud) = userdata(hwnd) {
+                if ud.hover.get() {
+                    ud.hover.set(false);
+                    let rect = close_button_rect(hwnd);
+                    user32::InvalidateRect(hwnd, &rect, 0);
+                }
+            }
+            return 0;
+        }
+        WM_PAINT => {
+            draw_close_button(hwnd);
+            return 0;
+        }
         CLAP_GUI_DRAIN_MESSAGE => {
             if let Some(ud) = userdata(hwnd) {
                 (ud.tick)();
@@ -286,29 +486,122 @@ unsafe extern "system" fn plugin_wnd_proc(
     user32::DefWindowProcW(hwnd, msg, wparam, lparam)
 }
 
+unsafe fn register_class(
+    name: &str,
+    style: u32,
+    wnd_proc: unsafe extern "system" fn(*mut c_void, u32, usize, isize) -> isize,
+    background: *mut c_void,
+) {
+    let class_wide = wto16(name);
+    let wc = user32::WNDCLASSEXW {
+        cbSize: std::mem::size_of::<user32::WNDCLASSEXW>() as u32,
+        style,
+        lpfnWndProc: wnd_proc,
+        cbClsExtra: 0,
+        cbWndExtra: 0,
+        hInstance: user32::GetModuleHandleW(std::ptr::null()),
+        hIcon: null_mut(),
+        hCursor: null_mut(),
+        hbrBackground: background,
+        lpszMenuName: std::ptr::null(),
+        lpszClassName: class_wide.as_ptr(),
+        hIconSm: null_mut(),
+    };
+    user32::RegisterClassExW(&wc);
+}
+
 fn ensure_class_registered() {
     static REGISTERED: OnceLock<()> = OnceLock::new();
     REGISTERED.get_or_init(|| unsafe {
-        let class_wide: Vec<u16> = CLASS_NAME
-            .encode_utf16()
-            .chain(std::iter::once(0))
-            .collect();
-        let wc = user32::WNDCLASSEXW {
-            cbSize: std::mem::size_of::<user32::WNDCLASSEXW>() as u32,
-            style: 0x0020, // CS_OWNDC
-            lpfnWndProc: plugin_wnd_proc,
-            cbClsExtra: 0,
-            cbWndExtra: 0,
-            hInstance: user32::GetModuleHandleW(std::ptr::null()),
-            hIcon: null_mut(),
-            hCursor: null_mut(),
-            hbrBackground: null_mut(),
-            lpszMenuName: std::ptr::null(),
-            lpszClassName: class_wide.as_ptr(),
-            hIconSm: null_mut(),
-        };
-        user32::RegisterClassExW(&wc);
+        // Also fills the plugin area wherever the plugin hasn't repainted yet (mid-resize).
+        let background = user32::CreateSolidBrush(DRAG_STRIP_COLOR);
+        register_class(CLASS_NAME, CONTAINER_CLASS_STYLE, plugin_wnd_proc, background);
+        register_class(PLUGIN_AREA_CLASS_NAME, 0, user32::DefWindowProcW, background);
     });
+}
+
+/// Windows 11 only rounds captioned windows by default; earlier versions ignore this.
+unsafe fn round_corners(hwnd: *mut c_void) {
+    let preference = DWMWCP_ROUND;
+    user32::DwmSetWindowAttribute(
+        hwnd,
+        DWMWA_WINDOW_CORNER_PREFERENCE,
+        &preference as *const u32 as *const c_void,
+        std::mem::size_of::<u32>() as u32,
+    );
+}
+
+/// The child window the plugin's GUI is embedded into, below the drag strip.
+fn plugin_area(container: *mut c_void) -> *mut c_void {
+    unsafe { user32::GetWindow(container, GW_CHILD) }
+}
+
+fn drag_strip_height(hwnd: *mut c_void) -> i32 {
+    (DRAG_STRIP_HEIGHT_LOGICAL as f64 * scale_for_dpi(window_dpi(hwnd))).round() as i32
+}
+
+/// Client-coordinate rect of the close button, right-aligned in the drag strip.
+fn close_button_rect(hwnd: *mut c_void) -> user32::RECT {
+    let mut client = user32::RECT { left: 0, top: 0, right: 0, bottom: 0 };
+    unsafe { user32::GetClientRect(hwnd, &mut client) };
+    let scale = scale_for_dpi(window_dpi(hwnd));
+    let width = (CLOSE_BUTTON_WIDTH_LOGICAL as f64 * scale).round() as i32;
+    let margin = (CLOSE_BUTTON_MARGIN_LOGICAL as f64 * scale).round() as i32;
+    user32::RECT {
+        left: client.right - margin - width,
+        top: 0,
+        right: client.right - margin,
+        bottom: drag_strip_height(hwnd),
+    }
+}
+
+fn point_in_rect(rect: &user32::RECT, x: i32, y: i32) -> bool {
+    x >= rect.left && x < rect.right && y >= rect.top && y < rect.bottom
+}
+
+/// Centers the window on the primary monitor, at its current size.
+unsafe fn center_on_screen(hwnd: *mut c_void) {
+    let mut client = user32::RECT { left: 0, top: 0, right: 0, bottom: 0 };
+    user32::GetClientRect(hwnd, &mut client);
+    let screen_w = user32::GetSystemMetrics(SM_CXSCREEN);
+    let screen_h = user32::GetSystemMetrics(SM_CYSCREEN);
+    let x = ((screen_w - (client.right - client.left)) / 2).max(0);
+    let y = ((screen_h - (client.bottom - client.top)) / 2).max(0);
+    user32::SetWindowPos(hwnd, null_mut(), x, y, 0, 0, SWP_MOVE_ONLY);
+}
+
+/// Draws the × glyph; the strip background itself is erased by the class brush.
+unsafe fn draw_close_button(hwnd: *mut c_void) {
+    ensure_gdiplus();
+    let mut ps: user32::PAINTSTRUCT = std::mem::zeroed();
+    let hdc = user32::BeginPaint(hwnd, &mut ps);
+    // BeginPaint clips drawing to ps.rcPaint, which can be a partial dirty
+    // rect (e.g. a small OS-driven repaint outside our own resize handling);
+    // the glyph must draw in full regardless of what triggered this WM_PAINT.
+    user32::SelectClipRgn(hdc, null_mut());
+
+    let hover = userdata(hwnd).is_some_and(|ud| ud.hover.get());
+    let rect = close_button_rect(hwnd);
+    // Square glyph centered in the (wider-than-tall) button rect.
+    let cx = (rect.left + rect.right) / 2;
+    let cy = (rect.top + rect.bottom) / 2;
+    let half = ((rect.bottom - rect.top) as f64 * 0.17).round().max(3.0) as i32;
+    let stroke_width = (1.5 * scale_for_dpi(window_dpi(hwnd))).max(1.0) as f32;
+    let color = if hover { CLOSE_GLYPH_HOVER_ARGB } else { CLOSE_GLYPH_ARGB };
+
+    let mut graphics: *mut c_void = null_mut();
+    gdiplus::GdipCreateFromHDC(hdc, &mut graphics);
+    gdiplus::GdipSetSmoothingMode(graphics, GDIP_SMOOTHING_ANTIALIAS);
+    let mut pen: *mut c_void = null_mut();
+    gdiplus::GdipCreatePen1(color, stroke_width, GDIP_UNIT_PIXEL, &mut pen);
+    gdiplus::GdipSetPenStartCap(pen, GDIP_LINE_CAP_ROUND);
+    gdiplus::GdipSetPenEndCap(pen, GDIP_LINE_CAP_ROUND);
+    gdiplus::GdipDrawLineI(graphics, pen, cx - half, cy - half, cx + half, cy + half);
+    gdiplus::GdipDrawLineI(graphics, pen, cx + half, cy - half, cx - half, cy + half);
+    gdiplus::GdipDeletePen(pen);
+    gdiplus::GdipDeleteGraphics(graphics);
+
+    user32::EndPaint(hwnd, &ps);
 }
 
 fn wto16(s: &str) -> Vec<u16> {
@@ -331,7 +624,7 @@ unsafe fn create_container(
     let title_w = wto16(title);
     let class_w = wto16(CLASS_NAME);
 
-    // Created at zero size: the frame thickness depends on the DPI of the
+    // Created at zero size: the drag strip height depends on the DPI of the
     // monitor the window lands on, only known once the HWND exists.
     let hwnd = user32::CreateWindowExW(
         CONTAINER_EX_STYLE,
@@ -351,6 +644,30 @@ unsafe fn create_container(
     if hwnd.is_null() {
         return Err("Win32 CreateWindowExW failed for plugin container".into());
     }
+
+    let area_class_w = wto16(PLUGIN_AREA_CLASS_NAME);
+    let area = user32::CreateWindowExW(
+        0,
+        area_class_w.as_ptr(),
+        std::ptr::null(),
+        PLUGIN_AREA_STYLE,
+        0,
+        0,
+        0,
+        0,
+        hwnd,
+        null_mut(),
+        user32::GetModuleHandleW(std::ptr::null()),
+        null_mut(),
+    );
+    if area.is_null() {
+        // Detach the userdata first so DestroyWindow can't free what the caller reclaims.
+        user32::SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
+        user32::DestroyWindow(hwnd);
+        return Err("Win32 CreateWindowExW failed for plugin area".into());
+    }
+
+    round_corners(hwnd);
     resize_to_client(hwnd, client_w, client_h);
     Ok(hwnd)
 }
@@ -366,32 +683,15 @@ fn scale_for_dpi(dpi: u32) -> f64 {
     dpi as f64 / USER_DEFAULT_SCREEN_DPI as f64
 }
 
-/// Resize the window so the *client* area matches the given dimensions
-/// (physical pixels).  Called from the host-side resize handlers (CLAP
-/// `host_gui.request_resize`, VST3 `IPlugFrame::resizeView`).
+/// Resize the window so the plugin area matches the given dimensions
+/// (physical pixels), with the drag strip on top.  Called from the host-side
+/// resize handlers (CLAP `host_gui.request_resize`, VST3 `IPlugFrame::resizeView`).
 unsafe fn resize_to_client(hwnd: *mut c_void, client_w: i32, client_h: i32) {
-    let mut wr = user32::RECT {
-        left: 0,
-        top: 0,
-        right: client_w.max(200),
-        bottom: client_h.max(100),
-    };
-    user32::AdjustWindowRectExForDpi(
-        &mut wr,
-        CONTAINER_STYLE,
-        0,
-        CONTAINER_EX_STYLE,
-        window_dpi(hwnd),
-    );
-    user32::SetWindowPos(
-        hwnd,
-        null_mut(),
-        0,
-        0,
-        wr.right - wr.left,
-        wr.bottom - wr.top,
-        SWP_RESIZE_ONLY,
-    );
+    let width = client_w.max(200);
+    let height = client_h.max(100);
+    let strip = drag_strip_height(hwnd);
+    user32::SetWindowPos(hwnd, null_mut(), 0, 0, width, height + strip, SWP_RESIZE_ONLY);
+    user32::SetWindowPos(plugin_area(hwnd), null_mut(), 0, strip, width, height, SWP_MOVE_AND_RESIZE);
 }
 
 /// Show the window and install the 16 ms drain timer.
@@ -797,6 +1097,7 @@ pub unsafe fn open_vst3_editor(
         open_editors: Arc::clone(&open_editors),
         tick,
         on_dpi_changed,
+        hover: std::cell::Cell::new(false),
         cleanup: Some(cleanup),
     });
     let userdata_raw = Box::into_raw(userdata);
@@ -817,13 +1118,14 @@ pub unsafe fn open_vst3_editor(
         .container_hwnd
         .store(hwnd, Ordering::Release);
 
-    let attach_r = ((*(*view).vtbl).attached)(view, hwnd, b"HWND\0".as_ptr());
+    let attach_r = ((*(*view).vtbl).attached)(view, plugin_area(hwnd), b"HWND\0".as_ptr());
     if attach_r != K_RESULT_OK {
         user32::PostMessageW(hwnd, WM_CLOSE, 0, 0);
         return Err(format!("VST3 GUI: IPlugView::attached failed: {attach_r}"));
     }
 
     fit_vst3_view_to_dpi(view, hwnd, window_dpi(hwnd));
+    center_on_screen(hwnd);
 
     show_and_start_timer(hwnd);
 
@@ -941,6 +1243,7 @@ pub unsafe fn open_clap_editor(
         open_editors: Arc::clone(&open_editors),
         tick,
         on_dpi_changed,
+        hover: std::cell::Cell::new(false),
         cleanup: Some(cleanup),
     });
     let userdata_raw = Box::into_raw(userdata);
@@ -962,10 +1265,11 @@ pub unsafe fn open_clap_editor(
     }
 
     fit_clap_gui_to_dpi(gui, plugin, hwnd, window_dpi(hwnd));
+    center_on_screen(hwnd);
 
     let clap_win = ClapWindow {
         api: CLAP_WINDOW_API_WIN32.as_ptr() as *const c_char,
-        specific: hwnd as usize,
+        specific: plugin_area(hwnd) as usize,
     };
     if !((*gui).set_parent)(plugin, &clap_win) {
         user32::PostMessageW(hwnd, WM_CLOSE, 0, 0);
