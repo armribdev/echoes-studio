@@ -626,6 +626,9 @@ unsafe fn create_container(
 
     // Created at zero size: the drag strip height depends on the DPI of the
     // monitor the window lands on, only known once the HWND exists.
+    // No owner HWND: owned popups stay above the owner (bad DAW UX), and a
+    // cross-process owner (sandbox bridge → Echoes) can deadlock the UI thread
+    // waiting on OpenEditor while CreateWindowEx waits on the owner's queue.
     let hwnd = user32::CreateWindowExW(
         CONTAINER_EX_STYLE,
         class_w.as_ptr(),

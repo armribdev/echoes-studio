@@ -49,3 +49,14 @@ used in `impl AppProject { fn to_dto() -> ProjectDto { Self { … } } }` or in a
 closure that must build `MidiClipDto` / `DeviceRecord`.
 **Avoid:** follow [`.claude/rules/rust_self_rules.md`](../rules/rust_self_rules.md);
 run `cargo build` after each batch; grep `-> OtherType` + `Self {`.
+
+## 9. Win32 owner HWND on plugin editors
+**Symptom:** editor stays above Echoes when clicking the arrange; sandboxed
+`OpenEditor` freezes the UI for seconds then later calls fail with
+`bridge control channel closed`.
+**Cause:** owned popups are always above their owner; a bridge window owned by
+Echoes can deadlock (UI waits on the control reply while `CreateWindowExW`
+waits on the owner's queue → 10 s timeout → channel marked broken).
+**Avoid:** never pass Echoes' HWND as `CreateWindowExW` owner for plugin
+editors. Keep `WS_EX_TOOLWINDOW` for taskbar hiding; sync minimise/hide via
+explicit host events if needed.

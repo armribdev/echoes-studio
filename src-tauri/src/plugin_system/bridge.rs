@@ -155,7 +155,9 @@ impl BridgedPlugin {
     /// Open the plugin's editor in the bridge process, or bring it to the front.
     pub fn open_editor(&self, title: &str) -> Result<(), String> {
         allow_foreground_window(self.process.process_id());
-        self.request(Op::OpenEditor, title.as_bytes()).map(|_| ()).map_err(|e| e.to_string())
+        self.request(Op::OpenEditor, title.as_bytes())
+            .map(|_| ())
+            .map_err(|e| e.to_string())
     }
 }
 

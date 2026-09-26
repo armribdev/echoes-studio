@@ -235,7 +235,9 @@ const WS_POPUP: u32 = 0x8000_0000;
 const WS_CHILD: u32 = 0x4000_0000;
 const WS_VISIBLE: u32 = 0x1000_0000;
 const WS_CLIPCHILDREN: u32 = 0x0200_0000;
+const WS_EX_TOOLWINDOW: u32 = 0x0000_0080;
 const WINDOW_STYLE: u32 = WS_POPUP | WS_CLIPCHILDREN;
+const WINDOW_EX_STYLE: u32 = WS_EX_TOOLWINDOW;
 const PLUGIN_AREA_STYLE: u32 = WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN;
 const GW_CHILD: u32 = 5;
 const HTCLIENT: isize = 1;
@@ -399,6 +401,9 @@ unsafe fn register_class(
 
 /// Borderless top-level window holding the drag strip, with the plugin area
 /// as its only child.  Returns null if either window can't be created.
+///
+/// No owner HWND: see `plugin_system/gui.rs` (`create_container`) — ownership
+/// would pin the editor above Echoes and can deadlock a sandboxed OpenEditor.
 unsafe fn create_window(title: &str) -> *mut c_void {
     let class = wide(CLASS_NAME);
     let area_class = wide(PLUGIN_AREA_CLASS_NAME);
@@ -412,7 +417,7 @@ unsafe fn create_window(title: &str) -> *mut c_void {
     });
     let title = wide(title);
     let hwnd = user32::CreateWindowExW(
-        0,
+        WINDOW_EX_STYLE,
         class.as_ptr(),
         title.as_ptr(),
         WINDOW_STYLE,

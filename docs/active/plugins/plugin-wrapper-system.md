@@ -277,9 +277,15 @@ plugin that reads the DPI itself ignores the host scale.
 Both editor windows — in-process (`plugin_system/gui.rs`) and sandboxed
 (`crates/plugin_host_bridge/src/editor.rs`) — share one layout:
 
-- **Borderless** `WS_POPUP` container (no native title bar), with Windows 11
+- **Borderless** `WS_POPUP` container (no native title bar), with
+  `WS_EX_TOOLWINDOW` so editors stay out of the taskbar / Alt+Tab, and Windows 11
   rounded corners requested via `DwmSetWindowAttribute`
   (`DWMWA_WINDOW_CORNER_PREFERENCE`; ignored on Windows 10).
+  Editors are **not** owned by Echoes' main HWND: Win32 ownership keeps them
+  above the owner (wrong when clicking the arrange), and a sandboxed editor
+  owned by Echoes can deadlock `OpenEditor` (UI waits on the bridge while
+  `CreateWindowExW` waits on the owner's message queue → control-channel
+  timeout → "bridge control channel closed").
 - An **8 px (logical) drag strip** on top, painted `#222229`
   (`$panel-background-color`). The container answers `WM_NCHITTEST` with
   `HTCAPTION`; only the strip can reach it, since the plugin covers the rest.
