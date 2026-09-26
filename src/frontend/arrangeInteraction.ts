@@ -58,6 +58,15 @@ export function arrangeVisibleMaxBars(tracks: Track[], bpm: number, numerator: n
 	);
 }
 
+/**
+ * Pendant un drag/resize, ne jamais rétrécir l'étendue visible.
+ * Sinon, franchir une mesure fait chuter maxBars d'un coup → scrollWidth,
+ * clamp de scrollLeft, et parfois enforceArrangeMinZoom → sauts sous le curseur.
+ */
+export function arrangeMaxBarsHeld(liveMaxBars: number, holdMaxBars: number | null): number {
+	return holdMaxBars == null ? liveMaxBars : Math.max(liveMaxBars, holdMaxBars);
+}
+
 /** px/beat au dézoom max : toute la timeline (max bars) remplit le viewport. */
 export function arrangeMinPxPerBeat(
 	viewportWidthPx: number,

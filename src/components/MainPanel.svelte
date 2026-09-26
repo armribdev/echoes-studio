@@ -47,6 +47,7 @@
 		ARRANGE_POINTER_DRAG_THRESHOLD,
 		ARRANGE_TRACK_HEIGHT,
 		arrangeTrackIndexFromY,
+		arrangeMaxBarsHeld,
 		arrangeMinLogScale,
 		arrangeVisibleMaxBars,
 		clipsInArrangeSelbox,
@@ -91,6 +92,17 @@
 		window.removeEventListener('mousemove', onResizeMove);
 		window.removeEventListener('mouseup', onResizeEnd);
 	});
+
+	/** Gel de l'étendue arrange pendant drag/resize (évite les sauts quand le dernier clip rétrécit). */
+	let arrangeMaxBarsHold: number | null = null;
+
+	function beginArrangeMaxBarsHold() {
+		if (arrangeMaxBarsHold == null) arrangeMaxBarsHold = arrangeMaxBars;
+	}
+
+	function endArrangeMaxBarsHold() {
+		arrangeMaxBarsHold = null;
+	}
 
 	let contextMenu: { x: number; y: number; trackId: string; trackName: string; trackIndex: number } | null = null;
 	let clipContextMenu: { x: number; y: number } | null = null;
@@ -360,7 +372,8 @@
 	});
 
 	$: pxPerBeat = (60 / $tempo.bpm) * scale;
-	$: arrangeMaxBars = arrangeVisibleMaxBars(tracks, $tempo.bpm, $tempo.numerator);
+	$: liveArrangeMaxBars = arrangeVisibleMaxBars(tracks, $tempo.bpm, $tempo.numerator);
+	$: arrangeMaxBars = arrangeMaxBarsHeld(liveArrangeMaxBars, arrangeMaxBarsHold);
 	$: arrangeTotalBeats = arrangeMaxBars * $tempo.numerator;
 	$: arrangeContentWidthPx = arrangeTotalBeats * pxPerBeat;
 	// While repeat-dragging past the current arrangement end, the scrollable area must
@@ -1037,6 +1050,7 @@
 			origStart: clip.start,
 			origEnd: clip.end,
 		};
+		beginArrangeMaxBarsHold();
 		window.addEventListener('mousemove', onMidiDragMove);
 		window.addEventListener('mouseup', onMidiDragEnd);
 		beginAutoScroll(onMidiDragMove);
@@ -1094,6 +1108,7 @@
 			}
 		}
 		midiDragging = null;
+		endArrangeMaxBarsHold();
 		window.removeEventListener('mousemove', onMidiDragMove);
 		window.removeEventListener('mouseup', onMidiDragEnd);
 		endAutoScroll();
@@ -1144,6 +1159,7 @@
 	function onClipDragStart(e: CustomEvent<{ offsetPx: number; trackIndex: number; clipIndex: number }>) {
 		selectTrackIndex(e.detail.trackIndex);
 		dragging = { origTrackIndex: e.detail.trackIndex, ...e.detail };
+		beginArrangeMaxBarsHold();
 		window.addEventListener('mousemove', onDragMove);
 		window.addEventListener('mouseup', onDragEnd);
 		beginAutoScroll(onDragMove);
@@ -1195,6 +1211,7 @@
 			}
 		}
 		dragging = null;
+		endArrangeMaxBarsHold();
 		window.removeEventListener('mousemove', onDragMove);
 		window.removeEventListener('mouseup', onDragEnd);
 		endAutoScroll();
@@ -1225,6 +1242,7 @@
 			origOffset: clip.offset,
 			maxSourceDuration: sourceDuration,
 		};
+		beginArrangeMaxBarsHold();
 		window.addEventListener('mousemove', onResizeMove);
 		window.addEventListener('mouseup', onResizeEnd);
 		beginAutoScroll(onResizeMove);
@@ -1247,6 +1265,7 @@
 			origOffset: clip.offset,
 			maxSourceDuration: Infinity,
 		};
+		beginArrangeMaxBarsHold();
 		window.addEventListener('mousemove', onResizeMove);
 		window.addEventListener('mouseup', onResizeEnd);
 		beginAutoScroll(onResizeMove);
@@ -1270,6 +1289,7 @@
 			offset: clip.offset ?? 0,
 			notes: clip.notes.map((n) => ({ ...n })),
 		};
+		beginArrangeMaxBarsHold();
 		window.addEventListener('mousemove', onRepeatMove);
 		window.addEventListener('mouseup', onRepeatEnd);
 		beginAutoScroll(onRepeatMove);
@@ -1297,10 +1317,14 @@
 		window.removeEventListener('mousemove', onRepeatMove);
 		window.removeEventListener('mouseup', onRepeatEnd);
 		endAutoScroll();
-		if (!repeating) return;
+		if (!repeating) {
+			endArrangeMaxBarsHold();
+			return;
+		}
 		const { trackId, origStart, duration, offset, notes, count, partialPx } = repeating;
 		if (count === 0 && partialPx <= MIN_REPEAT_PARTIAL_PX) {
 			repeating = null;
+			endArrangeMaxBarsHold();
 			return;
 		}
 		// Keep the ghost (and the widened scroll area it drives) alive until the real
@@ -1321,6 +1345,7 @@
 		const ids = results.map(clipIdFromResult).filter((id): id is string => id !== null);
 		if (ids.length > 0) selection.setMany(ids);
 		repeating = null;
+		endArrangeMaxBarsHold();
 		if (tracksEl && scrollLeft != null) {
 			await tick();
 			tracksEl.scrollLeft = scrollLeft;
@@ -1385,6 +1410,7 @@
 			}
 		}
 		resizing = null;
+		endArrangeMaxBarsHold();
 		window.removeEventListener('mousemove', onResizeMove);
 		window.removeEventListener('mouseup', onResizeEnd);
 		endAutoScroll();
