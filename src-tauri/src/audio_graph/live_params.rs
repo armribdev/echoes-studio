@@ -204,6 +204,10 @@ struct LiveParamsInner {
     /// Piano-roll audition. Reused across compiles so only the live instrument
     /// drains it (one consumer).
     midi_preview: HashMap<String, Arc<crate::audio_graph::midi::MidiPreviewQueue>>,
+    /// Live hardware MIDI input (ADR-022). Reused across compiles so only the
+    /// live instrument drains it (one consumer); the MIDI capture thread is
+    /// the sole producer.
+    midi_live_input: HashMap<String, Arc<crate::audio_graph::midi::MidiLiveInputQueue>>,
 }
 
 impl Default for LiveParamsInner {
@@ -218,6 +222,7 @@ impl Default for LiveParamsInner {
             plugin_param_shadows: HashMap::new(),
             midi_notes: HashMap::new(),
             midi_preview: HashMap::new(),
+            midi_live_input: HashMap::new(),
         }
     }
 }
@@ -226,6 +231,8 @@ pub struct LiveParams {
     inner: Mutex<LiveParamsInner>,
     pub any_solo: Arc<AtomicBool>,
     pub master_soft_clip: Arc<AtomicBool>,
+    /// Stamped by the MIDI capture threads and by the audio callback (ADR-022).
+    pub live_input_clock: Arc<crate::audio_graph::midi::LiveInputClock>,
 }
 
 impl Default for LiveParams {
@@ -247,6 +254,7 @@ impl LiveParams {
             inner: Mutex::new(LiveParamsInner::default()),
             any_solo: Arc::new(AtomicBool::new(false)),
             master_soft_clip: Arc::new(AtomicBool::new(false)),
+            live_input_clock: Arc::new(crate::audio_graph::midi::LiveInputClock::new()),
         }
     }
 
@@ -587,6 +595,9 @@ impl LiveParams {
         inner
             .midi_preview
             .retain(|id, _| live_track_ids.contains(id.as_str()));
+        inner
+            .midi_live_input
+            .retain(|id, _| live_track_ids.contains(id.as_str()));
 
         let any_solo = project.tracks.iter().any(|t| t.solo);
         self.any_solo.store(any_solo, Ordering::Relaxed);
@@ -641,6 +652,39 @@ impl LiveParams {
         message: crate::audio_graph::midi::MidiPreviewMessage,
     ) -> bool {
         let Some(queue) = self.lock_inner().midi_preview.get(track_id).cloned() else {
+            return false;
+        };
+        queue.push(message)
+    }
+
+    /// Queue the live instrument already drains for hardware MIDI input
+    /// (ADR-022). Created once per track.
+    pub fn live_input_queue(
+        &self,
+        track_id: &str,
+    ) -> Arc<crate::audio_graph::midi::MidiLiveInputQueue> {
+        let mut inner = self.lock_inner();
+        if let Some(queue) = inner.midi_live_input.get(track_id) {
+            return Arc::clone(queue);
+        }
+        let queue = Arc::new(crate::audio_graph::midi::MidiLiveInputQueue::new(Arc::clone(
+            &self.live_input_clock,
+        )));
+        inner
+            .midi_live_input
+            .insert(track_id.to_string(), Arc::clone(&queue));
+        queue
+    }
+
+    /// Hardware MIDI capture threads. No project event and no recompile.
+    /// Returns false when the track has no slot yet (graph not compiled, or
+    /// the armed track no longer exists).
+    pub fn push_live_input(
+        &self,
+        track_id: &str,
+        message: crate::audio_graph::midi::MidiLiveInputMessage,
+    ) -> bool {
+        let Some(queue) = self.lock_inner().midi_live_input.get(track_id).cloned() else {
             return false;
         };
         queue.push(message)

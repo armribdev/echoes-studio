@@ -116,6 +116,19 @@ pub fn preview_midi_note(
     Ok(())
 }
 
+/// Arm a track for hardware MIDI input (ADR-022), or disarm when `track_id`
+/// is `None`. Ephemeral session state — no project event, no recompile.
+#[tauri::command]
+pub fn arm_track_for_midi_input(
+    state: tauri::State<'_, AppState>,
+    track_id: Option<String>,
+) -> Result<(), String> {
+    if let Ok(mut armed) = state.armed_track_id.lock() {
+        *armed = track_id;
+    }
+    Ok(())
+}
+
 /// Send a single typed command to the engine.
 #[tauri::command]
 pub fn send_command(

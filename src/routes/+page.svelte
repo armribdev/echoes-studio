@@ -24,6 +24,9 @@
 	import GraphView from '../components/GraphView.svelte';
 	import { settingsPanelOpen, preferences } from '../stores/preferences';
 	import { setPluginIsolation } from '../lib/audioBackend';
+	import { applyMidiPreferences, listMidiInputDevices, MIDI_DEVICES_EVENT } from '../lib/midiBackend';
+	import type { MidiInputDeviceInfo } from '../lib/midiBackend';
+	import { midiDeviceList } from '../stores/midiDevices';
 	import { projectSettingsPanelOpen } from '../stores/project';
 	import { exportMixdown } from '../lib/exportMixdown';
 	import { notify } from '../stores/status';
@@ -43,6 +46,33 @@
 			setPluginIsolation(audio.pluginIsolation, audio.alwaysIsolated).catch((e) =>
 				notify(`Erreur isolation des plugins : ${(e as Error)?.message ?? String(e)}`, 'error')
 			);
+		});
+		// Reopens the enabled MIDI keyboards whenever the preference changes or a
+		// known one is plugged back in. Chained so overlapping triggers never
+		// open/close the same device concurrently.
+		let midiSync = Promise.resolve();
+		function applyMidiNow() {
+			midiSync = midiSync
+				.then(() => applyMidiPreferences(get(preferences).midi))
+				.then((failed) => {
+					if (failed.length) notify(`Clavier MIDI indisponible : ${failed.join(', ')}`, 'error');
+				})
+				.catch((e) => notify(`Erreur MIDI : ${(e as Error)?.message ?? String(e)}`, 'error'));
+		}
+		// Skips re-applying when an unrelated preference (audio, project, …)
+		// changed. A hotplug event below always re-applies: the device set
+		// changed even though the preference didn't.
+		let appliedMidi = '';
+		const unsubMidi = preferences.subscribe(({ midi }) => {
+			const key = JSON.stringify(midi);
+			if (key === appliedMidi) return;
+			appliedMidi = key;
+			applyMidiNow();
+		});
+		void listMidiInputDevices().then(midiDeviceList.set);
+		const unlistenMidiDevices = listen<MidiInputDeviceInfo[]>(MIDI_DEVICES_EVENT, ({ payload }) => {
+			midiDeviceList.set(payload);
+			applyMidiNow();
 		});
 		const disconnectBridge = connectTransportBridge();
 		const disconnectLoop = connectLoopSync();
@@ -104,6 +134,8 @@
 			graphSnapshot.disconnect();
 			unsubSelectedTrack();
 			unsubIsolation();
+			unsubMidi();
+			void unlistenMidiDevices.then((fn) => fn());
 			void unlistenMenu.then((fns) => fns.forEach((fn) => fn()));
 			window.removeEventListener('keydown', handleGlobalKey);
 		};

@@ -4,8 +4,9 @@
 //! `Vec` published off the audio thread and swapped in with an atomic pointer.
 
 use std::ptr;
-use std::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
-use std::sync::Arc;
+use std::sync::atomic::{AtomicPtr, AtomicU64, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 #[derive(Debug, Clone, Copy)]
 pub struct MidiEvent {
@@ -299,6 +300,163 @@ impl MidiPreviewQueue {
     }
 }
 
+/// Shared time base for live hardware MIDI (ADR-022 amendment).
+///
+/// The capture thread stamps each event on arrival; the audio callback stamps
+/// each rendered slice. An event is then played exactly one callback period
+/// after it arrived, at the matching sample — constant latency, instead of
+/// "next block start" whose delay jitters between zero and a whole block.
+pub struct LiveInputClock {
+    epoch: Instant,
+    /// Wall time (ns since `epoch`) that maps to sample 0 of the slice being
+    /// rendered. 0 = no live stream (offline render, tests).
+    event_window_start: AtomicU64,
+}
+
+impl LiveInputClock {
+    pub fn new() -> Self {
+        Self {
+            epoch: Instant::now(),
+            event_window_start: AtomicU64::new(0),
+        }
+    }
+
+    /// Capture thread and audio callback. Monotonic, no lock, no allocation.
+    pub fn now_nanos(&self) -> u64 {
+        self.epoch.elapsed().as_nanos() as u64
+    }
+
+    /// Audio callback, before each rendered slice. 0 = place events at once.
+    pub fn set_event_window_start(&self, nanos: u64) {
+        self.event_window_start.store(nanos, Ordering::Release);
+    }
+
+    fn event_window_start(&self) -> u64 {
+        self.event_window_start.load(Ordering::Acquire)
+    }
+}
+
+/// Where a live event lands relative to the slice being rendered.
+#[derive(Debug, PartialEq)]
+enum LiveEventSlot {
+    At(u32),
+    /// Due in a later slice — stays queued.
+    Later,
+}
+
+fn live_event_slot(
+    received_at: u64,
+    window_start: u64,
+    sample_rate: f32,
+    block_size: usize,
+) -> LiveEventSlot {
+    // No clock, or older than one period (e.g. after a stall): play at once.
+    if window_start == 0 || received_at <= window_start {
+        return LiveEventSlot::At(0);
+    }
+    let offset = ((received_at - window_start) as f64 * sample_rate as f64 / 1e9) as usize;
+    if offset >= block_size {
+        LiveEventSlot::Later
+    } else {
+        LiveEventSlot::At(offset as u32)
+    }
+}
+
+/// One hardware note event (MIDI capture thread → audio thread).
+#[derive(Debug, Clone, Copy)]
+pub struct MidiLiveInputMessage {
+    pub note_on: bool,
+    pub pitch: u8,
+    pub velocity: u8,
+    /// `LiveInputClock::now_nanos` when the capture thread received it.
+    pub received_at: u64,
+}
+
+const LIVE_INPUT_CAPACITY: usize = 64;
+
+/// Ring of live hardware MIDI note events, lock-free on the consumer side.
+///
+/// Producers are the MIDI capture threads — one per enabled device, so there
+/// can be several; `producer` serializes them (never taken by the audio
+/// thread). The live instrument node is the only consumer, and a recompile
+/// reuses the same queue so the new node takes over after the snapshot swap.
+///
+/// Kept separate from `MidiPreviewQueue`: a single consumer per ring, and the
+/// audition producer (command thread) must not contend with capture threads.
+pub struct MidiLiveInputQueue {
+    slots: Box<[std::cell::UnsafeCell<MidiLiveInputMessage>]>,
+    head: AtomicUsize,
+    tail: AtomicUsize,
+    producer: Mutex<()>,
+    clock: Arc<LiveInputClock>,
+}
+
+unsafe impl Send for MidiLiveInputQueue {}
+unsafe impl Sync for MidiLiveInputQueue {}
+
+impl MidiLiveInputQueue {
+    pub fn new(clock: Arc<LiveInputClock>) -> Self {
+        let empty = MidiLiveInputMessage {
+            note_on: false,
+            pitch: 0,
+            velocity: 0,
+            received_at: 0,
+        };
+        let mut slots = Vec::with_capacity(LIVE_INPUT_CAPACITY);
+        for _ in 0..LIVE_INPUT_CAPACITY {
+            slots.push(std::cell::UnsafeCell::new(empty));
+        }
+        Self {
+            slots: slots.into_boxed_slice(),
+            head: AtomicUsize::new(0),
+            tail: AtomicUsize::new(0),
+            producer: Mutex::new(()),
+            clock,
+        }
+    }
+
+    /// MIDI capture threads. Drops the newest message when the ring is full.
+    pub fn push(&self, message: MidiLiveInputMessage) -> bool {
+        let _producer = self.producer.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let tail = self.tail.load(Ordering::Relaxed);
+        let head = self.head.load(Ordering::Acquire);
+        if tail.wrapping_sub(head) >= LIVE_INPUT_CAPACITY {
+            return false;
+        }
+        unsafe {
+            *self.slots[tail % LIVE_INPUT_CAPACITY].get() = message;
+        }
+        self.tail.store(tail.wrapping_add(1), Ordering::Release);
+        true
+    }
+
+    /// Audio thread. Hands over, in order, each message due in the slice being
+    /// rendered with its sample offset; the first one due later stays queued.
+    pub fn drain_due(
+        &self,
+        sample_rate: f32,
+        block_size: usize,
+        mut f: impl FnMut(MidiLiveInputMessage, u32),
+    ) {
+        let window_start = self.clock.event_window_start();
+        loop {
+            let head = self.head.load(Ordering::Relaxed);
+            let tail = self.tail.load(Ordering::Acquire);
+            if head == tail {
+                return;
+            }
+            let message = unsafe { *self.slots[head % LIVE_INPUT_CAPACITY].get() };
+            let LiveEventSlot::At(offset) =
+                live_event_slot(message.received_at, window_start, sample_rate, block_size)
+            else {
+                return;
+            };
+            self.head.store(head.wrapping_add(1), Ordering::Release);
+            f(message, offset);
+        }
+    }
+}
+
 impl Drop for MidiNotePublisher {
     fn drop(&mut self) {
         self.drain_retired();
@@ -353,5 +511,74 @@ mod tests {
         assert_eq!(note.end_sample(120.0, 48_000.0), 48_000);
         assert_eq!(note.start_sample(240.0, 48_000.0), 12_000);
         assert_eq!(note.end_sample(240.0, 48_000.0), 24_000);
+    }
+
+    fn live_note(note_on: bool, pitch: u8, received_at: u64) -> MidiLiveInputMessage {
+        MidiLiveInputMessage {
+            note_on,
+            pitch,
+            velocity: 100,
+            received_at,
+        }
+    }
+
+    fn drain_all(queue: &MidiLiveInputQueue, block_size: usize) -> Vec<(u8, u32)> {
+        let mut drained = Vec::new();
+        queue.drain_due(48_000.0, block_size, |message, offset| {
+            drained.push((message.pitch, offset))
+        });
+        drained
+    }
+
+    #[test]
+    fn live_input_queue_drains_in_order() {
+        let queue = MidiLiveInputQueue::new(Arc::new(LiveInputClock::new()));
+        assert!(queue.push(live_note(true, 60, 0)));
+        assert!(queue.push(live_note(false, 60, 0)));
+        assert_eq!(drain_all(&queue, 256), vec![(60, 0), (60, 0)]);
+    }
+
+    #[test]
+    fn live_input_queue_drops_newest_when_full() {
+        let queue = MidiLiveInputQueue::new(Arc::new(LiveInputClock::new()));
+        for i in 0..LIVE_INPUT_CAPACITY {
+            assert!(queue.push(live_note(true, i as u8, 0)));
+        }
+        assert!(!queue.push(live_note(true, 127, 0)));
+        assert_eq!(drain_all(&queue, 256).len(), LIVE_INPUT_CAPACITY);
+    }
+
+    /// 1 ms after the window start at 48 kHz = sample 48: the event keeps its
+    /// position within the period instead of snapping to the block start.
+    #[test]
+    fn live_event_keeps_its_position_within_the_period() {
+        let clock = Arc::new(LiveInputClock::new());
+        clock.set_event_window_start(10_000_000);
+        let queue = MidiLiveInputQueue::new(Arc::clone(&clock));
+        queue.push(live_note(true, 60, 11_000_000));
+        assert_eq!(drain_all(&queue, 256), vec![(60, 48)]);
+    }
+
+    /// An event due after this slice waits in the queue for the next one.
+    #[test]
+    fn live_event_due_later_stays_queued() {
+        let clock = Arc::new(LiveInputClock::new());
+        clock.set_event_window_start(10_000_000);
+        let queue = MidiLiveInputQueue::new(Arc::clone(&clock));
+        queue.push(live_note(true, 60, 11_000_000));
+        assert!(drain_all(&queue, 32).is_empty());
+
+        clock.set_event_window_start(10_000_000 + 32 * 1_000_000_000 / 48_000);
+        assert_eq!(drain_all(&queue, 32), vec![(60, 16)]);
+    }
+
+    #[test]
+    fn live_event_older_than_the_window_plays_at_once() {
+        assert_eq!(live_event_slot(5, 10, 48_000.0, 256), LiveEventSlot::At(0));
+    }
+
+    #[test]
+    fn without_a_live_clock_events_play_at_once() {
+        assert_eq!(live_event_slot(99, 0, 48_000.0, 256), LiveEventSlot::At(0));
     }
 }

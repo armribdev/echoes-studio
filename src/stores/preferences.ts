@@ -17,6 +17,22 @@ export interface AudioPreferences {
 
 export type PluginIsolation = 'off' | 'chosen' | 'all';
 
+/** A MIDI keyboard seen at least once, kept even while unplugged (ADR-022). */
+export interface KnownMidiDevice {
+	/** System port name — the only identifier midir gives us on Windows. */
+	name: string;
+	/** Display name chosen by the user; empty = show `name`. */
+	alias: string;
+	enabled: boolean;
+}
+
+export interface MidiPreferences {
+	devices: KnownMidiDevice[];
+	/** Send "Local Control Off" so a keyboard with speakers stays silent while
+	 * Echoes plays it; given back when disabled or on exit. */
+	localControlOff: boolean;
+}
+
 export interface ProjectPreferences {
 	defaultFolder: string;
 	autoSave: boolean;
@@ -39,6 +55,7 @@ export interface InterfacePreferences {
 
 export interface Preferences {
 	audio: AudioPreferences;
+	midi: MidiPreferences;
 	project: ProjectPreferences;
 	interface: InterfacePreferences;
 }
@@ -58,6 +75,10 @@ function defaultPreferences(): Preferences {
 			pluginIsolation: 'chosen',
 			alwaysIsolated: []
 		},
+		midi: {
+			devices: [],
+			localControlOff: true
+		},
 		project: {
 			defaultFolder: '',
 			autoSave: true,
@@ -76,6 +97,17 @@ function defaultPreferences(): Preferences {
 	};
 }
 
+/** Earlier builds stored only the enabled names (`enabledDeviceNames`). */
+function loadMidiPreferences(
+	defaults: MidiPreferences,
+	parsed?: Partial<MidiPreferences> & { enabledDeviceNames?: string[] }
+): MidiPreferences {
+	const devices =
+		parsed?.devices ??
+		(parsed?.enabledDeviceNames ?? []).map((name) => ({ name, alias: '', enabled: true }));
+	return { localControlOff: parsed?.localControlOff ?? defaults.localControlOff, devices };
+}
+
 function loadPreferences(): Preferences {
 	try {
 		const raw = localStorage.getItem(STORAGE_KEY);
@@ -84,6 +116,7 @@ function loadPreferences(): Preferences {
 			const defaults = defaultPreferences();
 			return {
 				audio: { ...defaults.audio, ...parsed.audio },
+				midi: loadMidiPreferences(defaults.midi, parsed.midi),
 				project: { ...defaults.project, ...parsed.project },
 				interface: { ...defaults.interface, ...parsed.interface }
 			};

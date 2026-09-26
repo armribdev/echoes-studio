@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { preferences, settingsPanelOpen } from '../stores/preferences';
 	import { keyboardFocus } from '../stores/keyboardFocus';
-	import type { Preferences } from '../stores/preferences';
+	import type { KnownMidiDevice, Preferences } from '../stores/preferences';
 	import { onMount, onDestroy } from 'svelte';
 	import CustomSelect from './CustomSelect.svelte';
 	import Toggle from './Toggle.svelte';
@@ -14,6 +14,8 @@
 	import { listAudioDevices, applyAudioSettings, getSupportedSampleRates, getDeviceChannels, setActiveOutputChannels } from '../lib/audioBackend';
 	import { plugins } from '../stores/plugins';
 	import type { AudioDeviceInfo } from '../lib/audioBackend';
+	import type { MidiInputDeviceInfo } from '../lib/midiBackend';
+	import { midiDeviceList } from '../stores/midiDevices';
 	import { listen } from '@tauri-apps/api/event';
 	import type { UnlistenFn } from '@tauri-apps/api/event';
 
@@ -21,11 +23,17 @@
 	let masterRouting = 'out-1-2';
 	let headphoneRouting = 'mirror';
 
-	type Section = 'audio' | 'project' | 'interface';
+	type Section = 'audio' | 'midi' | 'project' | 'interface';
 	let activeSection: Section = 'audio';
 
 	// Local draft — confirmed on close or explicit save
-	let draft: Preferences = { ...$preferences, audio: { ...$preferences.audio }, project: { ...$preferences.project }, interface: { ...$preferences.interface } };
+	let draft: Preferences = {
+		...$preferences,
+		audio: { ...$preferences.audio },
+		midi: { ...$preferences.midi },
+		project: { ...$preferences.project },
+		interface: { ...$preferences.interface },
+	};
 
 	const SAMPLE_RATES = [44100, 48000, 88200, 96000] as const;
 	const BUFFER_SIZES = [64, 128, 256, 512, 1024, 2048] as const;
@@ -52,6 +60,57 @@
 		} finally {
 			devicesLoading = false;
 		}
+	}
+
+	// ── Hardware MIDI input (ADR-022) ─────────────────────────────────────────
+	// Every keyboard seen once stays listed — unplugged ones greyed out — with
+	// its alias and enabled flag. Draft only: saving the preferences is what
+	// reaches the engine (the subscriber in +page.svelte also owns opening/
+	// closing connections, including on hotplug — this panel only edits state).
+	interface MidiDeviceRow extends KnownMidiDevice {
+		connected: boolean;
+	}
+	let midiRows: MidiDeviceRow[] = draft.midi.devices.map((d) => ({ ...d, connected: false }));
+
+	// Keeps in-progress edits (alias, enabled) — only `connected` and brand-new
+	// devices come from the live list, so a hotplug event never discards typing.
+	function reconcileMidiRows(rows: MidiDeviceRow[], visible: MidiInputDeviceInfo[]): MidiDeviceRow[] {
+		const visibleNames = new Set(visible.map((d) => d.id));
+		const knownNames = new Set(rows.map((r) => r.name));
+		const updated = rows.map((r) => ({ ...r, connected: visibleNames.has(r.name) }));
+		const discovered = visible
+			.filter((d) => !knownNames.has(d.id))
+			.map((d) => ({ name: d.id, alias: '', enabled: false, connected: true }));
+		return [...updated, ...discovered];
+	}
+
+	const unsubMidiDeviceList = midiDeviceList.subscribe((visible) => {
+		midiRows = reconcileMidiRows(midiRows, visible);
+	});
+
+	let renamingMidiDevice: string | null = null;
+
+	function midiDeviceHint(row: MidiDeviceRow): string {
+		return row.alias ? row.name : '';
+	}
+
+	function startMidiRename(event: MouseEvent, name: string) {
+		if ((event.target as HTMLElement).closest('button')) return;
+		renamingMidiDevice = name;
+	}
+
+	// Enter and blur both land here; the guard ignores the blur that follows Enter.
+	function finishMidiRename(row: MidiDeviceRow, value: string) {
+		if (renamingMidiDevice !== row.name) return;
+		const name = value.trim();
+		row.alias = name === row.name ? '' : name;
+		midiRows = midiRows;
+		renamingMidiDevice = null;
+	}
+
+	function focusAndSelect(node: HTMLInputElement) {
+		node.focus();
+		node.select();
 	}
 
 	// ── Supported sample rates for the selected output device ─────────────────
@@ -184,6 +243,10 @@
 
 	async function applyAndClose() {
 		applyError = null;
+		draft.midi = {
+			...draft.midi,
+			devices: midiRows.map(({ name, alias, enabled }) => ({ name, alias: alias.trim(), enabled })),
+		};
 
 		// Push audio settings to CPAL engine (restarts stream if needed)
 		try {
@@ -206,7 +269,17 @@
 
 	function cancelAndClose() {
 		applyError = null;
-		draft = { ...$preferences, audio: { ...$preferences.audio }, project: { ...$preferences.project }, interface: { ...$preferences.interface } };
+		draft = {
+			...$preferences,
+			audio: { ...$preferences.audio },
+			midi: { ...$preferences.midi },
+			project: { ...$preferences.project },
+			interface: { ...$preferences.interface },
+		};
+		midiRows = reconcileMidiRows(
+			draft.midi.devices.map((d) => ({ ...d, connected: false })),
+			$midiDeviceList
+		);
 		// Resetting prevOutputDevice to the current (not original) value means
 		// the $: device reactive sees a change from current → original and fires
 		// applyDeviceChange with the original device → clean revert.
@@ -217,6 +290,10 @@
 
 	function resetSection() {
 		if (activeSection === 'audio') draft.audio = { inputDevice: 'default', outputDevice: 'default', sampleRate: 48000, bufferSize: 256, inputChannels: 2, outputChannels: 2, masterSoftClip: false, pluginIsolation: 'chosen', alwaysIsolated: [] };
+		else if (activeSection === 'midi') {
+			draft.midi = { devices: [], localControlOff: true };
+			midiRows = midiRows.filter((row) => row.connected).map((row) => ({ ...row, alias: '', enabled: false }));
+		}
 		else if (activeSection === 'project') draft.project = { defaultFolder: '', autoSave: true, autoSaveIntervalSec: 60, autoSaveMaxBackups: 5, defaultBpm: 120, defaultNumerator: 4, defaultDenominator: 4, exportBitDepth: 32, exportMp3Bitrate: 320 };
 		else if (activeSection === 'interface') draft.interface = { showMinimap: false, showArrangeGrid: false };
 		draft = { ...draft };
@@ -313,11 +390,13 @@
 	});
 	onDestroy(() => {
 		cancelAnimationFrame(rafId);
+		unsubMidiDeviceList();
 		unlistenLevels?.();
 	});
 
 	const SECTIONS: { id: Section; label: string }[] = [
 		{ id: 'audio',     label: 'Audio'     },
+		{ id: 'midi',      label: 'MIDI'      },
 		{ id: 'project',   label: 'Par défaut' },
 		{ id: 'interface', label: 'Interface' }
 	];
@@ -350,6 +429,8 @@
 						<span class="nav-icon">
 							{#if s.id === 'audio'}
 								<Icon name="volume" size={15} />
+							{:else if s.id === 'midi'}
+								<Icon name="cpu" size={15} />
 							{:else if s.id === 'project'}
 								<Icon name="folder" size={15} />
 							{:else if s.id === 'interface'}
@@ -629,6 +710,61 @@
 							/>
 						</div>
 					</div>
+				</div>
+
+				{:else if activeSection === 'midi'}
+				<div class="section">
+					<h2 class="section-title">Entrée MIDI</h2>
+					<span class="field-hint">
+						Activez un clavier ou contrôleur MIDI, puis armez une piste (bouton
+						rouge dans la liste des pistes) pour jouer en direct dessus. Un clavier
+						débranché reste dans la liste avec son nom et son réglage.
+					</span>
+
+					<div class="divider"></div>
+
+					{#if midiRows.length === 0}
+						<span class="field-hint">Aucun périphérique MIDI détecté.</span>
+					{:else}
+						{#each midiRows as row (row.name)}
+							<!-- svelte-ignore a11y-no-static-element-interactions -->
+							<div
+								class:midi-device--offline={!row.connected}
+								title="Double-clic pour renommer"
+								on:dblclick={(e) => startMidiRename(e, row.name)}
+							>
+								{#if renamingMidiDevice === row.name}
+									<Toggle bind:checked={row.enabled} label={row.alias || row.name}>
+										<input
+											slot="info"
+											class="midi-rename"
+											type="text"
+											value={row.alias || row.name}
+											aria-label="Renommer {row.name}"
+											use:focusAndSelect
+											on:keydown={(e) => { if (e.key === 'Enter') finishMidiRename(row, e.currentTarget.value); }}
+											on:blur={(e) => finishMidiRename(row, e.currentTarget.value)}
+										/>
+									</Toggle>
+								{:else}
+									<Toggle
+										bind:checked={row.enabled}
+										label={row.alias || row.name}
+										description={midiDeviceHint(row)}
+									/>
+								{/if}
+							</div>
+						{/each}
+					{/if}
+
+					<div class="divider"></div>
+					<h3 class="subsection-title">Son du clavier</h3>
+
+					<Toggle
+						bind:checked={draft.midi.localControlOff}
+						label="Couper le son interne du clavier"
+						description="Pour un piano numérique : il ne joue plus par ses propres haut-parleurs tant qu'Echoes l'utilise. Le son revient quand vous désactivez le clavier ou fermez Echoes."
+					/>
 				</div>
 
 				{:else if activeSection === 'project'}
@@ -1375,6 +1511,21 @@
 		margin-left: auto;
 		display: flex;
 		gap: 8px;
+	}
+
+	.midi-device--offline { opacity: 0.45; }
+
+	// Sits where the Toggle label is, so the row keeps its height while renaming.
+	.midi-rename {
+		width: 100%;
+		padding: 0;
+		border: none;
+		background: transparent;
+		color: $text-color;
+		font: inherit;
+		font-size: 12px;
+		font-weight: 500;
+		outline: none;
 	}
 
 	.isolated-list {

@@ -39,6 +39,16 @@
 │   Picks up new scheduler via RuntimeSnapshot::try_swap()       │
 │     (lock-free AtomicPtr; displaced box → SPSC drop ring)      │
 │   Writes interleaved f32 to CPAL output buffer                 │
+│   InstrumentNode drains its MidiLiveInputQueue every block     │
+│     (ADR-022) — same SPSC-drain shape as piano-roll audition   │
+└─────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────┐
+│ MIDI Capture Thread(s) (owned by `midir`, ADR-022)              │
+│   One per open hardware MIDI input device                       │
+│   Parses raw bytes → Note On/Off, reads the armed-track id,     │
+│     pushes into that track's MidiLiveInputQueue (SPSC)         │
+│   Never touches the audio thread, CPAL, or each other directly  │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -77,6 +87,34 @@ values, never allocate.**
 
 The audio thread is scheduled by the OS at elevated priority. Any blocking
 operation risks a **priority inversion** (see below) or an underrun.
+
+### MIDI Capture Thread(s) (ADR-022)
+
+**Owns:** One `midir::MidiInputConnection` per enabled hardware MIDI input
+device. Not spawned/managed by Echoes directly — `midir` drives the thread
+internally and invokes our callback on it.
+
+**Can do:** Parse raw MIDI bytes, read the armed-track `Mutex<Option<String>>`,
+push into that track's `MidiLiveInputQueue` (lock-free SPSC, command-thread
+style — this thread is not on the RT audio path so a `Mutex` read is fine).
+
+**Cannot do:** Touch the audio thread, CPAL, or the `GraphScheduler` directly.
+The only channel out of this thread is the per-track `MidiLiveInputQueue`.
+
+MIDI *output* (Local Control On/Off, ADR-022 amendment) is not sent from this
+thread: the command thread opens a short-lived `midir` output connection,
+sends, and closes it.
+
+### MIDI Hotplug Watcher (ADR-022 amendment)
+
+**Owns:** nothing persistent — a named thread (`midi-hotplug-watcher`, spawned
+once at startup) that re-enumerates visible MIDI ports every second and emits
+`MIDI_DEVICES_EVENT` to the frontend when the set changes. `midir`/WinMM give
+no OS-level connect/disconnect callback, so this is a plain poll, not a true
+event subscription.
+
+**Can do:** Lock `MidiInputRegistry` briefly to compare/reconcile, same as any
+other command-thread-adjacent access. Never touches the audio thread.
 
 ---
 
@@ -117,6 +155,27 @@ let peak = peak_atomic.load(Ordering::Acquire);
 
 Tauri events are **never emitted from the audio thread**. `app.emit()` acquires
 an internal lock — calling it from a real-time thread causes underruns.
+
+### MIDI capture thread → Audio thread (ADR-022)
+
+```rust
+// MIDI capture thread (midir callback): lock-free push
+live_params.push_live_input(&armed_track_id, message);
+
+// Audio thread, inside InstrumentNode::process(): drains every block
+self.drain_live_input(); // same shape as drain_preview()
+```
+
+Same ring shape as piano-roll audition (`MidiPreviewQueue`), but a distinct
+queue per track, and multi-producer: each enabled keyboard has its own capture
+thread, so pushes are serialized by a producer mutex inside the queue (never
+taken by the audio thread, whose drain stays lock-free).
+
+Timing (ADR-022 amendment): the capture thread stamps each event with the
+shared `LiveInputClock`; the CPAL callback reads the same clock once per
+callback and publishes, per rendered slice, the wall time mapped to its first
+sample. `drain_due` places each event one callback period after its arrival —
+constant latency, no jitter — and leaves events due later in the queue.
 
 ### Project state → Audio thread
 

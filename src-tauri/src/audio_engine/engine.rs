@@ -42,6 +42,7 @@ use tauri::Emitter;
 use crate::audio_engine::graph::AudioGraphCompiler;
 use crate::audio_engine::transport::{playback_chunk, SharedTransport};
 use crate::audio_graph::denormal::enable_flush_to_zero;
+use crate::audio_graph::midi::LiveInputClock;
 use crate::audio_graph::node::TimeSignature;
 use crate::audio_graph::{CompileConfig, GraphScheduler, LiveParams, MeterCell, RuntimeSnapshot};
 use crate::audio_settings::AudioSettings;
@@ -396,11 +397,13 @@ impl AudioEngine {
         let ch_ctrl_a = Arc::clone(&self.active_output_channels);
         let levels_a = Arc::clone(&self.levels);
         let xruns_a = Arc::clone(&self.xrun_stats);
+        let clock_a = Arc::clone(&self.live_params.live_input_clock);
         let snap_b = Arc::clone(&self.snapshot);
         let tport_b = Arc::clone(&self.transport);
         let ch_ctrl_b = Arc::clone(&self.active_output_channels);
         let levels_b = Arc::clone(&self.levels);
         let xruns_b = Arc::clone(&self.xrun_stats);
+        let clock_b = Arc::clone(&self.live_params.live_input_clock);
 
         let fixed_cfg = cpal::StreamConfig {
             buffer_size: cpal::BufferSize::Fixed(settings.buffer_size),
@@ -417,6 +420,7 @@ impl AudioEngine {
             ch_ctrl_a,
             levels_a,
             xruns_a,
+            clock_a,
         )
         .or_else(|e| {
             eprintln!(
@@ -438,6 +442,7 @@ impl AudioEngine {
                 ch_ctrl_b,
                 levels_b,
                 xruns_b,
+                clock_b,
             )
         })?;
 
@@ -589,6 +594,17 @@ fn resolve_stream_config(
 }
 
 /// Dispatch to the correct sample-type variant of `build_stream`.
+/// Live MIDI plays one callback period after it arrived (ADR-022): sample 0 of
+/// a slice whose `frames_left` run to the end of this callback maps back to
+/// `callback_start - frames_left / sample_rate`.
+fn live_event_window_start(callback_start: u64, frames_left: usize, sample_rate: f32) -> u64 {
+    if sample_rate <= 0.0 {
+        return 0;
+    }
+    let lead = (frames_left as f64 * 1e9 / sample_rate as f64) as u64;
+    callback_start.saturating_sub(lead)
+}
+
 fn build_typed_stream(
     device: &cpal::Device,
     config: &cpal::StreamConfig,
@@ -599,6 +615,7 @@ fn build_typed_stream(
     ch_ctrl: Arc<AtomicUsize>,
     levels: Arc<ChannelLevels>,
     xrun_stats: Arc<XrunStats>,
+    live_clock: Arc<LiveInputClock>,
 ) -> Result<cpal::Stream, String> {
     match fmt {
         cpal::SampleFormat::F32 => build_stream::<f32>(
@@ -610,6 +627,7 @@ fn build_typed_stream(
             ch_ctrl,
             levels,
             xrun_stats,
+            live_clock,
         ),
         cpal::SampleFormat::I16 => build_stream::<i16>(
             device,
@@ -620,6 +638,7 @@ fn build_typed_stream(
             ch_ctrl,
             levels,
             xrun_stats,
+            live_clock,
         ),
         cpal::SampleFormat::U16 => build_stream::<u16>(
             device,
@@ -630,6 +649,7 @@ fn build_typed_stream(
             ch_ctrl,
             levels,
             xrun_stats,
+            live_clock,
         ),
         other => {
             eprintln!("[audio] Format {other:?} non géré nativement, tentative F32");
@@ -642,6 +662,7 @@ fn build_typed_stream(
                 ch_ctrl,
                 levels,
                 xrun_stats,
+                live_clock,
             )
         }
     }
@@ -664,6 +685,7 @@ fn build_stream<T>(
     ch_ctrl: Arc<AtomicUsize>,
     levels: Arc<ChannelLevels>,
     xrun_stats: Arc<XrunStats>,
+    live_clock: Arc<LiveInputClock>,
 ) -> Result<cpal::Stream, String>
 where
     T: SizedSample + FromSample<f32> + Send + 'static,
@@ -685,6 +707,7 @@ where
         .build_output_stream(
             config,
             move |data: &mut [T], info: &cpal::OutputCallbackInfo| {
+                let callback_start = live_clock.now_nanos();
                 if !denormal_guard_set {
                     enable_flush_to_zero();
                     raise_audio_thread_priority();
@@ -748,6 +771,11 @@ where
                     }
                     let info = transport.snapshot(chunk);
                     let end = rendered + chunk;
+                    live_clock.set_event_window_start(live_event_window_start(
+                        callback_start,
+                        frames - rendered,
+                        info.sample_rate,
+                    ));
                     scheduler.process_block(&info, &mut mix_buf[rendered * 2..end * 2]);
                     if playing {
                         transport

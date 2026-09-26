@@ -956,6 +956,12 @@ pub struct AppState {
     /// Open native plugin editor windows.  Maps `effect_id → HWND as usize`.
     /// Shared as Arc so it can be cloned into `run_on_main_thread` closures.
     pub open_plugin_editors: Arc<Mutex<HashMap<String, usize>>>,
+    /// Hardware MIDI input device registry (ADR-022). Command-thread only —
+    /// never touched by the audio thread.
+    pub midi_input: Mutex<crate::midi_input::MidiInputRegistry>,
+    /// The track that currently receives hardware MIDI input, if any.
+    /// Ephemeral session state, not part of `AppProject` (ADR-002 scope).
+    pub armed_track_id: Arc<Mutex<Option<String>>>,
 }
 
 impl AppState {
@@ -990,6 +996,8 @@ impl AppState {
             audio_settings: Mutex::new(crate::audio_settings::AudioSettings::default()),
             dirty: AtomicBool::new(false),
             open_plugin_editors: Arc::new(Mutex::new(HashMap::new())),
+            midi_input: Mutex::new(crate::midi_input::MidiInputRegistry::new()),
+            armed_track_id: Arc::new(Mutex::new(None)),
         }
     }
 }

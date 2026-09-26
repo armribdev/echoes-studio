@@ -56,6 +56,16 @@ Meter values are written atomically from the audio thread. The UI reads them
 periodically (e.g. 30 fps) via a Tauri command that acquires no locks on the
 audio path.
 
+### MIDI capture threads → Audio thread (ADR-022)
+
+```
+MidiLiveInputQueue::push (capture threads, serialized by a producer mutex)
+    →  drain_due() in InstrumentNode::process (lock-free consumer)
+```
+
+The producer mutex is only ever taken by the capture threads (one per enabled
+keyboard); the audio thread reads head/tail atomics only.
+
 ### Project state → Audio thread
 
 **Never directly.** Project state always goes through the compilation pipeline:
@@ -198,6 +208,12 @@ for sample in self.delay_line.iter_mut() { ... }
 // ✓ RuntimeSnapshot::try_swap (lock-free AtomicPtr swap; displaced box
 //   handed to the SPSC drop ring, never dropped on this thread)
 snapshot.try_swap(&mut current_scheduler);
+
+// ✓ monotonic clock read (std::time::Instant — QueryPerformanceCounter /
+//   vDSO clock_gettime / mach_absolute_time: no lock, no allocation).
+//   Used once per callback to time live MIDI input (ADR-022); never feeds
+//   the offline render, so determinism (C-2) is unaffected.
+let callback_start = live_clock.now_nanos();
 ```
 
 ### Sandboxed plugins (ADR-015) — the one bounded wait

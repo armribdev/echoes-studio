@@ -753,6 +753,7 @@ impl GraphCompiler {
                 let mut node = InstrumentNode::from_publisher(id, notes, device);
                 if live {
                     node.set_preview(live_params.preview_queue(track_id));
+                    node.set_live_input(live_params.live_input_queue(track_id));
                 }
                 Box::new(node)
             }

@@ -17,7 +17,8 @@ use std::sync::Arc;
 use crate::audio_graph::buffer::AudioBuffer;
 use crate::audio_graph::live_params::EnvelopeCells;
 use crate::audio_graph::midi::{
-    MidiEvent, MidiEventKind, MidiEventList, MidiNotePublisher, MidiNoteSnapshot, MidiPreviewQueue,
+    MidiEvent, MidiEventKind, MidiEventList, MidiLiveInputQueue, MidiNotePublisher, MidiNoteSnapshot,
+    MidiPreviewQueue,
 };
 use crate::audio_graph::node::{AudioNode, NodeId, PrepareContext, TransportInfo};
 use crate::audio_graph::plugin_params::{parse_plugin_param_name, PluginParamControl, PluginParamControls};
@@ -86,6 +87,11 @@ pub struct InstrumentNode {
     preview: Option<Arc<MidiPreviewQueue>>,
     /// Voices opened by audition, so a seek or stop does not release them.
     preview_count: [u8; 128],
+    /// Live hardware MIDI input (ADR-022). Independent of transport and of the
+    /// timeline note list, same shape as piano-roll audition.
+    live_input: Option<Arc<MidiLiveInputQueue>>,
+    /// Voices opened by hardware input, so a seek or stop does not release them.
+    live_input_count: [u8; 128],
     device: Box<dyn InstrumentDevice>,
     /// Reused every block — no heap allocation in the RT path.
     event_buf: MidiEventList,
@@ -143,6 +149,35 @@ impl InstrumentNode {
         });
     }
 
+    pub fn set_live_input(&mut self, queue: Arc<MidiLiveInputQueue>) {
+        self.live_input = Some(queue);
+    }
+
+    fn drain_live_input(&mut self, transport: &TransportInfo) {
+        let Some(queue) = self.live_input.clone() else {
+            return;
+        };
+        queue.drain_due(transport.sample_rate, transport.block_size, |message, offset| {
+            let pitch = message.pitch as usize;
+            if message.note_on {
+                self.event_buf.push(MidiEvent {
+                    offset,
+                    kind: MidiEventKind::NoteOn {
+                        pitch: message.pitch,
+                        velocity: message.velocity,
+                    },
+                });
+                self.live_input_count[pitch] = self.live_input_count[pitch].saturating_add(1);
+            } else if self.live_input_count[pitch] > 0 {
+                self.event_buf.push(MidiEvent {
+                    offset,
+                    kind: MidiEventKind::NoteOff { pitch: message.pitch },
+                });
+                self.live_input_count[pitch] -= 1;
+            }
+        });
+    }
+
     pub fn from_publisher(
         id: NodeId,
         notes: Arc<MidiNotePublisher>,
@@ -153,6 +188,8 @@ impl InstrumentNode {
             notes,
             preview: None,
             preview_count: [0u8; 128],
+            live_input: None,
+            live_input_count: [0u8; 128],
             device,
             event_buf: MidiEventList::new(),
             next_expected_block_start: 0,
@@ -303,6 +340,7 @@ impl AudioNode for InstrumentNode {
             }
 
             self.drain_preview();
+            self.drain_live_input(transport);
             self.event_buf.sort_by_offset();
             self.next_expected_block_start = block_end;
         } else {
@@ -313,6 +351,10 @@ impl AudioNode for InstrumentNode {
                 self.release_sounding_notes();
             }
             self.drain_preview();
+            self.drain_live_input(transport);
+            // Live notes carry offsets inside the block, and two keyboards can
+            // interleave, so the events are not in order by construction.
+            self.event_buf.sort_by_offset();
             self.next_expected_block_start = transport.position_samples;
         }
 
@@ -321,7 +363,8 @@ impl AudioNode for InstrumentNode {
         // Notify envelope modulators: gate = any note still sounding this block.
         if !self.envelope_cells.is_empty() {
             let any_active = self.active_pitch_count.iter().any(|&c| c > 0)
-                || self.preview_count.iter().any(|&c| c > 0);
+                || self.preview_count.iter().any(|&c| c > 0)
+                || self.live_input_count.iter().any(|&c| c > 0);
             for cells in &self.envelope_cells {
                 cells.gate.store(any_active, Ordering::Relaxed);
             }
@@ -337,6 +380,7 @@ impl AudioNode for InstrumentNode {
         self.was_playing = false;
         self.active_pitch_count = [0u8; 128];
         self.preview_count = [0u8; 128];
+        self.live_input_count = [0u8; 128];
         // Release envelopes on graph reset so they don't hang in Sustain.
         for cells in &self.envelope_cells {
             cells.gate.store(false, Ordering::Relaxed);
@@ -672,5 +716,32 @@ mod tests {
             )),
             "a placed note must sound even when playback is stopped"
         );
+    }
+
+    /// A hardware note received 2 ms into the period plays 96 samples into
+    /// the block (48 kHz), not at its start — constant latency, no jitter.
+    #[test]
+    fn live_note_lands_at_its_arrival_position_in_the_block() {
+        let captured = Arc::new(Mutex::new(Vec::new()));
+        let mut node = make_node(captured.clone());
+        let clock = Arc::new(crate::audio_graph::midi::LiveInputClock::new());
+        let queue = Arc::new(crate::audio_graph::midi::MidiLiveInputQueue::new(Arc::clone(&clock)));
+        node.set_live_input(Arc::clone(&queue));
+        clock.set_event_window_start(50_000_000);
+        queue.push(crate::audio_graph::midi::MidiLiveInputMessage {
+            note_on: true,
+            pitch: 67,
+            velocity: 80,
+            received_at: 52_000_000,
+        });
+
+        run_block(&mut node, &transport_at(false, 0, 512));
+
+        let events = captured.lock().unwrap();
+        let note_on = events
+            .iter()
+            .find(|e| matches!(e.kind, MidiEventKind::NoteOn { pitch: 67, .. }))
+            .expect("live NoteOn emitted");
+        assert_eq!(note_on.offset, 96);
     }
 }

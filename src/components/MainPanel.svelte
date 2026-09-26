@@ -25,6 +25,8 @@
 	import { get } from 'svelte/store';
 	import { snapPosition, getSnapSubdivisionSec } from '../lib/snapUtils';
 	import { selectedTrack } from '../stores/selectedTrack';
+	import { armedTrackId } from '../stores/armedTrack';
+	import { armTrackForMidiInput } from '../lib/midiBackend';
 	import { leftPanel } from '../stores/leftPanel';
 	import { shouldHandleTimelineShortcuts } from '../frontend/shortcuts/context';
 	import { keyboardFocus } from '../stores/keyboardFocus';
@@ -1252,6 +1254,14 @@
 		soloTrack(track.id, !track.solo).catch(console.error);
 	}
 
+	function handleArmToggle(trackIndex: number) {
+		const track = tracks[trackIndex];
+		if (!track) return;
+		const nextArmed = get(armedTrackId) === track.id ? null : track.id;
+		armedTrackId.set(nextArmed);
+		armTrackForMidiInput(nextArmed).catch(console.error);
+	}
+
 	let showNewTrackPicker = false;
 
 	function handleCreateTrack() {
@@ -1367,6 +1377,7 @@
 				<TrackStrip
 					{track}
 					selected={selectedTrackIndex === trackIndex}
+					armed={$armedTrackId === track.id}
 					color={TRACK_COLORS[trackIndex % TRACK_COLORS.length]}
 					volume={track.volume}
 					bind:pan={tracks[trackIndex].pan}
@@ -1376,6 +1387,7 @@
 					on:contextmenu={(e) => { contextMenu = { x: e.detail.clientX, y: e.detail.clientY, trackId: track.id, trackName: track.name, trackIndex }; }}
 					on:mutetoggle={() => handleMuteToggle(trackIndex)}
 					on:solotoggle={() => handleSoloToggle(trackIndex)}
+					on:armtoggle={() => handleArmToggle(trackIndex)}
 					on:volumechange={(e) => handleVolumeChange(trackIndex, e.detail)}
 					on:volumerelease={(e) => handleVolumeRelease(trackIndex, e.detail)}
 					on:panchange={() => handlePanChange(trackIndex)}

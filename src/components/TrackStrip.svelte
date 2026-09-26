@@ -7,6 +7,7 @@
 
 	export let track: Track;
 	export let selected: boolean = false;
+	export let armed: boolean = false;
 	export let color: string;
 	export let peakL: number = 0;
 	export let peakR: number = 0;
@@ -45,6 +46,7 @@
 		contextmenu: MouseEvent;
 		mutetoggle: void;
 		solotoggle: void;
+		armtoggle: void;
 		volumerelease: number;
 		volumechange: number;
 		panrelease: void;
@@ -106,6 +108,13 @@
 			title="Solo"
 			on:click|stopPropagation={() => dispatch('solotoggle')}
 		>S</button>
+		<button
+			type="button"
+			class="ms-btn ms-btn--arm"
+			class:active={armed}
+			title="Armer pour l'entrée MIDI"
+			on:click|stopPropagation={() => dispatch('armtoggle')}
+		>●</button>
 	</div>
 
 	<div class="track-controls">
@@ -212,6 +221,15 @@
 			background: $accent-color;
 			border-color: $accent-color;
 			color: #fff;
+		}
+	}
+
+	.ms-btn--arm {
+		font-size: 8px;
+
+		&.active {
+			background: #e5484d;
+			border-color: #e5484d;
 		}
 	}
 

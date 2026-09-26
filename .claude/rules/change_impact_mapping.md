@@ -14,6 +14,7 @@ table for step 1 of the sync procedure.
 | `audio_graph/nodes/{eq,compressor,reverb,delay}.rs` (`*_RANGES`), `src/frontend/modulation/targets.ts` | `modulation/modulation-system.md` (depth units + bounds) — keep the TS range table in sync with the Rust one | 019, 021 |
 | `audio_graph/plugin_params.rs`, `plugin_formats/clap/params.rs` | `modulation/modulation-system.md`, `plugins/plugin-wrapper-system.md` | 021 |
 | `audio_graph/midi.rs` | `architecture/audio-graph.md` | 012 |
+| `audio_graph/midi.rs` (live input queue, `LiveInputClock`), `midi_input.rs`, live-clock stamping in `audio_engine/engine.rs` | `architecture/audio-graph.md`, `threading/threading-model.md`, `threading/realtime-safety.md`, `migration/migration_plan.md` (Phase 5f) | 022 |
 | `audio_graph/nodes/{instrument,clap_instrument}.rs` | `architecture/audio-graph.md`, `plugins/plugin-wrapper-system.md` | 013, 014 |
 | `audio_engine/transport.rs` | `threading/realtime-safety.md`, `threading/threading-model.md` | — |
 | `audio_engine/offline.rs`, `render_harness.rs` | `migration/*` (bit-identical C-2), `dsp/dsp-runtime.md` | 019 |

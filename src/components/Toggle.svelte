@@ -11,10 +11,12 @@
 
 <div class="toggle-row" class:disabled>
 	<div class="toggle-info">
-		<span class="toggle-label">{label}</span>
-		{#if description}
-			<span class="toggle-desc">{description}</span>
-		{/if}
+		<slot name="info">
+			<span class="toggle-label">{label}</span>
+			{#if description}
+				<span class="toggle-desc">{description}</span>
+			{/if}
+		</slot>
 	</div>
 	<button
 		class="toggle-switch"

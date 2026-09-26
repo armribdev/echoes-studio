@@ -354,6 +354,78 @@ Achever la séparation DSP/UI : l'UI ne touche plus jamais un état partagé via
 
 ---
 
+## Phase 5f — Entrée MIDI hardware live (ADR-022)
+
+### Objectif
+Jouer en direct sur un instrument via un clavier/contrôleur MIDI matériel.
+Périmètre volontairement restreint : notes uniquement (pas d'enregistrement
+dans un clip, pas de CC/Learn, pas de sortie MIDI, pas de routing par piste —
+une seule piste « armée » globale reçoit tous les devices activés).
+
+### Justification
+`target_architecture.md` §6.5 anticipe cette capacité (`MidiInputNode` +
+capture device → SPSC → audio thread) mais elle n'avait jamais été planifiée
+ici, et aucune lib MIDI n'était présente dans `Cargo.toml`. Livrée hors du
+chemin critique P1→P5d : ne dépend d'aucune autre sous-phase de la Phase 5 et
+ne bloque rien.
+
+### Fichiers impactés
+- `Cargo.toml` — dépendance `midir`.
+- `audio_graph/midi.rs` — `MidiLiveInputMessage` / `MidiLiveInputQueue`
+  (miroir de `MidiPreviewMessage` / `MidiPreviewQueue`).
+- `audio_graph/live_params.rs` — `midi_live_input` map, `live_input_queue` /
+  `push_live_input`.
+- `audio_graph/nodes/instrument.rs` — `live_input` / `set_live_input` /
+  `drain_live_input`, câblé dans `process()` à côté de `drain_preview()`.
+- `audio_graph/compiler.rs::build_node(NodeKind::Instrument)` — wiring de
+  `live_input_queue`.
+- `midi_input.rs` (nouveau) — `MidiInputRegistry` (énumération + connexions
+  `midir`, thread de capture par device).
+- `project.rs::AppState` — `midi_input: Mutex<MidiInputRegistry>`,
+  `armed_track_id: Arc<Mutex<Option<String>>>`.
+- `engine_gateway/api.rs`, `main.rs` — commandes
+  `list_midi_input_devices`, `set_midi_input_enabled`,
+  `arm_track_for_midi_input` (hors `CommandEnvelope`, comme
+  `preview_midi_note`).
+- Frontend : `src/lib/midiBackend.ts`, `src/stores/armedTrack.ts`,
+  section MIDI de `SettingsPanel.svelte`, bouton « Arm » dans
+  `TrackStrip.svelte`.
+
+### Risques RT
+- Thread de capture MIDI (interne à `midir`) : parsing + lecture d'un
+  `Mutex<Option<String>>`, hors thread audio — aucun risque.
+- `InstrumentNode::drain_live_input()` : même forme que `drain_preview()`
+  (ring pré-alloué, pas d'alloc/lock/drop) — RT-safe.
+- Aucun nouveau mutex atteignable depuis `process_block`.
+
+### Compatibilité
+- **C-2** : aucun impact — l'export offline n'ouvre jamais de device MIDI ni
+  ne draine cette queue (même non-interaction que l'audition piano-roll).
+- **C-4** : aucun changement de schéma projet. Piste armée et devices
+  activés sont de l'état de session/préférence, pas `AppProject`.
+
+### Tests obligatoires
+- Unitaires : `MidiLiveInputQueue` push/drain/overflow ;
+  `InstrumentNode::drain_live_input` fusionne les événements matériels dans
+  `event_buf`.
+- `render_harness.rs` (C-2) reste vert — chemin offline non touché.
+- Manuel : brancher un clavier MIDI, l'activer dans Réglages → MIDI, armer
+  une piste, jouer, entendre l'instrument.
+
+### Amendement 2026-09-26
+« Local Control Off » envoyé au port de sortie MIDI du même nom (préférence,
+activée par défaut) pour couper les haut-parleurs d'un piano numérique ;
+rétabli à la désactivation et à la fermeture. Correctif : les claviers
+activés sont rouverts au démarrage (abonnement aux préférences dans
+`routes/+page.svelte`). Détails : amendement d'ADR-022.
+
+### Suites (hors périmètre, notées dans ADR-022)
+Enregistrement des notes capturées dans un clip, MIDI CC/Learn, sortie MIDI
+matérielle générale, routing par piste (plusieurs pistes armées / device →
+piste).
+
+---
+
 ## Phase 6 — Sandboxing (ADR-010, opt-in par device)
 
 ### 6.1 Objectif

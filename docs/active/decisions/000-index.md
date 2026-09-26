@@ -45,13 +45,14 @@ lives there.
 | [019](019-sub-block-modulation.md) | Sub-block deterministic modulation & automation (absolute control grid; amended 2026-09-24: internal-effect bounds, EQ frequencies in octaves) | Modulation / scheduling / determinism |
 | [020](020-disabled-plugins-stay-loaded.md) | Disabled plugin effects stay loaded (`BypassNode`) | Plugins / graph / persistence |
 | [021](021-plugin-parameter-modulation-and-automation.md) | Plugin parameters: automation sets, modulation offsets (amended 2026-09-24: automatable-only CLAP params modulated by value) | Plugins / modulation |
+| [022](022-live-midi-hardware-input.md) | Live hardware MIDI input via queue-injection (`midir`, armed track as ephemeral state; amended 2026-09-26: Local Control Off, startup reconnection, live hotplug detection, timestamped jitter-free placement, multi-producer queue) | Graph / MIDI / threading |
 
 ---
 
 ## By theme
 
-- **Graph / DSP core:** 001, 011, 012, 018, 020
-- **Threading / RT safety:** 004, 007, 008, 016
+- **Graph / DSP core:** 001, 011, 012, 018, 020, 022
+- **Threading / RT safety:** 004, 007, 008, 016, 022
 - **State / persistence:** 002, 010, 017, 018, 020
 - **Architecture boundary:** 005, 017
 - **Plugins:** 003, 006, 007, 008, 010, 013, 014, 015, 016, 017, 020, 021

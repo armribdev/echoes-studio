@@ -114,6 +114,14 @@ Placing or moving a note in the piano roll also pushes a short audition
 instrument plays it even when the transport is stopped. Offline export does
 not attach the queue, so a render stays independent of audition.
 
+Hardware MIDI input (ADR-022) uses the same queue-injection shape, on a
+second, dedicated queue: a MIDI capture thread (owned by `midir`, one per
+enabled device) pushes note events for the currently armed track, and
+`InstrumentNode` drains them every block alongside the audition queue. This
+is independent of `PortKind::Midi` graph edges, which the compiler still
+rejects (Phase 5c, plugin instruments) — live hardware input never goes
+through the graph/edge model at all.
+
 ```
 AppProject (editor state)
     │

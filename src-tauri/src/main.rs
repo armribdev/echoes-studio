@@ -4,14 +4,15 @@ mod audio_graph;
 mod audio_settings;
 mod engine_gateway;
 mod menu_state;
+mod midi_input;
 mod plugin_formats;
 mod plugin_system;
 mod project;
 mod windows_theme;
 
 use engine_gateway::api::{
-    get_graph_snapshot, get_snapshot, preview_midi_note, redo, send_batch, send_command, set_track_mix,
-    undo,
+    arm_track_for_midi_input, get_graph_snapshot, get_snapshot, preview_midi_note, redo, send_batch,
+    send_command, set_track_mix, undo,
 };
 use project::{AppProject, AppState, ProjectDto, ProjectFile, ProjectUiLayout};
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
@@ -32,6 +33,7 @@ fn main() {
             // non-fatal: the app continues and offline export still works
             // (it drives the graph directly, without needing the live stream).
             start_native_audio(app);
+            midi_input::spawn_hotplug_watcher(app.handle().clone());
             watch_plugin_edits(app.handle().clone());
 
             let mut initial_title = "Sans titre".to_string();
@@ -209,6 +211,10 @@ fn main() {
             send_batch,
             set_track_mix,
             preview_midi_note,
+            list_midi_input_devices,
+            set_midi_input_enabled,
+            set_midi_local_control_off,
+            arm_track_for_midi_input,
             get_snapshot,
             get_graph_snapshot,
             undo,
@@ -229,9 +235,13 @@ fn main() {
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
-        .run(|_, event| {
+        .run(|app, event| {
             if let tauri::RunEvent::Exit = event {
                 plugin_system::crash_marker::mark_clean_exit();
+                // Otherwise a digital piano stays mute until it is power-cycled.
+                if let Ok(mut registry) = app.state::<AppState>().midi_input.lock() {
+                    registry.restore_all();
+                }
             }
         });
 }
@@ -1054,6 +1064,42 @@ fn start_native_audio(app: &mut tauri::App) {
     };
 }
 
+
+/// List currently visible hardware MIDI input devices (ADR-022).
+#[tauri::command]
+fn list_midi_input_devices(
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<midi_input::MidiInputDeviceInfo>, String> {
+    let registry = state.midi_input.lock().map_err(|_| "MIDI registry lock poisoned")?;
+    Ok(registry.list_devices())
+}
+
+/// Enable or disable hardware MIDI input for a device (ADR-022). Enabling
+/// opens a `midir` connection whose capture thread pushes note events into
+/// whichever track is currently armed.
+#[tauri::command]
+fn set_midi_input_enabled(
+    device_id: String,
+    enabled: bool,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    let mut registry = state.midi_input.lock().map_err(|_| "MIDI registry lock poisoned")?;
+    registry.set_enabled(
+        &device_id,
+        enabled,
+        std::sync::Arc::clone(&state.live_params),
+        std::sync::Arc::clone(&state.armed_track_id),
+    )
+}
+
+/// Silence (or give back) the enabled keyboards' own sound via MIDI Local
+/// Control (ADR-022 amendment).
+#[tauri::command]
+fn set_midi_local_control_off(off: bool, state: tauri::State<'_, AppState>) -> Result<(), String> {
+    let mut registry = state.midi_input.lock().map_err(|_| "MIDI registry lock poisoned")?;
+    registry.set_local_control_off(off);
+    Ok(())
+}
 
 /// Return available input and output audio devices.
 /// `"default"` always resolves to the system default device.
