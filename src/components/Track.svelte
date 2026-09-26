@@ -16,7 +16,7 @@
 		clipdragstart: { offsetPx: number; trackIndex: number; clipIndex: number };
 		clipresizestart: { edge: 'left' | 'right'; clientX: number; trackIndex: number; clipIndex: number };
 		clipcontextmenu: { id: string; trackIndex: number; x: number; y: number };
-		midiclip_dragstart: { offsetPx: number; trackIndex: number; clipId: string };
+		midiclip_dragstart: { offsetPx: number; trackIndex: number; clipId: string; duplicate: boolean };
 		midiclip_resizestart: { edge: 'left' | 'right'; clientX: number; trackIndex: number; clipId: string };
 		midiclip_contextmenu: { id: string; trackIndex: number; x: number; y: number };
 		midiclip_dblclick: { id: string; trackIndex: number };

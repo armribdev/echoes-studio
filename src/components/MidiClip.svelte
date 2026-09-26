@@ -14,7 +14,7 @@
 	export let bpm: number = 120;
 
 	const dispatch = createEventDispatcher<{
-		midiclip_dragstart: { offsetPx: number };
+		midiclip_dragstart: { offsetPx: number; duplicate: boolean };
 		midiclip_resizestart: { edge: 'left' | 'right'; clientX: number };
 		midiclip_contextmenu: { id: string; x: number; y: number };
 		midiclip_dblclick: { id: string };
@@ -110,7 +110,7 @@
 		dispatch('midiclip_activate', { id });
 
 		const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-		dispatch('midiclip_dragstart', { offsetPx: e.clientX - rect.left });
+		dispatch('midiclip_dragstart', { offsetPx: e.clientX - rect.left, duplicate: e.altKey });
 	}
 
 	function onResizeHandleDown(edge: 'left' | 'right', e: MouseEvent) {

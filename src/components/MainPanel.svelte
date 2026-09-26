@@ -935,13 +935,35 @@
 		}
 	}
 
-	function onMidiClipDragStart(e: CustomEvent<{ offsetPx: number; trackIndex: number; clipId: string }>) {
-		const { trackIndex, clipId, offsetPx } = e.detail;
+	async function onMidiClipDragStart(
+		e: CustomEvent<{ offsetPx: number; trackIndex: number; clipId: string; duplicate: boolean }>,
+	) {
+		const { trackIndex, clipId, offsetPx, duplicate } = e.detail;
 		selectTrackIndex(trackIndex);
 		const track = tracks[trackIndex];
 		const clip = track?.midi_clips?.find((c) => c.id === clipId);
 		if (!clip) return;
-		midiDragging = { origTrackIndex: trackIndex, trackIndex, clipId, offsetPx, origStart: clip.start, origEnd: clip.end };
+
+		let draggedClipId = clipId;
+		if (duplicate) {
+			const result = await addMidiClip(track.id, clip.start, clip.end, {
+				offset: clip.offset ?? 0,
+				notes: clip.notes.map((n) => ({ ...n })),
+			});
+			const newId = clipIdFromResult(result);
+			if (!newId) return;
+			draggedClipId = newId;
+			selection.setSingle(newId);
+		}
+
+		midiDragging = {
+			origTrackIndex: trackIndex,
+			trackIndex,
+			clipId: draggedClipId,
+			offsetPx,
+			origStart: clip.start,
+			origEnd: clip.end,
+		};
 		window.addEventListener('mousemove', onMidiDragMove);
 		window.addEventListener('mouseup', onMidiDragEnd);
 	}
