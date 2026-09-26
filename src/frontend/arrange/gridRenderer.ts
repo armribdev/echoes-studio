@@ -12,7 +12,7 @@ export interface ArrangeGridDrawParams {
 	gridBeats: number;
 }
 
-const MIN_SUBDIV_PX = 8;
+const MIN_SUBDIV_PX = 16;
 
 function visibleSubdivision(pxPerBeat: number, gridBeats: number): number {
 	const candidates = [gridBeats, 0.5, 1, 2, 4];
@@ -31,7 +31,7 @@ export function drawArrangeGrid(p: ArrangeGridDrawParams): void {
 
 	const beatsPerMeasure = numerator || 4;
 	const subdiv = visibleSubdivision(pxPerBeat, gridBeats);
-	const showBeats = pxPerBeat >= 6;
+	const showBeats = pxPerBeat >= MIN_SUBDIV_PX;
 	const pxPerBeatDev = pxPerBeat * dpr;
 	// ~1 CSS px, centré sur la grille device (pair → entier, impair → .5).
 	const lineWidth = Math.max(1, Math.round(dpr));

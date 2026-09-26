@@ -47,7 +47,7 @@ export function computeRulerTicks(options: ComputeRulerTicksOptions): RulerTicks
 	let barLabelEvery = 1;
 	while (barLabelEvery * pxPerBar < 40 && barLabelEvery < 4096) barLabelEvery *= 2;
 
-	const showBeatLabels = barLabelEvery === 1 && pxPerBeat >= 20;
+	const showBeatLabels = barLabelEvery === 1 && pxPerBeat >= 32;
 
 	const inView = (x: number) =>
 		viewportWidthPx == null || (x >= viewMin && x <= viewMax);
@@ -61,11 +61,11 @@ export function computeRulerTicks(options: ComputeRulerTicksOptions): RulerTicks
 
 		if ((bar - 1) % barLabelEvery === 0) {
 			if (inView(barX)) major.push({ x: barX, label: `${bar}` });
-		} else if (pxPerBar >= 10 && inView(barX)) {
+		} else if (pxPerBar >= 16 && inView(barX)) {
 			minor.push({ x: barX });
 		}
 
-		if (pxPerBeat >= 6) {
+		if (pxPerBeat >= 16) {
 			for (let beatNum = 2; beatNum <= numerator; beatNum++) {
 				const beatX = (barBeat + beatNum - 1) * pxPerBeat;
 				if (!inView(beatX)) continue;
