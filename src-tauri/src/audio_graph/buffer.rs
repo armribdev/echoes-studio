@@ -161,3 +161,116 @@ impl std::fmt::Debug for AudioBuffer {
         )
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn new_buffer_is_zeroed() {
+        let buf = AudioBuffer::new(2, 4);
+        assert!(buf.is_silent());
+        assert_eq!(buf.channel(0), &[0.0, 0.0, 0.0, 0.0]);
+        assert_eq!(buf.channel(1), &[0.0, 0.0, 0.0, 0.0]);
+    }
+
+    #[test]
+    fn channels_are_independent_planar_slices() {
+        let mut buf = AudioBuffer::new(2, 3);
+        buf.channel_mut(0).copy_from_slice(&[1.0, 2.0, 3.0]);
+        buf.channel_mut(1).copy_from_slice(&[4.0, 5.0, 6.0]);
+        assert_eq!(buf.channel(0), &[1.0, 2.0, 3.0]);
+        assert_eq!(buf.channel(1), &[4.0, 5.0, 6.0]);
+    }
+
+    #[test]
+    fn two_channels_mut_writes_correctly_regardless_of_argument_order() {
+        // (0, 1) and (1, 0) exercise the two different split_at_mut branches;
+        // both must land on the same physical channel.
+        let mut buf = AudioBuffer::new(2, 2);
+        {
+            let (a, b) = buf.two_channels_mut(0, 1);
+            a.copy_from_slice(&[1.0, 2.0]);
+            b.copy_from_slice(&[3.0, 4.0]);
+        }
+        assert_eq!(buf.channel(0), &[1.0, 2.0]);
+        assert_eq!(buf.channel(1), &[3.0, 4.0]);
+
+        let mut buf = AudioBuffer::new(2, 2);
+        {
+            let (b, a) = buf.two_channels_mut(1, 0);
+            b.copy_from_slice(&[3.0, 4.0]);
+            a.copy_from_slice(&[1.0, 2.0]);
+        }
+        assert_eq!(buf.channel(0), &[1.0, 2.0]);
+        assert_eq!(buf.channel(1), &[3.0, 4.0]);
+    }
+
+    #[test]
+    #[should_panic(expected = "must differ")]
+    fn two_channels_mut_rejects_same_index() {
+        let mut buf = AudioBuffer::new(2, 2);
+        buf.two_channels_mut(0, 0);
+    }
+
+    #[test]
+    fn clear_zeroes_all_samples() {
+        let mut buf = AudioBuffer::new(2, 2);
+        buf.channel_mut(0).copy_from_slice(&[1.0, 2.0]);
+        buf.channel_mut(1).copy_from_slice(&[3.0, 4.0]);
+        buf.clear();
+        assert!(buf.is_silent());
+    }
+
+    #[test]
+    fn copy_from_duplicates_contents() {
+        let mut src = AudioBuffer::new(1, 3);
+        src.channel_mut(0).copy_from_slice(&[1.0, -1.0, 0.5]);
+        let mut dst = AudioBuffer::new(1, 3);
+        dst.copy_from(&src);
+        assert_eq!(dst.channel(0), src.channel(0));
+    }
+
+    #[test]
+    fn mix_from_accumulates_scaled_signal() {
+        let mut dst = AudioBuffer::new(1, 2);
+        dst.channel_mut(0).copy_from_slice(&[1.0, 1.0]);
+        let mut src = AudioBuffer::new(1, 2);
+        src.channel_mut(0).copy_from_slice(&[2.0, -2.0]);
+        dst.mix_from(&src, 0.5);
+        assert_eq!(dst.channel(0), &[2.0, 0.0]);
+    }
+
+    #[test]
+    fn apply_gain_scales_every_sample() {
+        let mut buf = AudioBuffer::new(1, 3);
+        buf.channel_mut(0).copy_from_slice(&[1.0, 2.0, -3.0]);
+        buf.apply_gain(2.0);
+        assert_eq!(buf.channel(0), &[2.0, 4.0, -6.0]);
+    }
+
+    #[test]
+    fn mono_to_all_channels_broadcasts_channel_zero() {
+        let mut buf = AudioBuffer::new(3, 2);
+        buf.channel_mut(0).copy_from_slice(&[1.0, -1.0]);
+        buf.mono_to_all_channels();
+        assert_eq!(buf.channel(1), &[1.0, -1.0]);
+        assert_eq!(buf.channel(2), &[1.0, -1.0]);
+    }
+
+    #[test]
+    fn mono_to_all_channels_is_noop_for_single_channel() {
+        let mut buf = AudioBuffer::new(1, 2);
+        buf.channel_mut(0).copy_from_slice(&[1.0, -1.0]);
+        buf.mono_to_all_channels();
+        assert_eq!(buf.channel(0), &[1.0, -1.0]);
+    }
+
+    #[test]
+    fn is_silent_detects_any_nonzero_sample() {
+        let mut buf = AudioBuffer::new(1, 2);
+        assert!(buf.is_silent());
+        buf.channel_mut(0)[1] = f32::EPSILON;
+        assert!(!buf.is_silent());
+    }
+}

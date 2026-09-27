@@ -56,3 +56,45 @@ impl AudioNode for SendNode {
 
     fn reset(&mut self) {}
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::audio_graph::node::{NodeId, TimeSignature};
+
+    fn transport(frames: usize) -> TransportInfo {
+        TransportInfo {
+            is_playing: true,
+            position_samples: 0,
+            position_seconds: 0.0,
+            bpm: 120.0,
+            time_signature: TimeSignature::default(),
+            sample_rate: 48_000.0,
+            block_size: frames,
+        }
+    }
+
+    #[test]
+    fn scales_signal_by_send_gain() {
+        let mut node = SendNode::new(NodeId(1), 0.25);
+        let mut input = AudioBuffer::new(1, 3);
+        input.channel_mut(0).copy_from_slice(&[1.0, -2.0, 4.0]);
+        let mut output = [AudioBuffer::new(1, 3)];
+
+        node.process(&[&input], &mut output, &transport(3));
+
+        assert_eq!(output[0].channel(0), &[0.25, -0.5, 1.0]);
+    }
+
+    #[test]
+    fn zero_gain_produces_silence() {
+        let mut node = SendNode::new(NodeId(1), 0.0);
+        let mut input = AudioBuffer::new(1, 2);
+        input.channel_mut(0).copy_from_slice(&[1.0, 1.0]);
+        let mut output = [AudioBuffer::new(1, 2)];
+
+        node.process(&[&input], &mut output, &transport(2));
+
+        assert!(output[0].is_silent());
+    }
+}

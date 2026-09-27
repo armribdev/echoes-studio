@@ -61,3 +61,53 @@ impl AudioNode for BusNode {
 
     fn reset(&mut self) {}
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::audio_graph::node::{NodeId, TimeSignature};
+
+    fn transport(frames: usize) -> TransportInfo {
+        TransportInfo {
+            is_playing: true,
+            position_samples: 0,
+            position_seconds: 0.0,
+            bpm: 120.0,
+            time_signature: TimeSignature::default(),
+            sample_rate: 48_000.0,
+            block_size: frames,
+        }
+    }
+
+    #[test]
+    fn sums_all_connected_inputs_at_unity_gain() {
+        let mut node = BusNode::new(NodeId(1), 2);
+        let mut a = AudioBuffer::new(1, 3);
+        a.channel_mut(0).copy_from_slice(&[1.0, 2.0, 3.0]);
+        let mut b = AudioBuffer::new(1, 3);
+        b.channel_mut(0).copy_from_slice(&[0.5, 0.5, 0.5]);
+        let mut output = [AudioBuffer::new(1, 3)];
+
+        node.process(&[&a, &b], &mut output, &transport(3));
+
+        assert_eq!(output[0].channel(0), &[1.5, 2.5, 3.5]);
+    }
+
+    #[test]
+    fn clears_output_before_summing_so_stale_samples_do_not_leak() {
+        let mut node = BusNode::new(NodeId(1), 1);
+        let input = AudioBuffer::new(1, 2);
+        let mut output = [AudioBuffer::new(1, 2)];
+        output[0].channel_mut(0).copy_from_slice(&[9.0, 9.0]);
+
+        node.process(&[&input], &mut output, &transport(2));
+
+        assert_eq!(output[0].channel(0), &[0.0, 0.0]);
+    }
+
+    #[test]
+    fn num_inputs_is_never_zero() {
+        let node = BusNode::new(NodeId(1), 0);
+        assert_eq!(node.num_input_ports(), 1);
+    }
+}

@@ -71,3 +71,42 @@ pub fn enable_flush_to_zero() {
 /// (≈ −500 dBFS) but large enough to dominate denormals (which start at
 /// ≈ 1.18e-38).
 pub const ANTI_DENORMAL: f32 = 1.0e-25;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[allow(clippy::assertions_on_constants)] // regression guard on the literal value itself
+    fn anti_denormal_bias_is_inaudible_but_above_the_denormal_floor() {
+        // Must dominate the largest sub-normal (~1.18e-38) while staying far
+        // below anything a listener could perceive.
+        assert!(ANTI_DENORMAL > 1.0e-38);
+        assert!(ANTI_DENORMAL < 1.0e-10);
+    }
+
+    #[test]
+    #[cfg(target_arch = "x86_64")]
+    fn enable_flush_to_zero_sets_ftz_and_daz_bits() {
+        #[allow(deprecated)]
+        use std::arch::x86_64::_mm_getcsr;
+
+        enable_flush_to_zero();
+
+        #[allow(deprecated)]
+        let mxcsr = unsafe { _mm_getcsr() };
+        const FTZ: u32 = 1 << 15;
+        const DAZ: u32 = 1 << 6;
+        assert_eq!(mxcsr & FTZ, FTZ, "FTZ bit not set");
+        assert_eq!(mxcsr & DAZ, DAZ, "DAZ bit not set");
+    }
+
+    #[test]
+    fn enable_flush_to_zero_is_idempotent() {
+        // Calling it repeatedly (as every audio callback does) must not panic
+        // or toggle any bit back off.
+        enable_flush_to_zero();
+        enable_flush_to_zero();
+        enable_flush_to_zero();
+    }
+}

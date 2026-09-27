@@ -141,3 +141,71 @@ pub enum ModulatorKind {
     /// Amplitude follower — converts an audio signal's RMS/Peak level to 0..1.
     AudioFollower,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn route(source_node: u64, target_node: u64, param: &str) -> ModulationRoute {
+        ModulationRoute {
+            source: ModulationSource { node: NodeId(source_node), port: 0 },
+            target: ModulationTarget {
+                param: ParamId::new(NodeId(target_node), param),
+                depth: 1.0,
+            },
+            route_id: None,
+        }
+    }
+
+    #[test]
+    fn new_map_is_empty() {
+        let map = ModulationMap::new();
+        assert!(map.is_empty());
+        assert_eq!(map.len(), 0);
+    }
+
+    #[test]
+    fn routes_from_filters_by_source_node() {
+        let mut map = ModulationMap::new();
+        map.add_route(route(1, 10, "gain"));
+        map.add_route(route(2, 10, "gain"));
+
+        let from_one: Vec<_> = map.routes_from(NodeId(1)).collect();
+        assert_eq!(from_one.len(), 1);
+        assert_eq!(from_one[0].source.node, NodeId(1));
+    }
+
+    #[test]
+    fn routes_to_filters_by_exact_param_id() {
+        let mut map = ModulationMap::new();
+        map.add_route(route(1, 10, "gain"));
+        map.add_route(route(1, 10, "pan"));
+
+        let gain_param = ParamId::new(NodeId(10), "gain");
+        let to_gain: Vec<_> = map.routes_to(&gain_param).collect();
+        assert_eq!(to_gain.len(), 1);
+        assert_eq!(to_gain[0].target.param.name, "gain");
+    }
+
+    #[test]
+    fn routes_targeting_node_ignores_param_name() {
+        let mut map = ModulationMap::new();
+        map.add_route(route(1, 10, "gain"));
+        map.add_route(route(1, 10, "pan"));
+        map.add_route(route(1, 20, "gain"));
+
+        let targeting_ten: Vec<_> = map.routes_targeting_node(NodeId(10)).collect();
+        assert_eq!(targeting_ten.len(), 2);
+    }
+
+    #[test]
+    fn add_route_grows_len_and_all_routes() {
+        let mut map = ModulationMap::new();
+        map.add_route(route(1, 10, "gain"));
+        map.add_route(route(2, 20, "cutoff"));
+
+        assert_eq!(map.len(), 2);
+        assert!(!map.is_empty());
+        assert_eq!(map.all_routes().len(), 2);
+    }
+}

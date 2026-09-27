@@ -99,3 +99,76 @@ impl AudioNode for PanNode {
 
     fn reset(&mut self) {}
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::audio_graph::node::{NodeId, TimeSignature};
+
+    fn transport(frames: usize) -> TransportInfo {
+        TransportInfo {
+            is_playing: true,
+            position_samples: 0,
+            position_seconds: 0.0,
+            bpm: 120.0,
+            time_signature: TimeSignature::default(),
+            sample_rate: 48_000.0,
+            block_size: frames,
+        }
+    }
+
+    fn stereo_from_mono(frames: usize, node: &mut PanNode) -> (Vec<f32>, Vec<f32>) {
+        let mut input = AudioBuffer::new(1, frames);
+        input.channel_mut(0).fill(1.0);
+        let mut output = [AudioBuffer::new(2, frames)];
+        node.process(&[&input], &mut output, &transport(frames));
+        (output[0].channel(0).to_vec(), output[0].channel(1).to_vec())
+    }
+
+    #[test]
+    fn centre_pan_is_equal_power_both_sides() {
+        let mut node = PanNode::new(NodeId(1), 0.0);
+        let (left, right) = stereo_from_mono(4, &mut node);
+        let expected = std::f32::consts::FRAC_1_SQRT_2;
+        for &s in &left {
+            assert!((s - expected).abs() < 1e-6, "left {s} != {expected}");
+        }
+        for &s in &right {
+            assert!((s - expected).abs() < 1e-6, "right {s} != {expected}");
+        }
+    }
+
+    #[test]
+    fn hard_left_silences_right_channel() {
+        let mut node = PanNode::new(NodeId(1), -1.0);
+        let (left, right) = stereo_from_mono(4, &mut node);
+        assert!(left.iter().all(|&s| (s - 1.0).abs() < 1e-6));
+        assert!(right.iter().all(|&s| s.abs() < 1e-6));
+    }
+
+    #[test]
+    fn hard_right_silences_left_channel() {
+        let mut node = PanNode::new(NodeId(1), 1.0);
+        let (left, right) = stereo_from_mono(4, &mut node);
+        assert!(left.iter().all(|&s| s.abs() < 1e-6));
+        assert!(right.iter().all(|&s| (s - 1.0).abs() < 1e-6));
+    }
+
+    #[test]
+    fn position_is_clamped_to_valid_range() {
+        let node = PanNode::new(NodeId(1), 5.0);
+        assert_eq!(node.position(), PAN_POSITION_MAX);
+        let node = PanNode::new(NodeId(1), -5.0);
+        assert_eq!(node.position(), PAN_POSITION_MIN);
+    }
+
+    #[test]
+    fn mono_output_passes_input_through_unpanned() {
+        let mut node = PanNode::new(NodeId(1), -1.0);
+        let mut input = AudioBuffer::new(1, 3);
+        input.channel_mut(0).copy_from_slice(&[1.0, 2.0, 3.0]);
+        let mut output = [AudioBuffer::new(1, 3)];
+        node.process(&[&input], &mut output, &transport(3));
+        assert_eq!(output[0].channel(0), &[1.0, 2.0, 3.0]);
+    }
+}

@@ -133,3 +133,77 @@ impl ExecutionPlanBuilder {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn step(node_id: u64, input_connections: Vec<Option<InputConnection>>, num_outputs: usize) -> ExecutionStep {
+        ExecutionStep {
+            node_id: NodeId(node_id),
+            input_connections,
+            num_outputs,
+        }
+    }
+
+    #[test]
+    fn empty_plan_has_no_master_step_and_zero_latency() {
+        let plan = ExecutionPlan::empty(48_000.0);
+        assert_eq!(plan.master_step(), None);
+        assert_eq!(plan.total_latency_samples(), 0);
+        assert_eq!(plan.total_output_slots(), 0);
+        assert_eq!(plan.max_input_ports(), 0);
+    }
+
+    #[test]
+    fn master_step_is_the_last_step_index() {
+        let mut builder = ExecutionPlanBuilder::new(48_000.0, 512, 2);
+        builder.push_step(step(1, vec![None], 1));
+        builder.push_step(step(2, vec![Some(InputConnection { src_step: 0, src_port: 0, delay_samples: 0 })], 1));
+        let plan = builder.build();
+
+        assert_eq!(plan.master_step(), Some(1));
+    }
+
+    #[test]
+    fn total_output_slots_counts_at_least_one_per_step() {
+        let mut builder = ExecutionPlanBuilder::new(48_000.0, 512, 2);
+        builder.push_step(step(1, vec![None], 0));
+        builder.push_step(step(2, vec![None], 3));
+        let plan = builder.build();
+
+        // Step 1 declares 0 outputs but still occupies at least one output slot.
+        assert_eq!(plan.total_output_slots(), 1 + 3);
+    }
+
+    #[test]
+    fn max_input_ports_is_the_widest_step() {
+        let mut builder = ExecutionPlanBuilder::new(48_000.0, 512, 2);
+        builder.push_step(step(1, vec![None], 1));
+        builder.push_step(step(2, vec![None, None, None], 1));
+        let plan = builder.build();
+
+        assert_eq!(plan.max_input_ports(), 3);
+    }
+
+    #[test]
+    fn total_latency_samples_reads_the_master_steps_cumulative_latency() {
+        let mut builder = ExecutionPlanBuilder::new(48_000.0, 512, 2);
+        builder.push_step(step(1, vec![None], 1));
+        builder.push_step(step(2, vec![None], 1));
+        let mut plan = builder.build();
+        plan.step_cumulative_latency = vec![64, 128];
+
+        assert_eq!(plan.total_latency_samples(), 128);
+    }
+
+    #[test]
+    fn build_preserves_sample_rate_and_block_config() {
+        let builder = ExecutionPlanBuilder::new(44_100.0, 256, 1);
+        let plan = builder.build();
+
+        assert_eq!(plan.sample_rate, 44_100.0);
+        assert_eq!(plan.max_block_size, 256);
+        assert_eq!(plan.num_channels, 1);
+    }
+}
