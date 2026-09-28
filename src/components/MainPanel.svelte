@@ -53,9 +53,12 @@
 		arrangeTrackIndexFromY,
 		arrangeMaxBarsHeld,
 		arrangeMinLogScale,
+		arrangeViewportExpandToRange,
 		arrangeVisibleMaxBars,
 		clipsInArrangeSelbox,
+		easeOutCubic,
 		isNewArrangeTrackRow,
+		maxClipEndSec,
 		trackIndexFromArrangeY,
 	} from '../frontend/arrangeInteraction';
 	import { ev, isEngineEvent, type TrackCreatedPayload } from '../shared/protocol/events';
@@ -216,6 +219,8 @@
 
 		if (tracks.length > 0) selectTrackIndex(0);
 
+		cancelArrangeViewAnim();
+		importFitSignature.clear();
 		pendingArrangeFitZoom = true;
 		await tick();
 		requestAnimationFrame(() => tryPendingArrangeFitZoom());
@@ -371,10 +376,20 @@
 	});
 
 	$: pxPerBeat = (60 / $tempo.bpm) * scale;
-	$: liveArrangeMaxBars = arrangeVisibleMaxBars(tracks, $tempo.bpm, $tempo.numerator);
+	$: pendingImportEndsSec = $pendingImports.map((p) => p.end);
+	$: liveArrangeMaxBars = arrangeVisibleMaxBars(
+		tracks,
+		$tempo.bpm,
+		$tempo.numerator,
+		pendingImportEndsSec,
+	);
 	$: arrangeMaxBars = arrangeMaxBarsHeld(liveArrangeMaxBars, arrangeMaxBarsHold);
 	$: arrangeTotalBeats = arrangeMaxBars * $tempo.numerator;
 	$: arrangeContentWidthPx = arrangeTotalBeats * pxPerBeat;
+	$: arrangeTimelineEndSec = (arrangeMaxBars * $tempo.numerator * 60) / $tempo.bpm;
+	$: $pendingImports, arrangeTimelineEndSec, tracksEl, void tick().then(() => {
+		followImportsIntoView($pendingImports, arrangeTimelineEndSec);
+	});
 	// While repeat-dragging past the current arrangement end, the scrollable area must
 	// grow ahead of the (not-yet-committed) ghost preview, or auto-scroll hits a wall.
 	$: repeatGhostEdgePx = repeating
@@ -612,8 +627,126 @@
 		tracksScrollLeft = 0;
 	}
 
+	const ARRANGE_IMPORT_FIT_MS = 280;
+	/** Dernière plage déjà traitée par import (évite de rejouer l'anim à chaque tick). */
+	const importFitSignature = new Map<string, string>();
+	let arrangeViewAnimRaf = 0;
+
+	function cancelArrangeViewAnim() {
+		if (arrangeViewAnimRaf) {
+			cancelAnimationFrame(arrangeViewAnimRaf);
+			arrangeViewAnimRaf = 0;
+		}
+	}
+
+	function applyArrangeView(nextScale: number, nextScrollLeft: number) {
+		logScale = Math.log(Math.max(nextScale, 1e-9));
+		void tick().then(() => {
+			if (!tracksEl) return;
+			tracksEl.scrollLeft = nextScrollLeft;
+			tracksScrollLeft = nextScrollLeft;
+			updateArrangeScrollbars();
+		});
+	}
+
+	function animateArrangeView(toScale: number, toScrollLeft: number) {
+		if (!tracksEl || tracksEl.clientWidth <= 0) return;
+		cancelArrangeViewAnim();
+
+		const fromScale = scale;
+		const fromScrollLeft = tracksScrollLeft;
+		const fromStart = fromScrollLeft / fromScale;
+		const fromEnd = (fromScrollLeft + tracksEl.clientWidth) / fromScale;
+		const toStart = toScrollLeft / toScale;
+		const toEnd = (toScrollLeft + tracksEl.clientWidth) / toScale;
+		const vpW = tracksEl.clientWidth;
+		const t0 = performance.now();
+
+		const step = (now: number) => {
+			if (!tracksEl) {
+				arrangeViewAnimRaf = 0;
+				return;
+			}
+			const t = easeOutCubic((now - t0) / ARRANGE_IMPORT_FIT_MS);
+			const left = fromStart + (toStart - fromStart) * t;
+			const right = fromEnd + (toEnd - fromEnd) * t;
+			const span = Math.max(right - left, 1e-9);
+			const nextScale = Math.max(Math.exp(arrangeLogScaleFloor()), vpW / span);
+			const nextScroll = Math.max(0, left * nextScale);
+			logScale = Math.log(nextScale);
+			tracksEl.scrollLeft = nextScroll;
+			tracksScrollLeft = nextScroll;
+			updateArrangeScrollbars();
+			if (t < 1) {
+				arrangeViewAnimRaf = requestAnimationFrame(step);
+			} else {
+				arrangeViewAnimRaf = 0;
+				applyArrangeView(toScale, toScrollLeft);
+			}
+		};
+		arrangeViewAnimRaf = requestAnimationFrame(step);
+	}
+
+	function followImportsIntoView(
+		pendings: { id: string; start: number; end: number; settled?: boolean }[],
+		timelineEndSec: number,
+	) {
+		if (!tracksEl || tracksEl.clientWidth <= 0) return;
+		if (
+			pendingArrangeFitZoom ||
+			dragging ||
+			midiDragging ||
+			resizing ||
+			repeating ||
+			arrangeMaxBarsHold != null
+		) {
+			return;
+		}
+
+		const liveIds = new Set(pendings.map((p) => p.id));
+		for (const id of [...importFitSignature.keys()]) {
+			if (!liveIds.has(id)) importFitSignature.delete(id);
+		}
+
+		const viewStartSec = tracksScrollLeft / scale;
+		const viewEndSec = (tracksScrollLeft + tracksEl.clientWidth) / scale;
+		const minScale = Math.exp(arrangeLogScaleFloor());
+		const contentEnd = Math.max(
+			maxClipEndSec(tracks),
+			...pendings.map((p) => p.end),
+			0,
+		);
+
+		for (const pending of pendings) {
+			const sig = `${pending.start.toFixed(4)}:${pending.end.toFixed(4)}`;
+			if (importFitSignature.get(pending.id) === sig) continue;
+			importFitSignature.set(pending.id, sig);
+
+			// Import qui allonge le projet : inclure le padding timeline (+4 mesures).
+			const fitEnd =
+				pending.end >= contentEnd - 1e-3 ? Math.max(pending.end, timelineEndSec) : pending.end;
+
+			const next = arrangeViewportExpandToRange({
+				rangeStartSec: pending.start,
+				rangeEndSec: fitEnd,
+				viewStartSec,
+				viewEndSec,
+				viewportWidthPx: tracksEl.clientWidth,
+				currentScale: scale,
+				minScale,
+			});
+			if (!next) continue;
+
+			animateArrangeView(next.scale, next.scrollLeft);
+			return;
+		}
+	}
+
+	onDestroy(cancelArrangeViewAnim);
+
 	function onArrangeHScrollChange(e: CustomEvent<{ start: number; end: number; cause: string }>) {
 		if (!tracksEl) return;
+		cancelArrangeViewAnim();
 		const { start: ns, end: ne, cause } = e.detail;
 		const totalBeats = arrangeTotalBeats;
 		const vpW = tracksEl.clientWidth;
@@ -1710,6 +1843,7 @@
 	function handleTracksWheel(e: WheelEvent) {
 		if (e.ctrlKey || e.altKey) {
 			e.preventDefault();
+			cancelArrangeViewAnim();
 			const delta = e.deltaY < 0 ? ZOOM_STEP : -ZOOM_STEP;
 			const next = clampArrangeLogScale(logScale + delta);
 			if (next <= arrangeLogScaleFloor() + 1e-9 && tracksEl) {

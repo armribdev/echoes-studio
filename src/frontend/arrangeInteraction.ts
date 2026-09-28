@@ -35,7 +35,8 @@ export function isNewArrangeTrackRow(trackIndex: number, trackCount: number): bo
 const ARRANGE_MIN_VISIBLE_BARS = 8;
 const ARRANGE_VISIBLE_BARS_AFTER_LAST_CLIP = 4;
 
-function maxClipEndSec(tracks: Track[]): number {
+/** Fin temporelle du contenu arrange (clips audio + MIDI). */
+export function maxClipEndSec(tracks: Track[]): number {
 	let maxEnd = 0;
 	for (const track of tracks) {
 		for (const clip of track.clips) {
@@ -49,13 +50,85 @@ function maxClipEndSec(tracks: Track[]): number {
 }
 
 /** Dernière mesure visible : max(8, ceil(fin clip en mesures) + 4). Ceil évite le thrash de largeur pendant un drag du dernier clip. */
-export function arrangeVisibleMaxBars(tracks: Track[], bpm: number, numerator: number): number {
+export function arrangeVisibleMaxBars(
+	tracks: Track[],
+	bpm: number,
+	numerator: number,
+	extraEndsSec: Iterable<number> = [],
+): number {
+	let maxEnd = maxClipEndSec(tracks);
+	for (const end of extraEndsSec) {
+		if (end > maxEnd) maxEnd = end;
+	}
 	const barSec = (numerator * 60) / bpm;
-	const maxClipEndBar = maxClipEndSec(tracks) / barSec;
+	const maxClipEndBar = maxEnd / barSec;
 	return Math.max(
 		ARRANGE_MIN_VISIBLE_BARS,
 		Math.ceil(maxClipEndBar) + ARRANGE_VISIBLE_BARS_AFTER_LAST_CLIP,
 	);
+}
+
+/**
+ * Étend le viewport pour contenir `[rangeStartSec, rangeEndSec]`.
+ * - dépasse à droite → la limite droite avance (gauche fixe)
+ * - dépasse à gauche → la limite gauche recule (droite fixe)
+ * - les deux → les deux bougent
+ * Ne zoome jamais vers l'avant. Retourne null si déjà contenu.
+ */
+export function arrangeViewportExpandToRange(opts: {
+	rangeStartSec: number;
+	rangeEndSec: number;
+	viewStartSec: number;
+	viewEndSec: number;
+	viewportWidthPx: number;
+	currentScale: number;
+	minScale: number;
+}): { scale: number; scrollLeft: number; viewStartSec: number; viewEndSec: number } | null {
+	const {
+		rangeStartSec,
+		rangeEndSec,
+		viewStartSec,
+		viewEndSec,
+		viewportWidthPx,
+		currentScale,
+		minScale,
+	} = opts;
+
+	if (viewportWidthPx <= 0 || currentScale <= 0) return null;
+	const rangeStart = Math.min(rangeStartSec, rangeEndSec);
+	const rangeEnd = Math.max(rangeStartSec, rangeEndSec);
+	if (rangeEnd - rangeStart < 1e-9) return null;
+
+	const epsSec = 2 / currentScale;
+	const overflowLeft = rangeStart < viewStartSec - epsSec;
+	const overflowRight = rangeEnd > viewEndSec + epsSec;
+	if (!overflowLeft && !overflowRight) return null;
+
+	const nextStart = overflowLeft ? rangeStart : viewStartSec;
+	const nextEnd = overflowRight ? rangeEnd : viewEndSec;
+	const spanSec = Math.max(nextEnd - nextStart, 1e-9);
+	let scale = viewportWidthPx / spanSec;
+	if (scale >= currentScale - 1e-12) {
+		// Même span (cas limite) : pan éventuel uniquement si hors vue totale.
+		return null;
+	}
+
+	scale = Math.max(minScale, scale);
+	let scrollLeft = Math.max(0, nextStart * scale);
+
+	if (scrollLeft + viewportWidthPx < nextEnd * scale - 1e-6) {
+		scale = minScale;
+		scrollLeft = 0;
+	}
+
+	const fittedStart = scrollLeft / scale;
+	const fittedEnd = (scrollLeft + viewportWidthPx) / scale;
+	return { scale, scrollLeft, viewStartSec: fittedStart, viewEndSec: fittedEnd };
+}
+
+export function easeOutCubic(t: number): number {
+	const x = Math.min(1, Math.max(0, t));
+	return 1 - (1 - x) ** 3;
 }
 
 /**
