@@ -273,7 +273,7 @@ Current implementation (`Knob.svelte`):
 **Supported cases:**
 - Clip → another track: move or copy (+ Alt)
 - Audio file from OS → track: import
-- [TODO: other cases to define]
+- Library assets → track / timeline: see [library-browser-ux.md](library-browser-ux.md) §5
 
 ### 4.3 Context Menus
 
@@ -323,5 +323,8 @@ Opened via right-click only.
 ## Links
 
 - [ARCHITECTURE.md](ARCHITECTURE.md) — Svelte component structure
+- [library-browser-ux.md](library-browser-ux.md) — Library wireframes, states, contexts, drop rules
+- [library-browser-roadmap.md](library-browser-roadmap.md) — Library delivery phases
+- [ADR-023](active/decisions/023-library-browser-ux.md) — Library UX decision freeze
 - [CONTRIBUTING.md](../CONTRIBUTING.md) — General contribution process
 - [TODO: Link to Figma/Penpot design system file]

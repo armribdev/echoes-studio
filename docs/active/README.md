@@ -74,6 +74,7 @@ Sibling trees: `docs/archive/` (superseded docs) and `.claude/`
 | Can I change the threading/graph/plugin model? | `decisions/architecture-decision-rules.md` |
 | What decisions have already been made? | `decisions/000-index.md` |
 | What is the current system vs the target? | `migration/current_engine_diagram.md` vs `migration/target_architecture.md` |
+| Library / browser UX (panel, pop-up, drops)? | `../library-browser-ux.md` + `decisions/023-library-browser-ux.md` |
 
 ---
 
