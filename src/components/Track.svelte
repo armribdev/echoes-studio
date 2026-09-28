@@ -4,7 +4,10 @@
 	import type { Clip as ClipType, MidiClip as MidiClipType } from '../types/global';
 	import Clip from './Clip.svelte';
 	import MidiClip from './MidiClip.svelte';
+	import { pendingImports } from '../frontend/audio/pendingImports';
+	import { buildClipDisplayItems } from '../frontend/audio/clipDisplay';
 
+	export let trackId: string;
 	export let clips: ClipType[];
 	export let midiClips: MidiClipType[];
 	export let scale: number;
@@ -13,9 +16,20 @@
 	export let bpm: number = 120;
 
 	const dispatch = createEventDispatcher<{
-		clipdragstart: { offsetPx: number; trackIndex: number; clipIndex: number };
-		clipresizestart: { edge: 'left' | 'right'; clientX: number; trackIndex: number; clipIndex: number };
+		clipdragstart: {
+			offsetPx: number;
+			trackIndex: number;
+			clipId: string;
+			pendingImportId?: string;
+		};
+		clipresizestart: {
+			edge: 'left' | 'right';
+			clientX: number;
+			trackIndex: number;
+			clipId: string;
+		};
 		clipcontextmenu: { id: string; trackIndex: number; x: number; y: number };
+		pendingpainted: { pendingImportId: string };
 		midiclip_dragstart: { offsetPx: number; trackIndex: number; clipId: string; duplicate: boolean };
 		midiclip_resizestart: { edge: 'left' | 'right'; clientX: number; trackIndex: number; clipId: string };
 		midiclip_repeatstart: { clientX: number; trackIndex: number; clipId: string };
@@ -24,6 +38,8 @@
 		midiclip_activate: { id: string; trackIndex: number };
 		trackdblclick: { offsetPx: number; trackIndex: number };
 	}>();
+
+	$: displayClips = buildClipDisplayItems(clips, $pendingImports, trackId);
 
 	function onTrackDblClick(e: MouseEvent) {
 		const target = e.target;
@@ -38,20 +54,31 @@
 
 <!-- svelte-ignore a11y-no-static-element-interactions -->
 <div class="track" on:dblclick={onTrackDblClick}>
-	{#each clips as clip, clipIndex}
+	{#each displayClips as item (item.key)}
 		<Clip
-			id={clip.id}
-			start={clip.start}
-			end={clip.end}
-			offset={clip.offset}
+			id={item.id}
+			start={item.start}
+			end={item.end}
+			offset={item.offset}
 			{scale}
-			sample_rate={clip.sample_rate}
-			peaks_64={clip.peaks_64}
-			peaks_512={clip.peaks_512}
-			peaks_4096={clip.peaks_4096}
-			on:clipdragstart={(e) => dispatch('clipdragstart', { ...e.detail, trackIndex, clipIndex })}
-			on:clipresizestart={(e) => dispatch('clipresizestart', { ...e.detail, trackIndex, clipIndex })}
+			sample_rate={item.sample_rate}
+			peaks_64={item.peaks_64}
+			peaks_512={item.peaks_512}
+			peaks_4096={item.peaks_4096}
+			pending={item.pending}
+			loadProgress={item.loadProgress}
+			pendingImportId={item.pendingImportId ?? null}
+			on:clipdragstart={(e) =>
+				dispatch('clipdragstart', {
+					...e.detail,
+					trackIndex,
+					clipId: item.id,
+					pendingImportId: item.pendingImportId,
+				})}
+			on:clipresizestart={(e) =>
+				dispatch('clipresizestart', { ...e.detail, trackIndex, clipId: item.id })}
 			on:clipcontextmenu={(e) => dispatch('clipcontextmenu', { ...e.detail, trackIndex })}
+			on:pendingpainted={(e) => dispatch('pendingpainted', e.detail)}
 		/>
 	{/each}
 	{#each midiClips as clip}

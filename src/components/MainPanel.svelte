@@ -34,7 +34,6 @@
 	import { importAudioToTrack, probeAudioDuration } from '../frontend/audio/importClip';
 	import { clipSourceDurationSec } from '../frontend/audio/clipDuration';
 	import { pendingImports } from '../frontend/audio/pendingImports';
-	import Clip from './Clip.svelte';
 	import {
 		focusMidiClipForEdit,
 		ensureClipPreview,
@@ -80,6 +79,11 @@
 		const grid = normalizeMidiGridBeats(state.midi_grid_beats);
 		midiGridBeats.set(grid);
 		pianoRollStore.setQuantize(grid);
+		const liveIds = new Set<string>();
+		for (const t of state.tracks) {
+			for (const c of t.clips) liveIds.add(c.id);
+		}
+		pendingImports.pruneOrphans(liveIds);
 	});
 	onDestroy(unsubStore);
 
@@ -470,7 +474,15 @@
 		}
 		instrumentsOverflow = instrumentsEl.scrollHeight > instrumentsEl.clientHeight + 1;
 	}
-	let dragging: { origTrackIndex: number; trackIndex: number; clipIndex: number; offsetPx: number } | null = null;
+	let dragging: {
+		origTrackIndex: number;
+		trackIndex: number;
+		clipId: string;
+		offsetPx: number;
+		origStart: number;
+		origEnd: number;
+		pendingImportId?: string;
+	} | null = null;
 	let midiDragging: { origTrackIndex: number; trackIndex: number; clipId: string; offsetPx: number; origStart: number; origEnd: number } | null = null;
 	let repeating:
 		| {
@@ -1151,9 +1163,41 @@
 		addMidiClip(track.id, startSec, startSec + fourBeats).catch(console.error);
 	}
 
-	function onClipDragStart(e: CustomEvent<{ offsetPx: number; trackIndex: number; clipIndex: number }>) {
-		selectTrackIndex(e.detail.trackIndex);
-		dragging = { origTrackIndex: e.detail.trackIndex, ...e.detail };
+	function onClipDragStart(
+		e: CustomEvent<{
+			offsetPx: number;
+			trackIndex: number;
+			clipId: string;
+			pendingImportId?: string;
+		}>,
+	) {
+		const { trackIndex, clipId, offsetPx, pendingImportId } = e.detail;
+		selectTrackIndex(trackIndex);
+
+		let origStart = 0;
+		let origEnd = 1;
+		if (pendingImportId) {
+			const slot = pendingImports.get(pendingImportId);
+			if (!slot) return;
+			origStart = slot.start;
+			origEnd = slot.end;
+			pendingImports.lockDrag(pendingImportId);
+		} else {
+			const clip = tracks[trackIndex]?.clips.find((c) => c.id === clipId);
+			if (!clip) return;
+			origStart = clip.start;
+			origEnd = clip.end;
+		}
+
+		dragging = {
+			origTrackIndex: trackIndex,
+			trackIndex,
+			clipId,
+			offsetPx,
+			origStart,
+			origEnd,
+			pendingImportId,
+		};
 		beginArrangeMaxBarsHold();
 		window.addEventListener('mousemove', onDragMove);
 		window.addEventListener('mouseup', onDragEnd);
@@ -1164,45 +1208,93 @@
 		if (!dragging || !tracksEl) return;
 		updateAutoScrollEdge(e);
 		const rect = tracksEl.getBoundingClientRect();
-		const { clipIndex, offsetPx } = dragging;
+		const { clipId, offsetPx, origStart, origEnd, pendingImportId } = dragging;
 		const rawStart = Math.max(0, (e.clientX - rect.left + tracksEl.scrollLeft - offsetPx) / scale);
+		const duration = origEnd - origStart;
+		const newStart = snap(rawStart, e.altKey, pendingImportId ? undefined : clipId);
+		const newEnd = newStart + duration;
 
 		const y = e.clientY - rect.top + tracksEl.scrollTop;
 		const newTrackIndex = Math.max(0, Math.min(tracks.length - 1, Math.floor(y / ARRANGE_TRACK_HEIGHT)));
-		const prevTrackIndex = dragging.trackIndex;
 
+		if (pendingImportId) {
+			const trackId = tracks[newTrackIndex]?.id;
+			if (!trackId) return;
+			pendingImports.updatePlacement(pendingImportId, {
+				start: newStart,
+				end: newEnd,
+				trackId,
+			});
+			dragging = { ...dragging, trackIndex: newTrackIndex };
+			return;
+		}
+
+		const prevTrackIndex = dragging.trackIndex;
 		if (newTrackIndex !== prevTrackIndex) {
-			const clip = tracks[prevTrackIndex]?.clips[clipIndex];
+			const prevTrack = tracks[prevTrackIndex];
+			const clip = prevTrack?.clips.find((c) => c.id === clipId);
 			if (!clip) return;
-			const newStart = snap(rawStart, e.altKey, clip.id);
-			const duration = clip.end - clip.start;
-			const updatedClip = { ...clip, start: newStart, end: newStart + duration };
-			const prevClips = [...tracks[prevTrackIndex].clips];
-			prevClips.splice(clipIndex, 1);
-			tracks[prevTrackIndex] = { ...tracks[prevTrackIndex], clips: prevClips };
-			const newClips = [...tracks[newTrackIndex].clips, updatedClip];
-			tracks[newTrackIndex] = { ...tracks[newTrackIndex], clips: newClips };
-			dragging = { ...dragging, trackIndex: newTrackIndex, clipIndex: newClips.length - 1 };
+			const updatedClip = { ...clip, start: newStart, end: newEnd };
+			tracks[prevTrackIndex] = {
+				...prevTrack,
+				clips: prevTrack.clips.filter((c) => c.id !== clipId),
+			};
+			tracks[newTrackIndex] = {
+				...tracks[newTrackIndex],
+				clips: [...tracks[newTrackIndex].clips, updatedClip],
+			};
+			dragging = { ...dragging, trackIndex: newTrackIndex };
 		} else {
-			const draggedClipId = tracks[newTrackIndex]?.clips[clipIndex]?.id;
-			const newStart = snap(rawStart, e.altKey, draggedClipId);
-			const clip = tracks[newTrackIndex]?.clips[clipIndex];
-			if (!clip) return;
-			const duration = clip.end - clip.start;
-			tracks[newTrackIndex].clips[clipIndex] = { ...clip, start: newStart, end: newStart + duration };
+			const track = tracks[newTrackIndex];
+			if (!track) return;
+			tracks[newTrackIndex] = {
+				...track,
+				clips: track.clips.map((c) =>
+					c.id === clipId ? { ...c, start: newStart, end: newEnd } : c,
+				),
+			};
 		}
 		tracks = tracks;
 	}
 
 	function onDragEnd() {
 		if (dragging) {
-			const { origTrackIndex, trackIndex, clipIndex } = dragging;
-			const srcTrack = tracks[origTrackIndex];
-			const dstTrack = tracks[trackIndex];
-			const clip = dstTrack?.clips[clipIndex];
-			if (dstTrack && clip) {
-				const targetTrackId = origTrackIndex !== trackIndex ? dstTrack.id : undefined;
-				moveClip(srcTrack?.id ?? dstTrack.id, clip.id, clip.start, clip.end, clip.offset, targetTrackId).catch(console.error);
+			const { origTrackIndex, trackIndex, clipId, pendingImportId } = dragging;
+			if (pendingImportId) {
+				const slot = pendingImports.get(pendingImportId);
+				// If ADD_CLIP already attached, sync engine to the final UI placement.
+				if (slot?.engineClipId) {
+					const srcTrack = tracks[origTrackIndex];
+					const dstTrack = tracks[trackIndex];
+					if (dstTrack) {
+						const targetTrackId =
+							origTrackIndex !== trackIndex ? dstTrack.id : undefined;
+						moveClip(
+							srcTrack?.id ?? dstTrack.id,
+							slot.engineClipId,
+							slot.start,
+							slot.end,
+							0,
+							targetTrackId,
+						).catch(console.error);
+					}
+				}
+				pendingImports.unlockDrag(pendingImportId);
+			} else {
+				const srcTrack = tracks[origTrackIndex];
+				const dstTrack = tracks[trackIndex];
+				const clip = dstTrack?.clips.find((c) => c.id === clipId);
+				if (dstTrack && clip) {
+					const targetTrackId = origTrackIndex !== trackIndex ? dstTrack.id : undefined;
+					moveClip(
+						srcTrack?.id ?? dstTrack.id,
+						clip.id,
+						clip.start,
+						clip.end,
+						clip.offset,
+						targetTrackId,
+					).catch(console.error);
+				}
 			}
 		}
 		dragging = null;
@@ -1219,13 +1311,14 @@
 	const MIN_REPEAT_PARTIAL_PX = 4;
 
 	function onClipResizeStart(
-		e: CustomEvent<{ edge: 'left' | 'right'; clientX: number; trackIndex: number; clipIndex: number }>,
+		e: CustomEvent<{ edge: 'left' | 'right'; clientX: number; trackIndex: number; clipId: string }>,
 	) {
-		const { edge, trackIndex, clipIndex } = e.detail;
+		const { edge, trackIndex, clipId } = e.detail;
 		selectTrackIndex(trackIndex);
-		const clip = tracks[trackIndex]?.clips[clipIndex];
+		const clip = tracks[trackIndex]?.clips.find((c) => c.id === clipId);
 		if (!clip) return;
 		const sourceDuration = clipSourceDurationSec(clip);
+		const clipIndex = tracks[trackIndex].clips.findIndex((c) => c.id === clipId);
 		resizing = {
 			kind: 'audio',
 			edge,
@@ -1241,6 +1334,10 @@
 		window.addEventListener('mousemove', onResizeMove);
 		window.addEventListener('mouseup', onResizeEnd);
 		beginAutoScroll(onResizeMove);
+	}
+
+	function onPendingPainted(e: CustomEvent<{ pendingImportId: string }>) {
+		pendingImports.signalPainted(e.detail.pendingImportId);
 	}
 
 	function onMidiClipResizeStart(
@@ -1799,29 +1896,6 @@
 					style="top: {fileDragPreview.trackIndex * ARRANGE_TRACK_HEIGHT}px; left: {fileDragPreview.startSec * scale}px; width: {fileDragPreview.durationSec != null ? fileDragPreview.durationSec * scale : 150}px;"
 				></div>
 			{/if}
-			{#each $pendingImports as pending (pending.id)}
-				{@const trackIndex = tracks.findIndex((t) => t.id === pending.trackId)}
-				{#if trackIndex >= 0}
-					<div
-						class="pending-import-slot"
-						style="top: {trackIndex * ARRANGE_TRACK_HEIGHT}px; height: {ARRANGE_TRACK_HEIGHT}px; left: 0; right: 0;"
-					>
-						<Clip
-							id={pending.id}
-							start={pending.start}
-							end={pending.end}
-							offset={0}
-							{scale}
-							sample_rate={pending.sampleRate}
-							peaks_64={pending.peaks_64}
-							peaks_512={pending.peaks_512}
-							peaks_4096={pending.peaks_4096}
-							pending={true}
-							loadProgress={pending.progress}
-						/>
-					</div>
-				{/if}
-			{/each}
 			{#if repeating}
 				{#each Array(repeating.count) as _, i}
 					<div
@@ -1849,6 +1923,7 @@
 			{/if}
 			{#each tracks as track, trackIndex}
 				<Track
+					trackId={track.id}
 					clips={track.clips}
 					midiClips={track.midi_clips ?? []}
 					{scale}
@@ -1858,6 +1933,7 @@
 					on:clipdragstart={onClipDragStart}
 					on:clipresizestart={onClipResizeStart}
 					on:clipcontextmenu={handleClipContextMenu}
+					on:pendingpainted={onPendingPainted}
 					on:midiclip_dragstart={onMidiClipDragStart}
 					on:midiclip_resizestart={onMidiClipResizeStart}
 					on:midiclip_repeatstart={onMidiClipRepeatStart}
@@ -2042,13 +2118,6 @@
 			background-color: rgba(107, 203, 119, 0.12);
 			border-color: rgba(107, 203, 119, 0.75);
 		}
-	}
-
-	.pending-import-slot {
-		position: absolute;
-		pointer-events: none;
-		z-index: 4;
-		overflow: visible;
 	}
 
 	// ── Empty state ───────────────────────────────────────────────────────────

@@ -1,35 +1,11 @@
 <script lang="ts">
 	import { statusMessage, pianoRollStatusInfo } from '../stores/status';
 	import { viewMode } from '../stores/viewMode';
-	import { audioImportProgress } from '../frontend/audio/importProgress';
-
-	$: importing = $audioImportProgress.activeCount > 0;
-	$: progressPct =
-		$audioImportProgress.progress != null
-			? Math.round($audioImportProgress.progress * 100)
-			: null;
 </script>
 
-<div class="status-bar" class:importing>
-	{#if importing}
-		<div
-			class="import-track"
-			class:indeterminate={$audioImportProgress.progress == null}
-			role="progressbar"
-			aria-valuemin={0}
-			aria-valuemax={100}
-			aria-valuenow={progressPct}
-			aria-label="Import audio"
-		>
-			<div
-				class="import-fill"
-				style={progressPct != null ? `width: ${progressPct}%` : undefined}
-			></div>
-		</div>
-	{/if}
-
+<div class="status-bar">
 	<div class="status-left">
-		{#if $statusMessage && !importing}
+		{#if $statusMessage}
 			<span class="message message--{$statusMessage.level}">{$statusMessage.text}</span>
 		{/if}
 	</div>
@@ -80,34 +56,6 @@
 		padding: 0 12px;
 		flex-shrink: 0;
 		position: relative;
-	}
-
-	.import-track {
-		position: absolute;
-		left: 0;
-		right: 0;
-		top: 0;
-		height: 2px;
-		background: rgba(21, 113, 255, 0.15);
-		overflow: hidden;
-		pointer-events: none;
-	}
-
-	.import-fill {
-		height: 100%;
-		width: 0;
-		background: $accent-color;
-		transition: width 0.12s ease-out;
-	}
-
-	.import-track.indeterminate .import-fill {
-		width: 35%;
-		animation: status-indeterminate 1.1s ease-in-out infinite;
-	}
-
-	@keyframes status-indeterminate {
-		0% { transform: translateX(-120%); }
-		100% { transform: translateX(320%); }
 	}
 
 	.status-left {

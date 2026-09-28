@@ -3,6 +3,7 @@
 	import { selection } from '../stores/selection';
 	import { keyboardFocus } from '../stores/keyboardFocus';
 	import { arrangeClipFrame } from '../frontend/arrangeInteraction';
+	import { importMark } from '../frontend/audio/importDebugMarks';
 
 	export let id: string;
 	export let start: number;
@@ -13,10 +14,12 @@
 	export let peaks_64: [number, number][];
 	export let peaks_512: [number, number][];
 	export let peaks_4096: [number, number][];
-	/** Optimistic import preview — non-interactive, waveform may stream in. */
+	/** Optimistic import preview — waveform may stream in; drag still allowed. */
 	export let pending: boolean = false;
 	/** 0..1 decode progress (kept for API; coverage is driven by peak lanes). */
 	export let loadProgress: number = 1;
+	/** Stable pending-import id — used to signal handoff paint without remount flash. */
+	export let pendingImportId: string | null = null;
 
 	const WAVE_FILL = 'rgba(71, 171, 255, 0.85)';
 
@@ -24,6 +27,7 @@
 		clipdragstart: { offsetPx: number };
 		clipresizestart: { edge: 'left' | 'right'; clientX: number };
 		clipcontextmenu: { id: string; x: number; y: number };
+		pendingpainted: { pendingImportId: string };
 	}>();
 
 	let clipEl: HTMLElement;
@@ -32,6 +36,11 @@
 	let workerReady = false;
 	const bitmapCache = new Map<string, ImageBitmap>();
 	let latestKey = '';
+	let wasPending = pending;
+	let paintSignaled = false;
+	/** After import handoff, keep the grow canvas until zoom/offset changes (avoids worker clear flash). */
+	let holdWorkerAfterHandoff = false;
+	let holdScaleBucket = 0;
 
 	let _lastW = 0;
 	let _lastKey = '';
@@ -81,10 +90,14 @@
 		p512: [number, number][],
 		p4096: [number, number][],
 		sr: number,
-		s: number
+		s: number,
+		streamedOnly = false,
 	): { peaks: [number, number][]; chunkSize: number } {
 		const samplesPerPixel = sr / s;
-		if (samplesPerPixel < 512 && p64.length > 0) return { peaks: p64, chunkSize: 64 };
+		// Streamed-only: ignore peaks_64 (arrives at decode finalize and would pop).
+		if (!streamedOnly && !pending) {
+			if (samplesPerPixel < 512 && p64.length > 0) return { peaks: p64, chunkSize: 64 };
+		}
 		if (samplesPerPixel < 4096 && p512.length > 0) return { peaks: p512, chunkSize: 512 };
 		if (p4096.length > 0) return { peaks: p4096, chunkSize: 4096 };
 		if (p512.length > 0) return { peaks: p512, chunkSize: 512 };
@@ -92,7 +105,7 @@
 	}
 
 	/** Same column mapping as waveform.worker — identical final look. */
-	function rebuildGoals(width: number, height: number) {
+	function rebuildGoals(width: number, height: number, streamedOnly = false) {
 		const prevGrow = _grow;
 		const prevShowT = _showTops;
 		const prevShowB = _showBots;
@@ -113,7 +126,8 @@
 			peaks_512,
 			peaks_4096,
 			sample_rate,
-			scale
+			scale,
+			streamedOnly || pending,
 		);
 
 		if (peaks.length > 0 && sample_rate > 0) {
@@ -159,7 +173,8 @@
 			peaks_512,
 			peaks_4096,
 			sample_rate,
-			scale
+			scale,
+			true,
 		);
 		if (peaks.length === 0 || sample_rate <= 0 || scale <= 0) return 0;
 		const coveredSec = (peaks.length * chunkSize) / sample_rate;
@@ -183,10 +198,17 @@
 		}
 	}
 
+	function signalPendingPainted() {
+		if (paintSignaled || !pendingImportId) return;
+		paintSignaled = true;
+		dispatch('pendingpainted', { pendingImportId });
+	}
+
 	function paintFinalBitmap(bitmap: ImageBitmap) {
 		if (!canvas) return;
 		const ctx = canvas.getContext('2d');
 		if (!ctx) return;
+		// Setting canvas.width clears pixels — only do it when size actually changes.
 		if (canvas.width !== bitmap.width) canvas.width = bitmap.width;
 		ctx.clearRect(0, 0, canvas.width, canvas.height);
 		ctx.drawImage(bitmap, 0, 0);
@@ -199,13 +221,21 @@
 
 		const W = Math.max(1, canvasCssW);
 		const H = Math.max(canvas.height, Math.max(clipEl?.clientHeight ?? 0, 96));
-		if (canvas.width !== W) canvas.width = W;
-		if (canvas.height !== H) canvas.height = H;
-
-		const sig = `${peaksEpoch}|${W}|${H}|${scaleBucket(scale)}|${offset.toFixed(4)}`;
-		if (_colsDirty || sig !== _peaksSig || _goalTops.length !== W) {
-			_peaksSig = sig;
-			rebuildGoals(W, H);
+		// Near decode end / handoff: freeze goals so finalize peak replaces can't pop.
+		const freezeGoals = loadProgress >= 0.93 || holdWorkerAfterHandoff;
+		// Resizing the canvas buffer clears pixels — avoid that during handoff.
+		if (!freezeGoals) {
+			if (canvas.width !== W) canvas.width = W;
+			if (canvas.height !== H) canvas.height = H;
+			const sig = `${peaksEpoch}|${W}|${H}|${scaleBucket(scale)}|${offset.toFixed(4)}`;
+			if (_colsDirty || sig !== _peaksSig || _goalTops.length !== W) {
+				_peaksSig = sig;
+				rebuildGoals(W, H);
+			}
+		} else if (_goalTops.length === 0) {
+			if (canvas.width !== W) canvas.width = W;
+			if (canvas.height !== H) canvas.height = H;
+			rebuildGoals(W, H, true);
 		}
 
 		const covered = peaksCoveragePx(W);
@@ -284,8 +314,14 @@
 		void peaksEpoch;
 		void canvasCssW;
 		void loadProgress;
-		_colsDirty = true;
-		ensureGrowLoop();
+		// Freeze peak-lane rebuilds near the end — Rust finalize replaces 512/4096
+		// with recomputed lanes that differ slightly from streamed deltas (end flash).
+		if (loadProgress < 0.93) {
+			_colsDirty = true;
+			ensureGrowLoop();
+		} else {
+			ensureGrowLoop();
+		}
 	}
 
 	const loadWorker = async () => {
@@ -301,6 +337,10 @@
 
 	function requestRender(targetWidth: number) {
 		if (pending || !syncWorker || !canvas.height) return;
+		if (holdWorkerAfterHandoff) {
+			if (scaleBucket(scale) === holdScaleBucket) return;
+			holdWorkerAfterHandoff = false;
+		}
 		const bucket = scaleBucket(scale);
 		const key = renderKey(bucket, offset, peaksEpoch);
 		latestKey = key;
@@ -343,17 +383,6 @@
 		if (_raf) cancelAnimationFrame(_raf);
 	});
 
-	$: if (canvas && clipEl && !pending) {
-		const h = Math.max(clipEl.clientHeight, 96);
-		if (canvas.height !== h) canvas.height = h;
-	}
-
-	$: if (canvas && workerReady && !pending) {
-		const w = canvasCssW;
-		const key = renderKey(scaleBucket(scale), offset, peaksEpoch);
-		if (needsRender(w, key)) requestRender(w);
-	}
-
 	function onContextMenu(e: MouseEvent) {
 		if (pending) return;
 		e.preventDefault();
@@ -368,17 +397,48 @@
 		e.stopPropagation();
 	}
 
-	function onMouseDown(e: MouseEvent) {
-		if (pending) {
-			e.stopPropagation();
-			return;
+	// Handoff: set hold first. Do not read/write canvas here (cyclical deps with
+	// the height/worker reactives below).
+	$: if (wasPending && !pending) {
+		wasPending = false;
+		if (_raf) {
+			cancelAnimationFrame(_raf);
+			_raf = 0;
 		}
+		holdWorkerAfterHandoff = true;
+		holdScaleBucket = scaleBucket(scale);
+		importMark('clip-pending-false');
+		signalPendingPainted();
+	}
+	$: if (pending) {
+		wasPending = true;
+		paintSignaled = false;
+		holdWorkerAfterHandoff = false;
+	}
+
+	$: if (canvas && clipEl && !pending && !holdWorkerAfterHandoff) {
+		const h = Math.max(clipEl.clientHeight, 96);
+		if (h > canvas.height) {
+			canvas.height = h;
+			requestRender(canvasCssW);
+		}
+	}
+
+	$: if (canvas && workerReady && !pending && !holdWorkerAfterHandoff) {
+		const w = canvasCssW;
+		const key = renderKey(scaleBucket(scale), offset, peaksEpoch);
+		if (needsRender(w, key)) requestRender(w);
+	}
+
+	function onMouseDown(e: MouseEvent) {
 		e.stopPropagation();
 		e.preventDefault();
 
 		keyboardFocus.setTimeline();
 
-		selection.select(id, { additive: e.ctrlKey || e.metaKey });
+		if (!pending) {
+			selection.select(id, { additive: e.ctrlKey || e.metaKey });
+		}
 
 		const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
 		dispatch('clipdragstart', { offsetPx: e.clientX - rect.left });
@@ -409,12 +469,19 @@
 	on:keydown={onKeyDown}
 >
 	<canvas bind:this={canvas}></canvas>
-	{#if !pending}
-		<!-- svelte-ignore a11y-no-static-element-interactions -->
-		<div class="resize-handle resize-handle--left" on:mousedown={(e) => onResizeHandleDown('left', e)}></div>
-		<!-- svelte-ignore a11y-no-static-element-interactions -->
-		<div class="resize-handle resize-handle--right" on:mousedown={(e) => onResizeHandleDown('right', e)}></div>
-	{/if}
+	<!-- Always mounted — toggling these on pending→false caused a layout pop. -->
+	<!-- svelte-ignore a11y-no-static-element-interactions -->
+	<div
+		class="resize-handle resize-handle--left"
+		class:resize-handle--disabled={pending}
+		on:mousedown={(e) => onResizeHandleDown('left', e)}
+	></div>
+	<!-- svelte-ignore a11y-no-static-element-interactions -->
+	<div
+		class="resize-handle resize-handle--right"
+		class:resize-handle--disabled={pending}
+		on:mousedown={(e) => onResizeHandleDown('right', e)}
+	></div>
 </div>
 
 <style lang="scss">
@@ -440,12 +507,11 @@
 		}
 
 		&.pending {
-			cursor: progress;
-			box-shadow: inset 0 0 0 1px rgba(90, 160, 255, 0.55);
-			background: #1a335f;
+			/* Same chrome as a real clip — only waveform coverage differs. */
+			cursor: grab;
 
 			&:active {
-				cursor: progress;
+				cursor: grabbing;
 			}
 		}
 
@@ -470,6 +536,11 @@
 
 			&--right {
 				right: 0;
+			}
+
+			&--disabled {
+				pointer-events: none;
+				cursor: inherit;
 			}
 		}
 	}
