@@ -38,7 +38,7 @@ friction).
 
 ## Phase 1 — Audio MVP (panel)
 
-**Status:** `todo`  
+**Status:** `doing` (2026-09-28)  
 **Goal:** Docked library; find and drop audio; preview without polluting arrange.
 
 ### Scope

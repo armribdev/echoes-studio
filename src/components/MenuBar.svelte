@@ -116,7 +116,7 @@
 			class="btn btn--panel-toggle"
 			class:active={$rightPanel.open}
 			on:click={() => rightPanel.toggle()}
-			title="Bibliothèque (L)"
+			title="Bibliothèque (B)"
 			aria-label="Bibliothèque"
 		>
 			<Icon name="library" size={14} />

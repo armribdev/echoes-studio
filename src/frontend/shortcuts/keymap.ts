@@ -25,6 +25,9 @@ import { settingsPanelOpen } from '../../stores/preferences';
 import { cycleEditorFocus, handleEditorEscapeKey } from '../pianoRoll/clipEditor';
 import { viewMode } from '../../stores/viewMode';
 import { dismissTopLayer } from '../dismiss';
+import { rightPanel } from '../../stores/rightPanel';
+import { keyboardFocus } from '../../stores/keyboardFocus';
+import { libraryStore, requestLibrarySearchFocus } from '../library';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -118,10 +121,51 @@ const SHORTCUTS: Shortcut[] = [
   {
     key: ' ',
     modifiers: [],
-    description: 'Lecture / Pause',
+    description: 'Lecture / Pause (ou aperçu bibliothèque)',
     action: () => {
+      if (get(keyboardFocus) === 'library-results') {
+        const selected = libraryStore.getSelectedAsset();
+        if (selected) {
+          void libraryStore.togglePreview(selected.id).catch((e) =>
+            notify(`Aperçu : ${e?.message ?? e}`, 'error'),
+          );
+          return;
+        }
+      }
       const { isPlaying } = get(transport);
       (isPlaying ? pause() : play()).catch(console.error);
+    },
+  },
+
+  // ── Library ───────────────────────────────────────────────────────────────
+  {
+    key: 'b',
+    modifiers: [],
+    description: 'Basculer la bibliothèque',
+    action: () => rightPanel.toggle(),
+  },
+  {
+    key: 'l',
+    modifiers: [],
+    description: 'Basculer la bibliothèque (alias)',
+    action: () => rightPanel.toggle(),
+  },
+  {
+    key: '/',
+    modifiers: [],
+    description: 'Focus recherche bibliothèque',
+    action: () => {
+      if (!get(rightPanel).open) rightPanel.toggle();
+      requestLibrarySearchFocus();
+    },
+  },
+  {
+    key: 'f',
+    modifiers: ['ctrl'],
+    description: 'Focus recherche bibliothèque',
+    action: () => {
+      if (!get(rightPanel).open) return;
+      requestLibrarySearchFocus();
     },
   },
 
@@ -185,10 +229,34 @@ export function registerShortcuts(): () => void {
       return;
     }
 
-    if (isEditingText(e.target)) return;
+    if (isEditingText(e.target)) {
+      // ADR-023: B/L still toggle the library from the search field.
+      if (hasNoModifiers(e) && !e.shiftKey) {
+        const k = e.key.toLowerCase();
+        if (k === 'b' || k === 'l') {
+          e.preventDefault();
+          rightPanel.toggle();
+          return;
+        }
+      }
+      return;
+    }
 
     // Piano roll : un seul handler (capture) — désélection → aperçu → fermer.
     if (e.key === 'Escape' && hasNoModifiers(e) && !get(settingsPanelOpen)) {
+      if (get(keyboardFocus) === 'library-results') {
+        const lib = get(libraryStore);
+        if (lib.query) {
+          e.preventDefault();
+          libraryStore.clearQuery();
+          return;
+        }
+        if (lib.previewingId) {
+          e.preventDefault();
+          libraryStore.stopPreview();
+          return;
+        }
+      }
       if (get(bottomPanel).open) {
         e.preventDefault();
         e.stopImmediatePropagation();

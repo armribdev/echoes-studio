@@ -44,6 +44,7 @@ export function shouldHandleTimelineShortcuts(e: KeyboardEvent): boolean {
 	if (isEditingText(e.target)) return false;
 	const focus = getActiveFocus();
 	if (focus === 'piano-roll' || focus === 'settings') return false;
+	if (focus === 'library-results' || focus === 'library-search') return false;
 	return true;
 }
 

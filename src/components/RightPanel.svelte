@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { onMount } from 'svelte';
 	import { rightPanel } from '../stores/rightPanel';
 	import { selectedTrack } from '../stores/selectedTrack';
 	import { transport } from '../stores/transport';
@@ -9,9 +10,53 @@
 	import { open as openDialog } from '@tauri-apps/plugin-dialog';
 	import PanelResizeHandle from './PanelResizeHandle.svelte';
 	import { persistProjectUiLayout } from '../lib/projectUiLayout';
+	import { keyboardFocus } from '../stores/keyboardFocus';
+	import {
+		libraryStore,
+		libraryVisibleAssets,
+		libraryHasIndexedContent,
+		libraryFocusSearchTick,
+		LIBRARY_DRAG_MIME,
+		LIBRARY_SOURCE_LABELS,
+		LIBRARY_SOURCE_ORDER,
+		AUDIO_EXTENSIONS,
+		formatDuration,
+		beginLibraryDrag,
+		endLibraryDrag,
+		type LibraryAsset,
+		type LibrarySourceId,
+	} from '../frontend/library';
 
 	let isResizing = false;
 	let resizeStartW = 0;
+	let searchInputEl: HTMLInputElement | null = null;
+	let resultsEl: HTMLDivElement | null = null;
+
+	$: visible = $libraryVisibleAssets;
+	$: selected = $libraryStore.selectedId
+		? visible.find((a) => a.id === $libraryStore.selectedId) ??
+			$libraryStore.assetsById[$libraryStore.selectedId] ??
+			null
+		: null;
+
+	let lastFocusTick = 0;
+	$: if ($rightPanel.open && $libraryFocusSearchTick !== lastFocusTick) {
+		lastFocusTick = $libraryFocusSearchTick;
+		requestAnimationFrame(() => {
+			searchInputEl?.focus();
+			searchInputEl?.select();
+			keyboardFocus.setLibrarySearch();
+		});
+	}
+
+	$: if (!$rightPanel.open) {
+		libraryStore.stopPreview();
+	}
+
+	onMount(() => {
+		libraryStore.hydrateFromPersistence();
+		void libraryStore.rescanIndexedFolders();
+	});
 
 	function onPanelResizestart() {
 		resizeStartW = $rightPanel.width;
@@ -25,69 +70,160 @@
 		persistProjectUiLayout();
 	}
 
-	let searchQuery = '';
-	let libraryFiles: string[] = [];
-
-	$: projectFiles = (() => {
-		const seen = new Set<string>();
-		for (const track of $projectEventStore.tracks) {
-			for (const clip of track.clips) {
-				if (clip.file_path) seen.add(clip.file_path);
-			}
-		}
-		return [...seen];
-	})();
-
-	$: allFiles = [...new Set([...projectFiles, ...libraryFiles])];
-
-	$: filteredProject = projectFiles.filter((f) =>
-		fileName(f).toLowerCase().includes(searchQuery.toLowerCase())
-	);
-
-	$: filteredLibrary = libraryFiles.filter(
-		(f) => !projectFiles.includes(f) && fileName(f).toLowerCase().includes(searchQuery.toLowerCase())
-	);
-
-	function fileName(path: string): string {
-		return path.split(/[\\/]/).pop() ?? path;
-	}
-
-	function fileExt(path: string): string {
-		return (path.split('.').pop() ?? '').toUpperCase();
-	}
-
-	async function browseFile() {
+	async function browseFiles() {
 		try {
 			const result = await openDialog({
 				multiple: true,
-				filters: [{ name: 'Audio', extensions: ['wav', 'mp3', 'flac', 'ogg', 'oga'] }],
+				filters: [{ name: 'Audio', extensions: [...AUDIO_EXTENSIONS] }],
 			});
 			if (!result) return;
 			const paths = Array.isArray(result) ? result : [result];
-			for (const p of paths) {
-				if (!libraryFiles.includes(p) && !projectFiles.includes(p)) {
-					libraryFiles = [...libraryFiles, p];
-				}
-			}
+			libraryStore.importFiles(paths);
+			libraryStore.setSource('audio');
 		} catch (e) {
 			notify(`Erreur ouverture fichier : ${(e as Error)?.message ?? e}`, 'error');
 		}
 	}
 
-	async function insertFile(filePath: string) {
+	async function browseFolder() {
+		try {
+			const result = await openDialog({ directory: true, multiple: false });
+			if (!result || Array.isArray(result)) return;
+			await libraryStore.addFolder(result);
+			libraryStore.setSource('audio');
+			notify('Indexation du dossier…', 'info');
+		} catch (e) {
+			notify(`Erreur dossier : ${(e as Error)?.message ?? e}`, 'error');
+		}
+	}
+
+	async function insertAsset(asset: LibraryAsset) {
 		const targetTrackId = $selectedTrack.trackId ?? $projectEventStore.tracks[0]?.id;
 		if (!targetTrackId) {
-			notify('Créez une piste avant d\'importer.', 'error');
+			notify('Créez une piste avant d\'importer (Phase 1).', 'error');
 			return;
 		}
 		try {
-			const dur = await invoke<number>('get_audio_clip_duration', { filePath });
+			libraryStore.stopPreview();
+			const dur =
+				asset.durationSec ??
+				(await invoke<number>('get_audio_clip_duration', { filePath: asset.path }));
+			libraryStore.upsertAsset({ ...asset, durationSec: dur });
 			const startSec = $transport.position;
-			await addClip(targetTrackId, filePath, startSec, startSec + dur);
-			notify(`Importé : ${fileName(filePath)}`, 'success');
+			await addClip(targetTrackId, asset.path, startSec, startSec + dur);
+			libraryStore.recordRecent(asset.id);
+			notify(`Importé : ${asset.name}`, 'success');
 		} catch (e) {
 			notify(`Erreur import : ${(e as Error)?.message ?? e}`, 'error');
 		}
+	}
+
+	function onRowClick(asset: LibraryAsset) {
+		libraryStore.select(asset.id);
+		keyboardFocus.setLibraryResults();
+	}
+
+	function onRowDblClick(asset: LibraryAsset) {
+		void insertAsset(asset);
+	}
+
+	function onRowPointerEnter(asset: LibraryAsset) {
+		libraryStore.select(asset.id);
+		libraryStore.scheduleHoverPreview(asset.id);
+	}
+
+	function onRowPointerLeave() {
+		libraryStore.cancelHoverPreview();
+	}
+
+	function onDragStart(e: DragEvent, asset: LibraryAsset) {
+		libraryStore.stopPreview();
+		beginLibraryDrag(asset.path);
+		if (!e.dataTransfer) return;
+		e.dataTransfer.setData(LIBRARY_DRAG_MIME, asset.path);
+		e.dataTransfer.setData('text/plain', asset.path);
+		e.dataTransfer.effectAllowed = 'copy';
+		keyboardFocus.setLibraryResults();
+	}
+
+	function onDragEnd() {
+		endLibraryDrag();
+	}
+
+	async function onPreviewClick(e: MouseEvent, asset: LibraryAsset) {
+		e.stopPropagation();
+		libraryStore.select(asset.id);
+		keyboardFocus.setLibraryResults();
+		try {
+			await libraryStore.togglePreview(asset.id);
+		} catch (err) {
+			notify(`Aperçu : ${(err as Error)?.message ?? err}`, 'error');
+		}
+	}
+
+	function onFavoriteClick(e: MouseEvent, asset: LibraryAsset) {
+		e.stopPropagation();
+		libraryStore.toggleFavorite(asset.id);
+	}
+
+	function onResultsKeydown(e: KeyboardEvent) {
+		const ids = visible.map((a) => a.id);
+		if (e.key === 'ArrowDown') {
+			e.preventDefault();
+			libraryStore.moveSelection(1, ids);
+			return;
+		}
+		if (e.key === 'ArrowUp') {
+			e.preventDefault();
+			libraryStore.moveSelection(-1, ids);
+			return;
+		}
+		if (e.key === 'Enter' && $libraryStore.selectedId) {
+			e.preventDefault();
+			const asset = visible.find((a) => a.id === $libraryStore.selectedId);
+			if (asset) void insertAsset(asset);
+			return;
+		}
+		if (e.key === ' ' && $libraryStore.selectedId) {
+			e.preventDefault();
+			void libraryStore.togglePreview($libraryStore.selectedId).catch((err) => {
+				notify(`Aperçu : ${(err as Error)?.message ?? err}`, 'error');
+			});
+			return;
+		}
+		if (e.key === 'Escape') {
+			e.preventDefault();
+			if ($libraryStore.query) {
+				libraryStore.clearQuery();
+			} else {
+				libraryStore.stopPreview();
+			}
+		}
+	}
+
+	function onSearchKeydown(e: KeyboardEvent) {
+		if (e.key === 'Escape') {
+			e.preventDefault();
+			if ($libraryStore.query) {
+				libraryStore.clearQuery();
+			} else {
+				searchInputEl?.blur();
+				resultsEl?.focus();
+				keyboardFocus.setLibraryResults();
+			}
+			return;
+		}
+		if (e.key === 'ArrowDown') {
+			e.preventDefault();
+			resultsEl?.focus();
+			keyboardFocus.setLibraryResults();
+			libraryStore.moveSelection(1, visible.map((a) => a.id));
+		}
+	}
+
+	function setSource(id: LibrarySourceId) {
+		libraryStore.setSource(id);
+		keyboardFocus.setLibraryResults();
 	}
 </script>
 
@@ -108,6 +244,21 @@
 		/>
 
 		<div class="library-inner">
+			<div class="chrome">
+				<span class="chrome-title">Library</span>
+				{#if $libraryStore.indexer === 'scanning'}
+					<span class="chrome-status">
+						Indexing…{($libraryStore.indexerProgress != null
+							? ` ${Math.round($libraryStore.indexerProgress * 100)}%`
+							: '')}
+					</span>
+				{:else if $libraryStore.indexer === 'error'}
+					<span class="chrome-status chrome-status--error" title={$libraryStore.indexerError ?? ''}>
+						Index error
+					</span>
+				{/if}
+			</div>
+
 			<div class="search-row">
 				<div class="search-wrap">
 					<svg class="search-icon" width="11" height="11" viewBox="0 0 11 11" fill="none">
@@ -117,71 +268,151 @@
 					<input
 						class="search-input"
 						type="text"
-						placeholder="Rechercher…"
-						bind:value={searchQuery}
+						placeholder="Search…"
+						value={$libraryStore.query}
+						bind:this={searchInputEl}
+						on:input={(e) => libraryStore.setQuery(e.currentTarget.value)}
+						on:focus={() => keyboardFocus.setLibrarySearch()}
+						on:keydown={onSearchKeydown}
 					/>
-					{#if searchQuery}
-						<button class="search-clear" type="button" on:click={() => (searchQuery = '')}>
+					{#if $libraryStore.query}
+						<button class="search-clear" type="button" on:click={() => libraryStore.clearQuery()}>
 							<svg width="8" height="8" viewBox="0 0 8 8" fill="none">
 								<path d="M1 1L7 7M7 1L1 7" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
 							</svg>
 						</button>
 					{/if}
 				</div>
-				<button class="add-btn" type="button" on:click={browseFile} title="Ajouter des fichiers">
+				<button class="add-btn" type="button" on:click={browseFiles} title="Import file">
 					<svg width="10" height="10" viewBox="0 0 10 10" fill="none">
 						<path d="M5 1V9M1 5H9" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
 					</svg>
 				</button>
 			</div>
 
-			<div class="file-list">
-				{#if filteredProject.length > 0}
-					<div class="section-label">CE PROJET</div>
-					{#each filteredProject as filePath (filePath)}
-						<!-- svelte-ignore a11y-no-static-element-interactions -->
-						<div class="file-item" on:dblclick={() => insertFile(filePath)} title={filePath}>
-							<span class="file-ext">{fileExt(filePath)}</span>
-							<span class="file-name">{fileName(filePath)}</span>
-							<button class="insert-btn" type="button" on:click={() => insertFile(filePath)} title="Ajouter à la piste">
-								<svg width="8" height="8" viewBox="0 0 8 8" fill="none">
-									<path d="M4 1V6M1.5 5.5L4 7.5L6.5 5.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>
-								</svg>
-							</button>
-						</div>
+			<div class="body">
+				<nav class="sources" aria-label="Library sources">
+					{#each LIBRARY_SOURCE_ORDER as sourceId}
+						<button
+							type="button"
+							class="source-btn"
+							class:active={$libraryStore.source === sourceId}
+							on:click={() => setSource(sourceId)}
+						>
+							{LIBRARY_SOURCE_LABELS[sourceId]}
+						</button>
 					{/each}
-				{/if}
+					<button type="button" class="source-btn source-btn--action" on:click={browseFolder}>
+						Add folder…
+					</button>
+				</nav>
 
-				{#if filteredLibrary.length > 0}
-					<div class="section-label">BIBLIOTHÈQUE</div>
-					{#each filteredLibrary as filePath (filePath)}
-						<!-- svelte-ignore a11y-no-static-element-interactions -->
-						<div class="file-item" on:dblclick={() => insertFile(filePath)} title={filePath}>
-							<span class="file-ext">{fileExt(filePath)}</span>
-							<span class="file-name">{fileName(filePath)}</span>
-							<button class="insert-btn" type="button" on:click={() => insertFile(filePath)} title="Ajouter à la piste">
-								<svg width="8" height="8" viewBox="0 0 8 8" fill="none">
-									<path d="M4 1V6M1.5 5.5L4 7.5L6.5 5.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>
-								</svg>
-							</button>
+				<div class="results-col">
+					{#if !$libraryHasIndexedContent && visible.length === 0}
+						<div class="empty-state">
+							<p class="empty-title">No sounds yet</p>
+							<div class="empty-actions">
+								<button type="button" class="empty-btn" on:click={browseFolder}>Add folder…</button>
+								<button type="button" class="empty-btn empty-btn--ghost" on:click={browseFiles}>
+									Import file
+								</button>
+							</div>
+							<p class="empty-tip">Tip: Drop audio on a track or press B anytime</p>
 						</div>
-					{/each}
-				{/if}
+					{:else}
+						<!-- svelte-ignore a11y-no-noninteractive-tabindex -->
+						<div
+							class="file-list"
+							bind:this={resultsEl}
+							tabindex="0"
+							role="listbox"
+							aria-label="Library results"
+							on:focus={() => keyboardFocus.setLibraryResults()}
+							on:keydown={onResultsKeydown}
+							on:mousedown={() => keyboardFocus.setLibraryResults()}
+						>
+							{#if $libraryStore.query}
+								<div class="results-meta">
+									{LIBRARY_SOURCE_LABELS[$libraryStore.source]} · {visible.length} result{visible.length === 1 ? '' : 's'}
+								</div>
+							{/if}
 
-				{#if filteredProject.length === 0 && filteredLibrary.length === 0}
-					<div class="empty-state">
-						<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round">
-							<path d="M9 18V5l12-2v13"/>
-							<circle cx="6" cy="18" r="3"/>
-							<circle cx="18" cy="16" r="3"/>
-						</svg>
-						{#if searchQuery}
-							<p>Aucun résultat pour « {searchQuery} »</p>
-						{:else}
-							<p>Cliquez sur <strong>+</strong> pour ajouter des fichiers audio à la bibliothèque</p>
-						{/if}
-					</div>
-				{/if}
+							{#each visible as asset (asset.id)}
+								<!-- svelte-ignore a11y-no-noninteractive-element-interactions a11y-click-events-have-key-events a11y-no-noninteractive-tabindex -->
+								<div
+									class="file-item"
+									class:selected={$libraryStore.selectedId === asset.id}
+									class:previewing={$libraryStore.previewingId === asset.id}
+									role="option"
+									tabindex="-1"
+									aria-selected={$libraryStore.selectedId === asset.id}
+									draggable="true"
+									title={asset.path}
+									on:click={() => onRowClick(asset)}
+									on:dblclick={() => onRowDblClick(asset)}
+									on:pointerenter={() => onRowPointerEnter(asset)}
+									on:pointerleave={onRowPointerLeave}
+									on:dragstart={(e) => onDragStart(e, asset)}
+									on:dragend={onDragEnd}
+								>
+									<button
+										class="fav-btn"
+										type="button"
+										class:on={$libraryStore.favoriteIds.includes(asset.id)}
+										title="Favorite"
+										on:click={(e) => onFavoriteClick(e, asset)}
+									>
+										{$libraryStore.favoriteIds.includes(asset.id) ? '★' : '☆'}
+									</button>
+									<span class="file-ext">{asset.extension.toUpperCase()}</span>
+									<span class="file-name">{asset.name}</span>
+									<button
+										class="preview-btn"
+										type="button"
+										title="Preview"
+										on:click={(e) => onPreviewClick(e, asset)}
+									>
+										{$libraryStore.previewingId === asset.id ? '■' : '▶'}
+									</button>
+									<button
+										class="insert-btn"
+										type="button"
+										title="Insert at playhead"
+										on:click={() => insertAsset(asset)}
+									>
+										<svg width="8" height="8" viewBox="0 0 8 8" fill="none">
+											<path d="M4 1V6M1.5 5.5L4 7.5L6.5 5.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>
+										</svg>
+									</button>
+								</div>
+							{:else}
+								<div class="empty-state empty-state--compact">
+									{#if $libraryStore.query}
+										<p>No results for « {$libraryStore.query} »</p>
+									{:else if $libraryStore.source === 'recents'}
+										<p>No recent sounds yet</p>
+									{:else if $libraryStore.source === 'favorites'}
+										<p>Star a sound to pin it here</p>
+									{:else}
+										<p>No audio indexed</p>
+									{/if}
+								</div>
+							{/each}
+						</div>
+
+						<div class="detail">
+							{#if selected}
+								<div class="detail-name" title={selected.path}>{selected.name}</div>
+								<div class="detail-meta">
+									<span>{selected.extension.toUpperCase()}</span>
+									<span>{formatDuration(selected.durationSec)}</span>
+								</div>
+							{:else}
+								<div class="detail-placeholder">Select a sound</div>
+							{/if}
+						</div>
+					{/if}
+				</div>
 			</div>
 		</div>
 	{/if}
@@ -217,12 +448,36 @@
 		min-height: 0;
 	}
 
-	// ── Search bar ────────────────────────────────────────────────────────────
+	.chrome {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 8px;
+		padding: 8px 10px 0;
+		flex-shrink: 0;
+	}
+
+	.chrome-title {
+		font-size: 10px;
+		font-weight: 700;
+		letter-spacing: 0.08em;
+		text-transform: uppercase;
+		color: $text-muted;
+	}
+
+	.chrome-status {
+		font-size: 9px;
+		font-family: $font-mono;
+		color: $text-faint;
+
+		&--error { color: $color-error; }
+	}
+
 	.search-row {
 		display: flex;
 		align-items: center;
 		gap: 6px;
-		padding: 8px 8px 8px 12px;
+		padding: 8px 8px 8px 10px;
 		border-bottom: 1px solid $border-color;
 		flex-shrink: 0;
 	}
@@ -295,37 +550,118 @@
 		}
 	}
 
-	// ── File list ─────────────────────────────────────────────────────────────
+	.body {
+		flex: 1;
+		min-height: 0;
+		display: flex;
+		flex-direction: row;
+	}
+
+	.sources {
+		width: 84px;
+		flex-shrink: 0;
+		border-right: 1px solid $border-color;
+		padding: 6px 4px;
+		display: flex;
+		flex-direction: column;
+		gap: 2px;
+		overflow-y: auto;
+	}
+
+	.source-btn {
+		text-align: left;
+		background: transparent;
+		border: none;
+		border-radius: $radius-sm;
+		color: $text-subtle;
+		font-size: 10px;
+		padding: 5px 6px;
+		cursor: pointer;
+
+		&:hover { background: $surface-hover; color: $text-color; }
+
+		&.active {
+			background: rgba(21,113,255,0.14);
+			color: $text-color;
+		}
+
+		&--action {
+			margin-top: 6px;
+			color: $accent-color;
+			border-top: 1px solid $border-faint;
+			border-radius: 0;
+			padding-top: 8px;
+		}
+	}
+
+	.results-col {
+		flex: 1;
+		min-width: 0;
+		display: flex;
+		flex-direction: column;
+		min-height: 0;
+	}
+
 	.file-list {
 		flex: 1;
 		overflow-y: auto;
 		overflow-x: hidden;
 		padding: 4px 0;
+		outline: none;
+
+		&:focus-visible {
+			box-shadow: inset 0 0 0 1px rgba(21,113,255,0.35);
+		}
 	}
 
-	.section-label {
-		font-size: 8px;
+	.results-meta {
+		font-size: 9px;
 		font-family: $font-mono;
-		font-weight: 700;
 		color: $text-faint;
-		letter-spacing: 0.1em;
-		text-transform: uppercase;
-		padding: 8px 10px 4px;
+		padding: 4px 10px 6px;
 	}
 
 	.file-item {
 		display: flex;
 		align-items: center;
-		gap: 6px;
-		padding: 4px 8px 4px 10px;
-		cursor: pointer;
+		gap: 4px;
+		padding: 3px 6px 3px 4px;
+		cursor: grab;
 		transition: background 0.1s;
 
-		&:hover {
+		&:hover,
+		&.selected {
 			background: $surface-hover;
 
-			.insert-btn { opacity: 1; }
+			.insert-btn,
+			.preview-btn { opacity: 1; }
 		}
+
+		&.selected {
+			background: rgba(21,113,255,0.12);
+		}
+
+		&.previewing .file-name {
+			color: $text-color;
+		}
+
+		&:active { cursor: grabbing; }
+	}
+
+	.fav-btn {
+		width: 16px;
+		height: 16px;
+		padding: 0;
+		border: none;
+		background: transparent;
+		color: $text-faint;
+		cursor: pointer;
+		font-size: 10px;
+		line-height: 1;
+		flex-shrink: 0;
+
+		&.on,
+		&:hover { color: $color-warning; }
 	}
 
 	.file-ext {
@@ -351,6 +687,7 @@
 		min-width: 0;
 	}
 
+	.preview-btn,
 	.insert-btn {
 		display: flex;
 		align-items: center;
@@ -365,30 +702,97 @@
 		opacity: 0;
 		flex-shrink: 0;
 		transition: color 0.1s, opacity 0.1s;
+		font-size: 9px;
 
 		&:hover { color: $accent-color; }
 	}
 
-	// ── Empty state ───────────────────────────────────────────────────────────
+	.detail {
+		flex-shrink: 0;
+		border-top: 1px solid $border-color;
+		padding: 8px 10px;
+		min-height: 44px;
+	}
+
+	.detail-name {
+		font-size: 11px;
+		color: $text-color;
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+
+	.detail-meta {
+		display: flex;
+		gap: 10px;
+		margin-top: 3px;
+		font-size: 9px;
+		font-family: $font-mono;
+		color: $text-faint;
+	}
+
+	.detail-placeholder {
+		font-size: 10px;
+		color: $text-faint;
+	}
+
 	.empty-state {
 		display: flex;
 		flex-direction: column;
 		align-items: center;
 		justify-content: center;
-		gap: 10px;
-		padding: 32px 16px;
+		gap: 12px;
+		padding: 28px 14px;
 		color: $text-faint;
+		text-align: center;
 
-		svg { opacity: 0.25; }
-
-		p {
-			font-size: 10px;
-			text-align: center;
-			margin: 0;
-			line-height: 1.5;
-			color: $text-faint;
+		&--compact {
+			padding: 24px 12px;
+			gap: 6px;
 		}
+	}
 
-		strong { color: $text-subtle; }
+	.empty-title {
+		font-size: 12px;
+		color: $text-subtle;
+		margin: 0;
+	}
+
+	.empty-actions {
+		display: flex;
+		flex-direction: column;
+		gap: 6px;
+		width: 100%;
+		max-width: 160px;
+	}
+
+	.empty-btn {
+		height: 26px;
+		border-radius: $radius-sm;
+		border: 1px solid rgba(21,113,255,0.45);
+		background: rgba(21,113,255,0.14);
+		color: $text-color;
+		font-size: 11px;
+		cursor: pointer;
+
+		&:hover { background: rgba(21,113,255,0.22); }
+
+		&--ghost {
+			background: transparent;
+			border-color: $border-subtle;
+			color: $text-subtle;
+
+			&:hover {
+				color: $text-color;
+				border-color: $border-color;
+			}
+		}
+	}
+
+	.empty-tip {
+		font-size: 10px;
+		line-height: 1.45;
+		margin: 0;
+		color: $text-faint;
 	}
 </style>

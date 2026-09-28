@@ -259,6 +259,9 @@ Current implementation (`Knob.svelte`):
 | Zoom in timeline | `Ctrl/Cmd + Scroll` or `+` |
 | Zoom out timeline | `Ctrl/Cmd + Scroll` or `-` |
 | Zoom to fit | `Ctrl/Cmd + 0` |
+| Toggle library panel | `B` (alias `L`) |
+| Focus library search | `/` or `Ctrl/Cmd + F` (panel open) |
+| Preview selected library asset | `Space` (when library results focused) |
 
 [TODO: Full shortcut list to be defined and made configurable in Phase 5]
 

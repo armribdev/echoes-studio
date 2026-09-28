@@ -35,7 +35,7 @@ plugin_bridge = { path = "crates/plugin_bridge" }
 clap_ffi = { path = "crates/clap_ffi" }
 serde_json = "1.0"
 serde = { version = "1.0", features = ["derive"] }
-tauri = { version = "2", features = [] }
+tauri = { version = "2", features = ["protocol-asset"] }
 tauri-plugin-dialog = "2"
 hound = "3.5.1"
 cpal = "0.15.2"

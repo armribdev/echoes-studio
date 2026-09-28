@@ -3,6 +3,7 @@ mod audio_engine;
 mod audio_graph;
 mod audio_settings;
 mod engine_gateway;
+mod library;
 mod menu_state;
 mod midi_input;
 mod plugin_formats;
@@ -199,6 +200,7 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             get_audio_clip_duration,
+            library::scan_library_folder,
             get_project,
             list_plugins,
             get_unavailable_plugins,

@@ -30,6 +30,7 @@
 	import { leftPanel } from '../stores/leftPanel';
 	import { shouldHandleTimelineShortcuts } from '../frontend/shortcuts/context';
 	import { keyboardFocus } from '../stores/keyboardFocus';
+	import { LIBRARY_DRAG_MIME, libraryStore, isAudioPath, getActiveLibraryDragPath } from '../frontend/library';
 	import {
 		focusMidiClipForEdit,
 		ensureClipPreview,
@@ -1418,10 +1419,115 @@
 
 	// Tauri intercepts OS file drops before WebView2 sees them — these stubs
 	// just prevent the browser's default "open file" fallback on non-Tauri drags.
-	function handleDragEnter(event: DragEvent) { event.preventDefault(); }
-	function handleDragLeave(event: DragEvent) { event.preventDefault(); }
-	function handleDragOver(event: DragEvent) { event.preventDefault(); }
-	function handleDrop(event: DragEvent) { event.preventDefault(); }
+	function updateLibraryDragPreview(clientX: number, clientY: number) {
+		if (!tracksEl) return;
+		const rect = tracksEl.getBoundingClientRect();
+		const x = clientX - rect.left + tracksEl.scrollLeft;
+		const y = clientY - rect.top + tracksEl.scrollTop;
+		if (x < 0 || x > rect.width || y < 0) {
+			fileDragPreview = null;
+			return;
+		}
+		const trackIndex = arrangeTrackIndexFromY(y, tracks.length);
+		fileDragPreview = {
+			trackIndex,
+			startSec: Math.max(0, snap(x / scale, false)),
+			durationSec: pendingDragDuration ?? fileDragPreview?.durationSec ?? null,
+		};
+	}
+
+	function libraryPathFromDrag(event: DragEvent): string | null {
+		const active = getActiveLibraryDragPath();
+		if (active && isAudioPath(active)) return active;
+		const dt = event.dataTransfer;
+		if (!dt) return null;
+		const types = Array.from(dt.types ?? []);
+		if (!types.includes(LIBRARY_DRAG_MIME) && !types.includes('text/plain')) return null;
+		const path = dt.getData(LIBRARY_DRAG_MIME) || dt.getData('text/plain');
+		if (!path || !isAudioPath(path)) return null;
+		return path;
+	}
+
+	function isLibraryDrag(event: DragEvent): boolean {
+		if (getActiveLibraryDragPath()) return true;
+		const types = Array.from(event.dataTransfer?.types ?? []);
+		return types.includes(LIBRARY_DRAG_MIME);
+	}
+
+	function handleDragEnter(event: DragEvent) {
+		event.preventDefault();
+		if (!isLibraryDrag(event)) return;
+		const path = libraryPathFromDrag(event);
+		if (!path) return;
+		libraryStore.stopPreview();
+		pendingDragDuration = null;
+		updateLibraryDragPreview(event.clientX, event.clientY);
+		invoke<number>('get_audio_clip_duration', { filePath: path })
+			.then((dur) => {
+				pendingDragDuration = dur;
+				if (fileDragPreview) fileDragPreview = { ...fileDragPreview, durationSec: dur };
+			})
+			.catch(() => {});
+	}
+
+	function handleDragLeave(event: DragEvent) {
+		event.preventDefault();
+		const related = event.relatedTarget as Node | null;
+		if (related && tracksEl?.contains(related)) return;
+		if (isLibraryDrag(event) || fileDragPreview) {
+			fileDragPreview = null;
+			pendingDragDuration = null;
+		}
+	}
+
+	function handleDragOver(event: DragEvent) {
+		event.preventDefault();
+		if (!isLibraryDrag(event)) return;
+		if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy';
+		updateLibraryDragPreview(event.clientX, event.clientY);
+	}
+
+	function handleDrop(event: DragEvent) {
+		event.preventDefault();
+		const filePath = libraryPathFromDrag(event);
+		const preview = fileDragPreview;
+		const knownDuration = pendingDragDuration ?? preview?.durationSec ?? null;
+		pendingDragDuration = null;
+		fileDragPreview = null;
+		if (!filePath) return;
+
+		// Phase 1: library drop requires an existing track (no create-on-empty).
+		if (tracks.length === 0) {
+			notify('Créez une piste avant d\'importer (Phase 1).', 'error');
+			return;
+		}
+
+		const trackIndex = Math.min(preview?.trackIndex ?? 0, tracks.length - 1);
+		const startSec = preview?.startSec ?? 0;
+		const trackId = tracks[trackIndex]?.id;
+		if (!trackId) {
+			notify('Créez une piste avant d\'importer (Phase 1).', 'error');
+			return;
+		}
+
+		const finish = (dur: number) => {
+			libraryStore.recordRecent(filePath);
+			return addClip(trackId, filePath, startSec, startSec + dur)
+				.then(() => {
+					const name = filePath.split(/[\\/]/).pop() ?? filePath;
+					notify(`Importé : ${name}`, 'success');
+				})
+				.catch((err) => notify(`Erreur import : ${err?.message ?? err}`, 'error'));
+		};
+
+		if (knownDuration != null) {
+			void finish(knownDuration);
+		} else {
+			invoke<number>('get_audio_clip_duration', { filePath })
+				.then((dur) => finish(dur))
+				.catch((err) => notify(`Erreur import : ${err?.message ?? err}`, 'error'));
+		}
+	}
 
 	function handleVolumeChange(trackIndex: number, volume: number) {
 		const track = tracks[trackIndex];

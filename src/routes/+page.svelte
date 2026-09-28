@@ -31,7 +31,6 @@
 	import { exportMixdown } from '../lib/exportMixdown';
 	import { notify } from '../stores/status';
 	import { leftPanel } from '../stores/leftPanel';
-	import { rightPanel } from '../stores/rightPanel';
 	import { viewMode } from '../stores/viewMode';
 	import { graphSnapshot } from '../stores/graphSnapshot';
 	import { selectedTrack } from '../stores/selectedTrack';
@@ -119,9 +118,6 @@
 				if (e.key === 'i' || e.key === 'I') {
 					e.preventDefault();
 					leftPanel.toggle();
-				} else if (e.key === 'l' || e.key === 'L') {
-					e.preventDefault();
-					rightPanel.toggle();
 				}
 			}
 		}
