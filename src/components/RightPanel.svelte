@@ -4,13 +4,13 @@
 	import { selectedTrack } from '../stores/selectedTrack';
 	import { transport } from '../stores/transport';
 	import { projectEventStore } from '../shared/project/eventStore';
-	import { addClip } from '../frontend/commands/dispatcher';
 	import { notify } from '../stores/status';
-	import { invoke } from '@tauri-apps/api/core';
 	import { open as openDialog } from '@tauri-apps/plugin-dialog';
 	import PanelResizeHandle from './PanelResizeHandle.svelte';
 	import { persistProjectUiLayout } from '../lib/projectUiLayout';
 	import { keyboardFocus } from '../stores/keyboardFocus';
+	import { importAudioToTrack } from '../frontend/audio/importClip';
+	import { audioImportProgress } from '../frontend/audio/importProgress';
 	import {
 		libraryStore,
 		libraryVisibleAssets,
@@ -105,16 +105,15 @@
 		}
 		try {
 			libraryStore.stopPreview();
-			const dur =
-				asset.durationSec ??
-				(await invoke<number>('get_audio_clip_duration', { filePath: asset.path }));
-			libraryStore.upsertAsset({ ...asset, durationSec: dur });
-			const startSec = $transport.position;
-			await addClip(targetTrackId, asset.path, startSec, startSec + dur);
+			await importAudioToTrack({
+				trackId: targetTrackId,
+				filePath: asset.path,
+				startSec: $transport.position,
+				knownDurationSec: asset.durationSec,
+			});
 			libraryStore.recordRecent(asset.id);
-			notify(`Importé : ${asset.name}`, 'success');
-		} catch (e) {
-			notify(`Erreur import : ${(e as Error)?.message ?? e}`, 'error');
+		} catch {
+			/* importAudioToTrack already notified */
 		}
 	}
 
@@ -246,7 +245,16 @@
 		<div class="library-inner">
 			<div class="chrome">
 				<span class="chrome-title">Library</span>
-				{#if $libraryStore.indexer === 'scanning'}
+				{#if $audioImportProgress.activeCount > 0}
+					<span class="chrome-status chrome-status--busy" title={$audioImportProgress.fileName ?? ''}>
+						<span class="chrome-spinner" aria-hidden="true"></span>
+						Importing{#if $audioImportProgress.progress != null}
+							{' '}{Math.round($audioImportProgress.progress * 100)}%
+						{:else if $audioImportProgress.activeCount > 1}
+							{' '}({$audioImportProgress.activeCount})
+						{/if}…
+					</span>
+				{:else if $libraryStore.indexer === 'scanning'}
 					<span class="chrome-status">
 						Indexing…{($libraryStore.indexerProgress != null
 							? ` ${Math.round($libraryStore.indexerProgress * 100)}%`
@@ -258,6 +266,26 @@
 					</span>
 				{/if}
 			</div>
+
+			{#if $audioImportProgress.activeCount > 0 && $audioImportProgress.fileName}
+				<div class="import-banner" role="status" aria-live="polite">
+					<span class="chrome-spinner" aria-hidden="true"></span>
+					<span class="import-banner-text" title={$audioImportProgress.fileName}>
+						Loading {$audioImportProgress.fileName}
+						{#if $audioImportProgress.progress != null}
+							· {Math.round($audioImportProgress.progress * 100)}%
+						{/if}
+					</span>
+					{#if $audioImportProgress.progress != null}
+						<div class="import-banner-bar" aria-hidden="true">
+							<div
+								class="import-banner-fill"
+								style="width: {Math.round($audioImportProgress.progress * 100)}%"
+							></div>
+						</div>
+					{/if}
+				</div>
+			{/if}
 
 			<div class="search-row">
 				<div class="search-wrap">
@@ -338,18 +366,23 @@
 							{/if}
 
 							{#each visible as asset (asset.id)}
+								{@const isImporting =
+									$audioImportProgress.activeCount > 0 &&
+									$audioImportProgress.fileName === asset.name}
 								<!-- svelte-ignore a11y-no-noninteractive-element-interactions a11y-click-events-have-key-events a11y-no-noninteractive-tabindex -->
 								<div
 									class="file-item"
 									class:selected={$libraryStore.selectedId === asset.id}
 									class:previewing={$libraryStore.previewingId === asset.id}
+									class:importing={isImporting}
 									role="option"
 									tabindex="-1"
 									aria-selected={$libraryStore.selectedId === asset.id}
-									draggable="true"
+									aria-busy={isImporting}
+									draggable={!isImporting}
 									title={asset.path}
 									on:click={() => onRowClick(asset)}
-									on:dblclick={() => onRowDblClick(asset)}
+									on:dblclick={() => { if (!isImporting) onRowDblClick(asset); }}
 									on:pointerenter={() => onRowPointerEnter(asset)}
 									on:pointerleave={onRowPointerLeave}
 									on:dragstart={(e) => onDragStart(e, asset)}
@@ -366,24 +399,28 @@
 									</button>
 									<span class="file-ext">{asset.extension.toUpperCase()}</span>
 									<span class="file-name">{asset.name}</span>
-									<button
-										class="preview-btn"
-										type="button"
-										title="Preview"
-										on:click={(e) => onPreviewClick(e, asset)}
-									>
-										{$libraryStore.previewingId === asset.id ? '■' : '▶'}
-									</button>
-									<button
-										class="insert-btn"
-										type="button"
-										title="Insert at playhead"
-										on:click={() => insertAsset(asset)}
-									>
-										<svg width="8" height="8" viewBox="0 0 8 8" fill="none">
-											<path d="M4 1V6M1.5 5.5L4 7.5L6.5 5.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>
-										</svg>
-									</button>
+									{#if isImporting}
+										<span class="row-spinner" aria-hidden="true"></span>
+									{:else}
+										<button
+											class="preview-btn"
+											type="button"
+											title="Preview"
+											on:click={(e) => onPreviewClick(e, asset)}
+										>
+											{$libraryStore.previewingId === asset.id ? '■' : '▶'}
+										</button>
+										<button
+											class="insert-btn"
+											type="button"
+											title="Insert at playhead"
+											on:click={() => insertAsset(asset)}
+										>
+											<svg width="8" height="8" viewBox="0 0 8 8" fill="none">
+												<path d="M4 1V6M1.5 5.5L4 7.5L6.5 5.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>
+											</svg>
+										</button>
+									{/if}
 								</div>
 							{:else}
 								<div class="empty-state empty-state--compact">
@@ -469,8 +506,62 @@
 		font-size: 9px;
 		font-family: $font-mono;
 		color: $text-faint;
+		display: inline-flex;
+		align-items: center;
+		gap: 5px;
+		min-width: 0;
 
 		&--error { color: $color-error; }
+		&--busy { color: $accent-color; }
+	}
+
+	.chrome-spinner {
+		width: 8px;
+		height: 8px;
+		border: 1.5px solid rgba(21, 113, 255, 0.25);
+		border-top-color: $accent-color;
+		border-radius: 50%;
+		flex-shrink: 0;
+		animation: library-spin 0.7s linear infinite;
+	}
+
+	@keyframes library-spin {
+		to { transform: rotate(360deg); }
+	}
+
+	.import-banner {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 7px;
+		padding: 5px 10px;
+		border-bottom: 1px solid $border-color;
+		background: rgba(21, 113, 255, 0.08);
+		flex-shrink: 0;
+	}
+
+	.import-banner-text {
+		font-size: 10px;
+		color: $text-subtle;
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		min-width: 0;
+		flex: 1;
+	}
+
+	.import-banner-bar {
+		width: 100%;
+		height: 2px;
+		border-radius: 1px;
+		background: rgba(21, 113, 255, 0.18);
+		overflow: hidden;
+	}
+
+	.import-banner-fill {
+		height: 100%;
+		background: $accent-color;
+		transition: width 0.12s ease-out;
 	}
 
 	.search-row {
@@ -645,7 +736,25 @@
 			color: $text-color;
 		}
 
+		&.importing {
+			background: rgba(21,113,255,0.1);
+			cursor: progress;
+
+			.file-name { color: $text-color; }
+			.row-spinner { opacity: 1; }
+		}
+
 		&:active { cursor: grabbing; }
+	}
+
+	.row-spinner {
+		width: 12px;
+		height: 12px;
+		border: 1.5px solid rgba(21, 113, 255, 0.25);
+		border-top-color: $accent-color;
+		border-radius: 50%;
+		flex-shrink: 0;
+		animation: library-spin 0.7s linear infinite;
 	}
 
 	.fav-btn {

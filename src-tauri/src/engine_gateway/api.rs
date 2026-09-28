@@ -15,7 +15,7 @@ use serde::Serialize;
 use serde_json::{json, Value};
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, MutexGuard};
-use tauri::Emitter;
+use tauri::{Emitter, Manager};
 
 use super::commands::{
     cmd, AddAutomationLanePayload, AddClipPayload, AddEffectPayload, AddMidiClipPayload,
@@ -461,26 +461,124 @@ fn cached_audio_from_clip_data(data: AudioClipData) -> Arc<CachedAudioData> {
 fn insert_cached_clip(
     state: &tauri::State<'_, AppState>,
     clip_id: &str,
+    file_path: &str,
     cached: Arc<CachedAudioData>,
 ) -> Arc<CachedAudioData> {
     state
         .audio_cache
-        .insert(clip_id.to_string(), Arc::clone(&cached));
+        .insert_for_clip_and_path(clip_id.to_string(), file_path.to_string(), Arc::clone(&cached));
     cached
 }
 
+fn emit_import_progress(
+    app: &tauri::AppHandle,
+    file_path: &str,
+    update: crate::audio_clip::DecodeProgressUpdate,
+) {
+    let mut payload = serde_json::json!({
+        "file_path": file_path,
+        "progress": update.progress,
+        "cached": false,
+        "sample_rate": update.sample_rate,
+        "decoded_duration_sec": update.decoded_duration_sec,
+    });
+    if let Some(peaks) = update.peaks_64 {
+        payload["peaks_64"] = serde_json::json!(peaks);
+    }
+    if let Some(peaks) = update.peaks_512 {
+        payload["peaks_512"] = serde_json::json!(peaks);
+    }
+    if let Some(peaks) = update.peaks_4096 {
+        payload["peaks_4096"] = serde_json::json!(peaks);
+    }
+    if let Some(from) = update.peaks_512_from {
+        payload["peaks_512_from"] = serde_json::json!(from);
+        if let Some(append) = update.peaks_512_append {
+            payload["peaks_512_append"] = serde_json::json!(append);
+        }
+    }
+    if let Some(from) = update.peaks_4096_from {
+        payload["peaks_4096_from"] = serde_json::json!(from);
+        if let Some(append) = update.peaks_4096_append {
+            payload["peaks_4096_append"] = serde_json::json!(append);
+        }
+    }
+    let _ = app.emit("audio://import-progress", payload);
+}
+
+/// Decode (or reuse) audio into the path cache, emitting progressive peaks.
+fn ensure_path_cached(
+    app: &tauri::AppHandle,
+    state: &tauri::State<'_, AppState>,
+    file_path: &str,
+) -> Result<Arc<CachedAudioData>, String> {
+    if let Some(cached) = state.audio_cache.get_by_path(file_path) {
+        let _ = app.emit(
+            "audio://import-progress",
+            serde_json::json!({
+                "file_path": file_path,
+                "progress": 1.0,
+                "cached": true,
+                "sample_rate": cached.sample_rate,
+                "peaks_64": cached.peaks_64,
+                "peaks_512": cached.peaks_512,
+                "peaks_4096": cached.peaks_4096,
+                "decoded_duration_sec": cached.duration_sec(),
+            }),
+        );
+        return Ok(cached);
+    }
+
+    let mut emit_progress = |update: crate::audio_clip::DecodeProgressUpdate| {
+        emit_import_progress(app, file_path, update);
+    };
+
+    let audio = AudioClip::from_file_with_progress(file_path, &mut emit_progress)
+        .map_err(|e| format!("Failed to load audio '{file_path}': {e}"))?;
+    let data = audio.into_clip_data_with_progress(&mut emit_progress);
+    let cached = cached_audio_from_clip_data(data);
+    state
+        .audio_cache
+        .insert_path(file_path.to_string(), Arc::clone(&cached));
+    Ok(cached)
+}
+
 fn cache_audio_clip(
+    app: &tauri::AppHandle,
     state: &tauri::State<'_, AppState>,
     clip_id: &str,
     file_path: &str,
 ) -> Result<Arc<CachedAudioData>, String> {
-    let audio = AudioClip::from_file(file_path)
-        .map_err(|e| format!("Failed to load audio '{file_path}': {e}"))?;
-    Ok(insert_cached_clip(
-        state,
-        clip_id,
-        cached_audio_from_clip_data(audio.into_clip_data()),
-    ))
+    let cached = ensure_path_cached(app, state, file_path)?;
+    state
+        .audio_cache
+        .insert(clip_id.to_string(), Arc::clone(&cached));
+    Ok(cached)
+}
+
+/// Async preload so the UI event loop can paint progressive waveform updates
+/// while decode runs on a blocking pool thread (not inside sync `send_command`).
+#[derive(serde::Serialize)]
+pub struct PrepareAudioImportResult {
+    pub duration_sec: f64,
+    pub sample_rate: u32,
+}
+
+#[tauri::command]
+pub async fn prepare_audio_import(
+    app: tauri::AppHandle,
+    file_path: String,
+) -> Result<PrepareAudioImportResult, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        let cached = ensure_path_cached(&app, &state, &file_path)?;
+        Ok(PrepareAudioImportResult {
+            duration_sec: cached.duration_sec(),
+            sample_rate: cached.sample_rate,
+        })
+    })
+    .await
+    .map_err(|e| format!("Audio import task failed: {e}"))?
 }
 
 fn resolve_clip_audio(
@@ -491,10 +589,17 @@ fn resolve_clip_audio(
     if let Some(cached) = state.audio_cache.get(clip_id) {
         return Some(cached);
     }
+    if let Some(cached) = state.audio_cache.get_by_path(file_path) {
+        state
+            .audio_cache
+            .insert(clip_id.to_string(), Arc::clone(&cached));
+        return Some(cached);
+    }
     match AudioClip::from_file(file_path) {
         Ok(audio) => Some(insert_cached_clip(
             state,
             clip_id,
+            file_path,
             cached_audio_from_clip_data(audio.into_clip_data()),
         )),
         Err(e) => {
@@ -973,11 +1078,17 @@ fn process_command(
                 .map_err(|e| format!("ADD_CLIP payload invalid: {e}"))?;
 
             let clip_id = generate_id();
-            let cached = cache_audio_clip(state, &clip_id, &p.file_path)?;
+            let cached = cache_audio_clip(ctx.app, state, &clip_id, &p.file_path)?;
+            let file_duration = cached.duration_sec();
+            let end = if p.end > p.start {
+                p.end
+            } else {
+                p.start + file_duration
+            };
             let mut clip = app_clip_from_audio(
                 clip_id.clone(),
                 p.start,
-                p.end,
+                end,
                 p.file_path.clone(),
                 &cached,
             );
@@ -998,7 +1109,7 @@ fn process_command(
                     "clip_id": clip_id,
                     "file_path": p.file_path,
                     "start": p.start,
-                    "end": p.end,
+                    "end": end,
                     "offset": offset,
                 }),
                 json!({ "track_id": p.track_id, "clip": clip_dto }),

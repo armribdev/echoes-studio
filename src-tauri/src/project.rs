@@ -888,26 +888,47 @@ impl AppTrack {
 }
 
 impl AppClip {
+    pub fn source_duration_sec(&self) -> f64 {
+        if self.sample_rate == 0 {
+            return 0.0;
+        }
+        self.raw_samples.len() as f64 / self.sample_rate as f64
+    }
+
+    /// DTO for the UI IPC boundary. Never includes PCM samples — sending
+    /// multi-minute `raw_samples` as JSON freezes the WebView for seconds.
     pub fn to_dto(&self) -> ClipDto {
+        // Cap the densest peak lane so long files stay light on the wire.
+        // Arrange still has peaks_512 / peaks_4096 for overview zoom levels.
+        const MAX_UI_PEAKS_64: usize = 120_000;
+        let peaks_64 = if self.peaks_64.len() > MAX_UI_PEAKS_64 {
+            Vec::new()
+        } else {
+            self.peaks_64.clone()
+        };
         ClipDto {
             id: self.id.clone(),
             start: self.start,
             end: self.end,
             offset: self.offset,
             file_path: self.file_path.clone(),
-            raw_samples: Arc::clone(&self.raw_samples),
+            raw_samples: Arc::new(Vec::new()),
             sample_rate: self.sample_rate,
-            peaks_64: self.peaks_64.clone(),
+            source_duration_sec: self.source_duration_sec(),
+            peaks_64,
             peaks_512: self.peaks_512.clone(),
             peaks_4096: self.peaks_4096.clone(),
         }
     }
 }
 
-// Keyed by clip_id. Persists audio data across undo/redo so events can be
-// replayed without re-reading audio files from disk.
+// Keyed by clip_id (+ optional path index). Persists audio data across undo/redo
+// so events can be replayed without re-reading audio files from disk.
 
-pub struct AudioDataCache(pub Mutex<HashMap<String, Arc<CachedAudioData>>>);
+pub struct AudioDataCache {
+    by_clip_id: Mutex<HashMap<String, Arc<CachedAudioData>>>,
+    by_path: Mutex<HashMap<String, Arc<CachedAudioData>>>,
+}
 
 pub struct CachedAudioData {
     pub raw_samples: Arc<Vec<f32>>,
@@ -917,19 +938,51 @@ pub struct CachedAudioData {
     pub peaks_4096: Vec<[f32; 2]>,
 }
 
+impl CachedAudioData {
+    pub fn duration_sec(&self) -> f64 {
+        if self.sample_rate == 0 {
+            return 0.0;
+        }
+        self.raw_samples.len() as f64 / self.sample_rate as f64
+    }
+}
+
 impl AudioDataCache {
     pub fn new() -> Self {
-        Self(Mutex::new(HashMap::new()))
+        Self {
+            by_clip_id: Mutex::new(HashMap::new()),
+            by_path: Mutex::new(HashMap::new()),
+        }
     }
 
     pub fn get(&self, clip_id: &str) -> Option<Arc<CachedAudioData>> {
-        self.0.lock().ok()?.get(clip_id).cloned()
+        self.by_clip_id.lock().ok()?.get(clip_id).cloned()
+    }
+
+    pub fn get_by_path(&self, path: &str) -> Option<Arc<CachedAudioData>> {
+        self.by_path.lock().ok()?.get(path).cloned()
     }
 
     pub fn insert(&self, clip_id: String, data: Arc<CachedAudioData>) {
-        if let Ok(mut map) = self.0.lock() {
+        if let Ok(mut map) = self.by_clip_id.lock() {
             map.insert(clip_id, data);
         }
+    }
+
+    pub fn insert_path(&self, path: String, data: Arc<CachedAudioData>) {
+        if let Ok(mut map) = self.by_path.lock() {
+            map.insert(path, data);
+        }
+    }
+
+    pub fn insert_for_clip_and_path(
+        &self,
+        clip_id: String,
+        path: String,
+        data: Arc<CachedAudioData>,
+    ) {
+        self.insert_path(path, Arc::clone(&data));
+        self.insert(clip_id, data);
     }
 }
 
@@ -1144,9 +1197,12 @@ pub struct ClipDto {
     pub end: f64,
     pub offset: f64,
     pub file_path: String,
+    /// Always empty on the UI wire — PCM stays in the engine cache.
     #[serde(serialize_with = "crate::audio_clip::serialize_arc_vec_f32")]
     pub raw_samples: Arc<Vec<f32>>,
     pub sample_rate: u32,
+    /// Full source-file length in seconds (independent of clip trim / peaks lanes).
+    pub source_duration_sec: f64,
     pub peaks_64: Vec<[f32; 2]>,
     pub peaks_512: Vec<[f32; 2]>,
     pub peaks_4096: Vec<[f32; 2]>,

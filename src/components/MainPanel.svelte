@@ -31,6 +31,10 @@
 	import { shouldHandleTimelineShortcuts } from '../frontend/shortcuts/context';
 	import { keyboardFocus } from '../stores/keyboardFocus';
 	import { LIBRARY_DRAG_MIME, libraryStore, isAudioPath, getActiveLibraryDragPath } from '../frontend/library';
+	import { importAudioToTrack, probeAudioDuration } from '../frontend/audio/importClip';
+	import { clipSourceDurationSec } from '../frontend/audio/clipDuration';
+	import { pendingImports } from '../frontend/audio/pendingImports';
+	import Clip from './Clip.svelte';
 	import {
 		focusMidiClipForEdit,
 		ensureClipPreview,
@@ -271,7 +275,7 @@
 					const path = payload.paths[0];
 					if (!path || !isAudioFile(path)) return;
 					updateDragPreview(payload.position.x, payload.position.y);
-					invoke<number>('get_audio_clip_duration', { filePath: path })
+					probeAudioDuration(path)
 						.then((dur) => {
 							pendingDragDuration = dur;
 							if (fileDragPreview) fileDragPreview = { ...fileDragPreview, durationSec: dur };
@@ -297,28 +301,21 @@
 
 					const trackIndex = preview?.trackIndex ?? 0;
 					const startSec = preview?.startSec ?? 0;
+					fileDragPreview = null;
 
-					const doImport = (dur: number) => {
-						ensureTrackForClipPlacement(trackIndex)
-							.then((trackId) => {
-								if (!trackId) { fileDragPreview = null; return; }
-								return addClip(trackId, filePath, startSec, startSec + dur);
-							})
-							.then(() => { fileDragPreview = null; })
-							.catch((err) => { notify(`Erreur import : ${err?.message ?? err}`, 'error'); fileDragPreview = null; });
-					};
-
-					if (knownDuration !== null) {
-						if (fileDragPreview) fileDragPreview = { ...fileDragPreview, durationSec: knownDuration };
-						doImport(knownDuration);
-					} else {
-						invoke<number>('get_audio_clip_duration', { filePath })
-							.then((dur) => {
-								if (fileDragPreview) fileDragPreview = { ...fileDragPreview, durationSec: dur };
-								doImport(dur);
-							})
-							.catch((err) => { notify(`Erreur import : ${err?.message ?? err}`, 'error'); fileDragPreview = null; });
-					}
+					ensureTrackForClipPlacement(trackIndex)
+						.then((trackId) => {
+							if (!trackId) return;
+							return importAudioToTrack({
+								trackId,
+								filePath,
+								startSec,
+								knownDurationSec: knownDuration ?? undefined,
+								endSec:
+									knownDuration != null ? startSec + knownDuration : undefined,
+							});
+						})
+						.catch((err) => notify(`Erreur import : ${err?.message ?? err}`, 'error'));
 				}),
 			]);
 			unlisteners.push(...dragFns);
@@ -345,7 +342,6 @@
 				}),
 				listen<string>('audio-file-picked', async ({ payload: filePath }) => {
 					try {
-						const dur = await invoke<number>('get_audio_clip_duration', { filePath });
 						const startSec = $transport.position;
 						const trackIndex =
 							selectedTrackIndex !== null && tracks[selectedTrackIndex]
@@ -353,9 +349,7 @@
 								: tracks.length;
 						const trackId = await ensureTrackForClipPlacement(trackIndex);
 						if (!trackId) return;
-						await addClip(trackId, filePath, startSec, startSec + dur);
-						const filename = filePath.split(/[\\/]/).pop() ?? filePath;
-						notify(`Importé : ${filename}`, 'success');
+						await importAudioToTrack({ trackId, filePath, startSec });
 					} catch (err: unknown) {
 						const msg = err instanceof Error ? err.message : String(err);
 						notify(`Erreur import : ${msg}`, 'error');
@@ -1231,7 +1225,7 @@
 		selectTrackIndex(trackIndex);
 		const clip = tracks[trackIndex]?.clips[clipIndex];
 		if (!clip) return;
-		const sourceDuration = (clip.peaks_64.length * 64) / clip.sample_rate;
+		const sourceDuration = clipSourceDurationSec(clip);
 		resizing = {
 			kind: 'audio',
 			edge,
@@ -1462,7 +1456,7 @@
 		libraryStore.stopPreview();
 		pendingDragDuration = null;
 		updateLibraryDragPreview(event.clientX, event.clientY);
-		invoke<number>('get_audio_clip_duration', { filePath: path })
+		probeAudioDuration(path)
 			.then((dur) => {
 				pendingDragDuration = dur;
 				if (fileDragPreview) fileDragPreview = { ...fileDragPreview, durationSec: dur };
@@ -1510,23 +1504,14 @@
 			return;
 		}
 
-		const finish = (dur: number) => {
-			libraryStore.recordRecent(filePath);
-			return addClip(trackId, filePath, startSec, startSec + dur)
-				.then(() => {
-					const name = filePath.split(/[\\/]/).pop() ?? filePath;
-					notify(`Importé : ${name}`, 'success');
-				})
-				.catch((err) => notify(`Erreur import : ${err?.message ?? err}`, 'error'));
-		};
-
-		if (knownDuration != null) {
-			void finish(knownDuration);
-		} else {
-			invoke<number>('get_audio_clip_duration', { filePath })
-				.then((dur) => finish(dur))
-				.catch((err) => notify(`Erreur import : ${err?.message ?? err}`, 'error'));
-		}
+		libraryStore.recordRecent(filePath);
+		void importAudioToTrack({
+			trackId,
+			filePath,
+			startSec,
+			knownDurationSec: knownDuration ?? undefined,
+			endSec: knownDuration != null ? startSec + knownDuration : undefined,
+		}).catch(() => {});
 	}
 
 	function handleVolumeChange(trackIndex: number, volume: number) {
@@ -1814,6 +1799,29 @@
 					style="top: {fileDragPreview.trackIndex * ARRANGE_TRACK_HEIGHT}px; left: {fileDragPreview.startSec * scale}px; width: {fileDragPreview.durationSec != null ? fileDragPreview.durationSec * scale : 150}px;"
 				></div>
 			{/if}
+			{#each $pendingImports as pending (pending.id)}
+				{@const trackIndex = tracks.findIndex((t) => t.id === pending.trackId)}
+				{#if trackIndex >= 0}
+					<div
+						class="pending-import-slot"
+						style="top: {trackIndex * ARRANGE_TRACK_HEIGHT}px; height: {ARRANGE_TRACK_HEIGHT}px; left: 0; right: 0;"
+					>
+						<Clip
+							id={pending.id}
+							start={pending.start}
+							end={pending.end}
+							offset={0}
+							{scale}
+							sample_rate={pending.sampleRate}
+							peaks_64={pending.peaks_64}
+							peaks_512={pending.peaks_512}
+							peaks_4096={pending.peaks_4096}
+							pending={true}
+							loadProgress={pending.progress}
+						/>
+					</div>
+				{/if}
+			{/each}
 			{#if repeating}
 				{#each Array(repeating.count) as _, i}
 					<div
@@ -2034,6 +2042,13 @@
 			background-color: rgba(107, 203, 119, 0.12);
 			border-color: rgba(107, 203, 119, 0.75);
 		}
+	}
+
+	.pending-import-slot {
+		position: absolute;
+		pointer-events: none;
+		z-index: 4;
+		overflow: visible;
 	}
 
 	// ── Empty state ───────────────────────────────────────────────────────────

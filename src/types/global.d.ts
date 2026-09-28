@@ -161,8 +161,11 @@ export interface Clip {
 	/** Seconds skipped into the source file before playback (left-trim). Defaults to 0. */
 	offset: number;
 	file_path: string;
-	raw_samples: number[];
+	/** Always empty from the engine — PCM stays in Rust. Kept optional for older snapshots. */
+	raw_samples?: number[];
 	sample_rate: number;
+	/** Full source-file duration in seconds (preferred for trim limits). */
+	source_duration_sec?: number;
 	peaks_64: [number, number][];
 	peaks_512: [number, number][];
 	peaks_4096: [number, number][];

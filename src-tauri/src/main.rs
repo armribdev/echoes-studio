@@ -12,8 +12,8 @@ mod project;
 mod windows_theme;
 
 use engine_gateway::api::{
-    arm_track_for_midi_input, get_graph_snapshot, get_snapshot, preview_midi_note, redo, send_batch,
-    send_command, set_track_mix, undo,
+    arm_track_for_midi_input, get_graph_snapshot, get_snapshot, prepare_audio_import,
+    preview_midi_note, redo, send_batch, send_command, set_track_mix, undo,
 };
 use project::{AppProject, AppState, ProjectDto, ProjectFile, ProjectUiLayout};
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
@@ -201,6 +201,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             get_audio_clip_duration,
             library::scan_library_folder,
+            prepare_audio_import,
             get_project,
             list_plugins,
             get_unavailable_plugins,
@@ -559,8 +560,16 @@ fn sync_menu_track_selection(app: tauri::AppHandle, has_selected_track: bool) {
 
 /// Duration of an audio file in seconds — used for drag-and-drop preview.
 /// Supports WAV, MP3, FLAC, OGG via symphonia.
+/// Prefer the in-memory path cache when the file was already decoded for import.
 #[tauri::command]
-fn get_audio_clip_duration(file_path: &str) -> Result<f64, String> {
+fn get_audio_clip_duration(
+    state: tauri::State<'_, AppState>,
+    file_path: &str,
+) -> Result<f64, String> {
+    if let Some(cached) = state.audio_cache.get_by_path(file_path) {
+        return Ok(cached.duration_sec());
+    }
+
     use std::path::Path;
     use symphonia::core::{
         codecs::DecoderOptions, errors::Error as SymphoniaError, formats::FormatOptions,

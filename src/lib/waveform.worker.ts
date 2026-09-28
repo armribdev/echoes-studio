@@ -35,9 +35,13 @@ function selectPeaks(
 	scale: number
 ): { peaks: Peaks; chunkSize: number } {
 	const samplesPerPixel = sample_rate / scale;
-	if (samplesPerPixel < 512) return { peaks: peaks_64, chunkSize: 64 };
-	if (samplesPerPixel < 4096) return { peaks: peaks_512, chunkSize: 512 };
-	return { peaks: peaks_4096, chunkSize: 4096 };
+	// Prefer the lane matching zoom, but fall back to whatever we have
+	// (progressive import only streams peaks_4096).
+	if (samplesPerPixel < 512 && peaks_64.length > 0) return { peaks: peaks_64, chunkSize: 64 };
+	if (samplesPerPixel < 4096 && peaks_512.length > 0) return { peaks: peaks_512, chunkSize: 512 };
+	if (peaks_4096.length > 0) return { peaks: peaks_4096, chunkSize: 4096 };
+	if (peaks_512.length > 0) return { peaks: peaks_512, chunkSize: 512 };
+	return { peaks: peaks_64, chunkSize: 64 };
 }
 
 function drawWaveform(
