@@ -53,6 +53,10 @@ const PEAK_CHUNK_4096: usize = 4096;
 const DECODE_PROGRESS_SPAN: f32 = 0.92;
 /// Progressive peak snapshots (delta lanes only — keep cadence steady).
 const PEAKS_EMIT_STEP: f32 = 0.03;
+/// First PCM publish once this much audio is decoded (ADR-024).
+const PCM_FIRST_SEC: f64 = 0.35;
+/// Progress gates for later immutable prefix publishes (within decode span).
+const PCM_PROGRESS_GATES: &[f32] = &[0.15, 0.35, 0.55, 0.75, 0.90];
 
 pub(crate) fn serialize_arc_vec_f32<S>(v: &Arc<Vec<f32>>, ser: S) -> Result<S::Ok, S::Error>
 where
@@ -99,14 +103,16 @@ fn sync_peaks_lane(
 
 impl AudioClip {
     pub fn from_file(file_path: &str) -> Result<AudioClip, Box<dyn Error>> {
-        Self::from_file_with_progress(file_path, |_| {}, || false)
+        Self::from_file_with_progress(file_path, |_| {}, |_, _, _, _| {}, || false)
     }
 
     /// Decode with optional UI progress (`0.0..=DECODE_PROGRESS_SPAN` during decode).
     /// `should_cancel` is polled between packets; returning true aborts with an error.
+    /// `on_pcm_prefix` receives immutable decoded prefixes for early playback (ADR-024).
     pub fn from_file_with_progress(
         file_path: &str,
         mut on_progress: impl FnMut(DecodeProgressUpdate),
+        mut on_pcm_prefix: impl FnMut(&[f32], u32, f64, f32),
         mut should_cancel: impl FnMut() -> bool,
     ) -> Result<AudioClip, Box<dyn Error>> {
         let src = File::open(file_path)?;
@@ -148,6 +154,8 @@ impl AudioClip {
         let mut packet_count: u64 = 0;
         let mut last_emitted = -1.0f32;
         let mut last_peaks_at = -1.0f32;
+        let mut next_pcm_gate: usize = 0;
+        let mut pcm_first_published = false;
         // Progressive preview uses mid/coarse lanes only (delta IPC). Dense 64 is built at finalize.
         let mut peaks_512: Vec<[f32; 2]> = Vec::new();
         let mut peaks_4096: Vec<[f32; 2]> = Vec::new();
@@ -166,9 +174,28 @@ impl AudioClip {
                 && (last_peaks_at < 0.0
                     || clamped - last_peaks_at >= PEAKS_EMIT_STEP
                     || clamped >= DECODE_PROGRESS_SPAN);
+
+            let dur = duration_sec(frames);
+            let mut publish_pcm = false;
+            if include_peaks && !samples.is_empty() {
+                if !pcm_first_published
+                    && (dur >= PCM_FIRST_SEC || clamped >= PCM_PROGRESS_GATES[0])
+                {
+                    pcm_first_published = true;
+                    publish_pcm = true;
+                }
+                while next_pcm_gate < PCM_PROGRESS_GATES.len()
+                    && clamped >= PCM_PROGRESS_GATES[next_pcm_gate]
+                {
+                    publish_pcm = true;
+                    next_pcm_gate += 1;
+                }
+            }
+
             if (clamped - last_emitted).abs() < 0.01
                 && clamped < DECODE_PROGRESS_SPAN
                 && !should_peaks
+                && !publish_pcm
             {
                 return;
             }
@@ -193,7 +220,7 @@ impl AudioClip {
             on_progress(DecodeProgressUpdate {
                 progress: clamped,
                 sample_rate: raw_sample_rate,
-                decoded_duration_sec: duration_sec(frames),
+                decoded_duration_sec: dur,
                 peaks_64: None,
                 peaks_512: None,
                 peaks_4096: None,
@@ -202,6 +229,9 @@ impl AudioClip {
                 peaks_4096_from,
                 peaks_4096_append,
             });
+            if publish_pcm {
+                on_pcm_prefix(samples, raw_sample_rate, dur, clamped);
+            }
         };
 
         emit(0.0, 0, &[], false);

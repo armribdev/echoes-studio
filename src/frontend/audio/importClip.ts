@@ -1,10 +1,10 @@
 import { invoke } from '@tauri-apps/api/core';
+import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { addClip } from '../commands/dispatcher';
 import { notify } from '../../stores/status';
 import { audioImportProgress } from './importProgress';
 import { pendingImports } from './pendingImports';
 import { forgetClipUiKey } from './clipDisplay';
-import { importMark } from './importDebugMarks';
 import type { CommandResult } from '../../shared/protocol/commands';
 
 function fileName(path: string): string {
@@ -30,6 +30,16 @@ interface PrepareAudioImportResult {
 	sample_rate: number;
 }
 
+interface PcmReadyPayload {
+	file_path: string;
+	decoded_duration_sec: number;
+	sample_rate: number;
+	progress: number;
+	complete: boolean;
+	sample_count?: number;
+	cached?: boolean;
+}
+
 interface InFlightImport {
 	pendingId: string;
 	cancelled: boolean;
@@ -44,6 +54,38 @@ function clipIdFromResult(result: CommandResult): string | null {
 		if (id) return id;
 	}
 	return null;
+}
+
+function createPcmReadyGate(filePath: string, timeoutMs = 120_000) {
+	const target = normPath(filePath);
+	let resolve!: (p: PcmReadyPayload) => void;
+	let reject!: (e: Error) => void;
+	const promise = new Promise<PcmReadyPayload>((res, rej) => {
+		resolve = res;
+		reject = rej;
+	});
+
+	let unlisten: UnlistenFn | null = null;
+	let settled = false;
+	const timer = setTimeout(() => {
+		if (settled) return;
+		settled = true;
+		unlisten?.();
+		reject(new Error('Timed out waiting for audio PCM'));
+	}, timeoutMs);
+
+	const ready = listen<PcmReadyPayload>('audio://import-pcm-ready', ({ payload }) => {
+		if (settled) return;
+		if (normPath(payload.file_path) !== target) return;
+		settled = true;
+		clearTimeout(timer);
+		unlisten?.();
+		resolve(payload);
+	}).then((fn) => {
+		unlisten = fn;
+	});
+
+	return { ready, promise };
 }
 
 /** Abort an in-flight import (library ■ / stop). Removes the pending clip immediately. */
@@ -68,33 +110,29 @@ export async function cancelAudioImport(filePath: string): Promise<void> {
 
 /**
  * Import an audio file onto a track with optimistic arrange preview.
- * Decode runs on an async Rust command so progressive waveform events can paint.
- * The pending Clip keeps a stable UI key through ADD_CLIP (anti-flash handoff).
- * Clip frame uses full probed duration from the first paint — waveform fills in.
+ * Progressive PCM prefixes allow arrange playback before decode completes (ADR-024).
  */
 export async function importAudioToTrack(opts: ImportAudioOptions): Promise<void> {
 	const name = fileName(opts.filePath);
 	const key = normPath(opts.filePath);
 	await Promise.all([audioImportProgress.connect(), pendingImports.connect()]);
 
-	// Resolve full duration before showing the slot so the clip occupies its
-	// final arrange width immediately (waveform still streams in).
-	let durationSec = opts.knownDurationSec;
-	if (durationSec == null || durationSec <= 0) {
-		if (opts.endSec != null && opts.endSec > opts.startSec) {
-			durationSec = opts.endSec - opts.startSec;
+	let endSec = opts.endSec;
+	if (endSec == null || endSec <= opts.startSec) {
+		if (opts.knownDurationSec != null && opts.knownDurationSec > 0) {
+			endSec = opts.startSec + opts.knownDurationSec;
 		} else {
 			try {
-				durationSec = await invoke<number>('get_audio_clip_duration', {
+				const dur = await invoke<number>('get_audio_clip_duration', {
 					filePath: opts.filePath,
 				});
+				endSec = opts.startSec + dur;
 			} catch {
-				durationSec = 4;
+				endSec = opts.startSec + 4;
 			}
 		}
 	}
 
-	let endSec = opts.startSec + durationSec;
 	const pendingId = pendingImports.add({
 		trackId: opts.trackId,
 		filePath: opts.filePath,
@@ -102,66 +140,55 @@ export async function importAudioToTrack(opts: ImportAudioOptions): Promise<void
 		start: opts.startSec,
 		end: endSec,
 	});
-	importMark('01-pending-added');
 	const entry: InFlightImport = { pendingId, cancelled: false };
 	inFlight.set(key, entry);
 	audioImportProgress.begin(name, opts.filePath);
 
-	try {
-		importMark('02-prepare-start');
-		const prepared = await invoke<PrepareAudioImportResult>('prepare_audio_import', {
-			filePath: opts.filePath,
-		});
-		importMark('03-prepare-done');
-		if (entry.cancelled) return;
+	const pcmGate = createPcmReadyGate(opts.filePath);
+	await pcmGate.ready;
+	const preparePromise = invoke<PrepareAudioImportResult>('prepare_audio_import', {
+		filePath: opts.filePath,
+	});
 
-		// Honour moves made during decode; refine length only if prepare disagrees.
-		const placement = pendingImports.get(pendingId);
-		const trackId = placement?.trackId ?? opts.trackId;
-		let startSec = placement?.start ?? opts.startSec;
-		endSec = placement?.end ?? endSec;
-		if (prepared?.duration_sec > 0) {
-			const refined = startSec + prepared.duration_sec;
-			// Avoid sub-pixel frame resize at handoff (canvas buffer clear → flash).
-			if (Math.abs(refined - endSec) > 0.05) {
-				endSec = refined;
-				pendingImports.updatePlacement(pendingId, { start: startSec, end: endSec });
-				importMark('04-placement-resized');
-			} else {
-				endSec = placement?.end ?? refined;
-			}
+	try {
+		await pcmGate.promise;
+		if (entry.cancelled) {
+			await preparePromise.catch(() => {});
+			return;
 		}
 
-		importMark('05-addClip-start');
-		const result = await addClip(trackId, opts.filePath, startSec, endSec);
-		importMark('06-addClip-done');
-		if (entry.cancelled) return;
+		const placement = pendingImports.get(pendingId);
+		const trackId = placement?.trackId ?? opts.trackId;
+		const startSec = placement?.start ?? opts.startSec;
+		const clipEnd = placement?.end ?? endSec;
+
+		const result = await addClip(trackId, opts.filePath, startSec, clipEnd);
+		if (entry.cancelled) {
+			await preparePromise.catch(() => {});
+			return;
+		}
 
 		const engineClipId = clipIdFromResult(result);
 		if (engineClipId) {
-			importMark('07-attach-start');
 			pendingImports.attachEngineClip(pendingId, engineClipId);
-			importMark('08-attach-done');
-			await pendingImports.waitForPaint(pendingId);
-			importMark('09-paint-signaled');
-			if (entry.cancelled) return;
-			pendingImports.markSettled(pendingId);
-			importMark('10-settled');
-			await new Promise<void>((r) => requestAnimationFrame(() => r()));
-			importMark('11-after-raf');
-		} else {
-			pendingImports.remove(pendingId);
-			importMark('08b-no-engine-id-removed');
 		}
+
+		const prepared = await preparePromise;
 		if (entry.cancelled) return;
-		importMark('12-before-notify');
-		notify(`Importé : ${name}`, 'success');
-		importMark('13-after-notify');
-	} catch (e) {
-		importMark('error');
-		if (!entry.cancelled) {
-			pendingImports.remove(pendingId);
+
+		if (prepared?.duration_sec > 0) {
+			const latest = pendingImports.get(pendingId);
+			const s = latest?.start ?? startSec;
+			pendingImports.updatePlacement(pendingId, {
+				start: s,
+				end: s + prepared.duration_sec,
+			});
 		}
+
+		pendingImports.markSettled(pendingId);
+		if (entry.cancelled) return;
+		notify(`Importé : ${name}`, 'success');
+	} catch (e) {
 		if (entry.cancelled) return;
 		const msg = e instanceof Error ? e.message : String(e);
 		if (/cancelled/i.test(msg)) return;
@@ -171,7 +198,6 @@ export async function importAudioToTrack(opts: ImportAudioOptions): Promise<void
 		inFlight.delete(key);
 		if (!entry.cancelled) {
 			audioImportProgress.end();
-			importMark('14-progress-end');
 		}
 	}
 }

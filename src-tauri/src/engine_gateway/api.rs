@@ -455,7 +455,91 @@ fn cached_audio_from_clip_data(data: AudioClipData) -> Arc<CachedAudioData> {
         peaks_64: data.peaks_64,
         peaks_512: data.peaks_512,
         peaks_4096: data.peaks_4096,
+        complete: true,
     })
+}
+
+fn cached_audio_prefix(
+    samples: &[f32],
+    sample_rate: u32,
+    peaks_512: Vec<[f32; 2]>,
+    peaks_4096: Vec<[f32; 2]>,
+) -> Arc<CachedAudioData> {
+    Arc::new(CachedAudioData {
+        raw_samples: Arc::new(samples.to_vec()),
+        sample_rate,
+        peaks_64: Vec::new(),
+        peaks_512,
+        peaks_4096,
+        complete: false,
+    })
+}
+
+/// Push an immutable PCM prefix into the path cache and refresh live clips (ADR-024).
+fn publish_pcm_prefix(
+    app: &tauri::AppHandle,
+    state: &tauri::State<'_, AppState>,
+    file_path: &str,
+    samples: &[f32],
+    sample_rate: u32,
+    decoded_duration_sec: f64,
+    progress: f32,
+    peaks_512: Vec<[f32; 2]>,
+    peaks_4096: Vec<[f32; 2]>,
+) {
+    if samples.is_empty() || sample_rate == 0 {
+        return;
+    }
+    let cached = cached_audio_prefix(samples, sample_rate, peaks_512, peaks_4096);
+    state
+        .audio_cache
+        .insert_path(file_path.to_string(), Arc::clone(&cached));
+    refresh_clips_for_path(state, file_path, &cached);
+    recompile_if_needed(app, state);
+    let _ = app.emit(
+        "audio://import-pcm-ready",
+        serde_json::json!({
+            "file_path": file_path,
+            "decoded_duration_sec": decoded_duration_sec,
+            "sample_rate": sample_rate,
+            "progress": progress,
+            "complete": false,
+            "sample_count": samples.len(),
+        }),
+    );
+}
+
+fn refresh_clips_for_path(
+    state: &tauri::State<'_, AppState>,
+    file_path: &str,
+    cached: &Arc<CachedAudioData>,
+) {
+    let norm = |p: &str| p.replace('\\', "/").to_lowercase();
+    let target = norm(file_path);
+    let Ok(mut project) = state.project.lock() else {
+        return;
+    };
+    for track in &mut project.tracks {
+        for clip in &mut track.clips {
+            if norm(&clip.file_path) != target {
+                continue;
+            }
+            clip.raw_samples = Arc::clone(&cached.raw_samples);
+            clip.sample_rate = cached.sample_rate;
+            if !cached.peaks_512.is_empty() {
+                clip.peaks_512 = cached.peaks_512.clone();
+            }
+            if !cached.peaks_4096.is_empty() {
+                clip.peaks_4096 = cached.peaks_4096.clone();
+            }
+            if !cached.peaks_64.is_empty() {
+                clip.peaks_64 = cached.peaks_64.clone();
+            }
+            state
+                .audio_cache
+                .insert(clip.id.clone(), Arc::clone(cached));
+        }
+    }
 }
 
 fn insert_cached_clip(
@@ -510,7 +594,7 @@ fn norm_import_path(p: &str) -> String {
     p.replace('\\', "/").to_lowercase()
 }
 
-/// Decode (or reuse) audio into the path cache, emitting progressive peaks.
+/// Decode (or reuse) audio into the path cache, emitting progressive peaks + PCM prefixes.
 fn ensure_path_cached(
     app: &tauri::AppHandle,
     state: &tauri::State<'_, AppState>,
@@ -522,24 +606,78 @@ fn ensure_path_cached(
     }
 
     if let Some(cached) = state.audio_cache.get_by_path(file_path) {
-        let _ = app.emit(
-            "audio://import-progress",
-            serde_json::json!({
-                "file_path": file_path,
-                "progress": 1.0,
-                "cached": true,
-                "sample_rate": cached.sample_rate,
-                "peaks_64": cached.peaks_64,
-                "peaks_512": cached.peaks_512,
-                "peaks_4096": cached.peaks_4096,
-                "decoded_duration_sec": cached.duration_sec(),
-            }),
-        );
-        return Ok(cached);
+        if cached.complete {
+            let _ = app.emit(
+                "audio://import-progress",
+                serde_json::json!({
+                    "file_path": file_path,
+                    "progress": 1.0,
+                    "cached": true,
+                    "sample_rate": cached.sample_rate,
+                    "peaks_64": cached.peaks_64,
+                    "peaks_512": cached.peaks_512,
+                    "peaks_4096": cached.peaks_4096,
+                    "decoded_duration_sec": cached.duration_sec(),
+                }),
+            );
+            let _ = app.emit(
+                "audio://import-pcm-ready",
+                serde_json::json!({
+                    "file_path": file_path,
+                    "decoded_duration_sec": cached.duration_sec(),
+                    "sample_rate": cached.sample_rate,
+                    "progress": 1.0,
+                    "complete": true,
+                    "sample_count": cached.raw_samples.len(),
+                    "cached": true,
+                }),
+            );
+            return Ok(cached);
+        }
+        // Incomplete: wait for the in-flight decode to finish (ADR-024).
+        for _ in 0..15_000 {
+            if state
+                .import_cancels
+                .lock()
+                .map(|s| s.contains(&cancel_key))
+                .unwrap_or(false)
+            {
+                return Err("Import cancelled".into());
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+            if let Some(c) = state.audio_cache.get_by_path(file_path) {
+                if c.complete {
+                    return Ok(c);
+                }
+            } else {
+                break;
+            }
+        }
+        if let Some(c) = state.audio_cache.get_by_path(file_path) {
+            return Ok(c);
+        }
     }
 
     let mut emit_progress = |update: crate::audio_clip::DecodeProgressUpdate| {
         emit_import_progress(app, file_path, update);
+    };
+
+    let app_for_pcm = app.clone();
+    let path_for_pcm = file_path.to_string();
+    let mut on_pcm_prefix = move |samples: &[f32], sample_rate: u32, dur: f64, progress: f32| {
+        let st = app_for_pcm.state::<AppState>();
+        // Peaks stay on the UI progress channel; PCM prefixes are for playback only.
+        publish_pcm_prefix(
+            &app_for_pcm,
+            &st,
+            &path_for_pcm,
+            samples,
+            sample_rate,
+            dur,
+            progress,
+            Vec::new(),
+            Vec::new(),
+        );
     };
 
     let app_for_cancel = app.clone();
@@ -553,15 +691,20 @@ fn ensure_path_cached(
             .unwrap_or(false)
     };
 
-    let audio = AudioClip::from_file_with_progress(file_path, &mut emit_progress, is_cancelled)
-        .map_err(|e| {
-            let msg = e.to_string();
-            if msg.contains("cancelled") {
-                "Import cancelled".to_string()
-            } else {
-                format!("Failed to load audio '{file_path}': {msg}")
-            }
-        })?;
+    let audio = AudioClip::from_file_with_progress(
+        file_path,
+        &mut emit_progress,
+        &mut on_pcm_prefix,
+        is_cancelled,
+    )
+    .map_err(|e| {
+        let msg = e.to_string();
+        if msg.contains("cancelled") {
+            "Import cancelled".to_string()
+        } else {
+            format!("Failed to load audio '{file_path}': {msg}")
+        }
+    })?;
 
     if state
         .import_cancels
@@ -578,6 +721,19 @@ fn ensure_path_cached(
     state
         .audio_cache
         .insert_path(file_path.to_string(), Arc::clone(&cached));
+    refresh_clips_for_path(state, file_path, &cached);
+    recompile_if_needed(app, state);
+    let _ = app.emit(
+        "audio://import-pcm-ready",
+        serde_json::json!({
+            "file_path": file_path,
+            "decoded_duration_sec": cached.duration_sec(),
+            "sample_rate": cached.sample_rate,
+            "progress": 1.0,
+            "complete": true,
+            "sample_count": cached.raw_samples.len(),
+        }),
+    );
     let _ = state.import_cancels.lock().map(|mut s| s.remove(&cancel_key));
     Ok(cached)
 }
@@ -588,6 +744,13 @@ fn cache_audio_clip(
     clip_id: &str,
     file_path: &str,
 ) -> Result<Arc<CachedAudioData>, String> {
+    // Prefer in-flight / completed path cache (ADR-024 early ADD_CLIP).
+    if let Some(cached) = state.audio_cache.get_by_path(file_path) {
+        state
+            .audio_cache
+            .insert(clip_id.to_string(), Arc::clone(&cached));
+        return Ok(cached);
+    }
     let cached = ensure_path_cached(app, state, file_path)?;
     state
         .audio_cache

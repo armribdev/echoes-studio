@@ -75,8 +75,9 @@ export function buildClipDisplayItems(
 			peaks_64: p.peaks_64,
 			peaks_512: p.peaks_512,
 			peaks_4096: p.peaks_4096,
-			pending: !p.engineClipId,
-			loadProgress: p.engineClipId ? 1 : p.progress,
+			// Grow UI until settle; engine may already play prefixes (ADR-024).
+			pending: !p.settled,
+			loadProgress: p.settled ? 1 : p.progress,
 			pendingImportId: p.id,
 		});
 	}

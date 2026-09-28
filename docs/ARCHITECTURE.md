@@ -144,7 +144,7 @@ src-tauri/src/
 | SEEK                 | Immediate        | Optimistic local update + engine sync       |
 | CREATE/DELETE_TRACK  | Round-trip       | Engine is source of truth, no local guess   |
 | MOVE_CLIP            | Deferred commit  | Optimistic during drag, committed on drop   |
-| ADD_CLIP             | Round-trip       | Audio load required before commit           |
+| ADD_CLIP             | Round-trip       | May commit on first PCM prefix; silence past decoded samples (ADR-024) |
 | UPDATE_TEMPO         | Round-trip       | Ruler/transport react via TEMPO_UPDATED     |
 
 ---

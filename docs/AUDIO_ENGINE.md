@@ -93,7 +93,7 @@ pub struct AppClip {
     pub start: f64,              // timeline position in seconds
     pub end: f64,
     pub file_path: String,
-    pub raw_samples: Vec<f32>,   // [-1.0, 1.0], fully pre-loaded
+    pub raw_samples: Vec<f32>,   // [-1.0, 1.0]; immutable Arc prefixes during import (ADR-024)
     pub sample_rate: u32,
     pub peaks_64: Vec<[f32; 2]>, // waveform peaks at 3 resolutions for fast rendering
     pub peaks_512: Vec<[f32; 2]>,
@@ -303,7 +303,7 @@ They update `SharedTransport` atomics which are read by the callback on each blo
 |--------|---------|---------|
 | Audio driver buffer | 1.3–46 ms (64–2048 frames @ 44.1 kHz) | Configurable in Preferences |
 | Sample rate mismatch | Negligible if avoided | Match output SR to device SR |
-| File decoding | None (fully pre-loaded) | All audio loaded before playback starts |
+| File decoding | None on audio thread | Decode off RT; immutable PCM prefixes published during import (ADR-024) |
 | WASAPI exclusive mode | 1–3 ms | Future (Phase 5) |
 
 ### 8.2 Buffer Fallback

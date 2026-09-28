@@ -936,6 +936,8 @@ pub struct CachedAudioData {
     pub peaks_64: Vec<[f32; 2]>,
     pub peaks_512: Vec<[f32; 2]>,
     pub peaks_4096: Vec<[f32; 2]>,
+    /// False while decode is still appending immutable prefixes (ADR-024).
+    pub complete: bool,
 }
 
 impl CachedAudioData {

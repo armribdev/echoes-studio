@@ -187,7 +187,7 @@ function createPendingImports() {
 			rememberClipUiKey(engineClipId, id);
 			update((list) =>
 				list.map((item) =>
-					item.id === id ? { ...item, engineClipId, progress: 1 } : item,
+					item.id === id ? { ...item, engineClipId } : item,
 				),
 			);
 		},
