@@ -9,7 +9,7 @@
 	import PanelResizeHandle from './PanelResizeHandle.svelte';
 	import { persistProjectUiLayout } from '../lib/projectUiLayout';
 	import { keyboardFocus } from '../stores/keyboardFocus';
-	import { importAudioToTrack } from '../frontend/audio/importClip';
+	import { importAudioToTrack, cancelAudioImport } from '../frontend/audio/importClip';
 	import { audioImportProgress } from '../frontend/audio/importProgress';
 	import {
 		libraryStore,
@@ -245,16 +245,7 @@
 		<div class="library-inner">
 			<div class="chrome">
 				<span class="chrome-title">Library</span>
-				{#if $audioImportProgress.activeCount > 0}
-					<span class="chrome-status chrome-status--busy" title={$audioImportProgress.fileName ?? ''}>
-						<span class="chrome-spinner" aria-hidden="true"></span>
-						Importing{#if $audioImportProgress.progress != null}
-							{' '}{Math.round($audioImportProgress.progress * 100)}%
-						{:else if $audioImportProgress.activeCount > 1}
-							{' '}({$audioImportProgress.activeCount})
-						{/if}…
-					</span>
-				{:else if $libraryStore.indexer === 'scanning'}
+				{#if $libraryStore.indexer === 'scanning'}
 					<span class="chrome-status">
 						Indexing…{($libraryStore.indexerProgress != null
 							? ` ${Math.round($libraryStore.indexerProgress * 100)}%`
@@ -266,26 +257,6 @@
 					</span>
 				{/if}
 			</div>
-
-			{#if $audioImportProgress.activeCount > 0 && $audioImportProgress.fileName}
-				<div class="import-banner" role="status" aria-live="polite">
-					<span class="chrome-spinner" aria-hidden="true"></span>
-					<span class="import-banner-text" title={$audioImportProgress.fileName}>
-						Loading {$audioImportProgress.fileName}
-						{#if $audioImportProgress.progress != null}
-							· {Math.round($audioImportProgress.progress * 100)}%
-						{/if}
-					</span>
-					{#if $audioImportProgress.progress != null}
-						<div class="import-banner-bar" aria-hidden="true">
-							<div
-								class="import-banner-fill"
-								style="width: {Math.round($audioImportProgress.progress * 100)}%"
-							></div>
-						</div>
-					{/if}
-				</div>
-			{/if}
 
 			<div class="search-row">
 				<div class="search-wrap">
@@ -368,7 +339,9 @@
 							{#each visible as asset (asset.id)}
 								{@const isImporting =
 									$audioImportProgress.activeCount > 0 &&
-									$audioImportProgress.fileName === asset.name}
+									$audioImportProgress.filePath != null &&
+									$audioImportProgress.filePath.replace(/\\/g, '/').toLowerCase() ===
+										asset.path.replace(/\\/g, '/').toLowerCase()}
 								<!-- svelte-ignore a11y-no-noninteractive-element-interactions a11y-click-events-have-key-events a11y-no-noninteractive-tabindex -->
 								<div
 									class="file-item"
@@ -400,7 +373,19 @@
 									<span class="file-ext">{asset.extension.toUpperCase()}</span>
 									<span class="file-name">{asset.name}</span>
 									{#if isImporting}
-										<span class="row-spinner" aria-hidden="true"></span>
+										<button
+											class="cancel-import-btn"
+											type="button"
+											title="Annuler l'import"
+											aria-label="Annuler l'import"
+											on:click={(e) => {
+												e.stopPropagation();
+												void cancelAudioImport(asset.path);
+											}}
+										>
+											<span class="cancel-import-ring" aria-hidden="true"></span>
+											<span class="cancel-import-square" aria-hidden="true"></span>
+										</button>
 									{:else}
 										<button
 											class="preview-btn"
@@ -512,56 +497,6 @@
 		min-width: 0;
 
 		&--error { color: $color-error; }
-		&--busy { color: $accent-color; }
-	}
-
-	.chrome-spinner {
-		width: 8px;
-		height: 8px;
-		border: 1.5px solid rgba(21, 113, 255, 0.25);
-		border-top-color: $accent-color;
-		border-radius: 50%;
-		flex-shrink: 0;
-		animation: library-spin 0.7s linear infinite;
-	}
-
-	@keyframes library-spin {
-		to { transform: rotate(360deg); }
-	}
-
-	.import-banner {
-		display: flex;
-		flex-wrap: wrap;
-		align-items: center;
-		gap: 7px;
-		padding: 5px 10px;
-		border-bottom: 1px solid $border-color;
-		background: rgba(21, 113, 255, 0.08);
-		flex-shrink: 0;
-	}
-
-	.import-banner-text {
-		font-size: 10px;
-		color: $text-subtle;
-		white-space: nowrap;
-		overflow: hidden;
-		text-overflow: ellipsis;
-		min-width: 0;
-		flex: 1;
-	}
-
-	.import-banner-bar {
-		width: 100%;
-		height: 2px;
-		border-radius: 1px;
-		background: rgba(21, 113, 255, 0.18);
-		overflow: hidden;
-	}
-
-	.import-banner-fill {
-		height: 100%;
-		background: $accent-color;
-		transition: width 0.12s ease-out;
 	}
 
 	.search-row {
@@ -741,20 +676,10 @@
 			cursor: progress;
 
 			.file-name { color: $text-color; }
-			.row-spinner { opacity: 1; }
+			.cancel-import-btn { opacity: 1; }
 		}
 
 		&:active { cursor: grabbing; }
-	}
-
-	.row-spinner {
-		width: 12px;
-		height: 12px;
-		border: 1.5px solid rgba(21, 113, 255, 0.25);
-		border-top-color: $accent-color;
-		border-radius: 50%;
-		flex-shrink: 0;
-		animation: library-spin 0.7s linear infinite;
 	}
 
 	.fav-btn {
@@ -797,6 +722,7 @@
 	}
 
 	.preview-btn,
+	.cancel-import-btn,
 	.insert-btn {
 		display: flex;
 		align-items: center;
@@ -812,8 +738,40 @@
 		flex-shrink: 0;
 		transition: color 0.1s, opacity 0.1s;
 		font-size: 9px;
+		position: relative;
 
 		&:hover { color: $accent-color; }
+	}
+
+	.cancel-import-btn {
+		opacity: 1;
+		color: $accent-color;
+
+		&:hover .cancel-import-square {
+			background: $text-color;
+		}
+	}
+
+	.cancel-import-ring {
+		position: absolute;
+		inset: 2px;
+		border: 1.5px solid rgba(21, 113, 255, 0.28);
+		border-top-color: $accent-color;
+		border-radius: 50%;
+		animation: library-spin 0.7s linear infinite;
+	}
+
+	.cancel-import-square {
+		position: relative;
+		width: 5px;
+		height: 5px;
+		border-radius: 0.5px;
+		background: $accent-color;
+		z-index: 1;
+	}
+
+	@keyframes library-spin {
+		to { transform: rotate(360deg); }
 	}
 
 	.detail {

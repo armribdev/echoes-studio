@@ -29,13 +29,7 @@
 	{/if}
 
 	<div class="status-left">
-		{#if importing}
-			<span class="message message--info">
-				Importation{#if $audioImportProgress.fileName}
-					{' '}de « {$audioImportProgress.fileName} »
-				{/if}…{progressPct != null ? ` ${progressPct}%` : ''}
-			</span>
-		{:else if $statusMessage}
+		{#if $statusMessage && !importing}
 			<span class="message message--{$statusMessage.level}">{$statusMessage.text}</span>
 		{/if}
 	</div>

@@ -99,13 +99,15 @@ fn sync_peaks_lane(
 
 impl AudioClip {
     pub fn from_file(file_path: &str) -> Result<AudioClip, Box<dyn Error>> {
-        Self::from_file_with_progress(file_path, |_| {})
+        Self::from_file_with_progress(file_path, |_| {}, || false)
     }
 
     /// Decode with optional UI progress (`0.0..=DECODE_PROGRESS_SPAN` during decode).
+    /// `should_cancel` is polled between packets; returning true aborts with an error.
     pub fn from_file_with_progress(
         file_path: &str,
         mut on_progress: impl FnMut(DecodeProgressUpdate),
+        mut should_cancel: impl FnMut() -> bool,
     ) -> Result<AudioClip, Box<dyn Error>> {
         let src = File::open(file_path)?;
         let mss = MediaSourceStream::new(Box::new(src), Default::default());
@@ -205,6 +207,10 @@ impl AudioClip {
         emit(0.0, 0, &[], false);
 
         loop {
+            if should_cancel() {
+                return Err("Import cancelled".into());
+            }
+
             let packet = match format.next_packet() {
                 Ok(p) => p,
                 Err(SymphoniaError::IoError(_)) => break,

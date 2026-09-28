@@ -397,7 +397,7 @@ pub struct AppMidiClip {
     pub notes: Vec<MidiNote>,
 }
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -1019,6 +1019,8 @@ pub struct AppState {
     /// The track that currently receives hardware MIDI input, if any.
     /// Ephemeral session state, not part of `AppProject` (ADR-002 scope).
     pub armed_track_id: Arc<Mutex<Option<String>>>,
+    /// Absolute paths (normalized) whose in-flight `prepare_audio_import` should abort.
+    pub import_cancels: Mutex<HashSet<String>>,
 }
 
 impl AppState {
@@ -1055,6 +1057,7 @@ impl AppState {
             open_plugin_editors: Arc::new(Mutex::new(HashMap::new())),
             midi_input: Mutex::new(crate::midi_input::MidiInputRegistry::new()),
             armed_track_id: Arc::new(Mutex::new(None)),
+            import_cancels: Mutex::new(HashSet::new()),
         }
     }
 }

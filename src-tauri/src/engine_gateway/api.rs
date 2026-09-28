@@ -506,12 +506,21 @@ fn emit_import_progress(
     let _ = app.emit("audio://import-progress", payload);
 }
 
+fn norm_import_path(p: &str) -> String {
+    p.replace('\\', "/").to_lowercase()
+}
+
 /// Decode (or reuse) audio into the path cache, emitting progressive peaks.
 fn ensure_path_cached(
     app: &tauri::AppHandle,
     state: &tauri::State<'_, AppState>,
     file_path: &str,
 ) -> Result<Arc<CachedAudioData>, String> {
+    let cancel_key = norm_import_path(file_path);
+    if let Ok(mut set) = state.import_cancels.lock() {
+        set.remove(&cancel_key);
+    }
+
     if let Some(cached) = state.audio_cache.get_by_path(file_path) {
         let _ = app.emit(
             "audio://import-progress",
@@ -533,13 +542,43 @@ fn ensure_path_cached(
         emit_import_progress(app, file_path, update);
     };
 
-    let audio = AudioClip::from_file_with_progress(file_path, &mut emit_progress)
-        .map_err(|e| format!("Failed to load audio '{file_path}': {e}"))?;
+    let app_for_cancel = app.clone();
+    let key_for_cancel = cancel_key.clone();
+    let is_cancelled = move || {
+        app_for_cancel
+            .state::<AppState>()
+            .import_cancels
+            .lock()
+            .map(|s| s.contains(&key_for_cancel))
+            .unwrap_or(false)
+    };
+
+    let audio = AudioClip::from_file_with_progress(file_path, &mut emit_progress, is_cancelled)
+        .map_err(|e| {
+            let msg = e.to_string();
+            if msg.contains("cancelled") {
+                "Import cancelled".to_string()
+            } else {
+                format!("Failed to load audio '{file_path}': {msg}")
+            }
+        })?;
+
+    if state
+        .import_cancels
+        .lock()
+        .map(|s| s.contains(&cancel_key))
+        .unwrap_or(false)
+    {
+        let _ = state.import_cancels.lock().map(|mut s| s.remove(&cancel_key));
+        return Err("Import cancelled".into());
+    }
+
     let data = audio.into_clip_data_with_progress(&mut emit_progress);
     let cached = cached_audio_from_clip_data(data);
     state
         .audio_cache
         .insert_path(file_path.to_string(), Arc::clone(&cached));
+    let _ = state.import_cancels.lock().map(|mut s| s.remove(&cancel_key));
     Ok(cached)
 }
 
@@ -579,6 +618,18 @@ pub async fn prepare_audio_import(
     })
     .await
     .map_err(|e| format!("Audio import task failed: {e}"))?
+}
+
+#[tauri::command]
+pub fn cancel_audio_import(
+    state: tauri::State<'_, AppState>,
+    file_path: String,
+) -> Result<(), String> {
+    let key = norm_import_path(&file_path);
+    if let Ok(mut set) = state.import_cancels.lock() {
+        set.insert(key);
+    }
+    Ok(())
 }
 
 fn resolve_clip_audio(
