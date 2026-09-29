@@ -6,6 +6,7 @@
 	import { leftPanel } from '../stores/leftPanel';
 	import { rightPanel } from '../stores/rightPanel';
 	import { isMidiRecording } from '../stores/midiRecording';
+	import { metronomeEnabled, countInEnabled } from '../stores/metronome';
 	import { toggleMidiRecording } from '../frontend/midiRecording';
 	import Icon from './Icon.svelte';
 
@@ -92,6 +93,32 @@
 			>
 				<svg width="12" height="12" viewBox="0 0 12 12" fill="none" xmlns="http://www.w3.org/2000/svg">
 					<circle cx="6" cy="6" r="5" fill="currentColor"/>
+				</svg>
+			</button>
+			<button
+				class="btn btn--toggle"
+				class:active={$metronomeEnabled}
+				on:click={() => metronomeEnabled.update((enabled) => !enabled)}
+				title="Métronome"
+				aria-label="Métronome"
+				aria-pressed={$metronomeEnabled}
+			>
+				<svg width="12" height="13" viewBox="0 0 12 13" fill="none" xmlns="http://www.w3.org/2000/svg">
+					<path d="M3.6 1.5H8.4L11 12H1L3.6 1.5Z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>
+					<path d="M6 9L8.6 3.6" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
+				</svg>
+			</button>
+			<button
+				class="btn btn--toggle"
+				class:active={$countInEnabled}
+				on:click={() => countInEnabled.update((enabled) => !enabled)}
+				title="Décompte d'une mesure avant l'enregistrement"
+				aria-label="Décompte"
+				aria-pressed={$countInEnabled}
+			>
+				<svg width="14" height="13" viewBox="0 0 14 13" fill="none" xmlns="http://www.w3.org/2000/svg">
+					<circle cx="7" cy="6.5" r="5.6" stroke="currentColor" stroke-width="1.2"/>
+					<path d="M6 4.6L7.4 3.9V9.1" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
 				</svg>
 			</button>
 		</div>
@@ -182,7 +209,8 @@
 			color: $text-color;
 		}
 
-		&--loop.active {
+		&--loop.active,
+		&--toggle.active {
 			color: #4d94ff;
 		}
 

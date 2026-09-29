@@ -14,8 +14,8 @@ mod windows_theme;
 
 use engine_gateway::api::{
     arm_track_for_midi_input, cancel_audio_import, get_graph_snapshot, get_snapshot,
-    prepare_audio_import, preview_midi_note, redo, send_batch, send_command, set_track_mix,
-    start_midi_recording, stop_midi_recording, undo,
+    prepare_audio_import, preview_midi_note, redo, send_batch, send_command, set_metronome_enabled,
+    set_track_mix, start_midi_recording, stop_midi_recording, undo,
 };
 use project::{AppProject, AppState, ProjectDto, ProjectFile, ProjectUiLayout};
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
@@ -200,6 +200,7 @@ fn main() {
             arm_track_for_midi_input,
             start_midi_recording,
             stop_midi_recording,
+            set_metronome_enabled,
             get_snapshot,
             get_graph_snapshot,
             undo,

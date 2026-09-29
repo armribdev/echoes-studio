@@ -35,6 +35,13 @@ pub struct SharedTransport {
     /// clip instead of auto-stopping at the end of the timeline.
     recording: AtomicBool,
 
+    /// Click mixed into the output while playing (monitoring only, never exported).
+    metronome_enabled: AtomicBool,
+
+    /// Samples of count-in still to play before the transport really starts.
+    /// The position stays put and only the click sounds while it is non-zero.
+    count_in_samples: AtomicU64,
+
     /// End of the timeline in samples (latest audio or MIDI clip end).  `0` means
     /// no clips → no auto-stop.
     /// Updated every time the graph is recompiled.
@@ -61,6 +68,8 @@ impl SharedTransport {
             is_playing: AtomicBool::new(false),
             position_samples: AtomicU64::new(0),
             recording: AtomicBool::new(false),
+            metronome_enabled: AtomicBool::new(false),
+            count_in_samples: AtomicU64::new(0),
             duration_samples: AtomicU64::new(0),
             bpm_bits: AtomicU32::new(bpm.to_bits()),
             time_signature_bits: AtomicU32::new(pack_time_signature(TimeSignature::default())),
@@ -112,6 +121,40 @@ impl SharedTransport {
     }
 
     #[inline]
+    pub fn metronome_enabled(&self) -> bool {
+        self.metronome_enabled.load(Ordering::Relaxed)
+    }
+
+    #[inline]
+    pub fn set_metronome_enabled(&self, enabled: bool) {
+        self.metronome_enabled.store(enabled, Ordering::Relaxed);
+    }
+
+    #[inline]
+    pub fn count_in_remaining(&self) -> u64 {
+        self.count_in_samples.load(Ordering::Relaxed)
+    }
+
+    /// Command thread, before `play`.
+    pub fn start_count_in(&self, samples: u64) {
+        self.count_in_samples.store(samples, Ordering::Relaxed);
+    }
+
+    pub fn cancel_count_in(&self) {
+        self.count_in_samples.store(0, Ordering::Relaxed);
+    }
+
+    /// Audio callback, once per rendered count-in slice.
+    #[inline]
+    pub fn consume_count_in(&self, samples: u64) {
+        let _ =
+            self.count_in_samples
+                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |remaining| {
+                    Some(remaining.saturating_sub(samples))
+                });
+    }
+
+    #[inline]
     pub fn set_duration(&self, samples: u64) {
         self.duration_samples.store(samples, Ordering::Relaxed);
     }
@@ -123,12 +166,14 @@ impl SharedTransport {
 
     /// Stop playback and reset the cursor to the beginning.
     pub fn stop(&self) {
+        self.cancel_count_in();
         self.is_playing.store(false, Ordering::Relaxed);
         self.position_samples.store(0, Ordering::Relaxed);
     }
 
     /// Pause playback without resetting the cursor.
     pub fn pause(&self) {
+        self.cancel_count_in();
         self.is_playing.store(false, Ordering::Relaxed);
     }
 
@@ -195,6 +240,30 @@ fn pack_time_signature(time_signature: TimeSignature) -> u32 {
 /// splitting a hardware block into hundreds of one-sample renders.
 const MIN_LOOP_SAMPLES: u64 = 256;
 
+/// How the next render slice runs: a count-in slice keeps the transport still
+/// (only the click sounds) and stops exactly where the count-in ends, so the
+/// music starts on the sample.
+#[derive(Debug, PartialEq)]
+pub struct SlicePlan {
+    pub playing: bool,
+    pub counting_in: bool,
+    pub max_frames: usize,
+}
+
+pub fn plan_slice(running: bool, count_in_remaining: u64, frames_left: usize) -> SlicePlan {
+    let counting_in = running && count_in_remaining > 0;
+    let max_frames = if counting_in {
+        frames_left.min(count_in_remaining.min(usize::MAX as u64) as usize)
+    } else {
+        frames_left
+    };
+    SlicePlan {
+        playing: running && !counting_in,
+        counting_in,
+        max_frames,
+    }
+}
+
 /// Playback position and frame count for the next render slice.
 ///
 /// When `range` is set and playback has reached `end`, the position wraps to
@@ -229,7 +298,60 @@ pub fn playback_chunk(
 
 #[cfg(test)]
 mod tests {
-    use super::playback_chunk;
+    use super::{plan_slice, playback_chunk, SharedTransport, SlicePlan};
+
+    #[test]
+    fn count_in_slice_stops_where_the_count_in_ends() {
+        let plan = plan_slice(true, 100, 256);
+        assert_eq!(
+            plan,
+            SlicePlan {
+                playing: false,
+                counting_in: true,
+                max_frames: 100
+            }
+        );
+    }
+
+    #[test]
+    fn count_in_longer_than_the_block_takes_the_whole_block() {
+        assert_eq!(plan_slice(true, 1000, 256).max_frames, 256);
+    }
+
+    #[test]
+    fn without_count_in_the_slice_plays() {
+        let plan = plan_slice(true, 0, 256);
+        assert!(plan.playing && !plan.counting_in);
+        assert_eq!(plan.max_frames, 256);
+    }
+
+    #[test]
+    fn stopped_transport_ignores_a_pending_count_in() {
+        let plan = plan_slice(false, 100, 256);
+        assert!(!plan.playing && !plan.counting_in);
+        assert_eq!(plan.max_frames, 256);
+    }
+
+    #[test]
+    fn consuming_more_than_remaining_stops_at_zero() {
+        let transport = SharedTransport::new(48_000.0, 120.0);
+        transport.start_count_in(100);
+        transport.consume_count_in(60);
+        assert_eq!(transport.count_in_remaining(), 40);
+        transport.consume_count_in(60);
+        assert_eq!(transport.count_in_remaining(), 0);
+    }
+
+    #[test]
+    fn stop_and_pause_cancel_the_count_in() {
+        let transport = SharedTransport::new(48_000.0, 120.0);
+        transport.start_count_in(100);
+        transport.pause();
+        assert_eq!(transport.count_in_remaining(), 0);
+        transport.start_count_in(100);
+        transport.stop();
+        assert_eq!(transport.count_in_remaining(), 0);
+    }
 
     #[test]
     fn no_loop_consumes_the_whole_block() {

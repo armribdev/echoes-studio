@@ -275,7 +275,7 @@ transport stopped. `SharedTransport` now carries a `recording` flag (set by
 `MidiRecorder::start`, cleared by `finish`) and the reporter does not auto-stop
 while it is set.
 
-Known limits (follow-ups): no count-in; with a playback loop, passes stack into
+Count-in and metronome: ADR-026. Known limits (follow-ups): with a playback loop, passes stack into
 one clip instead of separate takes; `buildPreviewClip` is not unit-tested (no JS
 test runner in the repo).
 

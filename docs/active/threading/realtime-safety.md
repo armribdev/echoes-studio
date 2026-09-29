@@ -73,6 +73,12 @@ latency). The reader is the capture thread; the recorder's buffer and mutex
 are never reachable from `process_block`. The position reporter (not the audio
 thread) reads `SharedTransport::recording` to skip the end-of-timeline auto-stop.
 
+Metronome and count-in (ADR-026): per slice the callback reads two atomics
+(`count_in_remaining`, `metronome_enabled`), renders the click with
+`Metronome::render` (arithmetic only, buffers pre-allocated) and adds it to the
+output after the meters. Command → audio is atomics only: `start_count_in`,
+`set_metronome_enabled`.
+
 ### Project state → Audio thread
 
 **Never directly.** Project state always goes through the compilation pipeline:

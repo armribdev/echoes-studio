@@ -40,7 +40,8 @@ use cpal::{
 use tauri::Emitter;
 
 use crate::audio_engine::graph::AudioGraphCompiler;
-use crate::audio_engine::transport::{playback_chunk, SharedTransport};
+use crate::audio_engine::metronome::{ClickTiming, Metronome};
+use crate::audio_engine::transport::{plan_slice, playback_chunk, SharedTransport};
 use crate::audio_graph::denormal::enable_flush_to_zero;
 use crate::audio_graph::midi::LiveInputClock;
 use crate::audio_graph::node::TimeSignature;
@@ -637,6 +638,8 @@ where
         live_clock,
     } = shared;
     let mut mix_buf = vec![0.0_f32; MAX_BLOCK_FRAMES * 2];
+    let mut click_buf = vec![0.0_f32; MAX_BLOCK_FRAMES];
+    let mut metronome = Metronome::new();
     // Boxed so pointer swaps displace the old scheduler without drop on the audio thread.
     let mut scheduler = Box::new(GraphScheduler::empty(transport.sample_rate()));
     // ITU-R BS.775 / Pro Tools standard: −3 dB for stereo→mono downmix.
@@ -716,16 +719,23 @@ where
                 // slices so notes land on the wrapped position, not a block late.
                 let mut rendered = 0usize;
                 while rendered < frames {
-                    let playing = transport.is_playing.load(Ordering::Relaxed);
+                    let count_in_remaining = transport.count_in_remaining();
+                    let plan = plan_slice(
+                        transport.is_playing.load(Ordering::Relaxed),
+                        count_in_remaining,
+                        frames - rendered,
+                    );
+                    let playing = plan.playing;
                     let current = transport.position_samples.load(Ordering::Relaxed);
                     let (position, chunk) =
-                        playback_chunk(current, frames - rendered, playing, transport.loop_range());
+                        playback_chunk(current, plan.max_frames, playing, transport.loop_range());
                     if playing && position != current {
                         transport
                             .position_samples
                             .store(position, Ordering::Relaxed);
                     }
-                    let info = transport.snapshot(chunk);
+                    let mut info = transport.snapshot(chunk);
+                    info.is_playing = playing;
                     let end = rendered + chunk;
                     live_clock.set_event_window(
                         live_event_window_start(
@@ -736,6 +746,23 @@ where
                         position,
                     );
                     scheduler.process_block(&info, &mut mix_buf[rendered * 2..end * 2]);
+                    let click_timing = (plan.counting_in
+                        || (playing && transport.metronome_enabled()))
+                    .then(|| ClickTiming {
+                        first_sample: position as i64
+                            - if plan.counting_in {
+                                count_in_remaining as i64
+                            } else {
+                                0
+                            },
+                        bpm: info.bpm,
+                        sample_rate: info.sample_rate,
+                        beats_per_bar: info.time_signature.numerator,
+                    });
+                    metronome.render(&mut click_buf[rendered..end], click_timing);
+                    if plan.counting_in {
+                        transport.consume_count_in(chunk as u64);
+                    }
                     if playing {
                         transport
                             .position_samples
@@ -776,8 +803,9 @@ where
                 // Stereo/multi: L→even channels, R→odd channels.
                 // Channels beyond `active` receive silence.
                 for frame in 0..frames {
-                    let mix_l = mix[frame * 2];
-                    let mix_r = mix[frame * 2 + 1];
+                    let click = click_buf[frame];
+                    let mix_l = mix[frame * 2] + click;
+                    let mix_r = mix[frame * 2 + 1] + click;
                     let mono_s = if mono {
                         (mix_l + mix_r) * mono_gain
                     } else {

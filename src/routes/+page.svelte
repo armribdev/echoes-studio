@@ -28,6 +28,8 @@
 	import type { MidiInputDeviceInfo } from '../lib/midiBackend';
 	import { midiDeviceList } from '../stores/midiDevices';
 	import { connectMidiRecording } from '../frontend/midiRecording';
+	import { setMetronomeEnabled } from '../lib/metronomeBackend';
+	import { metronomeEnabled } from '../stores/metronome';
 	import { projectSettingsPanelOpen } from '../stores/project';
 	import { exportMixdown } from '../lib/exportMixdown';
 	import { notify } from '../stores/status';
@@ -73,6 +75,9 @@
 		const unlistenMidiDevices = listen<MidiInputDeviceInfo[]>(MIDI_DEVICES_EVENT, ({ payload }) => {
 			midiDeviceList.set(payload);
 			applyMidiNow();
+		});
+		const unsubMetronome = metronomeEnabled.subscribe((enabled) => {
+			setMetronomeEnabled(enabled).catch(console.error);
 		});
 		const unlistenMidiRecording = connectMidiRecording();
 		const disconnectBridge = connectTransportBridge();
@@ -134,6 +139,7 @@
 			unsubIsolation();
 			unsubMidi();
 			void unlistenMidiDevices.then((fn) => fn());
+			unsubMetronome();
 			void unlistenMidiRecording.then((fn) => fn());
 			void unlistenMenu.then((fns) => fns.forEach((fn) => fn()));
 			window.removeEventListener('keydown', handleGlobalKey);

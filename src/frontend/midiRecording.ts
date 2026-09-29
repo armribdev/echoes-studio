@@ -10,6 +10,7 @@ import {
 	type RecordedNote,
 } from '../lib/midiBackend';
 import { armedTrackId } from '../stores/armedTrack';
+import { countInEnabled } from '../stores/metronome';
 import { isMidiRecording, midiRecordingPreview } from '../stores/midiRecording';
 import { notify } from '../stores/status';
 import { transport } from '../stores/transport';
@@ -29,7 +30,7 @@ export async function toggleMidiRecording(): Promise<void> {
 		return;
 	}
 	try {
-		const start = await startMidiRecording();
+		const start = await startMidiRecording(get(countInEnabled) ? 1 : 0);
 		midiRecordingPreview.set({ trackId, start, events: [], finished: null });
 		isMidiRecording.set(true);
 		if (!get(transport).isPlaying) await play();

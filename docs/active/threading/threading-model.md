@@ -187,6 +187,10 @@ command thread (record button, `PAUSE`, `STOP`) — never from the audio thread.
 Each recorded note is also announced (`midi-recording-note`) from the capture
 thread so the UI can draw the growing clip; the capture thread is not real-time.
 
+Metronome / count-in (ADR-026): the command thread arms the count-in
+(`start_count_in`) and toggles the click (`set_metronome_enabled`) through
+`SharedTransport` atomics; the CPAL callback consumes them. Nothing is sent back.
+
 ### Project state → Audio thread
 
 **Never directly.** Project state always goes through the compilation pipeline:

@@ -105,11 +105,12 @@ export interface RecordedNote {
 }
 
 /**
- * Returns the timeline position (seconds) where the recording starts.
+ * Returns the timeline position (seconds) where the recording starts. From a
+ * stopped transport, `countInBars` bars of click play before it moves.
  * @throws `string` error message when no track is armed or a recording is running.
  */
-export async function startMidiRecording(): Promise<number> {
-	return invoke<number>('start_midi_recording');
+export async function startMidiRecording(countInBars: number): Promise<number> {
+	return invoke<number>('start_midi_recording', { countInBars });
 }
 
 /** The clip arrives through `MIDI_RECORDING_FINISHED_EVENT`. */

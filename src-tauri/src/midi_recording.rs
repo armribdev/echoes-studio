@@ -95,9 +95,13 @@ impl MidiRecorder {
         Ok(start_position_samples as f64 / self.transport.sample_rate() as f64)
     }
 
-    /// MIDI capture thread. Ignores notes that are not for the recorded track;
+    /// MIDI capture thread. Ignores notes played during the count-in and notes
+    /// that are not for the recorded track;
     /// returns the recorded note so the caller can show it right away.
     pub fn capture(&self, track_id: &str, message: &MidiLiveInputMessage) -> Option<RecordedNote> {
+        if self.transport.count_in_remaining() > 0 {
+            return None;
+        }
         let mut recording = self.lock();
         let recording = recording.as_mut().filter(|r| r.track_id == track_id)?;
         let sample_rate = self.transport.sample_rate();
@@ -122,6 +126,7 @@ impl MidiRecorder {
     pub fn finish(&self) -> Option<Option<RecordedMidiClip>> {
         let recording = self.lock().take()?;
         self.transport.set_recording(false);
+        self.transport.cancel_count_in();
         let end_position_samples = self.transport.position_samples.load(Ordering::Relaxed);
         Some(build_clip(
             recording,
@@ -254,6 +259,37 @@ mod tests {
         assert!(transport.is_recording());
         assert!(recorder.finish().is_some());
         assert!(!transport.is_recording());
+    }
+
+    #[test]
+    fn notes_played_during_the_count_in_are_not_recorded() {
+        let transport = SharedTransport::new(48_000.0, 120.0);
+        let clock = Arc::new(LiveInputClock::new());
+        clock.set_event_window(10_000_000, 0);
+        let recorder = MidiRecorder::new(Arc::clone(&transport), clock);
+        recorder.start("track".into()).unwrap();
+        let note = MidiLiveInputMessage {
+            note_on: true,
+            pitch: 60,
+            velocity: 100,
+            received_at: 20_000_000,
+        };
+
+        transport.start_count_in(1_000);
+        assert!(recorder.capture("track", &note).is_none());
+
+        transport.cancel_count_in();
+        assert!(recorder.capture("track", &note).is_some());
+    }
+
+    #[test]
+    fn finishing_cancels_a_pending_count_in() {
+        let transport = SharedTransport::new(48_000.0, 120.0);
+        let recorder = MidiRecorder::new(Arc::clone(&transport), Arc::new(LiveInputClock::new()));
+        recorder.start("track".into()).unwrap();
+        transport.start_count_in(1_000);
+        recorder.finish();
+        assert_eq!(transport.count_in_remaining(), 0);
     }
 
     #[test]

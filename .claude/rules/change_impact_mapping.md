@@ -16,7 +16,7 @@ table for step 1 of the sync procedure.
 | `audio_graph/midi.rs` | `architecture/audio-graph.md` | 012 |
 | `audio_graph/midi.rs` (live input queue, `LiveInputClock`), `midi_input.rs`, `midi_recording.rs`, live-clock stamping in `audio_engine/engine.rs` | `architecture/audio-graph.md`, `threading/threading-model.md`, `threading/realtime-safety.md`, `migration/migration_plan.md` (Phase 5f) | 022 |
 | `audio_graph/nodes/{instrument,clap_instrument}.rs` | `architecture/audio-graph.md`, `plugins/plugin-wrapper-system.md` | 013, 014 |
-| `audio_engine/transport.rs` | `threading/realtime-safety.md`, `threading/threading-model.md` | — |
+| `audio_engine/transport.rs`, `audio_engine/metronome.rs` (count-in, click) | `threading/realtime-safety.md`, `threading/threading-model.md` | 026 |
 | `audio_engine/offline.rs`, `render_harness.rs` | `migration/*` (bit-identical C-2), `dsp/dsp-runtime.md` | 019 |
 | `audio_engine/engine.rs`, `graph.rs` | `threading/threading-model.md`, `architecture/audio-graph.md` | 004, 005 |
 | `plugin_system/host.rs`, `lifecycle.rs`, `instance.rs`, `registry.rs` | `plugins/plugin-system.md` | 003, 007, 013, 014 |

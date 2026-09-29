@@ -29,6 +29,7 @@ use super::commands::{
 };
 use super::events::{ev, EngineEvent, ProjectEvent};
 use crate::audio_clip::{AudioClip, AudioClipData};
+use crate::audio_engine::transport::SharedTransport;
 use crate::audio_graph::nodes::track_gain::VOLUME_RANGE;
 use crate::audio_graph::GraphSnapshotDto;
 use crate::plugin_system::wrapper::DeviceFormat;
@@ -133,16 +134,37 @@ pub fn arm_track_for_midi_input(
 /// Start recording the armed track's hardware MIDI notes; returns the start
 /// position in seconds. The frontend starts the transport itself; notes stream
 /// in through `MIDI_RECORDING_NOTE_EVENT` and the clip is delivered by
-/// `MIDI_RECORDING_FINISHED_EVENT`.
+/// `MIDI_RECORDING_FINISHED_EVENT`. When the transport is stopped,
+/// `count_in_bars` bars of click play before it starts moving.
 #[tauri::command]
-pub fn start_midi_recording(state: tauri::State<'_, AppState>) -> Result<f64, String> {
+pub fn start_midi_recording(
+    state: tauri::State<'_, AppState>,
+    count_in_bars: u32,
+) -> Result<f64, String> {
     let armed = state
         .armed_track_id
         .lock()
         .ok()
         .and_then(|armed| armed.clone());
     let track_id = armed.ok_or("Aucune piste armée pour l'enregistrement")?;
-    state.midi_recorder.start(track_id)
+    let start_seconds = state.midi_recorder.start(track_id)?;
+    if !state.transport.is_playing.load(Ordering::Relaxed) {
+        state
+            .transport
+            .start_count_in(count_in_samples(&state.transport, count_in_bars));
+    }
+    Ok(start_seconds)
+}
+
+/// Metronome click on the live output (ADR-026). Session state, no project event.
+#[tauri::command]
+pub fn set_metronome_enabled(state: tauri::State<'_, AppState>, enabled: bool) {
+    state.transport.set_metronome_enabled(enabled);
+}
+
+fn count_in_samples(transport: &SharedTransport, bars: u32) -> u64 {
+    let beats = bars as f64 * transport.time_signature().numerator as f64;
+    (beats * 60.0 / transport.bpm() as f64 * transport.sample_rate() as f64) as u64
 }
 
 #[tauri::command]

@@ -132,6 +132,10 @@ the armed track is also stamped with its transport position and, when the
 recording ends (record button, pause or stop), becomes a MIDI clip added
 through the regular `ADD_MIDI_CLIP` command — nothing new in the graph.
 
+The metronome click (ADR-026) is the other thing outside the graph: it is added
+to the device output after the mix and the meters, so it is never in a track, a
+meter or an export.
+
 ```
 AppProject (editor state)
     │
