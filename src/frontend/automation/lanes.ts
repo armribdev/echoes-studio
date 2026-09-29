@@ -6,7 +6,7 @@ import type {
   ModulationTargetRef,
   TrackEffect,
 } from '../../types/global';
-import { effectGroupNames, type PluginParamInfo } from '../modulation/targets';
+import { effectGroupNames, internalParam, type PluginParamInfo } from '../modulation/targets';
 
 /** Vertical inset so points at 0 and 1 stay fully visible. */
 export const LANE_PADDING_PX = 6;
@@ -77,8 +77,13 @@ export function laneLabel(
   switch (target.kind) {
     case 'track_gain':
       return { group: 'Piste', name: 'Volume' };
-    case 'effect_param':
-      return { group: effectGroupNames(effects).get(target.effect_id) ?? 'Effet', name: target.param };
+    case 'effect_param': {
+      const effect = effects.find((e) => e.id === target.effect_id);
+      return {
+        group: effectGroupNames(effects).get(target.effect_id) ?? 'Effet',
+        name: internalParam(effect, target.param)?.label ?? target.param,
+      };
+    }
     case 'plugin_param': {
       const param = targetPluginParam(target, paramsByPlacement);
       return {
@@ -97,12 +102,46 @@ export function targetPluginParam(
   return paramsByPlacement[target.effect_id]?.find((p) => p.native_id === target.native_id);
 }
 
-/** Plain value in the plugin's own range, or a percentage when the range is 0…1 or unknown. */
-export function formatAutomationValue(value: number, param: PluginParamInfo | undefined): string {
-  if (!param || (param.min === 0 && param.max === 1)) return `${Math.round(value * 100)} %`;
-  const plain = param.min + value * (param.max - param.min);
-  const span = Math.abs(param.max - param.min);
-  return plain.toFixed(span >= 100 ? 0 : span >= 10 ? 1 : 2);
+/** How a lane's 0..1 value maps to the parameter's own unit, mirroring the engine (ADR-025). */
+export interface AutomationRange {
+  min: number;
+  max: number;
+  log: boolean;
+  /** `%` displays the value x100. */
+  unit: string;
+}
+
+const VOLUME_RANGE: AutomationRange = { min: 0, max: 2, log: false, unit: '%' };
+
+export function automationRange(
+  target: ModulationTargetRef,
+  effects: TrackEffect[],
+  paramsByPlacement: Record<string, PluginParamInfo[]>,
+): AutomationRange | undefined {
+  switch (target.kind) {
+    case 'track_gain':
+      return VOLUME_RANGE;
+    case 'effect_param': {
+      const param = internalParam(effects.find((e) => e.id === target.effect_id), target.param);
+      return param && { min: param.min, max: param.max, log: param.log === true, unit: param.unit };
+    }
+    case 'plugin_param': {
+      const param = targetPluginParam(target, paramsByPlacement);
+      return param && { min: param.min, max: param.max, log: false, unit: param.min === 0 && param.max === 1 ? '%' : '' };
+    }
+  }
+}
+
+export function formatAutomationValue(value: number, range: AutomationRange | undefined): string {
+  if (!range) return `${Math.round(value * 100)} %`;
+  const plain = range.log
+    ? range.min * (range.max / range.min) ** value
+    : range.min + value * (range.max - range.min);
+  if (range.unit === '%') return `${Math.round(plain * 100)} %`;
+  if (range.unit === 'Hz' && plain >= 1000) return `${(plain / 1000).toFixed(2)} kHz`;
+  const span = Math.abs(range.max - range.min);
+  const digits = range.unit === 'dB' ? 1 : span >= 100 ? 0 : span >= 10 ? 1 : 2;
+  return `${plain.toFixed(digits)}${range.unit ? ` ${range.unit}` : ''}`;
 }
 
 interface PixelPoint {

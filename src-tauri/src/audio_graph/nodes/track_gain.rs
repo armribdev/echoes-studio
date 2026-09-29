@@ -19,6 +19,10 @@ use crate::audio_graph::buffer::AudioBuffer;
 use crate::audio_graph::live_params::TrackParams;
 use crate::audio_graph::node::{AudioNode, PrepareContext, TransportInfo};
 use crate::audio_graph::nodes::gain::{SmoothedGain, FADER_SMOOTH_CUTOFF_HZ, PARAM_GAIN};
+use crate::audio_graph::nodes::{automated_value, ParamScale};
+
+/// Linear gain the fader can reach (0…200 %); an automation lane spans the same range.
+pub const VOLUME_RANGE: (f32, f32) = (0.0, 2.0);
 
 pub struct TrackGainNode {
     params: Arc<TrackParams>,
@@ -53,6 +57,12 @@ impl TrackGainNode {
         node.pan_l.snap_to(left);
         node.pan_r.snap_to(right);
         node
+    }
+
+    /// Offset from the fader that lands the volume on the automated value (ADR-025).
+    #[inline]
+    fn automation_delta(&self, normalised: f32) -> f32 {
+        automated_value(normalised, VOLUME_RANGE, ParamScale::Linear) - self.params.volume()
     }
 
     /// 0 when muted, or when another track is solo'd and this one is not; else 1.
@@ -169,6 +179,20 @@ impl AudioNode for TrackGainNode {
             self.smoother.add_delta_at(sample_offset, value);
         }
     }
+
+    fn apply_automation(&mut self, param_id: u32, value: f32) {
+        if param_id == PARAM_GAIN {
+            self.smoother
+                .add_block_start_delta(self.automation_delta(value));
+        }
+    }
+
+    fn apply_automation_at(&mut self, param_id: u32, sample_offset: u32, value: f32) {
+        if param_id == PARAM_GAIN {
+            self.smoother
+                .add_delta_at(sample_offset, self.automation_delta(value));
+        }
+    }
 }
 
 #[cfg(test)]
@@ -225,6 +249,54 @@ mod tests {
         assert!(
             last > 1.55,
             "modulation step from 1.0 towards 2.0 reached only {last} after 13 ms"
+        );
+    }
+
+    #[test]
+    fn automation_sets_the_volume_whatever_the_fader_says() {
+        for fader in [0.3, 1.0, 1.8] {
+            let live = LiveParams::new();
+            let cells = live.get_or_init_track("t", fader, 0.0, false, false);
+            let mut node = TrackGainNode::new(cells, Arc::clone(&live.any_solo));
+            node.prepare(PrepareContext {
+                sample_rate: 48_000.0,
+                max_block_size: FRAMES_13_MS,
+                num_channels: 1,
+                live: true,
+            });
+            // Enough blocks for the modulation ramp to settle on the target.
+            let mut last = 0.0;
+            for _ in 0..40 {
+                node.reset_modulation();
+                node.apply_automation(PARAM_GAIN, 0.25);
+                last = *render_ones(&mut node).last().unwrap();
+            }
+            assert!(
+                (last - 0.5).abs() < 1e-3,
+                "fader {fader}: automation at 0.25 should give gain 0.5, got {last}"
+            );
+        }
+    }
+
+    #[test]
+    fn automation_is_delivered_at_grid_points() {
+        let live = LiveParams::new();
+        let mut node = node_at_unity(&live);
+        node.apply_automation(PARAM_GAIN, 1.0);
+        node.apply_automation_at(PARAM_GAIN, 32, 0.0);
+
+        let out = render_ones(&mut node);
+
+        assert!(
+            out[0] > 1.0,
+            "block-start automation not applied: {}",
+            out[0]
+        );
+        assert!(
+            out[FRAMES_13_MS - 1] < out[0],
+            "grid-point automation not applied: {} then {}",
+            out[0],
+            out[FRAMES_13_MS - 1]
         );
     }
 

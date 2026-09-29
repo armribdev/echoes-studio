@@ -45,9 +45,60 @@ pub fn modulated(base: f32, delta: f32, range: (f32, f32)) -> f32 {
     (base + delta).clamp(min.min(base), max.max(base))
 }
 
+/// How a normalised automation value (0…1) spreads over a parameter's range (ADR-025).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ParamScale {
+    Linear,
+    /// Equal steps per octave; `range.0` must be above zero.
+    Log,
+}
+
+/// Plain value an automation lane asks for, held inside `range`.
+pub fn automated_value(normalised: f32, range: (f32, f32), scale: ParamScale) -> f32 {
+    let (min, max) = range;
+    let normalised = normalised.clamp(0.0, 1.0);
+    let plain = match scale {
+        ParamScale::Linear => min + normalised * (max - min),
+        ParamScale::Log => min * ((max / min).log2() * normalised).exp2(),
+    };
+    plain.clamp(min, max)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::modulated;
+    use super::{automated_value, modulated, ParamScale};
+
+    #[test]
+    fn linear_automation_spans_the_range() {
+        assert_eq!(
+            automated_value(0.0, (-12.0, 12.0), ParamScale::Linear),
+            -12.0
+        );
+        assert_eq!(automated_value(0.5, (-12.0, 12.0), ParamScale::Linear), 0.0);
+        assert_eq!(
+            automated_value(1.0, (-12.0, 12.0), ParamScale::Linear),
+            12.0
+        );
+    }
+
+    #[test]
+    fn log_automation_takes_equal_steps_per_octave() {
+        let range = (20.0, 20_000.0);
+        assert_eq!(automated_value(0.0, range, ParamScale::Log), 20.0);
+        let top = automated_value(1.0, range, ParamScale::Log);
+        assert!((top - 20_000.0).abs() < 0.01, "top of the range, got {top}");
+        let middle = automated_value(0.5, range, ParamScale::Log);
+        assert!(
+            (middle - 632.455_5).abs() < 0.01,
+            "geometric middle, got {middle}"
+        );
+    }
+
+    #[test]
+    fn automation_outside_zero_to_one_is_held_in_range() {
+        assert_eq!(automated_value(-3.0, (0.0, 2.0), ParamScale::Linear), 0.0);
+        assert_eq!(automated_value(7.0, (0.0, 2.0), ParamScale::Linear), 2.0);
+    }
 
     #[test]
     fn modulated_value_stays_in_range() {

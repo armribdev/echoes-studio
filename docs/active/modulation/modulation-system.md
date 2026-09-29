@@ -196,10 +196,15 @@ value (ADR-021 amendment).
 
 ## Automation vs Modulation — The Distinction
 
-> **Plugin parameters (ADR-021):** automation reaches nodes through
-> `apply_automation*` and **sets** a plugin parameter; modulation **offsets** it
-> around its current value without moving it (CLAP `PARAM_MOD`). Internal
-> nodes still receive automation additively, as described below.
+> **Absolute automation (ADR-021, ADR-025):** automation reaches nodes through
+> `apply_automation*` and **sets** the parameter — plugin parameters (ADR-021),
+> track volume and the four internal effects (ADR-025, 2026-09-29); modulation
+> **offsets** it around that value (CLAP `PARAM_MOD` for plugins). An internal
+> node maps the lane's 0…1 value to its own range (`automated_value` in
+> `nodes/mod.rs`; linear, or logarithmic for EQ frequencies and compressor
+> attack/release; track volume = the fader's 0…2 linear gain) and forwards
+> `target − current setting` to its existing modulation path, so `modulated()`
+> lands exactly on the target. The lane wins over the knob while it has points.
 
 Both deliver per-frame float values to a parameter. They differ in source and
 timing:
@@ -216,15 +221,18 @@ a single per-frame float array regardless of source.
 
 **Editor (2026-09-29).** Lanes sit under their track in the arrange view
 (`AutomationLane.svelte`, `AutomationLaneHeader.svelte`; row heights in
-`arrangeInteraction.ts`). The UI offers only automatable plugin parameters
-(`buildAutomationOptions`), because internal targets are still additive. It
+`arrangeInteraction.ts`). The UI offers track volume, internal effect
+parameters and automatable plugin parameters (`buildAutomationOptions`). It
 edits a lane as a single clip from 0 s to its last point (`laneClipFor`), since
 the engine drops points outside their clip window; each gesture sends one
 `UPDATE_AUTOMATION_CLIP` (one undo step). Times are in seconds, so points do not
 follow a tempo change. The pencil (`Ctrl/Cmd` + drag) samples one value per
 pixel column and simplifies the stroke with Ramer–Douglas–Peucker (1.5 px
-tolerance) before sending it. Displayed values are `min + v × (max − min)` in
-the plugin's plain range — the plugin's own text formatting is not queried.
+tolerance) before sending it. Displayed values are the plain value in the
+parameter's own unit (`automationRange` / `formatAutomationValue`, using the same
+range and scale as the engine — keep `INTERNAL_PARAMS` in `targets.ts` in sync
+with the Rust `*_RANGES` and `*_SCALES`); for plugins the plugin's own text
+formatting is not queried.
 
 ---
 

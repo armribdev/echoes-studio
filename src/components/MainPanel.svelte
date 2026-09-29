@@ -2203,6 +2203,7 @@
 					<AutomationLane
 						trackId={track.id}
 						{lane}
+						effects={track.effects}
 						{scale}
 						widthPx={effectiveContentWidthPx}
 						color={trackColor(trackIndex)}

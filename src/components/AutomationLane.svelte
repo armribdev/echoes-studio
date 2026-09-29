@@ -1,15 +1,15 @@
 <script lang="ts">
 	import { onDestroy } from 'svelte';
-	import type { AutomationLane, AutomationPoint } from '../types/global';
+	import type { AutomationLane, AutomationPoint, TrackEffect } from '../types/global';
 	import { updateAutomationClip } from '../frontend/commands/dispatcher';
 	import { ARRANGE_LANE_HEIGHT } from '../frontend/arrangeInteraction';
 	import {
 		curvePath,
+		automationRange,
 		formatAutomationValue,
 		laneClipFor,
 		lanePoints,
 		simplifyPolyline,
-		targetPluginParam,
 		valueToY,
 		yToValue,
 	} from '../frontend/automation/lanes';
@@ -18,6 +18,7 @@
 
 	export let trackId: string;
 	export let lane: AutomationLane;
+	export let effects: TrackEffect[];
 	export let scale: number;
 	export let widthPx: number;
 	export let color: string;
@@ -45,7 +46,7 @@
 	}
 	$: points = draft ?? lanePoints(lane);
 	$: path = curvePath(points, lane.interpolation, scale, widthPx, height);
-	$: param = targetPluginParam(lane.target, $pluginParamsByPlacement);
+	$: range = automationRange(lane.target, effects, $pluginParamsByPlacement);
 	$: labelIndex = stroke ? null : (dragIndex ?? hoverIndex);
 	$: labelPoint = labelIndex !== null ? points[labelIndex] : undefined;
 
@@ -212,7 +213,7 @@
 	{#if labelPoint}
 		{@const cy = valueToY(labelPoint.value, height)}
 		<text class="value" x={labelPoint.time_s * scale + 8} y={cy < 16 ? cy + 14 : cy - 7}>
-			{formatAutomationValue(labelPoint.value, param)}
+			{formatAutomationValue(labelPoint.value, range)}
 		</text>
 	{/if}
 </svg>

@@ -3,7 +3,7 @@ use std::sync::Arc;
 use crate::audio_graph::buffer::AudioBuffer;
 use crate::audio_graph::denormal::ANTI_DENORMAL;
 use crate::audio_graph::node::{AudioNode, PrepareContext, TransportInfo, MAX_CONTROL_POINTS};
-use crate::audio_graph::nodes::modulated;
+use crate::audio_graph::nodes::{automated_value, modulated, ParamScale};
 use crate::audio_graph::parameter_block::ParameterBlock;
 use crate::project::DelayParams;
 
@@ -24,6 +24,9 @@ pub const DELAY_RANGES: [(f32, f32); DELAY_PARAM_COUNT] = [
     (0.0, 1.0),
     (0.0, 1.0),
 ];
+
+/// Delay time is automated linearly like the other amounts (ADR-025).
+const DELAY_SCALE: ParamScale = ParamScale::Linear;
 
 const DEFAULT_ENGINE_SAMPLE_RATE: f32 = 48_000.0;
 
@@ -103,6 +106,16 @@ impl DelayNode {
     pub fn with_block(mut self, block: Arc<ParameterBlock>) -> Self {
         self.block = Some(block);
         self
+    }
+
+    /// Offset from the current setting that lands `param` on the automated value (ADR-025).
+    fn automation_delta(&self, param: usize, normalised: f32) -> Option<f32> {
+        let target = automated_value(normalised, *DELAY_RANGES.get(param)?, DELAY_SCALE);
+        let base = match &self.block {
+            Some(block) => block.get(param),
+            None => delay_block_values(&self.params)[param],
+        };
+        Some(target - base)
     }
 
     /// Recompute the read offset from `self.params.delay_ms`.  Does not touch
@@ -272,6 +285,18 @@ impl AudioNode for DelayNode {
         }
     }
 
+    fn apply_automation(&mut self, param_id: u32, value: f32) {
+        if let Some(delta) = self.automation_delta(param_id as usize, value) {
+            self.apply_modulation(param_id, delta);
+        }
+    }
+
+    fn apply_automation_at(&mut self, param_id: u32, sample_offset: u32, value: f32) {
+        if let Some(delta) = self.automation_delta(param_id as usize, value) {
+            self.apply_modulation_at(param_id, sample_offset, delta);
+        }
+    }
+
     fn apply_modulation_at(&mut self, param_id: u32, sample_offset: u32, value: f32) {
         let p = param_id as usize;
         if p >= DELAY_PARAM_COUNT {
@@ -303,6 +328,47 @@ impl AudioNode for DelayNode {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn automation_lands_on_the_absolute_value_whatever_the_setting() {
+        use crate::audio_graph::node::AudioNode;
+
+        for base_feedback in [0.0, 0.4, 0.9] {
+            let params = DelayParams {
+                feedback: base_feedback,
+                ..DelayParams::default()
+            };
+            let block = ParameterBlock::new(&delay_block_values(&params));
+            let mut node = DelayNode::new(params).with_block(block);
+            node.prepare(PrepareContext {
+                sample_rate: 48_000.0,
+                max_block_size: 64,
+                num_channels: 2,
+                live: true,
+            });
+            let input = AudioBuffer::new(2, 64);
+            let mut output = AudioBuffer::new(2, 64);
+            let t = TransportInfo::stopped(48_000.0);
+
+            for _ in 0..400 {
+                node.reset_modulation();
+                node.apply_automation(DELAY_FEEDBACK as u32, 0.5);
+                node.apply_automation(DELAY_DELAY_MS as u32, 1.0);
+                node.process(&[&input], std::slice::from_mut(&mut output), &t);
+            }
+
+            assert!(
+                (node.params.feedback - 0.475).abs() < 1e-3,
+                "feedback {}",
+                node.params.feedback
+            );
+            assert!(
+                (node.params.delay_ms - 2000.0).abs() < 0.5,
+                "delay {}",
+                node.params.delay_ms
+            );
+        }
+    }
 
     #[test]
     fn modulation_delta_applied_to_params() {

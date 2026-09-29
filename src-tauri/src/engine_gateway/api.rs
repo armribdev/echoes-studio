@@ -29,6 +29,7 @@ use super::commands::{
 };
 use super::events::{ev, EngineEvent, ProjectEvent};
 use crate::audio_clip::{AudioClip, AudioClipData};
+use crate::audio_graph::nodes::track_gain::VOLUME_RANGE;
 use crate::audio_graph::GraphSnapshotDto;
 use crate::plugin_system::wrapper::DeviceFormat;
 use crate::project::{
@@ -85,7 +86,7 @@ pub fn set_track_mix(
     pan: Option<f32>,
 ) -> Result<(), String> {
     if let Some(vol) = volume {
-        let linear = (vol / 100.0).clamp(0.0, 2.0);
+        let linear = (vol / 100.0).clamp(VOLUME_RANGE.0, VOLUME_RANGE.1);
         state.live_params.set_track_volume(&track_id, linear);
     }
     if let Some(pan) = pan {
@@ -1191,7 +1192,7 @@ fn process_command(
 
             // Hot-path: live atomics updated directly, no recompile.
             if let Some(vol) = p.volume {
-                let linear = (vol / 100.0).clamp(0.0, 2.0);
+                let linear = (vol / 100.0).clamp(VOLUME_RANGE.0, VOLUME_RANGE.1);
                 state.live_params.set_track_volume(&p.track_id, linear);
             }
             if let Some(pan) = p.pan {

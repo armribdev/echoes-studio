@@ -301,6 +301,96 @@ fn automated() -> AppProject {
     project_with(vec![audio, midi])
 }
 
+/// One project per automation target family (ADR-025), so converting a node to
+/// absolute automation must move only its own golden hash.
+fn effect_lanes(track: &mut AppTrack, effect_id: &str, params: &[(&str, &[(f64, f32)])]) {
+    for (param, points) in params {
+        track.automation_lanes.push(automation_lane(
+            &format!("{effect_id}.{param}"),
+            ModulationTargetRef::EffectParam {
+                track_id: track.id.clone(),
+                effect_id: effect_id.into(),
+                param: (*param).into(),
+            },
+            points,
+        ));
+    }
+}
+
+fn automated_effect(effect_id: &str, params: &[(&str, &[(f64, f32)])]) -> AppProject {
+    let mut audio = audio_track();
+    let mut midi = midi_track();
+    effect_lanes(&mut audio, effect_id, params);
+    effect_lanes(&mut midi, effect_id, params);
+    project_with(vec![audio, midi])
+}
+
+fn automated_gain() -> AppProject {
+    let mut audio = audio_track();
+    let mut midi = midi_track();
+    for track in [&mut audio, &mut midi] {
+        track.automation_lanes.push(automation_lane(
+            "volume",
+            ModulationTargetRef::TrackGain {
+                track_id: track.id.clone(),
+            },
+            &[(0.0, 0.2), (0.7, 0.6), (1.4, 0.05), (2.2, 0.45)],
+        ));
+    }
+    project_with(vec![audio, midi])
+}
+
+fn automated_eq() -> AppProject {
+    automated_effect(
+        "eq",
+        &[
+            ("low_gain_db", &[(0.0, 0.5), (1.0, 0.9), (2.2, 0.1)]),
+            ("mid_gain_db", &[(0.0, 0.5), (0.8, 1.0), (2.0, 0.2)]),
+            ("mid_freq", &[(0.0, 0.3), (1.2, 0.7), (2.2, 0.4)]),
+            ("mid_q", &[(0.0, 0.2), (1.5, 0.6)]),
+            ("high_gain_db", &[(0.0, 0.8), (1.6, 0.3)]),
+            ("high_freq", &[(0.0, 0.6), (2.0, 0.9)]),
+        ],
+    )
+}
+
+fn automated_compressor() -> AppProject {
+    automated_effect(
+        "comp",
+        &[
+            ("threshold_db", &[(0.0, 0.9), (1.2, 0.4), (2.2, 0.7)]),
+            ("ratio", &[(0.0, 0.1), (1.0, 0.5), (2.2, 0.3)]),
+            ("attack_ms", &[(0.0, 0.2), (2.0, 0.6)]),
+            ("release_ms", &[(0.0, 0.3), (2.0, 0.5)]),
+            ("makeup_db", &[(0.0, 0.2), (1.5, 0.4)]),
+            ("knee_db", &[(0.0, 0.1), (2.0, 0.5)]),
+        ],
+    )
+}
+
+fn automated_reverb() -> AppProject {
+    automated_effect(
+        "reverb",
+        &[
+            ("room_size", &[(0.0, 0.3), (1.3, 0.8), (2.2, 0.5)]),
+            ("damping", &[(0.0, 0.7), (1.5, 0.2)]),
+            ("wet", &[(0.0, 0.1), (0.9, 0.6), (2.2, 0.3)]),
+            ("width", &[(0.0, 1.0), (2.0, 0.4)]),
+        ],
+    )
+}
+
+fn automated_delay() -> AppProject {
+    automated_effect(
+        "delay",
+        &[
+            ("delay_ms", &[(0.0, 0.05), (1.1, 0.2), (2.2, 0.1)]),
+            ("feedback", &[(0.0, 0.2), (1.4, 0.7)]),
+            ("wet", &[(0.0, 0.2), (1.0, 0.7), (2.2, 0.3)]),
+        ],
+    )
+}
+
 /// EQ frequencies modulated in octaves (ADR-019 amendment, 2026-09-24).
 fn eq_octave_modulation() -> AppProject {
     let mut audio = audio_track();
@@ -318,24 +408,34 @@ fn eq_octave_modulation() -> AppProject {
     project_with(vec![audio, midi_track()])
 }
 
-fn reference_projects() -> [(&'static str, AppProject); 5] {
+fn reference_projects() -> [(&'static str, AppProject); 10] {
     [
         ("static_mix", static_mix()),
         ("modulated_effects", modulated_effects()),
         ("modulated_gain", modulated_gain()),
         ("automated", automated()),
         ("eq_octave_modulation", eq_octave_modulation()),
+        ("automated_gain", automated_gain()),
+        ("automated_eq", automated_eq()),
+        ("automated_compressor", automated_compressor()),
+        ("automated_reverb", automated_reverb()),
+        ("automated_delay", automated_delay()),
     ]
 }
 
 /// Recorded on Windows x86_64.  Only update a value when an ADR sanctions the
 /// render change, and say so in the commit.
-const GOLDEN_HASHES: [(&str, u64); 5] = [
+const GOLDEN_HASHES: [(&str, u64); 10] = [
     ("static_mix", 0x7dec_d259_cfd9_6694),
     ("modulated_effects", 0x29ea_1120_1ae0_2d53),
     ("modulated_gain", 0x23ef_388b_80d0_9a52),
-    ("automated", 0x05de_a39a_39d0_7514),
+    ("automated", 0x95cf_b495_b3d2_18b4),
     ("eq_octave_modulation", 0xc71b_3d76_d2c0_8257),
+    ("automated_gain", 0x8d7b_15cf_82b5_ab90),
+    ("automated_eq", 0x2dfa_041a_dfc4_e05c),
+    ("automated_compressor", 0x6f12_51b4_7ba9_2a1a),
+    ("automated_reverb", 0x8aef_85dc_383f_a3bc),
+    ("automated_delay", 0xed2b_9373_7df4_ac29),
 ];
 
 fn assert_block_size_independent(name: &str, project: &AppProject) {
@@ -382,6 +482,31 @@ fn automation_is_block_size_independent() {
 #[test]
 fn eq_octave_modulation_is_block_size_independent() {
     assert_block_size_independent("eq_octave_modulation", &eq_octave_modulation());
+}
+
+#[test]
+fn automated_gain_is_block_size_independent() {
+    assert_block_size_independent("automated_gain", &automated_gain());
+}
+
+#[test]
+fn automated_eq_is_block_size_independent() {
+    assert_block_size_independent("automated_eq", &automated_eq());
+}
+
+#[test]
+fn automated_compressor_is_block_size_independent() {
+    assert_block_size_independent("automated_compressor", &automated_compressor());
+}
+
+#[test]
+fn automated_reverb_is_block_size_independent() {
+    assert_block_size_independent("automated_reverb", &automated_reverb());
+}
+
+#[test]
+fn automated_delay_is_block_size_independent() {
+    assert_block_size_independent("automated_delay", &automated_delay());
 }
 
 #[test]

@@ -27,44 +27,48 @@ export interface ModulationTargetOption {
   listed: boolean;
 }
 
-interface InternalParam {
+export interface InternalParam {
   param: string;
   label: string;
   min: number;
   max: number;
+  /** Shown after the value; `%` displays the value x100. */
+  unit: string;
+  /** Automated in equal steps per octave, mirrors the Rust `*_SCALES` (ADR-025). */
+  log?: true;
   /** Modulated in octaves through the `{param}_octaves` target (ADR-019 amendment). */
   inOctaves?: true;
 }
 
-// Mirrors the `*_RANGES` tables of the Rust effect nodes, which clamp modulated values to them.
+// Mirrors the `*_RANGES` and `*_SCALES` tables of the Rust effect nodes, which clamp modulated and automated values to them.
 const INTERNAL_PARAMS: Record<string, InternalParam[]> = {
   eq: [
-    { param: 'low_gain_db', label: 'Gain graves', min: -12, max: 12 },
-    { param: 'low_freq', label: 'Fréquence graves', min: 20, max: 20000, inOctaves: true },
-    { param: 'mid_gain_db', label: 'Gain médiums', min: -12, max: 12 },
-    { param: 'mid_freq', label: 'Fréquence médiums', min: 20, max: 20000, inOctaves: true },
-    { param: 'mid_q', label: 'Largeur médiums (Q)', min: 0.1, max: 10 },
-    { param: 'high_gain_db', label: 'Gain aigus', min: -12, max: 12 },
-    { param: 'high_freq', label: 'Fréquence aigus', min: 20, max: 20000, inOctaves: true },
+    { param: 'low_gain_db', label: 'Gain graves', min: -12, max: 12, unit: 'dB' },
+    { param: 'low_freq', label: 'Fréquence graves', min: 20, max: 20000, unit: 'Hz', log: true, inOctaves: true },
+    { param: 'mid_gain_db', label: 'Gain médiums', min: -12, max: 12, unit: 'dB' },
+    { param: 'mid_freq', label: 'Fréquence médiums', min: 20, max: 20000, unit: 'Hz', log: true, inOctaves: true },
+    { param: 'mid_q', label: 'Largeur médiums (Q)', min: 0.1, max: 10, unit: '' },
+    { param: 'high_gain_db', label: 'Gain aigus', min: -12, max: 12, unit: 'dB' },
+    { param: 'high_freq', label: 'Fréquence aigus', min: 20, max: 20000, unit: 'Hz', log: true, inOctaves: true },
   ],
   compressor: [
-    { param: 'threshold_db', label: 'Seuil', min: -60, max: 0 },
-    { param: 'ratio', label: 'Ratio', min: 1, max: 20 },
-    { param: 'attack_ms', label: 'Attaque', min: 0.1, max: 200 },
-    { param: 'release_ms', label: 'Relâchement', min: 10, max: 2000 },
-    { param: 'makeup_db', label: 'Gain de sortie', min: -6, max: 24 },
-    { param: 'knee_db', label: 'Genou', min: 0, max: 24 },
+    { param: 'threshold_db', label: 'Seuil', min: -60, max: 0, unit: 'dB' },
+    { param: 'ratio', label: 'Ratio', min: 1, max: 20, unit: ':1' },
+    { param: 'attack_ms', label: 'Attaque', min: 0.1, max: 200, unit: 'ms', log: true },
+    { param: 'release_ms', label: 'Relâchement', min: 10, max: 2000, unit: 'ms', log: true },
+    { param: 'makeup_db', label: 'Gain de sortie', min: -6, max: 24, unit: 'dB' },
+    { param: 'knee_db', label: 'Genou', min: 0, max: 24, unit: 'dB' },
   ],
   reverb: [
-    { param: 'room_size', label: 'Taille', min: 0, max: 1 },
-    { param: 'damping', label: 'Amortissement', min: 0, max: 1 },
-    { param: 'wet', label: 'Mix', min: 0, max: 1 },
-    { param: 'width', label: 'Largeur stéréo', min: 0, max: 1 },
+    { param: 'room_size', label: 'Taille', min: 0, max: 1, unit: '%' },
+    { param: 'damping', label: 'Amortissement', min: 0, max: 1, unit: '%' },
+    { param: 'wet', label: 'Mix', min: 0, max: 1, unit: '%' },
+    { param: 'width', label: 'Largeur stéréo', min: 0, max: 1, unit: '%' },
   ],
   delay: [
-    { param: 'delay_ms', label: 'Temps', min: 10, max: 2000 },
-    { param: 'feedback', label: 'Répétitions', min: 0, max: 0.95 },
-    { param: 'wet', label: 'Mix', min: 0, max: 1 },
+    { param: 'delay_ms', label: 'Temps', min: 10, max: 2000, unit: 'ms' },
+    { param: 'feedback', label: 'Répétitions', min: 0, max: 0.95, unit: '%' },
+    { param: 'wet', label: 'Mix', min: 0, max: 1, unit: '%' },
   ],
 };
 
@@ -162,13 +166,37 @@ export function buildTargetOptions(
   return options;
 }
 
-/** Plugin parameters an automation lane can drive (absolute value, ADR-021). */
+export function internalParam(effect: TrackEffect | undefined, param: string): InternalParam | undefined {
+  return effect ? INTERNAL_PARAMS[effect.params.kind]?.find((p) => p.param === param) : undefined;
+}
+
+/** Track volume, internal effect parameters and automatable plugin parameters (absolute values, ADR-021 / ADR-025). */
 export function buildAutomationOptions(
   effects: TrackEffect[],
   placements: PluginPlacement[],
   paramsByPlacement: Record<string, PluginParamInfo[]>,
 ): ModulationTargetOption[] {
-  return pluginParamOptions(effects, placements, paramsByPlacement, (p) => p.automatable);
+  const groupNames = effectGroupNames(effects);
+  const options: ModulationTargetOption[] = [
+    { key: 'track_gain', group: 'Piste', module: '', label: 'Volume', kind: 'track_gain', param: 'gain', depthScale: 1, listed: true },
+  ];
+  for (const effect of effects) {
+    for (const p of INTERNAL_PARAMS[effect.params.kind] ?? []) {
+      options.push({
+        key: `${effect.id}/${p.param}`,
+        group: groupNames.get(effect.id) ?? '',
+        module: '',
+        label: p.label,
+        kind: 'effect_param',
+        effectId: effect.id,
+        param: p.param,
+        depthScale: p.max - p.min,
+        listed: true,
+      });
+    }
+  }
+  options.push(...pluginParamOptions(effects, placements, paramsByPlacement, (p) => p.automatable));
+  return options;
 }
 
 function pluginParamOptions(

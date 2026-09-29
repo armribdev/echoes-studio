@@ -3,7 +3,7 @@ use std::sync::Arc;
 use crate::audio_graph::buffer::AudioBuffer;
 use crate::audio_graph::denormal::ANTI_DENORMAL;
 use crate::audio_graph::node::{AudioNode, PrepareContext, TransportInfo, MAX_CONTROL_POINTS};
-use crate::audio_graph::nodes::modulated;
+use crate::audio_graph::nodes::{automated_value, modulated, ParamScale};
 use crate::audio_graph::parameter_block::ParameterBlock;
 use crate::project::ReverbParams;
 
@@ -17,6 +17,9 @@ pub const REVERB_WIDTH: usize = 4;
 
 /// Bounds a modulated value may reach, in cell order (mirrored by the UI's modulation targets).
 pub const REVERB_RANGES: [(f32, f32); REVERB_PARAM_COUNT] = [(0.0, 1.0); REVERB_PARAM_COUNT];
+
+/// Every reverb parameter is a 0…1 amount, automated linearly (ADR-025).
+const REVERB_SCALE: ParamScale = ParamScale::Linear;
 
 /// Flatten `ReverbParams` into the `ParameterBlock` cell order above.
 pub fn reverb_block_values(p: &ReverbParams) -> [f32; REVERB_PARAM_COUNT] {
@@ -142,6 +145,16 @@ impl ReverbNode {
     pub fn with_block(mut self, block: Arc<ParameterBlock>) -> Self {
         self.block = Some(block);
         self
+    }
+
+    /// Offset from the current setting that lands `param` on the automated value (ADR-025).
+    fn automation_delta(&self, param: usize, normalised: f32) -> Option<f32> {
+        let target = automated_value(normalised, *REVERB_RANGES.get(param)?, REVERB_SCALE);
+        let base = match &self.block {
+            Some(block) => block.get(param),
+            None => reverb_block_values(&self.params)[param],
+        };
+        Some(target - base)
     }
 
     /// Re-apply the comb feedback/damping coefficients from `self.params`.  Does
@@ -336,6 +349,18 @@ impl AudioNode for ReverbNode {
         }
     }
 
+    fn apply_automation(&mut self, param_id: u32, value: f32) {
+        if let Some(delta) = self.automation_delta(param_id as usize, value) {
+            self.apply_modulation(param_id, delta);
+        }
+    }
+
+    fn apply_automation_at(&mut self, param_id: u32, sample_offset: u32, value: f32) {
+        if let Some(delta) = self.automation_delta(param_id as usize, value) {
+            self.apply_modulation_at(param_id, sample_offset, delta);
+        }
+    }
+
     fn apply_modulation_at(&mut self, param_id: u32, sample_offset: u32, value: f32) {
         let p = param_id as usize;
         if p >= REVERB_PARAM_COUNT {
@@ -367,6 +392,41 @@ impl AudioNode for ReverbNode {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn automation_lands_on_the_absolute_value_whatever_the_setting() {
+        use crate::audio_graph::node::AudioNode;
+
+        for base_room in [0.0, 0.5, 1.0] {
+            let params = ReverbParams {
+                room_size: base_room,
+                ..ReverbParams::default()
+            };
+            let block = ParameterBlock::new(&reverb_block_values(&params));
+            let mut node = ReverbNode::new(params).with_block(block);
+            node.prepare(PrepareContext {
+                sample_rate: 48_000.0,
+                max_block_size: 64,
+                num_channels: 2,
+                live: true,
+            });
+            let input = AudioBuffer::new(2, 64);
+            let mut output = AudioBuffer::new(2, 64);
+            let t = TransportInfo::stopped(48_000.0);
+
+            for _ in 0..400 {
+                node.reset_modulation();
+                node.apply_automation(REVERB_ROOM_SIZE as u32, 0.3);
+                node.process(&[&input], std::slice::from_mut(&mut output), &t);
+            }
+
+            assert!(
+                (node.params.room_size - 0.3).abs() < 1e-3,
+                "room size {}",
+                node.params.room_size
+            );
+        }
+    }
 
     #[test]
     fn modulation_delta_applied_to_params() {

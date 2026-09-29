@@ -216,9 +216,9 @@ pub trait AudioNode: Send + 'static {
     /// via `apply_modulation`, so the default scalar path stays bit-identical.
     fn apply_modulation_at(&mut self, _param_id: u32, _sample_offset: u32, _value: f32) {}
 
-    /// Automation value at the block start (ADR-021).  Plugin wrappers treat it
-    /// as the parameter's absolute value; the default keeps the additive
-    /// modulation path, so internal nodes render exactly as before.
+    /// Automation value (0…1) at the block start.  Plugin wrappers (ADR-021) and
+    /// track volume + internal effects (ADR-025) treat it as the parameter's
+    /// absolute value; the default keeps the additive modulation path.
     fn apply_automation(&mut self, param_id: u32, value: f32) {
         self.apply_modulation(param_id, value);
     }

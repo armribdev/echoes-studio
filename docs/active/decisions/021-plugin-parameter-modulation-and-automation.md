@@ -134,4 +134,5 @@ Nothing exposed this, because the UI cannot target a plugin parameter yet.
   Rejected: CLAP defines non-destructive modulation for exactly this, and the
   host would still overwrite edits made in the plugin window.
 - **Make automation absolute for internal effects as well.** Deferred: it would
-  change existing renders and needs its own decision.
+  change existing renders and needs its own decision. _2026-09-29: decided in
+  [ADR-025](025-absolute-automation-internal-targets.md) (accepted)._

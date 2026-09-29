@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use crate::audio_graph::buffer::AudioBuffer;
 use crate::audio_graph::node::{AudioNode, PrepareContext, TransportInfo, MAX_CONTROL_POINTS};
-use crate::audio_graph::nodes::modulated;
+use crate::audio_graph::nodes::{automated_value, modulated, ParamScale};
 use crate::audio_graph::oversampling::{Oversample2x, OVERSAMPLE_FACTOR};
 use crate::audio_graph::parameter_block::ParameterBlock;
 use crate::project::CompressorParams;
@@ -25,6 +25,16 @@ pub const COMP_RANGES: [(f32, f32); COMP_PARAM_COUNT] = [
     (10.0, 2000.0),
     (-6.0, 24.0),
     (0.0, 24.0),
+];
+
+/// Times are automated in equal steps per octave (ADR-025).
+const COMP_SCALES: [ParamScale; COMP_PARAM_COUNT] = [
+    ParamScale::Linear,
+    ParamScale::Linear,
+    ParamScale::Log,
+    ParamScale::Log,
+    ParamScale::Linear,
+    ParamScale::Linear,
 ];
 
 const DEFAULT_ENGINE_SAMPLE_RATE: f32 = 48_000.0;
@@ -108,6 +118,16 @@ impl CompressorNode {
     pub fn with_block(mut self, block: Arc<ParameterBlock>) -> Self {
         self.block = Some(block);
         self
+    }
+
+    /// Offset from the current setting that lands `param` on the automated value (ADR-025).
+    fn automation_delta(&self, param: usize, normalised: f32) -> Option<f32> {
+        let target = automated_value(normalised, *COMP_RANGES.get(param)?, COMP_SCALES[param]);
+        let base = match &self.block {
+            Some(block) => block.get(param),
+            None => compressor_block_values(&self.params)[param],
+        };
+        Some(target - base)
     }
 
     /// Recompute the time-constant coefficients from `self.params`.  Does not
@@ -282,6 +302,18 @@ impl AudioNode for CompressorNode {
         }
     }
 
+    fn apply_automation(&mut self, param_id: u32, value: f32) {
+        if let Some(delta) = self.automation_delta(param_id as usize, value) {
+            self.apply_modulation(param_id, delta);
+        }
+    }
+
+    fn apply_automation_at(&mut self, param_id: u32, sample_offset: u32, value: f32) {
+        if let Some(delta) = self.automation_delta(param_id as usize, value) {
+            self.apply_modulation_at(param_id, sample_offset, delta);
+        }
+    }
+
     fn apply_modulation_at(&mut self, param_id: u32, sample_offset: u32, value: f32) {
         let p = param_id as usize;
         if p >= COMP_PARAM_COUNT {
@@ -313,6 +345,48 @@ impl AudioNode for CompressorNode {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn automation_lands_on_the_absolute_value_whatever_the_setting() {
+        use crate::audio_graph::node::AudioNode;
+
+        for base_threshold in [-40.0, -18.0, -3.0] {
+            let params = CompressorParams {
+                threshold_db: base_threshold,
+                ..CompressorParams::default()
+            };
+            let block = ParameterBlock::new(&compressor_block_values(&params));
+            let mut node = CompressorNode::new(params).with_block(block);
+            node.prepare(PrepareContext {
+                sample_rate: 48_000.0,
+                max_block_size: 64,
+                num_channels: 2,
+                live: true,
+            });
+            let input = AudioBuffer::new(2, 64);
+            let mut output = AudioBuffer::new(2, 64);
+            let t = TransportInfo::stopped(48_000.0);
+
+            for _ in 0..400 {
+                node.reset_modulation();
+                node.apply_automation(COMP_THRESHOLD_DB as u32, 0.5);
+                node.apply_automation(COMP_ATTACK_MS as u32, 0.5);
+                node.process(&[&input], std::slice::from_mut(&mut output), &t);
+            }
+
+            assert!(
+                (node.params.threshold_db + 30.0).abs() < 1e-2,
+                "threshold {}",
+                node.params.threshold_db
+            );
+            // Geometric middle of 0.1…200 ms.
+            assert!(
+                (node.params.attack_ms - 4.472).abs() < 0.05,
+                "attack {}",
+                node.params.attack_ms
+            );
+        }
+    }
 
     #[test]
     fn modulation_delta_applied_to_params() {

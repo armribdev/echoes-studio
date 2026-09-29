@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use crate::audio_graph::buffer::AudioBuffer;
 use crate::audio_graph::node::{AudioNode, PrepareContext, TransportInfo, MAX_CONTROL_POINTS};
-use crate::audio_graph::nodes::modulated;
+use crate::audio_graph::nodes::{automated_value, modulated, ParamScale};
 use crate::audio_graph::oversampling::{Oversample2x, OVERSAMPLE_FACTOR};
 use crate::audio_graph::parameter_block::ParameterBlock;
 use crate::project::EqParams;
@@ -34,6 +34,17 @@ pub const EQ_RANGES: [(f32, f32); EQ_PARAM_COUNT] = [
     (0.1, 10.0),
     (-12.0, 12.0),
     (20.0, 20_000.0),
+];
+
+/// Frequencies are automated in equal steps per octave (ADR-025).
+const EQ_SCALES: [ParamScale; EQ_PARAM_COUNT] = [
+    ParamScale::Linear,
+    ParamScale::Log,
+    ParamScale::Linear,
+    ParamScale::Log,
+    ParamScale::Linear,
+    ParamScale::Linear,
+    ParamScale::Log,
 ];
 
 /// Flatten `EqParams` into the `ParameterBlock` cell order above.
@@ -223,6 +234,17 @@ impl EqNode {
         self
     }
 
+    /// Offset from the current setting that lands `param` on the automated value
+    /// (ADR-025). `None` for the modulation-only octave slots.
+    fn automation_delta(&self, param: usize, normalised: f32) -> Option<f32> {
+        let target = automated_value(normalised, *EQ_RANGES.get(param)?, EQ_SCALES[param]);
+        let base = match &self.block {
+            Some(block) => block.get(param),
+            None => eq_block_values(&self.params)[param],
+        };
+        Some(target - base)
+    }
+
     /// Recompute the three biquad coefficient sets from `self.params`.
     /// Preserves the filter state (`s1`/`s2`) so a parameter change does not
     /// reset the running filters — only the coefficients move.
@@ -401,6 +423,18 @@ impl AudioNode for EqNode {
         }
     }
 
+    fn apply_automation(&mut self, param_id: u32, value: f32) {
+        if let Some(delta) = self.automation_delta(param_id as usize, value) {
+            self.apply_modulation(param_id, delta);
+        }
+    }
+
+    fn apply_automation_at(&mut self, param_id: u32, sample_offset: u32, value: f32) {
+        if let Some(delta) = self.automation_delta(param_id as usize, value) {
+            self.apply_modulation_at(param_id, sample_offset, delta);
+        }
+    }
+
     fn apply_modulation_at(&mut self, param_id: u32, sample_offset: u32, value: f32) {
         let p = param_id as usize;
         if p >= EQ_MODULATION_SLOTS {
@@ -514,6 +548,65 @@ mod tests {
             node.low.b0, b0_base,
             "low-shelf biquad must be recomputed for the interior segment"
         );
+    }
+
+    #[test]
+    fn automation_lands_on_the_absolute_value_whatever_the_setting() {
+        use crate::audio_graph::node::AudioNode;
+
+        for base_gain in [-6.0, 0.0, 9.0] {
+            let params = EqParams {
+                mid_gain_db: base_gain,
+                ..EqParams::default()
+            };
+            let block = ParameterBlock::new(&eq_block_values(&params));
+            let mut node = EqNode::new(params).with_block(block);
+            node.prepare(PrepareContext {
+                sample_rate: 48_000.0,
+                max_block_size: 64,
+                num_channels: 2,
+                live: true,
+            });
+            let input = AudioBuffer::new(2, 64);
+            let mut output = AudioBuffer::new(2, 64);
+
+            node.reset_modulation();
+            node.apply_automation(EQ_MID_GAIN_DB as u32, 1.0);
+            node.apply_automation(EQ_LOW_FREQ as u32, 0.5);
+            node.apply_automation(EQ_MID_Q as u32, 0.0);
+            node.process(
+                &[&input],
+                std::slice::from_mut(&mut output),
+                &TransportInfo::stopped(48_000.0),
+            );
+
+            assert!(
+                (node.params.mid_gain_db - 12.0).abs() < 1e-4,
+                "mid gain {}",
+                node.params.mid_gain_db
+            );
+            assert!(
+                (node.params.low_freq - 632.455).abs() < 0.05,
+                "low freq {}",
+                node.params.low_freq
+            );
+            assert!(
+                (node.params.mid_q - 0.1).abs() < 1e-5,
+                "mid q {}",
+                node.params.mid_q
+            );
+        }
+    }
+
+    #[test]
+    fn automation_ignores_the_modulation_only_octave_slots() {
+        use crate::audio_graph::node::AudioNode;
+
+        let mut node = EqNode::new(EqParams::default());
+        node.apply_automation(EQ_MID_FREQ_OCTAVES as u32, 1.0);
+        node.apply_automation_at(EQ_MID_FREQ_OCTAVES as u32, 32, 1.0);
+        assert_eq!(node.base_delta[EQ_MID_FREQ_OCTAVES], 0.0);
+        assert_eq!(node.seg_count, 0);
     }
 
     #[test]

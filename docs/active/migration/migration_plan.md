@@ -20,7 +20,7 @@ Les statuts détaillés par sous-système sont dans [`.claude/state_index.md`](.
 | 3 Param transport + `ParameterBlock` | livré | ADR-008, ADR-009, ADR-017 |
 | 4 Séparation DSP/UI + état plugin | livré | ADR-010 (sauvegarde/restauration d'état) |
 | 5a–5e PortKind, MIDI en beats, instruments CLAP, capabilities→compilateur, modulateurs | livré côté moteur | ADR-011 à 014, 019, 021 ; sidechain + multi-sorties CLAP réels |
-| 5e automation | moteur livré (`audio_graph/automation.rs`, commandes `*_AUTOMATION_*`) ; premier éditeur dans l'arrangement (2026-09-29, paramètres de plugins, pas encore testé à la main) | voir « Suite » |
+| 5e automation | moteur livré (`audio_graph/automation.rs`, commandes `*_AUTOMATION_*`) ; éditeur dans l'arrangement (2026-09-29) : paramètres de plugins (testé), volume de piste et effets internes en automation absolue (ADR-025, moteur + sélecteur livrés, pas encore testé à la main) | voir « Suite » |
 | 5f Entrée MIDI matérielle | livré (notes uniquement) | ADR-022 |
 | 6 Sandbox | stable pour effets et instruments CLAP, opt-in | ADR-015 |
 | V1 Harnais C-2 | livré sous forme légère | `audio_engine/render_harness.rs` |
@@ -33,9 +33,9 @@ Les statuts détaillés par sous-système sont dans [`.claude/state_index.md`](.
    1. ~~Le frontend reflète les lanes (types, reducer, dispatcher)~~ — fait 2026-09-29.
    2. ~~Lane sous la piste dans l'arrangement, « Automatiser un réglage… » au clic droit de la piste (les plugins n'ont pas de boutons dans Echoes), ajout / déplacement / suppression de points avec magnétisme~~ — fait 2026-09-29, à tester à la main.
    3. Confort : ~~crayon (tracé simplifié), valeur affichée au survol et au glisser, défilement vertical synchronisé entre pistes et arrangement~~ — fait 2026-09-29. Reste : choix linéaire / escalier par lane (demande une commande moteur `UPDATE_AUTOMATION_LANE`), formes rapides, texte de valeur fourni par le plugin (CLAP `value_to_text`).
-   4. Écriture en direct (demande de remonter les événements de sortie du plugin, limite notée dans ADR-021).
+   4. Automation absolue du volume de piste et des effets internes (ADR-025) — moteur et sélecteur faits 2026-09-29. Reste : clic droit sur un bouton pour l'automatiser, anneau de couleur sur un bouton automatisé (le bouton n'obéit plus à la souris tant que sa lane a des points), mesure de coût du calcul logarithmique sur un gros projet, validation cross-OS des empreintes.
+   5. Écriture en direct (demande de remonter les événements de sortie du plugin, limite notée dans ADR-021).
 
-   Première tranche : **paramètres de plugins CLAP uniquement** (automation absolue, pas d'ADR). Le volume de piste et les effets internes suivront avec un ADR : leur automation est aujourd'hui additive en unités natives (ADR-021, « Alternatives »), donc une courbe 0…1 n'y a pas de sens pour l'utilisateur.
 3. **Enregistrement MIDI dans un clip** (suite de 5f) — capture des notes jouées au clavier. Amendement d'ADR-022 requis avant.
 4. **Fin de V1** — la CI minimale existe (`.github/workflows/ci.yml` : `cargo test` harnais C-2 inclus, sur Windows uniquement, et build frontend). Reste ouvert : vérification cross-OS et projets avec plugins réels.
 5. **Vérifications manuelles en attente** — sidechain avec un vrai plugin, multi-sorties sur une boîte à rythmes CLAP, éditeur de plugin sur écran HiDPI.
