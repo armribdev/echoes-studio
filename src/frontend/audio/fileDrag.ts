@@ -1,5 +1,5 @@
 import { get, writable } from 'svelte/store';
-import { isAudioPath, assetIdFromPath } from '../library/types';
+import { isAudioPath, assetIdFromPath, isMidiLibraryKind, type LibraryAssetKind } from '../library/types';
 import { probeAudioDuration, type ImportAudioOptions } from './importClip';
 
 export type AudioFileDragSource = 'library' | 'os';
@@ -9,6 +9,9 @@ export interface AudioFileDragState {
 	source: AudioFileDragSource;
 	durationSec: number | null;
 	assetId: string | null;
+	/** Phase 3: MIDI/chord drag payload. */
+	kind?: LibraryAssetKind;
+	lengthBeats?: number | null;
 }
 
 export interface AudioFileDragPreview {
@@ -47,8 +50,13 @@ export function beginAudioFileDrag(opts: {
 	source: AudioFileDragSource;
 	durationSec?: number | null;
 	assetId?: string | null;
+	kind?: LibraryAssetKind;
+	lengthBeats?: number | null;
 }): AudioFileDragState | null {
-	if (!isAudioPath(opts.path)) return null;
+	const kind = opts.kind ?? 'one_shot';
+	const isMidi = isMidiLibraryKind(kind);
+	if (!isMidi && !isAudioPath(opts.path)) return null;
+
 	probeGeneration += 1;
 	const generation = probeGeneration;
 	const state: AudioFileDragState = {
@@ -57,10 +65,12 @@ export function beginAudioFileDrag(opts: {
 		durationSec:
 			opts.durationSec != null && opts.durationSec > 0 ? opts.durationSec : null,
 		assetId: opts.assetId ?? assetIdFromPath(opts.path),
+		kind,
+		lengthBeats: opts.lengthBeats ?? null,
 	};
 	audioFileDrag.set(state);
 
-	if (state.durationSec == null) {
+	if (!isMidi && state.durationSec == null) {
 		void probeAudioDuration(opts.path)
 			.then((dur) => {
 				if (generation !== probeGeneration) return;

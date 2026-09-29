@@ -26,7 +26,7 @@
 - Hébergement de plugins CLAP et VST3 (effets et instruments CLAP), paramètres, état, éditeur natif, sidechain et sorties multiples CLAP.
 - Isolation des plugins CLAP dans un processus séparé (opt-in, ADR-015).
 
-**Bibliothèque de sons** : phase 1 en cours (panneau, glisser-déposer, préécoute).
+**Bibliothèque de sons** : phase 1 hand-test ouvert ; phase 2 + 3 (accords/MIDI factory) livrées 2026-09-30.
 
 ---
 
@@ -35,7 +35,7 @@
 - [ ] **Bibliothèque**
   - [ ] Clôturer la phase 1 (hand-test des critères de sortie ; panneau / DnD / préécoute déjà en place)
   - [x] Phase 2 (pop-up Bitwig-style = même browser que le dock ; `+` sur lane arrange ; livré 2026-09-30)
-  - [ ] Phase 3 (accords / MIDI)
+  - [x] Phase 3 (accords / MIDI factory, sources Accords/MIDI/Drums, insert `ADD_MIDI_CLIP`, lane focus + reject ; livré 2026-09-30 ; hand-test ouvert)
 - [x] **Interface d'automation** : courbes dans l'arrangement, choix du paramètre (livré 2026-09-29 ; hand-test partiel)
 - [x] **Enregistrement MIDI** dans un clip depuis le clavier (ADR-022 amendé ; pas encore hand-testé à l'oreille)
 - [ ] **Enregistrement audio** : armement + capture via l'entrée CPAL, monitoring. Rien n'existe dans le code aujourd'hui.

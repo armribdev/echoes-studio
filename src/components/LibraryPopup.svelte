@@ -2,7 +2,7 @@
 	import { onMount, tick } from 'svelte';
 	import { dismissable } from '../frontend/dismiss';
 	import LibraryBrowser from './LibraryBrowser.svelte';
-	import { libraryStore, libraryPopup } from '../frontend/library';
+	import { libraryStore, libraryPopup, defaultSourceForContext } from '../frontend/library';
 
 	let rootEl: HTMLDivElement | null = null;
 	let adjustedX = 0;
@@ -15,7 +15,7 @@
 
 	onMount(() => {
 		// Context default source (Bitwig); keep the user's query.
-		libraryStore.setSource('audio');
+		libraryStore.setSource(defaultSourceForContext(popup.context));
 		void tick().then(() => {
 			if (!rootEl) return;
 			const rect = rootEl.getBoundingClientRect();

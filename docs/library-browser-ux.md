@@ -72,7 +72,7 @@ Sources are **views into the catalogue**, not a second folder tree.
 **Phase 1 ships:** `audio` (single file source), plus `recents` and `favorites`.  
 No Samples/Loops split until kinds exist (Phase 2+).  
 **Phase 2+ may add:** `samples`, `loops` (split from `audio`), user folders.  
-**Phase 3 adds:** `chords`, `midi`, `drums`.  
+**Phase 3 adds:** `chords`, `midi`, `drums` (factory content first; drums = drum MIDI factory, hybrid one-shots later).  
 **Phase 4 adds:** packs + smart collections.
 
 Sidebar order Phase 1: Recents → Favorites → **Audio**.  

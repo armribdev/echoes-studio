@@ -15,6 +15,9 @@
 		LIBRARY_SOURCE_ORDER,
 		AUDIO_EXTENSIONS,
 		formatDuration,
+		formatBeats,
+		isMidiLibraryKind,
+		libraryAssetLengthSec,
 		beginLibraryDrag,
 		endLibraryDrag,
 		moveAudioFileDragPointer,
@@ -22,6 +25,7 @@
 		type LibraryAsset,
 		type LibrarySourceId,
 	} from '../frontend/library';
+	import { tempo } from '../stores/tempo';
 	import { ARRANGE_POINTER_DRAG_THRESHOLD } from '../frontend/arrangeInteraction';
 
 	/** Docked panel vs Bitwig-style pop-up (same browser, different shell). */
@@ -189,11 +193,16 @@
 			if (Math.hypot(dx, dy) < ARRANGE_POINTER_DRAG_THRESHOLD) return;
 			drag.active = true;
 			libraryStore.stopPreview();
+			const durationSec = isMidiLibraryKind(drag.asset.kind)
+				? libraryAssetLengthSec(drag.asset, $tempo.bpm)
+				: (drag.asset.durationSec ?? null);
 			beginLibraryDrag({
 				path: drag.asset.path,
 				source: 'library',
-				durationSec: drag.asset.durationSec ?? null,
+				durationSec,
 				assetId: drag.asset.id,
+				kind: drag.asset.kind,
+				lengthBeats: drag.asset.lengthBeats ?? null,
 			});
 			document.body.classList.add('library-file-dragging');
 			keyboardFocus.setLibraryResults();
@@ -386,7 +395,7 @@
 
 	<div class="body">
 		<div class="results-col">
-			{#if !$libraryHasIndexedContent && visible.length === 0}
+			{#if visible.length === 0 && $libraryStore.source === 'audio' && !$libraryHasIndexedContent}
 				<div class="empty-state">
 					<p class="empty-title">No sounds yet</p>
 					<div class="empty-actions">
@@ -396,6 +405,11 @@
 						</button>
 					</div>
 					<p class="empty-tip">Tip: Drop audio on a track or press B anytime</p>
+				</div>
+			{:else if visible.length === 0}
+				<div class="empty-state">
+					<p class="empty-title">Aucun résultat</p>
+					<p class="empty-tip">Essayez une autre source ou une autre recherche</p>
 				</div>
 			{:else}
 				{#if $libraryStore.query}
@@ -518,6 +532,12 @@
 								<p>No recent sounds yet</p>
 							{:else if $libraryStore.source === 'favorites'}
 								<p>Star a sound to pin it here</p>
+							{:else if $libraryStore.source === 'chords'}
+								<p>Aucun accord factory</p>
+							{:else if $libraryStore.source === 'midi'}
+								<p>Aucun motif MIDI</p>
+							{:else if $libraryStore.source === 'drums'}
+								<p>Aucun pattern drums</p>
 							{:else}
 								<p>No audio indexed</p>
 							{/if}
@@ -530,8 +550,18 @@
 						<div class="detail-name" title={selected.path}>{selected.name}</div>
 						<div class="detail-meta">
 							<span>{selected.extension.toUpperCase()}</span>
-							<span>{formatDuration(selected.durationSec)}</span>
+							{#if isMidiLibraryKind(selected.kind)}
+								<span>{formatBeats(selected.lengthBeats)}</span>
+								{#if selected.keyRoot}
+									<span>{selected.keyRoot}</span>
+								{/if}
+							{:else}
+								<span>{formatDuration(selected.durationSec)}</span>
+							{/if}
 						</div>
+						{#if selected.kind === 'loop' || selected.kind === 'one_shot'}
+							<div class="detail-tip">Placé à la longueur d'origine (pas de warp)</div>
+						{/if}
 					{:else}
 						<div class="detail-placeholder">Select a sound</div>
 					{/if}
@@ -818,6 +848,11 @@
 		cursor: grabbing !important;
 	}
 
+	:global(body.library-file-dragging.library-file-dragging--rejected),
+	:global(body.library-file-dragging.library-file-dragging--rejected *) {
+		cursor: not-allowed !important;
+	}
+
 	.fav-btn {
 		width: 16px;
 		height: 16px;
@@ -938,6 +973,13 @@
 		font-size: 9px;
 		font-family: $font-mono;
 		color: $text-faint;
+	}
+
+	.detail-tip {
+		margin-top: 4px;
+		font-size: 9px;
+		color: $text-faint;
+		opacity: 0.85;
 	}
 
 	.detail-placeholder {

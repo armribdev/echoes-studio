@@ -36,7 +36,26 @@
 	import { leftPanel } from '../stores/leftPanel';
 	import { shouldHandleTimelineShortcuts } from '../frontend/shortcuts/context';
 	import { keyboardFocus } from '../stores/keyboardFocus';
-	import { libraryStore, libraryPopup, isAudioPath, audioFileDrag, audioFileDragPointer, audioFileDragDrop, beginAudioFileDrag, endAudioFileDrag, importOptionsFromAudioDrag, getActiveAudioFileDrag, isAudioFileDragActive } from '../frontend/library';
+	import {
+		libraryStore,
+		libraryPopup,
+		isAudioPath,
+		isMidiLibraryKind,
+		audioFileDrag,
+		audioFileDragPointer,
+		audioFileDragDrop,
+		beginAudioFileDrag,
+		endAudioFileDrag,
+		importOptionsFromAudioDrag,
+		getActiveAudioFileDrag,
+		isAudioFileDragActive,
+		laneFocusForTrack,
+		openContextFromLaneFocus,
+		canDropAssetOnLane,
+		insertMidiLibraryAsset,
+		beatsToSeconds,
+		type LibraryAssetKind,
+	} from '../frontend/library';
 	import type { LibraryOpenContext } from '../frontend/library';
 	import { importAudioToTrack, cancelAudioImport } from '../frontend/audio/importClip';
 	import { clipSourceDurationSec } from '../frontend/audio/clipDuration';
@@ -87,12 +106,10 @@
 	}) {
 		const track =
 			opts.trackIndex != null ? tracks[opts.trackIndex] : tracks.find((t) => t.id === opts.trackId);
-		const hasAudio = (track?.clips?.length ?? 0) > 0;
-		const hasMidi = (track?.midi_clips?.length ?? 0) > 0;
 		let context: LibraryOpenContext = opts.context ?? 'playhead_insert';
 		if (!opts.context) {
-			if (!track || (!hasAudio && !hasMidi)) context = 'track_empty';
-			else context = 'track_audio_lane';
+			const focus = laneFocusForTrack(track);
+			context = openContextFromLaneFocus(focus, !!track);
 		}
 		if (opts.trackIndex != null) selectTrackIndex(opts.trackIndex);
 		libraryPopup.open({
@@ -343,13 +360,14 @@
 						notify(`Format non supporté. Utilisez WAV, MP3, FLAC ou OGG.`, 'error');
 						return;
 					}
+					if (!preview || preview.rejected) return;
 					void commitAudioFileDrop({
 						path,
 						source: 'os',
-						durationSec: drag?.durationSec ?? preview?.durationSec ?? null,
+						durationSec: drag?.durationSec ?? preview.durationSec ?? null,
 						assetId: drag?.assetId ?? null,
-						trackIndex: preview?.trackIndex ?? 0,
-						startSec: preview?.startSec ?? 0,
+						trackIndex: preview.trackIndex,
+						startSec: preview.startSec,
 					});
 				}),
 			]);
@@ -586,10 +604,24 @@
 		  }
 		| null = null;
 	let midiClipContextTarget: string | null = null;
-	let fileDragPreview: { trackIndex: number; startSec: number; durationSec: number | null } | null = null;
+	let fileDragPreview: {
+		trackIndex: number;
+		startSec: number;
+		durationSec: number | null;
+		rejected?: boolean;
+	} | null = null;
 
-	$: if ($audioFileDrag?.durationSec != null && fileDragPreview && fileDragPreview.durationSec !== $audioFileDrag.durationSec) {
-		fileDragPreview = { ...fileDragPreview, durationSec: $audioFileDrag.durationSec };
+	$: if ($audioFileDrag && fileDragPreview) {
+		const drag = $audioFileDrag;
+		let nextDur = fileDragPreview.durationSec;
+		if (drag.kind && isMidiLibraryKind(drag.kind) && drag.lengthBeats != null && drag.lengthBeats > 0) {
+			nextDur = beatsToSeconds(drag.lengthBeats, $tempo.bpm);
+		} else if (drag.durationSec != null) {
+			nextDur = drag.durationSec;
+		}
+		if (nextDur !== fileDragPreview.durationSec) {
+			fileDragPreview = { ...fileDragPreview, durationSec: nextDur };
+		}
 	}
 
 	let scrubCleanup: (() => void) | null = null;
@@ -1769,6 +1801,7 @@
 	// Le dézoom se fait à l'import (followImportsIntoView).
 	function clearFileDragPreview() {
 		fileDragPreview = null;
+		document.body.classList.remove('library-file-dragging--rejected');
 	}
 
 	function updateFileDragPreview(clientX: number, clientY: number, doSnap: boolean) {
@@ -1781,18 +1814,30 @@
 			clientY > rect.bottom
 		) {
 			clearFileDragPreview();
+			document.body.classList.remove('library-file-dragging--rejected');
 			return;
 		}
 		const x = clientX - rect.left + tracksEl.scrollLeft;
 		const y = clientY - rect.top + tracksEl.scrollTop;
 		const trackIndex = arrangeTrackIndexFromY(y, tracks);
 		const rawStart = Math.max(0, x / scale);
-		const durationSec =
-			getActiveAudioFileDrag()?.durationSec ?? fileDragPreview?.durationSec ?? null;
+		const drag = getActiveAudioFileDrag();
+		let durationSec = drag?.durationSec ?? fileDragPreview?.durationSec ?? null;
+		if (drag?.kind && isMidiLibraryKind(drag.kind) && drag.lengthBeats != null && drag.lengthBeats > 0) {
+			durationSec = beatsToSeconds(drag.lengthBeats, get(tempo).bpm);
+		}
+
+		const targetTrack = tracks[trackIndex];
+		const lane = laneFocusForTrack(targetTrack);
+		const kind = drag?.kind ?? 'one_shot';
+		const rejected = !canDropAssetOnLane(kind, lane);
+		document.body.classList.toggle('library-file-dragging--rejected', rejected);
+
 		fileDragPreview = {
 			trackIndex,
 			startSec: doSnap ? snap(rawStart, false) : rawStart,
 			durationSec,
+			rejected,
 		};
 	}
 
@@ -1803,9 +1848,33 @@
 		assetId: string | null;
 		trackIndex: number;
 		startSec: number;
+		kind?: LibraryAssetKind;
+		lengthBeats?: number | null;
 	}) {
 		const trackId = await ensureTrackForClipPlacement(opts.trackIndex);
 		if (!trackId) return;
+
+		if (opts.kind && isMidiLibraryKind(opts.kind)) {
+			const asset =
+				(opts.assetId ? libraryStore.getAsset(opts.assetId) : null) ??
+				(opts.assetId ? libraryStore.getSelectedAsset() : null);
+			if (!asset || !isMidiLibraryKind(asset.kind)) {
+				notify('Motif MIDI introuvable', 'error');
+				return;
+			}
+			const target = tracks.find((t) => t.id === trackId) ?? tracks[opts.trackIndex];
+			if (!canDropAssetOnLane(asset.kind, laneFocusForTrack(target))) {
+				notify('Drop incompatible (piste audio)', 'error');
+				return;
+			}
+			await insertMidiLibraryAsset({
+				asset,
+				trackId,
+				startSec: opts.startSec,
+			});
+			return;
+		}
+
 		try {
 			await importAudioToTrack(
 				importOptionsFromAudioDrag(trackId, opts.startSec, {
@@ -1847,7 +1916,7 @@
 		const preview = fileDragPreview;
 		clearFileDragPreview();
 		endAudioFileDrag();
-		if (!preview) return;
+		if (!preview || preview.rejected) return;
 		void commitAudioFileDrop({
 			path: drag.path,
 			source: 'library',
@@ -1855,6 +1924,8 @@
 			assetId: drag.assetId,
 			trackIndex: preview.trackIndex,
 			startSec: preview.startSec,
+			kind: drag.kind,
+			lengthBeats: drag.lengthBeats,
 		});
 	});
 	onDestroy(unsubLibraryDrop);
@@ -2210,6 +2281,7 @@
 				<div
 					class="clip-ghost"
 					class:clip-ghost--new-track={isNewArrangeTrackRow(fileDragPreview.trackIndex, tracks.length)}
+					class:clip-ghost--rejected={fileDragPreview.rejected}
 					style="top: {rowTops[fileDragPreview.trackIndex]}px; left: {fileDragPreview.startSec * scale}px; width: {fileDragPreview.durationSec != null ? fileDragPreview.durationSec * scale : 150}px;"
 				></div>
 			{/if}
@@ -2452,6 +2524,12 @@
 		&--new-track {
 			background-color: rgba(107, 203, 119, 0.12);
 			border-color: rgba(107, 203, 119, 0.75);
+		}
+
+		&--rejected {
+			background-color: rgba(255, 80, 80, 0.1);
+			border-color: rgba(255, 100, 100, 0.55);
+			opacity: 0.55;
 		}
 	}
 

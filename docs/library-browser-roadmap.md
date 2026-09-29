@@ -140,7 +140,7 @@ MIDI-lane reject matrix still deferred.
 
 ## Phase 3 — Musical content
 
-**Status:** `todo`  
+**Status:** `doing` (2026-09-30)  
 **Depends on:** Phase 2  
 
 ### Scope
@@ -154,13 +154,22 @@ MIDI-lane reject matrix still deferred.
 | Loop BPM sync in preview when metadata allows | — |
 | **Warp-on-drop** only behind a **dedicated ADR** (no silent UI re-encode) | Shipping warp without ADR |
 
+### Progress (2026-09-30)
+
+Factory catalogue (chord progressions + MIDI patterns + drum MIDI), sources
+`chords` / `midi` / `drums` in the shared browser, insert via `ADD_MIDI_CLIP`
+(block-chord expand for progressions), WebAudio MIDI preview with project-key
+transpose (preview only), lane focus for pop-up defaults + audio↔MIDI reject on
+drag/insert. Warp deferred — detail tip “longueur d'origine”. Drums source is
+factory drum MIDI only (hybrid one-shots deferred). Piano-roll miniature peek
+deferred (audition via oscillators).
+
 ### Exit criteria
 
-- [ ] Drop a chord progression on MIDI lane → notes audible via PolySynth
-- [ ] Project key change + re-preview reflects transpose (preview only)
-- [ ] Hybrid `drums` source returns both one-shots and drum MIDI
-- [ ] Warp-on-drop either shipped behind a dedicated follow-up ADR or explicitly
-      deferred with UX copy (“placed at original length”)
+- [x] Drop a chord progression on MIDI lane → notes audible via PolySynth *(code path; hand-test open)*
+- [x] Project key change + re-preview reflects transpose (preview only) *(code path; hand-test open)*
+- [ ] Hybrid `drums` source returns both one-shots and drum MIDI *(drums MIDI factory only for now)*
+- [x] Warp-on-drop explicitly deferred with UX copy (“placed at original length”)
 
 ### Follow-up ADR likely
 

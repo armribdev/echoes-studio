@@ -1,4 +1,4 @@
-import type { LibrarySourceId } from './types';
+import { isLibrarySourceId, type LibrarySourceId } from './types';
 
 const STORAGE_KEY = 'echoes.library.v1';
 const MAX_RECENTS = 50;
@@ -28,7 +28,7 @@ export function loadLibraryPersistence(): LibraryPersistence {
 		if (!raw) return { ...DEFAULTS, favoriteIds: [], recentIds: [], indexedFolders: [] };
 		const parsed = JSON.parse(raw) as Partial<LibraryPersistence>;
 		const lastSource =
-			parsed.lastSource === 'recents' || parsed.lastSource === 'favorites' || parsed.lastSource === 'audio'
+			typeof parsed.lastSource === 'string' && isLibrarySourceId(parsed.lastSource)
 				? parsed.lastSource
 				: 'audio';
 		return {

@@ -9,6 +9,12 @@ import {
 } from './persistence';
 import { filterAssetsByQuery } from './search';
 import { libraryPreviewPlayer } from './previewPlayer';
+import { libraryMidiPreviewPlayer } from './midiPreview';
+import { FACTORY_LIBRARY_ASSETS } from './factoryCatalog';
+import { resolveLibraryMidiNotes } from './resolveMidi';
+import { isMidiLibraryKind } from './types';
+import { projectEventStore } from '../../shared/project/eventStore';
+import { tempo } from '../../stores/tempo';
 import {
 	assetFromPath,
 	assetFromScanEntry,
@@ -25,6 +31,9 @@ export interface LibraryState {
 	previewingId: string | null;
 	assetsById: Record<string, LibraryAsset>;
 	audioIds: string[];
+	chordIds: string[];
+	midiIds: string[];
+	drumIds: string[];
 	favoriteIds: string[];
 	recentIds: string[];
 	indexedFolders: string[];
@@ -34,19 +43,42 @@ export interface LibraryState {
 	scanToken: number;
 }
 
+function seedFactoryAssets(): {
+	assetsById: Record<string, LibraryAsset>;
+	chordIds: string[];
+	midiIds: string[];
+	drumIds: string[];
+} {
+	const assetsById: Record<string, LibraryAsset> = {};
+	const chordIds: string[] = [];
+	const midiIds: string[] = [];
+	const drumIds: string[] = [];
+	for (const asset of FACTORY_LIBRARY_ASSETS) {
+		assetsById[asset.id] = asset;
+		if (asset.kind === 'chord_progression') chordIds.push(asset.id);
+		else if (asset.tags?.includes('drums')) drumIds.push(asset.id);
+		else if (asset.kind === 'midi_pattern') midiIds.push(asset.id);
+	}
+	return { assetsById, chordIds, midiIds, drumIds };
+}
+
 function initialState(): LibraryState {
 	const persisted = loadLibraryPersistence();
+	const factory = seedFactoryAssets();
 	return {
 		source: persisted.lastSource,
 		query: '',
 		selectedId: null,
 		previewingId: null,
-		assetsById: {},
+		assetsById: factory.assetsById,
 		audioIds: [],
+		chordIds: factory.chordIds,
+		midiIds: factory.midiIds,
+		drumIds: factory.drumIds,
 		favoriteIds: [...persisted.favoriteIds],
 		recentIds: [...persisted.recentIds],
 		indexedFolders: [...persisted.indexedFolders],
-		indexer: persisted.indexedFolders.length > 0 ? 'idle' : 'idle',
+		indexer: 'idle',
 		indexerProgress: null,
 		indexerError: null,
 		scanToken: 0,
@@ -69,6 +101,12 @@ function mergedAsset(previous: LibraryAsset | undefined, asset: LibraryAsset): L
 		...previous,
 		...asset,
 		durationSec: asset.durationSec ?? previous.durationSec,
+		lengthBeats: asset.lengthBeats ?? previous.lengthBeats,
+		notes: asset.notes ?? previous.notes,
+		chords: asset.chords ?? previous.chords,
+		keyRoot: asset.keyRoot ?? previous.keyRoot,
+		tags: asset.tags ?? previous.tags,
+		origin: asset.origin ?? previous.origin,
 	};
 }
 
@@ -97,7 +135,15 @@ function createLibraryStore() {
 		}
 	}
 
+	function stopAllPreviewPlayers() {
+		libraryPreviewPlayer.stop();
+		libraryMidiPreviewPlayer.stop();
+	}
+
 	libraryPreviewPlayer.setOnEnded(() => {
+		update((s) => (s.previewingId == null ? s : { ...s, previewingId: null }));
+	});
+	libraryMidiPreviewPlayer.setOnEnded(() => {
 		update((s) => (s.previewingId == null ? s : { ...s, previewingId: null }));
 	});
 
@@ -296,11 +342,37 @@ function createLibraryStore() {
 			const state = get({ subscribe });
 			const asset = state.assetsById[id] ?? assetFromPath(id);
 			clearHoverTimer();
+
+			if (isMidiLibraryKind(asset.kind)) {
+				if (libraryMidiPreviewPlayer.isPlaying(id)) {
+					update((s) => ({ ...s, selectedId: id, previewingId: id }));
+					return;
+				}
+				stopAllPreviewPlayers();
+				const projectKey = get(projectEventStore).key_root ?? 'C';
+				const notes = resolveLibraryMidiNotes(asset, {
+					projectKeyRoot: projectKey,
+					transposeForPreview: true,
+				});
+				if (notes.length === 0) return;
+				try {
+					update((s) => ({ ...s, selectedId: id, previewingId: id }));
+					await libraryMidiPreviewPlayer.play(id, notes, get(tempo).bpm);
+					api.recordRecent(id);
+				} catch (e) {
+					libraryMidiPreviewPlayer.stop();
+					update((s) => ({ ...s, previewingId: null }));
+					throw e;
+				}
+				return;
+			}
+
 			if (libraryPreviewPlayer.isPlaying(asset.path)) {
 				update((s) => ({ ...s, selectedId: id, previewingId: id }));
 				return;
 			}
 			try {
+				stopAllPreviewPlayers();
 				update((s) => ({ ...s, selectedId: id, previewingId: id }));
 				await libraryPreviewPlayer.play(asset.path);
 				api.recordRecent(id);
@@ -316,14 +388,20 @@ function createLibraryStore() {
 			const asset = state.assetsById[id] ?? assetFromPath(id);
 			clearHoverTimer();
 			try {
-				if (libraryPreviewPlayer.isPlaying(asset.path)) {
+				if (isMidiLibraryKind(asset.kind)) {
+					if (libraryMidiPreviewPlayer.isPlaying(id)) {
+						libraryMidiPreviewPlayer.stop();
+						update((s) => ({ ...s, previewingId: null }));
+						return;
+					}
+				} else if (libraryPreviewPlayer.isPlaying(asset.path)) {
 					libraryPreviewPlayer.stop();
 					update((s) => ({ ...s, previewingId: null }));
 					return;
 				}
 				await api.playPreview(id);
 			} catch (e) {
-				libraryPreviewPlayer.stop();
+				stopAllPreviewPlayers();
 				update((s) => ({ ...s, previewingId: null }));
 				throw e;
 			}
@@ -343,7 +421,7 @@ function createLibraryStore() {
 
 		stopPreview() {
 			clearHoverTimer();
-			libraryPreviewPlayer.stop();
+			stopAllPreviewPlayers();
 			update((s) => ({ ...s, previewingId: null }));
 		},
 
@@ -351,6 +429,11 @@ function createLibraryStore() {
 			const s = get({ subscribe });
 			if (!s.selectedId) return null;
 			return s.assetsById[s.selectedId] ?? assetFromPath(s.selectedId);
+		},
+
+		getAsset(id: string): LibraryAsset | null {
+			const s = get({ subscribe });
+			return s.assetsById[id] ?? null;
 		},
 	};
 
@@ -365,6 +448,12 @@ function idsForSource(state: LibraryState): string[] {
 			return state.recentIds;
 		case 'favorites':
 			return state.favoriteIds;
+		case 'chords':
+			return state.chordIds;
+		case 'midi':
+			return state.midiIds;
+		case 'drums':
+			return state.drumIds;
 		case 'audio':
 		default:
 			return state.audioIds;
@@ -380,7 +469,6 @@ export const libraryVisibleAssets = derived(libraryStore, ($lib) => {
 			assets.push(asset);
 			continue;
 		}
-		// Favorites/recents may reference paths before rescan — synthesise a stub.
 		if ($lib.source === 'favorites' || $lib.source === 'recents') {
 			assets.push(assetFromPath(id));
 		}
@@ -389,5 +477,11 @@ export const libraryVisibleAssets = derived(libraryStore, ($lib) => {
 });
 
 export const libraryHasIndexedContent = derived(libraryStore, ($lib) => {
-	return $lib.audioIds.length > 0 || $lib.indexedFolders.length > 0;
+	return (
+		$lib.audioIds.length > 0 ||
+		$lib.indexedFolders.length > 0 ||
+		$lib.chordIds.length > 0 ||
+		$lib.midiIds.length > 0 ||
+		$lib.drumIds.length > 0
+	);
 });
