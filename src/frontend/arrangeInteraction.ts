@@ -177,6 +177,7 @@ export function clipsInArrangeSelbox(
 	tracks: Track[],
 	selbox: ArrangeSelbox,
 	scale: number,
+	pendings: { id: string; trackId: string; start: number; end: number; engineClipId?: string }[] = [],
 ): string[] {
 	const leftPx = Math.min(selbox.x0, selbox.x1);
 	const rightPx = Math.max(selbox.x0, selbox.x1);
@@ -191,14 +192,27 @@ export function clipsInArrangeSelbox(
 	);
 
 	const ids: string[] = [];
+	const seen = new Set<string>();
+	const pushId = (id: string) => {
+		if (seen.has(id)) return;
+		seen.add(id);
+		ids.push(id);
+	};
+
 	for (let ti = trackStart; ti <= trackEnd; ti++) {
 		const track = tracks[ti];
 		if (!track) continue;
 		for (const clip of track.clips) {
-			if (clip.start < timeEnd && clip.end > timeStart) ids.push(clip.id);
+			if (clip.start < timeEnd && clip.end > timeStart) pushId(clip.id);
 		}
 		for (const clip of track.midi_clips ?? []) {
-			if (clip.start < timeEnd && clip.end > timeStart) ids.push(clip.id);
+			if (clip.start < timeEnd && clip.end > timeStart) pushId(clip.id);
+		}
+		for (const pending of pendings) {
+			if (pending.trackId !== track.id) continue;
+			if (pending.start < timeEnd && pending.end > timeStart) {
+				pushId(pending.engineClipId ?? pending.id);
+			}
 		}
 	}
 	return ids;

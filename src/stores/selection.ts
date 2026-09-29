@@ -51,6 +51,20 @@ function createSelectionStore() {
 			update((s) => (sameSelection(s, next.ids, id) ? s : next));
 		},
 
+		/** Remplace un id dans la sélection (ex. pending → clip moteur). */
+		remapId(from: string, to: string) {
+			if (from === to) return;
+			update((s) => {
+				if (!s.ids.has(from)) return s;
+				const ids = new Set(s.ids);
+				ids.delete(from);
+				ids.add(to);
+				const primaryId = s.primaryId === from ? to : s.primaryId;
+				if (sameSelection(s, ids, primaryId ?? to)) return s;
+				return { ids, primaryId };
+			});
+		},
+
 		setMany(ids: string[], options?: { additive?: boolean }) {
 			update((s) => {
 				const nextIds = options?.additive ? new Set(s.ids) : new Set<string>();

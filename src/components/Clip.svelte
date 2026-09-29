@@ -64,7 +64,7 @@
 	let _lastBatchAt = 0;
 	let _lastTs = 0;
 
-	$: selected = !pending && $selection.ids.has(id);
+	$: selected = $selection.ids.has(id);
 	$: frame = arrangeClipFrame(start, end, scale);
 	$: canvasCssW = Math.max(1, Math.round(frame.widthPx));
 	$: peaksEpoch = `${peaks_64.length}:${peaks_512.length}:${peaks_4096.length}`;
@@ -384,14 +384,14 @@
 	});
 
 	function onContextMenu(e: MouseEvent) {
-		if (pending) return;
 		e.preventDefault();
 		e.stopPropagation();
+		selection.select(id, { additive: e.ctrlKey || e.metaKey });
+		if (pending) return;
 		dispatch('clipcontextmenu', { id, x: e.clientX, y: e.clientY });
 	}
 
 	function onKeyDown(e: KeyboardEvent) {
-		if (pending) return;
 		if (e.key !== 'Enter' && e.key !== ' ') return;
 		e.preventDefault();
 		e.stopPropagation();
@@ -435,10 +435,7 @@
 		e.preventDefault();
 
 		keyboardFocus.setTimeline();
-
-		if (!pending) {
-			selection.select(id, { additive: e.ctrlKey || e.metaKey });
-		}
+		selection.select(id, { additive: e.ctrlKey || e.metaKey });
 
 		const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
 		dispatch('clipdragstart', { offsetPx: e.clientX - rect.left });
@@ -460,7 +457,7 @@
 	class:selected
 	class:pending
 	role="button"
-	tabindex={pending ? -1 : 0}
+	tabindex="0"
 	aria-busy={pending}
 	style="transform: translateX({frame.leftPx}px); width: {frame.widthPx}px"
 	on:mousedown={onMouseDown}
@@ -504,6 +501,7 @@
 
 		&.selected {
 			background-color: #1a4fa0;
+			box-shadow: inset 0 0 0 1px rgba(120, 180, 255, 0.85);
 		}
 
 		&.pending {
@@ -513,6 +511,10 @@
 			&:active {
 				cursor: grabbing;
 			}
+		}
+
+		&.pending.selected {
+			background-color: #1a4fa0;
 		}
 
 		canvas {

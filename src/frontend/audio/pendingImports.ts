@@ -1,6 +1,7 @@
 import { get, writable } from 'svelte/store';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { forgetClipUiKey, rememberClipUiKey } from './clipDisplay';
+import { selection } from '../../stores/selection';
 
 export type PeakPair = [number, number];
 
@@ -185,6 +186,7 @@ function createPendingImports() {
 		/** Bind engine clip while keeping the same UI key (= pending id). */
 		attachEngineClip(id: string, engineClipId: string) {
 			rememberClipUiKey(engineClipId, id);
+			selection.remapId(id, engineClipId);
 			update((list) =>
 				list.map((item) =>
 					item.id === id ? { ...item, engineClipId } : item,

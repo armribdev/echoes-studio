@@ -2,6 +2,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { addClip } from '../commands/dispatcher';
 import { notify } from '../../stores/status';
+import { selection } from '../../stores/selection';
 import { audioImportProgress } from './importProgress';
 import { pendingImports } from './pendingImports';
 import { forgetClipUiKey } from './clipDisplay';
@@ -140,6 +141,7 @@ export async function importAudioToTrack(opts: ImportAudioOptions): Promise<void
 		start: opts.startSec,
 		end: endSec,
 	});
+	selection.setSingle(pendingId);
 	const entry: InFlightImport = { pendingId, cancelled: false };
 	inFlight.set(key, entry);
 	audioImportProgress.begin(name, opts.filePath);

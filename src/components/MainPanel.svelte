@@ -31,7 +31,7 @@
 	import { shouldHandleTimelineShortcuts } from '../frontend/shortcuts/context';
 	import { keyboardFocus } from '../stores/keyboardFocus';
 	import { libraryStore, isAudioPath, audioFileDrag, audioFileDragPointer, audioFileDragDrop, beginAudioFileDrag, endAudioFileDrag, importOptionsFromAudioDrag, getActiveAudioFileDrag, isAudioFileDragActive } from '../frontend/library';
-	import { importAudioToTrack } from '../frontend/audio/importClip';
+	import { importAudioToTrack, cancelAudioImport } from '../frontend/audio/importClip';
 	import { clipSourceDurationSec } from '../frontend/audio/clipDuration';
 	import { pendingImports } from '../frontend/audio/pendingImports';
 	import {
@@ -361,6 +361,19 @@
 		$tempo.numerator,
 		pendingImportEndsSec,
 	);
+	// Clip pending sélectionné → aligner la piste sélectionnée (auto-select à l'import).
+	$: {
+		const primaryId = $selection.primaryId;
+		if (primaryId) {
+			const pending = $pendingImports.find(
+				(p) => p.id === primaryId || p.engineClipId === primaryId,
+			);
+			if (pending) {
+				const idx = tracks.findIndex((t) => t.id === pending.trackId);
+				if (idx >= 0 && selectedTrackIndex !== idx) selectTrackIndex(idx);
+			}
+		}
+	}
 	$: arrangeMaxBars = arrangeMaxBarsHeld(liveArrangeMaxBars, arrangeMaxBarsHold);
 	$: arrangeTotalBeats = arrangeMaxBars * $tempo.numerator;
 	$: arrangeContentWidthPx = arrangeTotalBeats * pxPerBeat;
@@ -823,7 +836,7 @@
 			selectTrackFromArrangeY(tracksPointer.startY);
 			seekToClientX(event.clientX, event.altKey);
 		} else if (tracksPointer.kind === 'selbox') {
-			const ids = clipsInArrangeSelbox(tracks, tracksPointer, scale);
+			const ids = clipsInArrangeSelbox(tracks, tracksPointer, scale, $pendingImports);
 			if (ids.length === 1 && !tracksPointer.additive) {
 				const clipId = ids[0]!;
 				selection.setSingle(clipId);
@@ -853,6 +866,13 @@
 				selectTrackIndex(trackIndex);
 				return;
 			}
+		}
+		const pending = $pendingImports.find(
+			(p) => p.id === clipId || p.engineClipId === clipId,
+		);
+		if (pending) {
+			const trackIndex = tracks.findIndex((t) => t.id === pending.trackId);
+			if (trackIndex >= 0) selectTrackIndex(trackIndex);
 		}
 	}
 
@@ -913,21 +933,29 @@
 	}
 
 	function deleteSelected() {
+		const sel = $selection.ids;
+		// Pending imports (avant / pendant decode) : annuler plutôt que removeClip.
+		for (const pending of $pendingImports) {
+			const displayId = pending.engineClipId ?? pending.id;
+			if (sel.has(displayId) || sel.has(pending.id)) {
+				void cancelAudioImport(pending.filePath);
+			}
+		}
 		// Optimistic: remove from local state immediately for instant feedback.
 		tracks.forEach((track) => {
-			const toDeleteAudio = track.clips.filter((c) => $selection.ids.has(c.id));
+			const toDeleteAudio = track.clips.filter((c) => sel.has(c.id));
 			for (const clip of toDeleteAudio) {
 				removeClip(track.id, clip.id).catch(console.error);
 			}
-			const toDeleteMidi = (track.midi_clips ?? []).filter((c) => $selection.ids.has(c.id));
+			const toDeleteMidi = (track.midi_clips ?? []).filter((c) => sel.has(c.id));
 			for (const clip of toDeleteMidi) {
 				removeMidiClip(track.id, clip.id).catch(console.error);
 			}
 		});
 		tracks = tracks.map((track) => ({
 			...track,
-			clips: track.clips.filter((c) => !$selection.ids.has(c.id)),
-			midi_clips: (track.midi_clips ?? []).filter((c) => !$selection.ids.has(c.id)),
+			clips: track.clips.filter((c) => !sel.has(c.id)),
+			midi_clips: (track.midi_clips ?? []).filter((c) => !sel.has(c.id)),
 		}));
 		midiClipContextTarget = null;
 		selection.clear();
