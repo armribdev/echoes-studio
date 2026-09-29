@@ -218,7 +218,7 @@ armed track's hardware notes into a new MIDI clip. Not hand-tested yet.
 - **Position of a note.** The CPAL callback now publishes, with the wall time of
   each slice, the transport sample rendered at that time
   (`LiveInputClock::set_event_window`, three relaxed atomic stores guarded by a
-  seqlock counter so the reader never pairs two slices). The capture thread
+  seqlock counter, plus one for the latency below so the reader never pairs two slices). The capture thread
   converts an arrival time into a transport sample with
   `transport_position_at` — the same mapping the instrument uses to place the
   note, so playing the clip back reproduces what was heard. A loop wrap follows
@@ -243,11 +243,20 @@ armed track's hardware notes into a new MIDI clip. Not hand-tested yet.
 - **C-2 / C-4.** Offline render never sets the window nor records: harness green,
   hashes unchanged. No project schema change.
 
+**Latency compensation (same day).** A player follows what they hear, so a
+note is recorded where the player *heard* the timeline when pressing the key,
+not where the instrument renders it. Every callback publishes
+`LiveInputClock::set_record_latency` = callback period + output latency (CPAL
+`playback − callback` timestamp, 0 if unavailable), and `transport_position_at`
+subtracts it: the period because live notes sound one period after arrival
+(above), the output latency because a rendered buffer reaches the speakers
+later. Input latency (USB/driver, ~1–3 ms) is not compensated, and the CPAL
+output latency is only as accurate as the host API reports it — to be checked by
+ear on the target machine.
+
 Known limits (follow-ups): no live display while recording (the clip appears at
 the end); no count-in; with a playback loop, passes stack into one clip instead
-of separate takes; no compensation of the output latency, so a player who
-follows what they hear records slightly late (roughly the audio buffer + driver
-latency).
+of separate takes.
 
 ## Alternatives considered
 

@@ -571,6 +571,17 @@ fn live_event_window_start(callback_start: u64, frames_left: usize, sample_rate:
     callback_start.saturating_sub(lead)
 }
 
+/// A player follows what they hear, not what was just rendered: a live note is
+/// heard one callback period after it arrives (ADR-022), and a rendered buffer
+/// only reaches the speakers `output_latency` later (CPAL playback timestamp).
+fn heard_latency_nanos(frames: usize, sample_rate: f32, output_latency: Duration) -> u64 {
+    if sample_rate <= 0.0 {
+        return 0;
+    }
+    let period = (frames as f64 * 1e9 / sample_rate as f64) as u64;
+    period.saturating_add(output_latency.as_nanos() as u64)
+}
+
 /// State shared between the engine and the CPAL callback, cloned per stream attempt.
 #[derive(Clone)]
 struct StreamShared {
@@ -679,6 +690,16 @@ where
                 }
                 prev_callback = Some(now);
                 prev_frames = frames;
+                let output_latency = info
+                    .timestamp()
+                    .playback
+                    .duration_since(&now)
+                    .unwrap_or_default();
+                live_clock.set_record_latency(heard_latency_nanos(
+                    frames,
+                    transport.sample_rate(),
+                    output_latency,
+                ));
 
                 if frames > MAX_BLOCK_FRAMES {
                     // Block exceeds our pre-allocated buffer — fill with silence.
@@ -941,5 +962,19 @@ mod tests {
         assert!(!is_callback_xrun(block, block));
         assert!(!is_callback_xrun(Duration::from_millis(11), block));
         assert!(is_callback_xrun(Duration::from_millis(20), block));
+    }
+
+    #[test]
+    fn heard_latency_adds_the_callback_period_to_the_output_latency() {
+        let output_latency = Duration::from_millis(10);
+        assert_eq!(
+            heard_latency_nanos(480, 48_000.0, output_latency),
+            20_000_000
+        );
+    }
+
+    #[test]
+    fn heard_latency_is_zero_without_a_sample_rate() {
+        assert_eq!(heard_latency_nanos(480, 0.0, Duration::from_millis(10)), 0);
     }
 }

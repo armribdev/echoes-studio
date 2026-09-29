@@ -308,6 +308,9 @@ pub struct LiveInputClock {
     event_window_start: AtomicU64,
     /// Transport sample rendered at `event_window_start`, for MIDI recording.
     event_window_position: AtomicU64,
+    /// Delay (ns) between a note reaching the capture thread and the moment the
+    /// player hears the timeline position it belongs to. Refreshed every callback.
+    record_latency_nanos: AtomicU64,
     /// Seqlock counter so the capture thread never pairs a start with the
     /// position of another slice. Odd while the audio callback is writing.
     window_version: AtomicU64,
@@ -319,6 +322,7 @@ impl LiveInputClock {
             epoch: Instant::now(),
             event_window_start: AtomicU64::new(0),
             event_window_position: AtomicU64::new(0),
+            record_latency_nanos: AtomicU64::new(0),
             window_version: AtomicU64::new(0),
         }
     }
@@ -343,14 +347,21 @@ impl LiveInputClock {
             .store(version.wrapping_add(2), Ordering::Release);
     }
 
-    /// Capture thread. Transport sample playing at wall time `received_at`, or
-    /// `None` when no audio stream feeds the clock.
+    /// Audio callback, once per callback. Wait-free.
+    pub fn set_record_latency(&self, nanos: u64) {
+        self.record_latency_nanos.store(nanos, Ordering::Relaxed);
+    }
+
+    /// Capture thread. Transport sample the player was hearing at wall time
+    /// `received_at` — the one they played along with — or `None` when no audio
+    /// stream feeds the clock.
     pub fn transport_position_at(&self, received_at: u64, sample_rate: f32) -> Option<u64> {
         let (window_start, window_position) = self.read_event_window();
         if window_start == 0 {
             return None;
         }
-        let elapsed_nanos = received_at as i128 - window_start as i128;
+        let latency = self.record_latency_nanos.load(Ordering::Relaxed);
+        let elapsed_nanos = received_at as i128 - window_start as i128 - latency as i128;
         let elapsed_samples = elapsed_nanos * sample_rate as i128 / 1_000_000_000;
         Some((window_position as i128 + elapsed_samples).max(0) as u64)
     }
@@ -628,6 +639,15 @@ mod tests {
         let clock = LiveInputClock::new();
         clock.set_event_window(10_000_000, 96_000);
         assert_eq!(clock.transport_position_at(9_000_000, 48_000.0), Some(95_952));
+    }
+
+    /// 5 ms of latency moves a note 240 samples back at 48 kHz.
+    #[test]
+    fn transport_position_compensates_the_heard_latency() {
+        let clock = LiveInputClock::new();
+        clock.set_event_window(10_000_000, 96_000);
+        clock.set_record_latency(5_000_000);
+        assert_eq!(clock.transport_position_at(20_000_000, 48_000.0), Some(96_240));
     }
 
     #[test]

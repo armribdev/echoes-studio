@@ -465,7 +465,7 @@ activés sont rouverts au démarrage (abonnement aux préférences dans
 
 ### Suites (hors périmètre, notées dans ADR-022)
 MIDI CC/Learn, sortie MIDI matérielle générale, enregistrement en boucle
-(overdub / take), compensation de la latence de sortie, routing par piste (plusieurs pistes armées / device →
+(overdub / take), routing par piste (plusieurs pistes armées / device →
 piste).
 
 ---

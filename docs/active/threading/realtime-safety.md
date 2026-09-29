@@ -68,7 +68,8 @@ keyboard); the audio thread reads head/tail atomics only.
 
 MIDI recording adds three relaxed atomic stores per rendered slice
 (`LiveInputClock::set_event_window`: transport position + a seqlock counter,
-wait-free). The reader is the capture thread; the recorder's buffer and mutex
+wait-free) and one per callback (`set_record_latency`: period + CPAL output
+latency). The reader is the capture thread; the recorder's buffer and mutex
 are never reachable from `process_block`.
 
 ### Project state → Audio thread
