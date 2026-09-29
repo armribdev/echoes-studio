@@ -13,6 +13,8 @@
 	export let notes: MidiNote[];
 	export let color: string = '#6c63ff';
 	export let bpm: number = 120;
+	/** Live preview of a running recording: same look, not editable. */
+	export let recording = false;
 
 	const dispatch = createEventDispatcher<{
 		midiclip_dragstart: { offsetPx: number; duplicate: boolean };
@@ -167,6 +169,7 @@
 	bind:this={clipEl}
 	class="midi-clip"
 	class:selected
+	class:recording
 	role="button"
 	tabindex="0"
 	style="transform: translateX({frame.leftPx}px); width: {frame.widthPx}px; --clip-color: {color};"
@@ -185,12 +188,14 @@
 		</svg>
 	</div>
 	<canvas bind:this={canvas} class="midi-clip__canvas"></canvas>
-	<!-- svelte-ignore a11y-no-static-element-interactions -->
-	<div class="resize-handle resize-handle--left" on:mousedown={(e) => onResizeHandleDown('left', e)}></div>
-	<!-- svelte-ignore a11y-no-static-element-interactions -->
-	<div class="resize-handle resize-handle--right" on:mousedown={(e) => onResizeHandleDown('right', e)}></div>
-	<!-- svelte-ignore a11y-no-static-element-interactions -->
-	<div class="repeat-handle" title="Glisser pour répéter" on:mousedown={onRepeatHandleDown}></div>
+	{#if !recording}
+		<!-- svelte-ignore a11y-no-static-element-interactions -->
+		<div class="resize-handle resize-handle--left" on:mousedown={(e) => onResizeHandleDown('left', e)}></div>
+		<!-- svelte-ignore a11y-no-static-element-interactions -->
+		<div class="resize-handle resize-handle--right" on:mousedown={(e) => onResizeHandleDown('right', e)}></div>
+		<!-- svelte-ignore a11y-no-static-element-interactions -->
+		<div class="repeat-handle" title="Glisser pour répéter" on:mousedown={onRepeatHandleDown}></div>
+	{/if}
 </div>
 
 <style lang="scss">
@@ -205,6 +210,10 @@
 		box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--clip-color) 60%, transparent);
 
 		&:active { cursor: grabbing; }
+
+		&.recording {
+			pointer-events: none;
+		}
 
 		&.selected {
 			background-color: color-mix(in srgb, var(--clip-color) 30%, #1a1a2e);

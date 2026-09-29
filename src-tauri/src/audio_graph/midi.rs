@@ -631,14 +631,20 @@ mod tests {
     fn transport_position_follows_the_event_window() {
         let clock = LiveInputClock::new();
         clock.set_event_window(10_000_000, 96_000);
-        assert_eq!(clock.transport_position_at(20_000_000, 48_000.0), Some(96_480));
+        assert_eq!(
+            clock.transport_position_at(20_000_000, 48_000.0),
+            Some(96_480)
+        );
     }
 
     #[test]
     fn transport_position_before_the_window_goes_back() {
         let clock = LiveInputClock::new();
         clock.set_event_window(10_000_000, 96_000);
-        assert_eq!(clock.transport_position_at(9_000_000, 48_000.0), Some(95_952));
+        assert_eq!(
+            clock.transport_position_at(9_000_000, 48_000.0),
+            Some(95_952)
+        );
     }
 
     /// 5 ms of latency moves a note 240 samples back at 48 kHz.
@@ -647,12 +653,18 @@ mod tests {
         let clock = LiveInputClock::new();
         clock.set_event_window(10_000_000, 96_000);
         clock.set_record_latency(5_000_000);
-        assert_eq!(clock.transport_position_at(20_000_000, 48_000.0), Some(96_240));
+        assert_eq!(
+            clock.transport_position_at(20_000_000, 48_000.0),
+            Some(96_240)
+        );
     }
 
     #[test]
     fn transport_position_is_unknown_without_an_audio_stream() {
-        assert_eq!(LiveInputClock::new().transport_position_at(5, 48_000.0), None);
+        assert_eq!(
+            LiveInputClock::new().transport_position_at(5, 48_000.0),
+            None
+        );
     }
 
     #[test]

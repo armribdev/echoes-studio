@@ -7,7 +7,7 @@
 //! This registry is only ever touched by the command thread; the capture
 //! thread itself only reads the armed-track id and pushes into the lock-free
 //! `MidiLiveInputQueue` via `LiveParams::push_live_input` (and, while
-//! recording, hands the note to the `MidiRecorder`) — it never touches this
+//! recording, hands the note to the `MidiRecorder` and announces it to the UI) — it never touches this
 //! registry or the audio thread.
 //!
 //! Optionally sends "Local Control Off" to each enabled device's output port
@@ -24,7 +24,7 @@ use tauri::{AppHandle, Emitter, Manager};
 
 use crate::audio_graph::live_params::LiveParams;
 use crate::audio_graph::midi::MidiLiveInputMessage;
-use crate::midi_recording::MidiRecorder;
+use crate::midi_recording::{MidiRecorder, MIDI_RECORDING_NOTE_EVENT};
 use crate::project::AppState;
 
 const CLIENT_NAME: &str = "Echoes Studio";
@@ -155,6 +155,7 @@ impl MidiInputRegistry {
         live_params: Arc<LiveParams>,
         armed_track_id: Arc<Mutex<Option<String>>>,
         recorder: Arc<MidiRecorder>,
+        app: AppHandle,
     ) -> Result<(), String> {
         if !enabled {
             if let Some(SendMidiConnection(connection)) = self.connections.remove(device_name) {
@@ -193,7 +194,9 @@ impl MidiInputRegistry {
                     };
                     let track_id = armed_track_id.lock().ok().and_then(|guard| guard.clone());
                     if let Some(track_id) = track_id {
-                        recorder.capture(&track_id, &parsed);
+                        if let Some(note) = recorder.capture(&track_id, &parsed) {
+                            let _ = app.emit(MIDI_RECORDING_NOTE_EVENT, note);
+                        }
                         live_params.push_live_input(&track_id, parsed);
                     }
                 },

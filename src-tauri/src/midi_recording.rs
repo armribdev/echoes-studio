@@ -25,6 +25,10 @@ use crate::project::{generate_id, MidiNote};
 /// when no note was played.
 pub const MIDI_RECORDING_FINISHED_EVENT: &str = "midi-recording-finished";
 
+/// Emitted for every note edge while recording, so the arrange view can draw
+/// the clip as it grows. Payload: `RecordedNote`.
+pub const MIDI_RECORDING_NOTE_EVENT: &str = "midi-recording-note";
+
 const MIN_NOTE_BEATS: f64 = 0.0625;
 
 #[derive(Debug, Clone, Serialize)]
@@ -35,6 +39,16 @@ pub struct RecordedMidiClip {
     pub start: f64,
     pub end: f64,
     pub notes: Vec<MidiNote>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RecordedNote {
+    pub note_on: bool,
+    pub pitch: u8,
+    pub velocity: u8,
+    /// Seconds on the timeline, latency-compensated like the final clip.
+    pub position: f64,
 }
 
 struct RecordedEvent {
@@ -65,42 +79,49 @@ impl MidiRecorder {
         }
     }
 
-    pub fn start(&self, track_id: String) -> Result<(), String> {
+    /// Returns the timeline position, in seconds, where the recording starts.
+    pub fn start(&self, track_id: String) -> Result<f64, String> {
         let mut recording = self.lock();
         if recording.is_some() {
             return Err("Un enregistrement MIDI est déjà en cours".into());
         }
+        let start_position_samples = self.transport.position_samples.load(Ordering::Relaxed);
+        self.transport.set_recording(true);
         *recording = Some(Recording {
             track_id,
-            start_position_samples: self.transport.position_samples.load(Ordering::Relaxed),
+            start_position_samples,
             events: Vec::new(),
         });
-        Ok(())
+        Ok(start_position_samples as f64 / self.transport.sample_rate() as f64)
     }
 
-    /// MIDI capture thread. Ignores notes that are not for the recorded track.
-    pub fn capture(&self, track_id: &str, message: &MidiLiveInputMessage) {
+    /// MIDI capture thread. Ignores notes that are not for the recorded track;
+    /// returns the recorded note so the caller can show it right away.
+    pub fn capture(&self, track_id: &str, message: &MidiLiveInputMessage) -> Option<RecordedNote> {
         let mut recording = self.lock();
-        let Some(recording) = recording.as_mut().filter(|r| r.track_id == track_id) else {
-            return;
-        };
-        let Some(position_samples) = self
+        let recording = recording.as_mut().filter(|r| r.track_id == track_id)?;
+        let sample_rate = self.transport.sample_rate();
+        let position_samples = self
             .clock
-            .transport_position_at(message.received_at, self.transport.sample_rate())
-        else {
-            return;
-        };
+            .transport_position_at(message.received_at, sample_rate)?;
         recording.events.push(RecordedEvent {
             note_on: message.note_on,
             pitch: message.pitch,
             velocity: message.velocity,
             position_samples,
         });
+        Some(RecordedNote {
+            note_on: message.note_on,
+            pitch: message.pitch,
+            velocity: message.velocity,
+            position: position_samples as f64 / sample_rate as f64,
+        })
     }
 
     /// Ends the recording, if any. `Some(None)` when it held no note.
     pub fn finish(&self) -> Option<Option<RecordedMidiClip>> {
         let recording = self.lock().take()?;
+        self.transport.set_recording(false);
         let end_position_samples = self.transport.position_samples.load(Ordering::Relaxed);
         Some(build_clip(
             recording,
@@ -155,7 +176,12 @@ fn build_clip(
             open.remove(&event.pitch)
         };
         if let Some((velocity, on_samples)) = previous {
-            spans.push(close(event.pitch, velocity, on_samples, event.position_samples));
+            spans.push(close(
+                event.pitch,
+                velocity,
+                on_samples,
+                event.position_samples,
+            ));
         }
     }
     for (pitch, (velocity, on_samples)) in open {
@@ -218,6 +244,16 @@ mod tests {
 
     fn clip(start: u64, events: Vec<RecordedEvent>, end: u64) -> Option<RecordedMidiClip> {
         build_clip(recording(start, events), end, SAMPLE_RATE, BPM)
+    }
+
+    #[test]
+    fn recording_keeps_the_transport_from_auto_stopping() {
+        let transport = SharedTransport::new(48_000.0, 120.0);
+        let recorder = MidiRecorder::new(Arc::clone(&transport), Arc::new(LiveInputClock::new()));
+        recorder.start("track".into()).unwrap();
+        assert!(transport.is_recording());
+        assert!(recorder.finish().is_some());
+        assert!(!transport.is_recording());
     }
 
     #[test]

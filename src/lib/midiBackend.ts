@@ -92,9 +92,24 @@ export interface RecordedMidiClip {
 	notes: { id: string; pitch: number; start: number; duration: number; velocity: number }[];
 }
 
-/** @throws `string` error message when no track is armed or a recording is running. */
-export async function startMidiRecording(): Promise<void> {
-	await invoke<void>('start_midi_recording');
+/** Backend event fired for every note edge while recording. Payload: `RecordedNote`. */
+export const MIDI_RECORDING_NOTE_EVENT = 'midi-recording-note';
+
+/** Mirror of `midi_recording::RecordedNote`. */
+export interface RecordedNote {
+	noteOn: boolean;
+	pitch: number;
+	velocity: number;
+	/** Seconds on the timeline. */
+	position: number;
+}
+
+/**
+ * Returns the timeline position (seconds) where the recording starts.
+ * @throws `string` error message when no track is armed or a recording is running.
+ */
+export async function startMidiRecording(): Promise<number> {
+	return invoke<number>('start_midi_recording');
 }
 
 /** The clip arrives through `MIDI_RECORDING_FINISHED_EVENT`. */

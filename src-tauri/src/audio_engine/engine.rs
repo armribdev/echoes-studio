@@ -728,7 +728,11 @@ where
                     let info = transport.snapshot(chunk);
                     let end = rendered + chunk;
                     live_clock.set_event_window(
-                        live_event_window_start(callback_start, frames - rendered, info.sample_rate),
+                        live_event_window_start(
+                            callback_start,
+                            frames - rendered,
+                            info.sample_rate,
+                        ),
                         position,
                     );
                     scheduler.process_block(&info, &mut mix_buf[rendered * 2..end * 2]);
@@ -902,7 +906,11 @@ fn position_reporter(
 
             // Auto-stop when playhead reaches the end of the timeline.
             // An active loop wraps forever, including through silence past the clips.
-            if transport.loop_range().is_none() && dur > 0 && pos >= dur {
+            if transport.loop_range().is_none()
+                && dur > 0
+                && pos >= dur
+                && !transport.is_recording()
+            {
                 transport.stop();
                 let _ = app.emit(
                     "engine-event",

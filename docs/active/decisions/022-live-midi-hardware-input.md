@@ -254,9 +254,30 @@ later. Input latency (USB/driver, ~1–3 ms) is not compensated, and the CPAL
 output latency is only as accurate as the host API reports it — to be checked by
 ear on the target machine.
 
-Known limits (follow-ups): no live display while recording (the clip appears at
-the end); no count-in; with a playback loop, passes stack into one clip instead
-of separate takes.
+**Live display (2026-09-30).** The clip is drawn while it is recorded, like the
+pending audio import: a non-interactive `MidiClip` (`recording` prop) on the
+armed track that grows with the playhead and shows notes as they are played
+(held notes extend to the playhead). The capture callback emits
+`midi-recording-note` (`RecordedNote`: edge, pitch, velocity, latency-compensated
+position) for every recorded note — from the capture thread, never the audio
+thread; `start_midi_recording` returns the start position. The frontend keeps the
+events in `midiRecordingPreview` and rebuilds the clip with
+`buildPreviewClip` (same pairing as the Rust `build_clip`, so the shape matches).
+On `midi-recording-finished` the preview freezes on the final clip and stays
+until `ADD_MIDI_CLIP` has landed (+2 frames), so the swap to the real clip does
+not flash. The playhead moves at the ~30 Hz `POSITION_UPDATED` rate, and so does
+the growing edge.
+
+**Auto-stop bug (same day).** The position reporter stops playback at the end of
+the timeline by calling `transport.stop()` directly, bypassing the `STOP`
+command — recording past the last clip left the recording running while the
+transport stopped. `SharedTransport` now carries a `recording` flag (set by
+`MidiRecorder::start`, cleared by `finish`) and the reporter does not auto-stop
+while it is set.
+
+Known limits (follow-ups): no count-in; with a playback loop, passes stack into
+one clip instead of separate takes; `buildPreviewClip` is not unit-tested (no JS
+test runner in the repo).
 
 ## Alternatives considered
 

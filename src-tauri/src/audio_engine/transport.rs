@@ -31,6 +31,10 @@ pub struct SharedTransport {
     /// project.  Incremented by the audio callback each block.
     pub position_samples: AtomicU64,
 
+    /// `true` while MIDI is being recorded: playback then runs past the last
+    /// clip instead of auto-stopping at the end of the timeline.
+    recording: AtomicBool,
+
     /// End of the timeline in samples (latest audio or MIDI clip end).  `0` means
     /// no clips → no auto-stop.
     /// Updated every time the graph is recompiled.
@@ -56,6 +60,7 @@ impl SharedTransport {
         Arc::new(Self {
             is_playing: AtomicBool::new(false),
             position_samples: AtomicU64::new(0),
+            recording: AtomicBool::new(false),
             duration_samples: AtomicU64::new(0),
             bpm_bits: AtomicU32::new(bpm.to_bits()),
             time_signature_bits: AtomicU32::new(pack_time_signature(TimeSignature::default())),
@@ -94,6 +99,16 @@ impl SharedTransport {
         self.bpm_bits.store(bpm.to_bits(), Ordering::Relaxed);
         self.time_signature_bits
             .store(pack_time_signature(time_signature), Ordering::Relaxed);
+    }
+
+    #[inline]
+    pub fn is_recording(&self) -> bool {
+        self.recording.load(Ordering::Relaxed)
+    }
+
+    #[inline]
+    pub fn set_recording(&self, recording: bool) {
+        self.recording.store(recording, Ordering::Relaxed);
     }
 
     #[inline]

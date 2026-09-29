@@ -1082,6 +1082,7 @@ fn list_midi_input_devices(
 fn set_midi_input_enabled(
     device_id: String,
     enabled: bool,
+    app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
 ) -> Result<(), String> {
     let mut registry = state
@@ -1094,6 +1095,7 @@ fn set_midi_input_enabled(
         std::sync::Arc::clone(&state.live_params),
         std::sync::Arc::clone(&state.armed_track_id),
         std::sync::Arc::clone(&state.midi_recorder),
+        app,
     )
 }
 

@@ -6,6 +6,9 @@
 	import MidiClip from './MidiClip.svelte';
 	import { pendingImports } from '../frontend/audio/pendingImports';
 	import { buildClipDisplayItems } from '../frontend/audio/clipDisplay';
+	import { midiRecordingPreview } from '../stores/midiRecording';
+	import { transport } from '../stores/transport';
+	import { buildPreviewClip } from '../frontend/midiRecordingPreview';
 
 	export let trackId: string;
 	export let clips: ClipType[];
@@ -40,6 +43,10 @@
 	}>();
 
 	$: displayClips = buildClipDisplayItems(clips, $pendingImports, trackId);
+	$: recordingClip =
+		$midiRecordingPreview?.trackId === trackId
+			? buildPreviewClip($midiRecordingPreview, $transport.position, bpm)
+			: null;
 
 	function onTrackDblClick(e: MouseEvent) {
 		const target = e.target;
@@ -99,6 +106,19 @@
 			on:midiclip_activate={(e) => dispatch('midiclip_activate', { ...e.detail, trackIndex })}
 		/>
 	{/each}
+	{#if recordingClip}
+		<MidiClip
+			id="midi-recording"
+			start={recordingClip.start}
+			end={recordingClip.end}
+			offset={0}
+			{scale}
+			{bpm}
+			notes={recordingClip.notes}
+			color={trackColor}
+			recording
+		/>
+	{/if}
 </div>
 
 <style lang="scss">

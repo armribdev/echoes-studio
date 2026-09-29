@@ -130,11 +130,17 @@ pub fn arm_track_for_midi_input(
     Ok(())
 }
 
-/// Start recording the armed track's hardware MIDI notes. The frontend starts
-/// the transport itself; the clip is delivered by `MIDI_RECORDING_FINISHED_EVENT`.
+/// Start recording the armed track's hardware MIDI notes; returns the start
+/// position in seconds. The frontend starts the transport itself; notes stream
+/// in through `MIDI_RECORDING_NOTE_EVENT` and the clip is delivered by
+/// `MIDI_RECORDING_FINISHED_EVENT`.
 #[tauri::command]
-pub fn start_midi_recording(state: tauri::State<'_, AppState>) -> Result<(), String> {
-    let armed = state.armed_track_id.lock().ok().and_then(|armed| armed.clone());
+pub fn start_midi_recording(state: tauri::State<'_, AppState>) -> Result<f64, String> {
+    let armed = state
+        .armed_track_id
+        .lock()
+        .ok()
+        .and_then(|armed| armed.clone());
     let track_id = armed.ok_or("Aucune piste armée pour l'enregistrement")?;
     state.midi_recorder.start(track_id)
 }

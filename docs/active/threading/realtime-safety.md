@@ -70,7 +70,8 @@ MIDI recording adds three relaxed atomic stores per rendered slice
 (`LiveInputClock::set_event_window`: transport position + a seqlock counter,
 wait-free) and one per callback (`set_record_latency`: period + CPAL output
 latency). The reader is the capture thread; the recorder's buffer and mutex
-are never reachable from `process_block`.
+are never reachable from `process_block`. The position reporter (not the audio
+thread) reads `SharedTransport::recording` to skip the end-of-timeline auto-stop.
 
 ### Project state → Audio thread
 

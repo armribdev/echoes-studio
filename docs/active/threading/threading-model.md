@@ -184,6 +184,8 @@ transport position (`transport_position_at`) and appends it to the
 `MidiRecorder` buffer behind a `Mutex` shared only with the command thread. The
 finished clip reaches the UI through `midi-recording-finished`, emitted from the
 command thread (record button, `PAUSE`, `STOP`) — never from the audio thread.
+Each recorded note is also announced (`midi-recording-note`) from the capture
+thread so the UI can draw the growing clip; the capture thread is not real-time.
 
 ### Project state → Audio thread
 
