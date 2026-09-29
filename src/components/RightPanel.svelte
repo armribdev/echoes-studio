@@ -140,7 +140,7 @@
 
 	function onRowPointerLeave() {
 		if (rowPointerDrag) return;
-		libraryStore.cancelHoverPreview();
+		libraryStore.stopPreview();
 	}
 
 	/**
@@ -226,7 +226,7 @@
 		libraryStore.select(asset.id);
 		keyboardFocus.setLibraryResults();
 		try {
-			await libraryStore.togglePreview(asset.id);
+			await libraryStore.playPreview(asset.id);
 		} catch (err) {
 			notify(`Aperçu : ${(err as Error)?.message ?? err}`, 'error');
 		}
@@ -463,15 +463,17 @@
 											<span class="cancel-import-square" aria-hidden="true"></span>
 										</button>
 									{:else}
-										<button
-											class="preview-btn"
-											type="button"
-											title="Preview"
-											on:pointerdown={(e) => e.stopPropagation()}
-											on:click={(e) => onPreviewClick(e, asset)}
-										>
-											{$libraryStore.previewingId === asset.id ? '■' : '▶'}
-										</button>
+										{#if $libraryStore.previewingId !== asset.id}
+											<button
+												class="preview-btn"
+												type="button"
+												title="Preview"
+												on:pointerdown={(e) => e.stopPropagation()}
+												on:click={(e) => onPreviewClick(e, asset)}
+											>
+												▶
+											</button>
+										{/if}
 										<button
 											class="insert-btn"
 											type="button"

@@ -90,6 +90,10 @@ function createLibraryStore() {
 		}
 	}
 
+	libraryPreviewPlayer.setOnEnded(() => {
+		update((s) => (s.previewingId == null ? s : { ...s, previewingId: null }));
+	});
+
 	async function ensureScanListeners() {
 		if (scanUnlisteners.length > 0) return;
 		scanUnlisteners = await Promise.all([

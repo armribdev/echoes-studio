@@ -9,12 +9,18 @@ class LibraryPreviewPlayer {
 	private source: AudioBufferSourceNode | null = null;
 	private playingPath: string | null = null;
 	private generation = 0;
+	private onEndedCb: (() => void) | null = null;
 
 	private ensureContext(): AudioContext {
 		if (!this.ctx) {
 			this.ctx = new AudioContext();
 		}
 		return this.ctx;
+	}
+
+	/** Called when playback finishes naturally (not after stop()). */
+	setOnEnded(cb: (() => void) | null): void {
+		this.onEndedCb = cb;
 	}
 
 	isPlaying(path?: string): boolean {
@@ -45,10 +51,10 @@ class LibraryPreviewPlayer {
 		source.buffer = buffer;
 		source.connect(ctx.destination);
 		source.onended = () => {
-			if (this.source === source) {
-				this.source = null;
-				this.playingPath = null;
-			}
+			if (this.source !== source) return;
+			this.source = null;
+			this.playingPath = null;
+			this.onEndedCb?.();
 		};
 		this.source = source;
 		this.playingPath = path;
@@ -66,19 +72,23 @@ class LibraryPreviewPlayer {
 	stop(): void {
 		this.generation += 1;
 		if (this.source) {
+			const source = this.source;
+			this.source = null;
+			this.playingPath = null;
+			source.onended = null;
 			try {
-				this.source.stop();
+				source.stop();
 			} catch {
 				/* already stopped */
 			}
 			try {
-				this.source.disconnect();
+				source.disconnect();
 			} catch {
 				/* ignore */
 			}
-			this.source = null;
+		} else {
+			this.playingPath = null;
 		}
-		this.playingPath = null;
 	}
 }
 
