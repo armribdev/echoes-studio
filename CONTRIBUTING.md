@@ -54,6 +54,8 @@ Une seule commande lance la suite complète :
 pnpm test           # check + lint + cargo fmt + cargo clippy + cargo test
 ```
 
+La CI GitHub (`.github/workflows/ci.yml`) rejoue ces vérifications sur chaque PR, sauf `pnpm lint` qui n'est pas encore bloquant.
+
 Ou les étapes individuellement :
 
 ```bash

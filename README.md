@@ -3,7 +3,7 @@
 > A radically simple open-source DAW — designed from scratch to get out of your way.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Build](https://img.shields.io/github/actions/workflow/status/[TODO:org]/echoes-studio/ci.yml?branch=main)](https://github.com/[TODO:org]/echoes-studio/actions)
+[![Build](https://img.shields.io/github/actions/workflow/status/armribdev/echoes-studio/ci.yml?branch=master)](https://github.com/armribdev/echoes-studio/actions/workflows/ci.yml)
 [![Version](https://img.shields.io/badge/version-0.1.0--alpha-orange)](ROADMAP.md)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey)](#installation)
 

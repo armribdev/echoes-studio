@@ -36,7 +36,7 @@
 2. **Interface d'automation** : courbes dans l'arrangement, choix du paramètre.
 3. **Enregistrement MIDI** dans un clip depuis le clavier (amendement d'ADR-022 requis).
 4. **Enregistrement audio** : armement + capture via l'entrée CPAL, monitoring. Rien n'existe dans le code aujourd'hui.
-5. **CI minimale** : `cargo test` (harnais C-2 inclus) + build frontend.
+5. **CI** : la CI minimale est en place (`.github/workflows/ci.yml` : fmt, clippy, tests Rust avec harnais C-2, svelte-check, build frontend). Reste à rendre Prettier/ESLint bloquants, après un passage de formatage sur tout le dépôt.
 6. **Métronome**, **marqueurs / régions** : non présents dans le code.
 7. **Compléter les plugins** : VST3 (bus auxiliaires, latence dynamique, sandbox), AU (macOS, stub), synthés natifs supplémentaires (sampler).
 

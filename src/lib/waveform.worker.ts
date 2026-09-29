@@ -24,7 +24,7 @@ onmessage = function (event: MessageEvent<RenderMessage>) {
 	drawWaveform(ctx, peaks_64, peaks_512, peaks_4096, sample_rate, scale, offset);
 
 	const bitmap = canvas.transferToImageBitmap();
-	postMessage({ bitmap, key }, [bitmap] as unknown as Transferable[]);
+	postMessage({ bitmap, key }, { transfer: [bitmap] });
 };
 
 function selectPeaks(

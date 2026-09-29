@@ -63,7 +63,6 @@
 		trackIndexFromArrangeY,
 	} from '../frontend/arrangeInteraction';
 	import { ev, isEngineEvent, type TrackCreatedPayload } from '../shared/protocol/events';
-	import type { CommandResult } from '../shared/protocol/commands';
 
 	const TRACK_COLORS = [
 		'#4d96ff', '#ff6b6b', '#6bcb77', '#ffd93d',

@@ -199,7 +199,12 @@ pnpm tauri:build
 ```
 
 ### CI/CD
-[TODO: Configure GitHub Actions to build on all 3 platforms]
+GitHub Actions ([`.github/workflows/ci.yml`](../.github/workflows/ci.yml)), on every push to `master` and every PR:
+
+- **Rust** (Windows): `cargo fmt --check`, `cargo clippy -D warnings`, `cargo test --workspace` (includes the C-2 bit-identical render harness).
+- **Frontend** (Linux): `svelte-check` + `vite build`.
+
+Not yet gated: Prettier/ESLint (the codebase has never been formatted with them), macOS/Linux engine builds, release bundles.
 
 ---
 

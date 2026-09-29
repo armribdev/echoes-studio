@@ -4,6 +4,7 @@ import type {
 	GraphNodeDto,
 	GraphSnapshotDto,
 	LayoutNode,
+	ModEdgeDto,
 } from './types';
 import { H_GAP, LFO_OFFSET_Y, NODE_H, NODE_W, PADDING, TRACK_ROW_H } from './types';
 
@@ -136,7 +137,7 @@ export function layoutTrackGraph(
 	const chainSet = new Set(chainIds);
 	const mainRow = placeRow(chainIds, nodes, PADDING);
 
-	const mods = modulatorsForChain(snapshot, chainSet, snapshot);
+	const mods = modulatorsForChain(snapshot, chainSet);
 	const modRow = placeModulators(mods, snapshot, mainRow, PADDING);
 
 	const all = [...mainRow, ...modRow];
@@ -176,7 +177,7 @@ export function layoutProjectGraph(snapshot: GraphSnapshotDto): GraphLayout {
 		const rowNodes = placeRow(chainIds, nodes, y);
 		layoutNodes.push(...rowNodes);
 
-		const mods = modulatorsForChain(snapshot, chainSet, snapshot);
+		const mods = modulatorsForChain(snapshot, chainSet);
 		layoutNodes.push(...placeModulators(mods, snapshot, rowNodes, y));
 	});
 
