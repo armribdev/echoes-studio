@@ -30,8 +30,8 @@
 	import { leftPanel } from '../stores/leftPanel';
 	import { shouldHandleTimelineShortcuts } from '../frontend/shortcuts/context';
 	import { keyboardFocus } from '../stores/keyboardFocus';
-	import { LIBRARY_DRAG_MIME, libraryStore, isAudioPath, getActiveLibraryDragPath } from '../frontend/library';
-	import { importAudioToTrack, probeAudioDuration } from '../frontend/audio/importClip';
+	import { libraryStore, isAudioPath, audioFileDrag, audioFileDragPointer, audioFileDragDrop, beginAudioFileDrag, endAudioFileDrag, importOptionsFromAudioDrag, getActiveAudioFileDrag, isAudioFileDragActive } from '../frontend/library';
+	import { importAudioToTrack } from '../frontend/audio/importClip';
 	import { clipSourceDurationSec } from '../frontend/audio/clipDuration';
 	import { pendingImports } from '../frontend/audio/pendingImports';
 	import {
@@ -259,72 +259,50 @@
 				wasPlaying = state.isPlaying;
 			});
 
-			// ── File drag-and-drop via Tauri events ───────────────────────────────
-			function updateDragPreview(physX: number, physY: number) {
+			// ── File drag-and-drop (OS via Tauri + library HTML5 → même session) ─
+			function updateOsDragPreview(physX: number, physY: number) {
 				if (!tracksEl) return;
 				const dpr = window.devicePixelRatio || 1;
-				const winX = physX / dpr;
-				const winY = physY / dpr;
-				const rect = tracksEl.getBoundingClientRect();
-				const x = winX - rect.left + tracksEl.scrollLeft;
-				const y = winY - rect.top + tracksEl.scrollTop;
-				if (x < 0 || x > rect.width || y < 0) { fileDragPreview = null; return; }
-				const trackIndex = arrangeTrackIndexFromY(y, tracks.length);
-				fileDragPreview = { trackIndex, startSec: Math.max(0, x / scale), durationSec: pendingDragDuration ?? fileDragPreview?.durationSec ?? null };
+				updateFileDragPreview(physX / dpr, physY / dpr, /*snap*/ false);
 			}
-
-			const AUDIO_EXTS = new Set(['wav', 'mp3', 'flac', 'ogg', 'oga']);
-			const isAudioFile = (p: string) =>
-				AUDIO_EXTS.has(p.split('.').pop()?.toLowerCase() ?? '');
 
 			type DragPayload = { paths: string[]; position: { x: number; y: number } };
 			const dragFns = await Promise.all([
 				listen<DragPayload>('tauri://drag-enter', ({ payload }) => {
-					pendingDragDuration = null;
 					const path = payload.paths[0];
-					if (!path || !isAudioFile(path)) return;
-					updateDragPreview(payload.position.x, payload.position.y);
-					probeAudioDuration(path)
-						.then((dur) => {
-							pendingDragDuration = dur;
-							if (fileDragPreview) fileDragPreview = { ...fileDragPreview, durationSec: dur };
-						})
-						.catch(() => {});
+					if (!path || !isAudioPath(path)) return;
+					libraryStore.stopPreview();
+					beginAudioFileDrag({ path, source: 'os' });
+					updateOsDragPreview(payload.position.x, payload.position.y);
 				}),
 				listen<DragPayload>('tauri://drag-over', ({ payload }) => {
-					updateDragPreview(payload.position.x, payload.position.y);
+					if (!isAudioFileDragActive()) return;
+					updateOsDragPreview(payload.position.x, payload.position.y);
 				}),
-				listen('tauri://drag-leave', () => { fileDragPreview = null; pendingDragDuration = null; }),
+				listen('tauri://drag-leave', () => {
+					clearFileDragPreview();
+					endAudioFileDrag();
+				}),
 				listen<DragPayload>('tauri://drag-drop', ({ payload }) => {
-					updateDragPreview(payload.position.x, payload.position.y);
+					updateOsDragPreview(payload.position.x, payload.position.y);
+					const path = payload.paths[0];
 					const preview = fileDragPreview;
-					const filePath = payload.paths[0];
-					const knownDuration = pendingDragDuration ?? preview?.durationSec ?? null;
-					pendingDragDuration = null;
-					if (!filePath) { fileDragPreview = null; return; }
-					if (!isAudioFile(filePath)) {
+					const drag = getActiveAudioFileDrag();
+					clearFileDragPreview();
+					endAudioFileDrag();
+					if (!path) return;
+					if (!isAudioPath(path)) {
 						notify(`Format non supporté. Utilisez WAV, MP3, FLAC ou OGG.`, 'error');
-						fileDragPreview = null;
 						return;
 					}
-
-					const trackIndex = preview?.trackIndex ?? 0;
-					const startSec = preview?.startSec ?? 0;
-					fileDragPreview = null;
-
-					ensureTrackForClipPlacement(trackIndex)
-						.then((trackId) => {
-							if (!trackId) return;
-							return importAudioToTrack({
-								trackId,
-								filePath,
-								startSec,
-								knownDurationSec: knownDuration ?? undefined,
-								endSec:
-									knownDuration != null ? startSec + knownDuration : undefined,
-							});
-						})
-						.catch((err) => notify(`Erreur import : ${err?.message ?? err}`, 'error'));
+					void commitAudioFileDrop({
+						path,
+						source: 'os',
+						durationSec: drag?.durationSec ?? preview?.durationSec ?? null,
+						assetId: drag?.assetId ?? null,
+						trackIndex: preview?.trackIndex ?? 0,
+						startSec: preview?.startSec ?? 0,
+					});
 				}),
 			]);
 			unlisteners.push(...dragFns);
@@ -528,7 +506,10 @@
 		| null = null;
 	let midiClipContextTarget: string | null = null;
 	let fileDragPreview: { trackIndex: number; startSec: number; durationSec: number | null } | null = null;
-	let pendingDragDuration: number | null = null;
+
+	$: if ($audioFileDrag?.durationSec != null && fileDragPreview && fileDragPreview.durationSec !== $audioFileDrag.durationSec) {
+		fileDragPreview = { ...fileDragPreview, durationSec: $audioFileDrag.durationSec };
+	}
 
 	let scrubCleanup: (() => void) | null = null;
 
@@ -1641,107 +1622,108 @@
 		endAutoScroll();
 	}
 
-	// Tauri intercepts OS file drops before WebView2 sees them — these stubs
-	// just prevent the browser's default "open file" fallback on non-Tauri drags.
-	function updateLibraryDragPreview(clientX: number, clientY: number) {
+	// Shared audio-file drag (library HTML5 + OS/Tauri) — ghost + import.
+	function clearFileDragPreview() {
+		fileDragPreview = null;
+	}
+
+	function updateFileDragPreview(clientX: number, clientY: number, doSnap: boolean) {
 		if (!tracksEl) return;
 		const rect = tracksEl.getBoundingClientRect();
-		const x = clientX - rect.left + tracksEl.scrollLeft;
-		const y = clientY - rect.top + tracksEl.scrollTop;
-		if (x < 0 || x > rect.width || y < 0) {
-			fileDragPreview = null;
+		if (
+			clientX < rect.left ||
+			clientX > rect.right ||
+			clientY < rect.top ||
+			clientY > rect.bottom
+		) {
+			clearFileDragPreview();
 			return;
 		}
+		const x = clientX - rect.left + tracksEl.scrollLeft;
+		const y = clientY - rect.top + tracksEl.scrollTop;
 		const trackIndex = arrangeTrackIndexFromY(y, tracks.length);
+		const rawStart = Math.max(0, x / scale);
+		const durationSec =
+			getActiveAudioFileDrag()?.durationSec ?? fileDragPreview?.durationSec ?? null;
 		fileDragPreview = {
 			trackIndex,
-			startSec: Math.max(0, snap(x / scale, false)),
-			durationSec: pendingDragDuration ?? fileDragPreview?.durationSec ?? null,
+			startSec: doSnap ? snap(rawStart, false) : rawStart,
+			durationSec,
 		};
 	}
 
-	function libraryPathFromDrag(event: DragEvent): string | null {
-		const active = getActiveLibraryDragPath();
-		if (active && isAudioPath(active)) return active;
-		const dt = event.dataTransfer;
-		if (!dt) return null;
-		const types = Array.from(dt.types ?? []);
-		if (!types.includes(LIBRARY_DRAG_MIME) && !types.includes('text/plain')) return null;
-		const path = dt.getData(LIBRARY_DRAG_MIME) || dt.getData('text/plain');
-		if (!path || !isAudioPath(path)) return null;
-		return path;
+	async function commitAudioFileDrop(opts: {
+		path: string;
+		source: 'library' | 'os';
+		durationSec: number | null;
+		assetId: string | null;
+		trackIndex: number;
+		startSec: number;
+	}) {
+		const trackId = await ensureTrackForClipPlacement(opts.trackIndex);
+		if (!trackId) return;
+		try {
+			await importAudioToTrack(
+				importOptionsFromAudioDrag(trackId, opts.startSec, {
+					path: opts.path,
+					source: opts.source,
+					durationSec: opts.durationSec,
+					assetId: opts.assetId,
+				}),
+			);
+			if (opts.assetId) libraryStore.recordRecent(opts.assetId);
+		} catch (err: unknown) {
+			const msg = err instanceof Error ? err.message : String(err);
+			notify(`Erreur import : ${msg}`, 'error');
+		}
 	}
 
-	function isLibraryDrag(event: DragEvent): boolean {
-		if (getActiveLibraryDragPath()) return true;
-		const types = Array.from(event.dataTransfer?.types ?? []);
-		return types.includes(LIBRARY_DRAG_MIME);
-	}
+	const unsubLibraryPointer = audioFileDragPointer.subscribe((pos) => {
+		if (!pos) return;
+		if (getActiveAudioFileDrag()?.source !== 'library') return;
+		updateFileDragPreview(pos.clientX, pos.clientY, true);
+	});
+	onDestroy(unsubLibraryPointer);
 
+	const unsubLibraryDrop = audioFileDragDrop.subscribe((drop) => {
+		if (!drop) return;
+		const drag = getActiveAudioFileDrag();
+		audioFileDragDrop.set(null);
+		if (!drag || drag.source !== 'library') {
+			endAudioFileDrag();
+			return;
+		}
+		updateFileDragPreview(drop.clientX, drop.clientY, true);
+		const preview = fileDragPreview;
+		clearFileDragPreview();
+		endAudioFileDrag();
+		if (!preview) return;
+		void commitAudioFileDrop({
+			path: drag.path,
+			source: 'library',
+			durationSec: drag.durationSec ?? preview.durationSec,
+			assetId: drag.assetId,
+			trackIndex: preview.trackIndex,
+			startSec: preview.startSec,
+		});
+	});
+	onDestroy(unsubLibraryDrop);
+
+	// Stubs HTML5 : empêchent le fallback navigateur ; le vrai drag library est pointer-based.
 	function handleDragEnter(event: DragEvent) {
 		event.preventDefault();
-		if (!isLibraryDrag(event)) return;
-		const path = libraryPathFromDrag(event);
-		if (!path) return;
-		libraryStore.stopPreview();
-		pendingDragDuration = null;
-		updateLibraryDragPreview(event.clientX, event.clientY);
-		probeAudioDuration(path)
-			.then((dur) => {
-				pendingDragDuration = dur;
-				if (fileDragPreview) fileDragPreview = { ...fileDragPreview, durationSec: dur };
-			})
-			.catch(() => {});
 	}
 
 	function handleDragLeave(event: DragEvent) {
 		event.preventDefault();
-		const related = event.relatedTarget as Node | null;
-		if (related && tracksEl?.contains(related)) return;
-		if (isLibraryDrag(event) || fileDragPreview) {
-			fileDragPreview = null;
-			pendingDragDuration = null;
-		}
 	}
 
 	function handleDragOver(event: DragEvent) {
 		event.preventDefault();
-		if (!isLibraryDrag(event)) return;
-		if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy';
-		updateLibraryDragPreview(event.clientX, event.clientY);
 	}
 
 	function handleDrop(event: DragEvent) {
 		event.preventDefault();
-		const filePath = libraryPathFromDrag(event);
-		const preview = fileDragPreview;
-		const knownDuration = pendingDragDuration ?? preview?.durationSec ?? null;
-		pendingDragDuration = null;
-		fileDragPreview = null;
-		if (!filePath) return;
-
-		// Phase 1: library drop requires an existing track (no create-on-empty).
-		if (tracks.length === 0) {
-			notify('Créez une piste avant d\'importer (Phase 1).', 'error');
-			return;
-		}
-
-		const trackIndex = Math.min(preview?.trackIndex ?? 0, tracks.length - 1);
-		const startSec = preview?.startSec ?? 0;
-		const trackId = tracks[trackIndex]?.id;
-		if (!trackId) {
-			notify('Créez une piste avant d\'importer (Phase 1).', 'error');
-			return;
-		}
-
-		libraryStore.recordRecent(filePath);
-		void importAudioToTrack({
-			trackId,
-			filePath,
-			startSec,
-			knownDurationSec: knownDuration ?? undefined,
-			endSec: knownDuration != null ? startSec + knownDuration : undefined,
-		}).catch(() => {});
 	}
 
 	function handleVolumeChange(trackIndex: number, volume: number) {

@@ -16,16 +16,18 @@
 		libraryVisibleAssets,
 		libraryHasIndexedContent,
 		libraryFocusSearchTick,
-		LIBRARY_DRAG_MIME,
 		LIBRARY_SOURCE_LABELS,
 		LIBRARY_SOURCE_ORDER,
 		AUDIO_EXTENSIONS,
 		formatDuration,
 		beginLibraryDrag,
 		endLibraryDrag,
+		moveAudioFileDragPointer,
+		requestAudioFileDragDrop,
 		type LibraryAsset,
 		type LibrarySourceId,
 	} from '../frontend/library';
+	import { ARRANGE_POINTER_DRAG_THRESHOLD } from '../frontend/arrangeInteraction';
 
 	let isResizing = false;
 	let resizeStartW = 0;
@@ -118,6 +120,10 @@
 	}
 
 	function onRowClick(asset: LibraryAsset) {
+		if (suppressNextClick) {
+			suppressNextClick = false;
+			return;
+		}
 		libraryStore.select(asset.id);
 		keyboardFocus.setLibraryResults();
 	}
@@ -127,26 +133,92 @@
 	}
 
 	function onRowPointerEnter(asset: LibraryAsset) {
+		if (rowPointerDrag) return;
 		libraryStore.select(asset.id);
 		libraryStore.scheduleHoverPreview(asset.id);
 	}
 
 	function onRowPointerLeave() {
+		if (rowPointerDrag) return;
 		libraryStore.cancelHoverPreview();
 	}
 
-	function onDragStart(e: DragEvent, asset: LibraryAsset) {
-		libraryStore.stopPreview();
-		beginLibraryDrag(asset.path);
-		if (!e.dataTransfer) return;
-		e.dataTransfer.setData(LIBRARY_DRAG_MIME, asset.path);
-		e.dataTransfer.setData('text/plain', asset.path);
-		e.dataTransfer.effectAllowed = 'copy';
-		keyboardFocus.setLibraryResults();
+	/**
+	 * Pointer-drag (pas HTML5) : Tauri `dragDropEnabled` casse le DnD interne
+	 * WebView2. On réutilise la même session que le drop OS.
+	 */
+	let rowPointerDrag: {
+		pointerId: number;
+		asset: LibraryAsset;
+		startX: number;
+		startY: number;
+		active: boolean;
+	} | null = null;
+	let suppressNextClick = false;
+
+	function onRowPointerDown(e: PointerEvent, asset: LibraryAsset) {
+		if (e.button !== 0) return;
+		const target = e.target as HTMLElement | null;
+		if (target?.closest('button')) return;
+		rowPointerDrag = {
+			pointerId: e.pointerId,
+			asset,
+			startX: e.clientX,
+			startY: e.clientY,
+			active: false,
+		};
+		(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
 	}
 
-	function onDragEnd() {
-		endLibraryDrag();
+	function onRowPointerMove(e: PointerEvent) {
+		const drag = rowPointerDrag;
+		if (!drag || e.pointerId !== drag.pointerId) return;
+		const dx = e.clientX - drag.startX;
+		const dy = e.clientY - drag.startY;
+		if (!drag.active) {
+			if (Math.hypot(dx, dy) < ARRANGE_POINTER_DRAG_THRESHOLD) return;
+			drag.active = true;
+			libraryStore.stopPreview();
+			beginLibraryDrag({
+				path: drag.asset.path,
+				source: 'library',
+				durationSec: drag.asset.durationSec ?? null,
+				assetId: drag.asset.id,
+			});
+			document.body.classList.add('library-file-dragging');
+			keyboardFocus.setLibraryResults();
+		}
+		moveAudioFileDragPointer(e.clientX, e.clientY);
+	}
+
+	function finishRowPointerDrag(e: PointerEvent, commit: boolean) {
+		const drag = rowPointerDrag;
+		if (!drag || e.pointerId !== drag.pointerId) return;
+		rowPointerDrag = null;
+		try {
+			(e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
+		} catch {
+			/* already released */
+		}
+		document.body.classList.remove('library-file-dragging');
+		if (!drag.active) {
+			endLibraryDrag();
+			return;
+		}
+		suppressNextClick = true;
+		if (commit) {
+			requestAudioFileDragDrop(e.clientX, e.clientY);
+		} else {
+			endLibraryDrag();
+		}
+	}
+
+	function onRowPointerUp(e: PointerEvent) {
+		finishRowPointerDrag(e, true);
+	}
+
+	function onRowPointerCancel(e: PointerEvent) {
+		finishRowPointerDrag(e, false);
 	}
 
 	async function onPreviewClick(e: MouseEvent, asset: LibraryAsset) {
@@ -348,18 +420,20 @@
 									class:selected={$libraryStore.selectedId === asset.id}
 									class:previewing={$libraryStore.previewingId === asset.id}
 									class:importing={isImporting}
+									class:dragging={rowPointerDrag?.active && rowPointerDrag.asset.id === asset.id}
 									role="option"
 									tabindex="-1"
 									aria-selected={$libraryStore.selectedId === asset.id}
 									aria-busy={isImporting}
-									draggable={!isImporting}
 									title={asset.path}
 									on:click={() => onRowClick(asset)}
 									on:dblclick={() => { if (!isImporting) onRowDblClick(asset); }}
 									on:pointerenter={() => onRowPointerEnter(asset)}
 									on:pointerleave={onRowPointerLeave}
-									on:dragstart={(e) => onDragStart(e, asset)}
-									on:dragend={onDragEnd}
+									on:pointerdown={(e) => { if (!isImporting) onRowPointerDown(e, asset); }}
+									on:pointermove={onRowPointerMove}
+									on:pointerup={onRowPointerUp}
+									on:pointercancel={onRowPointerCancel}
 								>
 									<button
 										class="fav-btn"
@@ -367,6 +441,7 @@
 										class:on={$libraryStore.favoriteIds.includes(asset.id)}
 										title="Favorite"
 										on:click={(e) => onFavoriteClick(e, asset)}
+										on:pointerdown={(e) => e.stopPropagation()}
 									>
 										{$libraryStore.favoriteIds.includes(asset.id) ? '★' : '☆'}
 									</button>
@@ -378,6 +453,7 @@
 											type="button"
 											title="Annuler l'import"
 											aria-label="Annuler l'import"
+											on:pointerdown={(e) => e.stopPropagation()}
 											on:click={(e) => {
 												e.stopPropagation();
 												void cancelAudioImport(asset.path);
@@ -391,6 +467,7 @@
 											class="preview-btn"
 											type="button"
 											title="Preview"
+											on:pointerdown={(e) => e.stopPropagation()}
 											on:click={(e) => onPreviewClick(e, asset)}
 										>
 											{$libraryStore.previewingId === asset.id ? '■' : '▶'}
@@ -399,6 +476,7 @@
 											class="insert-btn"
 											type="button"
 											title="Insert at playhead"
+											on:pointerdown={(e) => e.stopPropagation()}
 											on:click={() => insertAsset(asset)}
 										>
 											<svg width="8" height="8" viewBox="0 0 8 8" fill="none">
@@ -653,6 +731,8 @@
 		gap: 4px;
 		padding: 3px 6px 3px 4px;
 		cursor: grab;
+		user-select: none;
+		touch-action: none;
 		transition: background 0.1s;
 
 		&:hover,
@@ -679,7 +759,17 @@
 			.cancel-import-btn { opacity: 1; }
 		}
 
-		&:active { cursor: grabbing; }
+		&.dragging,
+		&:active { cursor: grabbing; opacity: 0.85; }
+	}
+
+	:global(body.library-file-dragging) {
+		cursor: grabbing !important;
+		user-select: none !important;
+	}
+
+	:global(body.library-file-dragging *) {
+		cursor: grabbing !important;
 	}
 
 	.fav-btn {

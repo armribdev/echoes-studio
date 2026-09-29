@@ -1,14 +1,22 @@
-/** In-flight library → arrange drag path (HTML5 getData is unreliable before drop). */
-let activeLibraryDragPath: string | null = null;
+/**
+ * Compat library → arrange. La session réelle vit dans `frontend/audio/fileDrag`
+ * (partagée avec le drop OS / explorateur).
+ *
+ * Note: le drag library utilise un pointer-drag (pas HTML5) parce que
+ * `dragDropEnabled` côté Tauri casse le DnD interne WebView2.
+ */
+export {
+	beginAudioFileDrag as beginLibraryDrag,
+	endAudioFileDrag as endLibraryDrag,
+	getActiveAudioFileDrag,
+	isAudioFileDragActive,
+	moveAudioFileDragPointer,
+	requestAudioFileDragDrop,
+} from '../audio/fileDrag';
 
-export function beginLibraryDrag(path: string) {
-	activeLibraryDragPath = path;
-}
+import { getActiveAudioFileDrag } from '../audio/fileDrag';
 
-export function endLibraryDrag() {
-	activeLibraryDragPath = null;
-}
-
+/** @deprecated Prefer getActiveAudioFileDrag().path */
 export function getActiveLibraryDragPath(): string | null {
-	return activeLibraryDragPath;
+	return getActiveAudioFileDrag()?.path ?? null;
 }
