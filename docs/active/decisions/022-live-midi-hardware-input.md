@@ -210,6 +210,45 @@ keyboard has its own capture thread, so two keyboards could push concurrently.
 Producers are now serialized by a `Mutex<()>` inside the queue — taken only by
 capture threads; the audio-thread consumer stays lock-free.
 
+## Amendment 2026-09-29 — Recording captured notes into a clip
+
+The first follow-up is done: the ● button of the transport bar records the
+armed track's hardware notes into a new MIDI clip. Not hand-tested yet.
+
+- **Position of a note.** The CPAL callback now publishes, with the wall time of
+  each slice, the transport sample rendered at that time
+  (`LiveInputClock::set_event_window`, three relaxed atomic stores guarded by a
+  seqlock counter so the reader never pairs two slices). The capture thread
+  converts an arrival time into a transport sample with
+  `transport_position_at` — the same mapping the instrument uses to place the
+  note, so playing the clip back reproduces what was heard. A loop wrap follows
+  for free (each slice republishes). This is the only audio-thread change.
+- **Recorder.** `midi_recording.rs::MidiRecorder` (in `AppState`) holds the
+  events of one recording behind a `Mutex` taken only by the capture threads and
+  the command thread. `capture` is called from the capture callback for the
+  armed track; nothing is reachable from `process_block`.
+- **Lifecycle.** `start_midi_recording` / `stop_midi_recording` are plain Tauri
+  commands (session state, outside `CommandEnvelope`, like arming). The frontend
+  starts the transport itself. The recording also ends on `PAUSE` and `STOP`
+  (`api.rs`, before `STOP` resets the position). Ending emits
+  `midi-recording-finished` with the clip or `null`.
+- **Clip.** Note ons/offs are paired per pitch; held notes are closed at the
+  stop position; a retriggered pitch closes the previous note; notes shorter
+  than 1/16 beat are stretched. The clip starts at the record position (or the
+  first note, if earlier) and ends at the stop position (or the last note end).
+  No note → no clip.
+- **Project write.** The frontend adds the clip with the existing
+  `ADD_MIDI_CLIP` command (seeded notes, as for a paste): one undo step, one
+  recompile, project events unchanged. The buffer itself is not project state.
+- **C-2 / C-4.** Offline render never sets the window nor records: harness green,
+  hashes unchanged. No project schema change.
+
+Known limits (follow-ups): no live display while recording (the clip appears at
+the end); no count-in; with a playback loop, passes stack into one clip instead
+of separate takes; no compensation of the output latency, so a player who
+follows what they hear records slightly late (roughly the audio buffer + driver
+latency).
+
 ## Alternatives considered
 
 - **Route hardware input through `PortKind::Midi` graph edges** (a real
@@ -224,8 +263,8 @@ capture threads; the audio-thread consumer stays lock-free.
 
 ## Follow-ups (explicitly out of scope here)
 
-- Recording captured hardware notes into a MIDI clip (record-arm → project
-  write).
+- ~~Recording captured hardware notes into a MIDI clip~~ — done, see the
+  2026-09-29 amendment.
 - MIDI CC / Learn mapping to parameters.
 - MIDI output to external hardware (beyond Local Control, see amendment).
 - Per-track device routing (today: one global armed track receives every

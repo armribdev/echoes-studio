@@ -706,11 +706,10 @@ where
                     }
                     let info = transport.snapshot(chunk);
                     let end = rendered + chunk;
-                    live_clock.set_event_window_start(live_event_window_start(
-                        callback_start,
-                        frames - rendered,
-                        info.sample_rate,
-                    ));
+                    live_clock.set_event_window(
+                        live_event_window_start(callback_start, frames - rendered, info.sample_rate),
+                        position,
+                    );
                     scheduler.process_block(&info, &mut mix_buf[rendered * 2..end * 2]);
                     if playing {
                         transport

@@ -5,9 +5,9 @@
 	import { play, pause, stop, seek } from '../frontend/commands/dispatcher';
 	import { leftPanel } from '../stores/leftPanel';
 	import { rightPanel } from '../stores/rightPanel';
+	import { isMidiRecording } from '../stores/midiRecording';
+	import { toggleMidiRecording } from '../frontend/midiRecording';
 	import Icon from './Icon.svelte';
-
-	let isRecording = false;
 
 	function togglePlayPause() {
 		if ($transport.isPlaying) {
@@ -21,10 +21,6 @@
 		seek(0)
 			.then(() => stop())
 			.catch(console.error);
-	}
-
-	function toggleRecord() {
-		isRecording = !isRecording;
 	}
 
 	// Live position in bar.beat format
@@ -89,9 +85,10 @@
 			</button>
 			<button
 				class="btn btn--record"
-				class:active={isRecording}
-				on:click={toggleRecord}
-				title="Enregistrer"
+				class:active={$isMidiRecording}
+				on:click={() => toggleMidiRecording().catch(console.error)}
+				title="Enregistrer les notes MIDI de la piste armée"
+				aria-pressed={$isMidiRecording}
 			>
 				<svg width="12" height="12" viewBox="0 0 12 12" fill="none" xmlns="http://www.w3.org/2000/svg">
 					<circle cx="6" cy="6" r="5" fill="currentColor"/>

@@ -130,6 +130,20 @@ pub fn arm_track_for_midi_input(
     Ok(())
 }
 
+/// Start recording the armed track's hardware MIDI notes. The frontend starts
+/// the transport itself; the clip is delivered by `MIDI_RECORDING_FINISHED_EVENT`.
+#[tauri::command]
+pub fn start_midi_recording(state: tauri::State<'_, AppState>) -> Result<(), String> {
+    let armed = state.armed_track_id.lock().ok().and_then(|armed| armed.clone());
+    let track_id = armed.ok_or("Aucune piste armée pour l'enregistrement")?;
+    state.midi_recorder.start(track_id)
+}
+
+#[tauri::command]
+pub fn stop_midi_recording(app: tauri::AppHandle, state: tauri::State<'_, AppState>) {
+    crate::midi_recording::finish_and_emit(&app, &state.midi_recorder);
+}
+
 /// Send a single typed command to the engine.
 #[tauri::command]
 pub fn send_command(
@@ -1091,6 +1105,7 @@ fn process_command(
         }
 
         cmd::STOP => {
+            crate::midi_recording::finish_and_emit(app, &state.midi_recorder);
             state.transport.stop();
             let ev_stop = EngineEvent::new(ev::PLAY_STOPPED, &project_id, json!({}));
             let ev_pos = EngineEvent::new(
@@ -1107,6 +1122,7 @@ fn process_command(
         }
 
         cmd::PAUSE => {
+            crate::midi_recording::finish_and_emit(app, &state.midi_recorder);
             state.transport.pause();
             Ok(emit_and_ok(
                 app,

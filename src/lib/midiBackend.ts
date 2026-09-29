@@ -80,9 +80,31 @@ export async function applyMidiPreferences(midi: MidiPreferences): Promise<strin
 	return failed;
 }
 
+/** Backend event fired when a MIDI recording ends. Payload: `RecordedMidiClip | null`. */
+export const MIDI_RECORDING_FINISHED_EVENT = 'midi-recording-finished';
+
+/** Mirror of `midi_recording::RecordedMidiClip`; `null` payload = no note played. */
+export interface RecordedMidiClip {
+	trackId: string;
+	/** Seconds, same coordinate space as a MIDI clip. */
+	start: number;
+	end: number;
+	notes: { id: string; pitch: number; start: number; duration: number; velocity: number }[];
+}
+
+/** @throws `string` error message when no track is armed or a recording is running. */
+export async function startMidiRecording(): Promise<void> {
+	await invoke<void>('start_midi_recording');
+}
+
+/** The clip arrives through `MIDI_RECORDING_FINISHED_EVENT`. */
+export async function stopMidiRecording(): Promise<void> {
+	await invoke<void>('stop_midi_recording');
+}
+
 /**
  * Arm a track for hardware MIDI input, or disarm when `trackId` is `null`.
- * Live monitoring only — no recording, no project event.
+ * Arming only routes live notes to the track; recording is separate.
  */
 export async function armTrackForMidiInput(trackId: string | null): Promise<void> {
 	try {

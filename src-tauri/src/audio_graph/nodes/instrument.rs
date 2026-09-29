@@ -756,7 +756,7 @@ mod tests {
             Arc::clone(&clock),
         ));
         node.set_live_input(Arc::clone(&queue));
-        clock.set_event_window_start(50_000_000);
+        clock.set_event_window(50_000_000, 0);
         queue.push(crate::audio_graph::midi::MidiLiveInputMessage {
             note_on: true,
             pitch: 67,

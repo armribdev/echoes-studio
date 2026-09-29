@@ -66,6 +66,11 @@ MidiLiveInputQueue::push (capture threads, serialized by a producer mutex)
 The producer mutex is only ever taken by the capture threads (one per enabled
 keyboard); the audio thread reads head/tail atomics only.
 
+MIDI recording adds three relaxed atomic stores per rendered slice
+(`LiveInputClock::set_event_window`: transport position + a seqlock counter,
+wait-free). The reader is the capture thread; the recorder's buffer and mutex
+are never reachable from `process_block`.
+
 ### Project state → Audio thread
 
 **Never directly.** Project state always goes through the compilation pipeline:

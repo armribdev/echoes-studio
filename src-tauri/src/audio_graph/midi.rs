@@ -4,7 +4,7 @@
 //! `Vec` published off the audio thread and swapped in with an atomic pointer.
 
 use std::ptr;
-use std::sync::atomic::{AtomicPtr, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{fence, AtomicPtr, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
@@ -306,6 +306,11 @@ pub struct LiveInputClock {
     /// Wall time (ns since `epoch`) that maps to sample 0 of the slice being
     /// rendered. 0 = no live stream (offline render, tests).
     event_window_start: AtomicU64,
+    /// Transport sample rendered at `event_window_start`, for MIDI recording.
+    event_window_position: AtomicU64,
+    /// Seqlock counter so the capture thread never pairs a start with the
+    /// position of another slice. Odd while the audio callback is writing.
+    window_version: AtomicU64,
 }
 
 impl LiveInputClock {
@@ -313,6 +318,8 @@ impl LiveInputClock {
         Self {
             epoch: Instant::now(),
             event_window_start: AtomicU64::new(0),
+            event_window_position: AtomicU64::new(0),
+            window_version: AtomicU64::new(0),
         }
     }
 
@@ -321,9 +328,47 @@ impl LiveInputClock {
         self.epoch.elapsed().as_nanos() as u64
     }
 
-    /// Audio callback, before each rendered slice. 0 = place events at once.
-    pub fn set_event_window_start(&self, nanos: u64) {
-        self.event_window_start.store(nanos, Ordering::Release);
+    /// Audio callback, before each rendered slice: wall time `nanos` maps to
+    /// transport sample `position_samples`. `nanos` 0 = place events at once.
+    /// Wait-free (a few atomic stores).
+    pub fn set_event_window(&self, nanos: u64, position_samples: u64) {
+        let version = self.window_version.load(Ordering::Relaxed);
+        self.window_version
+            .store(version.wrapping_add(1), Ordering::Relaxed);
+        fence(Ordering::Release);
+        self.event_window_position
+            .store(position_samples, Ordering::Relaxed);
+        self.event_window_start.store(nanos, Ordering::Relaxed);
+        self.window_version
+            .store(version.wrapping_add(2), Ordering::Release);
+    }
+
+    /// Capture thread. Transport sample playing at wall time `received_at`, or
+    /// `None` when no audio stream feeds the clock.
+    pub fn transport_position_at(&self, received_at: u64, sample_rate: f32) -> Option<u64> {
+        let (window_start, window_position) = self.read_event_window();
+        if window_start == 0 {
+            return None;
+        }
+        let elapsed_nanos = received_at as i128 - window_start as i128;
+        let elapsed_samples = elapsed_nanos * sample_rate as i128 / 1_000_000_000;
+        Some((window_position as i128 + elapsed_samples).max(0) as u64)
+    }
+
+    fn read_event_window(&self) -> (u64, u64) {
+        loop {
+            let before = self.window_version.load(Ordering::Acquire);
+            if before % 2 == 1 {
+                std::hint::spin_loop();
+                continue;
+            }
+            let start = self.event_window_start.load(Ordering::Relaxed);
+            let position = self.event_window_position.load(Ordering::Relaxed);
+            fence(Ordering::Acquire);
+            if self.window_version.load(Ordering::Relaxed) == before {
+                return (start, position);
+            }
+        }
     }
 
     fn event_window_start(&self) -> u64 {
@@ -551,7 +596,7 @@ mod tests {
     #[test]
     fn live_event_keeps_its_position_within_the_period() {
         let clock = Arc::new(LiveInputClock::new());
-        clock.set_event_window_start(10_000_000);
+        clock.set_event_window(10_000_000, 0);
         let queue = MidiLiveInputQueue::new(Arc::clone(&clock));
         queue.push(live_note(true, 60, 11_000_000));
         assert_eq!(drain_all(&queue, 256), vec![(60, 48)]);
@@ -561,13 +606,33 @@ mod tests {
     #[test]
     fn live_event_due_later_stays_queued() {
         let clock = Arc::new(LiveInputClock::new());
-        clock.set_event_window_start(10_000_000);
+        clock.set_event_window(10_000_000, 0);
         let queue = MidiLiveInputQueue::new(Arc::clone(&clock));
         queue.push(live_note(true, 60, 11_000_000));
         assert!(drain_all(&queue, 32).is_empty());
 
-        clock.set_event_window_start(10_000_000 + 32 * 1_000_000_000 / 48_000);
+        clock.set_event_window(10_000_000 + 32 * 1_000_000_000 / 48_000, 0);
         assert_eq!(drain_all(&queue, 32), vec![(60, 16)]);
+    }
+
+    /// 10 ms after a slice that starts at transport sample 96_000, at 48 kHz.
+    #[test]
+    fn transport_position_follows_the_event_window() {
+        let clock = LiveInputClock::new();
+        clock.set_event_window(10_000_000, 96_000);
+        assert_eq!(clock.transport_position_at(20_000_000, 48_000.0), Some(96_480));
+    }
+
+    #[test]
+    fn transport_position_before_the_window_goes_back() {
+        let clock = LiveInputClock::new();
+        clock.set_event_window(10_000_000, 96_000);
+        assert_eq!(clock.transport_position_at(9_000_000, 48_000.0), Some(95_952));
+    }
+
+    #[test]
+    fn transport_position_is_unknown_without_an_audio_stream() {
+        assert_eq!(LiveInputClock::new().transport_position_at(5, 48_000.0), None);
     }
 
     #[test]

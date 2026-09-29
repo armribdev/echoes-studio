@@ -177,6 +177,14 @@ callback and publishes, per rendered slice, the wall time mapped to its first
 sample. `drain_due` places each event one callback period after its arrival —
 constant latency, no jitter — and leaves events due later in the queue.
 
+Recording (ADR-022 amendment 2026-09-29): the callback also publishes the
+transport sample mapped to that same wall time (`set_event_window`, seqlock).
+While a recording runs, the capture thread turns an event's arrival time into a
+transport position (`transport_position_at`) and appends it to the
+`MidiRecorder` buffer behind a `Mutex` shared only with the command thread. The
+finished clip reaches the UI through `midi-recording-finished`, emitted from the
+command thread (record button, `PAUSE`, `STOP`) — never from the audio thread.
+
 ### Project state → Audio thread
 
 **Never directly.** Project state always goes through the compilation pipeline:

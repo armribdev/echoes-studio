@@ -1106,6 +1106,8 @@ pub struct AppState {
     /// The track that currently receives hardware MIDI input, if any.
     /// Ephemeral session state, not part of `AppProject` (ADR-002 scope).
     pub armed_track_id: Arc<Mutex<Option<String>>>,
+    /// Notes captured from the armed track while recording (ADR-022 amendment).
+    pub midi_recorder: Arc<crate::midi_recording::MidiRecorder>,
     /// Absolute paths (normalized) whose in-flight `prepare_audio_import` should abort.
     pub import_cancels: Mutex<HashSet<String>>,
 }
@@ -1127,6 +1129,10 @@ impl AppState {
         );
 
         let live_params = Arc::new(crate::audio_graph::live_params::LiveParams::new());
+        let midi_recorder = Arc::new(crate::midi_recording::MidiRecorder::new(
+            Arc::clone(&transport),
+            Arc::clone(&live_params.live_input_clock),
+        ));
 
         Self {
             project: Mutex::new(AppProject::new()),
@@ -1144,6 +1150,7 @@ impl AppState {
             open_plugin_editors: Arc::new(Mutex::new(HashMap::new())),
             midi_input: Mutex::new(crate::midi_input::MidiInputRegistry::new()),
             armed_track_id: Arc::new(Mutex::new(None)),
+            midi_recorder,
             import_cancels: Mutex::new(HashSet::new()),
         }
     }

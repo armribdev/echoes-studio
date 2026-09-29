@@ -400,9 +400,11 @@ Achever la séparation DSP/UI : l'UI ne touche plus jamais un état partagé via
 
 ### Objectif
 Jouer en direct sur un instrument via un clavier/contrôleur MIDI matériel.
-Périmètre volontairement restreint : notes uniquement (pas d'enregistrement
-dans un clip, pas de CC/Learn, pas de sortie MIDI, pas de routing par piste —
-une seule piste « armée » globale reçoit tous les devices activés).
+Périmètre volontairement restreint : notes uniquement (pas de CC/Learn, pas de
+sortie MIDI, pas de routing par piste — une seule piste « armée » globale reçoit
+tous les devices activés). **Enregistrement dans un clip livré le 2026-09-29**
+(amendement ADR-022, `midi_recording.rs` ; pas encore testé à la main) :
+bouton ● de la barre de transport, un clip créé à l'arrêt/pause/re-clic.
 
 ### Justification
 `target_architecture.md` §6.5 anticipe cette capacité (`MidiInputNode` +
@@ -462,8 +464,8 @@ activés sont rouverts au démarrage (abonnement aux préférences dans
 `routes/+page.svelte`). Détails : amendement d'ADR-022.
 
 ### Suites (hors périmètre, notées dans ADR-022)
-Enregistrement des notes capturées dans un clip, MIDI CC/Learn, sortie MIDI
-matérielle générale, routing par piste (plusieurs pistes armées / device →
+MIDI CC/Learn, sortie MIDI matérielle générale, enregistrement en boucle
+(overdub / take), compensation de la latence de sortie, routing par piste (plusieurs pistes armées / device →
 piste).
 
 ---

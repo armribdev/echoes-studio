@@ -6,6 +6,7 @@ mod engine_gateway;
 mod library;
 mod menu_state;
 mod midi_input;
+mod midi_recording;
 mod plugin_formats;
 mod plugin_system;
 mod project;
@@ -13,7 +14,8 @@ mod windows_theme;
 
 use engine_gateway::api::{
     arm_track_for_midi_input, cancel_audio_import, get_graph_snapshot, get_snapshot,
-    prepare_audio_import, preview_midi_note, redo, send_batch, send_command, set_track_mix, undo,
+    prepare_audio_import, preview_midi_note, redo, send_batch, send_command, set_track_mix,
+    start_midi_recording, stop_midi_recording, undo,
 };
 use project::{AppProject, AppState, ProjectDto, ProjectFile, ProjectUiLayout};
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
@@ -196,6 +198,8 @@ fn main() {
             set_midi_input_enabled,
             set_midi_local_control_off,
             arm_track_for_midi_input,
+            start_midi_recording,
+            stop_midi_recording,
             get_snapshot,
             get_graph_snapshot,
             undo,
@@ -1089,6 +1093,7 @@ fn set_midi_input_enabled(
         enabled,
         std::sync::Arc::clone(&state.live_params),
         std::sync::Arc::clone(&state.armed_track_id),
+        std::sync::Arc::clone(&state.midi_recorder),
     )
 }
 

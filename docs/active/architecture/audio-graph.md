@@ -127,6 +127,11 @@ is independent of `PortKind::Midi` graph edges, which the compiler still
 rejects (Phase 5c, plugin instruments) — live hardware input never goes
 through the graph/edge model at all.
 
+The same capture path can record: while `MidiRecorder` is active, each note of
+the armed track is also stamped with its transport position and, when the
+recording ends (record button, pause or stop), becomes a MIDI clip added
+through the regular `ADD_MIDI_CLIP` command — nothing new in the graph.
+
 ```
 AppProject (editor state)
     │

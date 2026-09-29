@@ -27,6 +27,7 @@
 	import { applyMidiPreferences, listMidiInputDevices, MIDI_DEVICES_EVENT } from '../lib/midiBackend';
 	import type { MidiInputDeviceInfo } from '../lib/midiBackend';
 	import { midiDeviceList } from '../stores/midiDevices';
+	import { connectMidiRecording } from '../frontend/midiRecording';
 	import { projectSettingsPanelOpen } from '../stores/project';
 	import { exportMixdown } from '../lib/exportMixdown';
 	import { notify } from '../stores/status';
@@ -73,6 +74,7 @@
 			midiDeviceList.set(payload);
 			applyMidiNow();
 		});
+		const unlistenMidiRecording = connectMidiRecording();
 		const disconnectBridge = connectTransportBridge();
 		const disconnectLoop = connectLoopSync();
 		const unregisterShortcuts = registerShortcuts();
@@ -132,6 +134,7 @@
 			unsubIsolation();
 			unsubMidi();
 			void unlistenMidiDevices.then((fn) => fn());
+			void unlistenMidiRecording.then((fn) => fn());
 			void unlistenMenu.then((fns) => fns.forEach((fn) => fn()));
 			window.removeEventListener('keydown', handleGlobalKey);
 		};
