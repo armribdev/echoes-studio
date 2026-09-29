@@ -8,16 +8,16 @@ Status legend: **stable** (production, don't change silently) ·
 **in-migration** (actively evolving — check the migration plan) ·
 **scaffolded** (types/plumbing exist, runtime not fully wired).
 
-_Last full review: 2026-06-03 (roadmap status pass 2026-09-29). Each row's date is when its status was last verified — rows still dated 2026-06 predate the September work; confirm against the code._
+_Last full review: 2026-06-03 (roadmap status pass 2026-09-29). Each row's date is when its status was last verified — rows dated before 2026-09 predate the September work; confirm against the code._
 
 | Subsystem | Source of truth (`docs/active/`) | Code | Status | Verified |
 |-----------|----------------------------------|------|--------|----------|
 | Graph-first model & pipeline | `architecture/audio-graph.md` | `audio_graph/{graph,node,mod}.rs` | stable (nodes no longer carry a `NodeId`; `AudioNode::node_id/is_source/is_sink` removed, constructors take DSP params only) | 2026-09-29 |
 | Graph compiler | `dsp/graph-compiler.md` | `audio_graph/{compiler,execution_plan}.rs` | stable (plugin output counts widened from the prepared nodes, edges to missing outputs cut — ADR-014 multi-out) | 2026-09-25 |
-| DSP runtime / scheduler | `dsp/dsp-runtime.md` | `audio_graph/{scheduler,worker_pool,buffer}.rs` | stable | 2026-06-05 |
+| DSP runtime / scheduler | `dsp/dsp-runtime.md` | `audio_graph/{scheduler,worker_pool,buffer}.rs` | stable | 2026-09-29 |
 | Immutable snapshot swap | `architecture/snapshot-rebuild-flow.md` | `audio_graph/snapshot*.rs`, `audio_engine/snapshot.rs` | stable — progressive clip PCM via immutable prefixes + recompile (ADR-024) | 2026-09-29 |
-| Real-time safety | `threading/realtime-safety.md` | (cross-cutting; audio thread) | stable | 2026-06-05 |
-| Threading model | `threading/threading-model.md` | `audio_engine/engine.rs`, `engine_gateway/` | stable | 2026-06-03 |
+| Real-time safety | `threading/realtime-safety.md` | (cross-cutting; audio thread) | stable | 2026-09-29 |
+| Threading model | `threading/threading-model.md` | `audio_engine/engine.rs`, `engine_gateway/` | stable | 2026-09-29 |
 | Transport | `threading/realtime-safety.md` | `audio_engine/transport.rs` | stable — time signature, tempo resynced on recompile; playback loop is atomic (UI region, sample-accurate wrap) | 2026-09-24 |
 | Offline render (C-2 harness) | `migration/*` (+ ADR-019 amendment) | `audio_engine/{offline,render_harness}.rs` | stable — harness V1 built: block-size independence + golden hashes (5 reference projects) (Windows x86_64 only; cross-OS open); green again after the dB fader smoother was split from volume modulation (golden hashes unchanged) | 2026-09-25 |
 | Modulation | `modulation/modulation-system.md` (+ ADR-019) | `audio_graph/{modulation,parameter_block,live_params,scheduler,node,nodes/*}.rs` | sub-block grid modulation fully implemented (ADR-019 Tranches 1–3): plugins, Gain/TrackGain, and all 4 internal effects; `mod_smooth.rs` removed 2026-09-29; render proven block-size independent (held off-grid value + grid-aware gain smoother, ADR-019 amendment); internal-effect modulated values clamped to per-param ranges; EQ frequencies modulated in octaves via `*_freq_octaves` targets (ADR-019 amendment, harness project `eq_octave_modulation`); LFOs assignable from the UI (track volume, internal effects, plugin effects + instrument); LFO shape + tempo sync editable from the UI (`UPDATE_MODULATOR.waveform` recompiles, rate/sync fields stay hot); all 4 modulator kinds (LFO, envelope, audio follower, macro) creatable/editable from the UI — follower edits now recompile (previously persisted but never reached the engine); follower source (post-FX or after a given effect) editable from the UI | 2026-09-25 |

@@ -3,6 +3,7 @@
 > **Base** : [`../audits/plugin-system-audit-2026-05-31.md`](../audits/plugin-system-audit-2026-05-31.md) + [`target_architecture.md`](target_architecture.md)
 > **Cadre** : C-1 à C-10 du target (zéro mutex RT, bit-identique offline, migration variant par variant, compat ascendante, lock-free cmd↔audio, instance plugin unique, compileur étendu pas réécrit, UX track-linéaire préservée, sandbox opt-in, pas de flag pour C-2).
 > **Date** : 2026-05-31. **Statut** : proposition pour ratification.
+> **Numéros d'ADR** : les sections « Phase 1 » à « Phase 6 » ci-dessous citent la numérotation *proposée* dans `target_architecture.md` (ADR-006 à 014), qui ne correspond plus aux ADR réels de [`../decisions/000-index.md`](../decisions/000-index.md). Correspondance : Arc unique 006→**007** (capabilities/PDC = **006**), SPSC params 007→**008**, PortKind 008→**011**, `ParameterBlock` 009→**009**, sandbox 010→**015**, automation 011→**021** (+ **019**), MIDI en beats 012→**012**. Les propositions 013 (WorkerPool partagé) et 014 (containers) n'ont pas d'ADR ; les ADR réels 013 et 014 portent sur les instruments CLAP et le dimensionnement des ports. La section « État d'avancement » ci-dessus utilise déjà les numéros réels.
 
 ---
 
@@ -341,7 +342,7 @@ Achever la séparation DSP/UI : l'UI ne touche plus jamais un état partagé via
 - `project.rs` (`automation_lanes`, `ModulatorParams` étendu, `ModulationTargetRef::PluginParam`).
 - `plugin_system/host.rs` (midi_queues).
 - `plugin_formats/{vst3,clap}/wrapper.rs` (drain MIDI).
-- ADRs : `011-portkind.md`, `012-midi-beats.md`, `013-automation.md`, `014-extended-modulators.md`.
+- ADRs réels : `011-portkind-typed-edges.md`, `012-midi-snapshot-beats.md`, `013-clap-plugin-instruments.md`, `014-capability-driven-port-sizing.md`, `019-sub-block-modulation.md`, `021-plugin-parameter-modulation-and-automation.md`.
 
 ### 5.5 Risques RT
 - **5c MIDI drain** : analogue à param drain, même pattern SPSC. Coût ~50 ns/event.
