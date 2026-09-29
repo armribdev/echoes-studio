@@ -21,7 +21,7 @@ pub fn force_dark_popups() {
     const UXTHEME_FLUSHMENUTHEMES: usize = 136;
 
     unsafe {
-        let uxtheme = LoadLibraryA(b"uxtheme.dll\0".as_ptr());
+        let uxtheme = LoadLibraryA(c"uxtheme.dll".as_ptr().cast());
         if uxtheme.is_null() {
             return;
         }

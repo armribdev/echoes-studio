@@ -186,6 +186,7 @@ impl MacroCells {
     }
 }
 
+#[derive(Default)]
 struct LiveParamsInner {
     tracks: HashMap<String, Arc<TrackParams>>,
     modulators: HashMap<String, Arc<ModulatorCells>>,
@@ -208,23 +209,6 @@ struct LiveParamsInner {
     /// live instrument drains it (one consumer); the MIDI capture thread is
     /// the sole producer.
     midi_live_input: HashMap<String, Arc<crate::audio_graph::midi::MidiLiveInputQueue>>,
-}
-
-impl Default for LiveParamsInner {
-    fn default() -> Self {
-        Self {
-            tracks: HashMap::new(),
-            modulators: HashMap::new(),
-            macros: HashMap::new(),
-            envelopes: HashMap::new(),
-            routes: HashMap::new(),
-            effect_params: HashMap::new(),
-            plugin_param_shadows: HashMap::new(),
-            midi_notes: HashMap::new(),
-            midi_preview: HashMap::new(),
-            midi_live_input: HashMap::new(),
-        }
-    }
 }
 
 pub struct LiveParams {

@@ -708,9 +708,7 @@ where
                 }
 
                 let total_samples = data.len();
-                let frames = if hw_channels > 0 {
-                    total_samples / hw_channels
-                } else {
+                let Some(frames) = total_samples.checked_div(hw_channels) else {
                     return;
                 };
 

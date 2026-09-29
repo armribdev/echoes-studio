@@ -41,7 +41,7 @@ impl ClapHost {
             let path = entry.path();
             if path
                 .extension()
-                .map_or(false, |e| e.eq_ignore_ascii_case("clap"))
+                .is_some_and(|e| e.eq_ignore_ascii_case("clap"))
             {
                 self.register_clap(&path, registry);
             } else if path.is_dir() {

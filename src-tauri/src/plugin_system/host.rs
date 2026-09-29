@@ -13,6 +13,7 @@
 //!       * stores its own clone of that `Arc` in `instances`,
 //!       * hands a wrapper `Box<dyn AudioNode>` (holding *another* clone) to
 //!         the compiler.
+//!
 //!    Both clones share the same underlying handle — ADR-007 / Phase 2a.
 //! 3. The wrapper carries the audio-side clone into the `GraphScheduler` on
 //!    the audio thread.  When the old `CompiledGraph` retires through the

@@ -23,7 +23,7 @@
 //! - `output_buffers`     — pre-allocated AudioBuffer per step per port.
 //! - `silence_buffer`     — shared read-only zero buffer for unconnected ports.
 //! - `worker_scratch`     — one `Vec<*const AudioBuffer>` per worker (audio
-//!                          thread = worker `num_workers`); pre-sized.
+//!   thread = worker `num_workers`); pre-sized.
 //! - `delay_lines`        — pre-allocated PDC rings.
 //! - `mod_actions_by_step`— per-step modulation table, built at construction.
 //!

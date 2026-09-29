@@ -44,7 +44,7 @@ use crate::plugin_formats::clap::ffi::{CLAP_GUI_DRAIN_MESSAGE, CLAP_GUI_RESIZE_M
 use crate::plugin_system::crash_marker::PluginThread;
 use crate::plugin_system::instance::PluginInstance;
 
-#[allow(non_snake_case)]
+#[allow(non_snake_case, clippy::upper_case_acronyms)] // Win32 ABI type names
 mod user32 {
     use std::ffi::c_void;
 
@@ -431,11 +431,9 @@ unsafe extern "system" fn plugin_wnd_proc(
                 return 0;
             }
         }
-        CLAP_GUI_RESIZE_MESSAGE => {
-            if userdata(hwnd).is_some() {
-                resize_to_client(hwnd, wparam as i32, lparam as i32);
-                return 0;
-            }
+        CLAP_GUI_RESIZE_MESSAGE if userdata(hwnd).is_some() => {
+            resize_to_client(hwnd, wparam as i32, lparam as i32);
+            return 0;
         }
         WM_DPICHANGED => {
             if let Some(ud) = userdata(hwnd) {
@@ -1033,13 +1031,13 @@ pub unsafe fn open_vst3_editor(
     // Many plugins crash without a non-null component handler.
     let _ = ((*(*ctrl).vtbl).set_component_handler)(ctrl, component_handler_as_funknown());
 
-    let view = ((*(*ctrl).vtbl).create_view)(ctrl, b"editor\0".as_ptr());
+    let view = ((*(*ctrl).vtbl).create_view)(ctrl, c"editor".as_ptr().cast());
     if view.is_null() {
         release_controller(&mut separate, ctrl);
         return Err("VST3 GUI: IEditController::createView returned null".into());
     }
 
-    if ((*(*view).vtbl).is_platform_type_supported)(view, b"HWND\0".as_ptr()) != K_RESULT_OK {
+    if ((*(*view).vtbl).is_platform_type_supported)(view, c"HWND".as_ptr().cast()) != K_RESULT_OK {
         ((*(*view).vtbl).release)(view as *mut _);
         release_controller(&mut separate, ctrl);
         return Err("VST3 GUI: plugin view does not support HWND".into());
@@ -1121,7 +1119,7 @@ pub unsafe fn open_vst3_editor(
         .container_hwnd
         .store(hwnd, Ordering::Release);
 
-    let attach_r = ((*(*view).vtbl).attached)(view, plugin_area(hwnd), b"HWND\0".as_ptr());
+    let attach_r = ((*(*view).vtbl).attached)(view, plugin_area(hwnd), c"HWND".as_ptr().cast());
     if attach_r != K_RESULT_OK {
         user32::PostMessageW(hwnd, WM_CLOSE, 0, 0);
         return Err(format!("VST3 GUI: IPlugView::attached failed: {attach_r}"));

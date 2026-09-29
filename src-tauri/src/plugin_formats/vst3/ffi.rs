@@ -491,7 +491,7 @@ impl Vst3Library {
             return Err(format!("LoadLibraryW failed for {}", dll_path.display()));
         }
 
-        let factory_fn = unsafe { win32::GetProcAddress(handle, b"GetPluginFactory\0".as_ptr()) };
+        let factory_fn = unsafe { win32::GetProcAddress(handle, c"GetPluginFactory".as_ptr().cast()) };
         let factory_fn = match factory_fn {
             Some(f) => f,
             None => {
@@ -524,7 +524,7 @@ impl Vst3Library {
     /// Call off the audio thread.  The DLL must still be loaded (guaranteed
     /// while `self` is alive).
     pub unsafe fn factory(&self) -> Option<*mut IPluginFactory> {
-        let factory_fn = win32::GetProcAddress(self.handle, b"GetPluginFactory\0".as_ptr())?;
+        let factory_fn = win32::GetProcAddress(self.handle, c"GetPluginFactory".as_ptr().cast())?;
         type GetPluginFactoryFn = unsafe extern "C" fn() -> *mut IPluginFactory;
         let get_factory: GetPluginFactoryFn = std::mem::transmute(factory_fn);
         let factory = get_factory();

@@ -2118,7 +2118,7 @@ fn snapshot_project(project: &AppProject) -> AppProject {
 }
 
 fn plugin_id_from_effect_kind(kind: &str) -> Option<&str> {
-    kind.strip_prefix("plugin:")?.splitn(3, '|').next()
+    kind.strip_prefix("plugin:")?.split('|').next()
 }
 
 fn format_tag(fmt: DeviceFormat) -> &'static str {

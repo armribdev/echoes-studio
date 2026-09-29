@@ -207,7 +207,7 @@ impl ClapParamEvents {
             .map(|control| control.native_id)
             .collect();
         self.released_modulation = instance.replace_modulated_params(&modulated);
-        self.value_modulation = Box::new(value_modulation(&controls, instance));
+        *self.value_modulation = value_modulation(&controls, instance);
         self.controls = PluginParamControls::new(controls);
     }
 

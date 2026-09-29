@@ -69,7 +69,7 @@ fn collect(root: &Path, ext: &str, depth: usize, out: &mut Vec<PathBuf>) {
             collect(&path, ext, depth - 1, out);
         } else if path
             .extension()
-            .map_or(false, |e| e.eq_ignore_ascii_case(ext))
+            .is_some_and(|e| e.eq_ignore_ascii_case(ext))
         {
             out.push(path);
         }

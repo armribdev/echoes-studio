@@ -7,7 +7,7 @@ license = "MIT"
 repository = "https://github.com/echoes-studio/echoes-studio"
 default-run = "echoes-studio"
 edition = "2021"
-rust-version = "1.60"
+rust-version = "1.77.2"
 
 # Workspace rooted at this crate (ADR-015, Phase 6c-ii).  Rooting here — rather
 # than at the repo root — keeps the build artifact directory at `src-tauri/target`,

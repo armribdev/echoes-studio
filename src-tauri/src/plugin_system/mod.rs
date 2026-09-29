@@ -21,7 +21,7 @@
 //! - [`host`]         — `PluginHost` (lifecycle, parameter routing, state)
 //! - [`instance`]     — `PluginInstance` (Phase 2a): Arc-shared native handle
 //! - [`bridge`]       — out-of-process sandbox transport primitives (Phase 6c-i,
-//!                      not yet wired; see ADR-015)
+//!   not yet wired; see ADR-015)
 
 pub mod bridge;
 pub mod bridged_node;

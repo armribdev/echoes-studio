@@ -400,7 +400,7 @@ fn handle_menu_event(app: &tauri::AppHandle, menu_id: &str) {
             if let Ok(mut p) = state.project_path.lock() {
                 *p = None;
             }
-            recompile_audio_graph(&app, &state);
+            recompile_audio_graph(app, &state);
             mark_saved(&state);
             set_window_title(app, "Sans titre");
             let _ = app.emit("project-loaded", dto);
@@ -905,8 +905,8 @@ fn export_mp3(
         right: &right_i16,
     };
 
-    let mut mp3_out: Vec<u8> = Vec::new();
-    mp3_out.reserve(mp3lame_encoder::max_required_buffer_size(left_i16.len()));
+    let mut mp3_out: Vec<u8> =
+        Vec::with_capacity(mp3lame_encoder::max_required_buffer_size(left_i16.len()));
 
     let encoded_size = encoder
         .encode(input, mp3_out.spare_capacity_mut())
