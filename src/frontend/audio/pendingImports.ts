@@ -143,6 +143,13 @@ function createPendingImports() {
 			sampleRate?: number;
 		}): string {
 			const id = `pending-import-${++seq}-${Date.now()}`;
+			// Re-import of an already-cached file: copy peaks from a sibling slot
+			// so the Clip isn't empty when prepare settles in a few ms.
+			const sibling = get({ subscribe }).find(
+				(item) =>
+					pathsMatch(item.filePath, input.filePath) &&
+					(item.peaks_512.length > 0 || item.peaks_4096.length > 0),
+			);
 			update((list) => [
 				...list,
 				{
@@ -152,11 +159,11 @@ function createPendingImports() {
 					fileName: input.fileName,
 					start: input.start,
 					end: Math.max(input.end, input.start + 0.25),
-					sampleRate: input.sampleRate ?? 48_000,
-					peaks_64: [],
-					peaks_512: [],
-					peaks_4096: [],
-					progress: 0,
+					sampleRate: input.sampleRate ?? sibling?.sampleRate ?? 48_000,
+					peaks_64: sibling?.peaks_64.slice() ?? [],
+					peaks_512: sibling?.peaks_512.slice() ?? [],
+					peaks_4096: sibling?.peaks_4096.slice() ?? [],
+					progress: sibling ? Math.max(sibling.progress, 0.01) : 0,
 				},
 			]);
 			return id;
@@ -191,6 +198,38 @@ function createPendingImports() {
 				list.map((item) =>
 					item.id === id ? { ...item, engineClipId } : item,
 				),
+			);
+		},
+
+		/** Fill empty peak lanes from ADD_CLIP DTO (cached re-import). */
+		seedPeaks(
+			id: string,
+			peaks: {
+				sampleRate?: number;
+				peaks_64?: PeakPair[];
+				peaks_512?: PeakPair[];
+				peaks_4096?: PeakPair[];
+			},
+		) {
+			update((list) =>
+				list.map((item) => {
+					if (item.id !== id) return item;
+					return {
+						...item,
+						sampleRate:
+							peaks.sampleRate && peaks.sampleRate > 0
+								? peaks.sampleRate
+								: item.sampleRate,
+						peaks_64:
+							item.peaks_64.length > 0 ? item.peaks_64 : (peaks.peaks_64 ?? []),
+						peaks_512:
+							item.peaks_512.length > 0 ? item.peaks_512 : (peaks.peaks_512 ?? []),
+						peaks_4096:
+							item.peaks_4096.length > 0
+								? item.peaks_4096
+								: (peaks.peaks_4096 ?? []),
+					};
+				}),
 			);
 		},
 

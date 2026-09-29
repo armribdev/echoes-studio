@@ -67,11 +67,27 @@ interface InFlightImport {
 
 const inFlight = new Map<string, InFlightImport>();
 
-function clipIdFromResult(result: CommandResult): string | null {
+function clipFromResult(result: CommandResult): {
+	id: string;
+	sample_rate?: number;
+	peaks_64?: [number, number][];
+	peaks_512?: [number, number][];
+	peaks_4096?: [number, number][];
+} | null {
 	for (const raw of result.events) {
-		const payload = (raw as { payload?: { clip?: { id?: string } } }).payload;
-		const id = payload?.clip?.id;
-		if (id) return id;
+		const payload = (raw as {
+			payload?: {
+				clip?: {
+					id?: string;
+					sample_rate?: number;
+					peaks_64?: [number, number][];
+					peaks_512?: [number, number][];
+					peaks_4096?: [number, number][];
+				};
+			};
+		}).payload;
+		const clip = payload?.clip;
+		if (clip?.id) return { id: clip.id, ...clip };
 	}
 	return null;
 }
@@ -157,17 +173,30 @@ export async function cancelAudioImport(filePath: string): Promise<void> {
 		startSec = slot?.start ?? entry.startSec;
 		engineClipId = slot?.engineClipId ?? entry.engineClipId;
 		if (slot?.engineClipId) forgetClipUiKey(slot.engineClipId);
+		// Only this slot — never removeByPath (would wipe settled siblings).
 		pendingImports.remove(entry.pendingId, { force: true });
 		audioImportProgress.end();
 	} else {
-		const doomed = get(pendingImports).filter((item) => pathsMatch(item.filePath, filePath));
+		// Library stop with no local inFlight: cancel unsettled slots only.
+		const doomed = get(pendingImports).filter(
+			(item) => pathsMatch(item.filePath, filePath) && !item.settled,
+		);
 		for (const item of doomed) {
 			trackId = item.trackId;
 			startSec = item.start;
 			engineClipId = item.engineClipId;
 			if (item.engineClipId) forgetClipUiKey(item.engineClipId);
+			pendingImports.remove(item.id, { force: true });
 		}
-		pendingImports.removeByPath(filePath);
+		if (doomed.length === 0) {
+			selection.clear();
+			try {
+				await invoke('cancel_audio_import', { filePath });
+			} catch {
+				/* best-effort */
+			}
+			return;
+		}
 	}
 
 	selection.clear();
@@ -215,6 +244,29 @@ export async function importAudioToTrack(opts: ImportAudioOptions): Promise<void
 		start: opts.startSec,
 		end: endSec,
 	});
+	// If no pending sibling had peaks (slot pruned), borrow from an engine twin.
+	{
+		const slot = pendingImports.get(pendingId);
+		if (slot && slot.peaks_512.length === 0 && slot.peaks_4096.length === 0) {
+			const target = normPath(opts.filePath);
+			for (const track of get(projectEventStore).tracks) {
+				const twin = track.clips.find(
+					(c) =>
+						normPath(c.file_path ?? '') === target &&
+						((c.peaks_512?.length ?? 0) > 0 || (c.peaks_4096?.length ?? 0) > 0),
+				);
+				if (twin) {
+					pendingImports.seedPeaks(pendingId, {
+						sampleRate: twin.sample_rate,
+						peaks_64: twin.peaks_64,
+						peaks_512: twin.peaks_512,
+						peaks_4096: twin.peaks_4096,
+					});
+					break;
+				}
+			}
+		}
+	}
 	selection.setSingle(pendingId);
 	adoptTimelineFocusForImportedClip();
 	const entry: InFlightImport = {
@@ -247,7 +299,8 @@ export async function importAudioToTrack(opts: ImportAudioOptions): Promise<void
 		entry.startSec = startSec;
 
 		const result = await addClip(trackId, opts.filePath, startSec, clipEnd);
-		const engineClipId = clipIdFromResult(result);
+		const engineClip = clipFromResult(result);
+		const engineClipId = engineClip?.id ?? null;
 		if (engineClipId) {
 			entry.engineClipId = engineClipId;
 		}
@@ -260,6 +313,15 @@ export async function importAudioToTrack(opts: ImportAudioOptions): Promise<void
 
 		if (engineClipId) {
 			pendingImports.attachEngineClip(pendingId, engineClipId);
+		}
+		// Cached re-import may miss bulk peak IPC — seed from ADD_CLIP DTO.
+		if (engineClip) {
+			pendingImports.seedPeaks(pendingId, {
+				sampleRate: engineClip.sample_rate,
+				peaks_64: engineClip.peaks_64,
+				peaks_512: engineClip.peaks_512,
+				peaks_4096: engineClip.peaks_4096,
+			});
 		}
 
 		const prepared = await preparePromise;

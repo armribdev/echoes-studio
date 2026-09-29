@@ -949,6 +949,10 @@ impl CachedAudioData {
     }
 }
 
+fn norm_cache_path(path: &str) -> String {
+    path.replace('\\', "/").to_lowercase()
+}
+
 impl AudioDataCache {
     pub fn new() -> Self {
         Self {
@@ -962,7 +966,8 @@ impl AudioDataCache {
     }
 
     pub fn get_by_path(&self, path: &str) -> Option<Arc<CachedAudioData>> {
-        self.by_path.lock().ok()?.get(path).cloned()
+        let key = norm_cache_path(path);
+        self.by_path.lock().ok()?.get(&key).cloned()
     }
 
     pub fn insert(&self, clip_id: String, data: Arc<CachedAudioData>) {
@@ -972,8 +977,9 @@ impl AudioDataCache {
     }
 
     pub fn insert_path(&self, path: String, data: Arc<CachedAudioData>) {
+        let key = norm_cache_path(&path);
         if let Ok(mut map) = self.by_path.lock() {
-            map.insert(path, data);
+            map.insert(key, data);
         }
     }
 
@@ -985,6 +991,77 @@ impl AudioDataCache {
     ) {
         self.insert_path(path, Arc::clone(&data));
         self.insert(clip_id, data);
+    }
+
+    /// Drop a path entry regardless of completeness (e.g. orphan after cancel).
+    pub fn remove_path(&self, path: &str) {
+        let key = norm_cache_path(path);
+        if let Ok(mut map) = self.by_path.lock() {
+            map.remove(&key);
+        }
+    }
+
+    /// Drop only an incomplete path prefix so a cancelled decode cannot be reused.
+    pub fn remove_if_incomplete(&self, path: &str) {
+        let key = norm_cache_path(path);
+        if let Ok(mut map) = self.by_path.lock() {
+            let drop = map.get(&key).is_some_and(|c| !c.complete);
+            if drop {
+                map.remove(&key);
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod audio_cache_tests {
+    use super::*;
+    use std::sync::Arc;
+
+    fn sample(complete: bool, n: usize) -> Arc<CachedAudioData> {
+        Arc::new(CachedAudioData {
+            raw_samples: Arc::new(vec![0.1; n]),
+            sample_rate: 48_000,
+            peaks_64: Vec::new(),
+            peaks_512: Vec::new(),
+            peaks_4096: Vec::new(),
+            complete,
+        })
+    }
+
+    #[test]
+    fn path_lookup_is_case_and_slash_insensitive() {
+        let cache = AudioDataCache::new();
+        cache.insert_path(r"C:\Sounds\Kick.wav".into(), sample(true, 100));
+        assert!(cache.get_by_path("c:/sounds/kick.wav").is_some());
+    }
+
+    #[test]
+    fn remove_if_incomplete_keeps_complete_entries() {
+        let cache = AudioDataCache::new();
+        cache.insert_path("/a.wav".into(), sample(true, 100));
+        cache.remove_if_incomplete("/a.wav");
+        assert!(cache.get_by_path("/a.wav").is_some());
+    }
+
+    #[test]
+    fn remove_if_incomplete_drops_prefix() {
+        let cache = AudioDataCache::new();
+        cache.insert_path("/a.wav".into(), sample(false, 10));
+        cache.remove_if_incomplete("/a.wav");
+        assert!(cache.get_by_path("/a.wav").is_none());
+    }
+
+    #[test]
+    fn remove_path_allows_fresh_decode_after_orphan_prefix() {
+        let cache = AudioDataCache::new();
+        cache.insert_path("/a.wav".into(), sample(false, 10));
+        cache.remove_path("/a.wav");
+        assert!(cache.get_by_path("/a.wav").is_none());
+        cache.insert_path("/a.wav".into(), sample(true, 1000));
+        let hit = cache.get_by_path("/a.wav").unwrap();
+        assert!(hit.complete);
+        assert_eq!(hit.raw_samples.len(), 1000);
     }
 }
 

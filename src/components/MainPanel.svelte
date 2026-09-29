@@ -979,8 +979,10 @@
 
 	function deleteSelected() {
 		const sel = $selection.ids;
-		// Pending imports (avant / pendant decode) : annuler plutôt que removeClip.
+		// In-flight imports only: cancel decode. Settled slots are normal clips —
+		// cancelAudioImport(path) would also wipe other clips of the same file.
 		for (const pending of $pendingImports) {
+			if (pending.settled) continue;
 			const displayId = pending.engineClipId ?? pending.id;
 			if (sel.has(displayId) || sel.has(pending.id)) {
 				void cancelAudioImport(pending.filePath);

@@ -221,8 +221,10 @@
 
 		const W = Math.max(1, canvasCssW);
 		const H = Math.max(canvas.height, Math.max(clipEl?.clientHeight ?? 0, 96));
-		// Near decode end / handoff: freeze goals so finalize peak replaces can't pop.
-		const freezeGoals = loadProgress >= 0.93 || holdWorkerAfterHandoff;
+		const freezeGoals =
+			(loadProgress >= 0.93 || holdWorkerAfterHandoff) &&
+			(peaks_512.length > 0 || peaks_4096.length > 0 || peaks_64.length > 0) &&
+			_goalTops.length > 0;
 		// Resizing the canvas buffer clears pixels — avoid that during handoff.
 		if (!freezeGoals) {
 			if (canvas.width !== W) canvas.width = W;
@@ -316,12 +318,14 @@
 		void loadProgress;
 		// Freeze peak-lane rebuilds near the end — Rust finalize replaces 512/4096
 		// with recomputed lanes that differ slightly from streamed deltas (end flash).
-		if (loadProgress < 0.93) {
+		// Exception: still allow the first real peak fill (cached re-import jumps to
+		// progress=1 before peaks land).
+		const hasPeaks =
+			peaks_64.length > 0 || peaks_512.length > 0 || peaks_4096.length > 0;
+		if (loadProgress < 0.93 || !hasPeaks) {
 			_colsDirty = true;
-			ensureGrowLoop();
-		} else {
-			ensureGrowLoop();
 		}
+		ensureGrowLoop();
 	}
 
 	const loadWorker = async () => {
@@ -405,7 +409,10 @@
 			cancelAnimationFrame(_raf);
 			_raf = 0;
 		}
-		holdWorkerAfterHandoff = true;
+		// Cached re-import settles in ms — grow never covers the frame. Holding
+		// that empty canvas leaves a flat waveform; let the worker paint instead.
+		const grewEnough = _smoothCovered >= Math.max(8, canvasCssW * 0.85);
+		holdWorkerAfterHandoff = grewEnough;
 		holdScaleBucket = scaleBucket(scale);
 		importMark('clip-pending-false');
 		signalPendingPainted();

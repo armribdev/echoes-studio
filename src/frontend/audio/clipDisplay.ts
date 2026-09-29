@@ -72,9 +72,10 @@ export function buildClipDisplayItems(
 			end: p.end,
 			offset: 0,
 			sample_rate: p.sampleRate || engine?.sample_rate || 48_000,
-			peaks_64: p.peaks_64,
-			peaks_512: p.peaks_512,
-			peaks_4096: p.peaks_4096,
+			// Prefer streamed pending peaks; fall back to engine DTO (cached re-import).
+			peaks_64: p.peaks_64.length > 0 ? p.peaks_64 : (engine?.peaks_64 ?? []),
+			peaks_512: p.peaks_512.length > 0 ? p.peaks_512 : (engine?.peaks_512 ?? []),
+			peaks_4096: p.peaks_4096.length > 0 ? p.peaks_4096 : (engine?.peaks_4096 ?? []),
 			// Grow UI until settle; engine may already play prefixes (ADR-024).
 			pending: !p.settled,
 			loadProgress: p.settled ? 1 : p.progress,

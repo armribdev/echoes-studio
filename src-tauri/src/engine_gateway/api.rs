@@ -607,6 +607,7 @@ fn ensure_path_cached(
 
     if let Some(cached) = state.audio_cache.get_by_path(file_path) {
         if cached.complete {
+            // Omit peaks_64 — dense lane can blow IPC; arrange uses 512/4096.
             let _ = app.emit(
                 "audio://import-progress",
                 serde_json::json!({
@@ -614,7 +615,6 @@ fn ensure_path_cached(
                     "progress": 1.0,
                     "cached": true,
                     "sample_rate": cached.sample_rate,
-                    "peaks_64": cached.peaks_64,
                     "peaks_512": cached.peaks_512,
                     "peaks_4096": cached.peaks_4096,
                     "decoded_duration_sec": cached.duration_sec(),
@@ -653,9 +653,8 @@ fn ensure_path_cached(
                 break;
             }
         }
-        if let Some(c) = state.audio_cache.get_by_path(file_path) {
-            return Ok(c);
-        }
+        // Orphan prefix (cancelled decode left incomplete cache) — never reuse it.
+        state.audio_cache.remove_path(file_path);
     }
 
     let mut emit_progress = |update: crate::audio_clip::DecodeProgressUpdate| {
@@ -792,6 +791,8 @@ pub fn cancel_audio_import(
     if let Ok(mut set) = state.import_cancels.lock() {
         set.insert(key);
     }
+    // Drop incomplete path prefixes so a later re-import cannot adopt a stub.
+    state.audio_cache.remove_if_incomplete(&file_path);
     Ok(())
 }
 
