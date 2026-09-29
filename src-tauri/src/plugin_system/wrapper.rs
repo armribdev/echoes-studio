@@ -25,7 +25,7 @@
 //! the corresponding wrapper.
 
 use crate::audio_graph::buffer::AudioBuffer;
-use crate::audio_graph::node::{AudioNode, NodeId, PrepareContext, TransportInfo};
+use crate::audio_graph::node::{AudioNode, PrepareContext, TransportInfo};
 
 /// The hosting format of a device.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -40,20 +40,16 @@ pub enum DeviceFormat {
 }
 
 /// Stereo pass-through node standing in for an internal-format device.
-pub struct PassThroughDevice {
-    node_id: NodeId,
-}
+#[derive(Default)]
+pub struct PassThroughDevice;
 
 impl PassThroughDevice {
-    pub fn new(node_id: NodeId) -> Self {
-        Self { node_id }
+    pub fn new() -> Self {
+        Self
     }
 }
 
 impl AudioNode for PassThroughDevice {
-    fn node_id(&self) -> NodeId {
-        self.node_id
-    }
     fn label(&self) -> &str {
         "PassThrough"
     }

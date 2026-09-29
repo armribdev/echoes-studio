@@ -11,10 +11,9 @@ use std::sync::{
 };
 
 use crate::audio_graph::buffer::AudioBuffer;
-use crate::audio_graph::node::{AudioNode, NodeId, PrepareContext, TransportInfo};
+use crate::audio_graph::node::{AudioNode, PrepareContext, TransportInfo};
 
 pub struct MeterNode {
-    id: NodeId,
     /// Shared cells written by this node and read by the reporter thread.
     peak_l_out: Arc<AtomicU32>,
     peak_r_out: Arc<AtomicU32>,
@@ -22,9 +21,8 @@ pub struct MeterNode {
 
 impl MeterNode {
     /// Create a node that writes its per-block peak into the provided atomics.
-    pub fn new(id: NodeId, peak_l: Arc<AtomicU32>, peak_r: Arc<AtomicU32>) -> Self {
+    pub fn new(peak_l: Arc<AtomicU32>, peak_r: Arc<AtomicU32>) -> Self {
         Self {
-            id,
             peak_l_out: peak_l,
             peak_r_out: peak_r,
         }
@@ -32,9 +30,6 @@ impl MeterNode {
 }
 
 impl AudioNode for MeterNode {
-    fn node_id(&self) -> NodeId {
-        self.id
-    }
     fn label(&self) -> &str {
         "MeterNode"
     }
@@ -87,7 +82,7 @@ impl AudioNode for MeterNode {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::audio_graph::node::{NodeId, TimeSignature};
+    use crate::audio_graph::node::TimeSignature;
 
     fn transport(frames: usize) -> TransportInfo {
         TransportInfo {
@@ -109,7 +104,7 @@ mod tests {
     fn passes_audio_through_unchanged() {
         let peak_l = Arc::new(AtomicU32::new(0));
         let peak_r = Arc::new(AtomicU32::new(0));
-        let mut node = MeterNode::new(NodeId(1), Arc::clone(&peak_l), Arc::clone(&peak_r));
+        let mut node = MeterNode::new(Arc::clone(&peak_l), Arc::clone(&peak_r));
         let mut input = AudioBuffer::new(1, 3);
         input.channel_mut(0).copy_from_slice(&[0.1, -0.2, 0.3]);
         let mut output = [AudioBuffer::new(1, 3)];
@@ -123,7 +118,7 @@ mod tests {
     fn records_per_channel_absolute_peak() {
         let peak_l = Arc::new(AtomicU32::new(0));
         let peak_r = Arc::new(AtomicU32::new(0));
-        let mut node = MeterNode::new(NodeId(1), Arc::clone(&peak_l), Arc::clone(&peak_r));
+        let mut node = MeterNode::new(Arc::clone(&peak_l), Arc::clone(&peak_r));
         let mut input = AudioBuffer::new(2, 3);
         input.channel_mut(0).copy_from_slice(&[0.1, -0.9, 0.3]);
         input.channel_mut(1).copy_from_slice(&[0.2, 0.2, -0.5]);
@@ -139,7 +134,7 @@ mod tests {
     fn mono_input_mirrors_left_peak_into_right() {
         let peak_l = Arc::new(AtomicU32::new(0));
         let peak_r = Arc::new(AtomicU32::new(0));
-        let mut node = MeterNode::new(NodeId(1), Arc::clone(&peak_l), Arc::clone(&peak_r));
+        let mut node = MeterNode::new(Arc::clone(&peak_l), Arc::clone(&peak_r));
         let mut input = AudioBuffer::new(1, 2);
         input.channel_mut(0).copy_from_slice(&[0.4, -0.6]);
         let mut output = [AudioBuffer::new(1, 2)];
@@ -154,7 +149,7 @@ mod tests {
     fn reset_zeroes_both_meter_cells() {
         let peak_l = Arc::new(AtomicU32::new(f32::to_bits(0.8)));
         let peak_r = Arc::new(AtomicU32::new(f32::to_bits(0.8)));
-        let mut node = MeterNode::new(NodeId(1), Arc::clone(&peak_l), Arc::clone(&peak_r));
+        let mut node = MeterNode::new(Arc::clone(&peak_l), Arc::clone(&peak_r));
 
         node.reset();
 

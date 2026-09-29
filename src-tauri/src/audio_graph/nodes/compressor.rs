@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use crate::audio_graph::buffer::AudioBuffer;
-use crate::audio_graph::node::{AudioNode, NodeId, PrepareContext, TransportInfo, MAX_CONTROL_POINTS};
+use crate::audio_graph::node::{AudioNode, PrepareContext, TransportInfo, MAX_CONTROL_POINTS};
 use crate::audio_graph::oversampling::{Oversample2x, OVERSAMPLE_FACTOR};
 use crate::audio_graph::nodes::modulated;
 use crate::audio_graph::parameter_block::ParameterBlock;
@@ -54,7 +54,6 @@ fn compressor_params_from_block(block: &ParameterBlock) -> CompressorParams {
 }
 
 pub struct CompressorNode {
-    id: NodeId,
     /// Cached parameter values — the time-constants currently baked into
     /// `attack_coeff` / `release_coeff` / `makeup_linear`.  Compared against the
     /// hot block each block to decide whether a recompute is needed.
@@ -86,9 +85,8 @@ pub struct CompressorNode {
 }
 
 impl CompressorNode {
-    pub fn new(id: NodeId, params: CompressorParams) -> Self {
+    pub fn new(params: CompressorParams) -> Self {
         Self {
-            id,
             params,
             envelope: 0.0,
             attack_coeff: 0.0,
@@ -138,9 +136,6 @@ impl CompressorNode {
 }
 
 impl AudioNode for CompressorNode {
-    fn node_id(&self) -> NodeId {
-        self.id
-    }
     fn label(&self) -> &str {
         "CompressorNode"
     }
@@ -301,7 +296,7 @@ mod tests {
 
         let params = CompressorParams::default();
         let block = ParameterBlock::new(&compressor_block_values(&params));
-        let mut node = CompressorNode::new(NodeId(1), params.clone()).with_block(Arc::clone(&block));
+        let mut node = CompressorNode::new(params.clone()).with_block(Arc::clone(&block));
         node.prepare(PrepareContext {
             sample_rate: 48_000.0,
             max_block_size: 64,
@@ -337,7 +332,7 @@ mod tests {
     fn interior_grid_point_recomputes_coeffs_mid_block() {
         let params = CompressorParams::default();
         let block = ParameterBlock::new(&compressor_block_values(&params));
-        let mut node = CompressorNode::new(NodeId(1), params.clone()).with_block(Arc::clone(&block));
+        let mut node = CompressorNode::new(params.clone()).with_block(Arc::clone(&block));
         node.prepare(PrepareContext {
             sample_rate: 48_000.0,
             max_block_size: 64,
@@ -371,7 +366,7 @@ mod tests {
     fn hot_block_changes_coeffs_without_prepare() {
         let params = CompressorParams::default();
         let block = ParameterBlock::new(&compressor_block_values(&params));
-        let mut node = CompressorNode::new(NodeId(1), params).with_block(Arc::clone(&block));
+        let mut node = CompressorNode::new(params).with_block(Arc::clone(&block));
         node.prepare(PrepareContext {
             sample_rate: 48_000.0,
             max_block_size: 64,

@@ -17,11 +17,10 @@ use std::sync::Arc;
 
 use crate::audio_graph::buffer::AudioBuffer;
 use crate::audio_graph::live_params::TrackParams;
-use crate::audio_graph::node::{AudioNode, NodeId, PrepareContext, TransportInfo};
+use crate::audio_graph::node::{AudioNode, PrepareContext, TransportInfo};
 use crate::audio_graph::nodes::gain::{SmoothedGain, FADER_SMOOTH_CUTOFF_HZ, PARAM_GAIN};
 
 pub struct TrackGainNode {
-    id: NodeId,
     params: Arc<TrackParams>,
     any_solo: Arc<AtomicBool>,
     /// Volume fader: slow ramp in dB so a fast move does not click.
@@ -36,9 +35,8 @@ pub struct TrackGainNode {
 }
 
 impl TrackGainNode {
-    pub fn new(id: NodeId, params: Arc<TrackParams>, any_solo: Arc<AtomicBool>) -> Self {
+    pub fn new(params: Arc<TrackParams>, any_solo: Arc<AtomicBool>) -> Self {
         let mut node = Self {
-            id,
             params,
             any_solo,
             fader: SmoothedGain::new(0.0),
@@ -76,9 +74,6 @@ fn balance_gains(pan: f32) -> (f32, f32) {
 }
 
 impl AudioNode for TrackGainNode {
-    fn node_id(&self) -> NodeId {
-        self.id
-    }
     fn label(&self) -> &str {
         "TrackGainNode"
     }
@@ -175,7 +170,7 @@ mod tests {
     use super::*;
     use crate::audio_graph::buffer::AudioBuffer;
     use crate::audio_graph::live_params::LiveParams;
-    use crate::audio_graph::node::{NodeId, PrepareContext, TimeSignature, TransportInfo};
+    use crate::audio_graph::node::{PrepareContext, TimeSignature, TransportInfo};
 
     fn transport(block: usize) -> TransportInfo {
         TransportInfo {
@@ -193,7 +188,7 @@ mod tests {
 
     fn node_at_unity(live: &LiveParams) -> TrackGainNode {
         let cells = live.get_or_init_track("t", 1.0, 0.0, false, false);
-        let mut node = TrackGainNode::new(NodeId(1), cells, Arc::clone(&live.any_solo));
+        let mut node = TrackGainNode::new(cells, Arc::clone(&live.any_solo));
         node.prepare(PrepareContext {
             sample_rate: 48_000.0,
             max_block_size: FRAMES_13_MS,
@@ -240,7 +235,7 @@ mod tests {
     fn muted_track_stays_silent_under_volume_modulation() {
         let live = LiveParams::new();
         let cells = live.get_or_init_track("t", 1.0, 0.0, true, false);
-        let mut node = TrackGainNode::new(NodeId(1), cells, Arc::clone(&live.any_solo));
+        let mut node = TrackGainNode::new(cells, Arc::clone(&live.any_solo));
         node.prepare(PrepareContext {
             sample_rate: 48_000.0,
             max_block_size: FRAMES_13_MS,
@@ -270,7 +265,7 @@ mod tests {
     fn pan_step_ramps_instead_of_jumping() {
         let live = LiveParams::new();
         let cells = live.get_or_init_track("t", 1.0, 0.0, false, false);
-        let mut node = TrackGainNode::new(NodeId(1), cells, Arc::clone(&live.any_solo));
+        let mut node = TrackGainNode::new(cells, Arc::clone(&live.any_solo));
         node.prepare(PrepareContext {
             sample_rate: 48_000.0,
             max_block_size: 8,

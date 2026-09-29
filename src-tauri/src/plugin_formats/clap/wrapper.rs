@@ -30,7 +30,7 @@ use std::ffi::c_void;
 use std::sync::Arc;
 
 use crate::audio_graph::buffer::AudioBuffer;
-use crate::audio_graph::node::{AudioNode, NodeId, PrepareContext, TransportInfo};
+use crate::audio_graph::node::{AudioNode, PrepareContext, TransportInfo};
 use crate::audio_graph::plugin_params::{parse_plugin_param_name, PluginParamControl};
 use crate::plugin_formats::clap::audio_ports::ClapOutputBuses;
 use crate::plugin_formats::clap::params::{observe_output_event, read_clap_params, ClapParamEvents};
@@ -56,7 +56,6 @@ unsafe extern "C" fn clap_process_trampoline(raw: *mut c_void) -> i32 {
 }
 
 pub struct ClapWrapperNode {
-    node_id: NodeId,
 
     /// Shared, refcounted handle to the live plugin.  Captured at
     /// construction; cloned only on the command thread.  Deref on the audio
@@ -113,13 +112,12 @@ impl ClapWrapperNode {
     /// `num_aux_inputs` comes from the plugin's scanned manifest
     /// (`PluginHost::sidechain_input_ports`, ADR-014) — `0` for every plugin
     /// without a declared aux bus, so callers that don't care can pass `0`.
-    pub fn new(node_id: NodeId, instance: Arc<PluginInstance>, num_aux_inputs: usize) -> Self {
+    pub fn new(instance: Arc<PluginInstance>, num_aux_inputs: usize) -> Self {
         debug_assert!(
             instance.clap_plugin().is_some(),
             "ClapWrapperNode requires a CLAP PluginInstance"
         );
         Self {
-            node_id,
             instance,
             num_aux_inputs,
             in_port_channel_ptrs: Vec::new(),
@@ -150,9 +148,6 @@ impl ClapWrapperNode {
 }
 
 impl AudioNode for ClapWrapperNode {
-    fn node_id(&self) -> NodeId {
-        self.node_id
-    }
     fn label(&self) -> &str {
         "ClapWrapperNode"
     }
@@ -371,7 +366,7 @@ mod aux_feed_tests {
     use std::process::Command;
     use std::sync::OnceLock;
 
-    use crate::audio_graph::node::NodeId;
+    
     use crate::plugin_system::host::PluginHost;
     use crate::plugin_system::registry::PluginManifest;
     use crate::plugin_system::wrapper::DeviceFormat;
@@ -421,7 +416,7 @@ mod aux_feed_tests {
         host.registry_mut().add(manifest(dll, 1));
 
         let mut node = host
-            .instantiate(NodeId(1), "fx0", PLUGIN_ID, false)
+            .instantiate("fx0", PLUGIN_ID, false)
             .expect("real CLAP instantiation must succeed");
         node.prepare(PrepareContext {
             sample_rate: 48_000.0,
@@ -472,7 +467,7 @@ mod aux_feed_tests {
         host.registry_mut().add(manifest(dll, 0));
 
         let node = host
-            .instantiate(NodeId(1), "fx0", PLUGIN_ID, false)
+            .instantiate("fx0", PLUGIN_ID, false)
             .expect("real CLAP instantiation must succeed");
         assert_eq!(node.num_input_ports(), 1, "no aux bus declared");
     }
@@ -516,7 +511,7 @@ mod aux_feed_tests {
         host.registry_mut().add(manifest(dll, 0));
 
         let mut node = host
-            .instantiate(NodeId(1), "fx0", PLUGIN_ID, false)
+            .instantiate("fx0", PLUGIN_ID, false)
             .expect("real CLAP instantiation must succeed");
         node.prepare(prepare_context());
         assert_eq!(node.num_output_ports(), 2, "main + the declared aux output");
@@ -542,7 +537,7 @@ mod aux_feed_tests {
         let dll = test_plugin_dll();
         let mut host = PluginHost::new();
         host.registry_mut().add(manifest(dll, 0));
-        host.instantiate(NodeId(1), "fx0", PLUGIN_ID, false)
+        host.instantiate("fx0", PLUGIN_ID, false)
             .expect("real CLAP instantiation must succeed");
 
         assert_eq!(

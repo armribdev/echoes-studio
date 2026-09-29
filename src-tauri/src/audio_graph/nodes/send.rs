@@ -6,23 +6,19 @@
 //! do not need to change when the full implementation lands.
 
 use crate::audio_graph::buffer::AudioBuffer;
-use crate::audio_graph::node::{AudioNode, NodeId, PrepareContext, TransportInfo};
+use crate::audio_graph::node::{AudioNode, PrepareContext, TransportInfo};
 
 pub struct SendNode {
-    id: NodeId,
     gain: f32,
 }
 
 impl SendNode {
-    pub fn new(id: NodeId, gain: f32) -> Self {
-        Self { id, gain }
+    pub fn new(gain: f32) -> Self {
+        Self { gain }
     }
 }
 
 impl AudioNode for SendNode {
-    fn node_id(&self) -> NodeId {
-        self.id
-    }
     fn label(&self) -> &str {
         "SendNode"
     }
@@ -60,7 +56,7 @@ impl AudioNode for SendNode {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::audio_graph::node::{NodeId, TimeSignature};
+    use crate::audio_graph::node::TimeSignature;
 
     fn transport(frames: usize) -> TransportInfo {
         TransportInfo {
@@ -76,7 +72,7 @@ mod tests {
 
     #[test]
     fn scales_signal_by_send_gain() {
-        let mut node = SendNode::new(NodeId(1), 0.25);
+        let mut node = SendNode::new(0.25);
         let mut input = AudioBuffer::new(1, 3);
         input.channel_mut(0).copy_from_slice(&[1.0, -2.0, 4.0]);
         let mut output = [AudioBuffer::new(1, 3)];
@@ -88,7 +84,7 @@ mod tests {
 
     #[test]
     fn zero_gain_produces_silence() {
-        let mut node = SendNode::new(NodeId(1), 0.0);
+        let mut node = SendNode::new(0.0);
         let mut input = AudioBuffer::new(1, 2);
         input.channel_mut(0).copy_from_slice(&[1.0, 1.0]);
         let mut output = [AudioBuffer::new(1, 2)];

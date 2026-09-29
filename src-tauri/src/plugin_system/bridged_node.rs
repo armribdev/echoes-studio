@@ -24,7 +24,7 @@ use plugin_bridge::session::{BlockOutcome, BlockRequest};
 
 use crate::audio_graph::buffer::AudioBuffer;
 use crate::audio_graph::midi::MidiEventList;
-use crate::audio_graph::node::{AudioNode, NodeId, PrepareContext, TransportInfo};
+use crate::audio_graph::node::{AudioNode, PrepareContext, TransportInfo};
 use crate::audio_graph::nodes::clap_instrument::push_clap_notes;
 use crate::audio_graph::nodes::instrument::InstrumentDevice;
 use crate::audio_graph::plugin_params::{parse_plugin_param_name, PluginParamControl, PluginParamControls};
@@ -232,25 +232,19 @@ fn pass_through(inputs: &[&AudioBuffer], outputs: &mut [AudioBuffer]) {
 
 /// A sandboxed effect: a block that cannot be sent passes the input through.
 pub struct BridgedNode {
-    node_id: NodeId,
     round_trip: BridgeRoundTrip,
 }
 
 impl BridgedNode {
     /// `instance` must be sandboxed (`PluginInstance::new_bridged`).
-    pub fn new(node_id: NodeId, instance: Arc<PluginInstance>) -> Self {
+    pub fn new(instance: Arc<PluginInstance>) -> Self {
         BridgedNode {
-            node_id,
             round_trip: BridgeRoundTrip::new(instance),
         }
     }
 }
 
 impl AudioNode for BridgedNode {
-    fn node_id(&self) -> NodeId {
-        self.node_id
-    }
-
     fn label(&self) -> &str {
         "BridgedPlugin"
     }

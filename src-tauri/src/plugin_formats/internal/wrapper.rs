@@ -3,22 +3,18 @@
 //! Wraps a loaded WASM module as a graph-compatible `AudioNode`.
 
 use crate::audio_graph::buffer::AudioBuffer;
-use crate::audio_graph::node::{AudioNode, NodeId, PrepareContext, TransportInfo};
+use crate::audio_graph::node::{AudioNode, PrepareContext, TransportInfo};
 
-pub struct WasmWrapperNode {
-    node_id: NodeId,
-}
+#[derive(Default)]
+pub struct WasmWrapperNode;
 
 impl WasmWrapperNode {
-    pub fn new(node_id: NodeId) -> Self {
-        Self { node_id }
+    pub fn new() -> Self {
+        Self
     }
 }
 
 impl AudioNode for WasmWrapperNode {
-    fn node_id(&self) -> NodeId {
-        self.node_id
-    }
     fn label(&self) -> &str {
         "WasmWrapperNode"
     }

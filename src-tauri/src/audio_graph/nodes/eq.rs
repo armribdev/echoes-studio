@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use crate::audio_graph::buffer::AudioBuffer;
-use crate::audio_graph::node::{AudioNode, NodeId, PrepareContext, TransportInfo, MAX_CONTROL_POINTS};
+use crate::audio_graph::node::{AudioNode, PrepareContext, TransportInfo, MAX_CONTROL_POINTS};
 use crate::audio_graph::oversampling::{Oversample2x, OVERSAMPLE_FACTOR};
 use crate::audio_graph::nodes::modulated;
 use crate::audio_graph::parameter_block::ParameterBlock;
@@ -172,7 +172,6 @@ impl Biquad {
 }
 
 pub struct EqNode {
-    id: NodeId,
     /// Cached parameter values — the coefficients currently baked into the
     /// biquads.  Compared against the hot block each block to decide whether a
     /// recompute is needed.
@@ -201,9 +200,8 @@ pub struct EqNode {
 }
 
 impl EqNode {
-    pub fn new(id: NodeId, params: EqParams) -> Self {
+    pub fn new(params: EqParams) -> Self {
         Self {
-            id,
             params,
             low: Biquad::default(),
             mid: Biquad::default(),
@@ -255,9 +253,6 @@ impl EqNode {
 }
 
 impl AudioNode for EqNode {
-    fn node_id(&self) -> NodeId {
-        self.id
-    }
     fn label(&self) -> &str {
         "EqNode"
     }
@@ -458,7 +453,7 @@ mod tests {
 
         let params = EqParams::default();
         let block = ParameterBlock::new(&eq_block_values(&params));
-        let mut node = EqNode::new(NodeId(1), params.clone()).with_block(Arc::clone(&block));
+        let mut node = EqNode::new(params.clone()).with_block(Arc::clone(&block));
         node.prepare(PrepareContext {
             sample_rate: 48_000.0,
             max_block_size: 64,
@@ -494,7 +489,7 @@ mod tests {
 
         let params = EqParams::default();
         let block = ParameterBlock::new(&eq_block_values(&params));
-        let mut node = EqNode::new(NodeId(1), params).with_block(Arc::clone(&block));
+        let mut node = EqNode::new(params).with_block(Arc::clone(&block));
         node.prepare(PrepareContext {
             sample_rate: 48_000.0,
             max_block_size: 64,
@@ -527,7 +522,7 @@ mod tests {
 
         let params = EqParams::default();
         let block = ParameterBlock::new(&eq_block_values(&params));
-        let mut node = EqNode::new(NodeId(1), params.clone()).with_block(Arc::clone(&block));
+        let mut node = EqNode::new(params.clone()).with_block(Arc::clone(&block));
         node.prepare(PrepareContext {
             sample_rate: 48_000.0,
             max_block_size: 64,
@@ -592,7 +587,7 @@ mod tests {
 
     #[test]
     fn octave_targets_have_their_own_param_ids() {
-        let node = EqNode::new(NodeId(1), EqParams::default());
+        let node = EqNode::new(EqParams::default());
         assert_eq!(node.param_id("mid_freq_octaves"), Some(EQ_MID_FREQ_OCTAVES as u32));
         assert_eq!(node.param_id("mid_freq"), Some(EQ_MID_FREQ as u32));
     }

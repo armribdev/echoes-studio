@@ -4,26 +4,21 @@
 //! Used for group buses, master bus, and return channels.
 
 use crate::audio_graph::buffer::AudioBuffer;
-use crate::audio_graph::node::{AudioNode, NodeId, PrepareContext, TransportInfo};
+use crate::audio_graph::node::{AudioNode, PrepareContext, TransportInfo};
 
 pub struct BusNode {
-    id: NodeId,
     num_inputs: usize,
 }
 
 impl BusNode {
-    pub fn new(id: NodeId, num_inputs: usize) -> Self {
+    pub fn new(num_inputs: usize) -> Self {
         Self {
-            id,
             num_inputs: num_inputs.max(1),
         }
     }
 }
 
 impl AudioNode for BusNode {
-    fn node_id(&self) -> NodeId {
-        self.id
-    }
     fn label(&self) -> &str {
         "BusNode"
     }
@@ -65,7 +60,7 @@ impl AudioNode for BusNode {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::audio_graph::node::{NodeId, TimeSignature};
+    use crate::audio_graph::node::TimeSignature;
 
     fn transport(frames: usize) -> TransportInfo {
         TransportInfo {
@@ -81,7 +76,7 @@ mod tests {
 
     #[test]
     fn sums_all_connected_inputs_at_unity_gain() {
-        let mut node = BusNode::new(NodeId(1), 2);
+        let mut node = BusNode::new(2);
         let mut a = AudioBuffer::new(1, 3);
         a.channel_mut(0).copy_from_slice(&[1.0, 2.0, 3.0]);
         let mut b = AudioBuffer::new(1, 3);
@@ -95,7 +90,7 @@ mod tests {
 
     #[test]
     fn clears_output_before_summing_so_stale_samples_do_not_leak() {
-        let mut node = BusNode::new(NodeId(1), 1);
+        let mut node = BusNode::new(1);
         let input = AudioBuffer::new(1, 2);
         let mut output = [AudioBuffer::new(1, 2)];
         output[0].channel_mut(0).copy_from_slice(&[9.0, 9.0]);
@@ -107,7 +102,7 @@ mod tests {
 
     #[test]
     fn num_inputs_is_never_zero() {
-        let node = BusNode::new(NodeId(1), 0);
+        let node = BusNode::new(0);
         assert_eq!(node.num_input_ports(), 1);
     }
 }

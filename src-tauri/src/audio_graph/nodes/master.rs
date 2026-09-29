@@ -18,11 +18,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use crate::audio_graph::buffer::AudioBuffer;
-use crate::audio_graph::node::{AudioNode, NodeId, PrepareContext, TransportInfo};
+use crate::audio_graph::node::{AudioNode, PrepareContext, TransportInfo};
 use crate::audio_graph::oversampling::Oversample2x;
 
 pub struct MasterNode {
-    id: NodeId,
     num_inputs: usize,
     soft_clip_enabled: Arc<AtomicBool>,
     oversample: Oversample2x,
@@ -31,9 +30,8 @@ pub struct MasterNode {
 }
 
 impl MasterNode {
-    pub fn new(id: NodeId, num_inputs: usize, soft_clip_enabled: Arc<AtomicBool>) -> Self {
+    pub fn new(num_inputs: usize, soft_clip_enabled: Arc<AtomicBool>) -> Self {
         Self {
-            id,
             num_inputs: num_inputs.max(1),
             soft_clip_enabled,
             oversample: Oversample2x::default(),
@@ -50,9 +48,6 @@ impl MasterNode {
 }
 
 impl AudioNode for MasterNode {
-    fn node_id(&self) -> NodeId {
-        self.id
-    }
     fn label(&self) -> &str {
         "MasterNode"
     }
@@ -131,7 +126,7 @@ impl AudioNode for MasterNode {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::audio_graph::node::{NodeId, PrepareContext, TransportInfo};
+    use crate::audio_graph::node::{PrepareContext, TransportInfo};
 
     #[test]
     fn soft_clip_tanh_matches_direct() {
@@ -142,7 +137,7 @@ mod tests {
     #[test]
     fn process_linear_when_soft_clip_disabled() {
         let clip_flag = Arc::new(AtomicBool::new(false));
-        let mut node = MasterNode::new(NodeId(0), 1, Arc::clone(&clip_flag));
+        let mut node = MasterNode::new(1, Arc::clone(&clip_flag));
         node.prepare(PrepareContext {
             sample_rate: 48_000.0,
             max_block_size: 512,
@@ -166,7 +161,7 @@ mod tests {
     #[test]
     fn process_applies_tanh_when_soft_clip_enabled() {
         let clip_flag = Arc::new(AtomicBool::new(true));
-        let mut node = MasterNode::new(NodeId(0), 1, Arc::clone(&clip_flag));
+        let mut node = MasterNode::new(1, Arc::clone(&clip_flag));
         node.prepare(PrepareContext {
             sample_rate: 48_000.0,
             max_block_size: 512,

@@ -34,10 +34,6 @@ pub const MAX_CONTROL_POINTS: usize = 128;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct NodeId(pub u64);
 
-impl NodeId {
-    pub const INVALID: NodeId = NodeId(u64::MAX);
-}
-
 impl std::fmt::Display for NodeId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "Node({})", self.0)
@@ -176,12 +172,12 @@ impl TransportInfo {
 
 /// DSP unit in the graph (clips, effects, plugins).  `process` must be RT-safe.
 pub trait AudioNode: Send + 'static {
-    fn node_id(&self) -> NodeId;
-
+    #[allow(dead_code)] // asserted by node tests
     fn label(&self) -> &str {
         "AudioNode"
     }
 
+    #[allow(dead_code)] // asserted by port-layout tests (sidechain)
     fn num_input_ports(&self) -> usize;
     fn num_output_ports(&self) -> usize;
 
@@ -237,13 +233,5 @@ pub trait AudioNode: Send + 'static {
 
     fn latency_samples(&self) -> u32 {
         0
-    }
-
-    fn is_source(&self) -> bool {
-        self.num_input_ports() == 0
-    }
-
-    fn is_sink(&self) -> bool {
-        self.num_output_ports() == 0
     }
 }

@@ -37,7 +37,6 @@ Every DSP element implements the `AudioNode` trait:
 
 ```rust
 pub trait AudioNode: Send + 'static {
-    fn node_id(&self) -> NodeId;
     fn num_input_ports(&self) -> usize;
     fn num_output_ports(&self) -> usize;
     fn prepare(&mut self, ctx: PrepareContext);
@@ -53,9 +52,15 @@ non-blocking. See `../threading/realtime-safety.md`.
 
 ### Port model
 
-Every node declares `num_input_ports()` and `num_output_ports()`. The compiler
-uses these counts to size the `input_connections` array and pre-allocate
-`output_buffers[step]`.
+Nodes do not know their own `NodeId`: identity belongs to the graph
+(`AudioGraph` / `ExecutionStep.node_id`), so constructors take only DSP
+parameters (removed 2026-09-29, ADR-001 unchanged).
+
+The compiler sizes `input_connections` from the node *kind*
+(`num_inputs_for_kind`) and widens each step's output count from the prepared
+node's `num_output_ports()` (`size_outputs_from_processors`, ADR-014).
+`num_input_ports()` is a declared contract asserted by tests; the compiler does
+not read it.
 
 - A node with 0 inputs is a **source** (e.g. `TrackNode`).
 - A node with 0 outputs is a **sink** (conceptually the `MasterNode`, though it

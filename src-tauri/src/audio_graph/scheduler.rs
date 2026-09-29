@@ -582,21 +582,14 @@ mod tests {
     /// Source node: emits a stored sample on frame 0 of the next block, then silence.
     /// Used to inject a single impulse to verify PDC alignment.
     struct ImpulseSource {
-        id: NodeId,
         pending: f32,
     }
     impl ImpulseSource {
-        fn new(id: u64, value: f32) -> Self {
-            ImpulseSource {
-                id: NodeId(id),
-                pending: value,
-            }
+        fn new(value: f32) -> Self {
+            ImpulseSource { pending: value }
         }
     }
     impl AudioNode for ImpulseSource {
-        fn node_id(&self) -> NodeId {
-            self.id
-        }
         fn num_input_ports(&self) -> usize {
             0
         }
@@ -626,21 +619,14 @@ mod tests {
     /// (but does not actually delay its signal).  Lets the test verify that
     /// the compiler/scheduler insert compensation downstream of *other* paths.
     struct LatencyReporter {
-        id: NodeId,
         latency: u32,
     }
     impl LatencyReporter {
-        fn new(id: u64, latency: u32) -> Self {
-            LatencyReporter {
-                id: NodeId(id),
-                latency,
-            }
+        fn new(latency: u32) -> Self {
+            LatencyReporter { latency }
         }
     }
     impl AudioNode for LatencyReporter {
-        fn node_id(&self) -> NodeId {
-            self.id
-        }
         fn num_input_ports(&self) -> usize {
             1
         }
@@ -663,18 +649,13 @@ mod tests {
     }
 
     /// Two-input summing node — joins parallel paths so PDC must align them.
-    struct Sum2 {
-        id: NodeId,
-    }
+    struct Sum2;
     impl Sum2 {
-        fn new(id: u64) -> Self {
-            Sum2 { id: NodeId(id) }
+        fn new() -> Self {
+            Sum2
         }
     }
     impl AudioNode for Sum2 {
-        fn node_id(&self) -> NodeId {
-            self.id
-        }
         fn num_input_ports(&self) -> usize {
             2
         }
@@ -757,10 +738,10 @@ mod tests {
         };
 
         let processors: Vec<Box<dyn AudioNode>> = vec![
-            Box::new(ImpulseSource::new(1, 1.0)),
-            Box::new(ImpulseSource::new(2, 1.0)),
-            Box::new(LatencyReporter::new(3, latency)),
-            Box::new(Sum2::new(4)),
+            Box::new(ImpulseSource::new(1.0)),
+            Box::new(ImpulseSource::new(1.0)),
+            Box::new(LatencyReporter::new(latency)),
+            Box::new(Sum2::new()),
         ];
 
         // Replicate the compiler's PDC pass: arrival[i] = max input cumlat;
@@ -953,9 +934,6 @@ mod tests {
 
         struct Recorder(Arc<Mutex<Vec<Call>>>);
         impl AudioNode for Recorder {
-            fn node_id(&self) -> NodeId {
-                NodeId(1)
-            }
             fn num_input_ports(&self) -> usize {
                 0
             }

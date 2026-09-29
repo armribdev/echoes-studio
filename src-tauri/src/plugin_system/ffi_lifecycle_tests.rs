@@ -34,7 +34,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use crate::audio_graph::buffer::AudioBuffer;
-use crate::audio_graph::node::{NodeId, PrepareContext, TransportInfo};
+use crate::audio_graph::node::{PrepareContext, TransportInfo};
 use crate::plugin_system::host::PluginHost;
 use crate::plugin_system::instance::PluginInstance;
 use crate::plugin_system::lifecycle::LifecycleState;
@@ -253,7 +253,7 @@ fn clap_real_instance_full_lifecycle() {
 
     let key = "harness:clap:fx0";
     let node = host
-        .instantiate(NodeId(1), key, &device_id, false)
+        .instantiate(key, &device_id, false)
         .expect("real CLAP instantiation must succeed");
     let instance = host.instance_by_key(key).expect("instance registered");
 
@@ -380,7 +380,7 @@ fn vst3_real_instance_full_lifecycle() {
         let mut host = PluginHost::new();
         host.registry_mut().add(vst3_manifest(&device_id, path));
 
-        match host.instantiate(NodeId(1), key, &device_id, false) {
+        match host.instantiate(key, &device_id, false) {
             Ok(node) => {
                 eprintln!("{LOG} VST3 target: {device_id}  ({})", path.display());
                 let instance = host.instance_by_key(key).expect("instance registered");

@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use crate::audio_graph::buffer::AudioBuffer;
 use crate::audio_graph::denormal::ANTI_DENORMAL;
-use crate::audio_graph::node::{AudioNode, NodeId, PrepareContext, TransportInfo, MAX_CONTROL_POINTS};
+use crate::audio_graph::node::{AudioNode, PrepareContext, TransportInfo, MAX_CONTROL_POINTS};
 use crate::audio_graph::nodes::modulated;
 use crate::audio_graph::parameter_block::ParameterBlock;
 use crate::project::DelayParams;
@@ -50,7 +50,6 @@ fn delay_params_from_block(block: &ParameterBlock) -> DelayParams {
 }
 
 pub struct DelayNode {
-    id: NodeId,
     /// Cached parameter values — `delay_ms` is currently baked into
     /// `delay_samples`.  Compared against the hot block each block to decide
     /// whether a recompute is needed.
@@ -84,9 +83,8 @@ pub struct DelayNode {
 }
 
 impl DelayNode {
-    pub fn new(id: NodeId, params: DelayParams) -> Self {
+    pub fn new(params: DelayParams) -> Self {
         Self {
-            id,
             params,
             buf: Vec::new(),
             write_pos: 0,
@@ -116,9 +114,6 @@ impl DelayNode {
 }
 
 impl AudioNode for DelayNode {
-    fn node_id(&self) -> NodeId {
-        self.id
-    }
     fn label(&self) -> &str {
         "DelayNode"
     }
@@ -290,7 +285,7 @@ mod tests {
 
         let params = DelayParams::default();
         let block = ParameterBlock::new(&delay_block_values(&params));
-        let mut node = DelayNode::new(NodeId(1), params.clone()).with_block(Arc::clone(&block));
+        let mut node = DelayNode::new(params.clone()).with_block(Arc::clone(&block));
         node.prepare(PrepareContext {
             sample_rate: 48_000.0,
             max_block_size: 64,
@@ -333,7 +328,7 @@ mod tests {
             ..DelayParams::default()
         };
         let block = ParameterBlock::new(&delay_block_values(&params));
-        let mut node = DelayNode::new(NodeId(1), params).with_block(Arc::clone(&block));
+        let mut node = DelayNode::new(params).with_block(Arc::clone(&block));
         node.prepare(PrepareContext {
             sample_rate: 48_000.0,
             max_block_size: 64,
@@ -368,7 +363,7 @@ mod tests {
     fn hot_block_changes_delay_without_prepare() {
         let params = DelayParams::default();
         let block = ParameterBlock::new(&delay_block_values(&params));
-        let mut node = DelayNode::new(NodeId(1), params).with_block(Arc::clone(&block));
+        let mut node = DelayNode::new(params).with_block(Arc::clone(&block));
         node.prepare(PrepareContext {
             sample_rate: 48_000.0,
             max_block_size: 64,

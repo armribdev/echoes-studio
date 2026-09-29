@@ -10,7 +10,7 @@ use std::sync::OnceLock;
 
 use crate::audio_graph::buffer::AudioBuffer;
 use crate::audio_graph::midi::{MidiEvent, MidiEventKind, MidiEventList};
-use crate::audio_graph::node::{AudioNode, NodeId, PrepareContext, TransportInfo};
+use crate::audio_graph::node::{AudioNode, PrepareContext, TransportInfo};
 use crate::audio_graph::nodes::instrument::InstrumentDevice;
 use crate::plugin_formats::clap::ffi::{ClapPluginParams, CLAP_EXT_PARAMS};
 use crate::plugin_system::host::{PluginHost, PluginIsolation, UnavailableReason};
@@ -64,7 +64,7 @@ fn host() -> PluginHost {
 }
 
 fn prepared(host: &mut PluginHost, sandboxed: bool, live: bool) -> Box<dyn AudioNode> {
-    let mut node = host.instantiate(NodeId(1), KEY, PLUGIN_ID, sandboxed).expect("plugin starts");
+    let mut node = host.instantiate(KEY, PLUGIN_ID, sandboxed).expect("plugin starts");
     node.prepare(PrepareContext {
         sample_rate: 48_000.0,
         max_block_size: 4096,

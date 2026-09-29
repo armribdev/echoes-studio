@@ -38,6 +38,7 @@ pub struct ExecutionStep {
 pub struct ExecutionPlan {
     pub steps: Vec<ExecutionStep>,
     pub modulation: ModulationMap,
+    #[allow(dead_code)] // compile-time metadata, asserted by tests
     pub sample_rate: f32,
     pub max_block_size: usize,
     pub num_channels: usize,

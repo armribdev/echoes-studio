@@ -6,7 +6,7 @@
 use std::f32::consts::TAU;
 
 use crate::audio_graph::buffer::AudioBuffer;
-use crate::audio_graph::node::{AudioNode, NodeId, PrepareContext, TransportInfo, MAX_CONTROL_POINTS};
+use crate::audio_graph::node::{AudioNode, PrepareContext, TransportInfo, MAX_CONTROL_POINTS};
 
 /// Per-sample gain-smoothing cutoff (ADR-019 Tranche 2).  Removes zipper on
 /// modulated/automated gain without audible lag.  ~12 Hz ≈ 13 ms time constant.
@@ -188,15 +188,13 @@ fn db_to_lin(db: f32) -> f32 {
 }
 
 pub struct GainNode {
-    id: NodeId,
     gain: f32,
     smoother: SmoothedGain,
 }
 
 impl GainNode {
-    pub fn new(id: NodeId, gain: f32) -> Self {
+    pub fn new(gain: f32) -> Self {
         Self {
-            id,
             gain,
             smoother: SmoothedGain::new(gain),
         }
@@ -204,9 +202,6 @@ impl GainNode {
 }
 
 impl AudioNode for GainNode {
-    fn node_id(&self) -> NodeId {
-        self.id
-    }
     fn label(&self) -> &str {
         "GainNode"
     }
@@ -291,7 +286,7 @@ mod tests {
 
     #[test]
     fn static_gain_is_bit_identical() {
-        let mut node = GainNode::new(NodeId(1), 0.5);
+        let mut node = GainNode::new(0.5);
         node.prepare(ctx(8));
         let mut input = AudioBuffer::new(1, 8);
         input.channel_mut(0).copy_from_slice(&[1.0; 8]);
@@ -304,7 +299,7 @@ mod tests {
 
     #[test]
     fn modulation_ramps_instead_of_jumping() {
-        let mut node = GainNode::new(NodeId(1), 1.0);
+        let mut node = GainNode::new(1.0);
         node.prepare(ctx(64));
         node.apply_modulation(PARAM_GAIN, 1.0); // target gain 2.0
         let mut input = AudioBuffer::new(1, 64);

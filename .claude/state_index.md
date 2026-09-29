@@ -12,7 +12,7 @@ _Last full review: 2026-06-03 (roadmap status pass 2026-09-29). Each row's date 
 
 | Subsystem | Source of truth (`docs/active/`) | Code | Status | Verified |
 |-----------|----------------------------------|------|--------|----------|
-| Graph-first model & pipeline | `architecture/audio-graph.md` | `audio_graph/{graph,node,mod}.rs` | stable | 2026-06-03 |
+| Graph-first model & pipeline | `architecture/audio-graph.md` | `audio_graph/{graph,node,mod}.rs` | stable (nodes no longer carry a `NodeId`; `AudioNode::node_id/is_source/is_sink` removed, constructors take DSP params only) | 2026-09-29 |
 | Graph compiler | `dsp/graph-compiler.md` | `audio_graph/{compiler,execution_plan}.rs` | stable (plugin output counts widened from the prepared nodes, edges to missing outputs cut — ADR-014 multi-out) | 2026-09-25 |
 | DSP runtime / scheduler | `dsp/dsp-runtime.md` | `audio_graph/{scheduler,worker_pool,buffer}.rs` | stable | 2026-06-05 |
 | Immutable snapshot swap | `architecture/snapshot-rebuild-flow.md` | `audio_graph/snapshot*.rs`, `audio_engine/snapshot.rs` | stable — progressive clip PCM via immutable prefixes + recompile (ADR-024) | 2026-09-29 |

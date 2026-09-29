@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use crate::audio_graph::buffer::AudioBuffer;
 use crate::audio_graph::denormal::ANTI_DENORMAL;
-use crate::audio_graph::node::{AudioNode, NodeId, PrepareContext, TransportInfo, MAX_CONTROL_POINTS};
+use crate::audio_graph::node::{AudioNode, PrepareContext, TransportInfo, MAX_CONTROL_POINTS};
 use crate::audio_graph::nodes::modulated;
 use crate::audio_graph::parameter_block::ParameterBlock;
 use crate::project::ReverbParams;
@@ -94,7 +94,6 @@ const ALLPASS_TUNING_L: [usize; 4] = [556, 441, 341, 225];
 const STEREO_SPREAD: usize = 23;
 
 pub struct ReverbNode {
-    id: NodeId,
     /// Cached parameter values — `room_size` / `damping` are currently baked
     /// into the comb feedback/damping coefficients.  Compared against the hot
     /// block each block to decide whether a recompute is needed.
@@ -123,9 +122,8 @@ pub struct ReverbNode {
 }
 
 impl ReverbNode {
-    pub fn new(id: NodeId, params: ReverbParams) -> Self {
+    pub fn new(params: ReverbParams) -> Self {
         Self {
-            id,
             params,
             combs_l: Vec::new(),
             combs_r: Vec::new(),
@@ -161,9 +159,6 @@ impl ReverbNode {
 }
 
 impl AudioNode for ReverbNode {
-    fn node_id(&self) -> NodeId {
-        self.id
-    }
     fn label(&self) -> &str {
         "ReverbNode"
     }
@@ -355,7 +350,7 @@ mod tests {
 
         let params = ReverbParams::default();
         let block = ParameterBlock::new(&reverb_block_values(&params));
-        let mut node = ReverbNode::new(NodeId(1), params.clone()).with_block(Arc::clone(&block));
+        let mut node = ReverbNode::new(params.clone()).with_block(Arc::clone(&block));
         node.prepare(PrepareContext {
             sample_rate: 48_000.0,
             max_block_size: 64,
@@ -391,7 +386,7 @@ mod tests {
     fn interior_grid_point_reapplies_coeffs_mid_block() {
         let params = ReverbParams::default();
         let block = ParameterBlock::new(&reverb_block_values(&params));
-        let mut node = ReverbNode::new(NodeId(1), params.clone()).with_block(Arc::clone(&block));
+        let mut node = ReverbNode::new(params.clone()).with_block(Arc::clone(&block));
         node.prepare(PrepareContext {
             sample_rate: 48_000.0,
             max_block_size: 64,
@@ -422,7 +417,7 @@ mod tests {
     fn hot_block_changes_coeffs_without_prepare() {
         let params = ReverbParams::default();
         let block = ParameterBlock::new(&reverb_block_values(&params));
-        let mut node = ReverbNode::new(NodeId(1), params).with_block(Arc::clone(&block));
+        let mut node = ReverbNode::new(params).with_block(Arc::clone(&block));
         node.prepare(PrepareContext {
             sample_rate: 48_000.0,
             max_block_size: 64,

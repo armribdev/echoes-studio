@@ -6,23 +6,21 @@
 //! preserved when panning a mono signal in a stereo field.
 
 use crate::audio_graph::buffer::AudioBuffer;
-use crate::audio_graph::node::{AudioNode, NodeId, PrepareContext, TransportInfo};
+use crate::audio_graph::node::{AudioNode, PrepareContext, TransportInfo};
 
 const PAN_POSITION_MIN: f32 = -1.0;
 const PAN_POSITION_MAX: f32 = 1.0;
 const PAN_ANGLE_QUARTER_SCALE: f32 = 0.25;
 
 pub struct PanNode {
-    id: NodeId,
     position: f32,
     gain_l: f32,
     gain_r: f32,
 }
 
 impl PanNode {
-    pub fn new(id: NodeId, position: f32) -> Self {
+    pub fn new(position: f32) -> Self {
         let mut node = PanNode {
-            id,
             position: 0.0,
             gain_l: 1.0,
             gain_r: 1.0,
@@ -46,9 +44,6 @@ impl PanNode {
 }
 
 impl AudioNode for PanNode {
-    fn node_id(&self) -> NodeId {
-        self.id
-    }
     fn label(&self) -> &str {
         "PanNode"
     }
@@ -104,7 +99,7 @@ impl AudioNode for PanNode {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::audio_graph::node::{NodeId, TimeSignature};
+    use crate::audio_graph::node::TimeSignature;
 
     fn transport(frames: usize) -> TransportInfo {
         TransportInfo {
@@ -128,7 +123,7 @@ mod tests {
 
     #[test]
     fn centre_pan_is_equal_power_both_sides() {
-        let mut node = PanNode::new(NodeId(1), 0.0);
+        let mut node = PanNode::new(0.0);
         let (left, right) = stereo_from_mono(4, &mut node);
         let expected = std::f32::consts::FRAC_1_SQRT_2;
         for &s in &left {
@@ -141,7 +136,7 @@ mod tests {
 
     #[test]
     fn hard_left_silences_right_channel() {
-        let mut node = PanNode::new(NodeId(1), -1.0);
+        let mut node = PanNode::new(-1.0);
         let (left, right) = stereo_from_mono(4, &mut node);
         assert!(left.iter().all(|&s| (s - 1.0).abs() < 1e-6));
         assert!(right.iter().all(|&s| s.abs() < 1e-6));
@@ -149,7 +144,7 @@ mod tests {
 
     #[test]
     fn hard_right_silences_left_channel() {
-        let mut node = PanNode::new(NodeId(1), 1.0);
+        let mut node = PanNode::new(1.0);
         let (left, right) = stereo_from_mono(4, &mut node);
         assert!(left.iter().all(|&s| s.abs() < 1e-6));
         assert!(right.iter().all(|&s| (s - 1.0).abs() < 1e-6));
@@ -157,15 +152,15 @@ mod tests {
 
     #[test]
     fn position_is_clamped_to_valid_range() {
-        let node = PanNode::new(NodeId(1), 5.0);
+        let node = PanNode::new(5.0);
         assert_eq!(node.position(), PAN_POSITION_MAX);
-        let node = PanNode::new(NodeId(1), -5.0);
+        let node = PanNode::new(-5.0);
         assert_eq!(node.position(), PAN_POSITION_MIN);
     }
 
     #[test]
     fn mono_output_passes_input_through_unpanned() {
-        let mut node = PanNode::new(NodeId(1), -1.0);
+        let mut node = PanNode::new(-1.0);
         let mut input = AudioBuffer::new(1, 3);
         input.channel_mut(0).copy_from_slice(&[1.0, 2.0, 3.0]);
         let mut output = [AudioBuffer::new(1, 3)];

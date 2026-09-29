@@ -21,7 +21,7 @@ use crate::audio_graph::midi::{
 };
 #[cfg(test)]
 use crate::audio_graph::midi::MidiNoteSnapshot;
-use crate::audio_graph::node::{AudioNode, NodeId, PrepareContext, TransportInfo};
+use crate::audio_graph::node::{AudioNode, PrepareContext, TransportInfo};
 use crate::audio_graph::plugin_params::{parse_plugin_param_name, PluginParamControl, PluginParamControls};
 
 /// Anything that turns MIDI events into audio.
@@ -79,7 +79,6 @@ impl InstrumentDevice for SilentInstrument {
 }
 
 pub struct InstrumentNode {
-    id: NodeId,
     /// All notes for this instrument, in any order.
     /// Stored in beat space; sample positions are derived per block from transport BPM.
     /// Replaced in place when the piano roll edits notes — no graph rebuild.
@@ -115,11 +114,10 @@ pub struct InstrumentNode {
 impl InstrumentNode {
     #[cfg(test)]
     pub fn new(
-        id: NodeId,
         notes: Arc<Vec<MidiNoteSnapshot>>,
         device: Box<dyn InstrumentDevice>,
     ) -> Self {
-        Self::from_publisher(id, MidiNotePublisher::with_notes(notes.as_ref().clone()), device)
+        Self::from_publisher(MidiNotePublisher::with_notes(notes.as_ref().clone()), device)
     }
 
     pub fn set_preview(&mut self, queue: Arc<MidiPreviewQueue>) {
@@ -181,12 +179,10 @@ impl InstrumentNode {
     }
 
     pub fn from_publisher(
-        id: NodeId,
         notes: Arc<MidiNotePublisher>,
         device: Box<dyn InstrumentDevice>,
     ) -> Self {
         Self {
-            id,
             notes,
             preview: None,
             preview_count: [0u8; 128],
@@ -258,9 +254,6 @@ impl InstrumentNode {
 }
 
 impl AudioNode for InstrumentNode {
-    fn node_id(&self) -> NodeId {
-        self.id
-    }
     fn label(&self) -> &str {
         "InstrumentNode"
     }
@@ -472,7 +465,6 @@ mod tests {
 
     fn make_node(captured: Arc<Mutex<Vec<MidiEvent>>>) -> InstrumentNode {
         let mut node = InstrumentNode::new(
-            NodeId(1),
             Arc::new(vec![one_beat_note()]),
             Box::new(CaptureDevice { captured }),
         );
@@ -663,7 +655,6 @@ mod tests {
             },
         ]);
         let mut node = InstrumentNode::from_publisher(
-            NodeId(1),
             Arc::clone(&publisher),
             Box::new(CaptureDevice {
                 captured: Arc::clone(&captured),

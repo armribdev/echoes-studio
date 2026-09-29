@@ -254,11 +254,10 @@ impl GraphCompiler {
                 let peak_r = zero_cell();
                 meter_cells.insert(meter_id.clone(), (Arc::clone(&peak_l), Arc::clone(&peak_r)));
                 Box::new(crate::audio_graph::nodes::meter::MeterNode::new(
-                    node_id, peak_l, peak_r,
+                    peak_l, peak_r,
                 ))
             } else {
                 Self::build_node(
-                    node_id,
                     &graph_node.kind,
                     project,
                     config.sample_rate,
@@ -682,7 +681,6 @@ impl GraphCompiler {
     }
 
     fn build_plugin_node(
-        id: NodeId,
         instance_key: &str,
         device_id: &str,
         sandboxed: bool,
@@ -690,19 +688,18 @@ impl GraphCompiler {
     ) -> Box<dyn AudioNode> {
         use crate::audio_graph::nodes;
 
-        match plugin_host.instantiate(id, instance_key, device_id, sandboxed) {
+        match plugin_host.instantiate(instance_key, device_id, sandboxed) {
             Ok(node) => node,
             Err(e) => {
                 eprintln!(
                     "[audio] Plugin '{device_id}' instantiation failed ({e}) — pass-through utilisé"
                 );
-                Box::new(nodes::gain::GainNode::new(id, 1.0))
+                Box::new(nodes::gain::GainNode::new(1.0))
             }
         }
     }
 
     fn build_node(
-        id: NodeId,
         kind: &NodeKind,
         project: &AppProject,
         engine_sample_rate: f32,
@@ -745,7 +742,7 @@ impl GraphCompiler {
                     None => Box::new(PolySynth::new()),
                 };
 
-                let mut node = InstrumentNode::from_publisher(id, notes, device);
+                let mut node = InstrumentNode::from_publisher(notes, device);
                 if live {
                     node.set_preview(live_params.preview_queue(track_id));
                     node.set_live_input(live_params.live_input_queue(track_id));
@@ -773,7 +770,7 @@ impl GraphCompiler {
                     })
                     .unwrap_or_default();
 
-                Box::new(nodes::track::TrackNode::new(id, clips))
+                Box::new(nodes::track::TrackNode::new(clips))
             }
 
             NodeKind::TrackGain { track_id, gain } => {
@@ -788,37 +785,31 @@ impl GraphCompiler {
                     })
                     .unwrap_or((*gain, 0.0, false, false));
                 let cells = live_params.get_or_init_track(track_id, volume, pan, muted, solo);
-                Box::new(nodes::track_gain::TrackGainNode::new(
-                    id,
-                    cells,
+                Box::new(nodes::track_gain::TrackGainNode::new(cells,
                     Arc::clone(&live_params.any_solo),
                 ))
             }
 
             NodeKind::Gain { gain_linear } => {
-                Box::new(nodes::gain::GainNode::new(id, *gain_linear))
+                Box::new(nodes::gain::GainNode::new(*gain_linear))
             }
 
-            NodeKind::Pan { position } => Box::new(nodes::pan::PanNode::new(id, *position)),
+            NodeKind::Pan { position } => Box::new(nodes::pan::PanNode::new(*position)),
 
-            NodeKind::Bus => Box::new(nodes::bus::BusNode::new(
-                id,
-                Self::num_inputs_for_kind(kind),
+            NodeKind::Bus => Box::new(nodes::bus::BusNode::new(Self::num_inputs_for_kind(kind),
             )),
 
-            NodeKind::Master { num_inputs } => Box::new(nodes::master::MasterNode::new(
-                id,
-                *num_inputs,
+            NodeKind::Master { num_inputs } => Box::new(nodes::master::MasterNode::new(*num_inputs,
                 Arc::clone(&live_params.master_soft_clip),
             )),
 
-            NodeKind::Meter { .. } => Box::new(nodes::gain::GainNode::new(id, 1.0)),
+            NodeKind::Meter { .. } => Box::new(nodes::gain::GainNode::new(1.0)),
 
             NodeKind::Send { send_gain, .. } => {
-                Box::new(nodes::send::SendNode::new(id, *send_gain))
+                Box::new(nodes::send::SendNode::new(*send_gain))
             }
 
-            NodeKind::Return { .. } => Box::new(nodes::bus::BusNode::new(id, 1)),
+            NodeKind::Return { .. } => Box::new(nodes::bus::BusNode::new(1)),
 
             NodeKind::Plugin {
                 instance_key,
@@ -826,7 +817,7 @@ impl GraphCompiler {
                 sandboxed,
                 bypassed,
             } => {
-                let node = Self::build_plugin_node(id, instance_key, device_id, *sandboxed, plugin_host);
+                let node = Self::build_plugin_node(instance_key, device_id, *sandboxed, plugin_host);
                 if *bypassed {
                     Box::new(nodes::bypass::BypassNode::new(node))
                 } else {
@@ -855,24 +846,22 @@ impl GraphCompiler {
                             *beat_division,
                         );
                         Box::new(
-                            nodes::modulator::LfoNode::new(id, *rate_hz, waveform.clone())
+                            nodes::modulator::LfoNode::new(*rate_hz, waveform.clone())
                                 .with_rate_cells(cells),
                         )
                     }
                     ModulatorKind::Macro => {
                         let cells = live_params.get_or_init_macro(modulator_id, *initial_value);
-                        Box::new(nodes::modulator::MacroNode::new(id, cells))
+                        Box::new(nodes::modulator::MacroNode::new(cells))
                     }
                     ModulatorKind::Envelope => {
                         let cells = live_params.get_or_init_envelope(modulator_id, initial_envelope);
-                        Box::new(nodes::modulator::EnvelopeNode::new(id, cells))
+                        Box::new(nodes::modulator::EnvelopeNode::new(cells))
                     }
                     ModulatorKind::AudioFollower => {
-                        Box::new(nodes::modulator::AudioFollowerNode::new(id, initial_follower.clone()))
+                        Box::new(nodes::modulator::AudioFollowerNode::new(initial_follower.clone()))
                     }
-                    _ => Box::new(nodes::modulator::LfoNode::new(
-                        id,
-                        0.0,
+                    _ => Box::new(nodes::modulator::LfoNode::new(0.0,
                         crate::project::LfoWaveform::Sine,
                     )),
                 }
@@ -881,7 +870,7 @@ impl GraphCompiler {
             NodeKind::Eq { effect_id, params } => {
                 let block = live_params
                     .get_or_init_effect_block(effect_id, &nodes::eq::eq_block_values(params));
-                Box::new(nodes::eq::EqNode::new(id, params.clone()).with_block(block))
+                Box::new(nodes::eq::EqNode::new(params.clone()).with_block(block))
             }
             NodeKind::Compressor { effect_id, params } => {
                 let block = live_params.get_or_init_effect_block(
@@ -889,7 +878,7 @@ impl GraphCompiler {
                     &nodes::compressor::compressor_block_values(params),
                 );
                 Box::new(
-                    nodes::compressor::CompressorNode::new(id, params.clone()).with_block(block),
+                    nodes::compressor::CompressorNode::new(params.clone()).with_block(block),
                 )
             }
             NodeKind::Reverb { effect_id, params } => {
@@ -897,12 +886,12 @@ impl GraphCompiler {
                     effect_id,
                     &nodes::reverb::reverb_block_values(params),
                 );
-                Box::new(nodes::reverb::ReverbNode::new(id, params.clone()).with_block(block))
+                Box::new(nodes::reverb::ReverbNode::new(params.clone()).with_block(block))
             }
             NodeKind::Delay { effect_id, params } => {
                 let block = live_params
                     .get_or_init_effect_block(effect_id, &nodes::delay::delay_block_values(params));
-                Box::new(nodes::delay::DelayNode::new(id, params.clone()).with_block(block))
+                Box::new(nodes::delay::DelayNode::new(params.clone()).with_block(block))
             }
         }
     }
@@ -1189,9 +1178,6 @@ mod tests {
     struct MultiOut(usize);
 
     impl AudioNode for MultiOut {
-        fn node_id(&self) -> NodeId {
-            NodeId(1)
-        }
         fn num_input_ports(&self) -> usize {
             0
         }

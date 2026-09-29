@@ -14,7 +14,7 @@
 use std::sync::Arc;
 
 use crate::audio_graph::buffer::AudioBuffer;
-use crate::audio_graph::node::{AudioNode, NodeId, PrepareContext, TransportInfo};
+use crate::audio_graph::node::{AudioNode, PrepareContext, TransportInfo};
 
 /// Pre-decoded audio clip data, ready for real-time playback.
 pub struct ClipData {
@@ -37,16 +37,14 @@ const DEFAULT_ENGINE_SAMPLE_RATE: f32 = 48_000.0;
 const DEFAULT_OUTPUT_CHANNELS: usize = 2;
 
 pub struct TrackNode {
-    id: NodeId,
     clips: Vec<ClipData>,
     engine_sample_rate: f32,
     num_channels: usize,
 }
 
 impl TrackNode {
-    pub fn new(id: NodeId, clips: Vec<ClipData>) -> Self {
+    pub fn new(clips: Vec<ClipData>) -> Self {
         Self {
-            id,
             clips,
             engine_sample_rate: DEFAULT_ENGINE_SAMPLE_RATE,
             num_channels: DEFAULT_OUTPUT_CHANNELS,
@@ -55,9 +53,6 @@ impl TrackNode {
 }
 
 impl AudioNode for TrackNode {
-    fn node_id(&self) -> NodeId {
-        self.id
-    }
     fn label(&self) -> &str {
         "TrackNode"
     }

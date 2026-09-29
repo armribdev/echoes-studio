@@ -27,7 +27,7 @@ use std::sync::Arc;
 
 use serde::Serialize;
 
-use crate::audio_graph::node::{AudioNode, NodeId};
+use crate::audio_graph::node::AudioNode;
 use crate::audio_graph::nodes::clap_instrument::ClapInstrument;
 use crate::audio_graph::nodes::instrument::InstrumentDevice;
 use crate::plugin_formats::clap::ffi::{ClapLibrary, CLAP_PLUGIN_FACTORY_ID};
@@ -241,7 +241,6 @@ impl PluginHost {
     ///   CLAP, VST3 and internal are reuse-safe.
     fn reuse_existing(
         &self,
-        node_id: NodeId,
         instance_key: &str,
         plugin_id: &str,
         sandboxed: bool,
@@ -260,16 +259,15 @@ impl PluginHost {
             return None;
         }
         match inst.format {
-            DeviceFormat::Internal => Some(Box::new(PassThroughDevice::new(node_id))),
+            DeviceFormat::Internal => Some(Box::new(PassThroughDevice::new())),
             DeviceFormat::Clap if inst.is_sandboxed() => {
-                Some(Box::new(BridgedNode::new(node_id, Arc::clone(inst))))
+                Some(Box::new(BridgedNode::new(Arc::clone(inst))))
             }
             DeviceFormat::Clap => Some(Box::new(ClapWrapperNode::new(
-                node_id,
                 Arc::clone(inst),
                 self.sidechain_input_ports(plugin_id),
             ))),
-            DeviceFormat::Vst3 => Some(Box::new(VstWrapperNode::new(node_id, Arc::clone(inst)))),
+            DeviceFormat::Vst3 => Some(Box::new(VstWrapperNode::new(Arc::clone(inst)))),
             #[cfg(any(feature = "au", feature = "wasm"))]
             _ => None,
         }
@@ -278,14 +276,13 @@ impl PluginHost {
     /// `instance_key` = per-placement id (ADR-007); host keeps `Arc` in `records`.
     pub fn instantiate(
         &mut self,
-        node_id: NodeId,
         instance_key: &str,
         plugin_id: &str,
         sandboxed: bool,
     ) -> Result<Box<dyn AudioNode>, HostError> {
         let sandboxed = self.isolates(plugin_id, sandboxed);
         let _running = (!sandboxed).then(|| crash_marker::enter(PluginThread::Control, plugin_tag(plugin_id)));
-        let result = self.instantiate_placement(node_id, instance_key, plugin_id, sandboxed);
+        let result = self.instantiate_placement(instance_key, plugin_id, sandboxed);
         match &result {
             Ok(_) => self.mark_available(instance_key),
             Err(error) => self.mark_unavailable(instance_key, plugin_id, UnavailableReason::from_error(error)),
@@ -295,14 +292,13 @@ impl PluginHost {
 
     fn instantiate_placement(
         &mut self,
-        node_id: NodeId,
         instance_key: &str,
         plugin_id: &str,
         sandboxed: bool,
     ) -> Result<Box<dyn AudioNode>, HostError> {
         // ADR-016: reuse a live instance for this placement instead of rebuilding
         // it (no FFI churn, preserves the plugin's internal DSP state).
-        if let Some(node) = self.reuse_existing(node_id, instance_key, plugin_id, sandboxed) {
+        if let Some(node) = self.reuse_existing(instance_key, plugin_id, sandboxed) {
             return Ok(node);
         }
 
@@ -315,21 +311,21 @@ impl PluginHost {
         let (instance, device): (Arc<PluginInstance>, Box<dyn AudioNode>) = match manifest.format {
             DeviceFormat::Internal => {
                 let inst = PluginInstance::new_internal(plugin_id);
-                let node = Box::new(PassThroughDevice::new(node_id));
+                let node = Box::new(PassThroughDevice::new());
                 (inst, node)
             }
 
-            DeviceFormat::Vst3 => self.instantiate_vst3(node_id, plugin_id, &manifest)?,
+            DeviceFormat::Vst3 => self.instantiate_vst3(plugin_id, &manifest)?,
 
-            DeviceFormat::Clap if sandboxed => self.instantiate_bridged(node_id, plugin_id, &manifest)?,
+            DeviceFormat::Clap if sandboxed => self.instantiate_bridged(plugin_id, &manifest)?,
 
-            DeviceFormat::Clap => self.instantiate_clap(node_id, plugin_id, &manifest)?,
+            DeviceFormat::Clap => self.instantiate_clap(plugin_id, &manifest)?,
 
             #[cfg(feature = "au")]
             DeviceFormat::Au => {
                 eprintln!("[host] AU not yet implemented for '{plugin_id}' — pass-through");
                 let inst = PluginInstance::new_internal(plugin_id);
-                let node = Box::new(PassThroughDevice::new(node_id));
+                let node = Box::new(PassThroughDevice::new());
                 (inst, node)
             }
 
@@ -337,7 +333,7 @@ impl PluginHost {
             DeviceFormat::Wasm => {
                 eprintln!("[host] WASM not yet implemented for '{plugin_id}' — pass-through");
                 let inst = PluginInstance::new_internal(plugin_id);
-                let node = Box::new(PassThroughDevice::new(node_id));
+                let node = Box::new(PassThroughDevice::new());
                 (inst, node)
             }
         };
@@ -470,7 +466,6 @@ impl PluginHost {
 
     fn instantiate_vst3(
         &self,
-        node_id: NodeId,
         plugin_id: &str,
         manifest: &PluginManifest,
     ) -> Result<(Arc<PluginInstance>, Box<dyn AudioNode>), HostError> {
@@ -500,20 +495,18 @@ impl PluginHost {
         let instance = PluginInstance::new_vst3(plugin_id, comp_nn, proc_nn, lib);
 
         let node: Box<dyn AudioNode> =
-            Box::new(VstWrapperNode::new(node_id, Arc::clone(&instance)));
+            Box::new(VstWrapperNode::new(Arc::clone(&instance)));
 
         Ok((instance, node))
     }
 
     fn instantiate_clap(
         &self,
-        node_id: NodeId,
         plugin_id: &str,
         manifest: &PluginManifest,
     ) -> Result<(Arc<PluginInstance>, Box<dyn AudioNode>), HostError> {
         let instance = self.create_clap_instance(plugin_id, manifest)?;
         let node: Box<dyn AudioNode> = Box::new(ClapWrapperNode::new(
-            node_id,
             Arc::clone(&instance),
             manifest.num_sidechain_inputs,
         ));
@@ -522,12 +515,11 @@ impl PluginHost {
 
     fn instantiate_bridged(
         &self,
-        node_id: NodeId,
         plugin_id: &str,
         manifest: &PluginManifest,
     ) -> Result<(Arc<PluginInstance>, Box<dyn AudioNode>), HostError> {
         let instance = self.create_bridged_instance(plugin_id, manifest)?;
-        let node: Box<dyn AudioNode> = Box::new(BridgedNode::new(node_id, Arc::clone(&instance)));
+        let node: Box<dyn AudioNode> = Box::new(BridgedNode::new(Arc::clone(&instance)));
         Ok((instance, node))
     }
 
@@ -1004,7 +996,7 @@ mod tests {
         let mut host = PluginHost::new();
 
         let mut node = host
-            .instantiate(NodeId(1), "echoes.gain", "echoes.gain", false)
+            .instantiate("echoes.gain", "echoes.gain", false)
             .expect("instantiation must succeed for a registered device");
 
         assert_eq!(host.device_count(), 1);
@@ -1033,9 +1025,9 @@ mod tests {
     #[test]
     fn retain_devices_prunes_removed_records() {
         let mut host = PluginHost::new();
-        host.instantiate(NodeId(1), "echoes.gain", "echoes.gain", false)
+        host.instantiate("echoes.gain", "echoes.gain", false)
             .unwrap();
-        host.instantiate(NodeId(2), "echoes.pan", "echoes.pan", false)
+        host.instantiate("echoes.pan", "echoes.pan", false)
             .unwrap();
         assert_eq!(host.device_count(), 2);
 
@@ -1055,9 +1047,9 @@ mod tests {
     #[test]
     fn same_device_id_on_two_tracks_keeps_both_records() {
         let mut host = PluginHost::new();
-        host.instantiate(NodeId(1), "track-a:fx0", "echoes.gain", false)
+        host.instantiate("track-a:fx0", "echoes.gain", false)
             .unwrap();
-        host.instantiate(NodeId(2), "track-b:fx0", "echoes.gain", false)
+        host.instantiate("track-b:fx0", "echoes.gain", false)
             .unwrap();
 
         assert_eq!(host.device_count(), 2, "two placements → two records");
@@ -1072,12 +1064,12 @@ mod tests {
     #[test]
     fn same_instance_key_reuses_the_live_instance() {
         let mut host = PluginHost::new();
-        host.instantiate(NodeId(1), "fx0", "echoes.gain", false)
+        host.instantiate("fx0", "echoes.gain", false)
             .unwrap();
         let first_id = host.instance("echoes.gain").unwrap().instance_id();
 
         // Recompile re-instantiates the same placement.
-        host.instantiate(NodeId(2), "fx0", "echoes.gain", false)
+        host.instantiate("fx0", "echoes.gain", false)
             .unwrap();
         let second_id = host.instance("echoes.gain").unwrap().instance_id();
 
@@ -1094,9 +1086,9 @@ mod tests {
     #[test]
     fn push_plugin_param_targets_the_addressed_instance() {
         let mut host = PluginHost::new();
-        host.instantiate(NodeId(1), "track-a:fx0", "echoes.gain", false)
+        host.instantiate("track-a:fx0", "echoes.gain", false)
             .unwrap();
-        host.instantiate(NodeId(2), "track-b:fx0", "echoes.gain", false)
+        host.instantiate("track-b:fx0", "echoes.gain", false)
             .unwrap();
 
         assert!(host.push_plugin_param("track-b:fx0", 42, 0.5).unwrap());
@@ -1120,14 +1112,14 @@ mod tests {
     #[test]
     fn staged_state_forces_fresh_instance_over_reuse() {
         let mut host = PluginHost::new();
-        host.instantiate(NodeId(1), "fx0", "echoes.gain", false)
+        host.instantiate("fx0", "echoes.gain", false)
             .unwrap();
         let first_id = host.instance("echoes.gain").unwrap().instance_id();
 
         let mut staged = HashMap::new();
         staged.insert("echoes.gain".to_string(), vec![1u8, 2, 3]);
         host.set_pending_state_blobs(staged);
-        host.instantiate(NodeId(2), "fx0", "echoes.gain", false)
+        host.instantiate("fx0", "echoes.gain", false)
             .unwrap();
         let second_id = host.instance("echoes.gain").unwrap().instance_id();
 
@@ -1150,7 +1142,7 @@ mod tests {
         staged.insert("echoes.gain".to_string(), blob.clone());
         host.set_pending_state_blobs(staged);
 
-        host.instantiate(NodeId(1), "echoes.gain", "echoes.gain", false)
+        host.instantiate("echoes.gain", "echoes.gain", false)
             .unwrap();
 
         let restored = host
@@ -1176,7 +1168,7 @@ mod tests {
         let mut staged = HashMap::new();
         staged.insert("fx0".to_string(), blob.clone());
         host.set_pending_state_blobs(staged);
-        host.instantiate(NodeId(1), "fx0", "echoes.gain", false)
+        host.instantiate("fx0", "echoes.gain", false)
             .unwrap();
         host.clear_pending_state_blobs();
         let first_id = host.instance_by_key("fx0").unwrap().instance_id();
@@ -1185,7 +1177,7 @@ mod tests {
         host.instance_by_key("fx0")
             .unwrap()
             .set_lifecycle(LifecycleState::Destroyed);
-        host.instantiate(NodeId(2), "fx0", "echoes.gain", false)
+        host.instantiate("fx0", "echoes.gain", false)
             .unwrap();
         let second_id = host.instance_by_key("fx0").unwrap().instance_id();
 
@@ -1208,12 +1200,12 @@ mod tests {
         let mut staged = HashMap::new();
         staged.insert("fx0".to_string(), vec![5u8, 6, 7]);
         host.set_pending_state_blobs(staged);
-        host.instantiate(NodeId(1), "fx0", "echoes.gain", false)
+        host.instantiate("fx0", "echoes.gain", false)
             .unwrap();
         host.clear_pending_state_blobs();
 
         // Same placement key, different plugin type → no carry.
-        host.instantiate(NodeId(2), "fx0", "echoes.pan", false)
+        host.instantiate("fx0", "echoes.pan", false)
             .unwrap();
 
         assert_eq!(
@@ -1234,7 +1226,7 @@ mod tests {
         host.set_pending_state_blobs(staged);
         host.clear_pending_state_blobs();
 
-        host.instantiate(NodeId(1), "echoes.gain", "echoes.gain", false)
+        host.instantiate("echoes.gain", "echoes.gain", false)
             .unwrap();
 
         let restored = host.save_device_state("echoes.gain").unwrap();
@@ -1269,7 +1261,7 @@ mod tests {
     fn a_crashed_plugin_is_reported_and_rebuilt_from_its_saved_state() {
         let mut host = PluginHost::new();
         stage(&mut host, "fx0", &[3, 1, 4]);
-        host.instantiate(NodeId(1), "fx0", "echoes.gain", false).unwrap();
+        host.instantiate("fx0", "echoes.gain", false).unwrap();
         host.clear_pending_state_blobs();
         let crashed = host.instance_by_key("fx0").unwrap();
         crashed.set_lifecycle(LifecycleState::Error);
@@ -1278,7 +1270,7 @@ mod tests {
         assert_eq!(unavailable.len(), 1);
         assert_eq!(unavailable[0].reason, UnavailableReason::Crashed);
 
-        host.instantiate(NodeId(2), "fx0", "echoes.gain", false).unwrap();
+        host.instantiate("fx0", "echoes.gain", false).unwrap();
         assert_ne!(host.instance_by_key("fx0").unwrap().instance_id(), crashed.instance_id());
         assert!(host.unavailable_plugins().is_empty(), "the reload clears the crash");
         assert_eq!(saved_blob(&host, "fx0"), Some(vec![3, 1, 4]));
@@ -1288,7 +1280,7 @@ mod tests {
     fn missing_effect_keeps_its_state_for_the_next_save() {
         let mut host = PluginHost::new();
         stage(&mut host, "fx-missing", &[7, 7, 7]);
-        assert!(host.instantiate(NodeId(1), "fx-missing", "clap:not-installed", false).is_err());
+        assert!(host.instantiate("fx-missing", "clap:not-installed", false).is_err());
         host.clear_pending_state_blobs();
 
         assert_eq!(saved_blob(&host, "fx-missing"), Some(vec![7, 7, 7]));
@@ -1309,7 +1301,7 @@ mod tests {
     fn removed_placement_drops_the_kept_state() {
         let mut host = PluginHost::new();
         stage(&mut host, "fx-missing", &[7]);
-        let _ = host.instantiate(NodeId(1), "fx-missing", "clap:not-installed", false);
+        let _ = host.instantiate("fx-missing", "clap:not-installed", false);
         host.clear_pending_state_blobs();
 
         host.retain_devices(&HashSet::new());
@@ -1331,11 +1323,11 @@ mod tests {
     fn plugin_found_later_gets_its_kept_state_back() {
         let mut host = PluginHost::new();
         stage(&mut host, "fx0", &[4, 5, 6]);
-        assert!(host.instantiate(NodeId(1), "fx0", "test:late", false).is_err());
+        assert!(host.instantiate("fx0", "test:late", false).is_err());
         host.clear_pending_state_blobs();
 
         host.registry_mut().add(internal_manifest("test:late"));
-        host.instantiate(NodeId(2), "fx0", "test:late", false)
+        host.instantiate("fx0", "test:late", false)
             .expect("plugin is now available");
 
         let restored = host.save_device_state("test:late").expect("device is instantiated");

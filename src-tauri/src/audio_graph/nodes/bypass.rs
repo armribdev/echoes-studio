@@ -6,7 +6,7 @@
 //! never called.
 
 use crate::audio_graph::buffer::AudioBuffer;
-use crate::audio_graph::node::{AudioNode, NodeId, PrepareContext, TransportInfo};
+use crate::audio_graph::node::{AudioNode, PrepareContext, TransportInfo};
 
 pub struct BypassNode {
     inner: Box<dyn AudioNode>,
@@ -19,10 +19,6 @@ impl BypassNode {
 }
 
 impl AudioNode for BypassNode {
-    fn node_id(&self) -> NodeId {
-        self.inner.node_id()
-    }
-
     fn label(&self) -> &str {
         "BypassNode"
     }
@@ -63,9 +59,6 @@ mod tests {
     struct Inverter;
 
     impl AudioNode for Inverter {
-        fn node_id(&self) -> NodeId {
-            NodeId(7)
-        }
         fn num_input_ports(&self) -> usize {
             2
         }
@@ -84,7 +77,6 @@ mod tests {
     #[test]
     fn passes_audio_through_without_processing() {
         let mut node = BypassNode::new(Box::new(Inverter));
-        assert_eq!(node.node_id(), NodeId(7));
         assert_eq!(node.num_input_ports(), 2, "keeps the wrapped node's ports (sidechain)");
 
         let mut input = AudioBuffer::new(2, 4);

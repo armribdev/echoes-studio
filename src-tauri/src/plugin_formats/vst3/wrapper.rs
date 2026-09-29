@@ -34,7 +34,7 @@ use std::ptr::NonNull;
 use std::sync::Arc;
 
 use crate::audio_graph::buffer::AudioBuffer;
-use crate::audio_graph::node::{AudioNode, NodeId, PrepareContext, TransportInfo};
+use crate::audio_graph::node::{AudioNode, PrepareContext, TransportInfo};
 use crate::audio_graph::plugin_params::{parse_plugin_param_name, PluginParamControl, PluginParamControls};
 use crate::plugin_formats::crash_guard;
 use crate::plugin_system::instance::{PluginInstance, FFI_GATE_HARVEST_BUDGET};
@@ -56,7 +56,6 @@ unsafe extern "C" fn vst3_process_trampoline(raw: *mut c_void) -> i32 {
 }
 
 pub struct VstWrapperNode {
-    node_id: NodeId,
 
     /// Shared, refcounted handle.  Captured at construction; cloned only on
     /// the command thread.  Deref on the audio thread is a non-atomic load.
@@ -102,13 +101,12 @@ unsafe impl Send for VstWrapperNode {}
 impl VstWrapperNode {
     /// Construct from a shared [`PluginInstance`].  Caller must guarantee the
     /// instance was built with VST3 native handles (`PluginInstance::new_vst3`).
-    pub fn new(node_id: NodeId, instance: Arc<PluginInstance>) -> Self {
+    pub fn new(instance: Arc<PluginInstance>) -> Self {
         debug_assert!(
             instance.vst3_handles().is_some(),
             "VstWrapperNode requires a VST3 PluginInstance"
         );
         Self {
-            node_id,
             instance,
             in_channel_ptrs: Vec::new(),
             out_channel_ptrs: Vec::new(),
@@ -137,9 +135,6 @@ impl VstWrapperNode {
 }
 
 impl AudioNode for VstWrapperNode {
-    fn node_id(&self) -> NodeId {
-        self.node_id
-    }
     fn label(&self) -> &str {
         "VstWrapperNode"
     }

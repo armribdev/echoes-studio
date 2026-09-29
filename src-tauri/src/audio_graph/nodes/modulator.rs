@@ -10,7 +10,7 @@ use crate::audio_graph::buffer::AudioBuffer;
 use std::sync::atomic::Ordering;
 
 use crate::audio_graph::live_params::{EnvelopeCells, MacroCells, ModulatorCells};
-use crate::audio_graph::node::{AudioNode, NodeId, PrepareContext, TransportInfo};
+use crate::audio_graph::node::{AudioNode, PrepareContext, TransportInfo};
 use crate::project::{AudioFollowerParams, FollowerMode, LfoWaveform};
 
 /// LFO with selectable waveform.  Output is normalised to −1…+1.
@@ -21,7 +21,6 @@ use crate::project::{AudioFollowerParams, FollowerMode, LfoWaveform};
 /// graph recompile.  When `None`, falls back to the constant `rate_hz` baked
 /// at construction time (used by placeholder modulators).
 pub struct LfoNode {
-    id: NodeId,
     /// Fallback rate used when `rate_cells` is `None` (placeholder / test nodes).
     rate_hz: f32,
     rate_cells: Option<Arc<ModulatorCells>>,
@@ -32,9 +31,8 @@ pub struct LfoNode {
 }
 
 impl LfoNode {
-    pub fn new(id: NodeId, rate_hz: f32, waveform: LfoWaveform) -> Self {
+    pub fn new(rate_hz: f32, waveform: LfoWaveform) -> Self {
         Self {
-            id,
             rate_hz,
             rate_cells: None,
             waveform,
@@ -82,7 +80,6 @@ impl LfoNode {
 /// `EnvelopeCells::gate` (written on the audio thread at block boundaries).
 /// All ADSR params are hot-editable through `EnvelopeCells` atomics.
 pub struct EnvelopeNode {
-    id: NodeId,
     cells: Arc<EnvelopeCells>,
     phase: AdsrPhase,
     /// Current envelope amplitude (0..1).  Audio-thread-exclusive — no atomic needed.
@@ -102,9 +99,8 @@ enum AdsrPhase {
 }
 
 impl EnvelopeNode {
-    pub fn new(id: NodeId, cells: Arc<EnvelopeCells>) -> Self {
+    pub fn new(cells: Arc<EnvelopeCells>) -> Self {
         Self {
-            id,
             cells,
             phase: AdsrPhase::Idle,
             level: 0.0,
@@ -115,9 +111,6 @@ impl EnvelopeNode {
 }
 
 impl AudioNode for EnvelopeNode {
-    fn node_id(&self) -> NodeId {
-        self.id
-    }
     fn label(&self) -> &str {
         "Envelope"
     }
@@ -222,20 +215,16 @@ impl AudioNode for EnvelopeNode {
 /// The value is held constant for the entire block; the command thread updates it
 /// via `MacroCells` without triggering a recompile.
 pub struct MacroNode {
-    id: NodeId,
     value_cells: Arc<MacroCells>,
 }
 
 impl MacroNode {
-    pub fn new(id: NodeId, value_cells: Arc<MacroCells>) -> Self {
-        Self { id, value_cells }
+    pub fn new(value_cells: Arc<MacroCells>) -> Self {
+        Self { value_cells }
     }
 }
 
 impl AudioNode for MacroNode {
-    fn node_id(&self) -> NodeId {
-        self.id
-    }
     fn label(&self) -> &str {
         "Macro"
     }
@@ -273,7 +262,6 @@ impl AudioNode for MacroNode {
 /// measurement, followed by a one-pole attack/release envelope.  The ring buffer size
 /// is fixed at `prepare` time and never resized on the audio thread.
 pub struct AudioFollowerNode {
-    id: NodeId,
     mode: FollowerMode,
     window_ms: f32,
     attack_ms: f32,
@@ -292,9 +280,8 @@ pub struct AudioFollowerNode {
 }
 
 impl AudioFollowerNode {
-    pub fn new(id: NodeId, params: AudioFollowerParams) -> Self {
+    pub fn new(params: AudioFollowerParams) -> Self {
         Self {
-            id,
             mode: params.mode,
             window_ms: params.window_ms,
             attack_ms: params.attack_ms,
@@ -319,9 +306,6 @@ fn one_pole_coeff(ms: f32, sr: f32) -> f32 {
 }
 
 impl AudioNode for AudioFollowerNode {
-    fn node_id(&self) -> NodeId {
-        self.id
-    }
     fn label(&self) -> &str {
         "AudioFollower"
     }
@@ -409,10 +393,6 @@ impl AudioNode for AudioFollowerNode {
 }
 
 impl AudioNode for LfoNode {
-    fn node_id(&self) -> NodeId {
-        self.id
-    }
-
     fn label(&self) -> &str {
         "LFO"
     }
@@ -520,7 +500,7 @@ mod tests {
     fn lfo_phase_resets_on_transport_start() {
         let sr = 48_000.0;
         let cells = make_lfo_cells(1.0, false, 1.0);
-        let mut node = LfoNode::new(NodeId(20), 1.0, LfoWaveform::Sine).with_rate_cells(cells);
+        let mut node = LfoNode::new(1.0, LfoWaveform::Sine).with_rate_cells(cells);
 
         // First playing block: phase should reset to 0, so sample[0] = sin(0) = 0.
         let t = playing_transport(sr, 120.0, 64, 0);
@@ -559,7 +539,7 @@ mod tests {
         // beat_division = 1.0 → one cycle per beat → rate = bpm/60 = 2 Hz
         // period = sr / 2 = 24_000 samples
         let cells = make_lfo_cells(0.0, true, 1.0);
-        let mut node = LfoNode::new(NodeId(21), 0.0, LfoWaveform::Sine).with_rate_cells(cells);
+        let mut node = LfoNode::new(0.0, LfoWaveform::Sine).with_rate_cells(cells);
 
         // Run one full period (24_000 samples) starting from transport start.
         let t = playing_transport(sr, bpm, 24_000, 0);
@@ -578,7 +558,7 @@ mod tests {
     fn lfo_tempo_sync_hot_switchable() {
         let sr = 48_000.0;
         let cells = make_lfo_cells(0.5, false, 1.0);
-        let mut node = LfoNode::new(NodeId(22), 0.5, LfoWaveform::Sine).with_rate_cells(Arc::clone(&cells));
+        let mut node = LfoNode::new(0.5, LfoWaveform::Sine).with_rate_cells(Arc::clone(&cells));
 
         let t = playing_transport(sr, 120.0, 64, 0);
         let out_free = run_lfo_block(&mut node, &t);
@@ -601,7 +581,7 @@ mod tests {
     #[test]
     fn macro_node_fills_output_with_value() {
         let cells = make_macro_cells(0.75);
-        let mut node = MacroNode::new(NodeId(1), Arc::clone(&cells));
+        let mut node = MacroNode::new(Arc::clone(&cells));
         let mut output = crate::audio_graph::buffer::AudioBuffer::new(2, 64);
         let t = crate::audio_graph::node::TransportInfo::stopped(48_000.0);
         node.process(&[], std::slice::from_mut(&mut output), &t);
@@ -615,7 +595,7 @@ mod tests {
     fn macro_node_tracks_live_cell_update() {
         use std::sync::atomic::Ordering;
         let cells = make_macro_cells(0.0);
-        let mut node = MacroNode::new(NodeId(1), Arc::clone(&cells));
+        let mut node = MacroNode::new(Arc::clone(&cells));
         let mut output = crate::audio_graph::buffer::AudioBuffer::new(1, 32);
         let t = crate::audio_graph::node::TransportInfo::stopped(48_000.0);
 
@@ -660,7 +640,7 @@ mod tests {
     #[test]
     fn envelope_idle_outputs_zero() {
         let cells = make_envelope_cells(10.0, 100.0, 0.7, 200.0);
-        let mut node = EnvelopeNode::new(NodeId(10), Arc::clone(&cells));
+        let mut node = EnvelopeNode::new(Arc::clone(&cells));
         let out = run_block(&mut node, 48_000.0, 64);
         assert!(out.iter().all(|&s| s == 0.0), "no gate → output must be zero");
     }
@@ -670,7 +650,7 @@ mod tests {
         // attack_ms = 1.0 ms at 48 kHz ≈ 48 samples; block = 128 samples.
         let cells = make_envelope_cells(1.0, 1000.0, 0.5, 1000.0);
         cells.gate.store(true, Ordering::Relaxed);
-        let mut node = EnvelopeNode::new(NodeId(11), Arc::clone(&cells));
+        let mut node = EnvelopeNode::new(Arc::clone(&cells));
         let out = run_block(&mut node, 48_000.0, 128);
         // Level must reach 1.0 within the first 60 samples.
         let peak_idx = out.iter().take(60).position(|&s| (s - 1.0).abs() < 1e-5)
@@ -690,7 +670,7 @@ mod tests {
         // So gate-on → immediately at 1.0
         let cells = make_envelope_cells(0.0, 0.0, 1.0, 10.0); // 10ms release at 48kHz = 480 samples
         cells.gate.store(true, Ordering::Relaxed);
-        let mut node = EnvelopeNode::new(NodeId(12), Arc::clone(&cells));
+        let mut node = EnvelopeNode::new(Arc::clone(&cells));
         run_block(&mut node, 48_000.0, 64); // sustain block
 
         // Gate off → release
@@ -708,7 +688,7 @@ mod tests {
     fn envelope_reset_returns_to_idle() {
         let cells = make_envelope_cells(100.0, 100.0, 0.5, 100.0);
         cells.gate.store(true, Ordering::Relaxed);
-        let mut node = EnvelopeNode::new(NodeId(13), Arc::clone(&cells));
+        let mut node = EnvelopeNode::new(Arc::clone(&cells));
         run_block(&mut node, 48_000.0, 64);
         node.reset();
         cells.gate.store(false, Ordering::Relaxed);
@@ -750,7 +730,7 @@ mod tests {
             release_ms: 100.0,
             source_effect_id: None,
         };
-        let mut node = AudioFollowerNode::new(NodeId(30), params);
+        let mut node = AudioFollowerNode::new(params);
         node.prepare(crate::audio_graph::node::PrepareContext {
             sample_rate: 48_000.0,
             max_block_size: 512,
@@ -775,7 +755,7 @@ mod tests {
             source_effect_id: None,
         };
         let sr = 48_000.0_f32;
-        let mut node = AudioFollowerNode::new(NodeId(31), params);
+        let mut node = AudioFollowerNode::new(params);
         node.prepare(crate::audio_graph::node::PrepareContext {
             sample_rate: sr,
             max_block_size: 2048,
@@ -805,7 +785,7 @@ mod tests {
             source_effect_id: None,
         };
         let sr = 48_000.0_f32;
-        let mut node = AudioFollowerNode::new(NodeId(32), params);
+        let mut node = AudioFollowerNode::new(params);
         node.prepare(crate::audio_graph::node::PrepareContext {
             sample_rate: sr,
             max_block_size: 512,
