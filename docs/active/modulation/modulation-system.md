@@ -234,6 +234,15 @@ range and scale as the engine — keep `INTERNAL_PARAMS` in `targets.ts` in sync
 with the Rust `*_RANGES` and `*_SCALES`); for plugins the plugin's own text
 formatting is not queried.
 
+**Automating from a knob (2026-09-29).** Right-clicking a `Knob` or the volume
+`FaderMeter` that carries a `modTargetKey` posts an `automationRequest`
+(`stores/automation.ts`); `AutomationKnobMenu.svelte` (mounted in `MainPanel`)
+resolves the key against `buildAutomationOptions` for the selected track and adds
+or removes the lane. The same key marks the knob as automated: `automatedTargets`
+lists, per track, the targets whose lane has at least one point (an empty lane is
+not compiled, so the knob keeps control) and the knob draws a solid ring in the
+track color. The knob does not yet follow the automated value during playback.
+
 ---
 
 ## Current Status

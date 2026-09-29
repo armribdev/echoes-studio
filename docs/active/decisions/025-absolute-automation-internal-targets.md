@@ -2,7 +2,7 @@
 
 ## Status
 
-**Accepted — 2026-09-29 (approved by the user). Engine implemented 2026-09-29 (track volume, EQ, compressor, reverb, delay); picker offers the new targets. Right-click-on-knob entry and the automated-knob ring are still to do.**
+**Accepted — 2026-09-29 (approved by the user). Engine implemented 2026-09-29 (track volume, EQ, compressor, reverb, delay); picker offers the new targets. Right-click-on-knob entry and the automated-knob ring done 2026-09-29.**
 Resolves the item ADR-021 left open ("Make automation absolute for internal
 effects as well — deferred: it would change existing renders and needs its own
 decision"). Touches determinism (C-2), so it needs approval before any code
@@ -105,7 +105,7 @@ the modulator colour coding). A "temporary override" latch is out of scope.
 3. UI: offer track volume and internal effect parameters in the picker
    (`buildAutomationOptions`), then the right-click-on-knob entry.
 
-**Done 2026-09-29** (steps 1, 2 and the picker of step 3). The harness gained one
+**Done 2026-09-29** (steps 1, 2 and step 3: picker, right-click on a knob or the volume fader, solid ring on an automated knob). The harness gained one
 project per family (`automated_gain`, `_eq`, `_compressor`, `_reverb`, `_delay`),
 recorded with the old additive behaviour first; each node conversion then moved
 only its own hash (plus `automated`, which uses `TrackGain` and `delay.wet`).

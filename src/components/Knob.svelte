@@ -3,6 +3,7 @@
 	import { isTauri } from '@tauri-apps/api/core';
 	import { getCurrentWindow, LogicalPosition } from '@tauri-apps/api/window';
 	import { modulationDrag } from '../stores/modulationDrag';
+	import { automationRequest } from '../stores/automation';
 
 	export let value: number;
 	export let min: number;
@@ -15,6 +16,8 @@
 	export let modColor: string | undefined = undefined;
 	/** Modulation target key; makes this knob a drop target for dragged modulators. */
 	export let modTargetKey: string | undefined = undefined;
+	/** Track color to draw as a solid ring when a lane with points drives this parameter (ADR-025). */
+	export let automationColor: string | undefined = undefined;
 
 	$: dropCandidate = modTargetKey !== undefined && $modulationDrag !== null;
 	$: dropHover = dropCandidate && $modulationDrag?.hoverKey === modTargetKey;
@@ -38,6 +41,7 @@
 	const STROKE = 2.5;
 	const RING_R = 12;
 	const RING_STROKE = 1.25;
+	const AUTOMATION_RING_R = 14.5;
 
 	const START_CSS = -Math.PI * 0.83;
 	const ROT_RANGE = 2 * Math.PI * 0.83;
@@ -189,6 +193,13 @@
 		window.addEventListener('pointercancel', pointerUp);
 	}
 
+	function onContextMenu(e: MouseEvent) {
+		if (modTargetKey === undefined) return;
+		e.preventDefault();
+		e.stopPropagation();
+		automationRequest.set({ key: modTargetKey, x: e.clientX, y: e.clientY });
+	}
+
 	onDestroy(() => {
 		if (dragging) finishDrag();
 	});
@@ -205,8 +216,12 @@
 	bind:this={knobEl}
 	on:pointerdown={pointerDown}
 	on:dblclick={doubleClick}
+	on:contextmenu={onContextMenu}
 >
 	<svg width={SIZE} height={SIZE} viewBox="0 0 {SIZE} {SIZE}" overflow="visible">
+		{#if automationColor}
+			<circle class="automation-ring" cx={CX} cy={CY} r={AUTOMATION_RING_R} stroke={automationColor} />
+		{/if}
 		{#if modColor}
 			<circle class="mod-ring" cx={CX} cy={CY} r={RING_R} stroke-width={RING_STROKE} stroke={modColor} />
 		{/if}
@@ -269,6 +284,12 @@
 		fill: none;
 		opacity: 0.65;
 		stroke-dasharray: 2 2;
+	}
+
+	.automation-ring {
+		fill: none;
+		stroke-width: 1.5;
+		opacity: 0.9;
 	}
 
 </style>

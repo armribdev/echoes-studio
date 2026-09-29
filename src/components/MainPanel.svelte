@@ -5,6 +5,7 @@
 	import AutomationLane from './AutomationLane.svelte';
 	import AutomationLaneHeader from './AutomationLaneHeader.svelte';
 	import AutomationParamPicker from './AutomationParamPicker.svelte';
+	import AutomationKnobMenu from './AutomationKnobMenu.svelte';
 	import ClipContextMenu from './ClipContextMenu.svelte';
 	import PluginPicker from './PluginPicker.svelte';
 	import { instrumentIdOf, type PluginInfo } from '../stores/plugins';
@@ -1996,6 +1997,8 @@
 		on:close={() => { automationPicker = null; }}
 	/>
 {/if}
+
+<AutomationKnobMenu track={selectedTrackIndex !== null ? tracks[selectedTrackIndex] : undefined} />
 
 {#if clipContextMenu}
 	<ClipContextMenu

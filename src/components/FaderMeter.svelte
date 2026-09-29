@@ -6,6 +6,7 @@
 <script lang="ts">
 	import { onMount, onDestroy, createEventDispatcher } from 'svelte';
 	import { modulationDrag } from '../stores/modulationDrag';
+	import { automationRequest } from '../stores/automation';
 
 	/** Gain value, 0–100. */
 	export let value: number = 75;
@@ -19,6 +20,8 @@
 	export let modColor: string | undefined = undefined;
 	/** Modulation target key; makes this fader a drop target for dragged modulators. */
 	export let modTargetKey: string | undefined = undefined;
+	/** Track color to draw as a solid ring when a lane with points drives the volume (ADR-025). */
+	export let automationColor: string | undefined = undefined;
 
 	$: dropCandidate = modTargetKey !== undefined && $modulationDrag !== null;
 	$: dropHover = dropCandidate && $modulationDrag?.hoverKey === modTargetKey;
@@ -100,6 +103,13 @@
 		window.removeEventListener('mouseup', onMouseUp);
 	}
 
+	function onContextMenu(e: MouseEvent) {
+		if (modTargetKey === undefined) return;
+		e.preventDefault();
+		e.stopPropagation();
+		automationRequest.set({ key: modTargetKey, x: e.clientX, y: e.clientY });
+	}
+
 	function onDblClick() {
 		value = defaultValue;
 		dispatch('change', value);
@@ -118,6 +128,7 @@
 	bind:this={rail}
 	on:mousedown={onMouseDown}
 	on:dblclick={onDblClick}
+	on:contextmenu={onContextMenu}
 	role="slider"
 	aria-valuemin={0}
 	aria-valuemax={100}
@@ -134,6 +145,9 @@
 		<div class="fill" style="width:{pctR}%; background:{colorR};"></div>
 	</div>
 
+	{#if automationColor}
+		<div class="automation-ring" style="border-color:{automationColor};"></div>
+	{/if}
 	{#if modColor}
 		<div class="mod-ring" style="border-color:{modColor};"></div>
 	{/if}
@@ -193,6 +207,15 @@
 		border: 1px dashed;
 		border-radius: 3px;
 		opacity: 0.65;
+		pointer-events: none;
+	}
+
+	.automation-ring {
+		position: absolute;
+		inset: -4px -5px;
+		border: 1.5px solid;
+		border-radius: 4px;
+		opacity: 0.9;
 		pointer-events: none;
 	}
 

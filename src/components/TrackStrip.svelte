@@ -4,6 +4,7 @@
 	import { createEventDispatcher } from 'svelte';
 	import type { Track } from '../types/global';
 	import { modulatorColor } from '../frontend/modulation/colors';
+	import { automatedTargets } from '../stores/automation';
 
 	export let track: Track;
 	export let selected: boolean = false;
@@ -138,6 +139,7 @@
 					{peakR}
 					defaultValue={75}
 					modColor={volumeModColor}
+					automationColor={$automatedTargets[track.id]?.has('track_gain') ? color : undefined}
 					modTargetKey={selected ? 'track_gain' : undefined}
 					on:change={(e) => onVolumeChange(e.detail)}
 					on:release={(e) => onVolumeRelease(e.detail)}
