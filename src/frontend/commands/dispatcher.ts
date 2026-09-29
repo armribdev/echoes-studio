@@ -170,7 +170,7 @@ export function setTrackMixLive(trackId: string, volume?: number, pan?: number):
 
 export function updateTrack(
   trackId: string,
-  changes: { name?: string; volume?: number; pan?: number },
+  changes: { name?: string; volume?: number; pan?: number; color?: string },
 ): Promise<CommandResult> {
   return dispatch<UpdateTrackPayload>(cmd.UPDATE_TRACK, {
     track_id: trackId,

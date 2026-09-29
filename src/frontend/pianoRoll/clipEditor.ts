@@ -6,20 +6,14 @@ import { bottomPanel } from '../../stores/bottomPanel';
 import { keyboardFocus } from '../../stores/keyboardFocus';
 import { tempo } from '../../stores/tempo';
 import { computePreviewPanelHeight } from './previewLayout';
+import { trackColor } from '../trackColor';
 
-const TRACK_COLORS = [
-	'#4d96ff', '#ff6b6b', '#6bcb77', '#ffd93d',
-	'#c77dff', '#ff9a3c', '#00c9a7', '#ff6db6',
-];
+export { trackColor };
 
 export interface ResolvedMidiClip {
 	track: Track;
 	trackIndex: number;
 	clip: MidiClip;
-}
-
-export function trackColor(trackIndex: number): string {
-	return TRACK_COLORS[trackIndex % TRACK_COLORS.length];
 }
 
 function clipDurationBeats(clip: MidiClip): number {
@@ -195,7 +189,7 @@ export function cycleEditorFocus(tracks: Track[], state: SelectionState) {
 	if (!bp.open) {
 		const resolved = resolveActiveMidiClip(tracks, state);
 		if (!resolved) return;
-		focusMidiClipForEdit(resolved.track, resolved.clip, trackColor(resolved.trackIndex));
+		focusMidiClipForEdit(resolved.track, resolved.clip, trackColor(resolved.track.id, resolved.track.color));
 		return;
 	}
 
@@ -212,5 +206,5 @@ export function cycleEditorFocus(tracks: Track[], state: SelectionState) {
 
 	// Preview ouvert sans clip chargé (rare : panel ouvert via UI sans sélection).
 	const resolved = resolveActiveMidiClip(tracks, state);
-	if (resolved) focusMidiClipForEdit(resolved.track, resolved.clip, trackColor(resolved.trackIndex));
+	if (resolved) focusMidiClipForEdit(resolved.track, resolved.clip, trackColor(resolved.track.id, resolved.track.color));
 }

@@ -334,6 +334,7 @@ fn empty_app_track(id: String, name: String) -> AppTrack {
         instrument: None,
         input_source: None,
         automation_lanes: vec![],
+        color: None,
     }
 }
 
@@ -1231,6 +1232,9 @@ fn process_command(
                 if let Some(pan) = p.pan {
                     track.pan = pan;
                 }
+                if let Some(color) = p.color.as_ref() {
+                    track.color = Some(color.clone());
+                }
                 Ok(())
             })?;
 
@@ -1253,6 +1257,7 @@ fn process_command(
                     "name": p.name,
                     "volume": p.volume,
                     "pan": p.pan,
+                    "color": p.color,
                 }),
                 false,
             )
@@ -2202,6 +2207,7 @@ fn snapshot_track(t: &AppTrack) -> AppTrack {
         input_source: t.input_source.clone(),
         automation_lanes: t.automation_lanes.clone(),
         clips: t.clips.iter().map(snapshot_clip).collect(),
+        color: t.color.clone(),
     }
 }
 
@@ -2347,6 +2353,9 @@ fn apply_track_updated(project: &mut AppProject, payload: &Value) {
     }
     if let Some(pan) = payload["pan"].as_f64() {
         track.pan = pan as f32;
+    }
+    if let Some(color) = payload["color"].as_str() {
+        track.color = Some(color.to_string());
     }
 }
 
@@ -2983,6 +2992,7 @@ mod tests {
             instrument: None,
             input_source: None,
             automation_lanes: vec![],
+            color: None,
         });
         project
     }

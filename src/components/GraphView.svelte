@@ -14,6 +14,7 @@
 	} from '../frontend/graph/layout';
 	import { renderGraph, hitTestNode } from '../frontend/graph/render';
 	import type { GraphLayout, LayoutNode } from '../frontend/graph/types';
+	import { trackColor as colorForTrack } from '../frontend/trackColor';
 
 	const MIN_ZOOM = 0.25;
 	const MAX_ZOOM = 2;
@@ -38,15 +39,9 @@
 	$: scope = $viewMode.graphScope;
 	$: snapshot = $graphSnapshot;
 
-	$: trackColor = (() => {
-		if (!trackId) return '#4d96ff';
-		const idx = tracks.findIndex((t) => t.id === trackId);
-		const colors = [
-			'#4d96ff', '#ff6b6b', '#6bcb77', '#ffd93d',
-			'#c77dff', '#ff9a3c', '#00c9a7', '#ff6db6',
-		];
-		return colors[Math.max(0, idx) % colors.length];
-	})();
+	$: trackColor = trackId
+		? colorForTrack(trackId, tracks.find((t) => t.id === trackId)?.color)
+		: '#4d96ff';
 
 	$: layout = computeLayout(snapshot, scope, trackId);
 	$: audioEdges = snapshot ? visibleAudioEdges(snapshot, layout) : [];
@@ -188,15 +183,11 @@
 		const idx = tracks.findIndex((t) => t.id === tid);
 		if (idx < 0) return;
 
-		const colors = [
-			'#4d96ff', '#ff6b6b', '#6bcb77', '#ffd93d',
-			'#c77dff', '#ff9a3c', '#00c9a7', '#ff6db6',
-		];
 		const t = tracks[idx];
 		selectedTrack.set({
 			trackId: t.id,
 			trackName: t.name,
-			trackColor: colors[idx % colors.length],
+			trackColor: colorForTrack(t.id, t.color),
 			instrument: t.instrument ?? null,
 			effects: t.effects ?? [],
 			modulators: t.modulators ?? [],

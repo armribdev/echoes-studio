@@ -97,7 +97,7 @@ export function applyEvent(state: ProjectState, event: EngineEvent): ProjectStat
       if (state.tracks.some((t) => t.id === p.id)) return state; // idempotent
       return {
         ...state,
-        tracks: [...state.tracks, { id: p.id, name: p.name, volume: 80, pan: 0, muted: false, solo: false, instrument: p.instrument ?? null, input_source: null, clips: [], effects: [], modulators: [], mod_routes: [], midi_notes: [], midi_clips: [], automation_lanes: [] }],
+        tracks: [...state.tracks, { id: p.id, name: p.name, volume: 80, pan: 0, muted: false, solo: false, color: null, instrument: p.instrument ?? null, input_source: null, clips: [], effects: [], modulators: [], mod_routes: [], midi_notes: [], midi_clips: [], automation_lanes: [] }],
       };
     }
 
@@ -107,7 +107,7 @@ export function applyEvent(state: ProjectState, event: EngineEvent): ProjectStat
     }
 
     case ev.TRACK_UPDATED: {
-      const p = event.payload as { id: string; name?: string; volume?: number; pan?: number };
+      const p = event.payload as { id: string; name?: string; volume?: number; pan?: number; color?: string };
       return {
         ...state,
         tracks: state.tracks.map((t) =>
@@ -118,6 +118,7 @@ export function applyEvent(state: ProjectState, event: EngineEvent): ProjectStat
                 name: p.name ?? t.name,
                 volume: p.volume ?? t.volume,
                 pan: p.pan ?? t.pan,
+                color: p.color ?? t.color,
               },
         ),
       };
@@ -605,6 +606,7 @@ export function projectFromSnapshot(dto: Project): ProjectState {
       pan: t.pan ?? 0,
       muted: t.muted ?? false,
       solo: t.solo ?? false,
+      color: t.color ?? null,
       clips: t.clips.map((c) => ({ ...c, trackId: t.id })),
       effects: t.effects ?? [],
       modulators: t.modulators ?? [],

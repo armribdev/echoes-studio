@@ -164,6 +164,8 @@ export interface Track {
 	pan: number;
 	muted: boolean;
 	solo: boolean;
+	/** Optional UI color override (`#rrggbb`). Absent → stable default from id. */
+	color?: string | null;
 	/** Plugin id (e.g. `clap:…`) or null for built-in PolySynth. */
 	instrument?: string | null;
 	/** Plugin output mixed into the track's input, or null/absent for none. */

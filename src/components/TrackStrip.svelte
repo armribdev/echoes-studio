@@ -1,10 +1,15 @@
 <script lang="ts">
 	import FaderMeter from './FaderMeter.svelte';
 	import Knob from './Knob.svelte';
+	import TrackInstrumentArt from './TrackInstrumentArt.svelte';
 	import { createEventDispatcher } from 'svelte';
 	import type { Track } from '../types/global';
 	import { modulatorColor } from '../frontend/modulation/colors';
 	import { automatedTargets, automatedValues } from '../stores/automation';
+	import { TRACK_COLORS } from '../frontend/trackColor';
+	import { instrumentArtKind } from '../frontend/instrumentArt';
+	import { instrumentDisplayName, plugins } from '../stores/plugins';
+	import { dismissable } from '../frontend/dismiss';
 
 	export let track: Track;
 	export let selected: boolean = false;
@@ -24,6 +29,12 @@
 	$: volumeModColor = trackGainModColor(track);
 	$: automatedGain = $automatedValues[track.id]?.['track_gain'];
 	$: automatedVolume = automatedGain === undefined ? undefined : automatedGain * 100;
+	$: artKind = instrumentArtKind(
+		track.instrument,
+		instrumentDisplayName($plugins, track.instrument),
+	);
+
+	let colorOpen = false;
 
 	function trackGainModColor(t: Track): string | undefined {
 		const route = t.mod_routes?.find((r) => r.target.kind === 'track_gain');
@@ -56,6 +67,7 @@
 		panchange: void;
 		rename: { name: string };
 		openpianoroll: void;
+		colorchange: string;
 	}>();
 
 	function makeEditable(e: MouseEvent) {
@@ -84,6 +96,12 @@
 			dispatch('rename', { name: newName });
 		}, { once: true });
 	}
+
+	function pickColor(next: string) {
+		colorOpen = false;
+		if (next === color) return;
+		dispatch('colorchange', next);
+	}
 </script>
 
 <!-- svelte-ignore a11y-no-static-element-interactions -->
@@ -94,40 +112,77 @@
 	on:mousedown={() => dispatch('select')}
 	on:contextmenu={(e) => { e.preventDefault(); e.stopPropagation(); dispatch('contextmenu', e); }}
 >
-	<div class="track-head">
-		<!-- svelte-ignore a11y-no-static-element-interactions -->
-		<strong class="track-name" on:dblclick={makeEditable}>{track.name}</strong>
-		<div class="ms-group" role="group" aria-label="Mute, solo, armement">
-			<button
-				type="button"
-				class="ms-btn"
-				class:active={track.muted}
-				title="Mute"
-				aria-pressed={track.muted}
-				on:click|stopPropagation={() => dispatch('mutetoggle')}
-			>M</button>
-			<button
-				type="button"
-				class="ms-btn"
-				class:active={track.solo}
-				title="Solo"
-				aria-pressed={track.solo}
-				on:click|stopPropagation={() => dispatch('solotoggle')}
-			>S</button>
-			<button
-				type="button"
-				class="ms-btn ms-btn--arm"
-				class:active={armed}
-				title="Armer pour l'entrée MIDI"
-				aria-pressed={armed}
-				aria-label="Armer pour l'entrée MIDI"
-				on:click|stopPropagation={() => dispatch('armtoggle')}
-			><span class="arm-dot" aria-hidden="true"></span></button>
-		</div>
+	<div class="color-slot">
+		<button
+			type="button"
+			class="color-bar"
+			style="background: {color}"
+			aria-label="Changer la couleur de la piste"
+			aria-expanded={colorOpen}
+			on:click|stopPropagation={() => { colorOpen = !colorOpen; }}
+		></button>
+		{#if colorOpen}
+			<div
+				class="color-pop"
+				role="listbox"
+				aria-label="Couleurs de piste"
+				use:dismissable={() => { colorOpen = false; }}
+				on:mousedown|stopPropagation
+			>
+				{#each TRACK_COLORS as swatch}
+					<button
+						type="button"
+						class="color-opt"
+						class:active={swatch === color}
+						style="background: {swatch}"
+						role="option"
+						aria-selected={swatch === color}
+						aria-label={swatch}
+						on:click|stopPropagation={() => pickColor(swatch)}
+					></button>
+				{/each}
+			</div>
+		{/if}
 	</div>
 
-	<div class="track-controls">
-		<div class="ctrl-row">
+	<div class="track-stack">
+		<div class="track-top">
+			<div class="art-wrap">
+				<TrackInstrumentArt kind={artKind} {color} />
+			</div>
+
+			<!-- svelte-ignore a11y-no-static-element-interactions -->
+			<strong class="track-name" on:dblclick={makeEditable}>{track.name}</strong>
+			<div class="ms-group" role="group" aria-label="Mute, solo, armement">
+				<button
+					type="button"
+					class="ms-btn"
+					class:active={track.muted}
+					title="Mute"
+					aria-pressed={track.muted}
+					on:click|stopPropagation={() => dispatch('mutetoggle')}
+				>M</button>
+				<button
+					type="button"
+					class="ms-btn"
+					class:active={track.solo}
+					title="Solo"
+					aria-pressed={track.solo}
+					on:click|stopPropagation={() => dispatch('solotoggle')}
+				>S</button>
+				<button
+					type="button"
+					class="ms-btn ms-btn--arm"
+					class:active={armed}
+					title="Armer pour l'entrée MIDI"
+					aria-pressed={armed}
+					aria-label="Armer pour l'entrée MIDI"
+					on:click|stopPropagation={() => dispatch('armtoggle')}
+				><span class="arm-dot" aria-hidden="true"></span></button>
+			</div>
+		</div>
+
+		<div class="track-controls">
 			<div class="ctrl-pan">
 				<span class="ctrl-label">PAN</span>
 				<Knob
@@ -164,34 +219,98 @@
 	.instrument {
 		height: 100px;
 		display: flex;
-		flex-direction: column;
+		align-items: stretch;
 		box-sizing: border-box;
 		border-bottom: 1px solid $border-color;
 		position: relative;
 		transition: background 0.1s;
-
-		&::before {
-			content: '';
-			position: absolute;
-			left: 0;
-			top: 10px;
-			bottom: 10px;
-			width: 3px;
-			border-radius: 0 2px 2px 0;
-			background: var(--track-color, #{$accent-color});
-		}
+		padding: 0;
+		gap: 0;
 
 		&--selected { background: $surface-1; }
 	}
 
-	.track-head {
-		height: 32px;
+	.color-slot {
+		position: relative;
+		flex-shrink: 0;
+		width: 10px;
+		padding: 10px 0;
+		box-sizing: border-box;
+	}
+
+	.color-bar {
+		display: block;
+		width: 3px;
+		height: 100%;
+		margin: 0;
+		padding: 0;
+		border: none;
+		border-radius: 0 2px 2px 0;
+		cursor: pointer;
+		transition: width 0.12s ease, filter 0.12s ease;
+
+		&:hover {
+			width: 5px;
+			filter: brightness(1.12);
+		}
+	}
+
+	.color-pop {
+		position: absolute;
+		z-index: 30;
+		left: 10px;
+		top: 50%;
+		transform: translateY(-50%);
+		display: grid;
+		grid-template-columns: repeat(6, 20px);
+		gap: 5px;
+		padding: 8px;
+		background: $panel-background-color;
+		border: 1px solid $border-color;
+		border-radius: $radius-md;
+		box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+	}
+
+	.color-opt {
+		width: 20px;
+		height: 20px;
+		padding: 0;
+		border: 1px solid rgba(255, 255, 255, 0.08);
+		border-radius: 5px;
+		cursor: pointer;
+		transition: transform 0.08s ease, box-shadow 0.08s ease;
+
+		&.active {
+			box-shadow:
+				0 0 0 2px $panel-background-color,
+				0 0 0 3.5px #fff;
+		}
+
+		&:hover {
+			transform: scale(1.08);
+			filter: brightness(1.08);
+		}
+	}
+
+	.track-stack {
+		flex: 1;
+		min-width: 0;
+		display: flex;
+		flex-direction: column;
+		padding: 6px 8px 6px 6px;
+		gap: 4px;
+	}
+
+	.track-top {
 		flex-shrink: 0;
 		display: flex;
 		align-items: center;
-		gap: 6px;
-		padding: 0 6px 0 13px;
-		border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+		gap: 8px;
+		min-width: 0;
+	}
+
+	.art-wrap {
+		flex-shrink: 0;
 	}
 
 	.track-name {
@@ -277,17 +396,11 @@
 
 	.track-controls {
 		flex: 1;
+		min-height: 0;
+		width: 100%;
 		display: flex;
 		align-items: center;
-		padding: 0 8px 4px 13px;
-		gap: 0;
-	}
-
-	.ctrl-row {
-		flex: 1;
-		display: flex;
-		align-items: center;
-		gap: 8px;
+		gap: 10px;
 	}
 
 	.ctrl-label {
@@ -310,10 +423,10 @@
 
 	.ctrl-vol {
 		flex: 1;
+		min-width: 0;
 		display: flex;
 		flex-direction: column;
-		align-items: flex-start;
+		align-items: stretch;
 		gap: 5px;
-		min-width: 0;
 	}
 </style>

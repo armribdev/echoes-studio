@@ -736,6 +736,7 @@ mod routing_tests {
             instrument: None,
             input_source: None,
             automation_lanes: vec![],
+            color: None,
         }
     }
 

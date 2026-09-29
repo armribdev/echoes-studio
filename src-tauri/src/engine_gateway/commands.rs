@@ -97,6 +97,7 @@ pub struct UpdateTrackPayload {
     pub name: Option<String>,
     pub volume: Option<f32>,
     pub pan: Option<f32>,
+    pub color: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

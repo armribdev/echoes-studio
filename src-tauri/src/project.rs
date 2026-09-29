@@ -466,6 +466,8 @@ pub struct AppTrack {
     pub input_source: Option<PluginOutputSource>,
     /// Automation lanes — each drives one parameter from pre-recorded curves.
     pub automation_lanes: Vec<AutomationLane>,
+    /// Optional UI color override (`#rrggbb`). `None` → frontend picks a stable default from id.
+    pub color: Option<String>,
 }
 
 fn default_midi_grid_beats() -> f32 {
@@ -733,6 +735,7 @@ impl AppProject {
                     instrument: t.instrument.clone(),
                     input_source: t.input_source.clone(),
                     automation_lanes: t.automation_lanes.clone(),
+                    color: t.color.clone(),
                 })
                 .collect(),
             // New per-instance format (ADR-017): keyed by `instance_key`.
@@ -797,6 +800,7 @@ impl AppProject {
                 instrument: tf.instrument,
                 input_source: tf.input_source,
                 automation_lanes: tf.automation_lanes,
+                color: tf.color,
             });
         }
         // Plugin state: prefer the per-instance format (ADR-017); fall back to
@@ -891,6 +895,7 @@ impl AppTrack {
             instrument: self.instrument.clone(),
             input_source: self.input_source.clone(),
             automation_lanes: self.automation_lanes.clone(),
+            color: self.color.clone(),
         }
     }
 }
@@ -1220,6 +1225,8 @@ pub struct TrackFile {
     pub input_source: Option<PluginOutputSource>,
     #[serde(default)]
     pub automation_lanes: Vec<AutomationLane>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<String>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -1285,6 +1292,8 @@ pub struct TrackDto {
     pub instrument: Option<String>,
     pub input_source: Option<PluginOutputSource>,
     pub automation_lanes: Vec<AutomationLane>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub color: Option<String>,
 }
 
 #[derive(Serialize, Clone)]
@@ -1334,6 +1343,7 @@ mod tests {
             instrument: None,
             input_source: None,
             automation_lanes: vec![],
+            color: None,
         });
         assert_eq!(project.timeline_end_secs(), 12.5);
     }
@@ -1396,6 +1406,7 @@ mod tests {
             instrument: Some("clap://surge.dll?org.surge-synth.surge-xt".into()),
             input_source: None,
             automation_lanes: vec![],
+            color: None,
         });
 
         let file = project.to_file();
@@ -1434,6 +1445,7 @@ mod tests {
             instrument: None,
             input_source: None,
             automation_lanes: vec![],
+            color: None,
         }
     }
 

@@ -259,6 +259,7 @@ mod tests {
             instrument: None,
             input_source: None,
             automation_lanes: vec![],
+            color: None,
         });
         let snap = GraphSnapshotDto::from_project(&project);
         assert!(!snap.audio_edges.is_empty());

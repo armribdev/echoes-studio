@@ -89,11 +89,6 @@
 		trackIndexFromArrangeY,
 	} from '../frontend/arrangeInteraction';
 	import { ev, isEngineEvent, type TrackCreatedPayload } from '../shared/protocol/events';
-
-	const TRACK_COLORS = [
-		'#4d96ff', '#ff6b6b', '#6bcb77', '#ffd93d',
-		'#c77dff', '#ff9a3c', '#00c9a7', '#ff6db6',
-	];
 	import { notify } from '../stores/status';
 	import { trackLevels } from '../stores/trackLevels';
 
@@ -236,7 +231,7 @@
 			selectedTrack.set({
 				trackId: t.id,
 				trackName: t.name,
-				trackColor: TRACK_COLORS[selectedTrackIndex % TRACK_COLORS.length],
+				trackColor: trackColor(t.id, t.color),
 				instrument: t.instrument ?? null,
 				effects: t.effects ?? [],
 				modulators: t.modulators ?? [],
@@ -1003,7 +998,7 @@
 			const midiClip = track.midi_clips?.find((c) => c.id === clipId);
 			if (midiClip) {
 				selectTrackIndex(trackIndex);
-				ensureClipPreview(track, midiClip, trackColor(trackIndex));
+				ensureClipPreview(track, midiClip, trackColor(track.id, track.color));
 				return;
 			}
 			if (track.clips.some((c) => c.id === clipId)) {
@@ -1415,7 +1410,7 @@
 		if (!track) return;
 		const clip = track.midi_clips?.find((c) => c.id === id);
 		if (!clip) return;
-		ensureClipPreview(track, clip, trackColor(trackIndex));
+		ensureClipPreview(track, clip, trackColor(track.id, track.color));
 	}
 
 	function onMidiClipDblClick(e: CustomEvent<{ id: string; trackIndex: number }>) {
@@ -1424,7 +1419,7 @@
 		if (!track) return;
 		const clip = track.midi_clips?.find((c) => c.id === id);
 		if (!clip) return;
-		focusMidiClipForEdit(track, clip, trackColor(trackIndex));
+		focusMidiClipForEdit(track, clip, trackColor(track.id, track.color));
 	}
 
 	function onMidiClipContextMenu(e: CustomEvent<{ id: string; trackIndex: number; x: number; y: number }>) {
@@ -1972,6 +1967,12 @@
 		updateTrack(track.id, { pan: track.pan }).catch(console.error);
 	}
 
+	function handleColorChange(trackIndex: number, color: string) {
+		const track = tracks[trackIndex];
+		if (!track) return;
+		updateTrack(track.id, { color }).catch(console.error);
+	}
+
 	function handleMuteToggle(trackIndex: number) {
 		const track = tracks[trackIndex];
 		if (!track) return;
@@ -2135,7 +2136,7 @@
 					{track}
 					selected={selectedTrackIndex === trackIndex}
 					armed={$armedTrackId === track.id}
-					color={TRACK_COLORS[trackIndex % TRACK_COLORS.length]}
+					color={trackColor(track.id, track.color)}
 					volume={track.volume}
 					bind:pan={tracks[trackIndex].pan}
 					peakL={($trackLevels[track.id]?.[0]) ?? 0}
@@ -2149,12 +2150,13 @@
 					on:volumerelease={(e) => handleVolumeRelease(trackIndex, e.detail)}
 					on:panchange={() => handlePanChange(trackIndex)}
 					on:panrelease={() => handlePanRelease(trackIndex)}
+					on:colorchange={(e) => handleColorChange(trackIndex, e.detail)}
 					on:rename={(e) => { tracks[trackIndex] = { ...tracks[trackIndex], name: e.detail.name }; tracks = tracks; updateTrack(tracks[trackIndex].id, { name: e.detail.name, volume: tracks[trackIndex].volume }).catch(console.error); }}
 				on:openpianoroll={() => {
 					const firstClip = track.midi_clips?.[0];
 					if (firstClip) {
 						selection.setSingle(firstClip.id);
-						focusMidiClipForEdit(track, firstClip, trackColor(trackIndex));
+						focusMidiClipForEdit(track, firstClip, trackColor(track.id, track.color));
 					} else {
 						const bpm = $tempo.bpm;
 						const fourBeats = (4 / bpm) * 60;
@@ -2166,7 +2168,7 @@
 					<AutomationLaneHeader
 						{lane}
 						{track}
-						color={trackColor(trackIndex)}
+						color={trackColor(track.id, track.color)}
 						on:remove={() => handleRemoveLane(track.id, lane.id)}
 					/>
 				{/each}
@@ -2318,7 +2320,7 @@
 					{scale}
 					{trackIndex}
 					bpm={$tempo.bpm}
-					trackColor={TRACK_COLORS[trackIndex % TRACK_COLORS.length]}
+					trackColor={trackColor(track.id, track.color)}
 					on:clipdragstart={onClipDragStart}
 					on:clipresizestart={onClipResizeStart}
 					on:clipcontextmenu={handleClipContextMenu}
@@ -2345,7 +2347,7 @@
 						effects={track.effects}
 						{scale}
 						widthPx={effectiveContentWidthPx}
-						color={trackColor(trackIndex)}
+						color={trackColor(track.id, track.color)}
 						snapTime={(seconds, altKey) => snap(seconds, altKey)}
 					/>
 				{/each}

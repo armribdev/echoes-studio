@@ -102,6 +102,7 @@ export interface TrackUpdatedPayload {
   name?: string;
   volume?: number;
   pan?: number;
+  color?: string;
 }
 
 export interface TrackMutedPayload {

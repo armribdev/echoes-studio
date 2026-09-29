@@ -90,6 +90,7 @@ fn empty_track(id: &str) -> AppTrack {
         instrument: None,
         input_source: None,
         automation_lanes: vec![],
+        color: None,
     }
 }
 

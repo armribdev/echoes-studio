@@ -105,6 +105,7 @@ export interface UpdateTrackPayload {
   name?: string;
   volume?: number;
   pan?: number;
+  color?: string;
 }
 
 export interface MuteTrackPayload {

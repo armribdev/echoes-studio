@@ -1095,6 +1095,7 @@ mod tests {
             instrument: None,
             input_source: None,
             automation_lanes: vec![],
+            color: None,
         });
 
         let mut host = PluginHost::new();
@@ -1193,6 +1194,7 @@ mod tests {
                 }],
                 interpolation: InterpolationMode::Linear,
             }],
+            color: None,
         });
 
         let graph = AudioGraph::from_project(&project);
