@@ -64,14 +64,10 @@ impl ParameterBlock {
     }
 
     /// Number of parameter cells.
+    #[cfg(test)]
     #[inline]
     pub fn len(&self) -> usize {
         self.cells.len()
-    }
-
-    #[inline]
-    pub fn is_empty(&self) -> bool {
-        self.cells.is_empty()
     }
 
     /// Read cell `idx` (audio thread).  Out-of-range indices return `0.0`

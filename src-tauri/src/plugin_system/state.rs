@@ -55,15 +55,6 @@ impl DeviceState {
         }
     }
 
-    /// Create a JSON state from a serialisable value.
-    pub fn from_json(device_id: &str, value: serde_json::Value) -> Self {
-        Self {
-            device_id: device_id.to_string(),
-            format: StateFormat::Json,
-            data: StateData::Json(value),
-        }
-    }
-
     /// Create a binary state (e.g. VST3 chunk).
     pub fn from_binary(device_id: &str, bytes: Vec<u8>) -> Self {
         Self {
@@ -73,22 +64,11 @@ impl DeviceState {
         }
     }
 
-    pub fn as_json(&self) -> Option<&serde_json::Value> {
-        match &self.data {
-            StateData::Json(v) => Some(v),
-            _ => None,
-        }
-    }
-
     pub fn as_binary(&self) -> Option<&[u8]> {
         match &self.data {
             StateData::Binary(b) => Some(b),
             _ => None,
         }
-    }
-
-    pub fn is_empty(&self) -> bool {
-        matches!(self.format, StateFormat::Empty)
     }
 }
 

@@ -351,11 +351,6 @@ impl LiveParams {
         cells
     }
 
-    pub fn get_envelope(&self, id: &str) -> Option<Arc<EnvelopeCells>> {
-        let inner = self.lock_inner();
-        inner.envelopes.get(id).cloned()
-    }
-
     /// Hot-update ADSR params (no recompile).  The `EnvelopeNode` reads these
     /// each block so changes take effect within one block.
     pub fn set_envelope_params(
@@ -422,14 +417,6 @@ impl LiveParams {
         let cells = RouteCells::new(depth);
         inner.routes.insert(id.to_string(), Arc::clone(&cells));
         cells
-    }
-
-    pub fn any_solo(&self) -> bool {
-        self.any_solo.load(Ordering::Relaxed)
-    }
-
-    pub fn master_soft_clip_enabled(&self) -> bool {
-        self.master_soft_clip.load(Ordering::Relaxed)
     }
 
     pub fn set_master_soft_clip(&self, enabled: bool) {
@@ -506,17 +493,6 @@ impl LiveParams {
             return false;
         };
         cells.depth.store(depth.to_bits(), Ordering::Relaxed);
-        true
-    }
-
-    /// Write one cell of an effect's hot-parameter block (no recompile).
-    /// Returns false if no block exists yet (effect not in the active graph) —
-    /// the caller then falls back to the legacy recompile path (ADR-009, T4).
-    pub fn set_effect_param(&self, effect_id: &str, idx: usize, value: f32) -> bool {
-        let Some(block) = self.effect_block(effect_id) else {
-            return false;
-        };
-        block.set(idx, value);
         true
     }
 

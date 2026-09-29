@@ -52,8 +52,9 @@ toggle, topology, tempo).
    - `LiveParamsInner.effect_params: HashMap<String, Arc<ParameterBlock>>`
      keyed by project `effect_id`.
    - `get_or_init_effect_block(effect_id, values)` — compiler inserts/re-seeds.
-   - `effect_block(effect_id)` / `set_effect_param` / `write_effect_block` —
+   - `effect_block(effect_id)` / `write_effect_block` —
      hot-path writers (return `false` when no block exists → caller recompiles).
+     (`set_effect_param`, a single-cell variant with no caller, was removed 2026-09-29.)
    - `prune_to_project` drops blocks for effects no longer in the project.
 
 3. **[`audio_graph/graph.rs`](../../../src-tauri/src/audio_graph/graph.rs)**

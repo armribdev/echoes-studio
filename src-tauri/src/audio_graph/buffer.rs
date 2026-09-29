@@ -108,6 +108,7 @@ impl AudioBuffer {
     }
 
     /// Accumulate `gain * src` into `self` (wet/dry mix).  No allocation.
+    #[cfg(test)]
     #[inline]
     pub fn mix_from(&mut self, src: &AudioBuffer, gain: f32) {
         debug_assert_eq!(self.data.len(), src.data.len(), "mix_from: size mismatch");
@@ -117,6 +118,7 @@ impl AudioBuffer {
     }
 
     /// Scale all samples by `gain` in place.
+    #[cfg(test)]
     #[inline]
     pub fn apply_gain(&mut self, gain: f32) {
         for s in self.data.iter_mut() {

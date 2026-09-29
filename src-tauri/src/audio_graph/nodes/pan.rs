@@ -39,6 +39,7 @@ impl PanNode {
         self.gain_r = angle.sin();
     }
 
+    #[cfg(test)]
     pub fn position(&self) -> f32 {
         self.position
     }

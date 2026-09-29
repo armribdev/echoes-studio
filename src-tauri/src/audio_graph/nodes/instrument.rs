@@ -17,9 +17,10 @@ use std::sync::Arc;
 use crate::audio_graph::buffer::AudioBuffer;
 use crate::audio_graph::live_params::EnvelopeCells;
 use crate::audio_graph::midi::{
-    MidiEvent, MidiEventKind, MidiEventList, MidiLiveInputQueue, MidiNotePublisher, MidiNoteSnapshot,
-    MidiPreviewQueue,
+    MidiEvent, MidiEventKind, MidiEventList, MidiLiveInputQueue, MidiNotePublisher, MidiPreviewQueue,
 };
+#[cfg(test)]
+use crate::audio_graph::midi::MidiNoteSnapshot;
 use crate::audio_graph::node::{AudioNode, NodeId, PrepareContext, TransportInfo};
 use crate::audio_graph::plugin_params::{parse_plugin_param_name, PluginParamControl, PluginParamControls};
 
@@ -112,6 +113,7 @@ pub struct InstrumentNode {
 }
 
 impl InstrumentNode {
+    #[cfg(test)]
     pub fn new(
         id: NodeId,
         notes: Arc<Vec<MidiNoteSnapshot>>,

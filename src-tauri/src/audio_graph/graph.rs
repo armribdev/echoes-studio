@@ -272,18 +272,7 @@ impl AudioGraph {
         edge
     }
 
-    pub fn remove_node(&mut self, id: NodeId) {
-        self.nodes.remove(&id);
-        self.edges.retain(|e| e.from.node != id && e.to.node != id);
-        if self.master_id == Some(id) {
-            self.master_id = None;
-        }
-    }
-
-    pub fn remove_edge(&mut self, edge: &Edge) {
-        self.edges.retain(|e| e != edge);
-    }
-
+    #[cfg(test)]
     pub fn node(&self, id: NodeId) -> Option<&GraphNode> {
         self.nodes.get(&id)
     }
@@ -294,14 +283,6 @@ impl AudioGraph {
 
     pub fn edges_from(&self, node: NodeId) -> impl Iterator<Item = &Edge> {
         self.edges.iter().filter(move |e| e.from.node == node)
-    }
-
-    pub fn node_count(&self) -> usize {
-        self.nodes.len()
-    }
-
-    pub fn edge_count(&self) -> usize {
-        self.edges.len()
     }
 
     /// Iterate all nodes (for UI snapshot export).

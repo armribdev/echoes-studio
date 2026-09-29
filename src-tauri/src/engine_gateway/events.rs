@@ -171,17 +171,6 @@ impl EngineEvent {
             payload: serde_json::to_value(payload).unwrap_or(serde_json::Value::Null),
         }
     }
-
-    /// Wrap a stored ProjectEvent as an EngineEvent for emission to the UI.
-    pub fn from_project_event(project_event: &ProjectEvent, project_id: &str) -> Self {
-        Self {
-            id: generate_id(),
-            project_id: project_id.to_string(),
-            event_type: project_event.event_type.clone(),
-            timestamp: project_event.timestamp,
-            payload: project_event.payload.clone(),
-        }
-    }
 }
 
 fn now_ms() -> u64 {

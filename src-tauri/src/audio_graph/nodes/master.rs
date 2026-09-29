@@ -42,16 +42,6 @@ impl MasterNode {
         }
     }
 
-    /// Peak levels since last reset (linear, 0.0 … 1.0+).
-    pub fn peak_levels(&self) -> (f32, f32) {
-        (self.peak_l, self.peak_r)
-    }
-
-    pub fn reset_peaks(&mut self) {
-        self.peak_l = 0.0;
-        self.peak_r = 0.0;
-    }
-
     #[inline]
     fn soft_clip(x: f32) -> f32 {
         // Gentle tanh saturation — not linear; shapes all levels, not only peaks.

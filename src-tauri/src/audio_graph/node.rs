@@ -143,9 +143,12 @@ pub struct TransportInfo {
 }
 
 impl TransportInfo {
+    #[cfg(test)]
     const DEFAULT_BPM: f32 = 120.0;
+    #[cfg(test)]
     const DEFAULT_BLOCK_SIZE: usize = 512;
 
+    #[cfg(test)]
     pub fn stopped(sample_rate: f32) -> Self {
         Self {
             is_playing: false,

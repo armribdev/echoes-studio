@@ -112,11 +112,6 @@ impl<Ctx: Copy + Send + Sync + 'static> WorkerPool<Ctx> {
         WorkerPool { workers, shared }
     }
 
-    /// Number of worker threads in the pool (does not include the dispatcher).
-    pub fn num_workers(&self) -> usize {
-        self.workers.len()
-    }
-
     /// Dispatch `indices` for parallel processing.  Blocks the calling thread
     /// (spin-wait) until every index has been processed.
     ///

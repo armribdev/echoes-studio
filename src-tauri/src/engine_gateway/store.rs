@@ -82,11 +82,6 @@ impl EventStore {
         true
     }
 
-    /// Events that form the current state: `events[0..head]`.
-    pub fn active_events(&self) -> &[ProjectEvent] {
-        &self.events[..self.head]
-    }
-
     /// The best starting point for rebuilding: the most recent snapshot at or
     /// before `head` plus any events after it.
     ///
@@ -99,14 +94,6 @@ impl EventStore {
             }
             _ => (0, None, &self.events[..self.head]),
         }
-    }
-
-    pub fn head(&self) -> usize {
-        self.head
-    }
-
-    pub fn total_events(&self) -> usize {
-        self.events.len()
     }
 
     /// True if it's a good moment to snapshot (every N events).

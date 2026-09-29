@@ -92,11 +92,13 @@ impl ModulationMap {
     }
 
     /// All routes whose source originates from `node`.
+    #[cfg(test)]
     pub fn routes_from(&self, node: NodeId) -> impl Iterator<Item = &ModulationRoute> {
         self.routes.iter().filter(move |r| r.source.node == node)
     }
 
     /// All routes that target `param`.
+    #[cfg(test)]
     pub fn routes_to<'a>(
         &'a self,
         param: &'a ParamId,
@@ -105,6 +107,7 @@ impl ModulationMap {
     }
 
     /// All routes targeting `node_id` (called by the scheduler at construction time).
+    #[cfg(test)]
     pub fn routes_targeting_node(&self, node_id: NodeId) -> impl Iterator<Item = &ModulationRoute> {
         self.routes
             .iter()
@@ -116,10 +119,12 @@ impl ModulationMap {
         &self.routes
     }
 
+    #[cfg(test)]
     pub fn is_empty(&self) -> bool {
         self.routes.is_empty()
     }
 
+    #[cfg(test)]
     pub fn len(&self) -> usize {
         self.routes.len()
     }

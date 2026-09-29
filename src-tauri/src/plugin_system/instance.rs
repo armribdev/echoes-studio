@@ -476,6 +476,7 @@ impl PluginInstance {
     /// **different** values; a given instance returns the **same** value for its
     /// whole lifetime.  Use this — not `device_id` — whenever a caller must point
     /// at one specific instance rather than a plugin type.
+    #[cfg(test)]
     pub fn instance_id(&self) -> u64 {
         self.instance_id
     }
@@ -574,13 +575,6 @@ impl PluginInstance {
             .or_else(|| cached.filter(|c| !c.is_empty()).map(<[u8]>::to_vec))?;
         let _ = self.load_state_blob(&bytes);
         Some(bytes)
-    }
-
-    /// Borrow the native handle for FFI dispatch.  Wrappers pattern-match
-    /// the variant they expect; other variants indicate a routing bug at
-    /// instantiation time.
-    pub fn handle(&self) -> &NativeHandle {
-        &self.handle
     }
 
     /// Convenience: extract VST3 handles if this instance is VST3.

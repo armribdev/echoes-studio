@@ -61,11 +61,6 @@ impl MidiEventList {
         &self.events[..self.len]
     }
 
-    #[inline]
-    pub fn is_empty(&self) -> bool {
-        self.len == 0
-    }
-
     /// Sort events by sample offset (ascending).  At equal offsets, NoteOff
     /// precedes NoteOn so that a re-triggered note (NoteOff + NoteOn at the
     /// same offset, e.g. after a seek) releases cleanly before retriggering.

@@ -171,6 +171,7 @@ pub struct GraphScheduler {
 unsafe impl Send for GraphScheduler {}
 
 impl GraphScheduler {
+    #[cfg(test)]
     pub fn new(compiled: CompiledGraph) -> Self {
         Self::with_workers(compiled, 0)
     }
@@ -297,10 +298,6 @@ impl GraphScheduler {
         }
     }
 
-    pub fn num_steps(&self) -> usize {
-        self.plan.steps.len()
-    }
-
     pub fn empty(sample_rate: f32) -> Self {
         let plan = Arc::new(ExecutionPlan::empty(sample_rate));
         Self {
@@ -395,10 +392,8 @@ impl GraphScheduler {
         }
     }
 
-    pub fn plan(&self) -> &Arc<ExecutionPlan> {
-        &self.plan
-    }
-
+    /// Not wired to seek yet: ADR-019 "Seek reset".
+    #[allow(dead_code)]
     pub fn reset(&mut self) {
         for processor in &mut self.processors {
             processor.reset();
