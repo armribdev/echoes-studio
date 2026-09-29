@@ -4,6 +4,9 @@ export type LibraryAssetKind = 'one_shot' | 'loop';
 /** Organisational + content sources shipped in Phase 1. */
 export type LibrarySourceId = 'recents' | 'favorites' | 'audio';
 
+/** Open contexts for the Phase 2 insert pop-up (library-browser-ux.md §5). */
+export type LibraryOpenContext = 'track_empty' | 'track_audio_lane' | 'playhead_insert';
+
 export type LibraryIndexerState = 'idle' | 'scanning' | 'ready' | 'error';
 
 export interface LibraryAsset {

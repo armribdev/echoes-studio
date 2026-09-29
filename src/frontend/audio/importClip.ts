@@ -15,7 +15,7 @@ import type { CommandResult } from '../../shared/protocol/commands';
 function adoptTimelineFocusForImportedClip() {
 	keyboardFocus.setTimeline();
 	const active = document.activeElement;
-	if (active instanceof HTMLElement && active.closest('.library')) {
+	if (active instanceof HTMLElement && active.closest('.library, .library-popup')) {
 		active.blur();
 	}
 }

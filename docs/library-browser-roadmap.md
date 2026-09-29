@@ -106,8 +106,8 @@ the store ignore the batches of the one before).
 
 ## Phase 2 — Contextual pop-up
 
-**Status:** `todo`  
-**Depends on:** Phase 1 exit  
+**Status:** `doing` (2026-09-30)  
+**Depends on:** Phase 1 exit (code ready; hand-test of Phase 1 exit still open)
 
 ### Scope
 
@@ -120,13 +120,23 @@ the store ignore the batches of the one before).
 | Full reject matrix for audio vs MIDI lanes (UI lanes ready) | Chord factory packs |
 | Favorite shortcut; optional Quick Sources | Smart collections / silent context learn |
 
+### Progress (2026-09-30)
+
+Landed: compact `LibraryPopup` (search + short list + quick sources), triggers from
+track-strip `+`, track context menu « Insérer un son… », and empty-project CTA;
+`Esc` / click-outside via `dismissable`; Enter inserts at playhead; empty project
+creates a track on insert (shared `insertLibraryAsset`); favorite shortcuts
+`F` / `Ctrl+D` and source jump `Ctrl+1…3` when library-focused. Drop-on-empty-timeline
+create-track was already in Phase 1 drag path. Preview BPM stretch and MIDI-lane
+reject matrix deferred (no separate MIDI lane UI yet; audio-only assets).
+
 ### Exit criteria
 
-- [ ] Insert a loop via pop-up **without** opening the docked panel
-- [ ] `Esc` closes pop-up; arrange click-outside cancels
-- [ ] Empty project: drop/Enter can create track + clip
-- [ ] Defaults match UX §5 without user configuration
-
+- [x] Insert a loop via pop-up **without** opening the docked panel
+- [x] `Esc` closes pop-up; arrange click-outside cancels
+- [x] Empty project: drop/Enter can create track + clip
+- [x] Defaults match UX §5 without user configuration
+- [ ] Hand-test on a real project (pop-up path &lt; 10 s, Esc/outside, empty project)
 ---
 
 ## Phase 3 — Musical content

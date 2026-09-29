@@ -1,21 +1,19 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { rightPanel } from '../stores/rightPanel';
-	import { selectedTrack } from '../stores/selectedTrack';
-	import { transport } from '../stores/transport';
-	import { projectEventStore } from '../shared/project/eventStore';
 	import { notify } from '../stores/status';
 	import { open as openDialog } from '@tauri-apps/plugin-dialog';
 	import PanelResizeHandle from './PanelResizeHandle.svelte';
 	import { persistProjectUiLayout } from '../lib/projectUiLayout';
 	import { keyboardFocus } from '../stores/keyboardFocus';
-	import { importAudioToTrack, cancelAudioImport } from '../frontend/audio/importClip';
+	import { cancelAudioImport } from '../frontend/audio/importClip';
 	import { audioImportProgress } from '../frontend/audio/importProgress';
 	import {
 		libraryStore,
 		libraryVisibleAssets,
 		libraryHasIndexedContent,
 		libraryFocusSearchTick,
+		insertLibraryAsset,
 		LIBRARY_SOURCE_LABELS,
 		LIBRARY_SOURCE_ORDER,
 		AUDIO_EXTENSIONS,
@@ -132,23 +130,7 @@
 	}
 
 	async function insertAsset(asset: LibraryAsset) {
-		const targetTrackId = $selectedTrack.trackId ?? $projectEventStore.tracks[0]?.id;
-		if (!targetTrackId) {
-			notify('Créez une piste avant d\'importer (Phase 1).', 'error');
-			return;
-		}
-		try {
-			libraryStore.stopPreview();
-			await importAudioToTrack({
-				trackId: targetTrackId,
-				filePath: asset.path,
-				startSec: $transport.position,
-				knownDurationSec: asset.durationSec,
-			});
-			libraryStore.recordRecent(asset.id);
-		} catch {
-			/* importAudioToTrack already notified */
-		}
+		await insertLibraryAsset({ asset });
 	}
 
 	function onRowClick(asset: LibraryAsset) {

@@ -8,6 +8,7 @@
 	import AutomationKnobMenu from './AutomationKnobMenu.svelte';
 	import ClipContextMenu from './ClipContextMenu.svelte';
 	import PluginPicker from './PluginPicker.svelte';
+	import LibraryPopup from './LibraryPopup.svelte';
 	import { instrumentIdOf, type PluginInfo } from '../stores/plugins';
 	import type { Track as TrackType, Project, MidiNote } from '../types/global';
 	import { invoke } from '@tauri-apps/api/core';
@@ -35,7 +36,8 @@
 	import { leftPanel } from '../stores/leftPanel';
 	import { shouldHandleTimelineShortcuts } from '../frontend/shortcuts/context';
 	import { keyboardFocus } from '../stores/keyboardFocus';
-	import { libraryStore, isAudioPath, audioFileDrag, audioFileDragPointer, audioFileDragDrop, beginAudioFileDrag, endAudioFileDrag, importOptionsFromAudioDrag, getActiveAudioFileDrag, isAudioFileDragActive } from '../frontend/library';
+	import { libraryStore, libraryPopup, isAudioPath, audioFileDrag, audioFileDragPointer, audioFileDragDrop, beginAudioFileDrag, endAudioFileDrag, importOptionsFromAudioDrag, getActiveAudioFileDrag, isAudioFileDragActive } from '../frontend/library';
+	import type { LibraryOpenContext } from '../frontend/library';
 	import { importAudioToTrack, cancelAudioImport } from '../frontend/audio/importClip';
 	import { clipSourceDurationSec } from '../frontend/audio/clipDuration';
 	import { pendingImports } from '../frontend/audio/pendingImports';
@@ -75,6 +77,31 @@
 	];
 	import { notify } from '../stores/status';
 	import { trackLevels } from '../stores/trackLevels';
+
+	function openLibraryInsertPopup(opts: {
+		trackId: string | null;
+		trackIndex: number | null;
+		anchorX: number;
+		anchorY: number;
+		context?: LibraryOpenContext;
+	}) {
+		const track =
+			opts.trackIndex != null ? tracks[opts.trackIndex] : tracks.find((t) => t.id === opts.trackId);
+		const hasAudio = (track?.clips?.length ?? 0) > 0;
+		const hasMidi = (track?.midi_clips?.length ?? 0) > 0;
+		let context: LibraryOpenContext = opts.context ?? 'playhead_insert';
+		if (!opts.context) {
+			if (!track || (!hasAudio && !hasMidi)) context = 'track_empty';
+			else context = 'track_audio_lane';
+		}
+		if (opts.trackIndex != null) selectTrackIndex(opts.trackIndex);
+		libraryPopup.open({
+			context,
+			trackId: opts.trackId,
+			anchorX: opts.anchorX,
+			anchorY: opts.anchorY,
+		});
+	}
 
 	// Live sync from the engine event store.
 	// Local mutations (optimistic UI during drag/import) are reconciled by the
@@ -1981,6 +2008,15 @@
 		trackId={contextMenu.trackId}
 		trackName={contextMenu.trackName}
 		on:addtrack={handleCreateTrack}
+		on:insertsound={() => {
+			if (!contextMenu) return;
+			openLibraryInsertPopup({
+				trackId: contextMenu.trackId,
+				trackIndex: contextMenu.trackIndex,
+				anchorX: contextMenu.x,
+				anchorY: contextMenu.y,
+			});
+		}}
 		on:rename={() => { if (contextMenu) renameTrackByIndex(contextMenu.trackIndex); }}
 		on:automate={() => { if (contextMenu) automationPicker = { x: contextMenu.x, y: contextMenu.y, trackIndex: contextMenu.trackIndex }; }}
 		on:delete={(e) => handleDeleteTrack(e.detail.trackId)}
@@ -2015,6 +2051,10 @@
 	/>
 {/if}
 
+{#if $libraryPopup.open}
+	<LibraryPopup />
+{/if}
+
 <div class="container">
 	<div class="left-panel">
 		<div class="ruler-spacer"></div>
@@ -2039,6 +2079,13 @@
 					on:panchange={() => handlePanChange(trackIndex)}
 					on:panrelease={() => handlePanRelease(trackIndex)}
 					on:rename={(e) => { tracks[trackIndex] = { ...tracks[trackIndex], name: e.detail.name }; tracks = tracks; updateTrack(tracks[trackIndex].id, { name: e.detail.name, volume: tracks[trackIndex].volume }).catch(console.error); }}
+				on:insertsound={(e) =>
+					openLibraryInsertPopup({
+						trackId: track.id,
+						trackIndex,
+						anchorX: e.detail.clientX,
+						anchorY: e.detail.clientY,
+					})}
 				on:openpianoroll={() => {
 					const firstClip = track.midi_clips?.[0];
 					if (firstClip) {
@@ -2142,11 +2189,28 @@
 						<circle cx="18" cy="16" r="3"/>
 					</svg>
 					<p class="empty-tracks-text">Aucune piste</p>
-					<p class="empty-tracks-hint">Créez une piste ou glissez un fichier audio</p>
-					<!-- svelte-ignore a11y-no-static-element-interactions a11y-click-events-have-key-events -->
-					<button type="button" class="empty-tracks-cta" on:click={handleCreateTrack}>
-						+ Nouvelle piste
-					</button>
+					<p class="empty-tracks-hint">Créez une piste, glissez un fichier audio, ou insérez depuis la bibliothèque</p>
+					<div class="empty-tracks-actions">
+						<!-- svelte-ignore a11y-no-static-element-interactions a11y-click-events-have-key-events -->
+						<button type="button" class="empty-tracks-cta" on:click={handleCreateTrack}>
+							+ Nouvelle piste
+						</button>
+						<!-- svelte-ignore a11y-no-static-element-interactions a11y-click-events-have-key-events -->
+						<button
+							type="button"
+							class="empty-tracks-cta empty-tracks-cta--secondary"
+							on:click={(e) =>
+								openLibraryInsertPopup({
+									trackId: null,
+									trackIndex: null,
+									anchorX: e.clientX,
+									anchorY: e.clientY,
+									context: 'playhead_insert',
+								})}
+						>
+							Insérer un son…
+						</button>
+					</div>
 				</div>
 			{/if}
 			{#if fileDragPreview}
@@ -2418,11 +2482,19 @@
 			font-size: 11px;
 			color: $text-faint;
 			margin: 0;
+			text-align: center;
+			max-width: 280px;
+		}
+
+		.empty-tracks-actions {
+			display: flex;
+			gap: 8px;
+			margin-top: 8px;
+			pointer-events: all;
 		}
 
 		.empty-tracks-cta {
 			pointer-events: all;
-			margin-top: 8px;
 			height: $ctrl-height;
 			padding: 0 18px;
 			background: $accent-color;
@@ -2436,6 +2508,18 @@
 			transition: background 0.1s;
 
 			&:hover { background: $accent-hover; }
+
+			&--secondary {
+				background: transparent;
+				border: 1px solid $border-color;
+				color: $text-muted;
+
+				&:hover {
+					background: transparent;
+					color: $text-color;
+					border-color: rgba($text-color, 0.35);
+				}
+			}
 		}
 	}
 

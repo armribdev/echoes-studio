@@ -11,6 +11,7 @@
 		addtrack: void;
 		rename: void;
 		automate: void;
+		insertsound: void;
 		delete: { trackId: string };
 		close: void;
 	}>();
@@ -50,6 +51,15 @@
 		</svg>
 		<span>Nouvelle piste</span>
 		<span class="item-shortcut">Ctrl+Shift+T</span>
+	</button>
+
+	<button class="item" on:click={() => { dispatch('insertsound'); close(); }}>
+		<svg class="item-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+			<circle cx="11" cy="11" r="7"/>
+			<line x1="21" y1="21" x2="16.65" y2="16.65"/>
+			<path d="M8 11h6M11 8v6"/>
+		</svg>
+		<span>Insérer un son…</span>
 	</button>
 
 	<div class="separator"></div>

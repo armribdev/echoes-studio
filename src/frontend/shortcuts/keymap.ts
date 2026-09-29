@@ -27,7 +27,7 @@ import { viewMode } from '../../stores/viewMode';
 import { dismissTopLayer } from '../dismiss';
 import { rightPanel } from '../../stores/rightPanel';
 import { keyboardFocus } from '../../stores/keyboardFocus';
-import { libraryStore, requestLibrarySearchFocus } from '../library';
+import { libraryStore, libraryPopup, requestLibrarySearchFocus } from '../library';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -41,6 +41,13 @@ interface Shortcut {
   /** Human-readable label — for a future shortcut-help panel. */
   description: string;
   action: () => void;
+  /** If set, the shortcut only fires (and steals the key) when this returns true. */
+  when?: () => boolean;
+}
+
+function isLibraryFocus(): boolean {
+  const focus = get(keyboardFocus);
+  return focus === 'library-results' || focus === 'library-search';
 }
 
 // ── Shortcut table ────────────────────────────────────────────────────────────
@@ -155,6 +162,10 @@ const SHORTCUTS: Shortcut[] = [
     modifiers: [],
     description: 'Focus recherche bibliothèque',
     action: () => {
+      if (get(libraryPopup).open) {
+        requestLibrarySearchFocus();
+        return;
+      }
       if (!get(rightPanel).open) rightPanel.toggle();
       requestLibrarySearchFocus();
     },
@@ -167,6 +178,47 @@ const SHORTCUTS: Shortcut[] = [
       if (!get(rightPanel).open) return;
       requestLibrarySearchFocus();
     },
+  },
+  {
+    key: 'f',
+    modifiers: [],
+    description: 'Basculer favori (bibliothèque)',
+    when: isLibraryFocus,
+    action: () => {
+      const selected = libraryStore.getSelectedAsset();
+      if (selected) libraryStore.toggleFavorite(selected.id);
+    },
+  },
+  {
+    key: 'd',
+    modifiers: ['ctrl'],
+    description: 'Basculer favori (bibliothèque)',
+    when: isLibraryFocus,
+    action: () => {
+      const selected = libraryStore.getSelectedAsset();
+      if (selected) libraryStore.toggleFavorite(selected.id);
+    },
+  },
+  {
+    key: '1',
+    modifiers: ['ctrl'],
+    description: 'Bibliothèque · Récents',
+    when: isLibraryFocus,
+    action: () => libraryStore.setSource('recents'),
+  },
+  {
+    key: '2',
+    modifiers: ['ctrl'],
+    description: 'Bibliothèque · Favoris',
+    when: isLibraryFocus,
+    action: () => libraryStore.setSource('favorites'),
+  },
+  {
+    key: '3',
+    modifiers: ['ctrl'],
+    description: 'Bibliothèque · Audio',
+    when: isLibraryFocus,
+    action: () => libraryStore.setSource('audio'),
   },
 
   // ── View ──────────────────────────────────────────────────────────────────
@@ -267,6 +319,7 @@ export function registerShortcuts(): () => void {
 
     for (const shortcut of SHORTCUTS) {
       if (!matches(e, shortcut)) continue;
+      if (shortcut.when && !shortcut.when()) continue;
 
       // Undo/redo are handled locally by the piano roll when it is focused.
       const isHistory =
