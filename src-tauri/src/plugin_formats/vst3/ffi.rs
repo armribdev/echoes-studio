@@ -491,7 +491,8 @@ impl Vst3Library {
             return Err(format!("LoadLibraryW failed for {}", dll_path.display()));
         }
 
-        let factory_fn = unsafe { win32::GetProcAddress(handle, c"GetPluginFactory".as_ptr().cast()) };
+        let factory_fn =
+            unsafe { win32::GetProcAddress(handle, c"GetPluginFactory".as_ptr().cast()) };
         let factory_fn = match factory_fn {
             Some(f) => f,
             None => {

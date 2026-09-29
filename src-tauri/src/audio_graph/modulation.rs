@@ -154,7 +154,10 @@ mod tests {
 
     fn route(source_node: u64, target_node: u64, param: &str) -> ModulationRoute {
         ModulationRoute {
-            source: ModulationSource { node: NodeId(source_node), port: 0 },
+            source: ModulationSource {
+                node: NodeId(source_node),
+                port: 0,
+            },
             target: ModulationTarget {
                 param: ParamId::new(NodeId(target_node), param),
                 depth: 1.0,

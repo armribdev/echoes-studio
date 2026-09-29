@@ -172,44 +172,59 @@ impl ClapHostContext {
     /// thread included.  The app polls [`take_plugin_restart_requested`] to
     /// recompile, and the recompile reactivates this plugin.
     pub fn request_restart(&self) {
-        self.restart_requested.store(true, std::sync::atomic::Ordering::Release);
+        self.restart_requested
+            .store(true, std::sync::atomic::Ordering::Release);
         mark_plugin_restart_requested();
     }
 
     /// Whether the plugin asked for a restart since the last call, and clears it.
     pub fn take_restart_request(&self) -> bool {
-        self.restart_requested.swap(false, std::sync::atomic::Ordering::AcqRel)
+        self.restart_requested
+            .swap(false, std::sync::atomic::Ordering::AcqRel)
     }
 
     /// Editor window of this plugin. Null when its editor is closed.
     pub fn set_gui_hwnd(&self, hwnd: *mut c_void) {
-        self.gui_hwnd.store(hwnd, std::sync::atomic::Ordering::Release);
+        self.gui_hwnd
+            .store(hwnd, std::sync::atomic::Ordering::Release);
         if hwnd.is_null() {
-            self.gui_drain_pending.store(false, std::sync::atomic::Ordering::Release);
+            self.gui_drain_pending
+                .store(false, std::sync::atomic::Ordering::Release);
         }
     }
 
     /// Called by the editor before it runs `on_main_thread`, so a request that
     /// arrives during the drain is posted again.
     pub fn clear_gui_drain(&self) {
-        self.gui_drain_pending.store(false, std::sync::atomic::Ordering::Release);
+        self.gui_drain_pending
+            .store(false, std::sync::atomic::Ordering::Release);
     }
 
     /// If `request_callback` fired during `on_main_thread`, the coalesce skipped
     /// the post. Queue one more drain.
     pub fn rearm_gui_drain(&self) {
-        if self.gui_drain_pending.load(std::sync::atomic::Ordering::Acquire) {
+        if self
+            .gui_drain_pending
+            .load(std::sync::atomic::Ordering::Acquire)
+        {
             self.post_to_gui(CLAP_GUI_DRAIN_MESSAGE, 0, 0);
         }
     }
 
     fn request_gui_drain(&self) {
-        if self.gui_hwnd.load(std::sync::atomic::Ordering::Acquire).is_null() {
+        if self
+            .gui_hwnd
+            .load(std::sync::atomic::Ordering::Acquire)
+            .is_null()
+        {
             return;
         }
         // One posted drain at a time. A synth GUI can request a callback every
         // block; posting each one floods the UI thread and crackles the audio.
-        if self.gui_drain_pending.swap(true, std::sync::atomic::Ordering::AcqRel) {
+        if self
+            .gui_drain_pending
+            .swap(true, std::sync::atomic::Ordering::AcqRel)
+        {
             return;
         }
         self.post_to_gui(CLAP_GUI_DRAIN_MESSAGE, 0, 0);
@@ -259,7 +274,10 @@ unsafe fn host_context<'a>(host: *const ClapHost) -> Option<&'a ClapHostContext>
     ((*host).host_data as *const ClapHostContext).as_ref()
 }
 
-pub unsafe extern "C" fn host_get_extension(_: *const ClapHost, id: *const c_char) -> *const c_void {
+pub unsafe extern "C" fn host_get_extension(
+    _: *const ClapHost,
+    id: *const c_char,
+) -> *const c_void {
     if id.is_null() {
         return std::ptr::null();
     }
@@ -289,7 +307,9 @@ pub struct ClapHostLatency {
     pub changed: unsafe extern "C" fn(*const ClapHost),
 }
 
-static HOST_LATENCY: ClapHostLatency = ClapHostLatency { changed: host_latency_changed };
+static HOST_LATENCY: ClapHostLatency = ClapHostLatency {
+    changed: host_latency_changed,
+};
 
 unsafe extern "C" fn host_latency_changed(_: *const ClapHost) {}
 
@@ -319,7 +339,11 @@ unsafe extern "C" fn host_gui_resize_hints_changed(_: *const ClapHost) {}
 
 // Posted rather than resized in place: `request_resize` is callable from any
 // thread, and the window belongs to the Win32 UI thread.
-unsafe extern "C" fn host_gui_request_resize(host: *const ClapHost, width: u32, height: u32) -> bool {
+unsafe extern "C" fn host_gui_request_resize(
+    host: *const ClapHost,
+    width: u32,
+    height: u32,
+) -> bool {
     host_context(host).is_some_and(|context| {
         context.post_to_gui(CLAP_GUI_RESIZE_MESSAGE, width as usize, height as isize)
     })
@@ -342,7 +366,11 @@ unsafe extern "C" fn host_gui_closed(host: *const ClapHost, _was_destroyed: bool
 
 static HOST_LOG: ClapHostLog = ClapHostLog { log: host_log };
 
-unsafe extern "C" fn host_log(_: *const ClapHost, severity: ClapLogSeverity, message: *const c_char) {
+unsafe extern "C" fn host_log(
+    _: *const ClapHost,
+    severity: ClapLogSeverity,
+    message: *const c_char,
+) {
     // Printing allocates and does I/O, which the audio callback must never do.
     if message.is_null() || host_is_audio_thread(std::ptr::null()) {
         return;
@@ -420,10 +448,13 @@ pub struct ClapHostState {
     pub mark_dirty: unsafe extern "C" fn(*const ClapHost),
 }
 
-static HOST_STATE: ClapHostState = ClapHostState { mark_dirty: host_state_mark_dirty };
+static HOST_STATE: ClapHostState = ClapHostState {
+    mark_dirty: host_state_mark_dirty,
+};
 
 /// Set when any hosted plugin reports an edit; the app polls it to mark the project unsaved.
-static PLUGIN_STATE_EDITED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static PLUGIN_STATE_EDITED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
 
 unsafe extern "C" fn host_state_mark_dirty(_: *const ClapHost) {
     mark_plugin_state_edited();
@@ -475,11 +506,20 @@ mod host_abi_tests {
                 {
                     let _nested = audio_thread_scope();
                 }
-                assert!(host_is_audio_thread(&*host), "a nested scope keeps the role");
+                assert!(
+                    host_is_audio_thread(&*host),
+                    "a nested scope keeps the role"
+                );
                 let other = std::thread::spawn(|| host_is_audio_thread(std::ptr::null()));
-                assert!(!other.join().unwrap(), "another thread is not the audio thread");
+                assert!(
+                    !other.join().unwrap(),
+                    "another thread is not the audio thread"
+                );
             }
-            assert!(!host_is_audio_thread(&*host), "the role ends with the scope");
+            assert!(
+                !host_is_audio_thread(&*host),
+                "the role ends with the scope"
+            );
         }
     }
 
@@ -490,10 +530,7 @@ mod host_abi_tests {
         unsafe {
             assert!(host_is_audio_thread(&*host));
             assert!(!host_is_main_thread(&*host));
-            let ext = host_get_extension(
-                &*host,
-                CLAP_EXT_THREAD_CHECK.as_ptr() as *const c_char,
-            );
+            let ext = host_get_extension(&*host, CLAP_EXT_THREAD_CHECK.as_ptr() as *const c_char);
             assert!(!ext.is_null());
         }
     }
@@ -893,22 +930,30 @@ impl ClapEventBuffer {
     }
 
     pub fn push_note_on(&mut self, time: u32, channel: i16, key: i16, velocity: f64) {
-        self.push(ClapEventSlot { note: note_event(CLAP_EVENT_NOTE_ON, time, channel, key, velocity) });
+        self.push(ClapEventSlot {
+            note: note_event(CLAP_EVENT_NOTE_ON, time, channel, key, velocity),
+        });
     }
 
     pub fn push_note_off(&mut self, time: u32, channel: i16, key: i16) {
-        self.push(ClapEventSlot { note: note_event(CLAP_EVENT_NOTE_OFF, time, channel, key, 0.0) });
+        self.push(ClapEventSlot {
+            note: note_event(CLAP_EVENT_NOTE_OFF, time, channel, key, 0.0),
+        });
     }
 
     /// Sets the parameter to `value` (plain units).
     pub fn push_param_value(&mut self, time: u32, param_id: u32, value: f64) {
-        self.push(ClapEventSlot { param: param_event(CLAP_EVENT_PARAM_VALUE, time, param_id, value) });
+        self.push(ClapEventSlot {
+            param: param_event(CLAP_EVENT_PARAM_VALUE, time, param_id, value),
+        });
     }
 
     /// Sets the parameter's modulation offset to `amount` (plain units).  The
     /// offset persists until the next modulation event for that parameter.
     pub fn push_param_mod(&mut self, time: u32, param_id: u32, amount: f64) {
-        self.push(ClapEventSlot { param: param_event(CLAP_EVENT_PARAM_MOD, time, param_id, amount) });
+        self.push(ClapEventSlot {
+            param: param_event(CLAP_EVENT_PARAM_MOD, time, param_id, amount),
+        });
     }
 
     /// Orders events by time; events at the same time keep their push order.
@@ -967,7 +1012,10 @@ impl ClapEventBuffer {
 /// `header` must head a complete event of `header.size` bytes, as CLAP
 /// guarantees for events handed over by a plugin or built by this crate.
 pub unsafe fn event_bytes(header: &ClapEventHeader) -> &[u8] {
-    std::slice::from_raw_parts(header as *const ClapEventHeader as *const u8, header.size as usize)
+    std::slice::from_raw_parts(
+        header as *const ClapEventHeader as *const u8,
+        header.size as usize,
+    )
 }
 
 /// Appends `header`'s event to `out` at `offset`, returning the new end.
@@ -1000,7 +1048,9 @@ pub fn read_pod<T>(bytes: &[u8]) -> Option<T> {
 }
 
 fn read_sized<T>(bytes: &[u8], header: &ClapEventHeader) -> Option<T> {
-    (header.size as usize == std::mem::size_of::<T>()).then(|| read_pod(bytes)).flatten()
+    (header.size as usize == std::mem::size_of::<T>())
+        .then(|| read_pod(bytes))
+        .flatten()
 }
 
 fn note_event(r#type: u16, time: u32, channel: i16, key: i16, velocity: f64) -> ClapEventNote {
@@ -1675,7 +1725,10 @@ mod event_buffer_tests {
         buffer.sort();
         let header = buffer.header(0).unwrap();
         let event = unsafe { &*(header as *const ClapEventHeader as *const ClapEventParamValue) };
-        assert_eq!(header.size as usize, std::mem::size_of::<ClapEventParamValue>());
+        assert_eq!(
+            header.size as usize,
+            std::mem::size_of::<ClapEventParamValue>()
+        );
         assert_eq!((event.param_id, event.value), (9, -3.5));
     }
 

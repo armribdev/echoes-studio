@@ -26,17 +26,15 @@
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::sync::{atomic::AtomicU32, Arc};
 
+use crate::audio_graph::automation::SchedulerAutomationAction;
 use crate::audio_graph::execution_plan::{
     ExecutionPlan, ExecutionPlanBuilder, ExecutionStep, InputConnection,
 };
 use crate::audio_graph::graph::{instrument_instance_key, AudioGraph, NodeKind};
 use crate::audio_graph::live_params::LiveParams;
-use crate::audio_graph::automation::SchedulerAutomationAction;
-use crate::audio_graph::plugin_params::{parse_plugin_param_name, PluginParamControl};
-use crate::audio_graph::node::{
-    AudioNode, NodeId, PortId, PortKind, PrepareContext,
-};
 use crate::audio_graph::midi::MidiNoteSnapshot;
+use crate::audio_graph::node::{AudioNode, NodeId, PortId, PortKind, PrepareContext};
+use crate::audio_graph::plugin_params::{parse_plugin_param_name, PluginParamControl};
 use crate::plugin_system::PluginHost;
 use crate::project::{AppProject, AppTrack};
 
@@ -314,7 +312,13 @@ impl GraphCompiler {
                 .modulation
                 .all_routes()
                 .iter()
-                .map(|route| (route.target.param.node, route.target.param.name.as_str(), true))
+                .map(|route| {
+                    (
+                        route.target.param.node,
+                        route.target.param.name.as_str(),
+                        true,
+                    )
+                })
                 .chain(
                     graph
                         .automation_actions
@@ -327,9 +331,10 @@ impl GraphCompiler {
                 .map(|&node_id| (node_id, BTreeMap::new()))
                 .collect();
             for (node_id, param_name, is_modulation) in targeted_params {
-                if let (Some(params), Some(native_id)) =
-                    (params_by_node.get_mut(&node_id), parse_plugin_param_name(param_name))
-                {
+                if let (Some(params), Some(native_id)) = (
+                    params_by_node.get_mut(&node_id),
+                    parse_plugin_param_name(param_name),
+                ) {
                     *params.entry(native_id).or_insert(false) |= is_modulation;
                 }
             }
@@ -342,7 +347,11 @@ impl GraphCompiler {
                 let controls = params
                     .into_iter()
                     .map(|(native_id, modulated)| {
-                        let base = live_params.get_or_init_plugin_param_shadow(instance_key, native_id, 0.5);
+                        let base = live_params.get_or_init_plugin_param_shadow(
+                            instance_key,
+                            native_id,
+                            0.5,
+                        );
                         let mut control = PluginParamControl::new(native_id, base);
                         control.modulated = modulated;
                         control
@@ -713,7 +722,9 @@ impl GraphCompiler {
 
         match kind {
             NodeKind::Instrument { track_id } => {
-                use crate::audio_graph::nodes::instrument::{InstrumentDevice, InstrumentNode, SilentInstrument};
+                use crate::audio_graph::nodes::instrument::{
+                    InstrumentDevice, InstrumentNode, SilentInstrument,
+                };
                 use crate::audio_graph::nodes::poly_synth::PolySynth;
 
                 let mut instrument_id: Option<&str> = None;
@@ -731,15 +742,15 @@ impl GraphCompiler {
                 // it as unavailable) rather than being swapped for another sound.
                 let instr_key = instrument_instance_key(track_id);
                 let device: Box<dyn InstrumentDevice> = match instrument_id {
-                    Some(device_id) => match plugin_host
-                        .instantiate_instrument(&instr_key, device_id)
-                    {
-                        Ok(dev) => dev,
-                        Err(e) => {
-                            eprintln!("[audio] Instrument '{device_id}' unavailable ({e}) — track silent");
-                            Box::new(SilentInstrument)
+                    Some(device_id) => {
+                        match plugin_host.instantiate_instrument(&instr_key, device_id) {
+                            Ok(dev) => dev,
+                            Err(e) => {
+                                eprintln!("[audio] Instrument '{device_id}' unavailable ({e}) — track silent");
+                                Box::new(SilentInstrument)
+                            }
                         }
-                    },
+                    }
                     None => Box::new(PolySynth::new()),
                 };
 
@@ -786,29 +797,26 @@ impl GraphCompiler {
                     })
                     .unwrap_or((*gain, 0.0, false, false));
                 let cells = live_params.get_or_init_track(track_id, volume, pan, muted, solo);
-                Box::new(nodes::track_gain::TrackGainNode::new(cells,
+                Box::new(nodes::track_gain::TrackGainNode::new(
+                    cells,
                     Arc::clone(&live_params.any_solo),
                 ))
             }
 
-            NodeKind::Gain { gain_linear } => {
-                Box::new(nodes::gain::GainNode::new(*gain_linear))
-            }
+            NodeKind::Gain { gain_linear } => Box::new(nodes::gain::GainNode::new(*gain_linear)),
 
             NodeKind::Pan { position } => Box::new(nodes::pan::PanNode::new(*position)),
 
-            NodeKind::Bus => Box::new(nodes::bus::BusNode::new(Self::num_inputs_for_kind(kind),
-            )),
+            NodeKind::Bus => Box::new(nodes::bus::BusNode::new(Self::num_inputs_for_kind(kind))),
 
-            NodeKind::Master { num_inputs } => Box::new(nodes::master::MasterNode::new(*num_inputs,
+            NodeKind::Master { num_inputs } => Box::new(nodes::master::MasterNode::new(
+                *num_inputs,
                 Arc::clone(&live_params.master_soft_clip),
             )),
 
             NodeKind::Meter { .. } => Box::new(nodes::gain::GainNode::new(1.0)),
 
-            NodeKind::Send { send_gain, .. } => {
-                Box::new(nodes::send::SendNode::new(*send_gain))
-            }
+            NodeKind::Send { send_gain, .. } => Box::new(nodes::send::SendNode::new(*send_gain)),
 
             NodeKind::Return { .. } => Box::new(nodes::bus::BusNode::new(1)),
 
@@ -818,7 +826,8 @@ impl GraphCompiler {
                 sandboxed,
                 bypassed,
             } => {
-                let node = Self::build_plugin_node(instance_key, device_id, *sandboxed, plugin_host);
+                let node =
+                    Self::build_plugin_node(instance_key, device_id, *sandboxed, plugin_host);
                 if *bypassed {
                     Box::new(nodes::bypass::BypassNode::new(node))
                 } else {
@@ -856,13 +865,15 @@ impl GraphCompiler {
                         Box::new(nodes::modulator::MacroNode::new(cells))
                     }
                     ModulatorKind::Envelope => {
-                        let cells = live_params.get_or_init_envelope(modulator_id, initial_envelope);
+                        let cells =
+                            live_params.get_or_init_envelope(modulator_id, initial_envelope);
                         Box::new(nodes::modulator::EnvelopeNode::new(cells))
                     }
-                    ModulatorKind::AudioFollower => {
-                        Box::new(nodes::modulator::AudioFollowerNode::new(initial_follower.clone()))
-                    }
-                    _ => Box::new(nodes::modulator::LfoNode::new(0.0,
+                    ModulatorKind::AudioFollower => Box::new(
+                        nodes::modulator::AudioFollowerNode::new(initial_follower.clone()),
+                    ),
+                    _ => Box::new(nodes::modulator::LfoNode::new(
+                        0.0,
                         crate::project::LfoWaveform::Sine,
                     )),
                 }
@@ -878,9 +889,7 @@ impl GraphCompiler {
                     effect_id,
                     &nodes::compressor::compressor_block_values(params),
                 );
-                Box::new(
-                    nodes::compressor::CompressorNode::new(params.clone()).with_block(block),
-                )
+                Box::new(nodes::compressor::CompressorNode::new(params.clone()).with_block(block))
             }
             NodeKind::Reverb { effect_id, params } => {
                 let block = live_params.get_or_init_effect_block(
@@ -992,7 +1001,10 @@ mod tests {
                 .expect("compile must succeed");
 
         assert!(host.instance("echoes.gain").is_some());
-        assert!(compiled.processors.iter().any(|n| n.label() == "PassThrough"));
+        assert!(compiled
+            .processors
+            .iter()
+            .any(|n| n.label() == "PassThrough"));
 
         let mut sched = GraphScheduler::new(compiled);
         let block = 16usize;
@@ -1089,23 +1101,38 @@ mod tests {
         let live = LiveParams::new();
         host.set_pending_state_blobs(HashMap::from([("fx0".to_string(), vec![1u8, 2, 3])]));
         let compile = |project: &AppProject, host: &mut PluginHost| {
-            GraphCompiler::compile(&AudioGraph::from_project(project), project, CompileConfig::default(), &live, host)
-                .expect("compile must succeed")
+            GraphCompiler::compile(
+                &AudioGraph::from_project(project),
+                project,
+                CompileConfig::default(),
+                &live,
+                host,
+            )
+            .expect("compile must succeed")
         };
         compile(&project, &mut host);
         host.clear_pending_state_blobs();
-        let live_instance = host.instance_by_key("fx0").expect("plugin loaded").instance_id();
+        let live_instance = host
+            .instance_by_key("fx0")
+            .expect("plugin loaded")
+            .instance_id();
 
         project.tracks[0].effects[0].enabled = false;
         let compiled = compile(&project, &mut host);
 
-        assert!(compiled.processors.iter().any(|n| n.label() == "BypassNode"));
+        assert!(compiled
+            .processors
+            .iter()
+            .any(|n| n.label() == "BypassNode"));
         assert_eq!(
             host.instance_by_key("fx0").map(|i| i.instance_id()),
             Some(live_instance),
             "disabling must keep the same live instance"
         );
-        assert_eq!(host.collect_plugin_states(), vec![("fx0".to_string(), vec![1, 2, 3])]);
+        assert_eq!(
+            host.collect_plugin_states(),
+            vec![("fx0".to_string(), vec![1, 2, 3])]
+        );
     }
 
     /// ADR-021: a `PluginParam` target named `instrument:{track_id}` reaches the
@@ -1143,7 +1170,13 @@ mod tests {
                 depth: 0.2,
             }],
             midi_notes: vec![],
-            midi_clips: vec![AppMidiClip { id: "c".into(), start: 0.0, end: 1.0, offset: 0.0, notes: vec![] }],
+            midi_clips: vec![AppMidiClip {
+                id: "c".into(),
+                start: 0.0,
+                end: 1.0,
+                offset: 0.0,
+                notes: vec![],
+            }],
             instrument: Some("clap:synth".into()),
             input_source: None,
             automation_lanes: vec![AutomationLane {
@@ -1153,16 +1186,17 @@ mod tests {
                     id: "clip".into(),
                     start_s: 0.0,
                     end_s: 1.0,
-                    points: vec![AutomationPoint { time_s: 0.0, value: 0.3 }],
+                    points: vec![AutomationPoint {
+                        time_s: 0.0,
+                        value: 0.3,
+                    }],
                 }],
                 interpolation: InterpolationMode::Linear,
             }],
         });
 
         let graph = AudioGraph::from_project(&project);
-        let is_instrument = |id| {
-            matches!(graph.node(id).map(|n| &n.kind), Some(NodeKind::Instrument { track_id }) if track_id == "t1")
-        };
+        let is_instrument = |id| matches!(graph.node(id).map(|n| &n.kind), Some(NodeKind::Instrument { track_id }) if track_id == "t1");
 
         let route = &graph.modulation_routes()[0];
         assert!(is_instrument(route.target.param.node));
@@ -1187,11 +1221,21 @@ mod tests {
         }
         fn prepare(&mut self, _ctx: PrepareContext) {}
         fn reset(&mut self) {}
-        fn process(&mut self, _inputs: &[&AudioBuffer], _outputs: &mut [AudioBuffer], _t: &TransportInfo) {}
+        fn process(
+            &mut self,
+            _inputs: &[&AudioBuffer],
+            _outputs: &mut [AudioBuffer],
+            _t: &TransportInfo,
+        ) {
+        }
     }
 
     fn reading(src_step: usize, src_port: usize) -> Option<InputConnection> {
-        Some(InputConnection { src_step, src_port, delay_samples: 0 })
+        Some(InputConnection {
+            src_step,
+            src_port,
+            delay_samples: 0,
+        })
     }
 
     /// ADR-014 multi-out: a loaded plugin with more outputs than its static
@@ -1201,16 +1245,27 @@ mod tests {
     fn steps_grow_to_the_loaded_plugin_outputs_and_missing_outputs_read_silence() {
         let mut plan = ExecutionPlan::empty(48_000.0);
         plan.steps = vec![
-            ExecutionStep { node_id: NodeId(1), input_connections: vec![], num_outputs: 1 },
-            ExecutionStep { node_id: NodeId(2), input_connections: vec![], num_outputs: 1 },
+            ExecutionStep {
+                node_id: NodeId(1),
+                input_connections: vec![],
+                num_outputs: 1,
+            },
+            ExecutionStep {
+                node_id: NodeId(2),
+                input_connections: vec![],
+                num_outputs: 1,
+            },
             ExecutionStep {
                 node_id: NodeId(3),
                 input_connections: vec![reading(0, 0), reading(0, 2), reading(1, 1)],
                 num_outputs: 1,
             },
         ];
-        let processors: Vec<Box<dyn AudioNode>> =
-            vec![Box::new(MultiOut(3)), Box::new(MultiOut(1)), Box::new(MultiOut(0))];
+        let processors: Vec<Box<dyn AudioNode>> = vec![
+            Box::new(MultiOut(3)),
+            Box::new(MultiOut(1)),
+            Box::new(MultiOut(0)),
+        ];
 
         GraphCompiler::size_outputs_from_processors(&mut plan, &processors);
 
@@ -1218,7 +1273,13 @@ mod tests {
         assert_eq!(plan.steps[1].num_outputs, 1);
         assert_eq!(plan.steps[2].num_outputs, 1, "a step never shrinks");
         let inputs = &plan.steps[2].input_connections;
-        assert!(inputs[0].is_some() && inputs[1].is_some(), "existing outputs stay connected");
-        assert!(inputs[2].is_none(), "output 1 of a single-output node reads silence");
+        assert!(
+            inputs[0].is_some() && inputs[1].is_some(),
+            "existing outputs stay connected"
+        );
+        assert!(
+            inputs[2].is_none(),
+            "output 1 of a single-output node reads silence"
+        );
     }
 }

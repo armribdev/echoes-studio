@@ -513,8 +513,18 @@ fn ensure_class_registered() {
     REGISTERED.get_or_init(|| unsafe {
         // Also fills the plugin area wherever the plugin hasn't repainted yet (mid-resize).
         let background = user32::CreateSolidBrush(DRAG_STRIP_COLOR);
-        register_class(CLASS_NAME, CONTAINER_CLASS_STYLE, plugin_wnd_proc, background);
-        register_class(PLUGIN_AREA_CLASS_NAME, 0, user32::DefWindowProcW, background);
+        register_class(
+            CLASS_NAME,
+            CONTAINER_CLASS_STYLE,
+            plugin_wnd_proc,
+            background,
+        );
+        register_class(
+            PLUGIN_AREA_CLASS_NAME,
+            0,
+            user32::DefWindowProcW,
+            background,
+        );
     });
 }
 
@@ -540,7 +550,12 @@ fn drag_strip_height(hwnd: *mut c_void) -> i32 {
 
 /// Client-coordinate rect of the close button, right-aligned in the drag strip.
 fn close_button_rect(hwnd: *mut c_void) -> user32::RECT {
-    let mut client = user32::RECT { left: 0, top: 0, right: 0, bottom: 0 };
+    let mut client = user32::RECT {
+        left: 0,
+        top: 0,
+        right: 0,
+        bottom: 0,
+    };
     unsafe { user32::GetClientRect(hwnd, &mut client) };
     let scale = scale_for_dpi(window_dpi(hwnd));
     let width = (CLOSE_BUTTON_WIDTH_LOGICAL as f64 * scale).round() as i32;
@@ -559,7 +574,12 @@ fn point_in_rect(rect: &user32::RECT, x: i32, y: i32) -> bool {
 
 /// Centers the window on the primary monitor, at its current size.
 unsafe fn center_on_screen(hwnd: *mut c_void) {
-    let mut client = user32::RECT { left: 0, top: 0, right: 0, bottom: 0 };
+    let mut client = user32::RECT {
+        left: 0,
+        top: 0,
+        right: 0,
+        bottom: 0,
+    };
     user32::GetClientRect(hwnd, &mut client);
     let screen_w = user32::GetSystemMetrics(SM_CXSCREEN);
     let screen_h = user32::GetSystemMetrics(SM_CYSCREEN);
@@ -585,7 +605,11 @@ unsafe fn draw_close_button(hwnd: *mut c_void) {
     let cy = (rect.top + rect.bottom) / 2;
     let half = ((rect.bottom - rect.top) as f64 * 0.17).round().max(3.0) as i32;
     let stroke_width = (1.5 * scale_for_dpi(window_dpi(hwnd))).max(1.0) as f32;
-    let color = if hover { CLOSE_GLYPH_HOVER_ARGB } else { CLOSE_GLYPH_ARGB };
+    let color = if hover {
+        CLOSE_GLYPH_HOVER_ARGB
+    } else {
+        CLOSE_GLYPH_ARGB
+    };
 
     let mut graphics: *mut c_void = null_mut();
     gdiplus::GdipCreateFromHDC(hdc, &mut graphics);
@@ -691,8 +715,24 @@ unsafe fn resize_to_client(hwnd: *mut c_void, client_w: i32, client_h: i32) {
     let width = client_w.max(200);
     let height = client_h.max(100);
     let strip = drag_strip_height(hwnd);
-    user32::SetWindowPos(hwnd, null_mut(), 0, 0, width, height + strip, SWP_RESIZE_ONLY);
-    user32::SetWindowPos(plugin_area(hwnd), null_mut(), 0, strip, width, height, SWP_MOVE_AND_RESIZE);
+    user32::SetWindowPos(
+        hwnd,
+        null_mut(),
+        0,
+        0,
+        width,
+        height + strip,
+        SWP_RESIZE_ONLY,
+    );
+    user32::SetWindowPos(
+        plugin_area(hwnd),
+        null_mut(),
+        0,
+        strip,
+        width,
+        height,
+        SWP_MOVE_AND_RESIZE,
+    );
 }
 
 /// Show the window and install the 16 ms drain timer.
@@ -961,7 +1001,6 @@ unsafe fn fit_vst3_view_to_dpi(view: *mut IPlugView, hwnd: *mut c_void, dpi: u32
     }
 }
 
-
 /// Open a VST3 native editor window (main thread only).
 ///
 /// # Safety
@@ -982,8 +1021,8 @@ pub unsafe fn open_vst3_editor(
     open_editors: Arc<Mutex<HashMap<String, usize>>>,
 ) -> Result<usize, String> {
     use crate::plugin_formats::vst3::ffi::{
-        create_separate_controller, teardown_separate_controller, IEditController, SeparateController,
-        IID_IEDIT_CONTROLLER,
+        create_separate_controller, teardown_separate_controller, IEditController,
+        SeparateController, IID_IEDIT_CONTROLLER,
     };
 
     let _running = instance.mark(PluginThread::Ui);
@@ -1018,13 +1057,12 @@ pub unsafe fn open_vst3_editor(
     // Release the controller using whichever teardown matches how it was
     // acquired: the QI'd ref is a plain release; a separate controller needs
     // disconnect + terminate + release of every ref we added.
-    let release_controller = |separate: &mut Option<SeparateController>, ctrl: *mut IEditController| {
-        unsafe {
-            if let Some(sc) = separate.take() {
-                teardown_separate_controller(sc);
-            } else {
-                ((*(*ctrl).vtbl).release)(ctrl as *mut _);
-            }
+    let release_controller = |separate: &mut Option<SeparateController>,
+                              ctrl: *mut IEditController| unsafe {
+        if let Some(sc) = separate.take() {
+            teardown_separate_controller(sc);
+        } else {
+            ((*(*ctrl).vtbl).release)(ctrl as *mut _);
         }
     };
 

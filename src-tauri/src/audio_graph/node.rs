@@ -103,7 +103,10 @@ impl TimeSignature {
         if numerator == 0 || denominator == 0 {
             return Self::default();
         }
-        Self { numerator, denominator }
+        Self {
+            numerator,
+            denominator,
+        }
     }
 
     pub fn quarter_notes_per_bar(self) -> f64 {
@@ -113,7 +116,10 @@ impl TimeSignature {
 
 impl Default for TimeSignature {
     fn default() -> Self {
-        Self { numerator: 4, denominator: 4 }
+        Self {
+            numerator: 4,
+            denominator: 4,
+        }
     }
 }
 

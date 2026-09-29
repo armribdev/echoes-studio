@@ -53,7 +53,13 @@ pub fn render_project_offline(
     plugin_host: &mut PluginHost,
     sample_rate: u32,
 ) -> Result<(Vec<f32>, Vec<f32>), String> {
-    render_project_in_blocks(project, live_params, plugin_host, sample_rate, OFFLINE_BLOCK_SIZE)
+    render_project_in_blocks(
+        project,
+        live_params,
+        plugin_host,
+        sample_rate,
+        OFFLINE_BLOCK_SIZE,
+    )
 }
 
 /// Same as [`render_project_offline`] but processes `block_size` frames per

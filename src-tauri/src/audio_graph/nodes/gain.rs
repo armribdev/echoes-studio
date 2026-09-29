@@ -116,7 +116,13 @@ impl SmoothedGain {
     /// Frame-outer so the smoothed gain advances once per frame, shared across
     /// channels.  At target (static gain, no modulation) the step is exactly 0,
     /// so an unmodulated render stays bit-identical.
-    pub(crate) fn process(&mut self, gain: f32, input: &AudioBuffer, output: &mut AudioBuffer, frames: usize) {
+    pub(crate) fn process(
+        &mut self,
+        gain: f32,
+        input: &AudioBuffer,
+        output: &mut AudioBuffer,
+        frames: usize,
+    ) {
         let channels = output.num_channels.min(input.num_channels);
         let mut frame = 0;
         for k in 0..=self.point_count {
@@ -128,7 +134,11 @@ impl SmoothedGain {
             if segment_end <= frame {
                 continue;
             }
-            let delta = if k == 0 { self.base_delta } else { self.point_deltas[k - 1] };
+            let delta = if k == 0 {
+                self.base_delta
+            } else {
+                self.point_deltas[k - 1]
+            };
             let target = (gain + delta).max(0.0);
             for i in frame..segment_end {
                 self.smoothed += self.coeff * (target - self.smoothed);
@@ -162,7 +172,11 @@ impl SmoothedGain {
             if segment_end <= frame {
                 continue;
             }
-            let delta = if k == 0 { self.base_delta } else { self.point_deltas[k - 1] };
+            let delta = if k == 0 {
+                self.base_delta
+            } else {
+                self.point_deltas[k - 1]
+            };
             for i in frame..segment_end {
                 let target = (fader.advance_db(fader_target) + delta).max(0.0);
                 self.smoothed += self.coeff * (target - self.smoothed);
@@ -224,7 +238,10 @@ impl AudioNode for GainNode {
     ) {
         let input = inputs[0];
         let output = &mut outputs[0];
-        let frames = transport.block_size.min(output.num_frames).min(input.num_frames);
+        let frames = transport
+            .block_size
+            .min(output.num_frames)
+            .min(input.num_frames);
         self.smoother.process(self.gain, input, output, frames);
     }
 
@@ -307,8 +324,18 @@ mod tests {
         let mut outputs = [AudioBuffer::new(1, 64)];
         node.process(&[&input], &mut outputs, &transport(64));
         let out = outputs[0].channel(0);
-        assert!(out[0] > 1.0 && out[0] < 2.0, "first sample must be a partial step, got {}", out[0]);
-        assert!(out[63] > out[0], "gain must ramp upward toward the modulated target");
-        assert!(out[63] < 2.0, "13 ms smoother must not reach target within ~1.3 ms");
+        assert!(
+            out[0] > 1.0 && out[0] < 2.0,
+            "first sample must be a partial step, got {}",
+            out[0]
+        );
+        assert!(
+            out[63] > out[0],
+            "gain must ramp upward toward the modulated target"
+        );
+        assert!(
+            out[63] < 2.0,
+            "13 ms smoother must not reach target within ~1.3 ms"
+        );
     }
 }

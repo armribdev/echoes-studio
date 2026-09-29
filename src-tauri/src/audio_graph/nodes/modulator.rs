@@ -349,7 +349,11 @@ impl AudioNode for AudioFollowerNode {
         let ch0_out = output.channel_mut(0);
 
         for i in 0..block_size {
-            let x = if i < input_ch0.len() { input_ch0[i] } else { 0.0 };
+            let x = if i < input_ch0.len() {
+                input_ch0[i]
+            } else {
+                0.0
+            };
 
             let measure = match self.mode {
                 FollowerMode::Rms => x * x,
@@ -478,13 +482,21 @@ mod tests {
         })
     }
 
-    fn run_lfo_block(node: &mut LfoNode, transport: &crate::audio_graph::node::TransportInfo) -> Vec<f32> {
+    fn run_lfo_block(
+        node: &mut LfoNode,
+        transport: &crate::audio_graph::node::TransportInfo,
+    ) -> Vec<f32> {
         let mut output = crate::audio_graph::buffer::AudioBuffer::new(1, transport.block_size);
         node.process(&[], std::slice::from_mut(&mut output), transport);
         output.channel(0).to_vec()
     }
 
-    fn playing_transport(sr: f32, bpm: f32, block: usize, pos: u64) -> crate::audio_graph::node::TransportInfo {
+    fn playing_transport(
+        sr: f32,
+        bpm: f32,
+        block: usize,
+        pos: u64,
+    ) -> crate::audio_graph::node::TransportInfo {
         crate::audio_graph::node::TransportInfo {
             is_playing: true,
             position_samples: pos,
@@ -565,7 +577,9 @@ mod tests {
 
         // Enable tempo sync at runtime (no recompile).
         cells.tempo_sync.store(true, Ordering::Relaxed);
-        cells.beat_division.store(1.0_f32.to_bits(), Ordering::Relaxed);
+        cells
+            .beat_division
+            .store(1.0_f32.to_bits(), Ordering::Relaxed);
         let t2 = playing_transport(sr, 120.0, 64, 64);
         let out_sync = run_lfo_block(&mut node, &t2);
 
@@ -642,7 +656,10 @@ mod tests {
         let cells = make_envelope_cells(10.0, 100.0, 0.7, 200.0);
         let mut node = EnvelopeNode::new(Arc::clone(&cells));
         let out = run_block(&mut node, 48_000.0, 64);
-        assert!(out.iter().all(|&s| s == 0.0), "no gate → output must be zero");
+        assert!(
+            out.iter().all(|&s| s == 0.0),
+            "no gate → output must be zero"
+        );
     }
 
     #[test]
@@ -653,7 +670,10 @@ mod tests {
         let mut node = EnvelopeNode::new(Arc::clone(&cells));
         let out = run_block(&mut node, 48_000.0, 128);
         // Level must reach 1.0 within the first 60 samples.
-        let peak_idx = out.iter().take(60).position(|&s| (s - 1.0).abs() < 1e-5)
+        let peak_idx = out
+            .iter()
+            .take(60)
+            .position(|&s| (s - 1.0).abs() < 1e-5)
             .expect("envelope must reach 1.0 within ~60 samples for 1ms attack");
         // Decay must start after the peak.
         if peak_idx + 2 < out.len() {
@@ -693,7 +713,10 @@ mod tests {
         node.reset();
         cells.gate.store(false, Ordering::Relaxed);
         let out = run_block(&mut node, 48_000.0, 64);
-        assert!(out.iter().all(|&s| s == 0.0), "after reset envelope must stay silent");
+        assert!(
+            out.iter().all(|&s| s == 0.0),
+            "after reset envelope must stay silent"
+        );
     }
 
     fn run_follower_block(

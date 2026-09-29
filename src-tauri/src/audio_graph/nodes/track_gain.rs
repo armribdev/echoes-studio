@@ -88,9 +88,11 @@ impl AudioNode for TrackGainNode {
         let volume = self.params.volume();
         self.smoother.prepare(ctx.sample_rate, volume);
         self.fader.prepare(ctx.sample_rate, volume);
-        self.fader.set_cutoff(ctx.sample_rate, FADER_SMOOTH_CUTOFF_HZ);
+        self.fader
+            .set_cutoff(ctx.sample_rate, FADER_SMOOTH_CUTOFF_HZ);
         self.gate.prepare(ctx.sample_rate, self.gate_target());
-        self.gate.set_cutoff(ctx.sample_rate, FADER_SMOOTH_CUTOFF_HZ);
+        self.gate
+            .set_cutoff(ctx.sample_rate, FADER_SMOOTH_CUTOFF_HZ);
         let (left, right) = balance_gains(self.params.pan());
         self.pan_l.prepare(ctx.sample_rate, left);
         self.pan_r.prepare(ctx.sample_rate, right);
@@ -104,9 +106,13 @@ impl AudioNode for TrackGainNode {
     ) {
         let input = inputs[0];
         let output = &mut outputs[0];
-        let frames = transport.block_size.min(output.num_frames).min(input.num_frames);
+        let frames = transport
+            .block_size
+            .min(output.num_frames)
+            .min(input.num_frames);
         let volume = self.params.volume();
-        self.smoother.process_over_fader(&mut self.fader, volume, input, output, frames);
+        self.smoother
+            .process_over_fader(&mut self.fader, volume, input, output, frames);
         let gate_target = self.gate_target();
         // A settled open gate would multiply by exactly 1.0: skip it.
         if !(gate_target == 1.0 && self.gate.is_settled_at(1.0)) {
@@ -216,7 +222,10 @@ mod tests {
 
         // One 12 Hz time constant covers ~63 % of the step; the 4 Hz fader ramp would reach ~22 %.
         let last = out[FRAMES_13_MS - 1];
-        assert!(last > 1.55, "modulation step from 1.0 towards 2.0 reached only {last} after 13 ms");
+        assert!(
+            last > 1.55,
+            "modulation step from 1.0 towards 2.0 reached only {last} after 13 ms"
+        );
     }
 
     #[test]
@@ -227,8 +236,16 @@ mod tests {
 
         let out = render_ones(&mut node);
 
-        assert!(out[0] > 0.999, "fader move stepped the signal to {}", out[0]);
-        assert!(out[FRAMES_13_MS - 1] > 0.3, "fader ramp is too fast: {}", out[FRAMES_13_MS - 1]);
+        assert!(
+            out[0] > 0.999,
+            "fader move stepped the signal to {}",
+            out[0]
+        );
+        assert!(
+            out[FRAMES_13_MS - 1] > 0.3,
+            "fader ramp is too fast: {}",
+            out[FRAMES_13_MS - 1]
+        );
     }
 
     #[test]
@@ -246,7 +263,11 @@ mod tests {
 
         let out = render_ones(&mut node);
 
-        assert!(out.iter().all(|&s| s == 0.0), "a muted track leaked {:?}", out.iter().find(|&&s| s != 0.0));
+        assert!(
+            out.iter().all(|&s| s == 0.0),
+            "a muted track leaked {:?}",
+            out.iter().find(|&&s| s != 0.0)
+        );
     }
 
     #[test]
@@ -257,8 +278,16 @@ mod tests {
 
         let out = render_ones(&mut node);
 
-        assert!(out[0] > 0.99, "mute cut the signal to {} on the first sample", out[0]);
-        assert!(out[FRAMES_13_MS - 1] < 0.1, "mute fade is too slow: {}", out[FRAMES_13_MS - 1]);
+        assert!(
+            out[0] > 0.99,
+            "mute cut the signal to {} on the first sample",
+            out[0]
+        );
+        assert!(
+            out[FRAMES_13_MS - 1] < 0.1,
+            "mute fade is too slow: {}",
+            out[FRAMES_13_MS - 1]
+        );
     }
 
     #[test]

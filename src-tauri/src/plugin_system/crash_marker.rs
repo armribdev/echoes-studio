@@ -32,7 +32,11 @@ pub enum PluginThread {
     Ui = 4,
 }
 
-const SLOTS: [usize; 3] = [PluginThread::Audio as usize, PluginThread::Control as usize, PluginThread::Ui as usize];
+const SLOTS: [usize; 3] = [
+    PluginThread::Audio as usize,
+    PluginThread::Control as usize,
+    PluginThread::Ui as usize,
+];
 
 static MARKER: AtomicPtr<AtomicU64> = AtomicPtr::new(std::ptr::null_mut());
 
@@ -53,7 +57,9 @@ pub fn crash_count() -> u64 {
 pub fn plugin_tag(plugin_id: &str) -> u64 {
     let hash = plugin_id
         .bytes()
-        .fold(0xcbf2_9ce4_8422_2325u64, |hash, byte| (hash ^ byte as u64).wrapping_mul(0x0100_0000_01b3));
+        .fold(0xcbf2_9ce4_8422_2325u64, |hash, byte| {
+            (hash ^ byte as u64).wrapping_mul(0x0100_0000_01b3)
+        });
     hash.max(1)
 }
 
@@ -72,9 +78,13 @@ pub fn open(path: &Path) -> Vec<u64> {
     };
     // SAFETY: `imp::map` returns a page-aligned, never-unmapped mapping of `MARKER_BYTES`.
     let words = unsafe { std::slice::from_raw_parts(base, WORDS) };
-    let suspects = suspects(&std::array::from_fn(|index| words[index].load(Ordering::Acquire)));
+    let suspects = suspects(&std::array::from_fn(|index| {
+        words[index].load(Ordering::Acquire)
+    }));
 
-    SLOTS.iter().for_each(|&slot| words[slot].store(0, Ordering::Relaxed));
+    SLOTS
+        .iter()
+        .for_each(|&slot| words[slot].store(0, Ordering::Relaxed));
     words[OFF_MAGIC].store(MAGIC, Ordering::Relaxed);
     words[OFF_SESSION].store(SESSION_RUNNING, Ordering::Release);
     MARKER.store(base, Ordering::Release);
@@ -86,7 +96,11 @@ fn suspects(words: &[u64; WORDS]) -> Vec<u64> {
     if words[OFF_MAGIC] != MAGIC || words[OFF_SESSION] != SESSION_RUNNING {
         return Vec::new();
     }
-    let mut tags: Vec<u64> = SLOTS.iter().map(|&slot| words[slot]).filter(|&tag| tag != 0).collect();
+    let mut tags: Vec<u64> = SLOTS
+        .iter()
+        .map(|&slot| words[slot])
+        .filter(|&tag| tag != 0)
+        .collect();
     tags.sort_unstable();
     tags.dedup();
     tags
@@ -106,7 +120,11 @@ pub fn enter(thread: PluginThread, tag: u64) -> MarkerGuard {
         Some(slot) if tag != 0 => slot.swap(tag, Ordering::Relaxed),
         _ => 0,
     };
-    MarkerGuard { thread, tag, previous }
+    MarkerGuard {
+        thread,
+        tag,
+        previous,
+    }
 }
 
 pub struct MarkerGuard {
@@ -120,7 +138,12 @@ impl Drop for MarkerGuard {
     fn drop(&mut self) {
         // Leave the slot alone if a concurrent call replaced our mark.
         if let Some(slot) = word(self.thread as usize).filter(|_| self.tag != 0) {
-            let _ = slot.compare_exchange(self.tag, self.previous, Ordering::Relaxed, Ordering::Relaxed);
+            let _ = slot.compare_exchange(
+                self.tag,
+                self.previous,
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            );
         }
     }
 }
@@ -131,17 +154,25 @@ mod imp {
     use std::path::Path;
     use std::sync::atomic::AtomicU64;
 
-    use windows_sys::Win32::Foundation::{CloseHandle, GENERIC_READ, GENERIC_WRITE, INVALID_HANDLE_VALUE};
+    use windows_sys::Win32::Foundation::{
+        CloseHandle, GENERIC_READ, GENERIC_WRITE, INVALID_HANDLE_VALUE,
+    };
     use windows_sys::Win32::Storage::FileSystem::{
         CreateFileW, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_READ, OPEN_ALWAYS,
     };
-    use windows_sys::Win32::System::Memory::{CreateFileMappingW, MapViewOfFile, FILE_MAP_ALL_ACCESS, PAGE_READWRITE};
+    use windows_sys::Win32::System::Memory::{
+        CreateFileMappingW, MapViewOfFile, FILE_MAP_ALL_ACCESS, PAGE_READWRITE,
+    };
 
     use super::MARKER_BYTES;
 
     /// Map `path` (created if missing) for the life of the process.
     pub fn map(path: &Path) -> Option<*mut AtomicU64> {
-        let wide: Vec<u16> = path.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
+        let wide: Vec<u16> = path
+            .as_os_str()
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
         unsafe {
             let file = CreateFileW(
                 wide.as_ptr(),
@@ -155,7 +186,14 @@ mod imp {
             if file == INVALID_HANDLE_VALUE {
                 return None;
             }
-            let mapping = CreateFileMappingW(file, std::ptr::null(), PAGE_READWRITE, 0, MARKER_BYTES as u32, std::ptr::null());
+            let mapping = CreateFileMappingW(
+                file,
+                std::ptr::null(),
+                PAGE_READWRITE,
+                0,
+                MARKER_BYTES as u32,
+                std::ptr::null(),
+            );
             CloseHandle(file);
             if mapping.is_null() {
                 return None;
@@ -200,8 +238,14 @@ mod tests {
     fn only_a_session_that_did_not_exit_accuses_the_running_plugin() {
         let vital = plugin_tag("clap:vital");
         assert_eq!(suspects(&session(SESSION_RUNNING, vital)), vec![vital]);
-        assert!(suspects(&session(SESSION_CLEAN, vital)).is_empty(), "a clean exit accuses nobody");
-        assert!(suspects(&session(SESSION_RUNNING, 0)).is_empty(), "no plugin was running");
+        assert!(
+            suspects(&session(SESSION_CLEAN, vital)).is_empty(),
+            "a clean exit accuses nobody"
+        );
+        assert!(
+            suspects(&session(SESSION_RUNNING, 0)).is_empty(),
+            "no plugin was running"
+        );
         assert!(suspects(&[0; WORDS]).is_empty(), "a fresh file");
     }
 
@@ -217,8 +261,9 @@ mod tests {
         words[PluginThread::Audio as usize].store(plugin_tag("clap:vital"), Ordering::Release);
 
         let bytes = std::fs::read(&path).unwrap();
-        let on_disk: [u64; WORDS] =
-            std::array::from_fn(|i| u64::from_le_bytes(bytes[i * 8..i * 8 + 8].try_into().unwrap()));
+        let on_disk: [u64; WORDS] = std::array::from_fn(|i| {
+            u64::from_le_bytes(bytes[i * 8..i * 8 + 8].try_into().unwrap())
+        });
         assert_eq!(suspects(&on_disk), vec![plugin_tag("clap:vital")]);
     }
 }

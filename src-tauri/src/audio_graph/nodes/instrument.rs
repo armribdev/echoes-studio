@@ -16,13 +16,16 @@ use std::sync::Arc;
 
 use crate::audio_graph::buffer::AudioBuffer;
 use crate::audio_graph::live_params::EnvelopeCells;
-use crate::audio_graph::midi::{
-    MidiEvent, MidiEventKind, MidiEventList, MidiLiveInputQueue, MidiNotePublisher, MidiPreviewQueue,
-};
 #[cfg(test)]
 use crate::audio_graph::midi::MidiNoteSnapshot;
+use crate::audio_graph::midi::{
+    MidiEvent, MidiEventKind, MidiEventList, MidiLiveInputQueue, MidiNotePublisher,
+    MidiPreviewQueue,
+};
 use crate::audio_graph::node::{AudioNode, PrepareContext, TransportInfo};
-use crate::audio_graph::plugin_params::{parse_plugin_param_name, PluginParamControl, PluginParamControls};
+use crate::audio_graph::plugin_params::{
+    parse_plugin_param_name, PluginParamControl, PluginParamControls,
+};
 
 /// Anything that turns MIDI events into audio.
 ///
@@ -113,11 +116,11 @@ pub struct InstrumentNode {
 
 impl InstrumentNode {
     #[cfg(test)]
-    pub fn new(
-        notes: Arc<Vec<MidiNoteSnapshot>>,
-        device: Box<dyn InstrumentDevice>,
-    ) -> Self {
-        Self::from_publisher(MidiNotePublisher::with_notes(notes.as_ref().clone()), device)
+    pub fn new(notes: Arc<Vec<MidiNoteSnapshot>>, device: Box<dyn InstrumentDevice>) -> Self {
+        Self::from_publisher(
+            MidiNotePublisher::with_notes(notes.as_ref().clone()),
+            device,
+        )
     }
 
     pub fn set_preview(&mut self, queue: Arc<MidiPreviewQueue>) {
@@ -142,7 +145,9 @@ impl InstrumentNode {
             } else if self.preview_count[pitch] > 0 {
                 self.event_buf.push(MidiEvent {
                     offset: 0,
-                    kind: MidiEventKind::NoteOff { pitch: message.pitch },
+                    kind: MidiEventKind::NoteOff {
+                        pitch: message.pitch,
+                    },
                 });
                 self.preview_count[pitch] -= 1;
             }
@@ -157,25 +162,31 @@ impl InstrumentNode {
         let Some(queue) = self.live_input.clone() else {
             return;
         };
-        queue.drain_due(transport.sample_rate, transport.block_size, |message, offset| {
-            let pitch = message.pitch as usize;
-            if message.note_on {
-                self.event_buf.push(MidiEvent {
-                    offset,
-                    kind: MidiEventKind::NoteOn {
-                        pitch: message.pitch,
-                        velocity: message.velocity,
-                    },
-                });
-                self.live_input_count[pitch] = self.live_input_count[pitch].saturating_add(1);
-            } else if self.live_input_count[pitch] > 0 {
-                self.event_buf.push(MidiEvent {
-                    offset,
-                    kind: MidiEventKind::NoteOff { pitch: message.pitch },
-                });
-                self.live_input_count[pitch] -= 1;
-            }
-        });
+        queue.drain_due(
+            transport.sample_rate,
+            transport.block_size,
+            |message, offset| {
+                let pitch = message.pitch as usize;
+                if message.note_on {
+                    self.event_buf.push(MidiEvent {
+                        offset,
+                        kind: MidiEventKind::NoteOn {
+                            pitch: message.pitch,
+                            velocity: message.velocity,
+                        },
+                    });
+                    self.live_input_count[pitch] = self.live_input_count[pitch].saturating_add(1);
+                } else if self.live_input_count[pitch] > 0 {
+                    self.event_buf.push(MidiEvent {
+                        offset,
+                        kind: MidiEventKind::NoteOff {
+                            pitch: message.pitch,
+                        },
+                    });
+                    self.live_input_count[pitch] -= 1;
+                }
+            },
+        );
     }
 
     pub fn from_publisher(
@@ -288,9 +299,16 @@ impl AudioNode for InstrumentNode {
                 self.release_sounding_notes();
 
                 for note in self.notes.notes() {
-                    let start_sample = note.start_sample(bpm, sample_rate).max(note.window_start_sample);
-                    let end_sample = note.end_sample(bpm, sample_rate).min(note.window_end_sample);
-                    if start_sample < end_sample && start_sample < block_start && block_start < end_sample {
+                    let start_sample = note
+                        .start_sample(bpm, sample_rate)
+                        .max(note.window_start_sample);
+                    let end_sample = note
+                        .end_sample(bpm, sample_rate)
+                        .min(note.window_end_sample);
+                    if start_sample < end_sample
+                        && start_sample < block_start
+                        && block_start < end_sample
+                    {
                         self.event_buf.push(MidiEvent {
                             offset: 0,
                             kind: MidiEventKind::NoteOn {
@@ -308,8 +326,12 @@ impl AudioNode for InstrumentNode {
 
             for note in self.notes.notes() {
                 // Clamp the note to the clip's playable window (trim).
-                let start_sample = note.start_sample(bpm, sample_rate).max(note.window_start_sample);
-                let end_sample = note.end_sample(bpm, sample_rate).min(note.window_end_sample);
+                let start_sample = note
+                    .start_sample(bpm, sample_rate)
+                    .max(note.window_start_sample);
+                let end_sample = note
+                    .end_sample(bpm, sample_rate)
+                    .min(note.window_end_sample);
                 if start_sample >= end_sample {
                     continue;
                 }
@@ -625,7 +647,10 @@ mod tests {
         run_block(&mut node, &transport_at(true, 0, 30_000));
         run_block(&mut node, &transport_at(false, 0, 512));
 
-        assert!(released_pitch(&captured, 60), "Stop must release the sounding note");
+        assert!(
+            released_pitch(&captured, 60),
+            "Stop must release the sounding note"
+        );
     }
 
     /// The note ends exactly where a block ends and the song auto-stops before
@@ -636,10 +661,16 @@ mod tests {
         let mut node = make_node(captured.clone());
 
         run_block(&mut node, &transport_at(true, 0, 48_000));
-        assert!(!released_pitch(&captured, 60), "the NoteOff falls on the next block");
+        assert!(
+            !released_pitch(&captured, 60),
+            "the NoteOff falls on the next block"
+        );
         run_block(&mut node, &transport_at(false, 0, 512));
 
-        assert!(released_pitch(&captured, 60), "auto-stop must release the last note");
+        assert!(
+            released_pitch(&captured, 60),
+            "auto-stop must release the last note"
+        );
     }
 
     /// A note-list swap while playing releases a deleted pitch and leaves the
@@ -705,7 +736,10 @@ mod tests {
         assert!(
             events.iter().any(|e| matches!(
                 e.kind,
-                MidiEventKind::NoteOn { pitch: 72, velocity: 90 }
+                MidiEventKind::NoteOn {
+                    pitch: 72,
+                    velocity: 90
+                }
             )),
             "a placed note must sound even when playback is stopped"
         );
@@ -718,7 +752,9 @@ mod tests {
         let captured = Arc::new(Mutex::new(Vec::new()));
         let mut node = make_node(captured.clone());
         let clock = Arc::new(crate::audio_graph::midi::LiveInputClock::new());
-        let queue = Arc::new(crate::audio_graph::midi::MidiLiveInputQueue::new(Arc::clone(&clock)));
+        let queue = Arc::new(crate::audio_graph::midi::MidiLiveInputQueue::new(
+            Arc::clone(&clock),
+        ));
         node.set_live_input(Arc::clone(&queue));
         clock.set_event_window_start(50_000_000);
         queue.push(crate::audio_graph::midi::MidiLiveInputMessage {

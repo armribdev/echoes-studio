@@ -140,8 +140,10 @@ struct AudioPortsProbeCtx {
 /// # Safety
 /// `raw` must point to a live `AudioPortsProbeCtx` for the duration of the call.
 unsafe extern "C" fn probe_aux_inputs_trampoline(raw: *mut c_void) -> i32 {
-    use crate::plugin_formats::clap::ffi::{ClapAudioPortInfo, ClapPluginAudioPorts, CLAP_AUDIO_PORT_IS_MAIN, CLAP_EXT_AUDIO_PORTS};
     use crate::plugin_formats::clap::ffi::ClapPlugin;
+    use crate::plugin_formats::clap::ffi::{
+        ClapAudioPortInfo, ClapPluginAudioPorts, CLAP_AUDIO_PORT_IS_MAIN, CLAP_EXT_AUDIO_PORTS,
+    };
 
     let ctx = &*(raw as *const AudioPortsProbeCtx);
     let plugin = ((*ctx.factory).create_plugin)(ctx.factory, ctx.host, ctx.clap_id);
@@ -160,7 +162,10 @@ unsafe extern "C" fn probe_aux_inputs_trampoline(raw: *mut c_void) -> i32 {
         return 0;
     }
 
-    let ext = ((*plugin).get_extension)(plugin, CLAP_EXT_AUDIO_PORTS.as_ptr() as *const std::ffi::c_char);
+    let ext = ((*plugin).get_extension)(
+        plugin,
+        CLAP_EXT_AUDIO_PORTS.as_ptr() as *const std::ffi::c_char,
+    );
     let mut aux: i32 = 0;
     if !ext.is_null() {
         let audio_ports = ext as *const ClapPluginAudioPorts;
@@ -207,7 +212,9 @@ fn probe_aux_input_count(
         )
     };
     if result == crash_guard::CAUGHT {
-        eprintln!("[clap] scan: audio-ports probe crashed for '{clap_id}' — treating as 0 aux inputs");
+        eprintln!(
+            "[clap] scan: audio-ports probe crashed for '{clap_id}' — treating as 0 aux inputs"
+        );
         0
     } else {
         result.max(0) as usize
@@ -248,7 +255,9 @@ pub fn decode_plugin_id(plugin_id: &str) -> Option<&str> {
     plugin_id.strip_prefix("clap:")
 }
 
-fn clap_descriptor_features(desc: &crate::plugin_formats::clap::ffi::ClapPluginDescriptor) -> Vec<String> {
+fn clap_descriptor_features(
+    desc: &crate::plugin_formats::clap::ffi::ClapPluginDescriptor,
+) -> Vec<String> {
     use std::ffi::CStr;
 
     if desc.features.is_null() {

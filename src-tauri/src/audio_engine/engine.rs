@@ -340,7 +340,7 @@ impl AudioEngine {
         app: tauri::AppHandle,
         settings: &AudioSettings,
     ) -> Result<(), String> {
-            self.stop_stream();
+        self.stop_stream();
 
         let host = cpal::default_host();
         let device = find_output_device(&host, &settings.output_device)
@@ -701,7 +701,9 @@ where
                     let (position, chunk) =
                         playback_chunk(current, frames - rendered, playing, transport.loop_range());
                     if playing && position != current {
-                        transport.position_samples.store(position, Ordering::Relaxed);
+                        transport
+                            .position_samples
+                            .store(position, Ordering::Relaxed);
                     }
                     let info = transport.snapshot(chunk);
                     let end = rendered + chunk;

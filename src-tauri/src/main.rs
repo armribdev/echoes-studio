@@ -90,20 +90,8 @@ fn main() {
                 "Exporter",
                 true,
                 &[
-                    &MenuItem::with_id(
-                        app,
-                        "export-wav",
-                        "WAV",
-                        true,
-                        Some("CmdOrCtrl+Shift+E"),
-                    )?,
-                    &MenuItem::with_id(
-                        app,
-                        "export-mp3",
-                        "MP3",
-                        true,
-                        Some("CmdOrCtrl+Shift+M"),
-                    )?,
+                    &MenuItem::with_id(app, "export-wav", "WAV", true, Some("CmdOrCtrl+Shift+E"))?,
+                    &MenuItem::with_id(app, "export-mp3", "MP3", true, Some("CmdOrCtrl+Shift+M"))?,
                 ],
             )?;
 
@@ -139,12 +127,7 @@ fn main() {
                 ],
             )?;
 
-            let edit_menu = Submenu::with_items(
-                app,
-                "Édition",
-                true,
-                &[&undo_item, &redo_item],
-            )?;
+            let edit_menu = Submenu::with_items(app, "Édition", true, &[&undo_item, &redo_item])?;
 
             let app_menu = Submenu::with_items(
                 app,
@@ -176,15 +159,9 @@ fn main() {
             )?;
 
             #[cfg(target_os = "macos")]
-            let menu = Menu::with_items(
-                app,
-                &[&app_menu, &file_menu, &edit_menu, &track_menu],
-            )?;
+            let menu = Menu::with_items(app, &[&app_menu, &file_menu, &edit_menu, &track_menu])?;
             #[cfg(not(target_os = "macos"))]
-            let menu = Menu::with_items(
-                app,
-                &[&file_menu, &edit_menu, &track_menu, &app_menu],
-            )?;
+            let menu = Menu::with_items(app, &[&file_menu, &edit_menu, &track_menu, &app_menu])?;
             app.set_menu(menu)?;
 
             apply_native_dark_theme(app.handle());
@@ -721,7 +698,9 @@ fn set_plugin_isolation(
     if changed {
         // An open editor would stay attached to the instance the recompile replaces.
         if let Ok(editors) = state.open_plugin_editors.lock() {
-            editors.values().for_each(|&hwnd| plugin_system::gui::post_close(hwnd));
+            editors
+                .values()
+                .for_each(|&hwnd| plugin_system::gui::post_close(hwnd));
         }
         recompile_audio_graph(&app, &state);
     }
@@ -1024,7 +1003,9 @@ fn close_plugin_editor(effect_id: String, state: tauri::State<'_, AppState>) -> 
 /// Edits reported by plugins up to now are part of the loaded or saved project.
 fn mark_saved(state: &tauri::State<'_, AppState>) {
     plugin_formats::clap::ffi::take_plugin_state_edited();
-    state.dirty.store(false, std::sync::atomic::Ordering::Relaxed);
+    state
+        .dirty
+        .store(false, std::sync::atomic::Ordering::Relaxed);
 }
 
 /// Edits made inside a plugin window never go through `send_command`, so the
@@ -1039,7 +1020,9 @@ fn watch_plugin_edits(app: tauri::AppHandle) {
             std::thread::sleep(std::time::Duration::from_millis(250));
             let state = app.state::<AppState>();
             if plugin_formats::clap::ffi::take_plugin_state_edited() {
-                state.dirty.store(true, std::sync::atomic::Ordering::Relaxed);
+                state
+                    .dirty
+                    .store(true, std::sync::atomic::Ordering::Relaxed);
                 menu_state::refresh_menu(&app, &state);
             }
             if plugin_formats::clap::ffi::take_plugin_restart_requested() {
@@ -1076,13 +1059,15 @@ fn start_native_audio(app: &mut tauri::App) {
     };
 }
 
-
 /// List currently visible hardware MIDI input devices (ADR-022).
 #[tauri::command]
 fn list_midi_input_devices(
     state: tauri::State<'_, AppState>,
 ) -> Result<Vec<midi_input::MidiInputDeviceInfo>, String> {
-    let registry = state.midi_input.lock().map_err(|_| "MIDI registry lock poisoned")?;
+    let registry = state
+        .midi_input
+        .lock()
+        .map_err(|_| "MIDI registry lock poisoned")?;
     Ok(registry.list_devices())
 }
 
@@ -1095,7 +1080,10 @@ fn set_midi_input_enabled(
     enabled: bool,
     state: tauri::State<'_, AppState>,
 ) -> Result<(), String> {
-    let mut registry = state.midi_input.lock().map_err(|_| "MIDI registry lock poisoned")?;
+    let mut registry = state
+        .midi_input
+        .lock()
+        .map_err(|_| "MIDI registry lock poisoned")?;
     registry.set_enabled(
         &device_id,
         enabled,
@@ -1108,7 +1096,10 @@ fn set_midi_input_enabled(
 /// Control (ADR-022 amendment).
 #[tauri::command]
 fn set_midi_local_control_off(off: bool, state: tauri::State<'_, AppState>) -> Result<(), String> {
-    let mut registry = state.midi_input.lock().map_err(|_| "MIDI registry lock poisoned")?;
+    let mut registry = state
+        .midi_input
+        .lock()
+        .map_err(|_| "MIDI registry lock poisoned")?;
     registry.set_local_control_off(off);
     Ok(())
 }

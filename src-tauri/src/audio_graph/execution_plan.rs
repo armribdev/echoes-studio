@@ -141,7 +141,11 @@ impl ExecutionPlanBuilder {
 mod tests {
     use super::*;
 
-    fn step(node_id: u64, input_connections: Vec<Option<InputConnection>>, num_outputs: usize) -> ExecutionStep {
+    fn step(
+        node_id: u64,
+        input_connections: Vec<Option<InputConnection>>,
+        num_outputs: usize,
+    ) -> ExecutionStep {
         ExecutionStep {
             node_id: NodeId(node_id),
             input_connections,
@@ -162,7 +166,15 @@ mod tests {
     fn master_step_is_the_last_step_index() {
         let mut builder = ExecutionPlanBuilder::new(48_000.0, 512, 2);
         builder.push_step(step(1, vec![None], 1));
-        builder.push_step(step(2, vec![Some(InputConnection { src_step: 0, src_port: 0, delay_samples: 0 })], 1));
+        builder.push_step(step(
+            2,
+            vec![Some(InputConnection {
+                src_step: 0,
+                src_port: 0,
+                delay_samples: 0,
+            })],
+            1,
+        ));
         let plan = builder.build();
 
         assert_eq!(plan.master_step(), Some(1));

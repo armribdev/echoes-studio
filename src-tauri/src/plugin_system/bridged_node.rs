@@ -27,7 +27,9 @@ use crate::audio_graph::midi::MidiEventList;
 use crate::audio_graph::node::{AudioNode, PrepareContext, TransportInfo};
 use crate::audio_graph::nodes::clap_instrument::push_clap_notes;
 use crate::audio_graph::nodes::instrument::InstrumentDevice;
-use crate::audio_graph::plugin_params::{parse_plugin_param_name, PluginParamControl, PluginParamControls};
+use crate::audio_graph::plugin_params::{
+    parse_plugin_param_name, PluginParamControl, PluginParamControls,
+};
 use crate::plugin_formats::clap::ffi::{
     append_event, mark_plugin_state_edited, split_events, ClapEventHeader, ClapOutputEvents,
 };
@@ -68,7 +70,10 @@ unsafe impl Send for BridgeRoundTrip {}
 
 impl BridgeRoundTrip {
     fn new(instance: Arc<PluginInstance>) -> Self {
-        debug_assert!(instance.is_sandboxed(), "a bridged device requires a sandboxed instance");
+        debug_assert!(
+            instance.is_sandboxed(),
+            "a bridged device requires a sandboxed instance"
+        );
         BridgeRoundTrip {
             instance,
             param_events: ClapParamEvents::new(),
@@ -96,7 +101,10 @@ impl BridgeRoundTrip {
         self.events = vec![0; EVENT_CAPACITY as usize];
         self.out_events = vec![0; EVENT_CAPACITY as usize];
 
-        let bridge = self.instance.bridge().filter(|_| ctx.num_channels == CHANNELS as usize);
+        let bridge = self
+            .instance
+            .bridge()
+            .filter(|_| ctx.num_channels == CHANNELS as usize);
         let latency = bridge.and_then(|bridge| bridge.activate(ctx.sample_rate, max_frames));
         self.active = latency.is_some();
         self.latency = latency.unwrap_or(0);
@@ -116,7 +124,11 @@ impl BridgeRoundTrip {
 
     /// Transport first, then the parameter events and notes sorted by time.
     /// `None` if they do not fit.
-    fn write_events(&mut self, transport: &TransportInfo, notes: Option<&MidiEventList>) -> Option<usize> {
+    fn write_events(
+        &mut self,
+        transport: &TransportInfo,
+        notes: Option<&MidiEventList>,
+    ) -> Option<usize> {
         let transport_event = clap_transport_event(transport);
         let end = append_event(&mut self.events, 0, &transport_event.header)?;
         self.param_events.fill(&self.instance);
@@ -162,7 +174,12 @@ impl BridgeRoundTrip {
             return false;
         };
         if let Some(input) = input {
-            for (channel, planar) in self.input.chunks_exact_mut(frames).take(CHANNELS as usize).enumerate() {
+            for (channel, planar) in self
+                .input
+                .chunks_exact_mut(frames)
+                .take(CHANNELS as usize)
+                .enumerate()
+            {
                 planar.copy_from_slice(&input.channel(channel)[..frames]);
             }
         }
@@ -179,7 +196,10 @@ impl BridgeRoundTrip {
             steady_time: self.steady_time,
             reset: self.pending_reset,
         };
-        let outcome = bridge.audio().process_block(&request, &mut self.output, &mut self.out_events, budget);
+        let outcome =
+            bridge
+                .audio()
+                .process_block(&request, &mut self.output, &mut self.out_events, budget);
         let condemned = outcome == BlockOutcome::TimedOut && bridge.is_dead();
         self.sequence += 1;
         self.steady_time += frames as i64;
@@ -204,7 +224,12 @@ impl BridgeRoundTrip {
             }
             BlockOutcome::TimedOut | BlockOutcome::Dead => {}
         }
-        for (channel, planar) in self.output.chunks_exact(frames).take(CHANNELS as usize).enumerate() {
+        for (channel, planar) in self
+            .output
+            .chunks_exact(frames)
+            .take(CHANNELS as usize)
+            .enumerate()
+        {
             output.channel_mut(channel)[..frames].copy_from_slice(planar);
         }
         true
@@ -261,11 +286,19 @@ impl AudioNode for BridgedNode {
         self.round_trip.prepare(ctx);
     }
 
-    fn process(&mut self, inputs: &[&AudioBuffer], outputs: &mut [AudioBuffer], transport: &TransportInfo) {
+    fn process(
+        &mut self,
+        inputs: &[&AudioBuffer],
+        outputs: &mut [AudioBuffer],
+        transport: &TransportInfo,
+    ) {
         let Some(output) = outputs.first_mut() else {
             return;
         };
-        if !self.round_trip.process(inputs.first().copied(), output, transport, None) {
+        if !self
+            .round_trip
+            .process(inputs.first().copied(), output, transport, None)
+        {
             pass_through(inputs, outputs);
         }
     }
@@ -287,7 +320,9 @@ impl AudioNode for BridgedNode {
     }
 
     fn apply_modulation_at(&mut self, param_id: u32, sample_offset: u32, value: f32) {
-        self.round_trip.param_controls().modulate_at(param_id, sample_offset, value);
+        self.round_trip
+            .param_controls()
+            .modulate_at(param_id, sample_offset, value);
     }
 
     fn apply_automation(&mut self, param_id: u32, value: f32) {
@@ -295,7 +330,9 @@ impl AudioNode for BridgedNode {
     }
 
     fn apply_automation_at(&mut self, param_id: u32, sample_offset: u32, value: f32) {
-        self.round_trip.param_controls().automate_at(param_id, sample_offset, value);
+        self.round_trip
+            .param_controls()
+            .automate_at(param_id, sample_offset, value);
     }
 
     fn inject_plugin_param_controls(&mut self, controls: Vec<PluginParamControl>) {
@@ -328,9 +365,15 @@ impl InstrumentDevice for BridgedInstrument {
         self.round_trip.prepare(ctx);
     }
 
-    fn process_midi(&mut self, events: &MidiEventList, outputs: &mut [AudioBuffer], transport: &TransportInfo) {
+    fn process_midi(
+        &mut self,
+        events: &MidiEventList,
+        outputs: &mut [AudioBuffer],
+        transport: &TransportInfo,
+    ) {
         if let Some(output) = outputs.first_mut() {
-            self.round_trip.process(None, output, transport, Some(events));
+            self.round_trip
+                .process(None, output, transport, Some(events));
         }
     }
 

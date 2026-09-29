@@ -25,7 +25,10 @@ const CRASH: u32 = 2;
 const LOOKAHEAD: u32 = 4;
 const WRONG_THREAD: u32 = 5;
 const FRAMES: usize = 64;
-const NOTE_ON: MidiEventKind = MidiEventKind::NoteOn { pitch: 60, velocity: 127 };
+const NOTE_ON: MidiEventKind = MidiEventKind::NoteOn {
+    pitch: 60,
+    velocity: 127,
+};
 const NOTE_OFF: MidiEventKind = MidiEventKind::NoteOff { pitch: 60 };
 
 /// `(bridge exe, test plugin dll)`, built once per test run.
@@ -35,14 +38,28 @@ fn artifacts() -> &'static (PathBuf, PathBuf) {
         let workspace = Path::new(env!("CARGO_MANIFEST_DIR"));
         let target = workspace.join("target").join("sandbox-tests");
         let status = Command::new(env!("CARGO"))
-            .args(["build", "--quiet", "-p", "plugin_host_bridge", "-p", "test_clap_plugin", "--target-dir"])
+            .args([
+                "build",
+                "--quiet",
+                "-p",
+                "plugin_host_bridge",
+                "-p",
+                "test_clap_plugin",
+                "--target-dir",
+            ])
             .arg(&target)
             .current_dir(workspace)
             .status()
             .expect("run cargo");
-        assert!(status.success(), "building the sandbox test artifacts failed");
+        assert!(
+            status.success(),
+            "building the sandbox test artifacts failed"
+        );
         let debug = target.join("debug");
-        (debug.join("plugin_host_bridge.exe"), debug.join("test_clap_plugin.dll"))
+        (
+            debug.join("plugin_host_bridge.exe"),
+            debug.join("test_clap_plugin.dll"),
+        )
     })
 }
 
@@ -64,7 +81,9 @@ fn host() -> PluginHost {
 }
 
 fn prepared(host: &mut PluginHost, sandboxed: bool, live: bool) -> Box<dyn AudioNode> {
-    let mut node = host.instantiate(KEY, PLUGIN_ID, sandboxed).expect("plugin starts");
+    let mut node = host
+        .instantiate(KEY, PLUGIN_ID, sandboxed)
+        .expect("plugin starts");
     node.prepare(PrepareContext {
         sample_rate: 48_000.0,
         max_block_size: 4096,
@@ -89,7 +108,9 @@ fn run_block(node: &mut Box<dyn AudioNode>) -> Vec<f32> {
 }
 
 fn prepared_instrument(host: &mut PluginHost, live: bool) -> Box<dyn InstrumentDevice> {
-    let mut device = host.instantiate_instrument(INSTRUMENT_KEY, PLUGIN_ID).expect("instrument starts");
+    let mut device = host
+        .instantiate_instrument(INSTRUMENT_KEY, PLUGIN_ID)
+        .expect("instrument starts");
     device.prepare(PrepareContext {
         sample_rate: 48_000.0,
         max_block_size: 4096,
@@ -118,7 +139,10 @@ fn is_sandboxed(host: &PluginHost, key: &str) -> bool {
 }
 
 fn saved_state(host: &PluginHost) -> Option<Vec<u8>> {
-    host.collect_plugin_states().into_iter().find(|(key, _)| key == KEY).map(|(_, bytes)| bytes)
+    host.collect_plugin_states()
+        .into_iter()
+        .find(|(key, _)| key == KEY)
+        .map(|(_, bytes)| bytes)
 }
 
 fn gain_state(gain: f64) -> Vec<u8> {
@@ -152,8 +176,15 @@ fn a_latency_change_is_applied_by_the_next_recompile(sandboxed: bool) {
 
     let mut recompiled = prepared(&mut host, sandboxed, true);
     assert_eq!(recompiled.latency_samples(), 128);
-    assert_eq!(host.instance_by_key(KEY).unwrap().instance_id(), instance_id, "same instance, reactivated");
-    assert!(run_block(&mut recompiled).iter().all(|&s| s == 0.5), "still processing");
+    assert_eq!(
+        host.instance_by_key(KEY).unwrap().instance_id(),
+        instance_id,
+        "same instance, reactivated"
+    );
+    assert!(
+        run_block(&mut recompiled).iter().all(|&s| s == 0.5),
+        "still processing"
+    );
 }
 
 #[test]
@@ -169,7 +200,11 @@ fn a_sandboxed_latency_change_is_applied_by_the_next_recompile() {
 /// Audio-thread calls the test plugin saw on a thread `clap.thread-check` did
 /// not report as the audio thread.
 fn wrong_thread_calls(host: &PluginHost) -> f64 {
-    let plugin = host.instance_by_key(KEY).unwrap().clap_plugin().expect("in-process CLAP plugin");
+    let plugin = host
+        .instance_by_key(KEY)
+        .unwrap()
+        .clap_plugin()
+        .expect("in-process CLAP plugin");
     // SAFETY: live instance held by the host; no block is in flight.
     unsafe {
         let params = ((*plugin).get_extension)(plugin, CLAP_EXT_PARAMS.as_ptr() as *const c_char)
@@ -245,15 +280,28 @@ fn a_crash_is_contained_reported_and_recovered_on_recompile() {
         let output = run_block(&mut node);
         assert!(output.iter().all(|&s| s == 0.0 || s == 0.25));
     }
-    assert!(host.instance_by_key(KEY).unwrap().bridge().unwrap().is_dead());
+    assert!(host
+        .instance_by_key(KEY)
+        .unwrap()
+        .bridge()
+        .unwrap()
+        .is_dead());
     assert!(crate::plugin_system::crash_marker::crash_count() > crashes_before);
     let unavailable = host.unavailable_plugins();
     assert_eq!(unavailable.len(), 1);
     assert_eq!(unavailable[0].reason, UnavailableReason::Crashed);
 
     let mut restarted = prepared(&mut host, true, false);
-    assert!(!host.instance_by_key(KEY).unwrap().bridge().unwrap().is_dead());
-    assert!(run_block(&mut restarted).iter().all(|&s| s == 0.25), "restarted with its last known state");
+    assert!(!host
+        .instance_by_key(KEY)
+        .unwrap()
+        .bridge()
+        .unwrap()
+        .is_dead());
+    assert!(
+        run_block(&mut restarted).iter().all(|&s| s == 0.25),
+        "restarted with its last known state"
+    );
     host.retain_devices(&HashSet::from([KEY.to_string()]));
     assert!(host.unavailable_plugins().is_empty());
 }
@@ -269,7 +317,10 @@ fn the_isolation_preference_overrides_the_effect_choice() {
     let always = HashSet::from([PLUGIN_ID.to_string()]);
     assert!(host.set_isolation(PluginIsolation::Chosen, always.clone()));
     prepared(&mut host, false, false);
-    assert!(is_sandboxed(&host), "Chosen: a plugin marked always isolated is isolated everywhere");
+    assert!(
+        is_sandboxed(&host),
+        "Chosen: a plugin marked always isolated is isolated everywhere"
+    );
 
     assert!(host.set_isolation(PluginIsolation::All, HashSet::new()));
     prepared(&mut host, false, false);
@@ -278,7 +329,10 @@ fn the_isolation_preference_overrides_the_effect_choice() {
     assert!(host.set_isolation(PluginIsolation::Off, always.clone()));
     prepared(&mut host, true, false);
     assert!(!is_sandboxed(&host), "Off: in-process even when chosen");
-    assert!(!host.set_isolation(PluginIsolation::Off, always), "unchanged settings need no recompile");
+    assert!(
+        !host.set_isolation(PluginIsolation::Off, always),
+        "unchanged settings need no recompile"
+    );
 }
 
 #[test]
@@ -288,39 +342,71 @@ fn a_sandboxed_instrument_plays_notes_and_parameters() {
     let mut instrument = prepared_instrument(&mut host, false);
     assert!(is_sandboxed(&host, INSTRUMENT_KEY));
 
-    assert!(play_block(&mut instrument, &[]).iter().all(|&s| s == 0.0), "silent until a note");
-    assert!(play_block(&mut instrument, &[NOTE_ON]).iter().all(|&s| s == 1.0));
+    assert!(
+        play_block(&mut instrument, &[]).iter().all(|&s| s == 0.0),
+        "silent until a note"
+    );
+    assert!(play_block(&mut instrument, &[NOTE_ON])
+        .iter()
+        .all(|&s| s == 1.0));
     // Normalised 0.25 of the 0..2 range = gain 0.5.
     assert!(host.push_plugin_param(INSTRUMENT_KEY, GAIN, 0.25).unwrap());
-    assert!(play_block(&mut instrument, &[]).iter().all(|&s| s == 0.5), "the note is still held");
-    assert!(play_block(&mut instrument, &[NOTE_OFF]).iter().all(|&s| s == 0.0));
+    assert!(
+        play_block(&mut instrument, &[]).iter().all(|&s| s == 0.5),
+        "the note is still held"
+    );
+    assert!(play_block(&mut instrument, &[NOTE_OFF])
+        .iter()
+        .all(|&s| s == 0.0));
 }
 
 #[test]
 fn an_instrument_follows_the_isolation_preference_and_keeps_its_state() {
     let mut host = host();
-    host.set_pending_state_blobs(HashMap::from([(INSTRUMENT_KEY.to_string(), gain_state(0.5))]));
+    host.set_pending_state_blobs(HashMap::from([(
+        INSTRUMENT_KEY.to_string(),
+        gain_state(0.5),
+    )]));
     let _in_process = prepared_instrument(&mut host, false);
     host.clear_pending_state_blobs();
-    assert!(!is_sandboxed(&host, INSTRUMENT_KEY), "Chosen: an instrument has no choice of its own");
+    assert!(
+        !is_sandboxed(&host, INSTRUMENT_KEY),
+        "Chosen: an instrument has no choice of its own"
+    );
 
     let always = HashSet::from([PLUGIN_ID.to_string()]);
     host.set_isolation(PluginIsolation::Chosen, always.clone());
     let mut sandboxed = prepared_instrument(&mut host, false);
-    assert!(is_sandboxed(&host, INSTRUMENT_KEY), "Chosen: a plugin always isolated is isolated as an instrument");
-    assert!(play_block(&mut sandboxed, &[NOTE_ON]).iter().all(|&s| s == 0.5), "state carried into the sandbox");
+    assert!(
+        is_sandboxed(&host, INSTRUMENT_KEY),
+        "Chosen: a plugin always isolated is isolated as an instrument"
+    );
+    assert!(
+        play_block(&mut sandboxed, &[NOTE_ON])
+            .iter()
+            .all(|&s| s == 0.5),
+        "state carried into the sandbox"
+    );
 
     host.set_isolation(PluginIsolation::Off, always);
     let mut in_process = prepared_instrument(&mut host, false);
     assert!(!is_sandboxed(&host, INSTRUMENT_KEY), "Off: in-process");
-    assert!(play_block(&mut in_process, &[NOTE_ON]).iter().all(|&s| s == 0.5), "state carried back");
+    assert!(
+        play_block(&mut in_process, &[NOTE_ON])
+            .iter()
+            .all(|&s| s == 0.5),
+        "state carried back"
+    );
 }
 
 #[test]
 fn a_crashed_instrument_is_contained_reported_and_restarted() {
     let mut host = host();
     host.set_isolation(PluginIsolation::All, HashSet::new());
-    host.set_pending_state_blobs(HashMap::from([(INSTRUMENT_KEY.to_string(), gain_state(0.5))]));
+    host.set_pending_state_blobs(HashMap::from([(
+        INSTRUMENT_KEY.to_string(),
+        gain_state(0.5),
+    )]));
     let mut instrument = prepared_instrument(&mut host, true);
     host.clear_pending_state_blobs();
 
@@ -329,12 +415,22 @@ fn a_crashed_instrument_is_contained_reported_and_restarted() {
         let output = play_block(&mut instrument, &[NOTE_ON]);
         assert!(output.iter().all(|&s| s == 0.0 || s == 0.5));
     }
-    assert!(host.instance_by_key(INSTRUMENT_KEY).unwrap().bridge().unwrap().is_dead());
+    assert!(host
+        .instance_by_key(INSTRUMENT_KEY)
+        .unwrap()
+        .bridge()
+        .unwrap()
+        .is_dead());
     let unavailable = host.unavailable_plugins();
     assert_eq!(unavailable.len(), 1);
     assert_eq!(unavailable[0].reason, UnavailableReason::Crashed);
 
     let mut restarted = prepared_instrument(&mut host, false);
     assert!(host.unavailable_plugins().is_empty());
-    assert!(play_block(&mut restarted, &[NOTE_ON]).iter().all(|&s| s == 0.5), "restarted with its last known state");
+    assert!(
+        play_block(&mut restarted, &[NOTE_ON])
+            .iter()
+            .all(|&s| s == 0.5),
+        "restarted with its last known state"
+    );
 }

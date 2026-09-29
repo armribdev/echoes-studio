@@ -9,10 +9,11 @@ use crate::audio_graph::plugin_params::{
     PluginParamControl, PluginParamControls, PluginParamRange, ValueModulatedParam,
 };
 use crate::plugin_formats::clap::ffi::{
-    ClapEventBuffer, ClapEventHeader, ClapEventParamGesture, ClapEventParamValue, ClapOutputEvents,
-    ClapParamInfo, ClapPlugin, ClapPluginParams, CLAP_CORE_EVENT_SPACE, CLAP_EVENT_PARAM_GESTURE_BEGIN,
-    CLAP_EVENT_PARAM_GESTURE_END, CLAP_EVENT_PARAM_VALUE, CLAP_EXT_PARAMS, CLAP_PARAM_IS_AUTOMATABLE, mark_plugin_state_edited,
-    CLAP_PARAM_IS_HIDDEN, CLAP_PARAM_IS_MODULATABLE, CLAP_PARAM_IS_READONLY,
+    mark_plugin_state_edited, ClapEventBuffer, ClapEventHeader, ClapEventParamGesture,
+    ClapEventParamValue, ClapOutputEvents, ClapParamInfo, ClapPlugin, ClapPluginParams,
+    CLAP_CORE_EVENT_SPACE, CLAP_EVENT_PARAM_GESTURE_BEGIN, CLAP_EVENT_PARAM_GESTURE_END,
+    CLAP_EVENT_PARAM_VALUE, CLAP_EXT_PARAMS, CLAP_PARAM_IS_AUTOMATABLE, CLAP_PARAM_IS_HIDDEN,
+    CLAP_PARAM_IS_MODULATABLE, CLAP_PARAM_IS_READONLY,
 };
 use crate::plugin_system::instance::PluginInstance;
 use crate::plugin_system::parameter::PluginParamInfo;
@@ -72,7 +73,10 @@ pub unsafe fn read_clap_param_value(plugin: *const ClapPlugin, native_id: u32) -
     ((*params).get_value)(plugin, native_id, &mut value).then_some(value)
 }
 
-unsafe extern "C" fn discard_output_event(_: *const ClapOutputEvents, _: *const ClapEventHeader) -> bool {
+unsafe extern "C" fn discard_output_event(
+    _: *const ClapOutputEvents,
+    _: *const ClapEventHeader,
+) -> bool {
     true
 }
 
@@ -89,7 +93,10 @@ pub unsafe fn flush_clap_param_values(plugin: *const ClapPlugin, values: &[(u32,
     for &(native_id, value) in values {
         events.push_param_value(0, native_id, value);
     }
-    let output = ClapOutputEvents { ctx: std::ptr::null_mut(), try_push: discard_output_event };
+    let output = ClapOutputEvents {
+        ctx: std::ptr::null_mut(),
+        try_push: discard_output_event,
+    };
     ((*params).flush)(plugin, &events.input_events_vtable, &output);
 }
 
@@ -104,7 +111,9 @@ struct ValueModulation {
 
 impl ValueModulation {
     fn find(&self, native_id: u32) -> Option<&ValueModulatedParam> {
-        self.params.iter().find(|param| param.native_id == native_id)
+        self.params
+            .iter()
+            .find(|param| param.native_id == native_id)
     }
 
     /// A drag in the plugin window pauses the modulation and moves its base.
@@ -115,9 +124,14 @@ impl ValueModulation {
         match header.r#type {
             CLAP_EVENT_PARAM_GESTURE_BEGIN | CLAP_EVENT_PARAM_GESTURE_END => {
                 // SAFETY: the event type guarantees the layout.
-                let event = unsafe { &*(header as *const ClapEventHeader as *const ClapEventParamGesture) };
+                let event =
+                    unsafe { &*(header as *const ClapEventHeader as *const ClapEventParamGesture) };
                 let is_begin = header.r#type == CLAP_EVENT_PARAM_GESTURE_BEGIN;
-                if let Some(param) = self.params.iter_mut().find(|param| param.native_id == event.param_id) {
+                if let Some(param) = self
+                    .params
+                    .iter_mut()
+                    .find(|param| param.native_id == event.param_id)
+                {
                     param.editing = is_begin;
                 }
                 if !is_begin {
@@ -126,7 +140,8 @@ impl ValueModulation {
             }
             CLAP_EVENT_PARAM_VALUE => {
                 // SAFETY: the event type guarantees the layout.
-                let event = unsafe { &*(header as *const ClapEventHeader as *const ClapEventParamValue) };
+                let event =
+                    unsafe { &*(header as *const ClapEventHeader as *const ClapEventParamValue) };
                 match self.find(event.param_id) {
                     Some(param) if param.editing => {
                         param.set_base(param.range.normalise(event.value as f32));
@@ -193,11 +208,18 @@ impl ClapParamEvents {
     }
 
     fn range(&self, native_id: u32) -> PluginParamRange {
-        self.ranges.get(&native_id).copied().unwrap_or(PluginParamRange::UNKNOWN)
+        self.ranges
+            .get(&native_id)
+            .copied()
+            .unwrap_or(PluginParamRange::UNKNOWN)
     }
 
     /// Off the audio thread, at compile time, after `set_ranges`.
-    pub fn set_controls(&mut self, mut controls: Vec<PluginParamControl>, instance: &PluginInstance) {
+    pub fn set_controls(
+        &mut self,
+        mut controls: Vec<PluginParamControl>,
+        instance: &PluginInstance,
+    ) {
         for control in &mut controls {
             control.range = self.range(control.native_id);
         }
@@ -229,8 +251,15 @@ impl ClapParamEvents {
         let ranges = &self.ranges;
 
         instance.drain_params(|change| {
-            let range = ranges.get(&change.native_id).copied().unwrap_or(PluginParamRange::UNKNOWN);
-            buffer.push_param_value(change.sample_offset, change.native_id, range.denormalise(change.normalised) as f64);
+            let range = ranges
+                .get(&change.native_id)
+                .copied()
+                .unwrap_or(PluginParamRange::UNKNOWN);
+            buffer.push_param_value(
+                change.sample_offset,
+                change.native_id,
+                range.denormalise(change.normalised) as f64,
+            );
         });
 
         for native_id in self.released_modulation.drain(..) {
@@ -243,13 +272,21 @@ impl ClapParamEvents {
         for control in self.controls.iter() {
             if control.range.modulatable {
                 for (offset, value) in control.modulation.iter() {
-                    buffer.push_param_mod(offset, control.native_id, control.range.plain_offset(value) as f64);
+                    buffer.push_param_mod(
+                        offset,
+                        control.native_id,
+                        control.range.plain_offset(value) as f64,
+                    );
                 }
             } else if control.automation.is_empty() {
                 let value_modulated = self.value_modulation.find(control.native_id);
                 if let Some(param) = value_modulated.filter(|param| !param.editing) {
                     for (offset, value) in control.modulation.iter() {
-                        buffer.push_param_value(offset, control.native_id, param.modulated_plain(value) as f64);
+                        buffer.push_param_value(
+                            offset,
+                            control.native_id,
+                            param.modulated_plain(value) as f64,
+                        );
                     }
                 }
             }
@@ -267,13 +304,20 @@ impl ClapParamEvents {
 fn value_modulation(controls: &[PluginParamControl], instance: &PluginInstance) -> ValueModulation {
     let params: Vec<ValueModulatedParam> = controls
         .iter()
-        .filter(|control| control.modulated && !control.range.modulatable && control.range.automatable)
-        .map(|control| ValueModulatedParam::new(control.native_id, control.range, Arc::clone(&control.base)))
+        .filter(|control| {
+            control.modulated && !control.range.modulatable && control.range.automatable
+        })
+        .map(|control| {
+            ValueModulatedParam::new(control.native_id, control.range, Arc::clone(&control.base))
+        })
         .collect();
     let previous = instance.replace_value_modulated_params(params.clone());
     let was_modulated = |native_id: u32| previous.iter().any(|param| param.native_id == native_id);
 
-    for param in params.iter().filter(|param| !was_modulated(param.native_id)) {
+    for param in params
+        .iter()
+        .filter(|param| !was_modulated(param.native_id))
+    {
         if let Some(plain) = instance.clap_param_value(param.native_id) {
             param.set_base(param.range.normalise(plain as f32));
         }
@@ -310,20 +354,35 @@ mod tests {
     }
 
     fn read_only_info(native_id: u32) -> PluginParamInfo {
-        PluginParamInfo { automatable: false, ..info(native_id, false) }
+        PluginParamInfo {
+            automatable: false,
+            ..info(native_id, false)
+        }
     }
 
     fn header(r#type: u16, size: usize) -> ClapEventHeader {
-        ClapEventHeader { size: size as u32, time: 0, space_id: CLAP_CORE_EVENT_SPACE, r#type, flags: 0 }
+        ClapEventHeader {
+            size: size as u32,
+            time: 0,
+            space_id: CLAP_CORE_EVENT_SPACE,
+            r#type,
+            flags: 0,
+        }
     }
 
     fn gesture(r#type: u16, param_id: u32) -> ClapEventParamGesture {
-        ClapEventParamGesture { header: header(r#type, std::mem::size_of::<ClapEventParamGesture>()), param_id }
+        ClapEventParamGesture {
+            header: header(r#type, std::mem::size_of::<ClapEventParamGesture>()),
+            param_id,
+        }
     }
 
     fn value_event(param_id: u32, value: f64) -> ClapEventParamValue {
         ClapEventParamValue {
-            header: header(CLAP_EVENT_PARAM_VALUE, std::mem::size_of::<ClapEventParamValue>()),
+            header: header(
+                CLAP_EVENT_PARAM_VALUE,
+                std::mem::size_of::<ClapEventParamValue>(),
+            ),
             param_id,
             cookie: std::ptr::null_mut(),
             note_id: -1,
@@ -336,7 +395,10 @@ mod tests {
     }
 
     fn push_output(params: &mut ClapParamEvents, event: &ClapEventHeader) {
-        let output = ClapOutputEvents { ctx: params.output_context(), try_push: observe_output_event };
+        let output = ClapOutputEvents {
+            ctx: params.output_context(),
+            try_push: observe_output_event,
+        };
         assert!(unsafe { observe_output_event(&output, event) });
     }
 
@@ -351,7 +413,8 @@ mod tests {
         (0..params.buffer.len())
             .map(|i| {
                 let header = params.buffer.header(i).unwrap();
-                let event = unsafe { &*(header as *const ClapEventHeader as *const ClapEventParamValue) };
+                let event =
+                    unsafe { &*(header as *const ClapEventHeader as *const ClapEventParamValue) };
                 (header.time, header.r#type, event.param_id, event.value)
             })
             .collect()
@@ -385,7 +448,9 @@ mod tests {
         let mut params = ClapParamEvents::new();
         params.set_ranges(&[info(1, false)]);
         let modulated = control(1, true);
-        modulated.base.store(0.5f32.to_bits(), std::sync::atomic::Ordering::Relaxed);
+        modulated
+            .base
+            .store(0.5f32.to_bits(), std::sync::atomic::Ordering::Relaxed);
         params.set_controls(vec![modulated], &instance);
 
         params.controls_mut().modulate(1, 0.25);
@@ -394,7 +459,10 @@ mod tests {
 
         assert_eq!(
             events(&mut params),
-            vec![(0, CLAP_EVENT_PARAM_VALUE, 1, 250.0), (32, CLAP_EVENT_PARAM_VALUE, 1, 100.0)]
+            vec![
+                (0, CLAP_EVENT_PARAM_VALUE, 1, 250.0),
+                (32, CLAP_EVENT_PARAM_VALUE, 1, 100.0)
+            ]
         );
     }
 
@@ -418,17 +486,29 @@ mod tests {
         params.set_ranges(&[info(1, false)]);
         params.set_controls(vec![control(1, true)], &instance);
 
-        push_output(&mut params, &gesture(CLAP_EVENT_PARAM_GESTURE_BEGIN, 1).header);
+        push_output(
+            &mut params,
+            &gesture(CLAP_EVENT_PARAM_GESTURE_BEGIN, 1).header,
+        );
         push_output(&mut params, &value_event(1, 150.0).header);
         params.controls_mut().modulate(1, 0.25);
         params.fill(&instance);
-        assert!(events(&mut params).is_empty(), "no modulation while the user drags");
+        assert!(
+            events(&mut params).is_empty(),
+            "no modulation while the user drags"
+        );
 
-        push_output(&mut params, &gesture(CLAP_EVENT_PARAM_GESTURE_END, 1).header);
+        push_output(
+            &mut params,
+            &gesture(CLAP_EVENT_PARAM_GESTURE_END, 1).header,
+        );
         params.controls_mut().clear_block();
         params.controls_mut().modulate(1, 0.25);
         params.fill(&instance);
-        assert_eq!(events(&mut params), vec![(0, CLAP_EVENT_PARAM_VALUE, 1, 200.0)]);
+        assert_eq!(
+            events(&mut params),
+            vec![(0, CLAP_EVENT_PARAM_VALUE, 1, 200.0)]
+        );
     }
 
     #[test]
@@ -441,7 +521,10 @@ mod tests {
         push_output(&mut params, &value_event(1, 300.0).header);
         params.controls_mut().modulate(1, 0.0);
         params.fill(&instance);
-        assert_eq!(events(&mut params), vec![(0, CLAP_EVENT_PARAM_VALUE, 1, 100.0)]);
+        assert_eq!(
+            events(&mut params),
+            vec![(0, CLAP_EVENT_PARAM_VALUE, 1, 100.0)]
+        );
     }
 
     #[test]
@@ -470,9 +553,15 @@ mod tests {
         second.set_controls(Vec::new(), &instance);
 
         second.fill(&instance);
-        assert_eq!(events(&mut second), vec![(0, CLAP_EVENT_PARAM_VALUE, 1, 150.0)]);
+        assert_eq!(
+            events(&mut second),
+            vec![(0, CLAP_EVENT_PARAM_VALUE, 1, 150.0)]
+        );
         second.fill(&instance);
-        assert!(events(&mut second).is_empty(), "the restore is sent only once");
+        assert!(
+            events(&mut second).is_empty(),
+            "the restore is sent only once"
+        );
     }
 
     #[test]
@@ -489,7 +578,10 @@ mod tests {
         second.fill(&instance);
         assert_eq!(events(&mut second), vec![(0, CLAP_EVENT_PARAM_MOD, 1, 0.0)]);
         second.fill(&instance);
-        assert!(events(&mut second).is_empty(), "the reset is sent only once");
+        assert!(
+            events(&mut second).is_empty(),
+            "the reset is sent only once"
+        );
     }
 
     #[test]
@@ -500,6 +592,9 @@ mod tests {
         assert!(instance.push_param(1, 0.5));
 
         params.fill(&instance);
-        assert_eq!(events(&mut params), vec![(0, CLAP_EVENT_PARAM_VALUE, 1, 200.0)]);
+        assert_eq!(
+            events(&mut params),
+            vec![(0, CLAP_EVENT_PARAM_VALUE, 1, 200.0)]
+        );
     }
 }

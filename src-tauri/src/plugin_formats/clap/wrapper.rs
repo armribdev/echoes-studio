@@ -33,7 +33,9 @@ use crate::audio_graph::buffer::AudioBuffer;
 use crate::audio_graph::node::{AudioNode, PrepareContext, TransportInfo};
 use crate::audio_graph::plugin_params::{parse_plugin_param_name, PluginParamControl};
 use crate::plugin_formats::clap::audio_ports::ClapOutputBuses;
-use crate::plugin_formats::clap::params::{observe_output_event, read_clap_params, ClapParamEvents};
+use crate::plugin_formats::clap::params::{
+    observe_output_event, read_clap_params, ClapParamEvents,
+};
 use crate::plugin_formats::clap::transport::clap_transport_event;
 use crate::plugin_formats::crash_guard;
 use crate::plugin_system::instance::{PluginInstance, FFI_GATE_HARVEST_BUDGET};
@@ -56,7 +58,6 @@ unsafe extern "C" fn clap_process_trampoline(raw: *mut c_void) -> i32 {
 }
 
 pub struct ClapWrapperNode {
-
     /// Shared, refcounted handle to the live plugin.  Captured at
     /// construction; cloned only on the command thread.  Deref on the audio
     /// thread is a non-atomic field load (cf. `ADR-007`).
@@ -272,14 +273,21 @@ impl AudioNode for ClapWrapperNode {
             transport: &transport_event,
             audio_inputs: self.in_audio_bufs.as_ptr(),
             audio_outputs,
-            audio_inputs_count: if inputs.is_empty() { 0 } else { self.in_audio_bufs.len() as u32 },
+            audio_inputs_count: if inputs.is_empty() {
+                0
+            } else {
+                self.in_audio_bufs.len() as u32
+            },
             audio_outputs_count,
             in_events: &self.param_events.buffer.input_events_vtable,
             out_events: &self.out_events,
         };
 
         let p = self.plugin_ptr();
-        let mut ctx = ClapProcessCtx { plugin: p, process: &process };
+        let mut ctx = ClapProcessCtx {
+            plugin: p,
+            process: &process,
+        };
         let status = unsafe {
             crash_guard::guarded(
                 clap_process_trampoline,
@@ -325,7 +333,9 @@ impl AudioNode for ClapWrapperNode {
     }
 
     fn apply_modulation_at(&mut self, param_id: u32, sample_offset: u32, value: f32) {
-        self.param_events.controls_mut().modulate_at(param_id, sample_offset, value);
+        self.param_events
+            .controls_mut()
+            .modulate_at(param_id, sample_offset, value);
     }
 
     fn apply_automation(&mut self, param_id: u32, value: f32) {
@@ -333,7 +343,9 @@ impl AudioNode for ClapWrapperNode {
     }
 
     fn apply_automation_at(&mut self, param_id: u32, sample_offset: u32, value: f32) {
-        self.param_events.controls_mut().automate_at(param_id, sample_offset, value);
+        self.param_events
+            .controls_mut()
+            .automate_at(param_id, sample_offset, value);
     }
 
     fn inject_plugin_param_controls(&mut self, controls: Vec<PluginParamControl>) {
@@ -366,7 +378,6 @@ mod aux_feed_tests {
     use std::process::Command;
     use std::sync::OnceLock;
 
-    
     use crate::plugin_system::host::PluginHost;
     use crate::plugin_system::registry::PluginManifest;
     use crate::plugin_system::wrapper::DeviceFormat;
@@ -496,7 +507,10 @@ mod aux_feed_tests {
     fn assert_all(buffer: &AudioBuffer, frames: usize, expected: f32, what: &str) {
         for ch in 0..2 {
             for &s in &buffer.channel(ch)[..frames] {
-                assert!((s - expected).abs() < 1e-6, "{what}, channel {ch}: expected {expected}, got {s}");
+                assert!(
+                    (s - expected).abs() < 1e-6,
+                    "{what}, channel {ch}: expected {expected}, got {s}"
+                );
             }
         }
     }
@@ -542,7 +556,11 @@ mod aux_feed_tests {
 
         assert_eq!(
             host.plugin_outputs("fx0"),
-            vec![PluginOutputInfo { port: 1, name: "Aux Out".into(), channel_count: 1 }]
+            vec![PluginOutputInfo {
+                port: 1,
+                name: "Aux Out".into(),
+                channel_count: 1
+            }]
         );
         assert!(host.plugin_outputs("not-loaded").is_empty());
     }
@@ -561,13 +579,20 @@ mod aux_feed_tests {
             .instantiate_instrument("instrument:t1", PLUGIN_ID)
             .expect("real CLAP instrument instantiation must succeed");
         device.prepare(prepare_context());
-        assert_eq!(device.num_output_ports(), 2, "main + the declared aux output");
+        assert_eq!(
+            device.num_output_ports(),
+            2,
+            "main + the declared aux output"
+        );
 
         let frames = 32;
         let mut events = MidiEventList::new();
         events.push(MidiEvent {
             offset: 0,
-            kind: MidiEventKind::NoteOn { pitch: 60, velocity: 127 },
+            kind: MidiEventKind::NoteOn {
+                pitch: 60,
+                velocity: 127,
+            },
         });
         let mut outputs = vec![AudioBuffer::new(2, frames), AudioBuffer::new(2, frames)];
 

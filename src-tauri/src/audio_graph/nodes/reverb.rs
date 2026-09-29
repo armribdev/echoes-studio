@@ -203,7 +203,11 @@ impl AudioNode for ReverbNode {
         // ADR-009 + ADR-019 Tranche 3: read live block values, then apply
         // modulation per control segment on the absolute grid, re-applying comb
         // coefficients per segment only when room_size/damping change.
-        let base = self.block.as_ref().map(|b| reverb_params_from_block(b)).unwrap_or_else(|| self.params.clone());
+        let base = self
+            .block
+            .as_ref()
+            .map(|b| reverb_params_from_block(b))
+            .unwrap_or_else(|| self.params.clone());
 
         let input = &inputs[0];
         let output = &mut outputs[0];
@@ -220,13 +224,25 @@ impl AudioNode for ReverbNode {
             if seg_end <= frame {
                 continue;
             }
-            let delta = if k == 0 { self.base_delta } else { self.seg_delta[k - 1] };
+            let delta = if k == 0 {
+                self.base_delta
+            } else {
+                self.seg_delta[k - 1]
+            };
             let effective = ReverbParams {
-                room_size: modulated(base.room_size, delta[REVERB_ROOM_SIZE], REVERB_RANGES[REVERB_ROOM_SIZE]),
-                damping:   modulated(base.damping,   delta[REVERB_DAMPING],   REVERB_RANGES[REVERB_DAMPING]),
-                wet:       modulated(base.wet,       delta[REVERB_WET],       REVERB_RANGES[REVERB_WET]),
-                dry:       modulated(base.dry,       delta[REVERB_DRY],       REVERB_RANGES[REVERB_DRY]),
-                width:     modulated(base.width,     delta[REVERB_WIDTH],     REVERB_RANGES[REVERB_WIDTH]),
+                room_size: modulated(
+                    base.room_size,
+                    delta[REVERB_ROOM_SIZE],
+                    REVERB_RANGES[REVERB_ROOM_SIZE],
+                ),
+                damping: modulated(
+                    base.damping,
+                    delta[REVERB_DAMPING],
+                    REVERB_RANGES[REVERB_DAMPING],
+                ),
+                wet: modulated(base.wet, delta[REVERB_WET], REVERB_RANGES[REVERB_WET]),
+                dry: modulated(base.dry, delta[REVERB_DRY], REVERB_RANGES[REVERB_DRY]),
+                width: modulated(base.width, delta[REVERB_WIDTH], REVERB_RANGES[REVERB_WIDTH]),
             };
             if reverb_block_values(&effective) != reverb_block_values(&self.params) {
                 let recompute = effective.room_size != self.params.room_size
@@ -244,8 +260,16 @@ impl AudioNode for ReverbNode {
             let wet2 = wet * (0.5 - width / 2.0);
 
             for i in frame..seg_end {
-                let in_l = if channels > 0 { input.channel(0)[i] } else { 0.0 };
-                let in_r = if channels > 1 { input.channel(1)[i] } else { in_l };
+                let in_l = if channels > 0 {
+                    input.channel(0)[i]
+                } else {
+                    0.0
+                };
+                let in_r = if channels > 1 {
+                    input.channel(1)[i]
+                } else {
+                    in_l
+                };
                 let mono = (in_l + in_r) * 0.015; // Freeverb input gain
 
                 let mut out_l = 0.0_f32;
@@ -297,10 +321,10 @@ impl AudioNode for ReverbNode {
     fn param_id(&self, name: &str) -> Option<u32> {
         match name {
             "room_size" => Some(REVERB_ROOM_SIZE as u32),
-            "damping"   => Some(REVERB_DAMPING as u32),
-            "wet"       => Some(REVERB_WET as u32),
-            "dry"       => Some(REVERB_DRY as u32),
-            "width"     => Some(REVERB_WIDTH as u32),
+            "damping" => Some(REVERB_DAMPING as u32),
+            "wet" => Some(REVERB_WET as u32),
+            "dry" => Some(REVERB_DRY as u32),
+            "width" => Some(REVERB_WIDTH as u32),
             _ => None,
         }
     }

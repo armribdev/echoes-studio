@@ -43,9 +43,9 @@
 //! introduce GUI calls and must coordinate via the lifecycle state machine.
 
 use std::ptr::NonNull;
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU8, Ordering};
 #[cfg(test)]
 use std::sync::atomic::AtomicU64;
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
@@ -370,10 +370,7 @@ impl PluginInstance {
     }
 
     /// A CLAP plugin running in a sandbox process (ADR-015).
-    pub fn new_bridged(
-        device_id: impl Into<String>,
-        bridged: BridgedPlugin,
-    ) -> Arc<Self> {
+    pub fn new_bridged(device_id: impl Into<String>, bridged: BridgedPlugin) -> Arc<Self> {
         Arc::new(Self {
             #[cfg(test)]
             instance_id: next_instance_id(),
@@ -407,22 +404,36 @@ impl PluginInstance {
     /// The plugin crashed — caught in-process, or its sandbox was condemned —
     /// and stays silent until a recompile rebuilds it.
     pub fn has_crashed(&self) -> bool {
-        self.lifecycle() == LifecycleState::Error || self.bridge().is_some_and(BridgedPlugin::is_dead)
+        self.lifecycle() == LifecycleState::Error
+            || self.bridge().is_some_and(BridgedPlugin::is_dead)
     }
 
     /// Records which parameters are now modulated and returns those that no
     /// longer are, so the caller resets their modulation.  Command thread only.
     pub fn replace_modulated_params(&self, now: &[u32]) -> Vec<u32> {
-        let mut modulated = self.modulated_params.lock().unwrap_or_else(|e| e.into_inner());
-        let released = modulated.iter().copied().filter(|id| !now.contains(id)).collect();
+        let mut modulated = self
+            .modulated_params
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let released = modulated
+            .iter()
+            .copied()
+            .filter(|id| !now.contains(id))
+            .collect();
         *modulated = now.to_vec();
         released
     }
 
     /// Records the value-modulated parameters and returns the previous ones.
     /// Command thread only.
-    pub fn replace_value_modulated_params(&self, now: Vec<ValueModulatedParam>) -> Vec<ValueModulatedParam> {
-        let mut params = self.value_modulated_params.lock().unwrap_or_else(|e| e.into_inner());
+    pub fn replace_value_modulated_params(
+        &self,
+        now: Vec<ValueModulatedParam>,
+    ) -> Vec<ValueModulatedParam> {
+        let mut params = self
+            .value_modulated_params
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         std::mem::replace(&mut *params, now)
     }
 
@@ -550,7 +561,11 @@ impl PluginInstance {
     /// in the outgoing graph — so it is fenced by `previous`'s FFI gate; if a
     /// block is in flight and the gate cannot be claimed in time, we fall back to
     /// the cached blob rather than read concurrently with `process()`.
-    pub fn restore_from(&self, previous: &PluginInstance, cached: Option<&[u8]>) -> Option<Vec<u8>> {
+    pub fn restore_from(
+        &self,
+        previous: &PluginInstance,
+        cached: Option<&[u8]>,
+    ) -> Option<Vec<u8>> {
         if self.device_id != previous.device_id {
             return None;
         }
@@ -1067,7 +1082,10 @@ mod tests {
         let a = PluginInstance::new_internal("echoes.gain");
         let b = PluginInstance::new_internal("echoes.gain");
 
-        assert_eq!(a.device_id, b.device_id, "same plugin type → same device_id");
+        assert_eq!(
+            a.device_id, b.device_id,
+            "same plugin type → same device_id"
+        );
         assert_ne!(
             a.instance_id(),
             b.instance_id(),

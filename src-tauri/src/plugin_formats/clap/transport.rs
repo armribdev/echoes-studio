@@ -50,7 +50,12 @@ mod tests {
     use super::*;
     use crate::audio_graph::node::TimeSignature;
 
-    fn transport_at(seconds: f64, bpm: f32, time_signature: TimeSignature, is_playing: bool) -> TransportInfo {
+    fn transport_at(
+        seconds: f64,
+        bpm: f32,
+        time_signature: TimeSignature,
+        is_playing: bool,
+    ) -> TransportInfo {
         TransportInfo {
             is_playing,
             position_samples: (seconds * 48_000.0) as u64,
@@ -78,7 +83,8 @@ mod tests {
     #[test]
     fn eighth_note_denominator_shortens_bars() {
         // 6/8 = 3 quarter notes per bar.
-        let event = clap_transport_event(&transport_at(1.5, 120.0, TimeSignature::new(6, 8), false));
+        let event =
+            clap_transport_event(&transport_at(1.5, 120.0, TimeSignature::new(6, 8), false));
         assert_eq!(event.bar_number, 1);
         assert_eq!(event.bar_start, to_clap_time(3.0));
         assert_eq!(event.flags & CLAP_TRANSPORT_IS_PLAYING, 0);
@@ -88,7 +94,14 @@ mod tests {
     fn header_identifies_a_transport_event() {
         let event = clap_transport_event(&TransportInfo::stopped(48_000.0));
         assert_eq!(event.header.r#type, CLAP_EVENT_TRANSPORT);
-        assert_eq!(event.header.size as usize, std::mem::size_of::<ClapEventTransport>());
-        assert_eq!(std::mem::size_of::<ClapEventTransport>(), 104, "must match the C layout of clap_event_transport");
+        assert_eq!(
+            event.header.size as usize,
+            std::mem::size_of::<ClapEventTransport>()
+        );
+        assert_eq!(
+            std::mem::size_of::<ClapEventTransport>(),
+            104,
+            "must match the C layout of clap_event_transport"
+        );
     }
 }

@@ -412,7 +412,10 @@ impl MidiLiveInputQueue {
 
     /// MIDI capture threads. Drops the newest message when the ring is full.
     pub fn push(&self, message: MidiLiveInputMessage) -> bool {
-        let _producer = self.producer.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let _producer = self
+            .producer
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let tail = self.tail.load(Ordering::Relaxed);
         let head = self.head.load(Ordering::Acquire);
         if tail.wrapping_sub(head) >= LIVE_INPUT_CAPACITY {

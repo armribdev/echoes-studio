@@ -38,7 +38,9 @@ use crate::plugin_formats::clap::ffi::{
     audio_thread_scope, ClapEventBuffer, ClapOutputEvents, ClapPlugin, ClapProcess,
     CLAP_PROCESS_ERROR,
 };
-use crate::plugin_formats::clap::params::{observe_output_event, read_clap_params, ClapParamEvents};
+use crate::plugin_formats::clap::params::{
+    observe_output_event, read_clap_params, ClapParamEvents,
+};
 use crate::plugin_formats::clap::transport::clap_transport_event;
 
 /// Append the engine's per-block `MidiEventList` as CLAP note events.
@@ -217,7 +219,9 @@ impl InstrumentDevice for ClapInstrument {
 mod tests {
     use super::*;
     use crate::audio_graph::midi::MidiEvent;
-    use crate::plugin_formats::clap::ffi::{ClapEventHeader, ClapEventNote, CLAP_EVENT_NOTE_OFF, CLAP_EVENT_NOTE_ON};
+    use crate::plugin_formats::clap::ffi::{
+        ClapEventHeader, ClapEventNote, CLAP_EVENT_NOTE_OFF, CLAP_EVENT_NOTE_ON,
+    };
 
     fn notes(list: &ClapEventBuffer) -> Vec<(u16, u32, i16, f64)> {
         (0..list.len())

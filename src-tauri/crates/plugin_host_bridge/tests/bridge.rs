@@ -156,7 +156,9 @@ fn processes_audio_with_parameter_changes_and_modulation() {
         scaled(&input, 0.75)
     );
     assert_eq!(bridge.audio().timeout_count(), 0);
-    let wrong_thread = bridge.request(Op::ParamValue, &WRONG_THREAD.to_le_bytes(), TIMEOUT).unwrap();
+    let wrong_thread = bridge
+        .request(Op::ParamValue, &WRONG_THREAD.to_le_bytes(), TIMEOUT)
+        .unwrap();
     assert_eq!(
         f64::from_le_bytes(wrong_thread.try_into().unwrap()),
         0.0,
@@ -228,7 +230,11 @@ fn a_restart_request_comes_back_with_the_block_and_the_next_activate_applies_it(
     let BlockOutcome::Processed { flags, .. } = block.outcome else {
         panic!("block not processed: {:?}", block.outcome);
     };
-    assert_ne!(flags & BLOCK_RESTART_REQUESTED, 0, "request_restart is forwarded");
+    assert_ne!(
+        flags & BLOCK_RESTART_REQUESTED,
+        0,
+        "request_restart is forwarded"
+    );
     let later = process(&bridge, 1, &ramp(), &[], TIMEOUT);
     let BlockOutcome::Processed { flags, .. } = later.outcome else {
         panic!("block not processed: {:?}", later.outcome);
@@ -238,9 +244,17 @@ fn a_restart_request_comes_back_with_the_block_and_the_next_activate_applies_it(
     let mut payload = 48_000.0f64.to_le_bytes().to_vec();
     payload.extend_from_slice(&4096u32.to_le_bytes());
     let latency = bridge.request(Op::Activate, &payload, TIMEOUT).unwrap();
-    assert_eq!(latency, 128u32.to_le_bytes(), "same config, reactivated anyway");
+    assert_eq!(
+        latency,
+        128u32.to_le_bytes(),
+        "same config, reactivated anyway"
+    );
     let input = ramp();
-    assert_eq!(process(&bridge, 2, &input, &[], TIMEOUT).output, input, "processing resumes");
+    assert_eq!(
+        process(&bridge, 2, &input, &[], TIMEOUT).output,
+        input,
+        "processing resumes"
+    );
 }
 
 #[test]

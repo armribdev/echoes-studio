@@ -2,8 +2,8 @@ use std::sync::Arc;
 
 use crate::audio_graph::buffer::AudioBuffer;
 use crate::audio_graph::node::{AudioNode, PrepareContext, TransportInfo, MAX_CONTROL_POINTS};
-use crate::audio_graph::oversampling::{Oversample2x, OVERSAMPLE_FACTOR};
 use crate::audio_graph::nodes::modulated;
+use crate::audio_graph::oversampling::{Oversample2x, OVERSAMPLE_FACTOR};
 use crate::audio_graph::parameter_block::ParameterBlock;
 use crate::project::CompressorParams;
 
@@ -162,7 +162,11 @@ impl AudioNode for CompressorNode {
         // ADR-009 + ADR-019 Tranche 3: read live block values, then apply
         // modulation per control segment on the absolute grid, recomputing
         // time-constants per segment only when the effective params change.
-        let base = self.block.as_ref().map(|b| compressor_params_from_block(b)).unwrap_or_else(|| self.params.clone());
+        let base = self
+            .block
+            .as_ref()
+            .map(|b| compressor_params_from_block(b))
+            .unwrap_or_else(|| self.params.clone());
 
         let input = &inputs[0];
         let output = &mut outputs[0];
@@ -181,14 +185,34 @@ impl AudioNode for CompressorNode {
             if seg_end <= frame {
                 continue;
             }
-            let delta = if k == 0 { self.base_delta } else { self.seg_delta[k - 1] };
+            let delta = if k == 0 {
+                self.base_delta
+            } else {
+                self.seg_delta[k - 1]
+            };
             let effective = CompressorParams {
-                threshold_db: modulated(base.threshold_db, delta[COMP_THRESHOLD_DB], COMP_RANGES[COMP_THRESHOLD_DB]),
-                ratio:        modulated(base.ratio,        delta[COMP_RATIO],        COMP_RANGES[COMP_RATIO]),
-                attack_ms:    modulated(base.attack_ms,    delta[COMP_ATTACK_MS],    COMP_RANGES[COMP_ATTACK_MS]),
-                release_ms:   modulated(base.release_ms,   delta[COMP_RELEASE_MS],   COMP_RANGES[COMP_RELEASE_MS]),
-                makeup_db:    modulated(base.makeup_db,    delta[COMP_MAKEUP_DB],    COMP_RANGES[COMP_MAKEUP_DB]),
-                knee_db:      modulated(base.knee_db,      delta[COMP_KNEE_DB],      COMP_RANGES[COMP_KNEE_DB]),
+                threshold_db: modulated(
+                    base.threshold_db,
+                    delta[COMP_THRESHOLD_DB],
+                    COMP_RANGES[COMP_THRESHOLD_DB],
+                ),
+                ratio: modulated(base.ratio, delta[COMP_RATIO], COMP_RANGES[COMP_RATIO]),
+                attack_ms: modulated(
+                    base.attack_ms,
+                    delta[COMP_ATTACK_MS],
+                    COMP_RANGES[COMP_ATTACK_MS],
+                ),
+                release_ms: modulated(
+                    base.release_ms,
+                    delta[COMP_RELEASE_MS],
+                    COMP_RANGES[COMP_RELEASE_MS],
+                ),
+                makeup_db: modulated(
+                    base.makeup_db,
+                    delta[COMP_MAKEUP_DB],
+                    COMP_RANGES[COMP_MAKEUP_DB],
+                ),
+                knee_db: modulated(base.knee_db, delta[COMP_KNEE_DB], COMP_RANGES[COMP_KNEE_DB]),
             };
             if compressor_block_values(&effective) != compressor_block_values(&self.params) {
                 self.params = effective;
@@ -242,11 +266,11 @@ impl AudioNode for CompressorNode {
     fn param_id(&self, name: &str) -> Option<u32> {
         match name {
             "threshold_db" => Some(COMP_THRESHOLD_DB as u32),
-            "ratio"        => Some(COMP_RATIO as u32),
-            "attack_ms"    => Some(COMP_ATTACK_MS as u32),
-            "release_ms"   => Some(COMP_RELEASE_MS as u32),
-            "makeup_db"    => Some(COMP_MAKEUP_DB as u32),
-            "knee_db"      => Some(COMP_KNEE_DB as u32),
+            "ratio" => Some(COMP_RATIO as u32),
+            "attack_ms" => Some(COMP_ATTACK_MS as u32),
+            "release_ms" => Some(COMP_RELEASE_MS as u32),
+            "makeup_db" => Some(COMP_MAKEUP_DB as u32),
+            "knee_db" => Some(COMP_KNEE_DB as u32),
             _ => None,
         }
     }

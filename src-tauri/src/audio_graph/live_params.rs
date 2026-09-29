@@ -467,7 +467,9 @@ impl LiveParams {
         let Some(cells) = inner.modulators.get(id) else {
             return false;
         };
-        cells.beat_division.store(beat_division.to_bits(), Ordering::Relaxed);
+        cells
+            .beat_division
+            .store(beat_division.to_bits(), Ordering::Relaxed);
         true
     }
 
@@ -507,8 +509,7 @@ impl LiveParams {
     pub fn prune_to_project(&self, project: &AppProject) {
         let mut inner = self.lock_inner();
 
-        let live_track_ids: HashSet<&str> =
-            project.tracks.iter().map(|t| t.id.as_str()).collect();
+        let live_track_ids: HashSet<&str> = project.tracks.iter().map(|t| t.id.as_str()).collect();
         inner
             .tracks
             .retain(|id, _| live_track_ids.contains(id.as_str()));
@@ -627,9 +628,9 @@ impl LiveParams {
         if let Some(queue) = inner.midi_live_input.get(track_id) {
             return Arc::clone(queue);
         }
-        let queue = Arc::new(crate::audio_graph::midi::MidiLiveInputQueue::new(Arc::clone(
-            &self.live_input_clock,
-        )));
+        let queue = Arc::new(crate::audio_graph::midi::MidiLiveInputQueue::new(
+            Arc::clone(&self.live_input_clock),
+        ));
         inner
             .midi_live_input
             .insert(track_id.to_string(), Arc::clone(&queue));

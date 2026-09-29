@@ -37,9 +37,10 @@ const DEAD_REQUEST_TIMEOUT: Duration = Duration::from_secs(1);
 
 /// `plugin_host_bridge` next to the running engine binary.
 pub fn locate_bridge_exe() -> Option<PathBuf> {
-    let exe = std::env::current_exe()
-        .ok()?
-        .with_file_name(format!("plugin_host_bridge{}", std::env::consts::EXE_SUFFIX));
+    let exe = std::env::current_exe().ok()?.with_file_name(format!(
+        "plugin_host_bridge{}",
+        std::env::consts::EXE_SUFFIX
+    ));
     exe.exists().then_some(exe)
 }
 
@@ -88,7 +89,11 @@ impl BridgedPlugin {
     }
 
     fn request(&self, op: Op, payload: &[u8]) -> io::Result<Vec<u8>> {
-        let timeout = if self.is_dead() { DEAD_REQUEST_TIMEOUT } else { REQUEST_TIMEOUT };
+        let timeout = if self.is_dead() {
+            DEAD_REQUEST_TIMEOUT
+        } else {
+            REQUEST_TIMEOUT
+        };
         let reply = self.process.request(op, payload, timeout);
         if let Err(error) = &reply {
             eprintln!("[bridge] {op:?} failed: {error}");
@@ -139,7 +144,9 @@ impl BridgedPlugin {
     }
 
     pub fn param_value(&self, native_id: u32) -> Option<f64> {
-        let reply = self.request(Op::ParamValue, &native_id.to_le_bytes()).ok()?;
+        let reply = self
+            .request(Op::ParamValue, &native_id.to_le_bytes())
+            .ok()?;
         Some(f64::from_le_bytes(reply.get(..8)?.try_into().ok()?))
     }
 
@@ -147,7 +154,12 @@ impl BridgedPlugin {
     pub fn flush_values(&self, values: &[(u32, f64)]) {
         let payload: Vec<u8> = values
             .iter()
-            .flat_map(|(native_id, value)| native_id.to_le_bytes().into_iter().chain(value.to_le_bytes()))
+            .flat_map(|(native_id, value)| {
+                native_id
+                    .to_le_bytes()
+                    .into_iter()
+                    .chain(value.to_le_bytes())
+            })
             .collect();
         let _ = self.request(Op::FlushValues, &payload);
     }

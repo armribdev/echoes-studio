@@ -243,10 +243,7 @@ fn clap_real_instance_full_lifecycle() {
         eprintln!("{LOG} SKIP — {} exposes no CLAP plugin", path.display());
         return;
     };
-    eprintln!(
-        "{LOG} CLAP target: {device_id}  ({})",
-        path.display()
-    );
+    eprintln!("{LOG} CLAP target: {device_id}  ({})", path.display());
 
     let mut host = PluginHost::new();
     host.registry_mut().add(clap_manifest(&device_id, &path));
@@ -293,7 +290,9 @@ fn first_vst3_id(path: &Path) -> Option<String> {
     unsafe {
         ((*(*factory).vtbl).release)(factory);
     }
-    classes.first().map(|(cid, _)| format!("vst3:{}", hex_cid(cid)))
+    classes
+        .first()
+        .map(|(cid, _)| format!("vst3:{}", hex_cid(cid)))
 }
 
 /// Big-endian VST3 TUID → Windows COM byte order: reverse Data1 (`[0..4]`),
@@ -324,13 +323,19 @@ fn vst3_iid_byteorder_probe(path: &Path) -> Option<String> {
 
     unsafe {
         let mut a: *mut c_void = std::ptr::null_mut();
-        let r_engine =
-            ((*(*factory).vtbl).create_instance)(factory, cid.as_ptr(), IID_ICOMPONENT.as_ptr(), &mut a);
+        let r_engine = ((*(*factory).vtbl).create_instance)(
+            factory,
+            cid.as_ptr(),
+            IID_ICOMPONENT.as_ptr(),
+            &mut a,
+        );
         if r_engine == K_RESULT_OK && !a.is_null() {
             let c = a as *mut IComponent;
             ((*(*c).vtbl).release)(c);
             ((*(*factory).vtbl).release)(factory);
-            return Some(format!("inconclusive: engine IID already accepted (r={r_engine})"));
+            return Some(format!(
+                "inconclusive: engine IID already accepted (r={r_engine})"
+            ));
         }
 
         let mut b: *mut c_void = std::ptr::null_mut();
@@ -346,7 +351,11 @@ fn vst3_iid_byteorder_probe(path: &Path) -> Option<String> {
         Some(format!(
             "engine big-endian IID → {r_engine} [{}];  COM-swapped IID → {r_swap} [{}]  ⇒ {}",
             hresult_name(r_engine),
-            if swap_ok { "S_OK (component created)" } else { hresult_name(r_swap) },
+            if swap_ok {
+                "S_OK (component created)"
+            } else {
+                hresult_name(r_swap)
+            },
             if swap_ok {
                 "ROOT CAUSE CONFIRMED: interface IID byte order (engine uses non-COM order on Windows)"
             } else {

@@ -2,8 +2,8 @@ use std::sync::Arc;
 
 use crate::audio_graph::buffer::AudioBuffer;
 use crate::audio_graph::node::{AudioNode, PrepareContext, TransportInfo, MAX_CONTROL_POINTS};
-use crate::audio_graph::oversampling::{Oversample2x, OVERSAMPLE_FACTOR};
 use crate::audio_graph::nodes::modulated;
+use crate::audio_graph::oversampling::{Oversample2x, OVERSAMPLE_FACTOR};
 use crate::audio_graph::parameter_block::ParameterBlock;
 use crate::project::EqParams;
 
@@ -281,7 +281,11 @@ impl AudioNode for EqNode {
         // `process_channel` calls on sub-slices are seamless — the oversampler's
         // per-channel state lives in `self`, and `recompute_coeffs` preserves the
         // biquad state, so an unmodulated block (one segment) is bit-identical.
-        let base = self.block.as_ref().map(|b| eq_params_from_block(b)).unwrap_or_else(|| self.params.clone());
+        let base = self
+            .block
+            .as_ref()
+            .map(|b| eq_params_from_block(b))
+            .unwrap_or_else(|| self.params.clone());
 
         let input = &inputs[0];
         let output = &mut outputs[0];
@@ -298,15 +302,46 @@ impl AudioNode for EqNode {
             if seg_end <= frame {
                 continue;
             }
-            let delta = if k == 0 { self.base_delta } else { self.seg_delta[k - 1] };
+            let delta = if k == 0 {
+                self.base_delta
+            } else {
+                self.seg_delta[k - 1]
+            };
             let effective = EqParams {
-                low_gain_db:  modulated(base.low_gain_db,  delta[EQ_LOW_GAIN_DB],  EQ_RANGES[EQ_LOW_GAIN_DB]),
-                low_freq:     modulated_frequency(base.low_freq, delta[EQ_LOW_FREQ], delta[EQ_LOW_FREQ_OCTAVES], EQ_RANGES[EQ_LOW_FREQ]),
-                mid_gain_db:  modulated(base.mid_gain_db,  delta[EQ_MID_GAIN_DB],  EQ_RANGES[EQ_MID_GAIN_DB]),
-                mid_freq:     modulated_frequency(base.mid_freq, delta[EQ_MID_FREQ], delta[EQ_MID_FREQ_OCTAVES], EQ_RANGES[EQ_MID_FREQ]),
-                mid_q:        modulated(base.mid_q,        delta[EQ_MID_Q],        EQ_RANGES[EQ_MID_Q]),
-                high_gain_db: modulated(base.high_gain_db, delta[EQ_HIGH_GAIN_DB], EQ_RANGES[EQ_HIGH_GAIN_DB]),
-                high_freq:    modulated_frequency(base.high_freq, delta[EQ_HIGH_FREQ], delta[EQ_HIGH_FREQ_OCTAVES], EQ_RANGES[EQ_HIGH_FREQ]),
+                low_gain_db: modulated(
+                    base.low_gain_db,
+                    delta[EQ_LOW_GAIN_DB],
+                    EQ_RANGES[EQ_LOW_GAIN_DB],
+                ),
+                low_freq: modulated_frequency(
+                    base.low_freq,
+                    delta[EQ_LOW_FREQ],
+                    delta[EQ_LOW_FREQ_OCTAVES],
+                    EQ_RANGES[EQ_LOW_FREQ],
+                ),
+                mid_gain_db: modulated(
+                    base.mid_gain_db,
+                    delta[EQ_MID_GAIN_DB],
+                    EQ_RANGES[EQ_MID_GAIN_DB],
+                ),
+                mid_freq: modulated_frequency(
+                    base.mid_freq,
+                    delta[EQ_MID_FREQ],
+                    delta[EQ_MID_FREQ_OCTAVES],
+                    EQ_RANGES[EQ_MID_FREQ],
+                ),
+                mid_q: modulated(base.mid_q, delta[EQ_MID_Q], EQ_RANGES[EQ_MID_Q]),
+                high_gain_db: modulated(
+                    base.high_gain_db,
+                    delta[EQ_HIGH_GAIN_DB],
+                    EQ_RANGES[EQ_HIGH_GAIN_DB],
+                ),
+                high_freq: modulated_frequency(
+                    base.high_freq,
+                    delta[EQ_HIGH_FREQ],
+                    delta[EQ_HIGH_FREQ_OCTAVES],
+                    EQ_RANGES[EQ_HIGH_FREQ],
+                ),
             };
             if eq_block_values(&effective) != eq_block_values(&self.params) {
                 self.params = effective;
@@ -345,15 +380,15 @@ impl AudioNode for EqNode {
 
     fn param_id(&self, name: &str) -> Option<u32> {
         match name {
-            "low_gain_db"  => Some(EQ_LOW_GAIN_DB as u32),
-            "low_freq"     => Some(EQ_LOW_FREQ as u32),
-            "mid_gain_db"  => Some(EQ_MID_GAIN_DB as u32),
-            "mid_freq"     => Some(EQ_MID_FREQ as u32),
-            "mid_q"        => Some(EQ_MID_Q as u32),
+            "low_gain_db" => Some(EQ_LOW_GAIN_DB as u32),
+            "low_freq" => Some(EQ_LOW_FREQ as u32),
+            "mid_gain_db" => Some(EQ_MID_GAIN_DB as u32),
+            "mid_freq" => Some(EQ_MID_FREQ as u32),
+            "mid_q" => Some(EQ_MID_Q as u32),
             "high_gain_db" => Some(EQ_HIGH_GAIN_DB as u32),
-            "high_freq"    => Some(EQ_HIGH_FREQ as u32),
-            "low_freq_octaves"  => Some(EQ_LOW_FREQ_OCTAVES as u32),
-            "mid_freq_octaves"  => Some(EQ_MID_FREQ_OCTAVES as u32),
+            "high_freq" => Some(EQ_HIGH_FREQ as u32),
+            "low_freq_octaves" => Some(EQ_LOW_FREQ_OCTAVES as u32),
+            "mid_freq_octaves" => Some(EQ_MID_FREQ_OCTAVES as u32),
             "high_freq_octaves" => Some(EQ_HIGH_FREQ_OCTAVES as u32),
             _ => None,
         }
@@ -580,15 +615,26 @@ mod tests {
     #[test]
     fn frequency_modulation_without_octaves_matches_hz_routes_bit_for_bit() {
         let range = EQ_RANGES[EQ_MID_FREQ];
-        for (base, hz) in [(1000.0, 600.0), (1000.0, -0.3), (437.5, 12.25), (20.0, -5000.0)] {
-            assert_eq!(modulated_frequency(base, hz, 0.0, range).to_bits(), modulated(base, hz, range).to_bits());
+        for (base, hz) in [
+            (1000.0, 600.0),
+            (1000.0, -0.3),
+            (437.5, 12.25),
+            (20.0, -5000.0),
+        ] {
+            assert_eq!(
+                modulated_frequency(base, hz, 0.0, range).to_bits(),
+                modulated(base, hz, range).to_bits()
+            );
         }
     }
 
     #[test]
     fn octave_targets_have_their_own_param_ids() {
         let node = EqNode::new(EqParams::default());
-        assert_eq!(node.param_id("mid_freq_octaves"), Some(EQ_MID_FREQ_OCTAVES as u32));
+        assert_eq!(
+            node.param_id("mid_freq_octaves"),
+            Some(EQ_MID_FREQ_OCTAVES as u32)
+        );
         assert_eq!(node.param_id("mid_freq"), Some(EQ_MID_FREQ as u32));
     }
 }

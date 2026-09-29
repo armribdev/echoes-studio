@@ -40,12 +40,20 @@ impl AudioNode for BypassNode {
     }
 
     /// Main input → main output; aux inputs (sidechain) are ignored.
-    fn process(&mut self, inputs: &[&AudioBuffer], outputs: &mut [AudioBuffer], transport: &TransportInfo) {
+    fn process(
+        &mut self,
+        inputs: &[&AudioBuffer],
+        outputs: &mut [AudioBuffer],
+        transport: &TransportInfo,
+    ) {
         let (Some(input), Some(output)) = (inputs.first(), outputs.first_mut()) else {
             return;
         };
         let channels = output.num_channels.min(input.num_channels);
-        let frames = transport.block_size.min(output.num_frames).min(input.num_frames);
+        let frames = transport
+            .block_size
+            .min(output.num_frames)
+            .min(input.num_frames);
         for ch in 0..channels {
             output.channel_mut(ch)[..frames].copy_from_slice(&input.channel(ch)[..frames]);
         }
@@ -67,8 +75,17 @@ mod tests {
         }
         fn prepare(&mut self, _ctx: PrepareContext) {}
         fn reset(&mut self) {}
-        fn process(&mut self, inputs: &[&AudioBuffer], outputs: &mut [AudioBuffer], _t: &TransportInfo) {
-            for (o, i) in outputs[0].channel_mut(0).iter_mut().zip(inputs[0].channel(0)) {
+        fn process(
+            &mut self,
+            inputs: &[&AudioBuffer],
+            outputs: &mut [AudioBuffer],
+            _t: &TransportInfo,
+        ) {
+            for (o, i) in outputs[0]
+                .channel_mut(0)
+                .iter_mut()
+                .zip(inputs[0].channel(0))
+            {
                 *o = -*i;
             }
         }
@@ -77,7 +94,11 @@ mod tests {
     #[test]
     fn passes_audio_through_without_processing() {
         let mut node = BypassNode::new(Box::new(Inverter));
-        assert_eq!(node.num_input_ports(), 2, "keeps the wrapped node's ports (sidechain)");
+        assert_eq!(
+            node.num_input_ports(),
+            2,
+            "keeps the wrapped node's ports (sidechain)"
+        );
 
         let mut input = AudioBuffer::new(2, 4);
         input.channel_mut(0).copy_from_slice(&[0.1, 0.2, 0.3, 0.4]);

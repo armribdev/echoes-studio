@@ -155,7 +155,11 @@ impl PluginHost {
     }
 
     /// Returns whether anything changed (the caller then recompiles).
-    pub fn set_isolation(&mut self, isolation: PluginIsolation, always_isolated: HashSet<String>) -> bool {
+    pub fn set_isolation(
+        &mut self,
+        isolation: PluginIsolation,
+        always_isolated: HashSet<String>,
+    ) -> bool {
         let changed = self.isolation != isolation || self.always_isolated != always_isolated;
         self.isolation = isolation;
         self.always_isolated = always_isolated;
@@ -250,7 +254,9 @@ impl PluginHost {
             return None;
         }
         let inst = &self.records.get(instance_key)?.instance;
-        if inst.device_id != plugin_id || inst.is_sandboxed() != runs_sandboxed(inst.format, sandboxed) {
+        if inst.device_id != plugin_id
+            || inst.is_sandboxed() != runs_sandboxed(inst.format, sandboxed)
+        {
             return None;
         }
         if matches!(
@@ -282,11 +288,16 @@ impl PluginHost {
         sandboxed: bool,
     ) -> Result<Box<dyn AudioNode>, HostError> {
         let sandboxed = self.isolates(plugin_id, sandboxed);
-        let _running = (!sandboxed).then(|| crash_marker::enter(PluginThread::Control, plugin_tag(plugin_id)));
+        let _running =
+            (!sandboxed).then(|| crash_marker::enter(PluginThread::Control, plugin_tag(plugin_id)));
         let result = self.instantiate_placement(instance_key, plugin_id, sandboxed);
         match &result {
             Ok(_) => self.mark_available(instance_key),
-            Err(error) => self.mark_unavailable(instance_key, plugin_id, UnavailableReason::from_error(error)),
+            Err(error) => self.mark_unavailable(
+                instance_key,
+                plugin_id,
+                UnavailableReason::from_error(error),
+            ),
         }
         result
     }
@@ -343,9 +354,16 @@ impl PluginHost {
         // VST3/CLAP start at Created; Internal/AU/WASM already at Running — invalid
         // transitions (already past that step) are silently skipped; AlreadyDestroyed is fatal.
         let mut state = instance.lifecycle();
-        for target in [LifecycleState::Loaded, LifecycleState::Initialized, LifecycleState::Running] {
+        for target in [
+            LifecycleState::Loaded,
+            LifecycleState::Initialized,
+            LifecycleState::Running,
+        ] {
             match transition(state, target) {
-                Ok(next) => { instance.set_lifecycle(next); state = next; }
+                Ok(next) => {
+                    instance.set_lifecycle(next);
+                    state = next;
+                }
                 Err(LifecycleError::AlreadyDestroyed) => {
                     return Err(HostError::LifecycleError(LifecycleError::AlreadyDestroyed));
                 }
@@ -374,9 +392,7 @@ impl PluginHost {
             .pending_state_blobs
             .get(instance_key)
             .map(|bytes| DeviceState::from_binary(plugin_id, bytes.clone()));
-        let kept = self
-            .kept_state(instance_key, plugin_id)
-            .cloned();
+        let kept = self.kept_state(instance_key, plugin_id).cloned();
         self.unavailable.insert(
             instance_key.to_string(),
             UnavailablePlacement {
@@ -495,8 +511,7 @@ impl PluginHost {
 
         let instance = PluginInstance::new_vst3(plugin_id, comp_nn, proc_nn, lib);
 
-        let node: Box<dyn AudioNode> =
-            Box::new(VstWrapperNode::new(Arc::clone(&instance)));
+        let node: Box<dyn AudioNode> = Box::new(VstWrapperNode::new(Arc::clone(&instance)));
 
         Ok((instance, node))
     }
@@ -594,12 +609,7 @@ impl PluginHost {
             )));
         }
 
-        Ok(PluginInstance::new_clap(
-            plugin_id,
-            plugin,
-            host,
-            lib,
-        ))
+        Ok(PluginInstance::new_clap(plugin_id, plugin, host, lib))
     }
 
     /// Instantiate a plugin as a MIDI **instrument** generator, returning a
@@ -619,11 +629,16 @@ impl PluginHost {
         plugin_id: &str,
     ) -> Result<Box<dyn InstrumentDevice>, HostError> {
         let sandboxed = self.isolates(plugin_id, false);
-        let _running = (!sandboxed).then(|| crash_marker::enter(PluginThread::Control, plugin_tag(plugin_id)));
+        let _running =
+            (!sandboxed).then(|| crash_marker::enter(PluginThread::Control, plugin_tag(plugin_id)));
         let result = self.instantiate_instrument_placement(instance_key, plugin_id, sandboxed);
         match &result {
             Ok(_) => self.mark_available(instance_key),
-            Err(error) => self.mark_unavailable(instance_key, plugin_id, UnavailableReason::from_error(error)),
+            Err(error) => self.mark_unavailable(
+                instance_key,
+                plugin_id,
+                UnavailableReason::from_error(error),
+            ),
         }
         result
     }
@@ -659,7 +674,9 @@ impl PluginHost {
             .clone();
 
         let instance = match manifest.format {
-            DeviceFormat::Clap if sandboxed => self.create_bridged_instance(plugin_id, &manifest)?,
+            DeviceFormat::Clap if sandboxed => {
+                self.create_bridged_instance(plugin_id, &manifest)?
+            }
             DeviceFormat::Clap => self.create_clap_instance(plugin_id, &manifest)?,
             other => {
                 return Err(HostError::UnsupportedFormat(format!(
@@ -668,7 +685,11 @@ impl PluginHost {
             }
         };
         let mut state = instance.lifecycle();
-        for target in [LifecycleState::Loaded, LifecycleState::Initialized, LifecycleState::Running] {
+        for target in [
+            LifecycleState::Loaded,
+            LifecycleState::Initialized,
+            LifecycleState::Running,
+        ] {
             state = transition(state, target).map_err(HostError::LifecycleError)?;
             instance.set_lifecycle(state);
         }
@@ -1028,8 +1049,7 @@ mod tests {
         let mut host = PluginHost::new();
         host.instantiate("echoes.gain", "echoes.gain", false)
             .unwrap();
-        host.instantiate("echoes.pan", "echoes.pan", false)
-            .unwrap();
+        host.instantiate("echoes.pan", "echoes.pan", false).unwrap();
         assert_eq!(host.device_count(), 2);
 
         let mut active = HashSet::new();
@@ -1065,13 +1085,11 @@ mod tests {
     #[test]
     fn same_instance_key_reuses_the_live_instance() {
         let mut host = PluginHost::new();
-        host.instantiate("fx0", "echoes.gain", false)
-            .unwrap();
+        host.instantiate("fx0", "echoes.gain", false).unwrap();
         let first_id = host.instance("echoes.gain").unwrap().instance_id();
 
         // Recompile re-instantiates the same placement.
-        host.instantiate("fx0", "echoes.gain", false)
-            .unwrap();
+        host.instantiate("fx0", "echoes.gain", false).unwrap();
         let second_id = host.instance("echoes.gain").unwrap().instance_id();
 
         assert_eq!(
@@ -1113,15 +1131,13 @@ mod tests {
     #[test]
     fn staged_state_forces_fresh_instance_over_reuse() {
         let mut host = PluginHost::new();
-        host.instantiate("fx0", "echoes.gain", false)
-            .unwrap();
+        host.instantiate("fx0", "echoes.gain", false).unwrap();
         let first_id = host.instance("echoes.gain").unwrap().instance_id();
 
         let mut staged = HashMap::new();
         staged.insert("echoes.gain".to_string(), vec![1u8, 2, 3]);
         host.set_pending_state_blobs(staged);
-        host.instantiate("fx0", "echoes.gain", false)
-            .unwrap();
+        host.instantiate("fx0", "echoes.gain", false).unwrap();
         let second_id = host.instance("echoes.gain").unwrap().instance_id();
 
         assert_ne!(
@@ -1169,8 +1185,7 @@ mod tests {
         let mut staged = HashMap::new();
         staged.insert("fx0".to_string(), blob.clone());
         host.set_pending_state_blobs(staged);
-        host.instantiate("fx0", "echoes.gain", false)
-            .unwrap();
+        host.instantiate("fx0", "echoes.gain", false).unwrap();
         host.clear_pending_state_blobs();
         let first_id = host.instance_by_key("fx0").unwrap().instance_id();
 
@@ -1178,8 +1193,7 @@ mod tests {
         host.instance_by_key("fx0")
             .unwrap()
             .set_lifecycle(LifecycleState::Destroyed);
-        host.instantiate("fx0", "echoes.gain", false)
-            .unwrap();
+        host.instantiate("fx0", "echoes.gain", false).unwrap();
         let second_id = host.instance_by_key("fx0").unwrap().instance_id();
 
         assert_ne!(
@@ -1201,13 +1215,11 @@ mod tests {
         let mut staged = HashMap::new();
         staged.insert("fx0".to_string(), vec![5u8, 6, 7]);
         host.set_pending_state_blobs(staged);
-        host.instantiate("fx0", "echoes.gain", false)
-            .unwrap();
+        host.instantiate("fx0", "echoes.gain", false).unwrap();
         host.clear_pending_state_blobs();
 
         // Same placement key, different plugin type → no carry.
-        host.instantiate("fx0", "echoes.pan", false)
-            .unwrap();
+        host.instantiate("fx0", "echoes.pan", false).unwrap();
 
         assert_eq!(
             host.save_device_state("echoes.pan").unwrap().as_binary(),
@@ -1272,8 +1284,14 @@ mod tests {
         assert_eq!(unavailable[0].reason, UnavailableReason::Crashed);
 
         host.instantiate("fx0", "echoes.gain", false).unwrap();
-        assert_ne!(host.instance_by_key("fx0").unwrap().instance_id(), crashed.instance_id());
-        assert!(host.unavailable_plugins().is_empty(), "the reload clears the crash");
+        assert_ne!(
+            host.instance_by_key("fx0").unwrap().instance_id(),
+            crashed.instance_id()
+        );
+        assert!(
+            host.unavailable_plugins().is_empty(),
+            "the reload clears the crash"
+        );
         assert_eq!(saved_blob(&host, "fx0"), Some(vec![3, 1, 4]));
     }
 
@@ -1281,7 +1299,9 @@ mod tests {
     fn missing_effect_keeps_its_state_for_the_next_save() {
         let mut host = PluginHost::new();
         stage(&mut host, "fx-missing", &[7, 7, 7]);
-        assert!(host.instantiate("fx-missing", "clap:not-installed", false).is_err());
+        assert!(host
+            .instantiate("fx-missing", "clap:not-installed", false)
+            .is_err());
         host.clear_pending_state_blobs();
 
         assert_eq!(saved_blob(&host, "fx-missing"), Some(vec![7, 7, 7]));
@@ -1291,9 +1311,13 @@ mod tests {
     fn missing_instrument_keeps_its_state_across_recompiles() {
         let mut host = PluginHost::new();
         stage(&mut host, "instrument:t1", &[1, 2, 3]);
-        assert!(host.instantiate_instrument("instrument:t1", "clap:not-installed").is_err());
+        assert!(host
+            .instantiate_instrument("instrument:t1", "clap:not-installed")
+            .is_err());
         host.clear_pending_state_blobs();
-        assert!(host.instantiate_instrument("instrument:t1", "clap:not-installed").is_err());
+        assert!(host
+            .instantiate_instrument("instrument:t1", "clap:not-installed")
+            .is_err());
 
         assert_eq!(saved_blob(&host, "instrument:t1"), Some(vec![1, 2, 3]));
     }
@@ -1331,9 +1355,15 @@ mod tests {
         host.instantiate("fx0", "test:late", false)
             .expect("plugin is now available");
 
-        let restored = host.save_device_state("test:late").expect("device is instantiated");
+        let restored = host
+            .save_device_state("test:late")
+            .expect("device is instantiated");
         assert_eq!(restored.as_binary(), Some([4u8, 5, 6].as_slice()));
-        assert_eq!(saved_blob(&host, "fx0"), Some(vec![4, 5, 6]), "saved once, from the live record");
+        assert_eq!(
+            saved_blob(&host, "fx0"),
+            Some(vec![4, 5, 6]),
+            "saved once, from the live record"
+        );
         assert_eq!(host.collect_plugin_states().len(), 1);
     }
 }

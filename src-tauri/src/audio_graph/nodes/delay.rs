@@ -144,7 +144,11 @@ impl AudioNode for DelayNode {
         // modulation per control segment on the absolute grid.  The read offset
         // is recomputed only when delay_ms effectively changes (preserves the
         // ring).  ping_pong is a bool encoded as float (< 0.5 = false).
-        let base = self.block.as_ref().map(|b| delay_params_from_block(b)).unwrap_or_else(|| self.params.clone());
+        let base = self
+            .block
+            .as_ref()
+            .map(|b| delay_params_from_block(b))
+            .unwrap_or_else(|| self.params.clone());
 
         let input = &inputs[0];
         let output = &mut outputs[0];
@@ -167,14 +171,27 @@ impl AudioNode for DelayNode {
             if seg_end <= frame {
                 continue;
             }
-            let delta = if k == 0 { self.base_delta } else { self.seg_delta[k - 1] };
+            let delta = if k == 0 {
+                self.base_delta
+            } else {
+                self.seg_delta[k - 1]
+            };
 
-            let ping_pong_float = (if base.ping_pong { 1.0_f32 } else { 0.0 }) + delta[DELAY_PING_PONG];
+            let ping_pong_float =
+                (if base.ping_pong { 1.0_f32 } else { 0.0 }) + delta[DELAY_PING_PONG];
             let effective = DelayParams {
-                delay_ms:  modulated(base.delay_ms, delta[DELAY_DELAY_MS], DELAY_RANGES[DELAY_DELAY_MS]),
-                feedback:  modulated(base.feedback, delta[DELAY_FEEDBACK], DELAY_RANGES[DELAY_FEEDBACK]),
-                wet:       modulated(base.wet,      delta[DELAY_WET],      DELAY_RANGES[DELAY_WET]),
-                dry:       modulated(base.dry,      delta[DELAY_DRY],      DELAY_RANGES[DELAY_DRY]),
+                delay_ms: modulated(
+                    base.delay_ms,
+                    delta[DELAY_DELAY_MS],
+                    DELAY_RANGES[DELAY_DELAY_MS],
+                ),
+                feedback: modulated(
+                    base.feedback,
+                    delta[DELAY_FEEDBACK],
+                    DELAY_RANGES[DELAY_FEEDBACK],
+                ),
+                wet: modulated(base.wet, delta[DELAY_WET], DELAY_RANGES[DELAY_WET]),
+                dry: modulated(base.dry, delta[DELAY_DRY], DELAY_RANGES[DELAY_DRY]),
                 ping_pong: ping_pong_float >= 0.5,
             };
             if delay_block_values(&effective) != delay_block_values(&self.params) {
@@ -195,8 +212,16 @@ impl AudioNode for DelayNode {
                 let del_l = self.buf[read_pos * 2];
                 let del_r = self.buf[read_pos * 2 + 1];
 
-                let in_l = if channels > 0 { input.channel(0)[i] } else { 0.0 };
-                let in_r = if channels > 1 { input.channel(1)[i] } else { in_l };
+                let in_l = if channels > 0 {
+                    input.channel(0)[i]
+                } else {
+                    0.0
+                };
+                let in_r = if channels > 1 {
+                    input.channel(1)[i]
+                } else {
+                    in_l
+                };
 
                 // Write to delay buffer: feedback from delay out, cross-channel if ping-pong.
                 // ANTI_DENORMAL on each write keeps the recursive state out of the
@@ -231,10 +256,10 @@ impl AudioNode for DelayNode {
 
     fn param_id(&self, name: &str) -> Option<u32> {
         match name {
-            "delay_ms"  => Some(DELAY_DELAY_MS as u32),
-            "feedback"  => Some(DELAY_FEEDBACK as u32),
-            "wet"       => Some(DELAY_WET as u32),
-            "dry"       => Some(DELAY_DRY as u32),
+            "delay_ms" => Some(DELAY_DELAY_MS as u32),
+            "feedback" => Some(DELAY_FEEDBACK as u32),
+            "wet" => Some(DELAY_WET as u32),
+            "dry" => Some(DELAY_DRY as u32),
             "ping_pong" => Some(DELAY_PING_PONG as u32),
             _ => None,
         }
@@ -355,8 +380,16 @@ mod tests {
         node.process(&[&input], std::slice::from_mut(&mut output), &t);
 
         let out = output.channel(0);
-        assert!((out[0] - 0.5).abs() < 1e-4, "segment 0 wet 0.5 → dry 0.5, got {}", out[0]);
-        assert!((out[40] - 0.1).abs() < 1e-4, "segment 1 wet 0.9 → dry 0.1, got {}", out[40]);
+        assert!(
+            (out[0] - 0.5).abs() < 1e-4,
+            "segment 0 wet 0.5 → dry 0.5, got {}",
+            out[0]
+        );
+        assert!(
+            (out[40] - 0.1).abs() < 1e-4,
+            "segment 1 wet 0.9 → dry 0.1, got {}",
+            out[40]
+        );
     }
 
     #[test]

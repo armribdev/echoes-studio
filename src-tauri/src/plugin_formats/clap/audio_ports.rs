@@ -113,7 +113,12 @@ impl ClapOutputBuses {
     pub fn prepare(&mut self, num_channels: usize, max_block_size: usize) {
         self.num_channels = num_channels;
         self.spare = AudioBuffer::new(num_channels, max_block_size);
-        let clap_ports = self.ports.iter().map(|&(index, _)| index + 1).max().unwrap_or(1);
+        let clap_ports = self
+            .ports
+            .iter()
+            .map(|&(index, _)| index + 1)
+            .max()
+            .unwrap_or(1);
         // Every CLAP port starts on the spare buffer, so one the plugin declared
         // but would not describe (`get` failed) still gets valid memory.
         let spare: Vec<*mut f32> = (0..num_channels)

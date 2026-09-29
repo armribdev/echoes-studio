@@ -107,10 +107,7 @@ pub fn scan_library_folder(app: AppHandle, folder_path: String, token: u64) -> R
         let files = match collect_audio_files(&root) {
             Ok(f) => f,
             Err(message) => {
-                let _ = app.emit(
-                    "library://scan-error",
-                    ScanErrorPayload { token, message },
-                );
+                let _ = app.emit("library://scan-error", ScanErrorPayload { token, message });
                 return;
             }
         };

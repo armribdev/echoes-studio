@@ -477,7 +477,12 @@ fn drag_strip_height(hwnd: *mut c_void) -> i32 {
 
 /// Client-coordinate rect of the close button, right-aligned in the drag strip.
 fn close_button_rect(hwnd: *mut c_void) -> user32::RECT {
-    let mut client = user32::RECT { left: 0, top: 0, right: 0, bottom: 0 };
+    let mut client = user32::RECT {
+        left: 0,
+        top: 0,
+        right: 0,
+        bottom: 0,
+    };
     unsafe { user32::GetClientRect(hwnd, &mut client) };
     let scale = window_dpi(hwnd) as f64 / DEFAULT_DPI as f64;
     let width = (CLOSE_BUTTON_WIDTH_LOGICAL as f64 * scale).round() as i32;
@@ -496,7 +501,12 @@ fn point_in_rect(rect: &user32::RECT, x: i32, y: i32) -> bool {
 
 /// Centers the window on the primary monitor, at its current size.
 unsafe fn center_on_screen(hwnd: *mut c_void) {
-    let mut client = user32::RECT { left: 0, top: 0, right: 0, bottom: 0 };
+    let mut client = user32::RECT {
+        left: 0,
+        top: 0,
+        right: 0,
+        bottom: 0,
+    };
     user32::GetClientRect(hwnd, &mut client);
     let screen_w = user32::GetSystemMetrics(SM_CXSCREEN);
     let screen_h = user32::GetSystemMetrics(SM_CYSCREEN);
@@ -522,7 +532,11 @@ unsafe fn draw_close_button(hwnd: *mut c_void) {
     let cy = (rect.top + rect.bottom) / 2;
     let half = ((rect.bottom - rect.top) as f64 * 0.17).round().max(3.0) as i32;
     let stroke_width = (1.5 * window_dpi(hwnd) as f64 / DEFAULT_DPI as f64).max(1.0) as f32;
-    let color = if hover { CLOSE_GLYPH_HOVER_ARGB } else { CLOSE_GLYPH_ARGB };
+    let color = if hover {
+        CLOSE_GLYPH_HOVER_ARGB
+    } else {
+        CLOSE_GLYPH_ARGB
+    };
 
     let mut graphics: *mut c_void = null_mut();
     gdiplus::GdipCreateFromHDC(hdc, &mut graphics);
@@ -551,8 +565,24 @@ unsafe fn resize_to_client(hwnd: *mut c_void, width: i32, height: i32) {
     let width = width.max(200);
     let height = height.max(100);
     let strip = drag_strip_height(hwnd);
-    user32::SetWindowPos(hwnd, null_mut(), 0, 0, width, height + strip, SWP_RESIZE_ONLY);
-    user32::SetWindowPos(plugin_area(hwnd), null_mut(), 0, strip, width, height, SWP_MOVE_AND_RESIZE);
+    user32::SetWindowPos(
+        hwnd,
+        null_mut(),
+        0,
+        0,
+        width,
+        height + strip,
+        SWP_RESIZE_ONLY,
+    );
+    user32::SetWindowPos(
+        plugin_area(hwnd),
+        null_mut(),
+        0,
+        strip,
+        width,
+        height,
+        SWP_MOVE_AND_RESIZE,
+    );
 }
 
 /// Hands the monitor scale to the plugin, then fits the window to its size.

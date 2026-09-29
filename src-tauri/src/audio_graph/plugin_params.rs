@@ -38,7 +38,11 @@ pub struct BlockPoints {
 
 impl BlockPoints {
     fn new() -> Self {
-        Self { start: None, points: [(0, 0.0); MAX_CONTROL_POINTS], count: 0 }
+        Self {
+            start: None,
+            points: [(0, 0.0); MAX_CONTROL_POINTS],
+            count: 0,
+        }
     }
 
     fn clear(&mut self) {
@@ -84,7 +88,12 @@ pub struct PluginParamRange {
 
 impl PluginParamRange {
     /// Used when the plugin did not report the parameter: values pass through as-is.
-    pub const UNKNOWN: Self = Self { min: 0.0, max: 1.0, modulatable: false, automatable: false };
+    pub const UNKNOWN: Self = Self {
+        min: 0.0,
+        max: 1.0,
+        modulatable: false,
+        automatable: false,
+    };
 
     pub fn denormalise(&self, normalised: f32) -> f32 {
         self.min + normalised * (self.max - self.min)
@@ -92,7 +101,11 @@ impl PluginParamRange {
 
     pub fn normalise(&self, plain: f32) -> f32 {
         let span = self.max - self.min;
-        if span > 0.0 { ((plain - self.min) / span).clamp(0.0, 1.0) } else { 0.0 }
+        if span > 0.0 {
+            ((plain - self.min) / span).clamp(0.0, 1.0)
+        } else {
+            0.0
+        }
     }
 
     /// Converts a normalised offset into the plugin's plain units.
@@ -146,7 +159,12 @@ pub struct ValueModulatedParam {
 
 impl ValueModulatedParam {
     pub fn new(native_id: u32, range: PluginParamRange, base: Arc<AtomicU32>) -> Self {
-        Self { native_id, range, base, editing: false }
+        Self {
+            native_id,
+            range,
+            base,
+            editing: false,
+        }
     }
 
     pub fn base_value(&self) -> f32 {
@@ -162,7 +180,8 @@ impl ValueModulatedParam {
     }
 
     pub fn modulated_plain(&self, offset: f32) -> f32 {
-        self.range.denormalise((self.base_value() + offset).clamp(0.0, 1.0))
+        self.range
+            .denormalise((self.base_value() + offset).clamp(0.0, 1.0))
     }
 }
 
@@ -189,7 +208,9 @@ impl PluginParamControls {
     }
 
     fn find(&mut self, native_id: u32) -> Option<&mut PluginParamControl> {
-        self.controls.iter_mut().find(|control| control.native_id == native_id)
+        self.controls
+            .iter_mut()
+            .find(|control| control.native_id == native_id)
     }
 
     pub fn modulate(&mut self, native_id: u32, offset: f32) {
@@ -252,7 +273,10 @@ mod tests {
         assert!((modulation[0].1 - 0.3).abs() < 1e-6);
         assert_eq!(modulation[1].0, 32);
         assert!((modulation[1].1 - 0.4).abs() < 1e-6);
-        assert_eq!(control.automation.iter().collect::<Vec<_>>(), vec![(64, 0.9)]);
+        assert_eq!(
+            control.automation.iter().collect::<Vec<_>>(),
+            vec![(64, 0.9)]
+        );
     }
 
     #[test]
@@ -261,12 +285,19 @@ mod tests {
         c.modulate(1, 0.5);
         c.automate(2, 0.5);
         c.clear_block();
-        assert!(c.iter().all(|control| control.modulation.is_empty() && control.automation.is_empty()));
+        assert!(c
+            .iter()
+            .all(|control| control.modulation.is_empty() && control.automation.is_empty()));
     }
 
     #[test]
     fn range_converts_to_plain_units() {
-        let range = PluginParamRange { min: 20.0, max: 220.0, modulatable: true, automatable: true };
+        let range = PluginParamRange {
+            min: 20.0,
+            max: 220.0,
+            modulatable: true,
+            automatable: true,
+        };
         assert_eq!(range.denormalise(0.5), 120.0);
         assert_eq!(range.plain_offset(-0.25), -50.0);
         assert_eq!(range.normalise(120.0), 0.5);
@@ -274,7 +305,12 @@ mod tests {
 
     #[test]
     fn value_modulation_moves_around_the_base_and_stays_in_range() {
-        let range = PluginParamRange { min: 0.0, max: 200.0, modulatable: false, automatable: true };
+        let range = PluginParamRange {
+            min: 0.0,
+            max: 200.0,
+            modulatable: false,
+            automatable: true,
+        };
         let param = ValueModulatedParam::new(1, range, Arc::new(AtomicU32::new(0.25f32.to_bits())));
         assert_eq!(param.base_plain(), 50.0);
         assert_eq!(param.modulated_plain(0.25), 100.0);

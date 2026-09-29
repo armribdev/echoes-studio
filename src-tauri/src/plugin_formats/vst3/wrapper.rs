@@ -35,7 +35,9 @@ use std::sync::Arc;
 
 use crate::audio_graph::buffer::AudioBuffer;
 use crate::audio_graph::node::{AudioNode, PrepareContext, TransportInfo};
-use crate::audio_graph::plugin_params::{parse_plugin_param_name, PluginParamControl, PluginParamControls};
+use crate::audio_graph::plugin_params::{
+    parse_plugin_param_name, PluginParamControl, PluginParamControls,
+};
 use crate::plugin_formats::crash_guard;
 use crate::plugin_system::instance::{PluginInstance, FFI_GATE_HARVEST_BUDGET};
 use crate::plugin_system::lifecycle::LifecycleState;
@@ -56,7 +58,6 @@ unsafe extern "C" fn vst3_process_trampoline(raw: *mut c_void) -> i32 {
 }
 
 pub struct VstWrapperNode {
-
     /// Shared, refcounted handle.  Captured at construction; cloned only on
     /// the command thread.  Deref on the audio thread is a non-atomic load.
     /// Phase 2b: also holds the authoritative `lifecycle` atomic (the wrapper
@@ -237,7 +238,11 @@ impl AudioNode for VstWrapperNode {
                     }
                 } else {
                     for (offset, value) in control.automation.iter() {
-                        pc.push(control.native_id, offset as i32, value.clamp(0.0, 1.0) as f64);
+                        pc.push(
+                            control.native_id,
+                            offset as i32,
+                            value.clamp(0.0, 1.0) as f64,
+                        );
                     }
                 }
             }
@@ -292,7 +297,10 @@ impl AudioNode for VstWrapperNode {
         // Non-atomic load through Arc::deref → identical cost to a field read.
         let (_, proc_nn) = self.handles();
         let proc = proc_nn.as_ptr();
-        let mut ctx = Vst3ProcessCtx { proc_ptr: proc, data_ptr: &mut data };
+        let mut ctx = Vst3ProcessCtx {
+            proc_ptr: proc,
+            data_ptr: &mut data,
+        };
         let r = unsafe {
             crash_guard::guarded(
                 vst3_process_trampoline,
@@ -327,7 +335,8 @@ impl AudioNode for VstWrapperNode {
     }
 
     fn apply_modulation_at(&mut self, param_id: u32, sample_offset: u32, value: f32) {
-        self.param_controls.modulate_at(param_id, sample_offset, value);
+        self.param_controls
+            .modulate_at(param_id, sample_offset, value);
     }
 
     fn apply_automation(&mut self, param_id: u32, value: f32) {
@@ -335,7 +344,8 @@ impl AudioNode for VstWrapperNode {
     }
 
     fn apply_automation_at(&mut self, param_id: u32, sample_offset: u32, value: f32) {
-        self.param_controls.automate_at(param_id, sample_offset, value);
+        self.param_controls
+            .automate_at(param_id, sample_offset, value);
     }
 
     fn inject_plugin_param_controls(&mut self, controls: Vec<PluginParamControl>) {

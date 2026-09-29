@@ -828,7 +828,12 @@ mod tests {
             out[latency as usize], 1.0,
             "src_b impulse must arrive at frame `latency`"
         );
-        for (i, sample) in out.iter().enumerate().take(block).skip(latency as usize + 1) {
+        for (i, sample) in out
+            .iter()
+            .enumerate()
+            .take(block)
+            .skip(latency as usize + 1)
+        {
             assert_eq!(
                 *sample, 0.0,
                 "silence expected after both impulses at frame {i}"
@@ -923,7 +928,9 @@ mod tests {
     #[test]
     fn automation_is_delivered_through_the_automation_methods() {
         use crate::audio_graph::automation::{CompiledAutomationCurve, SchedulerAutomationAction};
-        use crate::project::{AutomationClip, AutomationLane, AutomationPoint, InterpolationMode, ModulationTargetRef};
+        use crate::project::{
+            AutomationClip, AutomationLane, AutomationPoint, InterpolationMode, ModulationTargetRef,
+        };
         use std::sync::Mutex;
 
         #[derive(Debug, PartialEq)]
@@ -942,7 +949,8 @@ mod tests {
             }
             fn prepare(&mut self, _ctx: PrepareContext) {}
             fn reset(&mut self) {}
-            fn process(&mut self, _i: &[&AudioBuffer], _o: &mut [AudioBuffer], _t: &TransportInfo) {}
+            fn process(&mut self, _i: &[&AudioBuffer], _o: &mut [AudioBuffer], _t: &TransportInfo) {
+            }
             fn apply_modulation(&mut self, _param_id: u32, _delta: f32) {
                 self.0.lock().unwrap().push(Call::Modulation(0));
             }
@@ -959,7 +967,11 @@ mod tests {
 
         let calls = Arc::new(Mutex::new(Vec::new()));
         let mut plan = ExecutionPlan {
-            steps: vec![ExecutionStep { node_id: NodeId(1), input_connections: vec![], num_outputs: 1 }],
+            steps: vec![ExecutionStep {
+                node_id: NodeId(1),
+                input_connections: vec![],
+                num_outputs: 1,
+            }],
             modulation: ModulationMap::new(),
             sample_rate: 48_000.0,
             max_block_size: 64,
@@ -972,12 +984,17 @@ mod tests {
         GraphCompiler::compute_execution_levels(&mut plan);
         let lane = AutomationLane {
             id: "lane".into(),
-            target: ModulationTargetRef::TrackGain { track_id: "t".into() },
+            target: ModulationTargetRef::TrackGain {
+                track_id: "t".into(),
+            },
             clips: vec![AutomationClip {
                 id: "clip".into(),
                 start_s: 0.0,
                 end_s: 1.0,
-                points: vec![AutomationPoint { time_s: 0.0, value: 0.75 }],
+                points: vec![AutomationPoint {
+                    time_s: 0.0,
+                    value: 0.75,
+                }],
             }],
             interpolation: InterpolationMode::Linear,
         };
@@ -999,6 +1016,9 @@ mod tests {
         transport.block_size = 64;
         sched.run_levels(&transport);
 
-        assert_eq!(*calls.lock().unwrap(), vec![Call::Automation(0), Call::Automation(32)]);
+        assert_eq!(
+            *calls.lock().unwrap(),
+            vec![Call::Automation(0), Call::Automation(32)]
+        );
     }
 }

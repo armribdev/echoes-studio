@@ -16,10 +16,7 @@ use std::ffi::c_void;
 extern "C" {
     /// Calls `fn(ctx)` inside a Windows SEH `__try/__except`.
     /// Returns `fn`'s return value, or `CAUGHT` if an exception was raised.
-    pub fn crash_guard_call(
-        f: unsafe extern "C" fn(*mut c_void) -> i32,
-        ctx: *mut c_void,
-    ) -> i32;
+    pub fn crash_guard_call(f: unsafe extern "C" fn(*mut c_void) -> i32, ctx: *mut c_void) -> i32;
 }
 
 /// Returned by the C shim when an SEH exception is caught.

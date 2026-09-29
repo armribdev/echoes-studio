@@ -216,10 +216,18 @@ pub struct EnvelopeParams {
     pub release_ms: f32,
 }
 
-fn default_env_attack_ms() -> f32 { 10.0 }
-fn default_env_decay_ms() -> f32 { 100.0 }
-fn default_env_sustain() -> f32 { 0.7 }
-fn default_env_release_ms() -> f32 { 200.0 }
+fn default_env_attack_ms() -> f32 {
+    10.0
+}
+fn default_env_decay_ms() -> f32 {
+    100.0
+}
+fn default_env_sustain() -> f32 {
+    0.7
+}
+fn default_env_release_ms() -> f32 {
+    200.0
+}
 
 impl Default for EnvelopeParams {
     fn default() -> Self {
@@ -1342,7 +1350,10 @@ mod tests {
     fn input_source_round_trips_through_a_saved_file() {
         let mut project = AppProject::new();
         let mut track = track_with_plugin("snare", "fx0", "clap:comp");
-        track.input_source = Some(PluginOutputSource { effect_id: "instrument:drums".into(), port: 2 });
+        track.input_source = Some(PluginOutputSource {
+            effect_id: "instrument:drums".into(),
+            port: 2,
+        });
         project.tracks.push(track);
 
         let json = serde_json::to_string(&project.to_file()).expect("serialize");
@@ -1351,7 +1362,10 @@ mod tests {
 
         assert_eq!(
             restored.tracks[0].input_source,
-            Some(PluginOutputSource { effect_id: "instrument:drums".into(), port: 2 })
+            Some(PluginOutputSource {
+                effect_id: "instrument:drums".into(),
+                port: 2
+            })
         );
     }
 
@@ -1422,8 +1436,12 @@ mod tests {
     #[test]
     fn plugin_states_round_trip_per_instance() {
         let mut project = AppProject::new();
-        project.tracks.push(track_with_plugin("t1", "fx-a", "vst3://x"));
-        project.tracks.push(track_with_plugin("t2", "fx-b", "vst3://x"));
+        project
+            .tracks
+            .push(track_with_plugin("t1", "fx-a", "vst3://x"));
+        project
+            .tracks
+            .push(track_with_plugin("t2", "fx-b", "vst3://x"));
         project.plugin_states.insert("fx-a".into(), vec![1, 2, 3]);
         project.plugin_states.insert("fx-b".into(), vec![9, 9]);
 
@@ -1437,7 +1455,9 @@ mod tests {
     #[test]
     fn legacy_device_keyed_state_maps_to_instance() {
         let mut project = AppProject::new();
-        project.tracks.push(track_with_plugin("t1", "fx-eq", "vst3://x"));
+        project
+            .tracks
+            .push(track_with_plugin("t1", "fx-eq", "vst3://x"));
 
         // Simulate a pre-ADR-017 file: state under the new per-instance field is
         // absent; the legacy device_id-keyed field carries the blob.

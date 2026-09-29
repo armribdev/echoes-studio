@@ -12,10 +12,11 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use clap_ffi::{
-    audio_thread_scope, read_pod, split_events, ClapAudioBuffer, ClapEventBuffer, ClapEventHeader, ClapEventTransport,
-    ClapHost, ClapLibrary, ClapOutputEvents, ClapParamInfo, ClapPlugin, ClapPluginFactory,
-    ClapPluginLatency, ClapPluginParams, ClapProcess, CLAP_CORE_EVENT_SPACE, CLAP_EVENT_TRANSPORT,
-    CLAP_EXT_LATENCY, CLAP_EXT_PARAMS, CLAP_PLUGIN_FACTORY_ID, CLAP_PROCESS_ERROR,
+    audio_thread_scope, read_pod, split_events, ClapAudioBuffer, ClapEventBuffer, ClapEventHeader,
+    ClapEventTransport, ClapHost, ClapLibrary, ClapOutputEvents, ClapParamInfo, ClapPlugin,
+    ClapPluginFactory, ClapPluginLatency, ClapPluginParams, ClapProcess, CLAP_CORE_EVENT_SPACE,
+    CLAP_EVENT_TRANSPORT, CLAP_EXT_LATENCY, CLAP_EXT_PARAMS, CLAP_PLUGIN_FACTORY_ID,
+    CLAP_PROCESS_ERROR,
 };
 use plugin_bridge::protocol::{BLOCK_PASSED_THROUGH, BLOCK_PLUGIN_EDITED, BLOCK_RESTART_REQUESTED};
 use plugin_bridge::session::{BlockContext, BridgeProcessor, EventWriter};
@@ -104,7 +105,10 @@ impl LoadedPlugin {
     /// returns the plugin's latency.
     pub fn activate(&self, sample_rate: f64, max_frames: u32) -> Result<u32, String> {
         let mut config = self.config.lock().unwrap_or_else(|e| e.into_inner());
-        let restart = self.host.context().is_some_and(|context| context.take_restart_request());
+        let restart = self
+            .host
+            .context()
+            .is_some_and(|context| context.take_restart_request());
         if restart || *config != Some((sample_rate, max_frames)) {
             *config = None;
             self.reactivate(sample_rate, max_frames)?;

@@ -33,7 +33,10 @@ fn render(project: &AppProject, block_size: usize) -> Vec<f32> {
     let (left, right) =
         render_project_in_blocks(project, &live_params, &mut host, SAMPLE_RATE, block_size)
             .expect("reference project must render");
-    left.into_iter().zip(right).flat_map(|(l, r)| [l, r]).collect()
+    left.into_iter()
+        .zip(right)
+        .flat_map(|(l, r)| [l, r])
+        .collect()
 }
 
 /// FNV-1a over the raw `f32` bits: bit-exact, dependency-free.
@@ -100,9 +103,24 @@ fn effect(id: &str, params: EffectParams) -> TrackEffect {
 
 fn full_effect_chain() -> Vec<TrackEffect> {
     vec![
-        effect("eq", EffectParams::Eq(EqParams { mid_gain_db: 4.0, ..EqParams::default() })),
-        effect("comp", EffectParams::Compressor(CompressorParams::default())),
-        effect("delay", EffectParams::Delay(DelayParams { delay_ms: 90.0, ..DelayParams::default() })),
+        effect(
+            "eq",
+            EffectParams::Eq(EqParams {
+                mid_gain_db: 4.0,
+                ..EqParams::default()
+            }),
+        ),
+        effect(
+            "comp",
+            EffectParams::Compressor(CompressorParams::default()),
+        ),
+        effect(
+            "delay",
+            EffectParams::Delay(DelayParams {
+                delay_ms: 90.0,
+                ..DelayParams::default()
+            }),
+        ),
         effect("reverb", EffectParams::Reverb(ReverbParams::default())),
     ]
 }
@@ -153,11 +171,21 @@ fn midi_track() -> AppTrack {
 fn lfo(id: &str, rate_hz: f32, waveform: LfoWaveform) -> ProjectModulator {
     ProjectModulator {
         id: id.into(),
-        params: ModulatorParams::Lfo(LfoParams { rate_hz, waveform, ..LfoParams::default() }),
+        params: ModulatorParams::Lfo(LfoParams {
+            rate_hz,
+            waveform,
+            ..LfoParams::default()
+        }),
     }
 }
 
-fn effect_route(track_id: &str, modulator_id: &str, effect_id: &str, param: &str, depth: f32) -> ProjectModulationRoute {
+fn effect_route(
+    track_id: &str,
+    modulator_id: &str,
+    effect_id: &str,
+    param: &str,
+    depth: f32,
+) -> ProjectModulationRoute {
     ProjectModulationRoute {
         id: format!("{modulator_id}->{effect_id}.{param}"),
         modulator_id: modulator_id.into(),
@@ -172,8 +200,12 @@ fn effect_route(track_id: &str, modulator_id: &str, effect_id: &str, param: &str
 
 fn add_effect_modulation(track: &mut AppTrack) {
     let id = track.id.clone();
-    track.modulators.push(lfo("lfo-fast", 7.3, LfoWaveform::Sine));
-    track.modulators.push(lfo("lfo-slow", 0.9, LfoWaveform::Triangle));
+    track
+        .modulators
+        .push(lfo("lfo-fast", 7.3, LfoWaveform::Sine));
+    track
+        .modulators
+        .push(lfo("lfo-slow", 0.9, LfoWaveform::Triangle));
     track.mod_routes.extend([
         effect_route(&id, "lfo-fast", "eq", "mid_freq", 600.0),
         effect_route(&id, "lfo-slow", "comp", "threshold_db", 8.0),
@@ -183,7 +215,9 @@ fn add_effect_modulation(track: &mut AppTrack) {
 }
 
 fn add_gain_modulation(track: &mut AppTrack) {
-    track.modulators.push(lfo("lfo-gain", 5.1, LfoWaveform::Square));
+    track
+        .modulators
+        .push(lfo("lfo-gain", 5.1, LfoWaveform::Square));
     track.modulators.push(ProjectModulator {
         id: "macro".into(),
         params: ModulatorParams::Macro(MacroParams { value: 0.5 }),
@@ -192,7 +226,9 @@ fn add_gain_modulation(track: &mut AppTrack) {
         track.mod_routes.push(ProjectModulationRoute {
             id: format!("{modulator_id}->gain"),
             modulator_id: modulator_id.into(),
-            target: ModulationTargetRef::TrackGain { track_id: track.id.clone() },
+            target: ModulationTargetRef::TrackGain {
+                track_id: track.id.clone(),
+            },
             depth,
         });
     }
@@ -269,8 +305,12 @@ fn automated() -> AppProject {
 fn eq_octave_modulation() -> AppProject {
     let mut audio = audio_track();
     let id = audio.id.clone();
-    audio.modulators.push(lfo("lfo-fast", 7.3, LfoWaveform::Sine));
-    audio.modulators.push(lfo("lfo-slow", 0.9, LfoWaveform::Triangle));
+    audio
+        .modulators
+        .push(lfo("lfo-fast", 7.3, LfoWaveform::Sine));
+    audio
+        .modulators
+        .push(lfo("lfo-slow", 0.9, LfoWaveform::Triangle));
     audio.mod_routes.extend([
         effect_route(&id, "lfo-fast", "eq", "mid_freq_octaves", 2.0),
         effect_route(&id, "lfo-slow", "eq", "low_freq_octaves", -1.0),
@@ -350,12 +390,20 @@ fn renders_match_golden_hashes() {
         .iter()
         .zip(GOLDEN_HASHES)
         .filter_map(|((name, project), (golden_name, golden))| {
-            assert_eq!(*name, golden_name, "GOLDEN_HASHES order must match reference_projects");
+            assert_eq!(
+                *name, golden_name,
+                "GOLDEN_HASHES order must match reference_projects"
+            );
             let actual = render_hash(&render(project, BLOCK_SIZES[0]));
-            (actual != golden).then(|| format!("{name}: expected {golden:#018x}, got {actual:#018x}"))
+            (actual != golden)
+                .then(|| format!("{name}: expected {golden:#018x}, got {actual:#018x}"))
         })
         .collect();
-    assert!(mismatches.is_empty(), "golden render changed:\n{}", mismatches.join("\n"));
+    assert!(
+        mismatches.is_empty(),
+        "golden render changed:\n{}",
+        mismatches.join("\n")
+    );
 }
 
 #[test]
@@ -367,8 +415,9 @@ fn missing_instrument_plugin_is_silent_and_reported() {
 
     let live_params = LiveParams::new();
     let mut host = PluginHost::new();
-    let (left, right) = render_project_in_blocks(&project, &live_params, &mut host, SAMPLE_RATE, 512)
-        .expect("project must render");
+    let (left, right) =
+        render_project_in_blocks(&project, &live_params, &mut host, SAMPLE_RATE, 512)
+            .expect("project must render");
 
     assert!(
         left.iter().chain(&right).all(|s| *s == 0.0),
@@ -377,5 +426,8 @@ fn missing_instrument_plugin_is_silent_and_reported() {
     let unavailable = host.unavailable_plugins();
     assert_eq!(unavailable.len(), 1);
     assert_eq!(unavailable[0].instance_key, "instrument:midi");
-    assert_eq!(unavailable[0].reason, crate::plugin_system::host::UnavailableReason::NotInstalled);
+    assert_eq!(
+        unavailable[0].reason,
+        crate::plugin_system::host::UnavailableReason::NotInstalled
+    );
 }

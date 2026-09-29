@@ -27,8 +27,8 @@ use crate::audio_graph::modulation::{
 use crate::audio_graph::node::{NodeId, PortId, PortKind};
 use crate::audio_graph::plugin_params::plugin_param_name;
 use crate::project::{
-    AppProject, AudioFollowerParams, EffectParams, EnvelopeParams, LfoWaveform, ModulationTargetRef, ModulatorParams,
-    PluginOutputSource,
+    AppProject, AudioFollowerParams, EffectParams, EnvelopeParams, LfoWaveform,
+    ModulationTargetRef, ModulatorParams, PluginOutputSource,
 };
 
 static NEXT_NODE_ID: AtomicU64 = AtomicU64::new(1);
@@ -338,11 +338,15 @@ impl AudioGraph {
                 // Track has both audio and MIDI clips — run each through its own
                 // source node then sum them through a Bus before the FX chain.
                 let audio_node = graph.add_node(
-                    NodeKind::Track { track_id: track.id.clone() },
+                    NodeKind::Track {
+                        track_id: track.id.clone(),
+                    },
                     format!("{} [clips]", track.name),
                 );
                 let instr_node = graph.add_node(
-                    NodeKind::Instrument { track_id: track.id.clone() },
+                    NodeKind::Instrument {
+                        track_id: track.id.clone(),
+                    },
                     format!("{} [instrument]", track.name),
                 );
                 instrument_node = Some(instr_node);
@@ -369,7 +373,8 @@ impl AudioGraph {
             };
             let track_node = match &track.input_source {
                 Some(source) => {
-                    let input_node = graph.add_node(NodeKind::Bus, format!("{} [input]", track.name));
+                    let input_node =
+                        graph.add_node(NodeKind::Bus, format!("{} [input]", track.name));
                     graph.connect(track_node, 0, input_node, 0);
                     pending_inputs.push((source.clone(), input_node));
                     input_node
@@ -461,49 +466,57 @@ impl AudioGraph {
             let mut mod_node_ids: HashMap<String, NodeId> = HashMap::new();
 
             for modulator in &track.modulators {
-                let (kind, rate_hz, waveform, initial_value, initial_envelope, initial_follower, tempo_sync, beat_division) =
-                    match &modulator.params {
-                        ModulatorParams::Lfo(p) => (
-                            ModulatorKind::Lfo,
-                            p.rate_hz,
-                            p.waveform.clone(),
-                            0.0f32,
-                            EnvelopeParams::default(),
-                            AudioFollowerParams::default(),
-                            p.tempo_sync,
-                            p.beat_division,
-                        ),
-                        ModulatorParams::Macro(p) => (
-                            ModulatorKind::Macro,
-                            0.0f32,
-                            LfoWaveform::default(),
-                            p.value,
-                            EnvelopeParams::default(),
-                            AudioFollowerParams::default(),
-                            false,
-                            1.0f32,
-                        ),
-                        ModulatorParams::Envelope(p) => (
-                            ModulatorKind::Envelope,
-                            0.0f32,
-                            LfoWaveform::default(),
-                            0.0f32,
-                            p.clone(),
-                            AudioFollowerParams::default(),
-                            false,
-                            1.0f32,
-                        ),
-                        ModulatorParams::AudioFollower(p) => (
-                            ModulatorKind::AudioFollower,
-                            0.0f32,
-                            LfoWaveform::default(),
-                            0.0f32,
-                            EnvelopeParams::default(),
-                            p.clone(),
-                            false,
-                            1.0f32,
-                        ),
-                    };
+                let (
+                    kind,
+                    rate_hz,
+                    waveform,
+                    initial_value,
+                    initial_envelope,
+                    initial_follower,
+                    tempo_sync,
+                    beat_division,
+                ) = match &modulator.params {
+                    ModulatorParams::Lfo(p) => (
+                        ModulatorKind::Lfo,
+                        p.rate_hz,
+                        p.waveform.clone(),
+                        0.0f32,
+                        EnvelopeParams::default(),
+                        AudioFollowerParams::default(),
+                        p.tempo_sync,
+                        p.beat_division,
+                    ),
+                    ModulatorParams::Macro(p) => (
+                        ModulatorKind::Macro,
+                        0.0f32,
+                        LfoWaveform::default(),
+                        p.value,
+                        EnvelopeParams::default(),
+                        AudioFollowerParams::default(),
+                        false,
+                        1.0f32,
+                    ),
+                    ModulatorParams::Envelope(p) => (
+                        ModulatorKind::Envelope,
+                        0.0f32,
+                        LfoWaveform::default(),
+                        0.0f32,
+                        p.clone(),
+                        AudioFollowerParams::default(),
+                        false,
+                        1.0f32,
+                    ),
+                    ModulatorParams::AudioFollower(p) => (
+                        ModulatorKind::AudioFollower,
+                        0.0f32,
+                        LfoWaveform::default(),
+                        0.0f32,
+                        EnvelopeParams::default(),
+                        p.clone(),
+                        false,
+                        1.0f32,
+                    ),
+                };
                 let node_id = graph.add_node(
                     NodeKind::Modulator {
                         modulator_id: modulator.id.clone(),
@@ -522,7 +535,8 @@ impl AudioGraph {
 
                 // AudioFollower taps audio from the track signal chain.
                 if let ModulatorParams::AudioFollower(p) = &modulator.params {
-                    let source = p.source_effect_id
+                    let source = p
+                        .source_effect_id
                         .as_deref()
                         .and_then(|eff_id| effect_node_ids.get(eff_id).copied())
                         .unwrap_or(last_node);
@@ -551,7 +565,9 @@ impl AudioGraph {
                     ModulationTargetRef::TrackGain { .. } => "gain".to_string(),
                     ModulationTargetRef::EffectParam { param, .. } => param.clone(),
                     // Sentinel prefix resolved by plugin wrappers in `param_id()`.
-                    ModulationTargetRef::PluginParam { native_id, .. } => plugin_param_name(*native_id),
+                    ModulationTargetRef::PluginParam { native_id, .. } => {
+                        plugin_param_name(*native_id)
+                    }
                 };
 
                 graph.modulation.add_route(ModulationRoute {
@@ -575,18 +591,19 @@ impl AudioGraph {
                 }
                 let (target_node_id, param_name) = match &lane.target {
                     ModulationTargetRef::TrackGain { .. } => (gain_node, "gain".to_string()),
-                    ModulationTargetRef::EffectParam { effect_id, param, .. } => {
-                        match effect_node_ids.get(effect_id) {
-                            Some(&id) => (id, param.clone()),
-                            None => continue,
-                        }
-                    }
-                    ModulationTargetRef::PluginParam { effect_id, native_id } => {
-                        match effect_node_ids.get(effect_id) {
-                            Some(&id) => (id, plugin_param_name(*native_id)),
-                            None => continue,
-                        }
-                    }
+                    ModulationTargetRef::EffectParam {
+                        effect_id, param, ..
+                    } => match effect_node_ids.get(effect_id) {
+                        Some(&id) => (id, param.clone()),
+                        None => continue,
+                    },
+                    ModulationTargetRef::PluginParam {
+                        effect_id,
+                        native_id,
+                    } => match effect_node_ids.get(effect_id) {
+                        Some(&id) => (id, plugin_param_name(*native_id)),
+                        None => continue,
+                    },
                 };
                 graph.automation_actions.push(AutomationAction {
                     target_node_id,
@@ -619,7 +636,13 @@ impl AudioGraph {
                 .entry(source_track_id.clone())
                 .or_default()
                 .push(target_track_id.clone());
-            graph.connect_typed(source_tap, 0, *target_node, 1, PortKind::default_audio_stereo());
+            graph.connect_typed(
+                source_tap,
+                0,
+                *target_node,
+                1,
+                PortKind::default_audio_stereo(),
+            );
         }
 
         // Plugin aux outputs into track inputs, once every placement exists.
@@ -692,7 +715,9 @@ impl Default for AudioGraph {
 #[cfg(test)]
 mod routing_tests {
     use super::*;
-    use crate::project::{AppMidiClip, AppProject, AppTrack, EffectParams, PluginParams, TrackEffect};
+    use crate::project::{
+        AppMidiClip, AppProject, AppTrack, EffectParams, PluginParams, TrackEffect,
+    };
 
     fn track(id: &str, effects: Vec<TrackEffect>) -> AppTrack {
         AppTrack {
@@ -756,7 +781,9 @@ mod routing_tests {
     fn sidechain_source_wires_post_fader_tap_into_aux_port() {
         let mut project = AppProject::new();
         project.tracks.push(track("kick", vec![]));
-        project.tracks.push(track("duck", vec![plugin_effect("fx0", Some("kick"))]));
+        project
+            .tracks
+            .push(track("duck", vec![plugin_effect("fx0", Some("kick"))]));
 
         let graph = AudioGraph::from_project(&project);
 
@@ -771,7 +798,9 @@ mod routing_tests {
         // here, so the topology must be identical to pre-routing behaviour.
         let mut project = AppProject::new();
         project.tracks.push(track("kick", vec![]));
-        project.tracks.push(track("duck", vec![plugin_effect("fx0", None)]));
+        project
+            .tracks
+            .push(track("duck", vec![plugin_effect("fx0", None)]));
 
         let graph = AudioGraph::from_project(&project);
         let plugin = plugin_node_of(&graph, "fx0");
@@ -781,7 +810,9 @@ mod routing_tests {
     #[test]
     fn sidechain_self_reference_is_dropped() {
         let mut project = AppProject::new();
-        project.tracks.push(track("t1", vec![plugin_effect("fx0", Some("t1"))]));
+        project
+            .tracks
+            .push(track("t1", vec![plugin_effect("fx0", Some("t1"))]));
 
         let graph = AudioGraph::from_project(&project);
         let plugin = plugin_node_of(&graph, "fx0");
@@ -791,7 +822,10 @@ mod routing_tests {
     #[test]
     fn sidechain_dangling_source_is_dropped() {
         let mut project = AppProject::new();
-        project.tracks.push(track("t1", vec![plugin_effect("fx0", Some("does-not-exist"))]));
+        project.tracks.push(track(
+            "t1",
+            vec![plugin_effect("fx0", Some("does-not-exist"))],
+        ));
 
         let graph = AudioGraph::from_project(&project);
         let plugin = plugin_node_of(&graph, "fx0");
@@ -804,8 +838,12 @@ mod routing_tests {
         // together this is a cycle, so only the first one seen (track order)
         // is wired; the second, which would close the loop, is dropped.
         let mut project = AppProject::new();
-        project.tracks.push(track("a", vec![plugin_effect("fx_a", Some("b"))]));
-        project.tracks.push(track("b", vec![plugin_effect("fx_b", Some("a"))]));
+        project
+            .tracks
+            .push(track("a", vec![plugin_effect("fx_a", Some("b"))]));
+        project
+            .tracks
+            .push(track("b", vec![plugin_effect("fx_b", Some("a"))]));
 
         let graph = AudioGraph::from_project(&project);
 
@@ -814,20 +852,35 @@ mod routing_tests {
         let fx_a = plugin_node_of(&graph, "fx_a");
         let fx_b = plugin_node_of(&graph, "fx_b");
 
-        assert!(has_aux_edge(&graph, b_tap, fx_a), "first candidate edge (b -> fx_a) must be accepted");
-        assert!(!has_aux_edge(&graph, a_tap, fx_b), "second candidate edge would close the cycle and must be dropped");
+        assert!(
+            has_aux_edge(&graph, b_tap, fx_a),
+            "first candidate edge (b -> fx_a) must be accepted"
+        );
+        assert!(
+            !has_aux_edge(&graph, a_tap, fx_b),
+            "second candidate edge would close the cycle and must be dropped"
+        );
     }
 
     fn drum_track(id: &str) -> AppTrack {
         let mut track = track(id, vec![]);
         track.instrument = Some("clap:drums".into());
-        track.midi_clips = vec![AppMidiClip { id: "c".into(), start: 0.0, end: 1.0, offset: 0.0, notes: vec![] }];
+        track.midi_clips = vec![AppMidiClip {
+            id: "c".into(),
+            start: 0.0,
+            end: 1.0,
+            offset: 0.0,
+            notes: vec![],
+        }];
         track
     }
 
     fn fed_from(track_id: &str, effect_id: &str, port: u32) -> AppTrack {
         let mut track = track(track_id, vec![]);
-        track.input_source = Some(PluginOutputSource { effect_id: effect_id.into(), port });
+        track.input_source = Some(PluginOutputSource {
+            effect_id: effect_id.into(),
+            port,
+        });
         track
     }
 
@@ -845,22 +898,28 @@ mod routing_tests {
     }
 
     fn feeds_input(graph: &AudioGraph, from: NodeId, from_port: u32, input: NodeId) -> bool {
-        graph
-            .all_edges()
-            .iter()
-            .any(|e| e.from.node == from && e.from.port == from_port && e.to.node == input && e.to.port == 1)
+        graph.all_edges().iter().any(|e| {
+            e.from.node == from && e.from.port == from_port && e.to.node == input && e.to.port == 1
+        })
     }
 
     #[test]
     fn a_track_input_takes_an_instrument_aux_output() {
         let mut project = AppProject::new();
         project.tracks.push(drum_track("drums"));
-        project.tracks.push(fed_from("snare", "instrument:drums", 2));
+        project
+            .tracks
+            .push(fed_from("snare", "instrument:drums", 2));
 
         let graph = AudioGraph::from_project(&project);
 
         let input = input_node_of(&graph, "snare").expect("input mixer at the head of the track");
-        assert!(feeds_input(&graph, instrument_node_of(&graph, "drums"), 2, input));
+        assert!(feeds_input(
+            &graph,
+            instrument_node_of(&graph, "drums"),
+            2,
+            input
+        ));
     }
 
     #[test]
@@ -878,11 +937,17 @@ mod routing_tests {
     fn the_main_output_cannot_be_taken_as_an_input() {
         let mut project = AppProject::new();
         project.tracks.push(drum_track("drums"));
-        project.tracks.push(fed_from("snare", "instrument:drums", 0));
+        project
+            .tracks
+            .push(fed_from("snare", "instrument:drums", 0));
 
         let graph = AudioGraph::from_project(&project);
         let input = input_node_of(&graph, "snare").expect("input mixer");
-        assert_eq!(graph.edges_into(input).count(), 1, "only the track's own source");
+        assert_eq!(
+            graph.edges_into(input).count(),
+            1,
+            "only the track's own source"
+        );
     }
 
     #[test]
@@ -894,7 +959,12 @@ mod routing_tests {
 
         let graph = AudioGraph::from_project(&project);
         let input = input_node_of(&graph, "t1").expect("input mixer");
-        assert!(!feeds_input(&graph, plugin_node_of(&graph, "fx0"), 1, input));
+        assert!(!feeds_input(
+            &graph,
+            plugin_node_of(&graph, "fx0"),
+            1,
+            input
+        ));
     }
 
     #[test]
@@ -904,6 +974,10 @@ mod routing_tests {
 
         let graph = AudioGraph::from_project(&project);
         let input = input_node_of(&graph, "t1").expect("input mixer");
-        assert_eq!(graph.edges_into(input).count(), 1, "only the track's own source");
+        assert_eq!(
+            graph.edges_into(input).count(),
+            1,
+            "only the track's own source"
+        );
     }
 }

@@ -207,8 +207,7 @@ impl AudioClip {
             let mut peaks_4096_append = None;
             if should_peaks && !samples.is_empty() {
                 last_peaks_at = clamped;
-                let (from512, app512) =
-                    sync_peaks_lane(&mut peaks_512, samples, PEAK_CHUNK_512);
+                let (from512, app512) = sync_peaks_lane(&mut peaks_512, samples, PEAK_CHUNK_512);
                 let (from4096, app4096) =
                     sync_peaks_lane(&mut peaks_4096, samples, PEAK_CHUNK_4096);
                 peaks_512_from = Some(from512);
@@ -310,24 +309,23 @@ impl AudioClip {
         } else {
             self.raw_samples.len() as f64 / sample_rate as f64
         };
-        let mut tick =
-            |progress: f32,
-             peaks_64: Option<Vec<[f32; 2]>>,
-             peaks_512: Option<Vec<[f32; 2]>>,
-             peaks_4096: Option<Vec<[f32; 2]>>| {
-                on_progress(DecodeProgressUpdate {
-                    progress,
-                    sample_rate,
-                    decoded_duration_sec: duration_sec,
-                    peaks_64,
-                    peaks_512,
-                    peaks_4096,
-                    peaks_512_from: None,
-                    peaks_512_append: None,
-                    peaks_4096_from: None,
-                    peaks_4096_append: None,
-                });
-            };
+        let mut tick = |progress: f32,
+                        peaks_64: Option<Vec<[f32; 2]>>,
+                        peaks_512: Option<Vec<[f32; 2]>>,
+                        peaks_4096: Option<Vec<[f32; 2]>>| {
+            on_progress(DecodeProgressUpdate {
+                progress,
+                sample_rate,
+                decoded_duration_sec: duration_sec,
+                peaks_64,
+                peaks_512,
+                peaks_4096,
+                peaks_512_from: None,
+                peaks_512_append: None,
+                peaks_4096_from: None,
+                peaks_4096_append: None,
+            });
+        };
 
         tick(0.94, None, None, None);
         let peaks_64 = compute_peaks(&self.raw_samples, PEAK_CHUNK_64);

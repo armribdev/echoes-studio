@@ -70,7 +70,11 @@ impl CompiledAutomationCurve {
             })
             .collect();
 
-        pts.sort_by(|a, b| a.time_s.partial_cmp(&b.time_s).unwrap_or(std::cmp::Ordering::Equal));
+        pts.sort_by(|a, b| {
+            a.time_s
+                .partial_cmp(&b.time_s)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
 
         // Remove points closer than 1 µs (float precision guard).
         pts.dedup_by(|newer, older| (newer.time_s - older.time_s).abs() < 1e-6);
@@ -141,16 +145,23 @@ pub struct SchedulerAutomationAction {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::project::{AutomationClip, AutomationLane, AutomationPoint, InterpolationMode, ModulationTargetRef};
+    use crate::project::{
+        AutomationClip, AutomationLane, AutomationPoint, InterpolationMode, ModulationTargetRef,
+    };
 
     fn lane(pts: &[(f64, f32)], mode: InterpolationMode) -> AutomationLane {
         let points = pts
             .iter()
-            .map(|&(t, v)| AutomationPoint { time_s: t, value: v })
+            .map(|&(t, v)| AutomationPoint {
+                time_s: t,
+                value: v,
+            })
             .collect();
         AutomationLane {
             id: "test".into(),
-            target: ModulationTargetRef::TrackGain { track_id: "t1".into() },
+            target: ModulationTargetRef::TrackGain {
+                track_id: "t1".into(),
+            },
             clips: vec![AutomationClip {
                 id: "c1".into(),
                 start_s: 0.0,
@@ -183,7 +194,10 @@ mod tests {
         let l = lane(&[(0.0, 0.0), (1.0, 1.0)], InterpolationMode::Linear);
         let curve = CompiledAutomationCurve::from_lane(&l);
         let mid = curve.evaluate(0.5);
-        assert!((mid - 0.5).abs() < 1e-5, "linear midpoint must be 0.5, got {mid}");
+        assert!(
+            (mid - 0.5).abs() < 1e-5,
+            "linear midpoint must be 0.5, got {mid}"
+        );
     }
 
     #[test]
@@ -191,7 +205,11 @@ mod tests {
         let l = lane(&[(0.0, 0.0), (1.0, 1.0)], InterpolationMode::Step);
         let curve = CompiledAutomationCurve::from_lane(&l);
         assert_eq!(curve.evaluate(0.5), 0.0, "step must hold previous value");
-        assert_eq!(curve.evaluate(1.0), 1.0, "step at exact point must use that value");
+        assert_eq!(
+            curve.evaluate(1.0),
+            1.0,
+            "step at exact point must use that value"
+        );
         assert_eq!(curve.evaluate(1.5), 1.0, "step after last point holds");
     }
 
@@ -201,32 +219,46 @@ mod tests {
         l.clips[0].start_s = 1.0;
         l.clips[0].end_s = 2.0;
         let curve = CompiledAutomationCurve::from_lane(&l);
-        assert!(curve.is_empty(), "both points outside clip window must be discarded");
+        assert!(
+            curve.is_empty(),
+            "both points outside clip window must be discarded"
+        );
     }
 
     #[test]
     fn multi_clip_points_are_merged_and_sorted() {
         let l = AutomationLane {
             id: "m".into(),
-            target: ModulationTargetRef::TrackGain { track_id: "t".into() },
+            target: ModulationTargetRef::TrackGain {
+                track_id: "t".into(),
+            },
             clips: vec![
                 AutomationClip {
                     id: "c1".into(),
                     start_s: 2.0,
                     end_s: 3.0,
-                    points: vec![AutomationPoint { time_s: 2.0, value: 0.2 }],
+                    points: vec![AutomationPoint {
+                        time_s: 2.0,
+                        value: 0.2,
+                    }],
                 },
                 AutomationClip {
                     id: "c2".into(),
                     start_s: 0.0,
                     end_s: 1.0,
-                    points: vec![AutomationPoint { time_s: 0.0, value: 0.0 }],
+                    points: vec![AutomationPoint {
+                        time_s: 0.0,
+                        value: 0.0,
+                    }],
                 },
             ],
             interpolation: InterpolationMode::Linear,
         };
         let curve = CompiledAutomationCurve::from_lane(&l);
         assert_eq!(curve.points.len(), 2);
-        assert!(curve.points[0].time_s < curve.points[1].time_s, "must be sorted by time");
+        assert!(
+            curve.points[0].time_s < curve.points[1].time_s,
+            "must be sorted by time"
+        );
     }
 }
