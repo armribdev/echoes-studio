@@ -40,6 +40,7 @@
 		midiclip_dblclick: { id: string; trackIndex: number };
 		midiclip_activate: { id: string; trackIndex: number };
 		trackdblclick: { offsetPx: number; trackIndex: number };
+		insertsound: { trackIndex: number; clientX: number; clientY: number };
 	}>();
 
 	$: displayClips = buildClipDisplayItems(clips, $pendingImports, trackId);
@@ -47,20 +48,38 @@
 		$midiRecordingPreview?.trackId === trackId
 			? buildPreviewClip($midiRecordingPreview, $transport.position, bpm)
 			: null;
+	$: laneEmpty = displayClips.length === 0 && midiClips.length === 0 && !recordingClip;
+
+	let hovered = false;
 
 	function onTrackDblClick(e: MouseEvent) {
 		const target = e.target;
 		if (!(target instanceof HTMLElement)) return;
-		if (target.closest('.clip, .midi-clip')) return;
+		if (target.closest('.clip, .midi-clip, .lane-insert')) return;
 
 		e.stopPropagation();
 		const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
 		dispatch('trackdblclick', { offsetPx: e.clientX - rect.left, trackIndex });
 	}
+
+	function onInsertClick(e: MouseEvent) {
+		e.stopPropagation();
+		dispatch('insertsound', {
+			trackIndex,
+			clientX: e.clientX,
+			clientY: e.clientY,
+		});
+	}
 </script>
 
 <!-- svelte-ignore a11y-no-static-element-interactions -->
-<div class="track" on:dblclick={onTrackDblClick}>
+<div
+	class="track"
+	class:track--empty={laneEmpty}
+	on:dblclick={onTrackDblClick}
+	on:pointerenter={() => (hovered = true)}
+	on:pointerleave={() => (hovered = false)}
+>
 	{#each displayClips as item (item.key)}
 		<Clip
 			id={item.id}
@@ -119,11 +138,62 @@
 			recording
 		/>
 	{/if}
+
+	{#if laneEmpty || hovered}
+		<button
+			type="button"
+			class="lane-insert"
+			class:lane-insert--empty={laneEmpty}
+			title="Insérer un son"
+			aria-label="Insérer un son"
+			on:click={onInsertClick}
+		>
+			+
+		</button>
+	{/if}
 </div>
 
 <style lang="scss">
+	@use '../variables.scss' as *;
+
 	.track {
 		position: relative;
 		height: 100px;
+	}
+
+	.lane-insert {
+		position: absolute;
+		left: 8px;
+		top: 50%;
+		transform: translateY(-50%);
+		z-index: 5;
+		width: 28px;
+		height: 28px;
+		padding: 0;
+		border: 1px dashed rgba(255, 255, 255, 0.22);
+		border-radius: $radius-md;
+		background: rgba(26, 26, 31, 0.72);
+		color: rgba(247, 247, 249, 0.55);
+		font-size: 18px;
+		font-weight: 400;
+		line-height: 1;
+		cursor: pointer;
+		opacity: 0;
+		transition: opacity 0.12s, color 0.12s, border-color 0.12s, background 0.12s;
+
+		&--empty {
+			opacity: 0.55;
+		}
+
+		.track:hover & {
+			opacity: 1;
+		}
+
+		&:hover {
+			color: $text-color;
+			border-color: rgba($accent-color, 0.65);
+			border-style: solid;
+			background: rgba($accent-color, 0.16);
+		}
 	}
 </style>

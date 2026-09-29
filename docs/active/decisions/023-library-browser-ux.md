@@ -138,3 +138,4 @@ does not silently become a second plugin browser or a full-screen destination.
 | 2026-09-28 | Initial acceptance |
 | 2026-09-28 | Lock Phase 1: right-dock panel, UI WebAudio preview, single Audio source |
 | 2026-09-28 | Lock deferred product calls: raw warp-until-ADR, factory MIDI then rules for chords, compact pop-up, no context memory until P4 opt-in, `B`+`L` alias, empty-project auto-track in P2, preview BPM native then optional UI stretch |
+| 2026-09-30 | **Pop-up = Bitwig dual surface**: same browser UI as the right dock (full list/search/sources/preview), opened from arrange **lane** `+` slot — not a truncated compact list; `+` not beside mute/solo |

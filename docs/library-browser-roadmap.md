@@ -113,7 +113,7 @@ the store ignore the batches of the one before).
 
 | In | Out |
 |----|-----|
-| Pop-up on track `+` / insert — **compact** (search + short list, not full panel clone) | Devices in library |
+| Pop-up on lane `+` — **same browser as dock** (Bitwig dual surface) | Truncated mini-list clone |
 | Contexts: `track_empty`, `track_audio_lane`, `playhead_insert` | `drum_pad`, context memory |
 | Create track + clip when dropping on empty timeline | Warp algorithm |
 | Optional UI-only preview BPM stretch if metadata present | Engine warp |
@@ -122,13 +122,12 @@ the store ignore the batches of the one before).
 
 ### Progress (2026-09-30)
 
-Landed: compact `LibraryPopup` (search + short list + quick sources), triggers from
-track-strip `+`, track context menu « Insérer un son… », and empty-project CTA;
-`Esc` / click-outside via `dismissable`; Enter inserts at playhead; empty project
-creates a track on insert (shared `insertLibraryAsset`); favorite shortcuts
-`F` / `Ctrl+D` and source jump `Ctrl+1…3` when library-focused. Drop-on-empty-timeline
-create-track was already in Phase 1 drag path. Preview BPM stretch and MIDI-lane
-reject matrix deferred (no separate MIDI lane UI yet; audio-only assets).
+Reworked toward Bitwig dual-surface: shared `LibraryBrowser` powers the right
+dock and a large floating pop-up (~440×560). Trigger is arrange **lane** `+`
+(visible on empty / hover) — not mute/solo strip. Context menu and empty-project
+CTA still open the same pop-up. Esc / click-outside dismiss; Enter inserts at
+playhead; empty project creates a track on insert. Preview BPM stretch and
+MIDI-lane reject matrix still deferred.
 
 ### Exit criteria
 
@@ -136,7 +135,7 @@ reject matrix deferred (no separate MIDI lane UI yet; audio-only assets).
 - [x] `Esc` closes pop-up; arrange click-outside cancels
 - [x] Empty project: drop/Enter can create track + clip
 - [x] Defaults match UX §5 without user configuration
-- [ ] Hand-test on a real project (pop-up path &lt; 10 s, Esc/outside, empty project)
+- [ ] Hand-test on a real project (lane `+`, full browser parity, Esc/outside)
 ---
 
 ## Phase 3 — Musical content

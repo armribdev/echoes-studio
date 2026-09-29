@@ -34,7 +34,7 @@
 
 - [ ] **Bibliothèque**
   - [ ] Clôturer la phase 1 (hand-test des critères de sortie ; panneau / DnD / préécoute déjà en place)
-  - [x] Phase 2 (pop-up d'insertion — compact ; `+` piste / menu / projet vide ; create-track à l'insert ; livré 2026-09-30)
+  - [x] Phase 2 (pop-up Bitwig-style = même browser que le dock ; `+` sur lane arrange ; livré 2026-09-30)
   - [ ] Phase 3 (accords / MIDI)
 - [x] **Interface d'automation** : courbes dans l'arrangement, choix du paramètre (livré 2026-09-29 ; hand-test partiel)
 - [x] **Enregistrement MIDI** dans un clip depuis le clavier (ADR-022 amendé ; pas encore hand-testé à l'oreille)

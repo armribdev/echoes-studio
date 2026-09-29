@@ -2079,13 +2079,6 @@
 					on:panchange={() => handlePanChange(trackIndex)}
 					on:panrelease={() => handlePanRelease(trackIndex)}
 					on:rename={(e) => { tracks[trackIndex] = { ...tracks[trackIndex], name: e.detail.name }; tracks = tracks; updateTrack(tracks[trackIndex].id, { name: e.detail.name, volume: tracks[trackIndex].volume }).catch(console.error); }}
-				on:insertsound={(e) =>
-					openLibraryInsertPopup({
-						trackId: track.id,
-						trackIndex,
-						anchorX: e.detail.clientX,
-						anchorY: e.detail.clientY,
-					})}
 				on:openpianoroll={() => {
 					const firstClip = track.midi_clips?.[0];
 					if (firstClip) {
@@ -2265,6 +2258,13 @@
 					on:midiclip_activate={onMidiClipActivate}
 					on:midiclip_contextmenu={onMidiClipContextMenu}
 					on:trackdblclick={handleTrackDoubleClick}
+					on:insertsound={(e) =>
+						openLibraryInsertPopup({
+							trackId: track.id,
+							trackIndex: e.detail.trackIndex,
+							anchorX: e.detail.clientX,
+							anchorY: e.detail.clientY + 8,
+						})}
 				/>
 				{#each track.automation_lanes as lane (lane.id)}
 					<AutomationLane

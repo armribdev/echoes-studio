@@ -56,7 +56,6 @@
 		panchange: void;
 		rename: { name: string };
 		openpianoroll: void;
-		insertsound: { clientX: number; clientY: number };
 	}>();
 
 	function makeEditable(e: MouseEvent) {
@@ -98,14 +97,6 @@
 	<div class="track-head">
 		<!-- svelte-ignore a11y-no-static-element-interactions -->
 		<strong class="track-name" on:dblclick={makeEditable}>{track.name}</strong>
-		<button
-			type="button"
-			class="ms-btn ms-btn--insert"
-			title="Insérer un son"
-			aria-label="Insérer un son"
-			on:click|stopPropagation={(e) =>
-				dispatch('insertsound', { clientX: e.clientX, clientY: e.clientY })}
-		>+</button>
 		<button
 			type="button"
 			class="ms-btn"
@@ -235,17 +226,6 @@
 			background: $accent-color;
 			border-color: $accent-color;
 			color: #fff;
-		}
-
-		&--insert {
-			font-size: 13px;
-			font-weight: 500;
-			color: rgba($text-color, 0.55);
-
-			&:hover {
-				color: $accent-hover;
-				border-color: rgba($accent-color, 0.5);
-			}
 		}
 	}
 

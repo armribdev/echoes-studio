@@ -275,7 +275,7 @@ Current implementation (`Knob.svelte`):
 | Toggle library panel | `B` (alias `L`) |
 | Focus library search | `/` or `Ctrl/Cmd + F` (panel open) |
 | Preview selected library asset | `Space` (when library results focused) |
-| Insert from library pop-up | Track `+` / context menu / empty-project CTA |
+| Insert from library pop-up | Lane `+` (empty/hover) / context menu / empty-project CTA |
 | Toggle library favorite | `F` or `Ctrl/Cmd + D` (library results focused) |
 | Jump library sources 1–3 | `Ctrl/Cmd + 1…3` (library focused) |
 

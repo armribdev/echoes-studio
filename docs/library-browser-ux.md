@@ -254,24 +254,27 @@ or Enter.
 
 Valid target: accent drop line. Invalid: `not-allowed`, lane visually rejects.
 
-### 7.7 Pop-up browser (Phase 2) — opened from track `+`
+### 7.7 Pop-up browser (Phase 2) — opened from lane `+`
 
 ```
-                    Track 1  [+]
-                         │
-         ┌───────────────▼────────────────────┐
-         │ POP-UP · context: track_audio_lane │
-         │ [Search…………]   Quick: Loops Samples│
-         │ Filters: Audio                     │
-         │  Soft Pad Loop                     │
-         │  Dusty Kick                        │
-         │  …                                 │
-         │ Enter = insert at playhead   Esc=× │
-         └────────────────────────────────────┘
+  Track lane (empty / hover)  [+]
+                                 │
+         ┌───────────────────────▼────────────────────────┐
+         │ LIBRARY                         (same as dock) │
+         │ [Search…………]  [+]                              │
+         │ Recents  Favorites  Audio  Add folder…         │
+         │  Soft Pad Loop                                 │
+         │  Dusty Kick                                    │
+         │  …full scrollable list…                        │
+         │ Detail strip                                   │
+         └────────────────────────────────────────────────┘
 ```
 
-Pop-up is modal to pointer/keyboard for the browser only — transport continues;
-clicking arrange outside commits cancel (closes without insert).
+Pop-up is the **same browser engine and UI** as the right dock (Bitwig dual
+surface). It is large enough to search and preview — not a short-list clone.
+Modal to pointer/keyboard for the browser only — transport continues;
+clicking arrange outside cancels (closes without insert). Trigger = `+` on the
+arrange **lane** (slot), not beside mute/solo.
 
 ### 7.8 Reject state (incompatible lane)
 
@@ -397,7 +400,7 @@ project FX). That is accepted.
 | Phase 1 sources | **`audio` + recents + favorites** only (no Samples/Loops split) |
 | Warp on loop drop | **Raw file length** until a dedicated warp ADR (target Phase 3); no UI re-encode hack |
 | Chord expansion | **Factory MIDI files first**; canonical rule-based voicing next; no drop-time editor until demanded |
-| Pop-up (Phase 2) | **Compact**: search + short list + Enter at playhead — not a clone of the docked panel |
+| Pop-up (Phase 2) | **Same browser as the dock** (Bitwig-style): full search + sources + scrollable results + preview — opened from a lane `+` slot. Not a truncated mini-list. |
 | Context memory | **None until Phase 4**, then **opt-in only** (“use current selections…”) — never silent auto-learn |
 | Sampler vs PolySynth | Library does not introduce a sampler; MIDI → PolySynth default |
 | Space conflict | Focus-scope rule (§8.2) — accepted |

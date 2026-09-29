@@ -28,7 +28,7 @@ Les statuts détaillés par sous-système sont dans [`.claude/state_index.md`](.
 
 ### Suite (ordre recommandé)
 
-1. **Bibliothèque** — phase 1 : hand-test des critères de sortie ([`../../library-browser-roadmap.md`](../../library-browser-roadmap.md)). Phase 2 pop-up d'insertion compacte livrée 2026-09-30 (hand-test ouvert). Ensuite phase 3 (accords / MIDI).
+1. **Bibliothèque** — phase 1 : hand-test des critères de sortie ([`../../library-browser-roadmap.md`](../../library-browser-roadmap.md)). Phase 2 pop-up Bitwig-style (même `LibraryBrowser` que le dock, `+` sur lane) livrée 2026-09-30 (hand-test ouvert). Ensuite phase 3 (accords / MIDI).
 2. **UI d'automation** (fin de 5e), par étapes :
    1. ~~Le frontend reflète les lanes (types, reducer, dispatcher)~~ — fait 2026-09-29.
    2. ~~Lane sous la piste dans l'arrangement, « Automatiser un réglage… » au clic droit de la piste (les plugins n'ont pas de boutons dans Echoes), ajout / déplacement / suppression de points avec magnétisme~~ — fait 2026-09-29, à tester à la main.
