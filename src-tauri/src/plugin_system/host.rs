@@ -329,6 +329,7 @@ impl PluginHost {
 
             DeviceFormat::Clap => self.instantiate_clap(node_id, plugin_id, &manifest)?,
 
+            #[cfg(feature = "au")]
             DeviceFormat::Au => {
                 eprintln!("[host] AU not yet implemented for '{plugin_id}' — pass-through");
                 let inst = PluginInstance::new_internal(plugin_id, &manifest.name);
@@ -336,6 +337,7 @@ impl PluginHost {
                 (inst, node)
             }
 
+            #[cfg(feature = "wasm")]
             DeviceFormat::Wasm => {
                 eprintln!("[host] WASM not yet implemented for '{plugin_id}' — pass-through");
                 let inst = PluginInstance::new_internal(plugin_id, &manifest.name);
@@ -979,8 +981,10 @@ fn format_tag(fmt: DeviceFormat) -> String {
     match fmt {
         DeviceFormat::Vst3 => "VST3".into(),
         DeviceFormat::Clap => "CLAP".into(),
+        #[cfg(feature = "au")]
         DeviceFormat::Au => "AU".into(),
         DeviceFormat::Internal => "Internal".into(),
+        #[cfg(feature = "wasm")]
         DeviceFormat::Wasm => "WASM".into(),
     }
 }

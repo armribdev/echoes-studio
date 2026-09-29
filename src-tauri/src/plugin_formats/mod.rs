@@ -6,14 +6,17 @@
 //!
 //! ## Status
 //!
-//! | Format   | Module     | Status                                      |
-//! |----------|------------|---------------------------------------------|
-//! | VST3     | `vst3`     | Interface defined; COM FFI pending          |
-//! | AU       | `au`       | Interface defined; macOS CoreAudio pending  |
-//! | WASM     | `internal` | Interface defined; wasmtime pending         |
+//! | Format   | Module     | Status                                              |
+//! |----------|------------|-----------------------------------------------------|
+//! | VST3     | `vst3`     | Hosted                                              |
+//! | CLAP     | `clap`     | Hosted (in-process or sandboxed)                    |
+//! | AU       | `au`       | Stub behind the `au` feature; CoreAudio pending     |
+//! | WASM     | `internal` | Stub behind the `wasm` feature; wasmtime pending    |
 
+#[cfg(feature = "au")]
 pub mod au;
 pub mod clap;
 pub(crate) mod crash_guard;
+#[cfg(feature = "wasm")]
 pub mod internal;
 pub mod vst3;

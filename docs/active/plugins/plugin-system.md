@@ -281,9 +281,9 @@ legacy field.
 
 Only these files may touch plugin-format specifics:
 - `plugin_formats/vst3/wrapper.rs`
-- `plugin_formats/au/wrapper.rs`
+- `plugin_formats/au/wrapper.rs` (feature `au`)
 - `plugin_formats/clap/wrapper.rs`
-- `plugin_formats/internal/wrapper.rs`
+- `plugin_formats/internal/wrapper.rs` (feature `wasm`)
 - `plugin_system/host.rs` (via format dispatch)
 
 The `audio_graph/compiler.rs` calls `build_node()` which returns

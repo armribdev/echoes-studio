@@ -2125,8 +2125,10 @@ fn format_tag(fmt: DeviceFormat) -> &'static str {
     match fmt {
         DeviceFormat::Vst3 => "VST3",
         DeviceFormat::Clap => "CLAP",
+        #[cfg(feature = "au")]
         DeviceFormat::Au => "AU",
         DeviceFormat::Internal => "interne",
+        #[cfg(feature = "wasm")]
         DeviceFormat::Wasm => "WASM",
     }
 }

@@ -147,6 +147,11 @@ State travels as `IBStream` bytes, not JSON — VST3 spec compliance. See
 
 ## AU Wrapper Responsibilities (macOS)
 
+> **Status (2026-09-29):** AU and WASM are stubs compiled only with the Cargo
+> features `au` / `wasm` (off by default). Without them, `DeviceFormat::Au` /
+> `DeviceFormat::Wasm` do not exist. Nothing produces these formats yet, so no
+> saved project depends on them, and the render path is unaffected (C-10).
+
 The AU wrapper has the same responsibilities as VST3 but adapts to Apple's
 `AudioUnit` C API. Key differences:
 - State is retrieved/set via `AudioUnitGetProperty` / `AudioUnitSetProperty`

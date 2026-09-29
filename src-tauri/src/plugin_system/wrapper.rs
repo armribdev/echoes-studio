@@ -49,8 +49,10 @@ pub struct DeviceInfo {
 pub enum DeviceFormat {
     Internal,
     Vst3,
+    #[cfg(feature = "au")]
     Au,
     Clap,
+    #[cfg(feature = "wasm")]
     Wasm,
 }
 
