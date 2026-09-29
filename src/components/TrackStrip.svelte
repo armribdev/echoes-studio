@@ -97,27 +97,33 @@
 	<div class="track-head">
 		<!-- svelte-ignore a11y-no-static-element-interactions -->
 		<strong class="track-name" on:dblclick={makeEditable}>{track.name}</strong>
-		<button
-			type="button"
-			class="ms-btn"
-			class:active={track.muted}
-			title="Mute"
-			on:click|stopPropagation={() => dispatch('mutetoggle')}
-		>M</button>
-		<button
-			type="button"
-			class="ms-btn"
-			class:active={track.solo}
-			title="Solo"
-			on:click|stopPropagation={() => dispatch('solotoggle')}
-		>S</button>
-		<button
-			type="button"
-			class="ms-btn ms-btn--arm"
-			class:active={armed}
-			title="Armer pour l'entrée MIDI"
-			on:click|stopPropagation={() => dispatch('armtoggle')}
-		>●</button>
+		<div class="ms-group" role="group" aria-label="Mute, solo, armement">
+			<button
+				type="button"
+				class="ms-btn"
+				class:active={track.muted}
+				title="Mute"
+				aria-pressed={track.muted}
+				on:click|stopPropagation={() => dispatch('mutetoggle')}
+			>M</button>
+			<button
+				type="button"
+				class="ms-btn"
+				class:active={track.solo}
+				title="Solo"
+				aria-pressed={track.solo}
+				on:click|stopPropagation={() => dispatch('solotoggle')}
+			>S</button>
+			<button
+				type="button"
+				class="ms-btn ms-btn--arm"
+				class:active={armed}
+				title="Armer pour l'entrée MIDI"
+				aria-pressed={armed}
+				aria-label="Armer pour l'entrée MIDI"
+				on:click|stopPropagation={() => dispatch('armtoggle')}
+			><span class="arm-dot" aria-hidden="true"></span></button>
+		</div>
 	</div>
 
 	<div class="track-controls">
@@ -183,7 +189,7 @@
 		flex-shrink: 0;
 		display: flex;
 		align-items: center;
-		gap: 4px;
+		gap: 6px;
 		padding: 0 6px 0 13px;
 		border-bottom: 1px solid rgba(255, 255, 255, 0.04);
 	}
@@ -202,39 +208,70 @@
 		&:focus { outline: none; }
 	}
 
+	.ms-group {
+		display: inline-flex;
+		flex-shrink: 0;
+		align-items: stretch;
+		height: 20px;
+		border: 1px solid $border-subtle;
+		border-radius: $radius-sm;
+		overflow: hidden;
+	}
+
 	.ms-btn {
 		width: 20px;
-		height: 20px;
-		flex-shrink: 0;
+		height: 100%;
 		padding: 0;
-		border: 1px solid rgba(255, 255, 255, 0.1);
-		border-radius: 3px;
+		border: none;
+		border-right: 1px solid $border-subtle;
+		border-radius: 0;
 		background: transparent;
-		color: rgba($text-color, 0.45);
+		color: $text-subtle;
 		font-size: 10px;
 		font-weight: 700;
+		font-family: inherit;
 		line-height: 1;
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
 		cursor: pointer;
-		transition: background 0.1s, color 0.1s, border-color 0.1s;
+		transition: background 0.1s, color 0.1s;
+
+		&:last-child {
+			border-right: none;
+		}
 
 		&:hover {
 			color: $text-color;
-			border-color: rgba($text-color, 0.35);
+			background: $surface-hover;
 		}
 
 		&.active {
 			background: $accent-color;
-			border-color: $accent-color;
 			color: #fff;
 		}
 	}
 
 	.ms-btn--arm {
-		font-size: 8px;
+		.arm-dot {
+			width: 6px;
+			height: 6px;
+			border-radius: 50%;
+			background: currentColor;
+			opacity: 0.55;
+		}
 
 		&.active {
 			background: #e5484d;
-			border-color: #e5484d;
+			color: #fff;
+
+			.arm-dot {
+				opacity: 1;
+			}
+		}
+
+		&:hover .arm-dot {
+			opacity: 1;
 		}
 	}
 
