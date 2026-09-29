@@ -253,12 +253,13 @@ function createPendingImports() {
 			}
 		},
 
-		remove(id: string) {
-			if (dragLocked.has(id)) {
+		remove(id: string, opts?: { force?: boolean }) {
+			if (!opts?.force && dragLocked.has(id)) {
 				removeWhenUnlocked.add(id);
 				resolvePaint(id);
 				return;
 			}
+			removeWhenUnlocked.delete(id);
 			removeNow(id);
 		},
 
