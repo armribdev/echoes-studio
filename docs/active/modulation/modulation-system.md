@@ -221,7 +221,10 @@ a single per-frame float array regardless of source.
 edits a lane as a single clip from 0 s to its last point (`laneClipFor`), since
 the engine drops points outside their clip window; each gesture sends one
 `UPDATE_AUTOMATION_CLIP` (one undo step). Times are in seconds, so points do not
-follow a tempo change.
+follow a tempo change. The pencil (`Ctrl/Cmd` + drag) samples one value per
+pixel column and simplifies the stroke with Ramer–Douglas–Peucker (1.5 px
+tolerance) before sending it. Displayed values are `min + v × (max − min)` in
+the plugin's plain range — the plugin's own text formatting is not queried.
 
 ---
 

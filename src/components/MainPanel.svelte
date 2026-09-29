@@ -455,7 +455,10 @@
 		updateInstrumentsOverflow();
 		instrumentsResizeObserver?.disconnect();
 		if (typeof ResizeObserver !== 'undefined') {
-			instrumentsResizeObserver = new ResizeObserver(updateInstrumentsOverflow);
+			instrumentsResizeObserver = new ResizeObserver(() => {
+				updateInstrumentsOverflow();
+				updateArrangeBottomPad();
+			});
 			instrumentsResizeObserver.observe(instrumentsEl);
 		}
 	}
@@ -467,6 +470,7 @@
 		if (typeof ResizeObserver !== 'undefined') {
 			tracksResizeObserver = new ResizeObserver(() => {
 				updateArrangeScrollbars();
+				updateArrangeBottomPad();
 				tryPendingArrangeFitZoom();
 			});
 			tracksResizeObserver.observe(tracksEl);
@@ -494,6 +498,20 @@
 	let instrumentsOverflow = false;
 	let instrumentsResizeObserver: ResizeObserver | undefined;
 	let arrangeRulerEl: HTMLDivElement;
+
+	/** Extra arrange height so both columns scroll the same distance (the track list is shorter by its footer). */
+	let arrangeBottomPadPx = 0;
+
+	function updateArrangeBottomPad() {
+		if (!tracksEl || !instrumentsEl) return;
+		arrangeBottomPadPx = Math.max(0, tracksEl.clientHeight - instrumentsEl.clientHeight);
+	}
+
+	function onInstrumentsScroll() {
+		if (tracksEl && instrumentsEl && tracksEl.scrollTop !== instrumentsEl.scrollTop) {
+			tracksEl.scrollTop = instrumentsEl.scrollTop;
+		}
+	}
 
 	function updateInstrumentsOverflow() {
 		if (!instrumentsEl) {
@@ -601,6 +619,9 @@
 		if (!tracksEl) return;
 		tracksScrollTop = tracksEl.scrollTop;
 		tracksScrollLeft = tracksEl.scrollLeft;
+		if (instrumentsEl && instrumentsEl.scrollTop !== tracksEl.scrollTop) {
+			instrumentsEl.scrollTop = tracksEl.scrollTop;
+		}
 		updateArrangeScrollbars();
 	}
 
@@ -1994,7 +2015,7 @@
 <div class="container">
 	<div class="left-panel">
 		<div class="ruler-spacer"></div>
-		<div class="instruments" bind:this={instrumentsEl}>
+		<div class="instruments" bind:this={instrumentsEl} on:scroll={onInstrumentsScroll}>
 			{#each tracks as track, trackIndex}
 				<TrackStrip
 					{track}
@@ -2092,7 +2113,7 @@
 				<div
 					class="tracks-inner"
 					bind:this={tracksInnerEl}
-					style="width: {effectiveContentWidthPx}px; min-width: {effectiveContentWidthPx}px"
+					style="width: {effectiveContentWidthPx}px; min-width: {effectiveContentWidthPx}px; min-height: calc(100% - {arrangeBottomPadPx}px); padding-bottom: {arrangeBottomPadPx}px"
 				>
 			{#if $loopRegion.enabled}
 				<div

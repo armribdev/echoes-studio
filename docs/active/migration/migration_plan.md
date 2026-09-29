@@ -32,7 +32,7 @@ Les statuts détaillés par sous-système sont dans [`.claude/state_index.md`](.
 2. **UI d'automation** (fin de 5e), par étapes :
    1. ~~Le frontend reflète les lanes (types, reducer, dispatcher)~~ — fait 2026-09-29.
    2. ~~Lane sous la piste dans l'arrangement, « Automatiser un réglage… » au clic droit de la piste (les plugins n'ont pas de boutons dans Echoes), ajout / déplacement / suppression de points avec magnétisme~~ — fait 2026-09-29, à tester à la main.
-   3. Confort : crayon (tracé simplifié), formes rapides, valeur réelle affichée, réglage qui suit la courbe en lecture.
+   3. Confort : ~~crayon (tracé simplifié), valeur affichée au survol et au glisser, défilement vertical synchronisé entre pistes et arrangement~~ — fait 2026-09-29. Reste : choix linéaire / escalier par lane (demande une commande moteur `UPDATE_AUTOMATION_LANE`), formes rapides, texte de valeur fourni par le plugin (CLAP `value_to_text`).
    4. Écriture en direct (demande de remonter les événements de sortie du plugin, limite notée dans ADR-021).
 
    Première tranche : **paramètres de plugins CLAP uniquement** (automation absolue, pas d'ADR). Le volume de piste et les effets internes suivront avec un ADR : leur automation est aujourd'hui additive en unités natives (ADR-021, « Alternatives »), donc une courbe 0…1 n'y a pas de sens pour l'utilisateur.

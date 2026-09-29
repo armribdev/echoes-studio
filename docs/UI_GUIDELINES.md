@@ -261,6 +261,8 @@ Current implementation (`Knob.svelte`):
 | Move a point | Drag it (snaps to the grid) |
 | Move without snapping | Hold `Alt` while dragging |
 | Delete a point | Double-click it |
+| Draw freehand (pencil) | `Ctrl/Cmd` + drag in the lane — replaces the points under the stroke, simplified on the fly |
+| See a point's value | Hover or drag it (plugin units, or % for a 0…1 range) |
 
 **Navigation**
 | Action | Shortcut |
