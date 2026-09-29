@@ -76,9 +76,14 @@ into view.
 
 Remaining: hand-test the exit criteria below on a real large folder (notably
 the &lt; 10 s path and “full scan never blocks first paint”). Known gaps found
-in review: a rescan never drops files deleted from disk, and the “Drop on
-MIDI-focused lane” criterion is moot until lane focus exists (tracks are
-unified; only drops outside the arrange area are rejected).
+in review: the “Drop on MIDI-focused lane” criterion is moot until lane focus
+exists (tracks are unified; only drops outside the arrange area are rejected).
+
+Also 2026-09-29: a finished folder scan now drops the assets it no longer
+found under that folder (files deleted or moved). A failed scan — e.g. an
+unplugged drive — keeps the existing entries. Scans are tracked per folder, so
+several indexed folders now all load at startup (previously a newer scan made
+the store ignore the batches of the one before).
 
 ### Exit criteria
 

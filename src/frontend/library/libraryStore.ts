@@ -76,9 +76,16 @@ function mergeAsset(map: Record<string, LibraryAsset>, asset: LibraryAsset): Rec
 	return { ...map, [asset.id]: mergedAsset(map[asset.id], asset) };
 }
 
+function isInsideFolder(path: string, folderPath: string): boolean {
+	const normalize = (p: string) => p.replace(/\\/g, '/').toLowerCase();
+	const base = normalize(folderPath).replace(/\/+$/, '');
+	return normalize(path).startsWith(`${base}/`);
+}
+
 function createLibraryStore() {
 	const { subscribe, update, set } = writable<LibraryState>(initialState());
 
+	const activeScans = new Map<number, { folderPath: string; seenIds: Set<string> }>();
 	let scanUnlisteners: UnlistenFn[] = [];
 	let hoverTimer: ReturnType<typeof setTimeout> | null = null;
 	let hydrated = false;
@@ -94,19 +101,49 @@ function createLibraryStore() {
 		update((s) => (s.previewingId == null ? s : { ...s, previewingId: null }));
 	});
 
+	function failScan(message: string) {
+		update((s) => ({
+			...s,
+			indexer: 'error',
+			indexerError: message,
+			indexerProgress: null,
+		}));
+	}
+
+	async function startScan(folderPath: string) {
+		await ensureScanListeners();
+		const token = get({ subscribe }).scanToken + 1;
+		activeScans.set(token, { folderPath, seenIds: new Set() });
+		update((s) => ({
+			...s,
+			scanToken: token,
+			indexer: 'scanning',
+			indexerProgress: 0,
+			indexerError: null,
+		}));
+		try {
+			await invoke('scan_library_folder', { folderPath, token });
+		} catch (e) {
+			activeScans.delete(token);
+			failScan(e instanceof Error ? e.message : String(e));
+		}
+	}
+
 	async function ensureScanListeners() {
 		if (scanUnlisteners.length > 0) return;
 		scanUnlisteners = await Promise.all([
 			listen<{ token: number; entries: LibraryScanEntry[]; progress: number }>(
 				'library://scan-batch',
 				({ payload }) => {
+					const scan = activeScans.get(payload.token);
+					if (!scan) return;
 					update((s) => {
-						if (payload.token !== s.scanToken) return s;
 						const assetsById = { ...s.assetsById };
 						const knownIds = new Set(s.audioIds);
 						const newIds: string[] = [];
 						for (const entry of payload.entries) {
 							const asset = assetFromScanEntry(entry);
+							scan.seenIds.add(asset.id);
 							assetsById[asset.id] = mergedAsset(assetsById[asset.id], asset);
 							if (!knownIds.has(asset.id)) {
 								knownIds.add(asset.id);
@@ -125,26 +162,28 @@ function createLibraryStore() {
 				},
 			),
 			listen<{ token: number; total: number }>('library://scan-done', ({ payload }) => {
+				const scan = activeScans.get(payload.token);
+				if (!scan) return;
+				activeScans.delete(payload.token);
 				update((s) => {
-					if (payload.token !== s.scanToken) return s;
+					const missingIds = new Set(
+						s.audioIds.filter((id) => isInsideFolder(id, scan.folderPath) && !scan.seenIds.has(id)),
+					);
+					const assetsById = { ...s.assetsById };
+					for (const id of missingIds) delete assetsById[id];
 					return {
 						...s,
-						indexer: 'ready',
+						assetsById,
+						audioIds: missingIds.size > 0 ? s.audioIds.filter((id) => !missingIds.has(id)) : s.audioIds,
+						indexer: activeScans.size > 0 ? 'scanning' : 'ready',
 						indexerProgress: 1,
 						indexerError: null,
 					};
 				});
 			}),
 			listen<{ token: number; message: string }>('library://scan-error', ({ payload }) => {
-				update((s) => {
-					if (payload.token !== s.scanToken) return s;
-					return {
-						...s,
-						indexer: 'error',
-						indexerError: payload.message,
-						indexerProgress: null,
-					};
-				});
+				if (!activeScans.delete(payload.token)) return;
+				failScan(payload.message);
 			}),
 		]);
 	}
@@ -238,62 +277,18 @@ function createLibraryStore() {
 		},
 
 		async addFolder(folderPath: string) {
-			await ensureScanListeners();
 			update((s) => {
-				const indexedFolders = s.indexedFolders.includes(folderPath)
-					? s.indexedFolders
-					: [...s.indexedFolders, folderPath];
-				const scanToken = s.scanToken + 1;
-				const next = {
-					...s,
-					indexedFolders,
-					scanToken,
-					indexer: 'scanning' as const,
-					indexerProgress: 0,
-					indexerError: null,
-				};
+				if (s.indexedFolders.includes(folderPath)) return s;
+				const next = { ...s, indexedFolders: [...s.indexedFolders, folderPath] };
 				persistSlice(next);
 				return next;
 			});
-			const token = get({ subscribe }).scanToken;
-			try {
-				await invoke('scan_library_folder', { folderPath, token });
-			} catch (e) {
-				update((s) => ({
-					...s,
-					indexer: 'error',
-					indexerError: e instanceof Error ? e.message : String(e),
-					indexerProgress: null,
-				}));
-			}
+			await startScan(folderPath);
 		},
 
 		async rescanIndexedFolders() {
-			const folders = [...get({ subscribe }).indexedFolders];
-			for (const folderPath of folders) {
-				await ensureScanListeners();
-				update((s) => {
-					const scanToken = s.scanToken + 1;
-					return {
-						...s,
-						scanToken,
-						indexer: 'scanning',
-						indexerProgress: 0,
-						indexerError: null,
-					};
-				});
-				const token = get({ subscribe }).scanToken;
-				try {
-					await invoke('scan_library_folder', { folderPath, token });
-				} catch (e) {
-					update((s) => ({
-						...s,
-						indexer: 'error',
-						indexerError: e instanceof Error ? e.message : String(e),
-						indexerProgress: null,
-					}));
-					return;
-				}
+			for (const folderPath of get({ subscribe }).indexedFolders) {
+				await startScan(folderPath);
 			}
 		},
 
