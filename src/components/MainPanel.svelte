@@ -54,6 +54,7 @@
 		arrangeMaxBarsHeld,
 		arrangeMinLogScale,
 		arrangeViewportExpandToRange,
+		arrangeViewportContractAfterShrink,
 		arrangeVisibleMaxBars,
 		clipsInArrangeSelbox,
 		easeOutCubic,
@@ -221,6 +222,8 @@
 
 		cancelArrangeViewAnim();
 		importFitSignature.clear();
+		arrangeTimelineFollowReady = false;
+		prevArrangeTimelineEndSec = 0;
 		pendingArrangeFitZoom = true;
 		await tick();
 		requestAnimationFrame(() => tryPendingArrangeFitZoom());
@@ -379,6 +382,7 @@
 	$: arrangeContentWidthPx = arrangeTotalBeats * pxPerBeat;
 	$: arrangeTimelineEndSec = (arrangeMaxBars * $tempo.numerator * 60) / $tempo.bpm;
 	$: $pendingImports, arrangeTimelineEndSec, tracksEl, void tick().then(() => {
+		followArrangeTimelineEndChange(arrangeTimelineEndSec);
 		followImportsIntoView($pendingImports, arrangeTimelineEndSec);
 	});
 	// While repeat-dragging past the current arrangement end, the scrollable area must
@@ -614,17 +618,19 @@
 
 	function enforceArrangeMinZoom() {
 		if (!tracksEl) return;
+		if (arrangeViewAnimRaf) return;
 		const floor = arrangeLogScaleFloor();
 		if (logScale >= floor) return;
-		logScale = floor;
-		tracksEl.scrollLeft = 0;
-		tracksScrollLeft = 0;
+		// Raccourcissement timeline (removeClip) : animer vers le nouveau plancher.
+		animateArrangeView(Math.exp(floor), 0);
 	}
 
 	const ARRANGE_IMPORT_FIT_MS = 280;
 	/** Dernière plage déjà traitée par import (évite de rejouer l'anim à chaque tick). */
 	const importFitSignature = new Map<string, string>();
 	let arrangeViewAnimRaf = 0;
+	let prevArrangeTimelineEndSec = 0;
+	let arrangeTimelineFollowReady = false;
 
 	function cancelArrangeViewAnim() {
 		if (arrangeViewAnimRaf) {
@@ -679,6 +685,45 @@
 			}
 		};
 		arrangeViewAnimRaf = requestAnimationFrame(step);
+	}
+
+	function followArrangeTimelineEndChange(timelineEndSec: number) {
+		if (!tracksEl || tracksEl.clientWidth <= 0) return;
+		if (
+			pendingArrangeFitZoom ||
+			dragging ||
+			midiDragging ||
+			resizing ||
+			repeating ||
+			arrangeMaxBarsHold != null
+		) {
+			prevArrangeTimelineEndSec = timelineEndSec;
+			return;
+		}
+		if (!arrangeTimelineFollowReady) {
+			prevArrangeTimelineEndSec = timelineEndSec;
+			arrangeTimelineFollowReady = true;
+			return;
+		}
+
+		const prevEnd = prevArrangeTimelineEndSec;
+		prevArrangeTimelineEndSec = timelineEndSec;
+		if (timelineEndSec >= prevEnd - 1e-6) return;
+
+		const viewStartSec = tracksScrollLeft / scale;
+		const viewEndSec = (tracksScrollLeft + tracksEl.clientWidth) / scale;
+		const next = arrangeViewportContractAfterShrink({
+			newTimelineEndSec: timelineEndSec,
+			prevTimelineEndSec: prevEnd,
+			viewStartSec,
+			viewEndSec,
+			viewportWidthPx: tracksEl.clientWidth,
+			currentScale: scale,
+			minScale: Math.exp(arrangeLogScaleFloor()),
+			maxScale: Math.exp(LOG_MAX),
+		});
+		if (!next) return;
+		animateArrangeView(next.scale, next.scrollLeft);
 	}
 
 	function followImportsIntoView(

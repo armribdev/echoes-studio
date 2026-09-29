@@ -126,6 +126,82 @@ export function arrangeViewportExpandToRange(opts: {
 	return { scale, scrollLeft, viewStartSec: fittedStart, viewEndSec: fittedEnd };
 }
 
+/**
+ * Après un remove qui raccourcit la timeline : resserre la vue (zoom avant)
+ * si l'ancienne fin était visible / la vue débordait au-delà de la nouvelle fin.
+ * Ancré à gauche ; retourne null si rien à changer.
+ */
+export function arrangeViewportContractAfterShrink(opts: {
+	newTimelineEndSec: number;
+	prevTimelineEndSec: number;
+	viewStartSec: number;
+	viewEndSec: number;
+	viewportWidthPx: number;
+	currentScale: number;
+	minScale: number;
+	maxScale: number;
+}): { scale: number; scrollLeft: number } | null {
+	const {
+		newTimelineEndSec,
+		prevTimelineEndSec,
+		viewStartSec,
+		viewEndSec,
+		viewportWidthPx,
+		currentScale,
+		minScale,
+		maxScale,
+	} = opts;
+
+	if (viewportWidthPx <= 0 || currentScale <= 0) return null;
+	if (newTimelineEndSec >= prevTimelineEndSec - 1e-9) return null;
+
+	const epsSec = 2 / currentScale;
+	const oldEndWasVisible = viewEndSec >= prevTimelineEndSec - epsSec;
+	const viewPastNewEnd = viewEndSec > newTimelineEndSec + epsSec;
+	const belowNewFloor = currentScale < minScale - 1e-9;
+
+	if (!oldEndWasVisible && !viewPastNewEnd && !belowNewFloor) {
+		const maxScroll = Math.max(0, newTimelineEndSec * currentScale - viewportWidthPx);
+		if (viewStartSec * currentScale <= maxScroll + 0.5) return null;
+		return {
+			scale: currentScale,
+			scrollLeft: maxScroll,
+		};
+	}
+
+	const targetEnd = Math.max(newTimelineEndSec, 1e-6);
+	let left = Math.min(viewStartSec, targetEnd);
+	if (left < 0) left = 0;
+
+	// Si on était au dézoom max (vue ≈ toute la timeline), recentrer sur [0, newEnd].
+	const wasFullSpan =
+		viewStartSec <= epsSec && Math.abs(viewEndSec - prevTimelineEndSec) <= epsSec * 4;
+	if (wasFullSpan || belowNewFloor) {
+		left = 0;
+	}
+
+	const spanSec = Math.max(targetEnd - left, 1e-9);
+	let scale = viewportWidthPx / spanSec;
+	scale = Math.min(maxScale, Math.max(minScale, scale));
+	// Uniquement resserrer (zoom avant) ou pan — pas dézoomer davantage.
+	if (scale < currentScale - 1e-12 && !belowNewFloor) {
+		scale = currentScale;
+	}
+
+	let scrollLeft = Math.max(0, left * scale);
+	const maxScroll = Math.max(0, targetEnd * scale - viewportWidthPx);
+	scrollLeft = Math.min(scrollLeft, maxScroll);
+
+	if (
+		Math.abs(scale - currentScale) < 1e-4 &&
+		Math.abs(scrollLeft - viewStartSec * currentScale) < 0.5
+	) {
+		return null;
+	}
+
+	return { scale, scrollLeft };
+}
+
 export function easeOutCubic(t: number): number {
 	const x = Math.min(1, Math.max(0, t));
 	return 1 - (1 - x) ** 3;
