@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use tauri::{AppHandle, Emitter};
 
 const AUDIO_EXTS: &[&str] = &["wav", "mp3", "flac", "ogg", "oga"];
-const BATCH_SIZE: usize = 64;
+const BATCH_SIZE: usize = 1000;
 const MAX_DEPTH: usize = 12;
 const MAX_FILES: usize = 50_000;
 

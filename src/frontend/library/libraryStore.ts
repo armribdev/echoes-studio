@@ -63,17 +63,17 @@ function persistSlice(state: LibraryState): void {
 	saveLibraryPersistence(data);
 }
 
-function mergeAsset(map: Record<string, LibraryAsset>, asset: LibraryAsset): Record<string, LibraryAsset> {
-	const prev = map[asset.id];
-	if (!prev) return { ...map, [asset.id]: asset };
+function mergedAsset(previous: LibraryAsset | undefined, asset: LibraryAsset): LibraryAsset {
+	if (!previous) return asset;
 	return {
-		...map,
-		[asset.id]: {
-			...prev,
-			...asset,
-			durationSec: asset.durationSec ?? prev.durationSec,
-		},
+		...previous,
+		...asset,
+		durationSec: asset.durationSec ?? previous.durationSec,
 	};
+}
+
+function mergeAsset(map: Record<string, LibraryAsset>, asset: LibraryAsset): Record<string, LibraryAsset> {
+	return { ...map, [asset.id]: mergedAsset(map[asset.id], asset) };
 }
 
 function createLibraryStore() {
@@ -102,21 +102,21 @@ function createLibraryStore() {
 				({ payload }) => {
 					update((s) => {
 						if (payload.token !== s.scanToken) return s;
-						let assetsById = s.assetsById;
-						const audioIds = [...s.audioIds];
-						const seen = new Set(audioIds);
+						const assetsById = { ...s.assetsById };
+						const knownIds = new Set(s.audioIds);
+						const newIds: string[] = [];
 						for (const entry of payload.entries) {
 							const asset = assetFromScanEntry(entry);
-							assetsById = mergeAsset(assetsById, asset);
-							if (!seen.has(asset.id)) {
-								seen.add(asset.id);
-								audioIds.push(asset.id);
+							assetsById[asset.id] = mergedAsset(assetsById[asset.id], asset);
+							if (!knownIds.has(asset.id)) {
+								knownIds.add(asset.id);
+								newIds.push(asset.id);
 							}
 						}
 						return {
 							...s,
 							assetsById,
-							audioIds,
+							audioIds: [...s.audioIds, ...newIds],
 							indexer: 'scanning',
 							indexerProgress: payload.progress,
 							indexerError: null,

@@ -67,8 +67,18 @@ friction).
 Landed: right-dock panel and source management, drag-and-drop to arrange with
 keyboard shortcuts, UI preview player, plus the audio import pipeline it relies
 on (progressive peaks/PCM, cancellation, focus of imported clips — ADR-024).
-Remaining: check every exit criterion below (notably the &lt; 10 s path and the
-“full scan never blocks first paint” item).
+2026-09-29 — scan-scalability pass (code-verified, not yet hand-tested on a
+large folder): the indexer emits batches of 1000 (was 64), the store copies its
+index once per batch instead of once per entry, and the results list is
+windowed (fixed 24 px rows, ~viewport + overscan in the DOM) so a 50 000-file
+folder no longer mounts 50 000 rows. Keyboard navigation scrolls the selection
+into view.
+
+Remaining: hand-test the exit criteria below on a real large folder (notably
+the &lt; 10 s path and “full scan never blocks first paint”). Known gaps found
+in review: a rescan never drops files deleted from disk, and the “Drop on
+MIDI-focused lane” criterion is moot until lane focus exists (tracks are
+unified; only drops outside the arrange area are rejected).
 
 ### Exit criteria
 

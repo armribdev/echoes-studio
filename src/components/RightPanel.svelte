@@ -41,6 +41,38 @@
 			null
 		: null;
 
+	const ROW_HEIGHT = 24;
+	const LIST_PADDING = 4;
+	const ROW_OVERSCAN = 10;
+	let scrollTop = 0;
+	let viewportHeight = 0;
+
+	$: firstRow = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - ROW_OVERSCAN);
+	$: lastRow = Math.min(
+		visible.length,
+		Math.ceil((scrollTop + viewportHeight) / ROW_HEIGHT) + ROW_OVERSCAN,
+	);
+	$: renderedRows = visible.slice(firstRow, lastRow);
+
+	function moveSelection(delta: number) {
+		libraryStore.moveSelection(delta, visible.map((a) => a.id));
+		scrollSelectionIntoView();
+	}
+
+	function scrollSelectionIntoView() {
+		const selectedId = libraryStore.getSelectedAsset()?.id;
+		if (!selectedId || !resultsEl) return;
+		const index = visible.findIndex((a) => a.id === selectedId);
+		if (index < 0) return;
+		const rowTop = LIST_PADDING + index * ROW_HEIGHT;
+		const rowBottom = rowTop + ROW_HEIGHT;
+		if (rowTop < resultsEl.scrollTop) {
+			resultsEl.scrollTop = rowTop;
+		} else if (rowBottom > resultsEl.scrollTop + resultsEl.clientHeight) {
+			resultsEl.scrollTop = rowBottom - resultsEl.clientHeight;
+		}
+	}
+
 	let lastFocusTick = 0;
 	$: if ($rightPanel.open && $libraryFocusSearchTick !== lastFocusTick) {
 		lastFocusTick = $libraryFocusSearchTick;
@@ -238,15 +270,14 @@
 	}
 
 	function onResultsKeydown(e: KeyboardEvent) {
-		const ids = visible.map((a) => a.id);
 		if (e.key === 'ArrowDown') {
 			e.preventDefault();
-			libraryStore.moveSelection(1, ids);
+			moveSelection(1);
 			return;
 		}
 		if (e.key === 'ArrowUp') {
 			e.preventDefault();
-			libraryStore.moveSelection(-1, ids);
+			moveSelection(-1);
 			return;
 		}
 		if (e.key === 'Enter' && $libraryStore.selectedId) {
@@ -288,7 +319,7 @@
 			e.preventDefault();
 			resultsEl?.focus();
 			keyboardFocus.setLibraryResults();
-			libraryStore.moveSelection(1, visible.map((a) => a.id));
+			moveSelection(1);
 		}
 	}
 
@@ -391,24 +422,27 @@
 							<p class="empty-tip">Tip: Drop audio on a track or press B anytime</p>
 						</div>
 					{:else}
+						{#if $libraryStore.query}
+							<div class="results-meta">
+								{LIBRARY_SOURCE_LABELS[$libraryStore.source]} · {visible.length} result{visible.length === 1 ? '' : 's'}
+							</div>
+						{/if}
+
 						<!-- svelte-ignore a11y-no-noninteractive-tabindex -->
 						<div
 							class="file-list"
 							bind:this={resultsEl}
+							bind:clientHeight={viewportHeight}
 							tabindex="0"
 							role="listbox"
 							aria-label="Library results"
+							on:scroll={() => (scrollTop = resultsEl?.scrollTop ?? 0)}
 							on:focus={() => keyboardFocus.setLibraryResults()}
 							on:keydown={onResultsKeydown}
 							on:mousedown={() => keyboardFocus.setLibraryResults()}
+							style="padding-top: {LIST_PADDING + firstRow * ROW_HEIGHT}px; padding-bottom: {LIST_PADDING + (visible.length - lastRow) * ROW_HEIGHT}px"
 						>
-							{#if $libraryStore.query}
-								<div class="results-meta">
-									{LIBRARY_SOURCE_LABELS[$libraryStore.source]} · {visible.length} result{visible.length === 1 ? '' : 's'}
-								</div>
-							{/if}
-
-							{#each visible as asset (asset.id)}
+							{#each renderedRows as asset (asset.id)}
 								{@const isImporting =
 									$audioImportProgress.activeCount > 0 &&
 									$audioImportProgress.filePath != null &&
@@ -729,7 +763,9 @@
 		display: flex;
 		align-items: center;
 		gap: 4px;
-		padding: 3px 6px 3px 4px;
+		box-sizing: border-box;
+		height: 24px;
+		padding: 0 6px 0 4px;
 		cursor: grab;
 		user-select: none;
 		touch-action: none;
