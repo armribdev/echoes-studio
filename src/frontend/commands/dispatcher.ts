@@ -38,6 +38,9 @@ import {
   type SetLoopPayload,
   type SetModulationDepthPayload,
   type AddModulationRoutePayload,
+  type AddAutomationLanePayload,
+  type RemoveAutomationLanePayload,
+  type UpdateAutomationClipPayload,
   type AddModulatorPayload,
   type SetTrackInputPayload,
   type SetTrackInstrumentPayload,
@@ -412,6 +415,41 @@ export function setModulationDepth(
     track_id: trackId,
     route_id: routeId,
     depth,
+  });
+}
+
+// ── Automation commands ───────────────────────────────────────────────────────
+
+export function addAutomationLane(
+  trackId: string,
+  targetKind: AddAutomationLanePayload['target_kind'],
+  param: string,
+  effectId?: string,
+): Promise<CommandResult> {
+  return dispatch<AddAutomationLanePayload>(cmd.ADD_AUTOMATION_LANE, {
+    track_id: trackId,
+    target_kind: targetKind,
+    param,
+    effect_id: effectId,
+  });
+}
+
+export function removeAutomationLane(trackId: string, laneId: string): Promise<CommandResult> {
+  return dispatch<RemoveAutomationLanePayload>(cmd.REMOVE_AUTOMATION_LANE, {
+    track_id: trackId,
+    lane_id: laneId,
+  });
+}
+
+export function updateAutomationClip(
+  trackId: string,
+  laneId: string,
+  clip: UpdateAutomationClipPayload['clip'],
+): Promise<CommandResult> {
+  return dispatch<UpdateAutomationClipPayload>(cmd.UPDATE_AUTOMATION_CLIP, {
+    track_id: trackId,
+    lane_id: laneId,
+    clip,
   });
 }
 

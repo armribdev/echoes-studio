@@ -100,6 +100,28 @@ export interface ProjectModulationRoute {
 	depth: number;
 }
 
+export type InterpolationMode = 'linear' | 'step';
+
+export interface AutomationPoint {
+	time_s: number;
+	/** Normalised parameter value [0..1]. */
+	value: number;
+}
+
+export interface AutomationClip {
+	id: string;
+	start_s: number;
+	end_s: number;
+	points: AutomationPoint[];
+}
+
+export interface AutomationLane {
+	id: string;
+	target: ModulationTargetRef;
+	clips: AutomationClip[];
+	interpolation: InterpolationMode;
+}
+
 export interface MidiNote {
 	id: string;
 	pitch: number;
@@ -152,6 +174,7 @@ export interface Track {
 	mod_routes: ProjectModulationRoute[];
 	midi_notes: MidiNote[];
 	midi_clips: MidiClip[];
+	automation_lanes: AutomationLane[];
 }
 
 export interface Clip {

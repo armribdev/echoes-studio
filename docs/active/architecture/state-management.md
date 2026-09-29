@@ -31,7 +31,7 @@ what the user *decided* about their project, not what the audio engine is doing.
 | `TRACK_INPUT_SET` | Structural, undoable, recompiles. Sets `AppTrack.input_source` — an aux output of a multi-out plugin fed into the track (`null` clears it; absent in older projects = none). ADR-014 |
 | `TEMPO_UPDATED` | Structural, affects rendering |
 | `PROJECT_NAME_UPDATED` | Structural |
-| Automation curves (future) | Structural, undoable |
+| `AUTOMATION_LANE_ADDED` / `AUTOMATION_LANE_REMOVED` / `AUTOMATION_CLIP_UPDATED` | Structural, undoable, recompile (ADR-021). `AUTOMATION_CLIP_UPDATED` replaces the clip with the same id or adds it. Mirrored in the frontend reducer (`TrackState.automation_lanes`) since 2026-09-29; no editing UI yet |
 | FX routing (future) | Structural, undoable |
 
 ### What is NOT event-sourced

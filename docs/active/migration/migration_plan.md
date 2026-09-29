@@ -20,7 +20,7 @@ Les statuts détaillés par sous-système sont dans [`.claude/state_index.md`](.
 | 3 Param transport + `ParameterBlock` | livré | ADR-008, ADR-009, ADR-017 |
 | 4 Séparation DSP/UI + état plugin | livré | ADR-010 (sauvegarde/restauration d'état) |
 | 5a–5e PortKind, MIDI en beats, instruments CLAP, capabilities→compilateur, modulateurs | livré côté moteur | ADR-011 à 014, 019, 021 ; sidechain + multi-sorties CLAP réels |
-| 5e automation | moteur livré (`audio_graph/automation.rs`, commandes `*_AUTOMATION_*`), **aucune UI** | voir « Suite » |
+| 5e automation | moteur livré (`audio_graph/automation.rs`, commandes `*_AUTOMATION_*`) ; le frontend reflète les lanes (2026-09-29), **pas encore d'UI d'édition** | voir « Suite » |
 | 5f Entrée MIDI matérielle | livré (notes uniquement) | ADR-022 |
 | 6 Sandbox | stable pour effets et instruments CLAP, opt-in | ADR-015 |
 | V1 Harnais C-2 | livré sous forme légère | `audio_engine/render_harness.rs` |
@@ -29,7 +29,13 @@ Les statuts détaillés par sous-système sont dans [`.claude/state_index.md`](.
 ### Suite (ordre recommandé)
 
 1. **Clôturer la bibliothèque phase 1** — critères de sortie de [`../../library-browser-roadmap.md`](../../library-browser-roadmap.md), dont le test « loop audible en < 10 s ». Puis phases 2 (pop-up) et 3 (accords / MIDI).
-2. **UI d'automation** (fin de 5e) — courbes dans l'arrangement, choix du paramètre à automatiser. Le moteur est prêt, aucun ADR nécessaire a priori.
+2. **UI d'automation** (fin de 5e), par étapes :
+   1. ~~Le frontend reflète les lanes (types, reducer, dispatcher)~~ — fait 2026-09-29.
+   2. Lane sous la piste dans l'arrangement, « Automatiser » au clic droit d'un réglage, ajout / déplacement de points avec magnétisme.
+   3. Confort : crayon (tracé simplifié), formes rapides, valeur réelle affichée, réglage qui suit la courbe en lecture.
+   4. Écriture en direct (demande de remonter les événements de sortie du plugin, limite notée dans ADR-021).
+
+   Première tranche : **paramètres de plugins CLAP uniquement** (automation absolue, pas d'ADR). Le volume de piste et les effets internes suivront avec un ADR : leur automation est aujourd'hui additive en unités natives (ADR-021, « Alternatives »), donc une courbe 0…1 n'y a pas de sens pour l'utilisateur.
 3. **Enregistrement MIDI dans un clip** (suite de 5f) — capture des notes jouées au clavier. Amendement d'ADR-022 requis avant.
 4. **Fin de V1** — la CI minimale existe (`.github/workflows/ci.yml` : `cargo test` harnais C-2 inclus, sur Windows uniquement, et build frontend). Reste ouvert : vérification cross-OS et projets avec plugins réels.
 5. **Vérifications manuelles en attente** — sidechain avec un vrai plugin, multi-sorties sur une boîte à rythmes CLAP, éditeur de plugin sur écran HiDPI.

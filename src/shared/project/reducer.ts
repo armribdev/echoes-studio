@@ -11,7 +11,7 @@
  */
 
 import { ev, type EngineEvent } from '../protocol/events';
-import type { Clip, MidiClip, MidiNote, PluginOutputSource, Project, ProjectModulationRoute, ProjectModulator, Track, TrackEffect } from '../../types/global';
+import type { AutomationClip, AutomationLane, Clip, MidiClip, MidiNote, PluginOutputSource, Project, ProjectModulationRoute, ProjectModulator, Track, TrackEffect } from '../../types/global';
 
 const MODULATOR_FIELDS = [
   'rate_hz', 'waveform', 'tempo_sync', 'beat_division', 'value',
@@ -63,6 +63,7 @@ export interface TrackState {
   midi_clips: MidiClip[];
   instrument: string | null;
   input_source: PluginOutputSource | null;
+  automation_lanes: AutomationLane[];
 }
 
 export function emptyProjectState(): ProjectState {
@@ -96,7 +97,7 @@ export function applyEvent(state: ProjectState, event: EngineEvent): ProjectStat
       if (state.tracks.some((t) => t.id === p.id)) return state; // idempotent
       return {
         ...state,
-        tracks: [...state.tracks, { id: p.id, name: p.name, volume: 80, pan: 0, muted: false, solo: false, instrument: p.instrument ?? null, input_source: null, clips: [], effects: [], modulators: [], mod_routes: [], midi_notes: [], midi_clips: [] }],
+        tracks: [...state.tracks, { id: p.id, name: p.name, volume: 80, pan: 0, muted: false, solo: false, instrument: p.instrument ?? null, input_source: null, clips: [], effects: [], modulators: [], mod_routes: [], midi_notes: [], midi_clips: [], automation_lanes: [] }],
       };
     }
 
@@ -517,6 +518,47 @@ export function applyEvent(state: ProjectState, event: EngineEvent): ProjectStat
       };
     }
 
+    case ev.AUTOMATION_LANE_ADDED: {
+      const p = event.payload as { track_id: string; lane: AutomationLane };
+      return {
+        ...state,
+        tracks: state.tracks.map((t) =>
+          t.id !== p.track_id || t.automation_lanes.some((l) => l.id === p.lane.id)
+            ? t
+            : { ...t, automation_lanes: [...t.automation_lanes, p.lane] },
+        ),
+      };
+    }
+
+    case ev.AUTOMATION_LANE_REMOVED: {
+      const p = event.payload as { track_id: string; lane_id: string };
+      return {
+        ...state,
+        tracks: state.tracks.map((t) =>
+          t.id !== p.track_id
+            ? t
+            : { ...t, automation_lanes: t.automation_lanes.filter((l) => l.id !== p.lane_id) },
+        ),
+      };
+    }
+
+    case ev.AUTOMATION_CLIP_UPDATED: {
+      const p = event.payload as { track_id: string; lane_id: string; clip: AutomationClip };
+      return {
+        ...state,
+        tracks: state.tracks.map((t) =>
+          t.id !== p.track_id
+            ? t
+            : {
+                ...t,
+                automation_lanes: t.automation_lanes.map((l) =>
+                  l.id !== p.lane_id ? l : { ...l, clips: upsertById(l.clips, p.clip) },
+                ),
+              },
+        ),
+      };
+    }
+
     default:
       return state; // forward-compat: unknown events ignored
   }
@@ -533,6 +575,12 @@ export function replayEvents(
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+
+function upsertById<T extends { id: string }>(items: T[], item: T): T[] {
+  return items.some((i) => i.id === item.id)
+    ? items.map((i) => (i.id === item.id ? item : i))
+    : [...items, item];
+}
 
 /**
  * Build a ProjectState from a raw backend DTO
@@ -565,6 +613,7 @@ export function projectFromSnapshot(dto: Project): ProjectState {
       midi_clips: t.midi_clips ?? [],
       instrument: t.instrument ?? null,
       input_source: t.input_source ?? null,
+      automation_lanes: t.automation_lanes ?? [],
     })),
   };
 }

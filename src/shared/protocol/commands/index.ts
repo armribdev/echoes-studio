@@ -11,7 +11,7 @@
  *   await dispatch(command);
  */
 
-import type { PluginOutputSource } from '../../../types/global';
+import type { AutomationClip, InterpolationMode, PluginOutputSource } from '../../../types/global';
 
 // ── Command type constants ────────────────────────────────────────────────────
 
@@ -49,6 +49,11 @@ export const cmd = {
   ADD_MODULATION_ROUTE: 'ADD_MODULATION_ROUTE',
   REMOVE_MODULATION_ROUTE: 'REMOVE_MODULATION_ROUTE',
   SET_MODULATION_DEPTH: 'SET_MODULATION_DEPTH',
+
+  // Automation
+  ADD_AUTOMATION_LANE: 'ADD_AUTOMATION_LANE',
+  REMOVE_AUTOMATION_LANE: 'REMOVE_AUTOMATION_LANE',
+  UPDATE_AUTOMATION_CLIP: 'UPDATE_AUTOMATION_CLIP',
 
   // MIDI
   SET_MIDI_NOTES: 'SET_MIDI_NOTES',
@@ -246,6 +251,28 @@ export interface SetModulationDepthPayload {
   track_id: string;
   route_id: string;
   depth: number;
+}
+
+export interface AddAutomationLanePayload {
+  track_id: string;
+  target_kind: 'track_gain' | 'effect_param' | 'plugin_param';
+  /** Effect id, or `instrument:{track_id}` for the track's plugin instrument. */
+  effect_id?: string;
+  /** Effect param name, or the plugin native_id as text for `plugin_param`. */
+  param: string;
+  interpolation?: InterpolationMode;
+}
+
+export interface RemoveAutomationLanePayload {
+  track_id: string;
+  lane_id: string;
+}
+
+/** Replaces the clip with the same id in the lane, or adds it. */
+export interface UpdateAutomationClipPayload {
+  track_id: string;
+  lane_id: string;
+  clip: AutomationClip;
 }
 
 export interface SetMidiNotesPayload {
