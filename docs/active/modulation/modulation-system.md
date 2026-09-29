@@ -214,6 +214,15 @@ timing:
 Both are unified at the `ParameterBlock` level — the node's `process()` receives
 a single per-frame float array regardless of source.
 
+**Editor (2026-09-29).** Lanes sit under their track in the arrange view
+(`AutomationLane.svelte`, `AutomationLaneHeader.svelte`; row heights in
+`arrangeInteraction.ts`). The UI offers only automatable plugin parameters
+(`buildAutomationOptions`), because internal targets are still additive. It
+edits a lane as a single clip from 0 s to its last point (`laneClipFor`), since
+the engine drops points outside their clip window; each gesture sends one
+`UPDATE_AUTOMATION_CLIP` (one undo step). Times are in seconds, so points do not
+follow a tempo change.
+
 ---
 
 ## Current Status

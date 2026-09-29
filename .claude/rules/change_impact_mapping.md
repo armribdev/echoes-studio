@@ -31,6 +31,7 @@ table for step 1 of the sync procedure.
 | `engine_gateway/{api,commands,events,store}.rs` | `architecture/state-management.md`, `threading/threading-model.md` | 002, 005 |
 | `main.rs` (save / load, unsaved-changes flag, plugin-edit watcher) | `plugins/plugin-wrapper-system.md` (unsaved-changes flag), `architecture/state-management.md` | 010 |
 | `audio_graph/automation.rs` | `modulation/modulation-system.md`, `migration/migration_plan.md` (status section) | 021 |
+| `src/components/Automation*.svelte`, `src/frontend/automation/`, row heights in `src/frontend/arrangeInteraction.ts` | `modulation/modulation-system.md` (automation editor), `../UI_GUIDELINES.md` (lane gestures) | 021 |
 | `src/frontend/library/`, `RightPanel.svelte` (library) | `../library-browser-ux.md`, `../library-browser-roadmap.md` (outside `docs/active/`) | 023 |
 | `project.rs`, `audio_clip.rs`, `audio_settings.rs` | `architecture/state-management.md` | 002 |
 

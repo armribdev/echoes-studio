@@ -124,3 +124,9 @@ export function pluginDisplayName(pluginId: string): string {
 	const bare = pluginId.replace(/^[a-z0-9]+:/i, '');
 	return bare.split('.').pop() || bare;
 }
+
+/** Name of a track's plugin instrument, or null for the built-in PolySynth. */
+export function instrumentDisplayName(list: PluginInfo[], instrument: string | null | undefined): string | null {
+	if (!instrument) return null;
+	return list.find((p) => p.id === instrument)?.name ?? pluginDisplayName(instrument);
+}

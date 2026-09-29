@@ -157,25 +157,43 @@ export function buildTargetOptions(
     }
   }
 
-  for (const placement of placements) {
+  // Automatable-only params are modulated by value in the engine (ADR-021 amendment).
+  options.push(...pluginParamOptions(effects, placements, paramsByPlacement, (p) => p.modulatable || p.automatable));
+  return options;
+}
+
+/** Plugin parameters an automation lane can drive (absolute value, ADR-021). */
+export function buildAutomationOptions(
+  effects: TrackEffect[],
+  placements: PluginPlacement[],
+  paramsByPlacement: Record<string, PluginParamInfo[]>,
+): ModulationTargetOption[] {
+  return pluginParamOptions(effects, placements, paramsByPlacement, (p) => p.automatable);
+}
+
+function pluginParamOptions(
+  effects: TrackEffect[],
+  placements: PluginPlacement[],
+  paramsByPlacement: Record<string, PluginParamInfo[]>,
+  accepts: (param: PluginParamInfo) => boolean,
+): ModulationTargetOption[] {
+  const groupNames = effectGroupNames(effects);
+  return placements.flatMap((placement) => {
     const group = groupNames.get(placement.key) ?? placement.name;
-    for (const p of paramsByPlacement[placement.key] ?? []) {
-      // Automatable-only params are modulated by value in the engine (ADR-021 amendment).
-      if (!(p.modulatable || p.automatable) || p.hidden) continue;
-      options.push({
+    return (paramsByPlacement[placement.key] ?? [])
+      .filter((p) => accepts(p) && !p.hidden)
+      .map((p) => ({
         key: `${placement.key}/${p.native_id}`,
         group,
         module: p.module,
         label: p.name,
-        kind: 'plugin_param',
+        kind: 'plugin_param' as const,
         effectId: placement.key,
         param: String(p.native_id),
         depthScale: 1,
         listed: true,
-      });
-    }
-  }
-  return options;
+      }));
+  });
 }
 
 export function findTargetOption(

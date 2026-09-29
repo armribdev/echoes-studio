@@ -2,6 +2,9 @@
 	import Track from './Track.svelte';
 	import TrackStrip from './TrackStrip.svelte';
 	import TrackContextMenu from './TrackContextMenu.svelte';
+	import AutomationLane from './AutomationLane.svelte';
+	import AutomationLaneHeader from './AutomationLaneHeader.svelte';
+	import AutomationParamPicker from './AutomationParamPicker.svelte';
 	import ClipContextMenu from './ClipContextMenu.svelte';
 	import PluginPicker from './PluginPicker.svelte';
 	import { instrumentIdOf, type PluginInfo } from '../stores/plugins';
@@ -18,10 +21,11 @@
 	import { pianoRollStore } from '../stores/pianoRoll';
 	import { normalizeMidiGridBeats } from '../lib/midiGrid';
 	import { projectEventStore } from '../shared/project/eventStore';
-	import { addClip, moveClip, removeClip, updateTrack, setTrackMixLive, muteTrack, soloTrack, seek, createTrack, deleteTrack, addMidiClip, moveMidiClip, removeMidiClip } from '../frontend/commands/dispatcher';
+	import { addClip, moveClip, removeClip, updateTrack, setTrackMixLive, muteTrack, soloTrack, seek, createTrack, deleteTrack, addMidiClip, moveMidiClip, removeMidiClip, addAutomationLane, removeAutomationLane } from '../frontend/commands/dispatcher';
 	import { clipboard } from '../stores/clipboard';
 	import type { ClipboardEntry } from '../stores/clipboard';
 	import type { CommandResult } from '../shared/protocol/commands';
+	import type { ModulationTargetOption } from '../frontend/modulation/targets';
 	import { get } from 'svelte/store';
 	import { snapPosition, getSnapSubdivisionSec } from '../lib/snapUtils';
 	import { selectedTrack } from '../stores/selectedTrack';
@@ -49,7 +53,7 @@
 	import { startTransportScrub } from '../frontend/transportScrub';
 	import {
 		ARRANGE_POINTER_DRAG_THRESHOLD,
-		ARRANGE_TRACK_HEIGHT,
+		arrangeRowTops,
 		arrangeTrackIndexFromY,
 		arrangeMaxBarsHeld,
 		arrangeMinLogScale,
@@ -118,6 +122,7 @@
 
 	let contextMenu: { x: number; y: number; trackId: string; trackName: string; trackIndex: number } | null = null;
 	let clipContextMenu: { x: number; y: number } | null = null;
+	let automationPicker: { x: number; y: number; trackIndex: number } | null = null;
 	let selectedTrackIndex: number | null = null;
 
 	function selectTrackIndex(trackIndex: number) {
@@ -127,8 +132,21 @@
 		leftPanel.open();
 	}
 
+	function handleAutomate(option: ModulationTargetOption) {
+		const track = automationPicker ? tracks[automationPicker.trackIndex] : undefined;
+		automationPicker = null;
+		if (!track) return;
+		addAutomationLane(track.id, option.kind, option.param, option.effectId).catch((e) =>
+			notify(`Erreur automation : ${(e as Error)?.message ?? e}`, 'error'),
+		);
+	}
+
+	function handleRemoveLane(trackId: string, laneId: string) {
+		removeAutomationLane(trackId, laneId).catch(console.error);
+	}
+
 	function selectTrackFromArrangeY(y: number) {
-		const idx = trackIndexFromArrangeY(y, tracks.length);
+		const idx = trackIndexFromArrangeY(y, tracks);
 		if (idx !== null) selectTrackIndex(idx);
 	}
 
@@ -391,7 +409,8 @@
 		: 0;
 	$: effectiveContentWidthPx = Math.max(arrangeContentWidthPx, repeatGhostEdgePx + 200);
 	$: effectiveTotalBeats = effectiveContentWidthPx / (pxPerBeat || 1);
-	$: arrangeGridHeight = Math.max(tracks.length * ARRANGE_TRACK_HEIGHT, tracksInnerEl?.offsetHeight ?? 0);
+	$: rowTops = arrangeRowTops(tracks);
+	$: arrangeGridHeight = Math.max(rowTops[tracks.length], tracksInnerEl?.offsetHeight ?? 0);
 	$: playheadX = $transport.position * scale;
 	$: playheadMarkerX = playheadX - tracksScrollLeft;
 	$: loopStartSec = ($loopRegion.startBeat * 60) / $tempo.bpm;
@@ -1261,7 +1280,7 @@
 		const duration = origEnd - origStart;
 
 		const y = e.clientY - rect.top + tracksEl.scrollTop;
-		const newTrackIndex = Math.max(0, Math.min(tracks.length - 1, Math.floor(y / ARRANGE_TRACK_HEIGHT)));
+		const newTrackIndex = trackIndexFromArrangeY(y, tracks) ?? 0;
 		const prevTrackIndex = midiDragging.trackIndex;
 
 		if (newTrackIndex !== prevTrackIndex) {
@@ -1403,7 +1422,7 @@
 		const newEnd = newStart + duration;
 
 		const y = e.clientY - rect.top + tracksEl.scrollTop;
-		const newTrackIndex = Math.max(0, Math.min(tracks.length - 1, Math.floor(y / ARRANGE_TRACK_HEIGHT)));
+		const newTrackIndex = trackIndexFromArrangeY(y, tracks) ?? 0;
 
 		if (pendingImportId) {
 			const trackId = tracks[newTrackIndex]?.id;
@@ -1717,7 +1736,7 @@
 		}
 		const x = clientX - rect.left + tracksEl.scrollLeft;
 		const y = clientY - rect.top + tracksEl.scrollTop;
-		const trackIndex = arrangeTrackIndexFromY(y, tracks.length);
+		const trackIndex = arrangeTrackIndexFromY(y, tracks);
 		const rawStart = Math.max(0, x / scale);
 		const durationSec =
 			getActiveAudioFileDrag()?.durationSec ?? fileDragPreview?.durationSec ?? null;
@@ -1941,8 +1960,19 @@
 		trackName={contextMenu.trackName}
 		on:addtrack={handleCreateTrack}
 		on:rename={() => { if (contextMenu) renameTrackByIndex(contextMenu.trackIndex); }}
+		on:automate={() => { if (contextMenu) automationPicker = { x: contextMenu.x, y: contextMenu.y, trackIndex: contextMenu.trackIndex }; }}
 		on:delete={(e) => handleDeleteTrack(e.detail.trackId)}
 		on:close={() => { contextMenu = null; }}
+	/>
+{/if}
+
+{#if automationPicker && tracks[automationPicker.trackIndex]}
+	<AutomationParamPicker
+		track={tracks[automationPicker.trackIndex]}
+		x={automationPicker.x}
+		y={automationPicker.y}
+		on:select={(e) => handleAutomate(e.detail)}
+		on:close={() => { automationPicker = null; }}
 	/>
 {/if}
 
@@ -1997,6 +2027,14 @@
 					}
 				}}
 				/>
+				{#each track.automation_lanes as lane (lane.id)}
+					<AutomationLaneHeader
+						{lane}
+						{track}
+						color={trackColor(trackIndex)}
+						on:remove={() => handleRemoveLane(track.id, lane.id)}
+					/>
+				{/each}
 			{/each}
 		</div>
 		<div class="left-panel-footer" class:has-scroll-separator={instrumentsOverflow}>
@@ -2091,20 +2129,20 @@
 				<div
 					class="clip-ghost"
 					class:clip-ghost--new-track={isNewArrangeTrackRow(fileDragPreview.trackIndex, tracks.length)}
-					style="top: {fileDragPreview.trackIndex * ARRANGE_TRACK_HEIGHT}px; left: {fileDragPreview.startSec * scale}px; width: {fileDragPreview.durationSec != null ? fileDragPreview.durationSec * scale : 150}px;"
+					style="top: {rowTops[fileDragPreview.trackIndex]}px; left: {fileDragPreview.startSec * scale}px; width: {fileDragPreview.durationSec != null ? fileDragPreview.durationSec * scale : 150}px;"
 				></div>
 			{/if}
 			{#if repeating}
 				{#each Array(repeating.count) as _, i}
 					<div
 						class="clip-ghost"
-						style="top: {repeating.trackIndex * ARRANGE_TRACK_HEIGHT}px; left: {(repeating.origStart + (i + 1) * repeating.duration) * scale}px; width: {repeating.duration * scale}px;"
+						style="top: {rowTops[repeating.trackIndex]}px; left: {(repeating.origStart + (i + 1) * repeating.duration) * scale}px; width: {repeating.duration * scale}px;"
 					></div>
 				{/each}
 				{#if repeating.partialPx > MIN_REPEAT_PARTIAL_PX}
 					<div
 						class="clip-ghost"
-						style="top: {repeating.trackIndex * ARRANGE_TRACK_HEIGHT}px; left: {(repeating.origStart + (repeating.count + 1) * repeating.duration) * scale}px; width: {repeating.partialPx}px; opacity: 0.5;"
+						style="top: {rowTops[repeating.trackIndex]}px; left: {(repeating.origStart + (repeating.count + 1) * repeating.duration) * scale}px; width: {repeating.partialPx}px; opacity: 0.5;"
 					></div>
 				{/if}
 			{/if}
@@ -2140,6 +2178,16 @@
 					on:midiclip_contextmenu={onMidiClipContextMenu}
 					on:trackdblclick={handleTrackDoubleClick}
 				/>
+				{#each track.automation_lanes as lane (lane.id)}
+					<AutomationLane
+						trackId={track.id}
+						{lane}
+						{scale}
+						widthPx={effectiveContentWidthPx}
+						color={trackColor(trackIndex)}
+						snapTime={(seconds, altKey) => snap(seconds, altKey)}
+					/>
+				{/each}
 			{/each}
 				</div>
 			</div>

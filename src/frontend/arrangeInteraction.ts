@@ -1,6 +1,7 @@
 import type { Track } from '../types/global';
 
 export const ARRANGE_TRACK_HEIGHT = 100;
+export const ARRANGE_LANE_HEIGHT = 56;
 export const ARRANGE_POINTER_DRAG_THRESHOLD = 3;
 
 /** Left accroché aux pixels device ; largeur = durée exacte (évite le crawl des notes au resize). */
@@ -15,17 +16,35 @@ export function arrangeClipFrame(
 	return { leftPx, widthPx };
 }
 
-export function trackIndexFromArrangeY(y: number, trackCount: number): number | null {
-	if (trackCount <= 0) return null;
-	return Math.min(Math.max(0, Math.floor(y / ARRANGE_TRACK_HEIGHT)), trackCount - 1);
+/** A track row is the track itself plus its automation lanes. */
+export function arrangeRowHeight(track: Track): number {
+	return ARRANGE_TRACK_HEIGHT + (track.automation_lanes?.length ?? 0) * ARRANGE_LANE_HEIGHT;
 }
 
-/** Track row for arrange hit-testing; `trackCount` means a new row below existing tracks. */
-export function arrangeTrackIndexFromY(y: number, trackCount: number): number {
-	if (trackCount <= 0) return 0;
-	const row = Math.floor(y / ARRANGE_TRACK_HEIGHT);
-	if (row >= trackCount) return trackCount;
-	return Math.max(0, row);
+/** Top of each track row, followed by the total height. */
+export function arrangeRowTops(tracks: Track[]): number[] {
+	const tops = [0];
+	for (const track of tracks) tops.push(tops[tops.length - 1] + arrangeRowHeight(track));
+	return tops;
+}
+
+function rowIndexFromY(y: number, tracks: Track[]): number {
+	let bottom = 0;
+	for (let index = 0; index < tracks.length; index++) {
+		bottom += arrangeRowHeight(tracks[index]);
+		if (y < bottom) return index;
+	}
+	return tracks.length;
+}
+
+export function trackIndexFromArrangeY(y: number, tracks: Track[]): number | null {
+	if (tracks.length === 0) return null;
+	return Math.min(rowIndexFromY(y, tracks), tracks.length - 1);
+}
+
+/** Track row for arrange hit-testing; `tracks.length` means a new row below existing tracks. */
+export function arrangeTrackIndexFromY(y: number, tracks: Track[]): number {
+	return rowIndexFromY(y, tracks);
 }
 
 export function isNewArrangeTrackRow(trackIndex: number, trackCount: number): boolean {
@@ -261,11 +280,8 @@ export function clipsInArrangeSelbox(
 	const bottomPx = Math.max(selbox.y0, selbox.y1);
 	const timeStart = leftPx / scale;
 	const timeEnd = rightPx / scale;
-	const trackStart = Math.max(0, Math.floor(topPx / ARRANGE_TRACK_HEIGHT));
-	const trackEnd = Math.min(
-		tracks.length - 1,
-		Math.floor(Math.max(topPx, bottomPx - 1) / ARRANGE_TRACK_HEIGHT),
-	);
+	const trackStart = rowIndexFromY(topPx, tracks);
+	const trackEnd = Math.min(tracks.length - 1, rowIndexFromY(Math.max(topPx, bottomPx - 1), tracks));
 
 	const ids: string[] = [];
 	const seen = new Set<string>();

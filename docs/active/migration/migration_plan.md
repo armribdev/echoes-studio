@@ -20,7 +20,7 @@ Les statuts détaillés par sous-système sont dans [`.claude/state_index.md`](.
 | 3 Param transport + `ParameterBlock` | livré | ADR-008, ADR-009, ADR-017 |
 | 4 Séparation DSP/UI + état plugin | livré | ADR-010 (sauvegarde/restauration d'état) |
 | 5a–5e PortKind, MIDI en beats, instruments CLAP, capabilities→compilateur, modulateurs | livré côté moteur | ADR-011 à 014, 019, 021 ; sidechain + multi-sorties CLAP réels |
-| 5e automation | moteur livré (`audio_graph/automation.rs`, commandes `*_AUTOMATION_*`) ; le frontend reflète les lanes (2026-09-29), **pas encore d'UI d'édition** | voir « Suite » |
+| 5e automation | moteur livré (`audio_graph/automation.rs`, commandes `*_AUTOMATION_*`) ; premier éditeur dans l'arrangement (2026-09-29, paramètres de plugins, pas encore testé à la main) | voir « Suite » |
 | 5f Entrée MIDI matérielle | livré (notes uniquement) | ADR-022 |
 | 6 Sandbox | stable pour effets et instruments CLAP, opt-in | ADR-015 |
 | V1 Harnais C-2 | livré sous forme légère | `audio_engine/render_harness.rs` |
@@ -31,7 +31,7 @@ Les statuts détaillés par sous-système sont dans [`.claude/state_index.md`](.
 1. **Clôturer la bibliothèque phase 1** — critères de sortie de [`../../library-browser-roadmap.md`](../../library-browser-roadmap.md), dont le test « loop audible en < 10 s ». Puis phases 2 (pop-up) et 3 (accords / MIDI).
 2. **UI d'automation** (fin de 5e), par étapes :
    1. ~~Le frontend reflète les lanes (types, reducer, dispatcher)~~ — fait 2026-09-29.
-   2. Lane sous la piste dans l'arrangement, « Automatiser » au clic droit d'un réglage, ajout / déplacement de points avec magnétisme.
+   2. ~~Lane sous la piste dans l'arrangement, « Automatiser un réglage… » au clic droit de la piste (les plugins n'ont pas de boutons dans Echoes), ajout / déplacement / suppression de points avec magnétisme~~ — fait 2026-09-29, à tester à la main.
    3. Confort : crayon (tracé simplifié), formes rapides, valeur réelle affichée, réglage qui suit la courbe en lecture.
    4. Écriture en direct (demande de remonter les événements de sortie du plugin, limite notée dans ADR-021).
 

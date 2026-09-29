@@ -10,6 +10,7 @@
 	const dispatch = createEventDispatcher<{
 		addtrack: void;
 		rename: void;
+		automate: void;
 		delete: { trackId: string };
 		close: void;
 	}>();
@@ -60,6 +61,15 @@
 		</svg>
 		<span>Renommer</span>
 		<span class="item-shortcut">F2</span>
+	</button>
+
+	<button class="item" on:click={() => { dispatch('automate'); close(); }}>
+		<svg class="item-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+			<polyline points="3 17 9 11 13 15 21 7"/>
+			<circle cx="9" cy="11" r="1.5"/>
+			<circle cx="13" cy="15" r="1.5"/>
+		</svg>
+		<span>Automatiser un réglage…</span>
 	</button>
 
 	<div class="separator"></div>

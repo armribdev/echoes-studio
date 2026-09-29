@@ -253,6 +253,15 @@ Current implementation (`Knob.svelte`):
 |--------|---------|
 | New track | `Ctrl/Cmd + Shift + T` |
 
+**Automation lanes**
+| Action | Shortcut |
+|--------|---------|
+| Add a lane | Track right-click → « Automatiser un réglage… » (plugin parameters) |
+| Add a point | Click in the lane (drag right away to place it) |
+| Move a point | Drag it (snaps to the grid) |
+| Move without snapping | Hold `Alt` while dragging |
+| Delete a point | Double-click it |
+
 **Navigation**
 | Action | Shortcut |
 |--------|---------|
