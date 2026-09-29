@@ -54,7 +54,7 @@
 - [ ] Documentation utilisateur
 - [ ] Mise à jour automatique (Tauri updater) et signature des binaires (Authenticode, notarisation)
 - [ ] Internationalisation (EN + FR)
-- [ ] Format de projet v2 — décision ouverte (voir ADR-004 dans [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md))
+- [ ] Format de projet v2 — décision ouverte (voir « ADR-004 — Project file format » dans [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), à ne pas confondre avec l'ADR-004 de `docs/active/decisions/` sur les snapshots du moteur)
 - [ ] Nettoyage du code hérité (phase 7 du plan de migration)
 
 ---

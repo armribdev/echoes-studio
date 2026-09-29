@@ -65,11 +65,10 @@ friction).
 ### Progress (2026-09-29, from commit history — slices not individually re-verified)
 
 Landed: right-dock panel and source management, drag-and-drop to arrange with
-keyboard shortcuts, UI preview player (uncommitted tweaks pending), plus the
-audio import pipeline it relies on (progressive peaks/PCM, cancellation, focus
-of imported clips — ADR-024). Remaining: check every exit criterion below
-(notably the &lt; 10 s path and the “full scan never blocks first paint” item),
-then commit the pending preview/panel changes.
+keyboard shortcuts, UI preview player, plus the audio import pipeline it relies
+on (progressive peaks/PCM, cancellation, focus of imported clips — ADR-024).
+Remaining: check every exit criterion below (notably the &lt; 10 s path and the
+“full scan never blocks first paint” item).
 
 ### Exit criteria
 

@@ -30,7 +30,7 @@ Les statuts détaillés par sous-système sont dans [`.claude/state_index.md`](.
 1. **Clôturer la bibliothèque phase 1** — critères de sortie de [`../../library-browser-roadmap.md`](../../library-browser-roadmap.md), dont le test « loop audible en < 10 s ». Puis phases 2 (pop-up) et 3 (accords / MIDI).
 2. **UI d'automation** (fin de 5e) — courbes dans l'arrangement, choix du paramètre à automatiser. Le moteur est prêt, aucun ADR nécessaire a priori.
 3. **Enregistrement MIDI dans un clip** (suite de 5f) — capture des notes jouées au clavier. Amendement d'ADR-022 requis avant.
-4. **CI minimale** (fin de V1) — `cargo test` (harnais C-2 inclus) et build frontend à chaque PR ; aucun workflow n'existe aujourd'hui. Reste aussi ouvert : vérification cross-OS et projets avec plugins réels.
+4. **Fin de V1** — la CI minimale existe (`.github/workflows/ci.yml` : `cargo test` harnais C-2 inclus, sur Windows uniquement, et build frontend). Reste ouvert : vérification cross-OS et projets avec plugins réels.
 5. **Vérifications manuelles en attente** — sidechain avec un vrai plugin, multi-sorties sur une boîte à rythmes CLAP, éditeur de plugin sur écran HiDPI.
 6. **Reste de la phase 6** — sandbox VST3, drapeau par piste pour les instruments, intégration à l'installeur.
 7. **Phase 7 (nettoyage legacy)** — après validation en production de P1 à P6.
@@ -657,8 +657,9 @@ Cohérent avec *« ~44 j avec bridge »* de l'audit (légère réévaluation à 
   `src-tauri/src/audio_engine/render_harness.rs`. Il contient 4 projets
   synthétiques (mix statique, effets modulés, gain modulé, automation), sans
   fichier audio. Il vérifie l'indépendance à la taille de bloc (offline == live)
-  et compare un hash FNV-1a figé, pas un `.wav` + SHA256. Restent ouverts : CI
-  (aucune n'existe), vérification cross-OS, projets avec plugins réels.
+  et compare un hash FNV-1a figé, pas un `.wav` + SHA256. La CI le rejoue à
+  chaque PR (Windows uniquement). Restent ouverts : vérification cross-OS,
+  projets avec plugins réels.
 
 ### V2 — Suite XRun longue durée (à partir de Phase 1)
 - Projet « stress » (32 effets + 8 plugins + automation), buffer 256, 48 kHz, 30 min.
