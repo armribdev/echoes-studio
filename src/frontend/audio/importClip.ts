@@ -4,11 +4,21 @@ import { get } from 'svelte/store';
 import { addClip, removeClip } from '../commands/dispatcher';
 import { notify } from '../../stores/status';
 import { selection } from '../../stores/selection';
+import { keyboardFocus } from '../../stores/keyboardFocus';
 import { projectEventStore } from '../../shared/project/eventStore';
 import { audioImportProgress } from './importProgress';
 import { pendingImports } from './pendingImports';
 import { forgetClipUiKey } from './clipDisplay';
 import type { CommandResult } from '../../shared/protocol/commands';
+
+/** Clip selection owns arrange shortcuts (Delete, etc.) — leave library DOM focus. */
+function adoptTimelineFocusForImportedClip() {
+	keyboardFocus.setTimeline();
+	const active = document.activeElement;
+	if (active instanceof HTMLElement && active.closest('.library')) {
+		active.blur();
+	}
+}
 
 function fileName(path: string): string {
 	return path.split(/[\\/]/).pop() ?? path;
@@ -206,6 +216,7 @@ export async function importAudioToTrack(opts: ImportAudioOptions): Promise<void
 		end: endSec,
 	});
 	selection.setSingle(pendingId);
+	adoptTimelineFocusForImportedClip();
 	const entry: InFlightImport = {
 		pendingId,
 		cancelled: false,
