@@ -447,8 +447,8 @@ impl GraphCompiler {
         plan.step_cumulative_latency.clear();
         plan.step_cumulative_latency.resize(n, 0);
 
-        for i in 0..n {
-            plan.step_latencies[i] = processors[i].latency_samples();
+        for (latency, processor) in plan.step_latencies.iter_mut().zip(processors) {
+            *latency = processor.latency_samples();
         }
 
         for i in 0..n {
@@ -510,6 +510,7 @@ impl GraphCompiler {
             }
         }
 
+        #[allow(clippy::needless_range_loop)]
         for i in 0..n {
             let mut lvl: u32 = 0;
             for conn in plan.steps[i].input_connections.iter().flatten() {

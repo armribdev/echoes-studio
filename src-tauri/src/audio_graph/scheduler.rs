@@ -746,8 +746,8 @@ mod tests {
 
         // Replicate the compiler's PDC pass: arrival[i] = max input cumlat;
         // input.delay = arrival - cumlat[src]; cumlat[i] = intrinsic + arrival.
-        for i in 0..plan.steps.len() {
-            plan.step_latencies[i] = processors[i].latency_samples();
+        for (latency, processor) in plan.step_latencies.iter_mut().zip(&processors) {
+            *latency = processor.latency_samples();
         }
         for i in 0..plan.steps.len() {
             let arrival = plan.steps[i]
@@ -818,9 +818,9 @@ mod tests {
         let out = run_one_block(&mut sched, block);
 
         assert_eq!(out[0], 1.0, "src_a impulse must arrive at frame 0");
-        for i in 1..(latency as usize) {
+        for (i, sample) in out.iter().enumerate().take(latency as usize).skip(1) {
             assert_eq!(
-                out[i], 0.0,
+                *sample, 0.0,
                 "silence expected at frame {i} (waiting on delayed path)"
             );
         }
@@ -828,9 +828,9 @@ mod tests {
             out[latency as usize], 1.0,
             "src_b impulse must arrive at frame `latency`"
         );
-        for i in (latency as usize + 1)..block {
+        for (i, sample) in out.iter().enumerate().take(block).skip(latency as usize + 1) {
             assert_eq!(
-                out[i], 0.0,
+                *sample, 0.0,
                 "silence expected after both impulses at frame {i}"
             );
         }

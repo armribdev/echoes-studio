@@ -182,10 +182,10 @@ mod tests {
         let frames = 128usize;
         let mut direct = vec![0.0_f32; frames];
         let mut oversampled = vec![0.0_f32; frames];
-        for i in 0..frames {
+        for (i, sample) in direct.iter_mut().enumerate() {
             let t = i as f32 / sr;
             let x = (2.0 * std::f32::consts::PI * freq * t).sin() * 2.0;
-            direct[i] = x.clamp(-1.0, 1.0);
+            *sample = x.clamp(-1.0, 1.0);
         }
         let input: Vec<f32> = (0..frames)
             .map(|i| {

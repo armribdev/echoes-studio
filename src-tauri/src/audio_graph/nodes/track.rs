@@ -111,9 +111,9 @@ impl AudioNode for TrackNode {
             let end_frame = (overlap_end - pos) as usize;
 
             let out_ch0 = output.channel_mut(0);
-            for frame in start_frame..end_frame {
+            for (frame_in_overlap, out) in out_ch0[start_frame..end_frame].iter_mut().enumerate() {
                 let local_offset =
-                    overlap_start - clip.start_sample + clip.offset_sample + (frame - start_frame) as u64;
+                    overlap_start - clip.start_sample + clip.offset_sample + frame_in_overlap as u64;
                 let src_pos = local_offset as f64 * sr_ratio;
                 let idx0 = src_pos as usize;
                 if idx0 < clip.samples.len() {
@@ -124,7 +124,7 @@ impl AudioNode for TrackNode {
                         s0
                     };
                     let frac = (src_pos - idx0 as f64) as f32;
-                    out_ch0[frame] += s0 + frac * (s1 - s0);
+                    *out += s0 + frac * (s1 - s0);
                 }
             }
         }

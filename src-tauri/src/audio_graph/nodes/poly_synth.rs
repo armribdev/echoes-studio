@@ -268,7 +268,7 @@ impl InstrumentDevice for PolySynth {
             }
         } else {
             let ch0 = output.channel_mut(0);
-            for frame in 0..block_size {
+            for (frame, out) in ch0[..block_size].iter_mut().enumerate() {
                 while ev_idx < events.len() && events[ev_idx].offset as usize <= frame {
                     match events[ev_idx].kind {
                         MidiEventKind::NoteOn { pitch, velocity } => self.note_on(pitch, velocity),
@@ -280,7 +280,7 @@ impl InstrumentDevice for PolySynth {
                 for v in &mut self.voices {
                     sample += Self::tick(v, adsr, sr);
                 }
-                ch0[frame] = sample * VOICE_SCALE;
+                *out = sample * VOICE_SCALE;
             }
         }
     }

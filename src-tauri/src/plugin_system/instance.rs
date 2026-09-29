@@ -122,7 +122,7 @@ pub enum NativeHandle {
     /// CLAP plugin hosted in a `plugin_host_bridge` process (ADR-015).  Its
     /// off-RT calls are requests to that process, so they never touch this
     /// process's memory and need no FFI gate.
-    Bridged(BridgedPlugin),
+    Bridged(Box<BridgedPlugin>),
 }
 
 // SAFETY (see module doc): VST3/CLAP plugin access is sequenced by the host;
@@ -379,7 +379,7 @@ impl PluginInstance {
             instance_id: next_instance_id(),
             device_id: device_id.into(),
             format: DeviceFormat::Clap,
-            handle: NativeHandle::Bridged(bridged),
+            handle: NativeHandle::Bridged(Box::new(bridged)),
             lifecycle: AtomicU8::new(encode_lifecycle(LifecycleState::Created)),
             param_queue: ParamQueue::with_capacity(PARAM_QUEUE_CAPACITY),
             clap_activation: ActivationState::new(),

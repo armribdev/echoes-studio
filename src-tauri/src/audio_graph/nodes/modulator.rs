@@ -167,7 +167,7 @@ impl AudioNode for EnvelopeNode {
         self.gate_was_on = gate_on;
 
         let ch0 = output.channel_mut(0);
-        for i in 0..block_size {
+        for out in &mut ch0[..block_size] {
             match self.phase {
                 AdsrPhase::Idle => {
                     self.level = 0.0;
@@ -197,7 +197,7 @@ impl AudioNode for EnvelopeNode {
                     }
                 }
             }
-            ch0[i] = self.level;
+            *out = self.level;
         }
         output.mono_to_all_channels();
     }
@@ -441,8 +441,8 @@ impl AudioNode for LfoNode {
         {
             let ch0 = output.channel_mut(0);
             let mut phase = self.phase;
-            for i in 0..block_size {
-                ch0[i] = Self::sample(phase, &self.waveform);
+            for out in &mut ch0[..block_size] {
+                *out = Self::sample(phase, &self.waveform);
                 phase = (phase + phase_inc).fract();
             }
             self.phase = phase;

@@ -393,59 +393,33 @@ impl AudioEngine {
             .store(active_channels, Ordering::Relaxed);
         self.xrun_stats.reset();
 
-        let snap_a = Arc::clone(&self.snapshot);
-        let tport_a = Arc::clone(&self.transport);
-        let ch_ctrl_a = Arc::clone(&self.active_output_channels);
-        let levels_a = Arc::clone(&self.levels);
-        let xruns_a = Arc::clone(&self.xrun_stats);
-        let clock_a = Arc::clone(&self.live_params.live_input_clock);
-        let snap_b = Arc::clone(&self.snapshot);
-        let tport_b = Arc::clone(&self.transport);
-        let ch_ctrl_b = Arc::clone(&self.active_output_channels);
-        let levels_b = Arc::clone(&self.levels);
-        let xruns_b = Arc::clone(&self.xrun_stats);
-        let clock_b = Arc::clone(&self.live_params.live_input_clock);
+        let shared = StreamShared {
+            snapshot: Arc::clone(&self.snapshot),
+            transport: Arc::clone(&self.transport),
+            hw_channels,
+            ch_ctrl: Arc::clone(&self.active_output_channels),
+            levels: Arc::clone(&self.levels),
+            xrun_stats: Arc::clone(&self.xrun_stats),
+            live_clock: Arc::clone(&self.live_params.live_input_clock),
+        };
 
         let fixed_cfg = cpal::StreamConfig {
             buffer_size: cpal::BufferSize::Fixed(settings.buffer_size),
             ..base_cfg.clone()
         };
 
-        let stream = build_typed_stream(
-            &device,
-            &fixed_cfg,
-            fmt,
-            snap_a,
-            tport_a,
-            hw_channels,
-            ch_ctrl_a,
-            levels_a,
-            xruns_a,
-            clock_a,
-        )
-        .or_else(|e| {
-            eprintln!(
-                "[audio] Buffer fixe ({} frames) non supporté ({e}), \
-                         passage au mode par défaut",
-                settings.buffer_size
-            );
-            let default_cfg = cpal::StreamConfig {
-                buffer_size: cpal::BufferSize::Default,
-                ..base_cfg
-            };
-            build_typed_stream(
-                &device,
-                &default_cfg,
-                fmt,
-                snap_b,
-                tport_b,
-                hw_channels,
-                ch_ctrl_b,
-                levels_b,
-                xruns_b,
-                clock_b,
-            )
-        })?;
+        let stream = build_typed_stream(&device, &fixed_cfg, fmt, shared.clone())
+            .or_else(|e| {
+                eprintln!(
+                    "[audio] Buffer fixe ({} frames) non supporté ({e}),                          passage au mode par défaut",
+                    settings.buffer_size
+                );
+                let default_cfg = cpal::StreamConfig {
+                    buffer_size: cpal::BufferSize::Default,
+                    ..base_cfg
+                };
+                build_typed_stream(&device, &default_cfg, fmt, shared)
+            })?;
 
         stream
             .play()
@@ -598,10 +572,9 @@ fn live_event_window_start(callback_start: u64, frames_left: usize, sample_rate:
     callback_start.saturating_sub(lead)
 }
 
-fn build_typed_stream(
-    device: &cpal::Device,
-    config: &cpal::StreamConfig,
-    fmt: cpal::SampleFormat,
+/// State shared between the engine and the CPAL callback, cloned per stream attempt.
+#[derive(Clone)]
+struct StreamShared {
     snapshot: Arc<RuntimeSnapshot>,
     transport: Arc<SharedTransport>,
     hw_channels: usize,
@@ -609,54 +582,21 @@ fn build_typed_stream(
     levels: Arc<ChannelLevels>,
     xrun_stats: Arc<XrunStats>,
     live_clock: Arc<LiveInputClock>,
+}
+
+fn build_typed_stream(
+    device: &cpal::Device,
+    config: &cpal::StreamConfig,
+    fmt: cpal::SampleFormat,
+    shared: StreamShared,
 ) -> Result<cpal::Stream, String> {
     match fmt {
-        cpal::SampleFormat::F32 => build_stream::<f32>(
-            device,
-            config,
-            snapshot,
-            transport,
-            hw_channels,
-            ch_ctrl,
-            levels,
-            xrun_stats,
-            live_clock,
-        ),
-        cpal::SampleFormat::I16 => build_stream::<i16>(
-            device,
-            config,
-            snapshot,
-            transport,
-            hw_channels,
-            ch_ctrl,
-            levels,
-            xrun_stats,
-            live_clock,
-        ),
-        cpal::SampleFormat::U16 => build_stream::<u16>(
-            device,
-            config,
-            snapshot,
-            transport,
-            hw_channels,
-            ch_ctrl,
-            levels,
-            xrun_stats,
-            live_clock,
-        ),
+        cpal::SampleFormat::F32 => build_stream::<f32>(device, config, shared),
+        cpal::SampleFormat::I16 => build_stream::<i16>(device, config, shared),
+        cpal::SampleFormat::U16 => build_stream::<u16>(device, config, shared),
         other => {
             eprintln!("[audio] Format {other:?} non géré nativement, tentative F32");
-            build_stream::<f32>(
-                device,
-                config,
-                snapshot,
-                transport,
-                hw_channels,
-                ch_ctrl,
-                levels,
-                xrun_stats,
-                live_clock,
-            )
+            build_stream::<f32>(device, config, shared)
         }
     }
 }
@@ -672,17 +612,20 @@ fn build_typed_stream(
 fn build_stream<T>(
     device: &cpal::Device,
     config: &cpal::StreamConfig,
-    snapshot: Arc<RuntimeSnapshot>,
-    transport: Arc<SharedTransport>,
-    hw_channels: usize,
-    ch_ctrl: Arc<AtomicUsize>,
-    levels: Arc<ChannelLevels>,
-    xrun_stats: Arc<XrunStats>,
-    live_clock: Arc<LiveInputClock>,
+    shared: StreamShared,
 ) -> Result<cpal::Stream, String>
 where
     T: SizedSample + FromSample<f32> + Send + 'static,
 {
+    let StreamShared {
+        snapshot,
+        transport,
+        hw_channels,
+        ch_ctrl,
+        levels,
+        xrun_stats,
+        live_clock,
+    } = shared;
     let mut mix_buf = vec![0.0_f32; MAX_BLOCK_FRAMES * 2];
     // Boxed so pointer swaps displace the old scheduler without drop on the audio thread.
     let mut scheduler = Box::new(GraphScheduler::empty(transport.sample_rate()));

@@ -103,14 +103,14 @@ impl AudioNode for MasterNode {
         }
         if output.num_channels >= 2 {
             let (ch_l, ch_r) = output.two_channels_mut(0, 1);
-            for i in 0..frames {
-                self.peak_l = self.peak_l.max(ch_l[i].abs());
-                self.peak_r = self.peak_r.max(ch_r[i].abs());
+            for (left, right) in ch_l[..frames].iter().zip(&ch_r[..frames]) {
+                self.peak_l = self.peak_l.max(left.abs());
+                self.peak_r = self.peak_r.max(right.abs());
             }
         } else {
             let ch = output.channel(0);
-            for i in 0..frames {
-                self.peak_l = self.peak_l.max(ch[i].abs());
+            for sample in &ch[..frames] {
+                self.peak_l = self.peak_l.max(sample.abs());
             }
             self.peak_r = self.peak_l;
         }

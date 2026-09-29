@@ -459,18 +459,13 @@ fn cached_audio_from_clip_data(data: AudioClipData) -> Arc<CachedAudioData> {
     })
 }
 
-fn cached_audio_prefix(
-    samples: &[f32],
-    sample_rate: u32,
-    peaks_512: Vec<[f32; 2]>,
-    peaks_4096: Vec<[f32; 2]>,
-) -> Arc<CachedAudioData> {
+fn cached_audio_prefix(samples: &[f32], sample_rate: u32) -> Arc<CachedAudioData> {
     Arc::new(CachedAudioData {
         raw_samples: Arc::new(samples.to_vec()),
         sample_rate,
         peaks_64: Vec::new(),
-        peaks_512,
-        peaks_4096,
+        peaks_512: Vec::new(),
+        peaks_4096: Vec::new(),
         complete: false,
     })
 }
@@ -484,13 +479,11 @@ fn publish_pcm_prefix(
     sample_rate: u32,
     decoded_duration_sec: f64,
     progress: f32,
-    peaks_512: Vec<[f32; 2]>,
-    peaks_4096: Vec<[f32; 2]>,
 ) {
     if samples.is_empty() || sample_rate == 0 {
         return;
     }
-    let cached = cached_audio_prefix(samples, sample_rate, peaks_512, peaks_4096);
+    let cached = cached_audio_prefix(samples, sample_rate);
     state
         .audio_cache
         .insert_path(file_path.to_string(), Arc::clone(&cached));
@@ -674,8 +667,6 @@ fn ensure_path_cached(
             sample_rate,
             dur,
             progress,
-            Vec::new(),
-            Vec::new(),
         );
     };
 
