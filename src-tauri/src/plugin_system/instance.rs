@@ -43,7 +43,9 @@
 //! introduce GUI calls and must coordinate via the lifecycle state machine.
 
 use std::ptr::NonNull;
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU8, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU8, Ordering};
+#[cfg(test)]
+use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
@@ -79,9 +81,11 @@ const PARAM_QUEUE_CAPACITY: usize = 1024;
 // This is the foundation for addressing a specific instance instead of a plugin
 // *type*; the project/graph/gateway layers must carry it end-to-end before the
 // `device_id` collision (R-2) can be fully closed (see module note below).
+#[cfg(test)]
 static NEXT_INSTANCE_ID: AtomicU64 = AtomicU64::new(1);
 
 /// Hand out the next process-unique instance identity.
+#[cfg(test)]
 fn next_instance_id() -> u64 {
     // Relaxed is sufficient: we only need uniqueness, not ordering against other
     // memory — and this runs off the audio thread at construction time.
@@ -225,18 +229,13 @@ pub struct PluginInstance {
     /// "Instance identity" note above).  Distinct from `device_id`, which names
     /// the plugin *type* and is shared across every use of the same plugin.
     /// Assigned once at construction; immutable and never recycled.
+    #[cfg(test)]
     instance_id: u64,
 
     /// Stable project-side identifier (e.g. `"vst3://<dll>?<cid>"`).  This is the
     /// plugin **type** id — two instances of the same plugin share it, so it is
     /// **not** a unique instance handle (use [`instance_id`](Self::instance_id)).
     pub device_id: String,
-
-    /// Human-readable name (from the plugin manifest).
-    pub name: String,
-
-    /// Vendor string (from the plugin manifest; may be empty).
-    pub vendor: String,
 
     /// Host-visible plugin format.
     pub format: DeviceFormat,
@@ -285,14 +284,13 @@ pub struct PluginInstance {
 }
 
 impl PluginInstance {
-    pub fn new_internal(device_id: impl Into<String>, name: impl Into<String>) -> Arc<Self> {
+    pub fn new_internal(device_id: impl Into<String>) -> Arc<Self> {
         let device_id: String = device_id.into();
         let crash_tag = crash_marker::plugin_tag(&device_id);
         Arc::new(Self {
+            #[cfg(test)]
             instance_id: next_instance_id(),
             device_id,
-            name: name.into(),
-            vendor: "Internal".to_string(),
             format: DeviceFormat::Internal,
             handle: NativeHandle::Internal,
             lifecycle: AtomicU8::new(encode_lifecycle(LifecycleState::Running)),
@@ -313,7 +311,6 @@ impl PluginInstance {
     /// eventually frees it.
     pub fn new_vst3(
         device_id: impl Into<String>,
-        name: impl Into<String>,
         component: NonNull<IComponent>,
         processor: NonNull<IAudioProcessor>,
         lib: Arc<Vst3Library>,
@@ -321,10 +318,9 @@ impl PluginInstance {
         let device_id: String = device_id.into();
         let crash_tag = crash_marker::plugin_tag(&device_id);
         Arc::new(Self {
+            #[cfg(test)]
             instance_id: next_instance_id(),
             device_id,
-            name: name.into(),
-            vendor: String::new(),
             format: DeviceFormat::Vst3,
             handle: NativeHandle::Vst3 {
                 component,
@@ -345,8 +341,6 @@ impl PluginInstance {
 
     pub fn new_clap(
         device_id: impl Into<String>,
-        name: impl Into<String>,
-        vendor: impl Into<String>,
         plugin: *const ClapPlugin,
         host: Box<ClapHost>,
         lib: Arc<ClapLibrary>,
@@ -354,10 +348,9 @@ impl PluginInstance {
         let device_id: String = device_id.into();
         let crash_tag = crash_marker::plugin_tag(&device_id);
         Arc::new(Self {
+            #[cfg(test)]
             instance_id: next_instance_id(),
             device_id,
-            name: name.into(),
-            vendor: vendor.into(),
             format: DeviceFormat::Clap,
             handle: NativeHandle::Clap {
                 plugin,
@@ -379,15 +372,12 @@ impl PluginInstance {
     /// A CLAP plugin running in a sandbox process (ADR-015).
     pub fn new_bridged(
         device_id: impl Into<String>,
-        name: impl Into<String>,
-        vendor: impl Into<String>,
         bridged: BridgedPlugin,
     ) -> Arc<Self> {
         Arc::new(Self {
+            #[cfg(test)]
             instance_id: next_instance_id(),
             device_id: device_id.into(),
-            name: name.into(),
-            vendor: vendor.into(),
             format: DeviceFormat::Clap,
             handle: NativeHandle::Bridged(bridged),
             lifecycle: AtomicU8::new(encode_lifecycle(LifecycleState::Created)),
@@ -977,7 +967,7 @@ mod tests {
 
     #[test]
     fn ffi_gate_offrt_holder_blocks_rt_until_released() {
-        let inst = PluginInstance::new_internal("echoes.gain", "Gain");
+        let inst = PluginInstance::new_internal("echoes.gain");
         let held = inst
             .offrt_try_acquire(Duration::from_millis(1))
             .expect("idle gate must be acquirable");
@@ -996,7 +986,7 @@ mod tests {
 
     #[test]
     fn ffi_gate_rt_holder_makes_offrt_time_out() {
-        let inst = PluginInstance::new_internal("echoes.gain", "Gain");
+        let inst = PluginInstance::new_internal("echoes.gain");
         let held = inst.rt_try_enter().expect("idle gate must be acquirable");
         // The audio thread holds it: off-RT must give up within its budget so its
         // caller can fall back to a cached blob (never the other way around).
@@ -1016,7 +1006,7 @@ mod tests {
         use std::sync::atomic::AtomicUsize;
         use std::thread;
 
-        let inst = PluginInstance::new_internal("echoes.gain", "Gain");
+        let inst = PluginInstance::new_internal("echoes.gain");
         // Counts threads currently inside the gate; must never exceed 1.
         let inside = Arc::new(AtomicUsize::new(0));
         let violations = Arc::new(AtomicUsize::new(0));
@@ -1056,7 +1046,7 @@ mod tests {
     #[test]
     fn param_queue_push_then_drain_roundtrips() {
         // An internal instance carries the same SPSC ring as any plugin.
-        let inst = PluginInstance::new_internal("dev://x", "X");
+        let inst = PluginInstance::new_internal("dev://x");
         assert!(inst.push_param(7, 0.25));
         assert!(inst.push_param(9, 0.75));
 
@@ -1074,8 +1064,8 @@ mod tests {
         // Two instances of the *same* plugin type (identical `device_id`) — the
         // exact R-2 collision scenario (same plugin on two tracks).  Their
         // instance identities must differ.
-        let a = PluginInstance::new_internal("echoes.gain", "Gain");
-        let b = PluginInstance::new_internal("echoes.gain", "Gain");
+        let a = PluginInstance::new_internal("echoes.gain");
+        let b = PluginInstance::new_internal("echoes.gain");
 
         assert_eq!(a.device_id, b.device_id, "same plugin type → same device_id");
         assert_ne!(
@@ -1090,8 +1080,8 @@ mod tests {
         // A controlled replacement: a fresh instance pulls the previous
         // instance's state. Internal devices have no live FFI state, so the
         // host-cached blob is what gets carried.
-        let previous = PluginInstance::new_internal("echoes.gain", "Gain");
-        let next = PluginInstance::new_internal("echoes.gain", "Gain");
+        let previous = PluginInstance::new_internal("echoes.gain");
+        let next = PluginInstance::new_internal("echoes.gain");
         let carried = next.restore_from(&previous, Some(&[7u8, 8, 9]));
         assert_eq!(
             carried,
@@ -1102,8 +1092,8 @@ mod tests {
 
     #[test]
     fn restore_from_refuses_across_plugin_types() {
-        let previous = PluginInstance::new_internal("echoes.gain", "Gain");
-        let next = PluginInstance::new_internal("echoes.pan", "Pan");
+        let previous = PluginInstance::new_internal("echoes.gain");
+        let next = PluginInstance::new_internal("echoes.pan");
         assert_eq!(
             next.restore_from(&previous, Some(&[1u8, 2, 3])),
             None,
@@ -1113,15 +1103,15 @@ mod tests {
 
     #[test]
     fn restore_from_returns_none_with_nothing_to_carry() {
-        let previous = PluginInstance::new_internal("echoes.gain", "Gain");
-        let next = PluginInstance::new_internal("echoes.gain", "Gain");
+        let previous = PluginInstance::new_internal("echoes.gain");
+        let next = PluginInstance::new_internal("echoes.gain");
         assert_eq!(next.restore_from(&previous, None), None);
         assert_eq!(next.restore_from(&previous, Some(&[])), None);
     }
 
     #[test]
     fn instance_id_is_stable_for_an_instances_lifetime() {
-        let inst = PluginInstance::new_internal("echoes.gain", "Gain");
+        let inst = PluginInstance::new_internal("echoes.gain");
         let first = inst.instance_id();
         inst.set_lifecycle(LifecycleState::Suspended);
         assert_eq!(inst.instance_id(), first);

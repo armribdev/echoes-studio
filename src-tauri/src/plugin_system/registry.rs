@@ -21,16 +21,11 @@ pub struct PluginManifest {
     pub id: String,
     pub name: String,
     pub vendor: String,
-    pub version: String,
     pub format: DeviceFormat,
     /// Path to the plugin binary / bundle (empty for built-in devices).
     pub path: Option<PathBuf>,
     /// Category tags (e.g. `["Filter", "EQ"]`).
     pub categories: Vec<String>,
-    pub num_audio_inputs: usize,
-    pub num_audio_outputs: usize,
-    pub has_midi_input: bool,
-    pub has_midi_output: bool,
     /// Number of **auxiliary** (sidechain) input ports/buses, separate from the
     /// main input bus (Phase 5d, P0-3 / P1-5).  Cached at scan time; the graph
     /// compiler allocates this many extra input ports on the plugin node so a
@@ -64,14 +59,9 @@ impl PluginManifest {
             id: id.into(),
             name: name.into(),
             vendor: vendor.into(),
-            version: env!("CARGO_PKG_VERSION").to_string(),
             format: DeviceFormat::Internal,
             path: None,
             categories: vec!["Internal".to_string()],
-            num_audio_inputs: 2,
-            num_audio_outputs: 2,
-            has_midi_input: false,
-            has_midi_output: false,
             num_sidechain_inputs: 0,
             is_instrument: false,
         }

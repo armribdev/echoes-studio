@@ -359,7 +359,7 @@ mod tests {
 
     #[test]
     fn modulation_becomes_a_plain_offset_and_automation_a_plain_value() {
-        let instance = PluginInstance::new_internal("test", "Test");
+        let instance = PluginInstance::new_internal("test");
         let mut params = ClapParamEvents::new();
         params.set_ranges(&[info(1, true), info(2, true)]);
         params.set_controls(vec![control(1, true), control(2, false)], &instance);
@@ -381,7 +381,7 @@ mod tests {
 
     #[test]
     fn automatable_only_parameter_is_modulated_by_value_around_its_base() {
-        let instance = PluginInstance::new_internal("test", "Test");
+        let instance = PluginInstance::new_internal("test");
         let mut params = ClapParamEvents::new();
         params.set_ranges(&[info(1, false)]);
         let modulated = control(1, true);
@@ -400,7 +400,7 @@ mod tests {
 
     #[test]
     fn parameter_neither_modulatable_nor_automatable_ignores_modulation() {
-        let instance = PluginInstance::new_internal("test", "Test");
+        let instance = PluginInstance::new_internal("test");
         let mut params = ClapParamEvents::new();
         params.set_ranges(&[read_only_info(1)]);
         params.set_controls(vec![control(1, true)], &instance);
@@ -413,7 +413,7 @@ mod tests {
 
     #[test]
     fn dragging_in_the_plugin_window_pauses_value_modulation_and_moves_the_base() {
-        let instance = PluginInstance::new_internal("test", "Test");
+        let instance = PluginInstance::new_internal("test");
         let mut params = ClapParamEvents::new();
         params.set_ranges(&[info(1, false)]);
         params.set_controls(vec![control(1, true)], &instance);
@@ -433,7 +433,7 @@ mod tests {
 
     #[test]
     fn plugin_values_outside_a_drag_do_not_move_the_base() {
-        let instance = PluginInstance::new_internal("test", "Test");
+        let instance = PluginInstance::new_internal("test");
         let mut params = ClapParamEvents::new();
         params.set_ranges(&[info(1, false)]);
         params.set_controls(vec![control(1, true)], &instance);
@@ -446,7 +446,7 @@ mod tests {
 
     #[test]
     fn plugin_window_edits_mark_the_project_unsaved() {
-        let instance = PluginInstance::new_internal("test", "Test");
+        let instance = PluginInstance::new_internal("test");
         let mut params = ClapParamEvents::new();
         params.set_ranges(&[info(1, false), info(2, false)]);
         params.set_controls(vec![control(1, true)], &instance);
@@ -457,7 +457,7 @@ mod tests {
 
     #[test]
     fn removed_value_modulation_restores_the_base_once() {
-        let instance = PluginInstance::new_internal("test", "Test");
+        let instance = PluginInstance::new_internal("test");
         let base = Arc::new(AtomicU32::new(0.25f32.to_bits()));
         let mut first = ClapParamEvents::new();
         first.set_ranges(&[info(1, false)]);
@@ -477,7 +477,7 @@ mod tests {
 
     #[test]
     fn removed_modulation_is_reset_once() {
-        let instance = PluginInstance::new_internal("test", "Test");
+        let instance = PluginInstance::new_internal("test");
         let mut first = ClapParamEvents::new();
         first.set_ranges(&[info(1, true)]);
         first.set_controls(vec![control(1, true)], &instance);
@@ -494,7 +494,7 @@ mod tests {
 
     #[test]
     fn queued_edits_are_denormalised() {
-        let instance = PluginInstance::new_internal("test", "Test");
+        let instance = PluginInstance::new_internal("test");
         let mut params = ClapParamEvents::new();
         params.set_ranges(&[info(1, true)]);
         assert!(instance.push_param(1, 0.5));

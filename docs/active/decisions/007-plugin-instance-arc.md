@@ -322,3 +322,5 @@ instantiation, `retain_devices` and the wrappers' activation paths.
 (`#[cfg(test)]`). The Phase 5d follow-up above was delivered through
 `PluginManifest` + `clap/audio_ports.rs` (ADR-014), not a `capabilities()`
 method.
+
+Also removed the same day, never read: `PluginInstance.name` / `vendor` (the constructors no longer take them) and the `PluginManifest` fields `version`, `num_audio_inputs`, `num_audio_outputs`, `has_midi_input`, `has_midi_output`. Port counts reach the compiler through `num_sidechain_inputs` and the loaded instance's ports (ADR-014). `instance_id` now exists only in test builds, where it proves instance reuse.

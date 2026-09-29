@@ -469,7 +469,6 @@ mod win32 {
 #[cfg(windows)]
 pub struct Vst3Library {
     handle: *mut c_void,
-    pub path: std::path::PathBuf,
 }
 
 // SAFETY: HMODULE is process-global and safe to send across threads.
@@ -513,10 +512,7 @@ impl Vst3Library {
             return Err("GetPluginFactory returned null".into());
         }
 
-        let lib = std::sync::Arc::new(Vst3Library {
-            handle,
-            path: dll_path.to_path_buf(),
-        });
+        let lib = std::sync::Arc::new(Vst3Library { handle });
         Ok((lib, factory))
     }
 

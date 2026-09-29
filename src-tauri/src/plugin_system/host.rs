@@ -314,7 +314,7 @@ impl PluginHost {
 
         let (instance, device): (Arc<PluginInstance>, Box<dyn AudioNode>) = match manifest.format {
             DeviceFormat::Internal => {
-                let inst = PluginInstance::new_internal(plugin_id, &manifest.name);
+                let inst = PluginInstance::new_internal(plugin_id);
                 let node = Box::new(PassThroughDevice::new(node_id));
                 (inst, node)
             }
@@ -328,7 +328,7 @@ impl PluginHost {
             #[cfg(feature = "au")]
             DeviceFormat::Au => {
                 eprintln!("[host] AU not yet implemented for '{plugin_id}' — pass-through");
-                let inst = PluginInstance::new_internal(plugin_id, &manifest.name);
+                let inst = PluginInstance::new_internal(plugin_id);
                 let node = Box::new(PassThroughDevice::new(node_id));
                 (inst, node)
             }
@@ -336,7 +336,7 @@ impl PluginHost {
             #[cfg(feature = "wasm")]
             DeviceFormat::Wasm => {
                 eprintln!("[host] WASM not yet implemented for '{plugin_id}' — pass-through");
-                let inst = PluginInstance::new_internal(plugin_id, &manifest.name);
+                let inst = PluginInstance::new_internal(plugin_id);
                 let node = Box::new(PassThroughDevice::new(node_id));
                 (inst, node)
             }
@@ -497,7 +497,7 @@ impl PluginHost {
         let proc_nn = NonNull::new(proc)
             .ok_or_else(|| HostError::InstantiationFailed("null IAudioProcessor".into()))?;
 
-        let instance = PluginInstance::new_vst3(plugin_id, &manifest.name, comp_nn, proc_nn, lib);
+        let instance = PluginInstance::new_vst3(plugin_id, comp_nn, proc_nn, lib);
 
         let node: Box<dyn AudioNode> =
             Box::new(VstWrapperNode::new(node_id, Arc::clone(&instance)));
@@ -552,7 +552,7 @@ impl PluginHost {
             .ok_or_else(|| HostError::InstantiationFailed("no DLL path in manifest".into()))?;
         let bridged = BridgedPlugin::spawn(bridge_exe, dll, clap_id)
             .map_err(|error| HostError::InstantiationFailed(format!("sandbox: {error}")))?;
-        Ok(PluginInstance::new_bridged(plugin_id, &manifest.name, &manifest.vendor, bridged))
+        Ok(PluginInstance::new_bridged(plugin_id, bridged))
     }
 
     /// Load the DLL, create the CLAP plugin, and build the shared
@@ -603,8 +603,6 @@ impl PluginHost {
 
         Ok(PluginInstance::new_clap(
             plugin_id,
-            &manifest.name,
-            &manifest.vendor,
             plugin,
             host,
             lib,
@@ -973,14 +971,9 @@ mod tests {
             id: id.to_string(),
             name: "Comp".into(),
             vendor: "Test".into(),
-            version: String::new(),
             format: DeviceFormat::Clap,
             path: None,
             categories: vec![],
-            num_audio_inputs: 2,
-            num_audio_outputs: 2,
-            has_midi_input: false,
-            has_midi_output: false,
             num_sidechain_inputs: aux,
             is_instrument: false,
         }
