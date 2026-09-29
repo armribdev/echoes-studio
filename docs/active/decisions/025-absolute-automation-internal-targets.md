@@ -109,8 +109,24 @@ the modulator colour coding). A "temporary override" latch is out of scope.
 project per family (`automated_gain`, `_eq`, `_compressor`, `_reverb`, `_delay`),
 recorded with the old additive behaviour first; each node conversion then moved
 only its own hash (plus `automated`, which uses `TrackGain` and `delay.wet`).
-Not done: the stress-project benchmark of the log scale, and the cross-OS golden
-run — both still open before this is called proven.
+**Cost measured 2026-09-29** (release build, Windows x86_64, ignored test
+`automation_cost_report` in `render_harness.rs`: `cargo test --release --bin
+echoes-studio automation_cost -- --ignored --nocapture`):
+
+| Measure | Result |
+|---|---|
+| `automated_value`, linear | 1.0 ns per call |
+| `automated_value`, logarithmic | 3.2 ns per call |
+| 16 tracks × full effect chain, offline render | 193 ms (13× real time) |
+| same + 3 linear EQ lanes per track (48 lanes) | 196 ms |
+| same + 3 log EQ lanes per track (48 lanes) | 197 ms |
+
+A lane is evaluated 1 500 times per second (32-sample grid at 48 kHz), so the log
+mapping costs about 5 µs per lane per second of audio; 48 lanes add under 2 % to
+a render that already runs 13× faster than real time, and the log-vs-linear
+difference is inside the measurement noise. The condition set above is met.
+
+Still open before this is called proven: the cross-OS golden run (harness V1).
 
 ### 5. Time base stays in seconds
 
@@ -159,8 +175,8 @@ Threading model, snapshot swap and the ownership rules are unchanged. Only
     removed; the UI has to make that visible.
   - Pan, sends and time-signature are not automatable targets (no target kind).
   - Beat-based lanes and a dB fader taper remain open questions.
-  - Log scaling adds two transcendental functions to the audio path; benchmark
-    with a stress project before merging the last node.
+  - Log scaling adds two transcendental functions to the audio path; measured
+    (see Rollout), negligible.
 
 ## Alternatives considered
 

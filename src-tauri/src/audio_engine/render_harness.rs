@@ -556,3 +556,82 @@ fn missing_instrument_plugin_is_silent_and_reported() {
         crate::plugin_system::host::UnavailableReason::NotInstalled
     );
 }
+
+/// 16 tracks, each with three EQ lanes, so the cost of the automation mapping shows up in a render.
+fn stress_eq_project(params: [&str; 3]) -> AppProject {
+    let points: &[(f64, f32)] = &[(0.0, 0.2), (0.6, 0.8), (1.3, 0.3), (2.2, 0.7)];
+    let tracks = (0..16)
+        .map(|index| {
+            let mut track = audio_track();
+            track.id = format!("audio{index}");
+            effect_lanes(&mut track, "eq", &params.map(|param| (param, points)));
+            track
+        })
+        .collect();
+    project_with(tracks)
+}
+
+fn best_render_time(project: &AppProject) -> std::time::Duration {
+    (0..3)
+        .map(|_| {
+            let started = std::time::Instant::now();
+            std::hint::black_box(render(project, 512));
+            started.elapsed()
+        })
+        .min()
+        .expect("three timings")
+}
+
+/// ADR-025 cost check. Timings mean nothing in a debug build:
+/// `cargo test --release --bin echoes-studio automation_cost -- --ignored --nocapture`
+#[test]
+#[ignore = "timing report, run in release"]
+fn automation_cost_report() {
+    use crate::audio_graph::nodes::{automated_value, ParamScale};
+
+    const CALLS: u32 = 20_000_000;
+    let range = (20.0_f32, 20_000.0_f32);
+    for scale in [ParamScale::Linear, ParamScale::Log] {
+        let started = std::time::Instant::now();
+        let mut sum = 0.0_f32;
+        for call in 0..CALLS {
+            sum += automated_value(
+                std::hint::black_box(call as f32 / CALLS as f32),
+                range,
+                scale,
+            );
+        }
+        std::hint::black_box(sum);
+        let nanos = started.elapsed().as_nanos() as f64 / CALLS as f64;
+        println!("automated_value {scale:?}: {nanos:.1} ns per call");
+    }
+
+    let linear = best_render_time(&stress_eq_project([
+        "low_gain_db",
+        "mid_gain_db",
+        "high_gain_db",
+    ]));
+    let log = best_render_time(&stress_eq_project(["low_freq", "mid_freq", "high_freq"]));
+    let baseline = best_render_time(&project_with(
+        (0..16)
+            .map(|index| {
+                let mut track = audio_track();
+                track.id = format!("audio{index}");
+                track
+            })
+            .collect(),
+    ));
+    let audio_seconds = DURATION_S;
+    println!(
+        "16 tracks, no automation:        {baseline:?} ({:.0}x real time)",
+        audio_seconds / baseline.as_secs_f64()
+    );
+    println!(
+        "16 tracks, 3 linear EQ lanes each: {linear:?} ({:.0}x real time)",
+        audio_seconds / linear.as_secs_f64()
+    );
+    println!(
+        "16 tracks, 3 log EQ lanes each:    {log:?} ({:.0}x real time)",
+        audio_seconds / log.as_secs_f64()
+    );
+}
