@@ -408,18 +408,17 @@ impl AudioEngine {
             ..base_cfg.clone()
         };
 
-        let stream = build_typed_stream(&device, &fixed_cfg, fmt, shared.clone())
-            .or_else(|e| {
-                eprintln!(
-                    "[audio] Buffer fixe ({} frames) non supporté ({e}),                          passage au mode par défaut",
-                    settings.buffer_size
-                );
-                let default_cfg = cpal::StreamConfig {
-                    buffer_size: cpal::BufferSize::Default,
-                    ..base_cfg
-                };
-                build_typed_stream(&device, &default_cfg, fmt, shared)
-            })?;
+        let stream = build_typed_stream(&device, &fixed_cfg, fmt, shared.clone()).or_else(|e| {
+            eprintln!(
+                "[audio] Buffer fixe ({} frames) non supporté ({e}), passage au mode par défaut",
+                settings.buffer_size
+            );
+            let default_cfg = cpal::StreamConfig {
+                buffer_size: cpal::BufferSize::Default,
+                ..base_cfg
+            };
+            build_typed_stream(&device, &default_cfg, fmt, shared)
+        })?;
 
         stream
             .play()
