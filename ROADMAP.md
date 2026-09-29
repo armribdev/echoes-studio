@@ -1,6 +1,6 @@
 # Roadmap — Echoes Studio
 
-> Feuille de route **produit** : ce qui est livré et ce qui vient ensuite. Mise à jour le 2026-09-29.
+> Feuille de route **produit** : ce qui est livré et ce qui vient ensuite. Mise à jour le 2026-09-30.
 > Le détail moteur (plugins, modulation, sandbox) est dans [`docs/active/migration/migration_plan.md`](docs/active/migration/migration_plan.md) ; la bibliothèque de sons dans [`docs/library-browser-roadmap.md`](docs/library-browser-roadmap.md). Les statuts par sous-système sont dans [`.claude/state_index.md`](.claude/state_index.md).
 
 ---
@@ -19,7 +19,7 @@
 **Effets et modulation (Phase 3, partielle)**
 - Égaliseur, compresseur, réverbération, délai ; compensation de latence (PDC).
 - Modulation sous-bloc : LFO (formes, synchro tempo), enveloppe, suiveur audio, macro ; assignation par glisser-déposer.
-- Automation : **moteur livré, interface à faire**.
+- Automation : moteur + premier éditeur dans l'arrangement (pistes, points, crayon, cibles absolues ADR-025).
 
 **MIDI et instruments (Phase 4, largement livrée)**
 - Piano roll, synthé intégré (PolySynth), entrée MIDI matérielle en direct (ADR-022).
@@ -32,13 +32,20 @@
 
 ## Prochaines étapes (ordre recommandé)
 
-1. **Clôturer la bibliothèque phase 1**, puis phase 2 (pop-up d'insertion) et phase 3 (accords / MIDI).
-2. **Interface d'automation** : courbes dans l'arrangement, choix du paramètre.
-3. **Enregistrement MIDI** dans un clip depuis le clavier (amendement d'ADR-022 requis).
-4. **Enregistrement audio** : armement + capture via l'entrée CPAL, monitoring. Rien n'existe dans le code aujourd'hui.
-5. **CI** : la CI minimale est en place (`.github/workflows/ci.yml` : fmt, clippy, tests Rust avec harnais C-2, svelte-check, build frontend). Reste à rendre Prettier/ESLint bloquants, après un passage de formatage sur tout le dépôt.
-6. **Métronome**, **marqueurs / régions** : non présents dans le code.
-7. **Compléter les plugins** : VST3 (bus auxiliaires, latence dynamique, sandbox), AU (macOS, stub), synthés natifs supplémentaires (sampler).
+- [ ] **Bibliothèque**
+  - [ ] Clôturer la phase 1 (hand-test des critères de sortie ; panneau / DnD / préécoute déjà en place)
+  - [ ] Phase 2 (pop-up d'insertion)
+  - [ ] Phase 3 (accords / MIDI)
+- [x] **Interface d'automation** : courbes dans l'arrangement, choix du paramètre (livré 2026-09-29 ; hand-test partiel)
+- [x] **Enregistrement MIDI** dans un clip depuis le clavier (ADR-022 amendé ; pas encore hand-testé à l'oreille)
+- [ ] **Enregistrement audio** : armement + capture via l'entrée CPAL, monitoring. Rien n'existe dans le code aujourd'hui.
+- [ ] **CI**
+  - [x] CI minimale (`.github/workflows/ci.yml` : fmt, clippy, tests Rust + harnais C-2, svelte-check, build frontend)
+  - [ ] Rendre Prettier/ESLint bloquants, après un passage de formatage sur tout le dépôt
+- [ ] **Transport auxiliaire**
+  - [x] Métronome + count-in (ADR-026 ; pas encore hand-testé)
+  - [ ] Marqueurs / régions d'arrangement
+- [ ] **Compléter les plugins** : VST3 (bus auxiliaires, latence dynamique, sandbox), AU (macOS, stub), synthés natifs supplémentaires (sampler)
 
 ---
 
