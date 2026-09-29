@@ -18,6 +18,8 @@
 	export let modTargetKey: string | undefined = undefined;
 	/** Track color to draw as a solid ring when a lane with points drives this parameter (ADR-025). */
 	export let automationColor: string | undefined = undefined;
+	/** Value the automation lane asks for at the playhead; shown instead of `value` unless the user is dragging. */
+	export let automatedValue: number | undefined = undefined;
 
 	$: dropCandidate = modTargetKey !== undefined && $modulationDrag !== null;
 	$: dropHover = dropCandidate && $modulationDrag?.hoverKey === modTargetKey;
@@ -72,7 +74,8 @@
 		return `M${s.x.toFixed(3)},${s.y.toFixed(3)} A${r},${r},0,${large},1,${e.x.toFixed(3)},${e.y.toFixed(3)}`;
 	}
 
-	$: t = Math.max(0, Math.min(1, (value - min) / (max - min)));
+	$: shownValue = automatedValue !== undefined && !dragging ? automatedValue : value;
+	$: t = Math.max(0, Math.min(1, (shownValue - min) / (max - min)));
 	$: valueMath = cssToMath(START_CSS + t * ROT_RANGE);
 	$: trackPath = arcPath(START_MATH, END_MATH, TRACK_R);
 	$: valuePath = t > 0.005 ? arcPath(START_MATH, valueMath, TRACK_R) : '';

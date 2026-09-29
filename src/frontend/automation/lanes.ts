@@ -132,11 +132,28 @@ export function automationRange(
   }
 }
 
+/** The parameter's own value for a 0..1 lane value, on the engine's range and scale. */
+export function toPlainValue(value: number, range: AutomationRange): number {
+  return range.log ? range.min * (range.max / range.min) ** value : range.min + value * (range.max - range.min);
+}
+
+/** Lane value at `timeS`, as the engine evaluates it: held before the first and after the last point. */
+export function automationValueAt(lane: AutomationLane, timeS: number): number | undefined {
+  const points = lanePoints(lane);
+  if (points.length === 0) return undefined;
+  const after = points.findIndex((p) => p.time_s > timeS);
+  if (after === 0) return points[0].value;
+  if (after === -1) return points[points.length - 1].value;
+  const previous = points[after - 1];
+  const next = points[after];
+  const span = next.time_s - previous.time_s;
+  if (lane.interpolation === 'step' || span < 1e-10) return lane.interpolation === 'step' ? previous.value : next.value;
+  return previous.value + ((timeS - previous.time_s) / span) * (next.value - previous.value);
+}
+
 export function formatAutomationValue(value: number, range: AutomationRange | undefined): string {
   if (!range) return `${Math.round(value * 100)} %`;
-  const plain = range.log
-    ? range.min * (range.max / range.min) ** value
-    : range.min + value * (range.max - range.min);
+  const plain = toPlainValue(value, range);
   if (range.unit === '%') return `${Math.round(plain * 100)} %`;
   if (range.unit === 'Hz' && plain >= 1000) return `${(plain / 1000).toFixed(2)} kHz`;
   const span = Math.abs(range.max - range.min);

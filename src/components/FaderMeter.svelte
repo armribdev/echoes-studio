@@ -22,6 +22,8 @@
 	export let modTargetKey: string | undefined = undefined;
 	/** Track color to draw as a solid ring when a lane with points drives the volume (ADR-025). */
 	export let automationColor: string | undefined = undefined;
+	/** Value the automation lane asks for at the playhead (0-100); shown instead of `value` unless dragging. */
+	export let automatedValue: number | undefined = undefined;
 
 	$: dropCandidate = modTargetKey !== undefined && $modulationDrag !== null;
 	$: dropHover = dropCandidate && $modulationDrag?.hoverKey === modTargetKey;
@@ -67,7 +69,7 @@
 	$: pctR = dbToPercent(linearToDb(dispR));
 	$: colorL = meterColor(pctL);
 	$: colorR = meterColor(pctR);
-	$: faderPct = Math.max(0, Math.min(100, value));
+	$: faderPct = Math.max(0, Math.min(100, automatedValue !== undefined && !dragging ? automatedValue : value));
 
 	// ── Drag interaction ──────────────────────────────────────────────────────────
 

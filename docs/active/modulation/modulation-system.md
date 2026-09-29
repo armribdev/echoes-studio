@@ -241,7 +241,12 @@ resolves the key against `buildAutomationOptions` for the selected track and add
 or removes the lane. The same key marks the knob as automated: `automatedTargets`
 lists, per track, the targets whose lane has at least one point (an empty lane is
 not compiled, so the knob keeps control) and the knob draws a solid ring in the
-track color. The knob does not yet follow the automated value during playback.
+track color. While a lane drives it, the knob or fader shows the lane's value at the
+playhead (`automatedValues`: `automationValueAt` mirrors the engine's evaluation —
+held before the first and after the last point, linear or step — mapped to the
+parameter's plain value with `toPlainValue`); it shows its own value while the user
+drags it. This is a display derived from the mirrored lanes and the transport
+position, computed in the UI: nothing is sent to the engine.
 
 ---
 
