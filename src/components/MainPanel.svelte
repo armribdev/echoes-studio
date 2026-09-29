@@ -1622,7 +1622,9 @@
 		endAutoScroll();
 	}
 
-	// Shared audio-file drag (library HTML5 + OS/Tauri) — ghost + import.
+	// Shared audio-file drag (library pointer + OS/Tauri) — ghost + import.
+	// Pas de dézoom live pendant le ghost : scale↔position souris = boucle de feedback.
+	// Le dézoom se fait à l'import (followImportsIntoView).
 	function clearFileDragPreview() {
 		fileDragPreview = null;
 	}
@@ -1684,6 +1686,12 @@
 		updateFileDragPreview(pos.clientX, pos.clientY, true);
 	});
 	onDestroy(unsubLibraryPointer);
+
+	const unsubAudioDragSession = audioFileDrag.subscribe((drag) => {
+		if (drag) return;
+		clearFileDragPreview();
+	});
+	onDestroy(unsubAudioDragSession);
 
 	const unsubLibraryDrop = audioFileDragDrop.subscribe((drop) => {
 		if (!drop) return;
