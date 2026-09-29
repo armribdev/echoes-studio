@@ -41,6 +41,8 @@
 	/** After import handoff, keep the grow canvas until zoom/offset changes (avoids worker clear flash). */
 	let holdWorkerAfterHandoff = false;
 	let holdScaleBucket = 0;
+	let holdWidth = 0;
+	let holdPeaksEpoch = '';
 
 	let _lastW = 0;
 	let _lastKey = '';
@@ -342,7 +344,6 @@
 	function requestRender(targetWidth: number) {
 		if (pending || !syncWorker || !canvas.height) return;
 		if (holdWorkerAfterHandoff) {
-			if (scaleBucket(scale) === holdScaleBucket) return;
 			holdWorkerAfterHandoff = false;
 		}
 		const bucket = scaleBucket(scale);
@@ -412,8 +413,12 @@
 		// Cached re-import settles in ms — grow never covers the frame. Holding
 		// that empty canvas leaves a flat waveform; let the worker paint instead.
 		const grewEnough = _smoothCovered >= Math.max(8, canvasCssW * 0.85);
-		holdWorkerAfterHandoff = grewEnough;
+		// Grow paints streamed lanes only (no peaks_64) — if the dense lane is
+		// already here, skip hold so zoom stays sharp via the worker.
+		holdWorkerAfterHandoff = grewEnough && peaks_64.length === 0;
 		holdScaleBucket = scaleBucket(scale);
+		holdWidth = canvasCssW;
+		holdPeaksEpoch = peaksEpoch;
 		importMark('clip-pending-false');
 		signalPendingPainted();
 	}
@@ -421,6 +426,21 @@
 		wasPending = true;
 		paintSignaled = false;
 		holdWorkerAfterHandoff = false;
+	}
+
+	// Release hold when zoom/width/peaks change — otherwise CSS stretches the
+	// grow bitmap (width:100%) and the waveform looks blurry.
+	$: if (holdWorkerAfterHandoff) {
+		void canvasCssW;
+		void peaksEpoch;
+		void scale;
+		if (
+			scaleBucket(scale) !== holdScaleBucket ||
+			canvasCssW !== holdWidth ||
+			peaksEpoch !== holdPeaksEpoch
+		) {
+			holdWorkerAfterHandoff = false;
+		}
 	}
 
 	$: if (canvas && clipEl && !pending && !holdWorkerAfterHandoff) {
