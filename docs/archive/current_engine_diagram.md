@@ -1,7 +1,12 @@
+> **⚠️ ARCHIVED — SUPERSEDED.** Structural snapshot of the engine as of 2026-05 (before the plugin/MIDI/modulation migration), kept for history only. **Do not edit.**
+> Canonical replacements: `docs/active/architecture/audio-graph.md`, `docs/active/dsp/`, `docs/active/plugins/`, `docs/active/threading/`; status in `.claude/state_index.md`.
+
+---
+
 # Current Engine Diagram — Echoes Studio
 
 > Description **structurelle** du moteur audio tel qu'il existe aujourd'hui (2026-05-31).
-> Source : audits [`audio-engine-audit-2026-05-29.md`](../audits/audio-engine-audit-2026-05-29.md), [`plugin-system-audit-2026-05-31.md`](../audits/plugin-system-audit-2026-05-31.md), [`plugin-gui-audit-2026-05-31.md`](../audits/plugin-gui-audit-2026-05-31.md).
+> Source : audits [`audio-engine-audit-2026-05-29.md`](../active/audits/audio-engine-audit-2026-05-29.md), [`plugin-system-audit-2026-05-31.md`](../active/audits/plugin-system-audit-2026-05-31.md), [`plugin-gui-audit-2026-05-31.md`](../active/audits/plugin-gui-audit-2026-05-31.md).
 > Ce document décrit **ce qui existe**, pas ce qui devrait exister. Aucune proposition d'architecture cible.
 
 ---
@@ -654,22 +659,22 @@ process_one_step(step) :
 
 | Concern                       | Fichier                                              |
 |-------------------------------|------------------------------------------------------|
-| Bootstrap stream CPAL         | [src-tauri/src/main.rs:623](../src-tauri/src/main.rs#L623) `start_native_audio` |
-| Audio callback                | [src-tauri/src/audio_engine/engine.rs:488](../src-tauri/src/audio_engine/engine.rs#L488) `build_stream` |
-| Snapshot swap (RT)            | [src-tauri/src/audio_graph/snapshot.rs](../src-tauri/src/audio_graph/snapshot.rs) |
-| Compilation graphe            | [src-tauri/src/audio_graph/compiler.rs](../src-tauri/src/audio_graph/compiler.rs) |
-| Exécution graphe              | [src-tauri/src/audio_graph/scheduler.rs](../src-tauri/src/audio_graph/scheduler.rs) |
-| Worker pool                   | [src-tauri/src/audio_graph/worker_pool.rs](../src-tauri/src/audio_graph/worker_pool.rs) |
-| ExecutionPlan                 | [src-tauri/src/audio_graph/execution_plan.rs](../src-tauri/src/audio_graph/execution_plan.rs) |
-| Modulation                    | [src-tauri/src/audio_graph/modulation.rs](../src-tauri/src/audio_graph/modulation.rs) |
-| LiveParams                    | [src-tauri/src/audio_graph/live_params.rs](../src-tauri/src/audio_graph/live_params.rs) |
-| MIDI types                    | [src-tauri/src/audio_graph/midi.rs](../src-tauri/src/audio_graph/midi.rs) |
-| Instrument / PolySynth        | [src-tauri/src/audio_graph/nodes/instrument.rs](../src-tauri/src/audio_graph/nodes/instrument.rs), [src-tauri/src/audio_graph/nodes/poly_synth.rs](../src-tauri/src/audio_graph/nodes/poly_synth.rs) |
-| Plugin host                   | [src-tauri/src/plugin_system/host.rs](../src-tauri/src/plugin_system/host.rs) |
-| Plugin capabilities (Phase 1) | [src-tauri/src/plugin_system/capabilities.rs](../src-tauri/src/plugin_system/capabilities.rs) |
-| Wrapper VST3                  | [src-tauri/src/plugin_formats/vst3/wrapper.rs](../src-tauri/src/plugin_formats/vst3/wrapper.rs) |
-| Wrapper CLAP                  | [src-tauri/src/plugin_formats/clap/wrapper.rs](../src-tauri/src/plugin_formats/clap/wrapper.rs) |
-| GUI plugin (Win32)            | [src-tauri/src/plugin_system/gui.rs](../src-tauri/src/plugin_system/gui.rs) |
-| Engine gateway (IPC)          | [src-tauri/src/engine_gateway/api.rs](../src-tauri/src/engine_gateway/api.rs) |
-| Transport partagé             | [src-tauri/src/audio_engine/transport.rs](../src-tauri/src/audio_engine/transport.rs) |
-| Export offline                | [src-tauri/src/audio_engine/offline.rs](../src-tauri/src/audio_engine/offline.rs) |
+| Bootstrap stream CPAL         | [src-tauri/src/main.rs:623](../../src-tauri/src/main.rs#L623) `start_native_audio` |
+| Audio callback                | [src-tauri/src/audio_engine/engine.rs:488](../../src-tauri/src/audio_engine/engine.rs#L488) `build_stream` |
+| Snapshot swap (RT)            | [src-tauri/src/audio_graph/snapshot.rs](../../src-tauri/src/audio_graph/snapshot.rs) |
+| Compilation graphe            | [src-tauri/src/audio_graph/compiler.rs](../../src-tauri/src/audio_graph/compiler.rs) |
+| Exécution graphe              | [src-tauri/src/audio_graph/scheduler.rs](../../src-tauri/src/audio_graph/scheduler.rs) |
+| Worker pool                   | [src-tauri/src/audio_graph/worker_pool.rs](../../src-tauri/src/audio_graph/worker_pool.rs) |
+| ExecutionPlan                 | [src-tauri/src/audio_graph/execution_plan.rs](../../src-tauri/src/audio_graph/execution_plan.rs) |
+| Modulation                    | [src-tauri/src/audio_graph/modulation.rs](../../src-tauri/src/audio_graph/modulation.rs) |
+| LiveParams                    | [src-tauri/src/audio_graph/live_params.rs](../../src-tauri/src/audio_graph/live_params.rs) |
+| MIDI types                    | [src-tauri/src/audio_graph/midi.rs](../../src-tauri/src/audio_graph/midi.rs) |
+| Instrument / PolySynth        | [src-tauri/src/audio_graph/nodes/instrument.rs](../../src-tauri/src/audio_graph/nodes/instrument.rs), [src-tauri/src/audio_graph/nodes/poly_synth.rs](../../src-tauri/src/audio_graph/nodes/poly_synth.rs) |
+| Plugin host                   | [src-tauri/src/plugin_system/host.rs](../../src-tauri/src/plugin_system/host.rs) |
+| Plugin capabilities (Phase 1) | [src-tauri/src/plugin_system/capabilities.rs](../../src-tauri/src/plugin_system/capabilities.rs) |
+| Wrapper VST3                  | [src-tauri/src/plugin_formats/vst3/wrapper.rs](../../src-tauri/src/plugin_formats/vst3/wrapper.rs) |
+| Wrapper CLAP                  | [src-tauri/src/plugin_formats/clap/wrapper.rs](../../src-tauri/src/plugin_formats/clap/wrapper.rs) |
+| GUI plugin (Win32)            | [src-tauri/src/plugin_system/gui.rs](../../src-tauri/src/plugin_system/gui.rs) |
+| Engine gateway (IPC)          | [src-tauri/src/engine_gateway/api.rs](../../src-tauri/src/engine_gateway/api.rs) |
+| Transport partagé             | [src-tauri/src/audio_engine/transport.rs](../../src-tauri/src/audio_engine/transport.rs) |
+| Export offline                | [src-tauri/src/audio_engine/offline.rs](../../src-tauri/src/audio_engine/offline.rs) |

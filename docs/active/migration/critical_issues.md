@@ -1,8 +1,67 @@
 # Critical Issues — Echoes Studio (état au 2026-05-31)
 
-> Analyse exhaustive des problèmes du **système actuel**, organisée par catégorie.
-> Source : audits [`audio-engine-audit-2026-05-29.md`](../audits/audio-engine-audit-2026-05-29.md), [`plugin-system-audit-2026-05-31.md`](../audits/plugin-system-audit-2026-05-31.md), [`plugin-gui-audit-2026-05-31.md`](../audits/plugin-gui-audit-2026-05-31.md).
-> Aucune solution n'est proposée ici. Voir [`current_engine_diagram.md`](current_engine_diagram.md) pour la structure correspondante.
+> **⚠️ Catalogue historique (2026-05-31).** Le corps du document décrit l'état de
+> l'époque et n'est **pas réécrit**. Le tableau ci-dessous donne l'état vérifié dans
+> le code le **2026-09-29** (lecture ciblée, pas de test à l'exécution). Pour la
+> suite, voir [`migration_plan.md`](migration_plan.md) (« État d'avancement et suite »).
+
+Légende : ✅ résolu · ◐ partiel · ⬜ ouvert · ❓ non vérifié (laissé tel que décrit).
+
+| # | État | Constat (2026-09-29) |
+|---|------|----------------------|
+| 1.1 | ◐ | XRun détectés et journalisés (`engine.rs`), compteur dans l'événement du reporter ; pas de surface UI vérifiée |
+| 1.2 | ✅ | Le commentaire `unsafe impl Send` ne porte plus l'affirmation erronée |
+| 1.3 | ❓ | Durée du verrou moteur pendant la compilation non revérifiée |
+| 1.4 | ✅ | Paramètres d'effet livrés à chaud (ADR-009/007) ; seul l'activer/désactiver recompile |
+| 1.5 | ◐ | Shim SEH `crash_guard` (Windows) autour des appels FFI ; isolation complète via sandbox (opt-in) |
+| 1.6 | ◐ | Timeouts sur le bridge sandbox ; aucun watchdog pour un plugin in-process |
+| 1.7 | ✅ | `TIME_CRITICAL` sur le thread audio et les workers (Windows) ; Linux/macOS non vérifiés |
+| 2.1 | ✅ | MIDI en beats, tempo resynchronisé (ADR-012) |
+| 2.2 | ✅ | `PortKind` existe (`node.rs`, ADR-011) |
+| 2.3 | ◐ | Instruments CLAP routés (ADR-013) ; pas de Note FX |
+| 2.4 | ❓ | Types `Send`/`Return` présents dans `graph.rs` et le compilateur ; câblage projet/UI non vérifié |
+| 2.5–2.6 | ❓ | Containers / Note FX : non revérifiés dans `NodeKind` |
+| 2.7 | ⬜ | Modulateurs toujours rattachés aux pistes (`project.rs`) |
+| 2.8 | ✅ | Voir 1.4 |
+| 2.9 | ❓ | Interpolation de `track.rs` non revérifiée |
+| 3.1 | ✅ | File SPSC des paramètres (ADR-008) |
+| 3.2 | ◐ | Instruments CLAP oui ; VST3 non |
+| 3.3 | ◐ | Sidechain et multi-sorties CLAP réels (ADR-014) ; VST3 `getBusInfo` ignoré |
+| 3.4 | ◐ | Paramètres CLAP énumérés (`clap/params.rs`) ; VST3 non vérifié |
+| 3.5 | ✅ | Persistance d'état via `plugin_system/state.rs` (ADR-010) ; les `save_state` des wrappers restent vides par conception |
+| 3.6 | ✅ | `latency_samples` surchargé (CLAP, VST3, sandbox) |
+| 3.7–3.9 | ✅ | `Arc<PluginInstance>` unique, cycle de vie atomique, paramètres adressables (ADR-007/008/016/017) |
+| 3.10 | ◐ | Le registre porte `is_instrument` et `num_sidechain_inputs` |
+| 3.11–3.13 | ✅ | Voir corps du document et ADR-016 ; V4 dual-component fait |
+| 3.14 | ⬜ | `Box<ClapHost>` non `Pin`, cosmétique |
+| 3.15 | ◐ | Capacités désormais lues au scan (voir 3.3, 3.10) |
+| 3.16 | ⬜ | AU : stub (macOS) ; pas de dossier WASM |
+| 4.1 | ⬜ | Aucune mesure de coût par nœud dans `worker_pool.rs` |
+| 4.2 | ❓ | Pool par scheduler : non revérifié |
+| 4.3 | ⬜ | `ECHOES_AUDIO_WORKERS` vaut 0 par défaut |
+| 4.4 | ⬜ | Suréchantillonnage fixe ×2 |
+| 4.5 | ⬜ | Reporter à ~30 Hz |
+| 4.6 | ✅ | Voir 1.4 |
+| 5.1 | ✅ | 4 types : LFO, macro, enveloppe, suiveur audio |
+| 5.2 | ◐ | Grille sous-bloc (ADR-019) ; pas d'échantillon par échantillon |
+| 5.3 | ❓ | Alignement PDC de la modulation non revérifié |
+| 5.4 | ✅ | Paramètres de plugin modulables (ADR-021) |
+| 5.5 | ✅ | Phase du LFO remise à zéro au démarrage du transport (test dans `modulator.rs`) |
+| 5.6 | ✅ | Synchro tempo (voir `state_index.md`) |
+| 5.7 | ◐ | Moteur d'automation livré (`audio_graph/automation.rs`) ; aucune UI |
+| 6.1 | ◐ | Une vue graphe existe (`GraphView.svelte`) ; modèle piste linéaire conservé (C-8) |
+| 6.2 | ◐ | `PluginPicker` a un mode instrument / effet |
+| 6.3 | ✅ | Voir 3.11 |
+| 6.4 | ◐ | Plugin désactivé reste chargé (ADR-020) ; le toggle recompile encore |
+| 6.5 | ❓ | Morphing / A-B non vérifié |
+| 6.6 | ⬜ | Pas d'UI d'automation |
+| 7.1 | ✅ | Latence des plugins reportée |
+| 7.2 | ◐ | CLAP oui ; VST3 `kLatencyChanged` ignoré |
+| 7.3 | ❓ | Voir 5.3 |
+| 8.1–8.4 | ◐ | Sandbox opt-in pour CLAP ; plugins non isolés et VST3 restent exposés |
+| 8.5 | ◐ | Plugin de test (`crates/test_clap_plugin`) et tests FFI ; aucune CI |
+| 8.6 | ✅ | Corrigé |
+| 8.7 | ◐ | Types conservés volontairement pour la migration (note dans `audio_engine/mod.rs`) |
 
 Légende sévérité :
 - **critical** — bloque un usage production, risque de crash / corruption / xrun systématique
@@ -503,7 +562,8 @@ Statut : seuls les problèmes **encore présents dans le code** sont listés. Le
 
 ## Synthèse par sévérité
 
-> Comptage mis à jour 2026-09-25 : 3.11 et 6.3 (double instance audio/GUI)
+> Les comptes ci-dessous datent du 2026-05-31 ; l'état courant est dans le tableau
+> en tête de fichier. Ancienne note (2026-09-25) : 3.11 et 6.3 (double instance audio/GUI)
 > corrigés depuis (ADR-016) — retirés de la colonne *critical* ; 3.12 (DPI)
 > corrigé — retiré de la colonne *medium*. Le reste du
 > tableau n'a pas été revérifié ligne par ligne dans cette passe ; d'autres

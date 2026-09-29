@@ -1,3 +1,8 @@
+> **⚠️ ARCHIVED — SUPERSEDED.** Point-in-time audit of 2026-06 (« reality audit » series), kept for history only. **Do not edit.**
+> Many findings were fixed since. Current status: `docs/active/migration/migration_plan.md` (section « État d'avancement et suite »), `.claude/state_index.md` and `docs/active/decisions/000-index.md`.
+
+---
+
 # ADR Runtime Validation
 
 > Focus #3 de l'audit. Pour chaque ADR : est-il **réellement appliqué** dans le
@@ -46,7 +51,7 @@ contradiction observée.
 Le **runtime** (`GraphScheduler`) ne voit que `Box<dyn AudioNode>` : agnostique
 format, conforme. **Réserve** : `architecture_rules.md` invariant #3 dit
 « `audio_graph/` ne doit pas importer `plugin_system` ». Or
-[`compiler.rs:36`](../src-tauri/src/audio_graph/compiler.rs#L36) importe
+[`compiler.rs:36`](../../src-tauri/src/audio_graph/compiler.rs#L36) importe
 `plugin_system::PluginHost` et l'appelle (`instantiate`, `instantiate_instrument`,
 `sidechain_input_ports`). **ADR-003 lui-même autorise** ceci (« The graph
 compiler calls `PluginHost::instantiate()` », lignes 37/40). → La **règle
@@ -111,7 +116,7 @@ ne crée que de l'`Audio` → bit-identique. `validate_port_kinds` garde le rest
 
 ### ADR-012 — MIDI Snapshot en beats — **VALID** (corrige une entrée périmée)
 `from_project` bake les notes en `start_beats`/`end_beats` + `clip_start_sec`
-([`graph.rs:561-567`](../src-tauri/src/audio_graph/graph.rs#L561)), pas en samples
+([`graph.rs:561-567`](../../src-tauri/src/audio_graph/graph.rs#L561)), pas en samples
 absolus. → **Contredit `critical_issues.md` §2.1** qui prétend que les notes sont
 bakées en samples absolus avec le BPM du compile. L'entrée §2.1 est **périmée** ;
 la résolution tempo per-block existe (ADR-012/Phase implémentée). *(Le câblage
@@ -126,19 +131,19 @@ support », périmé) pour CLAP.
 ### ADR-014 — Capability-driven Port Sizing — **PARTIAL / inerte**
 Le compiler ajoute `plugin_host.sidechain_input_ports(device_id)` aux entrées
 d'un node Plugin. Mais `num_sidechain_inputs` n'est **jamais peuplé** (le scan
-CLAP le met à 0, [`clap/host.rs:93`](../src-tauri/src/plugin_formats/clap/host.rs#L93)).
+CLAP le met à 0, [`clap/host.rs:93`](../../src-tauri/src/plugin_formats/clap/host.rs#L93)).
 → Toujours 0 → strictement bit-identique → **chemin dormant**. Foundation
 présente, capacité réelle absente.
 
 ### ADR-015 — Plugin Sandbox — **PARTIAL**
-- `BridgedNode` ([`bridged_node.rs`](../src-tauri/src/plugin_system/bridged_node.rs))
+- `BridgedNode` ([`bridged_node.rs`](../../src-tauri/src/plugin_system/bridged_node.rs))
   spawn un `plugin_host_bridge` enfant, échange l'audio via shared-memory
   (`plugin_bridge::session`), budget spin + fallback pass-through. Watchdog
   (6e) présent.
 - Branché dans `compiler.build_node` quand `sandboxed && CLAP && bridge exe`.
 - **Opt-in, défaut OFF** (C-9 respecté). VST3 sandbox non encore fait.
 - **Note** : `PluginHost::instantiate` **ignore** son param `sandboxed`
-  (`let _ = sandboxed`, [`host.rs:163`](../src-tauri/src/plugin_system/host.rs#L163)) —
+  (`let _ = sandboxed`, [`host.rs:163`](../../src-tauri/src/plugin_system/host.rs#L163)) —
   la vraie décision est dans le compiler. Cohérent mais le param host est mort.
 
 ---

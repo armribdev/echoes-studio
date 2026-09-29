@@ -39,21 +39,24 @@ docs/active/
 │   └── modulation-system.md ← ownership rules, data types, execution
 │
 ├── migration/              ← current → target evolution (no rewrite)
-│   ├── current_engine_diagram.md ← what exists today (structural)
 │   ├── critical_issues.md   ← catalogued problems of the current system
 │   ├── target_architecture.md ← realistic target + migration strategy
-│   └── migration_plan.md    ← incremental, variant-by-variant plan
+│   └── migration_plan.md    ← incremental plan + current status and next steps
 │
-├── audits/                 ← point-in-time engine/plugin audits
+├── audits/                 ← point-in-time engine/plugin audits (+ FFI lifecycle validation)
 │
 └── decisions/              ← ADR-style architecture decision records
     ├── 000-index.md         ← ADR index (start here)
     ├── architecture-decision-rules.md ← ADR governance + hard constraints
-    └── 001..015-*.md        ← individual ADRs
+    └── 001..024-*.md        ← individual ADRs
 ```
 
-Sibling trees: `docs/archive/` (superseded docs) and `.claude/`
-(`rules/`, `skills/`, `memory/` — added in later governance phases).
+Sibling trees: `docs/archive/` (superseded docs, including the June 2026
+« reality audit » series) and `.claude/` (`rules/`, `skills/`, `state_index.md`).
+
+General project docs live at the `docs/` root: `ARCHITECTURE.md`,
+`AUDIO_ENGINE.md`, `BUILD.md`, `TECH_STACK.md`, `UI_GUIDELINES.md`,
+`library-browser-ux.md`, `library-browser-roadmap.md`.
 
 ---
 
@@ -73,7 +76,8 @@ Sibling trees: `docs/archive/` (superseded docs) and `.claude/`
 | What mistakes must I avoid? | `architecture/anti-patterns.md` |
 | Can I change the threading/graph/plugin model? | `decisions/architecture-decision-rules.md` |
 | What decisions have already been made? | `decisions/000-index.md` |
-| What is the current system vs the target? | `migration/current_engine_diagram.md` vs `migration/target_architecture.md` |
+| What is done and what comes next? | `migration/migration_plan.md` (status section), `../library-browser-roadmap.md` |
+| What is the target architecture? | `migration/target_architecture.md` (pre-migration structure archived: `../archive/current_engine_diagram.md`) |
 | Library / browser UX (panel, pop-up, drops)? | `../library-browser-ux.md` + `decisions/023-library-browser-ux.md` |
 
 ---

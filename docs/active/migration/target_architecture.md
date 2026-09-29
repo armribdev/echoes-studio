@@ -1,7 +1,7 @@
 # Target Architecture — Echoes Studio (migration vers DAW moderne)
 
 > Architecture **cible réaliste** pour faire évoluer Echoes Studio en DAW moderne (Bitwig/Ableton/Reaper-like), **sans rewrite**.
-> Source des contraintes : [`critical_issues.md`](critical_issues.md), [`current_engine_diagram.md`](current_engine_diagram.md), audits sous [`../audits/`](../audits/).
+> Source des contraintes : [`critical_issues.md`](critical_issues.md), [`current_engine_diagram.md`](../../archive/current_engine_diagram.md) *(archivé)*, audits sous [`../audits/`](../audits/).
 > Date : 2026-05-31. Statut : proposition pour ratification.
 
 Ce document décrit l'**état cible** et la **stratégie de migration**. Il ne décrit pas un système à construire de zéro : chaque brique cible est attachée à une brique actuelle conservée, étendue, ou remplacée en place.

@@ -30,5 +30,6 @@ brick attaches to a current brick that is kept, extended, or replaced in place.
 - A migration step that touches a hard invariant still needs an ADR
   (`architecture_rules.md`).
 
-> Current vs target: `docs/active/migration/current_engine_diagram.md` vs
-> `target_architecture.md`. Problem catalogue: `critical_issues.md`.
+> Target: `target_architecture.md`. Progress + next steps: `migration_plan.md`.
+> Historical problem catalogue: `critical_issues.md` (status table at top).
+> Pre-migration structure (archived): `docs/archive/current_engine_diagram.md`.

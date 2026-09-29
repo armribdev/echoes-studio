@@ -1,3 +1,8 @@
+> **⚠️ ARCHIVED — SUPERSEDED.** Point-in-time audit of 2026-06 (« reality audit » series), kept for history only. **Do not edit.**
+> Many findings were fixed since. Current status: `docs/active/migration/migration_plan.md` (section « État d'avancement et suite »), `.claude/state_index.md` and `docs/active/decisions/000-index.md`.
+
+---
+
 # DSP Graph — Reality Check
 
 > Focus #2 de l'audit. Question : *quel graphe tourne vraiment ? Y a-t-il un
@@ -28,10 +33,10 @@
 
 | Fichier | Rôle réel | Contient un graphe exécutable ? |
 |---------|-----------|---------------------------------|
-| [`audio_graph/graph.rs`](../src-tauri/src/audio_graph/graph.rs) | **Modèle de topologie** (`AudioGraph`, `NodeKind`, `Edge`, `from_project`) | Non — topologie éditeur, non-RT |
-| [`audio_engine/graph.rs`](../src-tauri/src/audio_engine/graph.rs) | **Bridge** `AudioGraphCompiler::compile_scheduler` : `from_project`→`compile`→`GraphScheduler` | Non — orchestration, 96 lignes |
-| [`audio_graph/compiler.rs`](../src-tauri/src/audio_graph/compiler.rs) | Compile topologie → `ExecutionPlan` + `Vec<Box<dyn AudioNode>>` | Produit le plan |
-| [`audio_graph/scheduler.rs`](../src-tauri/src/audio_graph/scheduler.rs) | **Driver RT unique** : `process_block` | **Oui — c'est lui qui tourne** |
+| [`audio_graph/graph.rs`](../../src-tauri/src/audio_graph/graph.rs) | **Modèle de topologie** (`AudioGraph`, `NodeKind`, `Edge`, `from_project`) | Non — topologie éditeur, non-RT |
+| [`audio_engine/graph.rs`](../../src-tauri/src/audio_engine/graph.rs) | **Bridge** `AudioGraphCompiler::compile_scheduler` : `from_project`→`compile`→`GraphScheduler` | Non — orchestration, 96 lignes |
+| [`audio_graph/compiler.rs`](../../src-tauri/src/audio_graph/compiler.rs) | Compile topologie → `ExecutionPlan` + `Vec<Box<dyn AudioNode>>` | Produit le plan |
+| [`audio_graph/scheduler.rs`](../../src-tauri/src/audio_graph/scheduler.rs) | **Driver RT unique** : `process_block` | **Oui — c'est lui qui tourne** |
 
 > `audio_engine/graph.rs` est le « single integration point » documenté dans son
 > propre header. Garder son nom public évite de toucher `engine_gateway`. Ce
@@ -43,7 +48,7 @@
 
 - **Topo-sort déterministe** (Kahn, BFS) avec tie-break `sort_unstable()` sur
   `NodeId` → ordre stable indépendant de l'itération `HashMap`
-  ([`compiler.rs:430-481`](../src-tauri/src/audio_graph/compiler.rs#L430)).
+  ([`compiler.rs:430-481`](../../src-tauri/src/audio_graph/compiler.rs#L430)).
   Underpin de C-2 (bit-identique).
 - **Niveaux d'exécution (R1)** : `compute_execution_levels` plie les arêtes
   audio **et** modulation dans la relation de dépendance → garantit
@@ -57,7 +62,7 @@
   `DelayLine` par port (rings pré-alloués). Tests `pdc_*` verts.
 - **Swap immuable** : `RuntimeSnapshot` (AtomicPtr + drop-ring SPSC). L'ancien
   scheduler est libéré sur le thread commande, **jamais** dans le callback
-  ([`snapshot.rs`](../src-tauri/src/audio_graph/snapshot.rs)). Conforme ADR-004.
+  ([`snapshot.rs`](../../src-tauri/src/audio_graph/snapshot.rs)). Conforme ADR-004.
 - **Master** : `MasterNode` somme + soft-clip et écrit `output_buffers[master][0]`,
   lu directement par `write_master_output`. `num_outputs=1` déclaré pour
   pré-allouer ce slot.
@@ -70,7 +75,7 @@
 Le `AudioNode` trait expose `num_input_ports()`/`num_output_ports()`, **mais le
 pipeline de production ne les consulte pas** :
 - le compiler dimensionne via `num_inputs_for_kind` / `num_outputs_for_kind`
-  (codés en dur par `NodeKind`, [`compiler.rs:485-530`](../src-tauri/src/audio_graph/compiler.rs#L485)) ;
+  (codés en dur par `NodeKind`, [`compiler.rs:485-530`](../../src-tauri/src/audio_graph/compiler.rs#L485)) ;
 - le scheduler lit `plan.steps[].num_outputs` et `input_connections.len()`.
 
 Exemple concret : un `NodeKind::Plugin` → compiler alloue **2 in / 2 out**, alors
@@ -87,14 +92,14 @@ que `ClapWrapperNode`/`VstWrapperNode` déclarent **1 in / 1 out**. Au runtime :
 ### 3.2 ⚠️ Sends/Returns : tap non routé
 `NodeKind::Send` produit un tap pass-through (1 in/1 out) mais **aucun
 `ReturnNode` n'est câblé** : `NodeKind::Return` compile en `BusNode(1)` qui ne
-collecte rien ([`compiler.rs:670-673`](../src-tauri/src/audio_graph/compiler.rs#L670)),
+collecte rien ([`compiler.rs:670-673`](../../src-tauri/src/audio_graph/compiler.rs#L670)),
 et `from_project` ne crée jamais de node Send/Return. Les envois auxiliaires sont
 donc **inertes** (conforme `critical_issues.md` §2.4). Pas un bug, une feature
 absente.
 
 ### 3.3 ✅ Edges typés : seul `Audio` accepté
 `validate_port_kinds` rejette toute arête non-`Audio`
-([`compiler.rs:414-428`](../src-tauri/src/audio_graph/compiler.rs#L414)). Comme
+([`compiler.rs:414-428`](../../src-tauri/src/audio_graph/compiler.rs#L414)). Comme
 `from_project` ne crée que des arêtes `Audio` (defaut `connect`), c'est un no-op
 qui préserve C-2. Les arêtes MIDI/Modulation sont rejetées tant que les ports ne
 sont pas câblés (Phase 5c/5e) — tests `midi_edge_is_rejected`/`modulation_edge_is_rejected`.
@@ -116,7 +121,7 @@ en LFO silencieux (`rate 0`) — stubs, conforme §5.1.
   instanciés et processés. Un node sans arête sortante est quand même processé
   (gaspillage CPU mineur), mais `from_project` ne crée que des chaînes connectées
   au master.
-- **Meter** : traité **avant** `build_node` (cas spécial, [`compiler.rs:239`](../src-tauri/src/audio_graph/compiler.rs#L239))
+- **Meter** : traité **avant** `build_node` (cas spécial, [`compiler.rs:239`](../../src-tauri/src/audio_graph/compiler.rs#L239))
   pour créer ses cellules atomiques ; pass-through audio.
 
 ---

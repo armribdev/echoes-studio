@@ -1,3 +1,8 @@
+> **⚠️ ARCHIVED — SUPERSEDED.** Point-in-time audit of 2026-06 (« reality audit » series), kept for history only. **Do not edit.**
+> Many findings were fixed since. Current status: `docs/active/migration/migration_plan.md` (section « État d'avancement et suite »), `.claude/state_index.md` and `docs/active/decisions/000-index.md`.
+
+---
+
 # Cleanup Impact & Regressions
 
 > Focus #4 de l'audit. *Ce qui a été supprimé / déprécié, ce qui est encore
@@ -20,7 +25,7 @@ principale : *drift doc ↔ code*.
 
 ### 1.1 `audio_engine/snapshot.rs` — types legacy morts
 `AudioGraphSnapshot` / `TrackSnapshot` / `ClipSnapshot`
-([`audio_engine/snapshot.rs`](../src-tauri/src/audio_engine/snapshot.rs)) ne sont
+([`audio_engine/snapshot.rs`](../../src-tauri/src/audio_engine/snapshot.rs)) ne sont
 **référencés que dans leur propre fichier** + un commentaire de `audio_engine/mod.rs`.
 Aucun consommateur réel (le runtime utilise `audio_graph::RuntimeSnapshot`). Le
 header le dit lui-même (« no longer used … retained … will be removed »). Confirme
@@ -37,7 +42,7 @@ d'erreur. Voir [`plugin_instantiation_failure_analysis.md`](plugin_instantiation
 
 ### 1.3 Param `sandboxed` ignoré côté host
 `PluginHost::instantiate(…, sandboxed)` fait `let _ = sandboxed`
-([`host.rs:163`](../src-tauri/src/plugin_system/host.rs#L163)). La branche sandbox
+([`host.rs:163`](../../src-tauri/src/plugin_system/host.rs#L163)). La branche sandbox
 réelle est dans `compiler.build_node` (`BridgedNode::try_new`). Le paramètre host
 est donc **mort** (threadé « pour 6d » mais 6d a mis la logique ailleurs).
 
@@ -53,13 +58,13 @@ consultés** par le compiler (qui utilise `num_*_for_kind`) ni par le scheduler
 
 - **AU / WASM** : `PluginHost::instantiate` renvoie `PassThroughDevice` +
   `eprintln` « not yet implemented »
-  ([`host.rs:182-194`](../src-tauri/src/plugin_system/host.rs#L182)).
+  ([`host.rs:182-194`](../../src-tauri/src/plugin_system/host.rs#L182)).
   `plugin_formats/au/`, `plugin_formats/internal/wasm_runtime.rs` existent comme
   squelettes. Non câblés au runtime. Conforme `critical_issues` §3.16.
 - **Modulators non-LFO** (Envelope/Macro/AudioRate) → compilent en LFO silencieux
-  (`rate 0`) ([`compiler.rs:729-737`](../src-tauri/src/audio_graph/compiler.rs#L729)).
+  (`rate 0`) ([`compiler.rs:729-737`](../../src-tauri/src/audio_graph/compiler.rs#L729)).
 - **`registry.scan_directory`** : stub `// TODO platform-specific scanner`
-  ([`registry.rs:110`](../src-tauri/src/plugin_system/registry.rs#L110)) — le vrai
+  ([`registry.rs:110`](../../src-tauri/src/plugin_system/registry.rs#L110)) — le vrai
   scan VST3/CLAP passe par `Vst3Host::scan`/`ClapHost::scan`, pas par cette
   méthode. `scan_directory` est donc un stub mort.
 
@@ -91,14 +96,14 @@ surveiller car ils peuvent rendre un bug invisible :
 ### 4.1 Rendu offline : Web Audio (supprimé) → `offline.rs` (actif)
 Ancien : le frontend rendait un **second graphe** via `OfflineAudioContext` et
 envoyait les samples à `export_wav/mp3`. Supprimé. Nouveau
-[`offline.rs`](../src-tauri/src/audio_engine/offline.rs) réutilise **le même**
+[`offline.rs`](../../src-tauri/src/audio_engine/offline.rs) réutilise **le même**
 `AudioGraphCompiler::compile_scheduler` + `process_block`. **Bon nettoyage, pas de
 régression** : le risque de divergence DSP (gain laws, plugins, modulation, PDC
 absents en Web Audio) est éliminé. À vérifier : que **plus aucun** chemin
 frontend ne génère d'audio (hors scope code Rust).
 
 ### 4.2 `bridge.rs` — re-export « dead until 6d »
-[`plugin_system/bridge.rs`](../src-tauri/src/plugin_system/bridge.rs) re-exporte
+[`plugin_system/bridge.rs`](../../src-tauri/src/plugin_system/bridge.rs) re-exporte
 `plugin_bridge::{protocol, region, session, shmem}` avec un commentaire « Nothing
 in the engine consumes these yet — dead until 6d ». **Le commentaire est
 périmé** : `bridged_node.rs` consomme bien `plugin_bridge::session::{BridgeLayout,

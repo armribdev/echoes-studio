@@ -1,7 +1,7 @@
 # FFI Plugin Lifecycle Validation (real instances)
 
 **Date:** 2026-06-04 · **Scope:** real VST3 / CLAP instance lifecycle on Windows.
-**Harness:** [`src-tauri/src/plugin_system/ffi_lifecycle_tests.rs`](../src-tauri/src/plugin_system/ffi_lifecycle_tests.rs)
+**Harness:** [`src-tauri/src/plugin_system/ffi_lifecycle_tests.rs`](../../../src-tauri/src/plugin_system/ffi_lifecycle_tests.rs)
 (test-only; no production code, graph, scheduler, or plugin-system design was changed).
 
 This validation closes the two gaps left by the existing suite, which only
@@ -78,7 +78,7 @@ Before the fix, every real VST3 failed at instantiation:
 VST3 on Windows is **COM-compatible**: interface identifiers (`Tuid`) use the
 GUID byte layout (`Data1`/`Data2`/`Data3` little-endian, `Data4` big-endian).
 The engine hardcodes its interface IIDs in **platform-neutral big-endian** order
-in [`plugin_formats/vst3/ffi.rs`](../src-tauri/src/plugin_formats/vst3/ffi.rs):
+in [`plugin_formats/vst3/ffi.rs`](../../../src-tauri/src/plugin_formats/vst3/ffi.rs):
 
 ```rust
 // IComponent::iid = INLINE_UID(0xE831FF31, 0xF2D54301, 0x928EBBEE, 0x25697802)
@@ -112,7 +112,7 @@ pub const IID_ICOMPONENT: Tuid =
 ### Fix applied
 
 Minimal, scoped to the two interface IIDs on the instantiation/activation path,
-in [`plugin_formats/vst3/ffi.rs`](../src-tauri/src/plugin_formats/vst3/ffi.rs):
+in [`plugin_formats/vst3/ffi.rs`](../../../src-tauri/src/plugin_formats/vst3/ffi.rs):
 
 ```rust
 const fn interface_iid(be: Tuid) -> Tuid {
@@ -176,5 +176,5 @@ pub const IID_IAUDIO_PROCESSOR: Tuid = interface_iid([/* big-endian literal */])
 - VST3 real lifecycle (T1–T5): **PASS** (after the F1 fix).
 - Full suite: **70 passed, 0 failed, 0 ignored**.
 - Engine change: minimal byte-order fix to two VST3 interface IIDs
-  (`cfg(windows)`-gated, [`vst3/ffi.rs`](../src-tauri/src/plugin_formats/vst3/ffi.rs)).
+  (`cfg(windows)`-gated, [`vst3/ffi.rs`](../../../src-tauri/src/plugin_formats/vst3/ffi.rs)).
   No graph, scheduler, threading, or plugin-system design was changed.

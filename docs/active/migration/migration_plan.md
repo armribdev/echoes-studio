@@ -6,6 +6,41 @@
 
 ---
 
+## État d'avancement et suite (mis à jour 2026-09-29)
+
+Les statuts détaillés par sous-système sont dans [`.claude/state_index.md`](../../../.claude/state_index.md) ; cette section donne la vue d'ensemble.
+
+### Fait
+
+| Phase | État | Repères |
+|---|---|---|
+| 1 Fondations safe | livré | capabilities, latence/PDC, `catch_unwind` |
+| 2 `Arc<PluginInstance>` | livré | ADR-007, ADR-016 (une seule instance audio/GUI) |
+| 3 Param transport + `ParameterBlock` | livré | ADR-008, ADR-009, ADR-017 |
+| 4 Séparation DSP/UI + état plugin | livré | ADR-010 (sauvegarde/restauration d'état) |
+| 5a–5e PortKind, MIDI en beats, instruments CLAP, capabilities→compilateur, modulateurs | livré côté moteur | ADR-011 à 014, 019, 021 ; sidechain + multi-sorties CLAP réels |
+| 5e automation | moteur livré (`audio_graph/automation.rs`, commandes `*_AUTOMATION_*`), **aucune UI** | voir « Suite » |
+| 5f Entrée MIDI matérielle | livré (notes uniquement) | ADR-022 |
+| 6 Sandbox | stable pour effets et instruments CLAP, opt-in | ADR-015 |
+| V1 Harnais C-2 | livré sous forme légère | `audio_engine/render_harness.rs` |
+| Hors plan initial | livré | trim/offset de clips (ADR-018), PCM progressif (ADR-024), bibliothèque de sons phase 1 en cours (ADR-023), UX arrangement et panneau gauche |
+
+### Suite (ordre recommandé)
+
+1. **Clôturer la bibliothèque phase 1** — critères de sortie de [`../../library-browser-roadmap.md`](../../library-browser-roadmap.md), dont le test « loop audible en < 10 s ». Puis phases 2 (pop-up) et 3 (accords / MIDI).
+2. **UI d'automation** (fin de 5e) — courbes dans l'arrangement, choix du paramètre à automatiser. Le moteur est prêt, aucun ADR nécessaire a priori.
+3. **Enregistrement MIDI dans un clip** (suite de 5f) — capture des notes jouées au clavier. Amendement d'ADR-022 requis avant.
+4. **CI minimale** (fin de V1) — `cargo test` (harnais C-2 inclus) et build frontend à chaque PR ; aucun workflow n'existe aujourd'hui. Reste aussi ouvert : vérification cross-OS et projets avec plugins réels.
+5. **Vérifications manuelles en attente** — sidechain avec un vrai plugin, multi-sorties sur une boîte à rythmes CLAP, éditeur de plugin sur écran HiDPI.
+6. **Reste de la phase 6** — sandbox VST3, drapeau par piste pour les instruments, intégration à l'installeur.
+7. **Phase 7 (nettoyage legacy)** — après validation en production de P1 à P6.
+
+**À décider par ADR avant de commencer** : répétitions de clips MIDI liées (alias à la Logic, nouveau modèle de contenu partagé) ; warp à la dépose d'un loop (impact sur le rendu offline).
+
+**Documentation à rattraper** : [`critical_issues.md`](critical_issues.md) est périmé (plusieurs points déjà corrigés) ; plusieurs lignes de `state_index.md` datent encore de juin.
+
+---
+
 ## 0. Lecture rapide
 
 | Phase | Nom | Effort | Risque RT | Vague target | ADRs |

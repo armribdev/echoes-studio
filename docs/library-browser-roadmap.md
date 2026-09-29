@@ -62,6 +62,15 @@ friction).
 6. **Recents / favorites** — local persistence (not project undo)  
 7. **Shortcuts + focus scopes** — `B`/`L`, Space rule from ADR-023  
 
+### Progress (2026-09-29, from commit history — slices not individually re-verified)
+
+Landed: right-dock panel and source management, drag-and-drop to arrange with
+keyboard shortcuts, UI preview player (uncommitted tweaks pending), plus the
+audio import pipeline it relies on (progressive peaks/PCM, cancellation, focus
+of imported clips — ADR-024). Remaining: check every exit criterion below
+(notably the &lt; 10 s path and the “full scan never blocks first paint” item),
+then commit the pending preview/panel changes.
+
 ### Exit criteria
 
 - [ ] Cold open → `B` → search “loop” → drag to track → hear on play, **&lt; 10 s**

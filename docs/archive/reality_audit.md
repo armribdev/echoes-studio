@@ -1,3 +1,8 @@
+> **⚠️ ARCHIVED — SUPERSEDED.** Point-in-time audit of 2026-06 (« reality audit » series), kept for history only. **Do not edit.**
+> Many findings were fixed since. Current status: `docs/active/migration/migration_plan.md` (section « État d'avancement et suite »), `.claude/state_index.md` and `docs/active/decisions/000-index.md`.
+
+---
+
 # Reality Audit — Echoes Studio runtime (état réel, 2026-06-03)
 
 > **But** : reconstruire la *vérité runtime* du moteur tel qu'il tourne
@@ -56,7 +61,7 @@
 
 5. **Divergence de gouvernance** : `architecture_rules.md` (invariant #3) affirme
    « `audio_graph/` ne doit pas importer `plugin_system` ». Le code **viole** cette
-   formulation : [`audio_graph/compiler.rs:36`](../src-tauri/src/audio_graph/compiler.rs#L36)
+   formulation : [`audio_graph/compiler.rs:36`](../../src-tauri/src/audio_graph/compiler.rs#L36)
    importe `plugin_system::PluginHost` et l'appelle. Or **ADR-003 sanctionne
    explicitement** cet appel (« The graph compiler calls
    `PluginHost::instantiate()` »). La règle `.claude` est donc trop stricte vs son
@@ -91,8 +96,8 @@ callback CPAL (engine.rs) → snapshot.try_swap(&mut box) → scheduler.process_
 ```
 
 - **Un seul** owner du `PluginHost` : `AudioEngine.plugin_host`
-  ([`engine.rs:241`](../src-tauri/src/audio_engine/engine.rs#L241)), peuplé par
-  `scan_plugins()` au démarrage ([`engine.rs:258`](../src-tauri/src/audio_engine/engine.rs#L258)).
+  ([`engine.rs:241`](../../src-tauri/src/audio_engine/engine.rs#L241)), peuplé par
+  `scan_plugins()` au démarrage ([`engine.rs:258`](../../src-tauri/src/audio_engine/engine.rs#L258)).
 - Le **thread audio ne touche jamais** le `PluginHost` : les instances voyagent
   dans le `GraphScheduler` via le snapshot. Conforme au modèle threading.
 - **Params plugin** : `UPDATE_*` hot → `api.rs:797-811` →
@@ -132,13 +137,13 @@ callback CPAL (engine.rs) → snapshot.try_swap(&mut box) → scheduler.process_
 | # | Risque réel | Sévérité | Preuve |
 |---|-------------|----------|--------|
 | R-1 | **Ré-instanciation plugin à chaque recompile** → perte d'état interne du plugin, deux instances FFI transitoires | critical | `compile()` appelle `build_node`→`instantiate` à chaque fois ; aucune réutilisation par `NodeId`. ADR-007 §"t2" documente le cycle. |
-| R-2 | **`records` indexé par `device_id`** : même plugin sur 2 pistes → un seul record survit ; params + GUI adressent la mauvaise instance | high | [`host.rs:206`](../src-tauri/src/plugin_system/host.rs#L206) `records.insert(plugin_id, …)` |
+| R-2 | **`records` indexé par `device_id`** : même plugin sur 2 pistes → un seul record survit ; params + GUI adressent la mauvaise instance | high | [`host.rs:206`](../../src-tauri/src/plugin_system/host.rs#L206) `records.insert(plugin_id, …)` |
 | R-3 | **Teardown host mort** : `destroy_device`/`suspend_device`/`resume_device` sans appelant → fuite des instances de plugins retirés | high | grep : définitions seules, 0 site d'appel |
 | R-4 | **State plugin perdu au recompile** : `load_device_state` n'est rappelé qu'au load projet (`main.rs:252`), pas après une ré-instanciation déclenchée par un tour de bouton | high | flux `update_from_project` ne re-pousse pas `saved_state` dans la nouvelle instance |
 | R-5 | **Crash plugin C++ (SEH) = crash DAW** en in-process (défaut) | critical | `catch_unwind` only, `scheduler.rs:630` |
-| R-6 | **Params d'instrument CLAP jetés** : `ClapInstrument::process_midi` fait `drain_params(|_| {})` | medium | [`clap_instrument.rs:146`](../src-tauri/src/audio_graph/nodes/clap_instrument.rs#L146) |
+| R-6 | **Params d'instrument CLAP jetés** : `ClapInstrument::process_midi` fait `drain_params(|_| {})` | medium | [`clap_instrument.rs:146`](../../src-tauri/src/audio_graph/nodes/clap_instrument.rs#L146) |
 | R-7 | **`num_input_ports/num_output_ports` du trait non consultés** par le compiler/scheduler (le compiler utilise `num_*_for_kind` codé en dur) → comptes de ports déclarés par les nodes = vestige | low | `compiler.rs` `num_inputs_for_kind`, scheduler lit `plan.steps[].num_outputs` |
-| R-8 | **`sandboxed` ignoré dans `PluginHost::instantiate`** (`let _ = sandboxed`), la vraie branche sandbox est dans `compiler.build_node` | low (cohérent, inerte) | [`host.rs:163`](../src-tauri/src/plugin_system/host.rs#L163) |
+| R-8 | **`sandboxed` ignoré dans `PluginHost::instantiate`** (`let _ = sandboxed`), la vraie branche sandbox est dans `compiler.build_node` | low (cohérent, inerte) | [`host.rs:163`](../../src-tauri/src/plugin_system/host.rs#L163) |
 
 Détail R-1…R-4 et R-6 : [`plugin_instantiation_failure_analysis.md`](plugin_instantiation_failure_analysis.md).
 Détail R-7 : [`dsp_graph_reality_check.md`](dsp_graph_reality_check.md).

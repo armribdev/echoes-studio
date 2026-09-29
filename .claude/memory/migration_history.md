@@ -7,7 +7,7 @@ is *history* (what happened), not spec. The forward plan is
 ## Planning baseline (2026-05)
 - Audits produced: audio-engine (2026-05-29), plugin-system + plugin-GUI
   (2026-05-31) → `docs/active/audits/`.
-- Migration framing established: `current_engine_diagram.md`,
+- Migration framing established: `current_engine_diagram.md` (now archived),
   `critical_issues.md`, `target_architecture.md` (C-1…C-10), `migration_plan.md`.
 
 ## Phases delivered
@@ -36,8 +36,14 @@ is *history* (what happened), not spec. The forward plan is
   machinery.
 - Phase 3: scoped `CLAUDE.md` per engine subdir, `.claude/skills/`, this memory.
 
-## Still open (debt, not yet migrated)
-Two-instance plugin debt (A1), VST3 dual-component (V4), CLAP `ClapHost` Pin/host
-reuse (CL3/CL5), DPI handling (W3), modulation runtime routes, `UPDATE_TEMPO`
-recompile, untyped-port removal completion. See `critical_issues.md` +
-`engine_quirks.md`.
+## Later work (2026-09)
+Sub-block modulation (ADR-019), plugin param modulation + automation engine
+(ADR-021), live MIDI hardware input (ADR-022), library browser (ADR-023),
+progressive clip PCM (ADR-024), CLAP sidechain / multi-out, sandboxed CLAP
+instruments. Docs pass 2026-09-29: June audits archived, `critical_issues.md`
+got a verified status table.
+
+## Still open
+See the status section of `migration_plan.md` and the table atop
+`critical_issues.md` (UI for automation, MIDI recording, VST3 buses/latency/
+sandbox, CI, phase 7 cleanup).

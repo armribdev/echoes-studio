@@ -30,7 +30,7 @@ pub const K_RESULT_FALSE: TResult = 1;
 /// (`Data1`/`Data2`/`Data3` little-endian, `Data4` unchanged).  The literals
 /// below are the platform-neutral big-endian form; on Windows the first three
 /// groups must be byte-swapped or `createInstance`/`queryInterface` return
-/// E_NOINTERFACE for every plugin (see docs/ffi_lifecycle_validation.md, F1).
+/// E_NOINTERFACE for every plugin (see docs/active/audits/ffi_lifecycle_validation.md, F1).
 const fn interface_iid(be: Tuid) -> Tuid {
     if cfg!(windows) {
         [
