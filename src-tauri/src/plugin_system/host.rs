@@ -270,6 +270,7 @@ impl PluginHost {
                 self.sidechain_input_ports(plugin_id),
             ))),
             DeviceFormat::Vst3 => Some(Box::new(VstWrapperNode::new(node_id, Arc::clone(inst)))),
+            #[cfg(any(feature = "au", feature = "wasm"))]
             _ => None,
         }
     }

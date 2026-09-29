@@ -63,7 +63,8 @@ use crate::project::AppProject;
 ///
 /// All mainstream CPAL applications use this pattern; see also
 /// https://github.com/RustAudio/cpal/issues/818.
-struct SendStream(cpal::Stream);
+// Field 0 is never read: holding it is what keeps the CPAL stream playing.
+struct SendStream(#[allow(dead_code)] cpal::Stream);
 // SAFETY: see doc comment above.
 unsafe impl Send for SendStream {}
 
@@ -474,14 +475,6 @@ impl AudioEngine {
         self._stream = Some(SendStream(stream));
         eprintln!("[audio] Moteur démarré.");
         Ok(())
-    }
-
-    pub fn start_stream(
-        &mut self,
-        project: &AppProject,
-        app: tauri::AppHandle,
-    ) -> Result<(), String> {
-        self.start_stream_with_settings(project, app, &AudioSettings::default())
     }
 }
 

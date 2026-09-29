@@ -24,17 +24,10 @@
 //! - No `drop` inside the audio callback; displaced schedulers are handed back
 //!   to the command thread via `RuntimeSnapshot`'s SPSC drop ring.
 //! - No async runtime interaction from the audio thread.
-//!
-//! ## Legacy types
-//!
-//! `snapshot.rs` retains `AudioGraphSnapshot` / `TrackSnapshot` / `ClipSnapshot`
-//! for backward compatibility during the migration.  They will be removed once
-//! all references are updated.
 
 pub mod engine;
 pub mod graph;
 pub mod offline;
 #[cfg(test)]
 mod render_harness;
-pub mod snapshot;
 pub mod transport;

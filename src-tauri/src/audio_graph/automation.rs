@@ -206,7 +206,7 @@ mod tests {
 
     #[test]
     fn multi_clip_points_are_merged_and_sorted() {
-        let mut l = AutomationLane {
+        let l = AutomationLane {
             id: "m".into(),
             target: ModulationTargetRef::TrackGain { track_id: "t".into() },
             clips: vec![

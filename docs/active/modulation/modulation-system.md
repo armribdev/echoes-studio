@@ -228,8 +228,8 @@ evaluates every route on the absolute control grid (ADR-019, Tranches 1–3 done
 | `Delay` / `Compressor` / `Reverb` / `Eq` | `process` loop segmented at grid points, params recomputed per segment and clamped to their range |
 | `PanNode` / `MasterNode` | not modulation targets |
 
-The block-rate `ModSmooth` (`nodes/mod_smooth.rs`) is no longer used by
-production code; it is kept because ADR-009 references it. Projects without
+The block-rate `ModSmooth` was removed on 2026-09-29 (unused since ADR-019;
+recoverable from git history). Projects without
 modulation or automation render exactly as before ADR-019.
 
 **Editing a modulator (`UPDATE_MODULATOR`):**

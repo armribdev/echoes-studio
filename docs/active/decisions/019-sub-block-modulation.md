@@ -56,9 +56,9 @@ segment and calls `Oversample2x::process_channel` on consecutive sub-slices —
 seamless because the oversampler state lives in the node and `recompute_coeffs`
 preserves the biquad state). The block-rate `ModSmooth` was **dropped** from all
 four (the grid is continuous across blocks and 32-sample steps are inaudible, so
-no extra smoother is needed). `ModSmooth` (`mod_smooth.rs`) is now unused by
-production code but kept (referenced by ADR-009, reusable). Unmodulated output is
-bit-identical.
+no extra smoother is needed). `ModSmooth` (`mod_smooth.rs`) was unused by
+production code and was **deleted on 2026-09-29** (recoverable from git history).
+Unmodulated output is bit-identical.
 
 Tranche 2 landed: `GainNode` and `TrackGainNode` gained a per-sample one-pole
 gain smoother (coeff from the sample rate → block-size independent) that de-zippers

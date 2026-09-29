@@ -36,7 +36,6 @@ pub mod execution_plan;
 pub mod graph;
 pub mod live_params;
 pub mod midi;
-pub mod mod_smooth;
 pub mod modulation;
 pub mod node;
 pub mod nodes;
