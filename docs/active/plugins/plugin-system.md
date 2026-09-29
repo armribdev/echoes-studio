@@ -20,33 +20,19 @@ perspective, a VST3 reverb and a built-in gain node are identical.
 External binary (VST3 / AU / CLAP / WASM)
         │
         ▼  format-specific wrapper (plugin_formats/)
-Device trait    ← plugin lifecycle, parameters, state
-        │
-        ▼  graph sees only this
-AudioNode trait ← process(), prepare()
-        │
+AudioNode trait        ← process(), prepare() — all the graph ever sees
+        │   holds
         ▼
-AudioGraph / GraphScheduler  ← format-agnostic DSP execution
+Arc<PluginInstance>    ← native handle, lifecycle atomic, param queue, state
+        │   owned by
+        ▼
+PluginHost             ← instantiation, lifecycle, parameter routing, state
 ```
 
-The `Device` trait extends `AudioNode` with plugin-specific concerns: parameter
-maps, lifecycle state, and opaque state persistence. The graph calls only
-`AudioNode` methods. `Device` is for the `PluginHost`, not the scheduler.
-
-```rust
-pub trait Device: AudioNode {
-    fn device_id(&self) -> &str;
-    fn info(&self) -> &DeviceInfo;
-    fn parameters(&self) -> &ParameterMap;
-    fn parameters_mut(&mut self) -> &mut ParameterMap;
-    fn save_state(&self) -> DeviceState;
-    fn load_state(&mut self, state: &DeviceState);
-    fn lifecycle_state(&self) -> LifecycleState;
-    fn suspend(&mut self);
-    fn resume(&mut self);
-    fn destroy(&mut self);
-}
-```
+A wrapper implements only `AudioNode`. Plugin-specific concerns live on the
+shared `PluginInstance` (ADR-007) and are driven by `PluginHost` on the command
+thread. The former `Device` trait (parameter map, lifecycle and state on the
+wrapper) was never called and was removed on 2026-09-29.
 
 ---
 
@@ -58,9 +44,9 @@ pub trait Device: AudioNode {
 compilation.
 
 **External plugins** (VST3 / AU / CLAP / future WASM): loaded from disk at
-runtime, wrapped by format-specific code in `plugin_formats/`. They implement
-`Device` (which extends `AudioNode`) and are managed by `PluginHost`. The graph
-sees them as opaque `Box<dyn AudioNode>`.
+runtime, wrapped by format-specific code in `plugin_formats/`. The wrapper
+implements `AudioNode` around a shared `Arc<PluginInstance>` managed by
+`PluginHost`. The graph sees them as opaque `Box<dyn AudioNode>`.
 
 The distinction matters for:
 - **Stability**: internal nodes cannot crash; external plugins can.
@@ -92,7 +78,7 @@ PluginHost::instantiate(node_id, "vst3:my-plugin")
 PluginManifest { format: Vst3, path, ... }
     │
     ▼  format dispatch
-VstWrapperNode::new(node_id, ...)   // implements AudioNode + Device
+VstWrapperNode::new(node_id, instance)   // implements AudioNode
     │
     ▼
 Box<dyn AudioNode>  → handed to GraphCompiler → placed in ExecutionPlan
@@ -160,50 +146,38 @@ off the audio thread (ADR-007 removal path).
 
 ## Parameter System
 
-Parameters belong to the graph, not the plugin binary. Each device has a
-`ParameterMap` of `Param` entries:
-
-```rust
-Param {
-    key: ParamKey,           // stable string ID ("gain", "cutoff")
-    name: String,            // display name
-    range: ParameterRange,   // min/max/default + mapping (linear/log/dB)
-    value: f32,              // current plain value
-    modulation_offset: f32,  // sum of modulation for this block
-}
-```
-
-### Normalisation
-
-All parameters support `normalise(plain) → [0,1]` and
-`denormalise(normalised) → plain`. The modulation system operates in normalised
-space; the node receives the plain value.
+A plugin's parameters are described by `PluginParamInfo` (native id, name,
+module, plain min/max/default, automatable / modulatable / hidden flags),
+read from the live plugin by `PluginHost::plugin_params` (ADR-021; CLAP only so
+far, VST3 reports none yet). The host keeps no parameter map of its own: the
+plugin remains the owner of its values.
 
 ### Parameter change path
 
-A VST3 parameter change from the UI follows this path:
+A parameter change from the UI follows this path:
 
 ```
 UI knob change
   ─► dispatcher.ts (typed command)
   ─► send_command (Tauri IPC)
-  ─► engine_gateway: UPDATE_PLUGIN_PARAMETER
-  ─► PluginHost::set_parameter_normalised(key, value)
-  ─► queued in ring buffer (pre-allocated, lock-free)
-  ─► delivered via ProcessData.inputParameterChanges on next process()
+  ─► engine_gateway (api.rs)
+  ─► PluginHost::push_plugin_param(instance_key, native_id, normalised)
+  ─► PluginInstance SPSC ring (pre-allocated, lock-free — ADR-008)
+  ─► drained by the wrapper at the top of process(), delivered through the
+     format's sample-accurate event list (VST3 ProcessData / CLAP in_events)
 ```
 
-The plugin's parameter state lives in `ParameterMap` on the command thread. What
-reaches the audio thread is the queued change in `ProcessData` — never a
-reference to the map. Parameters are identified by stable string keys mapped to
-format-specific integer IDs by the wrapper at prepare time.
+Nothing but the queued change reaches the audio thread. Parameters are
+addressed by their format-native id (VST3 `ParamID`, CLAP `clap_id`) and by
+`instance_key`, so two placements of one plugin type stay independent
+(ADR-017).
 
 ### Automation
 
-Parameters record `automation_lane_ids`. The timeline engine reads these to
-deliver sample-accurate automation buffers before each block. See
-`../modulation/modulation-system.md` for how automation and modulation unify at
-the `ParameterBlock` level.
+Automated and modulated plugin parameters are injected into the wrapper at
+compile time (`inject_plugin_param_controls`, ADR-021) and evaluated in
+`process()` without allocation. See `../modulation/modulation-system.md` for how
+automation and modulation unify at the `ParameterBlock` level.
 
 `PluginInstance` also records, on the command thread, which parameters are
 host-modulated (`replace_modulated_params`) and which CLAP parameters are

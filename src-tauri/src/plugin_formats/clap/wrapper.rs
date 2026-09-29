@@ -14,9 +14,8 @@
 //!
 //! ## Unified lifecycle (Phase 2b)
 //!
-//! The local `LifecycleState` field is gone.  All queries / mutations route
-//! through `instance.lifecycle()` / `instance.set_lifecycle()`; mutations
-//! validate via [`transition`] against the current atomic value.
+//! The wrapper keeps no lifecycle state.  The single source of truth is the
+//! atomic inside [`PluginInstance`], driven by `PluginHost`.
 //!
 //! ## Thread safety
 //!
@@ -37,12 +36,8 @@ use crate::plugin_formats::clap::audio_ports::ClapOutputBuses;
 use crate::plugin_formats::clap::params::{observe_output_event, read_clap_params, ClapParamEvents};
 use crate::plugin_formats::clap::transport::clap_transport_event;
 use crate::plugin_formats::crash_guard;
-use crate::plugin_system::capabilities::DeviceCapabilities;
 use crate::plugin_system::instance::{PluginInstance, FFI_GATE_HARVEST_BUDGET};
-use crate::plugin_system::lifecycle::{transition, LifecycleState};
-use crate::plugin_system::parameter::ParameterMap;
-use crate::plugin_system::state::DeviceState;
-use crate::plugin_system::wrapper::{Device, DeviceInfo};
+use crate::plugin_system::lifecycle::LifecycleState;
 
 use super::ffi::{
     audio_thread_scope, ClapAudioBuffer, ClapOutputEvents, ClapPlugin, ClapPluginLatency,
@@ -62,8 +57,6 @@ unsafe extern "C" fn clap_process_trampoline(raw: *mut c_void) -> i32 {
 
 pub struct ClapWrapperNode {
     node_id: NodeId,
-    info: DeviceInfo,
-    params: ParameterMap,
 
     /// Shared, refcounted handle to the live plugin.  Captured at
     /// construction; cloned only on the command thread.  Deref on the audio
@@ -125,11 +118,8 @@ impl ClapWrapperNode {
             instance.clap_plugin().is_some(),
             "ClapWrapperNode requires a CLAP PluginInstance"
         );
-        let info = instance.legacy_device_info();
         Self {
             node_id,
-            info,
-            params: ParameterMap::new(),
             instance,
             num_aux_inputs,
             in_port_channel_ptrs: Vec::new(),
@@ -368,63 +358,6 @@ impl AudioNode for ClapWrapperNode {
 // a recompile must NOT deactivate the plugin, because the new graph may share
 // (reuse) the same live instance — deactivating it would corrupt the instance
 // the new graph is still processing.
-
-impl Device for ClapWrapperNode {
-    fn device_id(&self) -> &str {
-        &self.info.device_id
-    }
-    fn info(&self) -> &DeviceInfo {
-        &self.info
-    }
-    fn parameters(&self) -> &ParameterMap {
-        &self.params
-    }
-    fn parameters_mut(&mut self) -> &mut ParameterMap {
-        &mut self.params
-    }
-
-    fn save_state(&self) -> DeviceState {
-        DeviceState::empty(&self.info.device_id)
-    }
-    fn load_state(&mut self, _: &DeviceState) {}
-
-    // Invalid transitions are silently ignored at this layer — the host-side
-    // API surfaces errors to callers.  No FFI side effect in Phase 2b: CLAP
-    // suspend/resume would require start_processing/stop_processing toggles,
-    // which Phase 4 will wire properly once the host owns the lifecycle.
-
-    fn lifecycle_state(&self) -> LifecycleState {
-        self.instance.lifecycle()
-    }
-
-    fn suspend(&mut self) {
-        if let Ok(next) = transition(self.instance.lifecycle(), LifecycleState::Suspended) {
-            self.instance.set_lifecycle(next);
-        }
-    }
-    fn resume(&mut self) {
-        if let Ok(next) = transition(self.instance.lifecycle(), LifecycleState::Running) {
-            self.instance.set_lifecycle(next);
-        }
-    }
-    fn destroy(&mut self) {
-        if let Ok(next) = transition(self.instance.lifecycle(), LifecycleState::Destroyed) {
-            self.instance.set_lifecycle(next);
-        }
-    }
-
-    fn reported_latency(&self) -> u32 {
-        self.reported_latency
-    }
-
-    /// Phase 1: legacy shape (stereo, no params) plus the freshly-introspected
-    /// latency.  Phase 2 replaces this with full audio-port / param introspection.
-    fn capabilities(&self) -> DeviceCapabilities {
-        let mut caps = DeviceCapabilities::from_legacy_info(&self.info);
-        caps.reported_latency_samples = self.reported_latency;
-        caps
-    }
-}
 
 /// Real-FFI proof that a declared aux (sidechain) input port actually reaches
 /// the plugin's `process` call (ADR-014 follow-up: "wrapper aux feed"), and

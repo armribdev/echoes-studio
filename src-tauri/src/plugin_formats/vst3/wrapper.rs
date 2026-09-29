@@ -16,11 +16,8 @@
 //!
 //! ## Unified lifecycle (Phase 2b)
 //!
-//! The wrapper no longer keeps its own `LifecycleState` field.  The single
-//! source of truth is the `AtomicU8` inside [`PluginInstance`].  Queries
-//! (`lifecycle_state()`) load the atomic; mutations (`suspend / resume /
-//! destroy`) validate via [`transition`] against the current atomic value
-//! before writing the new state back.
+//! The wrapper keeps no lifecycle state.  The single source of truth is the
+//! `AtomicU8` inside [`PluginInstance`], driven by `PluginHost`.
 //!
 //! ## Thread safety
 //!
@@ -40,12 +37,8 @@ use crate::audio_graph::buffer::AudioBuffer;
 use crate::audio_graph::node::{AudioNode, NodeId, PrepareContext, TransportInfo};
 use crate::audio_graph::plugin_params::{parse_plugin_param_name, PluginParamControl, PluginParamControls};
 use crate::plugin_formats::crash_guard;
-use crate::plugin_system::capabilities::DeviceCapabilities;
 use crate::plugin_system::instance::{PluginInstance, FFI_GATE_HARVEST_BUDGET};
-use crate::plugin_system::lifecycle::{transition, LifecycleState};
-use crate::plugin_system::parameter::ParameterMap;
-use crate::plugin_system::state::DeviceState;
-use crate::plugin_system::wrapper::{Device, DeviceInfo};
+use crate::plugin_system::lifecycle::LifecycleState;
 
 use super::ffi::{
     AudioBusBuffers, HostParameterChanges, IAudioProcessor, IComponent, ProcessData, K_RESULT_OK,
@@ -64,8 +57,6 @@ unsafe extern "C" fn vst3_process_trampoline(raw: *mut c_void) -> i32 {
 
 pub struct VstWrapperNode {
     node_id: NodeId,
-    info: DeviceInfo,
-    params: ParameterMap,
 
     /// Shared, refcounted handle.  Captured at construction; cloned only on
     /// the command thread.  Deref on the audio thread is a non-atomic load.
@@ -116,11 +107,8 @@ impl VstWrapperNode {
             instance.vst3_handles().is_some(),
             "VstWrapperNode requires a VST3 PluginInstance"
         );
-        let info = instance.legacy_device_info();
         Self {
             node_id,
-            info,
-            params: ParameterMap::new(),
             instance,
             in_channel_ptrs: Vec::new(),
             out_channel_ptrs: Vec::new(),
@@ -383,66 +371,3 @@ impl AudioNode for VstWrapperNode {
 // clone usually still holds the instance alive at that moment.  The handle
 // is freed when the **last** `Arc` is released, on whichever off-RT thread
 // performs that release.
-
-impl Device for VstWrapperNode {
-    fn device_id(&self) -> &str {
-        &self.info.device_id
-    }
-    fn info(&self) -> &DeviceInfo {
-        &self.info
-    }
-    fn parameters(&self) -> &ParameterMap {
-        &self.params
-    }
-    fn parameters_mut(&mut self) -> &mut ParameterMap {
-        &mut self.params
-    }
-
-    fn save_state(&self) -> DeviceState {
-        DeviceState::empty(&self.info.device_id)
-    }
-    fn load_state(&mut self, _state: &DeviceState) {}
-
-    // Mutations validate the requested transition against the current atomic
-    // value via `lifecycle::transition`.  Invalid transitions are silently
-    // ignored at this layer — the host-side API is what surfaces errors to
-    // callers (`PluginHost::{suspend,resume}_device`).  No FFI side effect
-    // here in Phase 2b: suspend/resume on VST3 happens via setProcessing
-    // toggles already exercised by `reset()`, and the lifecycle field has
-    // historically been advisory only.  Phase 4 will wire it to setActive /
-    // setProcessing once state save/load lands.
-
-    fn lifecycle_state(&self) -> LifecycleState {
-        self.instance.lifecycle()
-    }
-
-    fn suspend(&mut self) {
-        if let Ok(next) = transition(self.instance.lifecycle(), LifecycleState::Suspended) {
-            self.instance.set_lifecycle(next);
-        }
-    }
-    fn resume(&mut self) {
-        if let Ok(next) = transition(self.instance.lifecycle(), LifecycleState::Running) {
-            self.instance.set_lifecycle(next);
-        }
-    }
-    fn destroy(&mut self) {
-        if let Ok(next) = transition(self.instance.lifecycle(), LifecycleState::Destroyed) {
-            self.instance.set_lifecycle(next);
-        }
-    }
-
-    fn reported_latency(&self) -> u32 {
-        self.reported_latency
-    }
-
-    /// Phase 1: legacy shape (stereo, no params, no state) plus the
-    /// freshly-introspected latency.  Phase 2 will replace this with full
-    /// bus / parameter introspection via `IComponent::getBusInfo` and
-    /// `IEditController::getParameterInfo`.
-    fn capabilities(&self) -> DeviceCapabilities {
-        let mut caps = DeviceCapabilities::from_legacy_info(&self.info);
-        caps.reported_latency_samples = self.reported_latency;
-        caps
-    }
-}

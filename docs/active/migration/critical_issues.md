@@ -437,7 +437,7 @@ Statut : seuls les problèmes **encore présents dans le code** sont listés. Le
 - **Description (historique)** : deux instances séparées (cf. 3.11 avant correctif). Aucune des deux n'était routée vers le son :
   - Knob dans le GUI natif → bougeait l'**instance GUI** (silencieuse).
   - Knob dans Echoes → aucun n'existait car `ParameterMap` vide (cf. 3.4, également corrigé depuis — ADR-021).
-- **État actuel** : le GUI natif agit sur l'instance partagée avec le thread audio (3.11) ; `ParameterMap` est peuplée et transporte params/automation/modulation (3.1, 3.4, ADR-021). Les deux chemins sont audibles et cohérents.
+- **État actuel** : le GUI natif agit sur l'instance partagée avec le thread audio (3.11) ; les paramètres sont lus depuis le plugin (`PluginParamInfo`) et transportent params/automation/modulation (3.1, 3.4, ADR-021) ; `ParameterMap` n'a jamais servi et a été supprimée le 2026-09-29. Les deux chemins sont audibles et cohérents.
 - **Sévérité** : ~~critical~~ → n/a
 - **Cause probable (historique)** : combinaison de 3.1, 3.4, 3.11.
 

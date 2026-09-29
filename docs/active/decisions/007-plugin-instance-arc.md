@@ -311,3 +311,14 @@ time; the `process` path and the determinism guarantees are untouched.
 - **Phase 5d** — `PluginInstance` exposes a `capabilities()` method
   populated by the wrapper at `prepare()` from VST3 `getBusInfo` /
   `IEditController` and CLAP `clap.audio-ports` / `clap.params`.
+
+## Update 2026-09-29 — unused host lifecycle API removed
+
+`PluginHost::suspend_device`, `resume_device` and `lifecycle_of` never had a
+production caller and were removed with the `Device` trait (ADR-006 amendment).
+The lifecycle atomic on `PluginInstance` is unchanged; it is driven by
+instantiation, `retain_devices` and the wrappers' activation paths.
+`destroy_device`, `save_device_state` and `device_count` are now test-only
+(`#[cfg(test)]`). The Phase 5d follow-up above was delivered through
+`PluginManifest` + `clap/audio_ports.rs` (ADR-014), not a `capabilities()`
+method.

@@ -111,15 +111,6 @@ impl PluginRegistry {
         self.manifests.insert(manifest.id.clone(), manifest);
     }
 
-    /// Scan a directory for VST3 bundles / AU components.
-    ///
-    /// Currently a stub — real scanner will be added per platform.
-    pub fn scan_directory(&mut self, _path: &std::path::Path) {
-        // TODO: platform-specific plugin scanner
-        // Windows: scan *.vst3 bundles
-        // macOS:   scan ~/Library/Audio/Plug-Ins/VST3 and .component
-    }
-
     pub fn get(&self, id: &str) -> Option<&PluginManifest> {
         self.manifests.get(id)
     }
@@ -128,28 +119,8 @@ impl PluginRegistry {
         self.manifests.values()
     }
 
-    pub fn by_format(&self, format: DeviceFormat) -> impl Iterator<Item = &PluginManifest> {
-        self.manifests.values().filter(move |m| m.format == format)
-    }
-
-    pub fn search(&self, query: &str) -> Vec<&PluginManifest> {
-        let q = query.to_lowercase();
-        self.manifests
-            .values()
-            .filter(|m| {
-                m.name.to_lowercase().contains(&q)
-                    || m.vendor.to_lowercase().contains(&q)
-                    || m.categories.iter().any(|c| c.to_lowercase().contains(&q))
-            })
-            .collect()
-    }
-
     pub fn len(&self) -> usize {
         self.manifests.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.manifests.is_empty()
     }
 }
 

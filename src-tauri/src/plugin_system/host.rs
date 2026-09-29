@@ -54,7 +54,6 @@ pub enum HostError {
     LifecycleError(LifecycleError),
     InstantiationFailed(String),
     UnsupportedFormat(String),
-    ParameterNotFound(String),
 }
 
 impl std::fmt::Display for HostError {
@@ -65,7 +64,6 @@ impl std::fmt::Display for HostError {
             HostError::LifecycleError(e) => write!(f, "lifecycle error: {e}"),
             HostError::InstantiationFailed(e) => write!(f, "instantiation failed: {e}"),
             HostError::UnsupportedFormat(e) => write!(f, "unsupported format: {e}"),
-            HostError::ParameterNotFound(k) => write!(f, "parameter not found: {k}"),
         }
     }
 }
@@ -188,6 +186,7 @@ impl PluginHost {
     pub fn registry(&self) -> &PluginRegistry {
         &self.registry
     }
+    #[cfg(test)]
     pub fn registry_mut(&mut self) -> &mut PluginRegistry {
         &mut self.registry
     }
@@ -261,11 +260,7 @@ impl PluginHost {
             return None;
         }
         match inst.format {
-            DeviceFormat::Internal => Some(Box::new(PassThroughDevice::new(
-                node_id,
-                &inst.device_id,
-                &inst.name,
-            ))),
+            DeviceFormat::Internal => Some(Box::new(PassThroughDevice::new(node_id))),
             DeviceFormat::Clap if inst.is_sandboxed() => {
                 Some(Box::new(BridgedNode::new(node_id, Arc::clone(inst))))
             }
@@ -319,7 +314,7 @@ impl PluginHost {
         let (instance, device): (Arc<PluginInstance>, Box<dyn AudioNode>) = match manifest.format {
             DeviceFormat::Internal => {
                 let inst = PluginInstance::new_internal(plugin_id, &manifest.name);
-                let node = Box::new(PassThroughDevice::new(node_id, plugin_id, &manifest.name));
+                let node = Box::new(PassThroughDevice::new(node_id));
                 (inst, node)
             }
 
@@ -333,7 +328,7 @@ impl PluginHost {
             DeviceFormat::Au => {
                 eprintln!("[host] AU not yet implemented for '{plugin_id}' — pass-through");
                 let inst = PluginInstance::new_internal(plugin_id, &manifest.name);
-                let node = Box::new(PassThroughDevice::new(node_id, plugin_id, &manifest.name));
+                let node = Box::new(PassThroughDevice::new(node_id));
                 (inst, node)
             }
 
@@ -341,7 +336,7 @@ impl PluginHost {
             DeviceFormat::Wasm => {
                 eprintln!("[host] WASM not yet implemented for '{plugin_id}' — pass-through");
                 let inst = PluginInstance::new_internal(plugin_id, &manifest.name);
-                let node = Box::new(PassThroughDevice::new(node_id, plugin_id, &manifest.name));
+                let node = Box::new(PassThroughDevice::new(node_id));
                 (inst, node)
             }
         };
@@ -757,26 +752,7 @@ impl PluginHost {
         Ok(unsafe { read_clap_params(plugin) })
     }
 
-    pub fn suspend_device(&mut self, device_id: &str) -> Result<(), HostError> {
-        let record = self
-            .record_by_device_id(device_id)
-            .ok_or_else(|| HostError::DeviceNotFound(device_id.to_string()))?;
-        let next = transition(record.instance.lifecycle(), LifecycleState::Suspended)
-            .map_err(HostError::LifecycleError)?;
-        record.instance.set_lifecycle(next);
-        Ok(())
-    }
-
-    pub fn resume_device(&mut self, device_id: &str) -> Result<(), HostError> {
-        let record = self
-            .record_by_device_id(device_id)
-            .ok_or_else(|| HostError::DeviceNotFound(device_id.to_string()))?;
-        let next = transition(record.instance.lifecycle(), LifecycleState::Running)
-            .map_err(HostError::LifecycleError)?;
-        record.instance.set_lifecycle(next);
-        Ok(())
-    }
-
+    #[cfg(test)]
     pub fn destroy_device(&mut self, device_id: &str) {
         // Records are keyed by `instance_key`; remove every record whose
         // instance is of this plugin type.
@@ -833,6 +809,7 @@ impl PluginHost {
     /// (`IComponent::getState`).  Formats without an FFI state path yet (CLAP =
     /// Phase 4c, internal) fall back to the transitional `saved_state` cache so
     /// the returned `DeviceState` is never lost.
+    #[cfg(test)]
     pub fn save_device_state(&self, device_id: &str) -> Option<DeviceState> {
         let record = self.record_by_device_id(device_id)?;
         // Fence the live getState with the instance FFI gate (ADR-010) so it never
@@ -894,13 +871,9 @@ impl PluginHost {
             .collect()
     }
 
+    #[cfg(test)]
     pub fn device_count(&self) -> usize {
         self.records.len()
-    }
-
-    pub fn lifecycle_of(&self, device_id: &str) -> Option<LifecycleState> {
-        self.record_by_device_id(device_id)
-            .map(|r| r.instance.lifecycle())
     }
 
     /// Borrow the shared instance for an already-instantiated device.
@@ -1032,7 +1005,7 @@ mod tests {
     #[test]
     fn instantiated_internal_plugin_node_processes_audio() {
         use crate::audio_graph::buffer::AudioBuffer;
-        use crate::audio_graph::node::{AudioNode, PrepareContext, TransportInfo};
+        use crate::audio_graph::node::{PrepareContext, TransportInfo};
 
         let mut host = PluginHost::new();
 

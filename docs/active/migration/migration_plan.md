@@ -14,7 +14,7 @@ Les statuts détaillés par sous-système sont dans [`.claude/state_index.md`](.
 
 | Phase | État | Repères |
 |---|---|---|
-| 1 Fondations safe | livré | capabilities, latence/PDC, `catch_unwind` |
+| 1 Fondations safe | livré | latence/PDC, `catch_unwind` ; les types `DeviceCapabilities` et le trait `Device`, jamais consommés, ont été retirés le 2026-09-29 (amendement ADR-006) |
 | 2 `Arc<PluginInstance>` | livré | ADR-007, ADR-016 (une seule instance audio/GUI) |
 | 3 Param transport + `ParameterBlock` | livré | ADR-008, ADR-009, ADR-017 |
 | 4 Séparation DSP/UI + état plugin | livré | ADR-010 (sauvegarde/restauration d'état) |

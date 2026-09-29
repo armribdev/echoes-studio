@@ -1,7 +1,7 @@
 //! Plugin format adapters.
 //!
 //! Each sub-module adapts a specific plugin format into the graph-compatible
-//! `Device + AudioNode` interface.  The audio graph runtime never imports
+//! `AudioNode` interface.  The audio graph runtime never imports
 //! these modules; only the `PluginHost` does.
 //!
 //! ## Status

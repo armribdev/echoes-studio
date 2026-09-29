@@ -3,6 +3,7 @@
 ## Status
 
 Accepted. Implements Phase 1 of [`docs/active/migration/migration_plan.md`](../migration/migration_plan.md).
+Decisions 1 and 2 superseded 2026-09-29 — see the amendment at the end.
 
 ---
 
@@ -185,3 +186,22 @@ These do not change the Phase 1 decision; they record that the guard is a
   `plugins/plugin-wrapper-system.md` § Latency Handling). VST3 still open.
 - SEH / structured-exception capture and out-of-process sandbox
   (Phase 6, ADR-010).
+
+## Amendment 2026-09-29 — capabilities types removed
+
+Decisions 1 and 2 never got a consumer. Capability data reached the compiler by
+another route instead (ADR-014): the scan-time `clap.audio-ports` probe fills
+`PluginManifest.num_sidechain_inputs`, and multi-out reads the loaded
+instance's output ports (`plugin_formats/clap/audio_ports.rs`). The
+`DeviceCapabilities` vocabulary and the `Device` trait carrying
+`capabilities()` stayed dead code alongside that working path.
+
+Removed: `plugin_system/capabilities.rs`, the `Device` trait and `DeviceInfo`
+(`plugin_system/wrapper.rs`), the `ParameterMap` / `Param` / `ParameterRange`
+model (`plugin_system/parameter.rs`, replaced in practice by `PluginParamInfo`,
+ADR-021), and the per-wrapper `Device` impls. Decisions 3–5 (latency via
+`AudioNode::latency_samples()`, `catch_unwind`, `PortKind`) are unchanged.
+
+A future capability source (VST3 `getBusInfo`, AU, WASM) extends the
+`PluginManifest` / `PluginInstance` route rather than reviving a parallel type.
+No runtime behaviour changed; the C-2 harness (golden hashes) stays green.

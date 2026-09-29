@@ -37,10 +37,6 @@ pub enum LifecycleState {
 }
 
 impl LifecycleState {
-    pub fn is_active(&self) -> bool {
-        matches!(self, LifecycleState::Running)
-    }
-
     pub fn is_terminal(&self) -> bool {
         matches!(self, LifecycleState::Destroyed | LifecycleState::Error)
     }

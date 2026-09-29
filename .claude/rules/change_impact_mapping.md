@@ -22,7 +22,7 @@ table for step 1 of the sync procedure.
 | `plugin_system/host.rs`, `lifecycle.rs`, `instance.rs`, `registry.rs` | `plugins/plugin-system.md` | 003, 007, 013, 014 |
 | `plugin_system/param_queue.rs`, `parameter.rs` | `plugins/plugin-system.md`, `plugins/plugin-wrapper-system.md` | 008, 009 |
 | `plugin_system/state.rs` | `plugins/plugin-system.md` | 010 |
-| `plugin_system/capabilities.rs` | `plugins/plugin-system.md`, `plugins/plugin-wrapper-system.md` | 006, 014 |
+| `plugin_system/registry.rs` (`PluginManifest` port counts), `plugin_formats/clap/audio_ports.rs` | `plugins/plugin-system.md`, `plugins/plugin-wrapper-system.md` | 006, 014 |
 | `plugin_system/crash_marker.rs` | `threading/realtime-safety.md` (crash marker), `plugins/plugin-wrapper-system.md` | 015 |
 | `plugin_system/bridge.rs`, `bridged_node.rs`, `crates/plugin_bridge`, `crates/plugin_host_bridge` | `plugins/plugin-wrapper-system.md` (sandbox), `threading/realtime-safety.md` (bounded wait) | 015 |
 | `plugin_system/gui.rs` | `plugins/plugin-wrapper-system.md`, `audits/plugin-gui-audit-2026-05-31.md` | — |

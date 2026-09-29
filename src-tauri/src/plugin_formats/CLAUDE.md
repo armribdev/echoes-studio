@@ -2,7 +2,7 @@
 
 VST3 / AU / CLAP / internal wrappers. This is the **only** code allowed to touch
 format-specific APIs (COM, AudioUnit, CLAP C ABI). Everything below the wrapper
-sees only `AudioNode` / `Device`.
+sees only `AudioNode`.
 
 ## Local hard constraints
 - **Never** let `vst3-sys`, CoreAudio, or `clap_*` types escape into

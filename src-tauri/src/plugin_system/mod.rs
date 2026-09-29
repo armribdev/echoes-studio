@@ -6,27 +6,25 @@
 //! central architecture.  It answers the question "how do we safely integrate
 //! external code?", while the audio graph answers "how do we execute DSP?".
 //!
-//! Plugin wrappers implement [`wrapper::Device`] (which in turn implements
-//! [`crate::audio_graph::node::AudioNode`]).  The graph compiler asks the
+//! Plugin wrappers implement [`crate::audio_graph::node::AudioNode`] around a
+//! shared [`instance::PluginInstance`].  The graph compiler asks the
 //! [`host::PluginHost`] to build a `Box<dyn AudioNode>` for each plugin node;
 //! after that the graph runtime treats it like any other node.
 //!
 //! ## Module map
 //!
-//! - [`parameter`]    — `Param`, `ParameterMap`, `ParameterRange`
-//! - [`wrapper`]      — `Device` trait + `PassThroughDevice` placeholder
+//! - [`parameter`]    — `PluginParamInfo` (parameter metadata)
+//! - [`wrapper`]      — `DeviceFormat` + `PassThroughDevice` placeholder
 //! - [`lifecycle`]    — `LifecycleState` + transition validator
 //! - [`state`]        — `DeviceState` for project save/load
 //! - [`registry`]     — `PluginManifest` + `PluginRegistry` (discovery)
 //! - [`host`]         — `PluginHost` (lifecycle, parameter routing, state)
-//! - [`capabilities`] — `DeviceCapabilities` introspected device metadata (Phase 1)
 //! - [`instance`]     — `PluginInstance` (Phase 2a): Arc-shared native handle
 //! - [`bridge`]       — out-of-process sandbox transport primitives (Phase 6c-i,
 //!                      not yet wired; see ADR-015)
 
 pub mod bridge;
 pub mod bridged_node;
-pub mod capabilities;
 pub mod crash_marker;
 pub mod gui;
 pub mod host;

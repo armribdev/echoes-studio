@@ -59,7 +59,7 @@ use crate::plugin_system::bridge::BridgedPlugin;
 use crate::plugin_system::crash_marker::{self, MarkerGuard, PluginThread};
 use crate::plugin_system::lifecycle::LifecycleState;
 use crate::plugin_system::param_queue::{ParamChange, ParamQueue};
-use crate::plugin_system::wrapper::{DeviceFormat, DeviceInfo};
+use crate::plugin_system::wrapper::DeviceFormat;
 
 /// Capacity of the per-instance parameter SPSC ring (ADR-007).  1024 slots ≈
 /// 17 s of edits at a 60 Hz UI — far more than the drain interval needs.
@@ -873,20 +873,6 @@ impl PluginInstance {
                 return None;
             }
             std::hint::spin_loop();
-        }
-    }
-
-    pub fn legacy_device_info(&self) -> DeviceInfo {
-        DeviceInfo {
-            device_id: self.device_id.clone(),
-            name: self.name.clone(),
-            vendor: self.vendor.clone(),
-            version: String::new(),
-            format: self.format,
-            num_inputs: 2,
-            num_outputs: 2,
-            has_midi_input: false,
-            has_midi_output: false,
         }
     }
 }
