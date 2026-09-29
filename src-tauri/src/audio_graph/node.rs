@@ -54,6 +54,7 @@ pub struct PortId {
 ///
 /// Reserved for the future `PortKind::Modulation` variant.  Phase 1 only
 /// declares the type; the compiler keeps treating every edge as `Audio`.
+#[allow(dead_code)] // only reachable through PortKind::Modulation, not routed yet
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Polarity {
     Bipolar,
@@ -69,6 +70,7 @@ pub enum Polarity {
 ///
 /// Keeping the variant set stable now means later phases extend
 /// behaviour without re-introducing exhaustiveness churn across the codebase.
+#[allow(dead_code)] // Midi/Modulation/Control edges are rejected by the compiler for now
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PortKind {
     Audio { channels: u8 },

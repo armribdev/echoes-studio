@@ -65,9 +65,12 @@ pub mod ev {
     pub const POSITION_UPDATED: &str = "POSITION_UPDATED";
     pub const LEVELS_UPDATED: &str = "LEVELS_UPDATED";
 
-    // Audio feedback — NOT persisted
+    // Audio feedback — NOT persisted. Mirrors the runtime-event filter in the frontend.
+    #[allow(dead_code)]
     pub const PEAK_METER: &str = "PEAK_METER";
+    #[allow(dead_code)]
     pub const CLIP_PLAYING: &str = "CLIP_PLAYING";
+    #[allow(dead_code)]
     pub const LATENCY_WARNING: &str = "LATENCY_WARNING";
 }
 

@@ -137,6 +137,7 @@ pub enum ModulatorKind {
     /// User-controlled knob that fans out to multiple targets simultaneously.
     Macro,
     /// Audio-rate modulation (e.g. ring modulation, FM).
+    #[allow(dead_code)] // planned, see target_architecture.md
     AudioRate,
     /// Amplitude follower — converts an audio signal's RMS/Peak level to 0..1.
     AudioFollower,

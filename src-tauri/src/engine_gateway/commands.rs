@@ -58,10 +58,6 @@ pub mod cmd {
     pub const REMOVE_EFFECT: &str = "REMOVE_EFFECT";
     pub const UPDATE_EFFECT: &str = "UPDATE_EFFECT";
 
-    pub const ADD_NODE: &str = "ADD_NODE";
-    pub const REMOVE_NODE: &str = "REMOVE_NODE";
-    pub const CONNECT_NODES: &str = "CONNECT_NODES";
-
     pub const ADD_AUTOMATION_LANE: &str = "ADD_AUTOMATION_LANE";
     pub const REMOVE_AUTOMATION_LANE: &str = "REMOVE_AUTOMATION_LANE";
     pub const UPDATE_AUTOMATION_CLIP: &str = "UPDATE_AUTOMATION_CLIP";

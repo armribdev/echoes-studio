@@ -82,8 +82,6 @@ pub enum CompileError {
     NoMasterNode,
     /// A referenced node does not exist in the graph.
     MissingNode(NodeId),
-    /// An edge references a port that the node does not have.
-    InvalidPort { node: NodeId, port: u32 },
     /// An edge declares a [`PortKind`] the compiler cannot route yet
     /// (anything other than `Audio`).  Guards Phase 5a until the MIDI /
     /// modulation paths (5c/5e) wire the producing & consuming ports.
@@ -100,9 +98,6 @@ impl std::fmt::Display for CompileError {
             CompileError::CycleDetected => write!(f, "audio graph contains a cycle"),
             CompileError::NoMasterNode => write!(f, "audio graph has no master output node"),
             CompileError::MissingNode(id) => write!(f, "missing node {}", id),
-            CompileError::InvalidPort { node, port } => {
-                write!(f, "invalid port {} on node {}", port, node)
-            }
             CompileError::UnsupportedPortKind { from, to, kind } => write!(
                 f,
                 "edge {:?} → {:?} declares port kind {:?}, which the compiler cannot route yet \

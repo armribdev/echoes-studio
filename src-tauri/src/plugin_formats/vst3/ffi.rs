@@ -47,9 +47,6 @@ pub const IID_FUNKNOWN: Tuid = [
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46,
 ];
 
-pub const IID_IPLUGIN_FACTORY: Tuid = [
-    0x7A, 0x4D, 0x81, 0x1C, 0x52, 0x11, 0x4A, 0x1F, 0xAE, 0xD9, 0xD2, 0xEE, 0x0D, 0xB2, 0x5A, 0x41,
-];
 pub const IID_ICOMPONENT: Tuid = interface_iid([
     0xE8, 0x31, 0xFF, 0x31, 0xF2, 0xD5, 0x43, 0x01, 0x92, 0x8E, 0xBB, 0xEE, 0x25, 0x69, 0x78, 0x02,
 ]);
@@ -59,11 +56,8 @@ pub const IID_IAUDIO_PROCESSOR: Tuid = interface_iid([
 
 /// L | R  (bits 0 and 1)
 pub const SPEAKER_STEREO: u64 = 0x0000_0003;
-/// Mono center (bit 19 = kSpeakerM)
-pub const SPEAKER_MONO: u64 = 0x0008_0000;
 
 pub const CATEGORY_AUDIO_MODULE: &[u8] = b"Audio Module Class";
-pub const CATEGORY_COMPONENT: &[u8] = b"Component Controller Class";
 
 /// Minimal class info returned by IPluginFactory::getClassInfo.
 #[repr(C)]
@@ -82,14 +76,6 @@ impl PClassInfo {
             .position(|&b| b == 0)
             .unwrap_or(self.name.len());
         std::str::from_utf8(&self.name[..end]).unwrap_or("")
-    }
-    pub fn category_str(&self) -> &str {
-        let end = self
-            .category
-            .iter()
-            .position(|&b| b == 0)
-            .unwrap_or(self.category.len());
-        std::str::from_utf8(&self.category[..end]).unwrap_or("")
     }
     pub fn is_audio_module(&self) -> bool {
         self.category.starts_with(CATEGORY_AUDIO_MODULE)
@@ -618,10 +604,6 @@ pub struct IEditControllerVtbl {
     // (17) createView — the one we call
     pub create_view: unsafe extern "C" fn(*mut IEditController, *const u8) -> *mut IPlugView,
 }
-
-pub const IID_IPLUG_VIEW: Tuid = [
-    0x5B, 0xC3, 0x25, 0x07, 0xD0, 0x60, 0x49, 0xEA, 0x84, 0x00, 0x4B, 0x4C, 0x80, 0xCF, 0xCE, 0x37,
-];
 
 /// Plugin-preferred view rectangle (in screen pixels).
 #[repr(C)]

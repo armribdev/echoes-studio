@@ -59,6 +59,7 @@ pub enum NodeKind {
     Bus,
 
     /// Send tap: copies audio to a return bus at a given level.
+    #[allow(dead_code)] // compiled and serialised, but no project builds it yet
     Send {
         /// Must match the id of a corresponding `Return` node.
         return_id: String,
@@ -66,12 +67,15 @@ pub enum NodeKind {
     },
 
     /// Receives audio from all `Send` nodes with the matching `return_id`.
+    #[allow(dead_code)]
     Return { return_id: String },
 
     /// Per-sample gain (linear multiplier, handles both gain and volume faders).
+    #[allow(dead_code)]
     Gain { gain_linear: f32 },
 
     /// Stereo panner (−1.0 = hard left, 0.0 = centre, +1.0 = hard right).
+    #[allow(dead_code)]
     Pan { position: f32 },
 
     /// Wraps an external or internal plugin.

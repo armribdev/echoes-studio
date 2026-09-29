@@ -42,11 +42,6 @@ export const cmd = {
   REMOVE_EFFECT: 'REMOVE_EFFECT',
   UPDATE_EFFECT: 'UPDATE_EFFECT',
 
-  // Audio graph (structural routing — future)
-  ADD_NODE: 'ADD_NODE',
-  REMOVE_NODE: 'REMOVE_NODE',
-  CONNECT_NODES: 'CONNECT_NODES',
-
   // Modulation
   ADD_MODULATOR: 'ADD_MODULATOR',
   REMOVE_MODULATOR: 'REMOVE_MODULATOR',
