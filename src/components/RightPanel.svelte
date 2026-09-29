@@ -361,23 +361,23 @@
 				</button>
 			</div>
 
-			<div class="body">
-				<nav class="sources" aria-label="Library sources">
-					{#each LIBRARY_SOURCE_ORDER as sourceId}
-						<button
-							type="button"
-							class="source-btn"
-							class:active={$libraryStore.source === sourceId}
-							on:click={() => setSource(sourceId)}
-						>
-							{LIBRARY_SOURCE_LABELS[sourceId]}
-						</button>
-					{/each}
-					<button type="button" class="source-btn source-btn--action" on:click={browseFolder}>
-						Add folder…
+			<nav class="sources" aria-label="Library sources">
+				{#each LIBRARY_SOURCE_ORDER as sourceId}
+					<button
+						type="button"
+						class="source-btn"
+						class:active={$libraryStore.source === sourceId}
+						on:click={() => setSource(sourceId)}
+					>
+						{LIBRARY_SOURCE_LABELS[sourceId]}
 					</button>
-				</nav>
+				{/each}
+				<button type="button" class="source-btn source-btn--action" on:click={browseFolder}>
+					Add folder…
+				</button>
+			</nav>
 
+			<div class="body">
 				<div class="results-col">
 					{#if !$libraryHasIndexedContent && visible.length === 0}
 						<div class="empty-state">
@@ -581,8 +581,7 @@
 		display: flex;
 		align-items: center;
 		gap: 6px;
-		padding: 8px 8px 8px 10px;
-		border-bottom: 1px solid $border-color;
+		padding: 8px 8px 6px 10px;
 		flex-shrink: 0;
 	}
 
@@ -654,33 +653,28 @@
 		}
 	}
 
-	.body {
-		flex: 1;
-		min-height: 0;
+	.sources {
+		flex-shrink: 0;
 		display: flex;
 		flex-direction: row;
-	}
-
-	.sources {
-		width: 84px;
-		flex-shrink: 0;
-		border-right: 1px solid $border-color;
-		padding: 6px 4px;
-		display: flex;
-		flex-direction: column;
+		align-items: center;
 		gap: 2px;
-		overflow-y: auto;
+		padding: 0 8px 6px 10px;
+		overflow-x: auto;
+		border-bottom: 1px solid $border-color;
 	}
 
 	.source-btn {
-		text-align: left;
+		flex-shrink: 0;
+		text-align: center;
 		background: transparent;
 		border: none;
 		border-radius: $radius-sm;
 		color: $text-subtle;
 		font-size: 10px;
-		padding: 5px 6px;
+		padding: 5px 8px;
 		cursor: pointer;
+		white-space: nowrap;
 
 		&:hover { background: $surface-hover; color: $text-color; }
 
@@ -690,12 +684,16 @@
 		}
 
 		&--action {
-			margin-top: 6px;
+			margin-left: auto;
 			color: $accent-color;
-			border-top: 1px solid $border-faint;
-			border-radius: 0;
-			padding-top: 8px;
 		}
+	}
+
+	.body {
+		flex: 1;
+		min-height: 0;
+		display: flex;
+		flex-direction: column;
 	}
 
 	.results-col {

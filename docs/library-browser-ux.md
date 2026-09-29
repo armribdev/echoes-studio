@@ -187,25 +187,23 @@ No selection: Phase 1 = no-op + hint; Phase 2 = create track.
 ```
 ┌─ Echoes ─────────────────────────────────────────────────────────────┐
 │ [B] …                                                                │
-├────────────────────┬─────────────────────────────────────────────────┤
-│ LIBRARY            │ Track 1 │ ████                                  │
-│ ┌────────────────┐ │ Track 2 │                                       │
-│ │ Search_____  ★ │ │                                                 │
-│ ├──────┬─────────┤ │                                                 │
-│ │Src   │ Results │ │                                                 │
-│ │Recents│ kick…  │ │                                                 │
-│ │★ Fav │ loop_A  │◄── selected row (kbd focus)                       │
-│ │Audio │ hat…    │ │                                                 │
-│ ├──────┴─────────┤ │                                                 │
-│ │ ▁▂▃▅ waveform  │ │                                                 │
-│ │ file · duration│ │                                                 │
-│ └────────────────┘ │                                                 │
-└────────────────────┴─────────────────────────────────────────────────┘
+├──────────────────────────────────┬───────────────────────────────────┤
+│ LIBRARY                          │ Track 1 │ ████                    │
+│ ┌──────────────────────────────┐ │ Track 2 │                         │
+│ │ Search_____              [+] │ │                                   │
+│ │ Recents  ★ Fav  Audio  Folder│ │                                   │
+│ │ kick…                        │◄── selected row (kbd focus)         │
+│ │ loop_A                       │ │                                   │
+│ │ hat…                         │ │                                   │
+│ │ ▁▂▃▅ waveform                │ │                                   │
+│ │ file · duration              │ │                                   │
+│ └──────────────────────────────┘ │                                   │
+└──────────────────────────────────┴───────────────────────────────────┘
 ```
 
 Widths: right-dock library; persist width via existing `rightPanel` layout
-(default ~260px). Detail strip under results is always visible when a row is
-selected. Left inspector unchanged.
+(default ~360px). Sources are a top tab strip under search. Detail strip under
+results is always visible when a row is selected. Left inspector unchanged.
 
 ### 7.3 Panel — empty index / first run
 

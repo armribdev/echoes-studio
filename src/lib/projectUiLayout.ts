@@ -10,7 +10,11 @@ import {
 	TRACK_INSPECTOR_MAX_WIDTH,
 	TRACK_INSPECTOR_MIN_WIDTH,
 } from '../stores/leftPanel';
-import { rightPanel } from '../stores/rightPanel';
+import {
+	LIBRARY_PANEL_MAX_WIDTH,
+	LIBRARY_PANEL_MIN_WIDTH,
+	rightPanel,
+} from '../stores/rightPanel';
 import { viewMode, type GraphScope, type MainViewMode } from '../stores/viewMode';
 import type { ProjectUiLayout } from '../types/global';
 
@@ -56,7 +60,7 @@ export function applyProjectUiLayout(layout?: ProjectUiLayout | null): void {
 	});
 	rightPanel.hydrate({
 		open: layout.right_panel.open,
-		width: clamp(layout.right_panel.width, 200, 480),
+		width: clamp(layout.right_panel.width, LIBRARY_PANEL_MIN_WIDTH, LIBRARY_PANEL_MAX_WIDTH),
 	});
 	bottomPanel.hydrate({
 		open: layout.bottom_panel.open,

@@ -489,7 +489,7 @@ fn default_left_panel_width() -> u16 {
 }
 
 fn default_right_panel_width() -> u16 {
-    260
+    360
 }
 
 fn default_bottom_panel_height() -> u16 {
