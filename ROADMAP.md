@@ -39,7 +39,7 @@
 - [x] **Interface d'automation** : courbes dans l'arrangement, choix du paramètre (livré 2026-09-29 ; hand-test partiel)
 - [x] **Enregistrement MIDI** dans un clip depuis le clavier (ADR-022 amendé ; pas encore hand-testé à l'oreille)
 - [ ] **Enregistrement audio** : armement + capture via l'entrée CPAL, monitoring. Rien n'existe dans le code aujourd'hui.
-- [ ] **CI**
+- [x] **CI**
   - [x] CI minimale (`.github/workflows/ci.yml` : fmt, clippy, tests Rust + harnais C-2, lint Prettier/ESLint, svelte-check, build frontend)
   - [x] Rendre Prettier/ESLint bloquants, après un passage de formatage sur tout le dépôt
 - [x] **Transport auxiliaire**
