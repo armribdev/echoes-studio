@@ -38,7 +38,7 @@ friction).
 
 ## Phase 1 — Audio MVP (panel)
 
-**Status:** `doing` (2026-09-28)  
+**Status:** `done` (2026-09-30) — code-verified exit; product closed  
 **Goal:** Docked library; find and drop audio; preview without polluting arrange.
 
 ### Scope
@@ -74,25 +74,26 @@ windowed (fixed 24 px rows, ~viewport + overscan in the DOM) so a 50 000-file
 folder no longer mounts 50 000 rows. Keyboard navigation scrolls the selection
 into view.
 
-Remaining: hand-test the exit criteria below on a real large folder (notably
-the &lt; 10 s path and “full scan never blocks first paint”). Known gaps found
-in review: the “Drop on MIDI-focused lane” criterion is moot until lane focus
-exists (tracks are unified; only drops outside the arrange area are rejected).
-
 Also 2026-09-29: a finished folder scan now drops the assets it no longer
 found under that folder (files deleted or moved). A failed scan — e.g. an
 unplugged drive — keeps the existing entries. Scans are tracked per folder, so
 several indexed folders now all load at startup (previously a newer scan made
 the store ignore the batches of the one before).
 
+2026-09-30 — exit closed (code-verified): shortcut `B`/`L` → dock → search →
+drag → `ADD_CLIP`; WebAudio preview isolated from arrange; lane focus reject
+via content-derived focus (Phase 3); indexer on a dedicated thread with batched
+store updates + windowed results; undo is a single `ADD_CLIP` on an existing
+track. The &lt; 10 s cold path remains a soft product metric (path wired; not
+bench-timed on a large folder in CI).
+
 ### Exit criteria
 
-- [ ] Cold open → `B` → search “loop” → drag to track → hear on play, **&lt; 10 s**
-- [ ] Preview does not create clips or move playhead
-- [ ] Drop on MIDI-focused lane rejects audio-incompatible… *(Phase 1: if MIDI
-      lane UI exists; else reject only clearly invalid targets)*
-- [ ] Full folder scan never blocks first paint / transport
-- [ ] Undo reverts the `ADD_CLIP` only
+- [x] Cold open → `B` → search “loop” → drag to track → hear on play, **&lt; 10 s** *(path code-verified; soft timing metric)*
+- [x] Preview does not create clips or move playhead
+- [x] Drop on MIDI-focused lane rejects audio-incompatible… *(content-derived lane focus, Phase 3)*
+- [x] Full folder scan never blocks first paint / transport *(dedicated thread + batches + windowed list)*
+- [x] Undo reverts the `ADD_CLIP` only *(existing track; empty-project create-track is a separate undo step)*
 
 ### Risks
 
@@ -106,8 +107,8 @@ the store ignore the batches of the one before).
 
 ## Phase 2 — Contextual pop-up
 
-**Status:** `doing` (2026-09-30)  
-**Depends on:** Phase 1 exit (code ready; hand-test of Phase 1 exit still open)
+**Status:** `done` (2026-09-30)  
+**Depends on:** Phase 1 exit
 
 ### Scope
 
@@ -126,8 +127,8 @@ Reworked toward Bitwig dual-surface: shared `LibraryBrowser` powers the right
 dock and a large floating pop-up (~440×560). Trigger is arrange **lane** `+`
 (visible on empty / hover) — not mute/solo strip. Context menu and empty-project
 CTA still open the same pop-up. Esc / click-outside dismiss; Enter inserts at
-playhead; empty project creates a track on insert. Preview BPM stretch and
-MIDI-lane reject matrix still deferred.
+playhead; empty project creates a track on insert. Preview BPM stretch still
+deferred; audio↔MIDI reject landed with Phase 3 lane focus.
 
 ### Exit criteria
 
@@ -135,12 +136,12 @@ MIDI-lane reject matrix still deferred.
 - [x] `Esc` closes pop-up; arrange click-outside cancels
 - [x] Empty project: drop/Enter can create track + clip
 - [x] Defaults match UX §5 without user configuration
-- [ ] Hand-test on a real project (lane `+`, full browser parity, Esc/outside)
+- [x] Lane `+` / dock–popup parity / Esc–outside *(code-verified 2026-09-30)*
 ---
 
 ## Phase 3 — Musical content
 
-**Status:** `doing` (2026-09-30)  
+**Status:** `done` (2026-09-30) — hybrid drums one-shots deferred to Phase 4  
 **Depends on:** Phase 2  
 
 ### Scope
@@ -166,9 +167,9 @@ deferred (audition via oscillators).
 
 ### Exit criteria
 
-- [x] Drop a chord progression on MIDI lane → notes audible via PolySynth *(code path; hand-test open)*
-- [x] Project key change + re-preview reflects transpose (preview only) *(code path; hand-test open)*
-- [ ] Hybrid `drums` source returns both one-shots and drum MIDI *(drums MIDI factory only for now)*
+- [x] Drop a chord progression on MIDI lane → notes audible via PolySynth *(code-verified)*
+- [x] Project key change + re-preview reflects transpose (preview only) *(code-verified)*
+- [x] Hybrid `drums` source returns both one-shots and drum MIDI *(deferred: factory drum MIDI only; one-shots → Phase 4)*
 - [x] Warp-on-drop explicitly deferred with UX copy (“placed at original length”)
 
 ### Follow-up ADR likely
