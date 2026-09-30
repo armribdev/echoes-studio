@@ -3,6 +3,7 @@
 	import { t } from 'svelte-i18n';
 	import { dismissable } from '../frontend/dismiss';
 	import { focusTrap } from '../frontend/focusTrap';
+	import { shortcutLabels } from '../frontend/shortcuts/label';
 
 	export let x = 0;
 	export let y = 0;
@@ -78,7 +79,7 @@
 			<line x1="10.27" y1="11.27" x2="20" y2="20" />
 		</svg>
 		<span>{$t('clipMenu.cut')}</span>
-		<span class="item-shortcut">Ctrl+X</span>
+		<span class="item-shortcut">{$shortcutLabels('arrangement.cut')}</span>
 	</button>
 
 	<button
@@ -103,7 +104,7 @@
 			<path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
 		</svg>
 		<span>{$t('clipMenu.copy')}</span>
-		<span class="item-shortcut">Ctrl+C</span>
+		<span class="item-shortcut">{$shortcutLabels('arrangement.copy')}</span>
 	</button>
 
 	<button
@@ -131,7 +132,7 @@
 			<rect x="8" y="2" width="8" height="4" rx="1" ry="1" />
 		</svg>
 		<span>{$t('clipMenu.paste')}</span>
-		<span class="item-shortcut">Ctrl+V</span>
+		<span class="item-shortcut">{$shortcutLabels('arrangement.paste')}</span>
 	</button>
 
 	<div class="separator"></div>
@@ -158,7 +159,7 @@
 			<path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
 		</svg>
 		<span>{$t('clipMenu.duplicate')}</span>
-		<span class="item-shortcut">Ctrl+D</span>
+		<span class="item-shortcut">{$shortcutLabels('arrangement.duplicate')}</span>
 	</button>
 
 	<div class="separator"></div>
@@ -187,7 +188,7 @@
 			<path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
 		</svg>
 		<span>{$t('common.delete')}</span>
-		<span class="item-shortcut">Suppr</span>
+		<span class="item-shortcut">{$shortcutLabels('arrangement.delete')}</span>
 	</button>
 </div>
 

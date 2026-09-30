@@ -5,6 +5,7 @@
 
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::{AppHandle, Manager};
+use std::collections::HashMap;
 
 use crate::menu_state::MenuHandles;
 
@@ -231,12 +232,46 @@ pub fn build_app_menu(
     let redo_h = redo_item.clone();
     let delete_track_h = delete_track_item.clone();
 
+    let accel_new = new_project.clone();
+    let accel_open = open.clone();
+    let accel_save = save_item.clone();
+    let accel_save_as = save_as.clone();
+    let accel_import = import_audio.clone();
+    let accel_export_wav = export_wav.clone();
+    let accel_export_mp3 = export_mp3.clone();
+    let accel_undo = undo_item.clone();
+    let accel_redo = redo_item.clone();
+    let accel_add_track = add_track.clone();
+    let accel_prefs = preferences.clone();
+    let accel_project = project_settings.clone();
+
     let handles = MenuHandles {
         set_undo: Box::new(move |e| undo_h.set_enabled(e)),
         set_redo: Box::new(move |e| redo_h.set_enabled(e)),
         set_save: Box::new(move |e| save_h.set_enabled(e)),
         set_delete_track: Box::new(move |e| delete_track_h.set_enabled(e)),
         apply_locale: Box::new(move |locale| apply_labels(&locale_items, &labels_for(locale))),
+        apply_accelerators: Box::new(move |map: &HashMap<String, String>| {
+            let set = |item: &MenuItem<tauri::Wry>, id: &str| -> tauri::Result<()> {
+                if let Some(accel) = map.get(id) {
+                    item.set_accelerator(Some(accel.as_str()))?;
+                }
+                Ok(())
+            };
+            set(&accel_new, "new")?;
+            set(&accel_open, "open")?;
+            set(&accel_save, "save")?;
+            set(&accel_save_as, "save-as")?;
+            set(&accel_import, "import-audio")?;
+            set(&accel_export_wav, "export-wav")?;
+            set(&accel_export_mp3, "export-mp3")?;
+            set(&accel_undo, "undo")?;
+            set(&accel_redo, "redo")?;
+            set(&accel_add_track, "add-track")?;
+            set(&accel_prefs, "preferences")?;
+            set(&accel_project, "project-settings")?;
+            Ok(())
+        }),
     };
 
     Ok((menu, handles))
@@ -246,6 +281,15 @@ pub fn build_app_menu(
 pub fn set_ui_locale(app: AppHandle, locale: String) -> Result<(), String> {
     let handles = app.try_state::<MenuHandles>().ok_or("menu not ready")?;
     (handles.apply_locale)(&locale).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn set_menu_accelerators(
+    app: AppHandle,
+    accelerators: HashMap<String, String>,
+) -> Result<(), String> {
+    let handles = app.try_state::<MenuHandles>().ok_or("menu not ready")?;
+    (handles.apply_accelerators)(&accelerators).map_err(|e| e.to_string())
 }
 
 /// Historical default until the SPA syncs the saved preference.

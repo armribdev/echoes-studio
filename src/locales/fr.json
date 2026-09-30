@@ -252,7 +252,8 @@
 			"audio": "Audio",
 			"midi": "MIDI",
 			"project": "Par défaut",
-			"interface": "Interface"
+			"interface": "Interface",
+			"shortcuts": "Raccourcis"
 		},
 		"audio": {
 			"devicesTitle": "Périphériques Audio",
@@ -336,6 +337,76 @@
 			"minimapDesc": "Vue d'ensemble navigable au-dessus de la timeline",
 			"arrangeGrid": "Grille temporelle",
 			"arrangeGridDesc": "Lignes de temps et de mesures dans la zone des pistes"
+		},
+		"shortcuts": {
+			"title": "Raccourcis clavier"
+		}
+	},
+	"shortcuts": {
+		"hint": "Cliquez une combinaison, puis tapez la nouvelle. Les changements s’appliquent tout de suite — Annuler restaure la carte précédente. Échap annule la capture.",
+		"pressKey": "Appuyez sur une touche…",
+		"waitForKey": "Puis appuyez sur la touche à combiner avec ce modificateur…",
+		"forbiddenKey": "Cette touche ne peut pas être utilisée seule.",
+		"search": "Rechercher un raccourci",
+		"searchPlaceholder": "Rechercher…",
+		"noResults": "Aucun raccourci ne correspond.",
+		"resetAll": "Tout réinitialiser",
+		"resetOne": "Rétablir les défauts pour cette action",
+		"resetOneShort": "Défaut",
+		"rebindAria": "Modifier le raccourci de {action}",
+		"conflict": "En conflit avec un autre raccourci",
+		"conflictWith": "En conflit avec {action}",
+		"conflictWithMany": "En conflit avec {actions}",
+		"categories": {
+			"file": "Fichier",
+			"edit": "Édition",
+			"transport": "Transport",
+			"arrangement": "Arrangement",
+			"track": "Pistes",
+			"library": "Bibliothèque",
+			"view": "Vue",
+			"editor": "Éditeur",
+			"pianoRoll": "Piano roll"
+		},
+		"actions": {
+			"fileNew": "Nouveau projet",
+			"fileOpen": "Ouvrir…",
+			"fileSave": "Enregistrer",
+			"fileSaveAs": "Enregistrer sous…",
+			"fileImportAudio": "Importer audio…",
+			"fileExportWav": "Exporter WAV…",
+			"fileExportMp3": "Exporter MP3…",
+			"editUndo": "Annuler",
+			"editRedo": "Rétablir",
+			"transportPlayPause": "Lecture / Pause",
+			"arrangementAddMarker": "Ajouter un marqueur",
+			"arrangementAddRegion": "Ajouter une région",
+			"arrangementPrevLocator": "Locator précédent",
+			"arrangementNextLocator": "Locator suivant",
+			"arrangementDelete": "Supprimer la sélection",
+			"arrangementCopy": "Copier",
+			"arrangementCut": "Couper",
+			"arrangementPaste": "Coller",
+			"arrangementDuplicate": "Dupliquer",
+			"libraryToggle": "Basculer la bibliothèque",
+			"libraryFocusSearch": "Focus recherche bibliothèque",
+			"libraryToggleFavorite": "Basculer favori",
+			"librarySourceRecents": "Bibliothèque · Récents",
+			"librarySourceFavorites": "Bibliothèque · Favoris",
+			"librarySourceAudio": "Bibliothèque · Audio",
+			"viewToggleMain": "Basculer Arrangement / Graph",
+			"editorCycleFocus": "Cycle focus éditeur",
+			"trackAdd": "Nouvelle piste",
+			"pianoRollModeDraw": "Mode dessin",
+			"pianoRollModeSelect": "Mode sélection",
+			"pianoRollModeErase": "Mode gomme",
+			"pianoRollQuantize": "Quantifier la sélection",
+			"pianoRollDelete": "Supprimer les notes",
+			"pianoRollCopy": "Copier les notes",
+			"pianoRollCut": "Couper les notes",
+			"pianoRollPaste": "Coller les notes",
+			"pianoRollDuplicate": "Dupliquer les notes",
+			"pianoRollSelectAll": "Tout sélectionner"
 		}
 	}
 }

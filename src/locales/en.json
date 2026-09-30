@@ -252,7 +252,8 @@
 			"audio": "Audio",
 			"midi": "MIDI",
 			"project": "Defaults",
-			"interface": "Interface"
+			"interface": "Interface",
+			"shortcuts": "Shortcuts"
 		},
 		"audio": {
 			"devicesTitle": "Audio Devices",
@@ -336,6 +337,76 @@
 			"minimapDesc": "Navigable overview above the timeline",
 			"arrangeGrid": "Time grid",
 			"arrangeGridDesc": "Beat and bar lines in the tracks area"
+		},
+		"shortcuts": {
+			"title": "Keyboard shortcuts"
+		}
+	},
+	"shortcuts": {
+		"hint": "Click a chord, then press the new keys. Changes apply immediately — Cancel restores the previous map. Escape cancels capture.",
+		"pressKey": "Press a key…",
+		"waitForKey": "Now press the key to combine with that modifier…",
+		"forbiddenKey": "That key can’t be used alone.",
+		"search": "Search shortcuts",
+		"searchPlaceholder": "Search…",
+		"noResults": "No shortcuts match.",
+		"resetAll": "Reset all",
+		"resetOne": "Restore defaults for this action",
+		"resetOneShort": "Default",
+		"rebindAria": "Change shortcut for {action}",
+		"conflict": "Conflicts with another shortcut",
+		"conflictWith": "Conflicts with {action}",
+		"conflictWithMany": "Conflicts with {actions}",
+		"categories": {
+			"file": "File",
+			"edit": "Edit",
+			"transport": "Transport",
+			"arrangement": "Arrangement",
+			"track": "Tracks",
+			"library": "Library",
+			"view": "View",
+			"editor": "Editor",
+			"pianoRoll": "Piano roll"
+		},
+		"actions": {
+			"fileNew": "New project",
+			"fileOpen": "Open…",
+			"fileSave": "Save",
+			"fileSaveAs": "Save as…",
+			"fileImportAudio": "Import audio…",
+			"fileExportWav": "Export WAV…",
+			"fileExportMp3": "Export MP3…",
+			"editUndo": "Undo",
+			"editRedo": "Redo",
+			"transportPlayPause": "Play / Pause",
+			"arrangementAddMarker": "Add marker",
+			"arrangementAddRegion": "Add region",
+			"arrangementPrevLocator": "Previous locator",
+			"arrangementNextLocator": "Next locator",
+			"arrangementDelete": "Delete selection",
+			"arrangementCopy": "Copy",
+			"arrangementCut": "Cut",
+			"arrangementPaste": "Paste",
+			"arrangementDuplicate": "Duplicate",
+			"libraryToggle": "Toggle library",
+			"libraryFocusSearch": "Focus library search",
+			"libraryToggleFavorite": "Toggle favorite",
+			"librarySourceRecents": "Library · Recents",
+			"librarySourceFavorites": "Library · Favorites",
+			"librarySourceAudio": "Library · Audio",
+			"viewToggleMain": "Toggle Arrangement / Graph",
+			"editorCycleFocus": "Cycle editor focus",
+			"trackAdd": "New track",
+			"pianoRollModeDraw": "Draw mode",
+			"pianoRollModeSelect": "Select mode",
+			"pianoRollModeErase": "Erase mode",
+			"pianoRollQuantize": "Quantize selection",
+			"pianoRollDelete": "Delete notes",
+			"pianoRollCopy": "Copy notes",
+			"pianoRollCut": "Cut notes",
+			"pianoRollPaste": "Paste notes",
+			"pianoRollDuplicate": "Duplicate notes",
+			"pianoRollSelectAll": "Select all notes"
 		}
 	}
 }

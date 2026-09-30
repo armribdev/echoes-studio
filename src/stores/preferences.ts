@@ -1,7 +1,9 @@
 import { writable } from 'svelte/store';
 import { resolveLocale, type AppLocale } from '../lib/i18n';
+import type { ShortcutOverrides } from '../frontend/shortcuts/types';
 
 export type { AppLocale };
+export type { ShortcutOverrides };
 
 export interface AudioPreferences {
 	inputDevice: string;
@@ -63,6 +65,8 @@ export interface Preferences {
 	midi: MidiPreferences;
 	project: ProjectPreferences;
 	interface: InterfacePreferences;
+	/** User overrides keyed by shortcut id — empty object = all defaults. */
+	shortcuts: ShortcutOverrides;
 }
 
 const STORAGE_KEY = 'echoes-studio-preferences';
@@ -101,7 +105,8 @@ function defaultPreferences(): Preferences {
 			locale: resolveLocale(
 				typeof navigator !== 'undefined' ? (navigator.language ?? navigator.languages?.[0]) : null
 			)
-		}
+		},
+		shortcuts: {}
 	};
 }
 
@@ -114,6 +119,25 @@ function loadMidiPreferences(
 		parsed?.devices ??
 		(parsed?.enabledDeviceNames ?? []).map((name) => ({ name, alias: '', enabled: true }));
 	return { localControlOff: parsed?.localControlOff ?? defaults.localControlOff, devices };
+}
+
+const VALID_MODIFIERS = new Set(['ctrl', 'shift', 'alt']);
+
+function sanitizeShortcutOverrides(raw: unknown): ShortcutOverrides {
+	if (!raw || typeof raw !== 'object') return {};
+	const out: ShortcutOverrides = {};
+	for (const [id, value] of Object.entries(raw as Record<string, unknown>)) {
+		if (!value || typeof value !== 'object') continue;
+		const key = (value as { key?: unknown }).key;
+		const modifiers = (value as { modifiers?: unknown }).modifiers;
+		if (typeof key !== 'string' || key.length === 0) continue;
+		if (!Array.isArray(modifiers)) continue;
+		const mods = modifiers.filter(
+			(m): m is 'ctrl' | 'shift' | 'alt' => typeof m === 'string' && VALID_MODIFIERS.has(m)
+		);
+		out[id as keyof ShortcutOverrides] = { key, modifiers: mods };
+	}
+	return out;
 }
 
 function loadPreferences(): Preferences {
@@ -130,7 +154,8 @@ function loadPreferences(): Preferences {
 				audio: { ...defaults.audio, ...parsed.audio },
 				midi: loadMidiPreferences(defaults.midi, parsed.midi),
 				project: { ...defaults.project, ...parsed.project },
-				interface: iface
+				interface: iface,
+				shortcuts: sanitizeShortcutOverrides(parsed.shortcuts)
 			};
 		}
 	} catch {

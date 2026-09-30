@@ -13,7 +13,7 @@
 	// which starts listening to "engine-event" and "project-loaded" channels.
 	// The store then stays alive for the entire app lifetime.
 	import { engineProject } from '../frontend/store/engineStore';
-	import { registerShortcuts } from '../frontend/shortcuts/keymap';
+	import { registerShortcuts, syncMenuAccelerators } from '../frontend/shortcuts/keymap';
 	import { isEditingText } from '../frontend/shortcuts/context';
 	import { connectTransportBridge } from '../frontend/transport/bridge';
 	import { connectLoopSync } from '../frontend/transport/loopSync';
@@ -49,6 +49,13 @@
 		const unsubLocale = preferences.subscribe(({ interface: iface }) => {
 			setAppLocale(iface.locale);
 			document.documentElement.lang = iface.locale;
+		});
+		let appliedShortcuts = '';
+		const unsubShortcuts = preferences.subscribe(({ shortcuts }) => {
+			const key = JSON.stringify(shortcuts);
+			if (key === appliedShortcuts) return;
+			appliedShortcuts = key;
+			syncMenuAccelerators(shortcuts);
 		});
 		let appliedIsolation = '';
 		const unsubIsolation = preferences.subscribe(({ audio }) => {
@@ -142,6 +149,7 @@
 
 		return () => {
 			unsubLocale();
+			unsubShortcuts();
 			disconnectBridge();
 			disconnectLoop();
 			unregisterShortcuts();

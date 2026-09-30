@@ -298,7 +298,7 @@ Current implementation (`Knob.svelte`):
 | Toggle library favorite | `F` or `Ctrl/Cmd + D` (library results focused) |
 | Jump library sources 1–3 | `Ctrl/Cmd + 1…3` (library focused) |
 
-[TODO: Full shortcut list to be defined and made configurable in Phase 5]
+Configurable in **Preferences → Shortcuts** (overrides persist in local preferences; native menu accelerators stay in sync).
 
 ### 4.2 Drag & Drop
 

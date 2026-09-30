@@ -120,6 +120,7 @@ fn main() {
             set_active_output_channels,
             sync_project_ui_layout,
             app_menu::set_ui_locale,
+            app_menu::set_menu_accelerators,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

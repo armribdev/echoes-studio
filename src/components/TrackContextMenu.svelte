@@ -3,6 +3,7 @@
 	import { t } from 'svelte-i18n';
 	import { dismissable } from '../frontend/dismiss';
 	import { focusTrap } from '../frontend/focusTrap';
+	import { shortcutLabels } from '../frontend/shortcuts/label';
 
 	export let x = 0;
 	export let y = 0;
@@ -72,7 +73,7 @@
 			<line x1="5" y1="12" x2="19" y2="12" />
 		</svg>
 		<span>{$t('trackMenu.newTrack')}</span>
-		<span class="item-shortcut">Ctrl+Shift+T</span>
+		<span class="item-shortcut">{$shortcutLabels('track.add')}</span>
 	</button>
 
 	<button
@@ -182,7 +183,7 @@
 			<path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
 		</svg>
 		<span>{$t('trackMenu.deleteTrack')}</span>
-		<span class="item-shortcut">Suppr</span>
+		<span class="item-shortcut">{$shortcutLabels('arrangement.delete')}</span>
 	</button>
 </div>
 

@@ -6,10 +6,8 @@
  * - File operations (new/open/save) go through the `menu_action` Tauri command,
  *   which reuses the exact same Rust logic as the native menu items.
  * - History operations (undo/redo) call the existing dispatcher helpers.
+ * - Bindings come from the catalog + user overrides in preferences.
  * - Shortcuts are intentionally suppressed when the user is typing in an input.
- *
- * To add a shortcut: append an entry to SHORTCUTS below.
- * To expose a new action: add a `#[tauri::command] fn menu_action` branch in main.rs.
  */
 
 import { get } from 'svelte/store';
@@ -31,7 +29,7 @@ import { isEditingText, shouldHandleGlobalHistoryShortcuts, hasNoModifiers } fro
 import { engineProject } from '../store/engineStore';
 import { selection } from '../../stores/selection';
 import { bottomPanel } from '../../stores/bottomPanel';
-import { settingsPanelOpen } from '../../stores/preferences';
+import { preferences, settingsPanelOpen } from '../../stores/preferences';
 import { cycleEditorFocus, handleEditorEscapeKey } from '../pianoRoll/clipEditor';
 import { viewMode } from '../../stores/viewMode';
 import { dismissTopLayer } from '../dismiss';
@@ -39,22 +37,10 @@ import { rightPanel } from '../../stores/rightPanel';
 import { keyboardFocus } from '../../stores/keyboardFocus';
 import { libraryStore, libraryPopup, requestLibrarySearchFocus, beatsToSeconds } from '../library';
 import { collectLocators, navigateLocator, defaultRegionSpanAt } from '../arrangement/locators';
-
-// ── Types ─────────────────────────────────────────────────────────────────────
-
-type Modifier = 'ctrl' | 'shift' | 'alt';
-
-interface Shortcut {
-	/** Single key (case-insensitive). */
-	key: string;
-	/** Required modifiers — all must be held, no extras. */
-	modifiers: Modifier[];
-	/** Human-readable label — for a future shortcut-help panel. */
-	description: string;
-	action: () => void;
-	/** If set, the shortcut only fires (and steals the key) when this returns true. */
-	when?: () => boolean;
-}
+import { SHORTCUT_CATALOG } from './catalog';
+import { matchesShortcut, menuAccelerators } from './bindings';
+import { shortcutRecording } from './recording';
+import type { ShortcutId, ShortcutOverrides } from './types';
 
 function isLibraryFocus(): boolean {
 	const focus = get(keyboardFocus);
@@ -79,85 +65,26 @@ function navigateLocators(direction: -1 | 1) {
 	seek(positionSec).catch(console.error);
 }
 
-// ── Shortcut table ────────────────────────────────────────────────────────────
-//
-// Mirror every accelerator defined in main.rs ↔ Submenu::with_items.
-
 const menuAction = (action: string) => () => invoke('menu_action', { action }).catch(console.error);
 
-const SHORTCUTS: Shortcut[] = [
-	// ── File ──────────────────────────────────────────────────────────────────
-	{
-		key: 'n',
-		modifiers: ['ctrl'],
-		description: 'Nouveau projet',
-		action: menuAction('new')
-	},
-	{
-		key: 'o',
-		modifiers: ['ctrl'],
-		description: 'Ouvrir…',
-		action: menuAction('open')
-	},
-	{
-		key: 's',
-		modifiers: ['ctrl'],
-		description: 'Enregistrer',
-		action: menuAction('save')
-	},
-	{
-		key: 's',
-		modifiers: ['ctrl', 'shift'],
-		description: 'Enregistrer sous…',
-		action: menuAction('save-as')
-	},
+type ActionMap = Record<ShortcutId, () => void>;
 
-	// ── History ───────────────────────────────────────────────────────────────
-	{
-		key: 'z',
-		modifiers: ['ctrl'],
-		description: 'Annuler',
-		action: () => undoCommand().catch((e) => notify(`Annuler : ${e?.message ?? e}`, 'error'))
-	},
-	{
-		key: 'z',
-		modifiers: ['ctrl', 'shift'],
-		description: 'Rétablir',
-		action: () => redoCommand().catch((e) => notify(`Rétablir : ${e?.message ?? e}`, 'error'))
-	},
-	{
-		key: 'y',
-		modifiers: ['ctrl'],
-		description: 'Rétablir (Windows)',
-		action: () => redoCommand().catch((e) => notify(`Rétablir : ${e?.message ?? e}`, 'error'))
-	},
-
-	// ── Import / Export ───────────────────────────────────────────────────────
-	{
-		key: 'i',
-		modifiers: ['ctrl', 'shift'],
-		description: 'Importer audio…',
-		action: menuAction('import-audio')
-	},
-	{
-		key: 'e',
-		modifiers: ['ctrl', 'shift'],
-		description: 'Exporter mixdown WAV…',
-		action: menuAction('export-wav')
-	},
-	{
-		key: 'm',
-		modifiers: ['ctrl', 'shift'],
-		description: 'Exporter mixdown MP3…',
-		action: menuAction('export-mp3')
-	},
-
-	// ── Transport ─────────────────────────────────────────────────────────────
-	{
-		key: ' ',
-		modifiers: [],
-		description: 'Lecture / Pause (ou aperçu bibliothèque)',
-		action: () => {
+function buildActions(): ActionMap {
+	return {
+		'file.new': menuAction('new'),
+		'file.open': menuAction('open'),
+		'file.save': menuAction('save'),
+		'file.saveAs': menuAction('save-as'),
+		'file.importAudio': menuAction('import-audio'),
+		'file.exportWav': menuAction('export-wav'),
+		'file.exportMp3': menuAction('export-mp3'),
+		'edit.undo': () =>
+			undoCommand().catch((e) => notify(`Annuler : ${e?.message ?? e}`, 'error')),
+		'edit.redo': () =>
+			redoCommand().catch((e) => notify(`Rétablir : ${e?.message ?? e}`, 'error')),
+		'edit.redoAlt': () =>
+			redoCommand().catch((e) => notify(`Rétablir : ${e?.message ?? e}`, 'error')),
+		'transport.playPause': () => {
 			if (get(keyboardFocus) === 'library-results') {
 				const selected = libraryStore.getSelectedAsset();
 				if (selected) {
@@ -169,23 +96,13 @@ const SHORTCUTS: Shortcut[] = [
 			}
 			const { isPlaying } = get(transport);
 			(isPlaying ? pause() : play()).catch(console.error);
-		}
-	},
-	{
-		key: 'm',
-		modifiers: [],
-		description: 'Ajouter un marqueur à la tête de lecture',
-		action: () => {
+		},
+		'arrangement.addMarker': () => {
 			const bpm = get(tempo).bpm;
 			const beat = (get(transport).position * bpm) / 60;
 			addMarker(Math.max(0, beat)).catch(console.error);
-		}
-	},
-	{
-		key: 'r',
-		modifiers: [],
-		description: 'Ajouter une région à la tête de lecture (ou depuis la boucle)',
-		action: () => {
+		},
+		'arrangement.addRegion': () => {
 			const loop = get(loopRegion);
 			if (loop.enabled) {
 				addRegion(loop.startBeat, loop.endBeat).catch(console.error);
@@ -196,157 +113,91 @@ const SHORTCUTS: Shortcut[] = [
 			const beat = (get(transport).position * bpm) / 60;
 			const { start, end } = defaultRegionSpanAt(beat, numerator);
 			addRegion(start, end).catch(console.error);
-		}
-	},
-	{
-		key: ',',
-		modifiers: [],
-		description: 'Locator précédent',
-		action: () => navigateLocators(-1)
-	},
-	{
-		key: '.',
-		modifiers: [],
-		description: 'Locator suivant',
-		action: () => navigateLocators(1)
-	},
-	{
-		key: ';',
-		modifiers: [],
-		description: 'Locator suivant (AZERTY)',
-		action: () => navigateLocators(1)
-	},
-
-	// ── Library ───────────────────────────────────────────────────────────────
-	{
-		key: 'b',
-		modifiers: [],
-		description: 'Basculer la bibliothèque',
-		action: () => rightPanel.toggle()
-	},
-	{
-		key: 'l',
-		modifiers: [],
-		description: 'Basculer la bibliothèque (alias)',
-		action: () => rightPanel.toggle()
-	},
-	{
-		key: '/',
-		modifiers: [],
-		description: 'Focus recherche bibliothèque',
-		action: () => {
+		},
+		'arrangement.prevLocator': () => navigateLocators(-1),
+		'arrangement.nextLocator': () => navigateLocators(1),
+		'arrangement.nextLocatorAlt': () => navigateLocators(1),
+		'arrangement.delete': () => {},
+		'arrangement.deleteAlt': () => {},
+		'arrangement.copy': () => {},
+		'arrangement.cut': () => {},
+		'arrangement.paste': () => {},
+		'arrangement.duplicate': () => {},
+		'library.toggle': () => rightPanel.toggle(),
+		'library.toggleAlt': () => rightPanel.toggle(),
+		'library.focusSearch': () => {
 			if (get(libraryPopup).open) {
 				requestLibrarySearchFocus();
 				return;
 			}
 			if (!get(rightPanel).open) rightPanel.toggle();
 			requestLibrarySearchFocus();
-		}
-	},
-	{
-		key: 'f',
-		modifiers: ['ctrl'],
-		description: 'Focus recherche bibliothèque',
-		action: () => {
+		},
+		'library.focusSearchAlt': () => {
 			if (!get(rightPanel).open) return;
 			requestLibrarySearchFocus();
-		}
-	},
-	{
-		key: 'f',
-		modifiers: [],
-		description: 'Basculer favori (bibliothèque)',
-		when: isLibraryFocus,
-		action: () => {
+		},
+		'library.toggleFavorite': () => {
 			const selected = libraryStore.getSelectedAsset();
 			if (selected) libraryStore.toggleFavorite(selected.id);
-		}
-	},
-	{
-		key: 'd',
-		modifiers: ['ctrl'],
-		description: 'Basculer favori (bibliothèque)',
-		when: isLibraryFocus,
-		action: () => {
+		},
+		'library.toggleFavoriteAlt': () => {
 			const selected = libraryStore.getSelectedAsset();
 			if (selected) libraryStore.toggleFavorite(selected.id);
-		}
-	},
-	{
-		key: '1',
-		modifiers: ['ctrl'],
-		description: 'Bibliothèque · Récents',
-		when: isLibraryFocus,
-		action: () => libraryStore.setSource('recents')
-	},
-	{
-		key: '2',
-		modifiers: ['ctrl'],
-		description: 'Bibliothèque · Favoris',
-		when: isLibraryFocus,
-		action: () => libraryStore.setSource('favorites')
-	},
-	{
-		key: '3',
-		modifiers: ['ctrl'],
-		description: 'Bibliothèque · Audio',
-		when: isLibraryFocus,
-		action: () => libraryStore.setSource('audio')
-	},
+		},
+		'library.sourceRecents': () => libraryStore.setSource('recents'),
+		'library.sourceFavorites': () => libraryStore.setSource('favorites'),
+		'library.sourceAudio': () => libraryStore.setSource('audio'),
+		'view.toggleMain': () => viewMode.toggleMain(),
+		'editor.cycleFocus': () => cycleEditorFocus(get(engineProject).tracks, get(selection)),
+		'track.add': menuAction('add-track'),
+		'pianoRoll.modeDraw': () => {},
+		'pianoRoll.modeSelect': () => {},
+		'pianoRoll.modeSelectAlt': () => {},
+		'pianoRoll.modeErase': () => {},
+		'pianoRoll.quantize': () => {},
+		'pianoRoll.quantizeAlt': () => {},
+		'pianoRoll.delete': () => {},
+		'pianoRoll.deleteAlt': () => {},
+		'pianoRoll.copy': () => {},
+		'pianoRoll.cut': () => {},
+		'pianoRoll.paste': () => {},
+		'pianoRoll.duplicate': () => {},
+		'pianoRoll.selectAll': () => {}
+	};
+}
 
-	// ── View ──────────────────────────────────────────────────────────────────
-	{
-		key: 'g',
-		modifiers: [],
-		description: 'Basculer Arrangement / Graph',
-		action: () => viewMode.toggleMain()
-	},
-
-	// ── Editor panel ──────────────────────────────────────────────────────────
-	{
-		key: 'Tab',
-		modifiers: [],
-		description: 'Plonger dans l’éditeur MIDI / remonter au focus arrangement',
-		action: () => cycleEditorFocus(get(engineProject).tracks, get(selection))
-	}
-];
-
-// ── Matching logic ────────────────────────────────────────────────────────────
-
-/**
- * True when the event exactly satisfies a shortcut's key + modifiers.
- *
- * Note: `ctrl` in the modifier list maps to Cmd on macOS (e.metaKey) and
- * Ctrl on Windows/Linux (e.ctrlKey) — both are accepted via `ctrlHeld`.
- */
-function matches(e: KeyboardEvent, shortcut: Shortcut): boolean {
-	if (e.key.toLowerCase() !== shortcut.key.toLowerCase()) return false;
-
-	const needs = shortcut.modifiers;
-
-	// On macOS, Cmd replaces Ctrl; on Windows/Linux, only Ctrl is used.
-	const ctrlHeld = e.ctrlKey || e.metaKey;
-
-	if (needs.includes('ctrl') !== ctrlHeld) return false;
-	if (needs.includes('shift') !== e.shiftKey) return false;
-	if (needs.includes('alt') !== e.altKey) return false;
-
+function scopeAllows(id: ShortcutId): boolean {
+	const meta = SHORTCUT_CATALOG.find((m) => m.id === id);
+	if (!meta) return false;
+	if (meta.scope === 'library') return isLibraryFocus();
+	if (meta.scope === 'timeline' || meta.scope === 'piano-roll') return false;
 	return true;
 }
 
-// ── Public API ────────────────────────────────────────────────────────────────
+function currentOverrides(): ShortcutOverrides {
+	return get(preferences).shortcuts;
+}
+
+/** Push effective menu accelerators to the native OS menu. */
+export function syncMenuAccelerators(overrides: ShortcutOverrides = currentOverrides()): void {
+	const accelerators = menuAccelerators(overrides);
+	invoke('set_menu_accelerators', { accelerators }).catch(() => {
+		// Menu may not be ready yet during boot — ignore.
+	});
+}
 
 /**
  * Attach the global keyboard handler to `window`.
  *
  * @returns A cleanup function — pass it directly as the onMount return value.
- *
- * @example
- * onMount(() => registerShortcuts());
  */
 export function registerShortcuts(): () => void {
+	const actions = buildActions();
+
 	const handler = (e: KeyboardEvent): void => {
 		if (e.repeat) return;
+		if (get(shortcutRecording)) return;
 
 		if (e.key === 'Escape' && dismissTopLayer()) {
 			e.preventDefault();
@@ -354,15 +205,16 @@ export function registerShortcuts(): () => void {
 			return;
 		}
 
+		const overrides = currentOverrides();
+
 		if (isEditingText(e.target)) {
-			// ADR-023: B/L still toggle the library from the search field.
-			if (hasNoModifiers(e) && !e.shiftKey) {
-				const k = e.key.toLowerCase();
-				if (k === 'b' || k === 'l') {
-					e.preventDefault();
-					rightPanel.toggle();
-					return;
-				}
+			// ADR-023: library toggle still works from the search field.
+			if (
+				matchesShortcut(e, 'library.toggle', overrides) ||
+				matchesShortcut(e, 'library.toggleAlt', overrides)
+			) {
+				e.preventDefault();
+				rightPanel.toggle();
 			}
 			return;
 		}
@@ -390,20 +242,20 @@ export function registerShortcuts(): () => void {
 			}
 		}
 
-		for (const shortcut of SHORTCUTS) {
-			if (!matches(e, shortcut)) continue;
-			if (shortcut.when && !shortcut.when()) continue;
+		for (const meta of SHORTCUT_CATALOG) {
+			if (meta.scope === 'timeline' || meta.scope === 'piano-roll') continue;
+			if (!matchesShortcut(e, meta.id, overrides)) continue;
+			if (!scopeAllows(meta.id)) continue;
 
-			// Undo/redo are handled locally by the piano roll when it is focused.
-			const isHistory = shortcut.key === 'z' || shortcut.key === 'y';
-			if (isHistory && !shouldHandleGlobalHistoryShortcuts()) continue;
+			if (meta.isHistory && !shouldHandleGlobalHistoryShortcuts()) continue;
 
 			e.preventDefault();
-			shortcut.action();
-			return; // first match wins
+			actions[meta.id]();
+			return;
 		}
 	};
 
 	window.addEventListener('keydown', handler, true);
+	syncMenuAccelerators();
 	return () => window.removeEventListener('keydown', handler, true);
 }

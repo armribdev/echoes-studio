@@ -35,7 +35,9 @@
 	import { midiGridBeats } from '../stores/project';
 	import { currentProjectMusical, updateProjectMusical } from '../frontend/commands/dispatcher';
 	import { startTransportScrub } from '../frontend/transportScrub';
-	import { shouldHandlePianoRollShortcuts, hasNoModifiers } from '../frontend/shortcuts/context';
+	import { shouldHandlePianoRollShortcuts } from '../frontend/shortcuts/context';
+	import { matchesShortcut, matchesShortcutRow } from '../frontend/shortcuts/bindings';
+	import { preferences } from '../stores/preferences';
 	import { noteClipboard, copyMidiNotes } from '../stores/noteClipboard';
 	import { keyboardFocus } from '../stores/keyboardFocus';
 	import { t } from 'svelte-i18n';
@@ -1306,25 +1308,25 @@
 	function onKeydown(e: KeyboardEvent) {
 		if (!shouldHandlePianoRollShortcuts(e)) return;
 
+		const overrides = get(preferences).shortcuts;
 		let handled = false;
 
-		if (hasNoModifiers(e)) {
-			if (e.key === 'd' || e.key === 'D') {
-				pianoRollStore.setMode('draw');
-				handled = true;
-			} else if (e.key === 'v' || e.key === 'V' || e.key === 's' || e.key === 'S') {
-				pianoRollStore.setMode('select');
-				handled = true;
-			} else if (e.key === 'e' || e.key === 'E') {
-				pianoRollStore.setMode('erase');
-				handled = true;
-			} else if (e.key === 'q' || e.key === 'Q') {
-				e.preventDefault();
-				if (!e.repeat) quantizeSelected();
-				handled = true;
-			}
+		if (matchesShortcut(e, 'pianoRoll.modeDraw', overrides)) {
+			pianoRollStore.setMode('draw');
+			handled = true;
+		} else if (matchesShortcutRow(e, 'pianoRoll.modeSelect', overrides)) {
+			pianoRollStore.setMode('select');
+			handled = true;
+		} else if (matchesShortcut(e, 'pianoRoll.modeErase', overrides)) {
+			pianoRollStore.setMode('erase');
+			handled = true;
+		} else if (matchesShortcutRow(e, 'pianoRoll.quantize', overrides)) {
+			e.preventDefault();
+			if (!e.repeat) quantizeSelected();
+			handled = true;
 		}
 
+		// Nudge: arrows stay fixed (Shift = octave) — awkward to rebind cleanly.
 		if (!handled && e.key.startsWith('Arrow') && !e.ctrlKey && !e.metaKey && !e.altKey) {
 			e.preventDefault();
 			if (e.key === 'ArrowLeft') nudgeSelected(0, -quantize);
@@ -1334,67 +1336,39 @@
 			handled = true;
 		}
 
-		if (!handled && (e.key === 'Delete' || e.key === 'Backspace')) {
+		if (!handled && matchesShortcutRow(e, 'pianoRoll.delete', overrides)) {
 			e.preventDefault();
 			pianoRollStore.deleteSelectedNotes();
 			commitNotes();
 			handled = true;
-		} else if (
-			!handled &&
-			(e.ctrlKey || e.metaKey) &&
-			!e.shiftKey &&
-			!e.altKey &&
-			(e.key === 'c' ||
-				e.key === 'x' ||
-				e.key === 'v' ||
-				e.key === 'C' ||
-				e.key === 'X' ||
-				e.key === 'V')
-		) {
-			const key = e.key.toLowerCase();
-			if (key === 'c') {
-				e.preventDefault();
-				copySelectedNotes();
-				handled = true;
-			} else if (key === 'x') {
-				e.preventDefault();
-				cutSelectedNotes();
-				handled = true;
-			} else if (key === 'v') {
-				e.preventDefault();
-				pasteNotes();
-				handled = true;
-			}
-		} else if (
-			!handled &&
-			(e.ctrlKey || e.metaKey) &&
-			!e.shiftKey &&
-			!e.altKey &&
-			(e.key === 'd' || e.key === 'D')
-		) {
+		} else if (!handled && matchesShortcut(e, 'pianoRoll.copy', overrides)) {
+			e.preventDefault();
+			copySelectedNotes();
+			handled = true;
+		} else if (!handled && matchesShortcut(e, 'pianoRoll.cut', overrides)) {
+			e.preventDefault();
+			cutSelectedNotes();
+			handled = true;
+		} else if (!handled && matchesShortcut(e, 'pianoRoll.paste', overrides)) {
+			e.preventDefault();
+			pasteNotes();
+			handled = true;
+		} else if (!handled && matchesShortcut(e, 'pianoRoll.duplicate', overrides)) {
 			e.preventDefault();
 			if (!e.repeat) duplicateSelected();
 			handled = true;
-		} else if (
-			!handled &&
-			(e.ctrlKey || e.metaKey) &&
-			!e.shiftKey &&
-			!e.altKey &&
-			(e.key === 'u' || e.key === 'U')
-		) {
-			e.preventDefault();
-			if (!e.repeat) quantizeSelected();
-			handled = true;
-		} else if (!handled && (e.ctrlKey || e.metaKey) && e.key === 'a') {
+		} else if (!handled && matchesShortcut(e, 'pianoRoll.selectAll', overrides)) {
 			e.preventDefault();
 			pianoRollStore.selectAll();
 			handled = true;
-		} else if (!handled && (e.ctrlKey || e.metaKey) && e.key === 'z') {
+		} else if (!handled && matchesShortcut(e, 'edit.undo', overrides)) {
 			e.preventDefault();
-			if (e.shiftKey) redoCommand();
-			else undoCommand();
+			undoCommand();
 			handled = true;
-		} else if (!handled && (e.ctrlKey || e.metaKey) && e.key === 'y') {
+		} else if (
+			!handled &&
+			(matchesShortcut(e, 'edit.redo', overrides) || matchesShortcut(e, 'edit.redoAlt', overrides))
+		) {
 			e.preventDefault();
 			redoCommand();
 			handled = true;

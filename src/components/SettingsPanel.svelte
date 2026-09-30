@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { preferences, settingsPanelOpen } from '../stores/preferences';
 	import { keyboardFocus } from '../stores/keyboardFocus';
-	import type { KnownMidiDevice, Preferences } from '../stores/preferences';
+	import type { KnownMidiDevice, Preferences, ShortcutOverrides } from '../stores/preferences';
 	import { onMount, onDestroy } from 'svelte';
 	import { get } from 'svelte/store';
 	import { t } from 'svelte-i18n';
@@ -13,9 +13,11 @@
 	import NumberInput from './NumberInput.svelte';
 	import Button from './Button.svelte';
 	import Icon from './Icon.svelte';
+	import ShortcutSettings from './ShortcutSettings.svelte';
 	import { dismissable } from '../frontend/dismiss';
 	import { focusTrap } from '../frontend/focusTrap';
 	import { appInert, portal } from '../frontend/portal';
+	import { syncMenuAccelerators } from '../frontend/shortcuts/keymap';
 	import {
 		listAudioDevices,
 		applyAudioSettings,
@@ -34,7 +36,7 @@
 	let masterRouting = 'out-1-2';
 	let headphoneRouting = 'mirror';
 
-	type Section = 'audio' | 'midi' | 'project' | 'interface';
+	type Section = 'audio' | 'midi' | 'project' | 'interface' | 'shortcuts';
 	let activeSection: Section = 'audio';
 
 	// Local draft — confirmed on close or explicit save
@@ -43,8 +45,32 @@
 		audio: { ...$preferences.audio },
 		midi: { ...$preferences.midi },
 		project: { ...$preferences.project },
-		interface: { ...$preferences.interface }
+		interface: { ...$preferences.interface },
+		shortcuts: { ...$preferences.shortcuts }
 	};
+
+	/** Shortcuts apply live while the panel is open; Cancel restores this snapshot. */
+	let shortcutsBaseline: ShortcutOverrides = { ...$preferences.shortcuts };
+	let shortcutsPanelSession = false;
+	let lastLiveShortcutsJson = JSON.stringify(draft.shortcuts);
+
+	$: if ($settingsPanelOpen) {
+		if (!shortcutsPanelSession) {
+			shortcutsPanelSession = true;
+			shortcutsBaseline = { ...$preferences.shortcuts };
+			draft.shortcuts = { ...$preferences.shortcuts };
+			lastLiveShortcutsJson = JSON.stringify(draft.shortcuts);
+		}
+		const key = JSON.stringify(draft.shortcuts);
+		if (key !== lastLiveShortcutsJson) {
+			lastLiveShortcutsJson = key;
+			if (JSON.stringify($preferences.shortcuts) !== key) {
+				preferences.update((p) => ({ ...p, shortcuts: { ...draft.shortcuts } }));
+			}
+		}
+	} else if (shortcutsPanelSession) {
+		shortcutsPanelSession = false;
+	}
 
 	const SAMPLE_RATES = [44100, 48000, 88200, 96000] as const;
 	const BUFFER_SIZES = [64, 128, 256, 512, 1024, 2048] as const;
@@ -75,7 +101,8 @@
 		{ id: 'audio' as const, label: $t('settings.nav.audio') },
 		{ id: 'midi' as const, label: $t('settings.nav.midi') },
 		{ id: 'project' as const, label: $t('settings.nav.project') },
-		{ id: 'interface' as const, label: $t('settings.nav.interface') }
+		{ id: 'interface' as const, label: $t('settings.nav.interface') },
+		{ id: 'shortcuts' as const, label: $t('settings.nav.shortcuts') }
 	];
 	$: isolationOptions = [
 		{ value: 'off' as const, label: $t('common.none') },
@@ -307,22 +334,27 @@
 		if (typeof document !== 'undefined') {
 			document.documentElement.lang = draft.interface.locale;
 		}
+		syncMenuAccelerators(draft.shortcuts);
 		settingsPanelOpen.set(false);
 		keyboardFocus.setTimeline();
 	}
 
 	function cancelAndClose() {
 		applyError = null;
+		preferences.update((p) => ({ ...p, shortcuts: { ...shortcutsBaseline } }));
+		lastLiveShortcutsJson = JSON.stringify(shortcutsBaseline);
+		const prefs = get(preferences);
 		draft = {
-			...$preferences,
-			audio: { ...$preferences.audio },
-			midi: { ...$preferences.midi },
-			project: { ...$preferences.project },
-			interface: { ...$preferences.interface }
+			...prefs,
+			audio: { ...prefs.audio },
+			midi: { ...prefs.midi },
+			project: { ...prefs.project },
+			interface: { ...prefs.interface },
+			shortcuts: { ...shortcutsBaseline }
 		};
-		setAppLocale($preferences.interface.locale);
+		setAppLocale(prefs.interface.locale);
 		if (typeof document !== 'undefined') {
-			document.documentElement.lang = $preferences.interface.locale;
+			document.documentElement.lang = prefs.interface.locale;
 		}
 		midiRows = reconcileMidiRows(
 			draft.midi.devices.map((d) => ({ ...d, connected: false })),
@@ -372,6 +404,10 @@
 				showArrangeGrid: false,
 				locale: draft.interface.locale
 			};
+		else if (activeSection === 'shortcuts') {
+			draft.shortcuts = {};
+			lastLiveShortcutsJson = '';
+		}
 		draft = { ...draft };
 	}
 
@@ -512,6 +548,8 @@
 									<Icon name="folder" size={15} />
 								{:else if s.id === 'interface'}
 									<Icon name="monitor" size={15} />
+								{:else if s.id === 'shortcuts'}
+									<Icon name="keyboard" size={15} />
 								{/if}
 							</span>
 							<span class="nav-label">{s.label}</span>
@@ -1027,6 +1065,11 @@
 								label={$t('settings.interface.arrangeGrid')}
 								description={$t('settings.interface.arrangeGridDesc')}
 							/>
+						</div>
+					{:else if activeSection === 'shortcuts'}
+						<div class="section">
+							<h2 class="section-title">{$t('settings.shortcuts.title')}</h2>
+							<ShortcutSettings bind:overrides={draft.shortcuts} />
 						</div>
 					{/if}
 				</div>

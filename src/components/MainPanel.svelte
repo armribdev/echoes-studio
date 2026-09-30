@@ -51,6 +51,8 @@
 	import { armTrackForMidiInput } from '../lib/midiBackend';
 	import { leftPanel } from '../stores/leftPanel';
 	import { shouldHandleTimelineShortcuts } from '../frontend/shortcuts/context';
+	import { matchesShortcut, matchesShortcutRow } from '../frontend/shortcuts/bindings';
+	import { preferences } from '../stores/preferences';
 	import { keyboardFocus } from '../stores/keyboardFocus';
 	import {
 		libraryStore,
@@ -88,7 +90,6 @@
 	import Playhead from './Playhead.svelte';
 	import ZoomScrollbar from './ZoomScrollbar.svelte';
 	import ArrangeGrid from './ArrangeGrid.svelte';
-	import { preferences } from '../stores/preferences';
 	import { startTransportScrub } from '../frontend/transportScrub';
 	import { t } from 'svelte-i18n';
 	import { MARKER_LANE_HEIGHT, RULER_HEIGHT } from '../frontend/timeRuler/constants';
@@ -1310,25 +1311,23 @@
 	function handleKeyDown(e: KeyboardEvent) {
 		if (!shouldHandleTimelineShortcuts(e)) return;
 
-		const ctrl = e.ctrlKey || e.metaKey;
+		const overrides = $preferences.shortcuts;
 
-		if ((e.key === 'Delete' || e.key === 'Backspace') && !ctrl) {
+		if (matchesShortcutRow(e, 'arrangement.delete', overrides)) {
 			e.preventDefault();
 			deleteSelected();
-		} else if (ctrl && !e.shiftKey && !e.altKey) {
-			if (e.key === 'c') {
-				e.preventDefault();
-				copySelected();
-			} else if (e.key === 'x') {
-				e.preventDefault();
-				cutSelected();
-			} else if (e.key === 'v') {
-				e.preventDefault();
-				pasteClips().catch(console.error);
-			} else if (e.key === 'd') {
-				e.preventDefault();
-				if (!e.repeat) duplicateSelected().catch(console.error);
-			}
+		} else if (matchesShortcut(e, 'arrangement.copy', overrides)) {
+			e.preventDefault();
+			copySelected();
+		} else if (matchesShortcut(e, 'arrangement.cut', overrides)) {
+			e.preventDefault();
+			cutSelected();
+		} else if (matchesShortcut(e, 'arrangement.paste', overrides)) {
+			e.preventDefault();
+			pasteClips().catch(console.error);
+		} else if (matchesShortcut(e, 'arrangement.duplicate', overrides)) {
+			e.preventDefault();
+			if (!e.repeat) duplicateSelected().catch(console.error);
 		}
 	}
 

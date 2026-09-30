@@ -9,7 +9,8 @@
 		| 'alert-triangle'
 		| 'cpu'
 		| 'inspector'
-		| 'library';
+		| 'library'
+		| 'keyboard';
 	export let size: number = 14;
 	export let strokeWidth: number = 1.8;
 </script>
@@ -74,5 +75,8 @@
 		<rect x="14" y="3" width="7" height="7" rx="1" />
 		<rect x="3" y="14" width="7" height="7" rx="1" />
 		<rect x="14" y="14" width="7" height="7" rx="1" />
+	{:else if name === 'keyboard'}
+		<rect x="2" y="4" width="20" height="16" rx="2" />
+		<path d="M6 8h.01M10 8h.01M14 8h.01M18 8h.01M8 12h.01M12 12h.01M16 12h.01M7 16h10" />
 	{/if}
 </svg>

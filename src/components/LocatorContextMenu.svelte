@@ -3,6 +3,7 @@
 	import { t } from 'svelte-i18n';
 	import { dismissable } from '../frontend/dismiss';
 	import { focusTrap } from '../frontend/focusTrap';
+	import { shortcutLabels } from '../frontend/shortcuts/label';
 
 	export let x = 0;
 	export let y = 0;
@@ -57,7 +58,7 @@
 			}}
 		>
 			<span>{$t('locatorMenu.addMarker')}</span>
-			<span class="item-shortcut">M</span>
+			<span class="item-shortcut">{$shortcutLabels('arrangement.addMarker')}</span>
 		</button>
 		<button
 			class="item" role="menuitem"
@@ -67,7 +68,7 @@
 			}}
 		>
 			<span>{$t('locatorMenu.addRegion')}</span>
-			<span class="item-shortcut">R</span>
+			<span class="item-shortcut">{$shortcutLabels('arrangement.addRegion')}</span>
 		</button>
 	{:else}
 		<div class="menu-header">
