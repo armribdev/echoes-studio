@@ -18,14 +18,16 @@ use std::sync::{Arc, MutexGuard};
 use tauri::{Emitter, Manager};
 
 use super::commands::{
-    cmd, AddAutomationLanePayload, AddClipPayload, AddEffectPayload, AddMidiClipPayload,
-    AddModulationRoutePayload, AddModulatorPayload, BatchCommand, CommandEnvelope,
-    CreateTrackPayload, DeleteTrackPayload, MoveClipPayload, MoveMidiClipPayload, MuteTrackPayload,
-    RemoveAutomationLanePayload, RemoveClipPayload, RemoveEffectPayload, RemoveMidiClipPayload,
-    RemoveModulationRoutePayload, RemoveModulatorPayload, SeekPayload, SetClipMidiNotesPayload,
+    cmd, AddAutomationLanePayload, AddClipPayload, AddEffectPayload, AddMarkerPayload,
+    AddMidiClipPayload, AddModulationRoutePayload, AddModulatorPayload, AddRegionPayload,
+    BatchCommand, CommandEnvelope, CreateTrackPayload, DeleteTrackPayload, MoveClipPayload,
+    MoveMidiClipPayload, MuteTrackPayload, RemoveAutomationLanePayload, RemoveClipPayload,
+    RemoveEffectPayload, RemoveMarkerPayload, RemoveMidiClipPayload, RemoveModulationRoutePayload,
+    RemoveModulatorPayload, RemoveRegionPayload, SeekPayload, SetClipMidiNotesPayload,
     SetLoopPayload, SetMidiNotesPayload, SetModulationDepthPayload, SetTrackInputPayload,
     SetTrackInstrumentPayload, SoloTrackPayload, UpdateAutomationClipPayload, UpdateEffectPayload,
-    UpdateModulatorPayload, UpdateProjectNamePayload, UpdateTempoPayload, UpdateTrackPayload,
+    UpdateMarkerPayload, UpdateModulatorPayload, UpdateProjectNamePayload, UpdateRegionPayload,
+    UpdateTempoPayload, UpdateTrackPayload,
 };
 use super::events::{ev, EngineEvent, ProjectEvent};
 use crate::audio_clip::{AudioClip, AudioClipData};
@@ -34,9 +36,10 @@ use crate::audio_graph::nodes::track_gain::VOLUME_RANGE;
 use crate::audio_graph::GraphSnapshotDto;
 use crate::plugin_system::wrapper::DeviceFormat;
 use crate::project::{
-    generate_id, AppClip, AppMidiClip, AppProject, AppState, AppTrack, CachedAudioData,
-    CompressorParams, DelayParams, EffectParams, EqParams, MidiClipDto, MidiNote, PluginParams,
-    ProjectUiLayout, ReverbParams, TrackEffect,
+    default_marker_name, default_region_name, generate_id, normalize_region_span, AppClip,
+    AppMidiClip, AppProject, AppState, AppTrack, ArrangementMarker, ArrangementRegion,
+    CachedAudioData, CompressorParams, DelayParams, EffectParams, EqParams, MidiClipDto, MidiNote,
+    PluginParams, ProjectUiLayout, ReverbParams, TrackEffect,
 };
 
 /// Returned by `send_command` / `send_batch` to the UI.
@@ -1548,6 +1551,185 @@ fn process_command(
             )
         }
 
+        cmd::ADD_MARKER => {
+            let p: AddMarkerPayload = serde_json::from_value(command.payload)
+                .map_err(|e| format!("ADD_MARKER payload invalid: {e}"))?;
+            let marker = {
+                let mut built = None;
+                with_project_mut(state, |project| {
+                    let name = p
+                        .name
+                        .as_ref()
+                        .map(|s| s.trim().to_string())
+                        .filter(|s| !s.is_empty())
+                        .unwrap_or_else(|| default_marker_name(&project.markers));
+                    let marker = ArrangementMarker {
+                        id: generate_id(),
+                        name,
+                        position_beats: p.position_beats.max(0.0),
+                        color: p.color,
+                    };
+                    project.markers.push(marker.clone());
+                    built = Some(marker);
+                    Ok(())
+                })?;
+                built.expect("marker built")
+            };
+            commit_same_payload(
+                &ctx,
+                ev::MARKER_ADDED,
+                json!({ "marker": marker }),
+                false,
+            )
+        }
+
+        cmd::UPDATE_MARKER => {
+            let p: UpdateMarkerPayload = serde_json::from_value(command.payload)
+                .map_err(|e| format!("UPDATE_MARKER payload invalid: {e}"))?;
+            let marker = {
+                let mut updated = None;
+                with_project_mut(state, |project| {
+                    let marker = project
+                        .markers
+                        .iter_mut()
+                        .find(|m| m.id == p.id)
+                        .ok_or_else(|| format!("Marker '{}' not found", p.id))?;
+                    if let Some(name) = p.name {
+                        let trimmed = name.trim().to_string();
+                        if !trimmed.is_empty() {
+                            marker.name = trimmed;
+                        }
+                    }
+                    if let Some(position_beats) = p.position_beats {
+                        marker.position_beats = position_beats.max(0.0);
+                    }
+                    if p.color.is_some() {
+                        marker.color = p.color;
+                    }
+                    updated = Some(marker.clone());
+                    Ok(())
+                })?;
+                updated.expect("marker updated")
+            };
+            commit_same_payload(
+                &ctx,
+                ev::MARKER_UPDATED,
+                json!({ "marker": marker }),
+                false,
+            )
+        }
+
+        cmd::REMOVE_MARKER => {
+            let p: RemoveMarkerPayload = serde_json::from_value(command.payload)
+                .map_err(|e| format!("REMOVE_MARKER payload invalid: {e}"))?;
+            with_project_mut(state, |project| {
+                let before = project.markers.len();
+                project.markers.retain(|m| m.id != p.id);
+                if project.markers.len() == before {
+                    return Err(format!("Marker '{}' not found", p.id));
+                }
+                Ok(())
+            })?;
+            commit_same_payload(
+                &ctx,
+                ev::MARKER_REMOVED,
+                json!({ "id": p.id }),
+                false,
+            )
+        }
+
+        cmd::ADD_REGION => {
+            let p: AddRegionPayload = serde_json::from_value(command.payload)
+                .map_err(|e| format!("ADD_REGION payload invalid: {e}"))?;
+            let region = {
+                let mut built = None;
+                with_project_mut(state, |project| {
+                    let name = p
+                        .name
+                        .as_ref()
+                        .map(|s| s.trim().to_string())
+                        .filter(|s| !s.is_empty())
+                        .unwrap_or_else(|| default_region_name(&project.regions));
+                    let (start_beats, end_beats) =
+                        normalize_region_span(p.start_beats, p.end_beats);
+                    let region = ArrangementRegion {
+                        id: generate_id(),
+                        name,
+                        start_beats,
+                        end_beats,
+                        color: p.color,
+                    };
+                    project.regions.push(region.clone());
+                    built = Some(region);
+                    Ok(())
+                })?;
+                built.expect("region built")
+            };
+            commit_same_payload(
+                &ctx,
+                ev::REGION_ADDED,
+                json!({ "region": region }),
+                false,
+            )
+        }
+
+        cmd::UPDATE_REGION => {
+            let p: UpdateRegionPayload = serde_json::from_value(command.payload)
+                .map_err(|e| format!("UPDATE_REGION payload invalid: {e}"))?;
+            let region = {
+                let mut updated = None;
+                with_project_mut(state, |project| {
+                    let region = project
+                        .regions
+                        .iter_mut()
+                        .find(|r| r.id == p.id)
+                        .ok_or_else(|| format!("Region '{}' not found", p.id))?;
+                    if let Some(name) = p.name {
+                        let trimmed = name.trim().to_string();
+                        if !trimmed.is_empty() {
+                            region.name = trimmed;
+                        }
+                    }
+                    let start = p.start_beats.unwrap_or(region.start_beats);
+                    let end = p.end_beats.unwrap_or(region.end_beats);
+                    let (start_beats, end_beats) = normalize_region_span(start, end);
+                    region.start_beats = start_beats;
+                    region.end_beats = end_beats;
+                    if p.color.is_some() {
+                        region.color = p.color;
+                    }
+                    updated = Some(region.clone());
+                    Ok(())
+                })?;
+                updated.expect("region updated")
+            };
+            commit_same_payload(
+                &ctx,
+                ev::REGION_UPDATED,
+                json!({ "region": region }),
+                false,
+            )
+        }
+
+        cmd::REMOVE_REGION => {
+            let p: RemoveRegionPayload = serde_json::from_value(command.payload)
+                .map_err(|e| format!("REMOVE_REGION payload invalid: {e}"))?;
+            with_project_mut(state, |project| {
+                let before = project.regions.len();
+                project.regions.retain(|r| r.id != p.id);
+                if project.regions.len() == before {
+                    return Err(format!("Region '{}' not found", p.id));
+                }
+                Ok(())
+            })?;
+            commit_same_payload(
+                &ctx,
+                ev::REGION_REMOVED,
+                json!({ "id": p.id }),
+                false,
+            )
+        }
+
         cmd::ADD_EFFECT => {
             let p: AddEffectPayload = serde_json::from_value(command.payload)
                 .map_err(|e| format!("ADD_EFFECT payload invalid: {e}"))?;
@@ -2225,6 +2407,8 @@ fn snapshot_project(project: &AppProject) -> AppProject {
         midi_ppq: project.midi_ppq,
         midi_grid_use_triplets: project.midi_grid_use_triplets,
         tracks: project.tracks.iter().map(snapshot_track).collect(),
+        markers: project.markers.clone(),
+        regions: project.regions.clone(),
         // Plugin binary state mirrors live plugin internals and is restored
         // separately (project load → compile → setState), not via the event
         // store.  Undo/redo snapshots therefore keep this empty.
@@ -2572,6 +2756,58 @@ fn apply_tempo_updated(project: &mut AppProject, payload: &Value) {
     }
 }
 
+fn apply_marker_added(project: &mut AppProject, payload: &Value) {
+    let Ok(marker) = serde_json::from_value::<ArrangementMarker>(payload["marker"].clone()) else {
+        return;
+    };
+    if project.markers.iter().any(|m| m.id == marker.id) {
+        return;
+    }
+    project.markers.push(marker);
+}
+
+fn apply_marker_updated(project: &mut AppProject, payload: &Value) {
+    let Ok(marker) = serde_json::from_value::<ArrangementMarker>(payload["marker"].clone()) else {
+        return;
+    };
+    if let Some(existing) = project.markers.iter_mut().find(|m| m.id == marker.id) {
+        *existing = marker;
+    }
+}
+
+fn apply_marker_removed(project: &mut AppProject, payload: &Value) {
+    let Some(id) = payload["id"].as_str() else {
+        return;
+    };
+    project.markers.retain(|m| m.id != id);
+}
+
+fn apply_region_added(project: &mut AppProject, payload: &Value) {
+    let Ok(region) = serde_json::from_value::<ArrangementRegion>(payload["region"].clone()) else {
+        return;
+    };
+    if project.regions.iter().any(|r| r.id == region.id) {
+        return;
+    }
+    project.regions.push(region);
+}
+
+fn apply_region_updated(project: &mut AppProject, payload: &Value) {
+    let Ok(region) = serde_json::from_value::<ArrangementRegion>(payload["region"].clone()) else {
+        return;
+    };
+    if let Some(existing) = project.regions.iter_mut().find(|r| r.id == region.id) {
+        *existing = region;
+    }
+}
+
+fn apply_region_removed(project: &mut AppProject, payload: &Value) {
+    let Some(id) = payload["id"].as_str() else {
+        return;
+    };
+    project.regions.retain(|r| r.id != id);
+}
+
 fn apply_effect_added(project: &mut AppProject, payload: &Value) {
     let track_id = payload_str(payload, "track_id");
     let Some(raw_effect) = payload.get("effect") else {
@@ -2907,6 +3143,12 @@ fn apply_events(
             ev::CLIP_REMOVED => apply_clip_removed(&mut project, &event.payload),
             ev::PROJECT_NAME_UPDATED => apply_project_name_updated(&mut project, &event.payload),
             ev::TEMPO_UPDATED => apply_tempo_updated(&mut project, &event.payload),
+            ev::MARKER_ADDED => apply_marker_added(&mut project, &event.payload),
+            ev::MARKER_UPDATED => apply_marker_updated(&mut project, &event.payload),
+            ev::MARKER_REMOVED => apply_marker_removed(&mut project, &event.payload),
+            ev::REGION_ADDED => apply_region_added(&mut project, &event.payload),
+            ev::REGION_UPDATED => apply_region_updated(&mut project, &event.payload),
+            ev::REGION_REMOVED => apply_region_removed(&mut project, &event.payload),
             ev::EFFECT_ADDED => apply_effect_added(&mut project, &event.payload),
             ev::EFFECT_REMOVED => apply_effect_removed(&mut project, &event.payload),
             ev::EFFECT_UPDATED => apply_effect_updated(&mut project, &event.payload),

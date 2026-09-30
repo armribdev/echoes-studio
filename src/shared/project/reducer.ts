@@ -11,7 +11,7 @@
  */
 
 import { ev, type EngineEvent } from '../protocol/events';
-import type { AutomationClip, AutomationLane, Clip, MidiClip, MidiNote, PluginOutputSource, Project, ProjectModulationRoute, ProjectModulator, Track, TrackEffect } from '../../types/global';
+import type { ArrangementMarker, ArrangementRegion, AutomationClip, AutomationLane, Clip, MidiClip, MidiNote, PluginOutputSource, Project, ProjectModulationRoute, ProjectModulator, Track, TrackEffect } from '../../types/global';
 
 const MODULATOR_FIELDS = [
   'rate_hz', 'waveform', 'tempo_sync', 'beat_division', 'value',
@@ -32,6 +32,8 @@ export interface ProjectState {
   midi_ppq: number;
   midi_grid_use_triplets: boolean;
   tracks: TrackState[];
+  markers: ArrangementMarker[];
+  regions: ArrangementRegion[];
 }
 
 /**
@@ -55,6 +57,7 @@ export interface TrackState {
   pan: number;
   muted: boolean;
   solo: boolean;
+  color?: string | null;
   clips: ClipState[];
   effects: TrackEffect[];
   modulators: ProjectModulator[];
@@ -79,6 +82,8 @@ export function emptyProjectState(): ProjectState {
     midi_ppq: 960,
     midi_grid_use_triplets: false,
     tracks: [],
+    markers: [],
+    regions: [],
   };
 }
 
@@ -267,6 +272,44 @@ export function applyEvent(state: ProjectState, event: EngineEvent): ProjectStat
         midi_ppq: p.midi_ppq ?? state.midi_ppq,
         midi_grid_use_triplets: p.midi_grid_use_triplets ?? state.midi_grid_use_triplets,
       };
+    }
+
+    case ev.MARKER_ADDED: {
+      const p = event.payload as { marker: ArrangementMarker };
+      if (state.markers.some((m) => m.id === p.marker.id)) return state;
+      return { ...state, markers: [...state.markers, p.marker] };
+    }
+
+    case ev.MARKER_UPDATED: {
+      const p = event.payload as { marker: ArrangementMarker };
+      return {
+        ...state,
+        markers: state.markers.map((m) => (m.id === p.marker.id ? p.marker : m)),
+      };
+    }
+
+    case ev.MARKER_REMOVED: {
+      const p = event.payload as { id: string };
+      return { ...state, markers: state.markers.filter((m) => m.id !== p.id) };
+    }
+
+    case ev.REGION_ADDED: {
+      const p = event.payload as { region: ArrangementRegion };
+      if (state.regions.some((r) => r.id === p.region.id)) return state;
+      return { ...state, regions: [...state.regions, p.region] };
+    }
+
+    case ev.REGION_UPDATED: {
+      const p = event.payload as { region: ArrangementRegion };
+      return {
+        ...state,
+        regions: state.regions.map((r) => (r.id === p.region.id ? p.region : r)),
+      };
+    }
+
+    case ev.REGION_REMOVED: {
+      const p = event.payload as { id: string };
+      return { ...state, regions: state.regions.filter((r) => r.id !== p.id) };
     }
 
     case ev.PROJECT_RESET: {
@@ -617,5 +660,7 @@ export function projectFromSnapshot(dto: Project): ProjectState {
       input_source: t.input_source ?? null,
       automation_lanes: t.automation_lanes ?? [],
     })),
+    markers: dto.markers ?? [],
+    regions: dto.regions ?? [],
   };
 }

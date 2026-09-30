@@ -233,5 +233,26 @@ export interface Project {
 	midi_ppq: number;
 	midi_grid_use_triplets: boolean;
 	tracks: Track[];
+	/** Locators — named points in beats. Absent/empty on older projects. */
+	markers?: ArrangementMarker[];
+	/** Arrangement sections — named spans in beats. Absent/empty on older projects. */
+	regions?: ArrangementRegion[];
 	ui_layout?: ProjectUiLayout;
+}
+
+/** Named point on the arrangement timeline (beats). */
+export interface ArrangementMarker {
+	id: string;
+	name: string;
+	position_beats: number;
+	color?: string | null;
+}
+
+/** Named span on the arrangement timeline (beats). */
+export interface ArrangementRegion {
+	id: string;
+	name: string;
+	start_beats: number;
+	end_beats: number;
+	color?: string | null;
 }

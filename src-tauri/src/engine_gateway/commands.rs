@@ -54,6 +54,13 @@ pub mod cmd {
     pub const UPDATE_PROJECT_NAME: &str = "UPDATE_PROJECT_NAME";
     pub const UPDATE_TEMPO: &str = "UPDATE_TEMPO";
 
+    pub const ADD_MARKER: &str = "ADD_MARKER";
+    pub const UPDATE_MARKER: &str = "UPDATE_MARKER";
+    pub const REMOVE_MARKER: &str = "REMOVE_MARKER";
+    pub const ADD_REGION: &str = "ADD_REGION";
+    pub const UPDATE_REGION: &str = "UPDATE_REGION";
+    pub const REMOVE_REGION: &str = "REMOVE_REGION";
+
     pub const ADD_EFFECT: &str = "ADD_EFFECT";
     pub const REMOVE_EFFECT: &str = "REMOVE_EFFECT";
     pub const UPDATE_EFFECT: &str = "UPDATE_EFFECT";
@@ -386,4 +393,57 @@ pub struct UpdateAutomationClipPayload {
     pub track_id: String,
     pub lane_id: String,
     pub clip: crate::project::AutomationClip,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AddMarkerPayload {
+    pub position_beats: f64,
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub color: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateMarkerPayload {
+    pub id: String,
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub position_beats: Option<f64>,
+    #[serde(default)]
+    pub color: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct RemoveMarkerPayload {
+    pub id: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AddRegionPayload {
+    pub start_beats: f64,
+    pub end_beats: f64,
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub color: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateRegionPayload {
+    pub id: String,
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub start_beats: Option<f64>,
+    #[serde(default)]
+    pub end_beats: Option<f64>,
+    #[serde(default)]
+    pub color: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct RemoveRegionPayload {
+    pub id: String,
 }

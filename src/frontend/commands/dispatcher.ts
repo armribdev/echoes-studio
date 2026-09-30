@@ -55,6 +55,12 @@ import {
   type RemoveMidiClipPayload,
   type MoveMidiClipPayload,
   type SetClipMidiNotesPayload,
+  type AddMarkerPayload,
+  type UpdateMarkerPayload,
+  type RemoveMarkerPayload,
+  type AddRegionPayload,
+  type UpdateRegionPayload,
+  type RemoveRegionPayload,
 } from '../../shared/protocol/commands';
 import type { ProjectMusicalFields } from '../../lib/projectMusical';
 import {
@@ -512,6 +518,61 @@ export function setClipMidiNotes(
     clip_id: clipId,
     notes,
   });
+}
+
+// ── Arrangement markers / regions ─────────────────────────────────────────────
+
+export function addMarker(
+  positionBeats: number,
+  name?: string,
+  color?: string | null,
+): Promise<CommandResult> {
+  return dispatch<AddMarkerPayload>(cmd.ADD_MARKER, {
+    position_beats: positionBeats,
+    name,
+    color,
+  });
+}
+
+export function updateMarker(
+  id: string,
+  patch: { name?: string; position_beats?: number; color?: string | null },
+): Promise<CommandResult> {
+  return dispatch<UpdateMarkerPayload>(cmd.UPDATE_MARKER, { id, ...patch });
+}
+
+export function removeMarker(id: string): Promise<CommandResult> {
+  return dispatch<RemoveMarkerPayload>(cmd.REMOVE_MARKER, { id });
+}
+
+export function addRegion(
+  startBeats: number,
+  endBeats: number,
+  name?: string,
+  color?: string | null,
+): Promise<CommandResult> {
+  return dispatch<AddRegionPayload>(cmd.ADD_REGION, {
+    start_beats: startBeats,
+    end_beats: endBeats,
+    name,
+    color,
+  });
+}
+
+export function updateRegion(
+  id: string,
+  patch: {
+    name?: string;
+    start_beats?: number;
+    end_beats?: number;
+    color?: string | null;
+  },
+): Promise<CommandResult> {
+  return dispatch<UpdateRegionPayload>(cmd.UPDATE_REGION, { id, ...patch });
+}
+
+export function removeRegion(id: string): Promise<CommandResult> {
+  return dispatch<RemoveRegionPayload>(cmd.REMOVE_REGION, { id });
 }
 
 // ── History ───────────────────────────────────────────────────────────────────

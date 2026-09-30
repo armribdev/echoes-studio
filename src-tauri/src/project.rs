@@ -422,6 +422,28 @@ pub fn generate_id() -> String {
     format!("{:x}{:x}", t, c)
 }
 
+/// Minimum arrangement-region length in beats (matches the UI loop brace floor).
+pub const MIN_REGION_BEATS: f64 = 1.0;
+
+pub fn normalize_region_span(start_beats: f64, end_beats: f64) -> (f64, f64) {
+    let start = start_beats.max(0.0);
+    let end = end_beats.max(start + MIN_REGION_BEATS);
+    (start, end)
+}
+
+pub fn default_marker_name(existing: &[ArrangementMarker]) -> String {
+    format!("M{}", existing.len() + 1)
+}
+
+pub fn default_region_name(existing: &[ArrangementRegion]) -> String {
+    let n = existing.len();
+    if n < 26 {
+        ((b'A' + n as u8) as char).to_string()
+    } else {
+        format!("R{}", n + 1)
+    }
+}
+
 pub struct AppClip {
     pub id: String,
     pub start: f64,
@@ -605,6 +627,30 @@ pub struct ProjectUiLayout {
     pub view_mode: ViewModeLayout,
 }
 
+/// Named point on the arrangement timeline (musical beats). Navigation only —
+/// does not affect the audio graph or transport atomics by itself.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ArrangementMarker {
+    pub id: String,
+    pub name: String,
+    /// Position in quarter-note beats from the project start.
+    pub position_beats: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<String>,
+}
+
+/// Named span on the arrangement timeline (musical beats). Used for section
+/// labels and as a source for the ephemeral playback loop (`SET_LOOP`).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ArrangementRegion {
+    pub id: String,
+    pub name: String,
+    pub start_beats: f64,
+    pub end_beats: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<String>,
+}
+
 pub struct AppProject {
     pub name: String,
     pub bpm: f32,
@@ -623,6 +669,10 @@ pub struct AppProject {
     /// Grille en triolet (subdivision T) — éditeur à venir.
     pub midi_grid_use_triplets: bool,
     pub tracks: Vec<AppTrack>,
+    /// Locators — named points on the arrangement (beats). Empty in pre-marker projects.
+    pub markers: Vec<ArrangementMarker>,
+    /// Arrangement sections — named spans in beats. Empty in pre-region projects.
+    pub regions: Vec<ArrangementRegion>,
     /// Binary plugin state (e.g. VST3 chunk), keyed by **`instance_key`** (the
     /// per-placement id = `effect.id`, or `instrument:{track_id}`) so two
     /// instances of the same plugin type persist distinct state (ADR-017).
@@ -661,6 +711,8 @@ impl AppProject {
             midi_ppq: default_midi_ppq(),
             midi_grid_use_triplets: false,
             tracks: vec![],
+            markers: vec![],
+            regions: vec![],
             plugin_states: HashMap::new(),
             ui_layout: ProjectUiLayout::default(),
         }
@@ -679,6 +731,8 @@ impl AppProject {
             midi_ppq: self.midi_ppq,
             midi_grid_use_triplets: self.midi_grid_use_triplets,
             tracks: self.tracks.iter().map(AppTrack::to_dto).collect(),
+            markers: self.markers.clone(),
+            regions: self.regions.clone(),
             ui_layout: self.ui_layout.clone(),
         }
     }
@@ -738,6 +792,8 @@ impl AppProject {
                     color: t.color.clone(),
                 })
                 .collect(),
+            markers: self.markers.clone(),
+            regions: self.regions.clone(),
             // New per-instance format (ADR-017): keyed by `instance_key`.
             plugin_states: self
                 .plugin_states
@@ -828,6 +884,8 @@ impl AppProject {
             midi_ppq: pf.midi_ppq,
             midi_grid_use_triplets: pf.midi_grid_use_triplets,
             tracks,
+            markers: pf.markers,
+            regions: pf.regions,
             plugin_states,
             ui_layout: pf.ui_layout,
         })
@@ -1181,6 +1239,12 @@ pub struct ProjectFile {
     #[serde(default)]
     pub midi_grid_use_triplets: bool,
     pub tracks: Vec<TrackFile>,
+    /// Arrangement markers (beats). Absent in older saves → empty.
+    #[serde(default)]
+    pub markers: Vec<ArrangementMarker>,
+    /// Arrangement regions (beats). Absent in older saves → empty.
+    #[serde(default)]
+    pub regions: Vec<ArrangementRegion>,
     /// Base64-encoded per-**instance** plugin state, keyed by `instance_key`
     /// (ADR-017).  This is what new saves write; `#[serde(default)]` keeps older
     /// files (which only carry `plugin_state_blobs`) loading unchanged.
@@ -1263,6 +1327,8 @@ pub struct ProjectDto {
     pub midi_ppq: u16,
     pub midi_grid_use_triplets: bool,
     pub tracks: Vec<TrackDto>,
+    pub markers: Vec<ArrangementMarker>,
+    pub regions: Vec<ArrangementRegion>,
     pub ui_layout: ProjectUiLayout,
 }
 
@@ -1346,6 +1412,49 @@ mod tests {
             color: None,
         });
         assert_eq!(project.timeline_end_secs(), 12.5);
+    }
+
+    #[test]
+    fn markers_and_regions_default_empty_on_legacy_file() {
+        let json = r#"{
+            "version": 1,
+            "name": "Legacy",
+            "bpm": 120.0,
+            "numerator": 4,
+            "denominator": 4,
+            "tracks": []
+        }"#;
+        let file: ProjectFile = serde_json::from_str(json).expect("deserialize legacy project");
+        assert!(file.markers.is_empty());
+        assert!(file.regions.is_empty());
+        let project = AppProject::from_file(file).expect("from_file");
+        assert!(project.markers.is_empty());
+        assert!(project.regions.is_empty());
+    }
+
+    #[test]
+    fn markers_and_regions_round_trip_through_file() {
+        let mut project = AppProject::new();
+        project.markers.push(ArrangementMarker {
+            id: "m1".into(),
+            name: "Intro".into(),
+            position_beats: 16.0,
+            color: Some("#3b82f6".into()),
+        });
+        project.regions.push(ArrangementRegion {
+            id: "r1".into(),
+            name: "A".into(),
+            start_beats: 0.0,
+            end_beats: 16.0,
+            color: None,
+        });
+
+        let json = serde_json::to_string(&project.to_file()).expect("serialize");
+        let file: ProjectFile = serde_json::from_str(&json).expect("deserialize");
+        let restored = AppProject::from_file(file).expect("from_file");
+
+        assert_eq!(restored.markers, project.markers);
+        assert_eq!(restored.regions, project.regions);
     }
 
     /// C-4: a saved project from before Phase 5c (no `instrument` field) loads

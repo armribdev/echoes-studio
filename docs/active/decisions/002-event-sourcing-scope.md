@@ -23,11 +23,11 @@ considered:
 ## Decision
 
 Event sourcing is applied **only to project structure**: tracks, clips, tempo,
-time signature, project name, automation curves (future), and FX routing
-(future).
+time signature, project name, arrangement markers/regions (beats), automation
+curves, and FX routing (future).
 
 Real-time state (transport position, meter levels, playback cursor, UI
-selection, drag state) is **never event-sourced**.
+selection, drag state, ephemeral playback loop brace) is **never event-sourced**.
 
 The `EventStore` is append-only with a `head` pointer. Undo moves `head`
 backward; redo moves it forward. New events discard redo-future entries.
@@ -38,6 +38,10 @@ a pure function from `(ProjectState, EngineEvent) → ProjectState`.
 ---
 
 ## Consequences
+
+*(Amended 2026-09-30: arrangement markers and regions are project structure —
+persisted, undoable, stored in musical beats — while the playback loop brace
+remains ephemeral runtime state via `SET_LOOP`.)*
 
 **Positive:**
 

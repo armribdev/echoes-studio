@@ -31,6 +31,8 @@ what the user *decided* about their project, not what the audio engine is doing.
 | `TRACK_INPUT_SET` | Structural, undoable, recompiles. Sets `AppTrack.input_source` — an aux output of a multi-out plugin fed into the track (`null` clears it; absent in older projects = none). ADR-014 |
 | `TEMPO_UPDATED` | Structural, affects rendering |
 | `PROJECT_NAME_UPDATED` | Structural |
+| `MARKER_ADDED` / `MARKER_UPDATED` / `MARKER_REMOVED` | Structural, undoable, no recompile. Locators in beats on the arrangement timeline |
+| `REGION_ADDED` / `REGION_UPDATED` / `REGION_REMOVED` | Structural, undoable, no recompile. Named arrangement spans in beats; may drive the ephemeral `SET_LOOP` brace from the UI |
 | `AUTOMATION_LANE_ADDED` / `AUTOMATION_LANE_REMOVED` / `AUTOMATION_CLIP_UPDATED` | Structural, undoable, recompile (ADR-021). `AUTOMATION_CLIP_UPDATED` replaces the clip with the same id or adds it. Mirrored in the frontend reducer (`TrackState.automation_lanes`) since 2026-09-29; no editing UI yet |
 | FX routing (future) | Structural, undoable |
 
@@ -39,6 +41,7 @@ what the user *decided* about their project, not what the audio engine is doing.
 | State | Why NOT |
 |-------|---------|
 | Transport position | 60fps real-time, never undone |
+| Playback loop brace (`SET_LOOP`) | Session runtime; arrangement regions may *drive* it from the UI |
 | Audio meter levels | Real-time feedback, ephemeral |
 | UI selection / panels | Ephemeral UI-only state |
 | Drag gesture state | Temporary, resolved on drop |

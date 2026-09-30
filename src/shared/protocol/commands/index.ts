@@ -37,6 +37,13 @@ export const cmd = {
   UPDATE_PROJECT_NAME: 'UPDATE_PROJECT_NAME',
   UPDATE_TEMPO: 'UPDATE_TEMPO',
 
+  ADD_MARKER: 'ADD_MARKER',
+  UPDATE_MARKER: 'UPDATE_MARKER',
+  REMOVE_MARKER: 'REMOVE_MARKER',
+  ADD_REGION: 'ADD_REGION',
+  UPDATE_REGION: 'UPDATE_REGION',
+  REMOVE_REGION: 'REMOVE_REGION',
+
   // Effects
   ADD_EFFECT: 'ADD_EFFECT',
   REMOVE_EFFECT: 'REMOVE_EFFECT',
@@ -311,6 +318,42 @@ export interface SetClipMidiNotesPayload {
   track_id: string;
   clip_id: string;
   notes: { id: string; pitch: number; start: number; duration: number; velocity: number }[];
+}
+
+export interface AddMarkerPayload {
+  position_beats: number;
+  name?: string;
+  color?: string | null;
+}
+
+export interface UpdateMarkerPayload {
+  id: string;
+  name?: string;
+  position_beats?: number;
+  color?: string | null;
+}
+
+export interface RemoveMarkerPayload {
+  id: string;
+}
+
+export interface AddRegionPayload {
+  start_beats: number;
+  end_beats: number;
+  name?: string;
+  color?: string | null;
+}
+
+export interface UpdateRegionPayload {
+  id: string;
+  name?: string;
+  start_beats?: number;
+  end_beats?: number;
+  color?: string | null;
+}
+
+export interface RemoveRegionPayload {
+  id: string;
 }
 
 // ── Factory ───────────────────────────────────────────────────────────────────

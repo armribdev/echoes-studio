@@ -14,8 +14,10 @@
 
 import { get } from 'svelte/store';
 import { invoke } from '@tauri-apps/api/core';
-import { undoCommand, redoCommand, play, pause } from '../commands/dispatcher';
+import { undoCommand, redoCommand, play, pause, addMarker, addRegion } from '../commands/dispatcher';
 import { transport } from '../../stores/transport';
+import { tempo } from '../../stores/tempo';
+import { loopRegion } from '../../stores/loopRegion';
 import { notify } from '../../stores/status';
 import { isEditingText, shouldHandleGlobalHistoryShortcuts, hasNoModifiers } from './context';
 import { engineProject } from '../store/engineStore';
@@ -141,6 +143,33 @@ const SHORTCUTS: Shortcut[] = [
       }
       const { isPlaying } = get(transport);
       (isPlaying ? pause() : play()).catch(console.error);
+    },
+  },
+  {
+    key: 'm',
+    modifiers: [],
+    description: 'Ajouter un marqueur à la tête de lecture',
+    action: () => {
+      const bpm = get(tempo).bpm;
+      const beat = (get(transport).position * bpm) / 60;
+      addMarker(Math.max(0, beat)).catch(console.error);
+    },
+  },
+  {
+    key: 'r',
+    modifiers: [],
+    description: 'Ajouter une région à la tête de lecture (ou depuis la boucle)',
+    action: () => {
+      const loop = get(loopRegion);
+      if (loop.enabled) {
+        addRegion(loop.startBeat, loop.endBeat).catch(console.error);
+        return;
+      }
+      const bpm = get(tempo).bpm;
+      const numerator = get(tempo).numerator;
+      const beat = (get(transport).position * bpm) / 60;
+      const start = Math.max(0, beat);
+      addRegion(start, start + 4 * numerator).catch(console.error);
     },
   },
 

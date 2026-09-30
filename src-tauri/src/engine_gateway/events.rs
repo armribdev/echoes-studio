@@ -34,6 +34,14 @@ pub mod ev {
     pub const PROJECT_NAME_UPDATED: &str = "PROJECT_NAME_UPDATED";
     pub const TEMPO_UPDATED: &str = "TEMPO_UPDATED";
     pub const PROJECT_RESET: &str = "PROJECT_RESET";
+
+    pub const MARKER_ADDED: &str = "MARKER_ADDED";
+    pub const MARKER_UPDATED: &str = "MARKER_UPDATED";
+    pub const MARKER_REMOVED: &str = "MARKER_REMOVED";
+    pub const REGION_ADDED: &str = "REGION_ADDED";
+    pub const REGION_UPDATED: &str = "REGION_UPDATED";
+    pub const REGION_REMOVED: &str = "REGION_REMOVED";
+
     pub const EFFECT_ADDED: &str = "EFFECT_ADDED";
     pub const EFFECT_REMOVED: &str = "EFFECT_REMOVED";
     pub const EFFECT_UPDATED: &str = "EFFECT_UPDATED";

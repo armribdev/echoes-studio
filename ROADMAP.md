@@ -40,7 +40,7 @@
   - [ ] Rendre Prettier/ESLint bloquants, après un passage de formatage sur tout le dépôt
 - [ ] **Transport auxiliaire**
   - [x] Métronome + count-in (ADR-026 ; pas encore hand-testé)
-  - [ ] Marqueurs / régions d'arrangement
+  - [x] Marqueurs / régions d'arrangement (event-sourcés en beats ; piste sous la règle ; boucle depuis une région via `SET_LOOP` ; 2026-09-30)
 - [ ] **Compléter les plugins** : VST3 (bus auxiliaires, latence dynamique, sandbox), AU (macOS, stub), synthés natifs supplémentaires (sampler)
 
 ---

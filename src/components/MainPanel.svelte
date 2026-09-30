@@ -68,11 +68,15 @@
 	} from '../frontend/pianoRoll/clipEditor';
 	import TimeRuler from './TimeRuler.svelte';
 	import LoopBrace from './LoopBrace.svelte';
+	import MarkerLane from './MarkerLane.svelte';
 	import Playhead from './Playhead.svelte';
 	import ZoomScrollbar from './ZoomScrollbar.svelte';
 	import ArrangeGrid from './ArrangeGrid.svelte';
 	import { preferences } from '../stores/preferences';
 	import { startTransportScrub } from '../frontend/transportScrub';
+	import { MARKER_LANE_HEIGHT, RULER_HEIGHT } from '../frontend/timeRuler/constants';
+	import { locatorSelection } from '../stores/locatorSelection';
+	import { engineProject } from '../frontend/store/engineStore';
 	import {
 		ARRANGE_POINTER_DRAG_THRESHOLD,
 		arrangeRowTops,
@@ -167,6 +171,7 @@
 
 	function selectTrackIndex(trackIndex: number) {
 		if (trackIndex < 0 || trackIndex >= tracks.length) return;
+		locatorSelection.clear();
 		selectedTrackIndex = trackIndex;
 		keyboardFocus.setTimeline();
 		leftPanel.open();
@@ -260,6 +265,7 @@
 
 	async function loadProject(dto: Project) {
 		selectedTrackIndex = null;
+		locatorSelection.clear();
 		transport.update((t) => ({ ...t, isPlaying: false, position: 0 }));
 
 		const { applyProjectUiLayout } = await import('../lib/projectUiLayout');
@@ -539,6 +545,7 @@
 	let instrumentsOverflow = false;
 	let instrumentsResizeObserver: ResizeObserver | undefined;
 	let arrangeRulerEl: HTMLDivElement;
+	let markerLane: { deleteSelectedLocator: () => boolean } | undefined;
 
 	/** Extra arrange height so both columns scroll the same distance (the track list is shorter by its footer). */
 	let arrangeBottomPadPx = 0;
@@ -1019,6 +1026,30 @@
 		return snapPosition(positionSec, altKey, $tempo, scale, $midiGridBeats, tracks, excludeClipId);
 	}
 
+	function snapBeat(beat: number, altKey: boolean): number {
+		const bpm = $tempo.bpm;
+		const sec = beatsToSeconds(beat, bpm);
+		const snapped = snap(sec, altKey);
+		return (snapped * bpm) / 60;
+	}
+
+	function beatsFromClientXOnRuler(clientX: number): number {
+		if (!arrangeRulerEl) return 0;
+		const sec = Math.max(0, arrangeContentX(clientX, arrangeRulerEl) / scale);
+		return (sec * $tempo.bpm) / 60;
+	}
+
+	function seekToBeat(beat: number) {
+		const positionSec = beatsToSeconds(Math.max(0, beat), $tempo.bpm);
+		transport.update((t) => ({ ...t, position: positionSec }));
+		seek(positionSec).catch(console.error);
+	}
+
+	function setLoopFromBeats(startBeat: number, endBeat: number) {
+		loopRegion.setBeats(startBeat, endBeat);
+		loopRegion.setEnabled(true);
+	}
+
 	function beginScrub(event: MouseEvent, originEl: HTMLElement) {
 		scrubCleanup?.();
 		scrubCleanup = startTransportScrub(
@@ -1072,6 +1103,8 @@
 	}
 
 	function deleteSelected() {
+		if (markerLane?.deleteSelectedLocator()) return;
+
 		const sel = $selection.ids;
 		// In-flight imports only: cancel decode. Settled slots are normal clips —
 		// cancelAudioImport(path) would also wipe other clips of the same file.
@@ -2129,7 +2162,7 @@
 
 <div class="container">
 	<div class="left-panel">
-		<div class="ruler-spacer"></div>
+		<div class="ruler-spacer" style="height: {RULER_HEIGHT + MARKER_LANE_HEIGHT}px"></div>
 		<div class="instruments" bind:this={instrumentsEl} on:scroll={onInstrumentsScroll}>
 			{#each tracks as track, trackIndex}
 				<TrackStrip
@@ -2205,6 +2238,23 @@
 				/>
 			</div>
 		{/if}
+
+		<MarkerLane
+			bind:this={markerLane}
+			markers={$engineProject.markers}
+			regions={$engineProject.regions}
+			{pxPerBeat}
+			scrollPx={tracksScrollLeft}
+			numerator={$tempo.numerator}
+			{snapBeat}
+			beatsFromClientX={beatsFromClientXOnRuler}
+			{seekToBeat}
+			{setLoopFromBeats}
+			on:focus={() => {
+				keyboardFocus.setTimeline();
+				selection.clear();
+			}}
+		/>
 
 		<Playhead x={playheadMarkerX} />
 
@@ -2388,7 +2438,6 @@
 	}
 
 	.ruler-spacer {
-		height: 22px;
 		flex-shrink: 0;
 		background-color: $background-color;
 		border-bottom: 1px solid $border-color;
