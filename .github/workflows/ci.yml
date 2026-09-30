@@ -44,7 +44,7 @@ jobs:
         run: cargo test --workspace
 
   frontend:
-    name: Frontend (lint, svelte-check, build)
+    name: Frontend (lint, svelte-check, tests, build)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -66,6 +66,9 @@ jobs:
 
       - name: svelte-check
         run: pnpm run check
+
+      - name: Frontend tests
+        run: pnpm run test:frontend
 
       - name: Build
         run: pnpm run build

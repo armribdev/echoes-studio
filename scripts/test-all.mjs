@@ -68,6 +68,14 @@ const steps = [
 		group: 'js'
 	},
 	{
+		id: 'test-frontend',
+		label: 'Vitest (frontend)',
+		cmd: 'pnpm',
+		args: ['run', 'test:frontend'],
+		cwd: ROOT,
+		group: 'js'
+	},
+	{
 		id: 'fmt',
 		label: 'cargo fmt --check',
 		cmd: 'cargo',

@@ -57,7 +57,7 @@
 - [ ] Raccourcis clavier configurables
 - [ ] Thèmes UI (clair / sombre / personnalisé)
 - [ ] Profilage et optimisation (worker pool, suréchantillonnage, télémétrie XRun dans l'interface)
-- [ ] Tests : environ 270 tests Rust aujourd'hui ; ajouter des tests d'intégration frontend
+- [x] Tests : ~270 tests Rust ; suite Vitest frontend (reducer événementiel ADR-005, arrangement, library, piano roll, automation, sélection) — `pnpm test:frontend` / CI
 - [ ] Documentation utilisateur
 - [ ] Mise à jour automatique (Tauri updater) et signature des binaires (Authenticode, notarisation)
 - [x] Internationalisation (EN + FR) — `svelte-i18n` ; menus contextuels, préférences projet, library, piano roll, dialogs, menus natifs OS

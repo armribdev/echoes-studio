@@ -1,5 +1,5 @@
 import { sveltekit } from '@sveltejs/kit/vite';
-import { defineConfig } from 'vite';
+import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
 	plugins: [sveltekit()],
@@ -22,5 +22,10 @@ export default defineConfig({
 			// a frontend HMR cycle. Cargo handles its own incremental rebuild.
 			ignored: ['**/src-tauri/**']
 		}
+	},
+	test: {
+		include: ['src/**/*.{test,spec}.{js,ts}'],
+		environment: 'node',
+		restoreMocks: true
 	}
 });
