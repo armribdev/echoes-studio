@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { createEventDispatcher, onMount } from 'svelte';
+	import { t } from 'svelte-i18n';
 	import { dismissable } from '../frontend/dismiss';
 
 	export let x = 0;
@@ -65,7 +66,7 @@
 			<line x1="12" y1="5" x2="12" y2="19" />
 			<line x1="5" y1="12" x2="19" y2="12" />
 		</svg>
-		<span>Nouvelle piste</span>
+		<span>{$t('trackMenu.newTrack')}</span>
 		<span class="item-shortcut">Ctrl+Shift+T</span>
 	</button>
 
@@ -91,7 +92,7 @@
 			<line x1="21" y1="21" x2="16.65" y2="16.65" />
 			<path d="M8 11h6M11 8v6" />
 		</svg>
-		<span>Insérer un son…</span>
+		<span>{$t('trackMenu.insertSound')}</span>
 	</button>
 
 	<div class="separator"></div>
@@ -117,7 +118,7 @@
 			<path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
 			<path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
 		</svg>
-		<span>Renommer</span>
+		<span>{$t('common.rename')}</span>
 		<span class="item-shortcut">F2</span>
 	</button>
 
@@ -143,7 +144,7 @@
 			<circle cx="9" cy="11" r="1.5" />
 			<circle cx="13" cy="15" r="1.5" />
 		</svg>
-		<span>Automatiser un réglage…</span>
+		<span>{$t('trackMenu.automateParam')}</span>
 	</button>
 
 	<div class="separator"></div>
@@ -171,7 +172,7 @@
 			<path d="M10 11v6M14 11v6" />
 			<path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
 		</svg>
-		<span>Supprimer la piste</span>
+		<span>{$t('trackMenu.deleteTrack')}</span>
 		<span class="item-shortcut">Suppr</span>
 	</button>
 </div>

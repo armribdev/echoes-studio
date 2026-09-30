@@ -23,6 +23,7 @@
 	import CrashSuspectDialog from '../components/CrashSuspectDialog.svelte';
 	import GraphView from '../components/GraphView.svelte';
 	import { settingsPanelOpen, preferences } from '../stores/preferences';
+	import { setAppLocale, getAppLocale } from '../lib/i18n';
 	import { setPluginIsolation } from '../lib/audioBackend';
 	import {
 		applyMidiPreferences,
@@ -44,6 +45,11 @@
 
 	// Register keyboard shortcuts and transport bridge once for the app lifetime.
 	onMount(() => {
+		document.documentElement.lang = getAppLocale();
+		const unsubLocale = preferences.subscribe(({ interface: iface }) => {
+			setAppLocale(iface.locale);
+			document.documentElement.lang = iface.locale;
+		});
 		let appliedIsolation = '';
 		const unsubIsolation = preferences.subscribe(({ audio }) => {
 			const key = JSON.stringify([audio.pluginIsolation, audio.alwaysIsolated]);
@@ -135,6 +141,7 @@
 		window.addEventListener('keydown', handleGlobalKey);
 
 		return () => {
+			unsubLocale();
 			disconnectBridge();
 			disconnectLoop();
 			unregisterShortcuts();

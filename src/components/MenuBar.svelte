@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { t } from 'svelte-i18n';
 	import { transport } from '../stores/transport';
 	import { loopRegion } from '../stores/loopRegion';
 	import { tempo } from '../stores/tempo';
@@ -44,8 +45,8 @@
 			class="btn btn--panel-toggle"
 			class:active={$leftPanel.open}
 			on:click={() => leftPanel.toggle()}
-			title="Inspecteur (I)"
-			aria-label="Inspecteur"
+			title={$t('menuBar.inspectorTitle')}
+			aria-label={$t('menuBar.inspector')}
 		>
 			<Icon name="inspector" size={14} />
 		</button>
@@ -53,7 +54,7 @@
 
 	<div class="zone zone--center">
 		<div class="transport">
-			<button class="btn" on:click={rewindToStart} title="Revenir au début">
+			<button class="btn" on:click={rewindToStart} title={$t('menuBar.rewind')}>
 				<svg
 					width="13"
 					height="13"
@@ -69,7 +70,7 @@
 				class="btn btn--loop"
 				class:active={$loopRegion.enabled}
 				on:click={() => loopRegion.toggle()}
-				title="Boucle de lecture"
+				title={$t('menuBar.loop')}
 				aria-pressed={$loopRegion.enabled}
 			>
 				<svg
@@ -86,7 +87,7 @@
 			<button
 				class="btn btn--play"
 				on:click={togglePlayPause}
-				title={$transport.isPlaying ? 'Pause' : 'Lecture'}
+				title={$transport.isPlaying ? $t('menuBar.pause') : $t('menuBar.play')}
 			>
 				{#if $transport.isPlaying}
 					<svg
@@ -115,7 +116,7 @@
 				class="btn btn--record"
 				class:active={$isMidiRecording}
 				on:click={() => toggleMidiRecording().catch(console.error)}
-				title="Enregistrer les notes MIDI de la piste armée"
+				title={$t('menuBar.record')}
 				aria-pressed={$isMidiRecording}
 			>
 				<svg
@@ -132,8 +133,8 @@
 				class="btn btn--toggle"
 				class:active={$metronomeEnabled}
 				on:click={() => metronomeEnabled.update((enabled) => !enabled)}
-				title="Métronome"
-				aria-label="Métronome"
+				title={$t('menuBar.metronome')}
+				aria-label={$t('menuBar.metronome')}
 				aria-pressed={$metronomeEnabled}
 			>
 				<svg
@@ -156,8 +157,8 @@
 				class="btn btn--toggle"
 				class:active={$countInEnabled}
 				on:click={() => countInEnabled.update((enabled) => !enabled)}
-				title="Décompte d'une mesure avant l'enregistrement"
-				aria-label="Décompte"
+				title={$t('menuBar.countInTitle')}
+				aria-label={$t('menuBar.countIn')}
 				aria-pressed={$countInEnabled}
 			>
 				<svg
@@ -182,7 +183,7 @@
 		<div class="sep"></div>
 
 		<div class="position">
-			<span class="ctrl-label">POSITION</span>
+			<span class="ctrl-label">{$t('menuBar.position')}</span>
 			<div class="position-display">
 				<span class="pos-bar">{barStr}</span>
 				<span class="pos-sep">.</span>
@@ -196,8 +197,8 @@
 			class="btn btn--panel-toggle"
 			class:active={$rightPanel.open}
 			on:click={() => rightPanel.toggle()}
-			title="Bibliothèque (B)"
-			aria-label="Bibliothèque"
+			title={$t('menuBar.libraryTitle')}
+			aria-label={$t('menuBar.library')}
 		>
 			<Icon name="library" size={14} />
 		</button>

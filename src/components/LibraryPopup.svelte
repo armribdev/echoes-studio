@@ -3,6 +3,7 @@
 	import { dismissable } from '../frontend/dismiss';
 	import LibraryBrowser from './LibraryBrowser.svelte';
 	import { libraryStore, libraryPopup, defaultSourceForContext } from '../frontend/library';
+	import { t } from 'svelte-i18n';
 
 	let rootEl: HTMLDivElement | null = null;
 	let adjustedX = 0;
@@ -39,7 +40,7 @@
 	bind:this={rootEl}
 	use:dismissable={close}
 	role="dialog"
-	aria-label="Library"
+	aria-label={$t('library.aria')}
 	style="left: {adjustedX || popup.anchorX}px; top: {adjustedY ||
 		popup.anchorY}px; width: {POPUP_W}px; height: min({POPUP_H}px, calc(100vh - 24px))"
 >

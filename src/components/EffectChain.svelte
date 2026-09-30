@@ -24,13 +24,20 @@
 		plugins,
 		rescanPlugins,
 		unavailablePlugins,
-		UNAVAILABLE_REASON_LABEL,
 		type UnavailableReason
 	} from '../stores/plugins';
 	import { addEffect, removeEffect, updateEffect } from '../frontend/commands/dispatcher';
 	import { notify } from '../stores/status';
 	import { preferences } from '../stores/preferences';
 	import { invoke } from '@tauri-apps/api/core';
+	import { t } from 'svelte-i18n';
+
+	const REASON_KEYS: Record<UnavailableReason, string> = {
+		not_installed: 'missingPlugins.notInstalled',
+		unsupported_format: 'missingPlugins.unsupportedFormat',
+		load_failed: 'missingPlugins.loadFailed',
+		crashed: 'missingPlugins.crashed'
+	};
 
 	export let trackId: string;
 	export let effects: TrackEffect[];
@@ -278,7 +285,7 @@
 			class="add-btn"
 			type="button"
 			on:click|stopPropagation={() => (showPicker = true)}
-			title="Ajouter">+</button
+			title={$t('effects.add')}>+</button
 		>
 	</div>
 
@@ -301,7 +308,7 @@
 					class:on={effect.enabled}
 					type="button"
 					on:click|stopPropagation={() => handleToggle(effect)}
-					title="Bypass"
+					title={$t('effects.bypass')}
 				>
 					<svg width="8" height="8" viewBox="0 0 8 8"
 						><circle cx="4" cy="4" r="3" fill="currentColor" /></svg
@@ -318,13 +325,13 @@
 						</span>
 					{/if}
 					{#if isSandboxed(effect, isolation, alwaysIsolated)}
-						<span class="sandbox-badge" title="Isolé : un plantage de ce plugin ne ferme pas Echoes"
+						<span class="sandbox-badge" title={$t('effects.isolated')}
 							>ISO</span
 						>
 					{/if}
 					{#if unavailable}
 						<span class="missing-badge" title={UNAVAILABLE_HELP[unavailable.reason]}>
-							{UNAVAILABLE_REASON_LABEL[unavailable.reason]}
+							{$t(REASON_KEYS[unavailable.reason])}
 						</span>
 					{/if}
 					<svg
@@ -358,7 +365,7 @@
 					class="rm-btn"
 					type="button"
 					on:click|stopPropagation={() => handleRemoveEffect(effect.id)}
-					title="Supprimer">×</button
+					title={$t('common.remove')}>×</button
 				>
 			</div>
 

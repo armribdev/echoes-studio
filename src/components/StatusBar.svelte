@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { t } from 'svelte-i18n';
 	import { statusMessage, pianoRollStatusInfo } from '../stores/status';
 	import { viewMode } from '../stores/viewMode';
 </script>
@@ -16,18 +17,18 @@
 			class="view-tab"
 			class:active={$viewMode.main === 'arrange'}
 			on:click={() => viewMode.setMain('arrange')}
-			title="Arrangement"
+			title={$t('statusBar.arrangeTitle')}
 		>
-			Arrangement
+			{$t('statusBar.arrange')}
 		</button>
 		<button
 			type="button"
 			class="view-tab"
 			class:active={$viewMode.main === 'graph'}
 			on:click={() => viewMode.setMain('graph')}
-			title="Graphe audio (G)"
+			title={$t('statusBar.graphTitle')}
 		>
-			Graph
+			{$t('statusBar.graph')}
 		</button>
 	</div>
 

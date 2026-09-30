@@ -90,6 +90,7 @@
 	import ArrangeGrid from './ArrangeGrid.svelte';
 	import { preferences } from '../stores/preferences';
 	import { startTransportScrub } from '../frontend/transportScrub';
+	import { t } from 'svelte-i18n';
 	import { MARKER_LANE_HEIGHT, RULER_HEIGHT } from '../frontend/timeRuler/constants';
 	import { engineProject } from '../frontend/store/engineStore';
 	import {
@@ -2184,7 +2185,7 @@
 {#if showNewTrackPicker}
 	<PluginPicker
 		mode="instrument"
-		title="Nouvelle piste — instrument"
+		title={$t('mainPanel.newInstrumentTrack')}
 		on:pick={(e) => handleNewTrackPick(e.detail)}
 		on:cancel={() => (showNewTrackPicker = false)}
 	/>
@@ -2427,7 +2428,7 @@
 								<circle cx="6" cy="18" r="3" />
 								<circle cx="18" cy="16" r="3" />
 							</svg>
-							<p class="empty-tracks-text">Aucune piste</p>
+							<p class="empty-tracks-text">{$t('mainPanel.emptyTracks')}</p>
 							<p class="empty-tracks-hint">
 								Créez une piste, glissez un fichier audio, ou insérez depuis la bibliothèque
 							</p>
@@ -2447,7 +2448,7 @@
 											context: 'playhead_insert'
 										})}
 								>
-									Insérer un son…
+									{$t('trackMenu.insertSound')}
 								</button>
 							</div>
 						</div>

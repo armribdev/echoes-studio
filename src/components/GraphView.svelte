@@ -15,6 +15,7 @@
 	import { renderGraph, hitTestNode } from '../frontend/graph/render';
 	import type { GraphLayout, LayoutNode } from '../frontend/graph/types';
 	import { trackColor as colorForTrack } from '../frontend/trackColor';
+	import { t } from 'svelte-i18n';
 
 	const MIN_ZOOM = 0.25;
 	const MAX_ZOOM = 2;
@@ -238,24 +239,24 @@
 				class:active={scope === 'track'}
 				on:click={focusTrackView}
 				disabled={!trackId}
-				title="Chaîne de la piste sélectionnée"
+				title={$t('graph.trackTitle')}
 			>
-				Piste
+				{$t('graph.track')}
 			</button>
 			<button
 				type="button"
 				class:active={scope === 'project'}
 				on:click={focusProjectView}
-				title="Vue projet entière"
+				title={$t('graph.projectTitle')}
 			>
-				Projet
+				{$t('graph.project')}
 			</button>
 		</div>
 		{#if scope === 'track' && trackId}
-			<span class="track-label">{$selectedTrack.trackName || 'Piste'}</span>
+			<span class="track-label">{$selectedTrack.trackName || $t('graph.track')}</span>
 		{/if}
-		<button type="button" class="fit-btn" on:click={fitToView} title="Ajuster à la vue">
-			Ajuster
+		<button type="button" class="fit-btn" on:click={fitToView} title={$t('graph.fitTitle')}>
+			{$t('graph.fit')}
 		</button>
 	</div>
 
@@ -270,11 +271,11 @@
 	></canvas>
 
 	{#if !snapshot}
-		<div class="empty">Chargement du graphe…</div>
+		<div class="empty">{$t('graph.loading')}</div>
 	{:else if scope === 'track' && !trackId}
-		<div class="empty">Sélectionnez une piste pour afficher sa chaîne de signal.</div>
+		<div class="empty">{$t('graph.selectTrack')}</div>
 	{:else if layout.nodes.length === 0}
-		<div class="empty">Aucun nœud à afficher.</div>
+		<div class="empty">{$t('graph.noNodes')}</div>
 	{/if}
 
 	{#if hoveredNodeId !== null && snapshot}

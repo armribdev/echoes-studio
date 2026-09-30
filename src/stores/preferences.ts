@@ -1,4 +1,7 @@
 import { writable } from 'svelte/store';
+import { resolveLocale, type AppLocale } from '../lib/i18n';
+
+export type { AppLocale };
 
 export interface AudioPreferences {
 	inputDevice: string;
@@ -51,6 +54,8 @@ export interface InterfacePreferences {
 	showMinimap: boolean;
 	/** Vertical beat/bar grid in the tracks arrange area. */
 	showArrangeGrid: boolean;
+	/** UI language (svelte-i18n). Native OS menus are still French until wired. */
+	locale: AppLocale;
 }
 
 export interface Preferences {
@@ -92,7 +97,10 @@ function defaultPreferences(): Preferences {
 		},
 		interface: {
 			showMinimap: false,
-			showArrangeGrid: false
+			showArrangeGrid: false,
+			locale: resolveLocale(
+				typeof navigator !== 'undefined' ? (navigator.language ?? navigator.languages?.[0]) : null
+			)
 		}
 	};
 }
@@ -114,11 +122,15 @@ function loadPreferences(): Preferences {
 		if (raw) {
 			const parsed = JSON.parse(raw) as Partial<Preferences>;
 			const defaults = defaultPreferences();
+			const iface = { ...defaults.interface, ...parsed.interface };
+			if (iface.locale !== 'en' && iface.locale !== 'fr') {
+				iface.locale = defaults.interface.locale;
+			}
 			return {
 				audio: { ...defaults.audio, ...parsed.audio },
 				midi: loadMidiPreferences(defaults.midi, parsed.midi),
 				project: { ...defaults.project, ...parsed.project },
-				interface: { ...defaults.interface, ...parsed.interface }
+				interface: iface
 			};
 		}
 	} catch {

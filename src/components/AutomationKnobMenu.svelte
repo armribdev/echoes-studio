@@ -12,6 +12,7 @@
 	import { pluginParamsByPlacement } from '../stores/pluginParams';
 	import { instrumentDisplayName, plugins } from '../stores/plugins';
 	import { notify } from '../stores/status';
+	import { t } from 'svelte-i18n';
 
 	export let track: Track | undefined;
 
@@ -71,10 +72,12 @@
 		<div class="menu-header">{menu.option.group} › {menu.option.label}</div>
 		{#if menu.laneId}
 			<button class="item item--danger" type="button" on:click={removeLane}
-				>Supprimer l'automation</button
+				>{$t('automationMenu.remove')}</button
 			>
 		{:else}
-			<button class="item" type="button" on:click={automate}>Automatiser ce réglage</button>
+			<button class="item" type="button" on:click={automate}
+				>{$t('automationMenu.automate')}</button
+			>
 		{/if}
 	</div>
 {/if}

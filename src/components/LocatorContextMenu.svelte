@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { createEventDispatcher, onMount } from 'svelte';
+	import { t } from 'svelte-i18n';
 	import { dismissable } from '../frontend/dismiss';
 
 	export let x = 0;
@@ -51,7 +52,7 @@
 				close();
 			}}
 		>
-			<span>Ajouter un marqueur</span>
+			<span>{$t('locatorMenu.addMarker')}</span>
 			<span class="item-shortcut">M</span>
 		</button>
 		<button
@@ -61,11 +62,14 @@
 				close();
 			}}
 		>
-			<span>Ajouter une région</span>
+			<span>{$t('locatorMenu.addRegion')}</span>
 			<span class="item-shortcut">R</span>
 		</button>
 	{:else}
-		<div class="menu-header">{name || (kind === 'region' ? 'Région' : 'Marqueur')}</div>
+		<div class="menu-header">
+			{name ||
+				(kind === 'region' ? $t('locatorMenu.region') : $t('locatorMenu.marker'))}
+		</div>
 		<div class="separator"></div>
 		<button
 			class="item"
@@ -74,7 +78,7 @@
 				close();
 			}}
 		>
-			<span>Aller ici</span>
+			<span>{$t('locatorMenu.goHere')}</span>
 		</button>
 		<button
 			class="item"
@@ -83,7 +87,7 @@
 				close();
 			}}
 		>
-			<span>Renommer</span>
+			<span>{$t('common.rename')}</span>
 		</button>
 		{#if kind === 'region'}
 			<button
@@ -93,7 +97,7 @@
 					close();
 				}}
 			>
-				<span>Boucler cette région</span>
+				<span>{$t('locatorMenu.loopRegion')}</span>
 			</button>
 		{/if}
 		<div class="separator"></div>
@@ -104,7 +108,7 @@
 				close();
 			}}
 		>
-			<span>Supprimer</span>
+			<span>{$t('common.delete')}</span>
 		</button>
 	{/if}
 </div>

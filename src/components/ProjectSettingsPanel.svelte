@@ -29,6 +29,7 @@
 	import Button from './Button.svelte';
 	import Icon from './Icon.svelte';
 	import { dismissable } from '../frontend/dismiss';
+	import { t } from 'svelte-i18n';
 
 	let draftName = '';
 	let draftMusical: ProjectMusicalFields = musicalFieldsFromDto({
@@ -74,7 +75,7 @@
 
 	async function applyAndClose() {
 		applyError = null;
-		const trimmed = draftName.trim() || 'Sans titre';
+		const trimmed = draftName.trim() || get(t)('common.untitled');
 		const cur = currentProjectMusical();
 		const nextMusical: ProjectMusicalFields = {
 			...draftMusical,
@@ -110,12 +111,14 @@
 			keyboardFocus.setTimeline();
 		} catch (err) {
 			applyError =
-				typeof err === 'string' ? err : ((err as Error)?.message ?? "Échec de l'enregistrement");
+				typeof err === 'string'
+					? err
+					: ((err as Error)?.message ?? get(t)('projectSettings.saveFailed'));
 		}
 	}
 
 	function formatPath(path: string | null): string {
-		if (!path) return 'Non enregistré — utilisez Fichier → Enregistrer';
+		if (!path) return get(t)('projectSettings.unsaved');
 		const sep = path.includes('\\') ? '\\' : '/';
 		const parts = path.split(sep);
 		if (parts.length <= 2) return path;
@@ -129,34 +132,34 @@
 			class="panel"
 			role="dialog"
 			aria-modal="true"
-			aria-label="Préférences du projet"
+			aria-label={$t('projectSettings.aria')}
 			use:dismissable={cancelAndClose}
 		>
 			<div class="panel-header">
 				<span class="header-icon"><Icon name="folder" size={14} /></span>
-				<span class="panel-title">Préférences du projet</span>
-				<button class="close-btn" on:click={cancelAndClose} title="Fermer (Échap)">
+				<span class="panel-title">{$t('projectSettings.title')}</span>
+				<button class="close-btn" on:click={cancelAndClose} title={$t('common.closeEsc')}>
 					<Icon name="close" size={15} strokeWidth={1.5} />
 				</button>
 			</div>
 
 			<div class="panel-body">
 				<div class="section">
-					<h2 class="section-title">Identité</h2>
+					<h2 class="section-title">{$t('projectSettings.identity')}</h2>
 
 					<div class="field">
-						<span class="field-label">Nom du projet</span>
+						<span class="field-label">{$t('projectSettings.projectName')}</span>
 						<input
 							class="text-input"
 							type="text"
 							bind:value={draftName}
-							placeholder="Sans titre"
+							placeholder={$t('common.untitled')}
 							maxlength="120"
 						/>
 					</div>
 
 					<div class="field">
-						<span class="field-label">Fichier</span>
+						<span class="field-label">{$t('projectSettings.file')}</span>
 						<span class="path-display" title={$projectPath ?? undefined}>
 							{formatPath($projectPath)}
 						</span>
@@ -166,19 +169,16 @@
 				<div class="divider"></div>
 
 				<div class="section">
-					<h2 class="section-title">Musical</h2>
-					<p class="section-hint">
-						Enregistré dans le fichier projet. Les options marquées « à venir » sont mémorisées mais
-						pas encore appliquées par le moteur.
-					</p>
+					<h2 class="section-title">{$t('projectSettings.musical')}</h2>
+					<p class="section-hint">{$t('projectSettings.musicalHint')}</p>
 
 					<div class="field-grid">
 						<div class="field">
-							<span class="field-label">Tempo</span>
+							<span class="field-label">{$t('projectSettings.tempo')}</span>
 							<NumberInput bind:value={draftMusical.bpm} min={20} max={400} unit="BPM" />
 						</div>
 						<div class="field">
-							<span class="field-label">Signature rythmique</span>
+							<span class="field-label">{$t('projectSettings.timeSignature')}</span>
 							<div class="field-row">
 								<NumberInput bind:value={draftMusical.numerator} min={1} max={16} width="42px" />
 								<span class="field-slash">/</span>
@@ -197,26 +197,26 @@
 					</div>
 
 					<div class="field">
-						<span class="field-label">Subdivision MIDI (PPQ)</span>
+						<span class="field-label">{$t('projectSettings.midiPpq')}</span>
 						<PillGroup
 							bind:value={draftMusical.midi_ppq}
 							options={MIDI_PPQ_OPTIONS.map((o) => ({ value: o.value, label: o.label }))}
 						/>
-						<span class="field-hint">
-							Résolution temporelle du projet (pulses per quarter note). La quantification du piano
-							roll se règle dans l’éditeur MIDI.
-						</span>
+						<span class="field-hint">{$t('projectSettings.midiPpqHint')}</span>
 					</div>
 				</div>
 
 				<div class="divider"></div>
 
 				<div class="section">
-					<h2 class="section-title">Tonalité & groove</h2>
+					<h2 class="section-title">{$t('projectSettings.keyGroove')}</h2>
 
 					<div class="field-grid">
 						<div class="field field--soon">
-							<span class="field-label">Tonalité <span class="badge-soon">à venir</span></span>
+							<span class="field-label"
+								>{$t('projectSettings.key')}
+								<span class="badge-soon">{$t('common.comingSoon')}</span></span
+							>
 							<div class="field-row">
 								<CustomSelect
 									small
@@ -229,15 +229,15 @@
 									options={[...KEY_MODE_OPTIONS]}
 								/>
 							</div>
-							<span class="field-hint"
-								>Indication harmonique pour l’éditeur et l’export MIDI (non utilisée par le moteur
-								audio).</span
-							>
+							<span class="field-hint">{$t('projectSettings.keyHint')}</span>
 						</div>
 						<div class="field field--soon">
-							<span class="field-label">Swing <span class="badge-soon">à venir</span></span>
+							<span class="field-label"
+								>{$t('projectSettings.swing')}
+								<span class="badge-soon">{$t('common.comingSoon')}</span></span
+							>
 							<NumberInput bind:value={draftMusical.swing_percent} min={0} max={100} unit="%" />
-							<span class="field-hint">Décalage des contretemps (0 % = straight).</span>
+							<span class="field-hint">{$t('projectSettings.swingHint')}</span>
 						</div>
 					</div>
 				</div>
@@ -249,8 +249,8 @@
 
 			<div class="panel-footer">
 				<div class="footer-actions">
-					<Button variant="secondary" on:click={cancelAndClose}>Annuler</Button>
-					<Button variant="primary" on:click={applyAndClose}>Enregistrer</Button>
+					<Button variant="secondary" on:click={cancelAndClose}>{$t('common.cancel')}</Button>
+					<Button variant="primary" on:click={applyAndClose}>{$t('common.save')}</Button>
 				</div>
 			</div>
 		</div>

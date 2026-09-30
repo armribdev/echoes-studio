@@ -3,6 +3,7 @@
 	import { onMount } from 'svelte';
 	import { get } from 'svelte/store';
 	import { invoke } from '@tauri-apps/api/core';
+	import { t } from 'svelte-i18n';
 	import { preferences } from '../stores/preferences';
 	import { dismissable } from '../frontend/dismiss';
 
@@ -62,28 +63,25 @@
 			use:dismissable={close}
 		>
 			<h2 id="crash-suspect-title">
-				Echoes s'est fermé pendant que « {suspect.name} » travaillait
+				{$t('crashSuspect.title', { values: { name: suspect.name } })}
 			</h2>
 			{#if suspect.can_isolate}
 				<p class="intro">
-					Ce plugin a probablement provoqué la fermeture. Isolé, il tourne dans son propre processus
-					: s'il plante encore, seul son son se coupe et Echoes continue.
-					{#if isolationOff}L'isolation, désactivée dans les Préférences, sera réactivée pour les
-						plugins choisis.{/if}
+					{$t('crashSuspect.introCanIsolate')}
+					{#if isolationOff}{$t('crashSuspect.isolationWillEnable')}{/if}
 				</p>
 				<div class="actions">
-					<button class="secondary" type="button" on:click={close}>Plus tard</button>
+					<button class="secondary" type="button" on:click={close}
+						>{$t('crashSuspect.later')}</button
+					>
 					<button class="primary" type="button" on:click={isolate}
-						>Toujours isoler {suspect.name}</button
+						>{$t('crashSuspect.alwaysIsolate', { values: { name: suspect.name } })}</button
 					>
 				</div>
 			{:else}
-				<p class="intro">
-					Ce plugin a probablement provoqué la fermeture. Son format ne peut pas encore être isolé :
-					si cela se reproduit, mettez-le à jour ou retirez-le de vos projets.
-				</p>
+				<p class="intro">{$t('crashSuspect.introCannotIsolate')}</p>
 				<div class="actions">
-					<button class="primary" type="button" on:click={close}>Compris</button>
+					<button class="primary" type="button" on:click={close}>{$t('crashSuspect.gotIt')}</button>
 				</div>
 			{/if}
 		</div>

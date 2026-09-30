@@ -9,6 +9,7 @@
 	import PianoRoll from './PianoRoll.svelte';
 	import PanelResizeHandle from './PanelResizeHandle.svelte';
 	import { persistProjectUiLayout } from '../lib/projectUiLayout';
+	import { t } from 'svelte-i18n';
 
 	let isResizing = false;
 	let resizeStartH = 0;
@@ -53,8 +54,8 @@
 					<button
 						class="empty-close"
 						on:click={closeEditor}
-						title="Fermer (Tab)"
-						aria-label="Fermer"
+						title={$t('common.closeTab')}
+						aria-label={$t('common.close')}
 					>
 						<svg width="10" height="10" viewBox="0 0 10 10" fill="none">
 							<path

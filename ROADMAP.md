@@ -60,7 +60,7 @@
 - [ ] Tests : environ 270 tests Rust aujourd'hui ; ajouter des tests d'intégration frontend
 - [ ] Documentation utilisateur
 - [ ] Mise à jour automatique (Tauri updater) et signature des binaires (Authenticode, notarisation)
-- [ ] Internationalisation (EN + FR)
+- [x] Internationalisation (EN + FR) — `svelte-i18n` ; menus contextuels, préférences projet, library, piano roll, dialogs, menus natifs OS
 - [ ] Format de projet v2 — décision ouverte (voir « ADR-004 — Project file format » dans [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), à ne pas confondre avec l'ADR-004 de `docs/active/decisions/` sur les snapshots du moteur)
 - [ ] Nettoyage du code hérité (phase 7 du plan de migration)
 

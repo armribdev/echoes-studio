@@ -10,12 +10,19 @@
 		pluginDisplayName,
 		rescanPlugins,
 		unavailablePlugins,
-		UNAVAILABLE_REASON_LABEL,
 		type UnavailableReason
 	} from '../stores/plugins';
 	import { invoke } from '@tauri-apps/api/core';
 	import { setTrackInstrument } from '../frontend/commands/dispatcher';
 	import { notify } from '../stores/status';
+	import { t } from 'svelte-i18n';
+
+	const REASON_KEYS: Record<UnavailableReason, string> = {
+		not_installed: 'missingPlugins.notInstalled',
+		unsupported_format: 'missingPlugins.unsupportedFormat',
+		load_failed: 'missingPlugins.loadFailed',
+		crashed: 'missingPlugins.crashed'
+	};
 
 	export let trackId: string;
 	export let instrument: string | null;
@@ -164,13 +171,13 @@
 			<span class="track-bar"></span>
 			<span class="track-name">{trackName || 'Piste'}</span>
 		{:else}
-			<span class="instr-title">Instrument</span>
+			<span class="instr-title">{$t('instrument.title')}</span>
 		{/if}
 		<button
 			class="change-btn"
 			type="button"
 			on:click={() => (showPicker = true)}
-			title="Changer l'instrument"
+			title={$t('instrument.change')}
 		>
 			{compact ? '…' : 'Changer'}
 		</button>
@@ -180,13 +187,13 @@
 	<div class="instr-slot" class:unavailable on:contextmenu={openContextMenu}>
 		<span class="instr-name" title={instrument ?? label}>{label}</span>
 		{#if sandboxed}
-			<span class="sandbox-badge" title="Isolé : un plantage de ce plugin ne ferme pas Echoes"
+			<span class="sandbox-badge" title={$t('instrument.isolated')}
 				>ISO</span
 			>
 		{/if}
 		{#if unavailable}
 			<span class="missing-badge" title={UNAVAILABLE_HELP[unavailable.reason]}>
-				{UNAVAILABLE_REASON_LABEL[unavailable.reason]}
+				{$t(REASON_KEYS[unavailable.reason])}
 			</span>
 		{/if}
 		{#if activePlugin}
@@ -204,7 +211,7 @@
 			>
 		{/if}
 		{#if instrument}
-			<button class="rm-btn" type="button" on:click={handleClear} title="PolySynth intégré"
+			<button class="rm-btn" type="button" on:click={handleClear} title={$t('instrument.builtinPoly')}
 				>×</button
 			>
 		{/if}

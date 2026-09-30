@@ -11,7 +11,6 @@
 		libraryHasIndexedContent,
 		libraryFocusSearchTick,
 		insertLibraryAsset,
-		LIBRARY_SOURCE_LABELS,
 		LIBRARY_SOURCE_ORDER,
 		AUDIO_EXTENSIONS,
 		formatDuration,
@@ -27,6 +26,7 @@
 	} from '../frontend/library';
 	import { tempo } from '../stores/tempo';
 	import { ARRANGE_POINTER_DRAG_THRESHOLD } from '../frontend/arrangeInteraction';
+	import { t } from 'svelte-i18n';
 
 	/** Docked panel vs Bitwig-style pop-up (same browser, different shell). */
 	export let variant: 'dock' | 'popup' = 'dock';
@@ -329,20 +329,20 @@
 
 <div class="browser" class:browser--popup={variant === 'popup'}>
 	<div class="chrome">
-		<span class="chrome-title">Library</span>
+		<span class="chrome-title">{$t('library.title')}</span>
 		{#if $libraryStore.indexer === 'scanning'}
 			<span class="chrome-status">
-				Indexing…{$libraryStore.indexerProgress != null
+				{$t('library.indexing')}{$libraryStore.indexerProgress != null
 					? ` ${Math.round($libraryStore.indexerProgress * 100)}%`
 					: ''}
 			</span>
 		{:else if $libraryStore.indexer === 'error'}
 			<span class="chrome-status chrome-status--error" title={$libraryStore.indexerError ?? ''}>
-				Index error
+				{$t('library.indexError')}
 			</span>
 		{/if}
 		{#if variant === 'popup' && onRequestClose}
-			<button type="button" class="close-btn" title="Fermer (Esc)" on:click={onRequestClose}
+			<button type="button" class="close-btn" title={$t('common.closeEsc')} on:click={onRequestClose}
 				>×</button
 			>
 		{/if}
@@ -357,7 +357,7 @@
 			<input
 				class="search-input"
 				type="text"
-				placeholder="Search…"
+				placeholder={$t('common.search')}
 				value={$libraryStore.query}
 				bind:this={searchInputEl}
 				on:input={(e) => libraryStore.setQuery(e.currentTarget.value)}
@@ -377,14 +377,14 @@
 				</button>
 			{/if}
 		</div>
-		<button class="add-btn" type="button" on:click={browseFiles} title="Import file">
+		<button class="add-btn" type="button" on:click={browseFiles} title={$t('library.importFile')}>
 			<svg width="10" height="10" viewBox="0 0 10 10" fill="none">
 				<path d="M5 1V9M1 5H9" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
 			</svg>
 		</button>
 	</div>
 
-	<nav class="sources" aria-label="Library sources">
+	<nav class="sources" aria-label={$t('library.sourcesAria')}>
 		{#each LIBRARY_SOURCE_ORDER as sourceId}
 			<button
 				type="button"
@@ -392,11 +392,11 @@
 				class:active={$libraryStore.source === sourceId}
 				on:click={() => setSource(sourceId)}
 			>
-				{LIBRARY_SOURCE_LABELS[sourceId]}
+				{$t(`library.sources.${sourceId}`)}
 			</button>
 		{/each}
 		<button type="button" class="source-btn source-btn--action" on:click={browseFolder}>
-			Add folder…
+			{$t('library.addFolder')}
 		</button>
 	</nav>
 
@@ -404,27 +404,31 @@
 		<div class="results-col">
 			{#if visible.length === 0 && $libraryStore.source === 'audio' && !$libraryHasIndexedContent}
 				<div class="empty-state">
-					<p class="empty-title">No sounds yet</p>
+					<p class="empty-title">{$t('library.noSounds')}</p>
 					<div class="empty-actions">
-						<button type="button" class="empty-btn" on:click={browseFolder}>Add folder…</button>
+						<button type="button" class="empty-btn" on:click={browseFolder}
+							>{$t('library.addFolder')}</button
+						>
 						<button type="button" class="empty-btn empty-btn--ghost" on:click={browseFiles}>
-							Import file
+							{$t('library.importFile')}
 						</button>
 					</div>
-					<p class="empty-tip">Tip: Drop audio on a track or press B anytime</p>
+					<p class="empty-tip">{$t('library.emptyTip')}</p>
 				</div>
 			{:else if visible.length === 0}
 				<div class="empty-state">
-					<p class="empty-title">Aucun résultat</p>
-					<p class="empty-tip">Essayez une autre source ou une autre recherche</p>
+					<p class="empty-title">{$t('library.noResults')}</p>
+					<p class="empty-tip">{$t('library.noResultsTip')}</p>
 				</div>
 			{:else}
 				{#if $libraryStore.query}
 					<div class="results-meta">
-						{LIBRARY_SOURCE_LABELS[$libraryStore.source]} · {visible.length} result{visible.length ===
-						1
-							? ''
-							: 's'}
+						{$t(visible.length === 1 ? 'library.resultOne' : 'library.resultMany', {
+							values: {
+								source: $t(`library.sources.${$libraryStore.source}`),
+								n: visible.length
+							}
+						})}
 					</div>
 				{/if}
 
@@ -434,7 +438,7 @@
 					bind:clientHeight={viewportHeight}
 					tabindex="0"
 					role="listbox"
-					aria-label="Library results"
+					aria-label={$t('library.resultsAria')}
 					on:scroll={() => (scrollTop = resultsEl?.scrollTop ?? 0)}
 					on:focus={() => keyboardFocus.setLibraryResults()}
 					on:keydown={onResultsKeydown}
@@ -483,7 +487,7 @@
 								class="fav-btn"
 								type="button"
 								class:on={$libraryStore.favoriteIds.includes(asset.id)}
-								title="Favorite"
+								title={$t('library.favorite')}
 								on:click={(e) => onFavoriteClick(e, asset)}
 								on:pointerdown={(e) => e.stopPropagation()}
 							>
@@ -495,8 +499,8 @@
 								<button
 									class="cancel-import-btn"
 									type="button"
-									title="Annuler l'import"
-									aria-label="Annuler l'import"
+									title={$t('library.cancelImport')}
+									aria-label={$t('library.cancelImport')}
 									on:pointerdown={(e) => e.stopPropagation()}
 									on:click={(e) => {
 										e.stopPropagation();
@@ -511,7 +515,7 @@
 									<button
 										class="preview-btn"
 										type="button"
-										title="Preview"
+										title={$t('library.preview')}
 										on:pointerdown={(e) => e.stopPropagation()}
 										on:click={(e) => onPreviewClick(e, asset)}
 									>
@@ -521,7 +525,7 @@
 								<button
 									class="insert-btn"
 									type="button"
-									title="Insert at playhead"
+									title={$t('library.insertAtPlayhead')}
 									on:pointerdown={(e) => e.stopPropagation()}
 									on:click={() => insertAsset(asset)}
 								>
@@ -540,19 +544,19 @@
 					{:else}
 						<div class="empty-state empty-state--compact">
 							{#if $libraryStore.query}
-								<p>No results for « {$libraryStore.query} »</p>
+								<p>{$t('library.noResults')}</p>
 							{:else if $libraryStore.source === 'recents'}
-								<p>No recent sounds yet</p>
+								<p>{$t('library.noRecent')}</p>
 							{:else if $libraryStore.source === 'favorites'}
-								<p>Star a sound to pin it here</p>
+								<p>{$t('library.starToPin')}</p>
 							{:else if $libraryStore.source === 'chords'}
-								<p>Aucun accord factory</p>
+								<p>{$t('library.noFactoryChords')}</p>
 							{:else if $libraryStore.source === 'midi'}
-								<p>Aucun motif MIDI</p>
+								<p>{$t('library.noMidiPatterns')}</p>
 							{:else if $libraryStore.source === 'drums'}
-								<p>Aucun pattern drums</p>
+								<p>{$t('library.noDrumPatterns')}</p>
 							{:else}
-								<p>No audio indexed</p>
+								<p>{$t('library.noAudioIndexed')}</p>
 							{/if}
 						</div>
 					{/each}
@@ -576,7 +580,7 @@
 							<div class="detail-tip">Placé à la longueur d'origine (pas de warp)</div>
 						{/if}
 					{:else}
-						<div class="detail-placeholder">Select a sound</div>
+						<div class="detail-placeholder">{$t('library.selectSound')}</div>
 					{/if}
 				</div>
 			{/if}

@@ -10,6 +10,7 @@
 	import { transport } from '../stores/transport';
 	import { buildPreviewClip } from '../frontend/midiRecordingPreview';
 	import { getPreviewPitchRange } from '../frontend/pianoRoll/previewLayout';
+	import { t } from 'svelte-i18n';
 
 	export let trackId: string;
 	export let clips: ClipType[];
@@ -166,8 +167,8 @@
 			type="button"
 			class="lane-insert"
 			class:lane-insert--empty={laneEmpty}
-			title="Insérer un son"
-			aria-label="Insérer un son"
+			title={$t('mainPanel.insertSound')}
+			aria-label={$t('mainPanel.insertSound')}
 			on:click={onInsertClick}
 		>
 			+

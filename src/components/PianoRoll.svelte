@@ -38,6 +38,7 @@
 	import { shouldHandlePianoRollShortcuts, hasNoModifiers } from '../frontend/shortcuts/context';
 	import { noteClipboard, copyMidiNotes } from '../stores/noteClipboard';
 	import { keyboardFocus } from '../stores/keyboardFocus';
+	import { t } from 'svelte-i18n';
 	import { pianoRollStatusInfo } from '../stores/status';
 	import { closeEditor, enterEditFromPreview } from '../frontend/pianoRoll/clipEditor';
 	import { bottomPanel } from '../stores/bottomPanel';
@@ -1536,18 +1537,18 @@
 		class:piano-roll--preview={!editMode}
 		class:piano-roll--resizing={$previewPanelResizing}
 		role="application"
-		aria-label="Piano Roll"
+		aria-label={$t('pianoRoll.aria')}
 	>
 		{#if editMode}
 			<div class="chrome" style="--track-color: {trackColor}">
 				<div class="chrome-inner">
-					<div class="mode-group" role="group" aria-label="Mode d'édition">
+					<div class="mode-group" role="group" aria-label={$t('pianoRoll.editMode')}>
 						<button
 							class="mode-btn"
 							class:active={mode === 'draw'}
 							on:click={() => pianoRollStore.setMode('draw')}
-							title="Dessiner (D)"
-							aria-label="Dessiner"
+							title={$t('pianoRoll.drawTitle')}
+							aria-label={$t('pianoRoll.draw')}
 						>
 							<svg
 								viewBox="0 0 16 16"
@@ -1563,8 +1564,8 @@
 							class="mode-btn"
 							class:active={mode === 'select'}
 							on:click={() => pianoRollStore.setMode('select')}
-							title="Sélectionner (S)"
-							aria-label="Sélectionner"
+							title={$t('pianoRoll.selectTitle')}
+							aria-label={$t('pianoRoll.select')}
 						>
 							<svg
 								viewBox="0 0 16 16"
@@ -1580,8 +1581,8 @@
 							class="mode-btn"
 							class:active={mode === 'erase'}
 							on:click={() => pianoRollStore.setMode('erase')}
-							title="Effacer (E)"
-							aria-label="Effacer"
+							title={$t('pianoRoll.eraseTitle')}
+							aria-label={$t('pianoRoll.erase')}
 						>
 							<svg
 								viewBox="0 0 16 16"
@@ -1608,8 +1609,8 @@
 								console.error
 							);
 						}}
-						title="Quantification (enregistrée dans le projet)"
-						aria-label="Quantification"
+						title={$t('pianoRoll.quantizeTitle')}
+						aria-label={$t('pianoRoll.quantize')}
 					>
 						{#each MIDI_GRID_OPTIONS as opt}
 							<option value={opt.beats}>{opt.label}</option>
@@ -1621,8 +1622,8 @@
 					<button
 						class="chrome-close"
 						on:click={closeEditor}
-						title="Fermer (Tab)"
-						aria-label="Fermer"
+						title={$t('common.closeTab')}
+						aria-label={$t('common.close')}
 					>
 						<svg viewBox="0 0 10 10" width="10" height="10" fill="none" aria-hidden="true">
 							<path
@@ -1643,8 +1644,8 @@
 					<button
 						class="chrome-close"
 						on:click={closeEditor}
-						title="Fermer (Tab)"
-						aria-label="Fermer"
+						title={$t('common.closeTab')}
+						aria-label={$t('common.close')}
 					>
 						<svg viewBox="0 0 10 10" width="10" height="10" fill="none" aria-hidden="true">
 							<path
@@ -1665,7 +1666,12 @@
 				<!-- Piano keys -->
 				<div class="keys-wrapper">
 					<div class="keys-ruler-spacer" style="height: {RULER_HEIGHT}px"></div>
-					<div class="keys-scroll" bind:this={keysContainer} role="list" aria-label="Touches piano">
+					<div
+						class="keys-scroll"
+						bind:this={keysContainer}
+						role="list"
+						aria-label={$t('pianoRoll.keys')}
+					>
 						{#each { length: TOTAL_PITCHES } as _, i}
 							{@const pitch = TOTAL_PITCHES - 1 - i}
 							<div

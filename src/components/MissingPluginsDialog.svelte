@@ -1,13 +1,14 @@
 <!-- MissingPluginsDialog.svelte — one summary of unloadable plugins when a project opens -->
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { get } from 'svelte/store';
 	import { listen } from '@tauri-apps/api/event';
 	import { invoke } from '@tauri-apps/api/core';
+	import { t } from 'svelte-i18n';
 	import type { Project } from '../types/global';
 	import {
 		pluginDisplayName,
 		rescanPlugins,
-		UNAVAILABLE_REASON_LABEL,
 		type UnavailablePlugin,
 		type UnavailableReason
 	} from '../stores/plugins';
@@ -21,6 +22,13 @@
 	}
 
 	const INSTRUMENT_KEY_PREFIX = 'instrument:';
+
+	const REASON_KEYS: Record<UnavailableReason, string> = {
+		not_installed: 'missingPlugins.notInstalled',
+		unsupported_format: 'missingPlugins.unsupportedFormat',
+		load_failed: 'missingPlugins.loadFailed',
+		crashed: 'missingPlugins.crashed'
+	};
 
 	let project: Project | null = null;
 	let missing: MissingPlugin[] = [];
@@ -37,13 +45,16 @@
 	}
 
 	function usage(project: Project, instanceKey: string): string {
+		const unknown = get(t)('missingPlugins.unknownTrack');
 		if (instanceKey.startsWith(INSTRUMENT_KEY_PREFIX)) {
 			const trackId = instanceKey.slice(INSTRUMENT_KEY_PREFIX.length);
 			const track = project.tracks.find((t) => t.id === trackId);
-			return `Instrument de « ${track?.name ?? 'piste inconnue'} »`;
+			return get(t)('missingPlugins.instrumentOf', {
+				values: { name: track?.name ?? unknown }
+			});
 		}
 		const track = project.tracks.find((t) => t.effects.some((e) => e.id === instanceKey));
-		return `Effet sur « ${track?.name ?? 'piste inconnue'} »`;
+		return get(t)('missingPlugins.effectOn', { values: { name: track?.name ?? unknown } });
 	}
 
 	/** One row per plugin, listing every place it is used. */
@@ -109,20 +120,18 @@
 			use:dismissable={close}
 		>
 			<h2 id="missing-plugins-title">
-				{count === 1 ? 'Un plugin est indisponible' : `${count} plugins sont indisponibles`}
+				{count === 1
+					? $t('missingPlugins.titleOne')
+					: $t('missingPlugins.titleMany', { values: { n: count } })}
 			</h2>
-			<p class="intro">
-				Les pistes concernées sont muettes, ou leur son passe sans être traité. Leurs réglages sont
-				conservés, même si vous enregistrez. Réinstallez les plugins puis cliquez sur « Rechercher à
-				nouveau ».
-			</p>
+			<p class="intro">{$t('missingPlugins.intro')}</p>
 
 			<ul class="list">
 				{#each missing as plugin (plugin.pluginId)}
 					<li>
 						<div class="row-head">
 							<span class="name">{plugin.name}</span>
-							<span class="badge">{UNAVAILABLE_REASON_LABEL[plugin.reason]}</span>
+							<span class="badge">{$t(REASON_KEYS[plugin.reason])}</span>
 						</div>
 						{#each plugin.usages as place}
 							<span class="usage">{place}</span>
@@ -133,14 +142,13 @@
 
 			<div class="actions">
 				<button class="secondary" type="button" on:click={handleSearchAgain} disabled={searching}>
-					{searching ? 'Recherche…' : 'Rechercher à nouveau'}
+					{searching ? $t('missingPlugins.searching') : $t('missingPlugins.searchAgain')}
 				</button>
-				<button class="primary" type="button" on:click={close}>Continuer</button>
+				<button class="primary" type="button" on:click={close}>{$t('common.continue')}</button>
 			</div>
 		</div>
 	</div>
 {/if}
-
 <style lang="scss">
 	@use '../variables.scss' as *;
 
@@ -271,3 +279,4 @@
 		}
 	}
 </style>
+

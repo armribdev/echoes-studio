@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { createEventDispatcher, onMount } from 'svelte';
+	import { t } from 'svelte-i18n';
 	import { dismissable } from '../frontend/dismiss';
 
 	export let x = 0;
@@ -33,7 +34,10 @@
 		dispatch('close');
 	}
 
-	$: label = selectionCount === 1 ? '1 clip' : `${selectionCount} clips`;
+	$: label =
+		selectionCount === 1
+			? $t('clipMenu.oneClip')
+			: $t('clipMenu.nClips', { values: { n: selectionCount } });
 </script>
 
 <div
@@ -69,7 +73,7 @@
 			<line x1="20" y1="4" x2="8.73" y2="15.27" />
 			<line x1="10.27" y1="11.27" x2="20" y2="20" />
 		</svg>
-		<span>Couper</span>
+		<span>{$t('clipMenu.cut')}</span>
 		<span class="item-shortcut">Ctrl+X</span>
 	</button>
 
@@ -94,7 +98,7 @@
 			<rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
 			<path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
 		</svg>
-		<span>Copier</span>
+		<span>{$t('clipMenu.copy')}</span>
 		<span class="item-shortcut">Ctrl+C</span>
 	</button>
 
@@ -122,7 +126,7 @@
 			<path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" />
 			<rect x="8" y="2" width="8" height="4" rx="1" ry="1" />
 		</svg>
-		<span>Coller</span>
+		<span>{$t('clipMenu.paste')}</span>
 		<span class="item-shortcut">Ctrl+V</span>
 	</button>
 
@@ -149,7 +153,7 @@
 			<rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
 			<path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
 		</svg>
-		<span>Dupliquer</span>
+		<span>{$t('clipMenu.duplicate')}</span>
 		<span class="item-shortcut">Ctrl+D</span>
 	</button>
 
@@ -178,7 +182,7 @@
 			<path d="M10 11v6M14 11v6" />
 			<path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
 		</svg>
-		<span>Supprimer</span>
+		<span>{$t('common.delete')}</span>
 		<span class="item-shortcut">Suppr</span>
 	</button>
 </div>

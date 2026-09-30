@@ -10,6 +10,7 @@
 	import { instrumentArtKind } from '../frontend/instrumentArt';
 	import { instrumentDisplayName, plugins } from '../stores/plugins';
 	import { dismissable } from '../frontend/dismiss';
+	import { t } from 'svelte-i18n';
 
 	export let track: Track;
 	export let selected: boolean = false;
@@ -125,7 +126,7 @@
 			type="button"
 			class="color-bar"
 			style="background: {color}"
-			aria-label="Changer la couleur de la piste"
+			aria-label={$t('trackStrip.changeColor')}
 			aria-expanded={colorOpen}
 			on:click|stopPropagation={() => {
 				colorOpen = !colorOpen;
@@ -136,7 +137,7 @@
 				class="color-pop"
 				role="listbox"
 				tabindex="0"
-				aria-label="Couleurs de piste"
+				aria-label={$t('trackStrip.colors')}
 				use:dismissable={() => {
 					colorOpen = false;
 				}}
@@ -165,12 +166,12 @@
 			</div>
 
 			<strong class="track-name" on:dblclick={makeEditable}>{track.name}</strong>
-			<div class="ms-group" role="group" aria-label="Mute, solo, armement">
+			<div class="ms-group" role="group" aria-label={$t('trackStrip.muteSoloArm')}>
 				<button
 					type="button"
 					class="ms-btn"
 					class:active={track.muted}
-					title="Mute"
+					title={$t('trackStrip.mute')}
 					aria-pressed={track.muted}
 					on:click|stopPropagation={() => dispatch('mutetoggle')}>M</button
 				>
@@ -178,7 +179,7 @@
 					type="button"
 					class="ms-btn"
 					class:active={track.solo}
-					title="Solo"
+					title={$t('trackStrip.solo')}
 					aria-pressed={track.solo}
 					on:click|stopPropagation={() => dispatch('solotoggle')}>S</button
 				>
@@ -186,9 +187,9 @@
 					type="button"
 					class="ms-btn ms-btn--arm"
 					class:active={armed}
-					title="Armer pour l'entrée MIDI"
+					title={$t('trackStrip.arm')}
 					aria-pressed={armed}
-					aria-label="Armer pour l'entrée MIDI"
+					aria-label={$t('trackStrip.arm')}
 					on:click|stopPropagation={() => dispatch('armtoggle')}
 					><span class="arm-dot" aria-hidden="true"></span></button
 				>
