@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount, onDestroy, createEventDispatcher } from 'svelte';
 	import { dismissable } from '../frontend/dismiss';
+	import { focusTrap } from '../frontend/focusTrap';
 
 	const dispatch = createEventDispatcher<{ change: string | number }>();
 
@@ -74,15 +75,28 @@
 	</button>
 
 	{#if open}
-		<ul class="cs-menu" role="listbox" use:dismissable={() => (open = false)}>
+		<ul
+			class="cs-menu"
+			role="listbox"
+			tabindex="-1"
+			use:focusTrap={{ initial: 'first' }}
+			use:dismissable={() => (open = false)}
+		>
 			{#each options as opt}
 				<!-- svelte-ignore a11y-click-events-have-key-events -->
 				<li
 					class="cs-option"
 					class:cs-option--selected={opt.value === value}
 					role="option"
+					tabindex="0"
 					aria-selected={opt.value === value}
 					on:click={() => select(opt.value)}
+					on:keydown={(e) => {
+						if (e.key === 'Enter' || e.key === ' ') {
+							e.preventDefault();
+							select(opt.value);
+						}
+					}}
 				>
 					{#if opt.value === value}
 						<svg

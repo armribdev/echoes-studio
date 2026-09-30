@@ -1,7 +1,8 @@
 <script lang="ts">
-	import { createEventDispatcher, onMount } from 'svelte';
+	import { createEventDispatcher } from 'svelte';
 	import { matchesSearch, type ModulationTargetOption } from '../frontend/modulation/targets';
 	import { dismissable } from '../frontend/dismiss';
+	import { focusTrap } from '../frontend/focusTrap';
 
 	export let options: ModulationTargetOption[];
 	export let loading = false;
@@ -9,7 +10,6 @@
 	const dispatch = createEventDispatcher<{ select: ModulationTargetOption; close: void }>();
 
 	let query = '';
-	let searchInput: HTMLInputElement;
 
 	interface ModuleSection {
 		module: string;
@@ -44,17 +44,21 @@
 	function handleKeydown(e: KeyboardEvent) {
 		if (e.key === 'Enter' && visible.length > 0) dispatch('select', visible[0]);
 	}
-
-	onMount(() => searchInput.focus());
 </script>
 
-<div class="picker" use:dismissable={() => dispatch('close')}>
+<div
+	class="picker"
+	role="dialog"
+	aria-label="Réglage à moduler"
+	tabindex="-1"
+	use:focusTrap={{ initial: 'first' }}
+	use:dismissable={() => dispatch('close')}
+>
 	<input
 		class="search"
 		type="text"
 		placeholder="Rechercher un réglage…"
 		bind:value={query}
-		bind:this={searchInput}
 		on:keydown={handleKeydown}
 	/>
 	<div class="list">

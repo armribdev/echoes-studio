@@ -2,6 +2,7 @@
 	import { createEventDispatcher, onMount } from 'svelte';
 	import { t } from 'svelte-i18n';
 	import { dismissable } from '../frontend/dismiss';
+	import { focusTrap } from '../frontend/focusTrap';
 
 	export let x = 0;
 	export let y = 0;
@@ -43,6 +44,9 @@
 <div
 	class="context-menu"
 	bind:this={menuEl}
+	role="menu"
+	tabindex="-1"
+	use:focusTrap={{ initial: 'first' }}
 	use:dismissable={close}
 	style="left: {adjustedX}px; top: {adjustedY}px"
 >
@@ -51,7 +55,7 @@
 	<div class="separator"></div>
 
 	<button
-		class="item"
+		class="item" role="menuitem"
 		on:click={() => {
 			dispatch('cut');
 			close();
@@ -78,7 +82,7 @@
 	</button>
 
 	<button
-		class="item"
+		class="item" role="menuitem"
 		on:click={() => {
 			dispatch('copy');
 			close();
@@ -103,7 +107,7 @@
 	</button>
 
 	<button
-		class="item"
+		class="item" role="menuitem"
 		class:item--disabled={!canPaste}
 		on:click={() => {
 			if (canPaste) {
@@ -133,7 +137,7 @@
 	<div class="separator"></div>
 
 	<button
-		class="item"
+		class="item" role="menuitem"
 		on:click={() => {
 			dispatch('duplicate');
 			close();
@@ -160,7 +164,7 @@
 	<div class="separator"></div>
 
 	<button
-		class="item item--danger"
+		class="item item--danger" role="menuitem"
 		on:click={() => {
 			dispatch('delete');
 			close();

@@ -1,6 +1,7 @@
 <script lang="ts">
 	import type { Track } from '../types/global';
 	import { dismissable } from '../frontend/dismiss';
+	import { focusTrap } from '../frontend/focusTrap';
 	import { addAutomationLane, removeAutomationLane } from '../frontend/commands/dispatcher';
 	import {
 		buildAutomationOptions,
@@ -66,16 +67,19 @@
 {#if menu}
 	<div
 		class="context-menu"
+		role="menu"
+		tabindex="-1"
+		use:focusTrap={{ initial: 'first' }}
 		use:dismissable={() => (menu = null)}
 		style="left: {menu.x}px; top: {menu.y}px; width: {MENU_WIDTH_PX}px"
 	>
 		<div class="menu-header">{menu.option.group} › {menu.option.label}</div>
 		{#if menu.laneId}
-			<button class="item item--danger" type="button" on:click={removeLane}
+			<button class="item item--danger" role="menuitem" type="button" on:click={removeLane}
 				>{$t('automationMenu.remove')}</button
 			>
 		{:else}
-			<button class="item" type="button" on:click={automate}
+			<button class="item" role="menuitem" type="button" on:click={automate}
 				>{$t('automationMenu.automate')}</button
 			>
 		{/if}

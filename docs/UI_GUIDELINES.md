@@ -306,7 +306,7 @@ Current implementation (`Knob.svelte`):
 
 - Drag is initiated after 3px of movement (prevents accidental triggers)
 - A visual indicator (drop line) shows the destination before release
-- Non-droppable targets visually reject the drag (`not-allowed` cursor)
+- Non-droppable targets visually reject the drag (`cursor: default`, muted style — never `not-allowed`)
 - Undo applies to drag & drop
 
 **Supported cases:**

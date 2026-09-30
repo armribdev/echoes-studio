@@ -87,7 +87,7 @@
 
 		&:disabled {
 			opacity: 0.4;
-			cursor: not-allowed;
+			cursor: default;
 		}
 
 		/* MenuBar variant — slightly smaller */

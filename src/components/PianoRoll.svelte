@@ -1888,7 +1888,7 @@
 			background: rgba(255, 255, 255, 0.07);
 			border-color: rgba(255, 255, 255, 0.14);
 		}
-		&:focus {
+		&:focus-visible {
 			outline: none;
 			border-color: #1571ff;
 		}

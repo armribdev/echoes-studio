@@ -10,6 +10,8 @@
 	} from '../stores/plugins';
 	import type { PluginInfo } from '../stores/plugins';
 	import { dismissable } from '../frontend/dismiss';
+	import { focusTrap } from '../frontend/focusTrap';
+	import { appInert, portal } from '../frontend/portal';
 
 	const dispatch = createEventDispatcher<{ pick: PluginInfo; cancel: void }>();
 
@@ -17,7 +19,6 @@
 	export let mode: 'instrument' | 'effect' | 'all' = 'all';
 
 	let query = '';
-	let inputEl: HTMLInputElement;
 	let selectedIndex = 0;
 	let itemEls: HTMLButtonElement[] = [];
 
@@ -60,7 +61,6 @@
 	}
 
 	onMount(() => {
-		inputEl?.focus();
 		window.addEventListener('keydown', handleKey);
 		return () => window.removeEventListener('keydown', handleKey);
 	});
@@ -92,12 +92,14 @@
 </script>
 
 <!-- Backdrop -->
-<div class="backdrop">
+<div class="backdrop" use:portal use:appInert>
 	<div
 		class="picker"
 		role="dialog"
 		aria-modal="true"
 		aria-label="Plugin browser"
+		tabindex="-1"
+		use:focusTrap={{ initial: 'first' }}
 		use:dismissable={() => dispatch('cancel')}
 	>
 		<div class="header">
@@ -108,7 +110,6 @@
 		</div>
 
 		<input
-			bind:this={inputEl}
 			class="search"
 			type="text"
 			placeholder="Rechercher…"

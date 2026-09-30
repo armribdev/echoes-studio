@@ -870,7 +870,7 @@
 
 	:global(body.library-file-dragging.library-file-dragging--rejected),
 	:global(body.library-file-dragging.library-file-dragging--rejected *) {
-		cursor: not-allowed !important;
+		cursor: default !important;
 	}
 
 	.fav-btn {

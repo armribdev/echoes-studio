@@ -19,6 +19,30 @@ body {
 	margin: 0;
 }
 
+/* Focus: no ring on pointer; keyboard-only via :focus-visible. */
+:focus {
+	outline: none;
+}
+
+:focus-visible {
+	outline: 2px solid $accent-color;
+	outline-offset: 2px;
+}
+
+/* Text fields: border/caret already signal focus — skip the global ring. */
+input:focus-visible,
+textarea:focus-visible,
+[contenteditable='true']:focus-visible {
+	outline: none;
+}
+
+/* Focus-trap sinks (tabindex=-1): no ring on the chrome at open. */
+[role='dialog']:focus-visible,
+[role='alertdialog']:focus-visible,
+[role='menu']:focus-visible {
+	outline: none;
+}
+
 .app {
 	height: 100vh;
 }

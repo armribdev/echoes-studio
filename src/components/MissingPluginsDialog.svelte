@@ -13,6 +13,8 @@
 		type UnavailableReason
 	} from '../stores/plugins';
 	import { dismissable } from '../frontend/dismiss';
+	import { focusTrap } from '../frontend/focusTrap';
+	import { appInert, portal } from '../frontend/portal';
 
 	interface MissingPlugin {
 		pluginId: string;
@@ -111,12 +113,14 @@
 </script>
 
 {#if count > 0}
-	<div class="backdrop" role="presentation">
+	<div class="backdrop" role="presentation" use:portal use:appInert>
 		<div
 			class="dialog"
 			role="dialog"
 			aria-modal="true"
 			aria-labelledby="missing-plugins-title"
+			tabindex="-1"
+			use:focusTrap={{ initial: 'first' }}
 			use:dismissable={close}
 		>
 			<h2 id="missing-plugins-title">

@@ -65,7 +65,7 @@
 
 		&.disabled {
 			opacity: 0.28;
-			cursor: not-allowed;
+			cursor: default;
 			pointer-events: none;
 		}
 

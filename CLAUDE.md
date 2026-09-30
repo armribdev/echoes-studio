@@ -9,6 +9,41 @@ The long-term architectural memory lives in [`docs/active/`](docs/active/).
 Start at [`docs/active/README.md`](docs/active/README.md), then read the relevant
 doc **before** changing that subsystem.
 
+## UI desktop (WebView)
+
+Détail UI (checklist, exemples) : [`docs/claude/ui_conventions.md`](docs/claude/ui_conventions.md).
+
+### Curseur CSS
+
+**Ne jamais utiliser `cursor: not-allowed`.** Sur un élément désactivé : garder
+l’opacité / le style et utiliser `cursor: default`.
+
+### Focus clavier (`:focus-visible`)
+
+Ressenti « app bureau » : **pas d’anneau de focus au clic souris** ; indicateur
+uniquement pour la navigation clavier.
+
+La baseline est dans `src/app.scss` (`:focus { outline: none }` + `:focus-visible`
+global). Les champs texte (`input` / `textarea`) et les sinks de focus trap
+(`[role="dialog"|"alertdialog"|"menu"]`) sont exclus du ring global.
+
+- **Ne pas** styler le focus avec `:focus` seul (UI non-texte).
+- Utiliser **`:focus-visible`** pour tout indicateur de focus.
+- Préférer `:has(:focus-visible)` à `:focus-within` pour les parents.
+
+### Tooltips custom
+
+Bulles / icônes « i » : `tabindex="-1"` — pas dans le cycle Tab.
+
+### Modales / dialogs (focus trap)
+
+Toute UI `role="dialog"` / `aria-modal="true"` **doit** piéger le focus :
+
+- `use:focusTrap` (`src/frontend/focusTrap.ts`) + `tabindex="-1"`
+- `use:portal` + `use:appInert` (`src/frontend/portal.ts`) pour `inert` sur `.app`
+- Menus contextuels : `role="menu"` + `use:focusTrap={{ initial: "first" }}` + Échap
+- Menus portailés hors dialog : `data-es-focus-trap-portal`
+
 ## Routing
 
 | Area                            | Read first                                                                                                                   |

@@ -1,18 +1,24 @@
 <!-- ModulatorTypeMenu.svelte — "+" menu: pick which kind of modulator to add -->
 <script lang="ts">
-	import { createEventDispatcher, onMount } from 'svelte';
+	import { createEventDispatcher } from 'svelte';
 	import { MODULATOR_KINDS } from '../frontend/modulation/modulators';
 	import type { ModulatorKind } from '../types/global';
 	import { dismissable } from '../frontend/dismiss';
+	import { focusTrap } from '../frontend/focusTrap';
 
 	const dispatch = createEventDispatcher<{ select: ModulatorKind; close: void }>();
 
 	let root: HTMLDivElement;
-
-	onMount(() => root.querySelector('button')?.focus());
 </script>
 
-<div class="menu" role="menu" bind:this={root} use:dismissable={() => dispatch('close')}>
+<div
+	class="menu"
+	role="menu"
+	tabindex="-1"
+	bind:this={root}
+	use:focusTrap={{ initial: 'first' }}
+	use:dismissable={() => dispatch('close')}
+>
 	{#each MODULATOR_KINDS as info (info.kind)}
 		<button
 			class="item"

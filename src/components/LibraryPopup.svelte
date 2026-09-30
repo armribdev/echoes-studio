@@ -1,6 +1,8 @@
 <script lang="ts">
 	import { onMount, tick } from 'svelte';
 	import { dismissable } from '../frontend/dismiss';
+	import { focusTrap } from '../frontend/focusTrap';
+	import { appInert, portal } from '../frontend/portal';
 	import LibraryBrowser from './LibraryBrowser.svelte';
 	import { libraryStore, libraryPopup, defaultSourceForContext } from '../frontend/library';
 	import { t } from 'svelte-i18n';
@@ -38,8 +40,13 @@
 <div
 	class="library-popup"
 	bind:this={rootEl}
+	use:portal
+	use:appInert
+	use:focusTrap={{ initial: 'first' }}
 	use:dismissable={close}
 	role="dialog"
+	aria-modal="true"
+	tabindex="-1"
 	aria-label={$t('library.aria')}
 	style="left: {adjustedX || popup.anchorX}px; top: {adjustedY ||
 		popup.anchorY}px; width: {POPUP_W}px; height: min({POPUP_H}px, calc(100vh - 24px))"

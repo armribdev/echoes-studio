@@ -2,6 +2,7 @@
 <script lang="ts">
 	import { createEventDispatcher, onMount } from 'svelte';
 	import { dismissable } from '../frontend/dismiss';
+	import { focusTrap } from '../frontend/focusTrap';
 	import { preferences } from '../stores/preferences';
 
 	export let x = 0;
@@ -37,13 +38,16 @@
 <div
 	class="context-menu"
 	bind:this={menuEl}
+	role="menu"
+	tabindex="-1"
+	use:focusTrap={{ initial: 'first' }}
 	use:dismissable={() => dispatch('close')}
 	style="left: {adjustedX}px; top: {adjustedY}px"
 >
 	<div class="menu-header">{pluginName}</div>
 	<div class="separator"></div>
 
-	<button class="item" type="button" disabled={mode !== 'chosen'} on:click={toggleAlwaysIsolated}>
+	<button class="item" role="menuitem" type="button" disabled={mode !== 'chosen'} on:click={toggleAlwaysIsolated}>
 		<span class="check">{alwaysIsolated ? '✓' : ''}</span>
 		<span>Toujours isoler {pluginName}</span>
 	</button>

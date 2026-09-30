@@ -281,7 +281,14 @@
 	{#if hoveredNodeId !== null && snapshot}
 		{@const node = layout.nodes.find((n) => n.id === hoveredNodeId)}
 		{#if node}
-			<div class="tooltip">{node.dto.label}{node.dto.summary ? ` · ${node.dto.summary}` : ''}</div>
+			<div
+				class="tooltip"
+				role="tooltip"
+				tabindex="-1"
+				aria-hidden="true"
+			>
+				{node.dto.label}{node.dto.summary ? ` · ${node.dto.summary}` : ''}
+			</div>
 		{/if}
 	{/if}
 </div>

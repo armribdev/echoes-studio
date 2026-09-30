@@ -10,6 +10,7 @@
 	import { instrumentArtKind } from '../frontend/instrumentArt';
 	import { instrumentDisplayName, plugins } from '../stores/plugins';
 	import { dismissable } from '../frontend/dismiss';
+	import { focusTrap } from '../frontend/focusTrap';
 	import { t } from 'svelte-i18n';
 
 	export let track: Track;
@@ -135,9 +136,10 @@
 		{#if colorOpen}
 			<div
 				class="color-pop"
-				role="listbox"
-				tabindex="0"
+				role="menu"
+				tabindex="-1"
 				aria-label={$t('trackStrip.colors')}
+				use:focusTrap={{ initial: 'first' }}
 				use:dismissable={() => {
 					colorOpen = false;
 				}}
@@ -149,8 +151,7 @@
 						class="color-opt"
 						class:active={swatch === color}
 						style="background: {swatch}"
-						role="option"
-						aria-selected={swatch === color}
+						role="menuitem"
 						aria-label={swatch}
 						on:click|stopPropagation={() => pickColor(swatch)}
 					></button>

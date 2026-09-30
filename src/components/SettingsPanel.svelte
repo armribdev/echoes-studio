@@ -14,6 +14,8 @@
 	import Button from './Button.svelte';
 	import Icon from './Icon.svelte';
 	import { dismissable } from '../frontend/dismiss';
+	import { focusTrap } from '../frontend/focusTrap';
+	import { appInert, portal } from '../frontend/portal';
 	import {
 		listAudioDevices,
 		applyAudioSettings,
@@ -472,12 +474,14 @@
 </script>
 
 {#if $settingsPanelOpen}
-	<div class="overlay">
+	<div class="overlay" use:portal use:appInert>
 		<div
 			class="panel"
 			role="dialog"
 			aria-modal="true"
 			aria-label={$t('settings.aria')}
+			tabindex="-1"
+			use:focusTrap
 			use:dismissable={cancelAndClose}
 		>
 			<!-- ── Header ── -->

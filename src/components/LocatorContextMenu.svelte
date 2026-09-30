@@ -2,6 +2,7 @@
 	import { createEventDispatcher, onMount } from 'svelte';
 	import { t } from 'svelte-i18n';
 	import { dismissable } from '../frontend/dismiss';
+	import { focusTrap } from '../frontend/focusTrap';
 
 	export let x = 0;
 	export let y = 0;
@@ -41,12 +42,15 @@
 <div
 	class="context-menu"
 	bind:this={menuEl}
+	role="menu"
+	tabindex="-1"
+	use:focusTrap={{ initial: 'first' }}
 	use:dismissable={close}
 	style="left: {adjustedX}px; top: {adjustedY}px"
 >
 	{#if mode === 'empty'}
 		<button
-			class="item"
+			class="item" role="menuitem"
 			on:click={() => {
 				dispatch('addMarker');
 				close();
@@ -56,7 +60,7 @@
 			<span class="item-shortcut">M</span>
 		</button>
 		<button
-			class="item"
+			class="item" role="menuitem"
 			on:click={() => {
 				dispatch('addRegion');
 				close();
@@ -72,7 +76,7 @@
 		</div>
 		<div class="separator"></div>
 		<button
-			class="item"
+			class="item" role="menuitem"
 			on:click={() => {
 				dispatch('goTo');
 				close();
@@ -81,7 +85,7 @@
 			<span>{$t('locatorMenu.goHere')}</span>
 		</button>
 		<button
-			class="item"
+			class="item" role="menuitem"
 			on:click={() => {
 				dispatch('rename');
 				close();
@@ -91,7 +95,7 @@
 		</button>
 		{#if kind === 'region'}
 			<button
-				class="item"
+				class="item" role="menuitem"
 				on:click={() => {
 					dispatch('setLoop');
 					close();
@@ -102,7 +106,7 @@
 		{/if}
 		<div class="separator"></div>
 		<button
-			class="item item--danger"
+			class="item item--danger" role="menuitem"
 			on:click={() => {
 				dispatch('delete');
 				close();

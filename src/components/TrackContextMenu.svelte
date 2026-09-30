@@ -2,6 +2,7 @@
 	import { createEventDispatcher, onMount } from 'svelte';
 	import { t } from 'svelte-i18n';
 	import { dismissable } from '../frontend/dismiss';
+	import { focusTrap } from '../frontend/focusTrap';
 
 	export let x = 0;
 	export let y = 0;
@@ -38,6 +39,9 @@
 <div
 	class="context-menu"
 	bind:this={menuEl}
+	role="menu"
+	tabindex="-1"
+	use:focusTrap={{ initial: 'first' }}
 	use:dismissable={close}
 	style="left: {adjustedX}px; top: {adjustedY}px"
 >
@@ -47,6 +51,7 @@
 
 	<button
 		class="item"
+		role="menuitem"
 		on:click={() => {
 			dispatch('addtrack');
 			close();
@@ -72,6 +77,7 @@
 
 	<button
 		class="item"
+		role="menuitem"
 		on:click={() => {
 			dispatch('insertsound');
 			close();
@@ -99,6 +105,7 @@
 
 	<button
 		class="item"
+		role="menuitem"
 		on:click={() => {
 			dispatch('rename');
 			close();
@@ -124,6 +131,7 @@
 
 	<button
 		class="item"
+		role="menuitem"
 		on:click={() => {
 			dispatch('automate');
 			close();
@@ -151,6 +159,7 @@
 
 	<button
 		class="item item--danger"
+		role="menuitem"
 		on:click={() => {
 			dispatch('delete', { trackId });
 			close();

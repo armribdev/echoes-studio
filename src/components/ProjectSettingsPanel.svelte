@@ -29,6 +29,8 @@
 	import Button from './Button.svelte';
 	import Icon from './Icon.svelte';
 	import { dismissable } from '../frontend/dismiss';
+	import { focusTrap } from '../frontend/focusTrap';
+	import { appInert, portal } from '../frontend/portal';
 	import { t } from 'svelte-i18n';
 
 	let draftName = '';
@@ -127,12 +129,14 @@
 </script>
 
 {#if $projectSettingsPanelOpen}
-	<div class="overlay">
+	<div class="overlay" use:portal use:appInert>
 		<div
 			class="panel"
 			role="dialog"
 			aria-modal="true"
 			aria-label={$t('projectSettings.aria')}
+			tabindex="-1"
+			use:focusTrap
 			use:dismissable={cancelAndClose}
 		>
 			<div class="panel-header">

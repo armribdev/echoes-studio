@@ -6,6 +6,8 @@
 	import { t } from 'svelte-i18n';
 	import { preferences } from '../stores/preferences';
 	import { dismissable } from '../frontend/dismiss';
+	import { focusTrap } from '../frontend/focusTrap';
+	import { appInert, portal } from '../frontend/portal';
 
 	interface CrashSuspect {
 		plugin_id: string;
@@ -54,12 +56,14 @@
 </script>
 
 {#if suspect}
-	<div class="backdrop" role="presentation">
+	<div class="backdrop" role="presentation" use:portal use:appInert>
 		<div
 			class="dialog"
 			role="dialog"
 			aria-modal="true"
 			aria-labelledby="crash-suspect-title"
+			tabindex="-1"
+			use:focusTrap={{ initial: 'first' }}
 			use:dismissable={close}
 		>
 			<h2 id="crash-suspect-title">
