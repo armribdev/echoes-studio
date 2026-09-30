@@ -13,6 +13,9 @@
 	export let notes: MidiNote[];
 	export let color: string = '#6c63ff';
 	export let bpm: number = 120;
+	/** Shared pitch bounds for all MIDI clips on the same lane. */
+	export let minPitch: number | undefined = undefined;
+	export let maxPitch: number | undefined = undefined;
 	/** Live preview of a running recording: same look, not editable. */
 	export let recording = false;
 
@@ -36,8 +39,8 @@
 	$: selected = $selection.ids.has(id);
 	$: frame = arrangeClipFrame(start, end, scale, dpr);
 
-	// Re-render whenever notes, frame, bpm, color, or trim offset change.
-	$: if (canvas) scheduleRender(notes, frame.widthPx, bpm, color, selected, offset);
+	// Re-render whenever notes, frame, pitch range, bpm, color, or trim offset change.
+	$: if (canvas) scheduleRender(notes, frame.widthPx, bpm, color, selected, offset, minPitch, maxPitch);
 
 	function scheduleRender(..._deps: unknown[]) {
 		cancelAnimationFrame(rafId);
@@ -74,8 +77,8 @@
 		if (notes.length === 0) return;
 
 		const pitches = notes.map((n) => n.pitch);
-		const minP = Math.max(0, Math.min(...pitches) - 3);
-		const maxP = Math.min(127, Math.max(...pitches) + 3);
+		const minP = minPitch ?? Math.max(0, Math.min(...pitches) - 3);
+		const maxP = maxPitch ?? Math.min(127, Math.max(...pitches) + 3);
 		const pitchRange = maxP - minP || 1;
 
 		const clipDurationBeats = ((end - start) * bpm) / 60;

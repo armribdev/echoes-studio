@@ -9,6 +9,7 @@
 	import { midiRecordingPreview } from '../stores/midiRecording';
 	import { transport } from '../stores/transport';
 	import { buildPreviewClip } from '../frontend/midiRecordingPreview';
+	import { getPreviewPitchRange } from '../frontend/pianoRoll/previewLayout';
 
 	export let trackId: string;
 	export let clips: ClipType[];
@@ -49,6 +50,10 @@
 			? buildPreviewClip($midiRecordingPreview, $transport.position, bpm)
 			: null;
 	$: laneEmpty = displayClips.length === 0 && midiClips.length === 0 && !recordingClip;
+	$: lanePitchRange = getPreviewPitchRange([
+		...midiClips.flatMap((c) => c.notes),
+		...(recordingClip?.notes ?? []),
+	]);
 
 	let hovered = false;
 
@@ -117,6 +122,8 @@
 			{bpm}
 			notes={clip.notes}
 			color={trackColor}
+			minPitch={lanePitchRange.min}
+			maxPitch={lanePitchRange.max}
 			on:midiclip_dragstart={(e) => dispatch('midiclip_dragstart', { ...e.detail, trackIndex, clipId: clip.id })}
 			on:midiclip_resizestart={(e) => dispatch('midiclip_resizestart', { ...e.detail, trackIndex, clipId: clip.id })}
 			on:midiclip_repeatstart={(e) => dispatch('midiclip_repeatstart', { ...e.detail, trackIndex, clipId: clip.id })}
@@ -135,6 +142,8 @@
 			{bpm}
 			notes={recordingClip.notes}
 			color={trackColor}
+			minPitch={lanePitchRange.min}
+			maxPitch={lanePitchRange.max}
 			recording
 		/>
 	{/if}
