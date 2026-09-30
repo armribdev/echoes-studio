@@ -45,7 +45,7 @@ function normPath(p: string): string {
 export function buildClipDisplayItems(
 	clips: Clip[],
 	pendings: PendingImportClip[],
-	trackId: string,
+	trackId: string
 ): ClipDisplayItem[] {
 	const trackPendings = pendings.filter((p) => {
 		if (p.trackId === trackId) return true;
@@ -56,7 +56,7 @@ export function buildClipDisplayItems(
 	});
 
 	const maskedEngineIds = new Set(
-		trackPendings.map((p) => p.engineClipId).filter((id): id is string => !!id),
+		trackPendings.map((p) => p.engineClipId).filter((id): id is string => !!id)
 	);
 
 	const items: ClipDisplayItem[] = [];
@@ -79,7 +79,7 @@ export function buildClipDisplayItems(
 			// Grow UI until settle; engine may already play prefixes (ADR-024).
 			pending: !p.settled,
 			loadProgress: p.settled ? 1 : p.progress,
-			pendingImportId: p.id,
+			pendingImportId: p.id
 		});
 	}
 
@@ -90,7 +90,7 @@ export function buildClipDisplayItems(
 			(p) =>
 				!p.engineClipId &&
 				normPath(p.filePath) === normPath(c.file_path ?? '') &&
-				Math.abs(p.start - c.start) < 0.1,
+				Math.abs(p.start - c.start) < 0.1
 		);
 		if (hiddenByInflightPending) continue;
 
@@ -105,7 +105,7 @@ export function buildClipDisplayItems(
 			peaks_512: c.peaks_512 ?? [],
 			peaks_4096: c.peaks_4096 ?? [],
 			pending: false,
-			loadProgress: 1,
+			loadProgress: 1
 		});
 	}
 

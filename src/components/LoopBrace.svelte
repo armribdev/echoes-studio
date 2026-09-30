@@ -31,7 +31,7 @@
 			kind: drag.kind,
 			originSec: drag.originSec,
 			currentSec: secondsFromClientX(event.clientX),
-			altKey: event.altKey,
+			altKey: event.altKey
 		});
 	}
 
@@ -43,7 +43,6 @@
 	}
 </script>
 
-<!-- svelte-ignore a11y-no-static-element-interactions -->
 <div class="loop" style="left: {startPx}px; width: {Math.max(0, endPx - startPx)}px">
 	<div class="span"></div>
 	<div class="edge edge--start" on:pointerdown={(e) => onPointerDown(e, 'start')}></div>

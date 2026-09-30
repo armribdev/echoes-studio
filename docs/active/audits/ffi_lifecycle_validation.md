@@ -31,13 +31,13 @@ and **TDR Nova** (VST3) on Windows 11.
 
 ## Mandatory tests
 
-| | Test | CLAP (Surge XT Effects) | VST3 (TDR Nova) |
-|--|------|--------------------------|------------------|
-| T1 | Activation `Created → activate → start_processing` | ✅ `active=true` | ✅ `active=true` (after F1 fix) |
-| T2 | Real audio block through `process` vtable | ✅ output finite | ✅ output finite |
-| T3 | Sample-rate reinit (48k→44.1k) | ✅ reactivated | ✅ reactivated |
-| T4 | Block-size change (512→256) | ✅ re-init | ✅ re-init |
-| T5 | Teardown / no leak | ✅ `strong_count=1`, `Destroyed`, real FFI release, no crash | ✅ `strong_count=1`, `Destroyed`, real FFI release, no crash |
+|     | Test                                               | CLAP (Surge XT Effects)                                      | VST3 (TDR Nova)                                              |
+| --- | -------------------------------------------------- | ------------------------------------------------------------ | ------------------------------------------------------------ |
+| T1  | Activation `Created → activate → start_processing` | ✅ `active=true`                                             | ✅ `active=true` (after F1 fix)                              |
+| T2  | Real audio block through `process` vtable          | ✅ output finite                                             | ✅ output finite                                             |
+| T3  | Sample-rate reinit (48k→44.1k)                     | ✅ reactivated                                               | ✅ reactivated                                               |
+| T4  | Block-size change (512→256)                        | ✅ re-init                                                   | ✅ re-init                                                   |
+| T5  | Teardown / no leak                                 | ✅ `strong_count=1`, `Destroyed`, real FFI release, no crash | ✅ `strong_count=1`, `Destroyed`, real FFI release, no crash |
 
 ### CLAP — real cycle log
 
@@ -92,7 +92,7 @@ pub const IID_ICOMPONENT: Tuid =
   the plugin's COM order) and passed straight back to `createInstance`, unchanged.
 - The **interface IID** is the engine's own constant. In big-endian order the
   plugin's class does not recognise it → `E_NOINTERFACE`. The harness probe calls
-  the *same* class with the COM-swapped IID and gets `S_OK`, isolating byte order
+  the _same_ class with the COM-swapped IID and gets `S_OK`, isolating byte order
   as the sole cause.
 
 ### Why this was never caught
@@ -139,14 +139,14 @@ pub const IID_IAUDIO_PROCESSOR: Tuid = interface_iid([/* big-endian literal */])
 
 ## Divergences: bypass/mock path vs. real FFI
 
-| Aspect | Existing suite (internal/pass-through) | Real FFI (this harness) |
-|--------|----------------------------------------|--------------------------|
-| Boundary crossed | none (`PassThroughDevice`) | real `LoadLibrary` + factory + `process` vtable |
-| Activation | not exercised | CLAP + VST3: real activate/start_processing ✅ |
-| SR / block re-init | not exercised | CLAP + VST3: real deactivate→reactivate ✅ |
-| Teardown | `Drop` is a no-op for `Internal` | CLAP + VST3: real release sequence ✅ |
-| VST3 instantiation | never tested | was broken (F1) — found, root-caused, **fixed**, now verified |
-| Bridge passthrough test | synthetic CLAP vtable (no DLL) | real `.clap` loaded from disk |
+| Aspect                  | Existing suite (internal/pass-through) | Real FFI (this harness)                                       |
+| ----------------------- | -------------------------------------- | ------------------------------------------------------------- |
+| Boundary crossed        | none (`PassThroughDevice`)             | real `LoadLibrary` + factory + `process` vtable               |
+| Activation              | not exercised                          | CLAP + VST3: real activate/start_processing ✅                |
+| SR / block re-init      | not exercised                          | CLAP + VST3: real deactivate→reactivate ✅                    |
+| Teardown                | `Drop` is a no-op for `Internal`       | CLAP + VST3: real release sequence ✅                         |
+| VST3 instantiation      | never tested                           | was broken (F1) — found, root-caused, **fixed**, now verified |
+| Bridge passthrough test | synthetic CLAP vtable (no DLL)         | real `.clap` loaded from disk                                 |
 
 ## Risks detected
 
@@ -158,9 +158,9 @@ pub const IID_IAUDIO_PROCESSOR: Tuid = interface_iid([/* big-endian literal */])
 2. **R2 — teardown "no leak" is structural, not absolute.** T5 proves the last
    `Arc` is the only remaining reference and that `PluginInstance::Drop` runs the
    real release sequence without crash/hang. It does **not** use an OS handle /
-   heap leak detector — a plugin that leaks *internally* on `destroy` would not be
+   heap leak detector — a plugin that leaks _internally_ on `destroy` would not be
    caught here. Adding a handle-count assertion is future work.
-3. **R3 — instrument-vs-effect coverage.** CLAP was validated with an *effect*
+3. **R3 — instrument-vs-effect coverage.** CLAP was validated with an _effect_
    (clean audio-in→out). The instrument path (`ClapInstrument`, MIDI-driven) is
    activated identically but its note/voice lifecycle is not covered by this
    harness.

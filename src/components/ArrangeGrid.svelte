@@ -41,11 +41,11 @@
 			dpr,
 			numerator,
 			totalBeats,
-			gridBeats,
+			gridBeats
 		});
 	}
 
-	$: widthPx, heightPx, pxPerBeat, numerator, totalBeats, gridBeats, canvas, redraw();
+	$: (widthPx, heightPx, pxPerBeat, numerator, totalBeats, gridBeats, canvas, redraw());
 
 	onMount(redraw);
 </script>

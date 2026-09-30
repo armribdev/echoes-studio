@@ -6,14 +6,7 @@
 	export let title = '';
 </script>
 
-<button
-	{type}
-	{disabled}
-	{title}
-	class="btn btn--{variant}"
-	class:btn--compact={compact}
-	on:click
->
+<button {type} {disabled} {title} class="btn btn--{variant}" class:btn--compact={compact} on:click>
 	<slot />
 </button>
 
@@ -30,7 +23,10 @@
 		font-size: 12px;
 		font-family: inherit;
 		cursor: pointer;
-		transition: background 0.1s, color 0.1s, opacity 0.1s;
+		transition:
+			background 0.1s,
+			color 0.1s,
+			opacity 0.1s;
 		white-space: nowrap;
 
 		&:disabled {
@@ -46,8 +42,12 @@
 			font-weight: 600;
 			padding: 0 16px;
 
-			&:not(:disabled):hover { background: $accent-hover; }
-			&:not(:disabled):active { opacity: 0.85; }
+			&:not(:disabled):hover {
+				background: $accent-hover;
+			}
+			&:not(:disabled):active {
+				opacity: 0.85;
+			}
 		}
 
 		// ── Secondary ───────────────────────────────────────────────────────────
@@ -72,7 +72,9 @@
 			padding: 0;
 			height: auto;
 
-			&:not(:disabled):hover { color: rgba(247, 247, 249, 0.7); }
+			&:not(:disabled):hover {
+				color: rgba(247, 247, 249, 0.7);
+			}
 		}
 
 		// ── Compact modifier ────────────────────────────────────────────────────

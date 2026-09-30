@@ -27,13 +27,7 @@ export interface ComputeRulerTicksOptions {
 
 /** Calcule les ticks de la règle temporelle (même logique que l'arrangement). */
 export function computeRulerTicks(options: ComputeRulerTicksOptions): RulerTicks {
-	const {
-		pxPerBeat,
-		numerator,
-		scrollPx = 0,
-		viewportWidthPx,
-		maxBars = 2000,
-	} = options;
+	const { pxPerBeat, numerator, scrollPx = 0, viewportWidthPx, maxBars = 2000 } = options;
 
 	const pxPerBar = numerator * pxPerBeat;
 	const viewMin = scrollPx - 40;
@@ -49,8 +43,7 @@ export function computeRulerTicks(options: ComputeRulerTicksOptions): RulerTicks
 
 	const showBeatLabels = barLabelEvery === 1 && pxPerBeat >= 32;
 
-	const inView = (x: number) =>
-		viewportWidthPx == null || (x >= viewMin && x <= viewMax);
+	const inView = (x: number) => viewportWidthPx == null || (x >= viewMin && x <= viewMax);
 
 	for (let bar = 1; bar <= maxBars; bar++) {
 		const barBeat = (bar - 1) * numerator;

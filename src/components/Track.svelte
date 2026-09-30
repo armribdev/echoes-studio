@@ -34,8 +34,18 @@
 		};
 		clipcontextmenu: { id: string; trackIndex: number; x: number; y: number };
 		pendingpainted: { pendingImportId: string };
-		midiclip_dragstart: { offsetPx: number; trackIndex: number; clipId: string; duplicate: boolean };
-		midiclip_resizestart: { edge: 'left' | 'right'; clientX: number; trackIndex: number; clipId: string };
+		midiclip_dragstart: {
+			offsetPx: number;
+			trackIndex: number;
+			clipId: string;
+			duplicate: boolean;
+		};
+		midiclip_resizestart: {
+			edge: 'left' | 'right';
+			clientX: number;
+			trackIndex: number;
+			clipId: string;
+		};
 		midiclip_repeatstart: { clientX: number; trackIndex: number; clipId: string };
 		midiclip_contextmenu: { id: string; trackIndex: number; x: number; y: number };
 		midiclip_dblclick: { id: string; trackIndex: number };
@@ -52,7 +62,7 @@
 	$: laneEmpty = displayClips.length === 0 && midiClips.length === 0 && !recordingClip;
 	$: lanePitchRange = getPreviewPitchRange([
 		...midiClips.flatMap((c) => c.notes),
-		...(recordingClip?.notes ?? []),
+		...(recordingClip?.notes ?? [])
 	]);
 
 	let hovered = false;
@@ -72,7 +82,7 @@
 		dispatch('insertsound', {
 			trackIndex,
 			clientX: e.clientX,
-			clientY: e.clientY,
+			clientY: e.clientY
 		});
 	}
 </script>
@@ -104,7 +114,7 @@
 					...e.detail,
 					trackIndex,
 					clipId: item.id,
-					pendingImportId: item.pendingImportId,
+					pendingImportId: item.pendingImportId
 				})}
 			on:clipresizestart={(e) =>
 				dispatch('clipresizestart', { ...e.detail, trackIndex, clipId: item.id })}
@@ -124,9 +134,12 @@
 			color={trackColor}
 			minPitch={lanePitchRange.min}
 			maxPitch={lanePitchRange.max}
-			on:midiclip_dragstart={(e) => dispatch('midiclip_dragstart', { ...e.detail, trackIndex, clipId: clip.id })}
-			on:midiclip_resizestart={(e) => dispatch('midiclip_resizestart', { ...e.detail, trackIndex, clipId: clip.id })}
-			on:midiclip_repeatstart={(e) => dispatch('midiclip_repeatstart', { ...e.detail, trackIndex, clipId: clip.id })}
+			on:midiclip_dragstart={(e) =>
+				dispatch('midiclip_dragstart', { ...e.detail, trackIndex, clipId: clip.id })}
+			on:midiclip_resizestart={(e) =>
+				dispatch('midiclip_resizestart', { ...e.detail, trackIndex, clipId: clip.id })}
+			on:midiclip_repeatstart={(e) =>
+				dispatch('midiclip_repeatstart', { ...e.detail, trackIndex, clipId: clip.id })}
 			on:midiclip_contextmenu={(e) => dispatch('midiclip_contextmenu', { ...e.detail, trackIndex })}
 			on:midiclip_dblclick={(e) => dispatch('midiclip_dblclick', { ...e.detail, trackIndex })}
 			on:midiclip_activate={(e) => dispatch('midiclip_activate', { ...e.detail, trackIndex })}
@@ -188,7 +201,11 @@
 		line-height: 1;
 		cursor: pointer;
 		opacity: 0;
-		transition: opacity 0.12s, color 0.12s, border-color 0.12s, background 0.12s;
+		transition:
+			opacity 0.12s,
+			color 0.12s,
+			border-color 0.12s,
+			background 0.12s;
 
 		&--empty {
 			opacity: 0.55;

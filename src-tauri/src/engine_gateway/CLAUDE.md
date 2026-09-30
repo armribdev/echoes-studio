@@ -5,6 +5,7 @@ mutates `AppProject`, triggers recompiles, and emits events. This is where
 UI/engine separation is enforced.
 
 ## Local hard constraints
+
 - Rust owns all state; the frontend is a **reactive mirror** (ADR-005). Never
   expose mutable engine state to the UI; reply with derived snapshots/events.
 - Event-sourcing scope is bounded — not every mutation is an event (ADR-002).
@@ -16,10 +17,12 @@ UI/engine separation is enforced.
   `.claude/memory/engine_quirks.md`.
 
 ## Key files
+
 `api.rs` (Tauri commands) · `commands.rs` (command handling/validation) ·
 `store.rs` (state/event store) · `events.rs` (outbound events).
 
 ## Read before changing
+
 - `docs/active/architecture/state-management.md`
 - `docs/active/threading/threading-model.md`
 - ADRs 002, 005 · then run `.claude/rules/completion_protocol.md`.

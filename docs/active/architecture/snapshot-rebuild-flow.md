@@ -129,17 +129,17 @@ thread (this is the C1 fix from the 2026-05-29 audit).
 
 ## Performance Characteristics
 
-| Operation                       | Cost                            |
-|---------------------------------|---------------------------------|
-| `AudioGraph::from_project`      | O(tracks) — fast                |
-| `GraphCompiler::compile`        | O(nodes + edges) — fast         |
-| Node instantiation              | O(nodes) — may involve alloc    |
-| `node.prepare()`                | O(1) per node — may alloc       |
-| `GraphScheduler::new()`         | O(nodes × ports × block_size)   |
-| `RuntimeSnapshot::enqueue()`    | O(1) atomic swap + ring drain   |
-| `try_swap()` in audio callback  | O(1) atomic swap + ring push    |
-| `process_block()`               | O(nodes × frames × channels)   |
+| Operation                      | Cost                          |
+| ------------------------------ | ----------------------------- |
+| `AudioGraph::from_project`     | O(tracks) — fast              |
+| `GraphCompiler::compile`       | O(nodes + edges) — fast       |
+| Node instantiation             | O(nodes) — may involve alloc  |
+| `node.prepare()`               | O(1) per node — may alloc     |
+| `GraphScheduler::new()`        | O(nodes × ports × block_size) |
+| `RuntimeSnapshot::enqueue()`   | O(1) atomic swap + ring drain |
+| `try_swap()` in audio callback | O(1) atomic swap + ring push  |
+| `process_block()`              | O(nodes × frames × channels)  |
 
 The dominant cost is `GraphScheduler::new()` which pre-allocates all audio
-buffers. For a project with 16 tracks, 2 channels, 512 frames: 
+buffers. For a project with 16 tracks, 2 channels, 512 frames:
 `16 nodes × 3 ports × 512 frames × 4 bytes ≈ 100 KB` — negligible.

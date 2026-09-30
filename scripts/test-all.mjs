@@ -51,13 +51,48 @@ function run(cmd, args, cwd) {
 
 // Step table — each entry is fully self-contained.
 const steps = [
-	{ id: 'check', label: 'TypeScript + Svelte check', cmd: 'pnpm', args: ['run', 'check'], cwd: ROOT, group: 'js' },
-	{ id: 'lint', label: 'Prettier + ESLint', cmd: 'pnpm', args: ['run', 'lint'], cwd: ROOT, group: 'js' },
-	{ id: 'fmt', label: 'cargo fmt --check', cmd: 'cargo', args: ['fmt', '--', '--check'], cwd: SRC_TAURI, group: 'rust' },
+	{
+		id: 'check',
+		label: 'TypeScript + Svelte check',
+		cmd: 'pnpm',
+		args: ['run', 'check'],
+		cwd: ROOT,
+		group: 'js'
+	},
+	{
+		id: 'lint',
+		label: 'Prettier + ESLint',
+		cmd: 'pnpm',
+		args: ['run', 'lint'],
+		cwd: ROOT,
+		group: 'js'
+	},
+	{
+		id: 'fmt',
+		label: 'cargo fmt --check',
+		cmd: 'cargo',
+		args: ['fmt', '--', '--check'],
+		cwd: SRC_TAURI,
+		group: 'rust'
+	},
 	// `--workspace`: src-tauri is now a workspace root (ADR-015 6c-ii); lint and
 	// test the sibling crates (plugin_bridge, plugin_host_bridge) too.
-	{ id: 'clippy', label: 'cargo clippy', cmd: 'cargo', args: ['clippy', '--workspace', '--', '-D', 'warnings'], cwd: SRC_TAURI, group: 'rust' },
-	{ id: 'test', label: 'cargo test', cmd: 'cargo', args: ['test', '--workspace'], cwd: SRC_TAURI, group: 'rust' }
+	{
+		id: 'clippy',
+		label: 'cargo clippy',
+		cmd: 'cargo',
+		args: ['clippy', '--workspace', '--', '-D', 'warnings'],
+		cwd: SRC_TAURI,
+		group: 'rust'
+	},
+	{
+		id: 'test',
+		label: 'cargo test',
+		cmd: 'cargo',
+		args: ['test', '--workspace'],
+		cwd: SRC_TAURI,
+		group: 'rust'
+	}
 ];
 
 const results = [];
@@ -67,7 +102,9 @@ for (const step of steps) {
 	if (step.group === 'js' && skipJs) continue;
 
 	console.log(`\n${C.bold}${C.cyan}▶ ${step.label}${C.reset}`);
-	console.log(`${C.dim}${step.cmd} ${step.args.join(' ')} (in ${step.cwd === ROOT ? '.' : 'src-tauri/'})${C.reset}`);
+	console.log(
+		`${C.dim}${step.cmd} ${step.args.join(' ')} (in ${step.cwd === ROOT ? '.' : 'src-tauri/'})${C.reset}`
+	);
 	const code = await run(step.cmd, step.args, step.cwd);
 	results.push({ ...step, code });
 }

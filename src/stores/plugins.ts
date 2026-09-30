@@ -13,10 +13,38 @@ export interface PluginInfo {
 
 /** Built-in insert effects shown alongside scanned plugins in the effect picker. */
 export const BUILTIN_EFFECT_PLUGINS: PluginInfo[] = [
-	{ id: 'eq', name: 'EQ 3-bandes', vendor: 'Echoes Studio', format: 'Internal', categories: ['EQ'], is_instrument: false },
-	{ id: 'compressor', name: 'Compresseur', vendor: 'Echoes Studio', format: 'Internal', categories: ['Dynamics'], is_instrument: false },
-	{ id: 'reverb', name: 'Réverb', vendor: 'Echoes Studio', format: 'Internal', categories: ['Reverb'], is_instrument: false },
-	{ id: 'delay', name: 'Délai', vendor: 'Echoes Studio', format: 'Internal', categories: ['Delay'], is_instrument: false },
+	{
+		id: 'eq',
+		name: 'EQ 3-bandes',
+		vendor: 'Echoes Studio',
+		format: 'Internal',
+		categories: ['EQ'],
+		is_instrument: false
+	},
+	{
+		id: 'compressor',
+		name: 'Compresseur',
+		vendor: 'Echoes Studio',
+		format: 'Internal',
+		categories: ['Dynamics'],
+		is_instrument: false
+	},
+	{
+		id: 'reverb',
+		name: 'Réverb',
+		vendor: 'Echoes Studio',
+		format: 'Internal',
+		categories: ['Reverb'],
+		is_instrument: false
+	},
+	{
+		id: 'delay',
+		name: 'Délai',
+		vendor: 'Echoes Studio',
+		format: 'Internal',
+		categories: ['Delay'],
+		is_instrument: false
+	}
 ];
 
 /** Picker entry for the built-in synth, which a track plays when its `instrument` is null. */
@@ -26,7 +54,7 @@ export const BUILTIN_INSTRUMENT_PLUGIN: PluginInfo = {
 	vendor: 'Echoes Studio',
 	format: 'Internal',
 	categories: ['Synth'],
-	is_instrument: true,
+	is_instrument: true
 };
 
 /** The engine's `instrument` id for a picked plugin (`null` = built-in PolySynth). */
@@ -91,7 +119,7 @@ export const UNAVAILABLE_REASON_LABEL: Record<UnavailableReason, string> = {
 	not_installed: 'Introuvable',
 	unsupported_format: 'Format non pris en charge',
 	load_failed: 'Échec du chargement',
-	crashed: 'Planté',
+	crashed: 'Planté'
 };
 
 /** Plugins the engine could not load, keyed by instance key. */
@@ -126,7 +154,10 @@ export function pluginDisplayName(pluginId: string): string {
 }
 
 /** Name of a track's plugin instrument, or null for the built-in PolySynth. */
-export function instrumentDisplayName(list: PluginInfo[], instrument: string | null | undefined): string | null {
+export function instrumentDisplayName(
+	list: PluginInfo[],
+	instrument: string | null | undefined
+): string | null {
 	if (!instrument) return null;
 	return list.find((p) => p.id === instrument)?.name ?? pluginDisplayName(instrument);
 }

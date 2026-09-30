@@ -1,14 +1,14 @@
 {
-  "version": "0.2.0",
-  "configurations": [
-    {
-      // F5 → lance `pnpm tauri:dev` dans un terminal intégré.
-      // node-terminal est intégré à VS Code (pas d'extension requise).
-      "type": "node-terminal",
-      "request": "launch",
-      "name": "Echoes Studio — dev",
-      "command": "pnpm tauri:dev",
-      "cwd": "${workspaceFolder}"
-    }
-  ]
+	"version": "0.2.0",
+	"configurations": [
+		{
+			// F5 → lance `pnpm tauri:dev` dans un terminal intégré.
+			// node-terminal est intégré à VS Code (pas d'extension requise).
+			"type": "node-terminal",
+			"request": "launch",
+			"name": "Echoes Studio — dev",
+			"command": "pnpm tauri:dev",
+			"cwd": "${workspaceFolder}"
+		}
+	]
 }

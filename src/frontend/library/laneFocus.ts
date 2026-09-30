@@ -1,10 +1,15 @@
 import type { LibraryAssetKind, LibraryOpenContext, LibrarySourceId, LaneFocus } from './types';
 import { isAudioLibraryKind, isMidiLibraryKind } from './types';
 
-export function laneFocusForTrack(track: {
-	clips?: unknown[];
-	midi_clips?: unknown[];
-} | null | undefined): LaneFocus {
+export function laneFocusForTrack(
+	track:
+		| {
+				clips?: unknown[];
+				midi_clips?: unknown[];
+		  }
+		| null
+		| undefined
+): LaneFocus {
 	if (!track) return 'neutral';
 	const hasAudio = (track.clips?.length ?? 0) > 0;
 	const hasMidi = (track.midi_clips?.length ?? 0) > 0;

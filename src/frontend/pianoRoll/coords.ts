@@ -15,7 +15,7 @@ export function pitchToYEdit(pitch: number): number {
 export function pitchToYPreview(
 	pitch: number,
 	previewPitchMax: number,
-	previewRowH: number,
+	previewRowH: number
 ): number {
 	return (previewPitchMax - pitch) * previewRowH;
 }
@@ -28,14 +28,8 @@ export function pitchFromGridY(rawY: number, rowH: number): number {
 	return TOTAL_PITCHES - 1 - Math.floor(rawY / rowH);
 }
 
-export function hitTestNote(
-	notes: MidiNote[],
-	beat: number,
-	pitch: number,
-): MidiNote | undefined {
-	return notes.find(
-		(n) => n.pitch === pitch && beat >= n.start && beat < n.start + n.duration,
-	);
+export function hitTestNote(notes: MidiNote[], beat: number, pitch: number): MidiNote | undefined {
+	return notes.find((n) => n.pitch === pitch && beat >= n.start && beat < n.start + n.duration);
 }
 
 export function isResizeHandle(note: MidiNote, beatX: number, zoom: number): boolean {
@@ -56,7 +50,7 @@ export function visibleBeatsForEdit(
 	notes: MidiNote[],
 	clipDurationBeats: number,
 	margin = 8,
-	minBeats = 16,
+	minBeats = 16
 ): number {
 	return Math.max(minBeats, contentEndBeats(notes, clipDurationBeats) + margin);
 }

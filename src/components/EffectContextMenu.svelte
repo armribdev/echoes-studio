@@ -65,7 +65,9 @@
 		border: 1px solid $border-color;
 		border-radius: $radius-lg;
 		padding: 4px;
-		box-shadow: 0 8px 32px rgba(0, 0, 0, 0.55), 0 2px 8px rgba(0, 0, 0, 0.3);
+		box-shadow:
+			0 8px 32px rgba(0, 0, 0, 0.55),
+			0 2px 8px rgba(0, 0, 0, 0.3);
 		user-select: none;
 	}
 
@@ -104,8 +106,14 @@
 		border-radius: $radius-sm;
 		cursor: pointer;
 
-		&:hover:not(:disabled) { background: rgba(21, 113, 255, 0.18); color: $text-color; }
-		&:disabled { cursor: default; opacity: 0.45; }
+		&:hover:not(:disabled) {
+			background: rgba(21, 113, 255, 0.18);
+			color: $text-color;
+		}
+		&:disabled {
+			cursor: default;
+			opacity: 0.45;
+		}
 	}
 
 	.check {

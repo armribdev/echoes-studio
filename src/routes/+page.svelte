@@ -24,7 +24,11 @@
 	import GraphView from '../components/GraphView.svelte';
 	import { settingsPanelOpen, preferences } from '../stores/preferences';
 	import { setPluginIsolation } from '../lib/audioBackend';
-	import { applyMidiPreferences, listMidiInputDevices, MIDI_DEVICES_EVENT } from '../lib/midiBackend';
+	import {
+		applyMidiPreferences,
+		listMidiInputDevices,
+		MIDI_DEVICES_EVENT
+	} from '../lib/midiBackend';
 	import type { MidiInputDeviceInfo } from '../lib/midiBackend';
 	import { midiDeviceList } from '../stores/midiDevices';
 	import { connectMidiRecording } from '../frontend/midiRecording';
@@ -109,7 +113,7 @@
 			}),
 			listen('open-project-settings', () => {
 				projectSettingsPanelOpen.set(true);
-			}),
+			})
 		]);
 
 		function handleGlobalKey(e: KeyboardEvent) {
@@ -153,24 +157,24 @@
   The value is not used here directly — components that need it import it.
 -->
 {#if $engineProject !== undefined}
-<div class="app">
-	<MenuBar />
-	<div class="workspace">
-		<div class="center-area">
-			<LeftPanel />
-			{#if $viewMode.main === 'arrange'}
-				<MainPanel />
-			{:else}
-				<GraphView />
-			{/if}
-			<RightPanel />
+	<div class="app">
+		<MenuBar />
+		<div class="workspace">
+			<div class="center-area">
+				<LeftPanel />
+				{#if $viewMode.main === 'arrange'}
+					<MainPanel />
+				{:else}
+					<GraphView />
+				{/if}
+				<RightPanel />
+			</div>
+			<BottomPanel />
 		</div>
-		<BottomPanel />
+		<StatusBar />
+		<SettingsPanel />
+		<ProjectSettingsPanel />
 	</div>
-	<StatusBar />
-	<SettingsPanel />
-	<ProjectSettingsPanel />
-</div>
 {/if}
 <MissingPluginsDialog />
 <CrashSuspectDialog />

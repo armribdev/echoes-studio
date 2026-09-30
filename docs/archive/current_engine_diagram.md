@@ -85,7 +85,7 @@ AppProject
             └ mod_routes: Vec<ProjectModulationRoute> ◄── modulator → target
 ```
 
-**Constatation structurelle clé** : un `AppTrack` est *soit* audio (`clips` non vides), *soit* MIDI (`midi_clips` non vides). La distinction est faite **au moment de la construction du graphe** (cf. §2) :
+**Constatation structurelle clé** : un `AppTrack` est _soit_ audio (`clips` non vides), _soit_ MIDI (`midi_clips` non vides). La distinction est faite **au moment de la construction du graphe** (cf. §2) :
 
 ```rust
 // audio_graph/graph.rs
@@ -102,13 +102,13 @@ Il **n'existe pas** de track « hybride » MIDI+audio, ni de track sans clips ut
 
 `EffectParams` (enum tagué `kind`) :
 
-| Variant       | Implémenté DSP | Source                                        |
-|---------------|----------------|-----------------------------------------------|
-| `Eq`          | ✅             | `nodes/eq.rs` (3-band, biquads cookbook RBJ, oversampling 2×) |
-| `Compressor`  | ✅             | `nodes/compressor.rs` (oversampling 2×)       |
-| `Reverb`      | ✅             | `nodes/reverb.rs` (Freeverb-like)             |
-| `Delay`       | ✅             | `nodes/delay.rs` (ping-pong supporté)         |
-| `Plugin`      | 🟡 partiel     | `nodes/…` non dédié — instancié par `PluginHost` (VST3/CLAP), traité comme `Box<dyn AudioNode>` 2 in / 2 out |
+| Variant      | Implémenté DSP | Source                                                                                                       |
+| ------------ | -------------- | ------------------------------------------------------------------------------------------------------------ |
+| `Eq`         | ✅             | `nodes/eq.rs` (3-band, biquads cookbook RBJ, oversampling 2×)                                                |
+| `Compressor` | ✅             | `nodes/compressor.rs` (oversampling 2×)                                                                      |
+| `Reverb`     | ✅             | `nodes/reverb.rs` (Freeverb-like)                                                                            |
+| `Delay`      | ✅             | `nodes/delay.rs` (ping-pong supporté)                                                                        |
+| `Plugin`     | 🟡 partiel     | `nodes/…` non dédié — instancié par `PluginHost` (VST3/CLAP), traité comme `Box<dyn AudioNode>` 2 in / 2 out |
 
 ### Modulation
 
@@ -123,6 +123,7 @@ pub enum ModulatorParams {
 L'enum `ModulatorKind` côté `audio_graph/modulation.rs` énumère `Lfo | Envelope | Macro | AudioRate`, mais seul `Lfo` est buildé. `Envelope`, `Macro`, `AudioRate` sont des stubs silencieux.
 
 `ProjectModulationRoute` cible :
+
 - `ModulationTargetRef::TrackGain { track_id }`
 - `ModulationTargetRef::EffectParam { track_id, effect_id, param }`
 
@@ -163,28 +164,29 @@ AppProject ──(AudioGraph::from_project)──► AudioGraph (DAG)
 
 `audio_graph/nodes/` :
 
-| Node                | Rôle                                                  | I/O ports                  |
-|---------------------|-------------------------------------------------------|----------------------------|
-| `TrackNode`         | Lit les clips audio d'une track (resample linéaire)   | 0 in / 1 out               |
-| `TrackGainNode`     | volume × mute × solo × any_solo (lecture atomique)    | 1 in / 1 out               |
-| `GainNode`          | Gain générique modulable                              | 1 in / 1 out               |
-| `PanNode`           | Pan equal-power                                       | 1 in / 1 out               |
-| `BusNode`           | Sommation                                             | N in / 1 out               |
-| `MasterNode`        | Somme finale + soft-clip optionnel (tanh, OS 2×)      | N in / 1 out (terminal)    |
-| `SendNode`          | Tap pass-through avec gain send                       | 1 in / 1 out (routage Return non implémenté) |
-| `MeterNode`         | Peak metering vers `meter_cells`                      | 1 in / 1 out               |
-| `InstrumentNode`    | Wrap `PolySynth` interne + flux MIDI (snapshot)       | 0 in / 1 out (stéréo)      |
-| `PolySynth`         | Synthé polyphonique interne (8 voix, pan par pitch)   | enfant d'`InstrumentNode`  |
-| `LfoNode`           | LFO (sine/triangle/saw/square), rate via atomique     | 0 in / 1 out (modulation)  |
-| `EqNode`            | 3-band biquads (oversample 2×)                        | 1 in / 1 out               |
-| `CompressorNode`    | Compresseur RMS + lookahead nul (oversample 2×)       | 1 in / 1 out               |
-| `ReverbNode`        | Freeverb-like                                         | 1 in / 1 out               |
-| `DelayNode`         | Stereo delay + ping-pong + feedback                   | 1 in / 1 out               |
-| `Plugin` (NodeKind) | Wrap `Box<dyn AudioNode>` produit par `PluginHost`    | 2 in / 2 out (forcé)       |
+| Node                | Rôle                                                | I/O ports                                    |
+| ------------------- | --------------------------------------------------- | -------------------------------------------- |
+| `TrackNode`         | Lit les clips audio d'une track (resample linéaire) | 0 in / 1 out                                 |
+| `TrackGainNode`     | volume × mute × solo × any_solo (lecture atomique)  | 1 in / 1 out                                 |
+| `GainNode`          | Gain générique modulable                            | 1 in / 1 out                                 |
+| `PanNode`           | Pan equal-power                                     | 1 in / 1 out                                 |
+| `BusNode`           | Sommation                                           | N in / 1 out                                 |
+| `MasterNode`        | Somme finale + soft-clip optionnel (tanh, OS 2×)    | N in / 1 out (terminal)                      |
+| `SendNode`          | Tap pass-through avec gain send                     | 1 in / 1 out (routage Return non implémenté) |
+| `MeterNode`         | Peak metering vers `meter_cells`                    | 1 in / 1 out                                 |
+| `InstrumentNode`    | Wrap `PolySynth` interne + flux MIDI (snapshot)     | 0 in / 1 out (stéréo)                        |
+| `PolySynth`         | Synthé polyphonique interne (8 voix, pan par pitch) | enfant d'`InstrumentNode`                    |
+| `LfoNode`           | LFO (sine/triangle/saw/square), rate via atomique   | 0 in / 1 out (modulation)                    |
+| `EqNode`            | 3-band biquads (oversample 2×)                      | 1 in / 1 out                                 |
+| `CompressorNode`    | Compresseur RMS + lookahead nul (oversample 2×)     | 1 in / 1 out                                 |
+| `ReverbNode`        | Freeverb-like                                       | 1 in / 1 out                                 |
+| `DelayNode`         | Stereo delay + ping-pong + feedback                 | 1 in / 1 out                                 |
+| `Plugin` (NodeKind) | Wrap `Box<dyn AudioNode>` produit par `PluginHost`  | 2 in / 2 out (forcé)                         |
 
 ### Compilation
 
 `GraphCompiler::compile` :
+
 1. Topo-sort (Kahn) ; rejette les cycles (`CompileError::CycleDetected`).
 2. `build_node` instancie chaque processor ; pour `NodeKind::Plugin`, appelle `PluginHost::instantiate` (qui charge la lib VST3/CLAP ou retourne un `PassThroughDevice`).
 3. `prepare()` appelé sur chaque processor (sample_rate, max_block_size).
@@ -195,6 +197,7 @@ AppProject ──(AudioGraph::from_project)──► AudioGraph (DAG)
 ### Ordonnancement
 
 `GraphScheduler::run_levels` :
+
 - Pour chaque niveau de `plan.levels` :
   - Si 1 seul step ou pool absent → exécution inline.
   - Sinon → dispatch sur `WorkerPool` (work-stealing par `AtomicUsize`, barrière Release/Acquire). Le thread audio participe à la pool (rôle worker N+1).
@@ -207,6 +210,7 @@ AppProject ──(AudioGraph::from_project)──► AudioGraph (DAG)
 ### Worker pool
 
 `audio_graph/worker_pool.rs` :
+
 - N threads pré-spawnés et parkés, taille fixée par env `ECHOES_AUDIO_WORKERS` (défaut 0 = séquentiel).
 - Dispatch par niveau ; pas de migration RT-priority sur les workers (ils héritent de la priorité du process).
 - Aucune mesure de coût par step (pas d'EWMA).
@@ -388,15 +392,15 @@ WM_APP_DRAIN (PostMessageW depuis n'importe quel thread)
 
 ### Synchronisation cross-thread — primitives utilisées
 
-| Primitive                                      | Usage                                                    |
-|------------------------------------------------|----------------------------------------------------------|
-| `RuntimeSnapshot { AtomicPtr<GraphScheduler> }`| Swap scheduler vivant ↔ scheduler en attente             |
-| Ring SPSC borné (drop ring)                    | Pousse l'ancien scheduler du thread audio vers cmd thread pour drop hors-RT |
-| `LiveParams` : `Arc<Mutex<HashMap<…, Arc<…>>>>`| Côté cmd ; le `HashMap` est protégé Mutex                |
-| `Arc<AtomicU32 / AtomicBool / AtomicF32>`      | Cellules par-paramètre lues lock-free par audio thread   |
-| `Transport` : atomiques partagés (`SharedTransport`) | Transport (play/pause/seek/bpm) entre cmd et audio |
-| `WorkerPool { AtomicUsize next_idx, AtomicBool workers_done }` | Work-stealing par niveau          |
-| `ClapHostShared { plugin: AtomicPtr<ClapPlugin>, host_hwnd: AtomicPtr<c_void> }` | Coord GUI ↔ tick |
+| Primitive                                                                        | Usage                                                                       |
+| -------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| `RuntimeSnapshot { AtomicPtr<GraphScheduler> }`                                  | Swap scheduler vivant ↔ scheduler en attente                                |
+| Ring SPSC borné (drop ring)                                                      | Pousse l'ancien scheduler du thread audio vers cmd thread pour drop hors-RT |
+| `LiveParams` : `Arc<Mutex<HashMap<…, Arc<…>>>>`                                  | Côté cmd ; le `HashMap` est protégé Mutex                                   |
+| `Arc<AtomicU32 / AtomicBool / AtomicF32>`                                        | Cellules par-paramètre lues lock-free par audio thread                      |
+| `Transport` : atomiques partagés (`SharedTransport`)                             | Transport (play/pause/seek/bpm) entre cmd et audio                          |
+| `WorkerPool { AtomicUsize next_idx, AtomicBool workers_done }`                   | Work-stealing par niveau                                                    |
+| `ClapHostShared { plugin: AtomicPtr<ClapPlugin>, host_hwnd: AtomicPtr<c_void> }` | Coord GUI ↔ tick                                                            |
 
 ### Invariants temps-réel respectés (post-fix C1/C2)
 
@@ -614,6 +618,7 @@ process_one_step(step) :
 ### Export offline
 
 `audio_engine::offline::render_project_offline` :
+
 - Compile un `GraphScheduler` éphémère via le **même** `AudioGraphCompiler::compile_scheduler` que la live.
 - Pas d'interaction avec le stream CPAL.
 - Tourne sur le thread commande → peut allouer librement.
@@ -623,58 +628,58 @@ process_one_step(step) :
 
 ## 11. Synthèse — ce qui existe vs ce qui n'existe pas
 
-| Sous-système                             | État                                                                |
-|------------------------------------------|---------------------------------------------------------------------|
-| DAG audio (nodes + edges, Kahn)          | ✅ implémenté                                                       |
-| ExecutionPlan immuable                   | ✅                                                                  |
-| Snapshot atomique (AtomicPtr + drop ring)| ✅                                                                  |
-| LiveParams (atomics) pour track basics   | ✅ (volume, pan, mute, solo, any_solo, mod rate/depth, soft clip)   |
-| Worker pool parallèle                    | ✅ (off par défaut, `ECHOES_AUDIO_WORKERS`)                         |
-| PDC (delay rings par port)               | ✅ pour nodes internes — ❌ ignoré par plugins (latence toujours 0) |
-| Modulation block-rate (LFO)              | ✅                                                                  |
-| Envelope / Macro / Random / Follower     | ❌ (énumérés, non implémentés)                                      |
-| FTZ/DAZ + anti-denormal                  | ✅                                                                  |
-| MIDI : clips, snapshot, PolySynth interne| ✅                                                                  |
-| MIDI live input                          | ❌ (R3 backlog)                                                     |
-| MIDI vers plugins externes               | ❌ (`InstrumentNode` hardcode `PolySynth`)                          |
-| Note FX (transpose, arp, chord, …)       | ❌                                                                  |
-| Plugins VST3/CLAP : chargement audio     | 🟡 (instanciés, traités, mais opaques)                              |
-| Plugins : paramètres UI → DSP            | ❌ (`input_param_changes = null`)                                   |
-| Plugins : énumération des paramètres     | ❌ (`ParameterMap::new()` vide)                                     |
-| Plugins : save / load state              | ❌ (no-op)                                                          |
-| Plugins : ports introspectés (mono/sur)  | ❌ (forcé 2/2)                                                      |
-| Plugins : sidechain                      | ❌                                                                  |
-| Plugins : latence rapportée              | ❌                                                                  |
-| Plugins : instance unique audio + GUI    | ❌ (deux instances séparées, A1)                                    |
-| Plugins : sandboxing process             | ❌ (`catch_unwind` Rust seulement, pas SEH C++)                     |
-| Returns / Sends routés                   | 🟡 (`SendNode` existe, routage Return non câblé)                    |
-| Containers (Chain, Layer, Split)         | ❌                                                                  |
-| Automation (lanes temporelles)           | ❌                                                                  |
-| Export offline via moteur unifié         | ✅                                                                  |
-| Détection XRun + télémétrie              | ❌ (`OutputCallbackInfo` ignoré)                                    |
+| Sous-système                              | État                                                                |
+| ----------------------------------------- | ------------------------------------------------------------------- |
+| DAG audio (nodes + edges, Kahn)           | ✅ implémenté                                                       |
+| ExecutionPlan immuable                    | ✅                                                                  |
+| Snapshot atomique (AtomicPtr + drop ring) | ✅                                                                  |
+| LiveParams (atomics) pour track basics    | ✅ (volume, pan, mute, solo, any_solo, mod rate/depth, soft clip)   |
+| Worker pool parallèle                     | ✅ (off par défaut, `ECHOES_AUDIO_WORKERS`)                         |
+| PDC (delay rings par port)                | ✅ pour nodes internes — ❌ ignoré par plugins (latence toujours 0) |
+| Modulation block-rate (LFO)               | ✅                                                                  |
+| Envelope / Macro / Random / Follower      | ❌ (énumérés, non implémentés)                                      |
+| FTZ/DAZ + anti-denormal                   | ✅                                                                  |
+| MIDI : clips, snapshot, PolySynth interne | ✅                                                                  |
+| MIDI live input                           | ❌ (R3 backlog)                                                     |
+| MIDI vers plugins externes                | ❌ (`InstrumentNode` hardcode `PolySynth`)                          |
+| Note FX (transpose, arp, chord, …)        | ❌                                                                  |
+| Plugins VST3/CLAP : chargement audio      | 🟡 (instanciés, traités, mais opaques)                              |
+| Plugins : paramètres UI → DSP             | ❌ (`input_param_changes = null`)                                   |
+| Plugins : énumération des paramètres      | ❌ (`ParameterMap::new()` vide)                                     |
+| Plugins : save / load state               | ❌ (no-op)                                                          |
+| Plugins : ports introspectés (mono/sur)   | ❌ (forcé 2/2)                                                      |
+| Plugins : sidechain                       | ❌                                                                  |
+| Plugins : latence rapportée               | ❌                                                                  |
+| Plugins : instance unique audio + GUI     | ❌ (deux instances séparées, A1)                                    |
+| Plugins : sandboxing process              | ❌ (`catch_unwind` Rust seulement, pas SEH C++)                     |
+| Returns / Sends routés                    | 🟡 (`SendNode` existe, routage Return non câblé)                    |
+| Containers (Chain, Layer, Split)          | ❌                                                                  |
+| Automation (lanes temporelles)            | ❌                                                                  |
+| Export offline via moteur unifié          | ✅                                                                  |
+| Détection XRun + télémétrie               | ❌ (`OutputCallbackInfo` ignoré)                                    |
 
 ---
 
 ## 12. Points d'entrée code (références rapides)
 
-| Concern                       | Fichier                                              |
-|-------------------------------|------------------------------------------------------|
-| Bootstrap stream CPAL         | [src-tauri/src/main.rs:623](../../src-tauri/src/main.rs#L623) `start_native_audio` |
-| Audio callback                | [src-tauri/src/audio_engine/engine.rs:488](../../src-tauri/src/audio_engine/engine.rs#L488) `build_stream` |
-| Snapshot swap (RT)            | [src-tauri/src/audio_graph/snapshot.rs](../../src-tauri/src/audio_graph/snapshot.rs) |
-| Compilation graphe            | [src-tauri/src/audio_graph/compiler.rs](../../src-tauri/src/audio_graph/compiler.rs) |
-| Exécution graphe              | [src-tauri/src/audio_graph/scheduler.rs](../../src-tauri/src/audio_graph/scheduler.rs) |
-| Worker pool                   | [src-tauri/src/audio_graph/worker_pool.rs](../../src-tauri/src/audio_graph/worker_pool.rs) |
-| ExecutionPlan                 | [src-tauri/src/audio_graph/execution_plan.rs](../../src-tauri/src/audio_graph/execution_plan.rs) |
-| Modulation                    | [src-tauri/src/audio_graph/modulation.rs](../../src-tauri/src/audio_graph/modulation.rs) |
-| LiveParams                    | [src-tauri/src/audio_graph/live_params.rs](../../src-tauri/src/audio_graph/live_params.rs) |
-| MIDI types                    | [src-tauri/src/audio_graph/midi.rs](../../src-tauri/src/audio_graph/midi.rs) |
+| Concern                       | Fichier                                                                                                                                                                                                    |
+| ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Bootstrap stream CPAL         | [src-tauri/src/main.rs:623](../../src-tauri/src/main.rs#L623) `start_native_audio`                                                                                                                         |
+| Audio callback                | [src-tauri/src/audio_engine/engine.rs:488](../../src-tauri/src/audio_engine/engine.rs#L488) `build_stream`                                                                                                 |
+| Snapshot swap (RT)            | [src-tauri/src/audio_graph/snapshot.rs](../../src-tauri/src/audio_graph/snapshot.rs)                                                                                                                       |
+| Compilation graphe            | [src-tauri/src/audio_graph/compiler.rs](../../src-tauri/src/audio_graph/compiler.rs)                                                                                                                       |
+| Exécution graphe              | [src-tauri/src/audio_graph/scheduler.rs](../../src-tauri/src/audio_graph/scheduler.rs)                                                                                                                     |
+| Worker pool                   | [src-tauri/src/audio_graph/worker_pool.rs](../../src-tauri/src/audio_graph/worker_pool.rs)                                                                                                                 |
+| ExecutionPlan                 | [src-tauri/src/audio_graph/execution_plan.rs](../../src-tauri/src/audio_graph/execution_plan.rs)                                                                                                           |
+| Modulation                    | [src-tauri/src/audio_graph/modulation.rs](../../src-tauri/src/audio_graph/modulation.rs)                                                                                                                   |
+| LiveParams                    | [src-tauri/src/audio_graph/live_params.rs](../../src-tauri/src/audio_graph/live_params.rs)                                                                                                                 |
+| MIDI types                    | [src-tauri/src/audio_graph/midi.rs](../../src-tauri/src/audio_graph/midi.rs)                                                                                                                               |
 | Instrument / PolySynth        | [src-tauri/src/audio_graph/nodes/instrument.rs](../../src-tauri/src/audio_graph/nodes/instrument.rs), [src-tauri/src/audio_graph/nodes/poly_synth.rs](../../src-tauri/src/audio_graph/nodes/poly_synth.rs) |
-| Plugin host                   | [src-tauri/src/plugin_system/host.rs](../../src-tauri/src/plugin_system/host.rs) |
-| Plugin capabilities (Phase 1) | [src-tauri/src/plugin_system/capabilities.rs](../../src-tauri/src/plugin_system/capabilities.rs) |
-| Wrapper VST3                  | [src-tauri/src/plugin_formats/vst3/wrapper.rs](../../src-tauri/src/plugin_formats/vst3/wrapper.rs) |
-| Wrapper CLAP                  | [src-tauri/src/plugin_formats/clap/wrapper.rs](../../src-tauri/src/plugin_formats/clap/wrapper.rs) |
-| GUI plugin (Win32)            | [src-tauri/src/plugin_system/gui.rs](../../src-tauri/src/plugin_system/gui.rs) |
-| Engine gateway (IPC)          | [src-tauri/src/engine_gateway/api.rs](../../src-tauri/src/engine_gateway/api.rs) |
-| Transport partagé             | [src-tauri/src/audio_engine/transport.rs](../../src-tauri/src/audio_engine/transport.rs) |
-| Export offline                | [src-tauri/src/audio_engine/offline.rs](../../src-tauri/src/audio_engine/offline.rs) |
+| Plugin host                   | [src-tauri/src/plugin_system/host.rs](../../src-tauri/src/plugin_system/host.rs)                                                                                                                           |
+| Plugin capabilities (Phase 1) | [src-tauri/src/plugin_system/capabilities.rs](../../src-tauri/src/plugin_system/capabilities.rs)                                                                                                           |
+| Wrapper VST3                  | [src-tauri/src/plugin_formats/vst3/wrapper.rs](../../src-tauri/src/plugin_formats/vst3/wrapper.rs)                                                                                                         |
+| Wrapper CLAP                  | [src-tauri/src/plugin_formats/clap/wrapper.rs](../../src-tauri/src/plugin_formats/clap/wrapper.rs)                                                                                                         |
+| GUI plugin (Win32)            | [src-tauri/src/plugin_system/gui.rs](../../src-tauri/src/plugin_system/gui.rs)                                                                                                                             |
+| Engine gateway (IPC)          | [src-tauri/src/engine_gateway/api.rs](../../src-tauri/src/engine_gateway/api.rs)                                                                                                                           |
+| Transport partagé             | [src-tauri/src/audio_engine/transport.rs](../../src-tauri/src/audio_engine/transport.rs)                                                                                                                   |
+| Export offline                | [src-tauri/src/audio_engine/offline.rs](../../src-tauri/src/audio_engine/offline.rs)                                                                                                                       |

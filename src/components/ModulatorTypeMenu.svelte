@@ -14,9 +14,19 @@
 
 <div class="menu" role="menu" bind:this={root} use:dismissable={() => dispatch('close')}>
 	{#each MODULATOR_KINDS as info (info.kind)}
-		<button class="item" type="button" role="menuitem" on:click={() => dispatch('select', info.kind)}>
-			<svg width="14" height="8" viewBox="-1 -1 16 10" aria-hidden="true"><path d={info.icon} /></svg>
-			<span class="text"><span class="title">{info.title}</span><span class="description">{info.description}</span></span>
+		<button
+			class="item"
+			type="button"
+			role="menuitem"
+			on:click={() => dispatch('select', info.kind)}
+		>
+			<svg width="14" height="8" viewBox="-1 -1 16 10" aria-hidden="true"
+				><path d={info.icon} /></svg
+			>
+			<span class="text"
+				><span class="title">{info.title}</span><span class="description">{info.description}</span
+				></span
+			>
 		</button>
 	{/each}
 </div>
@@ -41,8 +51,14 @@
 	}
 
 	@keyframes appear {
-		from { opacity: 0; transform: translateY(-3px); }
-		to { opacity: 1; transform: none; }
+		from {
+			opacity: 0;
+			transform: translateY(-3px);
+		}
+		to {
+			opacity: 1;
+			transform: none;
+		}
 	}
 
 	.item {
@@ -56,7 +72,8 @@
 		color: $text-subtle;
 		text-align: left;
 		cursor: pointer;
-		&:hover, &:focus-visible {
+		&:hover,
+		&:focus-visible {
 			background: rgba(21, 113, 255, 0.15);
 			color: $text-color;
 			outline: none;

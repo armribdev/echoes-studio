@@ -44,30 +44,66 @@
 	style="left: {adjustedX}px; top: {adjustedY}px"
 >
 	{#if mode === 'empty'}
-		<button class="item" on:click={() => { dispatch('addMarker'); close(); }}>
+		<button
+			class="item"
+			on:click={() => {
+				dispatch('addMarker');
+				close();
+			}}
+		>
 			<span>Ajouter un marqueur</span>
 			<span class="item-shortcut">M</span>
 		</button>
-		<button class="item" on:click={() => { dispatch('addRegion'); close(); }}>
+		<button
+			class="item"
+			on:click={() => {
+				dispatch('addRegion');
+				close();
+			}}
+		>
 			<span>Ajouter une région</span>
 			<span class="item-shortcut">R</span>
 		</button>
 	{:else}
 		<div class="menu-header">{name || (kind === 'region' ? 'Région' : 'Marqueur')}</div>
 		<div class="separator"></div>
-		<button class="item" on:click={() => { dispatch('goTo'); close(); }}>
+		<button
+			class="item"
+			on:click={() => {
+				dispatch('goTo');
+				close();
+			}}
+		>
 			<span>Aller ici</span>
 		</button>
-		<button class="item" on:click={() => { dispatch('rename'); close(); }}>
+		<button
+			class="item"
+			on:click={() => {
+				dispatch('rename');
+				close();
+			}}
+		>
 			<span>Renommer</span>
 		</button>
 		{#if kind === 'region'}
-			<button class="item" on:click={() => { dispatch('setLoop'); close(); }}>
+			<button
+				class="item"
+				on:click={() => {
+					dispatch('setLoop');
+					close();
+				}}
+			>
 				<span>Boucler cette région</span>
 			</button>
 		{/if}
 		<div class="separator"></div>
-		<button class="item item--danger" on:click={() => { dispatch('delete'); close(); }}>
+		<button
+			class="item item--danger"
+			on:click={() => {
+				dispatch('delete');
+				close();
+			}}
+		>
 			<span>Supprimer</span>
 		</button>
 	{/if}

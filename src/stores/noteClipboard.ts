@@ -20,7 +20,7 @@ export function copyMidiNotes(notes: MidiNote[]): void {
 			pitch: note.pitch,
 			relativeStart: note.start - origin,
 			duration: note.duration,
-			velocity: note.velocity,
-		})),
+			velocity: note.velocity
+		}))
 	);
 }

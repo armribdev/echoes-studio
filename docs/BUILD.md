@@ -34,24 +34,24 @@ That's it. If something fails, run `pnpm check-env` for a structured diagnosis.
 
 Five tools must be present before the first build. Every other dependency is fetched automatically by `pnpm install`, `cargo build`, or `rustup` (driven by `rust-toolchain.toml`).
 
-| Tool | Minimum version | Purpose | How `pnpm tauri:dev` notices if missing |
-|---|---|---|---|
-| **Node.js** | 18.0.0 | Runs Vite + SvelteKit | `engine-strict=true` blocks `pnpm install` |
-| **pnpm** | 8.0.0 | Package manager (do not use npm/yarn) | Engine check fails |
-| **Rust** (via rustup) | 1.60.0 | Compiles the Tauri backend | `cargo` is unavailable, build aborts |
-| **cargo** | bundled with Rust | Rust build tool | as above |
-| **Tauri CLI** | 2.x | Orchestrates dev/build | Installed locally with `pnpm install` (`@tauri-apps/cli`) |
+| Tool                  | Minimum version   | Purpose                               | How `pnpm tauri:dev` notices if missing                   |
+| --------------------- | ----------------- | ------------------------------------- | --------------------------------------------------------- |
+| **Node.js**           | 18.0.0            | Runs Vite + SvelteKit                 | `engine-strict=true` blocks `pnpm install`                |
+| **pnpm**              | 8.0.0             | Package manager (do not use npm/yarn) | Engine check fails                                        |
+| **Rust** (via rustup) | 1.60.0            | Compiles the Tauri backend            | `cargo` is unavailable, build aborts                      |
+| **cargo**             | bundled with Rust | Rust build tool                       | as above                                                  |
+| **Tauri CLI**         | 2.x               | Orchestrates dev/build                | Installed locally with `pnpm install` (`@tauri-apps/cli`) |
 
 The Tauri CLI is **not** installed globally — it lives in `node_modules` and is invoked via `pnpm tauri ...`, which means the version is pinned per-checkout.
 
 ### Platform-specific additions
 
-| OS | Extra requirement | Why |
-|---|---|---|
-| **Windows** | WebView2 Runtime (pre-installed on Win 11) | Tauri renders the UI inside a WebView2 window |
-| **Windows** | MSVC Build Tools 2019+ ("Desktop development with C++" workload) | Compiles C dependencies (e.g. `cpal`) |
-| **macOS** | Xcode Command Line Tools | Provides the linker and macOS SDK |
-| **Linux** | `libwebkit2gtk-4.0-dev`, `libgtk-3-dev`, `librsvg2-dev`, `libayatana-appindicator3-dev` | Tauri requires GTK + WebKit on Linux |
+| OS          | Extra requirement                                                                       | Why                                           |
+| ----------- | --------------------------------------------------------------------------------------- | --------------------------------------------- |
+| **Windows** | WebView2 Runtime (pre-installed on Win 11)                                              | Tauri renders the UI inside a WebView2 window |
+| **Windows** | MSVC Build Tools 2019+ ("Desktop development with C++" workload)                        | Compiles C dependencies (e.g. `cpal`)         |
+| **macOS**   | Xcode Command Line Tools                                                                | Provides the linker and macOS SDK             |
+| **Linux**   | `libwebkit2gtk-4.0-dev`, `libgtk-3-dev`, `librsvg2-dev`, `libayatana-appindicator3-dev` | Tauri requires GTK + WebKit on Linux          |
 
 `pnpm check-env` verifies every line of these tables on your machine.
 
@@ -147,21 +147,21 @@ sudo dnf install -y \
 
 Every command below is identical on Windows, macOS and Linux.
 
-| Command | What it does |
-|---|---|
-| `pnpm install` | Install all JS dependencies from `pnpm-lock.yaml` |
-| `pnpm check-env` | Verify every required tool is present and at the right version |
-| `pnpm tauri:dev` | **Start the dev build** — Vite hot-reload for the UI, incremental cargo rebuild for Rust. Runs `check-env` automatically first. |
-| `pnpm tauri:build` | Compile a release build and create platform installers. Runs `check-env` first. |
-| `pnpm dev` | Vite dev server only (frontend, no Tauri window) |
-| `pnpm build` | SvelteKit build only (`build/`) |
-| `pnpm test` | Run the full validation suite: `pnpm check` + `pnpm lint` + `cargo fmt --check` + `cargo clippy` + `cargo test` |
-| `pnpm check` | TypeScript + Svelte validation |
-| `pnpm check:watch` | Same, in watch mode |
-| `pnpm lint` | Prettier + ESLint check |
-| `pnpm format` | Prettier auto-format |
-| `pnpm clean` | Remove `build/`, `.svelte-kit/`, `src-tauri/target/` |
-| `pnpm clean:deep` | Same as above + `node_modules/` (re-run `pnpm install` afterwards) |
+| Command            | What it does                                                                                                                    |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------- |
+| `pnpm install`     | Install all JS dependencies from `pnpm-lock.yaml`                                                                               |
+| `pnpm check-env`   | Verify every required tool is present and at the right version                                                                  |
+| `pnpm tauri:dev`   | **Start the dev build** — Vite hot-reload for the UI, incremental cargo rebuild for Rust. Runs `check-env` automatically first. |
+| `pnpm tauri:build` | Compile a release build and create platform installers. Runs `check-env` first.                                                 |
+| `pnpm dev`         | Vite dev server only (frontend, no Tauri window)                                                                                |
+| `pnpm build`       | SvelteKit build only (`build/`)                                                                                                 |
+| `pnpm test`        | Run the full validation suite: `pnpm check` + `pnpm lint` + `cargo fmt --check` + `cargo clippy` + `cargo test`                 |
+| `pnpm check`       | TypeScript + Svelte validation                                                                                                  |
+| `pnpm check:watch` | Same, in watch mode                                                                                                             |
+| `pnpm lint`        | Prettier + ESLint check                                                                                                         |
+| `pnpm format`      | Prettier auto-format                                                                                                            |
+| `pnpm clean`       | Remove `build/`, `.svelte-kit/`, `src-tauri/target/`                                                                            |
+| `pnpm clean:deep`  | Same as above + `node_modules/` (re-run `pnpm install` afterwards)                                                              |
 
 ### Rust-only commands
 
@@ -224,17 +224,17 @@ The script exits with code `1` if any required tool is missing, making it safe t
 
 ### What gets checked
 
-| Category | Check |
-|---|---|
-| Node.js | version ≥ 18.0.0 |
-| pnpm | installed, version ≥ 8.0.0 |
-| Rust | `rustc` ≥ 1.60.0 |
-| Cargo | present |
-| Project | `pnpm-lock.yaml` exists, `node_modules` present and not older than lockfile |
-| Tauri CLI | installed locally in `node_modules` |
-| **Windows** | WebView2 runtime, MSVC C++ workload (via `vswhere.exe` or `cl.exe` fallback) |
-| **macOS** | Xcode CLI Tools, macOS SDK path |
-| **Linux** | `webkit2gtk-4.0`, `gtk+-3.0`, `librsvg-2.0`, `ayatana-appindicator3`, `patchelf` (via `pkg-config`) |
+| Category    | Check                                                                                               |
+| ----------- | --------------------------------------------------------------------------------------------------- |
+| Node.js     | version ≥ 18.0.0                                                                                    |
+| pnpm        | installed, version ≥ 8.0.0                                                                          |
+| Rust        | `rustc` ≥ 1.60.0                                                                                    |
+| Cargo       | present                                                                                             |
+| Project     | `pnpm-lock.yaml` exists, `node_modules` present and not older than lockfile                         |
+| Tauri CLI   | installed locally in `node_modules`                                                                 |
+| **Windows** | WebView2 runtime, MSVC C++ workload (via `vswhere.exe` or `cl.exe` fallback)                        |
+| **macOS**   | Xcode CLI Tools, macOS SDK path                                                                     |
+| **Linux**   | `webkit2gtk-4.0`, `gtk+-3.0`, `librsvg-2.0`, `ayatana-appindicator3`, `patchelf` (via `pkg-config`) |
 
 ---
 
@@ -291,12 +291,12 @@ pnpm tauri:build
 
 **Output locations:**
 
-| Artifact | Path |
-|---|---|
-| Frontend build | `build/` |
-| Rust debug binary | `src-tauri/target/debug/echoes-studio[.exe]` |
+| Artifact            | Path                                           |
+| ------------------- | ---------------------------------------------- |
+| Frontend build      | `build/`                                       |
+| Rust debug binary   | `src-tauri/target/debug/echoes-studio[.exe]`   |
 | Rust release binary | `src-tauri/target/release/echoes-studio[.exe]` |
-| Platform bundles | `src-tauri/target/release/bundle/` |
+| Platform bundles    | `src-tauri/target/release/bundle/`             |
 
 ### Why these specific design choices
 
@@ -327,6 +327,7 @@ Normal — Cargo compiles the full dependency tree from scratch. The `target/` d
 ### `error: linking with cc failed` on Linux
 
 Missing C toolchain:
+
 ```bash
 sudo apt install build-essential    # Debian/Ubuntu
 sudo dnf install gcc                # Fedora

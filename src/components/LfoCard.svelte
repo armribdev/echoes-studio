@@ -28,7 +28,7 @@
 		{ id: 'sine', label: 'Sinus', icon: 'M0 4 C2.5 -1.5 4.5 -1.5 7 4 C9.5 9.5 11.5 9.5 14 4' },
 		{ id: 'triangle', label: 'Triangle', icon: 'M0 4 L3.5 0.5 L10.5 7.5 L14 4' },
 		{ id: 'saw', label: 'Dent de scie', icon: 'M0 7.5 L13 0.5 L13 7.5' },
-		{ id: 'square', label: 'Carré', icon: 'M0 4 L0 0.5 L7 0.5 L7 7.5 L14 7.5 L14 4' },
+		{ id: 'square', label: 'Carré', icon: 'M0 4 L0 0.5 L7 0.5 L7 7.5 L14 7.5 L14 4' }
 	];
 
 	// Beats per cycle, labelled as note values (a beat is a quarter note).
@@ -39,7 +39,7 @@
 		{ beats: 2, label: '1/2' },
 		{ beats: 4, label: '1/1' },
 		{ beats: 8, label: '2/1' },
-		{ beats: 16, label: '4/1' },
+		{ beats: 16, label: '4/1' }
 	];
 
 	const RATE_MIN_HZ = 0.1;
@@ -67,10 +67,14 @@
 
 	function sample(phase: number, shape: LfoWaveform): number {
 		switch (shape) {
-			case 'sine': return Math.sin(phase * 2 * Math.PI);
-			case 'triangle': return phase < 0.25 ? 4 * phase : phase < 0.75 ? 2 - 4 * phase : 4 * phase - 4;
-			case 'saw': return 2 * phase - 1;
-			case 'square': return phase < 0.5 ? 1 : -1;
+			case 'sine':
+				return Math.sin(phase * 2 * Math.PI);
+			case 'triangle':
+				return phase < 0.25 ? 4 * phase : phase < 0.75 ? 2 - 4 * phase : 4 * phase - 4;
+			case 'saw':
+				return 2 * phase - 1;
+			case 'square':
+				return phase < 0.5 ? 1 : -1;
 		}
 	}
 
@@ -188,7 +192,9 @@
 					title={s.label}
 					on:click={() => shape !== s.id && update({ waveform: s.id })}
 				>
-					<svg width="14" height="8" viewBox="-1 -1 16 10" aria-hidden="true"><path class="icon" d={s.icon} /></svg>
+					<svg width="14" height="8" viewBox="-1 -1 16 10" aria-hidden="true"
+						><path class="icon" d={s.icon} /></svg
+					>
 				</button>
 			{/each}
 		</div>
@@ -197,8 +203,8 @@
 			class="mod-toggle"
 			class:active={sync}
 			title={sync ? 'Vitesse libre (Hz)' : 'Caler sur le tempo'}
-			on:click={() => update({ tempo_sync: !sync })}
-		>{sync ? 'SYNC' : 'HZ'}</button>
+			on:click={() => update({ tempo_sync: !sync })}>{sync ? 'SYNC' : 'HZ'}</button
+		>
 		{#key sync}
 			<Knob
 				min={0}
@@ -228,7 +234,9 @@
 		margin: -3px 0 0 -3px;
 		border-radius: 50%;
 		background: #fff;
-		box-shadow: 0 0 6px var(--mod-color), 0 0 0 1.5px var(--mod-color);
+		box-shadow:
+			0 0 6px var(--mod-color),
+			0 0 0 1.5px var(--mod-color);
 		pointer-events: none;
 	}
 

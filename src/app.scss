@@ -51,18 +51,27 @@ button span,
 button div,
 a span,
 a div,
-[role="button"] span,
-[role="button"] div,
-[role="option"] span,
-[role="option"] div {
+[role='button'] span,
+[role='button'] div,
+[role='option'] span,
+[role='option'] div {
 	cursor: inherit;
 }
 
-::-webkit-scrollbar { width: 8px; height: 8px; }
-::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar {
+	width: 8px;
+	height: 8px;
+}
+::-webkit-scrollbar-track {
+	background: transparent;
+}
 ::-webkit-scrollbar-thumb {
 	background: rgba(255, 255, 255, 0.09);
 	border-radius: 4px;
-	&:hover { background: rgba(255, 255, 255, 0.16); }
+	&:hover {
+		background: rgba(255, 255, 255, 0.16);
+	}
 }
-::-webkit-scrollbar-corner { background: transparent; }
+::-webkit-scrollbar-corner {
+	background: transparent;
+}

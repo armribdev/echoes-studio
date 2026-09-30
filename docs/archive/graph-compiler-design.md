@@ -45,6 +45,7 @@ Output: CompiledGraph {
 
 The sort is **stable** (deterministic for identical graphs regardless of
 HashMap iteration order) because:
+
 - Nodes at the same topological depth are sorted by `NodeId` (monotonically
   increasing allocation order).
 - `NodeId` allocation uses `AtomicU64` with `Relaxed` ordering, so within a
@@ -63,6 +64,7 @@ graph-level `PortId` references into flat array indices for the scheduler.
 ### Step 4: Build ExecutionSteps
 
 For each node in topological order:
+
 1. Determine `num_inputs` and `num_outputs` from `NodeKind`.
 2. For each of the node's input ports (0..num_inputs), find any edge with
    `to.node == node_id && to.port == port_idx`.
@@ -73,16 +75,16 @@ For each node in topological order:
 
 `build_node(id, kind, project)` dispatches on `NodeKind`:
 
-| NodeKind          | Produces                         | Data source           |
-|-------------------|----------------------------------|-----------------------|
-| Track { id }      | TrackNode with ClipData list     | AppProject.tracks     |
-| TrackGain { gain} | GainNode(gain)                   | gain from NodeKind    |
-| Gain { linear }   | GainNode(linear)                 | NodeKind field        |
-| Pan { pos }       | PanNode(pos)                     | NodeKind field        |
-| Bus               | BusNode(N inputs)                | constant              |
-| Master            | MasterNode(N inputs)             | constant              |
-| Meter { id }      | MeterNode(id)                    | meter_id string       |
-| Plugin { id }     | PluginHost::instantiate(id)      | plugin_system         |
+| NodeKind          | Produces                     | Data source        |
+| ----------------- | ---------------------------- | ------------------ |
+| Track { id }      | TrackNode with ClipData list | AppProject.tracks  |
+| TrackGain { gain} | GainNode(gain)               | gain from NodeKind |
+| Gain { linear }   | GainNode(linear)             | NodeKind field     |
+| Pan { pos }       | PanNode(pos)                 | NodeKind field     |
+| Bus               | BusNode(N inputs)            | constant           |
+| Master            | MasterNode(N inputs)         | constant           |
+| Meter { id }      | MeterNode(id)                | meter_id string    |
+| Plugin { id }     | PluginHost::instantiate(id)  | plugin_system      |
 
 For unknown plugin IDs, `build_node` logs a warning and returns a
 `PassThroughDevice` (silence pass-through) so compilation always succeeds.
@@ -124,6 +126,7 @@ InputConnection {
 ## Re-compilation Triggers
 
 A new graph is compiled whenever:
+
 - A track is created or deleted
 - A clip is added, moved, or removed
 - Track volume changes (gain node needs new value)
@@ -147,6 +150,7 @@ parameter change is wasteful. Future optimisations:
 ## Error Handling
 
 Compilation errors are logged but **never fatal**:
+
 - `CompileError::CycleDetected` → use empty graph (silence)
 - `CompileError::NoMasterNode` → use empty graph
 - `CompileError::MissingNode` → use empty graph

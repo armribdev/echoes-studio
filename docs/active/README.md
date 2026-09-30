@@ -62,23 +62,23 @@ General project docs live at the `docs/` root: `ARCHITECTURE.md`,
 
 ## Quick Reference: What Governs What
 
-| Concern | Go to |
-|---------|-------|
-| Can I allocate in `process()`? | `threading/realtime-safety.md` |
-| What threads exist and what can they do? | `threading/threading-model.md` |
-| Should plugins know about tracks? | `architecture/audio-graph.md` |
-| Why is the graph compiled ahead of time? | `dsp/graph-compiler.md` + `decisions/001-graph-first-architecture.md` |
-| How does the scheduler run a block? | `dsp/dsp-runtime.md` |
-| How does a project change reach the audio thread? | `architecture/snapshot-rebuild-flow.md` |
-| How does undo/redo work? | `architecture/state-management.md` |
-| How does VST3/AU/CLAP connect to the graph? | `plugins/plugin-wrapper-system.md` |
-| Who owns plugin parameters and modulation? | `plugins/plugin-system.md`, `modulation/modulation-system.md` |
-| What mistakes must I avoid? | `architecture/anti-patterns.md` |
-| Can I change the threading/graph/plugin model? | `decisions/architecture-decision-rules.md` |
-| What decisions have already been made? | `decisions/000-index.md` |
-| What is done and what comes next? | `migration/migration_plan.md` (status section), `../library-browser-roadmap.md` |
-| What is the target architecture? | `migration/target_architecture.md` (pre-migration structure archived: `../archive/current_engine_diagram.md`) |
-| Library / browser UX (panel, pop-up, drops)? | `../library-browser-ux.md` + `decisions/023-library-browser-ux.md` |
+| Concern                                           | Go to                                                                                                         |
+| ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| Can I allocate in `process()`?                    | `threading/realtime-safety.md`                                                                                |
+| What threads exist and what can they do?          | `threading/threading-model.md`                                                                                |
+| Should plugins know about tracks?                 | `architecture/audio-graph.md`                                                                                 |
+| Why is the graph compiled ahead of time?          | `dsp/graph-compiler.md` + `decisions/001-graph-first-architecture.md`                                         |
+| How does the scheduler run a block?               | `dsp/dsp-runtime.md`                                                                                          |
+| How does a project change reach the audio thread? | `architecture/snapshot-rebuild-flow.md`                                                                       |
+| How does undo/redo work?                          | `architecture/state-management.md`                                                                            |
+| How does VST3/AU/CLAP connect to the graph?       | `plugins/plugin-wrapper-system.md`                                                                            |
+| Who owns plugin parameters and modulation?        | `plugins/plugin-system.md`, `modulation/modulation-system.md`                                                 |
+| What mistakes must I avoid?                       | `architecture/anti-patterns.md`                                                                               |
+| Can I change the threading/graph/plugin model?    | `decisions/architecture-decision-rules.md`                                                                    |
+| What decisions have already been made?            | `decisions/000-index.md`                                                                                      |
+| What is done and what comes next?                 | `migration/migration_plan.md` (status section), `../library-browser-roadmap.md`                               |
+| What is the target architecture?                  | `migration/target_architecture.md` (pre-migration structure archived: `../archive/current_engine_diagram.md`) |
+| Library / browser UX (panel, pop-up, drops)?      | `../library-browser-ux.md` + `decisions/023-library-browser-ux.md`                                            |
 
 ---
 

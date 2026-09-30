@@ -13,7 +13,7 @@ A1 of the GUI audit) shipped in Phase 2c and is a precondition here.
 
 Sub-phase 4c reuses **verbatim** the `PluginInstance` / `PluginHost` / project
 plumbing introduced for VST3: only a CLAP-native stream pair and a dispatch
-branch were added (see *Module map* and *CLAP addendum* below). The host API,
+branch were added (see _Module map_ and _CLAP addendum_ below). The host API,
 project file schema, and save/load orchestration are format-agnostic and were
 not touched.
 
@@ -46,19 +46,19 @@ had no concrete stream to pass.
 2. **State lives on `PluginInstance`.** `save_state_blob()` / `load_state_blob()`
    dispatch on the shared `NativeHandle`. VST3 → FFI; CLAP/internal → `None` /
    `false`. The single shared `Arc<PluginInstance>` (ADR-006/007) is the natural
-   home: the command-thread host and the audio-thread wrapper reach the *same*
+   home: the command-thread host and the audio-thread wrapper reach the _same_
    `IComponent`.
 
 3. **Host API does the real thing.** `PluginHost::save_device_state` returns a
    `DeviceState::Binary` from FFI (falling back to the `saved_state` cache for
    formats without an FFI path). `device_ids()` lets the save path enumerate live
-   devices. **State restore is no longer a post-compile call** (see *Restore is
-   race-free* below): the project-load path stages blobs via
+   devices. **State restore is no longer a post-compile call** (see _Restore is
+   race-free_ below): the project-load path stages blobs via
    `set_pending_state_blobs`, and `instantiate` applies them to each instance
    before it enters a snapshot.
 
 4. **Project file carries the blobs.** `ProjectFile.plugin_state_blobs:
-   HashMap<device_id, base64>` with `#[serde(default)]` (backward compatible — a
+HashMap<device_id, base64>` with `#[serde(default)]` (backward compatible — a
    pre-4b save loads with an empty map → previous behaviour). On save the live
    state is harvested from the host before serialisation; on load it is **staged
    on the host and applied during instantiation** (before any node is published
@@ -70,16 +70,16 @@ had no concrete stream to pass.
 
 ### Module map
 
-| File | Change |
-|---|---|
-| `plugin_formats/vst3/ffi.rs` | `HostStream` (`IBStream`) + `IID_IBSTREAM` + `read/write_component_state` |
+| File                         | Change                                                                                                                                                                        |
+| ---------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `plugin_formats/vst3/ffi.rs` | `HostStream` (`IBStream`) + `IID_IBSTREAM` + `read/write_component_state`                                                                                                     |
 | `plugin_formats/clap/ffi.rs` | **(4c)** `CLAP_EXT_STATE` + `ClapPluginState`/`ClapIStream`/`ClapOStream` vtables + `ClapStateStream` (`Vec<u8>`-backed) + `read/write_plugin_state` + stream round-trip test |
-| `plugin_system/instance.rs` | `save_state_blob` / `load_state_blob` (VST3 dispatch; **4c** adds the CLAP branch) |
-| `plugin_system/host.rs` | `save/load_device_state` via FFI; `device_ids()` (format-agnostic — unchanged by 4c) |
-| `plugin_system/state.rs` | `encode_base64` / `decode_base64` + tests |
-| `project.rs` | `AppProject.plugin_state_blobs` + `ProjectFile.plugin_state_blobs` (serde default); `to_file` / `from_file` |
-| `engine_gateway/api.rs` | `snapshot_project` carries the (empty) field |
-| `main.rs` | harvest on save; restore after recompile on load |
+| `plugin_system/instance.rs`  | `save_state_blob` / `load_state_blob` (VST3 dispatch; **4c** adds the CLAP branch)                                                                                            |
+| `plugin_system/host.rs`      | `save/load_device_state` via FFI; `device_ids()` (format-agnostic — unchanged by 4c)                                                                                          |
+| `plugin_system/state.rs`     | `encode_base64` / `decode_base64` + tests                                                                                                                                     |
+| `project.rs`                 | `AppProject.plugin_state_blobs` + `ProjectFile.plugin_state_blobs` (serde default); `to_file` / `from_file`                                                                   |
+| `engine_gateway/api.rs`      | `snapshot_project` carries the (empty) field                                                                                                                                  |
+| `main.rs`                    | harvest on save; restore after recompile on load                                                                                                                              |
 
 ### CLAP addendum (sub-phase 4c)
 
@@ -117,7 +117,7 @@ ones.
 **Restore is not load-only (R-4, 2026-06-04).** The restore trigger was widened
 from "project load only" to "every valid instantiation". `instantiate` now routes
 through `PluginHost::restore_state_for`, which after the staged-blob case carries
-the *previous* instance's state into the rebuilt one when the placement still
+the _previous_ instance's state into the rebuilt one when the placement still
 hosts the same plugin type (`PluginInstance::restore_from`). ADR-016 instance
 reuse already preserves state on the common knob-turn recompile; this covers the
 rebuild paths reuse declines (terminal instance, non-reuse-safe format) so state
@@ -180,10 +180,10 @@ the data race for autosave-during-playback and for re-instantiation while playin
 
 - **AU / WASM state unimplemented**: they return `None`/`false` and fall back to
   the empty cache. (CLAP closed in 4c.)
-- **State *save*** live reads are all fenced by the per-instance FFI gate
+- **State _save_** live reads are all fenced by the per-instance FFI gate
   (`collect_plugin_states`, `restore_from`'s previous-instance read,
   `save_device_state`, and the wrappers' `prepare` introspection), VST3 and CLAP
-  alike (`clap.state.save` is `[main-thread]`) — safe during playback. *Restore*
+  alike (`clap.state.save` is `[main-thread]`) — safe during playback. _Restore_
   is race-free (applied at instantiation). No save-direction residual remains;
   future live-FFI callers (GUI) must reuse the gate.
 - **Controller-only state not persisted** (single-component assumption, VST3).

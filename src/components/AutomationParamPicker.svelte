@@ -5,7 +5,7 @@
 	import {
 		buildAutomationOptions,
 		pluginPlacements,
-		type ModulationTargetOption,
+		type ModulationTargetOption
 	} from '../frontend/modulation/targets';
 	import { targetKey } from '../frontend/automation/lanes';
 	import { pluginParamsByPlacement, reloadPluginParams } from '../stores/pluginParams';
@@ -22,10 +22,14 @@
 
 	let loading = true;
 
-	$: placements = pluginPlacements(track.id, track.effects, instrumentDisplayName($plugins, track.instrument));
+	$: placements = pluginPlacements(
+		track.id,
+		track.effects,
+		instrumentDisplayName($plugins, track.instrument)
+	);
 	$: automated = new Set(track.automation_lanes.map((lane) => targetKey(lane.target)));
 	$: options = buildAutomationOptions(track.effects, placements, $pluginParamsByPlacement).filter(
-		(option) => !automated.has(option.key),
+		(option) => !automated.has(option.key)
 	);
 	$: left = Math.max(8, Math.min(x, window.innerWidth - WIDTH_PX - 8));
 	$: top = Math.max(8, Math.min(y, window.innerHeight - MAX_HEIGHT_PX - 8));

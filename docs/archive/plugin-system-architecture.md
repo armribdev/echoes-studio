@@ -79,6 +79,7 @@ Box<dyn AudioNode>  → handed to GraphCompiler → placed in ExecutionPlan
 
 The registry holds `PluginManifest` entries for every known plugin. It is
 populated at startup by:
+
 1. Built-in device registration (Gain, Pan, Bus, Master, etc.)
 2. Platform-specific scanners (VST3 dirs, AU database, WASM plugin dir)
 
@@ -142,6 +143,7 @@ The host treats it as a black box — only the device knows how to restore from 
 **The graph runtime must never import `plugin_formats` or `plugin_system`.**
 
 Only these files are allowed to touch plugin-format specifics:
+
 - `plugin_formats/vst3/wrapper.rs`
 - `plugin_formats/au/wrapper.rs`
 - `plugin_formats/internal/wrapper.rs`

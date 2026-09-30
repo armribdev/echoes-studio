@@ -27,7 +27,7 @@ export async function exportMixdown(
 		filters: isMp3
 			? [{ name: 'Fichier MP3', extensions: ['mp3'] }]
 			: [{ name: 'Fichier WAV', extensions: ['wav'] }],
-		defaultPath: isMp3 ? 'mixdown.mp3' : 'mixdown.wav',
+		defaultPath: isMp3 ? 'mixdown.mp3' : 'mixdown.wav'
 	});
 	if (!filePath) return;
 
@@ -40,13 +40,13 @@ export async function exportMixdown(
 			await invoke('export_mp3', {
 				path: filePath,
 				sampleRate,
-				bitrateKbps: preferences.project.exportMp3Bitrate,
+				bitrateKbps: preferences.project.exportMp3Bitrate
 			});
 		} else {
 			await invoke('export_wav', {
 				path: filePath,
 				sampleRate,
-				bitDepth: preferences.project.exportBitDepth,
+				bitDepth: preferences.project.exportBitDepth
 			});
 		}
 	} catch (err) {

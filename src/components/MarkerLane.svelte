@@ -1,7 +1,11 @@
 <script lang="ts">
 	import { createEventDispatcher } from 'svelte';
 	import type { ArrangementMarker, ArrangementRegion } from '../types/global';
-	import { MARKER_LANE_HEIGHT, MARKER_ROW_HEIGHT, REGION_ROW_HEIGHT } from '../frontend/timeRuler/constants';
+	import {
+		MARKER_LANE_HEIGHT,
+		MARKER_ROW_HEIGHT,
+		REGION_ROW_HEIGHT
+	} from '../frontend/timeRuler/constants';
 	import { trackColor } from '../frontend/trackColor';
 	import {
 		addMarker,
@@ -9,7 +13,7 @@
 		removeMarker,
 		removeRegion,
 		updateMarker,
-		updateRegion,
+		updateRegion
 	} from '../frontend/commands/dispatcher';
 	import LocatorContextMenu from './LocatorContextMenu.svelte';
 	import { defaultRegionSpanAt } from '../frontend/arrangement/locators';
@@ -156,7 +160,7 @@
 			id: marker.id,
 			originBeat: marker.position_beats,
 			pointerOriginBeat: beatsFromClientX(e.clientX),
-			pointerOriginClientX: e.clientX,
+			pointerOriginClientX: e.clientX
 		};
 		draftMarkers = markers.map((m) => ({ ...m }));
 		window.addEventListener('pointermove', onPointerMove);
@@ -178,7 +182,7 @@
 	function onRegionPointerDown(
 		e: PointerEvent,
 		region: ArrangementRegion,
-		edge: 'move' | 'start' | 'end',
+		edge: 'move' | 'start' | 'end'
 	) {
 		if (e.button !== 0) return;
 		if ((e.target as HTMLElement).isContentEditable) return;
@@ -191,7 +195,7 @@
 			originStart: region.start_beats,
 			originEnd: region.end_beats,
 			pointerOriginBeat: beatsFromClientX(e.clientX),
-			pointerOriginClientX: e.clientX,
+			pointerOriginClientX: e.clientX
 		};
 		draftRegions = regions.map((r) => ({ ...r }));
 		window.addEventListener('pointermove', onPointerMove);
@@ -217,7 +221,7 @@
 		if (drag.kind === 'marker') {
 			const next = snapBeat(Math.max(0, drag.originBeat + delta), e.altKey);
 			draftMarkers = (draftMarkers ?? markers).map((m) =>
-				m.id === drag!.id ? { ...m, position_beats: next } : m,
+				m.id === drag!.id ? { ...m, position_beats: next } : m
 			);
 			return;
 		}
@@ -234,7 +238,7 @@
 			end = snapBeat(Math.max(drag.originStart + 1, drag.originEnd + delta), e.altKey);
 		}
 		draftRegions = (draftRegions ?? regions).map((r) =>
-			r.id === drag!.id ? { ...r, start_beats: start, end_beats: end } : r,
+			r.id === drag!.id ? { ...r, start_beats: start, end_beats: end } : r
 		);
 	}
 
@@ -281,7 +285,7 @@
 		) {
 			updateRegion(finished.id, {
 				start_beats: draft.start_beats,
-				end_beats: draft.end_beats,
+				end_beats: draft.end_beats
 			}).catch(console.error);
 		}
 	}
@@ -299,7 +303,13 @@
 		if (renameSession) {
 			renameSession.el.removeEventListener('keydown', renameSession.onKeyDown);
 			renameSession.el.removeEventListener('blur', renameSession.onBlur);
-			finishInlineRename(renameSession.el, renameSession.kind, renameSession.id, renameSession.original, false);
+			finishInlineRename(
+				renameSession.el,
+				renameSession.kind,
+				renameSession.id,
+				renameSession.original,
+				false
+			);
 			renameSession = null;
 		}
 
@@ -352,7 +362,7 @@
 		kind: 'marker' | 'region',
 		id: string,
 		original: string,
-		commit: boolean,
+		commit: boolean
 	) {
 		el.contentEditable = 'false';
 		const trimmed = (el.textContent ?? '').trim();
@@ -375,7 +385,7 @@
 			y: e.clientY,
 			kind: 'marker',
 			id: marker.id,
-			name: marker.name,
+			name: marker.name
 		};
 	}
 
@@ -389,7 +399,7 @@
 			y: e.clientY,
 			kind: 'region',
 			id: region.id,
-			name: region.name,
+			name: region.name
 		};
 	}
 </script>
@@ -455,7 +465,10 @@
 				class="region"
 				class:dragging={drag != null && drag.id === region.id}
 				data-locator="region"
-				style="left: {leftPx(region.start_beats)}px; width: {widthPx(region.start_beats, region.end_beats)}px; --loc-color: {color}"
+				style="left: {leftPx(region.start_beats)}px; width: {widthPx(
+					region.start_beats,
+					region.end_beats
+				)}px; --loc-color: {color}"
 				on:pointerdown={(e) => onRegionPointerDown(e, region, 'move')}
 				on:dblclick={(e) => onRegionDblClick(e, region)}
 				on:contextmenu={(e) => onRegionContextMenu(e, region)}
@@ -615,7 +628,10 @@
 		z-index: 1;
 		min-width: 10px;
 		overflow: hidden;
-		transition: background 0.12s ease, border-color 0.12s ease, box-shadow 0.12s ease;
+		transition:
+			background 0.12s ease,
+			border-color 0.12s ease,
+			box-shadow 0.12s ease;
 
 		&:hover {
 			background: color-mix(in srgb, var(--loc-color) 28%, transparent);

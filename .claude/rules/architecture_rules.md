@@ -6,6 +6,7 @@ approval** — never a silent edit. See
 and the full "never change silently" table.
 
 **Invariants:**
+
 1. **Graph-first.** Every DSP element is an `AudioNode` in the `AudioGraph`. New
    DSP features = new nodes, never special fields on `AppTrack`. (ADR-001)
 2. **Immutable runtime snapshots.** The audio thread never sees a mutable graph;

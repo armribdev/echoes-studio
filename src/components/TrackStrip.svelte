@@ -31,7 +31,7 @@
 	$: automatedVolume = automatedGain === undefined ? undefined : automatedGain * 100;
 	$: artKind = instrumentArtKind(
 		track.instrument,
-		instrumentDisplayName($plugins, track.instrument),
+		instrumentDisplayName($plugins, track.instrument)
 	);
 
 	let colorOpen = false;
@@ -90,11 +90,15 @@
 			}
 		});
 
-		el.addEventListener('blur', function () {
-			el.contentEditable = 'false';
-			const newName = el.textContent?.trim() || track.name;
-			dispatch('rename', { name: newName });
-		}, { once: true });
+		el.addEventListener(
+			'blur',
+			function () {
+				el.contentEditable = 'false';
+				const newName = el.textContent?.trim() || track.name;
+				dispatch('rename', { name: newName });
+			},
+			{ once: true }
+		);
 	}
 
 	function pickColor(next: string) {
@@ -110,7 +114,11 @@
 	class:instrument--selected={selected}
 	style="--track-color: {color}"
 	on:mousedown={() => dispatch('select')}
-	on:contextmenu={(e) => { e.preventDefault(); e.stopPropagation(); dispatch('contextmenu', e); }}
+	on:contextmenu={(e) => {
+		e.preventDefault();
+		e.stopPropagation();
+		dispatch('contextmenu', e);
+	}}
 >
 	<div class="color-slot">
 		<button
@@ -119,14 +127,19 @@
 			style="background: {color}"
 			aria-label="Changer la couleur de la piste"
 			aria-expanded={colorOpen}
-			on:click|stopPropagation={() => { colorOpen = !colorOpen; }}
+			on:click|stopPropagation={() => {
+				colorOpen = !colorOpen;
+			}}
 		></button>
 		{#if colorOpen}
 			<div
 				class="color-pop"
 				role="listbox"
+				tabindex="0"
 				aria-label="Couleurs de piste"
-				use:dismissable={() => { colorOpen = false; }}
+				use:dismissable={() => {
+					colorOpen = false;
+				}}
 				on:mousedown|stopPropagation
 			>
 				{#each TRACK_COLORS as swatch}
@@ -151,7 +164,6 @@
 				<TrackInstrumentArt kind={artKind} {color} />
 			</div>
 
-			<!-- svelte-ignore a11y-no-static-element-interactions -->
 			<strong class="track-name" on:dblclick={makeEditable}>{track.name}</strong>
 			<div class="ms-group" role="group" aria-label="Mute, solo, armement">
 				<button
@@ -160,16 +172,16 @@
 					class:active={track.muted}
 					title="Mute"
 					aria-pressed={track.muted}
-					on:click|stopPropagation={() => dispatch('mutetoggle')}
-				>M</button>
+					on:click|stopPropagation={() => dispatch('mutetoggle')}>M</button
+				>
 				<button
 					type="button"
 					class="ms-btn"
 					class:active={track.solo}
 					title="Solo"
 					aria-pressed={track.solo}
-					on:click|stopPropagation={() => dispatch('solotoggle')}
-				>S</button>
+					on:click|stopPropagation={() => dispatch('solotoggle')}>S</button
+				>
 				<button
 					type="button"
 					class="ms-btn ms-btn--arm"
@@ -178,7 +190,8 @@
 					aria-pressed={armed}
 					aria-label="Armer pour l'entrée MIDI"
 					on:click|stopPropagation={() => dispatch('armtoggle')}
-				><span class="arm-dot" aria-hidden="true"></span></button>
+					><span class="arm-dot" aria-hidden="true"></span></button
+				>
 			</div>
 		</div>
 
@@ -227,7 +240,9 @@
 		padding: 0;
 		gap: 0;
 
-		&--selected { background: $surface-1; }
+		&--selected {
+			background: $surface-1;
+		}
 	}
 
 	.color-slot {
@@ -247,7 +262,9 @@
 		border: none;
 		border-radius: 0 2px 2px 0;
 		cursor: pointer;
-		transition: width 0.12s ease, filter 0.12s ease;
+		transition:
+			width 0.12s ease,
+			filter 0.12s ease;
 
 		&:hover {
 			width: 5px;
@@ -278,7 +295,9 @@
 		border: 1px solid rgba(255, 255, 255, 0.08);
 		border-radius: 5px;
 		cursor: pointer;
-		transition: transform 0.08s ease, box-shadow 0.08s ease;
+		transition:
+			transform 0.08s ease,
+			box-shadow 0.08s ease;
 
 		&.active {
 			box-shadow:
@@ -324,7 +343,9 @@
 		min-width: 0;
 		cursor: default;
 
-		&:focus { outline: none; }
+		&:focus {
+			outline: none;
+		}
 	}
 
 	.ms-group {
@@ -354,7 +375,9 @@
 		align-items: center;
 		justify-content: center;
 		cursor: pointer;
-		transition: background 0.1s, color 0.1s;
+		transition:
+			background 0.1s,
+			color 0.1s;
 
 		&:last-child {
 			border-right: none;

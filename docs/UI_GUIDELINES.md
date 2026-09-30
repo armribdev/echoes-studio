@@ -10,14 +10,14 @@
 
 The dominant DAWs (Ableton, Logic, FL Studio, Pro Tools) suffer from accumulated structural problems:
 
-| Problem | Manifestation |
-|---------|--------------|
-| **Cognitive overload** | Hundreds of buttons always visible; parameters exposed even when irrelevant |
-| **Deep menus** | Options buried 3–4 levels deep in sub-menus |
+| Problem                       | Manifestation                                                                                                      |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| **Cognitive overload**        | Hundreds of buttons always visible; parameters exposed even when irrelevant                                        |
+| **Deep menus**                | Options buried 3–4 levels deep in sub-menus                                                                        |
 | **Inconsistent interactions** | Right-click does one thing here, something else there; double-click sometimes opens a window, sometimes edits text |
-| **Impossible onboarding** | No contextual guidance; users are left in front of an empty interface |
-| **Fragmented workflows** | Every action requires navigating between multiple detached windows |
-| **No feedback** | The user cannot tell whether an action succeeded |
+| **Impossible onboarding**     | No contextual guidance; users are left in front of an empty interface                                              |
+| **Fragmented workflows**      | Every action requires navigating between multiple detached windows                                                 |
+| **No feedback**               | The user cannot tell whether an action succeeded                                                                   |
 
 ### 1.2 Echoes Studio Principles
 
@@ -47,30 +47,31 @@ The base interface is simple. Complexity is revealed as the user explores — ne
 
 ```scss
 // Backgrounds
-$color-bg-base:       #1a1a1f;   // Main background
-$color-bg-panel:      #222229;   // Panel backgrounds
-$color-bg-elevated:   #2c2c34;   // Elevated elements (modals, tooltips)
-$color-border:        #3c3c43;   // Separators, borders
-$color-border-subtle: #2e2e35;   // Subtle borders
+$color-bg-base: #1a1a1f; // Main background
+$color-bg-panel: #222229; // Panel backgrounds
+$color-bg-elevated: #2c2c34; // Elevated elements (modals, tooltips)
+$color-border: #3c3c43; // Separators, borders
+$color-border-subtle: #2e2e35; // Subtle borders
 
 // Text
-$color-text-primary:   #f7f7f9;  // Primary text
-$color-text-secondary: #9999aa;  // Labels, descriptions
-$color-text-disabled:  #55555f;  // Disabled elements
+$color-text-primary: #f7f7f9; // Primary text
+$color-text-secondary: #9999aa; // Labels, descriptions
+$color-text-disabled: #55555f; // Disabled elements
 
 // Accent
-$color-accent:        #1571ff;   // Primary action, selection
-$color-accent-hover:  #2a7fff;   // Hover on accent
-$color-accent-active: #0f5bd4;   // Active/pressed state
+$color-accent: #1571ff; // Primary action, selection
+$color-accent-hover: #2a7fff; // Hover on accent
+$color-accent-active: #0f5bd4; // Active/pressed state
 
 // Status
 $color-success: #22c55e;
 $color-warning: #f59e0b;
-$color-error:   #ef4444;
-$color-record:  #ef4444;         // Red = recording active
+$color-error: #ef4444;
+$color-record: #ef4444; // Red = recording active
 ```
 
 **Usage rules:**
+
 - Never use pure white (`#ffffff`) on a dark background — use `$color-text-primary`
 - `$color-accent` is reserved for actions and selections — not decoration
 - `$color-record` (red) is reserved for recording state — do not use elsewhere
@@ -81,35 +82,48 @@ Tracks are assigned a colour from a cycling palette of 8:
 
 ```scss
 $track-colors: (
-  #4f8ef7,  // blue
-  #f7824f,  // orange
-  #4ff79e,  // green
-  #f74f8e,  // pink
-  #a04ff7,  // purple
-  #f7d44f,  // yellow
-  #4ff7f0,  // cyan
-  #f74f4f,  // red
+	#4f8ef7,
+	// blue
+	#f7824f,
+	// orange
+	#4ff79e,
+	// green
+	#f74f8e,
+	// pink
+	#a04ff7,
+	// purple
+	#f7d44f,
+	// yellow
+	#4ff7f0,
+	// cyan
+	#f74f4f // red
 );
 ```
 
 ### 2.3 Typography
 
 ```scss
-$font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+$font-family:
+	'Inter',
+	-apple-system,
+	BlinkMacSystemFont,
+	'Segoe UI',
+	sans-serif;
 // [TODO: decide whether Inter is bundled or uses the system font]
 
-$text-xs:   10px;   // Compact labels (parameter values)
-$text-sm:   12px;   // Common labels, menus
-$text-base: 14px;   // Default text
-$text-lg:   16px;   // Section headings
-$text-xl:   20px;   // Main headings
+$text-xs: 10px; // Compact labels (parameter values)
+$text-sm: 12px; // Common labels, menus
+$text-base: 14px; // Default text
+$text-lg: 16px; // Section headings
+$text-xl: 20px; // Main headings
 
-$font-regular:  400;
-$font-medium:   500;
+$font-regular: 400;
+$font-medium: 500;
 $font-semibold: 600;
 ```
 
 **Rules:**
+
 - No text below 10px (legibility)
 - Numeric values (BPM, volume, frequency) use tabular figures to prevent layout shift: `font-variant-numeric: tabular-nums`
 - Avoid all-caps for long labels (readability)
@@ -128,6 +142,7 @@ $space-8: 32px;
 ```
 
 **Rules:**
+
 - All spacing is a multiple of 4px
 - Minimum internal component padding: `$space-2` (8px)
 - Separation between logical sections: `$space-4` (16px) minimum
@@ -135,10 +150,10 @@ $space-8: 32px;
 ### 2.5 Border Radius
 
 ```scss
-$radius-sm:   3px;   // Buttons, tags
-$radius-md:   6px;   // Panels, cards
-$radius-lg:   10px;  // Modals
-$radius-full: 50%;   // Knobs, circular buttons
+$radius-sm: 3px; // Buttons, tags
+$radius-md: 6px; // Panels, cards
+$radius-lg: 10px; // Modals
+$radius-full: 50%; // Knobs, circular buttons
 ```
 
 ### 2.6 Icons
@@ -146,6 +161,7 @@ $radius-full: 50%;   // Knobs, circular buttons
 [TODO: Choose an icon library — Lucide, Phosphor, or custom SVGs]
 
 **Rules:**
+
 - Standard sizes: 16×16px (inline), 20×20px (buttons), 24×24px (toolbar)
 - Style: outline for actions; filled for active states
 - Every icon must have an `aria-label` or an accompanying text label
@@ -153,9 +169,9 @@ $radius-full: 50%;   // Knobs, circular buttons
 ### 2.7 Shadows and Depth
 
 ```scss
-$shadow-sm: 0 1px 3px rgba(0,0,0,0.4);   // Slightly elevated elements
-$shadow-md: 0 4px 12px rgba(0,0,0,0.5);  // Modals, floating menus
-$shadow-lg: 0 8px 24px rgba(0,0,0,0.6);  // Drawers, detached panels
+$shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.4); // Slightly elevated elements
+$shadow-md: 0 4px 12px rgba(0, 0, 0, 0.5); // Modals, floating menus
+$shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.6); // Drawers, detached panels
 ```
 
 ---
@@ -174,6 +190,7 @@ Hierarchy:
 ```
 
 **Rules:**
+
 - Maximum 1 Primary button visible per focus zone
 - Disabled buttons use `opacity: 0.4` — never hidden
 - Standard heights: 28px (compact), 36px (normal)
@@ -182,6 +199,7 @@ Hierarchy:
 ### 3.2 Knobs (rotary controls)
 
 Knobs are used for continuous parameters (volume, pan, effects). Behaviour:
+
 - **Vertical drag** — up = increase, down = decrease
 - **Shift + drag** — precision mode (movement slowed 10×)
 - **Double-click** — reset to `defaultValue`
@@ -189,6 +207,7 @@ Knobs are used for continuous parameters (volume, pan, effects). Behaviour:
 - **Scroll wheel** — increment by ±1 unit
 
 Current implementation (`Knob.svelte`):
+
 - SVG arc render: grey track + accent arc
 - Geometry: 298.8° sweep (7:30 → 4:30 clockwise)
 - Labels `VOL` / `PAN` displayed above knobs
@@ -284,12 +303,14 @@ Current implementation (`Knob.svelte`):
 ### 4.2 Drag & Drop
 
 **Rules:**
+
 - Drag is initiated after 3px of movement (prevents accidental triggers)
 - A visual indicator (drop line) shows the destination before release
 - Non-droppable targets visually reject the drag (`not-allowed` cursor)
 - Undo applies to drag & drop
 
 **Supported cases:**
+
 - Clip → another track: move or copy (+ Alt)
 - Audio file from OS → track: import
 - Library assets → track / timeline: see [library-browser-ux.md](library-browser-ux.md) §5
@@ -299,6 +320,7 @@ Current implementation (`Knob.svelte`):
 Opened via right-click only.
 
 **Rules:**
+
 - Maximum 8 visible entries without a sub-menu
 - No more than 1 level of sub-menu
 - Destructive actions at the bottom, separated by a divider

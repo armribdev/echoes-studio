@@ -53,15 +53,15 @@ a `Vec` that grows in place under an `Arc`.
 
 ## Alternatives considered
 
-| Option | Why not |
-|--------|---------|
-| WebAudio-only audition during import | Does not play on the arrange / engine path |
-| Grow `Vec` under `Arc` with atomics | Conflicts with ADR-004 without a dedicated ADR |
-| Wait for full decode (status quo) | No progressive playback |
+| Option                               | Why not                                        |
+| ------------------------------------ | ---------------------------------------------- |
+| WebAudio-only audition during import | Does not play on the arrange / engine path     |
+| Grow `Vec` under `Arc` with atomics  | Conflicts with ADR-004 without a dedicated ADR |
+| Wait for full decode (status quo)    | No progressive playback                        |
 
 ## Related
 
-- ADR-004 — Immutable Runtime Snapshots  
-- ADR-005 — UI / Engine Separation  
-- `docs/active/threading/realtime-safety.md`  
+- ADR-004 — Immutable Runtime Snapshots
+- ADR-005 — UI / Engine Separation
+- `docs/active/threading/realtime-safety.md`
 - Progressive peaks UI (pre-existing, unchanged contract)

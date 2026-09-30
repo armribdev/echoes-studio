@@ -20,7 +20,7 @@ export interface PianoRollState {
 	selectedNoteIds: Set<string>;
 	mode: PianoRollMode;
 	quantize: number; // in beats, e.g. 0.25 = 1/16
-	zoom: number;     // px per beat
+	zoom: number; // px per beat
 	clipDurationBeats: number;
 	/** Zoom preserved when leaving edit mode. */
 	savedEditZoom: number;
@@ -41,20 +41,26 @@ const INITIAL: PianoRollState = {
 	zoom: 80,
 	clipDurationBeats: 16,
 	savedEditZoom: 80,
-	editScrollByClipKey: {},
+	editScrollByClipKey: {}
 };
 
 // ── Store ─────────────────────────────────────────────────────────────────────
 
 function createPianoRollStore() {
-	const { subscribe, set, update } = writable<PianoRollState>(INITIAL);
+	const { subscribe, update } = writable<PianoRollState>(INITIAL);
 
 	// ── Public API ────────────────────────────────────────────────────────────
 
 	return {
 		subscribe,
 
-		openPianoRoll(trackId: string, clipId: string, trackName: string, trackColor: string, initialNotes: MidiNote[] = []) {
+		openPianoRoll(
+			trackId: string,
+			clipId: string,
+			trackName: string,
+			trackColor: string,
+			initialNotes: MidiNote[] = []
+		) {
 			this.loadClip(trackId, clipId, trackName, trackColor, initialNotes, 16);
 		},
 
@@ -64,7 +70,7 @@ function createPianoRollStore() {
 			trackName: string,
 			trackColor: string,
 			initialNotes: MidiNote[] = [],
-			clipDurationBeats = 16,
+			clipDurationBeats = 16
 		) {
 			update((s) => {
 				const sameClip =
@@ -86,7 +92,7 @@ function createPianoRollStore() {
 					trackColor,
 					notes: initialNotes,
 					clipDurationBeats,
-					selectedNoteIds: keepSelection ? s.selectedNoteIds : new Set(),
+					selectedNoteIds: keepSelection ? s.selectedNoteIds : new Set()
 				};
 			});
 		},
@@ -98,7 +104,7 @@ function createPianoRollStore() {
 				clipId: null,
 				trackId: null,
 				notes: [],
-				selectedNoteIds: new Set(),
+				selectedNoteIds: new Set()
 			}));
 		},
 
@@ -140,14 +146,14 @@ function createPianoRollStore() {
 			const key = `${trackId}:${clipId}`;
 			const pos = {
 				scrollLeft: Math.max(0, scrollLeft),
-				scrollTop: Math.max(0, scrollTop),
+				scrollTop: Math.max(0, scrollTop)
 			};
 			update((s) => {
 				const prev = s.editScrollByClipKey[key];
 				if (prev?.scrollLeft === pos.scrollLeft && prev?.scrollTop === pos.scrollTop) return s;
 				return {
 					...s,
-					editScrollByClipKey: { ...s.editScrollByClipKey, [key]: pos },
+					editScrollByClipKey: { ...s.editScrollByClipKey, [key]: pos }
 				};
 			});
 		},
@@ -163,7 +169,7 @@ function createPianoRollStore() {
 			const id = crypto.randomUUID().slice(0, 8);
 			update((s) => ({
 				...s,
-				notes: [...s.notes, { id, pitch, start, duration, velocity }],
+				notes: [...s.notes, { id, pitch, start, duration, velocity }]
 			}));
 			return id;
 		},
@@ -172,8 +178,8 @@ function createPianoRollStore() {
 			update((s) => ({
 				...s,
 				notes: s.notes.map((n) =>
-					n.id === id ? { ...n, pitch: clamp(pitch, 0, 127), start: Math.max(0, start) } : n,
-				),
+					n.id === id ? { ...n, pitch: clamp(pitch, 0, 127), start: Math.max(0, start) } : n
+				)
 			}));
 		},
 
@@ -187,10 +193,10 @@ function createPianoRollStore() {
 							? {
 									...n,
 									pitch: clamp(n.pitch + deltaPitch, 0, 127),
-									start: Math.max(0, n.start + deltaStart),
+									start: Math.max(0, n.start + deltaStart)
 								}
-							: n,
-					),
+							: n
+					)
 				};
 			});
 		},
@@ -199,8 +205,8 @@ function createPianoRollStore() {
 			update((s) => ({
 				...s,
 				notes: s.notes.map((n) =>
-					n.id === id ? { ...n, duration: Math.max(0.0156, duration) } : n,
-				),
+					n.id === id ? { ...n, duration: Math.max(0.0156, duration) } : n
+				)
 			}));
 		},
 
@@ -223,7 +229,7 @@ function createPianoRollStore() {
 				return {
 					...s,
 					notes: s.notes.filter((n) => !s.selectedNoteIds.has(n.id)),
-					selectedNoteIds: new Set(),
+					selectedNoteIds: new Set()
 				};
 			});
 		},
@@ -231,18 +237,14 @@ function createPianoRollStore() {
 		setVelocity(id: string, velocity: number) {
 			update((s) => ({
 				...s,
-				notes: s.notes.map((n) =>
-					n.id === id ? { ...n, velocity: clamp(velocity, 1, 127) } : n,
-				),
+				notes: s.notes.map((n) => (n.id === id ? { ...n, velocity: clamp(velocity, 1, 127) } : n))
 			}));
 		},
 
 		setVelocityMultiple(ids: Set<string>, velocity: number) {
 			update((s) => ({
 				...s,
-				notes: s.notes.map((n) =>
-					ids.has(n.id) ? { ...n, velocity: clamp(velocity, 1, 127) } : n,
-				),
+				notes: s.notes.map((n) => (ids.has(n.id) ? { ...n, velocity: clamp(velocity, 1, 127) } : n))
 			}));
 		},
 
@@ -272,7 +274,7 @@ function createPianoRollStore() {
 
 		getNotes(): MidiNote[] {
 			return get({ subscribe }).notes;
-		},
+		}
 	};
 }
 

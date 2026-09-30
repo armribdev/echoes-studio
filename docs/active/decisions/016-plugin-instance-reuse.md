@@ -51,7 +51,7 @@ So reuse requires moving the **activation lifecycle** (`activate`/`deactivate`,
 **shared `PluginInstance`**, owned by the host.
 
 VST3 is the simpler case: its wrapper already has **no `Drop`** (teardown lives in
-`PluginInstance::Drop`), so only the *new* wrapper's `prepare` could double-activate.
+`PluginInstance::Drop`), so only the _new_ wrapper's `prepare` could double-activate.
 Moving `setActive`/`setProcessing` into `PluginInstance::vst3_ensure_active`
 (idempotent) closes that, and the existing `Drop` (`setProcessing(0)` →
 `setActive(0)` → `terminate` → `release`) is unchanged.
@@ -99,7 +99,7 @@ instance concurrently; a displaced wrapper's drop does no FFI on the plugin.
 
 - [`plugin_system/instance.rs`](../../../src-tauri/src/plugin_system/instance.rs)
   — `ActivationState` (per format) + `clap_ensure_active` / `vst3_ensure_active`
-  + CLAP `Drop` teardown.
+  - CLAP `Drop` teardown.
 - [`plugin_formats/clap/wrapper.rs`](../../../src-tauri/src/plugin_formats/clap/wrapper.rs),
   [`audio_graph/nodes/clap_instrument.rs`](../../../src-tauri/src/audio_graph/nodes/clap_instrument.rs),
   [`plugin_formats/vst3/wrapper.rs`](../../../src-tauri/src/plugin_formats/vst3/wrapper.rs)
@@ -115,12 +115,12 @@ Migrated **variant by variant** (C-3): internal, CLAP, then VST3.
 
 ## Real-time impact
 
-| Aspect | Effect |
-|---|---|
-| `process` hot path | unchanged — same FFI dispatch through `Arc::deref` |
-| Per-recompile FFI churn | **removed** for CLAP — strictly improves command-thread cost, removes a xrun source |
-| Determinism (offline C-2) | unaffected — the offline harness does a single compile; reuse only changes *live* recompiles |
-| Live behaviour | plugin internal DSP state now **persists** across structural edits (the intended fix) |
+| Aspect                    | Effect                                                                                       |
+| ------------------------- | -------------------------------------------------------------------------------------------- |
+| `process` hot path        | unchanged — same FFI dispatch through `Arc::deref`                                           |
+| Per-recompile FFI churn   | **removed** for CLAP — strictly improves command-thread cost, removes a xrun source          |
+| Determinism (offline C-2) | unaffected — the offline harness does a single compile; reuse only changes _live_ recompiles |
+| Live behaviour            | plugin internal DSP state now **persists** across structural edits (the intended fix)        |
 
 No allocation, lock, or syscall added to the audio thread. Activation calls run
 on the command thread (`prepare`) / drop-ring worker (teardown).

@@ -44,7 +44,7 @@ jobs:
         run: cargo test --workspace
 
   frontend:
-    name: Frontend (svelte-check, build)
+    name: Frontend (lint, svelte-check, build)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -60,6 +60,9 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Prettier + ESLint
+        run: pnpm run lint
 
       - name: svelte-check
         run: pnpm run check

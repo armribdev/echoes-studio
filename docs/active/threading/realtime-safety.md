@@ -233,7 +233,7 @@ let callback_start = live_clock.now_nanos();
 
 A sandboxed plugin's device (`plugin_system/bridged_node.rs`: `BridgedNode`
 for an effect, `BridgedInstrument` for a track instrument) hands each block to
-another process and **waits for the answer on the audio thread**.  This is the
+another process and **waits for the answer on the audio thread**. This is the
 only wait allowed in the callback, and it is bounded:
 
 - a spin on the shared-memory ring, capped at 3/4 of the block period (live);
@@ -251,7 +251,7 @@ the export does not depend on scheduling (C-2).
 
 In-process plugin wrappers mark the running plugin in a memory-mapped file
 (`plugin_system/crash_marker.rs`) through the `rt_try_enter` guard: one atomic
-store per block, no lock, no allocation.  The page is file-backed, so after the
+store per block, no lock, no allocation. The page is file-backed, so after the
 OS writes it back the next store may take a soft page fault (no I/O).
 
 ---
@@ -262,6 +262,7 @@ The most dangerous scenario is a **priority inversion**: the high-priority audio
 thread blocks waiting for a lock held by the low-priority UI thread.
 
 Prevention strategy:
+
 - Audio thread **never** calls `Mutex::lock()` or `Mutex::try_lock()`.
 - All cross-thread data exchange uses lock-free primitives (`AtomicPtr`,
   `AtomicU32`, SPSC ring buffers).
@@ -290,6 +291,7 @@ block on the barrier). This is a mitigation, not full RT scheduling — MMCSS
 
 The audio thread's stack is limited on some platforms (e.g. 64 KB on some
 embedded systems, 256 KB on iOS). Guidelines:
+
 - Avoid deep recursion in `process()` implementations.
 - Keep per-frame stack allocations small (a few f32s is fine; 512-sample arrays
   on the stack are borderline — prefer pre-allocated heap).
@@ -302,6 +304,7 @@ embedded systems, 256 KB on iOS). Guidelines:
 
 When CPAL streaming is activated (`AudioEngine::start_stream`), the callback
 closure must capture:
+
 - `Arc<RuntimeSnapshot>` — for atomic scheduler swap via `try_swap`
 - `Box<GraphScheduler>` — the working scheduler, owned locally by the closure
   and updated in place by `try_swap`
@@ -318,18 +321,18 @@ from atomics — no lock anywhere on the audio path.
 
 Before any code enters the audio path, verify:
 
-| Check | Rule |
-|-------|------|
-| No `Vec::push`, `Box::new`, `String::new`, `format!` | No allocation |
-| No `drop` of owned heap values (use SPSC return path) | No deallocation |
-| No `Mutex::lock()` or `Mutex::try_lock()` | No blocking locks |
-| No `.await`, `block_on` | No async |
-| No `std::fs::*`, `std::net::*` | No I/O |
-| No `app.emit()` | No Tauri events from audio thread |
-| No `HashMap::values()` / `BTreeMap` traversal | No runtime graph traversal |
-| No `println!` / `eprintln!` | Both allocate internally |
-| No `unwrap()` without guaranteed success | No panic in callback |
-| Atomic loads/stores use Relaxed or Acquire/Release | No SeqCst on hot path |
+| Check                                                 | Rule                              |
+| ----------------------------------------------------- | --------------------------------- |
+| No `Vec::push`, `Box::new`, `String::new`, `format!`  | No allocation                     |
+| No `drop` of owned heap values (use SPSC return path) | No deallocation                   |
+| No `Mutex::lock()` or `Mutex::try_lock()`             | No blocking locks                 |
+| No `.await`, `block_on`                               | No async                          |
+| No `std::fs::*`, `std::net::*`                        | No I/O                            |
+| No `app.emit()`                                       | No Tauri events from audio thread |
+| No `HashMap::values()` / `BTreeMap` traversal         | No runtime graph traversal        |
+| No `println!` / `eprintln!`                           | Both allocate internally          |
+| No `unwrap()` without guaranteed success              | No panic in callback              |
+| Atomic loads/stores use Relaxed or Acquire/Release    | No SeqCst on hot path             |
 
 ---
 

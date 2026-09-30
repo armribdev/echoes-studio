@@ -55,7 +55,7 @@ ports). The compiler adds it to the base port count for `NodeKind::Plugin`.
 
 4. **[`audio_graph/compiler.rs`](../../../src-tauri/src/audio_graph/compiler.rs)**
    - Step build: `num_inputs = num_inputs_for_kind(kind) + (Plugin →
-     plugin_host.sidechain_input_ports(device_id))`. All other kinds unchanged.
+plugin_host.sidechain_input_ports(device_id))`. All other kinds unchanged.
 
 ## Real-time impact
 
@@ -108,7 +108,7 @@ change, no allocation/lock added.
   bus.~~ **done for CLAP (2026-09-25)**, see the update below.
 - **Routing** — ~~connect an aux/return track to the sidechain port in
   `from_project`~~ **done (2026-09-25)**, see the update below. Deliberately
-  *not* the generic return-bus/aux-send model critical issues §2.4 describes
+  _not_ the generic return-bus/aux-send model critical issues §2.4 describes
   (no `ReturnNode` wiring) — a plugin names one source track directly, which
   covers the standard "duck compressor" case without that larger data model.
 - **UI control** — `sidechain_source` is settable via `UPDATE_EFFECT` but has
@@ -131,7 +131,7 @@ already landed are now real, CLAP only (VST3 `getBusInfo` untouched):
   call so a plugin that crashes during this probe can't take the scanner down
   with it (falls back to `0`, same as "no `clap.audio-ports` support"). This
   is a one-time, off-RT scan-time cost, not a hot path. Instruments are not
-  probed (no meaningful aux *input*, and probing would trigger the same
+  probed (no meaningful aux _input_, and probing would trigger the same
   load-on-create cost a real instantiation does).
 - **Port base fixed.** `num_inputs_for_kind(NodeKind::Plugin)` was `2`
   ("default stereo in") even though both wrappers' real `num_input_ports()`
@@ -211,12 +211,12 @@ graph, and another track can take one as its input.
 
 - **Sized from the loaded instance, not the scan manifest** — a deliberate
   departure from this ADR's original plan for outputs. Multi-out matters
-  mostly for *instruments*, which the scanner deliberately does not probe
+  mostly for _instruments_, which the scanner deliberately does not probe
   (probing loads their samples/wavetables at every startup). Instead
   `PluginInstance` reads `clap.audio-ports` (outputs) once, right after the
   first `init` (`plugin_system/instance.rs::clap_ensure_initialized`) — the
   instance is brand-new and in no graph yet, so the read cannot race
-  `process`. The list is kept in *graph order*: the main port first
+  `process`. The list is kept in _graph order_: the main port first
   (`CLAP_AUDIO_PORT_IS_MAIN`, else the plugin's first port), then the aux
   ports.
 - **Compiler: grow, never shrink** (`audio_graph/compiler.rs::size_outputs_from_processors`).
@@ -227,7 +227,7 @@ graph, and another track can take one as its input.
   every other node keeps its size. Then any input connection whose
   `src_port` exceeds its source step's outputs is cut to silence — without
   this, the scheduler's `src_port.min(len-1)` clamp would silently feed the
-  source's *main* output instead. The phantom second output of every plugin
+  source's _main_ output instead. The phantom second output of every plugin
   node (`num_outputs_for_kind(Plugin) = 2`, never read) is removed (`→ 1`),
   mirroring the phantom-input fix above.
 - **Wrappers** (`plugin_formats/clap/audio_ports.rs::ClapOutputBuses`, shared by
@@ -245,7 +245,7 @@ graph, and another track can take one as its input.
   report its device's outputs. Built in `prepare`, since the wrapper is
   constructed before the plugin's `init`.
 - **Routing** — `AppTrack.input_source: Option<PluginOutputSource { effect_id,
-  port }>` (`project.rs`), where `effect_id` is a placement (an effect id or
+port }>` (`project.rs`), where `effect_id` is a placement (an effect id or
   `instrument:{track_id}`, the same keys as `PluginParam` targets) and `port ≥ 1`.
   `from_project` puts a `Bus` ("[input]") at the head of such a track —
   port 0 its own source, port 1 the plugin output — so the aux signal goes

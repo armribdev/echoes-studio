@@ -1,7 +1,13 @@
 <!-- PluginPicker.svelte — modal central pour parcourir et insérer un plugin -->
 <script lang="ts">
 	import { createEventDispatcher, onMount } from 'svelte';
-	import { BUILTIN_EFFECT_PLUGINS, BUILTIN_INSTRUMENT_PLUGIN, plugins, pluginsLoading, rescanPlugins } from '../stores/plugins';
+	import {
+		BUILTIN_EFFECT_PLUGINS,
+		BUILTIN_INSTRUMENT_PLUGIN,
+		plugins,
+		pluginsLoading,
+		rescanPlugins
+	} from '../stores/plugins';
 	import type { PluginInfo } from '../stores/plugins';
 	import { dismissable } from '../frontend/dismiss';
 
@@ -18,7 +24,11 @@
 	export let title: string | null = null;
 
 	$: builtins =
-		mode === 'effect' ? BUILTIN_EFFECT_PLUGINS : mode === 'instrument' ? [BUILTIN_INSTRUMENT_PLUGIN] : [];
+		mode === 'effect'
+			? BUILTIN_EFFECT_PLUGINS
+			: mode === 'instrument'
+				? [BUILTIN_INSTRUMENT_PLUGIN]
+				: [];
 
 	$: scanned = $plugins
 		.filter((p) => {
@@ -32,7 +42,8 @@
 
 	$: filtered = [...builtins, ...scanned].filter((p) => matchesQuery(p, query));
 
-	$: pickerTitle = title ?? (mode === 'instrument' ? 'Instruments' : mode === 'effect' ? 'Effets' : 'Plugins');
+	$: pickerTitle =
+		title ?? (mode === 'instrument' ? 'Instruments' : mode === 'effect' ? 'Effets' : 'Plugins');
 
 	function matchesQuery(p: PluginInfo, text: string): boolean {
 		if (!text) return true;
@@ -76,13 +87,19 @@
 		Internal: '#8b5cf6',
 		VST3: '#1571ff',
 		CLAP: '#22c55e',
-		AU:   '#f59e0b',
+		AU: '#f59e0b'
 	};
 </script>
 
 <!-- Backdrop -->
 <div class="backdrop">
-	<div class="picker" role="dialog" aria-modal="true" aria-label="Plugin browser" use:dismissable={() => dispatch('cancel')}>
+	<div
+		class="picker"
+		role="dialog"
+		aria-modal="true"
+		aria-label="Plugin browser"
+		use:dismissable={() => dispatch('cancel')}
+	>
 		<div class="header">
 			<span class="title">{pickerTitle}</span>
 			<button class="rescan" type="button" on:click={rescanPlugins} disabled={$pluginsLoading}>
@@ -123,10 +140,8 @@
 					>
 						<span class="plug-name">{p.name}</span>
 						<span class="plug-vendor">{p.vendor || '—'}</span>
-						<span
-							class="badge"
-							style:background={FORMAT_COLOR[p.format] ?? '#555'}
-						>{p.format}</span>
+						<span class="badge" style:background={FORMAT_COLOR[p.format] ?? '#555'}>{p.format}</span
+						>
 					</button>
 				{/each}
 			{/if}
@@ -188,8 +203,14 @@
 		background: transparent;
 		color: $text-subtle;
 		cursor: pointer;
-		&:hover:not(:disabled) { background: $surface-hover; color: $text-color; }
-		&:disabled { opacity: 0.4; cursor: default; }
+		&:hover:not(:disabled) {
+			background: $surface-hover;
+			color: $text-color;
+		}
+		&:disabled {
+			opacity: 0.4;
+			cursor: default;
+		}
 	}
 
 	.search {
@@ -201,7 +222,9 @@
 		color: $text-color;
 		font-size: 12px;
 		outline: none;
-		&:focus { border-color: rgba(21, 113, 255, 0.5); }
+		&:focus {
+			border-color: rgba(21, 113, 255, 0.5);
+		}
 	}
 
 	.list {
@@ -232,8 +255,12 @@
 		font-family: inherit;
 		text-align: left;
 		cursor: pointer;
-		&:hover { background: $surface-hover; }
-		&.selected { background: $surface-hover; }
+		&:hover {
+			background: $surface-hover;
+		}
+		&.selected {
+			background: $surface-hover;
+		}
 	}
 
 	.plug-name {

@@ -11,7 +11,7 @@ export {
 	getActiveAudioFileDrag,
 	isAudioFileDragActive,
 	moveAudioFileDragPointer,
-	requestAudioFileDragDrop,
+	requestAudioFileDragDrop
 } from '../audio/fileDrag';
 
 import { getActiveAudioFileDrag } from '../audio/fileDrag';

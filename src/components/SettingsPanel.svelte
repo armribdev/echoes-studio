@@ -11,7 +11,13 @@
 	import Button from './Button.svelte';
 	import Icon from './Icon.svelte';
 	import { dismissable } from '../frontend/dismiss';
-	import { listAudioDevices, applyAudioSettings, getSupportedSampleRates, getDeviceChannels, setActiveOutputChannels } from '../lib/audioBackend';
+	import {
+		listAudioDevices,
+		applyAudioSettings,
+		getSupportedSampleRates,
+		getDeviceChannels,
+		setActiveOutputChannels
+	} from '../lib/audioBackend';
 	import { plugins } from '../stores/plugins';
 	import type { AudioDeviceInfo } from '../lib/audioBackend';
 	import type { MidiInputDeviceInfo } from '../lib/midiBackend';
@@ -32,31 +38,30 @@
 		audio: { ...$preferences.audio },
 		midi: { ...$preferences.midi },
 		project: { ...$preferences.project },
-		interface: { ...$preferences.interface },
+		interface: { ...$preferences.interface }
 	};
 
 	const SAMPLE_RATES = [44100, 48000, 88200, 96000] as const;
 	const BUFFER_SIZES = [64, 128, 256, 512, 1024, 2048] as const;
-	const BIT_DEPTHS = [16, 24, 32] as const;
 
-	$: latencyMs = draft.audio.bufferSize / draft.audio.sampleRate * 1000;
+	$: latencyMs = (draft.audio.bufferSize / draft.audio.sampleRate) * 1000;
 
 	// ── Device lists (fetched from Rust/CPAL on panel open) ──────────────────
 	const DEFAULT_DEVICE: AudioDeviceInfo = { id: 'default', name: 'Par défaut (système)' };
 	let outputDevices: AudioDeviceInfo[] = [DEFAULT_DEVICE];
-	let inputDevices:  AudioDeviceInfo[] = [DEFAULT_DEVICE];
+	let inputDevices: AudioDeviceInfo[] = [DEFAULT_DEVICE];
 	let devicesLoading = false;
 	let applyError: string | null = null;
 
-	$: outputDeviceOptions = outputDevices.map(d => ({ value: d.id, label: d.name }));
-	$: inputDeviceOptions  = inputDevices.map(d =>  ({ value: d.id, label: d.name }));
+	$: outputDeviceOptions = outputDevices.map((d) => ({ value: d.id, label: d.name }));
+	$: inputDeviceOptions = inputDevices.map((d) => ({ value: d.id, label: d.name }));
 
 	async function loadDevices() {
 		devicesLoading = true;
 		try {
 			const list = await listAudioDevices();
 			outputDevices = list.outputs.length ? list.outputs : [DEFAULT_DEVICE];
-			inputDevices  = list.inputs.length  ? list.inputs  : [DEFAULT_DEVICE];
+			inputDevices = list.inputs.length ? list.inputs : [DEFAULT_DEVICE];
 		} finally {
 			devicesLoading = false;
 		}
@@ -74,7 +79,10 @@
 
 	// Keeps in-progress edits (alias, enabled) — only `connected` and brand-new
 	// devices come from the live list, so a hotplug event never discards typing.
-	function reconcileMidiRows(rows: MidiDeviceRow[], visible: MidiInputDeviceInfo[]): MidiDeviceRow[] {
+	function reconcileMidiRows(
+		rows: MidiDeviceRow[],
+		visible: MidiInputDeviceInfo[]
+	): MidiDeviceRow[] {
 		const visibleNames = new Set(visible.map((d) => d.id));
 		const knownNames = new Set(rows.map((r) => r.name));
 		const updated = rows.map((r) => ({ ...r, connected: visibleNames.has(r.name) }));
@@ -118,7 +126,7 @@
 	let supportedSampleRates: Set<number> = new Set(SAMPLE_RATES);
 
 	// ── Real device channel counts ────────────────────────────────────────────
-	let realInputChannels  = $preferences.audio.inputChannels;
+	let realInputChannels = $preferences.audio.inputChannels;
 	let realOutputChannels = $preferences.audio.outputChannels;
 	let channelsLoading = false;
 
@@ -131,9 +139,7 @@
 
 	// ── Live channel-routing preview ──────────────────────────────────────────
 	// No stream restart — just an atomic write in the CPAL callback (~5 ms).
-	$: void setActiveOutputChannels(
-		Math.min(draft.audio.outputChannels, realOutputChannels)
-	);
+	$: void setActiveOutputChannels(Math.min(draft.audio.outputChannels, realOutputChannels));
 
 	// ── Live preview: output device change ───────────────────────────────────
 	// Sequenced to avoid a double restart:
@@ -158,21 +164,20 @@
 			// Fetch rates and channel count in parallel.
 			const [rates, outCh] = await Promise.all([
 				getSupportedSampleRates(deviceId),
-				getDeviceChannels(deviceId, false),
+				getDeviceChannels(deviceId, false)
 			]);
 
 			// Update UI options.
 			supportedSampleRates = new Set(rates.length ? rates : SAMPLE_RATES);
-			realOutputChannels   = outCh;
+			realOutputChannels = outCh;
 
 			// Auto-correct sample rate if the current selection isn't supported.
 			let targetSR = draft.audio.sampleRate;
 			if (!supportedSampleRates.has(targetSR)) {
-				targetSR = ([...supportedSampleRates] as (typeof draft.audio.sampleRate)[])
-					.reduce((p, c) =>
-						Math.abs(c - draft.audio.sampleRate) < Math.abs(p - draft.audio.sampleRate)
-							? c : p
-					);
+				targetSR = ([...supportedSampleRates] as (typeof draft.audio.sampleRate)[]).reduce(
+					(p, c) =>
+						Math.abs(c - draft.audio.sampleRate) < Math.abs(p - draft.audio.sampleRate) ? c : p
+				);
 				// Update prevSRBufKey BEFORE updating draft so the non-device
 				// streamKey reactive below doesn't fire a duplicate restart.
 				prevSRBufKey = `${targetSR}|${draft.audio.bufferSize}|${draft.audio.inputDevice}`;
@@ -181,15 +186,15 @@
 
 			// Single stream restart with the fully-corrected settings.
 			await applyAudioSettings({
-				outputDevice:   deviceId,
-				inputDevice:    draft.audio.inputDevice,
-				sampleRate:     targetSR,
-				bufferSize:     draft.audio.bufferSize,
+				outputDevice: deviceId,
+				inputDevice: draft.audio.inputDevice,
+				sampleRate: targetSR,
+				bufferSize: draft.audio.bufferSize,
 				outputChannels: Math.min(draft.audio.outputChannels, realOutputChannels),
-				masterSoftClip: draft.audio.masterSoftClip,
+				masterSoftClip: draft.audio.masterSoftClip
 			});
 		} catch (err) {
-			applyError = typeof err === 'string' ? err : 'Impossible d\'appliquer les paramètres audio.';
+			applyError = typeof err === 'string' ? err : "Impossible d'appliquer les paramètres audio.";
 		} finally {
 			channelsLoading = false;
 		}
@@ -211,32 +216,32 @@
 		applyError = null;
 		try {
 			await applyAudioSettings({
-				outputDevice:   draft.audio.outputDevice,
-				inputDevice:    draft.audio.inputDevice,
-				sampleRate:     draft.audio.sampleRate,
-				bufferSize:     draft.audio.bufferSize,
+				outputDevice: draft.audio.outputDevice,
+				inputDevice: draft.audio.inputDevice,
+				sampleRate: draft.audio.sampleRate,
+				bufferSize: draft.audio.bufferSize,
 				outputChannels: Math.min(draft.audio.outputChannels, realOutputChannels),
-				masterSoftClip: draft.audio.masterSoftClip,
+				masterSoftClip: draft.audio.masterSoftClip
 			});
 		} catch (err) {
-			applyError = typeof err === 'string' ? err : 'Impossible d\'appliquer les paramètres audio.';
+			applyError = typeof err === 'string' ? err : "Impossible d'appliquer les paramètres audio.";
 		}
 	}
 
 	// Slider options — only include rates the device actually supports.
 	// Unsupported rates are simply absent from the slider positions.
-	$: sampleRateSliderOptions = SAMPLE_RATES
-		.filter(sr => supportedSampleRates.has(sr))
-		.map(sr => ({
+	$: sampleRateSliderOptions = SAMPLE_RATES.filter((sr) => supportedSampleRates.has(sr)).map(
+		(sr) => ({
 			value: sr,
-			label: sr >= 1000 ? (sr / 1000) + ' kHz' : sr + ' Hz',
-		}));
+			label: sr >= 1000 ? sr / 1000 + ' kHz' : sr + ' Hz'
+		})
+	);
 
 	// Buffer size slider options (always all 6 — fixed-buffer failures are
 	// handled at stream build time, not at enumeration time).
-	const bufferSliderOptions = BUFFER_SIZES.map(bs => ({
+	const bufferSliderOptions = BUFFER_SIZES.map((bs) => ({
 		value: bs,
-		label: String(bs),
+		label: String(bs)
 	}));
 
 	// ── Persistence + backend application ────────────────────────────────────
@@ -245,21 +250,21 @@
 		applyError = null;
 		draft.midi = {
 			...draft.midi,
-			devices: midiRows.map(({ name, alias, enabled }) => ({ name, alias: alias.trim(), enabled })),
+			devices: midiRows.map(({ name, alias, enabled }) => ({ name, alias: alias.trim(), enabled }))
 		};
 
 		// Push audio settings to CPAL engine (restarts stream if needed)
 		try {
 			await applyAudioSettings({
-				outputDevice:    draft.audio.outputDevice,
-				inputDevice:     draft.audio.inputDevice,
-				sampleRate:      draft.audio.sampleRate,
-				bufferSize:      draft.audio.bufferSize,
-				outputChannels:  Math.min(draft.audio.outputChannels, realOutputChannels),
-				masterSoftClip:  draft.audio.masterSoftClip,
+				outputDevice: draft.audio.outputDevice,
+				inputDevice: draft.audio.inputDevice,
+				sampleRate: draft.audio.sampleRate,
+				bufferSize: draft.audio.bufferSize,
+				outputChannels: Math.min(draft.audio.outputChannels, realOutputChannels),
+				masterSoftClip: draft.audio.masterSoftClip
 			});
 		} catch (err) {
-			applyError = typeof err === 'string' ? err : 'Impossible d\'appliquer les paramètres audio.';
+			applyError = typeof err === 'string' ? err : "Impossible d'appliquer les paramètres audio.";
 			// Still save preferences so settings survive restart
 		}
 		preferences.set(draft);
@@ -274,7 +279,7 @@
 			audio: { ...$preferences.audio },
 			midi: { ...$preferences.midi },
 			project: { ...$preferences.project },
-			interface: { ...$preferences.interface },
+			interface: { ...$preferences.interface }
 		};
 		midiRows = reconcileMidiRows(
 			draft.midi.devices.map((d) => ({ ...d, connected: false })),
@@ -289,13 +294,37 @@
 	}
 
 	function resetSection() {
-		if (activeSection === 'audio') draft.audio = { inputDevice: 'default', outputDevice: 'default', sampleRate: 48000, bufferSize: 256, inputChannels: 2, outputChannels: 2, masterSoftClip: false, pluginIsolation: 'chosen', alwaysIsolated: [] };
+		if (activeSection === 'audio')
+			draft.audio = {
+				inputDevice: 'default',
+				outputDevice: 'default',
+				sampleRate: 48000,
+				bufferSize: 256,
+				inputChannels: 2,
+				outputChannels: 2,
+				masterSoftClip: false,
+				pluginIsolation: 'chosen',
+				alwaysIsolated: []
+			};
 		else if (activeSection === 'midi') {
 			draft.midi = { devices: [], localControlOff: true };
-			midiRows = midiRows.filter((row) => row.connected).map((row) => ({ ...row, alias: '', enabled: false }));
-		}
-		else if (activeSection === 'project') draft.project = { defaultFolder: '', autoSave: true, autoSaveIntervalSec: 60, autoSaveMaxBackups: 5, defaultBpm: 120, defaultNumerator: 4, defaultDenominator: 4, exportBitDepth: 32, exportMp3Bitrate: 320 };
-		else if (activeSection === 'interface') draft.interface = { showMinimap: false, showArrangeGrid: false };
+			midiRows = midiRows
+				.filter((row) => row.connected)
+				.map((row) => ({ ...row, alias: '', enabled: false }));
+		} else if (activeSection === 'project')
+			draft.project = {
+				defaultFolder: '',
+				autoSave: true,
+				autoSaveIntervalSec: 60,
+				autoSaveMaxBackups: 5,
+				defaultBpm: 120,
+				defaultNumerator: 4,
+				defaultDenominator: 4,
+				exportBitDepth: 32,
+				exportMp3Bitrate: 320
+			};
+		else if (activeSection === 'interface')
+			draft.interface = { showMinimap: false, showArrangeGrid: false };
 		draft = { ...draft };
 	}
 
@@ -304,11 +333,11 @@
 	// `rawLevels` are updated instantly from events; `displayLevels` decay via rAF
 	// so the meter has a fast attack (immediate snap-up) and slow release (~400 ms).
 
-	let rawOutputLevels:     number[] = Array(16).fill(0);
-	let rawInputLevels:      number[] = Array(16).fill(0);
+	let rawOutputLevels: number[] = Array(16).fill(0);
+	let rawInputLevels: number[] = Array(16).fill(0);
 	let xrunCount = 0;
 	let displayOutputLevels: number[] = Array(16).fill(0);
-	let displayInputLevels:  number[] = Array(16).fill(0);
+	let displayInputLevels: number[] = Array(16).fill(0);
 
 	let unlistenLevels: UnlistenFn | null = null;
 	let rafId = 0;
@@ -322,23 +351,25 @@
 		let changed = false;
 		for (let i = 0; i < 16; i++) {
 			// Attack: snap up instantly.
-			const newOut = rawOutputLevels[i] > displayOutputLevels[i]
-				? rawOutputLevels[i]
-				: displayOutputLevels[i] * DECAY;
-			const newIn  = rawInputLevels[i] > displayInputLevels[i]
-				? rawInputLevels[i]
-				: displayInputLevels[i] * DECAY;
+			const newOut =
+				rawOutputLevels[i] > displayOutputLevels[i]
+					? rawOutputLevels[i]
+					: displayOutputLevels[i] * DECAY;
+			const newIn =
+				rawInputLevels[i] > displayInputLevels[i]
+					? rawInputLevels[i]
+					: displayInputLevels[i] * DECAY;
 
 			if (Math.abs(newOut - displayOutputLevels[i]) > 0.0001) changed = true;
-			if (Math.abs(newIn  - displayInputLevels[i])  > 0.0001) changed = true;
+			if (Math.abs(newIn - displayInputLevels[i]) > 0.0001) changed = true;
 
 			displayOutputLevels[i] = newOut;
-			displayInputLevels[i]  = newIn;
+			displayInputLevels[i] = newIn;
 		}
 		// Only trigger Svelte reactivity when something actually changed.
 		if (changed) {
 			displayOutputLevels = displayOutputLevels;
-			displayInputLevels  = displayInputLevels;
+			displayInputLevels = displayInputLevels;
 		}
 		// Continue only while the panel is open — stop to save CPU otherwise.
 		if (rafRunning) rafId = requestAnimationFrame(decayLoop);
@@ -356,7 +387,7 @@
 		cancelAnimationFrame(rafId);
 		// Reset display so meters open fresh next time.
 		displayOutputLevels = Array(16).fill(0);
-		displayInputLevels  = Array(16).fill(0);
+		displayInputLevels = Array(16).fill(0);
 		xrunCount = 0;
 	}
 
@@ -367,7 +398,7 @@
 	function levelToHeight(amp: number): string {
 		if (amp <= 0) return '0%';
 		const db = 20 * Math.log10(amp);
-		const pct = Math.max(0, Math.min(100, (db + 60) / 60 * 100));
+		const pct = Math.max(0, Math.min(100, ((db + 60) / 60) * 100));
 		return `${pct.toFixed(1)}%`;
 	}
 
@@ -383,7 +414,7 @@
 			// and sent as a standalone LEVELS_UPDATED event when stopped.
 			if (ev?.type === 'LEVELS_UPDATED' || ev?.type === 'POSITION_UPDATED') {
 				if (ev.payload.output) rawOutputLevels = ev.payload.output;
-				if (ev.payload.input)  rawInputLevels  = ev.payload.input;
+				if (ev.payload.input) rawInputLevels = ev.payload.input;
 				if (typeof ev.payload.xruns === 'number') xrunCount = ev.payload.xruns;
 			}
 		});
@@ -395,509 +426,591 @@
 	});
 
 	const SECTIONS: { id: Section; label: string }[] = [
-		{ id: 'audio',     label: 'Audio'     },
-		{ id: 'midi',      label: 'MIDI'      },
-		{ id: 'project',   label: 'Par défaut' },
+		{ id: 'audio', label: 'Audio' },
+		{ id: 'midi', label: 'MIDI' },
+		{ id: 'project', label: 'Par défaut' },
 		{ id: 'interface', label: 'Interface' }
 	];
 </script>
 
 {#if $settingsPanelOpen}
-<div class="overlay">
-	<div class="panel" role="dialog" aria-modal="true" aria-label="Préférences" use:dismissable={cancelAndClose}>
+	<div class="overlay">
+		<div
+			class="panel"
+			role="dialog"
+			aria-modal="true"
+			aria-label="Préférences"
+			use:dismissable={cancelAndClose}
+		>
+			<!-- ── Header ── -->
+			<div class="panel-header">
+				<span class="header-icon"><Icon name="settings" size={14} /></span>
+				<span class="panel-title">Préférences</span>
+				<button class="close-btn" on:click={cancelAndClose} title="Fermer (Échap)">
+					<Icon name="close" size={15} strokeWidth={1.5} />
+				</button>
+			</div>
 
-		<!-- ── Header ── -->
-		<div class="panel-header">
-			<span class="header-icon"><Icon name="settings" size={14} /></span>
-			<span class="panel-title">Préférences</span>
-			<button class="close-btn" on:click={cancelAndClose} title="Fermer (Échap)">
-				<Icon name="close" size={15} strokeWidth={1.5} />
-			</button>
-		</div>
-
-		<!-- ── Body ── -->
-		<div class="panel-body">
-
-			<!-- Sidebar nav -->
-			<nav class="sidebar">
-				{#each SECTIONS as s}
-					<button
-						class="nav-item"
-						class:active={activeSection === s.id}
-						on:click={() => (activeSection = s.id)}
-					>
-						<span class="nav-icon">
-							{#if s.id === 'audio'}
-								<Icon name="volume" size={15} />
-							{:else if s.id === 'midi'}
-								<Icon name="cpu" size={15} />
-							{:else if s.id === 'project'}
-								<Icon name="folder" size={15} />
-							{:else if s.id === 'interface'}
-								<Icon name="monitor" size={15} />
-							{/if}
-						</span>
-						<span class="nav-label">{s.label}</span>
-					</button>
-				{/each}
-			</nav>
-
-			<!-- Content -->
-			<div class="content">
-
-			{#if activeSection === 'audio'}
-			<div class="section">
-				<h2 class="section-title">Périphériques Audio</h2>
-
-				<!-- ── Deux colonnes IN / OUT ─────────────────────────────────── -->
-				<div class="io-grid">
-
-					<!-- Colonne Entrée -->
-					<div class="io-col">
-						<div class="io-device-row">
-							<span class="io-device-label">
-								Entrée
-								<span class="badge badge--in">IN</span>
-								{#if devicesLoading}<span class="loading-dot">…</span>{/if}
-							</span>
-							<CustomSelect bind:value={draft.audio.inputDevice} options={inputDeviceOptions} />
-							<span class="field-hint">Microphone, interface, entrée virtuelle</span>
-						</div>
-
-						<div class="channel-card channel-card--in">
-							<div class="channel-card-header">
-								<span class="channel-card-title">Canaux actifs</span>
-								<div class="channel-count-control">
-									<button class="count-btn"
-										disabled={draft.audio.inputChannels <= 1}
-										on:click={() => draft.audio.inputChannels = Math.max(1, draft.audio.inputChannels - 1)}>−</button>
-									<span class="count-value">{Math.min(draft.audio.inputChannels, realInputChannels)}</span>
-									<button class="count-btn"
-										disabled={draft.audio.inputChannels >= realInputChannels}
-										on:click={() => draft.audio.inputChannels = Math.min(realInputChannels, draft.audio.inputChannels + 1)}>+</button>
-								</div>
-							</div>
-							<div class="channel-strips">
-								{#each Array(Math.min(realInputChannels, 16)) as _, i}
-									<div
-										class="channel-strip channel-strip--in"
-										class:channel-strip--inactive={i >= Math.min(draft.audio.inputChannels, realInputChannels)}
-										title="Entrée {i + 1}"
-									>
-										<span class="strip-num">{i + 1}</span>
-										<div class="strip-meter">
-											<div
-												class="strip-level strip-level--in"
-												style="height: {levelToHeight(displayInputLevels[i] ?? 0)}"
-											></div>
-										</div>
-									</div>
-								{/each}
-							</div>
-						</div>
-					</div>
-
-					<!-- Flèche centrale -->
-					<div class="channel-route-arrow">
-						<Icon name="arrow-right" size={14} />
-					</div>
-
-					<!-- Colonne Sortie -->
-					<div class="io-col">
-						<div class="io-device-row">
-							<span class="io-device-label">
-								Sortie
-								<span class="badge badge--out">OUT</span>
-								{#if devicesLoading}<span class="loading-dot">…</span>{/if}
-							</span>
-							<CustomSelect bind:value={draft.audio.outputDevice} options={outputDeviceOptions} />
-							<span class="field-hint">Haut-parleurs, casque, interface de sortie</span>
-						</div>
-
-						<div class="channel-card channel-card--out">
-							<div class="channel-card-header">
-								<span class="channel-card-title">Canaux actifs</span>
-								{#if channelsLoading}<span class="loading-dot">…</span>{/if}
-								<div class="channel-count-control">
-									<button class="count-btn"
-										disabled={draft.audio.outputChannels <= 1}
-										on:click={() => draft.audio.outputChannels = Math.max(1, draft.audio.outputChannels - 1)}>−</button>
-									<span class="count-value">{Math.min(draft.audio.outputChannels, realOutputChannels)}</span>
-									<button class="count-btn"
-										disabled={draft.audio.outputChannels >= realOutputChannels}
-										on:click={() => draft.audio.outputChannels = Math.min(realOutputChannels, draft.audio.outputChannels + 1)}>+</button>
-								</div>
-							</div>
-							<div class="channel-strips">
-								{#each Array(Math.min(realOutputChannels, 16)) as _, i}
-									<div
-										class="channel-strip channel-strip--out"
-										class:channel-strip--inactive={i >= Math.min(draft.audio.outputChannels, realOutputChannels)}
-										title="Sortie {i + 1}"
-									>
-										<span class="strip-num">{i + 1}</span>
-										<div class="strip-meter">
-											<div
-												class="strip-level strip-level--out"
-												style="height: {levelToHeight(displayOutputLevels[i] ?? 0)}"
-											></div>
-										</div>
-									</div>
-								{/each}
-							</div>
-						</div>
-					</div>
-
-				</div><!-- /io-grid -->
-
-				{#if applyError}
-				<div class="apply-error">
-					<Icon name="alert-triangle" size={13} />
-					<span>{applyError}</span>
-				</div>
-				{/if}
-
-				<div class="divider"></div>
-				<h3 class="subsection-title">Qualité & Latence</h3>
-
-					<div class="field-grid">
-						<div class="field">
-							<span class="field-label">Fréquence d'échantillonnage</span>
-							{#if sampleRateSliderOptions.length <= 1}
-								<div class="single-value-display">
-									{sampleRateSliderOptions[0]?.label ?? (draft.audio.sampleRate >= 1000 ? draft.audio.sampleRate / 1000 + ' kHz' : draft.audio.sampleRate + ' Hz')}
-								</div>
-								<span class="field-hint">Seule fréquence supportée par ce périphérique</span>
-							{:else}
-								<StepSlider
-									bind:value={draft.audio.sampleRate}
-									options={sampleRateSliderOptions}
-								/>
-							{/if}
-						</div>
-
-						<div class="field">
-							<span class="field-label">Taille de buffer</span>
-							<StepSlider
-								bind:value={draft.audio.bufferSize}
-								options={bufferSliderOptions}
-							/>
-						</div>
-
-						<div class="field">
-							<span class="field-label">Bit depth</span>
-							<div class="single-value-display">
-								<Icon name="cpu" size={14} />
-								32-bit float
-							</div>
-							<span class="field-hint">Profondeur maximale sans conversion</span>
-						</div>
-
-					</div>
-
-					<div class="latency-bar">
-						<span class="latency-label">Latence estimée</span>
-						<span class="latency-value">{latencyMs.toFixed(2)} ms</span>
-						<div class="latency-indicator">
-							<div
-								class="latency-fill"
-								class:latency-low={latencyMs < 10}
-								class:latency-mid={latencyMs >= 10 && latencyMs < 25}
-								class:latency-high={latencyMs >= 25}
-								style="width: {Math.min(latencyMs / 50 * 100, 100)}%"
-							></div>
-						</div>
-						<span class="latency-hint">
-							{#if latencyMs < 10}Excellente — idéale pour l'enregistrement live
-							{:else if latencyMs < 25}Bonne — confortable pour la production
-							{:else}Élevée — envisager un buffer plus petit{/if}
-						</span>
-					</div>
-
-					<div class="xrun-bar" class:xrun-warning={xrunCount > 0}>
-						<span class="xrun-label">Underruns (XRun)</span>
-						<span class="xrun-value">{xrunCount}</span>
-						<span class="xrun-hint">
-							{#if xrunCount === 0}Aucun underrun détecté sur cette session
-							{:else}Le callback audio a été en retard — augmenter le buffer si cela persiste{/if}
-						</span>
-					</div>
-
-				<div class="divider"></div>
-				<h3 class="subsection-title">Sortie master</h3>
-
-				<Toggle
-					bind:checked={draft.audio.masterSoftClip}
-					label="Limiteur master (soft clip)"
-					description="Désactivé : sortie linéaire. Activé : saturation douce tanh sur le signal sommé."
-				/>
-
-				<div class="divider"></div>
-				<h3 class="subsection-title">Isolation des plugins</h3>
-
-				<div class="field">
-					<span class="field-label">Plugins isolés</span>
-					<PillGroup
-						bind:value={draft.audio.pluginIsolation}
-						options={[
-							{ value: 'off', label: 'Aucun' },
-							{ value: 'chosen', label: 'Choisis' },
-							{ value: 'all', label: 'Tous' },
-						]}
-					/>
-					<span class="field-hint">
-						{#if draft.audio.pluginIsolation === 'off'}Tous les plugins tournent dans Echoes : le plus léger, mais un plugin qui plante ferme Echoes.
-						{:else if draft.audio.pluginIsolation === 'chosen'}Seuls les effets marqués « Isoler » et les plugins toujours isolés tournent à part : leur plantage coupe le plugin, pas Echoes.
-						{:else}Chaque plugin tourne à part : un plantage ne ferme jamais Echoes, au prix d'un peu plus de CPU.{/if}
-						Plugins CLAP uniquement pour l'instant.
-					</span>
-				</div>
-
-				{#if draft.audio.pluginIsolation === 'chosen' && draft.audio.alwaysIsolated.length > 0}
-					<div class="field">
-						<span class="field-label">Toujours isolés</span>
-						<div class="isolated-list">
-							{#each draft.audio.alwaysIsolated as pluginId (pluginId)}
-								<span class="isolated-chip">
-									{$plugins.find((p) => p.id === pluginId)?.name ?? pluginId}
-									<button
-										type="button"
-										title="Ne plus toujours isoler ce plugin"
-										on:click={() => (draft.audio.alwaysIsolated = draft.audio.alwaysIsolated.filter((id) => id !== pluginId))}
-									>×</button>
-								</span>
-							{/each}
-						</div>
-						<span class="field-hint">Ajoutez un plugin avec un clic droit sur l'effet ou l'instrument → « Toujours isoler ».</span>
-					</div>
-				{/if}
-
-				<div class="divider"></div>
-				<h3 class="subsection-title">Routage Master</h3>
-
-					<div class="routing-row">
-						<div class="routing-label">
-							<span class="routing-name">Master L/R</span>
-							<span class="routing-desc">Sortie principale stéréo</span>
-						</div>
-						<div class="routing-assign">
-							<CustomSelect
-								small
-								bind:value={masterRouting}
-						options={[
-								{ value: 'out-1-2', label: 'Sorties 1–2' },
-								...(Math.min(draft.audio.outputChannels, realOutputChannels) >= 4 ? [{ value: 'out-3-4', label: 'Sorties 3–4' }] : []),
-								...(Math.min(draft.audio.outputChannels, realOutputChannels) >= 6 ? [{ value: 'out-5-6', label: 'Sorties 5–6' }] : [])
-							]}
-							/>
-						</div>
-					</div>
-
-					<div class="routing-row">
-						<div class="routing-label">
-							<span class="routing-name">Casque</span>
-							<span class="routing-desc">Mix monitoring indépendant</span>
-						</div>
-						<div class="routing-assign">
-							<CustomSelect
-								small
-								bind:value={headphoneRouting}
-						options={[
-								{ value: 'mirror', label: 'Miroir Master' },
-								...(Math.min(draft.audio.outputChannels, realOutputChannels) >= 4 ? [{ value: 'out-3-4', label: 'Sorties 3–4' }] : []),
-								...(Math.min(draft.audio.outputChannels, realOutputChannels) >= 6 ? [{ value: 'out-5-6', label: 'Sorties 5–6' }] : [])
-							]}
-							/>
-						</div>
-					</div>
-				</div>
-
-				{:else if activeSection === 'midi'}
-				<div class="section">
-					<h2 class="section-title">Entrée MIDI</h2>
-					<span class="field-hint">
-						Activez un clavier ou contrôleur MIDI, puis armez une piste (bouton
-						rouge dans la liste des pistes) pour jouer en direct dessus. Un clavier
-						débranché reste dans la liste avec son nom et son réglage.
-					</span>
-
-					<div class="divider"></div>
-
-					{#if midiRows.length === 0}
-						<span class="field-hint">Aucun périphérique MIDI détecté.</span>
-					{:else}
-						{#each midiRows as row (row.name)}
-							<!-- svelte-ignore a11y-no-static-element-interactions -->
-							<div
-								class:midi-device--offline={!row.connected}
-								title="Double-clic pour renommer"
-								on:dblclick={(e) => startMidiRename(e, row.name)}
-							>
-								{#if renamingMidiDevice === row.name}
-									<Toggle bind:checked={row.enabled} label={row.alias || row.name}>
-										<input
-											slot="info"
-											class="midi-rename"
-											type="text"
-											value={row.alias || row.name}
-											aria-label="Renommer {row.name}"
-											use:focusAndSelect
-											on:keydown={(e) => { if (e.key === 'Enter') finishMidiRename(row, e.currentTarget.value); }}
-											on:blur={(e) => finishMidiRename(row, e.currentTarget.value)}
-										/>
-									</Toggle>
-								{:else}
-									<Toggle
-										bind:checked={row.enabled}
-										label={row.alias || row.name}
-										description={midiDeviceHint(row)}
-									/>
+			<!-- ── Body ── -->
+			<div class="panel-body">
+				<!-- Sidebar nav -->
+				<nav class="sidebar">
+					{#each SECTIONS as s}
+						<button
+							class="nav-item"
+							class:active={activeSection === s.id}
+							on:click={() => (activeSection = s.id)}
+						>
+							<span class="nav-icon">
+								{#if s.id === 'audio'}
+									<Icon name="volume" size={15} />
+								{:else if s.id === 'midi'}
+									<Icon name="cpu" size={15} />
+								{:else if s.id === 'project'}
+									<Icon name="folder" size={15} />
+								{:else if s.id === 'interface'}
+									<Icon name="monitor" size={15} />
 								{/if}
+							</span>
+							<span class="nav-label">{s.label}</span>
+						</button>
+					{/each}
+				</nav>
+
+				<!-- Content -->
+				<div class="content">
+					{#if activeSection === 'audio'}
+						<div class="section">
+							<h2 class="section-title">Périphériques Audio</h2>
+
+							<!-- ── Deux colonnes IN / OUT ─────────────────────────────────── -->
+							<div class="io-grid">
+								<!-- Colonne Entrée -->
+								<div class="io-col">
+									<div class="io-device-row">
+										<span class="io-device-label">
+											Entrée
+											<span class="badge badge--in">IN</span>
+											{#if devicesLoading}<span class="loading-dot">…</span>{/if}
+										</span>
+										<CustomSelect
+											bind:value={draft.audio.inputDevice}
+											options={inputDeviceOptions}
+										/>
+										<span class="field-hint">Microphone, interface, entrée virtuelle</span>
+									</div>
+
+									<div class="channel-card channel-card--in">
+										<div class="channel-card-header">
+											<span class="channel-card-title">Canaux actifs</span>
+											<div class="channel-count-control">
+												<button
+													class="count-btn"
+													disabled={draft.audio.inputChannels <= 1}
+													on:click={() =>
+														(draft.audio.inputChannels = Math.max(
+															1,
+															draft.audio.inputChannels - 1
+														))}>−</button
+												>
+												<span class="count-value"
+													>{Math.min(draft.audio.inputChannels, realInputChannels)}</span
+												>
+												<button
+													class="count-btn"
+													disabled={draft.audio.inputChannels >= realInputChannels}
+													on:click={() =>
+														(draft.audio.inputChannels = Math.min(
+															realInputChannels,
+															draft.audio.inputChannels + 1
+														))}>+</button
+												>
+											</div>
+										</div>
+										<div class="channel-strips">
+											{#each Array(Math.min(realInputChannels, 16)) as _, i}
+												<div
+													class="channel-strip channel-strip--in"
+													class:channel-strip--inactive={i >=
+														Math.min(draft.audio.inputChannels, realInputChannels)}
+													title="Entrée {i + 1}"
+												>
+													<span class="strip-num">{i + 1}</span>
+													<div class="strip-meter">
+														<div
+															class="strip-level strip-level--in"
+															style="height: {levelToHeight(displayInputLevels[i] ?? 0)}"
+														></div>
+													</div>
+												</div>
+											{/each}
+										</div>
+									</div>
+								</div>
+
+								<!-- Flèche centrale -->
+								<div class="channel-route-arrow">
+									<Icon name="arrow-right" size={14} />
+								</div>
+
+								<!-- Colonne Sortie -->
+								<div class="io-col">
+									<div class="io-device-row">
+										<span class="io-device-label">
+											Sortie
+											<span class="badge badge--out">OUT</span>
+											{#if devicesLoading}<span class="loading-dot">…</span>{/if}
+										</span>
+										<CustomSelect
+											bind:value={draft.audio.outputDevice}
+											options={outputDeviceOptions}
+										/>
+										<span class="field-hint">Haut-parleurs, casque, interface de sortie</span>
+									</div>
+
+									<div class="channel-card channel-card--out">
+										<div class="channel-card-header">
+											<span class="channel-card-title">Canaux actifs</span>
+											{#if channelsLoading}<span class="loading-dot">…</span>{/if}
+											<div class="channel-count-control">
+												<button
+													class="count-btn"
+													disabled={draft.audio.outputChannels <= 1}
+													on:click={() =>
+														(draft.audio.outputChannels = Math.max(
+															1,
+															draft.audio.outputChannels - 1
+														))}>−</button
+												>
+												<span class="count-value"
+													>{Math.min(draft.audio.outputChannels, realOutputChannels)}</span
+												>
+												<button
+													class="count-btn"
+													disabled={draft.audio.outputChannels >= realOutputChannels}
+													on:click={() =>
+														(draft.audio.outputChannels = Math.min(
+															realOutputChannels,
+															draft.audio.outputChannels + 1
+														))}>+</button
+												>
+											</div>
+										</div>
+										<div class="channel-strips">
+											{#each Array(Math.min(realOutputChannels, 16)) as _, i}
+												<div
+													class="channel-strip channel-strip--out"
+													class:channel-strip--inactive={i >=
+														Math.min(draft.audio.outputChannels, realOutputChannels)}
+													title="Sortie {i + 1}"
+												>
+													<span class="strip-num">{i + 1}</span>
+													<div class="strip-meter">
+														<div
+															class="strip-level strip-level--out"
+															style="height: {levelToHeight(displayOutputLevels[i] ?? 0)}"
+														></div>
+													</div>
+												</div>
+											{/each}
+										</div>
+									</div>
+								</div>
 							</div>
-						{/each}
-					{/if}
+							<!-- /io-grid -->
 
-					<div class="divider"></div>
-					<h3 class="subsection-title">Son du clavier</h3>
+							{#if applyError}
+								<div class="apply-error">
+									<Icon name="alert-triangle" size={13} />
+									<span>{applyError}</span>
+								</div>
+							{/if}
 
-					<Toggle
-						bind:checked={draft.midi.localControlOff}
-						label="Couper le son interne du clavier"
-						description="Pour un piano numérique : il ne joue plus par ses propres haut-parleurs tant qu'Echoes l'utilise. Le son revient quand vous désactivez le clavier ou fermez Echoes."
-					/>
-				</div>
+							<div class="divider"></div>
+							<h3 class="subsection-title">Qualité & Latence</h3>
 
-				{:else if activeSection === 'project'}
-				<div class="section">
-					<h2 class="section-title">Projets & sauvegarde (globaux)</h2>
+							<div class="field-grid">
+								<div class="field">
+									<span class="field-label">Fréquence d'échantillonnage</span>
+									{#if sampleRateSliderOptions.length <= 1}
+										<div class="single-value-display">
+											{sampleRateSliderOptions[0]?.label ??
+												(draft.audio.sampleRate >= 1000
+													? draft.audio.sampleRate / 1000 + ' kHz'
+													: draft.audio.sampleRate + ' Hz')}
+										</div>
+										<span class="field-hint">Seule fréquence supportée par ce périphérique</span>
+									{:else}
+										<StepSlider
+											bind:value={draft.audio.sampleRate}
+											options={sampleRateSliderOptions}
+										/>
+									{/if}
+								</div>
 
-					<div class="field">
-						<span class="field-label">Dossier de projets par défaut</span>
-						<div class="field-row">
-							<input class="text-input" type="text" bind:value={draft.project.defaultFolder} placeholder="~/Documents/Echoes Studio" />
-							<Button compact on:click={() => {}}>Parcourir…</Button>
-						</div>
-					</div>
+								<div class="field">
+									<span class="field-label">Taille de buffer</span>
+									<StepSlider bind:value={draft.audio.bufferSize} options={bufferSliderOptions} />
+								</div>
 
-					<div class="divider"></div>
-					<h3 class="subsection-title">Sauvegarde automatique</h3>
+								<div class="field">
+									<span class="field-label">Bit depth</span>
+									<div class="single-value-display">
+										<Icon name="cpu" size={14} />
+										32-bit float
+									</div>
+									<span class="field-hint">Profondeur maximale sans conversion</span>
+								</div>
+							</div>
 
-					<Toggle
-						bind:checked={draft.project.autoSave}
-						label="Sauvegarde automatique"
-						description="Enregistre le projet à intervalles réguliers"
-					/>
+							<div class="latency-bar">
+								<span class="latency-label">Latence estimée</span>
+								<span class="latency-value">{latencyMs.toFixed(2)} ms</span>
+								<div class="latency-indicator">
+									<div
+										class="latency-fill"
+										class:latency-low={latencyMs < 10}
+										class:latency-mid={latencyMs >= 10 && latencyMs < 25}
+										class:latency-high={latencyMs >= 25}
+										style="width: {Math.min((latencyMs / 50) * 100, 100)}%"
+									></div>
+								</div>
+								<span class="latency-hint">
+									{#if latencyMs < 10}Excellente — idéale pour l'enregistrement live
+									{:else if latencyMs < 25}Bonne — confortable pour la production
+									{:else}Élevée — envisager un buffer plus petit{/if}
+								</span>
+							</div>
 
-					{#if draft.project.autoSave}
-					<div class="field-grid" style="margin-top: 0">
-						<div class="field">
-							<span class="field-label">Intervalle</span>
-							<NumberInput bind:value={draft.project.autoSaveIntervalSec} min={10} max={600} unit="sec" />
-						</div>
-						<div class="field">
-							<span class="field-label">Sauvegardes conservées</span>
-							<NumberInput bind:value={draft.project.autoSaveMaxBackups} min={1} max={20} unit="max" />
-						</div>
-					</div>
-					{/if}
+							<div class="xrun-bar" class:xrun-warning={xrunCount > 0}>
+								<span class="xrun-label">Underruns (XRun)</span>
+								<span class="xrun-value">{xrunCount}</span>
+								<span class="xrun-hint">
+									{#if xrunCount === 0}Aucun underrun détecté sur cette session
+									{:else}Le callback audio a été en retard — augmenter le buffer si cela persiste{/if}
+								</span>
+							</div>
 
-					<div class="divider"></div>
-					<h3 class="subsection-title">Export Mixdown</h3>
+							<div class="divider"></div>
+							<h3 class="subsection-title">Sortie master</h3>
 
-					<div class="field">
-						<span class="field-label">Profondeur de bits WAV</span>
-						<PillGroup
-							bind:value={draft.project.exportBitDepth}
-							options={[
-								{ value: 16, label: '16 bit' },
-								{ value: 24, label: '24 bit' },
-								{ value: 32, label: '32-bit float' },
-							]}
-						/>
-						<span class="field-hint">
-							{#if draft.project.exportBitDepth === 16}CD / streaming — compatible partout, taille réduite
-							{:else if draft.project.exportBitDepth === 24}Standard pro — livraison mastering et plateformes
-							{:else}Archival / stems — préserve la plage dynamique float intacte{/if}
-						</span>
-					</div>
+							<Toggle
+								bind:checked={draft.audio.masterSoftClip}
+								label="Limiteur master (soft clip)"
+								description="Désactivé : sortie linéaire. Activé : saturation douce tanh sur le signal sommé."
+							/>
 
-					<div class="field">
-						<span class="field-label">Débit MP3</span>
-						<PillGroup
-							bind:value={draft.project.exportMp3Bitrate}
-							options={[
-								{ value: 128, label: '128 kbps' },
-								{ value: 192, label: '192 kbps' },
-								{ value: 320, label: '320 kbps' },
-							]}
-						/>
-						<span class="field-hint">
-							{#if draft.project.exportMp3Bitrate === 128}Streaming léger — ~1 Mo/min
-							{:else if draft.project.exportMp3Bitrate === 192}Haute qualité — distribution recommandée
-							{:else}Qualité maximale — archivage et livraison pro{/if}
-						</span>
-					</div>
+							<div class="divider"></div>
+							<h3 class="subsection-title">Isolation des plugins</h3>
 
-					<div class="divider"></div>
-					<h3 class="subsection-title">Nouveau projet — Défauts</h3>
-
-					<div class="field-grid">
-						<div class="field">
-							<span class="field-label">BPM</span>
-							<NumberInput bind:value={draft.project.defaultBpm} min={20} max={400} unit="BPM" />
-						</div>
-						<div class="field">
-							<span class="field-label">Mesure</span>
-							<div class="field-row">
-								<NumberInput bind:value={draft.project.defaultNumerator} min={1} max={16} width="42px" />
-								<span class="field-slash">/</span>
-								<CustomSelect
-									small
-									bind:value={draft.project.defaultDenominator}
+							<div class="field">
+								<span class="field-label">Plugins isolés</span>
+								<PillGroup
+									bind:value={draft.audio.pluginIsolation}
 									options={[
-										{ value: 2, label: '2' },
-										{ value: 4, label: '4' },
-										{ value: 8, label: '8' },
-										{ value: 16, label: '16' }
+										{ value: 'off', label: 'Aucun' },
+										{ value: 'chosen', label: 'Choisis' },
+										{ value: 'all', label: 'Tous' }
 									]}
 								/>
+								<span class="field-hint">
+									{#if draft.audio.pluginIsolation === 'off'}Tous les plugins tournent dans Echoes :
+										le plus léger, mais un plugin qui plante ferme Echoes.
+									{:else if draft.audio.pluginIsolation === 'chosen'}Seuls les effets marqués «
+										Isoler » et les plugins toujours isolés tournent à part : leur plantage coupe le
+										plugin, pas Echoes.
+									{:else}Chaque plugin tourne à part : un plantage ne ferme jamais Echoes, au prix
+										d'un peu plus de CPU.{/if}
+									Plugins CLAP uniquement pour l'instant.
+								</span>
+							</div>
+
+							{#if draft.audio.pluginIsolation === 'chosen' && draft.audio.alwaysIsolated.length > 0}
+								<div class="field">
+									<span class="field-label">Toujours isolés</span>
+									<div class="isolated-list">
+										{#each draft.audio.alwaysIsolated as pluginId (pluginId)}
+											<span class="isolated-chip">
+												{$plugins.find((p) => p.id === pluginId)?.name ?? pluginId}
+												<button
+													type="button"
+													title="Ne plus toujours isoler ce plugin"
+													on:click={() =>
+														(draft.audio.alwaysIsolated = draft.audio.alwaysIsolated.filter(
+															(id) => id !== pluginId
+														))}>×</button
+												>
+											</span>
+										{/each}
+									</div>
+									<span class="field-hint"
+										>Ajoutez un plugin avec un clic droit sur l'effet ou l'instrument → « Toujours
+										isoler ».</span
+									>
+								</div>
+							{/if}
+
+							<div class="divider"></div>
+							<h3 class="subsection-title">Routage Master</h3>
+
+							<div class="routing-row">
+								<div class="routing-label">
+									<span class="routing-name">Master L/R</span>
+									<span class="routing-desc">Sortie principale stéréo</span>
+								</div>
+								<div class="routing-assign">
+									<CustomSelect
+										small
+										bind:value={masterRouting}
+										options={[
+											{ value: 'out-1-2', label: 'Sorties 1–2' },
+											...(Math.min(draft.audio.outputChannels, realOutputChannels) >= 4
+												? [{ value: 'out-3-4', label: 'Sorties 3–4' }]
+												: []),
+											...(Math.min(draft.audio.outputChannels, realOutputChannels) >= 6
+												? [{ value: 'out-5-6', label: 'Sorties 5–6' }]
+												: [])
+										]}
+									/>
+								</div>
+							</div>
+
+							<div class="routing-row">
+								<div class="routing-label">
+									<span class="routing-name">Casque</span>
+									<span class="routing-desc">Mix monitoring indépendant</span>
+								</div>
+								<div class="routing-assign">
+									<CustomSelect
+										small
+										bind:value={headphoneRouting}
+										options={[
+											{ value: 'mirror', label: 'Miroir Master' },
+											...(Math.min(draft.audio.outputChannels, realOutputChannels) >= 4
+												? [{ value: 'out-3-4', label: 'Sorties 3–4' }]
+												: []),
+											...(Math.min(draft.audio.outputChannels, realOutputChannels) >= 6
+												? [{ value: 'out-5-6', label: 'Sorties 5–6' }]
+												: [])
+										]}
+									/>
+								</div>
 							</div>
 						</div>
-					</div>
+					{:else if activeSection === 'midi'}
+						<div class="section">
+							<h2 class="section-title">Entrée MIDI</h2>
+							<span class="field-hint">
+								Activez un clavier ou contrôleur MIDI, puis armez une piste (bouton rouge dans la
+								liste des pistes) pour jouer en direct dessus. Un clavier débranché reste dans la
+								liste avec son nom et son réglage.
+							</span>
+
+							<div class="divider"></div>
+
+							{#if midiRows.length === 0}
+								<span class="field-hint">Aucun périphérique MIDI détecté.</span>
+							{:else}
+								{#each midiRows as row (row.name)}
+									<!-- svelte-ignore a11y-no-static-element-interactions -->
+									<div
+										class:midi-device--offline={!row.connected}
+										title="Double-clic pour renommer"
+										on:dblclick={(e) => startMidiRename(e, row.name)}
+									>
+										{#if renamingMidiDevice === row.name}
+											<Toggle bind:checked={row.enabled} label={row.alias || row.name}>
+												<input
+													slot="info"
+													class="midi-rename"
+													type="text"
+													value={row.alias || row.name}
+													aria-label="Renommer {row.name}"
+													use:focusAndSelect
+													on:keydown={(e) => {
+														if (e.key === 'Enter') finishMidiRename(row, e.currentTarget.value);
+													}}
+													on:blur={(e) => finishMidiRename(row, e.currentTarget.value)}
+												/>
+											</Toggle>
+										{:else}
+											<Toggle
+												bind:checked={row.enabled}
+												label={row.alias || row.name}
+												description={midiDeviceHint(row)}
+											/>
+										{/if}
+									</div>
+								{/each}
+							{/if}
+
+							<div class="divider"></div>
+							<h3 class="subsection-title">Son du clavier</h3>
+
+							<Toggle
+								bind:checked={draft.midi.localControlOff}
+								label="Couper le son interne du clavier"
+								description="Pour un piano numérique : il ne joue plus par ses propres haut-parleurs tant qu'Echoes l'utilise. Le son revient quand vous désactivez le clavier ou fermez Echoes."
+							/>
+						</div>
+					{:else if activeSection === 'project'}
+						<div class="section">
+							<h2 class="section-title">Projets & sauvegarde (globaux)</h2>
+
+							<div class="field">
+								<span class="field-label">Dossier de projets par défaut</span>
+								<div class="field-row">
+									<input
+										class="text-input"
+										type="text"
+										bind:value={draft.project.defaultFolder}
+										placeholder="~/Documents/Echoes Studio"
+									/>
+									<Button compact on:click={() => {}}>Parcourir…</Button>
+								</div>
+							</div>
+
+							<div class="divider"></div>
+							<h3 class="subsection-title">Sauvegarde automatique</h3>
+
+							<Toggle
+								bind:checked={draft.project.autoSave}
+								label="Sauvegarde automatique"
+								description="Enregistre le projet à intervalles réguliers"
+							/>
+
+							{#if draft.project.autoSave}
+								<div class="field-grid" style="margin-top: 0">
+									<div class="field">
+										<span class="field-label">Intervalle</span>
+										<NumberInput
+											bind:value={draft.project.autoSaveIntervalSec}
+											min={10}
+											max={600}
+											unit="sec"
+										/>
+									</div>
+									<div class="field">
+										<span class="field-label">Sauvegardes conservées</span>
+										<NumberInput
+											bind:value={draft.project.autoSaveMaxBackups}
+											min={1}
+											max={20}
+											unit="max"
+										/>
+									</div>
+								</div>
+							{/if}
+
+							<div class="divider"></div>
+							<h3 class="subsection-title">Export Mixdown</h3>
+
+							<div class="field">
+								<span class="field-label">Profondeur de bits WAV</span>
+								<PillGroup
+									bind:value={draft.project.exportBitDepth}
+									options={[
+										{ value: 16, label: '16 bit' },
+										{ value: 24, label: '24 bit' },
+										{ value: 32, label: '32-bit float' }
+									]}
+								/>
+								<span class="field-hint">
+									{#if draft.project.exportBitDepth === 16}CD / streaming — compatible partout,
+										taille réduite
+									{:else if draft.project.exportBitDepth === 24}Standard pro — livraison mastering
+										et plateformes
+									{:else}Archival / stems — préserve la plage dynamique float intacte{/if}
+								</span>
+							</div>
+
+							<div class="field">
+								<span class="field-label">Débit MP3</span>
+								<PillGroup
+									bind:value={draft.project.exportMp3Bitrate}
+									options={[
+										{ value: 128, label: '128 kbps' },
+										{ value: 192, label: '192 kbps' },
+										{ value: 320, label: '320 kbps' }
+									]}
+								/>
+								<span class="field-hint">
+									{#if draft.project.exportMp3Bitrate === 128}Streaming léger — ~1 Mo/min
+									{:else if draft.project.exportMp3Bitrate === 192}Haute qualité — distribution
+										recommandée
+									{:else}Qualité maximale — archivage et livraison pro{/if}
+								</span>
+							</div>
+
+							<div class="divider"></div>
+							<h3 class="subsection-title">Nouveau projet — Défauts</h3>
+
+							<div class="field-grid">
+								<div class="field">
+									<span class="field-label">BPM</span>
+									<NumberInput
+										bind:value={draft.project.defaultBpm}
+										min={20}
+										max={400}
+										unit="BPM"
+									/>
+								</div>
+								<div class="field">
+									<span class="field-label">Mesure</span>
+									<div class="field-row">
+										<NumberInput
+											bind:value={draft.project.defaultNumerator}
+											min={1}
+											max={16}
+											width="42px"
+										/>
+										<span class="field-slash">/</span>
+										<CustomSelect
+											small
+											bind:value={draft.project.defaultDenominator}
+											options={[
+												{ value: 2, label: '2' },
+												{ value: 4, label: '4' },
+												{ value: 8, label: '8' },
+												{ value: 16, label: '16' }
+											]}
+										/>
+									</div>
+								</div>
+							</div>
+						</div>
+					{:else if activeSection === 'interface'}
+						<div class="section">
+							<h2 class="section-title">Interface</h2>
+
+							<Toggle
+								bind:checked={draft.interface.showMinimap}
+								label="Mini-carte de la timeline"
+								description="Vue d'ensemble navigable au-dessus de la timeline"
+							/>
+
+							<Toggle
+								bind:checked={draft.interface.showArrangeGrid}
+								label="Grille temporelle"
+								description="Lignes de temps et de mesures dans la zone des pistes"
+							/>
+						</div>
+					{/if}
 				</div>
-
-			{:else if activeSection === 'interface'}
-			<div class="section">
-				<h2 class="section-title">Interface</h2>
-
-				<Toggle
-					bind:checked={draft.interface.showMinimap}
-					label="Mini-carte de la timeline"
-					description="Vue d'ensemble navigable au-dessus de la timeline"
-				/>
-
-				<Toggle
-					bind:checked={draft.interface.showArrangeGrid}
-					label="Grille temporelle"
-					description="Lignes de temps et de mesures dans la zone des pistes"
-				/>
 			</div>
-				{/if}
 
+			<!-- ── Footer ── -->
+			<div class="panel-footer">
+				<Button variant="ghost" on:click={resetSection} title="Réinitialiser cette section"
+					>Réinitialiser</Button
+				>
+				<div class="footer-actions">
+					<Button variant="secondary" on:click={cancelAndClose}>Annuler</Button>
+					<Button variant="primary" on:click={applyAndClose}>Enregistrer</Button>
+				</div>
 			</div>
 		</div>
-
-		<!-- ── Footer ── -->
-		<div class="panel-footer">
-			<Button variant="ghost" on:click={resetSection} title="Réinitialiser cette section">Réinitialiser</Button>
-			<div class="footer-actions">
-				<Button variant="secondary" on:click={cancelAndClose}>Annuler</Button>
-				<Button variant="primary" on:click={applyAndClose}>Enregistrer</Button>
-			</div>
-		</div>
-
 	</div>
-</div>
 {/if}
 
 <style lang="scss">
@@ -927,7 +1040,9 @@
 		display: flex;
 		flex-direction: column;
 		overflow: hidden;
-		box-shadow: 0 24px 64px rgba(0, 0, 0, 0.7), 0 0 0 0.5px rgba(255,255,255,0.06);
+		box-shadow:
+			0 24px 64px rgba(0, 0, 0, 0.7),
+			0 0 0 0.5px rgba(255, 255, 255, 0.06);
 	}
 
 	// ── Header ────────────────────────────────────────────────────────────────
@@ -967,7 +1082,9 @@
 		align-items: center;
 		justify-content: center;
 		cursor: pointer;
-		transition: background 0.1s, color 0.1s;
+		transition:
+			background 0.1s,
+			color 0.1s;
 
 		&:hover {
 			background: rgba(255, 255, 255, 0.1);
@@ -1006,7 +1123,9 @@
 		color: rgba(247, 247, 249, 0.5);
 		font-size: 12px;
 		text-align: left;
-		transition: background 0.12s, color 0.12s;
+		transition:
+			background 0.12s,
+			color 0.12s;
 		width: 100%;
 
 		&:hover {
@@ -1014,13 +1133,17 @@
 			color: rgba(247, 247, 249, 0.85);
 		}
 
-		&:hover .nav-icon { opacity: 0.85; }
+		&:hover .nav-icon {
+			opacity: 0.85;
+		}
 
 		&.active {
 			background: rgba(21, 113, 255, 0.15);
 			color: $text-color;
 
-			.nav-icon { opacity: 1; }
+			.nav-icon {
+				opacity: 1;
+			}
 		}
 	}
 
@@ -1048,7 +1171,7 @@
 		}
 
 		&::-webkit-scrollbar-thumb {
-			background: rgba(255,255,255,0.12);
+			background: rgba(255, 255, 255, 0.12);
 			border-radius: 3px;
 		}
 	}
@@ -1088,7 +1211,6 @@
 		flex-direction: column;
 		gap: 5px;
 	}
-
 
 	.field-grid {
 		display: grid;
@@ -1180,11 +1302,19 @@
 	.latency-fill {
 		height: 100%;
 		border-radius: 2px;
-		transition: width 0.3s, background-color 0.3s;
+		transition:
+			width 0.3s,
+			background-color 0.3s;
 
-		&.latency-low { background: $color-success; }
-		&.latency-mid { background: $color-warning; }
-		&.latency-high { background: $color-error; }
+		&.latency-low {
+			background: $color-success;
+		}
+		&.latency-mid {
+			background: $color-warning;
+		}
+		&.latency-high {
+			background: $color-error;
+		}
 	}
 
 	.latency-hint {
@@ -1243,7 +1373,6 @@
 		}
 	}
 
-
 	// ── IO two-column grid ────────────────────────────────────────────────────
 	.io-grid {
 		display: grid;
@@ -1285,8 +1414,12 @@
 		flex-direction: column;
 		gap: 10px;
 
-		&--in  { border-top: 2px solid rgba(0, 200, 120, 0.35); }
-		&--out { border-top: 2px solid rgba(21, 113, 255, 0.35); }
+		&--in {
+			border-top: 2px solid rgba(0, 200, 120, 0.35);
+		}
+		&--out {
+			border-top: 2px solid rgba(21, 113, 255, 0.35);
+		}
 	}
 
 	.channel-card-header {
@@ -1318,7 +1451,9 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		transition: background 0.1s, border-color 0.1s;
+		transition:
+			background 0.1s,
+			border-color 0.1s;
 
 		&:hover:not(:disabled) {
 			background: rgba(255, 255, 255, 0.1);
@@ -1368,8 +1503,12 @@
 		gap: 2px;
 		height: 36px;
 
-		&--in { border-bottom: 2px solid rgba(0, 200, 120, 0.5); }
-		&--out { border-bottom: 2px solid rgba(21, 113, 255, 0.5); }
+		&--in {
+			border-bottom: 2px solid rgba(0, 200, 120, 0.5);
+		}
+		&--out {
+			border-bottom: 2px solid rgba(21, 113, 255, 0.5);
+		}
 
 		&--inactive {
 			opacity: 0.4;
@@ -1397,11 +1536,13 @@
 		width: 100%;
 		border-radius: 1px;
 
-		&--in  { background: rgba(0, 200, 120, 0.65); }
-		&--out { background: rgba(21, 113, 255, 0.65); }
+		&--in {
+			background: rgba(0, 200, 120, 0.65);
+		}
+		&--out {
+			background: rgba(21, 113, 255, 0.65);
+		}
 	}
-
-
 
 	// ── Routing ───────────────────────────────────────────────────────────────
 	.routing-row {
@@ -1485,8 +1626,13 @@
 		box-sizing: border-box;
 		outline: none;
 
-		&::placeholder { color: $text-faint; }
-		&:focus { border-color: $accent-color; background: rgba(21, 113, 255, 0.06); }
+		&::placeholder {
+			color: $text-faint;
+		}
+		&:focus {
+			border-color: $accent-color;
+			background: rgba(21, 113, 255, 0.06);
+		}
 	}
 
 	.field-slash {
@@ -1513,7 +1659,9 @@
 		gap: 8px;
 	}
 
-	.midi-device--offline { opacity: 0.45; }
+	.midi-device--offline {
+		opacity: 0.45;
+	}
 
 	// Sits where the Toggle label is, so the row keeps its height while renaming.
 	.midi-rename {
@@ -1553,7 +1701,9 @@
 			font-size: 13px;
 			line-height: 1;
 			padding: 0 2px;
-			&:hover { color: #ff6b61; }
+			&:hover {
+				color: #ff6b61;
+			}
 		}
 	}
 </style>

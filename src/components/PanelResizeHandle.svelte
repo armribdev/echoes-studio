@@ -66,8 +66,12 @@
 		z-index: 10;
 		transition: background 0.15s;
 
-		&:hover  { background: rgba($accent-color, 0.4); }
-		&:active { background: $accent-color; }
+		&:hover {
+			background: rgba($accent-color, 0.4);
+		}
+		&:active {
+			background: $accent-color;
+		}
 	}
 
 	.resize-handle--horizontal {
@@ -76,8 +80,12 @@
 		height: 100%;
 		cursor: ew-resize;
 
-		&.resize-handle--start { left: 0; }
-		&.resize-handle--end   { right: 0; }
+		&.resize-handle--start {
+			left: 0;
+		}
+		&.resize-handle--end {
+			right: 0;
+		}
 	}
 
 	.resize-handle--vertical {
@@ -86,7 +94,11 @@
 		height: 4px;
 		cursor: ns-resize;
 
-		&.resize-handle--start { top: 0; }
-		&.resize-handle--end   { bottom: 0; }
+		&.resize-handle--start {
+			top: 0;
+		}
+		&.resize-handle--end {
+			bottom: 0;
+		}
 	}
 </style>

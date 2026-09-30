@@ -40,7 +40,8 @@
 	$: frame = arrangeClipFrame(start, end, scale, dpr);
 
 	// Re-render whenever notes, frame, pitch range, bpm, color, or trim offset change.
-	$: if (canvas) scheduleRender(notes, frame.widthPx, bpm, color, selected, offset, minPitch, maxPitch);
+	$: if (canvas)
+		scheduleRender(notes, frame.widthPx, bpm, color, selected, offset, minPitch, maxPitch);
 
 	function scheduleRender(..._deps: unknown[]) {
 		cancelAnimationFrame(rafId);
@@ -184,18 +185,24 @@
 >
 	<div class="midi-clip__header">
 		<svg class="midi-clip__icon" viewBox="0 0 10 10" width="8" height="8" fill="currentColor">
-			<rect x="0" y="2" width="1.5" height="6" rx="0.5"/>
-			<rect x="2.5" y="0" width="1.5" height="8" rx="0.5"/>
-			<rect x="5" y="3" width="1.5" height="5" rx="0.5"/>
-			<rect x="7.5" y="1" width="1.5" height="7" rx="0.5"/>
+			<rect x="0" y="2" width="1.5" height="6" rx="0.5" />
+			<rect x="2.5" y="0" width="1.5" height="8" rx="0.5" />
+			<rect x="5" y="3" width="1.5" height="5" rx="0.5" />
+			<rect x="7.5" y="1" width="1.5" height="7" rx="0.5" />
 		</svg>
 	</div>
 	<canvas bind:this={canvas} class="midi-clip__canvas"></canvas>
 	{#if !recording}
 		<!-- svelte-ignore a11y-no-static-element-interactions -->
-		<div class="resize-handle resize-handle--left" on:mousedown={(e) => onResizeHandleDown('left', e)}></div>
+		<div
+			class="resize-handle resize-handle--left"
+			on:mousedown={(e) => onResizeHandleDown('left', e)}
+		></div>
 		<!-- svelte-ignore a11y-no-static-element-interactions -->
-		<div class="resize-handle resize-handle--right" on:mousedown={(e) => onResizeHandleDown('right', e)}></div>
+		<div
+			class="resize-handle resize-handle--right"
+			on:mousedown={(e) => onResizeHandleDown('right', e)}
+		></div>
 		<!-- svelte-ignore a11y-no-static-element-interactions -->
 		<div class="repeat-handle" title="Glisser pour répéter" on:mousedown={onRepeatHandleDown}></div>
 	{/if}
@@ -212,7 +219,9 @@
 		background-color: color-mix(in srgb, var(--clip-color) 18%, #1a1a2e);
 		box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--clip-color) 60%, transparent);
 
-		&:active { cursor: grabbing; }
+		&:active {
+			cursor: grabbing;
+		}
 
 		&.recording {
 			pointer-events: none;

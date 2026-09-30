@@ -79,22 +79,22 @@ Phase 1 lands four additive, behaviour-preserving changes:
    process isolation are Phase 6 work (ADR-010, bridge IPC).
 
 5. **`PortKind` enum declared in `audio_graph::node`.** Variants `Audio
-   { channels }`, `Midi`, `Modulation { polarity }`, `Control`. **Not** read
+{ channels }`, `Midi`, `Modulation { polarity }`, `Control`. **Not** read
    by the compiler. Phase 5 (ADR-008) adds a `kind` field on `Edge`,
    defaults legacy connections to `Audio`, and switches the compiler to
    typed validation.
 
 ## Real-time impact
 
-| Change | RT cost | RT risk |
-|---|---|---|
-| `DeviceCapabilities` types | none | none — types only |
-| `Device::capabilities()` default | none | called only off-RT (compile / UI) |
-| VST3 `getLatencySamples` at prepare | none on hot path | off-RT call |
-| CLAP `clap.latency.get` at prepare | none on hot path | off-RT call |
-| `latency_samples()` override | none on hot path | plain field read, off-RT consumer |
-| `catch_unwind` around process | ~ns / node / block (setjmp frame) | no allocation, no syscall, no lock |
-| `PortKind` enum | none | type-level only |
+| Change                              | RT cost                           | RT risk                            |
+| ----------------------------------- | --------------------------------- | ---------------------------------- |
+| `DeviceCapabilities` types          | none                              | none — types only                  |
+| `Device::capabilities()` default    | none                              | called only off-RT (compile / UI)  |
+| VST3 `getLatencySamples` at prepare | none on hot path                  | off-RT call                        |
+| CLAP `clap.latency.get` at prepare  | none on hot path                  | off-RT call                        |
+| `latency_samples()` override        | none on hot path                  | plain field read, off-RT consumer  |
+| `catch_unwind` around process       | ~ns / node / block (setjmp frame) | no allocation, no syscall, no lock |
+| `PortKind` enum                     | none                              | type-level only                    |
 
 All RT constraints from `../threading/realtime-safety.md` and target C-1
 hold. No mutex, no allocation, no UI call introduced on the audio path.
@@ -153,7 +153,7 @@ the scheduler / plugin process path:
    the "~ns" figure on the hot path.
 
 These do not change the Phase 1 decision; they record that the guard is a
-*containment stopgap*, and the real isolation is ADR-015.
+_containment stopgap_, and the real isolation is ADR-015.
 
 ## Alternatives considered
 

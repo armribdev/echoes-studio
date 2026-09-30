@@ -36,7 +36,6 @@
 		barStr = String(bar).padStart(3, '0');
 		beatStr = String(beat);
 	}
-
 </script>
 
 <div class="menu-bar">
@@ -55,9 +54,15 @@
 	<div class="zone zone--center">
 		<div class="transport">
 			<button class="btn" on:click={rewindToStart} title="Revenir au début">
-				<svg width="13" height="13" viewBox="0 0 13 13" fill="none" xmlns="http://www.w3.org/2000/svg">
-					<rect x="1" y="1.5" width="1.6" height="10" rx="0.8" fill="currentColor"/>
-					<path d="M11.5 2L4.5 6.5L11.5 11V2Z" fill="currentColor"/>
+				<svg
+					width="13"
+					height="13"
+					viewBox="0 0 13 13"
+					fill="none"
+					xmlns="http://www.w3.org/2000/svg"
+				>
+					<rect x="1" y="1.5" width="1.6" height="10" rx="0.8" fill="currentColor" />
+					<path d="M11.5 2L4.5 6.5L11.5 11V2Z" fill="currentColor" />
 				</svg>
 			</button>
 			<button
@@ -67,20 +72,42 @@
 				title="Boucle de lecture"
 				aria-pressed={$loopRegion.enabled}
 			>
-				<svg width="14" height="12" viewBox="0 0 14 12" fill="none" xmlns="http://www.w3.org/2000/svg">
-					<path d="M3.2 2.2H9.2V0.4L12.6 3.2L9.2 6V4.2H3.2V2.2Z" fill="currentColor"/>
-					<path d="M10.8 9.8H4.8V11.6L1.4 8.8L4.8 6V7.8H10.8V9.8Z" fill="currentColor"/>
+				<svg
+					width="14"
+					height="12"
+					viewBox="0 0 14 12"
+					fill="none"
+					xmlns="http://www.w3.org/2000/svg"
+				>
+					<path d="M3.2 2.2H9.2V0.4L12.6 3.2L9.2 6V4.2H3.2V2.2Z" fill="currentColor" />
+					<path d="M10.8 9.8H4.8V11.6L1.4 8.8L4.8 6V7.8H10.8V9.8Z" fill="currentColor" />
 				</svg>
 			</button>
-			<button class="btn btn--play" on:click={togglePlayPause} title={$transport.isPlaying ? 'Pause' : 'Lecture'}>
+			<button
+				class="btn btn--play"
+				on:click={togglePlayPause}
+				title={$transport.isPlaying ? 'Pause' : 'Lecture'}
+			>
 				{#if $transport.isPlaying}
-					<svg width="11" height="13" viewBox="0 0 11 13" fill="none" xmlns="http://www.w3.org/2000/svg">
-						<rect x="1" y="1" width="3" height="11" rx="1" fill="currentColor"/>
-						<rect x="7" y="1" width="3" height="11" rx="1" fill="currentColor"/>
+					<svg
+						width="11"
+						height="13"
+						viewBox="0 0 11 13"
+						fill="none"
+						xmlns="http://www.w3.org/2000/svg"
+					>
+						<rect x="1" y="1" width="3" height="11" rx="1" fill="currentColor" />
+						<rect x="7" y="1" width="3" height="11" rx="1" fill="currentColor" />
 					</svg>
 				{:else}
-					<svg width="12" height="13" viewBox="0 0 12 13" fill="none" xmlns="http://www.w3.org/2000/svg">
-						<path d="M2 1.5L11 6.5L2 11.5V1.5Z" fill="currentColor"/>
+					<svg
+						width="12"
+						height="13"
+						viewBox="0 0 12 13"
+						fill="none"
+						xmlns="http://www.w3.org/2000/svg"
+					>
+						<path d="M2 1.5L11 6.5L2 11.5V1.5Z" fill="currentColor" />
 					</svg>
 				{/if}
 			</button>
@@ -91,8 +118,14 @@
 				title="Enregistrer les notes MIDI de la piste armée"
 				aria-pressed={$isMidiRecording}
 			>
-				<svg width="12" height="12" viewBox="0 0 12 12" fill="none" xmlns="http://www.w3.org/2000/svg">
-					<circle cx="6" cy="6" r="5" fill="currentColor"/>
+				<svg
+					width="12"
+					height="12"
+					viewBox="0 0 12 12"
+					fill="none"
+					xmlns="http://www.w3.org/2000/svg"
+				>
+					<circle cx="6" cy="6" r="5" fill="currentColor" />
 				</svg>
 			</button>
 			<button
@@ -103,9 +136,20 @@
 				aria-label="Métronome"
 				aria-pressed={$metronomeEnabled}
 			>
-				<svg width="12" height="13" viewBox="0 0 12 13" fill="none" xmlns="http://www.w3.org/2000/svg">
-					<path d="M3.6 1.5H8.4L11 12H1L3.6 1.5Z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>
-					<path d="M6 9L8.6 3.6" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
+				<svg
+					width="12"
+					height="13"
+					viewBox="0 0 12 13"
+					fill="none"
+					xmlns="http://www.w3.org/2000/svg"
+				>
+					<path
+						d="M3.6 1.5H8.4L11 12H1L3.6 1.5Z"
+						stroke="currentColor"
+						stroke-width="1.2"
+						stroke-linejoin="round"
+					/>
+					<path d="M6 9L8.6 3.6" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" />
 				</svg>
 			</button>
 			<button
@@ -116,9 +160,21 @@
 				aria-label="Décompte"
 				aria-pressed={$countInEnabled}
 			>
-				<svg width="14" height="13" viewBox="0 0 14 13" fill="none" xmlns="http://www.w3.org/2000/svg">
-					<circle cx="7" cy="6.5" r="5.6" stroke="currentColor" stroke-width="1.2"/>
-					<path d="M6 4.6L7.4 3.9V9.1" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+				<svg
+					width="14"
+					height="13"
+					viewBox="0 0 14 13"
+					fill="none"
+					xmlns="http://www.w3.org/2000/svg"
+				>
+					<circle cx="7" cy="6.5" r="5.6" stroke="currentColor" stroke-width="1.2" />
+					<path
+						d="M6 4.6L7.4 3.9V9.1"
+						stroke="currentColor"
+						stroke-width="1.2"
+						stroke-linecap="round"
+						stroke-linejoin="round"
+					/>
 				</svg>
 			</button>
 		</div>
@@ -202,7 +258,9 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		transition: background 0.1s, color 0.1s;
+		transition:
+			background 0.1s,
+			color 0.1s;
 
 		&:hover {
 			background: rgba(255, 255, 255, 0.08);
@@ -222,7 +280,6 @@
 				color: #ff6b5f;
 			}
 		}
-
 	}
 
 	.btn--panel-toggle {
@@ -231,7 +288,10 @@
 		border-radius: $radius-sm;
 		border: 1px solid $border-subtle;
 		background: $surface-2;
-		transition: background 0.12s, color 0.12s, border-color 0.12s;
+		transition:
+			background 0.12s,
+			color 0.12s,
+			border-color 0.12s;
 
 		&:not(.active):hover {
 			background: $surface-3;
@@ -299,5 +359,4 @@
 		font-size: 21px;
 		color: rgba(247, 247, 249, 0.65);
 	}
-
 </style>

@@ -37,14 +37,14 @@ They apply to every Claude Code session working on this project.
 The following properties may not be changed without an explicit ADR and user
 approval:
 
-| Constraint | Governed by |
-|-----------|------------|
-| Real-time safety (audio callback prohibitions) | `../threading/realtime-safety.md` |
-| Threading model (which thread owns what) | `../threading/threading-model.md` |
-| Graph execution model (topological order, immutable plan) | `../architecture/audio-graph.md` |
-| Plugin ownership rules (graph sees only `AudioNode`) | `../plugins/plugin-system.md` |
-| State management boundaries (event sourcing scope) | `../architecture/state-management.md` |
-| UI / engine separation (no direct state sharing) | `005-ui-engine-separation.md` |
+| Constraint                                                                              | Governed by                                                    |
+| --------------------------------------------------------------------------------------- | -------------------------------------------------------------- |
+| Real-time safety (audio callback prohibitions)                                          | `../threading/realtime-safety.md`                              |
+| Threading model (which thread owns what)                                                | `../threading/threading-model.md`                              |
+| Graph execution model (topological order, immutable plan)                               | `../architecture/audio-graph.md`                               |
+| Plugin ownership rules (graph sees only `AudioNode`)                                    | `../plugins/plugin-system.md`                                  |
+| State management boundaries (event sourcing scope)                                      | `../architecture/state-management.md`                          |
+| UI / engine separation (no direct state sharing)                                        | `005-ui-engine-separation.md`                                  |
 | **Bit-exact determinism** (same project + transport ⇒ identical render, cross-platform) | migration C-2 / C-10, `../migration/target_architecture.md` §0 |
 
 Changing these without an ADR is an architectural regression, not a
@@ -69,7 +69,7 @@ sample-accurate automation sits behind a feature flag in tension with C-10
 > **Build-profile note (anti-foot-gun).** The only in-process crash guard
 > (`catch_unwind` around `AudioNode::process`, ADR-006) works **solely** under
 > `panic = "unwind"`. The build currently has no `[profile]` override, so unwind
-> is in effect and the guard is live — but nothing *pins* it. Adding
+> is in effect and the guard is live — but nothing _pins_ it. Adding
 > `panic = "abort"` (a common size/speed optimisation) would silently turn the
 > guard into a no-op. Treat the panic strategy as a governed property: do not set
 > `panic = "abort"` without an ADR that first replaces the guard (e.g. the

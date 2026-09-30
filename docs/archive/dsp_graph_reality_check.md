@@ -5,9 +5,9 @@
 
 # DSP Graph — Reality Check
 
-> Focus #2 de l'audit. Question : *quel graphe tourne vraiment ? Y a-t-il un
+> Focus #2 de l'audit. Question : _quel graphe tourne vraiment ? Y a-t-il un
 > double système ? Incohérences de scheduling, nodes non exécutés, edges
-> invalides ?*
+> invalides ?_
 >
 > Fichiers : `audio_engine/graph.rs`, `audio_graph/{graph,compiler,scheduler,execution_plan,snapshot}.rs`,
 > `audio_engine/{engine,offline,snapshot}.rs`.
@@ -31,12 +31,12 @@
 
 ## 1. Les deux fichiers « graph » — clarification
 
-| Fichier | Rôle réel | Contient un graphe exécutable ? |
-|---------|-----------|---------------------------------|
-| [`audio_graph/graph.rs`](../../src-tauri/src/audio_graph/graph.rs) | **Modèle de topologie** (`AudioGraph`, `NodeKind`, `Edge`, `from_project`) | Non — topologie éditeur, non-RT |
-| [`audio_engine/graph.rs`](../../src-tauri/src/audio_engine/graph.rs) | **Bridge** `AudioGraphCompiler::compile_scheduler` : `from_project`→`compile`→`GraphScheduler` | Non — orchestration, 96 lignes |
-| [`audio_graph/compiler.rs`](../../src-tauri/src/audio_graph/compiler.rs) | Compile topologie → `ExecutionPlan` + `Vec<Box<dyn AudioNode>>` | Produit le plan |
-| [`audio_graph/scheduler.rs`](../../src-tauri/src/audio_graph/scheduler.rs) | **Driver RT unique** : `process_block` | **Oui — c'est lui qui tourne** |
+| Fichier                                                                    | Rôle réel                                                                                      | Contient un graphe exécutable ? |
+| -------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- | ------------------------------- |
+| [`audio_graph/graph.rs`](../../src-tauri/src/audio_graph/graph.rs)         | **Modèle de topologie** (`AudioGraph`, `NodeKind`, `Edge`, `from_project`)                     | Non — topologie éditeur, non-RT |
+| [`audio_engine/graph.rs`](../../src-tauri/src/audio_engine/graph.rs)       | **Bridge** `AudioGraphCompiler::compile_scheduler` : `from_project`→`compile`→`GraphScheduler` | Non — orchestration, 96 lignes  |
+| [`audio_graph/compiler.rs`](../../src-tauri/src/audio_graph/compiler.rs)   | Compile topologie → `ExecutionPlan` + `Vec<Box<dyn AudioNode>>`                                | Produit le plan                 |
+| [`audio_graph/scheduler.rs`](../../src-tauri/src/audio_graph/scheduler.rs) | **Driver RT unique** : `process_block`                                                         | **Oui — c'est lui qui tourne**  |
 
 > `audio_engine/graph.rs` est le « single integration point » documenté dans son
 > propre header. Garder son nom public évite de toucher `engine_gateway`. Ce
@@ -72,14 +72,17 @@
 ## 3. Incohérences / nodes non exécutés / edges
 
 ### 3.1 ⚠️ Comptes de ports : trait vs compiler (R-7)
+
 Le `AudioNode` trait expose `num_input_ports()`/`num_output_ports()`, **mais le
 pipeline de production ne les consulte pas** :
+
 - le compiler dimensionne via `num_inputs_for_kind` / `num_outputs_for_kind`
   (codés en dur par `NodeKind`, [`compiler.rs:485-530`](../../src-tauri/src/audio_graph/compiler.rs#L485)) ;
 - le scheduler lit `plan.steps[].num_outputs` et `input_connections.len()`.
 
 Exemple concret : un `NodeKind::Plugin` → compiler alloue **2 in / 2 out**, alors
 que `ClapWrapperNode`/`VstWrapperNode` déclarent **1 in / 1 out**. Au runtime :
+
 - les wrappers n'utilisent que `inputs[0]`/`outputs[0]` ; le port 1 alloué reste
   **silence en entrée / non écrit en sortie** (inoffensif mais gaspillé) ;
 - les méthodes `num_*_ports()` des nodes sont **vestigiales** hors tests.
@@ -90,6 +93,7 @@ que `ClapWrapperNode`/`VstWrapperNode` déclarent **1 in / 1 out**. Au runtime :
 > des ports est `num_*_for_kind` du compiler, pas le node.
 
 ### 3.2 ⚠️ Sends/Returns : tap non routé
+
 `NodeKind::Send` produit un tap pass-through (1 in/1 out) mais **aucun
 `ReturnNode` n'est câblé** : `NodeKind::Return` compile en `BusNode(1)` qui ne
 collecte rien ([`compiler.rs:670-673`](../../src-tauri/src/audio_graph/compiler.rs#L670)),
@@ -98,6 +102,7 @@ donc **inertes** (conforme `critical_issues.md` §2.4). Pas un bug, une feature
 absente.
 
 ### 3.3 ✅ Edges typés : seul `Audio` accepté
+
 `validate_port_kinds` rejette toute arête non-`Audio`
 ([`compiler.rs:414-428`](../../src-tauri/src/audio_graph/compiler.rs#L414)). Comme
 `from_project` ne crée que des arêtes `Audio` (defaut `connect`), c'est un no-op
@@ -105,6 +110,7 @@ qui préserve C-2. Les arêtes MIDI/Modulation sont rejetées tant que les ports
 sont pas câblés (Phase 5c/5e) — tests `midi_edge_is_rejected`/`modulation_edge_is_rejected`.
 
 ### 3.4 ✅ Modulation : hors arêtes audio
+
 Les routes de modulation vivent dans `ModulationMap` (vecteur parallèle), pas
 dans `edges`. Le scheduler les pré-compile en `CompiledModAction` par step cible
 et les applique block-rate (échantillonne `channel(0)[0]` du source). Source
@@ -112,11 +118,13 @@ toujours à un niveau strictement inférieur (garanti par `compute_execution_lev
 **Block-rate seulement** (pas sample-accurate — `critical_issues.md` §5.2, exact).
 
 ### 3.5 ✅ Modulators sources
+
 `NodeKind::Modulator` (LFO) : node source (0 in / 1 out), exécuté, son buffer lu
 par les actions de modulation. Les variantes Envelope/Macro/AudioRate compilent
 en LFO silencieux (`rate 0`) — stubs, conforme §5.1.
 
 ### 3.6 Nodes potentiellement non exécutés
+
 - **Aucun node orphelin n'est dropped** : tous les `order` du topo-sort sont
   instanciés et processés. Un node sans arête sortante est quand même processé
   (gaspillage CPU mineur), mais `from_project` ne crée que des chaînes connectées
@@ -142,15 +150,15 @@ en LFO silencieux (`rate 0`) — stubs, conforme §5.1.
 
 ## 5. Verdict graphe
 
-| Question | Verdict |
-|----------|---------|
-| Graphe réellement utilisé | `audio_graph::GraphScheduler` (unique) |
-| Double système de graphe | **Non** (bridge + modèle, pas deux moteurs) |
-| Incohérences de scheduling | Non sur le chemin RT ; déterminisme tenu |
-| Nodes non exécutés | Non (tous processés) ; ports plugin surdimensionnés (1 vs 2) inoffensif |
-| Edges invalides | Bloqués au compile (`validate_port_kinds`) |
-| Incohérence de contrat | `num_*_ports()` du node ignorés au profit de `num_*_for_kind` (R-7) |
-| Features inertes (≠ bug) | Sends/Returns, modulators non-LFO, ports MIDI/mod |
+| Question                   | Verdict                                                                 |
+| -------------------------- | ----------------------------------------------------------------------- |
+| Graphe réellement utilisé  | `audio_graph::GraphScheduler` (unique)                                  |
+| Double système de graphe   | **Non** (bridge + modèle, pas deux moteurs)                             |
+| Incohérences de scheduling | Non sur le chemin RT ; déterminisme tenu                                |
+| Nodes non exécutés         | Non (tous processés) ; ports plugin surdimensionnés (1 vs 2) inoffensif |
+| Edges invalides            | Bloqués au compile (`validate_port_kinds`)                              |
+| Incohérence de contrat     | `num_*_ports()` du node ignorés au profit de `num_*_for_kind` (R-7)     |
+| Features inertes (≠ bug)   | Sends/Returns, modulators non-LFO, ports MIDI/mod                       |
 
 Le cœur DSP est **cohérent et unique**. Les seules « incohérences » sont des
 contrats de ports vestigiaux (R-7) et des features câblées-mais-inertes, pas des

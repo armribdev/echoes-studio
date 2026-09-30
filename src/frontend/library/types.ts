@@ -80,7 +80,7 @@ export const LIBRARY_SOURCE_ORDER: LibrarySourceId[] = [
 	'audio',
 	'chords',
 	'midi',
-	'drums',
+	'drums'
 ];
 
 export const LIBRARY_SOURCE_LABELS: Record<LibrarySourceId, string> = {
@@ -89,7 +89,7 @@ export const LIBRARY_SOURCE_LABELS: Record<LibrarySourceId, string> = {
 	audio: 'Audio',
 	chords: 'Accords',
 	midi: 'MIDI',
-	drums: 'Drums',
+	drums: 'Drums'
 };
 
 export const CONTENT_SOURCES: LibrarySourceId[] = ['audio', 'chords', 'midi', 'drums'];
@@ -133,7 +133,7 @@ export function assetFromPath(path: string, durationSec?: number): LibraryAsset 
 		name: fileNameFromPath(path),
 		extension,
 		durationSec,
-		origin: 'file',
+		origin: 'file'
 	};
 }
 
@@ -144,7 +144,7 @@ export function assetFromScanEntry(entry: LibraryScanEntry): LibraryAsset {
 		path: entry.path,
 		name: entry.name,
 		extension: entry.extension.toLowerCase(),
-		origin: 'file',
+		origin: 'file'
 	};
 }
 

@@ -26,6 +26,7 @@ AudioGraph  (has no knowledge of VST3)
 ```
 
 The graph runtime **must never** see:
+
 - `IAudioProcessor` or any VST3 COM pointer
 - `AudioUnit` or any CoreAudio handle
 - `vst3-sys` types
@@ -68,6 +69,7 @@ fn process(&mut self, inputs: &[&AudioBuffer], outputs: &mut [AudioBuffer], tran
 ```
 
 Key rules:
+
 - `self.input_ptrs`, `self.output_ptrs`, `self.input_bus_buffers`, etc. are
   all pre-allocated in `prepare()`.
 - The `process()` call only fills pointer values (no `Vec::push`, no `Box`).
@@ -78,11 +80,13 @@ Key rules:
 VST3 parameters have integer IDs; our system uses string keys.
 
 During `prepare()`, build a mapping:
+
 ```
 String key ("gain") ↔ VST3 parameter ID (u32: 0x12345678)
 ```
 
 When the host calls `set_parameter_normalised("gain", 0.75)`:
+
 1. Look up the VST3 ID in the mapping.
 2. Queue a `ParamChange { id, value: 0.75 }` in a pre-allocated ring buffer.
 3. On the next `process()` call, pass the queued changes via `ProcessData.inputParameterChanges`.
@@ -145,18 +149,19 @@ The graph compiler collects these values to compute **latency compensation**
 
 VST3 plugins run in-process. A crashing plugin takes down the entire engine.
 Best-effort mitigations:
+
 1. Validate all plugin-provided pointers before dereferencing.
 2. Wrap the `process()` call in platform-specific signal handling (future).
 3. Out-of-process hosting via a subprocess bridge (major future work).
 
 ## Rules Summary
 
-| Rule                                             | Rationale                              |
-|--------------------------------------------------|----------------------------------------|
-| Graph runtime never imports `plugin_formats`     | Format isolation                       |
-| No allocation in `VstWrapperNode::process`       | Real-time safety                       |
-| Pre-allocate all pointer arrays in `prepare`     | Real-time safety                       |
+| Rule                                                                           | Rationale                    |
+| ------------------------------------------------------------------------------ | ---------------------------- |
+| Graph runtime never imports `plugin_formats`                                   | Format isolation             |
+| No allocation in `VstWrapperNode::process`                                     | Real-time safety             |
+| Pre-allocate all pointer arrays in `prepare`                                   | Real-time safety             |
 | Parameter changes via `ProcessData`, not `IEditController::setParamNormalized` | Sample-accurate, thread-safe |
-| Transport from `TransportInfo`, not global state | Thread safety                          |
-| State via `IBStream` bytes, not JSON             | VST3 spec compliance                   |
-| Latency reported via `latency_samples()`         | Future compensation support            |
+| Transport from `TransportInfo`, not global state                               | Thread safety                |
+| State via `IBStream` bytes, not JSON                                           | VST3 spec compliance         |
+| Latency reported via `latency_samples()`                                       | Future compensation support  |

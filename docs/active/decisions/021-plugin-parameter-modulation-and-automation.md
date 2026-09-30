@@ -45,7 +45,7 @@ The engine could already route modulation and automation to a plugin
 parameter (`ModulationTargetRef::PluginParam`), but:
 
 1. **Automation was ignored.** Wrappers only held entries for parameters
-   targeted by a *modulation route*; an automation lane on a plugin parameter
+   targeted by a _modulation route_; an automation lane on a plugin parameter
    found no entry and was dropped.
 2. **Modulation ignored the knob position.** Wrappers sent `shadow + delta`,
    where the shadow defaulted to 0.5 and never followed edits made in the
@@ -96,13 +96,13 @@ Nothing exposed this, because the UI cannot target a plugin parameter yet.
 
 ## Real-time impact
 
-| Change | RT cost | RT risk |
-|---|---|---|
-| Separate automation/modulation dispatch | one branch per action | none |
-| Controls storage | pre-allocated at compile | none |
-| Event sort | `sort_unstable` on ≤ 1280 indices, in place | none — no alloc |
-| Released-modulation resets | `Vec::drain` of a compile-time list, once | none — no dealloc |
-| `replace_modulated_params` | `Mutex` on the command thread only | none — never on the audio thread |
+| Change                                  | RT cost                                     | RT risk                          |
+| --------------------------------------- | ------------------------------------------- | -------------------------------- |
+| Separate automation/modulation dispatch | one branch per action                       | none                             |
+| Controls storage                        | pre-allocated at compile                    | none                             |
+| Event sort                              | `sort_unstable` on ≤ 1280 indices, in place | none — no alloc                  |
+| Released-modulation resets              | `Vec::drain` of a compile-time list, once   | none — no dealloc                |
+| `replace_modulated_params`              | `Mutex` on the command thread only          | none — never on the audio thread |
 
 ## Compatibility
 

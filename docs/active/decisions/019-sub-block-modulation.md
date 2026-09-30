@@ -88,7 +88,7 @@ the zipper limit (BP-7) noted in [`009-parameter-block.md`](009-parameter-block.
 Determination-affecting change — see §Compatibility.
 
 **Design target.** Echoes is a modulation-first DAW in the Bitwig mould:
-*everything* is a modulation target and modulation must feel continuous, not
+_everything_ is a modulation target and modulation must feel continuous, not
 stepped. The decisions below therefore (a) pick a control period fine enough to
 read as continuous (`P = 32`), and (b) commit the full path so **every** node —
 plugins, effects, and the volume/pan/master chain — de-zippers, not just the
@@ -116,7 +116,7 @@ Two consequences:
    audible on fast LFOs / envelopes, especially on external plugin parameters,
    which (unlike internal effects) have **no** `mod_smooth` interpolation.
 2. **Offline ≠ online divergence.** Because the held value depends on where block
-   boundaries fall, the modulation *timeline* changes with the device buffer
+   boundaries fall, the modulation _timeline_ changes with the device buffer
    size. Offline export (fixed block) and live playback (WASAPI buffer) therefore
    do not produce the same modulated render — the unspecified-automation risk in
    [ADR-008 known-risk #2/#3](008-param-transport-spsc.md).
@@ -161,7 +161,7 @@ The same funnel feeds plugins and internal nodes — no special plugin path:
   behaviour). The scheduler calls it once per grid point per route.
 - Each modulation-aware node owns a **pre-allocated per-param point array**
   (`[f32; MAX_CONTROL_POINTS]` + count; `MAX_CONTROL_POINTS = ceil(max_block /
-  P)`, sized once in `prepare`, off-RT). `apply_modulation_at` writes into it; no
+P)`, sized once in `prepare`, off-RT). `apply_modulation_at` writes into it; no
   allocation on the audio thread.
 
 ### 3. Plugin targets
@@ -226,20 +226,20 @@ de-zippering is in scope, achieved **without** changing `process` arity.
 
 ## Real-time impact
 
-| Change | RT cost | RT risk |
-|---|---|---|
-| Sample modulator buffer at ≤ `ceil(nf/P)` offsets (was 1) | a few `f32` loads per route per block | none — bounded, no alloc |
-| Evaluate automation curve at grid points | binary search ×`ceil(nf/P)` on a `Box<[…]>` | none — no alloc |
-| Fill `PluginModEntry` point array | in-place writes to a pre-sized array | none |
-| `apply_modulation_at` (default) | one forward call, offset ignored | none — same as today |
-| Emit N param events in wrapper `process` | N in-place pushes to a pre-allocated list | none — N bounded by the raised cap |
-| Point-array / event-list allocation | `prepare` only (off-RT) | none |
+| Change                                                    | RT cost                                     | RT risk                            |
+| --------------------------------------------------------- | ------------------------------------------- | ---------------------------------- |
+| Sample modulator buffer at ≤ `ceil(nf/P)` offsets (was 1) | a few `f32` loads per route per block       | none — bounded, no alloc           |
+| Evaluate automation curve at grid points                  | binary search ×`ceil(nf/P)` on a `Box<[…]>` | none — no alloc                    |
+| Fill `PluginModEntry` point array                         | in-place writes to a pre-sized array        | none                               |
+| `apply_modulation_at` (default)                           | one forward call, offset ignored            | none — same as today               |
+| Emit N param events in wrapper `process`                  | N in-place pushes to a pre-allocated list   | none — N bounded by the raised cap |
+| Point-array / event-list allocation                       | `prepare` only (off-RT)                     | none                               |
 
 C-1 preserved: no allocation, no lock, no syscall in `process`. The per-block
 work is bounded by `MAX_CONTROL_POINTS = ceil(max_block_size / P)` (≤ 128 with
 `P=32`, `max_block=4096`; ≤ 16 at a typical 512-frame buffer) and pre-allocated.
 `Relaxed`/`Acquire` orderings are unchanged. The internal `mod_smooth` step is
-already per-sample today — Tranche 2/3 only change *which* target it ramps to, at
+already per-sample today — Tranche 2/3 only change _which_ target it ramps to, at
 no extra per-sample cost.
 
 ## Compatibility
@@ -248,10 +248,10 @@ no extra per-sample cost.
   **alters the render output** of any project that uses modulation or automation.
   Per the 2026-06-05 decision this regression is **accepted**: the offline golden
   references are regenerated once at merge, and bit-identity is preserved
-  *forward* from this ADR. Projects with no modulation/automation are byte-for-byte
+  _forward_ from this ADR. Projects with no modulation/automation are byte-for-byte
   unchanged (empty grid → same single value as before).
 - **C-10 (no flag may gate determinism) — now satisfied.** Sub-block delivery is
-  the *only* behaviour; there is no `sample_accurate_modulation` toggle. This
+  the _only_ behaviour; there is no `sample_accurate_modulation` toggle. This
   retires the ADR-008 known-risk #3 tension rather than deferring it.
 - **Cross-OS determinism.** The grid is integer sample arithmetic on
   `position_samples`; modulator/automation evaluation is already `f32`/`f64` as
@@ -263,7 +263,7 @@ no extra per-sample cost.
 - **C-5 / C-7.** Lock-free; the compiler is untouched (the grid lives in the
   scheduler runtime, not the plan). `AudioNode` gains one **defaulted** method —
   additive, no existing impl breaks.
-- **Plugins.** External plugins receive *more* param events per block, all at
+- **Plugins.** External plugins receive _more_ param events per block, all at
   valid `sample_offset`s within `[0, nf)` — standard VST3/CLAP usage. No plugin
   that works today can break from finer-grained, in-range parameter automation.
 
@@ -279,7 +279,7 @@ no extra per-sample cost.
 - **Limits / debt.**
   - Tranches 1→3 land in sequence; until Tranche 3 ships, `Gain/Pan/Master` keep
     today's block-rate value (the `apply_modulation_at` default), so the engine is
-    never in a broken state between tranches. The *plugin* path ships first
+    never in a broken state between tranches. The _plugin_ path ships first
     because it had **no** smoothing at all (worst artefact).
   - `P = 32` is a fixed engine constant; an oversample-aware or user-exposed
     control rate is a later refinement, **never** a determinism flag.

@@ -59,7 +59,7 @@
 	function polar(angleMath: number, r: number) {
 		return {
 			x: CX + r * Math.cos(angleMath),
-			y: CY - r * Math.sin(angleMath),
+			y: CY - r * Math.sin(angleMath)
 		};
 	}
 
@@ -223,10 +223,23 @@
 >
 	<svg width={SIZE} height={SIZE} viewBox="0 0 {SIZE} {SIZE}" overflow="visible">
 		{#if automationColor}
-			<circle class="automation-ring" cx={CX} cy={CY} r={AUTOMATION_RING_R} stroke={automationColor} />
+			<circle
+				class="automation-ring"
+				cx={CX}
+				cy={CY}
+				r={AUTOMATION_RING_R}
+				stroke={automationColor}
+			/>
 		{/if}
 		{#if modColor}
-			<circle class="mod-ring" cx={CX} cy={CY} r={RING_R} stroke-width={RING_STROKE} stroke={modColor} />
+			<circle
+				class="mod-ring"
+				cx={CX}
+				cy={CY}
+				r={RING_R}
+				stroke-width={RING_STROKE}
+				stroke={modColor}
+			/>
 		{/if}
 		<path class="track" d={trackPath} stroke-width={STROKE} />
 		{#if valuePath}
@@ -248,8 +261,12 @@
 		border-radius: 50%;
 		transition: filter 0.1s;
 
-		&:hover { filter: brightness(1.25); }
-		&:active { filter: brightness(1.5); }
+		&:hover {
+			filter: brightness(1.25);
+		}
+		&:active {
+			filter: brightness(1.5);
+		}
 
 		&.dragging {
 			cursor: none;
@@ -294,5 +311,4 @@
 		stroke-width: 1.5;
 		opacity: 0.9;
 	}
-
 </style>

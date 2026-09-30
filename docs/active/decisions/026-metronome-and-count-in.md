@@ -4,7 +4,7 @@
 
 Accepted — 2026-09-30. Implemented, not yet hand-tested. Raised for review
 because it adds audio-thread code that is **not** an `AudioNode` (see
-*Invariant check*).
+_Invariant check_).
 
 ## Context
 
@@ -51,7 +51,7 @@ next to ● in the transport bar.
 
 ## Invariant check
 
-- **Graph-first (ADR-001).** Every *project* DSP element is an `AudioNode`. The
+- **Graph-first (ADR-001).** Every _project_ DSP element is an `AudioNode`. The
   click is not project DSP: it is not in the mix, has no track, and is never
   rendered offline — the same kind of exception as the live-input queue
   (ADR-022), which also bypasses the graph. Nothing was added to `AppTrack`.

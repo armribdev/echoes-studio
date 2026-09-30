@@ -56,7 +56,7 @@ Nodes do not know their own `NodeId`: identity belongs to the graph
 (`AudioGraph` / `ExecutionStep.node_id`), so constructors take only DSP
 parameters (removed 2026-09-29, ADR-001 unchanged).
 
-The compiler sizes `input_connections` from the node *kind*
+The compiler sizes `input_connections` from the node _kind_
 (`num_inputs_for_kind`) and widens each step's output count from the prepared
 node's `num_output_ports()` (`size_outputs_from_processors`, ADR-014).
 `num_input_ports()` is a declared contract asserted by tests; the compiler does
@@ -195,6 +195,7 @@ Full algorithm in `../dsp/graph-compiler.md`.
 ### 3. CompiledGraph → GraphScheduler
 
 `GraphScheduler::new(compiled)` pre-allocates:
+
 - `output_buffers[step][port]` — one `AudioBuffer` per output port per step
 - `silence_buffer` — a permanently-zeroed sentinel for unconnected ports
 - `input_ptr_scratch` — raw pointer array sized to `MAX_NODE_INPUT_PORTS`
@@ -213,8 +214,8 @@ No further allocation occurs until the next graph update.
 
 Transport changes (play/stop/seek) do **not** trigger recompilation. They are
 passed directly to `process_block` via `TransportInfo`. This separation is
-critical: the graph describes *what to process*, transport describes *where in
-time we are*. These concerns must not be mixed.
+critical: the graph describes _what to process_, transport describes _where in
+time we are_. These concerns must not be mixed.
 
 Full runtime detail in `../dsp/dsp-runtime.md`.
 
@@ -229,6 +230,7 @@ data = [ ch0[0..frames] | ch1[0..frames] | … ]
 ```
 
 Key operations (all allocation-free):
+
 - `clear()` — zero all samples
 - `copy_from(src)` — memcpy
 - `mix_from(src, gain)` — accumulate (used for bus mixing)
@@ -271,6 +273,7 @@ RuntimeSnapshot::enqueue()         ───►  try_swap(&mut current) at block
 ```
 
 This means:
+
 - The audio callback has no synchronization overhead on the hot path.
 - The graph is always in a consistent state from the audio thread's perspective.
 - Partial graph updates are impossible — the swap is all-or-nothing.
@@ -295,6 +298,7 @@ guarantees bit-identical output for the same project regardless of `HashMap`
 iteration order or system thread scheduling.
 
 Determinism is not just a nice property — it is required for:
+
 - Reproducible offline export (same mixdown every time).
 - Future A/B comparison of graph changes.
 - Predictable test assertions.

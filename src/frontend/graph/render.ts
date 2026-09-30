@@ -1,10 +1,5 @@
-import type {
-	AudioEdgeDto,
-	GraphLayout,
-	LayoutNode,
-	ModEdgeDto,
-} from './types';
-import { KIND_LABELS, NODE_H, NODE_W } from './types';
+import type { AudioEdgeDto, GraphLayout, LayoutNode, ModEdgeDto } from './types';
+import { KIND_LABELS } from './types';
 
 export interface GraphRenderOptions {
 	trackColor: string;
@@ -24,7 +19,7 @@ const COLORS = {
 	textMuted: '#888894',
 	mod: '#ff9a3c',
 	masterAccent: '#6bcb77',
-	audioCable: 'rgba(255,255,255,0.35)',
+	audioCable: 'rgba(255,255,255,0.35)'
 };
 
 function portOut(ln: LayoutNode): { x: number; y: number } {
@@ -43,13 +38,7 @@ function modPortIn(ln: LayoutNode): { x: number; y: number } {
 	return { x: ln.x + ln.width / 2, y: ln.y + ln.height };
 }
 
-function drawBezier(
-	ctx: CanvasRenderingContext2D,
-	x1: number,
-	y1: number,
-	x2: number,
-	y2: number,
-) {
+function drawBezier(ctx: CanvasRenderingContext2D, x1: number, y1: number, x2: number, y2: number) {
 	const dx = Math.abs(x2 - x1) * 0.5;
 	ctx.moveTo(x1, y1);
 	ctx.bezierCurveTo(x1 + dx, y1, x2 - dx, y2, x2, y2);
@@ -77,11 +66,7 @@ function displayLabel(kind: string, label: string): string {
 	return short;
 }
 
-function drawNode(
-	ctx: CanvasRenderingContext2D,
-	ln: LayoutNode,
-	opts: GraphRenderOptions,
-) {
+function drawNode(ctx: CanvasRenderingContext2D, ln: LayoutNode, opts: GraphRenderOptions) {
 	const { trackColor, hoveredNodeId, selectedNodeId } = opts;
 	const isMaster = ln.dto.kind === 'master';
 	const isMod = ln.dto.kind === 'modulator';
@@ -143,10 +128,7 @@ function drawNode(
 	}
 
 	// Mod in port (bottom) for modulatable nodes
-	if (
-		ln.dto.kind === 'track_gain' ||
-		ln.dto.effectKind !== null
-	) {
+	if (ln.dto.kind === 'track_gain' || ln.dto.effectKind !== null) {
 		ctx.fillStyle = COLORS.mod;
 		ctx.globalAlpha = 0.7;
 		ctx.beginPath();
@@ -163,7 +145,7 @@ function drawAudioEdge(
 	ctx: CanvasRenderingContext2D,
 	edge: AudioEdgeDto,
 	byId: Map<number, LayoutNode>,
-	trackColor: string,
+	trackColor: string
 ) {
 	const from = byId.get(edge.fromNode);
 	const to = byId.get(edge.toNode);
@@ -185,7 +167,7 @@ function drawModEdge(
 	ctx: CanvasRenderingContext2D,
 	edge: ModEdgeDto,
 	byId: Map<number, LayoutNode>,
-	modPhase: number,
+	modPhase: number
 ) {
 	const from = byId.get(edge.sourceNode);
 	const to = byId.get(edge.targetNode);
@@ -221,7 +203,7 @@ export function renderGraph(
 	modEdges: ModEdgeDto[],
 	opts: GraphRenderOptions,
 	canvasW: number,
-	canvasH: number,
+	canvasH: number
 ) {
 	drawGrid(ctx, canvasW, canvasH);
 
@@ -238,11 +220,7 @@ export function renderGraph(
 	}
 }
 
-export function hitTestNode(
-	layout: GraphLayout,
-	x: number,
-	y: number,
-): LayoutNode | null {
+export function hitTestNode(layout: GraphLayout, x: number, y: number): LayoutNode | null {
 	for (let i = layout.nodes.length - 1; i >= 0; i--) {
 		const n = layout.nodes[i];
 		if (x >= n.x && x <= n.x + n.width && y >= n.y && y <= n.y + n.height) {

@@ -75,17 +75,19 @@ function clipFromResult(result: CommandResult): {
 	peaks_4096?: [number, number][];
 } | null {
 	for (const raw of result.events) {
-		const payload = (raw as {
-			payload?: {
-				clip?: {
-					id?: string;
-					sample_rate?: number;
-					peaks_64?: [number, number][];
-					peaks_512?: [number, number][];
-					peaks_4096?: [number, number][];
+		const payload = (
+			raw as {
+				payload?: {
+					clip?: {
+						id?: string;
+						sample_rate?: number;
+						peaks_64?: [number, number][];
+						peaks_512?: [number, number][];
+						peaks_4096?: [number, number][];
+					};
 				};
-			};
-		}).payload;
+			}
+		).payload;
 		const clip = payload?.clip;
 		if (clip?.id) return { id: clip.id, ...clip };
 	}
@@ -129,15 +131,14 @@ function resolveImportEngineClipId(
 	trackId: string,
 	filePath: string,
 	startSec: number,
-	knownId?: string,
+	knownId?: string
 ): string | null {
 	if (knownId) return knownId;
 	const track = get(projectEventStore).tracks.find((t) => t.id === trackId);
 	if (!track) return null;
 	const target = normPath(filePath);
 	const hit = track.clips.find(
-		(c) =>
-			normPath(c.file_path ?? '') === target && Math.abs(c.start - startSec) < 0.15,
+		(c) => normPath(c.file_path ?? '') === target && Math.abs(c.start - startSec) < 0.15
 	);
 	return hit?.id ?? null;
 }
@@ -146,7 +147,7 @@ async function purgeImportEngineClip(
 	trackId: string,
 	filePath: string,
 	startSec: number,
-	knownId?: string,
+	knownId?: string
 ): Promise<void> {
 	const clipId = resolveImportEngineClipId(trackId, filePath, startSec, knownId);
 	if (!clipId) return;
@@ -179,7 +180,7 @@ export async function cancelAudioImport(filePath: string): Promise<void> {
 	} else {
 		// Library stop with no local inFlight: cancel unsettled slots only.
 		const doomed = get(pendingImports).filter(
-			(item) => pathsMatch(item.filePath, filePath) && !item.settled,
+			(item) => pathsMatch(item.filePath, filePath) && !item.settled
 		);
 		for (const item of doomed) {
 			trackId = item.trackId;
@@ -228,7 +229,7 @@ export async function importAudioToTrack(opts: ImportAudioOptions): Promise<void
 		} else {
 			try {
 				const dur = await invoke<number>('get_audio_clip_duration', {
-					filePath: opts.filePath,
+					filePath: opts.filePath
 				});
 				endSec = opts.startSec + dur;
 			} catch {
@@ -242,7 +243,7 @@ export async function importAudioToTrack(opts: ImportAudioOptions): Promise<void
 		filePath: opts.filePath,
 		fileName: name,
 		start: opts.startSec,
-		end: endSec,
+		end: endSec
 	});
 	// If no pending sibling had peaks (slot pruned), borrow from an engine twin.
 	{
@@ -253,14 +254,14 @@ export async function importAudioToTrack(opts: ImportAudioOptions): Promise<void
 				const twin = track.clips.find(
 					(c) =>
 						normPath(c.file_path ?? '') === target &&
-						((c.peaks_512?.length ?? 0) > 0 || (c.peaks_4096?.length ?? 0) > 0),
+						((c.peaks_512?.length ?? 0) > 0 || (c.peaks_4096?.length ?? 0) > 0)
 				);
 				if (twin) {
 					pendingImports.seedPeaks(pendingId, {
 						sampleRate: twin.sample_rate,
 						peaks_64: twin.peaks_64,
 						peaks_512: twin.peaks_512,
-						peaks_4096: twin.peaks_4096,
+						peaks_4096: twin.peaks_4096
 					});
 					break;
 				}
@@ -273,7 +274,7 @@ export async function importAudioToTrack(opts: ImportAudioOptions): Promise<void
 		pendingId,
 		cancelled: false,
 		trackId: opts.trackId,
-		startSec: opts.startSec,
+		startSec: opts.startSec
 	};
 	inFlight.set(key, entry);
 	audioImportProgress.begin(name, opts.filePath);
@@ -281,7 +282,7 @@ export async function importAudioToTrack(opts: ImportAudioOptions): Promise<void
 	const pcmGate = createPcmReadyGate(opts.filePath);
 	await pcmGate.ready;
 	const preparePromise = invoke<PrepareAudioImportResult>('prepare_audio_import', {
-		filePath: opts.filePath,
+		filePath: opts.filePath
 	});
 
 	try {
@@ -320,7 +321,7 @@ export async function importAudioToTrack(opts: ImportAudioOptions): Promise<void
 				sampleRate: engineClip.sample_rate,
 				peaks_64: engineClip.peaks_64,
 				peaks_512: engineClip.peaks_512,
-				peaks_4096: engineClip.peaks_4096,
+				peaks_4096: engineClip.peaks_4096
 			});
 		}
 
@@ -335,7 +336,7 @@ export async function importAudioToTrack(opts: ImportAudioOptions): Promise<void
 			const s = latest?.start ?? startSec;
 			pendingImports.updatePlacement(pendingId, {
 				start: s,
-				end: s + prepared.duration_sec,
+				end: s + prepared.duration_sec
 			});
 		}
 
@@ -352,12 +353,7 @@ export async function importAudioToTrack(opts: ImportAudioOptions): Promise<void
 		notify(`Importé : ${name}`, 'success');
 	} catch (e) {
 		if (entry.cancelled) {
-			await purgeImportEngineClip(
-				entry.trackId,
-				opts.filePath,
-				entry.startSec,
-				entry.engineClipId,
-			);
+			await purgeImportEngineClip(entry.trackId, opts.filePath, entry.startSec, entry.engineClipId);
 			return;
 		}
 		const msg = e instanceof Error ? e.message : String(e);

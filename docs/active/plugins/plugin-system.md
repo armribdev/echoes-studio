@@ -49,6 +49,7 @@ implements `AudioNode` around a shared `Arc<PluginInstance>` managed by
 `PluginHost`. The graph sees them as opaque `Box<dyn AudioNode>`.
 
 The distinction matters for:
+
 - **Stability**: internal nodes cannot crash; external plugins can.
 - **Latency**: external plugins may report latency via `latency_samples()`.
 - **State**: internal nodes have no serializable state beyond their `NodeKind`
@@ -88,6 +89,7 @@ Box<dyn AudioNode>  → handed to GraphCompiler → placed in ExecutionPlan
 
 The registry holds `PluginManifest` entries for every known plugin, populated at
 startup by:
+
 1. Built-in device registration (Gain, Pan, Bus, Master, etc.).
 2. Platform-specific scanners (VST3 dirs, AU database, CLAP dirs, WASM dir).
 
@@ -114,7 +116,7 @@ called. **Plugins are never initialized or destroyed from the audio thread.**
 The host keeps one `Arc<PluginInstance>` clone per **plugin placement** in its
 `records` map, keyed by the per-instance `instance_key` — the project `effect.id`
 (or `instrument:{track_id}` for a track instrument) — **not** by `device_id` (the
-plugin *type*). This is what lets the same plugin used on two tracks live as two
+plugin _type_). This is what lets the same plugin used on two tracks live as two
 distinct records instead of one silently overwriting the other (engine audit
 point 2). The UI/IPC surface addresses plugins by `instance_key` too (ADR-017):
 parameter pushes (`push_plugin_param`), the GUI editor (`instance_by_key`), and
@@ -254,6 +256,7 @@ legacy field.
 **The graph runtime must never import `plugin_formats` or `plugin_system`.**
 
 Only these files may touch plugin-format specifics:
+
 - `plugin_formats/vst3/wrapper.rs`
 - `plugin_formats/au/wrapper.rs` (feature `au`)
 - `plugin_formats/clap/wrapper.rs`

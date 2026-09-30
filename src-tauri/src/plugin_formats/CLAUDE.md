@@ -5,6 +5,7 @@ format-specific APIs (COM, AudioUnit, CLAP C ABI). Everything below the wrapper
 sees only `AudioNode`.
 
 ## Local hard constraints
+
 - **Never** let `vst3-sys`, CoreAudio, or `clap_*` types escape into
   `audio_graph/`. Leaking format types is an architectural regression (ADR-003).
 - Wrapper `process()` obeys all RT rules: pointer arrays pre-allocated in
@@ -19,6 +20,7 @@ sees only `AudioNode`.
   direct setter from the audio thread.
 
 ## Read before changing
+
 - `docs/active/plugins/plugin-wrapper-system.md`
 - `docs/active/audits/plugin-gui-audit-2026-05-31.md` (C1, V1–V5, CL1–CL5, W1–W3)
 - `.claude/memory/engine_quirks.md` · ADRs 003, 013 · then `completion_protocol.md`.

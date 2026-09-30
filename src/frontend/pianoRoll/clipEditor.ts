@@ -30,7 +30,7 @@ function persistEditLayout() {
 
 export function resolveActiveMidiClip(
 	tracks: Track[],
-	state: SelectionState,
+	state: SelectionState
 ): ResolvedMidiClip | null {
 	const { primaryId, ids } = state;
 	if (ids.size === 0) return null;
@@ -57,11 +57,7 @@ export function resolveActiveMidiClip(
 	return null;
 }
 
-export function showMidiClipPreview(
-	track: Track,
-	clip: MidiClip,
-	color: string,
-) {
+export function showMidiClipPreview(track: Track, clip: MidiClip, color: string) {
 	const pr = get(pianoRollStore);
 	const bp = get(bottomPanel);
 	const alreadyPreviewing =
@@ -77,14 +73,7 @@ export function showMidiClipPreview(
 	const duration = clipDurationBeats(clip);
 	const clipNotes = clip.notes ?? [];
 	pianoRollStore.clearSelection();
-	pianoRollStore.loadClip(
-		track.id,
-		clip.id,
-		track.name,
-		color,
-		clipNotes,
-		duration,
-	);
+	pianoRollStore.loadClip(track.id, clip.id, track.name, color, clipNotes, duration);
 	bottomPanel.openTab('pianoroll');
 	bottomPanel.setPreviewAutoHeight(computePreviewPanelHeight(clipNotes));
 }
@@ -107,18 +96,14 @@ export function enterEditFromPreview() {
 	pianoRollStore.restoreEditZoom();
 }
 
-export function focusMidiClipForEdit(
-	track: Track,
-	clip: MidiClip,
-	color: string,
-) {
+export function focusMidiClipForEdit(track: Track, clip: MidiClip, color: string) {
 	pianoRollStore.loadClip(
 		track.id,
 		clip.id,
 		track.name,
 		color,
 		clip.notes ?? [],
-		clipDurationBeats(clip),
+		clipDurationBeats(clip)
 	);
 	bottomPanel.openTab('pianoroll');
 	keyboardFocus.setPianoRoll();
@@ -189,7 +174,11 @@ export function cycleEditorFocus(tracks: Track[], state: SelectionState) {
 	if (!bp.open) {
 		const resolved = resolveActiveMidiClip(tracks, state);
 		if (!resolved) return;
-		focusMidiClipForEdit(resolved.track, resolved.clip, trackColor(resolved.track.id, resolved.track.color));
+		focusMidiClipForEdit(
+			resolved.track,
+			resolved.clip,
+			trackColor(resolved.track.id, resolved.track.color)
+		);
 		return;
 	}
 
@@ -206,5 +195,10 @@ export function cycleEditorFocus(tracks: Track[], state: SelectionState) {
 
 	// Preview ouvert sans clip chargé (rare : panel ouvert via UI sans sélection).
 	const resolved = resolveActiveMidiClip(tracks, state);
-	if (resolved) focusMidiClipForEdit(resolved.track, resolved.clip, trackColor(resolved.track.id, resolved.track.color));
+	if (resolved)
+		focusMidiClipForEdit(
+			resolved.track,
+			resolved.clip,
+			trackColor(resolved.track.id, resolved.track.color)
+		);
 }

@@ -39,9 +39,9 @@ a pure function from `(ProjectState, EngineEvent) → ProjectState`.
 
 ## Consequences
 
-*(Amended 2026-09-30: arrangement markers and regions are project structure —
+_(Amended 2026-09-30: arrangement markers and regions are project structure —
 persisted, undoable, stored in musical beats — while the playback loop brace
-remains ephemeral runtime state via `SET_LOOP`.)*
+remains ephemeral runtime state via `SET_LOOP`.)_
 
 **Positive:**
 

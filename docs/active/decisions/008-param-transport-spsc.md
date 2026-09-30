@@ -18,7 +18,7 @@ hot params). Together they retire the "every edit recompiles" shape.
 ## Context
 
 Audit [`plugin-system-audit-2026-05-31.md`](../audits/plugin-system-audit-2026-05-31.md)
-**P0-1** — *"Aucun transport de paramètres UI → plugin DSP"*:
+**P0-1** — _"Aucun transport de paramètres UI → plugin DSP"_:
 
 - `PluginHost::set_parameter_normalised` stashed the value in a `DeviceState`
   JSON blob the audio thread never read.
@@ -105,13 +105,13 @@ the producer format-agnostic.
 
 ## Real-time impact
 
-| Change | RT cost | RT risk |
-|---|---|---|
-| `ParamQueue::push` | off-RT (command thread) | none |
-| `ParamQueue::drain` in `process` | N atomic loads + N struct copies (N = pending) | none — bounded, no alloc, no lock |
-| Fill `HostParameterChanges` | in-place writes to pre-allocated arrays | none |
-| Fill `FixedParamEventList` + denormalise | in-place + HashMap *lookup* (no insert) | none — lookup does not allocate |
-| Allocation of the param structures | `prepare` only (off-RT) | none |
+| Change                                   | RT cost                                        | RT risk                           |
+| ---------------------------------------- | ---------------------------------------------- | --------------------------------- |
+| `ParamQueue::push`                       | off-RT (command thread)                        | none                              |
+| `ParamQueue::drain` in `process`         | N atomic loads + N struct copies (N = pending) | none — bounded, no alloc, no lock |
+| Fill `HostParameterChanges`              | in-place writes to pre-allocated arrays        | none                              |
+| Fill `FixedParamEventList` + denormalise | in-place + HashMap _lookup_ (no insert)        | none — lookup does not allocate   |
+| Allocation of the param structures       | `prepare` only (off-RT)                        | none                              |
 
 C-1 (zero mutex / zero alloc / zero syscall in `process`) is preserved: every
 buffer is pre-allocated at `prepare`; the ring is lock-free and bounded;
@@ -157,14 +157,14 @@ overflow degrades to drop-newest, never to a blocking or allocating path.
 
 Tracked debt for when the automation path (Phase 5e) is built on this queue:
 
-1. **Drop-newest loses automation targets.** A full ring drops the *newest*
+1. **Drop-newest loses automation targets.** A full ring drops the _newest_
    change. For a continuous automation/modulation stream that is the worst
    policy — the dropped value is the most recent target the DSP should converge
    to. Under dense multi-parameter automation (the "sessions énormes" case) the
    plugin can be left at a stale value. Phase 5e should switch to **coalescing by
    `native_id`** (keep only the latest per parameter) or drop-oldest, not
    drop-newest.
-2. **Offline render of *recorded* automation is unspecified.** "Offline issues no
+2. **Offline render of _recorded_ automation is unspecified.** "Offline issues no
    `UPDATE_EFFECT`, so the ring stays empty" guarantees C-2 only for projects
    with **no** automation. It does **not** say how recorded automation lanes are
    delivered to the plugin during an offline render. If that path differs from

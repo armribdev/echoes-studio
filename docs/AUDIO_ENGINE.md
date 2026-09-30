@@ -35,33 +35,33 @@ Interleaved f32 → CPAL output device
 
 ### 2.1 Audio Parameters
 
-| Parameter | Default | Configurable | Notes |
-|-----------|---------|:---:|-------|
-| Sample rate | 48,000 Hz | Yes | 44.1, 48, 88.2, 96 kHz supported |
-| Internal bit depth | f32 (32-bit float) | No | Normalised range [-1.0, 1.0] |
-| Output channels | 2 (stereo) | Yes (1–N) | Configurable in Preferences |
-| Buffer size | 512 frames | Yes | 64–2048 frames; auto-fallback if device rejects value |
-| Target latency | < 10 ms | — | Driven by buffer size / sample rate |
+| Parameter          | Default            | Configurable | Notes                                                 |
+| ------------------ | ------------------ | :----------: | ----------------------------------------------------- |
+| Sample rate        | 48,000 Hz          |     Yes      | 44.1, 48, 88.2, 96 kHz supported                      |
+| Internal bit depth | f32 (32-bit float) |      No      | Normalised range [-1.0, 1.0]                          |
+| Output channels    | 2 (stereo)         |  Yes (1–N)   | Configurable in Preferences                           |
+| Buffer size        | 512 frames         |     Yes      | 64–2048 frames; auto-fallback if device rejects value |
+| Target latency     | < 10 ms            |      —       | Driven by buffer size / sample rate                   |
 
 ### 2.2 Supported File Formats
 
-| Format | Status | Library |
-|--------|--------|---------|
-| WAV (PCM 16/24/32-bit) | ✅ Implemented | `hound` |
-| WAV (float 32-bit) | ✅ Implemented | `hound` |
-| MP3 | Planned (Phase 2) | `symphonia` |
-| FLAC | Planned (Phase 2) | `symphonia` |
-| OGG Vorbis | Planned (Phase 2) | `symphonia` |
-| AIFF | Planned | `symphonia` |
-| M4A/AAC | Planned | `symphonia` |
+| Format                 | Status            | Library     |
+| ---------------------- | ----------------- | ----------- |
+| WAV (PCM 16/24/32-bit) | ✅ Implemented    | `hound`     |
+| WAV (float 32-bit)     | ✅ Implemented    | `hound`     |
+| MP3                    | Planned (Phase 2) | `symphonia` |
+| FLAC                   | Planned (Phase 2) | `symphonia` |
+| OGG Vorbis             | Planned (Phase 2) | `symphonia` |
+| AIFF                   | Planned           | `symphonia` |
+| M4A/AAC                | Planned           | `symphonia` |
 
 ### 2.3 Audio Backends by Platform
 
-| OS | Default backend | Alternative |
-|----|----------------|------------|
-| Windows | WASAPI | ASIO (ultra-low latency — Phase 5) |
-| macOS | CoreAudio | — |
-| Linux | ALSA | JACK, PipeWire |
+| OS      | Default backend | Alternative                        |
+| ------- | --------------- | ---------------------------------- |
+| Windows | WASAPI          | ASIO (ultra-low latency — Phase 5) |
+| macOS   | CoreAudio       | —                                  |
+| Linux   | ALSA            | JACK, PipeWire                     |
 
 ---
 
@@ -135,15 +135,15 @@ pub struct TransportInfo {
 
 ### 3.3 Built-in Nodes (`audio_graph/nodes/`)
 
-| Node | Role |
-|------|------|
-| `TrackNode` | Audio source — reads clips, advances position |
-| `GainNode` | Volume control |
-| `PanNode` | Constant-power stereo panning |
-| `MeterNode` | Peak/RMS measurement, writes to atomic cells |
-| `BusNode` | Multi-input mixing point |
-| `MasterNode` | Final output, soft limiter |
-| `SendNode` | Aux send routing (scaffolded, Phase 3) |
+| Node         | Role                                          |
+| ------------ | --------------------------------------------- |
+| `TrackNode`  | Audio source — reads clips, advances position |
+| `GainNode`   | Volume control                                |
+| `PanNode`    | Constant-power stereo panning                 |
+| `MeterNode`  | Peak/RMS measurement, writes to atomic cells  |
+| `BusNode`    | Multi-input mixing point                      |
+| `MasterNode` | Final output, soft limiter                    |
+| `SendNode`   | Aux send routing (scaffolded, Phase 3)        |
 
 ---
 
@@ -263,6 +263,7 @@ fn process_block(&mut self, transport: TransportInfo, output: &mut [f32]) {
 ```
 
 Real-time safety invariants:
+
 - All buffers pre-allocated in `GraphScheduler::new()` — no allocation in callback
 - No `Mutex` of any kind — scheduler swap goes through `AtomicPtr`
 - No `drop` on the audio thread — displaced schedulers ride the SPSC drop ring
@@ -299,12 +300,12 @@ They update `SharedTransport` atomics which are read by the callback on each blo
 
 ### 8.1 Sources of Latency
 
-| Source | Typical | Control |
-|--------|---------|---------|
-| Audio driver buffer | 1.3–46 ms (64–2048 frames @ 44.1 kHz) | Configurable in Preferences |
-| Sample rate mismatch | Negligible if avoided | Match output SR to device SR |
-| File decoding | None on audio thread | Decode off RT; immutable PCM prefixes published during import (ADR-024) |
-| WASAPI exclusive mode | 1–3 ms | Future (Phase 5) |
+| Source                | Typical                               | Control                                                                 |
+| --------------------- | ------------------------------------- | ----------------------------------------------------------------------- |
+| Audio driver buffer   | 1.3–46 ms (64–2048 frames @ 44.1 kHz) | Configurable in Preferences                                             |
+| Sample rate mismatch  | Negligible if avoided                 | Match output SR to device SR                                            |
+| File decoding         | None on audio thread                  | Decode off RT; immutable PCM prefixes published during import (ADR-024) |
+| WASAPI exclusive mode | 1–3 ms                                | Future (Phase 5)                                                        |
 
 ### 8.2 Buffer Fallback
 
@@ -324,6 +325,7 @@ A Rust offline renderer (same `GraphScheduler`, no CPAL stream, maximum CPU spee
 is planned for Phase 3. It will guarantee that export is bit-identical to playback.
 
 Current export flow:
+
 1. Frontend builds an `OfflineAudioContext` graph from project state
 2. `startRendering()` produces a stereo mixdown at full CPU speed
 3. `export_wav(path, samples_left, samples_right, sample_rate, bit_depth)` (Tauri command) writes via `hound`
@@ -337,15 +339,15 @@ The plugin system (`plugin_system/`, `plugin_formats/`) is scaffolded for Phase 
 Architecture: every plugin wraps as an `AudioNode`. The graph has no knowledge
 of plugin formats. See `docs/active/plugins/plugin-system.md`.
 
-| Module | Status | Contents |
-|--------|--------|---------|
-| `plugin_system/host.rs` | Scaffolded | `PluginHost`: lifecycle, parameter routing, state |
-| `plugin_system/parameter.rs` | Scaffolded | `ParameterMap`, `Param`, `ParameterRange` |
-| `plugin_system/lifecycle.rs` | Scaffolded | `LifecycleState` machine |
-| `plugin_system/registry.rs` | Scaffolded | `PluginManifest`, `PluginRegistry` |
-| `plugin_formats/vst3/` | Scaffolded | VST3 wrapper (FFI, host, wrapper) |
-| `plugin_formats/au/` | Scaffolded | AudioUnit wrapper (macOS) |
-| `plugin_formats/internal/` | Scaffolded | WASM plugin runtime |
+| Module                       | Status     | Contents                                          |
+| ---------------------------- | ---------- | ------------------------------------------------- |
+| `plugin_system/host.rs`      | Scaffolded | `PluginHost`: lifecycle, parameter routing, state |
+| `plugin_system/parameter.rs` | Scaffolded | `ParameterMap`, `Param`, `ParameterRange`         |
+| `plugin_system/lifecycle.rs` | Scaffolded | `LifecycleState` machine                          |
+| `plugin_system/registry.rs`  | Scaffolded | `PluginManifest`, `PluginRegistry`                |
+| `plugin_formats/vst3/`       | Scaffolded | VST3 wrapper (FFI, host, wrapper)                 |
+| `plugin_formats/au/`         | Scaffolded | AudioUnit wrapper (macOS)                         |
+| `plugin_formats/internal/`   | Scaffolded | WASM plugin runtime                               |
 
 ---
 

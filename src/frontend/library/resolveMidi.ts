@@ -5,7 +5,7 @@ import { expandChordProgression, keyTransposeSemitones, transposeNotes } from '.
 /** Resolve playable notes for a MIDI/chord asset (optionally transposed for preview). */
 export function resolveLibraryMidiNotes(
 	asset: LibraryAsset,
-	opts?: { projectKeyRoot?: string; transposeForPreview?: boolean },
+	opts?: { projectKeyRoot?: string; transposeForPreview?: boolean }
 ): LibraryMidiNote[] {
 	if (!isMidiLibraryKind(asset.kind)) return [];
 	let notes: LibraryMidiNote[];

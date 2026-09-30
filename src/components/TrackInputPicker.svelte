@@ -2,7 +2,7 @@
 	import { invoke } from '@tauri-apps/api/core';
 	import { engineProject } from '../frontend/store/engineStore';
 	import { setTrackInput } from '../frontend/commands/dispatcher';
-	import { instrumentPlacementKey, pluginPlacements } from '../frontend/modulation/targets';
+	import { pluginPlacements } from '../frontend/modulation/targets';
 	import { plugins, pluginDisplayName, unavailablePlugins } from '../stores/plugins';
 	import { notify } from '../stores/status';
 	import type { PluginOutputInfo, PluginOutputSource } from '../types/global';
@@ -33,7 +33,7 @@
 		const effects = t.id === trackId ? [] : t.effects;
 		return pluginPlacements(t.id, effects, instrumentName).map((placement) => ({
 			...placement,
-			trackName: t.name,
+			trackName: t.name
 		}));
 	});
 
@@ -46,9 +46,9 @@
 		const outputs = await Promise.all(
 			list.map((placement) =>
 				invoke<PluginOutputInfo[]>('get_plugin_outputs', { instanceKey: placement.key }).catch(
-					() => [] as PluginOutputInfo[],
-				),
-			),
+					() => [] as PluginOutputInfo[]
+				)
+			)
 		);
 		if (request !== latestRequest) return;
 		choices = list.flatMap((placement, i) =>
@@ -57,9 +57,9 @@
 				return {
 					value: valueOf(source),
 					label: `${placement.trackName} › ${placement.name} › ${output.name || `Sortie ${output.port + 1}`}`,
-					source,
+					source
 				};
-			}),
+			})
 		);
 	}
 

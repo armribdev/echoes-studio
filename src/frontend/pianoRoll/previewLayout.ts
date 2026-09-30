@@ -1,8 +1,5 @@
 import type { MidiNote } from '../../types/global';
-import {
-	PREVIEW_PANEL_MIN,
-	PREVIEW_PANEL_RESIZE_MAX,
-} from '../../stores/bottomPanel';
+import { PREVIEW_PANEL_MIN, PREVIEW_PANEL_RESIZE_MAX } from '../../stores/bottomPanel';
 import { NOTE_H } from './coords';
 import { RULER_HEIGHT } from '../timeRuler/constants';
 
@@ -17,7 +14,7 @@ export function getPreviewPitchRange(noteList: MidiNote[]): { min: number; max: 
 	const pitches = noteList.map((n) => n.pitch);
 	return {
 		min: Math.max(0, Math.min(...pitches) - 3),
-		max: Math.min(127, Math.max(...pitches) + 3),
+		max: Math.min(127, Math.max(...pitches) + 3)
 	};
 }
 

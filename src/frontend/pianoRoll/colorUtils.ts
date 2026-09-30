@@ -18,7 +18,7 @@ export function roundRect(
 	y: number,
 	w: number,
 	h: number,
-	r: number,
+	r: number
 ) {
 	if (w < 2 * r) r = w / 2;
 	if (h < 2 * r) r = h / 2;

@@ -15,7 +15,7 @@ export interface PreviewClip {
 export function buildPreviewClip(
 	preview: MidiRecordingPreview,
 	playhead: number,
-	bpm: number,
+	bpm: number
 ): PreviewClip {
 	if (preview.finished) {
 		const { start, end, notes } = preview.finished;
@@ -36,7 +36,7 @@ export function buildPreviewClip(
 			pitch: noteOn.pitch,
 			velocity: noteOn.velocity,
 			start: (noteOn.position - start) * beatsPerSecond,
-			duration: (noteEnd - noteOn.position) * beatsPerSecond,
+			duration: (noteEnd - noteOn.position) * beatsPerSecond
 		});
 	};
 

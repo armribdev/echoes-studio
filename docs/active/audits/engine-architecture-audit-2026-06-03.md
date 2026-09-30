@@ -29,16 +29,16 @@ Grille de classement : cosmétique / dette acceptable / **dette structurelle** /
 
 ## Synthèse priorisée
 
-| # | Problème | Classe | Risque clé |
-|---|----------|--------|-----------|
-| 1 | Ré-instanciation plugins à chaque recompile | **structurelle** | glitch + perte état DSP + freeze |
-| 2 | `records` clé = type plugin (R-2) | **structurelle** | param/état sur la mauvaise instance |
-| 3 | Compile synchrone sous double verrou | **structurelle** | mur de réactivité à l'échelle |
-| 4 | Workers non-RT + unpark/spin sur RT | **structurelle / archi-mauvaise** | underrun multicœur sous charge |
-| 5 | Buffers brassés à 4096 frames | **structurelle (perf)** | anti-cache, plafond pistes |
-| 6 | Modulation block-rate | acceptable→structurelle | escalier, pas d'audio-rate |
-| 7 | Crash plugin = crash process | acceptable (boundary OK) | **bloquant shipping** |
-| 8 | Ports plugin codés stéréo | structurelle (ambition pro) | pas de mono/surround/multi-out |
+| #   | Problème                                    | Classe                            | Risque clé                          |
+| --- | ------------------------------------------- | --------------------------------- | ----------------------------------- |
+| 1   | Ré-instanciation plugins à chaque recompile | **structurelle**                  | glitch + perte état DSP + freeze    |
+| 2   | `records` clé = type plugin (R-2)           | **structurelle**                  | param/état sur la mauvaise instance |
+| 3   | Compile synchrone sous double verrou        | **structurelle**                  | mur de réactivité à l'échelle       |
+| 4   | Workers non-RT + unpark/spin sur RT         | **structurelle / archi-mauvaise** | underrun multicœur sous charge      |
+| 5   | Buffers brassés à 4096 frames               | **structurelle (perf)**           | anti-cache, plafond pistes          |
+| 6   | Modulation block-rate                       | acceptable→structurelle           | escalier, pas d'audio-rate          |
+| 7   | Crash plugin = crash process                | acceptable (boundary OK)          | **bloquant shipping**               |
+| 8   | Ports plugin codés stéréo                   | structurelle (ambition pro)       | pas de mono/surround/multi-out      |
 
 **Ordre d'attaque conseillé :** 2 → 1 (couplés : un cache d'instances correct exige
 une clé d'instance correcte), puis 5 (gain perf transverse pas cher), puis 7 (avant
@@ -66,8 +66,9 @@ ajouter une piste, un clip ou une route ré-instancie l'intégralité des plugin
 graphe.
 
 **Pourquoi c'est dangereux dans un vrai DAW.** Chaque édition structurelle :
+
 - **détruit l'état DSP interne** des plugins (queues de reverb/delay, enveloppes de
-  compresseur, historiques d'analyseur) — sauf l'état sérialisé FFI, rejoué *que* au
+  compresseur, historiques d'analyseur) — sauf l'état sérialisé FFI, rejoué _que_ au
   chargement de projet via `pending_state_blobs`, pas sur recompile ;
 - provoque un **pic CPU** (load DLL + `activate`) sur le thread commande, **verrous
   tenus** (cf. #3) → micro-freeze UI ;
@@ -79,7 +80,7 @@ that survives a recompile is never disturbed (no FFI churn, bit-identical) »
 promesse est fausse car `instantiate` a déjà écrasé le record juste avant.
 
 **Coût futur.** Linéaire avec le nombre de plugins : un projet réaliste (20-50
-plugins) rend *chaque* clic d'édition coûteux et glitchy. Le retrofit d'un cache
+plugins) rend _chaque_ clic d'édition coûteux et glitchy. Le retrofit d'un cache
 d'instances devra toucher host + compiler + chemin de restauration d'état — d'autant
 plus douloureux que le projet/gateway s'enracinent sur l'adressage par `device_id`.
 
@@ -148,7 +149,8 @@ héritent de la **priorité normale** du process (commentaire l.24-25 : « raisi
 to RT is left to a separate change »).
 
 **Pourquoi c'est dangereux.** Deux choses se cumulent sur le chemin hard-RT :
-- `thread::unpark` = appel système, exécuté *depuis le callback audio*, autant de fois
+
+- `thread::unpark` = appel système, exécuté _depuis le callback audio_, autant de fois
   que de workers × niveaux. L'esprit « no syscalls on the audio thread » est violé
   pour les graphes profonds.
 - le thread audio (haute prio implicite CPAL) **attend en spin** la complétion de
@@ -227,7 +229,7 @@ existe en squelette opt-in (`BridgedNode`, ADR-015) mais est **inerte**
 entière (perte de travail). **Risque #1 de stabilité** d'un produit qui shippe avec
 hosting natif.
 
-**Bonne nouvelle.** La frontière de sandbox est *conçue d'avance* (opt-in,
+**Bonne nouvelle.** La frontière de sandbox est _conçue d'avance_ (opt-in,
 `Box<dyn AudioNode>` côté graphe) — donc le sandbox n'est **pas** « impossible à
 ajouter plus tard » : seul point « impossible à rajouter » de la liste initiale qui
 est déjà couvert architecturalement. Il reste à le rendre réel.

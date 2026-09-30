@@ -14,7 +14,15 @@
 
 import { get } from 'svelte/store';
 import { invoke } from '@tauri-apps/api/core';
-import { undoCommand, redoCommand, play, pause, addMarker, addRegion, seek } from '../commands/dispatcher';
+import {
+	undoCommand,
+	redoCommand,
+	play,
+	pause,
+	addMarker,
+	addRegion,
+	seek
+} from '../commands/dispatcher';
 import { transport } from '../../stores/transport';
 import { tempo } from '../../stores/tempo';
 import { loopRegion } from '../../stores/loopRegion';
@@ -37,271 +45,270 @@ import { collectLocators, navigateLocator, defaultRegionSpanAt } from '../arrang
 type Modifier = 'ctrl' | 'shift' | 'alt';
 
 interface Shortcut {
-  /** Single key (case-insensitive). */
-  key: string;
-  /** Required modifiers — all must be held, no extras. */
-  modifiers: Modifier[];
-  /** Human-readable label — for a future shortcut-help panel. */
-  description: string;
-  action: () => void;
-  /** If set, the shortcut only fires (and steals the key) when this returns true. */
-  when?: () => boolean;
+	/** Single key (case-insensitive). */
+	key: string;
+	/** Required modifiers — all must be held, no extras. */
+	modifiers: Modifier[];
+	/** Human-readable label — for a future shortcut-help panel. */
+	description: string;
+	action: () => void;
+	/** If set, the shortcut only fires (and steals the key) when this returns true. */
+	when?: () => boolean;
 }
 
 function isLibraryFocus(): boolean {
-  const focus = get(keyboardFocus);
-  return focus === 'library-results' || focus === 'library-search';
+	const focus = get(keyboardFocus);
+	return focus === 'library-results' || focus === 'library-search';
 }
 
 function playheadBeat(): number {
-  const bpm = get(tempo).bpm;
-  return (get(transport).position * bpm) / 60;
+	const bpm = get(tempo).bpm;
+	return (get(transport).position * bpm) / 60;
 }
 
 /** Jump to previous/next locator relative to the playhead (no selection state). */
 function navigateLocators(direction: -1 | 1) {
-  const project = get(engineProject);
-  const entries = collectLocators(project.markers, project.regions);
-  const next = navigateLocator(entries, null, playheadBeat(), direction);
-  if (!next) return;
-  selection.clear();
-  keyboardFocus.setTimeline();
-  const positionSec = beatsToSeconds(Math.max(0, next.beat), get(tempo).bpm);
-  transport.update((t) => ({ ...t, position: positionSec }));
-  seek(positionSec).catch(console.error);
+	const project = get(engineProject);
+	const entries = collectLocators(project.markers, project.regions);
+	const next = navigateLocator(entries, null, playheadBeat(), direction);
+	if (!next) return;
+	selection.clear();
+	keyboardFocus.setTimeline();
+	const positionSec = beatsToSeconds(Math.max(0, next.beat), get(tempo).bpm);
+	transport.update((t) => ({ ...t, position: positionSec }));
+	seek(positionSec).catch(console.error);
 }
 
 // ── Shortcut table ────────────────────────────────────────────────────────────
 //
 // Mirror every accelerator defined in main.rs ↔ Submenu::with_items.
 
-const menuAction = (action: string) => () =>
-  invoke('menu_action', { action }).catch(console.error);
+const menuAction = (action: string) => () => invoke('menu_action', { action }).catch(console.error);
 
 const SHORTCUTS: Shortcut[] = [
-  // ── File ──────────────────────────────────────────────────────────────────
-  {
-    key: 'n',
-    modifiers: ['ctrl'],
-    description: 'Nouveau projet',
-    action: menuAction('new'),
-  },
-  {
-    key: 'o',
-    modifiers: ['ctrl'],
-    description: 'Ouvrir…',
-    action: menuAction('open'),
-  },
-  {
-    key: 's',
-    modifiers: ['ctrl'],
-    description: 'Enregistrer',
-    action: menuAction('save'),
-  },
-  {
-    key: 's',
-    modifiers: ['ctrl', 'shift'],
-    description: 'Enregistrer sous…',
-    action: menuAction('save-as'),
-  },
+	// ── File ──────────────────────────────────────────────────────────────────
+	{
+		key: 'n',
+		modifiers: ['ctrl'],
+		description: 'Nouveau projet',
+		action: menuAction('new')
+	},
+	{
+		key: 'o',
+		modifiers: ['ctrl'],
+		description: 'Ouvrir…',
+		action: menuAction('open')
+	},
+	{
+		key: 's',
+		modifiers: ['ctrl'],
+		description: 'Enregistrer',
+		action: menuAction('save')
+	},
+	{
+		key: 's',
+		modifiers: ['ctrl', 'shift'],
+		description: 'Enregistrer sous…',
+		action: menuAction('save-as')
+	},
 
-  // ── History ───────────────────────────────────────────────────────────────
-  {
-    key: 'z',
-    modifiers: ['ctrl'],
-    description: 'Annuler',
-    action: () => undoCommand().catch((e) => notify(`Annuler : ${e?.message ?? e}`, 'error')),
-  },
-  {
-    key: 'z',
-    modifiers: ['ctrl', 'shift'],
-    description: 'Rétablir',
-    action: () => redoCommand().catch((e) => notify(`Rétablir : ${e?.message ?? e}`, 'error')),
-  },
-  {
-    key: 'y',
-    modifiers: ['ctrl'],
-    description: 'Rétablir (Windows)',
-    action: () => redoCommand().catch((e) => notify(`Rétablir : ${e?.message ?? e}`, 'error')),
-  },
+	// ── History ───────────────────────────────────────────────────────────────
+	{
+		key: 'z',
+		modifiers: ['ctrl'],
+		description: 'Annuler',
+		action: () => undoCommand().catch((e) => notify(`Annuler : ${e?.message ?? e}`, 'error'))
+	},
+	{
+		key: 'z',
+		modifiers: ['ctrl', 'shift'],
+		description: 'Rétablir',
+		action: () => redoCommand().catch((e) => notify(`Rétablir : ${e?.message ?? e}`, 'error'))
+	},
+	{
+		key: 'y',
+		modifiers: ['ctrl'],
+		description: 'Rétablir (Windows)',
+		action: () => redoCommand().catch((e) => notify(`Rétablir : ${e?.message ?? e}`, 'error'))
+	},
 
-  // ── Import / Export ───────────────────────────────────────────────────────
-  {
-    key: 'i',
-    modifiers: ['ctrl', 'shift'],
-    description: 'Importer audio…',
-    action: menuAction('import-audio'),
-  },
-  {
-    key: 'e',
-    modifiers: ['ctrl', 'shift'],
-    description: 'Exporter mixdown WAV…',
-    action: menuAction('export-wav'),
-  },
-  {
-    key: 'm',
-    modifiers: ['ctrl', 'shift'],
-    description: 'Exporter mixdown MP3…',
-    action: menuAction('export-mp3'),
-  },
+	// ── Import / Export ───────────────────────────────────────────────────────
+	{
+		key: 'i',
+		modifiers: ['ctrl', 'shift'],
+		description: 'Importer audio…',
+		action: menuAction('import-audio')
+	},
+	{
+		key: 'e',
+		modifiers: ['ctrl', 'shift'],
+		description: 'Exporter mixdown WAV…',
+		action: menuAction('export-wav')
+	},
+	{
+		key: 'm',
+		modifiers: ['ctrl', 'shift'],
+		description: 'Exporter mixdown MP3…',
+		action: menuAction('export-mp3')
+	},
 
-  // ── Transport ─────────────────────────────────────────────────────────────
-  {
-    key: ' ',
-    modifiers: [],
-    description: 'Lecture / Pause (ou aperçu bibliothèque)',
-    action: () => {
-      if (get(keyboardFocus) === 'library-results') {
-        const selected = libraryStore.getSelectedAsset();
-        if (selected) {
-          void libraryStore.togglePreview(selected.id).catch((e) =>
-            notify(`Aperçu : ${e?.message ?? e}`, 'error'),
-          );
-          return;
-        }
-      }
-      const { isPlaying } = get(transport);
-      (isPlaying ? pause() : play()).catch(console.error);
-    },
-  },
-  {
-    key: 'm',
-    modifiers: [],
-    description: 'Ajouter un marqueur à la tête de lecture',
-    action: () => {
-      const bpm = get(tempo).bpm;
-      const beat = (get(transport).position * bpm) / 60;
-      addMarker(Math.max(0, beat)).catch(console.error);
-    },
-  },
-  {
-    key: 'r',
-    modifiers: [],
-    description: 'Ajouter une région à la tête de lecture (ou depuis la boucle)',
-    action: () => {
-      const loop = get(loopRegion);
-      if (loop.enabled) {
-        addRegion(loop.startBeat, loop.endBeat).catch(console.error);
-        return;
-      }
-      const bpm = get(tempo).bpm;
-      const numerator = get(tempo).numerator;
-      const beat = (get(transport).position * bpm) / 60;
-      const { start, end } = defaultRegionSpanAt(beat, numerator);
-      addRegion(start, end).catch(console.error);
-    },
-  },
-  {
-    key: ',',
-    modifiers: [],
-    description: 'Locator précédent',
-    action: () => navigateLocators(-1),
-  },
-  {
-    key: '.',
-    modifiers: [],
-    description: 'Locator suivant',
-    action: () => navigateLocators(1),
-  },
-  {
-    key: ';',
-    modifiers: [],
-    description: 'Locator suivant (AZERTY)',
-    action: () => navigateLocators(1),
-  },
+	// ── Transport ─────────────────────────────────────────────────────────────
+	{
+		key: ' ',
+		modifiers: [],
+		description: 'Lecture / Pause (ou aperçu bibliothèque)',
+		action: () => {
+			if (get(keyboardFocus) === 'library-results') {
+				const selected = libraryStore.getSelectedAsset();
+				if (selected) {
+					void libraryStore
+						.togglePreview(selected.id)
+						.catch((e) => notify(`Aperçu : ${e?.message ?? e}`, 'error'));
+					return;
+				}
+			}
+			const { isPlaying } = get(transport);
+			(isPlaying ? pause() : play()).catch(console.error);
+		}
+	},
+	{
+		key: 'm',
+		modifiers: [],
+		description: 'Ajouter un marqueur à la tête de lecture',
+		action: () => {
+			const bpm = get(tempo).bpm;
+			const beat = (get(transport).position * bpm) / 60;
+			addMarker(Math.max(0, beat)).catch(console.error);
+		}
+	},
+	{
+		key: 'r',
+		modifiers: [],
+		description: 'Ajouter une région à la tête de lecture (ou depuis la boucle)',
+		action: () => {
+			const loop = get(loopRegion);
+			if (loop.enabled) {
+				addRegion(loop.startBeat, loop.endBeat).catch(console.error);
+				return;
+			}
+			const bpm = get(tempo).bpm;
+			const numerator = get(tempo).numerator;
+			const beat = (get(transport).position * bpm) / 60;
+			const { start, end } = defaultRegionSpanAt(beat, numerator);
+			addRegion(start, end).catch(console.error);
+		}
+	},
+	{
+		key: ',',
+		modifiers: [],
+		description: 'Locator précédent',
+		action: () => navigateLocators(-1)
+	},
+	{
+		key: '.',
+		modifiers: [],
+		description: 'Locator suivant',
+		action: () => navigateLocators(1)
+	},
+	{
+		key: ';',
+		modifiers: [],
+		description: 'Locator suivant (AZERTY)',
+		action: () => navigateLocators(1)
+	},
 
-  // ── Library ───────────────────────────────────────────────────────────────
-  {
-    key: 'b',
-    modifiers: [],
-    description: 'Basculer la bibliothèque',
-    action: () => rightPanel.toggle(),
-  },
-  {
-    key: 'l',
-    modifiers: [],
-    description: 'Basculer la bibliothèque (alias)',
-    action: () => rightPanel.toggle(),
-  },
-  {
-    key: '/',
-    modifiers: [],
-    description: 'Focus recherche bibliothèque',
-    action: () => {
-      if (get(libraryPopup).open) {
-        requestLibrarySearchFocus();
-        return;
-      }
-      if (!get(rightPanel).open) rightPanel.toggle();
-      requestLibrarySearchFocus();
-    },
-  },
-  {
-    key: 'f',
-    modifiers: ['ctrl'],
-    description: 'Focus recherche bibliothèque',
-    action: () => {
-      if (!get(rightPanel).open) return;
-      requestLibrarySearchFocus();
-    },
-  },
-  {
-    key: 'f',
-    modifiers: [],
-    description: 'Basculer favori (bibliothèque)',
-    when: isLibraryFocus,
-    action: () => {
-      const selected = libraryStore.getSelectedAsset();
-      if (selected) libraryStore.toggleFavorite(selected.id);
-    },
-  },
-  {
-    key: 'd',
-    modifiers: ['ctrl'],
-    description: 'Basculer favori (bibliothèque)',
-    when: isLibraryFocus,
-    action: () => {
-      const selected = libraryStore.getSelectedAsset();
-      if (selected) libraryStore.toggleFavorite(selected.id);
-    },
-  },
-  {
-    key: '1',
-    modifiers: ['ctrl'],
-    description: 'Bibliothèque · Récents',
-    when: isLibraryFocus,
-    action: () => libraryStore.setSource('recents'),
-  },
-  {
-    key: '2',
-    modifiers: ['ctrl'],
-    description: 'Bibliothèque · Favoris',
-    when: isLibraryFocus,
-    action: () => libraryStore.setSource('favorites'),
-  },
-  {
-    key: '3',
-    modifiers: ['ctrl'],
-    description: 'Bibliothèque · Audio',
-    when: isLibraryFocus,
-    action: () => libraryStore.setSource('audio'),
-  },
+	// ── Library ───────────────────────────────────────────────────────────────
+	{
+		key: 'b',
+		modifiers: [],
+		description: 'Basculer la bibliothèque',
+		action: () => rightPanel.toggle()
+	},
+	{
+		key: 'l',
+		modifiers: [],
+		description: 'Basculer la bibliothèque (alias)',
+		action: () => rightPanel.toggle()
+	},
+	{
+		key: '/',
+		modifiers: [],
+		description: 'Focus recherche bibliothèque',
+		action: () => {
+			if (get(libraryPopup).open) {
+				requestLibrarySearchFocus();
+				return;
+			}
+			if (!get(rightPanel).open) rightPanel.toggle();
+			requestLibrarySearchFocus();
+		}
+	},
+	{
+		key: 'f',
+		modifiers: ['ctrl'],
+		description: 'Focus recherche bibliothèque',
+		action: () => {
+			if (!get(rightPanel).open) return;
+			requestLibrarySearchFocus();
+		}
+	},
+	{
+		key: 'f',
+		modifiers: [],
+		description: 'Basculer favori (bibliothèque)',
+		when: isLibraryFocus,
+		action: () => {
+			const selected = libraryStore.getSelectedAsset();
+			if (selected) libraryStore.toggleFavorite(selected.id);
+		}
+	},
+	{
+		key: 'd',
+		modifiers: ['ctrl'],
+		description: 'Basculer favori (bibliothèque)',
+		when: isLibraryFocus,
+		action: () => {
+			const selected = libraryStore.getSelectedAsset();
+			if (selected) libraryStore.toggleFavorite(selected.id);
+		}
+	},
+	{
+		key: '1',
+		modifiers: ['ctrl'],
+		description: 'Bibliothèque · Récents',
+		when: isLibraryFocus,
+		action: () => libraryStore.setSource('recents')
+	},
+	{
+		key: '2',
+		modifiers: ['ctrl'],
+		description: 'Bibliothèque · Favoris',
+		when: isLibraryFocus,
+		action: () => libraryStore.setSource('favorites')
+	},
+	{
+		key: '3',
+		modifiers: ['ctrl'],
+		description: 'Bibliothèque · Audio',
+		when: isLibraryFocus,
+		action: () => libraryStore.setSource('audio')
+	},
 
-  // ── View ──────────────────────────────────────────────────────────────────
-  {
-    key: 'g',
-    modifiers: [],
-    description: 'Basculer Arrangement / Graph',
-    action: () => viewMode.toggleMain(),
-  },
+	// ── View ──────────────────────────────────────────────────────────────────
+	{
+		key: 'g',
+		modifiers: [],
+		description: 'Basculer Arrangement / Graph',
+		action: () => viewMode.toggleMain()
+	},
 
-  // ── Editor panel ──────────────────────────────────────────────────────────
-  {
-    key: 'Tab',
-    modifiers: [],
-    description: 'Plonger dans l’éditeur MIDI / remonter au focus arrangement',
-    action: () => cycleEditorFocus(get(engineProject).tracks, get(selection)),
-  },
+	// ── Editor panel ──────────────────────────────────────────────────────────
+	{
+		key: 'Tab',
+		modifiers: [],
+		description: 'Plonger dans l’éditeur MIDI / remonter au focus arrangement',
+		action: () => cycleEditorFocus(get(engineProject).tracks, get(selection))
+	}
 ];
 
 // ── Matching logic ────────────────────────────────────────────────────────────
@@ -313,18 +320,18 @@ const SHORTCUTS: Shortcut[] = [
  * Ctrl on Windows/Linux (e.ctrlKey) — both are accepted via `ctrlHeld`.
  */
 function matches(e: KeyboardEvent, shortcut: Shortcut): boolean {
-  if (e.key.toLowerCase() !== shortcut.key.toLowerCase()) return false;
+	if (e.key.toLowerCase() !== shortcut.key.toLowerCase()) return false;
 
-  const needs = shortcut.modifiers;
+	const needs = shortcut.modifiers;
 
-  // On macOS, Cmd replaces Ctrl; on Windows/Linux, only Ctrl is used.
-  const ctrlHeld = e.ctrlKey || e.metaKey;
+	// On macOS, Cmd replaces Ctrl; on Windows/Linux, only Ctrl is used.
+	const ctrlHeld = e.ctrlKey || e.metaKey;
 
-  if (needs.includes('ctrl') !== ctrlHeld) return false;
-  if (needs.includes('shift') !== e.shiftKey) return false;
-  if (needs.includes('alt') !== e.altKey) return false;
+	if (needs.includes('ctrl') !== ctrlHeld) return false;
+	if (needs.includes('shift') !== e.shiftKey) return false;
+	if (needs.includes('alt') !== e.altKey) return false;
 
-  return true;
+	return true;
 }
 
 // ── Public API ────────────────────────────────────────────────────────────────
@@ -338,66 +345,65 @@ function matches(e: KeyboardEvent, shortcut: Shortcut): boolean {
  * onMount(() => registerShortcuts());
  */
 export function registerShortcuts(): () => void {
-  const handler = (e: KeyboardEvent): void => {
-    if (e.repeat) return;
+	const handler = (e: KeyboardEvent): void => {
+		if (e.repeat) return;
 
-    if (e.key === 'Escape' && dismissTopLayer()) {
-      e.preventDefault();
-      e.stopImmediatePropagation();
-      return;
-    }
+		if (e.key === 'Escape' && dismissTopLayer()) {
+			e.preventDefault();
+			e.stopImmediatePropagation();
+			return;
+		}
 
-    if (isEditingText(e.target)) {
-      // ADR-023: B/L still toggle the library from the search field.
-      if (hasNoModifiers(e) && !e.shiftKey) {
-        const k = e.key.toLowerCase();
-        if (k === 'b' || k === 'l') {
-          e.preventDefault();
-          rightPanel.toggle();
-          return;
-        }
-      }
-      return;
-    }
+		if (isEditingText(e.target)) {
+			// ADR-023: B/L still toggle the library from the search field.
+			if (hasNoModifiers(e) && !e.shiftKey) {
+				const k = e.key.toLowerCase();
+				if (k === 'b' || k === 'l') {
+					e.preventDefault();
+					rightPanel.toggle();
+					return;
+				}
+			}
+			return;
+		}
 
-    // Piano roll : un seul handler (capture) — désélection → aperçu → fermer.
-    if (e.key === 'Escape' && hasNoModifiers(e) && !get(settingsPanelOpen)) {
-      if (get(keyboardFocus) === 'library-results') {
-        const lib = get(libraryStore);
-        if (lib.query) {
-          e.preventDefault();
-          libraryStore.clearQuery();
-          return;
-        }
-        if (lib.previewingId) {
-          e.preventDefault();
-          libraryStore.stopPreview();
-          return;
-        }
-      }
-      if (get(bottomPanel).open) {
-        e.preventDefault();
-        e.stopImmediatePropagation();
-        handleEditorEscapeKey();
-        return;
-      }
-    }
+		// Piano roll : un seul handler (capture) — désélection → aperçu → fermer.
+		if (e.key === 'Escape' && hasNoModifiers(e) && !get(settingsPanelOpen)) {
+			if (get(keyboardFocus) === 'library-results') {
+				const lib = get(libraryStore);
+				if (lib.query) {
+					e.preventDefault();
+					libraryStore.clearQuery();
+					return;
+				}
+				if (lib.previewingId) {
+					e.preventDefault();
+					libraryStore.stopPreview();
+					return;
+				}
+			}
+			if (get(bottomPanel).open) {
+				e.preventDefault();
+				e.stopImmediatePropagation();
+				handleEditorEscapeKey();
+				return;
+			}
+		}
 
-    for (const shortcut of SHORTCUTS) {
-      if (!matches(e, shortcut)) continue;
-      if (shortcut.when && !shortcut.when()) continue;
+		for (const shortcut of SHORTCUTS) {
+			if (!matches(e, shortcut)) continue;
+			if (shortcut.when && !shortcut.when()) continue;
 
-      // Undo/redo are handled locally by the piano roll when it is focused.
-      const isHistory =
-        shortcut.key === 'z' || shortcut.key === 'y';
-      if (isHistory && !shouldHandleGlobalHistoryShortcuts()) continue;
+			// Undo/redo are handled locally by the piano roll when it is focused.
+			const isHistory = shortcut.key === 'z' || shortcut.key === 'y';
+			if (isHistory && !shouldHandleGlobalHistoryShortcuts()) continue;
 
-      e.preventDefault();
-      shortcut.action();
-      return; // first match wins
-    }
-  };
+			e.preventDefault();
+			shortcut.action();
+			return; // first match wins
+		}
+	};
 
-  window.addEventListener('keydown', handler, true);
-  return () => window.removeEventListener('keydown', handler, true);
+	window.addEventListener('keydown', handler, true);
+	return () => window.removeEventListener('keydown', handler, true);
 }

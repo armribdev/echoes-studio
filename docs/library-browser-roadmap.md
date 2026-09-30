@@ -26,11 +26,11 @@ friction).
 
 **Status:** `done` (2026-09-28) — including deferred product-call freeze
 
-| Deliverable | Done when |
-|-------------|-----------|
-| UX contract + wireframes + states | `library-browser-ux.md` |
-| ADR-023 accepted + Phase 1/deferred locks | indexed in `000-index.md` |
-| This roadmap | linked from UX doc + UI guidelines |
+| Deliverable                               | Done when                          |
+| ----------------------------------------- | ---------------------------------- |
+| UX contract + wireframes + states         | `library-browser-ux.md`            |
+| ADR-023 accepted + Phase 1/deferred locks | indexed in `000-index.md`          |
+| This roadmap                              | linked from UX doc + UI guidelines |
 
 **Exit:** Product agrees §§ asset types, contexts, drop matrix, Space rule, Phase 1 dock/preview/sources, and deferred calls in UX §12. **Met.**
 
@@ -43,24 +43,24 @@ friction).
 
 ### Scope
 
-| In | Out |
-|----|-----|
-| **Right-dock** library (evolve `RightPanel`) | Pop-up browser |
-| Sources: `recents`, `favorites`, **`audio`** (single) | Samples/Loops split, chords/MIDI/packs |
-| Async index of ≥1 user folder | Factory packs, cloud |
-| **UI WebAudio** preview (hover / Space) | Engine preview, BPM/key sync |
-| Drag → `ADD_CLIP` on track | MIDI drops, create-track-on-empty |
-| Shortcuts: `B` (+ keep `L` alias), `/`, ↑↓, Space, Enter, Esc | `Ctrl+1…4`, context memory |
+| In                                                            | Out                                    |
+| ------------------------------------------------------------- | -------------------------------------- |
+| **Right-dock** library (evolve `RightPanel`)                  | Pop-up browser                         |
+| Sources: `recents`, `favorites`, **`audio`** (single)         | Samples/Loops split, chords/MIDI/packs |
+| Async index of ≥1 user folder                                 | Factory packs, cloud                   |
+| **UI WebAudio** preview (hover / Space)                       | Engine preview, BPM/key sync           |
+| Drag → `ADD_CLIP` on track                                    | MIDI drops, create-track-on-empty      |
+| Shortcuts: `B` (+ keep `L` alias), `/`, ↑↓, Space, Enter, Esc | `Ctrl+1…4`, context memory             |
 
 ### Engineering slices (suggested order)
 
-1. **Library service (TS)** — asset model, in-memory index, search stub  
-2. **Indexer (Rust or Node via Tauri)** — scan folder, emit paths + basic metadata  
-3. **RightPanel library UI** — wireframe §7.2 / empty §7.3 (replace stub list)  
-4. **UI preview player (WebAudio)** — isolated; stop on drag/Esc  
-5. **DnD → `ADD_CLIP`** — snap; reuse/extend existing OS-drop path  
-6. **Recents / favorites** — local persistence (not project undo)  
-7. **Shortcuts + focus scopes** — `B`/`L`, Space rule from ADR-023  
+1. **Library service (TS)** — asset model, in-memory index, search stub
+2. **Indexer (Rust or Node via Tauri)** — scan folder, emit paths + basic metadata
+3. **RightPanel library UI** — wireframe §7.2 / empty §7.3 (replace stub list)
+4. **UI preview player (WebAudio)** — isolated; stop on drag/Esc
+5. **DnD → `ADD_CLIP`** — snap; reuse/extend existing OS-drop path
+6. **Recents / favorites** — local persistence (not project undo)
+7. **Shortcuts + focus scopes** — `B`/`L`, Space rule from ADR-023
 
 ### Progress (2026-09-29, from commit history — slices not individually re-verified)
 
@@ -89,19 +89,19 @@ bench-timed on a large folder in CI).
 
 ### Exit criteria
 
-- [x] Cold open → `B` → search “loop” → drag to track → hear on play, **&lt; 10 s** *(path code-verified; soft timing metric)*
+- [x] Cold open → `B` → search “loop” → drag to track → hear on play, **&lt; 10 s** _(path code-verified; soft timing metric)_
 - [x] Preview does not create clips or move playhead
-- [x] Drop on MIDI-focused lane rejects audio-incompatible… *(content-derived lane focus, Phase 3)*
-- [x] Full folder scan never blocks first paint / transport *(dedicated thread + batches + windowed list)*
-- [x] Undo reverts the `ADD_CLIP` only *(existing track; empty-project create-track is a separate undo step)*
+- [x] Drop on MIDI-focused lane rejects audio-incompatible… _(content-derived lane focus, Phase 3)_
+- [x] Full folder scan never blocks first paint / transport _(dedicated thread + batches + windowed list)_
+- [x] Undo reverts the `ADD_CLIP` only _(existing track; empty-project create-track is a separate undo step)_
 
 ### Risks
 
-| Risk | Mitigation |
-|------|------------|
-| Large folders freeze UI | Incremental index + debounce search |
-| Space steals transport | Focus-scope tests |
-| Duplicate of OS file drop path | Reuse import/`ADD_CLIP` path |
+| Risk                           | Mitigation                          |
+| ------------------------------ | ----------------------------------- |
+| Large folders freeze UI        | Incremental index + debounce search |
+| Space steals transport         | Focus-scope tests                   |
+| Duplicate of OS file drop path | Reuse import/`ADD_CLIP` path        |
 
 ---
 
@@ -112,14 +112,14 @@ bench-timed on a large folder in CI).
 
 ### Scope
 
-| In | Out |
-|----|-----|
-| Pop-up on lane `+` — **same browser as dock** (Bitwig dual surface) | Truncated mini-list clone |
-| Contexts: `track_empty`, `track_audio_lane`, `playhead_insert` | `drum_pad`, context memory |
-| Create track + clip when dropping on empty timeline | Warp algorithm |
-| Optional UI-only preview BPM stretch if metadata present | Engine warp |
-| Full reject matrix for audio vs MIDI lanes (UI lanes ready) | Chord factory packs |
-| Favorite shortcut; optional Quick Sources | Smart collections / silent context learn |
+| In                                                                  | Out                                      |
+| ------------------------------------------------------------------- | ---------------------------------------- |
+| Pop-up on lane `+` — **same browser as dock** (Bitwig dual surface) | Truncated mini-list clone                |
+| Contexts: `track_empty`, `track_audio_lane`, `playhead_insert`      | `drum_pad`, context memory               |
+| Create track + clip when dropping on empty timeline                 | Warp algorithm                           |
+| Optional UI-only preview BPM stretch if metadata present            | Engine warp                              |
+| Full reject matrix for audio vs MIDI lanes (UI lanes ready)         | Chord factory packs                      |
+| Favorite shortcut; optional Quick Sources                           | Smart collections / silent context learn |
 
 ### Progress (2026-09-30)
 
@@ -136,24 +136,25 @@ deferred; audio↔MIDI reject landed with Phase 3 lane focus.
 - [x] `Esc` closes pop-up; arrange click-outside cancels
 - [x] Empty project: drop/Enter can create track + clip
 - [x] Defaults match UX §5 without user configuration
-- [x] Lane `+` / dock–popup parity / Esc–outside *(code-verified 2026-09-30)*
+- [x] Lane `+` / dock–popup parity / Esc–outside _(code-verified 2026-09-30)_
+
 ---
 
 ## Phase 3 — Musical content
 
 **Status:** `done` (2026-09-30) — hybrid drums one-shots deferred to Phase 4  
-**Depends on:** Phase 2  
+**Depends on:** Phase 2
 
 ### Scope
 
-| In | Out |
-|----|-----|
-| Sources `chords`, `midi`, `drums` | Full Devices browser |
-| `ADD_MIDI_CLIP` from **factory MIDI** first, then rule-based voicing | Drop-time chord editor; sampler product |
-| Lane focus `midi` + reject audio↔midi | — |
-| Preview piano-roll peek; key transpose toward project key | Perfect voice-leading |
-| Loop BPM sync in preview when metadata allows | — |
-| **Warp-on-drop** only behind a **dedicated ADR** (no silent UI re-encode) | Shipping warp without ADR |
+| In                                                                        | Out                                     |
+| ------------------------------------------------------------------------- | --------------------------------------- |
+| Sources `chords`, `midi`, `drums`                                         | Full Devices browser                    |
+| `ADD_MIDI_CLIP` from **factory MIDI** first, then rule-based voicing      | Drop-time chord editor; sampler product |
+| Lane focus `midi` + reject audio↔midi                                     | —                                       |
+| Preview piano-roll peek; key transpose toward project key                 | Perfect voice-leading                   |
+| Loop BPM sync in preview when metadata allows                             | —                                       |
+| **Warp-on-drop** only behind a **dedicated ADR** (no silent UI re-encode) | Shipping warp without ADR               |
 
 ### Progress (2026-09-30)
 
@@ -167,9 +168,9 @@ deferred (audition via oscillators).
 
 ### Exit criteria
 
-- [x] Drop a chord progression on MIDI lane → notes audible via PolySynth *(code-verified)*
-- [x] Project key change + re-preview reflects transpose (preview only) *(code-verified)*
-- [x] Hybrid `drums` source returns both one-shots and drum MIDI *(deferred: factory drum MIDI only; one-shots → Phase 4)*
+- [x] Drop a chord progression on MIDI lane → notes audible via PolySynth _(code-verified)_
+- [x] Project key change + re-preview reflects transpose (preview only) _(code-verified)_
+- [x] Hybrid `drums` source returns both one-shots and drum MIDI _(deferred: factory drum MIDI only; one-shots → Phase 4)_
 - [x] Warp-on-drop explicitly deferred with UX copy (“placed at original length”)
 
 ### Follow-up ADR likely
@@ -183,16 +184,16 @@ or offline render.
 ## Phase 4 — Scale & power-user
 
 **Status:** `todo`  
-**Depends on:** Phase 3  
+**Depends on:** Phase 3
 
-| In | Out |
-|----|-----|
-| Factory / installed **packs** | Silent auto-learn of browser context |
-| **Smart collections** | — |
-| **Opt-in** “Use current selections for this context” + restore defaults | — |
-| Tag editor; richer filters | — |
-| Evaluate **Devices** source merge — go/no-go ADR | Merging devices without decision |
-| Optional grid results; shortcuts cleanup (Loop key restored) | — |
+| In                                                                      | Out                                  |
+| ----------------------------------------------------------------------- | ------------------------------------ |
+| Factory / installed **packs**                                           | Silent auto-learn of browser context |
+| **Smart collections**                                                   | —                                    |
+| **Opt-in** “Use current selections for this context” + restore defaults | —                                    |
+| Tag editor; richer filters                                              | —                                    |
+| Evaluate **Devices** source merge — go/no-go ADR                        | Merging devices without decision     |
+| Optional grid results; shortcuts cleanup (Loop key restored)            | —                                    |
 
 ### Exit criteria
 
@@ -214,12 +215,12 @@ or offline render.
 
 ## Milestone sketch (relative)
 
-| Milestone | Outcome |
-|-----------|---------|
-| M1 | Phase 1 usable internally with one sample folder |
-| M2 | Phase 2 pop-up is the default insert path for audio |
-| M3 | First factory chord + MIDI pack demo-able |
-| M4 | Packs + collections; devices go/no-go decided |
+| Milestone | Outcome                                             |
+| --------- | --------------------------------------------------- |
+| M1        | Phase 1 usable internally with one sample folder    |
+| M2        | Phase 2 pop-up is the default insert path for audio |
+| M3        | First factory chord + MIDI pack demo-able           |
+| M4        | Packs + collections; devices go/no-go decided       |
 
 Exact calendar dates intentionally omitted — bind dates when scheduling a sprint.
 

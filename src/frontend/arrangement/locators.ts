@@ -18,7 +18,7 @@ export function defaultRegionLengthBeats(numerator: number): number {
 /** Region span of 4 bars starting at the bar that contains `beat`. */
 export function defaultRegionSpanAt(
 	beat: number,
-	numerator: number,
+	numerator: number
 ): { start: number; end: number } {
 	const barBeats = Math.max(1, numerator);
 	const start = Math.max(0, Math.floor(beat / barBeats) * barBeats);
@@ -27,21 +27,21 @@ export function defaultRegionSpanAt(
 
 export function collectLocators(
 	markers: ArrangementMarker[],
-	regions: ArrangementRegion[],
+	regions: ArrangementRegion[]
 ): LocatorEntry[] {
 	const entries: LocatorEntry[] = [
 		...markers.map((m) => ({
 			kind: 'marker' as const,
 			id: m.id,
 			beat: m.position_beats,
-			name: m.name,
+			name: m.name
 		})),
 		...regions.map((r) => ({
 			kind: 'region' as const,
 			id: r.id,
 			beat: r.start_beats,
-			name: r.name,
-		})),
+			name: r.name
+		}))
 	];
 	entries.sort((a, b) => a.beat - b.beat || a.id.localeCompare(b.id));
 	return entries;
@@ -52,7 +52,7 @@ export function navigateLocator(
 	entries: LocatorEntry[],
 	_current: { kind: LocatorKind; id: string } | null,
 	playheadBeat: number,
-	direction: -1 | 1,
+	direction: -1 | 1
 ): LocatorEntry | null {
 	if (entries.length === 0) return null;
 

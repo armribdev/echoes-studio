@@ -1,6 +1,11 @@
 import { derived, writable } from 'svelte/store';
 import { projectEventStore } from '../shared/project/eventStore';
-import { automationRange, automationValueAt, targetKey, toPlainValue } from '../frontend/automation/lanes';
+import {
+	automationRange,
+	automationValueAt,
+	targetKey,
+	toPlainValue
+} from '../frontend/automation/lanes';
 import { transport } from './transport';
 
 /** A right-click on a knob or fader that can be automated; `key` is its `ModulationTargetOption` key. */
@@ -16,7 +21,9 @@ export const automationRequest = writable<AutomationRequest | null>(null);
 export const automatedTargets = derived(projectEventStore, ($project) => {
 	const byTrack: Record<string, Set<string>> = {};
 	for (const track of $project.tracks) {
-		const driven = track.automation_lanes.filter((lane) => lane.clips.some((clip) => clip.points.length > 0));
+		const driven = track.automation_lanes.filter((lane) =>
+			lane.clips.some((clip) => clip.points.length > 0)
+		);
 		byTrack[track.id] = new Set(driven.map((lane) => targetKey(lane.target)));
 	}
 	return byTrack;

@@ -43,11 +43,11 @@ staged project-load blob is applied at instantiation.
 
 ## Real-time impact
 
-| Change | RT cost | RT risk |
-|---|---|---|
-| `BypassNode::process` | one `copy_from_slice` per channel | none — no alloc, no lock |
-| Disabled plugin kept active | none on the audio thread (its `process` is not called) | none |
-| Build / wrap | compile time, off-RT | none |
+| Change                      | RT cost                                                | RT risk                  |
+| --------------------------- | ------------------------------------------------------ | ------------------------ |
+| `BypassNode::process`       | one `copy_from_slice` per channel                      | none — no alloc, no lock |
+| Disabled plugin kept active | none on the audio thread (its `process` is not called) | none                     |
+| Build / wrap                | compile time, off-RT                                   | none                     |
 
 The inner node is dropped with the retiring graph through the snapshot drop
 ring, exactly like any plugin node (ADR-004, ADR-016).

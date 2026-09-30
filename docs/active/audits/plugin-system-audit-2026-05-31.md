@@ -19,9 +19,9 @@ L'architecture **n'est pas un « track = liste linéaire de plugins »**. Le mot
 - modulation traitée comme arête de graphe distincte (`ModulationRoute`), pas comme code interne au plugin,
 - niveaux d'exécution calculés au compile pour le worker-pool parallèle.
 
-Les **fondations sont saines et alignées avec un DAW moderne type Bitwig**. Ce que je vois en revanche, c'est une **couche plugin minimale** : les wrappers VST3/CLAP existent, mais ils ne *transportent* presque rien — pas de paramètres exposés, pas d'état, pas de MIDI, pas de capacités dynamiques, pas de sidechain, pas de latence rapportée. Le `Device` trait est défini mais la majorité des méthodes renvoient `Empty` ou `false`. Aujourd'hui un plugin chargé est essentiellement un boîtier opaque à 2 in / 2 out qui traite l'audio sans qu'on puisse interagir avec lui depuis l'UI ou le système de modulation.
+Les **fondations sont saines et alignées avec un DAW moderne type Bitwig**. Ce que je vois en revanche, c'est une **couche plugin minimale** : les wrappers VST3/CLAP existent, mais ils ne _transportent_ presque rien — pas de paramètres exposés, pas d'état, pas de MIDI, pas de capacités dynamiques, pas de sidechain, pas de latence rapportée. Le `Device` trait est défini mais la majorité des méthodes renvoient `Empty` ou `false`. Aujourd'hui un plugin chargé est essentiellement un boîtier opaque à 2 in / 2 out qui traite l'audio sans qu'on puisse interagir avec lui depuis l'UI ou le système de modulation.
 
-**Verdict en une phrase :** moteur prêt pour la production, *interface plugin* prête pour la démo.
+**Verdict en une phrase :** moteur prêt pour la production, _interface plugin_ prête pour la démo.
 
 **Compte par priorité :** P0 = 6, P1 = 9, P2 = 7.
 
@@ -80,36 +80,37 @@ Les **fondations sont saines et alignées avec un DAW moderne type Bitwig**. Ce 
 ```
 
 **Trois constats lisibles sur ce schéma :**
+
 1. La frontière audio est propre (snapshot atomique unique).
-2. Le plugin host est *strictement command-thread* — bonne décision.
+2. Le plugin host est _strictement command-thread_ — bonne décision.
 3. Mais : **le path "UI knob → plugin DSP" n'existe pas**. Les seuls flux UI → plugin sont (a) instanciation au compile et (b) ouverture du GUI natif dans un **deuxième** ClapPlugin/IComponent.
 
 ---
 
 ## PARTIE 1 — Anti-patterns recherchés
 
-| # | Anti-pattern recherché                            | Verdict | Détail                                                                                     |
-|---|---------------------------------------------------|---------|--------------------------------------------------------------------------------------------|
-| 1 | track = liste linéaire de plugins                 | 🟢      | DAG complet avec routing arbitraire au niveau graphe (cf. `AudioGraph::from_project`)      |
-| 2 | absence de DSP graph réel                         | 🟢      | `ExecutionPlan` + Kahn + niveaux parallèles                                                |
-| 3 | couplage UI ↔ audio thread                        | 🟢      | IPC Tauri + atomics, aucun `emit` depuis l'audio thread                                    |
-| 4 | mutex dans audio thread                           | 🟢      | `RuntimeSnapshot` = `AtomicPtr::swap`, drop ring SPSC                                      |
-| 5 | allocations temps réel                            | 🟢      | Toutes les `Vec` pré-allouées dans `prepare`, scratch fixes                                |
-| 6 | séparation audio / midi / modulation              | 🟡      | Modulation ✅ (graph edges), MIDI ✅ (msnap → block) mais **plugins ne reçoivent jamais de MIDI** |
-| 7 | types de plugins rigides (instrument/effet)       | 🔴      | `DeviceFormat` enum suffit ; **aucune** notion de capabilities ; instrument plugins inutilisables |
-| 8 | absence de capacités dynamiques                   | 🔴      | `DeviceInfo { num_inputs: 2, num_outputs: 2, has_midi_input: false, … }` câblé en dur      |
-| 9 | absence de sandboxing                             | 🔴      | Plugin in-process. Un crash = crash du DAW. Pas même de `catch_unwind` autour de `process` |
-|10 | absence de scheduling explicite                   | 🟢      | `ExecutionPlan.levels` (niveaux topo) + worker_pool                                        |
-|11 | routing implicite fragile                         | 🟢      | `Edge { PortId → PortId }` typé                                                             |
-|12 | paramètres non normalisés                         | 🟢      | `ParameterRange { Linear / Logarithmic / Decibels }` propre — mais **inutilisé pour les plugins externes** |
-|13 | absence de système de ports                       | 🟡      | OK pour audio, **absent** pour MIDI in/out et CV/modulation in/out                          |
-|14 | absence de support hybride MIDI/audio             | 🔴      | Pas d'instrument plugin ; le code force `NodeKind::Instrument` → `PolySynth` interne uniquement |
-|15 | absence de modulation généralisée                 | 🟡      | Infrastructure 🟢, mais **uniquement LFO sinus/tri/saw/sq** ; pas d'envelope, macro, follower |
-|16 | dépendance du DSP à la GUI                        | 🟢      | Aucune                                                                                       |
-|17 | processing parallèle                              | 🟢      | `compute_execution_levels` + worker pool                                                    |
-|18 | cycles dangereux                                  | 🟢      | Kahn rejette les cycles à la compile (`CompileError::CycleDetected`)                       |
-|19 | gestion latence / PDC                             | 🟡      | PDC implémenté ✅ ; mais `latency_samples()` toujours `0` pour wrappers → **aucun plugin ne déclare sa latence** |
-|20 | architecture impossible à scaler                  | 🟢      | Foundations 🟢. Limite actuelle = couche plugin minimale, pas l'architecture                |
+| #   | Anti-pattern recherché                      | Verdict | Détail                                                                                                           |
+| --- | ------------------------------------------- | ------- | ---------------------------------------------------------------------------------------------------------------- |
+| 1   | track = liste linéaire de plugins           | 🟢      | DAG complet avec routing arbitraire au niveau graphe (cf. `AudioGraph::from_project`)                            |
+| 2   | absence de DSP graph réel                   | 🟢      | `ExecutionPlan` + Kahn + niveaux parallèles                                                                      |
+| 3   | couplage UI ↔ audio thread                  | 🟢      | IPC Tauri + atomics, aucun `emit` depuis l'audio thread                                                          |
+| 4   | mutex dans audio thread                     | 🟢      | `RuntimeSnapshot` = `AtomicPtr::swap`, drop ring SPSC                                                            |
+| 5   | allocations temps réel                      | 🟢      | Toutes les `Vec` pré-allouées dans `prepare`, scratch fixes                                                      |
+| 6   | séparation audio / midi / modulation        | 🟡      | Modulation ✅ (graph edges), MIDI ✅ (msnap → block) mais **plugins ne reçoivent jamais de MIDI**                |
+| 7   | types de plugins rigides (instrument/effet) | 🔴      | `DeviceFormat` enum suffit ; **aucune** notion de capabilities ; instrument plugins inutilisables                |
+| 8   | absence de capacités dynamiques             | 🔴      | `DeviceInfo { num_inputs: 2, num_outputs: 2, has_midi_input: false, … }` câblé en dur                            |
+| 9   | absence de sandboxing                       | 🔴      | Plugin in-process. Un crash = crash du DAW. Pas même de `catch_unwind` autour de `process`                       |
+| 10  | absence de scheduling explicite             | 🟢      | `ExecutionPlan.levels` (niveaux topo) + worker_pool                                                              |
+| 11  | routing implicite fragile                   | 🟢      | `Edge { PortId → PortId }` typé                                                                                  |
+| 12  | paramètres non normalisés                   | 🟢      | `ParameterRange { Linear / Logarithmic / Decibels }` propre — mais **inutilisé pour les plugins externes**       |
+| 13  | absence de système de ports                 | 🟡      | OK pour audio, **absent** pour MIDI in/out et CV/modulation in/out                                               |
+| 14  | absence de support hybride MIDI/audio       | 🔴      | Pas d'instrument plugin ; le code force `NodeKind::Instrument` → `PolySynth` interne uniquement                  |
+| 15  | absence de modulation généralisée           | 🟡      | Infrastructure 🟢, mais **uniquement LFO sinus/tri/saw/sq** ; pas d'envelope, macro, follower                    |
+| 16  | dépendance du DSP à la GUI                  | 🟢      | Aucune                                                                                                           |
+| 17  | processing parallèle                        | 🟢      | `compute_execution_levels` + worker pool                                                                         |
+| 18  | cycles dangereux                            | 🟢      | Kahn rejette les cycles à la compile (`CompileError::CycleDetected`)                                             |
+| 19  | gestion latence / PDC                       | 🟡      | PDC implémenté ✅ ; mais `latency_samples()` toujours `0` pour wrappers → **aucun plugin ne déclare sa latence** |
+| 20  | architecture impossible à scaler            | 🟢      | Foundations 🟢. Limite actuelle = couche plugin minimale, pas l'architecture                                     |
 
 ---
 
@@ -140,11 +141,12 @@ pub fn set_parameter_normalised(&mut self, device_id, param_key, value) {
 ```
 
 **Pourquoi c'est problématique.** Toute la promesse du `Device` trait (paramètres normalisés, modulation, automation) repose sur la capacité du host à pousser des valeurs au plugin entre les blocs. Aujourd'hui :
-- `PluginHost::set_parameter_normalised` *stocke* la valeur dans un `DeviceState::Json` mais **n'a aucune référence vers l'instance audio**.
+
+- `PluginHost::set_parameter_normalised` _stocke_ la valeur dans un `DeviceState::Json` mais **n'a aucune référence vers l'instance audio**.
 - Les wrappers passent `input_param_changes = null` à chaque `process` ⇒ le plugin ne reçoit aucun changement.
 - Les automations / modulations / macros / MIDI learn / preset morph — **rien ne fonctionne** côté plugins externes.
 
-**Impact réel.** Un utilisateur charge Vital, bouge un knob *dans le DAW* : aucun effet sur le son. Bouge le knob *dans le GUI natif* : aucun effet sur le son (cf. A1 GUI audit). Bouge le LFO interne (modulator) qui pointe sur un paramètre plugin : aucun effet.
+**Impact réel.** Un utilisateur charge Vital, bouge un knob _dans le DAW_ : aucun effet sur le son. Bouge le knob _dans le GUI natif_ : aucun effet sur le son (cf. A1 GUI audit). Bouge le LFO interne (modulator) qui pointe sur un paramètre plugin : aucun effet.
 
 **Correction moderne.** SPSC ring buffer `ParameterChange { node_id, param_id, normalised, sample_offset }` pré-alloué côté host, consommé en début de `process_block` par le scheduler, puis transformé en `IParameterChanges` (VST3) ou `clap_input_events` (CLAP) avant l'appel `process`. Voir PARTIE 3.
 
@@ -172,7 +174,7 @@ NodeKind::Instrument { track_id } => {
 
 **Impact réel.** Vital, Surge XT, Diva, Serum — chargés comme insert FX uniquement, sans note MIDI possible. Toute la cible "DAW moderne" devient inaccessible : un DAW sans synthés VST n'est pas un DAW.
 
-**Correction moderne.** Voir PARTIE 2 architecture cible — ports MIDI déclarés via `PortLayout`, `NodeKind::Plugin` autorisé comme *source* d'une track MIDI, MIDI events convertis en `clap_event_note` / `IEventList` au moment du `process`.
+**Correction moderne.** Voir PARTIE 2 architecture cible — ports MIDI déclarés via `PortLayout`, `NodeKind::Plugin` autorisé comme _source_ d'une track MIDI, MIDI events convertis en `clap_event_note` / `IEventList` au moment du `process`.
 
 ---
 
@@ -192,7 +194,8 @@ info: DeviceInfo {
 NodeKind::Plugin { .. } => 2, // default stereo in
 ```
 
-**Pourquoi c'est problématique.** Le compileur force *toujours* 2 entrées / 2 sorties stéréo, sans interroger le plugin. Plusieurs casses :
+**Pourquoi c'est problématique.** Le compileur force _toujours_ 2 entrées / 2 sorties stéréo, sans interroger le plugin. Plusieurs casses :
+
 - Plugin mono (Guitar Rig en mono, NoiseGen) : on alloue un canal de trop et on injecte du silence dans le 2ᵉ canal.
 - Plugin surround (Auro-3D, Atmos) : ses 8+ canaux sont ignorés ; on lui passe stereo et il sortira stereo.
 - Plugin avec sidechain (compresseur ducker, vocoder) : le bus auxiliaire n'existe pas dans le graphe.
@@ -201,6 +204,7 @@ NodeKind::Plugin { .. } => 2, // default stereo in
 **Impact réel.** Sidechain compression — fonctionnalité de base d'un DAW — impossible. Plugins multi-out cassés silencieusement.
 
 **Correction moderne.** `PluginCapabilities` introspecté au `prepare()` :
+
 ```rust
 struct PluginCapabilities {
     audio_ports:    Vec<AudioPortInfo>,    // VST3: getBusInfo / CLAP: clap.audio-ports
@@ -213,6 +217,7 @@ struct PluginCapabilities {
     reported_latency_samples: u32,
 }
 ```
+
 Le compileur lit ces capacités et adapte `num_inputs_for_kind` / `num_outputs_for_kind` au cas par cas.
 
 ---
@@ -244,6 +249,7 @@ let r = unsafe { ((*(*proc).vtbl).process)(proc, &mut data) };
 ```
 
 **Pourquoi c'est problématique.** Aucune des trois défenses standard n'est en place :
+
 1. **Pas d'isolation process** (modèle bridged Bitwig / REAPER bridge / FL bridge) — un plugin 32-bit ou un plugin mal codé peut SEGV → tout le moteur tombe.
 2. **Pas de SEH/structured exception handling** sur Windows autour des appels FFI plugin.
 3. **Pas de watchdog** sur la durée de `process` — un plugin qui boucle (deadlock interne, calcul exponentiel) bloque l'audio thread → underrun continu.
@@ -251,6 +257,7 @@ let r = unsafe { ((*(*proc).vtbl).process)(proc, &mut data) };
 **Impact réel.** Vital, Diva, Serum — tous capables de crasher en certaines conditions (modulations extrêmes, presets corrompus). Avec l'archi actuelle : perte de la session non sauvegardée + frustration utilisateur.
 
 **Correction moderne (par ordre de coût).**
+
 - **Court terme :** `catch_unwind` autour du `process` (mais ne capte pas les SEH C++ Windows — utilité limitée). Compile flag `-C panic=unwind` requis.
 - **Moyen terme :** Win32 `__try/__except` (via FFI helper) pour capter `STATUS_ACCESS_VIOLATION` et marquer le plugin Dead.
 - **Long terme :** plugin bridge IPC (sub-process séparé, ring buffer shared memory pour audio, MIDI, params). Modèle Bitwig "All Plug-ins in Bridge". C'est la seule vraie solution mais c'est un module à part entière (~2–4 semaines).
@@ -286,9 +293,10 @@ params: ParameterMap::new(),  // ← vide, jamais peuplée
 **Pourquoi c'est problématique.** Pour exposer les knobs dans l'UI Echoes Studio (sans ouvrir le GUI natif), brancher l'automation, le MIDI learn, la modulation interne sur des paramètres plugin : il faut connaître la liste. Personne ne l'énumère.
 
 **Correction moderne.** Wrappers énumèrent les paramètres dans `prepare()` :
+
 - VST3 : `IEditController::getParameterCount/getParameterInfo` → `ParameterInfo { id, title, units, default_normalized, step_count, flags }`.
 - CLAP : `clap.params.count/get_info` → `clap_param_info { id, flags, min_value, max_value, default_value, name, module }`.
-Le mapping `ParamKey ↔ format-native ID` se garde dans le wrapper pour la traduction au moment du dispatch.
+  Le mapping `ParamKey ↔ format-native ID` se garde dans le wrapper pour la traduction au moment du dispatch.
 
 ---
 
@@ -312,7 +320,7 @@ self.lifecycle = LifecycleState::Running;  // ← deuxième source de vérité
 
 **Pourquoi c'est problématique.** Deux états de cycle de vie maintenus en parallèle, jamais synchronisés. La machine à états dans `lifecycle.rs` impose `Created → Loaded → Initialized → Running` mais le host saute directement à `Running`. Suspend/Resume sur le host ne désactive pas le plugin réel ; suspend sur le wrapper ne notifie pas le host. Si on ajoute un jour un plugin "monitor" qui dépend du lifecycle pour suspendre la CPU au repos — ça ne marchera pas.
 
-**Correction moderne.** Source de vérité unique : le wrapper porte le lifecycle, le host stocke seulement une *référence* (Arc/Weak). Les commandes `suspend/resume/destroy` du host appellent les méthodes correspondantes sur le wrapper *ou* enqueue la commande pour application au prochain block boundary.
+**Correction moderne.** Source de vérité unique : le wrapper porte le lifecycle, le host stocke seulement une _référence_ (Arc/Weak). Les commandes `suspend/resume/destroy` du host appellent les méthodes correspondantes sur le wrapper _ou_ enqueue la commande pour application au prochain block boundary.
 
 ---
 
@@ -341,7 +349,7 @@ NodeKind::Modulator { kind, … } => match kind {
 
 **Impact réel.** Pas d'ADSR routable, pas de macros (1 knob → N paramètres), pas de side-chain follower, pas d'aléatoire. Toute la sophistication "Bitwig modulators" manque.
 
-**Correction moderne.** Ajouter `ModulatorParams::{ Envelope, Macro, Random, AudioFollower }` au projet, créer les nodes correspondants dans `audio_graph/nodes/`, faire en sorte que l'enveloppe puisse être *triggered* par un évènement note (lien avec MIDI).
+**Correction moderne.** Ajouter `ModulatorParams::{ Envelope, Macro, Random, AudioFollower }` au projet, créer les nodes correspondants dans `audio_graph/nodes/`, faire en sorte que l'enveloppe puisse être _triggered_ par un évènement note (lien avec MIDI).
 
 ---
 
@@ -356,7 +364,7 @@ fn num_output_ports(&self) -> usize;
 pub struct Edge { pub from: PortId, pub to: PortId }
 ```
 
-Tous les ports sont du même type — il n'y a pas de distinction au niveau du système de port entre audio, MIDI et modulation. La modulation est implémentée via une `ModulationMap` parallèle, ce qui *marche* mais empêche un routing UI uniforme.
+Tous les ports sont du même type — il n'y a pas de distinction au niveau du système de port entre audio, MIDI et modulation. La modulation est implémentée via une `ModulationMap` parallèle, ce qui _marche_ mais empêche un routing UI uniforme.
 
 **Correction moderne.** `PortKind { Audio { channels: u8 }, Midi, Modulation { polarity: Bipolar | Unipolar } }`. Le `PortId` carry le `PortKind`. Le compiler valide la compatibilité des connexions.
 
@@ -376,9 +384,9 @@ Tous les ports sont du même type — il n'y a pas de distinction au niveau du s
 
 **Code concerné** — [`plugin_system/host.rs:118-158`](../../src-tauri/src/plugin_system/host.rs#L118-L158).
 
-Le `PluginHost::instantiate` *crée* la `Box<dyn AudioNode>` et la retourne au compileur, qui la place dans `CompiledGraph.processors`. Mais le host ne garde aucune référence (forte ou faible) vers l'instance — uniquement un `DeviceRecord` opaque par plugin_id. Conséquence : `set_parameter_normalised` ne sait pas vers *qui* envoyer le paramètre, et `save_device_state` ne peut pas appeler `device.save_state()`.
+Le `PluginHost::instantiate` _crée_ la `Box<dyn AudioNode>` et la retourne au compileur, qui la place dans `CompiledGraph.processors`. Mais le host ne garde aucune référence (forte ou faible) vers l'instance — uniquement un `DeviceRecord` opaque par plugin*id. Conséquence : `set_parameter_normalised` ne sait pas vers \_qui* envoyer le paramètre, et `save_device_state` ne peut pas appeler `device.save_state()`.
 
-**Correction moderne.** Le host crée un `Arc<Mutex<dyn Device>>` (ou mieux, `Arc<DeviceCommandQueue>` lock-free) et lui passe au compileur une *poignée* (Arc clone). Le compileur insère un proxy qui *référence* l'instance partagée. Toutes les méthodes `host.set_parameter / save_state / load_state` traversent ce handle.
+**Correction moderne.** Le host crée un `Arc<Mutex<dyn Device>>` (ou mieux, `Arc<DeviceCommandQueue>` lock-free) et lui passe au compileur une _poignée_ (Arc clone). Le compileur insère un proxy qui _référence_ l'instance partagée. Toutes les méthodes `host.set_parameter / save_state / load_state` traversent ce handle.
 
 ---
 
@@ -410,7 +418,7 @@ L'UI ne sait pas distinguer un instrument d'un effet, un mono d'un stéréo, un 
 
 #### P2-1 Pas de bypass des plugins en process_block
 
-`effect.enabled = false` est résolu *au moment du compile* (le node n'est pas créé). Toggler bypass = recompile. Acceptable pour un toggle occasionnel, lourd pour de l'A/B testing rapide.
+`effect.enabled = false` est résolu _au moment du compile_ (le node n'est pas créé). Toggler bypass = recompile. Acceptable pour un toggle occasionnel, lourd pour de l'A/B testing rapide.
 
 **Cible.** `BypassNode` wrap chaque plugin avec un atomic bool, `process` choisit copy_from(input) si bypassed.
 
@@ -434,7 +442,7 @@ Le scheduler dispatch tous les steps d'un niveau au pool sans aucune information
 
 #### P2-6 Modulation : pas de phase reset sur transport restart
 
-`LfoNode` n'est pas resetté quand on stoppe/repart. Pour la production *musicale* on veut souvent un LFO sync-tempo qui reprenne au début à chaque play.
+`LfoNode` n'est pas resetté quand on stoppe/repart. Pour la production _musicale_ on veut souvent un LFO sync-tempo qui reprenne au début à chaque play.
 
 **Cible.** Méthode `AudioNode::reset` est déjà là — il faut l'appeler depuis le scheduler au transport restart pour tous les nodes.
 
@@ -571,29 +579,31 @@ pub enum ModulatorParams {
 
 ### Plan d'orchestration (par phase)
 
-| Phase | Livrable                                                          | Précondition         | Effort   |
-|-------|-------------------------------------------------------------------|----------------------|----------|
-| 1     | `DeviceCapabilities` + introspection ports / params au `prepare`  | aucun                | 1–2 jours |
-| 2     | SPSC param queue + drain dans wrappers (UI knob → plugin)         | Phase 1              | 2–3 jours |
-| 3     | State save/load via FFI natif + persistance projet                | aucun                | 1–2 jours |
-| 4     | PluginInstance unique (élimine A1 du GUI audit)                   | Phases 1+2           | 3–5 jours |
-| 5     | Latence rapportée → PDC                                           | Phase 1              | 0.5 jour  |
-| 6     | MIDI vers plugins instruments + NodeKind::Plugin source MIDI      | Phases 1+2+4         | 3–5 jours |
-| 7     | Sidechain via AudioBusInfo::is_aux + UI routing                   | Phase 1              | 2 jours   |
-| 8     | Modulators étendus (Envelope, Macro, Random, Follower)            | aucun                | 3 jours   |
-| 9     | NodeKind::Container + UI                                          | aucun                | 5 jours   |
-| 10    | Sandboxing (Win32 SEH minimum, bridge IPC en backlog)             | Phase 4              | 2 jours / 3 sem |
+| Phase | Livrable                                                         | Précondition | Effort          |
+| ----- | ---------------------------------------------------------------- | ------------ | --------------- |
+| 1     | `DeviceCapabilities` + introspection ports / params au `prepare` | aucun        | 1–2 jours       |
+| 2     | SPSC param queue + drain dans wrappers (UI knob → plugin)        | Phase 1      | 2–3 jours       |
+| 3     | State save/load via FFI natif + persistance projet               | aucun        | 1–2 jours       |
+| 4     | PluginInstance unique (élimine A1 du GUI audit)                  | Phases 1+2   | 3–5 jours       |
+| 5     | Latence rapportée → PDC                                          | Phase 1      | 0.5 jour        |
+| 6     | MIDI vers plugins instruments + NodeKind::Plugin source MIDI     | Phases 1+2+4 | 3–5 jours       |
+| 7     | Sidechain via AudioBusInfo::is_aux + UI routing                  | Phase 1      | 2 jours         |
+| 8     | Modulators étendus (Envelope, Macro, Random, Follower)           | aucun        | 3 jours         |
+| 9     | NodeKind::Container + UI                                         | aucun        | 5 jours         |
+| 10    | Sandboxing (Win32 SEH minimum, bridge IPC en backlog)            | Phase 4      | 2 jours / 3 sem |
 
 ---
 
 ## PARTIE 3 — Implémentation (cette session)
 
-L'audit étant le livrable principal, j'ai limité l'implémentation à un *fondation set* tractable, qui :
+L'audit étant le livrable principal, j'ai limité l'implémentation à un _fondation set_ tractable, qui :
+
 - ne casse aucune compatibilité existante,
 - ouvre la voie aux phases suivantes,
 - ne traverse pas les frontières temps-réel.
 
 **Implémenté dans ce commit :**
+
 1. `DeviceCapabilities` + `AudioBusInfo` + `MidiPortInfo` + `ParameterInfo` (types).
 2. `Device::capabilities()` trait method avec impl par défaut sûre.
 3. SEH/`catch_unwind` autour des `process` plugins (P0-5 court terme).
@@ -601,9 +611,10 @@ L'audit étant le livrable principal, j'ai limité l'implémentation à un *fond
 5. Documentation du contrat dans `../plugins/plugin-wrapper-system.md`.
 
 **Reporté à des PRs dédiés (avec ADR) :**
+
 - Phases 2 (param queue), 3 (state), 4 (PluginInstance unique), 6 (MIDI), 7 (sidechain), 9 (containers), 10 (bridge IPC).
 
-Voir section *Refactors effectués* pour la liste exacte des fichiers.
+Voir section _Refactors effectués_ pour la liste exacte des fichiers.
 
 ---
 
@@ -611,17 +622,17 @@ Voir section *Refactors effectués* pour la liste exacte des fichiers.
 
 ### Liste des refactors effectués (cette session)
 
-| Fichier                                                         | Changement                                                                 |
-|-----------------------------------------------------------------|----------------------------------------------------------------------------|
-| `src-tauri/src/plugin_system/capabilities.rs` (nouveau)         | `DeviceCapabilities`, `AudioBusInfo`, `MidiPortInfo`, `ParameterInfo`      |
-| `src-tauri/src/plugin_system/wrapper.rs`                        | `Device::capabilities()` avec impl par défaut + helper sur DeviceInfo      |
-| `src-tauri/src/plugin_system/mod.rs`                            | re-export `capabilities`                                                   |
-| `src-tauri/src/plugin_formats/vst3/wrapper.rs`                  | introspection latence (`getLatencySamples`) + `capabilities()`             |
-| `src-tauri/src/plugin_formats/clap/wrapper.rs`                  | introspection latence (extension `clap.latency`) + `capabilities()`        |
-| `src-tauri/src/plugin_formats/clap/ffi.rs`                      | `ClapPluginLatency` extension + `CLAP_EXT_LATENCY`                         |
-| `src-tauri/src/audio_graph/scheduler.rs`                        | `catch_unwind` autour de `processors[i].process` (P0-5 court terme)        |
-| `./plugin-system-audit-2026-05-31.md` (ce doc) | audit complet                                                              |
-| `../decisions/006-plugin-capabilities-and-pdc.md`      | ADR pour les changements                                                   |
+| Fichier                                                 | Changement                                                            |
+| ------------------------------------------------------- | --------------------------------------------------------------------- |
+| `src-tauri/src/plugin_system/capabilities.rs` (nouveau) | `DeviceCapabilities`, `AudioBusInfo`, `MidiPortInfo`, `ParameterInfo` |
+| `src-tauri/src/plugin_system/wrapper.rs`                | `Device::capabilities()` avec impl par défaut + helper sur DeviceInfo |
+| `src-tauri/src/plugin_system/mod.rs`                    | re-export `capabilities`                                              |
+| `src-tauri/src/plugin_formats/vst3/wrapper.rs`          | introspection latence (`getLatencySamples`) + `capabilities()`        |
+| `src-tauri/src/plugin_formats/clap/wrapper.rs`          | introspection latence (extension `clap.latency`) + `capabilities()`   |
+| `src-tauri/src/plugin_formats/clap/ffi.rs`              | `ClapPluginLatency` extension + `CLAP_EXT_LATENCY`                    |
+| `src-tauri/src/audio_graph/scheduler.rs`                | `catch_unwind` autour de `processors[i].process` (P0-5 court terme)   |
+| `./plugin-system-audit-2026-05-31.md` (ce doc)          | audit complet                                                         |
+| `../decisions/006-plugin-capabilities-and-pdc.md`       | ADR pour les changements                                              |
 
 ### Risques restants
 
@@ -648,22 +659,22 @@ Voir section *Refactors effectués* pour la liste exacte des fichiers.
 - **B1 — `unsafe` propagation.** Beaucoup de changements ci-dessus impliquent du `unsafe` FFI nouveau (IBStream pour VST3 state, clap_istream/ostream pour CLAP). Plan : tout encapsuler derrière un wrapper safe par format, audité comme la FFI actuelle.
 - **B2 — Réentrance host_get_extension.** Si les plugins commencent à demander `clap.params.host_params_rescan` depuis le worker thread, on a besoin d'une vraie file thread-safe (déjà partiellement en place via `WM_APP_DRAIN` côté GUI).
 - **B3 — Compatibilité projet.** Le changement de schéma (PluginParams qui inclut un blob state binaire) impose un bump de version `ProjectFile`. Plan : ajouter un champ optionnel `state_b64: Option<String>` côté file, no-op si absent.
-- **B4 — Test instrumental.** Sans CI capable de loader Vital/Surge XT, les régressions FFI sont invisibles. Plan : ajouter au moins un plugin minimal *écrit en Rust* (genre `clap-plugin` minimal) embarqué pour tests.
+- **B4 — Test instrumental.** Sans CI capable de loader Vital/Surge XT, les régressions FFI sont invisibles. Plan : ajouter au moins un plugin minimal _écrit en Rust_ (genre `clap-plugin` minimal) embarqué pour tests.
 
 ### Estimation dette technique restante
 
-| Catégorie               | Effort restant | Bloquant ? |
-|-------------------------|----------------|------------|
-| Param queue + state     | ~5 j           | P0         |
-| Instance unique (A1)    | ~3 j (après ↑) | P0         |
-| MIDI plugins            | ~4 j           | P0         |
-| Capacités → compiler    | ~2 j           | P0         |
-| Sidechain               | ~2 j           | P1         |
-| Modulators étendus      | ~3 j           | P1         |
-| Containers              | ~5 j           | P1         |
-| Sandboxing bridge IPC   | ~15–20 j       | P0 long terme |
-| **Total court terme P0/P1** | **~24 j**  |            |
-| **Total avec bridge**   | **~44 j**      |            |
+| Catégorie                   | Effort restant | Bloquant ?    |
+| --------------------------- | -------------- | ------------- |
+| Param queue + state         | ~5 j           | P0            |
+| Instance unique (A1)        | ~3 j (après ↑) | P0            |
+| MIDI plugins                | ~4 j           | P0            |
+| Capacités → compiler        | ~2 j           | P0            |
+| Sidechain                   | ~2 j           | P1            |
+| Modulators étendus          | ~3 j           | P1            |
+| Containers                  | ~5 j           | P1            |
+| Sandboxing bridge IPC       | ~15–20 j       | P0 long terme |
+| **Total court terme P0/P1** | **~24 j**      |               |
+| **Total avec bridge**       | **~44 j**      |               |
 
 ---
 

@@ -39,13 +39,13 @@
 	}
 
 	function dbToPercent(db: number): number {
-		return Math.max(0, Math.min(100, (db - DB_FLOOR) / -DB_FLOOR * 100));
+		return Math.max(0, Math.min(100, ((db - DB_FLOOR) / -DB_FLOOR) * 100));
 	}
 
 	function meterColor(pct: number): string {
 		if (pct >= 95) return 'var(--meter-red,    #ff4444)';
 		if (pct >= 75) return 'var(--meter-yellow, #ffd93d)';
-		return                 'var(--meter-green,  #6bcb77)';
+		return 'var(--meter-green,  #6bcb77)';
 	}
 
 	// ── Per-channel soft decay (60 fps) ──────────────────────────────────────────
@@ -60,7 +60,9 @@
 		rafId = requestAnimationFrame(tick);
 	}
 
-	onMount(() => { rafId = requestAnimationFrame(tick); });
+	onMount(() => {
+		rafId = requestAnimationFrame(tick);
+	});
 	onDestroy(() => cancelAnimationFrame(rafId));
 
 	// ── Derived display values ────────────────────────────────────────────────────
@@ -69,7 +71,10 @@
 	$: pctR = dbToPercent(linearToDb(dispR));
 	$: colorL = meterColor(pctL);
 	$: colorR = meterColor(pctR);
-	$: faderPct = Math.max(0, Math.min(100, automatedValue !== undefined && !dragging ? automatedValue : value));
+	$: faderPct = Math.max(
+		0,
+		Math.min(100, automatedValue !== undefined && !dragging ? automatedValue : value)
+	);
 
 	// ── Drag interaction ──────────────────────────────────────────────────────────
 
@@ -79,7 +84,7 @@
 	function clampedVal(clientX: number): number {
 		if (!rail) return value;
 		const r = rail.getBoundingClientRect();
-		return Math.max(0, Math.min(100, (clientX - r.left) / r.width * 100));
+		return Math.max(0, Math.min(100, ((clientX - r.left) / r.width) * 100));
 	}
 
 	function onMouseDown(e: MouseEvent) {
@@ -119,7 +124,6 @@
 	}
 </script>
 
-<!-- svelte-ignore a11y-no-static-element-interactions -->
 <div
 	class="fader-meter"
 	class:fader-meter--dragging={dragging}

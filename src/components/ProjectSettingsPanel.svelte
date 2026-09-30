@@ -1,11 +1,7 @@
 <script lang="ts">
 	import { get } from 'svelte/store';
 	import { getCurrentWindow } from '@tauri-apps/api/window';
-	import {
-		projectSettingsPanelOpen,
-		projectPath,
-		projectName,
-	} from '../stores/project';
+	import { projectSettingsPanelOpen, projectPath, projectName } from '../stores/project';
 	import { tempo } from '../stores/tempo';
 	import { midiGridBeats } from '../stores/project';
 	import { engineProject, engineProjectName } from '../frontend/store/engineStore';
@@ -13,7 +9,7 @@
 	import {
 		currentProjectMusical,
 		updateProjectMusical,
-		updateProjectName,
+		updateProjectName
 	} from '../frontend/commands/dispatcher';
 	import { normalizeMidiGridBeats } from '../lib/midiGrid';
 	import {
@@ -25,7 +21,7 @@
 		KEY_ROOT_OPTIONS,
 		MIDI_PPQ_OPTIONS,
 		musicalFieldsFromDto,
-		type ProjectMusicalFields,
+		type ProjectMusicalFields
 	} from '../lib/projectMusical';
 	import CustomSelect from './CustomSelect.svelte';
 	import NumberInput from './NumberInput.svelte';
@@ -44,7 +40,7 @@
 		key_mode: DEFAULT_KEY_MODE,
 		swing_percent: DEFAULT_SWING_PERCENT,
 		midi_ppq: DEFAULT_MIDI_PPQ,
-		midi_grid_use_triplets: false,
+		midi_grid_use_triplets: false
 	});
 	let applyError: string | null = null;
 
@@ -61,7 +57,7 @@
 			key_mode: p.key_mode,
 			swing_percent: p.swing_percent,
 			midi_ppq: p.midi_ppq,
-			midi_grid_use_triplets: p.midi_grid_use_triplets,
+			midi_grid_use_triplets: p.midi_grid_use_triplets
 		});
 	}
 
@@ -82,7 +78,7 @@
 		const cur = currentProjectMusical();
 		const nextMusical: ProjectMusicalFields = {
 			...draftMusical,
-			midi_grid_beats: normalizeMidiGridBeats(cur.midi_grid_beats),
+			midi_grid_beats: normalizeMidiGridBeats(cur.midi_grid_beats)
 		};
 
 		try {
@@ -106,7 +102,7 @@
 				tempo.set({
 					bpm: nextMusical.bpm,
 					numerator: nextMusical.numerator,
-					denominator: nextMusical.denominator,
+					denominator: nextMusical.denominator
 				});
 				await updateProjectMusical(nextMusical);
 			}
@@ -114,7 +110,7 @@
 			keyboardFocus.setTimeline();
 		} catch (err) {
 			applyError =
-				typeof err === 'string' ? err : (err as Error)?.message ?? 'Échec de l\'enregistrement';
+				typeof err === 'string' ? err : ((err as Error)?.message ?? "Échec de l'enregistrement");
 		}
 	}
 
@@ -125,134 +121,140 @@
 		if (parts.length <= 2) return path;
 		return `…${sep}${parts.slice(-2).join(sep)}`;
 	}
-
 </script>
 
 {#if $projectSettingsPanelOpen}
-<div class="overlay">
-	<div class="panel" role="dialog" aria-modal="true" aria-label="Préférences du projet" use:dismissable={cancelAndClose}>
-
-		<div class="panel-header">
-			<span class="header-icon"><Icon name="folder" size={14} /></span>
-			<span class="panel-title">Préférences du projet</span>
-			<button class="close-btn" on:click={cancelAndClose} title="Fermer (Échap)">
-				<Icon name="close" size={15} strokeWidth={1.5} />
-			</button>
-		</div>
-
-		<div class="panel-body">
-			<div class="section">
-				<h2 class="section-title">Identité</h2>
-
-				<div class="field">
-					<span class="field-label">Nom du projet</span>
-					<input
-						class="text-input"
-						type="text"
-						bind:value={draftName}
-						placeholder="Sans titre"
-						maxlength="120"
-					/>
-				</div>
-
-				<div class="field">
-					<span class="field-label">Fichier</span>
-					<span class="path-display" title={$projectPath ?? undefined}>
-						{formatPath($projectPath)}
-					</span>
-				</div>
+	<div class="overlay">
+		<div
+			class="panel"
+			role="dialog"
+			aria-modal="true"
+			aria-label="Préférences du projet"
+			use:dismissable={cancelAndClose}
+		>
+			<div class="panel-header">
+				<span class="header-icon"><Icon name="folder" size={14} /></span>
+				<span class="panel-title">Préférences du projet</span>
+				<button class="close-btn" on:click={cancelAndClose} title="Fermer (Échap)">
+					<Icon name="close" size={15} strokeWidth={1.5} />
+				</button>
 			</div>
 
-			<div class="divider"></div>
+			<div class="panel-body">
+				<div class="section">
+					<h2 class="section-title">Identité</h2>
 
-			<div class="section">
-				<h2 class="section-title">Musical</h2>
-				<p class="section-hint">Enregistré dans le fichier projet. Les options marquées « à venir » sont mémorisées mais pas encore appliquées par le moteur.</p>
-
-				<div class="field-grid">
 					<div class="field">
-						<span class="field-label">Tempo</span>
-						<NumberInput bind:value={draftMusical.bpm} min={20} max={400} unit="BPM" />
-					</div>
-					<div class="field">
-						<span class="field-label">Signature rythmique</span>
-						<div class="field-row">
-							<NumberInput bind:value={draftMusical.numerator} min={1} max={16} width="42px" />
-							<span class="field-slash">/</span>
-							<CustomSelect
-								small
-								bind:value={draftMusical.denominator}
-								options={[
-									{ value: 2, label: '2' },
-									{ value: 4, label: '4' },
-									{ value: 8, label: '8' },
-									{ value: 16, label: '16' },
-								]}
-							/>
-						</div>
-					</div>
-				</div>
-
-				<div class="field">
-					<span class="field-label">Subdivision MIDI (PPQ)</span>
-					<PillGroup
-						bind:value={draftMusical.midi_ppq}
-						options={MIDI_PPQ_OPTIONS.map((o) => ({ value: o.value, label: o.label }))}
-					/>
-					<span class="field-hint">
-						Résolution temporelle du projet (pulses per quarter note). La quantification du piano roll se règle dans l’éditeur MIDI.
-					</span>
-				</div>
-			</div>
-
-			<div class="divider"></div>
-
-			<div class="section">
-				<h2 class="section-title">Tonalité & groove</h2>
-
-				<div class="field-grid">
-					<div class="field field--soon">
-						<span class="field-label">Tonalité <span class="badge-soon">à venir</span></span>
-						<div class="field-row">
-							<CustomSelect
-								small
-								bind:value={draftMusical.key_root}
-								options={KEY_ROOT_OPTIONS.map((r) => ({ value: r, label: r }))}
-							/>
-							<CustomSelect
-								small
-								bind:value={draftMusical.key_mode}
-								options={[...KEY_MODE_OPTIONS]}
-							/>
-						</div>
-						<span class="field-hint">Indication harmonique pour l’éditeur et l’export MIDI (non utilisée par le moteur audio).</span>
-					</div>
-					<div class="field field--soon">
-						<span class="field-label">Swing <span class="badge-soon">à venir</span></span>
-						<NumberInput
-							bind:value={draftMusical.swing_percent}
-							min={0}
-							max={100}
-							unit="%"
+						<span class="field-label">Nom du projet</span>
+						<input
+							class="text-input"
+							type="text"
+							bind:value={draftName}
+							placeholder="Sans titre"
+							maxlength="120"
 						/>
-						<span class="field-hint">Décalage des contretemps (0 % = straight).</span>
+					</div>
+
+					<div class="field">
+						<span class="field-label">Fichier</span>
+						<span class="path-display" title={$projectPath ?? undefined}>
+							{formatPath($projectPath)}
+						</span>
 					</div>
 				</div>
+
+				<div class="divider"></div>
+
+				<div class="section">
+					<h2 class="section-title">Musical</h2>
+					<p class="section-hint">
+						Enregistré dans le fichier projet. Les options marquées « à venir » sont mémorisées mais
+						pas encore appliquées par le moteur.
+					</p>
+
+					<div class="field-grid">
+						<div class="field">
+							<span class="field-label">Tempo</span>
+							<NumberInput bind:value={draftMusical.bpm} min={20} max={400} unit="BPM" />
+						</div>
+						<div class="field">
+							<span class="field-label">Signature rythmique</span>
+							<div class="field-row">
+								<NumberInput bind:value={draftMusical.numerator} min={1} max={16} width="42px" />
+								<span class="field-slash">/</span>
+								<CustomSelect
+									small
+									bind:value={draftMusical.denominator}
+									options={[
+										{ value: 2, label: '2' },
+										{ value: 4, label: '4' },
+										{ value: 8, label: '8' },
+										{ value: 16, label: '16' }
+									]}
+								/>
+							</div>
+						</div>
+					</div>
+
+					<div class="field">
+						<span class="field-label">Subdivision MIDI (PPQ)</span>
+						<PillGroup
+							bind:value={draftMusical.midi_ppq}
+							options={MIDI_PPQ_OPTIONS.map((o) => ({ value: o.value, label: o.label }))}
+						/>
+						<span class="field-hint">
+							Résolution temporelle du projet (pulses per quarter note). La quantification du piano
+							roll se règle dans l’éditeur MIDI.
+						</span>
+					</div>
+				</div>
+
+				<div class="divider"></div>
+
+				<div class="section">
+					<h2 class="section-title">Tonalité & groove</h2>
+
+					<div class="field-grid">
+						<div class="field field--soon">
+							<span class="field-label">Tonalité <span class="badge-soon">à venir</span></span>
+							<div class="field-row">
+								<CustomSelect
+									small
+									bind:value={draftMusical.key_root}
+									options={KEY_ROOT_OPTIONS.map((r) => ({ value: r, label: r }))}
+								/>
+								<CustomSelect
+									small
+									bind:value={draftMusical.key_mode}
+									options={[...KEY_MODE_OPTIONS]}
+								/>
+							</div>
+							<span class="field-hint"
+								>Indication harmonique pour l’éditeur et l’export MIDI (non utilisée par le moteur
+								audio).</span
+							>
+						</div>
+						<div class="field field--soon">
+							<span class="field-label">Swing <span class="badge-soon">à venir</span></span>
+							<NumberInput bind:value={draftMusical.swing_percent} min={0} max={100} unit="%" />
+							<span class="field-hint">Décalage des contretemps (0 % = straight).</span>
+						</div>
+					</div>
+				</div>
+
+				{#if applyError}
+					<p class="error-msg">{applyError}</p>
+				{/if}
 			</div>
 
-			{#if applyError}
-				<p class="error-msg">{applyError}</p>
-			{/if}
-		</div>
-
-		<div class="panel-footer">
-			<div class="footer-actions">
-				<Button variant="secondary" on:click={cancelAndClose}>Annuler</Button>
-				<Button variant="primary" on:click={applyAndClose}>Enregistrer</Button>
+			<div class="panel-footer">
+				<div class="footer-actions">
+					<Button variant="secondary" on:click={cancelAndClose}>Annuler</Button>
+					<Button variant="primary" on:click={applyAndClose}>Enregistrer</Button>
+				</div>
 			</div>
 		</div>
 	</div>
-</div>
 {/if}
 
 <style lang="scss">
@@ -297,7 +299,9 @@
 		display: flex;
 		flex-direction: column;
 		overflow: hidden;
-		box-shadow: 0 24px 64px rgba(0, 0, 0, 0.7), 0 0 0 0.5px rgba(255, 255, 255, 0.06);
+		box-shadow:
+			0 24px 64px rgba(0, 0, 0, 0.7),
+			0 0 0 0.5px rgba(255, 255, 255, 0.06);
 	}
 
 	.panel-header {

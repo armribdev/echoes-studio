@@ -35,7 +35,7 @@ Interleaved f32 output → CPAL device
 ### 1. AppProject → AudioGraph
 
 `AudioGraph::from_project(project)` converts the flat project model into a
-directed acyclic graph (DAG).  Each track becomes:
+directed acyclic graph (DAG). Each track becomes:
 
 ```
 TrackNode ──► TrackGainNode ──► MasterNode
@@ -53,7 +53,7 @@ changing downstream stages.
 2. **Step construction** — each node becomes an `ExecutionStep` with its
    `input_connections` list and `num_outputs`.
 3. **Node instantiation** — `build_node()` creates a `Box<dyn AudioNode>` for
-   each step.  The graph is format-agnostic: it calls `NodeFactory` which
+   each step. The graph is format-agnostic: it calls `NodeFactory` which
    dispatches to built-in nodes or plugin wrappers.
 4. **Prepare** — `node.prepare(ctx)` is called for every node; this is the
    only place where nodes may allocate.
@@ -61,6 +61,7 @@ changing downstream stages.
 ### 3. CompiledGraph → GraphScheduler
 
 `GraphScheduler::new(compiled)` pre-allocates:
+
 - `output_buffers[step][port]` — one `AudioBuffer` per output port per step
 - `silence_buffer` — a permanently-zeroed sentinel for unconnected ports
 - `input_ptr_scratch` — raw pointer array sized to `MAX_NODE_INPUT_PORTS`
@@ -86,6 +87,7 @@ data = [ ch0[0..frames] | ch1[0..frames] | … ]
 ```
 
 Key operations (all allocation-free):
+
 - `clear()` — zero all samples
 - `copy_from(src)` — memcpy
 - `mix_from(src, gain)` — accumulate (used for bus mixing)
@@ -130,6 +132,7 @@ current scheduler.
 ## Node Port Model
 
 Every node declares:
+
 - `num_input_ports()` — how many audio inputs it reads
 - `num_output_ports()` — how many audio outputs it produces
 
@@ -143,6 +146,7 @@ declares 1 output for the scheduler's working buffer).
 ## Deterministic Execution Order
 
 Kahn's algorithm produces a stable topological order:
+
 - Nodes with no incoming edges come first.
 - Among nodes at the same depth, they are sorted by `NodeId` (monotonically
   incrementing) for bit-identical renders.

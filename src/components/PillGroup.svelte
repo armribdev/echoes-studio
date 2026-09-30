@@ -18,7 +18,9 @@
 			aria-checked={opt.value === value}
 			aria-disabled={opt.disabled}
 			disabled={opt.disabled}
-			on:click={() => { if (!opt.disabled) value = opt.value; }}
+			on:click={() => {
+				if (!opt.disabled) value = opt.value;
+			}}
 		>
 			{opt.label}
 		</button>
@@ -44,7 +46,11 @@
 		color: rgba(247, 247, 249, 0.6);
 		cursor: pointer;
 		white-space: nowrap;
-		transition: background 0.1s, border-color 0.1s, color 0.1s, opacity 0.1s;
+		transition:
+			background 0.1s,
+			border-color 0.1s,
+			color 0.1s,
+			opacity 0.1s;
 
 		&:hover:not(.disabled) {
 			background: rgba(255, 255, 255, 0.08);

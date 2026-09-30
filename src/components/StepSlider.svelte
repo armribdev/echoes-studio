@@ -6,7 +6,10 @@
 	export let options: Array<{ value: OptionValue; label: string }>;
 
 	// Keep the internal index in sync with the bound value.
-	$: idx = Math.max(0, options.findIndex(o => o.value === value));
+	$: idx = Math.max(
+		0,
+		options.findIndex((o) => o.value === value)
+	);
 
 	// Track-fill percentage (0 → 100) for the CSS gradient.
 	$: fillPct = options.length <= 1 ? 0 : (idx / (options.length - 1)) * 100;
@@ -63,8 +66,8 @@
 				class="label"
 				class:active={i === idx}
 				style={labelStyle(i)}
-				on:click={() => selectByIndex(i)}
-			>{opt.label}</span>
+				on:click={() => selectByIndex(i)}>{opt.label}</span
+			>
 		{/each}
 	</div>
 </div>
@@ -134,7 +137,9 @@
 			background: $accent-color;
 			border: 2px solid $background-color;
 			box-shadow: 0 0 0 0 rgba(21, 113, 255, 0);
-			transition: box-shadow 0.15s, transform 0.1s;
+			transition:
+				box-shadow 0.15s,
+				transform 0.1s;
 			position: relative;
 			z-index: 3;
 		}
@@ -176,7 +181,9 @@
 		height: 5px;
 		background: rgba(255, 255, 255, 0.18);
 		border-radius: 1px;
-		transition: background 0.15s, height 0.15s;
+		transition:
+			background 0.15s,
+			height 0.15s;
 
 		&.active {
 			background: $accent-color;

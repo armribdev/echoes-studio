@@ -54,8 +54,22 @@
 		aria-expanded={open}
 	>
 		<span class="cs-value">{selectedLabel}</span>
-		<svg class="cs-chevron" class:cs-chevron--up={open} width="10" height="6" viewBox="0 0 10 6" fill="none" xmlns="http://www.w3.org/2000/svg">
-			<path d="M1 1l4 4 4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+		<svg
+			class="cs-chevron"
+			class:cs-chevron--up={open}
+			width="10"
+			height="6"
+			viewBox="0 0 10 6"
+			fill="none"
+			xmlns="http://www.w3.org/2000/svg"
+		>
+			<path
+				d="M1 1l4 4 4-4"
+				stroke="currentColor"
+				stroke-width="1.5"
+				stroke-linecap="round"
+				stroke-linejoin="round"
+			/>
 		</svg>
 	</button>
 
@@ -71,8 +85,21 @@
 					on:click={() => select(opt.value)}
 				>
 					{#if opt.value === value}
-						<svg class="cs-check" width="12" height="12" viewBox="0 0 12 12" fill="none" xmlns="http://www.w3.org/2000/svg">
-							<path d="M2 6l3 3 5-5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+						<svg
+							class="cs-check"
+							width="12"
+							height="12"
+							viewBox="0 0 12 12"
+							fill="none"
+							xmlns="http://www.w3.org/2000/svg"
+						>
+							<path
+								d="M2 6l3 3 5-5"
+								stroke="currentColor"
+								stroke-width="1.6"
+								stroke-linecap="round"
+								stroke-linejoin="round"
+							/>
 						</svg>
 					{:else}
 						<span class="cs-check-placeholder"></span>
@@ -112,7 +139,9 @@
 		height: 30px;
 		cursor: pointer;
 		text-align: left;
-		transition: border-color 0.12s, background 0.12s;
+		transition:
+			border-color 0.12s,
+			background 0.12s;
 		white-space: nowrap;
 
 		&:hover {
@@ -154,7 +183,9 @@
 		margin: 0;
 		list-style: none;
 		z-index: 9999;
-		box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6), 0 0 0 0.5px rgba(255,255,255,0.04);
+		box-shadow:
+			0 8px 24px rgba(0, 0, 0, 0.6),
+			0 0 0 0.5px rgba(255, 255, 255, 0.04);
 		overflow: hidden;
 	}
 
@@ -167,7 +198,9 @@
 		font-size: 12px;
 		color: rgba(247, 247, 249, 0.75);
 		cursor: pointer;
-		transition: background 0.08s, color 0.08s;
+		transition:
+			background 0.08s,
+			color 0.08s;
 		white-space: nowrap;
 
 		&:hover {

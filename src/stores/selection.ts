@@ -19,7 +19,7 @@ function sameSelection(a: SelectionState, ids: Set<string>, primaryId: string): 
 }
 
 function createSelectionStore() {
-	const { subscribe, set, update } = writable<SelectionState>(emptyState());
+	const { subscribe, update } = writable<SelectionState>(emptyState());
 
 	return {
 		subscribe,
@@ -72,7 +72,7 @@ function createSelectionStore() {
 				if (nextIds.size === 0) {
 					return s.ids.size === 0 ? s : emptyState();
 				}
-				const primaryId = ids.length > 0 ? ids[ids.length - 1]! : s.primaryId ?? [...nextIds][0]!;
+				const primaryId = ids.length > 0 ? ids[ids.length - 1]! : (s.primaryId ?? [...nextIds][0]!);
 				if (sameSelection(s, nextIds, primaryId)) return s;
 				return { ids: nextIds, primaryId };
 			});
@@ -80,7 +80,7 @@ function createSelectionStore() {
 
 		clear() {
 			update((s) => (s.ids.size === 0 ? s : emptyState()));
-		},
+		}
 	};
 }
 

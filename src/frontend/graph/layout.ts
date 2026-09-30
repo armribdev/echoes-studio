@@ -4,7 +4,7 @@ import type {
 	GraphNodeDto,
 	GraphSnapshotDto,
 	LayoutNode,
-	ModEdgeDto,
+	ModEdgeDto
 } from './types';
 import { H_GAP, LFO_OFFSET_Y, NODE_H, NODE_W, PADDING, TRACK_ROW_H } from './types';
 
@@ -26,21 +26,28 @@ function audioAdjacency(edges: AudioEdgeDto[]): Map<number, number[]> {
 function chainFromSource(
 	sourceId: number,
 	adj: Map<number, number[]>,
-	nodes: Map<number, GraphNodeDto>,
+	nodes: Map<number, GraphNodeDto>
 ): number[] {
 	const chain: number[] = [sourceId];
 	let current = sourceId;
 	const stopKinds = new Set(['meter']);
 
-	while (true) {
+	let keepGoing = true;
+	while (keepGoing) {
 		const nextIds = adj.get(current) ?? [];
 		const next = nextIds.find((id) => {
 			const k = nodes.get(id)?.kind;
 			return k !== 'master';
 		});
-		if (next === undefined) break;
+		if (next === undefined) {
+			keepGoing = false;
+			continue;
+		}
 		chain.push(next);
-		if (stopKinds.has(nodes.get(next)?.kind ?? '')) break;
+		if (stopKinds.has(nodes.get(next)?.kind ?? '')) {
+			keepGoing = false;
+			continue;
+		}
 		current = next;
 	}
 	return chain;
@@ -53,14 +60,11 @@ function placeRow(ids: number[], nodes: Map<number, GraphNodeDto>, y: number): L
 		y,
 		width: NODE_W,
 		height: NODE_H,
-		dto: nodes.get(id)!,
+		dto: nodes.get(id)!
 	}));
 }
 
-function modulatorsForChain(
-	snapshot: GraphSnapshotDto,
-	chainIds: Set<number>,
-): GraphNodeDto[] {
+function modulatorsForChain(snapshot: GraphSnapshotDto, chainIds: Set<number>): GraphNodeDto[] {
 	const modIds = new Set<number>();
 	for (const e of snapshot.modEdges) {
 		if (chainIds.has(e.targetNode)) modIds.add(e.sourceNode);
@@ -72,7 +76,7 @@ function placeModulators(
 	mods: GraphNodeDto[],
 	snapshot: GraphSnapshotDto,
 	layoutNodes: LayoutNode[],
-	baseY: number,
+	baseY: number
 ): LayoutNode[] {
 	const byId = new Map(layoutNodes.map((n) => [n.id, n]));
 	const placed: LayoutNode[] = [];
@@ -85,9 +89,7 @@ function placeModulators(
 			.filter(Boolean) as LayoutNode[];
 
 		const anchor = targets[0];
-		const x = anchor
-			? anchor.x
-			: PADDING + modIndex * (NODE_W + H_GAP);
+		const x = anchor ? anchor.x : PADDING + modIndex * (NODE_W + H_GAP);
 		const y = baseY + LFO_OFFSET_Y;
 
 		placed.push({
@@ -96,7 +98,7 @@ function placeModulators(
 			y,
 			width: NODE_W,
 			height: NODE_H,
-			dto: mod,
+			dto: mod
 		});
 		modIndex++;
 	}
@@ -117,17 +119,12 @@ function layoutBounds(nodes: LayoutNode[]): { width: number; height: number } {
 }
 
 /** Single-track signal chain + LFOs. */
-export function layoutTrackGraph(
-	snapshot: GraphSnapshotDto,
-	trackId: string,
-): GraphLayout {
+export function layoutTrackGraph(snapshot: GraphSnapshotDto, trackId: string): GraphLayout {
 	const nodes = nodeMap(snapshot);
 	const adj = audioAdjacency(snapshot.audioEdges);
 
 	const source = snapshot.nodes.find(
-		(n) =>
-			n.trackId === trackId &&
-			(n.kind === 'track' || n.kind === 'instrument'),
+		(n) => n.trackId === trackId && (n.kind === 'track' || n.kind === 'instrument')
 	);
 	if (!source) {
 		return { nodes: [], width: 400, height: 200 };
@@ -155,8 +152,8 @@ export function layoutProjectGraph(snapshot: GraphSnapshotDto): GraphLayout {
 		...new Set(
 			snapshot.nodes
 				.filter((n) => n.trackId && (n.kind === 'track' || n.kind === 'instrument'))
-				.map((n) => n.trackId!),
-		),
+				.map((n) => n.trackId!)
+		)
 	];
 
 	const layoutNodes: LayoutNode[] = [];
@@ -164,9 +161,7 @@ export function layoutProjectGraph(snapshot: GraphSnapshotDto): GraphLayout {
 
 	trackIds.forEach((trackId, row) => {
 		const source = snapshot.nodes.find(
-			(n) =>
-				n.trackId === trackId &&
-				(n.kind === 'track' || n.kind === 'instrument'),
+			(n) => n.trackId === trackId && (n.kind === 'track' || n.kind === 'instrument')
 		);
 		if (!source) return;
 
@@ -184,9 +179,7 @@ export function layoutProjectGraph(snapshot: GraphSnapshotDto): GraphLayout {
 	if (master) {
 		const masterX = PADDING + maxChainLen * (NODE_W + H_GAP) + H_GAP;
 		const masterY =
-			trackIds.length > 0
-				? PADDING + ((trackIds.length - 1) * TRACK_ROW_H) / 2
-				: PADDING;
+			trackIds.length > 0 ? PADDING + ((trackIds.length - 1) * TRACK_ROW_H) / 2 : PADDING;
 
 		layoutNodes.push({
 			id: master.id,
@@ -194,7 +187,7 @@ export function layoutProjectGraph(snapshot: GraphSnapshotDto): GraphLayout {
 			y: masterY,
 			width: NODE_W + 20,
 			height: NODE_H + 8,
-			dto: master,
+			dto: master
 		});
 	}
 
@@ -207,22 +200,12 @@ export function visibleNodeIds(layout: GraphLayout): Set<number> {
 	return new Set(layout.nodes.map((n) => n.id));
 }
 
-export function visibleAudioEdges(
-	snapshot: GraphSnapshotDto,
-	layout: GraphLayout,
-): AudioEdgeDto[] {
+export function visibleAudioEdges(snapshot: GraphSnapshotDto, layout: GraphLayout): AudioEdgeDto[] {
 	const ids = visibleNodeIds(layout);
-	return snapshot.audioEdges.filter(
-		(e) => ids.has(e.fromNode) && ids.has(e.toNode),
-	);
+	return snapshot.audioEdges.filter((e) => ids.has(e.fromNode) && ids.has(e.toNode));
 }
 
-export function visibleModEdges(
-	snapshot: GraphSnapshotDto,
-	layout: GraphLayout,
-): ModEdgeDto[] {
+export function visibleModEdges(snapshot: GraphSnapshotDto, layout: GraphLayout): ModEdgeDto[] {
 	const ids = visibleNodeIds(layout);
-	return snapshot.modEdges.filter(
-		(e) => ids.has(e.sourceNode) && ids.has(e.targetNode),
-	);
+	return snapshot.modEdges.filter((e) => ids.has(e.sourceNode) && ids.has(e.targetNode));
 }

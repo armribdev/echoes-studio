@@ -4,6 +4,7 @@ This is the heart of the engine: the compiler, scheduler, buffers, and node
 model. Most code here runs **on or feeding the audio thread**.
 
 ## Local hard constraints
+
 - Code reachable from `scheduler.rs` / `worker_pool.rs` is RT-critical: no alloc,
   no locks, no I/O, no `drop`. See `.claude/rules/rt_audio_rules.md`.
 - The graph the audio thread executes is **immutable**. Mutations go through
@@ -15,12 +16,14 @@ model. Most code here runs **on or feeding the audio thread**.
   invariant — keep that assertion intact.
 
 ## Key files
+
 `compiler.rs`, `execution_plan.rs` (compile pipeline) · `scheduler.rs`,
 `worker_pool.rs` (runtime) · `graph.rs`, `node.rs` (model) · `buffer.rs` (planar
 buffers) · `snapshot*.rs` (swap) · `modulation.rs`, `parameter_block.rs`,
 `live_params.rs`, `midi.rs` (params/mod/MIDI).
 
 ## Read before changing
+
 - `docs/active/dsp/graph-compiler.md`, `docs/active/dsp/dsp-runtime.md`
 - `docs/active/architecture/audio-graph.md`, `.../snapshot-rebuild-flow.md`
 - `docs/active/threading/realtime-safety.md`

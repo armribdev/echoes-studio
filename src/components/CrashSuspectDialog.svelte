@@ -16,7 +16,10 @@
 
 	function alreadyIsolated(pluginId: string): boolean {
 		const { pluginIsolation, alwaysIsolated } = get(preferences).audio;
-		return pluginIsolation === 'all' || (pluginIsolation === 'chosen' && alwaysIsolated.includes(pluginId));
+		return (
+			pluginIsolation === 'all' ||
+			(pluginIsolation === 'chosen' && alwaysIsolated.includes(pluginId))
+		);
 	}
 
 	onMount(async () => {
@@ -38,8 +41,8 @@
 			audio: {
 				...prefs.audio,
 				pluginIsolation: 'chosen',
-				alwaysIsolated: [...prefs.audio.alwaysIsolated.filter((id) => id !== pluginId), pluginId],
-			},
+				alwaysIsolated: [...prefs.audio.alwaysIsolated.filter((id) => id !== pluginId), pluginId]
+			}
 		}));
 		close();
 	}
@@ -51,17 +54,28 @@
 
 {#if suspect}
 	<div class="backdrop" role="presentation">
-		<div class="dialog" role="dialog" aria-modal="true" aria-labelledby="crash-suspect-title" use:dismissable={close}>
-			<h2 id="crash-suspect-title">Echoes s'est fermé pendant que « {suspect.name} » travaillait</h2>
+		<div
+			class="dialog"
+			role="dialog"
+			aria-modal="true"
+			aria-labelledby="crash-suspect-title"
+			use:dismissable={close}
+		>
+			<h2 id="crash-suspect-title">
+				Echoes s'est fermé pendant que « {suspect.name} » travaillait
+			</h2>
 			{#if suspect.can_isolate}
 				<p class="intro">
-					Ce plugin a probablement provoqué la fermeture. Isolé, il tourne dans son propre processus :
-					s'il plante encore, seul son son se coupe et Echoes continue.
-					{#if isolationOff}L'isolation, désactivée dans les Préférences, sera réactivée pour les plugins choisis.{/if}
+					Ce plugin a probablement provoqué la fermeture. Isolé, il tourne dans son propre processus
+					: s'il plante encore, seul son son se coupe et Echoes continue.
+					{#if isolationOff}L'isolation, désactivée dans les Préférences, sera réactivée pour les
+						plugins choisis.{/if}
 				</p>
 				<div class="actions">
 					<button class="secondary" type="button" on:click={close}>Plus tard</button>
-					<button class="primary" type="button" on:click={isolate}>Toujours isoler {suspect.name}</button>
+					<button class="primary" type="button" on:click={isolate}
+						>Toujours isoler {suspect.name}</button
+					>
 				</div>
 			{:else}
 				<p class="intro">

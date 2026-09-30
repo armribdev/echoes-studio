@@ -21,6 +21,7 @@ struct AppTrack {
 ```
 
 **Why it is dangerous:**
+
 - It hardcodes a linear insert chain topology. Parallel processing, feedback
   loops, and complex routing become impossible without hacking the track struct.
 - It makes the plugin count a property of the track model, not the graph.
@@ -48,6 +49,7 @@ fn set_track_volume(volume: f32) {
 ```
 
 **Why it is dangerous:**
+
 - Graph compilation instantiates new nodes and pre-allocates new buffers.
   At large track counts this takes measurable time.
 - Doing it on every knob twist blocks the command thread.
@@ -70,11 +72,12 @@ command handlers.
 ```typescript
 // ✗ Wrong: computing gain in the frontend
 function applyVolume(samples: Float32Array, volume: number): Float32Array {
-    return samples.map(s => s * volume);
+	return samples.map((s) => s * volume);
 }
 ```
 
 **Why it is dangerous:**
+
 - The Web Audio API (OfflineAudioContext) is used only for export — not for the
   production audio path, which runs via CPAL.
 - UI-side DSP has no access to the real-time graph, sample-accurate transport,
@@ -103,6 +106,7 @@ fn add_plugin(state: State<AppState>, node_id: NodeId, plugin_id: String) {
 ```
 
 **Why it is dangerous:**
+
 - The audio thread is iterating `processors` in `process_block()` at the same
   time. Even with locking, this creates unpredictable timing.
 - The execution plan (`plan.steps`) no longer matches the processors array.
@@ -130,6 +134,7 @@ struct AppProject {
 ```
 
 **Why it is dangerous:**
+
 - `AppProject` is serialized to disk and replayed for undo/redo. Runtime values
   corrupt the undo history.
 - The event store would log `POSITION_UPDATED` thousands of times per second,
@@ -150,10 +155,11 @@ has no meaningful undo semantics.
 ```typescript
 // ✗ Wrong: emitting and storing position events
 eventStore.append({ type: 'POSITION_UPDATED', position: 48000 });
-eventStore.append({ type: 'PEAK_METER',       left: 0.8, right: 0.7 });
+eventStore.append({ type: 'PEAK_METER', left: 0.8, right: 0.7 });
 ```
 
 **Why it is dangerous:**
+
 - An event log entry is written for every `POSITION_UPDATED` at 30 fps.
   Over a 10-minute session this is ~18,000 events — all meaningless for undo.
 - The frontend's `ProjectEventStore` replays all events on `PROJECT_RESET`.
@@ -182,6 +188,7 @@ fn process(&mut self, ...) {
 ```
 
 **Why it is dangerous:**
+
 - The modulator is invisible to the graph's modulation routing system.
 - It cannot be reused across parameters or across nodes.
 - It cannot be automated from the timeline.
@@ -209,6 +216,7 @@ fn process(&mut self, ...) {
 ```
 
 **Why it is dangerous:**
+
 - The first block after the graph is swapped in will allocate, which may stall
   the audio callback and cause a click or underrun.
 - There is no guarantee about when the first `process()` call occurs relative
@@ -231,6 +239,7 @@ outputs[0].channel_mut(1)[i] = right;  // panics if num_channels != 2
 ```
 
 **Why it is dangerous:**
+
 - The user may configure a mono output device or a multichannel interface.
 - The channel count is part of the `CompileConfig` passed to the compiler
   and propagated to every node via `PrepareContext`.

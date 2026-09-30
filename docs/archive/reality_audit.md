@@ -5,7 +5,7 @@
 
 # Reality Audit — Echoes Studio runtime (état réel, 2026-06-03)
 
-> **But** : reconstruire la *vérité runtime* du moteur tel qu'il tourne
+> **But** : reconstruire la _vérité runtime_ du moteur tel qu'il tourne
 > aujourd'hui, indépendamment de ce que décrivent les docs `docs/active/` et les
 > audits datés. Aucune proposition d'archi, aucun refactor. On constate.
 >
@@ -25,7 +25,7 @@
 
 1. **Le pipeline DSP est unique et cohérent.** Il n'y a **pas** de double
    système de graphe. `AppProject → AudioGraph::from_project → GraphCompiler →
-   GraphScheduler → RuntimeSnapshot(AtomicPtr) → callback CPAL`. L'export
+GraphScheduler → RuntimeSnapshot(AtomicPtr) → callback CPAL`. L'export
    offline (`offline.rs`) emprunte exactement le même chemin. Les fondations
    (DAG, topo-sort déterministe, snapshot atomique + drop-ring SPSC, PDC
    interne, FTZ/DAZ, worker-pool optionnel) sont saines et réellement câblées.
@@ -65,7 +65,7 @@
    importe `plugin_system::PluginHost` et l'appelle. Or **ADR-003 sanctionne
    explicitement** cet appel (« The graph compiler calls
    `PluginHost::instantiate()` »). La règle `.claude` est donc trop stricte vs son
-   propre ADR. C'est le *runtime* (scheduler) qui est agnostique, pas le compiler.
+   propre ADR. C'est le _runtime_ (scheduler) qui est agnostique, pas le compiler.
 
 ---
 
@@ -108,21 +108,21 @@ callback CPAL (engine.rs) → snapshot.try_swap(&mut box) → scheduler.process_
 
 ## 2. Ce qui tourne vraiment vs ce que disent les docs
 
-| Sujet | Doc/`critical_issues.md` (2026-05-31) | Réalité du code (2026-06-03) |
-|------|----------------------------------------|------------------------------|
-| Transport params UI→plugin (§3.1) | « aucun, critical » | **Câblé** (ADR-007/008, `param_queue.rs`, drain VST3/CLAP) |
-| Instruments VST3i/CLAPi (§3.2) | « aucun, critical » | **CLAP câblé** (`ClapInstrument`, `instantiate_instrument`, ADR-013) |
-| State plugin save/load (§3.5) | « no-op, critical » | **FFI réel** VST3+CLAP (`save_state_blob`/`load_state_blob`, ADR-010) — mais perdu au recompile |
-| Latence/PDC plugin (§3.6/§7.1) | « toujours 0, critical » | **Rapportée** : `latency_samples()` overridé via `clap.latency` / `getLatencySamples` |
-| Lifecycle bicéphale (§3.7) | « deux sources, medium » | **Unifié** (Phase 2b : atomic unique sur l'instance) |
-| Host sans ref instance (§3.8) | « critical » | **Résolu** : `Arc<PluginInstance>` dans `records` (ADR-007) |
-| Double instance audio+GUI (§3.11/§6.3) | « critical » | **Résolu** (Phase 2c : `gui.rs` réutilise `instance.vst3_handles()/clap_plugin()`) |
-| `clap_entry.init` (§8.6) | « corrigé » | **Confirmé** : `ClapLibrary::load` l'appelle 1×/DLL, cache process-wide |
-| Sandbox out-of-process (§8.1) | « aucun, critical » | **Opt-in câblé** (ADR-015 : `BridgedNode` + `plugin_host_bridge`, CLAP) |
-| SEH C++ uncaught (§1.5/§8.2) | « critical » | **Toujours vrai** : `catch_unwind` ne capte que les panics Rust |
-| Watchdog durée process (§1.6) | « aucun, critical » | **Partiel** : budget spin côté `BridgedNode`; in-process toujours sans |
-| Recompile sur param effet (§1.4/§4.6) | « critical » | **Toujours vrai** : chemin param effet/plugin = recompile complet |
-| `audio_engine/snapshot.rs` mort (§8.7) | « low » | **Confirmé mort** (aucun consommateur réel) |
+| Sujet                                  | Doc/`critical_issues.md` (2026-05-31) | Réalité du code (2026-06-03)                                                                    |
+| -------------------------------------- | ------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| Transport params UI→plugin (§3.1)      | « aucun, critical »                   | **Câblé** (ADR-007/008, `param_queue.rs`, drain VST3/CLAP)                                      |
+| Instruments VST3i/CLAPi (§3.2)         | « aucun, critical »                   | **CLAP câblé** (`ClapInstrument`, `instantiate_instrument`, ADR-013)                            |
+| State plugin save/load (§3.5)          | « no-op, critical »                   | **FFI réel** VST3+CLAP (`save_state_blob`/`load_state_blob`, ADR-010) — mais perdu au recompile |
+| Latence/PDC plugin (§3.6/§7.1)         | « toujours 0, critical »              | **Rapportée** : `latency_samples()` overridé via `clap.latency` / `getLatencySamples`           |
+| Lifecycle bicéphale (§3.7)             | « deux sources, medium »              | **Unifié** (Phase 2b : atomic unique sur l'instance)                                            |
+| Host sans ref instance (§3.8)          | « critical »                          | **Résolu** : `Arc<PluginInstance>` dans `records` (ADR-007)                                     |
+| Double instance audio+GUI (§3.11/§6.3) | « critical »                          | **Résolu** (Phase 2c : `gui.rs` réutilise `instance.vst3_handles()/clap_plugin()`)              |
+| `clap_entry.init` (§8.6)               | « corrigé »                           | **Confirmé** : `ClapLibrary::load` l'appelle 1×/DLL, cache process-wide                         |
+| Sandbox out-of-process (§8.1)          | « aucun, critical »                   | **Opt-in câblé** (ADR-015 : `BridgedNode` + `plugin_host_bridge`, CLAP)                         |
+| SEH C++ uncaught (§1.5/§8.2)           | « critical »                          | **Toujours vrai** : `catch_unwind` ne capte que les panics Rust                                 |
+| Watchdog durée process (§1.6)          | « aucun, critical »                   | **Partiel** : budget spin côté `BridgedNode`; in-process toujours sans                          |
+| Recompile sur param effet (§1.4/§4.6)  | « critical »                          | **Toujours vrai** : chemin param effet/plugin = recompile complet                               |
+| `audio_engine/snapshot.rs` mort (§8.7) | « low »                               | **Confirmé mort** (aucun consommateur réel)                                                     |
 
 > Conclusion : `critical_issues.md` et la mémoire projet décrivent un état
 > **antérieur** aux phases plugin. La frontière moteur↔plugin est aujourd'hui
@@ -134,16 +134,16 @@ callback CPAL (engine.rs) → snapshot.try_swap(&mut box) → scheduler.process_
 
 ## 3. Vrais risques runtime actuels (non couverts / mal couverts par les docs)
 
-| # | Risque réel | Sévérité | Preuve |
-|---|-------------|----------|--------|
-| R-1 | **Ré-instanciation plugin à chaque recompile** → perte d'état interne du plugin, deux instances FFI transitoires | critical | `compile()` appelle `build_node`→`instantiate` à chaque fois ; aucune réutilisation par `NodeId`. ADR-007 §"t2" documente le cycle. |
-| R-2 | **`records` indexé par `device_id`** : même plugin sur 2 pistes → un seul record survit ; params + GUI adressent la mauvaise instance | high | [`host.rs:206`](../../src-tauri/src/plugin_system/host.rs#L206) `records.insert(plugin_id, …)` |
-| R-3 | **Teardown host mort** : `destroy_device`/`suspend_device`/`resume_device` sans appelant → fuite des instances de plugins retirés | high | grep : définitions seules, 0 site d'appel |
-| R-4 | **State plugin perdu au recompile** : `load_device_state` n'est rappelé qu'au load projet (`main.rs:252`), pas après une ré-instanciation déclenchée par un tour de bouton | high | flux `update_from_project` ne re-pousse pas `saved_state` dans la nouvelle instance |
-| R-5 | **Crash plugin C++ (SEH) = crash DAW** en in-process (défaut) | critical | `catch_unwind` only, `scheduler.rs:630` |
-| R-6 | **Params d'instrument CLAP jetés** : `ClapInstrument::process_midi` fait `drain_params(|_| {})` | medium | [`clap_instrument.rs:146`](../../src-tauri/src/audio_graph/nodes/clap_instrument.rs#L146) |
-| R-7 | **`num_input_ports/num_output_ports` du trait non consultés** par le compiler/scheduler (le compiler utilise `num_*_for_kind` codé en dur) → comptes de ports déclarés par les nodes = vestige | low | `compiler.rs` `num_inputs_for_kind`, scheduler lit `plan.steps[].num_outputs` |
-| R-8 | **`sandboxed` ignoré dans `PluginHost::instantiate`** (`let _ = sandboxed`), la vraie branche sandbox est dans `compiler.build_node` | low (cohérent, inerte) | [`host.rs:163`](../../src-tauri/src/plugin_system/host.rs#L163) |
+| #   | Risque réel                                                                                                                                                                                    | Sévérité               | Preuve                                                                                                                              |
+| --- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------- | ------ | ----------------------------------------------------------------------------------------- |
+| R-1 | **Ré-instanciation plugin à chaque recompile** → perte d'état interne du plugin, deux instances FFI transitoires                                                                               | critical               | `compile()` appelle `build_node`→`instantiate` à chaque fois ; aucune réutilisation par `NodeId`. ADR-007 §"t2" documente le cycle. |
+| R-2 | **`records` indexé par `device_id`** : même plugin sur 2 pistes → un seul record survit ; params + GUI adressent la mauvaise instance                                                          | high                   | [`host.rs:206`](../../src-tauri/src/plugin_system/host.rs#L206) `records.insert(plugin_id, …)`                                      |
+| R-3 | **Teardown host mort** : `destroy_device`/`suspend_device`/`resume_device` sans appelant → fuite des instances de plugins retirés                                                              | high                   | grep : définitions seules, 0 site d'appel                                                                                           |
+| R-4 | **State plugin perdu au recompile** : `load_device_state` n'est rappelé qu'au load projet (`main.rs:252`), pas après une ré-instanciation déclenchée par un tour de bouton                     | high                   | flux `update_from_project` ne re-pousse pas `saved_state` dans la nouvelle instance                                                 |
+| R-5 | **Crash plugin C++ (SEH) = crash DAW** en in-process (défaut)                                                                                                                                  | critical               | `catch_unwind` only, `scheduler.rs:630`                                                                                             |
+| R-6 | **Params d'instrument CLAP jetés** : `ClapInstrument::process_midi` fait `drain_params(                                                                                                        | \_                     | {})`                                                                                                                                | medium | [`clap_instrument.rs:146`](../../src-tauri/src/audio_graph/nodes/clap_instrument.rs#L146) |
+| R-7 | **`num_input_ports/num_output_ports` du trait non consultés** par le compiler/scheduler (le compiler utilise `num_*_for_kind` codé en dur) → comptes de ports déclarés par les nodes = vestige | low                    | `compiler.rs` `num_inputs_for_kind`, scheduler lit `plan.steps[].num_outputs`                                                       |
+| R-8 | **`sandboxed` ignoré dans `PluginHost::instantiate`** (`let _ = sandboxed`), la vraie branche sandbox est dans `compiler.build_node`                                                           | low (cohérent, inerte) | [`host.rs:163`](../../src-tauri/src/plugin_system/host.rs#L163)                                                                     |
 
 Détail R-1…R-4 et R-6 : [`plugin_instantiation_failure_analysis.md`](plugin_instantiation_failure_analysis.md).
 Détail R-7 : [`dsp_graph_reality_check.md`](dsp_graph_reality_check.md).

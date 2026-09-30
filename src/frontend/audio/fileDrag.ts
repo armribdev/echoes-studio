@@ -1,5 +1,10 @@
 import { get, writable } from 'svelte/store';
-import { isAudioPath, assetIdFromPath, isMidiLibraryKind, type LibraryAssetKind } from '../library/types';
+import {
+	isAudioPath,
+	assetIdFromPath,
+	isMidiLibraryKind,
+	type LibraryAssetKind
+} from '../library/types';
 import { probeAudioDuration, type ImportAudioOptions } from './importClip';
 
 export type AudioFileDragSource = 'library' | 'os';
@@ -62,11 +67,10 @@ export function beginAudioFileDrag(opts: {
 	const state: AudioFileDragState = {
 		path: opts.path,
 		source: opts.source,
-		durationSec:
-			opts.durationSec != null && opts.durationSec > 0 ? opts.durationSec : null,
+		durationSec: opts.durationSec != null && opts.durationSec > 0 ? opts.durationSec : null,
 		assetId: opts.assetId ?? assetIdFromPath(opts.path),
 		kind,
-		lengthBeats: opts.lengthBeats ?? null,
+		lengthBeats: opts.lengthBeats ?? null
 	};
 	audioFileDrag.set(state);
 
@@ -110,7 +114,7 @@ export function isAudioFileDragActive(): boolean {
 export function importOptionsFromAudioDrag(
 	trackId: string,
 	startSec: number,
-	drag: AudioFileDragState,
+	drag: AudioFileDragState
 ): ImportAudioOptions {
 	const durationSec = drag.durationSec;
 	return {
@@ -118,6 +122,6 @@ export function importOptionsFromAudioDrag(
 		filePath: drag.path,
 		startSec,
 		knownDurationSec: durationSec ?? undefined,
-		endSec: durationSec != null ? startSec + durationSec : undefined,
+		endSec: durationSec != null ? startSec + durationSec : undefined
 	};
 }

@@ -9,7 +9,7 @@
 		rescanPlugins,
 		UNAVAILABLE_REASON_LABEL,
 		type UnavailablePlugin,
-		type UnavailableReason,
+		type UnavailableReason
 	} from '../stores/plugins';
 	import { dismissable } from '../frontend/dismiss';
 
@@ -29,7 +29,8 @@
 	function pluginName(project: Project, entry: UnavailablePlugin): string {
 		for (const track of project.tracks) {
 			const effect = track.effects.find((e) => e.id === entry.instance_key);
-			const savedName = (effect?.params as { params?: { name?: string } } | undefined)?.params?.name;
+			const savedName = (effect?.params as { params?: { name?: string } } | undefined)?.params
+				?.name;
 			if (savedName) return savedName;
 		}
 		return pluginDisplayName(entry.plugin_id);
@@ -53,7 +54,7 @@
 				pluginId: entry.plugin_id,
 				name: pluginName(project, entry),
 				reason: entry.reason,
-				usages: [],
+				usages: []
 			};
 			row.usages.push(usage(project, entry.instance_key));
 			byPlugin.set(entry.plugin_id, row);
@@ -100,7 +101,13 @@
 
 {#if count > 0}
 	<div class="backdrop" role="presentation">
-		<div class="dialog" role="dialog" aria-modal="true" aria-labelledby="missing-plugins-title" use:dismissable={close}>
+		<div
+			class="dialog"
+			role="dialog"
+			aria-modal="true"
+			aria-labelledby="missing-plugins-title"
+			use:dismissable={close}
+		>
 			<h2 id="missing-plugins-title">
 				{count === 1 ? 'Un plugin est indisponible' : `${count} plugins sont indisponibles`}
 			</h2>

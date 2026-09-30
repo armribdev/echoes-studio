@@ -9,6 +9,7 @@ here — those live in `docs/active/` and `docs/active/decisions/`.
 > per-user auto-memory. Verify a named file/flag still exists before relying on it.
 
 ## Files
+
 - [`engine_quirks.md`](engine_quirks.md) — non-obvious behaviours that trip you up
   (silent XRuns, `catch_unwind` vs SEH, `UPDATE_TEMPO` no-recompile, two plugin
   instances, CLAP/VST3 traps, modulation limits).
@@ -19,6 +20,7 @@ here — those live in `docs/active/` and `docs/active/decisions/`.
   phases (ADR-006…015) and the docs governance overhaul.
 
 ## Where the truth lives (not here)
+
 - Architecture + subsystems → `docs/active/`
 - Decisions → `docs/active/decisions/` (`000-index.md`)
 - Rules / protocols → `.claude/rules/`

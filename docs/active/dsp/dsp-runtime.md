@@ -1,7 +1,7 @@
 # DSP Runtime
 
-> **Canonical.** The runtime *execution model* (how the scheduler runs a block).
-> The audio-thread *prohibitions* that used to live in the legacy
+> **Canonical.** The runtime _execution model_ (how the scheduler runs a block).
+> The audio-thread _prohibitions_ that used to live in the legacy
 > `dsp-runtime-rules.md` are now consolidated in
 > `../threading/realtime-safety.md`. The legacy flat file is archived under
 > `docs/archive/dsp-runtime-rules.md`.
@@ -45,6 +45,7 @@ The `ExecutionPlan` is the contract between the compiler and the scheduler.
 It is immutable after compilation and shared via `Arc<ExecutionPlan>`.
 
 Key properties:
+
 - **Flat:** `steps` is a `Vec`, not a tree or graph. O(1) index access.
 - **Pre-ordered:** topological sort ensures producers always precede consumers.
   The scheduler never needs to check ordering.
@@ -60,6 +61,7 @@ Key properties:
 Same graph + same transport state = same output, always.
 
 Determinism sources:
+
 1. **Topological sort** uses `NodeId` as tiebreaker within the same depth.
    `NodeId` is a monotonically incrementing `AtomicU64` assigned at node
    creation on the command thread (single-threaded creation → deterministic).
@@ -96,6 +98,7 @@ All memory is allocated once per graph update, never in the callback.
 ### Deallocation phase
 
 When a new `GraphScheduler` replaces the old one:
+
 - The audio thread **never** drops the displaced scheduler. It pushes the
   `Box<GraphScheduler>` into `RuntimeSnapshot`'s bounded SPSC drop ring.
 - The command thread drains the drop ring on its next `enqueue` call and runs
@@ -132,6 +135,7 @@ buffer, so execution order across workers cannot affect the result (the
 
 Each worker, **once at start-up** (off the audio path), mirrors the audio
 callback thread so worker-run DSP behaves identically:
+
 - enables FTZ/DAZ (`enable_flush_to_zero`) — MXCSR is per-thread, so without this
   a denormal on a worker would not be flushed (CPU spike) **and** could diverge
   from the FTZ-enabled sequential path;

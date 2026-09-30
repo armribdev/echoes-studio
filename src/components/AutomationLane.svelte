@@ -11,7 +11,7 @@
 		lanePoints,
 		simplifyPolyline,
 		valueToY,
-		yToValue,
+		yToValue
 	} from '../frontend/automation/lanes';
 	import { pluginParamsByPlacement } from '../stores/pluginParams';
 	import { notify } from '../stores/status';
@@ -57,7 +57,7 @@
 
 	function pointAt(x: number, y: number): number | null {
 		const index = points.findIndex(
-			(p) => Math.hypot(p.time_s * scale - x, valueToY(p.value, height) - y) <= HIT_RADIUS_PX,
+			(p) => Math.hypot(p.time_s * scale - x, valueToY(p.value, height) - y) <= HIT_RADIUS_PX
 		);
 		return index >= 0 ? index : null;
 	}
@@ -123,7 +123,9 @@
 		let time = snapTime(x / scale, e.altKey);
 		if (previous) time = Math.max(time, previous.time_s);
 		if (following) time = Math.min(time, following.time_s);
-		draft = draft.map((p, i) => (i === dragIndex ? { time_s: time, value: yToValue(y, height) } : p));
+		draft = draft.map((p, i) =>
+			i === dragIndex ? { time_s: time, value: yToValue(y, height) } : p
+		);
 		dragChanged = true;
 	}
 
@@ -149,7 +151,10 @@
 		const steps = Math.abs(column - strokeLast.x);
 		for (let step = 1; step <= steps; step++) {
 			const t = step / steps;
-			stroke.set(strokeLast.x + Math.sign(column - strokeLast.x) * step, strokeLast.y + t * (y - strokeLast.y));
+			stroke.set(
+				strokeLast.x + Math.sign(column - strokeLast.x) * step,
+				strokeLast.y + t * (y - strokeLast.y)
+			);
 		}
 		if (steps === 0) stroke.set(column, y);
 		strokeLast = { x: column, y };
@@ -164,7 +169,7 @@
 		const kept = strokeBase.filter((p) => p.time_s < from || p.time_s > to);
 		const added = simplifyPolyline(drawn, PENCIL_TOLERANCE_PX).map((p) => ({
 			time_s: p.x / scale,
-			value: yToValue(p.y, height),
+			value: yToValue(p.y, height)
 		}));
 		return [...kept, ...added].sort((a, b) => a.time_s - b.time_s);
 	}

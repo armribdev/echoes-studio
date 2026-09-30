@@ -31,7 +31,7 @@ function createBottomPanelStore() {
 		activeTab: null,
 		height: PREVIEW_PANEL_MIN,
 		savedEditHeight: DEFAULT_EDIT_PANEL_HEIGHT,
-		savedPreviewHeight: PREVIEW_PANEL_MIN,
+		savedPreviewHeight: PREVIEW_PANEL_MIN
 	});
 
 	function notifyPersist() {
@@ -44,9 +44,7 @@ function createBottomPanelStore() {
 			update((s) => ({ ...s, ...partial }));
 		},
 		openTab(tab: BottomPanelTab) {
-			update((s) =>
-				s.open && s.activeTab === tab ? s : { ...s, open: true, activeTab: tab },
-			);
+			update((s) => (s.open && s.activeTab === tab ? s : { ...s, open: true, activeTab: tab }));
 			notifyPersist();
 		},
 		toggle() {
@@ -59,35 +57,26 @@ function createBottomPanelStore() {
 		},
 		/** Hauteur auto (ouverture clip / sortie édition). */
 		setPreviewAutoHeight(height: number) {
-			const clamped = Math.max(
-				PREVIEW_PANEL_MIN,
-				Math.min(PREVIEW_PANEL_AUTO_MAX, height),
-			);
+			const clamped = Math.max(PREVIEW_PANEL_MIN, Math.min(PREVIEW_PANEL_AUTO_MAX, height));
 			update((s) =>
 				s.height === clamped && s.savedPreviewHeight === clamped
 					? s
-					: { ...s, height: clamped, savedPreviewHeight: clamped },
+					: { ...s, height: clamped, savedPreviewHeight: clamped }
 			);
 			notifyPersist();
 		},
 		/** Redimensionnement manuel en aperçu — persisté pour la session d'aperçu. */
 		setPreviewHeight(height: number, maxHeight = PREVIEW_PANEL_RESIZE_MAX) {
-			const clamped = Math.max(
-				PREVIEW_PANEL_MIN,
-				Math.min(maxHeight, height),
-			);
+			const clamped = Math.max(PREVIEW_PANEL_MIN, Math.min(maxHeight, height));
 			update((s) =>
 				s.height === clamped && s.savedPreviewHeight === clamped
 					? s
-					: { ...s, height: clamped, savedPreviewHeight: clamped },
+					: { ...s, height: clamped, savedPreviewHeight: clamped }
 			);
 		},
 		restorePreviewHeight(maxHeight = PREVIEW_PANEL_RESIZE_MAX) {
 			update((s) => {
-				const h = Math.max(
-					PREVIEW_PANEL_MIN,
-					Math.min(maxHeight, s.savedPreviewHeight),
-				);
+				const h = Math.max(PREVIEW_PANEL_MIN, Math.min(maxHeight, s.savedPreviewHeight));
 				return s.height === h ? s : { ...s, height: h };
 			});
 		},
@@ -105,9 +94,9 @@ function createBottomPanelStore() {
 			update((s) =>
 				s.height === clamped && s.savedEditHeight === clamped
 					? s
-					: { ...s, height: clamped, savedEditHeight: clamped },
+					: { ...s, height: clamped, savedEditHeight: clamped }
 			);
-		},
+		}
 	};
 }
 

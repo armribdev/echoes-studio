@@ -5,9 +5,9 @@
 
 # Cleanup Impact & Regressions
 
-> Focus #4 de l'audit. *Ce qui a été supprimé / déprécié, ce qui est encore
+> Focus #4 de l'audit. _Ce qui a été supprimé / déprécié, ce qui est encore
 > référencé indirectement, les fallbacks, et les systèmes hybrides legacy+new
-> qui coexistent.*
+> qui coexistent._
 
 ---
 
@@ -17,13 +17,14 @@ Pas de régression fonctionnelle introduite par un nettoyage cassé. Les seuls
 points sont : **du code mort résiduel**, **des stubs**, **des chemins de
 fallback silencieux**, et surtout **une documentation périmée** (`critical_issues.md`,
 mémoires plugin) qui décrit un état antérieur — c'est la « régression »
-principale : *drift doc ↔ code*.
+principale : _drift doc ↔ code_.
 
 ---
 
 ## 1. Code mort résiduel (toujours compilé, jamais utilisé)
 
 ### 1.1 `audio_engine/snapshot.rs` — types legacy morts
+
 `AudioGraphSnapshot` / `TrackSnapshot` / `ClipSnapshot`
 ([`audio_engine/snapshot.rs`](../../src-tauri/src/audio_engine/snapshot.rs)) ne sont
 **référencés que dans leur propre fichier** + un commentaire de `audio_engine/mod.rs`.
@@ -33,6 +34,7 @@ header le dit lui-même (« no longer used … retained … will be removed »).
 accidentel. Aucun effet runtime.
 
 ### 1.2 Lifecycle host — méthodes sans appelant
+
 `PluginHost::{destroy_device, suspend_device, resume_device}` : définies, **0
 appelant** (grep `src/`). La machine d'états `lifecycle.rs` (`transition`) n'est
 donc jamais exercée pour suspend/resume au runtime ; seuls `Running` (forcé à
@@ -41,12 +43,14 @@ d'appelant) sont atteints. **Impact** : fuite des instances retirées (R-3), pas
 d'erreur. Voir [`plugin_instantiation_failure_analysis.md`](plugin_instantiation_failure_analysis.md).
 
 ### 1.3 Param `sandboxed` ignoré côté host
+
 `PluginHost::instantiate(…, sandboxed)` fait `let _ = sandboxed`
 ([`host.rs:163`](../../src-tauri/src/plugin_system/host.rs#L163)). La branche sandbox
 réelle est dans `compiler.build_node` (`BridgedNode::try_new`). Le paramètre host
 est donc **mort** (threadé « pour 6d » mais 6d a mis la logique ailleurs).
 
 ### 1.4 Comptes de ports des nodes — vestigiaux
+
 `AudioNode::num_input_ports/num_output_ports` : implémentés partout mais **non
 consultés** par le compiler (qui utilise `num_*_for_kind`) ni par le scheduler
 (qui lit `plan.steps[].num_outputs`). Vestige hors tests. Détail dans
@@ -75,14 +79,14 @@ consultés** par le compiler (qui utilise `num_*_for_kind`) ni par le scheduler
 Ces fallbacks **masquent** les échecs au lieu de les remonter à l'UI — à
 surveiller car ils peuvent rendre un bug invisible :
 
-| Fallback | Déclencheur | Conséquence | Lieu |
-|----------|-------------|-------------|------|
-| Plugin → `GainNode` unity | registry miss / FFI échoue | Le plugin disparaît, audio passe-plat, seul `eprintln` | `compiler.rs:705-710` |
-| Instrument → `PolySynth` | `instantiate_instrument` échoue (non-CLAP, FFI) | Synthé interne au lieu du plugin demandé | `compiler.rs:580-585` |
-| `BridgedNode` → in-process | sandbox indisponible (no bridge exe, non-CLAP) | Plugin chargé in-process malgré l'opt-in sandbox | `compiler.rs:683-695` |
-| `BridgedNode` → pass-through | spawn bridge échoue / block partiel | Audio passe-plat, `eprintln` | `bridged_node.rs:176-181` |
-| Compile error → graphe vide | erreur de compile | **Silence total**, `eprintln` « using empty graph » | `audio_engine/graph.rs:85-92` |
-| CLAP/VST3 `process` erreur | status d'erreur FFI | pass-through input→output | wrappers `process` |
+| Fallback                     | Déclencheur                                     | Conséquence                                            | Lieu                          |
+| ---------------------------- | ----------------------------------------------- | ------------------------------------------------------ | ----------------------------- |
+| Plugin → `GainNode` unity    | registry miss / FFI échoue                      | Le plugin disparaît, audio passe-plat, seul `eprintln` | `compiler.rs:705-710`         |
+| Instrument → `PolySynth`     | `instantiate_instrument` échoue (non-CLAP, FFI) | Synthé interne au lieu du plugin demandé               | `compiler.rs:580-585`         |
+| `BridgedNode` → in-process   | sandbox indisponible (no bridge exe, non-CLAP)  | Plugin chargé in-process malgré l'opt-in sandbox       | `compiler.rs:683-695`         |
+| `BridgedNode` → pass-through | spawn bridge échoue / block partiel             | Audio passe-plat, `eprintln`                           | `bridged_node.rs:176-181`     |
+| Compile error → graphe vide  | erreur de compile                               | **Silence total**, `eprintln` « using empty graph »    | `audio_engine/graph.rs:85-92` |
+| CLAP/VST3 `process` erreur   | status d'erreur FFI                             | pass-through input→output                              | wrappers `process`            |
 
 > **Régression latente** : aucun de ces fallbacks n'émet d'event Tauri. Un plugin
 > qui échoue à charger devient un `GainNode` silencieux sans notification UI —
@@ -94,6 +98,7 @@ surveiller car ils peuvent rendre un bug invisible :
 ## 4. Systèmes hybrides legacy + new qui coexistent
 
 ### 4.1 Rendu offline : Web Audio (supprimé) → `offline.rs` (actif)
+
 Ancien : le frontend rendait un **second graphe** via `OfflineAudioContext` et
 envoyait les samples à `export_wav/mp3`. Supprimé. Nouveau
 [`offline.rs`](../../src-tauri/src/audio_engine/offline.rs) réutilise **le même**
@@ -103,6 +108,7 @@ absents en Web Audio) est éliminé. À vérifier : que **plus aucun** chemin
 frontend ne génère d'audio (hors scope code Rust).
 
 ### 4.2 `bridge.rs` — re-export « dead until 6d »
+
 [`plugin_system/bridge.rs`](../../src-tauri/src/plugin_system/bridge.rs) re-exporte
 `plugin_bridge::{protocol, region, session, shmem}` avec un commentaire « Nothing
 in the engine consumes these yet — dead until 6d ». **Le commentaire est
@@ -112,12 +118,14 @@ re-export `bridge.rs` lui-même reste potentiellement inutilisé — à confirme
 on veut le supprimer.
 
 ### 4.3 Persistance d'état : transitionnel `saved_state` + FFI
+
 `DeviceRecord.saved_state` (cache `DeviceState`) **coexiste** avec le chemin FFI
 (`save_state_blob`/`load_state_blob`). `save_device_state` tente le FFI puis
 retombe sur le cache. Hybride documenté (ADR-007/010), pas cassé, mais c'est une
 **double source** de vérité d'état tant que le FFI n'est pas universel.
 
 ### 4.4 VST3 sans cache DLL vs CLAP avec cache
+
 CLAP : `CLAP_LIBRARIES` (cache process-wide + init unique). VST3 :
 `Vst3Library::load` refait `LoadLibraryW` à chaque instanciation (l'OS refcount le
 module). Asymétrie historique, pas un bug, mais incohérence de stratégie.
@@ -143,12 +151,12 @@ fait, toute décision basée sur ces docs partira d'un état faux.
 
 ## 6. Synthèse cleanup
 
-| Catégorie | Élément | Risque |
-|-----------|---------|--------|
-| Code mort | `audio_engine/snapshot.rs` | low (hygiène) |
-| Code mort | `destroy/suspend/resume_device` | **high** (fuite, lifecycle non câblé) |
-| Code mort | param `sandboxed` host, `scan_directory`, comptes de ports node | low |
-| Stub | AU/WASM, modulators non-LFO | medium (features absentes) |
-| Fallback silencieux | plugin/instrument/bridge → repli sans event UI | **medium** (échecs invisibles) |
-| Hybride | offline (résolu), `bridge.rs` re-export, `saved_state`+FFI, cache VST3 vs CLAP | low |
-| **Doc drift** | `critical_issues.md` + mémoires périmés | **high** (décisions sur état faux) |
+| Catégorie           | Élément                                                                        | Risque                                |
+| ------------------- | ------------------------------------------------------------------------------ | ------------------------------------- |
+| Code mort           | `audio_engine/snapshot.rs`                                                     | low (hygiène)                         |
+| Code mort           | `destroy/suspend/resume_device`                                                | **high** (fuite, lifecycle non câblé) |
+| Code mort           | param `sandboxed` host, `scan_directory`, comptes de ports node                | low                                   |
+| Stub                | AU/WASM, modulators non-LFO                                                    | medium (features absentes)            |
+| Fallback silencieux | plugin/instrument/bridge → repli sans event UI                                 | **medium** (échecs invisibles)        |
+| Hybride             | offline (résolu), `bridge.rs` re-export, `saved_state`+FFI, cache VST3 vs CLAP | low                                   |
+| **Doc drift**       | `critical_issues.md` + mémoires périmés                                        | **high** (décisions sur état faux)    |

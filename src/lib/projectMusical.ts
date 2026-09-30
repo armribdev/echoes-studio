@@ -6,20 +6,31 @@ export const DEFAULT_SWING_PERCENT = 0;
 export const DEFAULT_MIDI_PPQ = 960;
 
 export const KEY_ROOT_OPTIONS = [
-	'C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B',
+	'C',
+	'C#',
+	'D',
+	'D#',
+	'E',
+	'F',
+	'F#',
+	'G',
+	'G#',
+	'A',
+	'A#',
+	'B'
 ] as const;
 
 export type KeyRoot = (typeof KEY_ROOT_OPTIONS)[number];
 
 export const KEY_MODE_OPTIONS = [
 	{ value: 'major', label: 'Majeur' },
-	{ value: 'minor', label: 'Mineur' },
+	{ value: 'minor', label: 'Mineur' }
 ] as const;
 
 export const MIDI_PPQ_OPTIONS = [
 	{ value: 480, label: '480' },
 	{ value: 960, label: '960' },
-	{ value: 1920, label: '1920' },
+	{ value: 1920, label: '1920' }
 ] as const;
 
 export function keySignatureLabel(root: string, mode: string): string {
@@ -51,7 +62,7 @@ export function musicalFieldsFromDto(
 		| 'swing_percent'
 		| 'midi_ppq'
 		| 'midi_grid_use_triplets'
-	>,
+	>
 ): ProjectMusicalFields {
 	return {
 		bpm: dto.bpm,
@@ -62,6 +73,6 @@ export function musicalFieldsFromDto(
 		key_mode: dto.key_mode ?? DEFAULT_KEY_MODE,
 		swing_percent: dto.swing_percent ?? DEFAULT_SWING_PERCENT,
 		midi_ppq: dto.midi_ppq ?? DEFAULT_MIDI_PPQ,
-		midi_grid_use_triplets: dto.midi_grid_use_triplets ?? false,
+		midi_grid_use_triplets: dto.midi_grid_use_triplets ?? false
 	};
 }

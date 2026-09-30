@@ -11,8 +11,14 @@
 	let query = '';
 	let searchInput: HTMLInputElement;
 
-	interface ModuleSection { module: string; options: ModulationTargetOption[] }
-	interface GroupSection { group: string; modules: ModuleSection[] }
+	interface ModuleSection {
+		module: string;
+		options: ModulationTargetOption[];
+	}
+	interface GroupSection {
+		group: string;
+		modules: ModuleSection[];
+	}
 
 	$: visible = options.filter((o) => matchesSearch(o, query));
 	$: sections = groupOptions(visible);
@@ -101,29 +107,47 @@
 
 	.group {
 		padding: 5px 7px 2px;
-		font-size: 9px; font-weight: 700; font-family: $font-mono;
-		letter-spacing: 0.06em; text-transform: uppercase;
-		color: rgba(21,113,255,0.9);
+		font-size: 9px;
+		font-weight: 700;
+		font-family: $font-mono;
+		letter-spacing: 0.06em;
+		text-transform: uppercase;
+		color: rgba(21, 113, 255, 0.9);
 	}
 
 	.module {
 		padding: 3px 7px 1px 12px;
-		font-size: 8px; font-family: $font-mono;
-		color: $text-faint; text-transform: uppercase; letter-spacing: 0.04em;
+		font-size: 8px;
+		font-family: $font-mono;
+		color: $text-faint;
+		text-transform: uppercase;
+		letter-spacing: 0.04em;
 	}
 
 	.option {
-		display: block; width: 100%;
+		display: block;
+		width: 100%;
 		padding: 3px 7px 3px 16px;
-		border: none; background: transparent;
-		color: $text-subtle; font-size: 10px; text-align: left;
+		border: none;
+		background: transparent;
+		color: $text-subtle;
+		font-size: 10px;
+		text-align: left;
 		cursor: pointer;
-		overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-		&:hover { background: rgba(21,113,255,0.15); color: $text-color; }
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		&:hover {
+			background: rgba(21, 113, 255, 0.15);
+			color: $text-color;
+		}
 	}
 
 	.hint {
-		margin: 0; padding: 8px 7px;
-		font-size: 9px; color: $text-faint; text-align: center;
+		margin: 0;
+		padding: 8px 7px;
+		font-size: 9px;
+		color: $text-faint;
+		text-align: center;
 	}
 </style>

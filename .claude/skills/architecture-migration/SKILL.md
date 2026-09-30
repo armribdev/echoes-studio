@@ -6,10 +6,12 @@ description: Execute a step of the incremental DAW migration (current -> target)
 # Architecture Migration
 
 ## Objective
+
 Advance one migration step while honouring the C-1…C-10 constraints and keeping
 every shipped step independently correct.
 
 ## Workflow
+
 1. Locate the step in `docs/active/migration/migration_plan.md`; read its phase
    notes and the ADR it realizes. Check `state_index.md` for current status.
 2. Confirm the constraints in `.claude/rules/migration_rules.md` apply (esp.
@@ -24,6 +26,7 @@ every shipped step independently correct.
 6. Run **safe-refactor** + **rt-validation** as applicable, then **doc-sync**.
 
 ## Checklist
+
 - [ ] Step maps to a migration_plan phase + an ADR.
 - [ ] Legacy projects load and behave unchanged (C-4).
 - [ ] Offline render bit-identical, or divergence is intentional + tested (C-2/C-10).
@@ -32,10 +35,12 @@ every shipped step independently correct.
 - [ ] `state_index.md` row updated (status / verified date).
 
 ## Anti-patterns
+
 - Big-bang replacement of a subsystem instead of variant-by-variant (C-3).
 - Gating determinism behind a feature flag (violates C-10).
 - Shipping a phase that breaks an earlier one.
 
 ## Validation (done when)
+
 - The phase is implemented, its ADR exists, harness is green, and docs +
   state_index are synced.

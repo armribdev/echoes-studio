@@ -9,7 +9,7 @@ export function connectLoopSync(): () => void {
 	return derived([loopRegion, tempo], ([$loop, $tempo]) => ({
 		enabled: $loop.enabled,
 		start: ($loop.startBeat * 60) / $tempo.bpm,
-		end: ($loop.endBeat * 60) / $tempo.bpm,
+		end: ($loop.endBeat * 60) / $tempo.bpm
 	})).subscribe((region) => {
 		const key = `${region.enabled}:${region.start}:${region.end}`;
 		if (key === lastSent) return;

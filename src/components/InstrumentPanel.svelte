@@ -11,7 +11,7 @@
 		rescanPlugins,
 		unavailablePlugins,
 		UNAVAILABLE_REASON_LABEL,
-		type UnavailableReason,
+		type UnavailableReason
 	} from '../stores/plugins';
 	import { invoke } from '@tauri-apps/api/core';
 	import { setTrackInstrument } from '../frontend/commands/dispatcher';
@@ -39,9 +39,7 @@
 
 	if ($plugins.length === 0) loadPlugins();
 
-	$: activePlugin = instrument
-		? $plugins.find((p) => p.id === instrument)
-		: null;
+	$: activePlugin = instrument ? $plugins.find((p) => p.id === instrument) : null;
 
 	$: unavailable = instrument ? $unavailablePlugins.get(editorKey) : undefined;
 
@@ -59,7 +57,8 @@
 	$: sandboxed =
 		!!instrument &&
 		isClap &&
-		(isolation === 'all' || (isolation === 'chosen' && $preferences.audio.alwaysIsolated.includes(instrument)));
+		(isolation === 'all' ||
+			(isolation === 'chosen' && $preferences.audio.alwaysIsolated.includes(instrument)));
 
 	let contextMenu: { x: number; y: number } | null = null;
 
@@ -73,11 +72,9 @@
 		not_installed:
 			"Ce plugin n'est pas installé sur cet ordinateur : la piste est muette. Ses réglages sont conservés. Réinstallez-le puis réessayez, ou choisissez un autre instrument.",
 		unsupported_format:
-			"Echoes ne sait pas encore utiliser ce format comme instrument : la piste est muette. Choisissez un instrument CLAP.",
-		crashed:
-			"Le plugin a planté : la piste est muette. Réessayez pour le recharger.",
-		load_failed:
-			"Le plugin n'a pas pu démarrer : la piste est muette. Ses réglages sont conservés.",
+			'Echoes ne sait pas encore utiliser ce format comme instrument : la piste est muette. Choisissez un instrument CLAP.',
+		crashed: 'Le plugin a planté : la piste est muette. Réessayez pour le recharger.',
+		load_failed: "Le plugin n'a pas pu démarrer : la piste est muette. Ses réglages sont conservés."
 	};
 
 	let retrying = false;
@@ -127,7 +124,7 @@
 				await invoke('open_plugin_editor', {
 					pluginId: instrument,
 					effectId: editorKey,
-					pluginName: activePlugin.name,
+					pluginName: activePlugin.name
 				});
 				editorOpen = !sandboxed;
 			}
@@ -139,7 +136,7 @@
 	const FORMAT_COLOR: Record<string, string> = {
 		VST3: '#1571ff',
 		CLAP: '#22c55e',
-		AU: '#f59e0b',
+		AU: '#f59e0b'
 	};
 </script>
 
@@ -169,7 +166,12 @@
 		{:else}
 			<span class="instr-title">Instrument</span>
 		{/if}
-		<button class="change-btn" type="button" on:click={() => (showPicker = true)} title="Changer l'instrument">
+		<button
+			class="change-btn"
+			type="button"
+			on:click={() => (showPicker = true)}
+			title="Changer l'instrument"
+		>
 			{compact ? '…' : 'Changer'}
 		</button>
 	</div>
@@ -178,7 +180,9 @@
 	<div class="instr-slot" class:unavailable on:contextmenu={openContextMenu}>
 		<span class="instr-name" title={instrument ?? label}>{label}</span>
 		{#if sandboxed}
-			<span class="sandbox-badge" title="Isolé : un plantage de ce plugin ne ferme pas Echoes">ISO</span>
+			<span class="sandbox-badge" title="Isolé : un plantage de ce plugin ne ferme pas Echoes"
+				>ISO</span
+			>
 		{/if}
 		{#if unavailable}
 			<span class="missing-badge" title={UNAVAILABLE_HELP[unavailable.reason]}>
@@ -186,10 +190,9 @@
 			</span>
 		{/if}
 		{#if activePlugin}
-			<span
-				class="fmt-badge"
-				style:background={FORMAT_COLOR[activePlugin.format] ?? '#555'}
-			>{activePlugin.format}</span>
+			<span class="fmt-badge" style:background={FORMAT_COLOR[activePlugin.format] ?? '#555'}
+				>{activePlugin.format}</span
+			>
 		{/if}
 		{#if canOpenEditor}
 			<button
@@ -197,11 +200,13 @@
 				class:active={editorOpen}
 				type="button"
 				on:click={handleToggleEditor}
-				title={editorOpen ? "Fermer l'éditeur" : "Ouvrir l'éditeur"}
-			>GUI</button>
+				title={editorOpen ? "Fermer l'éditeur" : "Ouvrir l'éditeur"}>GUI</button
+			>
 		{/if}
 		{#if instrument}
-			<button class="rm-btn" type="button" on:click={handleClear} title="PolySynth intégré">×</button>
+			<button class="rm-btn" type="button" on:click={handleClear} title="PolySynth intégré"
+				>×</button
+			>
 		{/if}
 	</div>
 
@@ -469,7 +474,10 @@
 		font-weight: 600;
 		letter-spacing: 0.04em;
 		cursor: pointer;
-		transition: background 0.1s, color 0.1s, border-color 0.1s;
+		transition:
+			background 0.1s,
+			color 0.1s,
+			border-color 0.1s;
 		&:hover {
 			background: rgba(21, 113, 255, 0.15);
 			color: $text-color;

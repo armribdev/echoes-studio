@@ -9,5 +9,5 @@ interface TransportState {
 export const transport = writable<TransportState>({
 	isPlaying: false,
 	position: 0,
-	isScrubbing: false,
+	isScrubbing: false
 });

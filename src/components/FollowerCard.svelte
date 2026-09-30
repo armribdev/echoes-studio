@@ -19,14 +19,15 @@
 
 	const MODES: { id: FollowerMode; label: string; title: string }[] = [
 		{ id: 'rms', label: 'RMS', title: 'Volume moyen (plus doux)' },
-		{ id: 'peak', label: 'PEAK', title: 'Crêtes (plus nerveux)' },
+		{ id: 'peak', label: 'PEAK', title: 'Crêtes (plus nerveux)' }
 	];
 
 	// Defaults mirror `AudioFollowerParams::default()` in the engine.
 	$: mode = mod.mode ?? 'rms';
 	$: effectNames = effectGroupNames(effects);
 	// A tap on a removed effect falls back to the post-FX output in the engine.
-	$: source = mod.source_effect_id && effectNames.has(mod.source_effect_id) ? mod.source_effect_id : POST_FX;
+	$: source =
+		mod.source_effect_id && effectNames.has(mod.source_effect_id) ? mod.source_effect_id : POST_FX;
 	let attack = mod.attack_ms ?? 10;
 	let release = mod.release_ms ?? 100;
 
@@ -61,9 +62,7 @@
 	onDestroy(unsubscribe);
 
 	function polyline(values: number[]): string {
-		return values
-			.map((v, i) => `${(i / (HISTORY_LENGTH - 1)) * 100},${30 - v * 27}`)
-			.join(' ');
+		return values.map((v, i) => `${(i / (HISTORY_LENGTH - 1)) * 100},${30 - v * 27}`).join(' ');
 	}
 
 	function update(changes: Parameters<typeof updateModulatorOrNotify>[2]) {
@@ -114,16 +113,45 @@
 					role="radio"
 					aria-checked={mode === m.id}
 					title={m.title}
-					on:click={() => mode !== m.id && update({ mode: m.id })}
-				>{m.label}</button>
+					on:click={() => mode !== m.id && update({ mode: m.id })}>{m.label}</button
+				>
 			{/each}
 		</div>
-		<ParamKnob label="Fen." value={mod.window_ms ?? 50} min={5} max={500} defaultValue={50}
-			scale="log" format={formatMs} {color} on:release={(e) => update({ window_ms: e.detail })} />
-		<ParamKnob label="Att." value={mod.attack_ms ?? 10} bind:live={attack} min={0.1} max={500} defaultValue={10}
-			scale="log" format={formatMs} {color} on:release={(e) => update({ attack_ms: e.detail })} />
-		<ParamKnob label="Rel." value={mod.release_ms ?? 100} bind:live={release} min={1} max={2000} defaultValue={100}
-			scale="log" format={formatMs} {color} on:release={(e) => update({ release_ms: e.detail })} />
+		<ParamKnob
+			label="Fen."
+			value={mod.window_ms ?? 50}
+			min={5}
+			max={500}
+			defaultValue={50}
+			scale="log"
+			format={formatMs}
+			{color}
+			on:release={(e) => update({ window_ms: e.detail })}
+		/>
+		<ParamKnob
+			label="Att."
+			value={mod.attack_ms ?? 10}
+			bind:live={attack}
+			min={0.1}
+			max={500}
+			defaultValue={10}
+			scale="log"
+			format={formatMs}
+			{color}
+			on:release={(e) => update({ attack_ms: e.detail })}
+		/>
+		<ParamKnob
+			label="Rel."
+			value={mod.release_ms ?? 100}
+			bind:live={release}
+			min={1}
+			max={2000}
+			defaultValue={100}
+			scale="log"
+			format={formatMs}
+			{color}
+			on:release={(e) => update({ release_ms: e.detail })}
+		/>
 	</div>
 </ModulatorCard>
 
@@ -149,8 +177,14 @@
 			font-size: 10px;
 			cursor: pointer;
 
-			&:hover { background: rgba(255, 255, 255, 0.07); border-color: rgba(255, 255, 255, 0.14); }
-			&:focus { outline: none; border-color: var(--mod-color); }
+			&:hover {
+				background: rgba(255, 255, 255, 0.07);
+				border-color: rgba(255, 255, 255, 0.14);
+			}
+			&:focus {
+				outline: none;
+				border-color: var(--mod-color);
+			}
 		}
 	}
 

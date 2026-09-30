@@ -70,5 +70,5 @@ export const KIND_LABELS: Record<string, string> = {
 	bus: 'Bus',
 	send: 'Send',
 	return: 'Return',
-	plugin: 'Plugin',
+	plugin: 'Plugin'
 };

@@ -23,13 +23,29 @@
 	import { pianoRollStore } from '../stores/pianoRoll';
 	import { normalizeMidiGridBeats } from '../lib/midiGrid';
 	import { projectEventStore } from '../shared/project/eventStore';
-	import { addClip, moveClip, removeClip, updateTrack, setTrackMixLive, muteTrack, soloTrack, seek, createTrack, deleteTrack, addMidiClip, moveMidiClip, removeMidiClip, addAutomationLane, removeAutomationLane } from '../frontend/commands/dispatcher';
+	import {
+		addClip,
+		moveClip,
+		removeClip,
+		updateTrack,
+		setTrackMixLive,
+		muteTrack,
+		soloTrack,
+		seek,
+		createTrack,
+		deleteTrack,
+		addMidiClip,
+		moveMidiClip,
+		removeMidiClip,
+		addAutomationLane,
+		removeAutomationLane
+	} from '../frontend/commands/dispatcher';
 	import { clipboard } from '../stores/clipboard';
 	import type { ClipboardEntry } from '../stores/clipboard';
 	import type { CommandResult } from '../shared/protocol/commands';
 	import type { ModulationTargetOption } from '../frontend/modulation/targets';
 	import { get } from 'svelte/store';
-	import { snapPosition, getSnapSubdivisionSec } from '../lib/snapUtils';
+	import { snapPosition } from '../lib/snapUtils';
 	import { selectedTrack } from '../stores/selectedTrack';
 	import { armedTrackId } from '../stores/armedTrack';
 	import { armTrackForMidiInput } from '../lib/midiBackend';
@@ -54,7 +70,7 @@
 		canDropAssetOnLane,
 		insertMidiLibraryAsset,
 		beatsToSeconds,
-		type LibraryAssetKind,
+		type LibraryAssetKind
 	} from '../frontend/library';
 	import type { LibraryOpenContext } from '../frontend/library';
 	import { importAudioToTrack, cancelAudioImport } from '../frontend/audio/importClip';
@@ -64,7 +80,7 @@
 		focusMidiClipForEdit,
 		ensureClipPreview,
 		syncPianoRollToSelection,
-		trackColor,
+		trackColor
 	} from '../frontend/pianoRoll/clipEditor';
 	import TimeRuler from './TimeRuler.svelte';
 	import LoopBrace from './LoopBrace.svelte';
@@ -89,7 +105,7 @@
 		easeOutCubic,
 		isNewArrangeTrackRow,
 		maxClipEndSec,
-		trackIndexFromArrangeY,
+		trackIndexFromArrangeY
 	} from '../frontend/arrangeInteraction';
 	import { ev, isEngineEvent, type TrackCreatedPayload } from '../shared/protocol/events';
 	import { notify } from '../stores/status';
@@ -114,7 +130,7 @@
 			context,
 			trackId: opts.trackId,
 			anchorX: opts.anchorX,
-			anchorY: opts.anchorY,
+			anchorY: opts.anchorY
 		});
 	}
 
@@ -146,7 +162,9 @@
 	onDestroy(cleanupTracksPointer);
 	onDestroy(() => instrumentsResizeObserver?.disconnect());
 	onDestroy(() => tracksResizeObserver?.disconnect());
-	onDestroy(() => { if (autoScrollRafId) cancelAnimationFrame(autoScrollRafId); });
+	onDestroy(() => {
+		if (autoScrollRafId) cancelAnimationFrame(autoScrollRafId);
+	});
 	onDestroy(() => {
 		window.removeEventListener('mousemove', onResizeMove);
 		window.removeEventListener('mouseup', onResizeEnd);
@@ -163,7 +181,13 @@
 		arrangeMaxBarsHold = null;
 	}
 
-	let contextMenu: { x: number; y: number; trackId: string; trackName: string; trackIndex: number } | null = null;
+	let contextMenu: {
+		x: number;
+		y: number;
+		trackId: string;
+		trackName: string;
+		trackIndex: number;
+	} | null = null;
 	let clipContextMenu: { x: number; y: number } | null = null;
 	let automationPicker: { x: number; y: number; trackIndex: number } | null = null;
 	let selectedTrackIndex: number | null = null;
@@ -180,7 +204,7 @@
 		automationPicker = null;
 		if (!track) return;
 		addAutomationLane(track.id, option.kind, option.param, option.effectId).catch((e) =>
-			notify(`Erreur automation : ${(e as Error)?.message ?? e}`, 'error'),
+			notify(`Erreur automation : ${(e as Error)?.message ?? e}`, 'error')
 		);
 	}
 
@@ -238,10 +262,18 @@
 				instrument: t.instrument ?? null,
 				effects: t.effects ?? [],
 				modulators: t.modulators ?? [],
-				mod_routes: t.mod_routes ?? [],
+				mod_routes: t.mod_routes ?? []
 			});
 		} else {
-			selectedTrack.set({ trackId: null, trackName: '', trackColor: '#4d96ff', instrument: null, effects: [], modulators: [], mod_routes: [] });
+			selectedTrack.set({
+				trackId: null,
+				trackName: '',
+				trackColor: '#4d96ff',
+				instrument: null,
+				effects: [],
+				modulators: [],
+				mod_routes: []
+			});
 		}
 	}
 
@@ -315,13 +347,6 @@
 
 			animFrameId = requestAnimationFrame(loop);
 
-			// The transport store is updated by the engine-event bridge.
-			// No Web Audio wiring needed here.
-			let wasPlaying = false;
-			unsub = transport.subscribe((state) => {
-				wasPlaying = state.isPlaying;
-			});
-
 			// ── File drag-and-drop (OS via Tauri + library HTML5 → même session) ─
 			function updateOsDragPreview(physX: number, physY: number) {
 				if (!tracksEl) return;
@@ -365,9 +390,9 @@
 						durationSec: drag?.durationSec ?? preview.durationSec ?? null,
 						assetId: drag?.assetId ?? null,
 						trackIndex: preview.trackIndex,
-						startSec: preview.startSec,
+						startSec: preview.startSec
 					});
-				}),
+				})
 			]);
 			unlisteners.push(...dragFns);
 
@@ -405,7 +430,7 @@
 						const msg = err instanceof Error ? err.message : String(err);
 						notify(`Erreur import : ${msg}`, 'error');
 					}
-				}),
+				})
 			]);
 			unlisteners.push(...menuFns);
 		})().catch(console.error);
@@ -423,14 +448,14 @@
 		tracks,
 		$tempo.bpm,
 		$tempo.numerator,
-		pendingImportEndsSec,
+		pendingImportEndsSec
 	);
 	// Clip pending sélectionné → aligner la piste sélectionnée (auto-select à l'import).
 	$: {
 		const primaryId = $selection.primaryId;
 		if (primaryId) {
 			const pending = $pendingImports.find(
-				(p) => p.id === primaryId || p.engineClipId === primaryId,
+				(p) => p.id === primaryId || p.engineClipId === primaryId
 			);
 			if (pending) {
 				const idx = tracks.findIndex((t) => t.id === pending.trackId);
@@ -442,14 +467,18 @@
 	$: arrangeTotalBeats = arrangeMaxBars * $tempo.numerator;
 	$: arrangeContentWidthPx = arrangeTotalBeats * pxPerBeat;
 	$: arrangeTimelineEndSec = (arrangeMaxBars * $tempo.numerator * 60) / $tempo.bpm;
-	$: $pendingImports, arrangeTimelineEndSec, tracksEl, void tick().then(() => {
-		followArrangeTimelineEndChange(arrangeTimelineEndSec);
-		followImportsIntoView($pendingImports, arrangeTimelineEndSec);
-	});
+	$: ($pendingImports,
+		arrangeTimelineEndSec,
+		tracksEl,
+		void tick().then(() => {
+			followArrangeTimelineEndChange(arrangeTimelineEndSec);
+			followImportsIntoView($pendingImports, arrangeTimelineEndSec);
+		}));
 	// While repeat-dragging past the current arrangement end, the scrollable area must
 	// grow ahead of the (not-yet-committed) ghost preview, or auto-scroll hits a wall.
 	$: repeatGhostEdgePx = repeating
-		? (repeating.origStart + (repeating.count + 1) * repeating.duration) * scale + repeating.partialPx
+		? (repeating.origStart + (repeating.count + 1) * repeating.duration) * scale +
+			repeating.partialPx
 		: 0;
 	$: effectiveContentWidthPx = Math.max(arrangeContentWidthPx, repeatGhostEdgePx + 200);
 	$: effectiveTotalBeats = effectiveContentWidthPx / (pxPerBeat || 1);
@@ -474,7 +503,14 @@
 		loopDragOrigin = { startBeat: region.startBeat, endBeat: region.endBeat };
 	}
 
-	function onLoopDrag(event: CustomEvent<{ kind: 'start' | 'end'; originSec: number; currentSec: number; altKey: boolean }>) {
+	function onLoopDrag(
+		event: CustomEvent<{
+			kind: 'start' | 'end';
+			originSec: number;
+			currentSec: number;
+			altKey: boolean;
+		}>
+	) {
 		if (!loopDragOrigin) return;
 		const { kind, originSec, currentSec, altKey } = event.detail;
 		const bpm = get(tempo).bpm;
@@ -507,7 +543,7 @@
 		}
 	}
 
-	$: tracks.length, instrumentsEl, void tick().then(updateInstrumentsOverflow);
+	$: (tracks.length, instrumentsEl, void tick().then(updateInstrumentsOverflow));
 
 	$: if (tracksEl && !tracksResizeObserver) {
 		updateArrangeScrollbars();
@@ -525,16 +561,21 @@
 		void tick().then(tryPendingArrangeFitZoom);
 	}
 
-	$: scale, arrangeContentWidthPx, arrangeMaxBars, rulerViewportWidth, tracksEl, void tick().then(() => {
-		if (!tracksEl) return;
-		enforceArrangeMinZoom();
-		const maxScroll = Math.max(0, tracksEl.scrollWidth - tracksEl.clientWidth);
-		if (tracksEl.scrollLeft > maxScroll) {
-			tracksEl.scrollLeft = maxScroll;
-			tracksScrollLeft = maxScroll;
-		}
-		updateArrangeScrollbars();
-	});
+	$: (scale,
+		arrangeContentWidthPx,
+		arrangeMaxBars,
+		rulerViewportWidth,
+		tracksEl,
+		void tick().then(() => {
+			if (!tracksEl) return;
+			enforceArrangeMinZoom();
+			const maxScroll = Math.max(0, tracksEl.scrollWidth - tracksEl.clientWidth);
+			if (tracksEl.scrollLeft > maxScroll) {
+				tracksEl.scrollLeft = maxScroll;
+				tracksScrollLeft = maxScroll;
+			}
+			updateArrangeScrollbars();
+		}));
 
 	let tracksEl: HTMLElement;
 	let tracksInnerEl: HTMLDivElement | undefined;
@@ -573,35 +614,37 @@
 		origEnd: number;
 		pendingImportId?: string;
 	} | null = null;
-	let midiDragging: { origTrackIndex: number; trackIndex: number; clipId: string; offsetPx: number; origStart: number; origEnd: number } | null = null;
-	let repeating:
-		| {
-				trackIndex: number;
-				trackId: string;
-				origStart: number;
-				duration: number;
-				startClientX: number;
-				startScrollLeft: number;
-				count: number;
-				partialPx: number;
-				offset: number;
-				notes: MidiNote[];
-		  }
-		| null = null;
-	let resizing:
-		| {
-				kind: 'audio' | 'midi';
-				edge: 'left' | 'right';
-				trackIndex: number;
-				clipIndex?: number;
-				clipId: string;
-				origStart: number;
-				origEnd: number;
-				origOffset: number;
-				maxSourceDuration: number;
-		  }
-		| null = null;
-	let midiClipContextTarget: string | null = null;
+	let midiDragging: {
+		origTrackIndex: number;
+		trackIndex: number;
+		clipId: string;
+		offsetPx: number;
+		origStart: number;
+		origEnd: number;
+	} | null = null;
+	let repeating: {
+		trackIndex: number;
+		trackId: string;
+		origStart: number;
+		duration: number;
+		startClientX: number;
+		startScrollLeft: number;
+		count: number;
+		partialPx: number;
+		offset: number;
+		notes: MidiNote[];
+	} | null = null;
+	let resizing: {
+		kind: 'audio' | 'midi';
+		edge: 'left' | 'right';
+		trackIndex: number;
+		clipIndex?: number;
+		clipId: string;
+		origStart: number;
+		origEnd: number;
+		origOffset: number;
+		maxSourceDuration: number;
+	} | null = null;
 	let fileDragPreview: {
 		trackIndex: number;
 		startSec: number;
@@ -612,7 +655,12 @@
 	$: if ($audioFileDrag && fileDragPreview) {
 		const drag = $audioFileDrag;
 		let nextDur = fileDragPreview.durationSec;
-		if (drag.kind && isMidiLibraryKind(drag.kind) && drag.lengthBeats != null && drag.lengthBeats > 0) {
+		if (
+			drag.kind &&
+			isMidiLibraryKind(drag.kind) &&
+			drag.lengthBeats != null &&
+			drag.lengthBeats > 0
+		) {
 			nextDur = beatsToSeconds(drag.lengthBeats, $tempo.bpm);
 		} else if (drag.durationSec != null) {
 			nextDur = drag.durationSec;
@@ -655,7 +703,7 @@
 		const rect = tracksEl.getBoundingClientRect();
 		return {
 			x: event.clientX - rect.left + tracksEl.scrollLeft,
-			y: event.clientY - rect.top + tracksEl.scrollTop,
+			y: event.clientY - rect.top + tracksEl.scrollTop
 		};
 	}
 
@@ -685,12 +733,7 @@
 
 	function arrangeLogScaleFloor(): number {
 		if (!tracksEl || tracksEl.clientWidth <= 0) return Math.log(10);
-		return arrangeMinLogScale(
-			tracksEl.clientWidth,
-			arrangeMaxBars,
-			$tempo.numerator,
-			$tempo.bpm,
-		);
+		return arrangeMinLogScale(tracksEl.clientWidth, arrangeMaxBars, $tempo.numerator, $tempo.bpm);
 	}
 
 	function clampArrangeLogScale(value: number): number {
@@ -817,7 +860,7 @@
 			viewportWidthPx: tracksEl.clientWidth,
 			currentScale: scale,
 			minScale: Math.exp(arrangeLogScaleFloor()),
-			maxScale: Math.exp(LOG_MAX),
+			maxScale: Math.exp(LOG_MAX)
 		});
 		if (!next) return;
 		animateArrangeView(next.scale, next.scrollLeft);
@@ -825,7 +868,7 @@
 
 	function followImportsIntoView(
 		pendings: { id: string; start: number; end: number; settled?: boolean }[],
-		timelineEndSec: number,
+		timelineEndSec: number
 	) {
 		if (!tracksEl || tracksEl.clientWidth <= 0) return;
 		if (
@@ -847,11 +890,7 @@
 		const viewStartSec = tracksScrollLeft / scale;
 		const viewEndSec = (tracksScrollLeft + tracksEl.clientWidth) / scale;
 		const minScale = Math.exp(arrangeLogScaleFloor());
-		const contentEnd = Math.max(
-			maxClipEndSec(tracks),
-			...pendings.map((p) => p.end),
-			0,
-		);
+		const contentEnd = Math.max(maxClipEndSec(tracks), ...pendings.map((p) => p.end), 0);
 
 		for (const pending of pendings) {
 			const sig = `${pending.start.toFixed(4)}:${pending.end.toFixed(4)}`;
@@ -869,7 +908,7 @@
 				viewEndSec,
 				viewportWidthPx: tracksEl.clientWidth,
 				currentScale: scale,
-				minScale,
+				minScale
 			});
 			if (!next) continue;
 
@@ -892,7 +931,7 @@
 		const spanBeats = rightBeat - leftBeat;
 		if (spanBeats <= 0 || vpW <= 0) return;
 
-		const clampedLog = clampArrangeLogScale(Math.log((vpW / spanBeats) * bpm / 60));
+		const clampedLog = clampArrangeLogScale(Math.log(((vpW / spanBeats) * bpm) / 60));
 		const clampedPxPerBeat = (Math.exp(clampedLog) * 60) / bpm;
 		const clampedSpanBeats = vpW / clampedPxPerBeat;
 		const atMinZoom = clampedLog <= arrangeLogScaleFloor() + 1e-9;
@@ -913,7 +952,7 @@
 			const center = (leftBeat + rightBeat) * 0.5;
 			clampedLeftBeat = Math.max(
 				0,
-				Math.min(center - clampedSpanBeats * 0.5, totalBeats - clampedSpanBeats),
+				Math.min(center - clampedSpanBeats * 0.5, totalBeats - clampedSpanBeats)
 			);
 			clampedRightBeat = clampedLeftBeat + clampedSpanBeats;
 		}
@@ -964,7 +1003,7 @@
 				y0: tracksPointer.startY,
 				x1: x,
 				y1: y,
-				additive: tracksPointer.additive,
+				additive: tracksPointer.additive
 			};
 			return;
 		}
@@ -1009,9 +1048,7 @@
 				return;
 			}
 		}
-		const pending = $pendingImports.find(
-			(p) => p.id === clipId || p.engineClipId === clipId,
-		);
+		const pending = $pendingImports.find((p) => p.id === clipId || p.engineClipId === clipId);
 		if (pending) {
 			const trackIndex = tracks.findIndex((t) => t.id === pending.trackId);
 			if (trackIndex >= 0) selectTrackIndex(trackIndex);
@@ -1054,7 +1091,7 @@
 			(positionSec) => {
 				scrubCleanup = null;
 				seek(positionSec).catch(console.error);
-			},
+			}
 		);
 	}
 
@@ -1091,7 +1128,7 @@
 			startY: y,
 			clientX: event.clientX,
 			clientY: event.clientY,
-			additive,
+			additive
 		};
 
 		window.addEventListener('mousemove', onTracksPointerMove);
@@ -1123,9 +1160,8 @@
 		tracks = tracks.map((track) => ({
 			...track,
 			clips: track.clips.filter((c) => !sel.has(c.id)),
-			midi_clips: (track.midi_clips ?? []).filter((c) => !sel.has(c.id)),
+			midi_clips: (track.midi_clips ?? []).filter((c) => !sel.has(c.id))
 		}));
-		midiClipContextTarget = null;
 		selection.clear();
 	}
 
@@ -1151,7 +1187,7 @@
 						trackId: track.id,
 						filePath: clip.file_path,
 						durationSec: clip.end - clip.start,
-						relativeStart: clip.start - minStart,
+						relativeStart: clip.start - minStart
 					});
 				}
 			}
@@ -1163,7 +1199,7 @@
 						durationSec: clip.end - clip.start,
 						relativeStart: clip.start - minStart,
 						offset: clip.offset ?? 0,
-						notes: clip.notes.map((n) => ({ ...n })),
+						notes: clip.notes.map((n) => ({ ...n }))
 					});
 				}
 			}
@@ -1209,15 +1245,25 @@
 			for (const clip of track.clips) {
 				if (!sel.has(clip.id)) continue;
 				const start = clip.start + span;
-				jobs.push(addClip(track.id, clip.file_path, start, start + (clip.end - clip.start), clip.offset ?? 0));
+				jobs.push(
+					addClip(
+						track.id,
+						clip.file_path,
+						start,
+						start + (clip.end - clip.start),
+						clip.offset ?? 0
+					)
+				);
 			}
 			for (const clip of track.midi_clips ?? []) {
 				if (!sel.has(clip.id)) continue;
 				const start = clip.start + span;
-				jobs.push(addMidiClip(track.id, start, start + (clip.end - clip.start), {
-					offset: clip.offset ?? 0,
-					notes: clip.notes.map((n) => ({ ...n })),
-				}));
+				jobs.push(
+					addMidiClip(track.id, start, start + (clip.end - clip.start), {
+						offset: clip.offset ?? 0,
+						notes: clip.notes.map((n) => ({ ...n }))
+					})
+				);
 			}
 		}
 		const results = await Promise.all(jobs);
@@ -1240,13 +1286,15 @@
 				}
 				return addMidiClip(targetTrackId, start, end, {
 					offset: entry.offset,
-					notes: entry.notes,
+					notes: entry.notes
 				});
 			})
 		);
 	}
 
-	function handleClipContextMenu(e: CustomEvent<{ id: string; trackIndex: number; x: number; y: number }>) {
+	function handleClipContextMenu(
+		e: CustomEvent<{ id: string; trackIndex: number; x: number; y: number }>
+	) {
 		keyboardFocus.setTimeline();
 		const { id, trackIndex, x, y } = e.detail;
 		selectTrackIndex(trackIndex);
@@ -1301,7 +1349,10 @@
 		if (autoScrollSpeed !== 0 && tracksEl) {
 			tracksEl.scrollLeft = Math.max(0, tracksEl.scrollLeft + autoScrollSpeed);
 			autoScrollActiveMove?.(
-				new MouseEvent('mousemove', { clientX: autoScrollLastClientX, clientY: autoScrollLastClientY }),
+				new MouseEvent('mousemove', {
+					clientX: autoScrollLastClientX,
+					clientY: autoScrollLastClientY
+				})
 			);
 		}
 		autoScrollRafId = requestAnimationFrame(autoScrollTick);
@@ -1339,7 +1390,7 @@
 	}
 
 	async function onMidiClipDragStart(
-		e: CustomEvent<{ offsetPx: number; trackIndex: number; clipId: string; duplicate: boolean }>,
+		e: CustomEvent<{ offsetPx: number; trackIndex: number; clipId: string; duplicate: boolean }>
 	) {
 		const { trackIndex, clipId, offsetPx, duplicate } = e.detail;
 		selectTrackIndex(trackIndex);
@@ -1351,7 +1402,7 @@
 		if (duplicate) {
 			const result = await addMidiClip(track.id, clip.start, clip.end, {
 				offset: clip.offset ?? 0,
-				notes: clip.notes.map((n) => ({ ...n })),
+				notes: clip.notes.map((n) => ({ ...n }))
 			});
 			const newId = clipIdFromResult(result);
 			if (!newId) return;
@@ -1365,7 +1416,7 @@
 			clipId: draggedClipId,
 			offsetPx,
 			origStart: clip.start,
-			origEnd: clip.end,
+			origEnd: clip.end
 		};
 		beginArrangeMaxBarsHold();
 		window.addEventListener('mousemove', onMidiDragMove);
@@ -1393,11 +1444,11 @@
 			const updatedClip = { ...clip, start: newStart, end: newStart + duration };
 			tracks[prevTrackIndex] = {
 				...prevTrack,
-				midi_clips: prevTrack.midi_clips.filter((c) => c.id !== clipId),
+				midi_clips: prevTrack.midi_clips.filter((c) => c.id !== clipId)
 			};
 			tracks[newTrackIndex] = {
 				...tracks[newTrackIndex],
-				midi_clips: [...tracks[newTrackIndex].midi_clips, updatedClip],
+				midi_clips: [...tracks[newTrackIndex].midi_clips, updatedClip]
 			};
 			midiDragging = { ...midiDragging, trackIndex: newTrackIndex };
 		} else {
@@ -1407,7 +1458,7 @@
 				...track,
 				midi_clips: track.midi_clips.map((c) =>
 					c.id === clipId ? { ...c, start: newStart, end: newStart + duration } : c
-				),
+				)
 			};
 		}
 		tracks = tracks;
@@ -1421,7 +1472,14 @@
 			const clip = dstTrack?.midi_clips?.find((c) => c.id === clipId);
 			if (dstTrack && clip) {
 				const targetTrackId = origTrackIndex !== trackIndex ? dstTrack.id : undefined;
-				moveMidiClip(srcTrack?.id ?? dstTrack.id, clipId, clip.start, clip.end, clip.offset, targetTrackId).catch(console.error);
+				moveMidiClip(
+					srcTrack?.id ?? dstTrack.id,
+					clipId,
+					clip.start,
+					clip.end,
+					clip.offset,
+					targetTrackId
+				).catch(console.error);
 			}
 		}
 		midiDragging = null;
@@ -1449,13 +1507,14 @@
 		focusMidiClipForEdit(track, clip, trackColor(track.id, track.color));
 	}
 
-	function onMidiClipContextMenu(e: CustomEvent<{ id: string; trackIndex: number; x: number; y: number }>) {
+	function onMidiClipContextMenu(
+		e: CustomEvent<{ id: string; trackIndex: number; x: number; y: number }>
+	) {
 		keyboardFocus.setTimeline();
 		const { id, trackIndex, x, y } = e.detail;
 		selectTrackIndex(trackIndex);
 		// Reuse clip context menu with a remove action handled via selection
 		selection.setSingle(id);
-		midiClipContextTarget = id;
 		contextMenu = null;
 		clipContextMenu = { x, y };
 	}
@@ -1479,7 +1538,7 @@
 			trackIndex: number;
 			clipId: string;
 			pendingImportId?: string;
-		}>,
+		}>
 	) {
 		const { trackIndex, clipId, offsetPx, pendingImportId } = e.detail;
 		selectTrackIndex(trackIndex);
@@ -1506,7 +1565,7 @@
 			offsetPx,
 			origStart,
 			origEnd,
-			pendingImportId,
+			pendingImportId
 		};
 		beginArrangeMaxBarsHold();
 		window.addEventListener('mousemove', onDragMove);
@@ -1533,7 +1592,7 @@
 			pendingImports.updatePlacement(pendingImportId, {
 				start: newStart,
 				end: newEnd,
-				trackId,
+				trackId
 			});
 			dragging = { ...dragging, trackIndex: newTrackIndex };
 			return;
@@ -1547,11 +1606,11 @@
 			const updatedClip = { ...clip, start: newStart, end: newEnd };
 			tracks[prevTrackIndex] = {
 				...prevTrack,
-				clips: prevTrack.clips.filter((c) => c.id !== clipId),
+				clips: prevTrack.clips.filter((c) => c.id !== clipId)
 			};
 			tracks[newTrackIndex] = {
 				...tracks[newTrackIndex],
-				clips: [...tracks[newTrackIndex].clips, updatedClip],
+				clips: [...tracks[newTrackIndex].clips, updatedClip]
 			};
 			dragging = { ...dragging, trackIndex: newTrackIndex };
 		} else {
@@ -1560,8 +1619,8 @@
 			tracks[newTrackIndex] = {
 				...track,
 				clips: track.clips.map((c) =>
-					c.id === clipId ? { ...c, start: newStart, end: newEnd } : c,
-				),
+					c.id === clipId ? { ...c, start: newStart, end: newEnd } : c
+				)
 			};
 		}
 		tracks = tracks;
@@ -1577,15 +1636,14 @@
 					const srcTrack = tracks[origTrackIndex];
 					const dstTrack = tracks[trackIndex];
 					if (dstTrack) {
-						const targetTrackId =
-							origTrackIndex !== trackIndex ? dstTrack.id : undefined;
+						const targetTrackId = origTrackIndex !== trackIndex ? dstTrack.id : undefined;
 						moveClip(
 							srcTrack?.id ?? dstTrack.id,
 							slot.engineClipId,
 							slot.start,
 							slot.end,
 							0,
-							targetTrackId,
+							targetTrackId
 						).catch(console.error);
 					}
 				}
@@ -1602,7 +1660,7 @@
 						clip.start,
 						clip.end,
 						clip.offset,
-						targetTrackId,
+						targetTrackId
 					).catch(console.error);
 				}
 			}
@@ -1621,7 +1679,7 @@
 	const MIN_REPEAT_PARTIAL_PX = 4;
 
 	function onClipResizeStart(
-		e: CustomEvent<{ edge: 'left' | 'right'; clientX: number; trackIndex: number; clipId: string }>,
+		e: CustomEvent<{ edge: 'left' | 'right'; clientX: number; trackIndex: number; clipId: string }>
 	) {
 		const { edge, trackIndex, clipId } = e.detail;
 		selectTrackIndex(trackIndex);
@@ -1638,7 +1696,7 @@
 			origStart: clip.start,
 			origEnd: clip.end,
 			origOffset: clip.offset,
-			maxSourceDuration: sourceDuration,
+			maxSourceDuration: sourceDuration
 		};
 		beginArrangeMaxBarsHold();
 		window.addEventListener('mousemove', onResizeMove);
@@ -1651,7 +1709,7 @@
 	}
 
 	function onMidiClipResizeStart(
-		e: CustomEvent<{ edge: 'left' | 'right'; clientX: number; trackIndex: number; clipId: string }>,
+		e: CustomEvent<{ edge: 'left' | 'right'; clientX: number; trackIndex: number; clipId: string }>
 	) {
 		const { edge, trackIndex, clipId } = e.detail;
 		selectTrackIndex(trackIndex);
@@ -1665,7 +1723,7 @@
 			origStart: clip.start,
 			origEnd: clip.end,
 			origOffset: clip.offset,
-			maxSourceDuration: Infinity,
+			maxSourceDuration: Infinity
 		};
 		beginArrangeMaxBarsHold();
 		window.addEventListener('mousemove', onResizeMove);
@@ -1673,7 +1731,9 @@
 		beginAutoScroll(onResizeMove);
 	}
 
-	function onMidiClipRepeatStart(e: CustomEvent<{ clientX: number; trackIndex: number; clipId: string }>) {
+	function onMidiClipRepeatStart(
+		e: CustomEvent<{ clientX: number; trackIndex: number; clipId: string }>
+	) {
 		const { clientX, trackIndex, clipId } = e.detail;
 		selectTrackIndex(trackIndex);
 		const track = tracks[trackIndex];
@@ -1689,7 +1749,7 @@
 			count: 0,
 			partialPx: 0,
 			offset: clip.offset ?? 0,
-			notes: clip.notes.map((n) => ({ ...n })),
+			notes: clip.notes.map((n) => ({ ...n }))
 		};
 		beginArrangeMaxBarsHold();
 		window.addEventListener('mousemove', onRepeatMove);
@@ -1706,7 +1766,8 @@
 		// auto-scroll has already shifted the view by (scrollLeft can move the
 		// content under a pointer that itself hasn't moved, e.g. while it sits at
 		// the edge or has left the window and stopped emitting `mousemove`).
-		const scrollDelta = (tracksEl?.scrollLeft ?? repeating.startScrollLeft) - repeating.startScrollLeft;
+		const scrollDelta =
+			(tracksEl?.scrollLeft ?? repeating.startScrollLeft) - repeating.startScrollLeft;
 		const deltaX = Math.max(0, e.clientX - repeating.startClientX + scrollDelta);
 		const count = Math.floor(deltaX / durationPx);
 		const partialPx = deltaX - count * durationPx;
@@ -1734,13 +1795,23 @@
 		const jobs: Promise<CommandResult>[] = [];
 		for (let i = 1; i <= count; i++) {
 			const start = origStart + i * duration;
-			jobs.push(addMidiClip(trackId, start, start + duration, { offset, notes: notes.map((n) => ({ ...n })) }));
+			jobs.push(
+				addMidiClip(trackId, start, start + duration, {
+					offset,
+					notes: notes.map((n) => ({ ...n }))
+				})
+			);
 		}
 		if (partialPx > MIN_REPEAT_PARTIAL_PX) {
 			// Trailing cut-off repeat, same trim mechanism as a right-edge resize:
 			// the underlying notes are kept whole, only the visible window shrinks.
 			const start = origStart + (count + 1) * duration;
-			jobs.push(addMidiClip(trackId, start, start + partialPx / scale, { offset, notes: notes.map((n) => ({ ...n })) }));
+			jobs.push(
+				addMidiClip(trackId, start, start + partialPx / scale, {
+					offset,
+					notes: notes.map((n) => ({ ...n }))
+				})
+			);
 		}
 		const scrollLeft = tracksEl?.scrollLeft;
 		const results = await Promise.all(jobs);
@@ -1757,11 +1828,15 @@
 	function onResizeMove(e: MouseEvent) {
 		if (!resizing || !tracksEl) return;
 		updateAutoScrollEdge(e);
-		const { edge, trackIndex, origStart, origEnd, origOffset, maxSourceDuration } = resizing;
+		const { edge, origStart, origEnd, origOffset, maxSourceDuration } = resizing;
 		const minWidth = MIN_CLIP_PX / scale;
 		const origin = origStart - origOffset;
 
-		const posSec = snap(Math.max(0, arrangeContentX(e.clientX, tracksEl) / scale), e.altKey, resizing.clipId);
+		const posSec = snap(
+			Math.max(0, arrangeContentX(e.clientX, tracksEl) / scale),
+			e.altKey,
+			resizing.clipId
+		);
 
 		let newStart = origStart;
 		let newEnd = origEnd;
@@ -1791,7 +1866,7 @@
 			track.clips[clipIndex!] = { ...clip, start, end, offset };
 		} else {
 			track.midi_clips = track.midi_clips.map((c) =>
-				c.id === resizing!.clipId ? { ...c, start, end, offset } : c,
+				c.id === resizing!.clipId ? { ...c, start, end, offset } : c
 			);
 		}
 		tracks = tracks;
@@ -1804,10 +1879,12 @@
 			if (track) {
 				if (resizing.kind === 'audio') {
 					const clip = track.clips[resizing.clipIndex!];
-					if (clip) moveClip(track.id, clip.id, clip.start, clip.end, clip.offset).catch(console.error);
+					if (clip)
+						moveClip(track.id, clip.id, clip.start, clip.end, clip.offset).catch(console.error);
 				} else {
 					const clip = track.midi_clips?.find((c) => c.id === resizing!.clipId);
-					if (clip) moveMidiClip(track.id, clip.id, clip.start, clip.end, clip.offset).catch(console.error);
+					if (clip)
+						moveMidiClip(track.id, clip.id, clip.start, clip.end, clip.offset).catch(console.error);
 				}
 			}
 		}
@@ -1845,7 +1922,12 @@
 		const rawStart = Math.max(0, x / scale);
 		const drag = getActiveAudioFileDrag();
 		let durationSec = drag?.durationSec ?? fileDragPreview?.durationSec ?? null;
-		if (drag?.kind && isMidiLibraryKind(drag.kind) && drag.lengthBeats != null && drag.lengthBeats > 0) {
+		if (
+			drag?.kind &&
+			isMidiLibraryKind(drag.kind) &&
+			drag.lengthBeats != null &&
+			drag.lengthBeats > 0
+		) {
 			durationSec = beatsToSeconds(drag.lengthBeats, get(tempo).bpm);
 		}
 
@@ -1859,7 +1941,7 @@
 			trackIndex,
 			startSec: doSnap ? snap(rawStart, false) : rawStart,
 			durationSec,
-			rejected,
+			rejected
 		};
 	}
 
@@ -1892,7 +1974,7 @@
 			await insertMidiLibraryAsset({
 				asset,
 				trackId,
-				startSec: opts.startSec,
+				startSec: opts.startSec
 			});
 			return;
 		}
@@ -1903,8 +1985,8 @@
 					path: opts.path,
 					source: opts.source,
 					durationSec: opts.durationSec,
-					assetId: opts.assetId,
-				}),
+					assetId: opts.assetId
+				})
 			);
 			if (opts.assetId) libraryStore.recordRecent(opts.assetId);
 		} catch (err: unknown) {
@@ -1947,7 +2029,7 @@
 			trackIndex: preview.trackIndex,
 			startSec: preview.startSec,
 			kind: drag.kind,
-			lengthBeats: drag.lengthBeats,
+			lengthBeats: drag.lengthBeats
 		});
 	});
 	onDestroy(unsubLibraryDrop);
@@ -2056,15 +2138,25 @@
 		sel?.removeAllRanges();
 		sel?.addRange(range);
 		el.addEventListener('keydown', function onKey(ev: KeyboardEvent) {
-			if (ev.key === 'Enter') { ev.preventDefault(); el.blur(); }
+			if (ev.key === 'Enter') {
+				ev.preventDefault();
+				el.blur();
+			}
 		});
-		el.addEventListener('blur', function() {
-			el.contentEditable = 'false';
-			const newName = el.textContent?.trim() || tracks[trackIndex].name;
-			tracks[trackIndex] = { ...tracks[trackIndex], name: newName };
-			tracks = tracks;
-			updateTrack(tracks[trackIndex].id, { name: newName, volume: tracks[trackIndex].volume }).catch(console.error);
-		}, { once: true });
+		el.addEventListener(
+			'blur',
+			function () {
+				el.contentEditable = 'false';
+				const newName = el.textContent?.trim() || tracks[trackIndex].name;
+				tracks[trackIndex] = { ...tracks[trackIndex], name: newName };
+				tracks = tracks;
+				updateTrack(tracks[trackIndex].id, {
+					name: newName,
+					volume: tracks[trackIndex].volume
+				}).catch(console.error);
+			},
+			{ once: true }
+		);
 	}
 
 	// ── Zoom controls ─────────────────────────────────────────────────────────
@@ -2085,8 +2177,6 @@
 			updateArrangeScrollbars();
 		}
 	}
-
-
 </script>
 
 <svelte:window on:keydown={handleKeyDown} />
@@ -2113,13 +2203,24 @@
 				trackId: contextMenu.trackId,
 				trackIndex: contextMenu.trackIndex,
 				anchorX: contextMenu.x,
-				anchorY: contextMenu.y,
+				anchorY: contextMenu.y
 			});
 		}}
-		on:rename={() => { if (contextMenu) renameTrackByIndex(contextMenu.trackIndex); }}
-		on:automate={() => { if (contextMenu) automationPicker = { x: contextMenu.x, y: contextMenu.y, trackIndex: contextMenu.trackIndex }; }}
+		on:rename={() => {
+			if (contextMenu) renameTrackByIndex(contextMenu.trackIndex);
+		}}
+		on:automate={() => {
+			if (contextMenu)
+				automationPicker = {
+					x: contextMenu.x,
+					y: contextMenu.y,
+					trackIndex: contextMenu.trackIndex
+				};
+		}}
 		on:delete={(e) => handleDeleteTrack(e.detail.trackId)}
-		on:close={() => { contextMenu = null; }}
+		on:close={() => {
+			contextMenu = null;
+		}}
 	/>
 {/if}
 
@@ -2129,7 +2230,9 @@
 		x={automationPicker.x}
 		y={automationPicker.y}
 		on:select={(e) => handleAutomate(e.detail)}
-		on:close={() => { automationPicker = null; }}
+		on:close={() => {
+			automationPicker = null;
+		}}
 	/>
 {/if}
 
@@ -2146,7 +2249,9 @@
 		on:paste={() => pasteClips().catch(console.error)}
 		on:duplicate={() => duplicateSelected().catch(console.error)}
 		on:delete={() => deleteSelected()}
-		on:close={() => { clipContextMenu = null; }}
+		on:close={() => {
+			clipContextMenu = null;
+		}}
 	/>
 {/if}
 
@@ -2166,10 +2271,18 @@
 					color={trackColor(track.id, track.color)}
 					volume={track.volume}
 					bind:pan={tracks[trackIndex].pan}
-					peakL={($trackLevels[track.id]?.[0]) ?? 0}
-					peakR={($trackLevels[track.id]?.[1]) ?? 0}
+					peakL={$trackLevels[track.id]?.[0] ?? 0}
+					peakR={$trackLevels[track.id]?.[1] ?? 0}
 					on:select={() => selectTrackIndex(trackIndex)}
-					on:contextmenu={(e) => { contextMenu = { x: e.detail.clientX, y: e.detail.clientY, trackId: track.id, trackName: track.name, trackIndex }; }}
+					on:contextmenu={(e) => {
+						contextMenu = {
+							x: e.detail.clientX,
+							y: e.detail.clientY,
+							trackId: track.id,
+							trackName: track.name,
+							trackIndex
+						};
+					}}
 					on:mutetoggle={() => handleMuteToggle(trackIndex)}
 					on:solotoggle={() => handleSoloToggle(trackIndex)}
 					on:armtoggle={() => handleArmToggle(trackIndex)}
@@ -2178,18 +2291,25 @@
 					on:panchange={() => handlePanChange(trackIndex)}
 					on:panrelease={() => handlePanRelease(trackIndex)}
 					on:colorchange={(e) => handleColorChange(trackIndex, e.detail)}
-					on:rename={(e) => { tracks[trackIndex] = { ...tracks[trackIndex], name: e.detail.name }; tracks = tracks; updateTrack(tracks[trackIndex].id, { name: e.detail.name, volume: tracks[trackIndex].volume }).catch(console.error); }}
-				on:openpianoroll={() => {
-					const firstClip = track.midi_clips?.[0];
-					if (firstClip) {
-						selection.setSingle(firstClip.id);
-						focusMidiClipForEdit(track, firstClip, trackColor(track.id, track.color));
-					} else {
-						const bpm = $tempo.bpm;
-						const fourBeats = (4 / bpm) * 60;
-						addMidiClip(track.id, 0, fourBeats).catch(console.error);
-					}
-				}}
+					on:rename={(e) => {
+						tracks[trackIndex] = { ...tracks[trackIndex], name: e.detail.name };
+						tracks = tracks;
+						updateTrack(tracks[trackIndex].id, {
+							name: e.detail.name,
+							volume: tracks[trackIndex].volume
+						}).catch(console.error);
+					}}
+					on:openpianoroll={() => {
+						const firstClip = track.midi_clips?.[0];
+						if (firstClip) {
+							selection.setSingle(firstClip.id);
+							focusMidiClipForEdit(track, firstClip, trackColor(track.id, track.color));
+						} else {
+							const bpm = $tempo.bpm;
+							const fourBeats = (4 / bpm) * 60;
+							addMidiClip(track.id, 0, fourBeats).catch(console.error);
+						}
+					}}
 				/>
 				{#each track.automation_lanes as lane (lane.id)}
 					<AutomationLaneHeader
@@ -2209,10 +2329,9 @@
 	</div>
 
 	<div class="right-panel">
-		<!-- svelte-ignore a11y-no-static-element-interactions a11y-click-events-have-key-events -->
 		<TimeRuler
 			bind:rulerEl={arrangeRulerEl}
-			pxPerBeat={pxPerBeat}
+			{pxPerBeat}
 			numerator={$tempo.numerator}
 			scrollPx={tracksScrollLeft}
 			viewportWidthPx={rulerViewportWidth}
@@ -2252,7 +2371,7 @@
 		<Playhead x={playheadMarkerX} />
 
 		<div class="tracks-column">
-			<!-- svelte-ignore a11y-no-static-element-interactions a11y-click-events-have-key-events -->
+			<!-- svelte-ignore a11y-no-static-element-interactions -->
 			<div
 				id="arrange-tracks"
 				class="tracks"
@@ -2274,127 +2393,148 @@
 					bind:this={tracksInnerEl}
 					style="width: {effectiveContentWidthPx}px; min-width: {effectiveContentWidthPx}px; min-height: calc(100% - {arrangeBottomPadPx}px); padding-bottom: {arrangeBottomPadPx}px"
 				>
-			{#if $loopRegion.enabled}
-				<div
-					class="loop-shade"
-					style="left: {loopStartSec * scale}px; width: {(loopEndSec - loopStartSec) * scale}px;"
-				></div>
-			{/if}
-			{#if $preferences.interface.showArrangeGrid}
-				<ArrangeGrid
-					widthPx={effectiveContentWidthPx}
-					heightPx={arrangeGridHeight}
-					pxPerBeat={pxPerBeat}
-					numerator={$tempo.numerator}
-					totalBeats={effectiveTotalBeats}
-					gridBeats={$midiGridBeats}
-				/>
-			{/if}
-			{#if tracks.length === 0}
-				<div class="empty-tracks">
-					<svg class="empty-tracks-icon" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-						<path d="M9 18V5l12-2v13"/>
-						<circle cx="6" cy="18" r="3"/>
-						<circle cx="18" cy="16" r="3"/>
-					</svg>
-					<p class="empty-tracks-text">Aucune piste</p>
-					<p class="empty-tracks-hint">Créez une piste, glissez un fichier audio, ou insérez depuis la bibliothèque</p>
-					<div class="empty-tracks-actions">
-						<!-- svelte-ignore a11y-no-static-element-interactions a11y-click-events-have-key-events -->
-						<button type="button" class="empty-tracks-cta" on:click={handleCreateTrack}>
-							+ Nouvelle piste
-						</button>
-						<!-- svelte-ignore a11y-no-static-element-interactions a11y-click-events-have-key-events -->
-						<button
-							type="button"
-							class="empty-tracks-cta empty-tracks-cta--secondary"
-							on:click={(e) =>
-								openLibraryInsertPopup({
-									trackId: null,
-									trackIndex: null,
-									anchorX: e.clientX,
-									anchorY: e.clientY,
-									context: 'playhead_insert',
-								})}
-						>
-							Insérer un son…
-						</button>
-					</div>
-				</div>
-			{/if}
-			{#if fileDragPreview}
-				<div
-					class="clip-ghost"
-					class:clip-ghost--new-track={isNewArrangeTrackRow(fileDragPreview.trackIndex, tracks.length)}
-					class:clip-ghost--rejected={fileDragPreview.rejected}
-					style="top: {rowTops[fileDragPreview.trackIndex]}px; left: {fileDragPreview.startSec * scale}px; width: {fileDragPreview.durationSec != null ? fileDragPreview.durationSec * scale : 150}px;"
-				></div>
-			{/if}
-			{#if repeating}
-				{#each Array(repeating.count) as _, i}
-					<div
-						class="clip-ghost"
-						style="top: {rowTops[repeating.trackIndex]}px; left: {(repeating.origStart + (i + 1) * repeating.duration) * scale}px; width: {repeating.duration * scale}px;"
-					></div>
-				{/each}
-				{#if repeating.partialPx > MIN_REPEAT_PARTIAL_PX}
-					<div
-						class="clip-ghost"
-						style="top: {rowTops[repeating.trackIndex]}px; left: {(repeating.origStart + (repeating.count + 1) * repeating.duration) * scale}px; width: {repeating.partialPx}px; opacity: 0.5;"
-					></div>
-				{/if}
-			{/if}
-			{#if tracksPointer.kind === 'selbox'}
-				<div
-					class="arrange-selbox"
-					style="
+					{#if $loopRegion.enabled}
+						<div
+							class="loop-shade"
+							style="left: {loopStartSec * scale}px; width: {(loopEndSec - loopStartSec) *
+								scale}px;"
+						></div>
+					{/if}
+					{#if $preferences.interface.showArrangeGrid}
+						<ArrangeGrid
+							widthPx={effectiveContentWidthPx}
+							heightPx={arrangeGridHeight}
+							{pxPerBeat}
+							numerator={$tempo.numerator}
+							totalBeats={effectiveTotalBeats}
+							gridBeats={$midiGridBeats}
+						/>
+					{/if}
+					{#if tracks.length === 0}
+						<div class="empty-tracks">
+							<svg
+								class="empty-tracks-icon"
+								width="32"
+								height="32"
+								viewBox="0 0 24 24"
+								fill="none"
+								stroke="currentColor"
+								stroke-width="1.5"
+								stroke-linecap="round"
+								stroke-linejoin="round"
+							>
+								<path d="M9 18V5l12-2v13" />
+								<circle cx="6" cy="18" r="3" />
+								<circle cx="18" cy="16" r="3" />
+							</svg>
+							<p class="empty-tracks-text">Aucune piste</p>
+							<p class="empty-tracks-hint">
+								Créez une piste, glissez un fichier audio, ou insérez depuis la bibliothèque
+							</p>
+							<div class="empty-tracks-actions">
+								<button type="button" class="empty-tracks-cta" on:click={handleCreateTrack}>
+									+ Nouvelle piste
+								</button>
+								<button
+									type="button"
+									class="empty-tracks-cta empty-tracks-cta--secondary"
+									on:click={(e) =>
+										openLibraryInsertPopup({
+											trackId: null,
+											trackIndex: null,
+											anchorX: e.clientX,
+											anchorY: e.clientY,
+											context: 'playhead_insert'
+										})}
+								>
+									Insérer un son…
+								</button>
+							</div>
+						</div>
+					{/if}
+					{#if fileDragPreview}
+						<div
+							class="clip-ghost"
+							class:clip-ghost--new-track={isNewArrangeTrackRow(
+								fileDragPreview.trackIndex,
+								tracks.length
+							)}
+							class:clip-ghost--rejected={fileDragPreview.rejected}
+							style="top: {rowTops[fileDragPreview.trackIndex]}px; left: {fileDragPreview.startSec *
+								scale}px; width: {fileDragPreview.durationSec != null
+								? fileDragPreview.durationSec * scale
+								: 150}px;"
+						></div>
+					{/if}
+					{#if repeating}
+						{#each Array(repeating.count) as _, i}
+							<div
+								class="clip-ghost"
+								style="top: {rowTops[repeating.trackIndex]}px; left: {(repeating.origStart +
+									(i + 1) * repeating.duration) *
+									scale}px; width: {repeating.duration * scale}px;"
+							></div>
+						{/each}
+						{#if repeating.partialPx > MIN_REPEAT_PARTIAL_PX}
+							<div
+								class="clip-ghost"
+								style="top: {rowTops[repeating.trackIndex]}px; left: {(repeating.origStart +
+									(repeating.count + 1) * repeating.duration) *
+									scale}px; width: {repeating.partialPx}px; opacity: 0.5;"
+							></div>
+						{/if}
+					{/if}
+					{#if tracksPointer.kind === 'selbox'}
+						<div
+							class="arrange-selbox"
+							style="
 						left: {Math.min(tracksPointer.x0, tracksPointer.x1)}px;
 						top: {Math.min(tracksPointer.y0, tracksPointer.y1) - tracksScrollTop}px;
 						width: {Math.abs(tracksPointer.x1 - tracksPointer.x0)}px;
 						height: {Math.abs(tracksPointer.y1 - tracksPointer.y0)}px;
 					"
-				></div>
-			{/if}
-			{#each tracks as track, trackIndex}
-				<Track
-					trackId={track.id}
-					clips={track.clips}
-					midiClips={track.midi_clips ?? []}
-					{scale}
-					{trackIndex}
-					bpm={$tempo.bpm}
-					trackColor={trackColor(track.id, track.color)}
-					on:clipdragstart={onClipDragStart}
-					on:clipresizestart={onClipResizeStart}
-					on:clipcontextmenu={handleClipContextMenu}
-					on:pendingpainted={onPendingPainted}
-					on:midiclip_dragstart={onMidiClipDragStart}
-					on:midiclip_resizestart={onMidiClipResizeStart}
-					on:midiclip_repeatstart={onMidiClipRepeatStart}
-					on:midiclip_dblclick={onMidiClipDblClick}
-					on:midiclip_activate={onMidiClipActivate}
-					on:midiclip_contextmenu={onMidiClipContextMenu}
-					on:trackdblclick={handleTrackDoubleClick}
-					on:insertsound={(e) =>
-						openLibraryInsertPopup({
-							trackId: track.id,
-							trackIndex: e.detail.trackIndex,
-							anchorX: e.detail.clientX,
-							anchorY: e.detail.clientY + 8,
-						})}
-				/>
-				{#each track.automation_lanes as lane (lane.id)}
-					<AutomationLane
-						trackId={track.id}
-						{lane}
-						effects={track.effects}
-						{scale}
-						widthPx={effectiveContentWidthPx}
-						color={trackColor(track.id, track.color)}
-						snapTime={(seconds, altKey) => snap(seconds, altKey)}
-					/>
-				{/each}
-			{/each}
+						></div>
+					{/if}
+					{#each tracks as track, trackIndex}
+						<Track
+							trackId={track.id}
+							clips={track.clips}
+							midiClips={track.midi_clips ?? []}
+							{scale}
+							{trackIndex}
+							bpm={$tempo.bpm}
+							trackColor={trackColor(track.id, track.color)}
+							on:clipdragstart={onClipDragStart}
+							on:clipresizestart={onClipResizeStart}
+							on:clipcontextmenu={handleClipContextMenu}
+							on:pendingpainted={onPendingPainted}
+							on:midiclip_dragstart={onMidiClipDragStart}
+							on:midiclip_resizestart={onMidiClipResizeStart}
+							on:midiclip_repeatstart={onMidiClipRepeatStart}
+							on:midiclip_dblclick={onMidiClipDblClick}
+							on:midiclip_activate={onMidiClipActivate}
+							on:midiclip_contextmenu={onMidiClipContextMenu}
+							on:trackdblclick={handleTrackDoubleClick}
+							on:insertsound={(e) =>
+								openLibraryInsertPopup({
+									trackId: track.id,
+									trackIndex: e.detail.trackIndex,
+									anchorX: e.detail.clientX,
+									anchorY: e.detail.clientY + 8
+								})}
+						/>
+						{#each track.automation_lanes as lane (lane.id)}
+							<AutomationLane
+								trackId={track.id}
+								{lane}
+								effects={track.effects}
+								{scale}
+								widthPx={effectiveContentWidthPx}
+								color={trackColor(track.id, track.color)}
+								snapTime={(seconds, altKey) => snap(seconds, altKey)}
+							/>
+						{/each}
+					{/each}
 				</div>
 			</div>
 			<ZoomScrollbar
@@ -2406,7 +2546,6 @@
 			/>
 		</div>
 	</div>
-
 </div>
 
 <style lang="scss">
@@ -2464,7 +2603,10 @@
 		align-items: center;
 		justify-content: center;
 		gap: 4px;
-		transition: background 0.15s, color 0.15s, border-color 0.15s;
+		transition:
+			background 0.15s,
+			color 0.15s,
+			border-color 0.15s;
 
 		&:hover {
 			background: rgba(21, 113, 255, 0.1);
@@ -2629,7 +2771,9 @@
 			cursor: pointer;
 			transition: background 0.1s;
 
-			&:hover { background: $accent-hover; }
+			&:hover {
+				background: $accent-hover;
+			}
 
 			&--secondary {
 				background: transparent;
@@ -2644,5 +2788,4 @@
 			}
 		}
 	}
-
 </style>

@@ -15,10 +15,10 @@
 
 The library is an **insertion tool**, not a destination page.
 
-| Surface | Trigger | Role |
-|---------|---------|------|
-| **Browser panel (right dock)** | `B` (and current `L`) / toolbar | Explore, search, organise, import |
-| **Pop-up browser** | `+` on a drop target *(Phase 2)* | Insert in context without leaving the arrange |
+| Surface                        | Trigger                          | Role                                          |
+| ------------------------------ | -------------------------------- | --------------------------------------------- |
+| **Browser panel (right dock)** | `B` (and current `L`) / toolbar  | Explore, search, organise, import             |
+| **Pop-up browser**             | `+` on a drop target _(Phase 2)_ | Insert in context without leaving the arrange |
 
 Same search engine, same assets, same filters. Only the **open context** changes
 default source + filters + drop behaviour.
@@ -38,13 +38,13 @@ in the existing plugin flow until a later unified “Devices” source is design
 
 ## 2. Asset types
 
-| Asset kind | Payload | Preview | Typical drop result |
-|------------|---------|---------|---------------------|
-| `one_shot` | Audio file (short) | Audition one-shot | Audio clip on track |
-| `loop` | Audio file (loopable) | Audition synced to project BPM when possible | Audio clip (raw length Phase 1; warp Phase 3+) |
-| `midi_pattern` | MIDI notes + length | Piano-roll miniature / soft synth | MIDI clip on track |
-| `chord_progression` | Chord list + rhythm | Piano-roll / block chords | MIDI clip (notes derived from chords) |
-| `preset` | Instrument id + state | Optional dry audition | Set track instrument + load state *(Phase 3+)* |
+| Asset kind          | Payload               | Preview                                      | Typical drop result                            |
+| ------------------- | --------------------- | -------------------------------------------- | ---------------------------------------------- |
+| `one_shot`          | Audio file (short)    | Audition one-shot                            | Audio clip on track                            |
+| `loop`              | Audio file (loopable) | Audition synced to project BPM when possible | Audio clip (raw length Phase 1; warp Phase 3+) |
+| `midi_pattern`      | MIDI notes + length   | Piano-roll miniature / soft synth            | MIDI clip on track                             |
+| `chord_progression` | Chord list + rhythm   | Piano-roll / block chords                    | MIDI clip (notes derived from chords)          |
+| `preset`            | Instrument id + state | Optional dry audition                        | Set track instrument + load state _(Phase 3+)_ |
 
 Factory Echoes packs and user folders share the same kinds. Tags and folders are
 metadata, not separate asset types.
@@ -55,19 +55,19 @@ metadata, not separate asset types.
 
 Sources are **views into the catalogue**, not a second folder tree.
 
-| Source id | Shows | Default sort |
-|-----------|-------|--------------|
-| `recents` | Last used / previewed / dropped assets | Recency |
-| `favorites` | User-starred assets | Name |
-| `audio` | All indexed audio files (Phase 1 sole content source) | Name |
-| `all` | Every indexed asset *(Phase 2+ when multiple kinds exist)* | Relevance / name |
-| `samples` | `one_shot` *(Phase 2+)* | Name |
-| `loops` | `loop` *(Phase 2+)* | BPM proximity to project, then name |
-| `chords` | `chord_progression` | Name / key match |
-| `midi` | `midi_pattern` | Name |
-| `drums` | Hybrid: drum-tagged one-shots + drum MIDI *(Phase 3)* | Name |
-| `user_folder:*` | One indexed user folder | Path / name |
-| `pack:*` | One factory or installed pack *(Phase 4)* | Pack order |
+| Source id       | Shows                                                      | Default sort                        |
+| --------------- | ---------------------------------------------------------- | ----------------------------------- |
+| `recents`       | Last used / previewed / dropped assets                     | Recency                             |
+| `favorites`     | User-starred assets                                        | Name                                |
+| `audio`         | All indexed audio files (Phase 1 sole content source)      | Name                                |
+| `all`           | Every indexed asset _(Phase 2+ when multiple kinds exist)_ | Relevance / name                    |
+| `samples`       | `one_shot` _(Phase 2+)_                                    | Name                                |
+| `loops`         | `loop` _(Phase 2+)_                                        | BPM proximity to project, then name |
+| `chords`        | `chord_progression`                                        | Name / key match                    |
+| `midi`          | `midi_pattern`                                             | Name                                |
+| `drums`         | Hybrid: drum-tagged one-shots + drum MIDI _(Phase 3)_      | Name                                |
+| `user_folder:*` | One indexed user folder                                    | Path / name                         |
+| `pack:*`        | One factory or installed pack _(Phase 4)_                  | Pack order                          |
 
 **Phase 1 ships:** `audio` (single file source), plus `recents` and `favorites`.  
 No Samples/Loops split until kinds exist (Phase 2+).  
@@ -85,36 +85,36 @@ Later: … → Samples → Loops → Chords → MIDI → Drums → User folders 
 Engine tracks are **unified** (`clips` + `midi_clips` + optional `instrument`).
 The UI still needs a drop target notion. Define **lane focus**:
 
-| Lane focus | How it is determined | Accepts |
-|------------|----------------------|---------|
-| `audio` | Pointer over audio clip region, or last selected item was an audio clip, or empty track opened from audio `+` | `one_shot`, `loop` |
-| `midi` | Pointer over MIDI clip region, or last selected item was a MIDI clip, or empty track opened from MIDI `+` | `midi_pattern`, `chord_progression` |
-| `neutral` | Empty track, no last selection | Both — prefer asset under drag; pop-up defaults to `loops` |
+| Lane focus | How it is determined                                                                                          | Accepts                                                    |
+| ---------- | ------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
+| `audio`    | Pointer over audio clip region, or last selected item was an audio clip, or empty track opened from audio `+` | `one_shot`, `loop`                                         |
+| `midi`     | Pointer over MIDI clip region, or last selected item was a MIDI clip, or empty track opened from MIDI `+`     | `midi_pattern`, `chord_progression`                        |
+| `neutral`  | Empty track, no last selection                                                                                | Both — prefer asset under drag; pop-up defaults to `loops` |
 
 **Track “type” for this UX** = current lane focus, not a stored track kind.
 
-| Track situation | Default lane focus on `+` |
-|-----------------|---------------------------|
-| Empty track | `neutral` → pop-up source `audio` |
-| Has audio clips only | `audio` |
-| Has MIDI clips only | `midi` |
-| Mixed audio + MIDI | Last selected clip’s kind; if none, region under `+` |
-| No tracks in project | Phase 1: hint; Phase 2: create track on Enter/drop |
+| Track situation      | Default lane focus on `+`                            |
+| -------------------- | ---------------------------------------------------- |
+| Empty track          | `neutral` → pop-up source `audio`                    |
+| Has audio clips only | `audio`                                              |
+| Has MIDI clips only  | `midi`                                               |
+| Mixed audio + MIDI   | Last selected clip’s kind; if none, region under `+` |
+| No tracks in project | Phase 1: hint; Phase 2: create track on Enter/drop   |
 
 ---
 
 ## 5. Open contexts
 
-| Context id | UI trigger | Default source | Default filters | Primary intent |
-|------------|------------|----------------|-----------------|----------------|
-| `panel` | Right-dock browser | `recents` (cold start: `audio`) | none | Explore |
-| `track_empty` | `+` on empty track | `audio` | — | First content |
-| `track_audio_lane` | `+` / drop on audio focus | `audio` | audio files only | Add audio clip |
-| `track_midi_lane` | `+` / drop on MIDI focus | `chords` (fallback `midi`) | kind ∈ {chord_progression, midi_pattern} | Add MIDI clip |
-| `playhead_insert` | Insert at playhead | inherits selected lane | same as lane | Place at playhead |
-| `instrument_slot` | Instrument picker | *(deferred)* | — | Load instrument |
-| `fx_slot` | Effect `+` | *(deferred)* | — | Load effect |
-| `drum_pad` | Drum pad `+` *(Phase 3)* | `drums` | drums tag | Assign hit |
+| Context id         | UI trigger                | Default source                  | Default filters                          | Primary intent    |
+| ------------------ | ------------------------- | ------------------------------- | ---------------------------------------- | ----------------- |
+| `panel`            | Right-dock browser        | `recents` (cold start: `audio`) | none                                     | Explore           |
+| `track_empty`      | `+` on empty track        | `audio`                         | —                                        | First content     |
+| `track_audio_lane` | `+` / drop on audio focus | `audio`                         | audio files only                         | Add audio clip    |
+| `track_midi_lane`  | `+` / drop on MIDI focus  | `chords` (fallback `midi`)      | kind ∈ {chord_progression, midi_pattern} | Add MIDI clip     |
+| `playhead_insert`  | Insert at playhead        | inherits selected lane          | same as lane                             | Place at playhead |
+| `instrument_slot`  | Instrument picker         | _(deferred)_                    | —                                        | Load instrument   |
+| `fx_slot`          | Effect `+`                | _(deferred)_                    | —                                        | Load effect       |
+| `drum_pad`         | Drum pad `+` _(Phase 3)_  | `drums`                         | drums tag                                | Assign hit        |
 
 **Memory (Phase 4):** optional “Use current selections for this context”. Factory
 defaults above always remain restorable. Never require configuration before use.
@@ -125,36 +125,36 @@ defaults above always remain restorable. Never require configuration before use.
 
 ### 6.1 Compatibility matrix
 
-| Asset ↓ \ Target → | Lane `audio` | Lane `midi` | Lane `neutral` (empty track) | Timeline (no track) | FX / instrument slot |
-|--------------------|--------------|-------------|------------------------------|---------------------|----------------------|
-| `one_shot` / `loop` | **Add audio clip** | Reject | **Add audio clip** | Create track + clip *(P2)* | Reject |
-| `midi_pattern` | Reject | **Add MIDI clip** | **Add MIDI clip** | Create track + MIDI *(P2)* | Reject |
-| `chord_progression` | Reject | **Add MIDI clip** (expand) | Same | Same *(P2)* | Reject |
-| `preset` | — | — | Set instrument *(P3+)* | Create + set *(P3+)* | Load slot *(P3+)* |
+| Asset ↓ \ Target →  | Lane `audio`       | Lane `midi`                | Lane `neutral` (empty track) | Timeline (no track)        | FX / instrument slot |
+| ------------------- | ------------------ | -------------------------- | ---------------------------- | -------------------------- | -------------------- |
+| `one_shot` / `loop` | **Add audio clip** | Reject                     | **Add audio clip**           | Create track + clip _(P2)_ | Reject               |
+| `midi_pattern`      | Reject             | **Add MIDI clip**          | **Add MIDI clip**            | Create track + MIDI _(P2)_ | Reject               |
+| `chord_progression` | Reject             | **Add MIDI clip** (expand) | Same                         | Same _(P2)_                | Reject               |
+| `preset`            | —                  | —                          | Set instrument _(P3+)_       | Create + set _(P3+)_       | Load slot _(P3+)_    |
 
 Reject = `not-allowed` cursor, no drop line (`UI_GUIDELINES.md` §4.2).
 
 ### 6.2 Placement
 
-| Rule | Behaviour |
-|------|-----------|
-| Horizontal position | Snap to grid (same as clip move) |
-| Vertical target | Track under pointer; else selected track |
-| Duration (audio) | File length in project time (Phase 1) |
+| Rule                     | Behaviour                                         |
+| ------------------------ | ------------------------------------------------- |
+| Horizontal position      | Snap to grid (same as clip move)                  |
+| Vertical target          | Track under pointer; else selected track          |
+| Duration (audio)         | File length in project time (Phase 1)             |
 | Duration (MIDI / chords) | Pattern length in beats → seconds via project BPM |
-| Key adaptation | Phase 3: transpose when asset declares a key |
-| Undo | One undo step wrapping the command group |
+| Key adaptation           | Phase 3: transpose when asset declares a key      |
+| Undo                     | One undo step wrapping the command group          |
 
 ### 6.3 Commands (engine)
 
 UI never mutates engine state directly (ADR-005 / ADR-023).
 
-| Drop outcome | Command(s) |
-|--------------|------------|
-| Audio on track | `ADD_CLIP` |
-| MIDI / chords on track | `ADD_MIDI_CLIP` (notes expanded before or in gateway) |
-| New track + content | `ADD_TRACK` then add clip *(Phase 2)* |
-| MIDI on track with `instrument: null` | Keep built-in PolySynth — no extra command |
+| Drop outcome                          | Command(s)                                            |
+| ------------------------------------- | ----------------------------------------------------- |
+| Audio on track                        | `ADD_CLIP`                                            |
+| MIDI / chords on track                | `ADD_MIDI_CLIP` (notes expanded before or in gateway) |
+| New track + content                   | `ADD_TRACK` then add clip _(Phase 2)_                 |
+| MIDI on track with `instrument: null` | Keep built-in PolySynth — no extra command            |
 
 ### 6.4 Double-click / Enter
 
@@ -325,12 +325,12 @@ thrash). Panel closes via `B` or chrome toggle. Pop-up: `Esc` always closes.
 
 ### 8.2 Focus scopes (for shortcuts)
 
-| Scope | When | `Space` means |
-|-------|------|---------------|
-| `arrange` | Default | Transport play/pause |
-| `library_results` | Panel or pop-up results list focused | Preview toggle |
-| `library_search` | Search field focused | Type space character |
-| `popup` | Pop-up open | Same as results/search inside pop-up; Esc closes |
+| Scope             | When                                 | `Space` means                                    |
+| ----------------- | ------------------------------------ | ------------------------------------------------ |
+| `arrange`         | Default                              | Transport play/pause                             |
+| `library_results` | Panel or pop-up results list focused | Preview toggle                                   |
+| `library_search`  | Search field focused                 | Type space character                             |
+| `popup`           | Pop-up open                          | Same as results/search inside pop-up; Esc closes |
 
 ### 8.3 Result row states
 
@@ -347,17 +347,17 @@ incrementally. App startup never waits on a full scan (ADR-023).
 
 ## 9. Shortcuts
 
-| Action | Shortcut | Scope |
-|--------|----------|-------|
-| Toggle library panel | `B` | Global (unless text field, except search) |
-| Focus library search | `/` or `Ctrl/Cmd+F` | Panel open → focuses search |
-| Move result selection | `↑` `↓` | `library_results` |
-| Preview selected | `Space` | `library_results` only |
-| Insert at playhead | `Enter` | `library_results` / pop-up |
-| Clear search | `Esc` | Search non-empty |
-| Close pop-up | `Esc` | Pop-up open (search empty or second Esc) |
-| Toggle favorite | `F` or `Ctrl/Cmd+D` | `library_results` *(Phase 2)* |
-| Jump sources 1–4 | `Ctrl/Cmd+1…4` | Panel/pop-up *(Phase 2)* |
+| Action                | Shortcut            | Scope                                     |
+| --------------------- | ------------------- | ----------------------------------------- |
+| Toggle library panel  | `B`                 | Global (unless text field, except search) |
+| Focus library search  | `/` or `Ctrl/Cmd+F` | Panel open → focuses search               |
+| Move result selection | `↑` `↓`             | `library_results`                         |
+| Preview selected      | `Space`             | `library_results` only                    |
+| Insert at playhead    | `Enter`             | `library_results` / pop-up                |
+| Clear search          | `Esc`               | Search non-empty                          |
+| Close pop-up          | `Esc`               | Pop-up open (search empty or second Esc)  |
+| Toggle favorite       | `F` or `Ctrl/Cmd+D` | `library_results` _(Phase 2)_             |
+| Jump sources 1–4      | `Ctrl/Cmd+1…4`      | Panel/pop-up _(Phase 2)_                  |
 
 Transport and edit shortcuts from `UI_GUIDELINES.md` §4.1 remain unchanged
 outside `library_*` scopes.
@@ -366,15 +366,15 @@ outside `library_*` scopes.
 
 ## 10. Preview
 
-| Rule | Phase 1 | Later |
-|------|---------|-------|
-| Implementation | **UI-side** (decode + Web Audio / equivalent) | Optional engine-faithful path |
-| Trigger | Hover dwell ~300 ms or `Space` in results | Same |
-| Stop | `Space` / Esc / blur / drag start | Same |
-| BPM sync | None required (play file as-is) | Required for loops |
-| Key sync | — | MIDI / chords |
-| Routing | Must not mutate arrange clips or transport position | Same |
-| RT | Never on audio callback alloc/lock/IO path | Same |
+| Rule           | Phase 1                                             | Later                         |
+| -------------- | --------------------------------------------------- | ----------------------------- |
+| Implementation | **UI-side** (decode + Web Audio / equivalent)       | Optional engine-faithful path |
+| Trigger        | Hover dwell ~300 ms or `Space` in results           | Same                          |
+| Stop           | `Space` / Esc / blur / drag start                   | Same                          |
+| BPM sync       | None required (play file as-is)                     | Required for loops            |
+| Key sync       | —                                                   | MIDI / chords                 |
+| Routing        | Must not mutate arrange clips or transport position | Same                          |
+| RT             | Never on audio callback alloc/lock/IO path          | Same                          |
 
 Phase 1 preview may differ slightly from arrange playback (sample rate, no
 project FX). That is accepted.
@@ -393,20 +393,20 @@ project FX). That is accepted.
 
 ## 12. Resolved product calls (see ADR-023)
 
-| Topic | Decision |
-|-------|----------|
-| Dock | **Right panel** — evolve `RightPanel.svelte`; left = inspector only |
-| Preview path | **UI WebAudio** in Phase 1; engine preview later if needed |
-| Phase 1 sources | **`audio` + recents + favorites** only (no Samples/Loops split) |
-| Warp on loop drop | **Raw file length** until a dedicated warp ADR (target Phase 3); no UI re-encode hack |
-| Chord expansion | **Factory MIDI files first**; canonical rule-based voicing next; no drop-time editor until demanded |
-| Pop-up (Phase 2) | **Same browser as the dock** (Bitwig-style): full search + sources + scrollable results + preview — opened from a lane `+` slot. Not a truncated mini-list. |
-| Context memory | **None until Phase 4**, then **opt-in only** (“use current selections…”) — never silent auto-learn |
-| Sampler vs PolySynth | Library does not introduce a sampler; MIDI → PolySynth default |
-| Space conflict | Focus-scope rule (§8.2) — accepted |
-| `B` vs `L` | **Both toggle** the right library panel; restore Loop to another shortcut in a later shortcuts cleanup |
-| Empty project insert | Phase 1 = hint only; Phase 2 = auto `ADD_TRACK` + clip |
-| Preview BPM sync | Phase 1 = native file rate; Phase 2 optional UI-only stretch **if** BPM metadata exists |
+| Topic                | Decision                                                                                                                                                    |
+| -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Dock                 | **Right panel** — evolve `RightPanel.svelte`; left = inspector only                                                                                         |
+| Preview path         | **UI WebAudio** in Phase 1; engine preview later if needed                                                                                                  |
+| Phase 1 sources      | **`audio` + recents + favorites** only (no Samples/Loops split)                                                                                             |
+| Warp on loop drop    | **Raw file length** until a dedicated warp ADR (target Phase 3); no UI re-encode hack                                                                       |
+| Chord expansion      | **Factory MIDI files first**; canonical rule-based voicing next; no drop-time editor until demanded                                                         |
+| Pop-up (Phase 2)     | **Same browser as the dock** (Bitwig-style): full search + sources + scrollable results + preview — opened from a lane `+` slot. Not a truncated mini-list. |
+| Context memory       | **None until Phase 4**, then **opt-in only** (“use current selections…”) — never silent auto-learn                                                          |
+| Sampler vs PolySynth | Library does not introduce a sampler; MIDI → PolySynth default                                                                                              |
+| Space conflict       | Focus-scope rule (§8.2) — accepted                                                                                                                          |
+| `B` vs `L`           | **Both toggle** the right library panel; restore Loop to another shortcut in a later shortcuts cleanup                                                      |
+| Empty project insert | Phase 1 = hint only; Phase 2 = auto `ADD_TRACK` + clip                                                                                                      |
+| Preview BPM sync     | Phase 1 = native file rate; Phase 2 optional UI-only stretch **if** BPM metadata exists                                                                     |
 
 ---
 

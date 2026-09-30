@@ -23,14 +23,7 @@
 	{#if label}
 		<span class="range-label">{displayLabel}</span>
 	{/if}
-	<input
-		class="range-input"
-		type="range"
-		{min}
-		{max}
-		{step}
-		bind:value
-	/>
+	<input class="range-input" type="range" {min} {max} {step} bind:value />
 	{#if hints.length}
 		<div class="range-hints">
 			{#each hints as h}
@@ -73,7 +66,9 @@
 			border-radius: 50%;
 			background: $accent-color;
 			cursor: pointer;
-			transition: transform 0.1s, box-shadow 0.1s;
+			transition:
+				transform 0.1s,
+				box-shadow 0.1s;
 
 			&:hover {
 				transform: scale(1.2);

@@ -12,7 +12,7 @@ export interface TempoInfo {
 export function getSnapSubdivisionSec(
 	tempo: TempoInfo,
 	scale: number,
-	midiGridBeats: number,
+	midiGridBeats: number
 ): number {
 	const MIN_SNAP_PX = 8;
 	const beatSec = 60 / tempo.bpm;

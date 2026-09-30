@@ -4,6 +4,7 @@ The architecture memory lives in `docs/active/`. It must stay small, canonical,
 and in sync with the code.
 
 **Structure:**
+
 - `docs/active/` — the single source of truth, one canonical doc per topic.
 - `docs/archive/` — superseded docs, banner-marked, **never edited**.
 - `docs/active/decisions/` — ADRs + `000-index.md` + `architecture-decision-rules.md`.
@@ -12,6 +13,7 @@ and in sync with the code.
 - `.claude/state_index.md` — the subsystem → source-of-truth → code map.
 
 **Hard rules:**
+
 1. **Never delete a useful doc — archive it** with a banner pointing to its
    replacement. Never overwrite history.
 2. **One canonical home per topic.** If two docs cover the same thing, merge into

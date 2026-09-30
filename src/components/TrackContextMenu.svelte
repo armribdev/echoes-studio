@@ -44,52 +44,132 @@
 
 	<div class="separator"></div>
 
-	<button class="item" on:click={() => { dispatch('addtrack'); close(); }}>
-		<svg class="item-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-			<line x1="12" y1="5" x2="12" y2="19"/>
-			<line x1="5" y1="12" x2="19" y2="12"/>
+	<button
+		class="item"
+		on:click={() => {
+			dispatch('addtrack');
+			close();
+		}}
+	>
+		<svg
+			class="item-icon"
+			width="14"
+			height="14"
+			viewBox="0 0 24 24"
+			fill="none"
+			stroke="currentColor"
+			stroke-width="2"
+			stroke-linecap="round"
+			stroke-linejoin="round"
+		>
+			<line x1="12" y1="5" x2="12" y2="19" />
+			<line x1="5" y1="12" x2="19" y2="12" />
 		</svg>
 		<span>Nouvelle piste</span>
 		<span class="item-shortcut">Ctrl+Shift+T</span>
 	</button>
 
-	<button class="item" on:click={() => { dispatch('insertsound'); close(); }}>
-		<svg class="item-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-			<circle cx="11" cy="11" r="7"/>
-			<line x1="21" y1="21" x2="16.65" y2="16.65"/>
-			<path d="M8 11h6M11 8v6"/>
+	<button
+		class="item"
+		on:click={() => {
+			dispatch('insertsound');
+			close();
+		}}
+	>
+		<svg
+			class="item-icon"
+			width="14"
+			height="14"
+			viewBox="0 0 24 24"
+			fill="none"
+			stroke="currentColor"
+			stroke-width="2"
+			stroke-linecap="round"
+			stroke-linejoin="round"
+		>
+			<circle cx="11" cy="11" r="7" />
+			<line x1="21" y1="21" x2="16.65" y2="16.65" />
+			<path d="M8 11h6M11 8v6" />
 		</svg>
 		<span>Insérer un son…</span>
 	</button>
 
 	<div class="separator"></div>
 
-	<button class="item" on:click={() => { dispatch('rename'); close(); }}>
-		<svg class="item-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-			<path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
-			<path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+	<button
+		class="item"
+		on:click={() => {
+			dispatch('rename');
+			close();
+		}}
+	>
+		<svg
+			class="item-icon"
+			width="14"
+			height="14"
+			viewBox="0 0 24 24"
+			fill="none"
+			stroke="currentColor"
+			stroke-width="2"
+			stroke-linecap="round"
+			stroke-linejoin="round"
+		>
+			<path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+			<path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
 		</svg>
 		<span>Renommer</span>
 		<span class="item-shortcut">F2</span>
 	</button>
 
-	<button class="item" on:click={() => { dispatch('automate'); close(); }}>
-		<svg class="item-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-			<polyline points="3 17 9 11 13 15 21 7"/>
-			<circle cx="9" cy="11" r="1.5"/>
-			<circle cx="13" cy="15" r="1.5"/>
+	<button
+		class="item"
+		on:click={() => {
+			dispatch('automate');
+			close();
+		}}
+	>
+		<svg
+			class="item-icon"
+			width="14"
+			height="14"
+			viewBox="0 0 24 24"
+			fill="none"
+			stroke="currentColor"
+			stroke-width="2"
+			stroke-linecap="round"
+			stroke-linejoin="round"
+		>
+			<polyline points="3 17 9 11 13 15 21 7" />
+			<circle cx="9" cy="11" r="1.5" />
+			<circle cx="13" cy="15" r="1.5" />
 		</svg>
 		<span>Automatiser un réglage…</span>
 	</button>
 
 	<div class="separator"></div>
 
-	<button class="item item--danger" on:click={() => { dispatch('delete', { trackId }); close(); }}>
-		<svg class="item-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-			<polyline points="3 6 5 6 21 6"/>
-			<path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
-			<path d="M10 11v6M14 11v6"/>
-			<path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
+	<button
+		class="item item--danger"
+		on:click={() => {
+			dispatch('delete', { trackId });
+			close();
+		}}
+	>
+		<svg
+			class="item-icon"
+			width="14"
+			height="14"
+			viewBox="0 0 24 24"
+			fill="none"
+			stroke="currentColor"
+			stroke-width="2"
+			stroke-linecap="round"
+			stroke-linejoin="round"
+		>
+			<polyline points="3 6 5 6 21 6" />
+			<path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+			<path d="M10 11v6M14 11v6" />
+			<path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
 		</svg>
 		<span>Supprimer la piste</span>
 		<span class="item-shortcut">Suppr</span>
@@ -107,7 +187,9 @@
 		border: 1px solid $border-color;
 		border-radius: $radius-lg;
 		padding: 4px;
-		box-shadow: 0 8px 32px rgba(0, 0, 0, 0.55), 0 2px 8px rgba(0, 0, 0, 0.3);
+		box-shadow:
+			0 8px 32px rgba(0, 0, 0, 0.55),
+			0 2px 8px rgba(0, 0, 0, 0.3);
 		user-select: none;
 	}
 
@@ -139,7 +221,9 @@
 		border-radius: $radius-sm;
 		cursor: pointer;
 		text-align: left;
-		transition: background 0.08s, color 0.08s;
+		transition:
+			background 0.08s,
+			color 0.08s;
 
 		&:hover {
 			background: $surface-hover;

@@ -93,7 +93,7 @@
 		p4096: [number, number][],
 		sr: number,
 		s: number,
-		streamedOnly = false,
+		streamedOnly = false
 	): { peaks: [number, number][]; chunkSize: number } {
 		const samplesPerPixel = sr / s;
 		// Streamed-only: ignore peaks_64 (arrives at decode finalize and would pop).
@@ -129,7 +129,7 @@
 			peaks_4096,
 			sample_rate,
 			scale,
-			streamedOnly || pending,
+			streamedOnly || pending
 		);
 
 		if (peaks.length > 0 && sample_rate > 0) {
@@ -176,7 +176,7 @@
 			peaks_4096,
 			sample_rate,
 			scale,
-			true,
+			true
 		);
 		if (peaks.length === 0 || sample_rate <= 0 || scale <= 0) return 0;
 		const coveredSec = (peaks.length * chunkSize) / sample_rate;
@@ -322,8 +322,7 @@
 		// with recomputed lanes that differ slightly from streamed deltas (end flash).
 		// Exception: still allow the first real peak fill (cached re-import jumps to
 		// progress=1 before peaks land).
-		const hasPeaks =
-			peaks_64.length > 0 || peaks_512.length > 0 || peaks_4096.length > 0;
+		const hasPeaks = peaks_64.length > 0 || peaks_512.length > 0 || peaks_4096.length > 0;
 		if (loadProgress < 0.93 || !hasPeaks) {
 			_colsDirty = true;
 		}

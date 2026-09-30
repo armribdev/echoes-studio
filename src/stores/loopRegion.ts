@@ -9,7 +9,10 @@ export interface LoopRegion {
 
 const MIN_BEATS = 1;
 
-function clampRegion(startBeat: number, endBeat: number): Pick<LoopRegion, 'startBeat' | 'endBeat'> {
+function clampRegion(
+	startBeat: number,
+	endBeat: number
+): Pick<LoopRegion, 'startBeat' | 'endBeat'> {
 	const start = Math.max(0, startBeat);
 	const end = Math.max(start + MIN_BEATS, endBeat);
 	return { startBeat: start, endBeat: end };
@@ -19,7 +22,7 @@ function createLoopRegion() {
 	const { subscribe, update, set } = writable<LoopRegion>({
 		enabled: false,
 		startBeat: 0,
-		endBeat: 16,
+		endBeat: 16
 	});
 
 	return {
@@ -28,7 +31,7 @@ function createLoopRegion() {
 		setEnabled: (enabled: boolean) => update((region) => ({ ...region, enabled })),
 		setBeats: (startBeat: number, endBeat: number) =>
 			update((region) => ({ ...region, ...clampRegion(startBeat, endBeat) })),
-		reset: () => set({ enabled: false, startBeat: 0, endBeat: 16 }),
+		reset: () => set({ enabled: false, startBeat: 0, endBeat: 16 })
 	};
 }
 

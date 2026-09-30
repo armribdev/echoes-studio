@@ -9,7 +9,7 @@ export function arrangeClipFrame(
 	startSec: number,
 	endSec: number,
 	scale: number,
-	dpr = typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1,
+	dpr = typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1
 ): { leftPx: number; widthPx: number } {
 	const leftPx = Math.round(startSec * scale * dpr) / dpr;
 	const widthPx = Math.max(1 / dpr, (endSec - startSec) * scale);
@@ -73,7 +73,7 @@ export function arrangeVisibleMaxBars(
 	tracks: Track[],
 	bpm: number,
 	numerator: number,
-	extraEndsSec: Iterable<number> = [],
+	extraEndsSec: Iterable<number> = []
 ): number {
 	let maxEnd = maxClipEndSec(tracks);
 	for (const end of extraEndsSec) {
@@ -83,7 +83,7 @@ export function arrangeVisibleMaxBars(
 	const maxClipEndBar = maxEnd / barSec;
 	return Math.max(
 		ARRANGE_MIN_VISIBLE_BARS,
-		Math.ceil(maxClipEndBar) + ARRANGE_VISIBLE_BARS_AFTER_LAST_CLIP,
+		Math.ceil(maxClipEndBar) + ARRANGE_VISIBLE_BARS_AFTER_LAST_CLIP
 	);
 }
 
@@ -110,7 +110,7 @@ export function arrangeViewportExpandToRange(opts: {
 		viewEndSec,
 		viewportWidthPx,
 		currentScale,
-		minScale,
+		minScale
 	} = opts;
 
 	if (viewportWidthPx <= 0 || currentScale <= 0) return null;
@@ -168,7 +168,7 @@ export function arrangeViewportContractAfterShrink(opts: {
 		viewportWidthPx,
 		currentScale,
 		minScale,
-		maxScale,
+		maxScale
 	} = opts;
 
 	if (viewportWidthPx <= 0 || currentScale <= 0) return null;
@@ -184,7 +184,7 @@ export function arrangeViewportContractAfterShrink(opts: {
 		if (viewStartSec * currentScale <= maxScroll + 0.5) return null;
 		return {
 			scale: currentScale,
-			scrollLeft: maxScroll,
+			scrollLeft: maxScroll
 		};
 	}
 
@@ -239,7 +239,7 @@ export function arrangeMaxBarsHeld(liveMaxBars: number, holdMaxBars: number | nu
 export function arrangeMinPxPerBeat(
 	viewportWidthPx: number,
 	maxBars: number,
-	numerator: number,
+	numerator: number
 ): number {
 	const totalBeats = maxBars * numerator;
 	if (viewportWidthPx <= 0 || totalBeats <= 0) return 0;
@@ -251,7 +251,7 @@ export function arrangeMinScale(
 	viewportWidthPx: number,
 	maxBars: number,
 	numerator: number,
-	bpm: number,
+	bpm: number
 ): number {
 	const pxPerBeat = arrangeMinPxPerBeat(viewportWidthPx, maxBars, numerator);
 	return (pxPerBeat * bpm) / 60;
@@ -261,7 +261,7 @@ export function arrangeMinLogScale(
 	viewportWidthPx: number,
 	maxBars: number,
 	numerator: number,
-	bpm: number,
+	bpm: number
 ): number {
 	return Math.log(Math.max(arrangeMinScale(viewportWidthPx, maxBars, numerator, bpm), 1e-9));
 }
@@ -272,7 +272,13 @@ export function clipsInArrangeSelbox(
 	tracks: Track[],
 	selbox: ArrangeSelbox,
 	scale: number,
-	pendings: { id: string; trackId: string; start: number; end: number; engineClipId?: string }[] = [],
+	pendings: {
+		id: string;
+		trackId: string;
+		start: number;
+		end: number;
+		engineClipId?: string;
+	}[] = []
 ): string[] {
 	const leftPx = Math.min(selbox.x0, selbox.x1);
 	const rightPx = Math.max(selbox.x0, selbox.x1);
@@ -281,7 +287,10 @@ export function clipsInArrangeSelbox(
 	const timeStart = leftPx / scale;
 	const timeEnd = rightPx / scale;
 	const trackStart = rowIndexFromY(topPx, tracks);
-	const trackEnd = Math.min(tracks.length - 1, rowIndexFromY(Math.max(topPx, bottomPx - 1), tracks));
+	const trackEnd = Math.min(
+		tracks.length - 1,
+		rowIndexFromY(Math.max(topPx, bottomPx - 1), tracks)
+	);
 
 	const ids: string[] = [];
 	const seen = new Set<string>();

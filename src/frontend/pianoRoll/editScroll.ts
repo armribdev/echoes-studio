@@ -11,7 +11,7 @@ export function editClipLayoutKey(trackId: string | null, clipId: string | null)
 export function pitchRangeScrollTop(
 	minPitch: number,
 	maxPitch: number,
-	viewportHeight: number,
+	viewportHeight: number
 ): number {
 	const contentH = TOTAL_PITCHES * NOTE_H;
 	const maxScroll = Math.max(0, contentH - viewportHeight);
@@ -28,11 +28,11 @@ export function pitchRangeScrollTop(
 /** Cadrage initial édition : début du clip à gauche, plage de notes visible verticalement. */
 export function fitEditScrollForNotes(
 	noteList: MidiNote[],
-	viewportHeight: number,
+	viewportHeight: number
 ): { scrollLeft: number; scrollTop: number } {
 	const { min, max } = getPreviewPitchRange(noteList);
 	return {
 		scrollLeft: 0,
-		scrollTop: pitchRangeScrollTop(min, max, viewportHeight),
+		scrollTop: pitchRangeScrollTop(min, max, viewportHeight)
 	};
 }

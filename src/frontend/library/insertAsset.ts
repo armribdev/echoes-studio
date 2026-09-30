@@ -49,7 +49,7 @@ function assertCompatibleLane(asset: LibraryAsset, trackId: string): boolean {
 		isMidiLibraryKind(asset.kind)
 			? 'Drop incompatible (piste audio)'
 			: 'Drop incompatible (piste MIDI)',
-		'error',
+		'error'
 	);
 	return false;
 }
@@ -81,7 +81,7 @@ async function insertAudioLibraryAsset(opts: {
 			trackId,
 			filePath: opts.asset.path,
 			startSec: opts.startSec ?? get(transport).position,
-			knownDurationSec: opts.asset.durationSec,
+			knownDurationSec: opts.asset.durationSec
 		});
 		libraryStore.recordRecent(opts.asset.id);
 		return true;
@@ -107,7 +107,8 @@ export async function insertMidiLibraryAsset(opts: {
 	}
 
 	const bpm = get(tempo).bpm;
-	const lengthBeats = opts.asset.lengthBeats ?? Math.max(...notes.map((n) => n.start + n.duration), 4);
+	const lengthBeats =
+		opts.asset.lengthBeats ?? Math.max(...notes.map((n) => n.start + n.duration), 4);
 	const startSec = opts.startSec ?? get(transport).position;
 	const endSec = startSec + beatsToSeconds(lengthBeats, bpm);
 
@@ -119,8 +120,8 @@ export async function insertMidiLibraryAsset(opts: {
 				pitch: n.pitch,
 				start: n.start,
 				duration: n.duration,
-				velocity: n.velocity,
-			})),
+				velocity: n.velocity
+			}))
 		});
 		libraryStore.recordRecent(opts.asset.id);
 		return true;

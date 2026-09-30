@@ -14,7 +14,7 @@ const DEFAULTS: LibraryPersistence = {
 	favoriteIds: [],
 	recentIds: [],
 	indexedFolders: [],
-	lastSource: 'audio',
+	lastSource: 'audio'
 };
 
 function canUseStorage(): boolean {
@@ -32,12 +32,16 @@ export function loadLibraryPersistence(): LibraryPersistence {
 				? parsed.lastSource
 				: 'audio';
 		return {
-			favoriteIds: Array.isArray(parsed.favoriteIds) ? parsed.favoriteIds.filter((x) => typeof x === 'string') : [],
-			recentIds: Array.isArray(parsed.recentIds) ? parsed.recentIds.filter((x) => typeof x === 'string') : [],
+			favoriteIds: Array.isArray(parsed.favoriteIds)
+				? parsed.favoriteIds.filter((x) => typeof x === 'string')
+				: [],
+			recentIds: Array.isArray(parsed.recentIds)
+				? parsed.recentIds.filter((x) => typeof x === 'string')
+				: [],
 			indexedFolders: Array.isArray(parsed.indexedFolders)
 				? parsed.indexedFolders.filter((x) => typeof x === 'string')
 				: [],
-			lastSource,
+			lastSource
 		};
 	} catch {
 		return { ...DEFAULTS, favoriteIds: [], recentIds: [], indexedFolders: [] };

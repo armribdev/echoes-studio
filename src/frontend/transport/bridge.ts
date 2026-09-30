@@ -11,48 +11,48 @@ import { get } from 'svelte/store';
 import { transport } from '../../stores/transport';
 import { trackLevels } from '../../stores/trackLevels';
 import {
-  ev,
-  type EngineEvent,
-  type PositionUpdatedPayload,
-  type LevelsUpdatedPayload,
+	ev,
+	type EngineEvent,
+	type PositionUpdatedPayload,
+	type LevelsUpdatedPayload
 } from '../../shared/protocol/events';
 
 export function connectTransportBridge(): () => void {
-  let unlisten: UnlistenFn | null = null;
+	let unlisten: UnlistenFn | null = null;
 
-  listen<EngineEvent>('engine-event', ({ payload }) => {
-    switch (payload.type) {
-      case ev.PLAY_STARTED:
-        transport.update((t) => ({ ...t, isPlaying: true }));
-        break;
-      case ev.PLAY_STOPPED:
-        transport.update((t) => ({ ...t, isPlaying: false }));
-        break;
-      case ev.POSITION_UPDATED: {
-        const p = payload.payload as PositionUpdatedPayload;
-        if (typeof p.position === 'number' && p.position >= 0 && !get(transport).isScrubbing) {
-          transport.update((t) => ({ ...t, position: p.position }));
-        }
-        if (p.tracks) {
-          trackLevels.set(p.tracks);
-        }
-        break;
-      }
-      case ev.LEVELS_UPDATED: {
-        const p = payload.payload as LevelsUpdatedPayload;
-        if (p.tracks) {
-          trackLevels.set(p.tracks);
-        }
-        break;
-      }
-    }
-  })
-    .then((fn) => {
-      unlisten = fn;
-    })
-    .catch(console.error);
+	listen<EngineEvent>('engine-event', ({ payload }) => {
+		switch (payload.type) {
+			case ev.PLAY_STARTED:
+				transport.update((t) => ({ ...t, isPlaying: true }));
+				break;
+			case ev.PLAY_STOPPED:
+				transport.update((t) => ({ ...t, isPlaying: false }));
+				break;
+			case ev.POSITION_UPDATED: {
+				const p = payload.payload as PositionUpdatedPayload;
+				if (typeof p.position === 'number' && p.position >= 0 && !get(transport).isScrubbing) {
+					transport.update((t) => ({ ...t, position: p.position }));
+				}
+				if (p.tracks) {
+					trackLevels.set(p.tracks);
+				}
+				break;
+			}
+			case ev.LEVELS_UPDATED: {
+				const p = payload.payload as LevelsUpdatedPayload;
+				if (p.tracks) {
+					trackLevels.set(p.tracks);
+				}
+				break;
+			}
+		}
+	})
+		.then((fn) => {
+			unlisten = fn;
+		})
+		.catch(console.error);
 
-  return () => {
-    unlisten?.();
-  };
+	return () => {
+		unlisten?.();
+	};
 }

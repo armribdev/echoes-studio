@@ -20,8 +20,8 @@ edges), which relax the guard introduced here.
 ## Context
 
 Audit [`plugin-system-audit-2026-05-31.md`](../audits/plugin-system-audit-2026-05-31.md)
-**P1-5** / target **BP-2** — *"Pas de séparation port audio / port modulation /
-port MIDI"*:
+**P1-5** / target **BP-2** — _"Pas de séparation port audio / port modulation /
+port MIDI"_:
 
 - `Edge { from: PortId, to: PortId }` carried no type. Every connection was
   implicitly audio.
@@ -73,10 +73,10 @@ emits a typed edge before its node-side port exists.
 
 ## Real-time impact
 
-| Change | RT cost | RT risk |
-|---|---|---|
-| `Edge.kind` field | none — topology type, command thread only | none |
-| `validate_port_kinds` | one O(edges) pass in `compile` (off-RT) | none |
+| Change                | RT cost                                   | RT risk |
+| --------------------- | ----------------------------------------- | ------- |
+| `Edge.kind` field     | none — topology type, command thread only | none    |
+| `validate_port_kinds` | one O(edges) pass in `compile` (off-RT)   | none    |
 
 C-1 preserved: nothing in `process_block` is touched. The pass runs on the
 compiler thread.

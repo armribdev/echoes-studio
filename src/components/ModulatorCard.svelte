@@ -61,7 +61,6 @@
 
 <div class="card" style:--mod-color={color}>
 	<div class="head">
-		<!-- svelte-ignore a11y-no-static-element-interactions -->
 		<div
 			class="handle"
 			class:dragging={ghost !== null}
@@ -74,18 +73,32 @@
 			<svg width="14" height="8" viewBox="-1 -1 16 10" aria-hidden="true"><path d={icon} /></svg>
 		</div>
 		<span class="name">{label}</span>
-		<button class="assign-btn" type="button" class:active={pickerOpen}
+		<button
+			class="assign-btn"
+			type="button"
+			class:active={pickerOpen}
 			on:mousedown|stopPropagation
 			on:click|stopPropagation={() => dispatch('togglepicker')}
-			title="Choisir un réglage dans la liste">Assigner</button>
-		<button class="rm-btn" type="button" on:click|stopPropagation={() => dispatch('remove')} title="Supprimer">×</button>
+			title="Choisir un réglage dans la liste">Assigner</button
+		>
+		<button
+			class="rm-btn"
+			type="button"
+			on:click|stopPropagation={() => dispatch('remove')}
+			title="Supprimer">×</button
+		>
 	</div>
 
 	<slot />
 </div>
 
 {#if ghost}
-	<div class="drag-ghost" style:left="{ghost.x + 12}px" style:top="{ghost.y + 12}px" style:background={color}>
+	<div
+		class="drag-ghost"
+		style:left="{ghost.x + 12}px"
+		style:top="{ghost.y + 12}px"
+		style:background={color}
+	>
 		{label}
 	</div>
 {/if}
@@ -118,8 +131,13 @@
 		cursor: grab;
 		touch-action: none;
 		color: var(--mod-color);
-		&:hover { background: color-mix(in srgb, var(--mod-color) 18%, transparent); }
-		&.dragging { cursor: grabbing; opacity: 0.5; }
+		&:hover {
+			background: color-mix(in srgb, var(--mod-color) 18%, transparent);
+		}
+		&.dragging {
+			cursor: grabbing;
+			opacity: 0.5;
+		}
 	}
 
 	.name {
@@ -144,7 +162,8 @@
 		font-size: 9px;
 		line-height: 1.3;
 		cursor: pointer;
-		&:hover, &.active {
+		&:hover,
+		&.active {
 			background: color-mix(in srgb, var(--mod-color) 15%, transparent);
 			color: $text-color;
 			border-color: color-mix(in srgb, var(--mod-color) 45%, transparent);
@@ -152,11 +171,22 @@
 	}
 
 	.rm-btn {
-		width: 16px; height: 16px; border: none; background: transparent;
-		color: $text-faint; font-size: 14px; line-height: 1; cursor: pointer;
-		padding: 0; display: flex; align-items: center; justify-content: center;
+		width: 16px;
+		height: 16px;
+		border: none;
+		background: transparent;
+		color: $text-faint;
+		font-size: 14px;
+		line-height: 1;
+		cursor: pointer;
+		padding: 0;
+		display: flex;
+		align-items: center;
+		justify-content: center;
 		flex-shrink: 0;
-		&:hover { color: #ff4136; }
+		&:hover {
+			color: #ff4136;
+		}
 	}
 
 	.drag-ghost {

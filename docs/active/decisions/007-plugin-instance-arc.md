@@ -7,6 +7,7 @@ Materialises the ADR-006 design in
 [`docs/active/migration/target_architecture.md`](../migration/target_architecture.md) (BP-1, C-6).
 
 Subsequent phases (out of scope here):
+
 - **Phase 2b** — unify the lifecycle state (single atomic on the instance).
 - **Phase 2c** — refactor `open_vst3_editor` / `open_clap_editor` to clone the
   same `Arc<PluginInstance>` instead of creating a second IComponent /
@@ -35,7 +36,7 @@ Pre-Phase-2a layout
 Direct consequences documented in the audit
 ([`audits/plugin-system-audit-2026-05-31.md`](../audits/plugin-system-audit-2026-05-31.md)):
 
-- **P1-7** — `PluginHost::set_parameter_normalised` "ne sait pas vers *qui*
+- **P1-7** — `PluginHost::set_parameter_normalised` "ne sait pas vers _qui_
   envoyer le paramètre, et `save_device_state` ne peut pas appeler
   `device.save_state()`".
 - **P1-2** — two `LifecycleState` sources of truth (host record + wrapper
@@ -168,20 +169,20 @@ fondation 4 of the audit).
 - No GUI editor consuming the shared `Arc` (Phase 2c).
 - No capability introspection at `prepare` time (Phase 5d).
 - No unification of `LifecycleState` into a single field (Phase 2b — the
-  `set_lifecycle` calls in this PR are deliberately *redundant* with the
+  `set_lifecycle` calls in this PR are deliberately _redundant_ with the
   wrapper's own `lifecycle: LifecycleState` field, so the wrapper API
   observable behaviour is unchanged).
 
 ## Real-time impact
 
-| Change | RT cost | RT risk |
-|---|---|---|
-| `Arc::clone` at instantiate | none — off-RT | none |
-| `Arc::deref` to reach handle in `process` | one non-atomic load (≡ field read) | none |
-| `Arc::drop` on snapshot retire | runs on drop-ring worker (off-RT) | none — same path as previous wrapper drop |
-| `PluginInstance::Drop` FFI teardown | runs on drop-ring or command thread | none — same calls as the old wrapper `Drop` |
-| `AtomicU8` lifecycle store on transitions | off-RT (suspend/resume from command thread) | none |
-| `AtomicU8` lifecycle load | reserved for off-RT consumers (host, future GUI) | none — never called from `process` |
+| Change                                    | RT cost                                          | RT risk                                     |
+| ----------------------------------------- | ------------------------------------------------ | ------------------------------------------- |
+| `Arc::clone` at instantiate               | none — off-RT                                    | none                                        |
+| `Arc::deref` to reach handle in `process` | one non-atomic load (≡ field read)               | none                                        |
+| `Arc::drop` on snapshot retire            | runs on drop-ring worker (off-RT)                | none — same path as previous wrapper drop   |
+| `PluginInstance::Drop` FFI teardown       | runs on drop-ring or command thread              | none — same calls as the old wrapper `Drop` |
+| `AtomicU8` lifecycle store on transitions | off-RT (suspend/resume from command thread)      | none                                        |
+| `AtomicU8` lifecycle load                 | reserved for off-RT consumers (host, future GUI) | none — never called from `process`          |
 
 The `process` call path is **mechanically identical** to the pre-Phase-2a
 code: same FFI sequence, same pointer scratch, same buffer routing. The only
@@ -247,7 +248,7 @@ C-1 (zero mutex / zero alloc / zero syscall in `process`) is preserved.
 
 - **Reversibility.**
   - The five edited files are local and additive.
-  - Wrapper constructors keep their old shape *semantically* — only the
+  - Wrapper constructors keep their old shape _semantically_ — only the
     inputs change. Reverting is straightforward at the cost of giving up the
     host↔wrapper link.
 
@@ -270,7 +271,7 @@ C-1 (zero mutex / zero alloc / zero syscall in `process`) is preserved.
 
 ## Update — 2026-06-03 (records keyed by `instance_key`)
 
-Phase 2a keyed `PluginHost.records` by `device_id` (the plugin *type*), which
+Phase 2a keyed `PluginHost.records` by `device_id` (the plugin _type_), which
 collapsed two instances of the same plugin onto one record — the **R-2**
 collision flagged in
 [`audits/engine-architecture-audit-2026-06-03.md`](../audits/engine-architecture-audit-2026-06-03.md)
@@ -292,7 +293,7 @@ What changed, and what deliberately did **not**:
   independently from the UI and persisted separately — remains a follow-up
   (audit point 2, "step 4"), which touches the serialized format (C-4 migration)
   and the IPC surface and therefore needs its own ADR.
-- **Not yet done:** instance *reuse* across recompiles (audit point 1). The new
+- **Not yet done:** instance _reuse_ across recompiles (audit point 1). The new
   key is its prerequisite; reuse additionally requires avoiding a double
   `activate` in the format wrappers and is gated on that work.
 

@@ -63,7 +63,8 @@ function pushLayer(layer: Layer) {
 
 function removeLayer(layer: Layer) {
 	layers.splice(layers.indexOf(layer), 1);
-	if (layers.length === 0) window.removeEventListener('pointerdown', handleOutsidePointerDown, true);
+	if (layers.length === 0)
+		window.removeEventListener('pointerdown', handleOutsidePointerDown, true);
 }
 
 /** `use:dismissable={close}` — `close` runs on Escape or a press outside `node`. */

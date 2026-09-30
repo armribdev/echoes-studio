@@ -91,11 +91,11 @@ in the same way). Two commands: `list_midi_input_devices`,
 
 ## Real-time impact
 
-| Change | RT cost | RT risk |
-|---|---|---|
-| `InstrumentNode::drain_live_input()` | pre-allocated ring drain, same as `drain_preview` | none — no alloc/lock/drop |
-| Capture thread → `push_live_input` | off-RT (not the audio thread) | none |
-| Armed-track `Mutex` | only touched by command thread + capture thread | never reachable from `process_block` |
+| Change                               | RT cost                                           | RT risk                              |
+| ------------------------------------ | ------------------------------------------------- | ------------------------------------ |
+| `InstrumentNode::drain_live_input()` | pre-allocated ring drain, same as `drain_preview` | none — no alloc/lock/drop            |
+| Capture thread → `push_live_input`   | off-RT (not the audio thread)                     | none                                 |
+| Armed-track `Mutex`                  | only touched by command thread + capture thread   | never reachable from `process_block` |
 
 C-1 preserved: no new mutex on the RT path. C-5 preserved: the new
 cross-thread channel is the same lock-free SPSC pattern already used
@@ -244,7 +244,7 @@ armed track's hardware notes into a new MIDI clip. Not hand-tested yet.
   hashes unchanged. No project schema change.
 
 **Latency compensation (same day).** A player follows what they hear, so a
-note is recorded where the player *heard* the timeline when pressing the key,
+note is recorded where the player _heard_ the timeline when pressing the key,
 not where the instrument renders it. Every callback publishes
 `LiveInputClock::set_record_latency` = callback period + output latency (CPAL
 `playback − callback` timestamp, 0 if unavailable), and `transport_position_at`

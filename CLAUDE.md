@@ -11,16 +11,16 @@ doc **before** changing that subsystem.
 
 ## Routing
 
-| Area | Read first |
-|------|-----------|
-| Audio graph / DSP core | [`docs/active/architecture/audio-graph.md`](docs/active/architecture/audio-graph.md), [`docs/active/dsp/`](docs/active/dsp/) |
-| Real-time safety (audio thread) | [`docs/active/threading/realtime-safety.md`](docs/active/threading/realtime-safety.md) |
-| Threading model | [`docs/active/threading/threading-model.md`](docs/active/threading/threading-model.md) |
-| Plugin system / hosting | [`docs/active/plugins/`](docs/active/plugins/) |
-| Modulation | [`docs/active/modulation/modulation-system.md`](docs/active/modulation/modulation-system.md) |
-| State / undo-redo | [`docs/active/architecture/state-management.md`](docs/active/architecture/state-management.md) |
-| Migration (current→target) | [`docs/active/migration/`](docs/active/migration/) |
-| Architecture decisions | [`docs/active/decisions/000-index.md`](docs/active/decisions/000-index.md) |
+| Area                            | Read first                                                                                                                   |
+| ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| Audio graph / DSP core          | [`docs/active/architecture/audio-graph.md`](docs/active/architecture/audio-graph.md), [`docs/active/dsp/`](docs/active/dsp/) |
+| Real-time safety (audio thread) | [`docs/active/threading/realtime-safety.md`](docs/active/threading/realtime-safety.md)                                       |
+| Threading model                 | [`docs/active/threading/threading-model.md`](docs/active/threading/threading-model.md)                                       |
+| Plugin system / hosting         | [`docs/active/plugins/`](docs/active/plugins/)                                                                               |
+| Modulation                      | [`docs/active/modulation/modulation-system.md`](docs/active/modulation/modulation-system.md)                                 |
+| State / undo-redo               | [`docs/active/architecture/state-management.md`](docs/active/architecture/state-management.md)                               |
+| Migration (current→target)      | [`docs/active/migration/`](docs/active/migration/)                                                                           |
+| Architecture decisions          | [`docs/active/decisions/000-index.md`](docs/active/decisions/000-index.md)                                                   |
 
 ## Operating rules (`.claude/`)
 
@@ -60,9 +60,11 @@ impacted docs (`doc_sync_rules.md`) after.
 ## Code style rules
 
 ### Core principle
+
 Write simple, readable and maintainable code. Prioritize clarity over cleverness.
 
 ### Comments rules
+
 - Avoid obvious comments.
 - Comments must explain intent or non-obvious reasoning only.
 - Do NOT describe what the code already shows.
@@ -71,30 +73,35 @@ Write simple, readable and maintainable code. Prioritize clarity over cleverness
 - Keep comments short and rare.
 
 ### Naming
+
 - Use clear and descriptive names.
 - Avoid abbreviations.
 - Prefer consistency across the project.
 
 ### Rust `Self` (struct literals)
+
 - During safe refactors, follow [`.claude/rules/rust_self_rules.md`](.claude/rules/rust_self_rules.md).
 - `Self` is only the type of the current `impl` block — not the function’s return type, not nested DTOs in closures, not free functions.
 
 ### Functions
+
 - Small and focused (one responsibility).
 - No flag arguments.
 - Prefer composition over complexity.
 
 ### General rules
+
 - Keep it simple.
 - Avoid unnecessary abstractions.
 - Follow existing project conventions.
 - Reduce complexity whenever possible.
 
 ### Important
+
 If unsure, prefer simpler code over more “clever” design.
 
-
 ### Strict comment policy
+
 - Prefer zero comments when code is self-explanatory.
 - Only add comments for non-obvious business logic or constraints.
 - Never explain obvious code.

@@ -54,17 +54,17 @@ UI (Svelte/TypeScript)
 
 ## Scope of event sourcing
 
-| Domain                  | Event-sourced | Reason                                 |
-|-------------------------|:------------:|----------------------------------------|
-| Tracks                  | ✅            | Structural, undoable                   |
-| Clips                   | ✅            | Structural, undoable                   |
-| Automation              | ✅ (future)   | Structural, undoable                   |
-| FX routing              | ✅ (future)   | Structural, undoable                   |
-| Project metadata        | ✅            | name, tempo, time-sig                  |
-| UI selection/panels     | ❌            | Ephemeral UI state only                |
-| Transport position      | ❌            | Real-time, 60fps                       |
-| Audio meters (peak/rms) | ❌            | Real-time feedback only                |
-| Drag interactions       | ❌            | Temporary UI state during gesture      |
+| Domain                  | Event-sourced | Reason                            |
+| ----------------------- | :-----------: | --------------------------------- |
+| Tracks                  |      ✅       | Structural, undoable              |
+| Clips                   |      ✅       | Structural, undoable              |
+| Automation              |  ✅ (future)  | Structural, undoable              |
+| FX routing              |  ✅ (future)  | Structural, undoable              |
+| Project metadata        |      ✅       | name, tempo, time-sig             |
+| UI selection/panels     |      ❌       | Ephemeral UI state only           |
+| Transport position      |      ❌       | Real-time, 60fps                  |
+| Audio meters (peak/rms) |      ❌       | Real-time feedback only           |
+| Drag interactions       |      ❌       | Temporary UI state during gesture |
 
 ---
 
@@ -138,14 +138,14 @@ src-tauri/src/
 
 ## Command latency classification
 
-| Command type         | Strategy         | Notes                                      |
-|----------------------|:----------------:|---------------------------------------------|
-| PLAY / STOP / PAUSE  | Immediate        | Engine event updates transport store        |
-| SEEK                 | Immediate        | Optimistic local update + engine sync       |
-| CREATE/DELETE_TRACK  | Round-trip       | Engine is source of truth, no local guess   |
-| MOVE_CLIP            | Deferred commit  | Optimistic during drag, committed on drop   |
-| ADD_CLIP             | Round-trip       | May commit on first PCM prefix; silence past decoded samples (ADR-024) |
-| UPDATE_TEMPO         | Round-trip       | Ruler/transport react via TEMPO_UPDATED     |
+| Command type        |    Strategy     | Notes                                                                  |
+| ------------------- | :-------------: | ---------------------------------------------------------------------- |
+| PLAY / STOP / PAUSE |    Immediate    | Engine event updates transport store                                   |
+| SEEK                |    Immediate    | Optimistic local update + engine sync                                  |
+| CREATE/DELETE_TRACK |   Round-trip    | Engine is source of truth, no local guess                              |
+| MOVE_CLIP           | Deferred commit | Optimistic during drag, committed on drop                              |
+| ADD_CLIP            |   Round-trip    | May commit on first PCM prefix; silence past decoded samples (ADR-024) |
+| UPDATE_TEMPO        |   Round-trip    | Ruler/transport react via TEMPO_UPDATED                                |
 
 ---
 
@@ -227,6 +227,7 @@ Main Thread (UI)
 **Context:** Desktop cross-platform runtime choice.  
 **Decision:** Tauri 2.x.  
 **Reasons:**
+
 - Binaries 10–20× smaller than Electron
 - Lower memory footprint (uses the OS native WebView)
 - Native Rust backend = audio performance without Node.js overhead
@@ -241,6 +242,7 @@ Main Thread (UI)
 **Context:** UI framework choice.  
 **Decision:** SvelteKit 2 (SPA mode, SSR disabled).  
 **Reasons:**
+
 - Reactivity without virtual DOM = fluid UI performance for a DAW
 - Lighter final bundle than React/Vue for a desktop app
 - Native TypeScript
@@ -255,6 +257,7 @@ Main Thread (UI)
 **Context:** Language choice for audio processing.  
 **Decision:** Rust + `cpal`.  
 **Reasons:**
+
 - Real-time guarantees: no GC, explicit memory control
 - `cpal` supports ASIO (Windows), CoreAudio (macOS), ALSA/JACK (Linux)
 - Memory safety without a garbage collector
@@ -268,6 +271,7 @@ Main Thread (UI)
 
 **Context:** Project save format.  
 **Options:**
+
 - JSON text — human-readable, versionable, but verbose for large timelines
 - MessagePack binary — compact, but not human-readable
 - SQLite — queryable, history support, but heavy dependency
@@ -280,6 +284,7 @@ Main Thread (UI)
 
 **Context:** Third-party audio plugin format.  
 **Options considered:**
+
 - VST3 — industry standard, Windows/macOS/Linux support
 - LV2 — open-source, native Linux
 - CLAP — new open-source standard, promising

@@ -1,20 +1,12 @@
 import { invoke } from '@tauri-apps/api/core';
 import { get } from 'svelte/store';
-import {
-	bottomPanel,
-	DEFAULT_EDIT_PANEL_HEIGHT,
-	PREVIEW_PANEL_MIN,
-} from '../stores/bottomPanel';
+import { bottomPanel, DEFAULT_EDIT_PANEL_HEIGHT, PREVIEW_PANEL_MIN } from '../stores/bottomPanel';
 import {
 	leftPanel,
 	TRACK_INSPECTOR_MAX_WIDTH,
-	TRACK_INSPECTOR_MIN_WIDTH,
+	TRACK_INSPECTOR_MIN_WIDTH
 } from '../stores/leftPanel';
-import {
-	LIBRARY_PANEL_MAX_WIDTH,
-	LIBRARY_PANEL_MIN_WIDTH,
-	rightPanel,
-} from '../stores/rightPanel';
+import { LIBRARY_PANEL_MAX_WIDTH, LIBRARY_PANEL_MIN_WIDTH, rightPanel } from '../stores/rightPanel';
 import { viewMode, type GraphScope, type MainViewMode } from '../stores/viewMode';
 import type { ProjectUiLayout } from '../types/global';
 
@@ -32,22 +24,22 @@ export function collectProjectUiLayout(): ProjectUiLayout {
 	return {
 		left_panel: {
 			open: left.open,
-			width: left.width,
+			width: left.width
 		},
 		right_panel: {
 			open: right.open,
-			width: right.width,
+			width: right.width
 		},
 		bottom_panel: {
 			open: bottom.open,
 			height: bottom.height,
 			saved_edit_height: bottom.savedEditHeight,
-			saved_preview_height: bottom.savedPreviewHeight,
+			saved_preview_height: bottom.savedPreviewHeight
 		},
 		view_mode: {
 			main: view.main,
-			graph_scope: view.graphScope,
-		},
+			graph_scope: view.graphScope
+		}
 	};
 }
 
@@ -56,26 +48,20 @@ export function applyProjectUiLayout(layout?: ProjectUiLayout | null): void {
 	hydrating = true;
 	leftPanel.hydrate({
 		open: layout.left_panel.open,
-		width: clamp(layout.left_panel.width, TRACK_INSPECTOR_MIN_WIDTH, TRACK_INSPECTOR_MAX_WIDTH),
+		width: clamp(layout.left_panel.width, TRACK_INSPECTOR_MIN_WIDTH, TRACK_INSPECTOR_MAX_WIDTH)
 	});
 	rightPanel.hydrate({
 		open: layout.right_panel.open,
-		width: clamp(layout.right_panel.width, LIBRARY_PANEL_MIN_WIDTH, LIBRARY_PANEL_MAX_WIDTH),
+		width: clamp(layout.right_panel.width, LIBRARY_PANEL_MIN_WIDTH, LIBRARY_PANEL_MAX_WIDTH)
 	});
 	bottomPanel.hydrate({
 		open: layout.bottom_panel.open,
 		height: clamp(layout.bottom_panel.height, PREVIEW_PANEL_MIN, 600),
-		savedEditHeight: clamp(
-			layout.bottom_panel.saved_edit_height,
-			DEFAULT_EDIT_PANEL_HEIGHT,
-			600,
-		),
-		savedPreviewHeight: clamp(layout.bottom_panel.saved_preview_height, PREVIEW_PANEL_MIN, 600),
+		savedEditHeight: clamp(layout.bottom_panel.saved_edit_height, DEFAULT_EDIT_PANEL_HEIGHT, 600),
+		savedPreviewHeight: clamp(layout.bottom_panel.saved_preview_height, PREVIEW_PANEL_MIN, 600)
 	});
-	const main: MainViewMode =
-		layout.view_mode.main === 'graph' ? 'graph' : 'arrange';
-	const graphScope: GraphScope =
-		layout.view_mode.graph_scope === 'project' ? 'project' : 'track';
+	const main: MainViewMode = layout.view_mode.main === 'graph' ? 'graph' : 'arrange';
+	const graphScope: GraphScope = layout.view_mode.graph_scope === 'project' ? 'project' : 'track';
 	viewMode.hydrate({ main, graphScope });
 	hydrating = false;
 }
@@ -83,6 +69,6 @@ export function applyProjectUiLayout(layout?: ProjectUiLayout | null): void {
 export function persistProjectUiLayout(): void {
 	if (hydrating) return;
 	void invoke('sync_project_ui_layout', { ui_layout: collectProjectUiLayout() }).catch(
-		console.error,
+		console.error
 	);
 }

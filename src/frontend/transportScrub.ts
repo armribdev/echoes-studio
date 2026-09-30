@@ -6,7 +6,7 @@ export type PositionFromPointer = (clientX: number, altKey: boolean) => number;
 export function startTransportScrub(
 	event: MouseEvent,
 	positionFromPointer: PositionFromPointer,
-	onEnd: (positionSec: number) => void,
+	onEnd: (positionSec: number) => void
 ): () => void {
 	event.preventDefault();
 

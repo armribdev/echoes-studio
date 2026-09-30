@@ -15,9 +15,9 @@ decision"). Touches determinism (C-2), so it needs approval before any code
 An automation lane carries a **normalised value 0…1** per point (`AutomationPoint.value`).
 The engine delivers it in two different ways (ADR-021):
 
-| Target | What the node does with the 0…1 value today |
-|---|---|
-| CLAP plugin parameter | **Sets** the parameter (absolute). The plugin's knob follows the curve. |
+| Target                                      | What the node does with the 0…1 value today                                                                                                     |
+| ------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| CLAP plugin parameter                       | **Sets** the parameter (absolute). The plugin's knob follows the curve.                                                                         |
 | Track volume, EQ, compressor, reverb, delay | **Adds** it to the current setting, in the node's own unit, through `apply_modulation*` (the trait default forwards `apply_automation*` there). |
 
 For internal targets that is not usable as automation:
@@ -113,13 +113,13 @@ only its own hash (plus `automated`, which uses `TrackGain` and `delay.wet`).
 `automation_cost_report` in `render_harness.rs`: `cargo test --release --bin
 echoes-studio automation_cost -- --ignored --nocapture`):
 
-| Measure | Result |
-|---|---|
-| `automated_value`, linear | 1.0 ns per call |
-| `automated_value`, logarithmic | 3.2 ns per call |
+| Measure                                       | Result                 |
+| --------------------------------------------- | ---------------------- |
+| `automated_value`, linear                     | 1.0 ns per call        |
+| `automated_value`, logarithmic                | 3.2 ns per call        |
 | 16 tracks × full effect chain, offline render | 193 ms (13× real time) |
-| same + 3 linear EQ lanes per track (48 lanes) | 196 ms |
-| same + 3 log EQ lanes per track (48 lanes) | 197 ms |
+| same + 3 linear EQ lanes per track (48 lanes) | 196 ms                 |
+| same + 3 log EQ lanes per track (48 lanes)    | 197 ms                 |
 
 A lane is evaluated 1 500 times per second (32-sample grid at 48 kHz), so the log
 mapping costs about 5 µs per lane per second of audio; 48 lanes add under 2 % to
@@ -140,10 +140,10 @@ placement unless clips moved to beats too, which is a separate, larger decision.
 
 ## Real-time impact
 
-| Change | RT cost | RT risk |
-|---|---|---|
+| Change                                                 | RT cost                                                                              | RT risk                                                                                      |
+| ------------------------------------------------------ | ------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------- |
 | `apply_automation_at` override per grid point per lane | one `Relaxed` atomic load + a few float ops; `exp2`/`log2` for log-scaled parameters | none — no allocation, lock, drop or I/O; bounded by the existing grid (`MAX_CONTROL_POINTS`) |
-| Mapping helper | pure function | none |
+| Mapping helper                                         | pure function                                                                        | none                                                                                         |
 
 Threading model, snapshot swap and the ownership rules are unchanged. Only
 `audio_graph/nodes/*` and the UI table change.

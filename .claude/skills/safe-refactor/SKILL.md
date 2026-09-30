@@ -6,10 +6,12 @@ description: Refactor engine code without changing behaviour or breaking archite
 # Safe Refactor
 
 ## Objective
+
 Change structure, not behaviour. Preserve every hard invariant and keep the
 offline render bit-identical.
 
 ## Workflow
+
 1. Run the "before" steps of `.claude/rules/completion_protocol.md`: read
    `state_index.md`, the relevant ADRs, and the active doc(s) for the subsystem.
 2. Identify the invariants in scope (`.claude/rules/architecture_rules.md`):
@@ -22,6 +24,7 @@ offline render bit-identical.
    `state_index.md`.
 
 ## Checklist
+
 - [ ] Struct literals: [`.claude/rules/rust_self_rules.md`](../../rules/rust_self_rules.md) — `Self` only when building the `impl` target type (see pitfalls table).
 - [ ] No public contract / `NodeKind` / serialized shape changed silently.
 - [ ] Topological-sort tiebreak (`NodeId`) and `src_step < step` invariant intact.
@@ -30,10 +33,12 @@ offline render bit-identical.
 - [ ] Tests for the touched area pass.
 
 ## Anti-patterns
+
 - "While I'm here" scope creep that mixes refactor with behaviour change.
 - Rewriting the graph compiler instead of extending it.
 - Renaming/moving a documented type without updating its active doc + ADR.
 
 ## Validation (done when)
+
 - Behaviour is provably unchanged (tests + bit-identical render), invariants
   hold, and docs/state_index reflect the new structure.

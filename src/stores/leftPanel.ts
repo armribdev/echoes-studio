@@ -10,16 +10,13 @@ interface LeftPanelState {
 }
 
 function clampTrackInspectorWidth(w: number): number {
-	return Math.max(
-		TRACK_INSPECTOR_MIN_WIDTH,
-		Math.min(TRACK_INSPECTOR_MAX_WIDTH, w),
-	);
+	return Math.max(TRACK_INSPECTOR_MIN_WIDTH, Math.min(TRACK_INSPECTOR_MAX_WIDTH, w));
 }
 
 function createLeftPanelStore() {
 	const { subscribe, update } = writable<LeftPanelState>({
 		open: true,
-		width: TRACK_INSPECTOR_DEFAULT_WIDTH,
+		width: TRACK_INSPECTOR_DEFAULT_WIDTH
 	});
 
 	return {
@@ -28,10 +25,7 @@ function createLeftPanelStore() {
 			update((s) => ({
 				...s,
 				...partial,
-				width:
-					partial.width !== undefined
-						? clampTrackInspectorWidth(partial.width)
-						: s.width,
+				width: partial.width !== undefined ? clampTrackInspectorWidth(partial.width) : s.width
 			}));
 		},
 		toggle() {
@@ -51,7 +45,7 @@ function createLeftPanelStore() {
 		},
 		setWidth(w: number) {
 			update((s) => ({ ...s, width: clampTrackInspectorWidth(w) }));
-		},
+		}
 	};
 }
 

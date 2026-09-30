@@ -4,6 +4,7 @@ Discovers, instantiates, and manages external plugins. Runs on the **command
 thread**, never the audio thread.
 
 ## Local hard constraints
+
 - This crate may use `plugin_formats`, but **must not** leak format types into
   `audio_graph/`. The graph only ever receives `Box<dyn AudioNode>` (ADR-003).
 - One `Arc<PluginInstance>` per device — no duplicate hosting (ADR-007). Audit
@@ -20,12 +21,14 @@ thread**, never the audio thread.
   migration C-9) — never default-on.
 
 ## Key files
+
 `host.rs`, `registry.rs`, `instance.rs`, `lifecycle.rs` (hosting) ·
 `param_queue.rs`, `parameter.rs` (params) ·
 `state.rs` (persistence) · `wrapper.rs` (format dispatch) · `gui.rs` (editor) ·
 `bridge.rs`, `bridged_node.rs` (sandbox).
 
 ## Read before changing
+
 - `docs/active/plugins/plugin-system.md`, `.../plugin-wrapper-system.md`
 - ADRs 003, 006, 007, 008, 010, 013, 014, 015
 - Known traps: `.claude/memory/engine_quirks.md` · then `completion_protocol.md`.

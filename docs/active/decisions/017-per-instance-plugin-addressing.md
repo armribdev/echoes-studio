@@ -25,11 +25,11 @@ Step 2 (ADR-007 update) re-keyed `PluginHost.records` by the per-placement
 plugin type. But the **addressing that reaches the host is still by `device_id`
 (plugin type)** on three surfaces, so the user-visible R-2 bug persists:
 
-| Surface | Today | File |
-|---|---|---|
-| Param push (UI→DSP) | `HotEffectUpdate::Plugin(device_id, params)` | [`engine_gateway/api.rs`](../../../src-tauri/src/engine_gateway/api.rs) |
-| GUI editor open | `host.instance(plugin_id)` | [`main.rs`](../../../src-tauri/src/main.rs) |
-| State save/restore | `plugin_state_blobs: HashMap<device_id, …>` | [`main.rs`](../../../src-tauri/src/main.rs), [`project.rs`](../../../src-tauri/src/project.rs) |
+| Surface             | Today                                        | File                                                                                           |
+| ------------------- | -------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| Param push (UI→DSP) | `HotEffectUpdate::Plugin(device_id, params)` | [`engine_gateway/api.rs`](../../../src-tauri/src/engine_gateway/api.rs)                        |
+| GUI editor open     | `host.instance(plugin_id)`                   | [`main.rs`](../../../src-tauri/src/main.rs)                                                    |
+| State save/restore  | `plugin_state_blobs: HashMap<device_id, …>`  | [`main.rs`](../../../src-tauri/src/main.rs), [`project.rs`](../../../src-tauri/src/project.rs) |
 
 The serialized format is the hard part: `ProjectFile.plugin_state_blobs:
 HashMap<String /*device_id*/, String>` ([`project.rs`](../../../src-tauri/src/project.rs))
@@ -106,7 +106,7 @@ and determinism are untouched.
   only the legacy field) — acceptable forward-incompat, documented in the PR.
 - **C-2 (bit-identical offline).** Unaffected — no DSP change.
 - **C-5 (lock-free cmd↔audio).** Unaffected — still the SPSC `ParamChange` queue;
-  only the host-side *addressing* of which queue changes.
+  only the host-side _addressing_ of which queue changes.
 - **ADR-002 / ADR-005.** Honoured: the project remains the source of truth; the
   frontend sends an identifier it already owns; no mutable engine state is
   exposed.

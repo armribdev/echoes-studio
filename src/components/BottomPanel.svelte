@@ -2,10 +2,7 @@
 	import { get } from 'svelte/store';
 	import { bottomPanel } from '../stores/bottomPanel';
 	import { closeEditor } from '../frontend/pianoRoll/clipEditor';
-	import {
-		previewPanelResizing,
-		editPanelResizing,
-	} from '../frontend/pianoRoll/previewRefit';
+	import { previewPanelResizing, editPanelResizing } from '../frontend/pianoRoll/previewRefit';
 	import { computePreviewResizeMax } from '../frontend/pianoRoll/previewLayout';
 	import { pianoRollStore } from '../stores/pianoRoll';
 	import { keyboardFocus } from '../stores/keyboardFocus';
@@ -42,43 +39,60 @@
 </script>
 
 {#if $bottomPanel.open}
-<!-- svelte-ignore a11y-no-static-element-interactions -->
-<div
-	class="bottom-panel"
-	class:bottom-panel--preview={!editMode}
-	style="height: {$bottomPanel.height}px"
-	class:resizing={isResizing}
->
-	<div class="panel-body">
-		{#if $pianoRollStore.open}
-			<PianoRoll />
-		{:else}
-			<div class="empty-state">
-				<button class="empty-close" on:click={closeEditor} title="Fermer (Tab)" aria-label="Fermer">
-					<svg width="10" height="10" viewBox="0 0 10 10" fill="none">
-						<path d="M1.5 1.5L8.5 8.5M8.5 1.5L1.5 8.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+	<div
+		class="bottom-panel"
+		class:bottom-panel--preview={!editMode}
+		style="height: {$bottomPanel.height}px"
+		class:resizing={isResizing}
+	>
+		<div class="panel-body">
+			{#if $pianoRollStore.open}
+				<PianoRoll />
+			{:else}
+				<div class="empty-state">
+					<button
+						class="empty-close"
+						on:click={closeEditor}
+						title="Fermer (Tab)"
+						aria-label="Fermer"
+					>
+						<svg width="10" height="10" viewBox="0 0 10 10" fill="none">
+							<path
+								d="M1.5 1.5L8.5 8.5M8.5 1.5L1.5 8.5"
+								stroke="currentColor"
+								stroke-width="1.5"
+								stroke-linecap="round"
+							/>
+						</svg>
+					</button>
+					<svg
+						width="28"
+						height="28"
+						viewBox="0 0 28 28"
+						fill="none"
+						stroke="currentColor"
+						stroke-width="1.2"
+						stroke-linecap="round"
+					>
+						<rect x="2" y="8" width="5" height="18" rx="1" />
+						<rect x="9" y="2" width="5" height="24" rx="1" />
+						<rect x="16" y="6" width="5" height="20" rx="1" />
+						<rect x="23" y="4" width="3" height="22" rx="1" />
 					</svg>
-				</button>
-				<svg width="28" height="28" viewBox="0 0 28 28" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round">
-					<rect x="2" y="8" width="5" height="18" rx="1"/>
-					<rect x="9" y="2" width="5" height="24" rx="1"/>
-					<rect x="16" y="6" width="5" height="20" rx="1"/>
-					<rect x="23" y="4" width="3" height="22" rx="1"/>
-				</svg>
-				<p>Sélectionnez un clip MIDI ou double-cliquez pour éditer</p>
-			</div>
-		{/if}
-	</div>
+					<p>Sélectionnez un clip MIDI ou double-cliquez pour éditer</p>
+				</div>
+			{/if}
+		</div>
 
-	<PanelResizeHandle
-		axis="vertical"
-		side="start"
-		bind:resizing={isResizing}
-		on:resizestart={onPanelResizestart}
-		on:resize={onPanelResize}
-		on:resizeend={onPanelResizeend}
-	/>
-</div>
+		<PanelResizeHandle
+			axis="vertical"
+			side="start"
+			bind:resizing={isResizing}
+			on:resizestart={onPanelResizestart}
+			on:resize={onPanelResize}
+			on:resizeend={onPanelResizeend}
+		/>
+	</div>
 {/if}
 
 <style lang="scss">
@@ -93,7 +107,10 @@
 		overflow: hidden;
 		position: relative;
 
-		&.resizing { cursor: ns-resize; user-select: none; }
+		&.resizing {
+			cursor: ns-resize;
+			user-select: none;
+		}
 
 		&--preview {
 			flex-shrink: 0;
@@ -120,7 +137,9 @@
 		color: $text-faint;
 		position: relative;
 
-		> svg { opacity: 0.3; }
+		> svg {
+			opacity: 0.3;
+		}
 
 		p {
 			font-size: 11px;
@@ -145,8 +164,13 @@
 		border-radius: $radius-sm;
 		color: $text-faint;
 		cursor: pointer;
-		transition: background 0.12s, color 0.12s;
+		transition:
+			background 0.12s,
+			color 0.12s;
 
-		&:hover { background: rgba(255, 65, 54, 0.15); color: #ff4136; }
+		&:hover {
+			background: rgba(255, 65, 54, 0.15);
+			color: #ff4136;
+		}
 	}
 </style>

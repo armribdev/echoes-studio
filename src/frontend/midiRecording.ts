@@ -7,7 +7,7 @@ import {
 	startMidiRecording,
 	stopMidiRecording,
 	type RecordedMidiClip,
-	type RecordedNote,
+	type RecordedNote
 } from '../lib/midiBackend';
 import { armedTrackId } from '../stores/armedTrack';
 import { countInEnabled } from '../stores/metronome';

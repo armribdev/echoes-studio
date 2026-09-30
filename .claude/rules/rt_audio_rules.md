@@ -5,6 +5,7 @@ Absolute constraints for **any code reachable from the CPAL audio callback**
 plugin wrapper `process`). No exceptions without an ADR.
 
 **Forbidden on the audio thread:**
+
 - Heap allocation (`Vec::push`, `Box::new`, `String`, `format!`).
 - Deallocation / `drop` of owned heap data → hand back via the SPSC drop ring.
 - Blocking or `try_lock` on any `Mutex`/`RwLock`.

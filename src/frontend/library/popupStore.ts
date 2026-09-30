@@ -15,7 +15,7 @@ const INITIAL: LibraryPopupState = {
 	context: 'playhead_insert',
 	trackId: null,
 	anchorX: 0,
-	anchorY: 0,
+	anchorY: 0
 };
 
 function createLibraryPopupStore() {
@@ -34,12 +34,12 @@ function createLibraryPopupStore() {
 				context: opts.context,
 				trackId: opts.trackId ?? null,
 				anchorX: opts.anchorX,
-				anchorY: opts.anchorY,
+				anchorY: opts.anchorY
 			});
 		},
 		close() {
 			update((s) => (s.open ? { ...s, open: false } : s));
-		},
+		}
 	};
 }
 

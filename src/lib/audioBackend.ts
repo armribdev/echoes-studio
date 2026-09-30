@@ -119,7 +119,10 @@ export async function applyAudioSettings(settings: AudioSettingsPayload): Promis
  * Which plugins run in their own process: the mode, plus the plugin ids isolated
  * everywhere. A change reloads the affected plugins.
  */
-export async function setPluginIsolation(mode: PluginIsolation, alwaysIsolated: string[]): Promise<void> {
+export async function setPluginIsolation(
+	mode: PluginIsolation,
+	alwaysIsolated: string[]
+): Promise<void> {
 	await invoke<void>('set_plugin_isolation', { mode, alwaysIsolated });
 }
 

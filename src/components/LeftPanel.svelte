@@ -94,7 +94,10 @@
 			width: var(--w);
 		}
 
-		&.resizing { user-select: none; transition: none; }
+		&.resizing {
+			user-select: none;
+			transition: none;
+		}
 	}
 
 	.inspector-inner {
@@ -113,5 +116,4 @@
 		background: $border-color;
 		flex-shrink: 0;
 	}
-
 </style>

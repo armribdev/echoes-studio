@@ -21,7 +21,7 @@ function createKeyboardFocusStore() {
 		setPianoRoll: () => setZone('piano-roll'),
 		setSettings: () => setZone('settings'),
 		setLibraryResults: () => setZone('library-results'),
-		setLibrarySearch: () => setZone('library-search'),
+		setLibrarySearch: () => setZone('library-search')
 	};
 }
 

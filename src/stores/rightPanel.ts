@@ -16,7 +16,7 @@ function clampLibraryWidth(w: number): number {
 function createRightPanelStore() {
 	const { subscribe, update } = writable<RightPanelState>({
 		open: false,
-		width: LIBRARY_PANEL_DEFAULT_WIDTH,
+		width: LIBRARY_PANEL_DEFAULT_WIDTH
 	});
 
 	return {
@@ -25,10 +25,7 @@ function createRightPanelStore() {
 			update((s) => ({
 				...s,
 				...partial,
-				width:
-					partial.width !== undefined
-						? clampLibraryWidth(partial.width)
-						: s.width,
+				width: partial.width !== undefined ? clampLibraryWidth(partial.width) : s.width
 			}));
 		},
 		toggle() {
@@ -37,7 +34,7 @@ function createRightPanelStore() {
 		},
 		setWidth(w: number) {
 			update((s) => ({ ...s, width: clampLibraryWidth(w) }));
-		},
+		}
 	};
 }
 

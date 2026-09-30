@@ -40,7 +40,8 @@
 	use:dismissable={close}
 	role="dialog"
 	aria-label="Library"
-	style="left: {adjustedX || popup.anchorX}px; top: {adjustedY || popup.anchorY}px; width: {POPUP_W}px; height: min({POPUP_H}px, calc(100vh - 24px))"
+	style="left: {adjustedX || popup.anchorX}px; top: {adjustedY ||
+		popup.anchorY}px; width: {POPUP_W}px; height: min({POPUP_H}px, calc(100vh - 24px))"
 >
 	<LibraryBrowser
 		variant="popup"
@@ -61,7 +62,9 @@
 		flex-direction: column;
 		border: 1px solid $border-color;
 		border-radius: $radius-lg;
-		box-shadow: 0 12px 40px rgba(0, 0, 0, 0.55), 0 2px 8px rgba(0, 0, 0, 0.3);
+		box-shadow:
+			0 12px 40px rgba(0, 0, 0, 0.55),
+			0 2px 8px rgba(0, 0, 0, 0.3);
 		overflow: hidden;
 	}
 </style>

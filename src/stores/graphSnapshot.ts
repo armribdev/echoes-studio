@@ -18,11 +18,11 @@ const GRAPH_REFRESH_TYPES = new Set<string>([
 	ev.MODULATION_ROUTE_ADDED,
 	ev.MODULATION_ROUTE_REMOVED,
 	ev.MIDI_CLIP_ADDED,
-	ev.MIDI_CLIP_REMOVED,
+	ev.MIDI_CLIP_REMOVED
 ]);
 
 function createGraphSnapshotStore() {
-	const { subscribe, set, update } = writable<GraphSnapshotDto | null>(null);
+	const { subscribe, set } = writable<GraphSnapshotDto | null>(null);
 	let unlisten: UnlistenFn | null = null;
 	let connected = false;
 
@@ -56,7 +56,7 @@ function createGraphSnapshotStore() {
 		subscribe,
 		connect,
 		disconnect,
-		refresh,
+		refresh
 	};
 }
 

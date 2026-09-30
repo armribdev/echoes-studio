@@ -9,7 +9,7 @@
 ## Core Principle
 
 Modulation is a **graph-level** system. Plugins do not own their modulators.
-A reverb plugin does not contain an LFO — instead, an LFO *node* in the graph
+A reverb plugin does not contain an LFO — instead, an LFO _node_ in the graph
 connects to the reverb node's parameter via a modulation edge.
 
 ```
@@ -20,6 +20,7 @@ ModulationTarget { node_id: reverb_node, param: "room_size", depth: 0.3 }
 ```
 
 This means:
+
 - Modulators are reusable (one LFO can target 20 parameters)
 - Modulation routing is visible and editable in the graph
 - Plugins have zero internal modulation logic
@@ -66,12 +67,12 @@ struct ModulationMap {
 
 ## Modulator Node Types
 
-| Kind      | Description                                          |
-|-----------|------------------------------------------------------|
-| `Lfo`     | Periodic waveform (sine/tri/saw/square); rate in Hz |
-| `Envelope`| ADSR / multi-stage, triggered by gate or MIDI       |
-| `Macro`   | User-controlled knob, fans to multiple targets       |
-| `AudioRate`| Audio-rate (sample-by-sample) modulation signal     |
+| Kind        | Description                                         |
+| ----------- | --------------------------------------------------- |
+| `Lfo`       | Periodic waveform (sine/tri/saw/square); rate in Hz |
+| `Envelope`  | ADSR / multi-stage, triggered by gate or MIDI       |
+| `Macro`     | User-controlled knob, fans to multiple targets      |
+| `AudioRate` | Audio-rate (sample-by-sample) modulation signal     |
 
 All modulator types implement `AudioNode` — they produce a normalised
 modulation signal (−1.0 … +1.0) on their output port.
@@ -117,6 +118,7 @@ node.process() reads per-frame values instead of a single base value
 ```
 
 The difference from modulation:
+
 - **Automation** is read from pre-baked `f32` slices (offline curve evaluation)
 - **Modulation** is a live signal from another DSP node (real-time)
 

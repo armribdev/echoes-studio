@@ -88,7 +88,9 @@
 		font-size: 10px;
 		font-family: inherit;
 		cursor: pointer;
-		transition: background 0.12s, color 0.12s;
+		transition:
+			background 0.12s,
+			color 0.12s;
 
 		&.active {
 			background: rgba(21, 113, 255, 0.12);
@@ -130,8 +132,14 @@
 		font-family: 'SF Mono', 'Fira Code', ui-monospace, monospace;
 		letter-spacing: 0.3px;
 
-		&--info    { color: rgba(247, 247, 249, 0.5); }
-		&--success { color: #4caf82; }
-		&--error   { color: #ff5f57; }
+		&--info {
+			color: rgba(247, 247, 249, 0.5);
+		}
+		&--success {
+			color: #4caf82;
+		}
+		&--error {
+			color: #ff5f57;
+		}
 	}
 </style>

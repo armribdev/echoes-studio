@@ -207,8 +207,12 @@
 			width: 2px;
 			height: 50%;
 
-			&--start { left: 3px; }
-			&--end   { right: 3px; }
+			&--start {
+				left: 3px;
+			}
+			&--end {
+				right: 3px;
+			}
 		}
 
 		.zsb--v & {
@@ -217,8 +221,12 @@
 			height: 2px;
 			width: 50%;
 
-			&--start { top: 3px; }
-			&--end   { bottom: 3px; }
+			&--start {
+				top: 3px;
+			}
+			&--end {
+				bottom: 3px;
+			}
 		}
 	}
 </style>

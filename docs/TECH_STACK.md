@@ -6,20 +6,21 @@
 
 ## Overview
 
-| Layer | Technology | Version | Role |
-|-------|------------|---------|------|
-| Desktop runtime | Tauri | **2.x** | Native shell, IPC, permissions |
-| UI Framework | SvelteKit | 2.0 | User interface |
-| UI Language | TypeScript | 5.0 | Static typing (strict mode) |
-| Styling | SCSS/Sass | 1.69 | Design system variables + component styles |
-| Build tool | Vite | 5.0 | Frontend bundler + dev server |
-| Backend language | Rust | 2021 edition | Audio engine, IPC handlers, file I/O |
-| Audio I/O | cpal | 0.15 | Cross-platform audio stream |
-| WAV parsing | hound | 3.5 | WAV read/write |
-| Serialisation | serde / serde_json | 1.0 | IPC JSON, project file format |
-| Package manager | pnpm | ≥ 8 | Node dependency management |
+| Layer            | Technology         | Version      | Role                                       |
+| ---------------- | ------------------ | ------------ | ------------------------------------------ |
+| Desktop runtime  | Tauri              | **2.x**      | Native shell, IPC, permissions             |
+| UI Framework     | SvelteKit          | 2.0          | User interface                             |
+| UI Language      | TypeScript         | 5.0          | Static typing (strict mode)                |
+| Styling          | SCSS/Sass          | 1.69         | Design system variables + component styles |
+| Build tool       | Vite               | 5.0          | Frontend bundler + dev server              |
+| Backend language | Rust               | 2021 edition | Audio engine, IPC handlers, file I/O       |
+| Audio I/O        | cpal               | 0.15         | Cross-platform audio stream                |
+| WAV parsing      | hound              | 3.5          | WAV read/write                             |
+| Serialisation    | serde / serde_json | 1.0          | IPC JSON, project file format              |
+| Package manager  | pnpm               | ≥ 8          | Node dependency management                 |
 
 **Removed from previous versions:**
+
 - `wavesurfer.js` — replaced by a custom `waveform.worker.ts` Web Worker with canvas rendering; no external dependency needed for waveform display.
 
 ---
@@ -42,22 +43,22 @@ The project runs on Tauri 2.x. The v2 rewrite introduced a redesigned permission
 
 ### Cross-Platform Notes
 
-| OS | Requirement | Notes |
-|----|------------|-------|
-| Windows | WebView2 (pre-installed on Windows 11) | Installer required on Windows 10 |
-| Windows | MSVC Build Tools 2019+ (C++ workload) | Required to compile `cpal` |
-| macOS | Xcode Command Line Tools | Provides linker + macOS SDK |
-| Linux | `libwebkit2gtk-4.0-dev`, `libgtk-3-dev` | GTK + WebKit required by Tauri |
+| OS      | Requirement                             | Notes                            |
+| ------- | --------------------------------------- | -------------------------------- |
+| Windows | WebView2 (pre-installed on Windows 11)  | Installer required on Windows 10 |
+| Windows | MSVC Build Tools 2019+ (C++ workload)   | Required to compile `cpal`       |
+| macOS   | Xcode Command Line Tools                | Provides linker + macOS SDK      |
+| Linux   | `libwebkit2gtk-4.0-dev`, `libgtk-3-dev` | GTK + WebKit required by Tauri   |
 
 ### Alternatives Considered
 
-| Alternative | Reason rejected |
-|-------------|----------------|
-| Electron | ~100 MB binary, Node.js on audio path — unacceptable for real-time audio |
-| Qt (C++) | No hot-reload, ageing UI ecosystem, complex licensing |
-| JUCE | Excellent audio library but proprietary UI, C++ only |
-| Flutter Desktop | Promising but Dart ecosystem less mature for professional audio |
-| Native (Win32/Cocoa/GTK) | Per-platform maintenance cost unacceptable for a small team |
+| Alternative              | Reason rejected                                                          |
+| ------------------------ | ------------------------------------------------------------------------ |
+| Electron                 | ~100 MB binary, Node.js on audio path — unacceptable for real-time audio |
+| Qt (C++)                 | No hot-reload, ageing UI ecosystem, complex licensing                    |
+| JUCE                     | Excellent audio library but proprietary UI, C++ only                     |
+| Flutter Desktop          | Promising but Dart ecosystem less mature for professional audio          |
+| Native (Win32/Cocoa/GTK) | Per-platform maintenance cost unacceptable for a small team              |
 
 ---
 
@@ -75,12 +76,12 @@ The project runs on Tauri 2.x. The v2 rewrite introduced a redesigned permission
 
 ### Alternatives Considered
 
-| Alternative | Reason rejected |
-|-------------|----------------|
-| React | Virtual DOM unnecessary for desktop, heavier bundle |
-| Vue 3 | Good candidate, but Svelte has better performance at equivalent bundle size |
-| Solid.js | Very fast, but smaller ecosystem and fewer potential contributors |
-| Vanilla TS | Too much boilerplate to manage DAW-level reactivity |
+| Alternative | Reason rejected                                                             |
+| ----------- | --------------------------------------------------------------------------- |
+| React       | Virtual DOM unnecessary for desktop, heavier bundle                         |
+| Vue 3       | Good candidate, but Svelte has better performance at equivalent bundle size |
+| Solid.js    | Very fast, but smaller ecosystem and fewer potential contributors           |
+| Vanilla TS  | Too much boilerplate to manage DAW-level reactivity                         |
 
 ---
 
@@ -95,12 +96,13 @@ TypeScript 5 strict mode is used throughout the frontend. No `.js` files exist i
 SCSS is used for design-system variables (`src/variables.scss`) and component-scoped styles. Every `.svelte` component uses `<style lang="scss">`.
 
 Core design tokens:
+
 ```scss
-$color-bg-base:     #1a1a1f;
-$color-bg-panel:    #222229;
-$color-border:      #3c3c43;
+$color-bg-base: #1a1a1f;
+$color-bg-panel: #222229;
+$color-border: #3c3c43;
 $color-text-primary: #f7f7f9;
-$color-accent:      #1571ff;
+$color-accent: #1571ff;
 ```
 
 ---
@@ -117,14 +119,14 @@ Tauri integration is native — the Rust backend compiles directly into the Taur
 
 The DSP engine is implemented as a directed acyclic graph compiled ahead of time into a flat execution plan. Key modules:
 
-| Module | Role |
-|--------|------|
-| `audio_graph/node.rs` | `AudioNode` trait — uniform interface for all DSP elements |
-| `audio_graph/buffer.rs` | `AudioBuffer` — planar f32, allocation-free operations |
-| `audio_graph/compiler.rs` | `GraphCompiler` — topological sort, node instantiation, `prepare()` |
-| `audio_graph/scheduler.rs` | `GraphScheduler` — drives execution plan in the audio callback |
-| `audio_graph/execution_plan.rs` | `ExecutionPlan` — immutable, `Arc`-shared between threads |
-| `audio_graph/nodes/` | Built-in nodes: Track, Gain, Pan, Meter, Bus, Master |
+| Module                          | Role                                                                |
+| ------------------------------- | ------------------------------------------------------------------- |
+| `audio_graph/node.rs`           | `AudioNode` trait — uniform interface for all DSP elements          |
+| `audio_graph/buffer.rs`         | `AudioBuffer` — planar f32, allocation-free operations              |
+| `audio_graph/compiler.rs`       | `GraphCompiler` — topological sort, node instantiation, `prepare()` |
+| `audio_graph/scheduler.rs`      | `GraphScheduler` — drives execution plan in the audio callback      |
+| `audio_graph/execution_plan.rs` | `ExecutionPlan` — immutable, `Arc`-shared between threads           |
+| `audio_graph/nodes/`            | Built-in nodes: Track, Gain, Pan, Meter, Bus, Master                |
 
 See [AUDIO_ENGINE.md](AUDIO_ENGINE.md) and `docs/active/architecture/audio-graph.md` for details.
 
@@ -157,6 +159,7 @@ Required via `.npmrc` (`engine-strict=true`). Faster and more disk-efficient tha
 Waveform display uses a custom implementation in `src/lib/waveform.worker.ts` — a Web Worker that computes peak arrays and renders them to a canvas off the UI thread. No external waveform library.
 
 Pre-computed peaks at three resolutions are stored on each `AppClip`:
+
 - `peaks_64` — 1 peak per 64 samples (zoomed-in view)
 - `peaks_512` — 1 peak per 512 samples (medium zoom)
 - `peaks_4096` — 1 peak per 4096 samples (overview)
@@ -167,14 +170,15 @@ This eliminates re-computation on zoom changes.
 
 ## Planned Dependencies
 
-| Dependency | Phase | Purpose |
-|------------|-------|---------|
-| `symphonia` (Rust) | Phase 2 | MP3/FLAC/OGG decoding |
-| `rubato` (Rust) | Phase 3 | Sample rate conversion for clips not at project SR |
-| `dasp` (Rust) | Phase 3 | DSP primitives (filters, envelopes) for built-in effects |
+| Dependency                   | Phase   | Purpose                                                          |
+| ---------------------------- | ------- | ---------------------------------------------------------------- |
+| `symphonia` (Rust)           | Phase 2 | MP3/FLAC/OGG decoding                                            |
+| `rubato` (Rust)              | Phase 3 | Sample rate conversion for clips not at project SR               |
+| `dasp` (Rust)                | Phase 3 | DSP primitives (filters, envelopes) for built-in effects         |
 | VST3 SDK / `vst3-sys` (Rust) | Phase 4 | VST3 plugin hosting (scaffolding done in `plugin_formats/vst3/`) |
 
 **Explicitly not used:**
+
 - `ringbuf` — lock-free ring buffer crate. The command→audio path is handled by `RuntimeSnapshot` (`AtomicPtr<GraphScheduler>` + a small in-house SPSC ring for deferred drops), which fits the snapshot-swap model and avoids adding a dependency.
 - `arc-swap` — also considered for the swap slot. The hand-rolled `AtomicPtr` + drop ring is equivalent in behaviour, keeps the deallocation off the audio thread, and ships without a new crate.
 
@@ -183,12 +187,14 @@ This eliminates re-computation on zoom changes.
 ## Build
 
 ### Development
+
 ```bash
 pnpm tauri:dev
 # Starts Vite dev server (localhost:5173) + Tauri in watch mode
 ```
 
 ### Production
+
 ```bash
 pnpm tauri:build
 # Builds Vite → dist/, then Tauri bundles the app
@@ -199,6 +205,7 @@ pnpm tauri:build
 ```
 
 ### CI/CD
+
 GitHub Actions ([`.github/workflows/ci.yml`](../.github/workflows/ci.yml)), on every push to `master` and every PR:
 
 - **Rust** (Windows): `cargo fmt --check`, `cargo clippy -D warnings`, `cargo test --workspace` (includes the C-2 bit-identical render harness).

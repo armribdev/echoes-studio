@@ -16,7 +16,7 @@ function graphScopeForSelection(scope: GraphScope): GraphScope {
 function createViewModeStore() {
 	const { subscribe, update } = writable<ViewModeState>({
 		main: 'arrange',
-		graphScope: 'track',
+		graphScope: 'track'
 	});
 
 	selectedTrack.subscribe(() => {
@@ -59,7 +59,7 @@ function createViewModeStore() {
 				return s.graphScope === next ? s : { ...s, graphScope: next };
 			});
 			notifyPersist();
-		},
+		}
 	};
 }
 

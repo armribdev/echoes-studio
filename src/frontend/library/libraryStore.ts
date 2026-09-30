@@ -5,7 +5,7 @@ import {
 	loadLibraryPersistence,
 	pushRecentId,
 	saveLibraryPersistence,
-	type LibraryPersistence,
+	type LibraryPersistence
 } from './persistence';
 import { filterAssetsByQuery } from './search';
 import { libraryPreviewPlayer } from './previewPlayer';
@@ -21,7 +21,7 @@ import {
 	type LibraryAsset,
 	type LibraryIndexerState,
 	type LibraryScanEntry,
-	type LibrarySourceId,
+	type LibrarySourceId
 } from './types';
 
 export interface LibraryState {
@@ -81,7 +81,7 @@ function initialState(): LibraryState {
 		indexer: 'idle',
 		indexerProgress: null,
 		indexerError: null,
-		scanToken: 0,
+		scanToken: 0
 	};
 }
 
@@ -90,7 +90,7 @@ function persistSlice(state: LibraryState): void {
 		favoriteIds: state.favoriteIds,
 		recentIds: state.recentIds,
 		indexedFolders: state.indexedFolders,
-		lastSource: state.source,
+		lastSource: state.source
 	};
 	saveLibraryPersistence(data);
 }
@@ -106,11 +106,14 @@ function mergedAsset(previous: LibraryAsset | undefined, asset: LibraryAsset): L
 		chords: asset.chords ?? previous.chords,
 		keyRoot: asset.keyRoot ?? previous.keyRoot,
 		tags: asset.tags ?? previous.tags,
-		origin: asset.origin ?? previous.origin,
+		origin: asset.origin ?? previous.origin
 	};
 }
 
-function mergeAsset(map: Record<string, LibraryAsset>, asset: LibraryAsset): Record<string, LibraryAsset> {
+function mergeAsset(
+	map: Record<string, LibraryAsset>,
+	asset: LibraryAsset
+): Record<string, LibraryAsset> {
 	return { ...map, [asset.id]: mergedAsset(map[asset.id], asset) };
 }
 
@@ -152,7 +155,7 @@ function createLibraryStore() {
 			...s,
 			indexer: 'error',
 			indexerError: message,
-			indexerProgress: null,
+			indexerProgress: null
 		}));
 	}
 
@@ -165,7 +168,7 @@ function createLibraryStore() {
 			scanToken: token,
 			indexer: 'scanning',
 			indexerProgress: 0,
-			indexerError: null,
+			indexerError: null
 		}));
 		try {
 			await invoke('scan_library_folder', { folderPath, token });
@@ -202,10 +205,10 @@ function createLibraryStore() {
 							audioIds: [...s.audioIds, ...newIds],
 							indexer: 'scanning',
 							indexerProgress: payload.progress,
-							indexerError: null,
+							indexerError: null
 						};
 					});
-				},
+				}
 			),
 			listen<{ token: number; total: number }>('library://scan-done', ({ payload }) => {
 				const scan = activeScans.get(payload.token);
@@ -213,24 +216,25 @@ function createLibraryStore() {
 				activeScans.delete(payload.token);
 				update((s) => {
 					const missingIds = new Set(
-						s.audioIds.filter((id) => isInsideFolder(id, scan.folderPath) && !scan.seenIds.has(id)),
+						s.audioIds.filter((id) => isInsideFolder(id, scan.folderPath) && !scan.seenIds.has(id))
 					);
 					const assetsById = { ...s.assetsById };
 					for (const id of missingIds) delete assetsById[id];
 					return {
 						...s,
 						assetsById,
-						audioIds: missingIds.size > 0 ? s.audioIds.filter((id) => !missingIds.has(id)) : s.audioIds,
+						audioIds:
+							missingIds.size > 0 ? s.audioIds.filter((id) => !missingIds.has(id)) : s.audioIds,
 						indexer: activeScans.size > 0 ? 'scanning' : 'ready',
 						indexerProgress: 1,
-						indexerError: null,
+						indexerError: null
 					};
 				});
 			}),
 			listen<{ token: number; message: string }>('library://scan-error', ({ payload }) => {
 				if (!activeScans.delete(payload.token)) return;
 				failScan(payload.message);
-			}),
+			})
 		]);
 	}
 
@@ -352,7 +356,7 @@ function createLibraryStore() {
 				const projectKey = get(projectEventStore).key_root ?? 'C';
 				const notes = resolveLibraryMidiNotes(asset, {
 					projectKeyRoot: projectKey,
-					transposeForPreview: true,
+					transposeForPreview: true
 				});
 				if (notes.length === 0) return;
 				try {
@@ -434,7 +438,7 @@ function createLibraryStore() {
 		getAsset(id: string): LibraryAsset | null {
 			const s = get({ subscribe });
 			return s.assetsById[id] ?? null;
-		},
+		}
 	};
 
 	return api;

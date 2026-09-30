@@ -1,7 +1,7 @@
 # Target Architecture — Echoes Studio (migration vers DAW moderne)
 
 > Architecture **cible réaliste** pour faire évoluer Echoes Studio en DAW moderne (Bitwig/Ableton/Reaper-like), **sans rewrite**.
-> Source des contraintes : [`critical_issues.md`](critical_issues.md), [`current_engine_diagram.md`](../../archive/current_engine_diagram.md) *(archivé)*, audits sous [`../audits/`](../audits/).
+> Source des contraintes : [`critical_issues.md`](critical_issues.md), [`current_engine_diagram.md`](../../archive/current_engine_diagram.md) _(archivé)_, audits sous [`../audits/`](../audits/).
 > Date : 2026-05-31. Statut : proposition pour ratification.
 
 Ce document décrit l'**état cible** et la **stratégie de migration**. Il ne décrit pas un système à construire de zéro : chaque brique cible est attachée à une brique actuelle conservée, étendue, ou remplacée en place.
@@ -22,47 +22,47 @@ Ce document décrit l'**état cible** et la **stratégie de migration**. Il ne d
 
 ### 1.1 Ce qui fonctionne et reste
 
-| Brique | Statut | Conservation cible |
-|---|---|---|
-| DAG audio (`AudioGraph` + `Edge` + Kahn topo-sort) | ✅ | conservé, étendu (PortKind, MIDI edges) |
-| `ExecutionPlan` immuable + `levels` parallèles | ✅ | conservé tel quel |
-| `RuntimeSnapshot` (`AtomicPtr<GraphScheduler>` + drop ring SPSC) | ✅ | conservé tel quel |
-| `GraphScheduler::process_block` + worker pool | ✅ | conservé ; priorisation RT ajoutée (1.7) |
-| PDC interne (delay rings par port + walk topo) | ✅ | conservé ; alimenté par latence plugin |
-| FTZ/DAZ + pré-allocation totale | ✅ | conservé, propagé aux nouveaux nodes |
-| `LiveParams` (atomics) pour volume/pan/mute/solo/mod rate/depth | ✅ | conservé, **étendu** (cf. §6) |
-| `MidiNoteSnapshot` (capacité fixe, tri stable) | ✅ | conservé ; étendu en port MIDI graphe |
-| Export offline (réutilise `compile_scheduler`) | ✅ | conservé tel quel |
-| Thin-wrapper plugins (ADR-003) | ✅ | conservé ; complété (capabilities, params, state) |
+| Brique                                                           | Statut | Conservation cible                                |
+| ---------------------------------------------------------------- | ------ | ------------------------------------------------- |
+| DAG audio (`AudioGraph` + `Edge` + Kahn topo-sort)               | ✅     | conservé, étendu (PortKind, MIDI edges)           |
+| `ExecutionPlan` immuable + `levels` parallèles                   | ✅     | conservé tel quel                                 |
+| `RuntimeSnapshot` (`AtomicPtr<GraphScheduler>` + drop ring SPSC) | ✅     | conservé tel quel                                 |
+| `GraphScheduler::process_block` + worker pool                    | ✅     | conservé ; priorisation RT ajoutée (1.7)          |
+| PDC interne (delay rings par port + walk topo)                   | ✅     | conservé ; alimenté par latence plugin            |
+| FTZ/DAZ + pré-allocation totale                                  | ✅     | conservé, propagé aux nouveaux nodes              |
+| `LiveParams` (atomics) pour volume/pan/mute/solo/mod rate/depth  | ✅     | conservé, **étendu** (cf. §6)                     |
+| `MidiNoteSnapshot` (capacité fixe, tri stable)                   | ✅     | conservé ; étendu en port MIDI graphe             |
+| Export offline (réutilise `compile_scheduler`)                   | ✅     | conservé tel quel                                 |
+| Thin-wrapper plugins (ADR-003)                                   | ✅     | conservé ; complété (capabilities, params, state) |
 
 ### 1.2 Ce qui doit évoluer en place
 
-| Brique actuelle | Limite (réf. critical_issues) | Évolution cible |
-|---|---|---|
-| `NodeKind { Track, Instrument, Plugin, Eq, … }` enum fermé | 2.2, 2.3, 2.5 | enum **élargi** progressivement (variants Container, ReturnBus, NoteFx, …) ; pas remplacé |
-| Ports `usize` non typés | 2.2 | `PortKind { Audio, Midi, Modulation, Control }` ajouté ; convention legacy → `Audio` |
-| `EffectParams` enum + recompile sur tout change | 1.4, 4.6 | `ParameterBlock` par effet (cellules atomiques) ; recompile réservé aux changements **structurels** |
-| `InstrumentNode { inner: PolySynth }` codé en dur | 3.2 | `InstrumentNode { inner: Box<dyn AudioNode> }` polymorphe (PolySynth ou plugin instrument) |
-| `PluginHost::instantiate` retourne `Box<dyn AudioNode>` opaque | 3.1, 3.8, 3.11 | retourne `Arc<PluginInstance>` partagé hôte/audio/GUI |
-| `DeviceInfo` hardcodé 2/2 | 3.3 | `PluginCapabilities` introspecté au scan + au prepare |
-| `ModulatorParams::Lfo` unique | 5.1 | variants `Envelope`, `Macro`, `Random`, `Follower` ajoutés côte à côte |
-| `ModulationTargetRef { TrackGain, EffectParam }` | 5.4 | variant `PluginParam { instance_id, param_key }` ajouté |
-| `AppTrack` = audio XOR MIDI | §1 diag | inchangé en UX ; les containers (Chain/Layer) permettent l'hybride sans casser `AppTrack` |
-| `SendNode` sans `ReturnNode` | 2.4 | `ReturnBus` ajouté ; routing graphe interne ; UX inchangée |
-| `LifecycleState` bicéphale | 3.7 | source de vérité unique côté `PluginInstance` |
+| Brique actuelle                                                | Limite (réf. critical_issues) | Évolution cible                                                                                     |
+| -------------------------------------------------------------- | ----------------------------- | --------------------------------------------------------------------------------------------------- |
+| `NodeKind { Track, Instrument, Plugin, Eq, … }` enum fermé     | 2.2, 2.3, 2.5                 | enum **élargi** progressivement (variants Container, ReturnBus, NoteFx, …) ; pas remplacé           |
+| Ports `usize` non typés                                        | 2.2                           | `PortKind { Audio, Midi, Modulation, Control }` ajouté ; convention legacy → `Audio`                |
+| `EffectParams` enum + recompile sur tout change                | 1.4, 4.6                      | `ParameterBlock` par effet (cellules atomiques) ; recompile réservé aux changements **structurels** |
+| `InstrumentNode { inner: PolySynth }` codé en dur              | 3.2                           | `InstrumentNode { inner: Box<dyn AudioNode> }` polymorphe (PolySynth ou plugin instrument)          |
+| `PluginHost::instantiate` retourne `Box<dyn AudioNode>` opaque | 3.1, 3.8, 3.11                | retourne `Arc<PluginInstance>` partagé hôte/audio/GUI                                               |
+| `DeviceInfo` hardcodé 2/2                                      | 3.3                           | `PluginCapabilities` introspecté au scan + au prepare                                               |
+| `ModulatorParams::Lfo` unique                                  | 5.1                           | variants `Envelope`, `Macro`, `Random`, `Follower` ajoutés côte à côte                              |
+| `ModulationTargetRef { TrackGain, EffectParam }`               | 5.4                           | variant `PluginParam { instance_id, param_key }` ajouté                                             |
+| `AppTrack` = audio XOR MIDI                                    | §1 diag                       | inchangé en UX ; les containers (Chain/Layer) permettent l'hybride sans casser `AppTrack`           |
+| `SendNode` sans `ReturnNode`                                   | 2.4                           | `ReturnBus` ajouté ; routing graphe interne ; UX inchangée                                          |
+| `LifecycleState` bicéphale                                     | 3.7                           | source de vérité unique côté `PluginInstance`                                                       |
 
 ### 1.3 Ce qui n'existe pas et doit être ajouté
 
-| Manque (réf.) | Cible |
-|---|---|
+| Manque (réf.)                             | Cible                                                                                                                            |
+| ----------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
 | Automation (lanes temporelles) — 5.7, 6.6 | `AutomationLane` au niveau projet ; baked en `AutomationCurve` au compile ; lue per-block par `AutomationEvaluator` (block-rate) |
-| Sandbox plugin out-of-process — 8.1–8.4 | bridge optionnel `plugin_host_bridge` (process séparé) ; même API `Arc<PluginInstance>` |
-| XRun télémétrie — 1.1 | wired via `OutputCallbackInfo` → SPSC → telemetry sink |
-| MIDI live input — diag §3 | `MidiInputNode` + capture device |
-| Note FX — 2.6 | nodes MIDI-in/MIDI-out greffés sur ports MIDI typés |
-| Containers (Chain/Layer/Split) — 2.5 | `ContainerNode` métacompilé : non émis dans `ExecutionPlan`, déplié en sous-graphe |
-| Bypass sans recompile — 6.4 | flag atomique sur step + court-circuit dans `process_one_step` |
-| Tempo-sync LFO + phase reset — 5.5, 5.6 | extension `LfoParams` ; reset hook au transport restart |
+| Sandbox plugin out-of-process — 8.1–8.4   | bridge optionnel `plugin_host_bridge` (process séparé) ; même API `Arc<PluginInstance>`                                          |
+| XRun télémétrie — 1.1                     | wired via `OutputCallbackInfo` → SPSC → telemetry sink                                                                           |
+| MIDI live input — diag §3                 | `MidiInputNode` + capture device                                                                                                 |
+| Note FX — 2.6                             | nodes MIDI-in/MIDI-out greffés sur ports MIDI typés                                                                              |
+| Containers (Chain/Layer/Split) — 2.5      | `ContainerNode` métacompilé : non émis dans `ExecutionPlan`, déplié en sous-graphe                                               |
+| Bypass sans recompile — 6.4               | flag atomique sur step + court-circuit dans `process_one_step`                                                                   |
+| Tempo-sync LFO + phase reset — 5.5, 5.6   | extension `LfoParams` ; reset hook au transport restart                                                                          |
 
 ---
 
@@ -381,6 +381,7 @@ Refus explicite : `EngineV1` + `EngineV2` séparés. Coût de maintenance prohib
 Quatre techniques sont utilisées en combinaison :
 
 **T1 — Enum élargi avec default safe.**
+
 ```rust
 enum NodeKind {
     Track { … },              // legacy
@@ -398,9 +399,11 @@ enum NodeKind {
     AudioRateModulator { … },
 }
 ```
+
 Tout match sur `NodeKind` reste exhaustif et explicite (pas de catch-all). Un projet legacy ne crée aucun des nouveaux variants.
 
 **T2 — Champs `Option<…>` / `#[serde(default)]` sur `AppProject`.**
+
 ```rust
 struct AppProject {
     name: String, bpm: f32, tracks: Vec<AppTrack>,  // inchangés
@@ -410,9 +413,11 @@ struct AppProject {
     #[serde(default)] plugin_state_blobs: HashMap<DeviceId, Vec<u8>>,
 }
 ```
+
 Un projet sauvegardé en `master` se recharge avec ces champs vides → comportement strictement identique.
 
 **T3 — Feature flag par fonctionnalité risquée.**
+
 - `containers` — désactivé par défaut, activé via toggle settings.
 - `plugin_sandbox` — désactivé par défaut, activé par device (cf. C-9).
 - `sample_accurate_modulation` — désactivé jusqu'à validation perf (cf. 5.2 critical_issues).
@@ -421,6 +426,7 @@ Pas de feature flag pour les fixes critiques (3.1, 3.2, 3.4, 3.5, 8.1). Ils s'ap
 
 **T4 — Code path dual sur le path hot.**
 Pour les paramètres effet : tant qu'un `ParameterBlock` n'est pas alloué pour un effet donné, l'écriture passe par recompile (legacy). Au fur et à mesure qu'on alloue les blocs, l'écriture bascule sur LiveParams. Mécanisme local, pas global :
+
 ```rust
 fn update_effect_param(effect_id, key, value) {
     if let Some(block) = live_params.effect_params.get(effect_id) {
@@ -444,66 +450,66 @@ fn update_effect_param(effect_id, key, value) {
 
 ### 6.1 Modèle de données
 
-| Ancien | Nouveau | Stratégie |
-|---|---|---|
-| `AppTrack { clips, midi_clips, … }` (audio XOR MIDI) | `AppTrack` inchangé | inchangé ; le mode hybride passe par container |
-| `AppTrack.effects: Vec<TrackEffect>` | idem | inchangé ; l'effet peut maintenant être un `Plugin` instrument-capable |
-| `EffectParams::Plugin { plugin_id }` | idem | enrichi : `device_id` référence un `PluginInstance` partagé |
-| `ModulatorParams::Lfo(…)` | + `Envelope`, `Macro`, `Random`, `Follower` | enum élargi |
-| `ModulationTargetRef::{TrackGain, EffectParam}` | + `PluginParam { device_id, key }` | variant ajouté |
-| pas d'automation | `AutomationLane { target, points: Vec<Point>, curve }` | champ nouveau |
-| pas de container | `Container { kind, children: Vec<NodeId>, routing }` | champ nouveau (opt) |
-| pas de return bus | `ReturnBus { id, name, effects, fader }` | champ nouveau (opt) |
+| Ancien                                               | Nouveau                                                | Stratégie                                                              |
+| ---------------------------------------------------- | ------------------------------------------------------ | ---------------------------------------------------------------------- |
+| `AppTrack { clips, midi_clips, … }` (audio XOR MIDI) | `AppTrack` inchangé                                    | inchangé ; le mode hybride passe par container                         |
+| `AppTrack.effects: Vec<TrackEffect>`                 | idem                                                   | inchangé ; l'effet peut maintenant être un `Plugin` instrument-capable |
+| `EffectParams::Plugin { plugin_id }`                 | idem                                                   | enrichi : `device_id` référence un `PluginInstance` partagé            |
+| `ModulatorParams::Lfo(…)`                            | + `Envelope`, `Macro`, `Random`, `Follower`            | enum élargi                                                            |
+| `ModulationTargetRef::{TrackGain, EffectParam}`      | + `PluginParam { device_id, key }`                     | variant ajouté                                                         |
+| pas d'automation                                     | `AutomationLane { target, points: Vec<Point>, curve }` | champ nouveau                                                          |
+| pas de container                                     | `Container { kind, children: Vec<NodeId>, routing }`   | champ nouveau (opt)                                                    |
+| pas de return bus                                    | `ReturnBus { id, name, effects, fader }`               | champ nouveau (opt)                                                    |
 
 ### 6.2 Graphe
 
-| Ancien | Nouveau | Stratégie |
-|---|---|---|
-| `Edge { from: PortId, to: PortId }` non typé | `Edge { from, to, kind: PortKind }` | `PortKind::Audio` par défaut → bit-identique |
-| `num_input_ports() -> usize` | `input_ports() -> &[PortDescriptor]` (kind + channel count) | méthode ajoutée ; ancienne conservée comme `usize` aggregat |
-| Modulation hors-bande (`Vec<ModulationRoute>`) | idem + arêtes `PortKind::Modulation` possibles | les deux coexistent ; le compileur normalise |
-| MIDI dans `InstrumentNode` interne | + arêtes `PortKind::Midi` entre nodes | path interne préservé pour PolySynth ; path graphe pour NoteFx / plugins instruments |
-| `SendNode` pass-through | `SendNode` + `ReturnBusNode` connectés via aux edges | rétrocompat : un `SendNode` sans return existant continue en pass-through |
+| Ancien                                         | Nouveau                                                     | Stratégie                                                                            |
+| ---------------------------------------------- | ----------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| `Edge { from: PortId, to: PortId }` non typé   | `Edge { from, to, kind: PortKind }`                         | `PortKind::Audio` par défaut → bit-identique                                         |
+| `num_input_ports() -> usize`                   | `input_ports() -> &[PortDescriptor]` (kind + channel count) | méthode ajoutée ; ancienne conservée comme `usize` aggregat                          |
+| Modulation hors-bande (`Vec<ModulationRoute>`) | idem + arêtes `PortKind::Modulation` possibles              | les deux coexistent ; le compileur normalise                                         |
+| MIDI dans `InstrumentNode` interne             | + arêtes `PortKind::Midi` entre nodes                       | path interne préservé pour PolySynth ; path graphe pour NoteFx / plugins instruments |
+| `SendNode` pass-through                        | `SendNode` + `ReturnBusNode` connectés via aux edges        | rétrocompat : un `SendNode` sans return existant continue en pass-through            |
 
 ### 6.3 Plugins
 
-| Ancien | Nouveau | Stratégie |
-|---|---|---|
-| `PluginHost::instantiate → Box<dyn AudioNode>` | `instantiate → (Arc<PluginInstance>, Box<dyn AudioNode>)` | le node wrap un clone `Arc` ; host garde un clone ; GUI réutilise le même Arc |
-| `DeviceInfo { num_inputs: 2, num_outputs: 2, has_midi_*: false }` hardcodé | `PluginCapabilities` lue depuis `IComponent::getBusInfo` / `clap.audio-ports` au prepare | hardcode reste comme fallback ; capabilities probées en plus |
-| `ParameterMap::new()` vide | énumération via `IEditController::getParameter*` / `clap.params.*` au prepare | si vide (ancien plugin) : comportement inchangé |
-| `save_state → empty / load_state → no-op` | `IComponent::getState/setState` / `clap_plugin_state.{save,load}` | implémentation via FFI ; fallback empty pour wrappers non encore migrés |
-| `latency_samples() → 0` | override avec `getLatencySamples` / `clap.get_latency` | nouvelle valeur consommée par PDC (déjà implémenté côté interne) |
-| `set_parameter_normalised → JSON blob` jamais lu | SPSC `ParamChange` drainée dans `process()` ; injectée via `IParameterChanges` / `clap_input_events` | path actuel reste pour devices fallback |
-| Instance GUI ≠ instance audio | une seule `Arc<PluginInstance>` ; le GUI appelle des méthodes sur la même | `open_plugin_editor` refactorisé pour réutiliser l'instance existante |
-| `LifecycleState` dans host ET wrapper | un seul état dans `PluginInstance` | wrapper et host lisent via l'`Arc` |
-| `NodeKind::Plugin` pour effets uniquement | `NodeKind::Plugin` peut être instrument (compileur regarde `capabilities.is_instrument`) | `InstrumentNode::inner` accepte un `Arc<PluginInstance>` à la place de `PolySynth` |
+| Ancien                                                                     | Nouveau                                                                                              | Stratégie                                                                          |
+| -------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| `PluginHost::instantiate → Box<dyn AudioNode>`                             | `instantiate → (Arc<PluginInstance>, Box<dyn AudioNode>)`                                            | le node wrap un clone `Arc` ; host garde un clone ; GUI réutilise le même Arc      |
+| `DeviceInfo { num_inputs: 2, num_outputs: 2, has_midi_*: false }` hardcodé | `PluginCapabilities` lue depuis `IComponent::getBusInfo` / `clap.audio-ports` au prepare             | hardcode reste comme fallback ; capabilities probées en plus                       |
+| `ParameterMap::new()` vide                                                 | énumération via `IEditController::getParameter*` / `clap.params.*` au prepare                        | si vide (ancien plugin) : comportement inchangé                                    |
+| `save_state → empty / load_state → no-op`                                  | `IComponent::getState/setState` / `clap_plugin_state.{save,load}`                                    | implémentation via FFI ; fallback empty pour wrappers non encore migrés            |
+| `latency_samples() → 0`                                                    | override avec `getLatencySamples` / `clap.get_latency`                                               | nouvelle valeur consommée par PDC (déjà implémenté côté interne)                   |
+| `set_parameter_normalised → JSON blob` jamais lu                           | SPSC `ParamChange` drainée dans `process()` ; injectée via `IParameterChanges` / `clap_input_events` | path actuel reste pour devices fallback                                            |
+| Instance GUI ≠ instance audio                                              | une seule `Arc<PluginInstance>` ; le GUI appelle des méthodes sur la même                            | `open_plugin_editor` refactorisé pour réutiliser l'instance existante              |
+| `LifecycleState` dans host ET wrapper                                      | un seul état dans `PluginInstance`                                                                   | wrapper et host lisent via l'`Arc`                                                 |
+| `NodeKind::Plugin` pour effets uniquement                                  | `NodeKind::Plugin` peut être instrument (compileur regarde `capabilities.is_instrument`)             | `InstrumentNode::inner` accepte un `Arc<PluginInstance>` à la place de `PolySynth` |
 
 ### 6.4 Paramètres & modulation
 
-| Ancien | Nouveau | Stratégie |
-|---|---|---|
-| `LiveParams.tracks / modulators` | + `effect_params: HashMap<EffectId, Arc<ParameterBlock>>` | extension du struct |
-| Recompile à chaque change param effet | écriture dans `ParameterBlock` (atomic) lu par node | path conservé pour les effets non encore migrés ; migration variant par variant |
-| Pas de queue paramètre plugin | `PluginHost.param_queues: HashMap<DeviceId, SpscQueue<ParamChange>>` | nouvelle file |
-| Modulation cible TrackGain/EffectParam | + `PluginParam { device_id, param_key }` | source écrit dans la SPSC du plugin au lieu d'appeler `apply_modulation` |
-| Pas d'automation | `AutomationEvaluator` consomme `AutomationLane` baked en `AutomationCurve` ; écrit dans `LiveParams` block-rate | block-rate aligne avec modulation existante |
+| Ancien                                 | Nouveau                                                                                                         | Stratégie                                                                       |
+| -------------------------------------- | --------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| `LiveParams.tracks / modulators`       | + `effect_params: HashMap<EffectId, Arc<ParameterBlock>>`                                                       | extension du struct                                                             |
+| Recompile à chaque change param effet  | écriture dans `ParameterBlock` (atomic) lu par node                                                             | path conservé pour les effets non encore migrés ; migration variant par variant |
+| Pas de queue paramètre plugin          | `PluginHost.param_queues: HashMap<DeviceId, SpscQueue<ParamChange>>`                                            | nouvelle file                                                                   |
+| Modulation cible TrackGain/EffectParam | + `PluginParam { device_id, param_key }`                                                                        | source écrit dans la SPSC du plugin au lieu d'appeler `apply_modulation`        |
+| Pas d'automation                       | `AutomationEvaluator` consomme `AutomationLane` baked en `AutomationCurve` ; écrit dans `LiveParams` block-rate | block-rate aligne avec modulation existante                                     |
 
 ### 6.5 MIDI
 
-| Ancien | Nouveau | Stratégie |
-|---|---|---|
-| `MidiNoteSnapshot` bake samples au compile (BPM courant) | bake en **beats** + résolution en samples per-block via `TransportInfo` | corrige 2.1 (UPDATE_TEMPO désync) |
-| MIDI cantonné à `InstrumentNode` | flux MIDI via `PortKind::Midi` edges | `InstrumentNode` accepte une entrée MIDI ; NoteFx insère des nodes en amont |
-| Pas d'input live | `MidiInputNode` (capture device → SPSC → audio thread) | ajout source MIDI ; PortKind unifié |
+| Ancien                                                   | Nouveau                                                                 | Stratégie                                                                   |
+| -------------------------------------------------------- | ----------------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| `MidiNoteSnapshot` bake samples au compile (BPM courant) | bake en **beats** + résolution en samples per-block via `TransportInfo` | corrige 2.1 (UPDATE_TEMPO désync)                                           |
+| MIDI cantonné à `InstrumentNode`                         | flux MIDI via `PortKind::Midi` edges                                    | `InstrumentNode` accepte une entrée MIDI ; NoteFx insère des nodes en amont |
+| Pas d'input live                                         | `MidiInputNode` (capture device → SPSC → audio thread)                  | ajout source MIDI ; PortKind unifié                                         |
 
 ### 6.6 Threading
 
-| Ancien | Nouveau | Stratégie |
-|---|---|---|
-| Workers héritent priorité process | `SetThreadPriority(THREAD_PRIORITY_TIME_CRITICAL)` / `SCHED_FIFO` | applied au spawn |
-| WorkerPool par scheduler (respawn à chaque recompile) | WorkerPool partagé via `Arc<WorkerPool>` dans `AudioEngine` | refactor isolé ; transparent pour le scheduler |
-| `catch_unwind` Rust seulement | + `__try/__except` Win32 OU bridge sandbox out-of-process | sandbox via flag par device |
+| Ancien                                                | Nouveau                                                           | Stratégie                                      |
+| ----------------------------------------------------- | ----------------------------------------------------------------- | ---------------------------------------------- |
+| Workers héritent priorité process                     | `SetThreadPriority(THREAD_PRIORITY_TIME_CRITICAL)` / `SCHED_FIFO` | applied au spawn                               |
+| WorkerPool par scheduler (respawn à chaque recompile) | WorkerPool partagé via `Arc<WorkerPool>` dans `AudioEngine`       | refactor isolé ; transparent pour le scheduler |
+| `catch_unwind` Rust seulement                         | + `__try/__except` Win32 OU bridge sandbox out-of-process         | sandbox via flag par device                    |
 
 ---
 
@@ -664,22 +670,22 @@ L'écriture par automation **partage** la cellule avec l'UI et la modulation : l
 
 Inventaire de validation, partie par partie.
 
-| Évolution cible | Compatible avec compile actuel ? | Compatible avec scheduler RT ? | Compatible projets sauvegardés ? | Couverture |
-|---|---|---|---|---|
-| `PluginInstance` Arc partagé (ADR-006) | oui — `instantiate` retourne aussi un `Box<dyn AudioNode>` au compileur | oui — wrapper délègue, pas de modif scheduler | oui — `device_id` inchangé | 3.1, 3.4–3.11, 6.3, 8.6 |
-| SPSC `ParamChange` (ADR-007) | oui — file allouée au prepare | oui — drain en début de `process()`, borné, lock-free | oui — projets sans plugin = pas de file | 3.1, 3.9, 5.4 |
-| `PortKind` (ADR-008) | oui — défaut `Audio` produit le DAG identique | oui — aucune modif runtime | oui — `#[serde(default)]` | 2.2, 2.3, 2.6, sidechain |
-| `ParameterBlock` (ADR-009) | oui — alloué par node au prepare | oui — atomic read per-block | oui — fallback recompile tant que pas câblé | 1.3, 1.4, 2.8, 4.6 |
-| Sandbox out-of-process (ADR-010) | oui — bridge derrière l'`AudioNode` | oui — ring shared-mem borné | oui — opt-in par-device, défaut in-process | 1.5, 1.6, 8.1–8.4 |
-| Automation lanes (ADR-011) | oui — bake au compile | oui — evaluator block-rate écrit dans `LiveParams` | oui — `Vec::new()` par défaut | 5.7, 6.6 |
-| MIDI bake en beats (ADR-012) | oui — refactor isolé du baker | oui — résolution per-block dans `process` | oui — `AppMidiClip` déjà en beats | 2.1 (UPDATE_TEMPO) |
-| WorkerPool partagé (ADR-013) | oui — `Arc<WorkerPool>` sur `AudioEngine` | oui — disponible sans respawn | oui — comportement par défaut inchangé | 1.7, 4.2 |
-| Containers métacompilés (ADR-014) | oui — dépaquetage avant `compute_execution_levels` | oui — invisibles à l'exécution | oui — `Vec::new()` par défaut | 2.5 |
-| `Envelope` / `Macro` / `Random` / `Follower` | oui — nouveaux variants enum | oui — nodes isolés | oui — variants non utilisés ignorés | 5.1 |
-| LFO tempo-sync + phase reset | oui — extension `LfoParams` | oui — calcul block-rate existant | oui — `Option<TempoSync>` | 5.5, 5.6 |
-| `ReturnBus` + routage Send | oui — node ajouté, edges aux | oui — DAG standard | oui — pas de return = comportement actuel | 2.4 |
-| Bypass step (`AtomicBool`) | oui — alloué au compile | oui — read 1 atomic + court-circuit | oui — défaut false | 6.4 |
-| XRun télémétrie | oui — branché sur `OutputCallbackInfo` | oui — push SPSC borné | oui — opt-in via reporter existant | 1.1 |
+| Évolution cible                              | Compatible avec compile actuel ?                                        | Compatible avec scheduler RT ?                        | Compatible projets sauvegardés ?            | Couverture               |
+| -------------------------------------------- | ----------------------------------------------------------------------- | ----------------------------------------------------- | ------------------------------------------- | ------------------------ |
+| `PluginInstance` Arc partagé (ADR-006)       | oui — `instantiate` retourne aussi un `Box<dyn AudioNode>` au compileur | oui — wrapper délègue, pas de modif scheduler         | oui — `device_id` inchangé                  | 3.1, 3.4–3.11, 6.3, 8.6  |
+| SPSC `ParamChange` (ADR-007)                 | oui — file allouée au prepare                                           | oui — drain en début de `process()`, borné, lock-free | oui — projets sans plugin = pas de file     | 3.1, 3.9, 5.4            |
+| `PortKind` (ADR-008)                         | oui — défaut `Audio` produit le DAG identique                           | oui — aucune modif runtime                            | oui — `#[serde(default)]`                   | 2.2, 2.3, 2.6, sidechain |
+| `ParameterBlock` (ADR-009)                   | oui — alloué par node au prepare                                        | oui — atomic read per-block                           | oui — fallback recompile tant que pas câblé | 1.3, 1.4, 2.8, 4.6       |
+| Sandbox out-of-process (ADR-010)             | oui — bridge derrière l'`AudioNode`                                     | oui — ring shared-mem borné                           | oui — opt-in par-device, défaut in-process  | 1.5, 1.6, 8.1–8.4        |
+| Automation lanes (ADR-011)                   | oui — bake au compile                                                   | oui — evaluator block-rate écrit dans `LiveParams`    | oui — `Vec::new()` par défaut               | 5.7, 6.6                 |
+| MIDI bake en beats (ADR-012)                 | oui — refactor isolé du baker                                           | oui — résolution per-block dans `process`             | oui — `AppMidiClip` déjà en beats           | 2.1 (UPDATE_TEMPO)       |
+| WorkerPool partagé (ADR-013)                 | oui — `Arc<WorkerPool>` sur `AudioEngine`                               | oui — disponible sans respawn                         | oui — comportement par défaut inchangé      | 1.7, 4.2                 |
+| Containers métacompilés (ADR-014)            | oui — dépaquetage avant `compute_execution_levels`                      | oui — invisibles à l'exécution                        | oui — `Vec::new()` par défaut               | 2.5                      |
+| `Envelope` / `Macro` / `Random` / `Follower` | oui — nouveaux variants enum                                            | oui — nodes isolés                                    | oui — variants non utilisés ignorés         | 5.1                      |
+| LFO tempo-sync + phase reset                 | oui — extension `LfoParams`                                             | oui — calcul block-rate existant                      | oui — `Option<TempoSync>`                   | 5.5, 5.6                 |
+| `ReturnBus` + routage Send                   | oui — node ajouté, edges aux                                            | oui — DAG standard                                    | oui — pas de return = comportement actuel   | 2.4                      |
+| Bypass step (`AtomicBool`)                   | oui — alloué au compile                                                 | oui — read 1 atomic + court-circuit                   | oui — défaut false                          | 6.4                      |
+| XRun télémétrie                              | oui — branché sur `OutputCallbackInfo`                                  | oui — push SPSC borné                                 | oui — opt-in via reporter existant          | 1.1                      |
 
 **Conclusion.** Aucune des évolutions cibles n'exige de modification destructrice des invariants validés (DAG, snapshot atomique, scheduler RT, drop ring, pré-allocation). Toutes peuvent être introduites par variant additif, fallback legacy, ou feature flag. La migration est **incrémentale et réversible** à chaque PR.
 

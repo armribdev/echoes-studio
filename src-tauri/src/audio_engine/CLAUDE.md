@@ -4,6 +4,7 @@ Owns the CPAL stream lifecycle, the transport clock, the runtime snapshot
 plumbing, and the offline (non-realtime) render path.
 
 ## Local hard constraints
+
 - The CPAL callback closure (`engine.rs`) must capture only lock-free handles
   (`Arc<RuntimeSnapshot>`, transport atomics, meter cells). No locks on the audio
   path. See `.claude/rules/rt_audio_rules.md` + `threading_rules.md`.
@@ -17,10 +18,12 @@ plumbing, and the offline (non-realtime) render path.
   never dropped in the callback.
 
 ## Key files
+
 `engine.rs` (CPAL stream) · `transport.rs` (clock/atomics) · `snapshot.rs`
 (swap plumbing) · `offline.rs` (deterministic render) · `graph.rs`.
 
 ## Read before changing
+
 - `docs/active/threading/threading-model.md`, `.../realtime-safety.md`
 - `docs/active/architecture/snapshot-rebuild-flow.md`
 - ADR-004 · then run `.claude/rules/completion_protocol.md`.

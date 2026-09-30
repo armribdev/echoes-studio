@@ -49,7 +49,7 @@ function pathsMatch(a: string, b: string): boolean {
 function applyPeakDelta(
 	current: PeakPair[],
 	from: number | undefined,
-	append: PeakPair[] | undefined,
+	append: PeakPair[] | undefined
 ): PeakPair[] | null {
 	if (from == null || !append || append.length === 0) return null;
 	const head = from <= current.length ? current.slice(0, from) : current.slice();
@@ -89,7 +89,7 @@ function createPendingImports() {
 						if (!pathsMatch(item.filePath, payload.file_path)) return item;
 						const next: PendingImportClip = {
 							...item,
-							progress: Math.max(item.progress, payload.progress),
+							progress: Math.max(item.progress, payload.progress)
 						};
 						if (payload.sample_rate && payload.sample_rate > 0) {
 							next.sampleRate = payload.sample_rate;
@@ -98,13 +98,13 @@ function createPendingImports() {
 						const d512 = applyPeakDelta(
 							item.peaks_512,
 							payload.peaks_512_from,
-							payload.peaks_512_append,
+							payload.peaks_512_append
 						);
 						if (d512) next.peaks_512 = d512;
 						const d4096 = applyPeakDelta(
 							item.peaks_4096,
 							payload.peaks_4096_from,
-							payload.peaks_4096_append,
+							payload.peaks_4096_append
 						);
 						if (d4096) next.peaks_4096 = d4096;
 
@@ -116,7 +116,11 @@ function createPendingImports() {
 						if (payload.peaks_512 && payload.peaks_512.length > 0 && item.peaks_512.length === 0) {
 							next.peaks_512 = payload.peaks_512;
 						}
-						if (payload.peaks_4096 && payload.peaks_4096.length > 0 && item.peaks_4096.length === 0) {
+						if (
+							payload.peaks_4096 &&
+							payload.peaks_4096.length > 0 &&
+							item.peaks_4096.length === 0
+						) {
 							next.peaks_4096 = payload.peaks_4096;
 						}
 
@@ -124,7 +128,7 @@ function createPendingImports() {
 						// that shrinks a probed full-duration slot then grows it back.
 						// Frame size is set at add() / prepare finalize only.
 						return next;
-					}),
+					})
 				);
 			});
 		},
@@ -148,7 +152,7 @@ function createPendingImports() {
 			const sibling = get({ subscribe }).find(
 				(item) =>
 					pathsMatch(item.filePath, input.filePath) &&
-					(item.peaks_512.length > 0 || item.peaks_4096.length > 0),
+					(item.peaks_512.length > 0 || item.peaks_4096.length > 0)
 			);
 			update((list) => [
 				...list,
@@ -163,8 +167,8 @@ function createPendingImports() {
 					peaks_64: sibling?.peaks_64.slice() ?? [],
 					peaks_512: sibling?.peaks_512.slice() ?? [],
 					peaks_4096: sibling?.peaks_4096.slice() ?? [],
-					progress: sibling ? Math.max(sibling.progress, 0.01) : 0,
-				},
+					progress: sibling ? Math.max(sibling.progress, 0.01) : 0
+				}
 			]);
 			return id;
 		},
@@ -173,10 +177,7 @@ function createPendingImports() {
 			return get({ subscribe }).find((item) => item.id === id);
 		},
 
-		updatePlacement(
-			id: string,
-			placement: { start: number; end: number; trackId?: string },
-		) {
+		updatePlacement(id: string, placement: { start: number; end: number; trackId?: string }) {
 			update((list) =>
 				list.map((item) => {
 					if (item.id !== id) return item;
@@ -184,9 +185,9 @@ function createPendingImports() {
 						...item,
 						start: placement.start,
 						end: Math.max(placement.end, placement.start + 0.05),
-						trackId: placement.trackId ?? item.trackId,
+						trackId: placement.trackId ?? item.trackId
 					};
-				}),
+				})
 			);
 		},
 
@@ -194,11 +195,7 @@ function createPendingImports() {
 		attachEngineClip(id: string, engineClipId: string) {
 			rememberClipUiKey(engineClipId, id);
 			selection.remapId(id, engineClipId);
-			update((list) =>
-				list.map((item) =>
-					item.id === id ? { ...item, engineClipId } : item,
-				),
-			);
+			update((list) => list.map((item) => (item.id === id ? { ...item, engineClipId } : item)));
 		},
 
 		/** Fill empty peak lanes from ADD_CLIP DTO (cached re-import). */
@@ -209,7 +206,7 @@ function createPendingImports() {
 				peaks_64?: PeakPair[];
 				peaks_512?: PeakPair[];
 				peaks_4096?: PeakPair[];
-			},
+			}
 		) {
 			update((list) =>
 				list.map((item) => {
@@ -217,19 +214,12 @@ function createPendingImports() {
 					return {
 						...item,
 						sampleRate:
-							peaks.sampleRate && peaks.sampleRate > 0
-								? peaks.sampleRate
-								: item.sampleRate,
-						peaks_64:
-							item.peaks_64.length > 0 ? item.peaks_64 : (peaks.peaks_64 ?? []),
-						peaks_512:
-							item.peaks_512.length > 0 ? item.peaks_512 : (peaks.peaks_512 ?? []),
-						peaks_4096:
-							item.peaks_4096.length > 0
-								? item.peaks_4096
-								: (peaks.peaks_4096 ?? []),
+							peaks.sampleRate && peaks.sampleRate > 0 ? peaks.sampleRate : item.sampleRate,
+						peaks_64: item.peaks_64.length > 0 ? item.peaks_64 : (peaks.peaks_64 ?? []),
+						peaks_512: item.peaks_512.length > 0 ? item.peaks_512 : (peaks.peaks_512 ?? []),
+						peaks_4096: item.peaks_4096.length > 0 ? item.peaks_4096 : (peaks.peaks_4096 ?? [])
 					};
-				}),
+				})
 			);
 		},
 
@@ -239,7 +229,7 @@ function createPendingImports() {
 		 */
 		markSettled(id: string) {
 			update((list) =>
-				list.map((item) => (item.id === id ? { ...item, settled: true, progress: 1 } : item)),
+				list.map((item) => (item.id === id ? { ...item, settled: true, progress: 1 } : item))
 			);
 			resolvePaint(id);
 		},
@@ -247,10 +237,7 @@ function createPendingImports() {
 		/** Drop settled slots whose engine clip no longer exists on any track. */
 		pruneOrphans(liveClipIds: Set<string>) {
 			const doomed = get({ subscribe }).filter(
-				(item) =>
-					item.settled &&
-					item.engineClipId != null &&
-					!liveClipIds.has(item.engineClipId),
+				(item) => item.settled && item.engineClipId != null && !liveClipIds.has(item.engineClipId)
 			);
 			if (doomed.length === 0) return;
 			for (const item of doomed) {
@@ -323,7 +310,7 @@ function createPendingImports() {
 
 		has(id: string): boolean {
 			return get({ subscribe }).some((item) => item.id === id);
-		},
+		}
 	};
 }
 

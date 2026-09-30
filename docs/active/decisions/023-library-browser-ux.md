@@ -103,39 +103,39 @@ does not silently become a second plugin browser or a full-screen destination.
 
 **Invariants this ADR adds (do not change silently):**
 
-| Invariant | Notes |
-|-----------|--------|
-| Library drops → commands only | Extends ADR-005 to library |
-| Preview ≠ arrange mutation | Product + engine boundary |
-| Phase 1 preview = UI-side | Not on audio callback |
-| Library dock = right panel | Left stays inspector |
+| Invariant                                             | Notes                       |
+| ----------------------------------------------------- | --------------------------- |
+| Library drops → commands only                         | Extends ADR-005 to library  |
+| Preview ≠ arrange mutation                            | Product + engine boundary   |
+| Phase 1 preview = UI-side                             | Not on audio callback       |
+| Library dock = right panel                            | Left stays inspector        |
 | Phase 1 = single `audio` source (+ recents/favorites) | No fake Samples/Loops split |
-| Devices ∉ library until Phase 4 decision | Scope freeze |
-| No blocking startup scan | UX + performance |
+| Devices ∉ library until Phase 4 decision              | Scope freeze                |
+| No blocking startup scan                              | UX + performance            |
 
 ---
 
 ## Alternatives considered
 
-| Alternative | Why rejected |
-|-------------|--------------|
-| Ableton-only docked browser | Slower insertion; misses Echoes “10 s to idea” |
-| Bitwig-only pop-up, no panel | Weak for browsing/organising large libraries |
-| Full-screen Library page | Breaks arrange flow; fights UI guidelines |
-| Unified Devices + Sounds from day one | Recreates “Everything” overload; blocks MVP |
-| Stored AudioTrack vs MidiTrack kinds | Conflicts with current unified `AppTrack` model |
-| Preview via temporary arrange clip | Pollutes undo stack and transport |
-| Dock library in left inspector | Left panel is track inspector (`I`); would destroy density |
-| Engine preview stream in Phase 1 | Blocks MVP; UI WebAudio is enough for audition |
-| Samples + Loops sources in Phase 1 | No reliable kind metadata yet; fake taxonomy |
+| Alternative                           | Why rejected                                               |
+| ------------------------------------- | ---------------------------------------------------------- |
+| Ableton-only docked browser           | Slower insertion; misses Echoes “10 s to idea”             |
+| Bitwig-only pop-up, no panel          | Weak for browsing/organising large libraries               |
+| Full-screen Library page              | Breaks arrange flow; fights UI guidelines                  |
+| Unified Devices + Sounds from day one | Recreates “Everything” overload; blocks MVP                |
+| Stored AudioTrack vs MidiTrack kinds  | Conflicts with current unified `AppTrack` model            |
+| Preview via temporary arrange clip    | Pollutes undo stack and transport                          |
+| Dock library in left inspector        | Left panel is track inspector (`I`); would destroy density |
+| Engine preview stream in Phase 1      | Blocks MVP; UI WebAudio is enough for audition             |
+| Samples + Loops sources in Phase 1    | No reliable kind metadata yet; fake taxonomy               |
 
 ---
 
 ## Amendments
 
-| Date | Change |
-|------|--------|
-| 2026-09-28 | Initial acceptance |
-| 2026-09-28 | Lock Phase 1: right-dock panel, UI WebAudio preview, single Audio source |
+| Date       | Change                                                                                                                                                                                                                             |
+| ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 2026-09-28 | Initial acceptance                                                                                                                                                                                                                 |
+| 2026-09-28 | Lock Phase 1: right-dock panel, UI WebAudio preview, single Audio source                                                                                                                                                           |
 | 2026-09-28 | Lock deferred product calls: raw warp-until-ADR, factory MIDI then rules for chords, compact pop-up, no context memory until P4 opt-in, `B`+`L` alias, empty-project auto-track in P2, preview BPM native then optional UI stretch |
-| 2026-09-30 | **Pop-up = Bitwig dual surface**: same browser UI as the right dock (full list/search/sources/preview), opened from arrange **lane** `+` slot — not a truncated compact list; `+` not beside mute/solo |
+| 2026-09-30 | **Pop-up = Bitwig dual surface**: same browser UI as the right dock (full list/search/sources/preview), opened from arrange **lane** `+` slot — not a truncated compact list; `+` not beside mute/solo                             |

@@ -18,13 +18,13 @@ const KIND_PATTERNS: { kind: InstrumentArtKind; re: RegExp }[] = [
 	{ kind: 'pad', re: /\bpad\b|ambient|atmosphere|texture/i },
 	{ kind: 'keys', re: /piano|keys|rhodes|epiano|organ|clav|harpsi|wurl/i },
 	{ kind: 'synth', re: /synth|polysynth|lead|analog|fm\b|wave|osc/i },
-	{ kind: 'fx', re: /fx|effect|noise|glitch/i },
+	{ kind: 'fx', re: /fx|effect|noise|glitch/i }
 ];
 
 /** Déduit une vignette style GarageBand depuis le nom/id d'instrument. */
 export function instrumentArtKind(
 	instrumentId: string | null | undefined,
-	displayName?: string | null,
+	displayName?: string | null
 ): InstrumentArtKind {
 	if (!instrumentId) return 'synth';
 	const haystack = `${instrumentId} ${displayName ?? ''}`;

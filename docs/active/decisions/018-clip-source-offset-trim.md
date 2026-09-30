@@ -56,7 +56,7 @@ source length.
   `AppMidiClip`, their DTOs, and the persisted `ClipFile` / `MidiClipFile`
   (`#[serde(default)]`).
 - [`audio_graph/nodes/track.rs`](../../../src-tauri/src/audio_graph/nodes/track.rs)
-  + [`compiler.rs`](../../../src-tauri/src/audio_graph/compiler.rs): source-skip.
+  - [`compiler.rs`](../../../src-tauri/src/audio_graph/compiler.rs): source-skip.
 - [`audio_graph/midi.rs`](../../../src-tauri/src/audio_graph/midi.rs) +
   [`nodes/instrument.rs`](../../../src-tauri/src/audio_graph/nodes/instrument.rs):
   window cull.

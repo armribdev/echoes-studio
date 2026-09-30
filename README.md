@@ -10,6 +10,7 @@
 ---
 
 <!-- [TODO: Remplacer par une vraie capture d'écran] -->
+
 ```
 ┌──────────────────────────────────────────────────────┐
 │                                                      │
@@ -27,6 +28,7 @@ La plupart des DAW ont été construits par accumulation de fonctionnalités sur
 Echoes Studio part d'un postulat inverse : **chaque interaction doit être évidente au premier regard.** Pas de menus profonds, pas de boîtes de dialogue inutiles, pas de paramètres cachés derrière des onglets. L'outil doit disparaître pour que la musique apparaisse.
 
 **Principes fondateurs :**
+
 - **Zéro friction d'entrée** — ouvrir l'app et enregistrer en moins de 10 secondes
 - **Cohérence absolue** — le même geste fait toujours la même chose, partout
 - **Densité maîtrisée** — ne montrer que ce qui est pertinent au contexte
@@ -38,12 +40,12 @@ Echoes Studio part d'un postulat inverse : **chaque interaction doit être évid
 
 ## Stack Technique
 
-| Couche | Technologie |
-|--------|-------------|
-| Desktop runtime | [Tauri](https://tauri.app) 1.x |
-| UI | [SvelteKit](https://kit.svelte.dev) 2 + TypeScript |
-| Audio engine | Rust + [cpal](https://github.com/RustAudio/cpal) |
-| Styling | SCSS |
+| Couche          | Technologie                                        |
+| --------------- | -------------------------------------------------- |
+| Desktop runtime | [Tauri](https://tauri.app) 1.x                     |
+| UI              | [SvelteKit](https://kit.svelte.dev) 2 + TypeScript |
+| Audio engine    | Rust + [cpal](https://github.com/RustAudio/cpal)   |
+| Styling         | SCSS                                               |
 
 → Détail et justifications : [docs/TECH_STACK.md](docs/TECH_STACK.md)
 
@@ -92,9 +94,9 @@ pnpm tauri:build
 ## Premiers pas
 
 1. **Lancer Echoes Studio** via `pnpm tauri:dev`
-2. **Charger un fichier audio** — glisser-déposer un `.wav` dans la zone de pistes *(à venir)*
-3. **Lire le projet** — `Espace` pour play/pause *(à venir)*
-4. **Enregistrer** — `R` pour armer l'enregistrement *(à venir)*
+2. **Charger un fichier audio** — glisser-déposer un `.wav` dans la zone de pistes _(à venir)_
+3. **Lire le projet** — `Espace` pour play/pause _(à venir)_
+4. **Enregistrer** — `R` pour armer l'enregistrement _(à venir)_
 
 ---
 
@@ -116,14 +118,14 @@ Contributions bienvenues : code, design, documentation, retours utilisateurs.
 
 ## Documentation
 
-| Document | Description |
-|----------|-------------|
-| [ROADMAP.md](ROADMAP.md) | Phases MVP → v1.0 et priorités |
-| [CONTRIBUTING.md](CONTRIBUTING.md) | Guide de contribution |
-| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Architecture et décisions techniques |
-| [docs/TECH_STACK.md](docs/TECH_STACK.md) | Stack et justifications des choix |
-| [docs/UI_GUIDELINES.md](docs/UI_GUIDELINES.md) | Principes UX et système de design |
-| [docs/AUDIO_ENGINE.md](docs/AUDIO_ENGINE.md) | Moteur audio : specs et design |
+| Document                                       | Description                          |
+| ---------------------------------------------- | ------------------------------------ |
+| [ROADMAP.md](ROADMAP.md)                       | Phases MVP → v1.0 et priorités       |
+| [CONTRIBUTING.md](CONTRIBUTING.md)             | Guide de contribution                |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)   | Architecture et décisions techniques |
+| [docs/TECH_STACK.md](docs/TECH_STACK.md)       | Stack et justifications des choix    |
+| [docs/UI_GUIDELINES.md](docs/UI_GUIDELINES.md) | Principes UX et système de design    |
+| [docs/AUDIO_ENGINE.md](docs/AUDIO_ENGINE.md)   | Moteur audio : specs et design       |
 
 ---
 

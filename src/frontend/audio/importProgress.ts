@@ -17,7 +17,7 @@ function createAudioImportProgress() {
 		activeCount: 0,
 		fileName: null,
 		filePath: null,
-		progress: null,
+		progress: null
 	});
 
 	let unlisten: UnlistenFn | null = null;
@@ -39,10 +39,10 @@ function createAudioImportProgress() {
 						return {
 							...s,
 							filePath: s.filePath ?? payload.file_path,
-							progress: Math.max(0, Math.min(1, payload.progress)),
+							progress: Math.max(0, Math.min(1, payload.progress))
 						};
 					});
-				},
+				}
 			);
 		},
 
@@ -56,7 +56,7 @@ function createAudioImportProgress() {
 				activeCount: s.activeCount + 1,
 				fileName,
 				filePath: filePath ?? s.filePath,
-				progress: s.activeCount === 0 ? 0 : s.progress,
+				progress: s.activeCount === 0 ? 0 : s.progress
 			}));
 		},
 
@@ -68,12 +68,12 @@ function createAudioImportProgress() {
 						activeCount: 0,
 						fileName: null,
 						filePath: null,
-						progress: null,
+						progress: null
 					};
 				}
 				return {
 					...s,
-					activeCount,
+					activeCount
 				};
 			});
 		},
@@ -83,9 +83,9 @@ function createAudioImportProgress() {
 				activeCount: 0,
 				fileName: null,
 				filePath: null,
-				progress: null,
+				progress: null
 			});
-		},
+		}
 	};
 }
 

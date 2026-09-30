@@ -54,7 +54,7 @@ Une seule commande lance la suite complète :
 pnpm test           # check + lint + cargo fmt + cargo clippy + cargo test
 ```
 
-La CI GitHub (`.github/workflows/ci.yml`) rejoue ces vérifications sur chaque PR, sauf `pnpm lint` qui n'est pas encore bloquant.
+La CI GitHub (`.github/workflows/ci.yml`) rejoue ces vérifications sur chaque PR, y compris `pnpm lint` (Prettier + ESLint).
 
 Ou les étapes individuellement :
 
@@ -144,16 +144,16 @@ Utiliser le format **Conventional Commits** :
 
 ### Types
 
-| Type | Usage |
-|------|-------|
-| `feat` | Nouvelle fonctionnalité |
-| `fix` | Correction de bug |
+| Type       | Usage                                       |
+| ---------- | ------------------------------------------- |
+| `feat`     | Nouvelle fonctionnalité                     |
+| `fix`      | Correction de bug                           |
 | `refactor` | Refactoring sans changement de comportement |
-| `style` | Formatage, CSS (pas de changement logique) |
-| `test` | Ajout ou modification de tests |
-| `docs` | Documentation uniquement |
-| `chore` | Tâches de build, dépendances, config |
-| `perf` | Amélioration de performance |
+| `style`    | Formatage, CSS (pas de changement logique)  |
+| `test`     | Ajout ou modification de tests              |
+| `docs`     | Documentation uniquement                    |
+| `chore`    | Tâches de build, dépendances, config        |
+| `perf`     | Amélioration de performance                 |
 
 ### Scopes courants
 
@@ -194,18 +194,22 @@ chore(deps): upgrade tauri to 1.6.0
 
 ```markdown
 ## Description
+
 [Que fait ce changement ? Pourquoi ?]
 
 ## Type de changement
+
 - [ ] Bug fix
 - [ ] Nouvelle fonctionnalité
 - [ ] Refactoring
 - [ ] Documentation
 
 ## Lié à
+
 Closes #[numéro d'issue]
 
 ## Checklist
+
 - [ ] Le code passe `pnpm check` et `pnpm lint`
 - [ ] `cargo clippy` et `cargo test` passent
 - [ ] J'ai ajouté des tests pour mon changement
@@ -242,6 +246,7 @@ Ouvrir une issue avec le template suivant :
 Echoes Studio s'engage à maintenir un environnement ouvert et respectueux pour tous les contributeurs.
 
 En résumé :
+
 - Soyez respectueux et constructif dans vos échanges
 - Accueillez les contributeurs de tous niveaux
 - Acceptez les critiques constructives

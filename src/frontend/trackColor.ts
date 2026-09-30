@@ -23,7 +23,7 @@ export const TRACK_COLORS = [
 	'#93c5fd', // soft blue
 	'#c4b5fd', // soft violet
 	'#e2e8f0', // light gray
-	'#94a3b8', // slate
+	'#94a3b8' // slate
 ] as const;
 
 /** Couleur affichée : override projet si présent, sinon défaut stable depuis l'id. */

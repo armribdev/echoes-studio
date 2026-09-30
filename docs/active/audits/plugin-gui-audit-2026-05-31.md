@@ -32,6 +32,7 @@ Le raisonnement du commentaire original était inversé : Vital crashe parce qu'
 ### A1 — Deux instances de plugin par effet ✅ Corrigé (ADR-016 : l'éditeur réutilise l'`Arc<PluginInstance>` audio)
 
 Ni VST3 ni CLAP ne supportent ce modèle. Conséquences :
+
 - Aucune sync paramètres ↔ audio : un knob bougé dans le GUI n'affecte pas l'audio
 - Aucune sync d'état/preset
 - Double allocation des ressources lourdes (wavetables, samples, IR)
@@ -74,6 +75,7 @@ Le plugin n'était jamais informé de l'échelle de l'écran (`gui.set_scale` / 
 `SetThreadDpiAwarenessContext` s'est révélé inutile : tao (Tauri) met déjà le processus en `PER_MONITOR_AWARE_V2` au démarrage, donc le conteneur l'est aussi.
 
 **Correctif appliqué** ([gui.rs](../../../src-tauri/src/plugin_system/gui.rs)) :
+
 - DPI lu par fenêtre (`GetDpiForWindow`), cadre calculé avec `AdjustWindowRectExForDpi` (création + tout redimensionnement).
 - CLAP : `set_scale(dpi/96)` puis `get_size` → resize, **avant** `set_parent` (ordre de la spec). Un plugin qui lit le DPI lui-même renvoie `false` et l'ignore.
 - VST3 : QI de `IPlugViewContentScaleSupport` ([vst3/ffi.rs](../../../src-tauri/src/plugin_formats/vst3/ffi.rs)) → `setContentScaleFactor` après `attached`, puis `getSize` → resize. Interface optionnelle : absente = pas d'appel.
@@ -103,6 +105,7 @@ Plugins dual-component (Steinberg pro, NI, **TDR Nova**) rejetés à l'ouverture
 l'éditeur : `IEditController not available via QI (single-component only)`.
 
 **Correctif appliqué** :
+
 - [vst3/ffi.rs](../../../src-tauri/src/plugin_formats/vst3/ffi.rs) : `set_component_state`
   typé (slot 5 de `IEditControllerVtbl`), `IConnectionPoint` (+IID), `Vst3Library::factory()`
   (réobtient la factory depuis la DLL déjà mappée), et `create_separate_controller` /
@@ -119,6 +122,7 @@ l'éditeur : `IEditController not available via QI (single-component only)`.
 ### V5 — Vtable `IEditController` / `IPlugView` sans assert de taille ✅ Corrigé
 
 **Correctif appliqué** ([vst3/ffi.rs](../../../src-tauri/src/plugin_formats/vst3/ffi.rs)) :
+
 ```rust
 const _: () = assert!(size_of::<IPlugViewVtbl>()      == 15 * size_of::<usize>(), "IPlugViewVtbl layout drift");
 const _: () = assert!(size_of::<IEditControllerVtbl>() == 18 * size_of::<usize>(), "IEditControllerVtbl layout drift");
@@ -135,6 +139,7 @@ const _: () = assert!(size_of::<IEditControllerVtbl>() == 18 * size_of::<usize>(
 ### CL2 — Ordre de drop incorrect dans cleanup ✅ Corrigé
 
 **Correctif appliqué** : ordre dans la closure `cleanup` :
+
 1. `shared.plugin.store(null)` → désactive le `tick` et tout callback entrant
 2. `gui.hide` / `gui.destroy` → relâche les ressources fenêtre du plugin
 3. `plugin.destroy` → garantit l'absence de callbacks après cette ligne

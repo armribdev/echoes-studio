@@ -2,7 +2,11 @@
 <script lang="ts">
 	import ModulatorCard from './ModulatorCard.svelte';
 	import ParamKnob from './ParamKnob.svelte';
-	import { formatPercent, kindInfo, updateModulatorOrNotify } from '../frontend/modulation/modulators';
+	import {
+		formatPercent,
+		kindInfo,
+		updateModulatorOrNotify
+	} from '../frontend/modulation/modulators';
 	import type { ProjectModulator } from '../types/global';
 
 	export let trackId: string;
@@ -64,9 +68,11 @@
 	.fill {
 		position: absolute;
 		inset: 0 auto 0 0;
-		background: linear-gradient(90deg,
+		background: linear-gradient(
+			90deg,
 			color-mix(in srgb, var(--mod-color) 10%, transparent),
-			color-mix(in srgb, var(--mod-color) 45%, transparent));
+			color-mix(in srgb, var(--mod-color) 45%, transparent)
+		);
 		border-right: 2px solid var(--mod-color);
 		transition: width 0.05s linear;
 	}

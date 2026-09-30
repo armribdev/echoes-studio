@@ -9,7 +9,7 @@ const QUALITY_INTERVALS: Record<LibraryChordQuality, number[]> = {
 	sus2: [0, 2, 7],
 	sus4: [0, 5, 7],
 	dim: [0, 3, 6],
-	aug: [0, 4, 8],
+	aug: [0, 4, 8]
 };
 
 /** Expand one chord step into block-chord notes (factory voicing, ADR-023 Phase 3). */
@@ -19,7 +19,7 @@ export function expandChordStep(step: LibraryChordStep): LibraryMidiNote[] {
 		pitch: clampPitch(step.rootPitch + semitone),
 		start: step.startBeat,
 		duration: Math.max(0.05, step.durationBeats * 0.92),
-		velocity: 96,
+		velocity: 96
 	}));
 }
 
@@ -31,7 +31,7 @@ export function transposeNotes(notes: LibraryMidiNote[], semitones: number): Lib
 	if (semitones === 0) return notes;
 	return notes.map((n) => ({
 		...n,
-		pitch: clampPitch(n.pitch + semitones),
+		pitch: clampPitch(n.pitch + semitones)
 	}));
 }
 
@@ -52,11 +52,14 @@ const ROOT_TO_PC: Record<string, number> = {
 	A: 9,
 	'A#': 10,
 	Bb: 10,
-	B: 11,
+	B: 11
 };
 
 /** Semitone offset so asset keyRoot lands on projectKeyRoot (preview only). */
-export function keyTransposeSemitones(assetKeyRoot: string | undefined, projectKeyRoot: string): number {
+export function keyTransposeSemitones(
+	assetKeyRoot: string | undefined,
+	projectKeyRoot: string
+): number {
 	if (!assetKeyRoot) return 0;
 	const from = ROOT_TO_PC[assetKeyRoot];
 	const to = ROOT_TO_PC[projectKeyRoot];

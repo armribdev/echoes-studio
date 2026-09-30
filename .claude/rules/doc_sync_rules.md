@@ -5,11 +5,12 @@ behaviour, architecture, or a documented contract, Claude must synchronise the
 documentation as part of the same change — not "later".
 
 **Sync procedure:**
+
 1. **Detect impact.** Look up the files you changed in `change_impact_mapping.md`.
    It names the docs and ADRs that depend on each code area.
 2. **Update the impacted active docs** so they describe what the code now does.
 3. **Check ADR coherence.** If the change alters a recorded decision, update that
-   ADR (note the date + what changed). If it's a *new* decision, create the next
+   ADR (note the date + what changed). If it's a _new_ decision, create the next
    ADR and add a row to `decisions/000-index.md`.
 4. **Update `state_index.md`** — bump the status / last-verified date for the
    affected subsystem.

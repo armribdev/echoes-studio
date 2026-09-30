@@ -1,8 +1,9 @@
 # Plugin Wrapper System
 
 > **Canonical.** Merges the former `systems/plugin-wrapper-system.md` (VST3 + AU
-> + CLAP responsibilities) and the legacy `vst-wrapper-rules.md` (detailed VST3
-> code). The legacy flat file is archived under `docs/archive/vst-wrapper-rules.md`.
+>
+> - CLAP responsibilities) and the legacy `vst-wrapper-rules.md` (detailed VST3
+>   code). The legacy flat file is archived under `docs/archive/vst-wrapper-rules.md`.
 
 ## Purpose
 
@@ -29,6 +30,7 @@ AudioGraph / GraphScheduler  — has zero knowledge of plugin formats
 ```
 
 The graph runtime **must never** see:
+
 - `IAudioProcessor`, `IEditController`, or any VST3 COM pointer
 - `AudioUnit` or any CoreAudio handle
 - `clap_plugin` or any CLAP struct pointer
@@ -88,6 +90,7 @@ string key "gain"  ↔  VST3 ParamID 0x12345678
 ```
 
 When the host calls `set_parameter_normalised("gain", 0.75)`:
+
 1. Look up the VST3 ID in the mapping.
 2. Queue a `ParamChange { id, value: 0.75 }` in a pre-allocated ring buffer
    (on the command thread).
@@ -154,6 +157,7 @@ State travels as `IBStream` bytes, not JSON — VST3 spec compliance. See
 
 The AU wrapper has the same responsibilities as VST3 but adapts to Apple's
 `AudioUnit` C API. Key differences:
+
 - State is retrieved/set via `AudioUnitGetProperty` / `AudioUnitSetProperty`
   with `kAudioUnitProperty_ClassInfo`.
 - Parameters use `AudioUnitParameterID` (also integer) mapped to string keys.
@@ -304,7 +308,7 @@ Both editor windows — in-process (`plugin_system/gui.rs`) and sandboxed
 
 A plugin that resizes itself (e.g. Vital's corner handle) sends
 `request_resize` continuously; the host window follows within ~2 ms. Any lag
-in the plugin's *own* redraw during the drag is the plugin's rendering, not
+in the plugin's _own_ redraw during the drag is the plugin's rendering, not
 the host. Such plugins may report `can_resize = false`, so the host does not
 call `set_size` after `request_resize` (the CLAP spec makes it optional).
 
@@ -388,25 +392,26 @@ Rationale and the state-direction specifics live in
 
 VST3, AU, and CLAP plugins run in-process by default. A crashing plugin takes
 down the engine. Best-effort mitigations (current):
+
 1. Validate all plugin-provided pointers before dereferencing.
 2. Wrap `process()` calls in platform signal handlers where feasible.
 
 **Out-of-process hosting** is the durable mitigation, opt-in: per CLAP effect
 ("Isoler" in the effect chain, `PluginParams.sandboxed`), per plugin type
 (right-click on an effect or instrument → "Toujours isoler", an app
-preference), or for every CLAP plugin through the app preference *Isolation
-des plugins* (Aucun / Choisis / Tous).  A track instrument has no per-placement
+preference), or for every CLAP plugin through the app preference _Isolation
+des plugins_ (Aucun / Choisis / Tous). A track instrument has no per-placement
 flag: it follows the last two only (`BridgedInstrument`).
-All three reach the engine through `PluginHost::set_isolation`.  The plugin then runs
+All three reach the engine through `PluginHost::set_isolation`. The plugin then runs
 in a `plugin_host_bridge` process behind the same `Arc<PluginInstance>`
 (`NativeHandle::Bridged`): state, parameters, automation, modulation, latency
 and the editor (a window of the bridge process) all work; a crash or hang only
 silences that device, which is reported as crashed and restarted by the next
-recompile.  Design and RT strategy: `../decisions/015-plugin-sandbox.md`
-(amendments 2026-09-25).  Not sandboxable yet: VST3.
+recompile. Design and RT strategy: `../decisions/015-plugin-sandbox.md`
+(amendments 2026-09-25). Not sandboxable yet: VST3.
 A crashed plugin (sandbox condemned, or in-process crash caught by the SEH
 guard) is shown red in the effect chain with « Recharger », which rebuilds it
-from its last saved state.  In-process plugins keep the "best effort" guarantee
+from its last saved state. In-process plugins keep the "best effort" guarantee
 above; when one kills
 Echoes, the next start names it and offers to isolate it (crash marker,
 ADR-015).
@@ -417,14 +422,14 @@ ADR-015).
 
 Before merging any wrapper `process()` implementation:
 
-| Rule | Check |
-|------|-------|
-| No `Vec::push` / `Box::new` | all pointer arrays allocated in `prepare()` |
+| Rule                                      | Check                                                                    |
+| ----------------------------------------- | ------------------------------------------------------------------------ |
+| No `Vec::push` / `Box::new`               | all pointer arrays allocated in `prepare()`                              |
 | No `setParamNormalized` from audio thread | use `ProcessData.inputParameterChanges` (VST3) / host event queue (CLAP) |
-| All transport from `TransportInfo` | never from global state |
-| `unsafe` scoped to the FFI call only | no wider `unsafe` blocks |
-| Latency reported via `latency_samples()` | required for PDC |
-| State via native chunk bytes, not JSON | format spec compliance |
+| All transport from `TransportInfo`        | never from global state                                                  |
+| `unsafe` scoped to the FFI call only      | no wider `unsafe` blocks                                                 |
+| Latency reported via `latency_samples()`  | required for PDC                                                         |
+| State via native chunk bytes, not JSON    | format spec compliance                                                   |
 
 ---
 

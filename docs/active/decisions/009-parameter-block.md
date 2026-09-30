@@ -64,8 +64,8 @@ toggle, topology, tempo).
 
 4. **[`audio_graph/nodes/eq.rs`](../../../src-tauri/src/audio_graph/nodes/eq.rs)**
    - Cell-order constants (`EQ_LOW_GAIN_DB` … `EQ_HIGH_FREQ`, `EQ_PARAM_COUNT`)
-     + `eq_block_values(&EqParams)` — the single source of truth for the layout,
-     shared by compiler, gateway and node.
+     - `eq_block_values(&EqParams)` — the single source of truth for the layout,
+       shared by compiler, gateway and node.
    - `EqNode` gains `block: Option<Arc<ParameterBlock>>`, `sr_os`, and
      `with_block(block)`. `process` reads the block, compares the flattened
      values to the cached params, and recomputes the three biquads **only on
@@ -84,13 +84,13 @@ toggle, topology, tempo).
 
 ## Real-time impact
 
-| Change | RT cost | RT risk |
-|---|---|---|
-| `ParameterBlock::get` ×7 in `EqNode::process` | 7 `Relaxed` atomic loads | none |
-| Change-detection compare | 7-element `[f32;7]` equality | negligible |
-| Biquad recompute on change | 3 biquads (trig) — only when a value moved | bounded; one-off per edit |
-| `write_effect_block` | off-RT (command thread) | none |
-| `effect_params` map | inserted at compile (off-RT); audio side holds an `Arc<ParameterBlock>` clone captured at compile | none — no map lookup at runtime (BP-8) |
+| Change                                        | RT cost                                                                                           | RT risk                                |
+| --------------------------------------------- | ------------------------------------------------------------------------------------------------- | -------------------------------------- |
+| `ParameterBlock::get` ×7 in `EqNode::process` | 7 `Relaxed` atomic loads                                                                          | none                                   |
+| Change-detection compare                      | 7-element `[f32;7]` equality                                                                      | negligible                             |
+| Biquad recompute on change                    | 3 biquads (trig) — only when a value moved                                                        | bounded; one-off per edit              |
+| `write_effect_block`                          | off-RT (command thread)                                                                           | none                                   |
+| `effect_params` map                           | inserted at compile (off-RT); audio side holds an `Arc<ParameterBlock>` clone captured at compile | none — no map lookup at runtime (BP-8) |
 
 C-1 preserved: no allocation, no lock in `process`. `Relaxed` ordering is
 sound — each cell is independent; a torn read across two cells resolves on the

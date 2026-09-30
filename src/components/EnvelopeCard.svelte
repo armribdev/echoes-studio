@@ -6,7 +6,7 @@
 		formatMs,
 		formatPercent,
 		kindInfo,
-		updateModulatorOrNotify,
+		updateModulatorOrNotify
 	} from '../frontend/modulation/modulators';
 	import type { ProjectModulator } from '../types/global';
 
@@ -33,7 +33,9 @@
 	function envelopePath(a: number, d: number, s: number, r: number): string {
 		const weights = [a, d, r].map(Math.sqrt);
 		const total = weights.reduce((sum, w) => sum + w, 0) || 1;
-		const [wa, wd, wr] = weights.map((w) => MIN_SEGMENT_WIDTH + (w / total) * (100 - SUSTAIN_WIDTH - 3 * MIN_SEGMENT_WIDTH));
+		const [wa, wd, wr] = weights.map(
+			(w) => MIN_SEGMENT_WIDTH + (w / total) * (100 - SUSTAIN_WIDTH - 3 * MIN_SEGMENT_WIDTH)
+		);
 		const sustainY = BOTTOM_Y - s * (BOTTOM_Y - TOP_Y);
 		const xa = wa;
 		const xd = xa + wd;
@@ -75,14 +77,53 @@
 	</div>
 
 	<div class="mod-controls">
-		<ParamKnob label="A" value={mod.attack_ms ?? 10} bind:live={attack} min={1} max={5000} defaultValue={10}
-			scale="log" format={formatMs} {color} on:release={(e) => update({ attack_ms: e.detail })} />
-		<ParamKnob label="D" value={mod.decay_ms ?? 100} bind:live={decay} min={1} max={5000} defaultValue={100}
-			scale="log" format={formatMs} {color} on:release={(e) => update({ decay_ms: e.detail })} />
-		<ParamKnob label="S" value={mod.sustain_level ?? 0.7} bind:live={sustain} min={0} max={1} defaultValue={0.7}
-			format={formatPercent} {color} on:release={(e) => update({ sustain_level: e.detail })} />
-		<ParamKnob label="R" value={mod.release_ms ?? 200} bind:live={release} min={1} max={10000} defaultValue={200}
-			scale="log" format={formatMs} {color} on:release={(e) => update({ release_ms: e.detail })} />
+		<ParamKnob
+			label="A"
+			value={mod.attack_ms ?? 10}
+			bind:live={attack}
+			min={1}
+			max={5000}
+			defaultValue={10}
+			scale="log"
+			format={formatMs}
+			{color}
+			on:release={(e) => update({ attack_ms: e.detail })}
+		/>
+		<ParamKnob
+			label="D"
+			value={mod.decay_ms ?? 100}
+			bind:live={decay}
+			min={1}
+			max={5000}
+			defaultValue={100}
+			scale="log"
+			format={formatMs}
+			{color}
+			on:release={(e) => update({ decay_ms: e.detail })}
+		/>
+		<ParamKnob
+			label="S"
+			value={mod.sustain_level ?? 0.7}
+			bind:live={sustain}
+			min={0}
+			max={1}
+			defaultValue={0.7}
+			format={formatPercent}
+			{color}
+			on:release={(e) => update({ sustain_level: e.detail })}
+		/>
+		<ParamKnob
+			label="R"
+			value={mod.release_ms ?? 200}
+			bind:live={release}
+			min={1}
+			max={10000}
+			defaultValue={200}
+			scale="log"
+			format={formatMs}
+			{color}
+			on:release={(e) => update({ release_ms: e.detail })}
+		/>
 	</div>
 
 	{#if !hasInstrument}

@@ -101,7 +101,7 @@ style — this thread is not on the RT audio path so a `Mutex` read is fine).
 **Cannot do:** Touch the audio thread, CPAL, or the `GraphScheduler` directly.
 The only channel out of this thread is the per-track `MidiLiveInputQueue`.
 
-MIDI *output* (Local Control On/Off, ADR-022 amendment) is not sent from this
+MIDI _output_ (Local Control On/Off, ADR-022 amendment) is not sent from this
 thread: the command thread opens a short-lived `midir` output connection,
 sends, and closes it.
 
@@ -211,6 +211,7 @@ A priority inversion occurs when the high-priority audio thread blocks waiting
 for a lock held by the low-priority command thread.
 
 Prevention rules:
+
 - Audio thread **never** calls `Mutex::lock()` or `Mutex::try_lock()` (the
   latter is not strictly lock-free on Windows).
 - All cross-thread data exchange uses lock-free primitives (`AtomicPtr`,

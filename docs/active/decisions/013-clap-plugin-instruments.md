@@ -4,7 +4,7 @@
 
 Accepted (CLAP slice). Implements the **plugin-instrument** half of **Phase 5c**
 of [`docs/active/migration/migration_plan.md`](../migration/migration_plan.md) — audit **P0-2**
-(*"Aucun support des plugins instruments"*) and target **BP-4**
+(_"Aucun support des plugins instruments"_) and target **BP-4**
 (`InstrumentNode` inner accepts a plugin or PolySynth).
 
 Builds on [`007-plugin-instance-arc.md`](007-plugin-instance-arc.md) (shared
@@ -76,12 +76,12 @@ on any failure.
 
 ## Real-time impact
 
-| Change | RT cost | RT risk |
-|---|---|---|
-| `fill_clap_notes` per block | bounded copy into a pre-allocated list | none |
-| `ClapInstrument::process_midi` | pointer fill + one FFI `process` call | none — no alloc/lock, mirrors the effect wrapper |
-| param ring drain-and-discard | N atomic loads (N pending) | none — bounded |
-| instrument instantiation | compile-time (off-RT) | none |
+| Change                         | RT cost                                | RT risk                                          |
+| ------------------------------ | -------------------------------------- | ------------------------------------------------ |
+| `fill_clap_notes` per block    | bounded copy into a pre-allocated list | none                                             |
+| `ClapInstrument::process_midi` | pointer fill + one FFI `process` call  | none — no alloc/lock, mirrors the effect wrapper |
+| param ring drain-and-discard   | N atomic loads (N pending)             | none — bounded                                   |
+| instrument instantiation       | compile-time (off-RT)                  | none                                             |
 
 C-1 preserved: all buffers/lists allocated in `prepare`; the audio thread only
 fills pre-allocated scratch and calls the plugin. The `Arc<PluginInstance>` is

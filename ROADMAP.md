@@ -8,20 +8,24 @@
 ## Livré
 
 **Fondations et moteur (Phases 0–1)**
+
 - Tauri 2 + SvelteKit 2 + Rust ; event sourcing complet (undo/redo, sauvegarde `.echoes`).
 - Moteur audio natif CPAL, graphe DSP déterministe compilé, swap de snapshot sans verrou, rendu offline identique au live (harnais C-2).
 - Import audio multi-format (WAV, MP3, FLAC, OGG), pics de forme d'onde, PCM progressif à l'import (ADR-024), export WAV/MP3.
 
 **Mixage et arrangement (Phase 2)**
+
 - Pistes : volume, pan, mute/solo, couleurs, vumètres, menus contextuels ; clips audio et MIDI (couper/copier/coller, trim, duplication Alt+glisser, répétition, accrochage magnétique, boucle de lecture).
 - Préférences audio/projet/interface, périphériques CPAL, latence estimée.
 
 **Effets et modulation (Phase 3, partielle)**
+
 - Égaliseur, compresseur, réverbération, délai ; compensation de latence (PDC).
 - Modulation sous-bloc : LFO (formes, synchro tempo), enveloppe, suiveur audio, macro ; assignation par glisser-déposer.
 - Automation : moteur + premier éditeur dans l'arrangement (pistes, points, crayon, cibles absolues ADR-025).
 
 **MIDI et instruments (Phase 4, largement livrée)**
+
 - Piano roll, synthé intégré (PolySynth), entrée MIDI matérielle en direct (ADR-022).
 - Hébergement de plugins CLAP et VST3 (effets et instruments CLAP), paramètres, état, éditeur natif, sidechain et sorties multiples CLAP.
 - Isolation des plugins CLAP dans un processus séparé (opt-in, ADR-015).
@@ -36,8 +40,8 @@
 - [x] **Enregistrement MIDI** dans un clip depuis le clavier (ADR-022 amendé ; pas encore hand-testé à l'oreille)
 - [ ] **Enregistrement audio** : armement + capture via l'entrée CPAL, monitoring. Rien n'existe dans le code aujourd'hui.
 - [ ] **CI**
-  - [x] CI minimale (`.github/workflows/ci.yml` : fmt, clippy, tests Rust + harnais C-2, svelte-check, build frontend)
-  - [ ] Rendre Prettier/ESLint bloquants, après un passage de formatage sur tout le dépôt
+  - [x] CI minimale (`.github/workflows/ci.yml` : fmt, clippy, tests Rust + harnais C-2, lint Prettier/ESLint, svelte-check, build frontend)
+  - [x] Rendre Prettier/ESLint bloquants, après un passage de formatage sur tout le dépôt
 - [x] **Transport auxiliaire**
   - [x] Métronome + count-in (ADR-026 ; pas encore hand-testé)
   - [x] Marqueurs / régions d'arrangement (event-sourcés en beats ; piste sous la règle ; boucle depuis une région via `SET_LOOP` ; 2026-09-30)

@@ -18,6 +18,7 @@ cache-friendly.
 ## Why Compilation Is Necessary
 
 At process time, the scheduler needs to know:
+
 - In what order to call each node's `process()`.
 - Which output buffers to pass as inputs to each node.
 - How many output buffers to pre-allocate per node.
@@ -75,6 +76,7 @@ error events.
 
 The sort is **stable** (deterministic for identical graphs regardless of
 HashMap iteration order) because:
+
 - Nodes at the same topological depth are sorted by `NodeId` (monotonically
   increasing allocation order).
 - `NodeId` allocation uses `AtomicU64` with `Relaxed` ordering, so within a
@@ -96,6 +98,7 @@ graph-level `PortId` references (node + port) into flat array indices
 ### 4. ExecutionStep Construction
 
 For each node in topological order:
+
 1. Determine `num_inputs` and `num_outputs` from `NodeKind`.
 2. For each input port (`0..num_inputs`), find any edge with
    `to.node == node_id && to.port == port_idx`.
@@ -117,16 +120,16 @@ The scheduler relies on this to safely share buffer references without aliasing.
 
 `build_node(id, kind, project)` dispatches on `NodeKind`:
 
-| NodeKind            | Produces                       | Data source        |
-|---------------------|--------------------------------|--------------------|
-| `Track { id }`      | `TrackNode` with clip data     | `AppProject.tracks`|
-| `TrackGain { gain }`| `GainNode(gain)`               | `NodeKind` field   |
-| `Gain { linear }`   | `GainNode(linear)`             | `NodeKind` field   |
-| `Pan { pos }`       | `PanNode(pos)`                 | `NodeKind` field   |
-| `Bus`               | `BusNode(N inputs)`            | constant           |
-| `Master`            | `MasterNode(N inputs)`         | constant           |
-| `Meter { id }`      | `MeterNode(id)`                | meter ID string    |
-| `Plugin { id }`     | `PluginHost::instantiate(id)`, wrapped in `BypassNode` when `bypassed` (ADR-020) | plugin system      |
+| NodeKind             | Produces                                                                         | Data source         |
+| -------------------- | -------------------------------------------------------------------------------- | ------------------- |
+| `Track { id }`       | `TrackNode` with clip data                                                       | `AppProject.tracks` |
+| `TrackGain { gain }` | `GainNode(gain)`                                                                 | `NodeKind` field    |
+| `Gain { linear }`    | `GainNode(linear)`                                                               | `NodeKind` field    |
+| `Pan { pos }`        | `PanNode(pos)`                                                                   | `NodeKind` field    |
+| `Bus`                | `BusNode(N inputs)`                                                              | constant            |
+| `Master`             | `MasterNode(N inputs)`                                                           | constant            |
+| `Meter { id }`       | `MeterNode(id)`                                                                  | meter ID string     |
+| `Plugin { id }`      | `PluginHost::instantiate(id)`, wrapped in `BypassNode` when `bypassed` (ADR-020) | plugin system       |
 
 For unknown plugin IDs, `build_node` logs a warning and returns a
 `PassThroughDevice` (silence pass-through) so compilation always succeeds.
@@ -202,6 +205,7 @@ No further allocation occurs until the next graph update.
 ## Re-compilation Triggers
 
 A new graph is compiled whenever:
+
 - A track is created or deleted
 - A clip is added, moved, or removed
 - Track volume changes (gain node needs new value)

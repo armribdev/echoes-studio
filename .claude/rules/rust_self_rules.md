@@ -7,12 +7,12 @@ the wrong struct.
 
 ## What `Self` means
 
-| Context | `Self` resolves to |
-|---------|-------------------|
-| `impl Foo { … }` | `Foo` |
-| `impl Foo for Bar { … }` | `Bar` (the type being implemented) |
+| Context                       | `Self` resolves to                         |
+| ----------------------------- | ------------------------------------------ |
+| `impl Foo { … }`              | `Foo`                                      |
+| `impl Foo for Bar { … }`      | `Bar` (the type being implemented)         |
 | Free function `fn f() -> Bar` | **Invalid** — no `Self` in scope (`E0411`) |
-| Closure inside `impl Foo` | `Foo`, **not** the closure’s return type |
+| Closure inside `impl Foo`     | `Foo`, **not** the closure’s return type   |
 
 ## Safe to use `Self`
 
@@ -91,14 +91,14 @@ If any answer is wrong → keep `ExplicitType { … }`.
 
 ## Project examples (real mistakes from safe-refactor passes)
 
-| Location | Wrong | Right |
-|----------|-------|-------|
-| `impl AppProject::to_dto` | `Self { name, … }` | `ProjectDto { … }` |
-| `impl AppTrack::to_dto` + `map` | `Self { id, … }` for MIDI clip | `MidiClipDto { … }` |
-| `fn snapshot_project` | — | `AppProject { … }` (free fn) |
-| `impl PluginHost` + `records.insert` | `Self { instance, … }` | `DeviceRecord { … }` |
-| `node_to_dto` / `route_to_dto` | `Self { … }` | `GraphNodeDto` / `ModEdgeDto` |
-| `#[cfg(test)] fn pc(…) -> ParamChange` | `Self { … }` | `ParamChange { … }` |
+| Location                               | Wrong                          | Right                         |
+| -------------------------------------- | ------------------------------ | ----------------------------- |
+| `impl AppProject::to_dto`              | `Self { name, … }`             | `ProjectDto { … }`            |
+| `impl AppTrack::to_dto` + `map`        | `Self { id, … }` for MIDI clip | `MidiClipDto { … }`           |
+| `fn snapshot_project`                  | —                              | `AppProject { … }` (free fn)  |
+| `impl PluginHost` + `records.insert`   | `Self { instance, … }`         | `DeviceRecord { … }`          |
+| `node_to_dto` / `route_to_dto`         | `Self { … }`                   | `GraphNodeDto` / `ModEdgeDto` |
+| `#[cfg(test)] fn pc(…) -> ParamChange` | `Self { … }`                   | `ParamChange { … }`           |
 
 ## Allowed without `Self`
 

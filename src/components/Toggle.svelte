@@ -21,7 +21,9 @@
 	<button
 		class="toggle-switch"
 		class:on={checked}
-		on:click={() => { if (!disabled) checked = !checked; }}
+		on:click={() => {
+			if (!disabled) checked = !checked;
+		}}
 		role="switch"
 		aria-checked={checked}
 		aria-label={label}
@@ -78,7 +80,9 @@
 		cursor: pointer;
 		position: relative;
 		flex-shrink: 0;
-		transition: background 0.2s, border-color 0.2s;
+		transition:
+			background 0.2s,
+			border-color 0.2s;
 		padding: 0;
 
 		&.on {

@@ -81,6 +81,7 @@ Tauri's `State` is accessible from both command handlers and the frontend via
 read it directly would eliminate the IPC round-trip for reads.
 
 But:
+
 - Reads acquire a lock. The audio thread must never be blocked by a UI read
   of `AppProject`.
 - There is no event log. Undo/redo requires either snapshot diffing or

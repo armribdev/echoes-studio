@@ -18,5 +18,5 @@ export const selectedTrack = writable<SelectedTrackInfo>({
 	instrument: null,
 	effects: [],
 	modulators: [],
-	mod_routes: [],
+	mod_routes: []
 });

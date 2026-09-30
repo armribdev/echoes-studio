@@ -22,7 +22,7 @@
 		strings: stringsImg,
 		vocals: vocalsImg,
 		pad: padImg,
-		fx: fxImg,
+		fx: fxImg
 	};
 
 	$: src = ART[kind] ?? ART.synth;
@@ -49,8 +49,7 @@
 		display: block;
 		pointer-events: none;
 		user-select: none;
-		filter:
-			drop-shadow(0 0 0.6px rgba(255, 255, 255, 0.35))
+		filter: drop-shadow(0 0 0.6px rgba(255, 255, 255, 0.35))
 			drop-shadow(0 1px 2px rgba(0, 0, 0, 0.4));
 	}
 </style>

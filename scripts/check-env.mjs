@@ -152,7 +152,7 @@ check(
 	`found ${vStr(nodeV)}`,
 	!nodeOk
 		? 'Install the LTS release from https://nodejs.org\n' +
-			'Or use a version manager: nvm (Unix) / nvm-windows (Windows) / volta'
+				'Or use a version manager: nvm (Unix) / nvm-windows (Windows) / volta'
 		: undefined
 );
 
@@ -169,7 +169,7 @@ check(
 	pnpmV ? `found ${vStr(pnpmV)}` : 'not found',
 	!pnpmV || !pnpmOk
 		? 'Install: npm install -g pnpm@latest\n' +
-			'Or via corepack: corepack enable && corepack prepare pnpm@latest --activate'
+				'Or via corepack: corepack enable && corepack prepare pnpm@latest --activate'
 		: undefined
 );
 
@@ -273,14 +273,31 @@ if (PLATFORM === 'linux') {
 	// Tauri's Linux requirements come in three groups: webkit (rendering),
 	// GTK + GLib (UI shell), and bundler tools (rsvg, patchelf, appindicator).
 	const linuxLibs = [
-		{ pc: 'webkit2gtk-4.0', label: 'webkit2gtk-4.0', required: true,
-		  hint: 'Debian/Ubuntu : sudo apt install libwebkit2gtk-4.0-dev\nFedora        : sudo dnf install webkit2gtk3-devel\nArch          : sudo pacman -S webkit2gtk' },
-		{ pc: 'gtk+-3.0', label: 'gtk+-3.0', required: true,
-		  hint: 'Debian/Ubuntu : sudo apt install libgtk-3-dev\nFedora        : sudo dnf install gtk3-devel' },
-		{ pc: 'librsvg-2.0', label: 'librsvg-2.0', required: false,
-		  hint: 'Debian/Ubuntu : sudo apt install librsvg2-dev\nFedora        : sudo dnf install librsvg2-devel' },
-		{ pc: 'ayatana-appindicator3-0.1', label: 'ayatana-appindicator3-0.1', required: false, alt: 'appindicator3-0.1',
-		  hint: 'Debian/Ubuntu : sudo apt install libayatana-appindicator3-dev\nFedora        : sudo dnf install libappindicator-gtk3-devel' }
+		{
+			pc: 'webkit2gtk-4.0',
+			label: 'webkit2gtk-4.0',
+			required: true,
+			hint: 'Debian/Ubuntu : sudo apt install libwebkit2gtk-4.0-dev\nFedora        : sudo dnf install webkit2gtk3-devel\nArch          : sudo pacman -S webkit2gtk'
+		},
+		{
+			pc: 'gtk+-3.0',
+			label: 'gtk+-3.0',
+			required: true,
+			hint: 'Debian/Ubuntu : sudo apt install libgtk-3-dev\nFedora        : sudo dnf install gtk3-devel'
+		},
+		{
+			pc: 'librsvg-2.0',
+			label: 'librsvg-2.0',
+			required: false,
+			hint: 'Debian/Ubuntu : sudo apt install librsvg2-dev\nFedora        : sudo dnf install librsvg2-devel'
+		},
+		{
+			pc: 'ayatana-appindicator3-0.1',
+			label: 'ayatana-appindicator3-0.1',
+			required: false,
+			alt: 'appindicator3-0.1',
+			hint: 'Debian/Ubuntu : sudo apt install libayatana-appindicator3-dev\nFedora        : sudo dnf install libappindicator-gtk3-devel'
+		}
 	];
 	for (const lib of linuxLibs) {
 		const has = runFile('pkg-config', ['--exists', lib.pc]) !== null;
@@ -351,9 +368,12 @@ if (PLATFORM === 'linux') {
 		// `-products *` includes Build Tools (not just full VS), `-requires` the C++ workload.
 		const out = runFile(vswhere, [
 			'-latest',
-			'-products', '*',
-			'-requires', 'Microsoft.VisualStudio.Component.VC.Tools.x86.x64',
-			'-property', 'installationVersion'
+			'-products',
+			'*',
+			'-requires',
+			'Microsoft.VisualStudio.Component.VC.Tools.x86.x64',
+			'-property',
+			'installationVersion'
 		]);
 		if (out) {
 			msvcOk = true;
@@ -376,8 +396,8 @@ if (PLATFORM === 'linux') {
 		msvcDetail,
 		!msvcOk
 			? 'Install Visual Studio Build Tools 2019 or later:\n' +
-				'https://visualstudio.microsoft.com/visual-cpp-build-tools/\n' +
-				'Select "Desktop development with C++" workload.'
+					'https://visualstudio.microsoft.com/visual-cpp-build-tools/\n' +
+					'Select "Desktop development with C++" workload.'
 			: undefined
 	);
 } else {
@@ -417,7 +437,9 @@ if (errorCount === 0 && warnCount === 0) {
 				}
 			}
 		}
-		console.log(`\n${C.dim}Run ${C.bold}pnpm check-env${C.reset}${C.dim} for the full report.${C.reset}\n`);
+		console.log(
+			`\n${C.dim}Run ${C.bold}pnpm check-env${C.reset}${C.dim} for the full report.${C.reset}\n`
+		);
 	} else {
 		console.log(
 			`${C.red}${C.bold}${errorCount} error(s), ${warnCount} warning(s) — fix the issues above before building.${C.reset}\n`

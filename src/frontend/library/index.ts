@@ -10,7 +10,7 @@ export {
 	laneFocusForTrack,
 	openContextFromLaneFocus,
 	defaultSourceForContext,
-	canDropAssetOnLane,
+	canDropAssetOnLane
 } from './laneFocus';
 export { resolveLibraryMidiNotes, beatsToSeconds, libraryAssetLengthSec } from './resolveMidi';
 export { FACTORY_LIBRARY_ASSETS, isFactoryAssetId } from './factoryCatalog';
@@ -21,7 +21,7 @@ export {
 	getActiveAudioFileDrag,
 	isAudioFileDragActive,
 	moveAudioFileDragPointer,
-	requestAudioFileDragDrop,
+	requestAudioFileDragDrop
 } from './dragSession';
 export {
 	audioFileDrag,
@@ -31,5 +31,5 @@ export {
 	endAudioFileDrag,
 	importOptionsFromAudioDrag,
 	type AudioFileDragPreview,
-	type AudioFileDragState,
+	type AudioFileDragState
 } from '../audio/fileDrag';

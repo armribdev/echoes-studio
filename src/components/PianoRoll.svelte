@@ -6,7 +6,7 @@
 		pianoRollStore,
 		pianoRollNotes,
 		pianoRollSelection,
-		type PianoRollMode,
+		type PianoRollMode
 	} from '../stores/pianoRoll';
 	import { drawGridLayer } from '../frontend/pianoRoll/gridRenderer';
 	import { drawNotesLayer } from '../frontend/pianoRoll/notesRenderer';
@@ -14,18 +14,22 @@
 	import {
 		NOTE_H,
 		TOTAL_PITCHES,
-		RESIZE_ZONE,
 		snapBeat,
 		hitTestNote,
 		isResizeHandle,
 		visibleBeatsForEdit,
-		pitchFromGridY,
+		pitchFromGridY
 	} from '../frontend/pianoRoll/coords';
 	import { transport } from '../stores/transport';
 	import { tempo } from '../stores/tempo';
 	import type { MidiNote } from '../types/global';
 	import { engineProject } from '../frontend/store/engineStore';
-	import { setClipMidiNotes, undoCommand, redoCommand, seek } from '../frontend/commands/dispatcher';
+	import {
+		setClipMidiNotes,
+		undoCommand,
+		redoCommand,
+		seek
+	} from '../frontend/commands/dispatcher';
 	import { snapPosition } from '../lib/snapUtils';
 	import { MIDI_GRID_OPTIONS } from '../lib/midiGrid';
 	import { midiGridBeats } from '../stores/project';
@@ -41,7 +45,7 @@
 		getPreviewPitchRange,
 		computePreviewPanelHeight,
 		computePreviewRowH,
-		PREVIEW_CHROME_H,
+		PREVIEW_CHROME_H
 	} from '../frontend/pianoRoll/previewLayout';
 	import { previewPanelResizing, editPanelResizing } from '../frontend/pianoRoll/previewRefit';
 	import { fitEditScrollForNotes, pitchRangeScrollTop } from '../frontend/pianoRoll/editScroll';
@@ -50,34 +54,33 @@
 	import Playhead from './Playhead.svelte';
 	import ZoomScrollbar from './ZoomScrollbar.svelte';
 	import { RULER_HEIGHT } from '../frontend/timeRuler/constants';
-	const KEYS_WIDTH    = 64;
-	const VEL_H         = 72;
-	const VEL_BAR_MIN   = 3;
-	const MIN_DURATION  = 0.0625;
+	const VEL_H = 72;
+	const VEL_BAR_MIN = 3;
+	const MIN_DURATION = 0.0625;
 
-	const NOTE_NAMES = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
-	const BLACK_KEYS = new Set([1,3,6,8,10]);
-	const dpr = typeof window !== 'undefined' ? (window.devicePixelRatio || 1) : 1;
+	const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+	const BLACK_KEYS = new Set([1, 3, 6, 8, 10]);
+	const dpr = typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1;
 
 	// ── État local ─────────────────────────────────────────────────────────────
 	let canvasGrid: HTMLCanvasElement;
-	let canvasVel:  HTMLCanvasElement;
+	let canvasVel: HTMLCanvasElement;
 	let scrollContainer: HTMLDivElement;
 	let velWrapper: HTMLDivElement;
-	let keysContainer:   HTMLDivElement;
+	let keysContainer: HTMLDivElement;
 
 	let scrollLeft = 0;
-	let scrollTop  = 0;
+	let scrollTop = 0;
 
 	// ── Scrollbars personnalisés ────────────────────────────────────────────────
 	let hScrollStart = 0;
-	let hScrollEnd   = 1;
+	let hScrollEnd = 1;
 	let vScrollStart = 0;
-	let vScrollEnd   = 1;
-	let hTotalBeats  = 1; // beats totaux dans le canvas (pour zoom cohérent)
+	let vScrollEnd = 1;
+	let hTotalBeats = 1; // beats totaux dans le canvas (pour zoom cohérent)
 
 	// Hover (ghost note + position indicator)
-	let hoverBeat  = -1;
+	let hoverBeat = -1;
 	let hoverPitch = -1;
 
 	// Velocity drag
@@ -139,9 +142,8 @@
 	$: playheadMarkerX = playheadX - scrollLeft;
 	$: rulerMaxBars =
 		Math.ceil(
-			(editMode
-				? visibleBeatsForEdit(notes, clipDurationBeats)
-				: Math.max(clipDurationBeats, 1)) / ($tempo.numerator || 4),
+			(editMode ? visibleBeatsForEdit(notes, clipDurationBeats) : Math.max(clipDurationBeats, 1)) /
+				($tempo.numerator || 4)
 		) + 4;
 
 	function copySelectedNotes() {
@@ -197,7 +199,7 @@
 		const copies: MidiNote[] = notes.map((n) => ({
 			...n,
 			id: crypto.randomUUID().slice(0, 8),
-			start: n.start + span,
+			start: n.start + span
 		}));
 		pianoRollStore.setNotes([...pianoRollStore.getNotes(), ...copies]);
 		pianoRollStore.selectNotes(copies.map((n) => n.id));
@@ -225,14 +227,16 @@
 			pitch: note.pitch,
 			start: origin + note.relativeStart,
 			duration: note.duration,
-			velocity: note.velocity,
+			velocity: note.velocity
 		}));
 		pianoRollStore.setNotes([...pianoRollStore.getNotes(), ...pasted]);
 		pianoRollStore.selectNotes(pasted.map((n) => n.id));
 		commitNotes();
 	}
 
-	function noteSignature(notes: { id: string; pitch: number; start: number; duration: number; velocity: number }[]): string {
+	function noteSignature(
+		notes: { id: string; pitch: number; start: number; duration: number; velocity: number }[]
+	): string {
 		return notes.map((n) => `${n.id}:${n.pitch}:${n.start}:${n.duration}:${n.velocity}`).join('|');
 	}
 
@@ -396,13 +400,6 @@
 		});
 	}
 
-	/** @deprecated alias — notes + velocity */
-	function scheduleRedraw() {
-		scheduleGridRedraw();
-		scheduleNotesRedraw();
-		if (editMode) drawVelocity();
-	}
-
 	function scheduleHoverRedraw() {
 		scheduleGridRedraw();
 	}
@@ -443,7 +440,7 @@
 		const maxScrollTop = Math.max(0, contentH - viewportH);
 		const top = Math.min(
 			pitchRangeScrollTop(editScrollAnchor.minPitch, editScrollAnchor.maxPitch, viewportH),
-			maxScrollTop,
+			maxScrollTop
 		);
 
 		scrollContainer.scrollTop = top;
@@ -486,7 +483,7 @@
 			trackId,
 			clipId,
 			scrollContainer.scrollLeft,
-			scrollContainer.scrollTop,
+			scrollContainer.scrollTop
 		);
 	}
 
@@ -532,9 +529,9 @@
 
 	// HiDPI helper
 	function setSize(c: HTMLCanvasElement, w: number, h: number) {
-		c.width  = Math.round(w * dpr);
+		c.width = Math.round(w * dpr);
 		c.height = Math.round(h * dpr);
-		c.style.width  = w + 'px';
+		c.style.width = w + 'px';
 		c.style.height = h + 'px';
 	}
 
@@ -575,14 +572,13 @@
 		previewPitchMin = range.min;
 		previewPitchMax = range.max;
 		const measuredGridH = scrollContainer?.clientHeight ?? 0;
-		const effectivePanelH =
-			measuredGridH > 0 ? measuredGridH + PREVIEW_CHROME_H : panelH;
+		const effectivePanelH = measuredGridH > 0 ? measuredGridH + PREVIEW_CHROME_H : panelH;
 		previewRowH = computePreviewRowH(notes, effectivePanelH);
 	}
 
 	async function applyPreviewFit(
 		panelH: number,
-		opts: { fitZoom?: boolean; resetScroll?: boolean } = {},
+		opts: { fitZoom?: boolean; resetScroll?: boolean } = {}
 	) {
 		if (!scrollContainer || get(keyboardFocus) === 'piano-roll') return;
 
@@ -625,12 +621,6 @@
 		await applyPreviewFit(panelH, { fitZoom: true, resetScroll: autoHeight });
 	}
 
-	// ── Conversion coordonnées ────────────────────────────────────────────────
-
-	function pitchToY(pitch: number): number {
-		if (editMode) return (TOTAL_PITCHES - 1 - pitch) * NOTE_H;
-		return (previewPitchMax - pitch) * previewRowH;
-	}
 	function visibleBeats(): number {
 		if (!editMode) return Math.max(get(pianoRollStore).clipDurationBeats, 1);
 		return visibleBeatsForEdit(displayNotes(), clipDurationBeats);
@@ -638,23 +628,22 @@
 
 	// Indicateur de position (toolbar)
 	function beatLabel(beat: number): string {
-		const num     = get(tempo).numerator || 4;
+		const num = get(tempo).numerator || 4;
 		const measure = Math.floor(beat / num) + 1;
-		const b       = Math.floor(beat % num) + 1;
+		const b = Math.floor(beat % num) + 1;
 		return `${measure}:${b}`;
 	}
 
-	$: posLabel = hoverPitch >= 0 && hoverBeat >= 0
-		? `${NOTE_NAMES[hoverPitch % 12]}${Math.floor(hoverPitch / 12) - 1}  ${beatLabel(hoverBeat)}`
-		: '';
+	$: posLabel =
+		hoverPitch >= 0 && hoverBeat >= 0
+			? `${NOTE_NAMES[hoverPitch % 12]}${Math.floor(hoverPitch / 12) - 1}  ${beatLabel(hoverBeat)}`
+			: '';
 
 	$: clipMetaLabel = (() => {
 		const num = $tempo.numerator || 4;
 		const bars = clipDurationBeats / num;
 		const barsRounded = Math.round(bars * 10) / 10;
-		const barsText = Number.isInteger(barsRounded)
-			? `${barsRounded}`
-			: `${barsRounded.toFixed(1)}`;
+		const barsText = Number.isInteger(barsRounded) ? `${barsRounded}` : `${barsRounded.toFixed(1)}`;
 		return `${barsText} mes.`;
 	})();
 
@@ -665,9 +654,9 @@
 			? {
 					hoverLabel: posLabel,
 					noteMeta: noteMetaLabel,
-					clipMeta: clipMetaLabel,
+					clipMeta: clipMetaLabel
 				}
-			: null,
+			: null
 	);
 
 	onDestroy(() => {
@@ -715,7 +704,7 @@
 			viewportWidth: scrollContainer?.clientWidth ?? W,
 			previewPitchMin,
 			previewPitchMax,
-			previewRowH,
+			previewRowH
 		});
 		return true;
 	}
@@ -746,7 +735,7 @@
 			hoverPitch,
 			dragType: drag.type,
 			showSelbox: drag.type === 'selbox',
-			selbox: drag.type === 'selbox' ? drag : undefined,
+			selbox: drag.type === 'selbox' ? drag : undefined
 		});
 	}
 
@@ -754,8 +743,8 @@
 		if (!canvasVel) return;
 		const ctx = getCtx(canvasVel);
 		if (!ctx) return;
-		const W   = canvasVel.width / dpr;
-		const H   = VEL_H;
+		const W = canvasVel.width / dpr;
+		const H = VEL_H;
 		ctx.clearRect(0, 0, W, H);
 
 		// Fond
@@ -767,20 +756,23 @@
 		[0.25, 0.5, 0.75].forEach((p) => {
 			ctx.strokeStyle = '#252530';
 			const y = H - p * (H - 4);
-			ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
+			ctx.beginPath();
+			ctx.moveTo(0, y);
+			ctx.lineTo(W, y);
+			ctx.stroke();
 		});
 
 		// Barres de velocity
 		const velNotes = displayNotes();
 		const sel = displaySelection();
 		for (const note of velNotes) {
-			const x        = note.start * zoom + 1;
-			const barH     = Math.max(VEL_BAR_MIN, (note.velocity / 127) * (H - 6));
-			const barW     = Math.max(3, quantize * zoom - 3);
-			const y        = H - barH;
+			const x = note.start * zoom + 1;
+			const barH = Math.max(VEL_BAR_MIN, (note.velocity / 127) * (H - 6));
+			const barW = Math.max(3, quantize * zoom - 3);
+			const y = H - barH;
 			const selected = sel.has(note.id);
-			const base     = selected ? lighten(trackColor, 0.2) : trackColor;
-			const alpha    = selected ? 0.9 : 0.62;
+			const base = selected ? lighten(trackColor, 0.2) : trackColor;
+			const alpha = selected ? 0.9 : 0.62;
 
 			// Gradient du bas vers le haut
 			const gr = ctx.createLinearGradient(0, y, 0, H);
@@ -804,13 +796,21 @@
 
 		// Séparateur haut
 		ctx.strokeStyle = '#32323e';
-		ctx.lineWidth   = 1;
-		ctx.beginPath(); ctx.moveTo(0, 0.5); ctx.lineTo(W, 0.5); ctx.stroke();
+		ctx.lineWidth = 1;
+		ctx.beginPath();
+		ctx.moveTo(0, 0.5);
+		ctx.lineTo(W, 0.5);
+		ctx.stroke();
 	}
 
 	// ── Interactions Canvas ───────────────────────────────────────────────────
 
-	function getGridCoords(e: MouseEvent): { beat: number; pitch: number; rawX: number; rawY: number } {
+	function getGridCoords(e: MouseEvent): {
+		beat: number;
+		pitch: number;
+		rawX: number;
+		rawY: number;
+	} {
 		if (!canvasGrid) return { beat: 0, pitch: 0, rawX: 0, rawY: 0 };
 		const rect = canvasGrid.getBoundingClientRect();
 		const rawX = e.clientX - rect.left;
@@ -822,10 +822,10 @@
 				? pitchFromGridY(rawY, rowH)
 				: Math.max(
 						previewPitchMin,
-						Math.min(previewPitchMax, previewPitchMax - Math.floor(rawY / rowH)),
+						Math.min(previewPitchMax, previewPitchMax - Math.floor(rawY / rowH))
 					),
 			rawX,
-			rawY,
+			rawY
 		};
 	}
 
@@ -876,7 +876,7 @@
 			origDur: hit.duration,
 			anchorBeat: beat,
 			isGroup,
-			origDurs,
+			origDurs
 		};
 	}
 
@@ -885,7 +885,7 @@
 		workingNotes = workingNotes.map((n) =>
 			n.id === id
 				? { ...n, pitch: Math.max(0, Math.min(127, pitch)), start: Math.max(0, start) }
-				: n,
+				: n
 		);
 		scheduleNotesRedraw();
 	}
@@ -907,7 +907,7 @@
 			anchorBeat: beat,
 			anchorPitch: pitch,
 			isGroup,
-			origPositions,
+			origPositions
 		};
 		if (trackId) auditionPitch(trackId, hit.pitch, hit.velocity);
 	}
@@ -915,7 +915,7 @@
 	function moveWorkingGroup(
 		origPositions: Map<string, { pitch: number; start: number }>,
 		deltaPitch: number,
-		deltaStart: number,
+		deltaStart: number
 	) {
 		if (!workingNotes) return;
 		workingNotes = workingNotes.map((n) => {
@@ -948,8 +948,8 @@
 		// Middle-click : pan horizontal (preview + édition)
 		if (e.button === 1) {
 			e.preventDefault();
-			isPanning          = true;
-			panStartX          = e.clientX;
+			isPanning = true;
+			panStartX = e.clientX;
 			panStartScrollLeft = scrollContainer.scrollLeft;
 			return;
 		}
@@ -980,7 +980,7 @@
 				const id = crypto.randomUUID().slice(0, 8);
 				workingNotes = [
 					...displayNotes(),
-					{ id, pitch, start: sb, duration: quantize, velocity: 100 },
+					{ id, pitch, start: sb, duration: quantize, velocity: 100 }
 				];
 				drag = { type: 'create', noteId: id, pitch, startBeat: sb, anchorBeat: beat };
 				if (trackId) auditionPitch(trackId, pitch, 100);
@@ -1014,7 +1014,7 @@
 		const { beat, pitch, rawX, rawY } = getGridCoords(e);
 
 		if (editMode) {
-			hoverBeat  = beat;
+			hoverBeat = beat;
 			hoverPitch = Math.max(0, Math.min(127, pitch));
 		}
 
@@ -1032,7 +1032,7 @@
 			if (moveDrag.isGroup) {
 				const newStart = Math.max(
 					0,
-					snapBeat(beat - (moveDrag.anchorBeat - moveDrag.origStart), quantize),
+					snapBeat(beat - (moveDrag.anchorBeat - moveDrag.origStart), quantize)
 				);
 				let deltaStart = newStart - moveDrag.origStart;
 				let deltaPitch = pitch - moveDrag.anchorPitch;
@@ -1053,8 +1053,14 @@
 					auditionPitch(trackId, heard, vel);
 				}
 			} else {
-				const newStart = Math.max(0, snapBeat(beat - (moveDrag.anchorBeat - moveDrag.origStart), quantize));
-				const newPitch = Math.max(0, Math.min(127, moveDrag.origPitch + (pitch - moveDrag.anchorPitch)));
+				const newStart = Math.max(
+					0,
+					snapBeat(beat - (moveDrag.anchorBeat - moveDrag.origStart), quantize)
+				);
+				const newPitch = Math.max(
+					0,
+					Math.min(127, moveDrag.origPitch + (pitch - moveDrag.anchorPitch))
+				);
 				moveWorkingNote(moveDrag.noteId, newPitch, newStart);
 				if (trackId) {
 					const vel = workingNotes?.find((n) => n.id === moveDrag.noteId)?.velocity ?? 100;
@@ -1080,10 +1086,7 @@
 			dragSelIds = displayNotes()
 				.filter(
 					(n) =>
-						n.pitch >= pBot &&
-						n.pitch <= pTop &&
-						n.start < bRight &&
-						n.start + n.duration > bLeft,
+						n.pitch >= pBot && n.pitch <= pTop && n.start < bRight && n.start + n.duration > bLeft
 				)
 				.map((n) => n.id);
 			scheduleNotesRedraw();
@@ -1116,16 +1119,23 @@
 
 	function updateCursor(e: MouseEvent) {
 		if (!canvasGrid) return;
-		if (isPanning) { canvasGrid.style.cursor = 'grabbing'; return; }
+		if (isPanning) {
+			canvasGrid.style.cursor = 'grabbing';
+			return;
+		}
 		const { beat, pitch } = getGridCoords(e);
 		const hit = hitTest(beat, pitch);
 		if (mode === 'draw') {
 			canvasGrid.style.cursor = hit
-				? (noteResizeHandle(hit, beat) ? 'ew-resize' : 'grab')
+				? noteResizeHandle(hit, beat)
+					? 'ew-resize'
+					: 'grab'
 				: 'crosshair';
 		} else if (mode === 'select') {
 			canvasGrid.style.cursor = hit
-				? (noteResizeHandle(hit, beat) ? 'ew-resize' : 'grab')
+				? noteResizeHandle(hit, beat)
+					? 'ew-resize'
+					: 'grab'
 				: 'default';
 		} else {
 			canvasGrid.style.cursor = 'cell';
@@ -1137,7 +1147,10 @@
 		e.preventDefault();
 		const { beat, pitch } = getGridCoords(e);
 		const hit = hitTest(beat, pitch);
-		if (hit) { pianoRollStore.deleteNote(hit.id); commitNotes(); }
+		if (hit) {
+			pianoRollStore.deleteNote(hit.id);
+			commitNotes();
+		}
 	}
 
 	// ── Velocity interactions ──────────────────────────────────────────────────
@@ -1151,7 +1164,7 @@
 		if (!hit) return;
 		const vel = Math.max(
 			1,
-			Math.min(127, Math.round(((VEL_H - (e.clientY - rect.top)) / VEL_H) * 127)),
+			Math.min(127, Math.round(((VEL_H - (e.clientY - rect.top)) / VEL_H) * 127))
 		);
 		if (!workingNotes) beginWorkingNotes();
 		if (workingNotes) {
@@ -1202,15 +1215,15 @@
 	function updateScrollbars() {
 		if (!scrollContainer) return;
 		const totalW = scrollContainer.scrollWidth;
-		const vpW    = scrollContainer.clientWidth;
+		const vpW = scrollContainer.clientWidth;
 		const totalH = scrollContainer.scrollHeight;
-		const vpH    = scrollContainer.clientHeight;
+		const vpH = scrollContainer.clientHeight;
 
-		hTotalBeats  = zoom > 0 ? totalW / zoom : 1;
+		hTotalBeats = zoom > 0 ? totalW / zoom : 1;
 		hScrollStart = totalW > vpW ? scrollLeft / totalW : 0;
-		hScrollEnd   = totalW > vpW ? Math.min(1, (scrollLeft + vpW) / totalW) : 1;
-		vScrollStart = totalH > vpH ? scrollTop  / totalH : 0;
-		vScrollEnd   = totalH > vpH ? Math.min(1, (scrollTop  + vpH) / totalH) : 1;
+		hScrollEnd = totalW > vpW ? Math.min(1, (scrollLeft + vpW) / totalW) : 1;
+		vScrollStart = totalH > vpH ? scrollTop / totalH : 0;
+		vScrollEnd = totalH > vpH ? Math.min(1, (scrollTop + vpH) / totalH) : 1;
 	}
 
 	function onHScrollChange(e: CustomEvent<{ start: number; end: number; cause: string }>) {
@@ -1218,18 +1231,18 @@
 		const { start: ns, end: ne } = e.detail;
 
 		const totalBeats = hTotalBeats;
-		const vpW        = scrollContainer.clientWidth;
-		const leftBeat   = ns * totalBeats;
-		const rightBeat  = ne * totalBeats;
-		const spanBeats  = rightBeat - leftBeat;
+		const vpW = scrollContainer.clientWidth;
+		const leftBeat = ns * totalBeats;
+		const rightBeat = ne * totalBeats;
+		const spanBeats = rightBeat - leftBeat;
 		if (spanBeats <= 0) return;
 
-		const newZoom      = Math.max(12, Math.min(400, vpW / spanBeats));
+		const newZoom = Math.max(12, Math.min(400, vpW / spanBeats));
 		const newScrollLeft = Math.max(0, leftBeat * newZoom);
 
 		// Mise à jour visuelle immédiate pour fluidité
 		hScrollStart = ns;
-		hScrollEnd   = ne;
+		hScrollEnd = ne;
 
 		if (Math.abs(newZoom - zoom) < 0.5) {
 			// Pan pur
@@ -1257,9 +1270,9 @@
 		if (!scrollContainer || !editMode) return;
 		const { start: ns, end: ne, cause } = e.detail;
 
-		const totalH   = scrollContainer.scrollHeight;
-		const vpH      = scrollContainer.clientHeight;
-		const thumbSz  = vScrollEnd - vScrollStart;
+		const totalH = scrollContainer.scrollHeight;
+		const vpH = scrollContainer.clientHeight;
+		const thumbSz = vScrollEnd - vScrollStart;
 
 		let newScrollTop: number;
 
@@ -1267,17 +1280,17 @@
 			// Poignée haute : fait défiler vers la position de début
 			newScrollTop = ns * totalH;
 			vScrollStart = ns;
-			vScrollEnd   = Math.min(1, ns + thumbSz);
+			vScrollEnd = Math.min(1, ns + thumbSz);
 		} else if (cause === 'resize-end') {
 			// Poignée basse : fait défiler pour que la fin soit visible
 			newScrollTop = (ne - thumbSz) * totalH;
 			vScrollStart = Math.max(0, ne - thumbSz);
-			vScrollEnd   = ne;
+			vScrollEnd = ne;
 		} else {
 			// Pan
 			newScrollTop = ns * totalH;
 			vScrollStart = ns;
-			vScrollEnd   = ne;
+			vScrollEnd = ne;
 		}
 
 		newScrollTop = Math.max(0, Math.min(totalH - vpH, newScrollTop));
@@ -1295,10 +1308,16 @@
 		let handled = false;
 
 		if (hasNoModifiers(e)) {
-			if      (e.key === 'd' || e.key === 'D') { pianoRollStore.setMode('draw');   handled = true; }
-			else if (e.key === 'v' || e.key === 'V' || e.key === 's' || e.key === 'S') { pianoRollStore.setMode('select'); handled = true; }
-			else if (e.key === 'e' || e.key === 'E') { pianoRollStore.setMode('erase');  handled = true; }
-			else if (e.key === 'q' || e.key === 'Q') {
+			if (e.key === 'd' || e.key === 'D') {
+				pianoRollStore.setMode('draw');
+				handled = true;
+			} else if (e.key === 'v' || e.key === 'V' || e.key === 's' || e.key === 'S') {
+				pianoRollStore.setMode('select');
+				handled = true;
+			} else if (e.key === 'e' || e.key === 'E') {
+				pianoRollStore.setMode('erase');
+				handled = true;
+			} else if (e.key === 'q' || e.key === 'Q') {
 				e.preventDefault();
 				if (!e.repeat) quantizeSelected();
 				handled = true;
@@ -1319,8 +1338,18 @@
 			pianoRollStore.deleteSelectedNotes();
 			commitNotes();
 			handled = true;
-		}
-		else if (!handled && (e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && (e.key === 'c' || e.key === 'x' || e.key === 'v' || e.key === 'C' || e.key === 'X' || e.key === 'V')) {
+		} else if (
+			!handled &&
+			(e.ctrlKey || e.metaKey) &&
+			!e.shiftKey &&
+			!e.altKey &&
+			(e.key === 'c' ||
+				e.key === 'x' ||
+				e.key === 'v' ||
+				e.key === 'C' ||
+				e.key === 'X' ||
+				e.key === 'V')
+		) {
 			const key = e.key.toLowerCase();
 			if (key === 'c') {
 				e.preventDefault();
@@ -1335,28 +1364,36 @@
 				pasteNotes();
 				handled = true;
 			}
-		}
-		else if (!handled && (e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && (e.key === 'd' || e.key === 'D')) {
+		} else if (
+			!handled &&
+			(e.ctrlKey || e.metaKey) &&
+			!e.shiftKey &&
+			!e.altKey &&
+			(e.key === 'd' || e.key === 'D')
+		) {
 			e.preventDefault();
 			if (!e.repeat) duplicateSelected();
 			handled = true;
-		}
-		else if (!handled && (e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && (e.key === 'u' || e.key === 'U')) {
+		} else if (
+			!handled &&
+			(e.ctrlKey || e.metaKey) &&
+			!e.shiftKey &&
+			!e.altKey &&
+			(e.key === 'u' || e.key === 'U')
+		) {
 			e.preventDefault();
 			if (!e.repeat) quantizeSelected();
 			handled = true;
-		}
-		else if (!handled && (e.ctrlKey || e.metaKey) && e.key === 'a') {
+		} else if (!handled && (e.ctrlKey || e.metaKey) && e.key === 'a') {
 			e.preventDefault();
 			pianoRollStore.selectAll();
 			handled = true;
-		}
-		else if (!handled && (e.ctrlKey || e.metaKey) && e.key === 'z') {
+		} else if (!handled && (e.ctrlKey || e.metaKey) && e.key === 'z') {
 			e.preventDefault();
-			if (e.shiftKey) redoCommand(); else undoCommand();
+			if (e.shiftKey) redoCommand();
+			else undoCommand();
 			handled = true;
-		}
-		else if (!handled && (e.ctrlKey || e.metaKey) && e.key === 'y') {
+		} else if (!handled && (e.ctrlKey || e.metaKey) && e.key === 'y') {
 			e.preventDefault();
 			redoCommand();
 			handled = true;
@@ -1376,10 +1413,7 @@
 		if (isPanning) isPanning = false;
 		const auditioning = drag.type === 'create' || drag.type === 'move';
 		const needsCommit =
-			auditioning ||
-			drag.type === 'resize' ||
-			drag.type === 'erase' ||
-			drag.type === 'selbox';
+			auditioning || drag.type === 'resize' || drag.type === 'erase' || drag.type === 'selbox';
 		if (drag.type !== 'none') {
 			flushWorkingNotes();
 			drag = { type: 'none' };
@@ -1395,17 +1429,17 @@
 	}
 
 	onMount(() => {
-		window.addEventListener('keydown',    onKeydown);
-		window.addEventListener('mousemove',  onWindowMousemove);
-		window.addEventListener('mouseup',    onWindowMouseup);
+		window.addEventListener('keydown', onKeydown);
+		window.addEventListener('mousemove', onWindowMousemove);
+		window.addEventListener('mouseup', onWindowMouseup);
 	});
 	onDestroy(() => {
 		releaseAudition();
 		gridViewportObserver?.disconnect();
 		scrubCleanup?.();
-		window.removeEventListener('keydown',   onKeydown);
+		window.removeEventListener('keydown', onKeydown);
 		window.removeEventListener('mousemove', onWindowMousemove);
-		window.removeEventListener('mouseup',   onWindowMouseup);
+		window.removeEventListener('mouseup', onWindowMouseup);
 	});
 
 	$: if (scrollContainer && !gridViewportObserver) {
@@ -1422,7 +1456,7 @@
 	}
 
 	function timelineScale(): number {
-		return zoom * get(tempo).bpm / 60;
+		return (zoom * get(tempo).bpm) / 60;
 	}
 
 	function positionSecFromRuler(clientX: number, altKey: boolean): number {
@@ -1437,21 +1471,17 @@
 			get(tempo),
 			timelineScale(),
 			get(midiGridBeats),
-			get(engineProject).tracks,
+			get(engineProject).tracks
 		);
 	}
 
 	function handleRulerMouseDown(event: CustomEvent<MouseEvent>) {
 		if (!pianoRulerEl) return;
 		scrubCleanup?.();
-		scrubCleanup = startTransportScrub(
-			event.detail,
-			positionSecFromRuler,
-			(positionSec) => {
-				scrubCleanup = null;
-				seek(positionSec).catch(console.error);
-			},
-		);
+		scrubCleanup = startTransportScrub(event.detail, positionSecFromRuler, (positionSec) => {
+			scrubCleanup = null;
+			seek(positionSec).catch(console.error);
+		});
 	}
 
 	// ── Piano keys ────────────────────────────────────────────────────────────
@@ -1459,13 +1489,15 @@
 	function getPianoKeyLabel(pitch: number): string {
 		const deg = pitch % 12;
 		const oct = Math.floor(pitch / 12) - 1;
-		if (deg === 0)  return `C${oct}`;
-		if (deg === 4)  return `E${oct}`;
-		if (deg === 9)  return `A${oct}`;
+		if (deg === 0) return `C${oct}`;
+		if (deg === 4) return `E${oct}`;
+		if (deg === 9) return `A${oct}`;
 		return '';
 	}
 
-	function isBlack(pitch: number): boolean { return BLACK_KEYS.has(pitch % 12); }
+	function isBlack(pitch: number): boolean {
+		return BLACK_KEYS.has(pitch % 12);
+	}
 
 	// ── Zoom ──────────────────────────────────────────────────────────────────
 
@@ -1490,203 +1522,249 @@
 		if (!editMode) return;
 		if (e.ctrlKey || e.metaKey) {
 			e.preventDefault();
-			if (e.deltaY < 0) zoomIn(); else zoomOut();
+			if (e.deltaY < 0) zoomIn();
+			else zoomOut();
 		}
 	}
 
 	// ── Réactivité ────────────────────────────────────────────────────────────
-
 </script>
 
 {#if open}
-<!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
-<div
-	class="piano-roll"
-	class:piano-roll--preview={!editMode}
-	class:piano-roll--resizing={$previewPanelResizing}
-	role="application"
-	aria-label="Piano Roll"
->
-	{#if editMode}
-	<div class="chrome" style="--track-color: {trackColor}">
-		<div class="chrome-inner">
-			<div class="mode-group" role="group" aria-label="Mode d'édition">
-				<button class="mode-btn" class:active={mode === 'draw'} on:click={() => pianoRollStore.setMode('draw')} title="Dessiner (D)" aria-label="Dessiner">
-					<svg viewBox="0 0 16 16" width="13" height="13" fill="currentColor" aria-hidden="true">
-						<path d="M11.5 1.5a2.121 2.121 0 0 1 3 3L5 14H2v-3L11.5 1.5z"/>
-					</svg>
-				</button>
-				<button class="mode-btn" class:active={mode === 'select'} on:click={() => pianoRollStore.setMode('select')} title="Sélectionner (S)" aria-label="Sélectionner">
-					<svg viewBox="0 0 16 16" width="13" height="13" fill="currentColor" aria-hidden="true">
-						<path d="M3 2l10 6-5 1.5L6.5 14 3 2z"/>
-					</svg>
-				</button>
-				<button class="mode-btn" class:active={mode === 'erase'} on:click={() => pianoRollStore.setMode('erase')} title="Effacer (E)" aria-label="Effacer">
-					<svg viewBox="0 0 16 16" width="13" height="13" fill="currentColor" aria-hidden="true">
-						<path d="M9.5 2.5L14 7l-7 7H3v-3l6.5-8.5zM2 13h5.5l1-1.5H2V13z"/>
-					</svg>
-				</button>
-			</div>
-
-			<div class="chrome-divider"></div>
-
-			<select
-				class="q-select"
-				value={quantize}
-				on:change={(e) => {
-					const beats = +e.currentTarget.value;
-					pianoRollStore.setQuantize(beats);
-					midiGridBeats.set(beats);
-					updateProjectMusical({ ...currentProjectMusical(), midi_grid_beats: beats }).catch(
-						console.error,
-					);
-				}}
-				title="Quantification (enregistrée dans le projet)"
-				aria-label="Quantification"
-			>
-				{#each MIDI_GRID_OPTIONS as opt}
-					<option value={opt.beats}>{opt.label}</option>
-				{/each}
-			</select>
-
-			<div class="chrome-spacer"></div>
-
-			<button class="chrome-close" on:click={closeEditor} title="Fermer (Tab)" aria-label="Fermer">
-				<svg viewBox="0 0 10 10" width="10" height="10" fill="none" aria-hidden="true">
-					<path d="M1.5 1.5L8.5 8.5M8.5 1.5L1.5 8.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
-				</svg>
-			</button>
-		</div>
-	</div>
-	{:else}
-	<div class="chrome chrome--preview" style="--track-color: {trackColor}">
-		<div class="chrome-inner">
-			<div class="chrome-spacer"></div>
-			<button class="edit-btn" on:click={enterEditFromPreview}>
-				Éditer
-			</button>
-			<button class="chrome-close" on:click={closeEditor} title="Fermer (Tab)" aria-label="Fermer">
-				<svg viewBox="0 0 10 10" width="10" height="10" fill="none" aria-hidden="true">
-					<path d="M1.5 1.5L8.5 8.5M8.5 1.5L1.5 8.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
-				</svg>
-			</button>
-		</div>
-	</div>
-	{/if}
-
-	<!-- Corps principal -->
-	<div class="body" class:body--preview={!editMode}>
+	<div
+		class="piano-roll"
+		class:piano-roll--preview={!editMode}
+		class:piano-roll--resizing={$previewPanelResizing}
+		role="application"
+		aria-label="Piano Roll"
+	>
 		{#if editMode}
-		<!-- Piano keys -->
-		<!-- svelte-ignore a11y-no-static-element-interactions -->
-		<div class="keys-wrapper">
-			<div class="keys-ruler-spacer" style="height: {RULER_HEIGHT}px"></div>
-			<!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
-			<div class="keys-scroll" bind:this={keysContainer} role="list" aria-label="Touches piano">
-				{#each { length: TOTAL_PITCHES } as _, i}
-					{@const pitch = TOTAL_PITCHES - 1 - i}
-					<!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
-					<div
-						class="key"
-						class:key--black={isBlack(pitch)}
-						class:key--c={pitch % 12 === 0}
-						style="height: {NOTE_H}px"
-						role="listitem"
-					>
-						<span class="key-label">{getPianoKeyLabel(pitch)}</span>
+			<div class="chrome" style="--track-color: {trackColor}">
+				<div class="chrome-inner">
+					<div class="mode-group" role="group" aria-label="Mode d'édition">
+						<button
+							class="mode-btn"
+							class:active={mode === 'draw'}
+							on:click={() => pianoRollStore.setMode('draw')}
+							title="Dessiner (D)"
+							aria-label="Dessiner"
+						>
+							<svg
+								viewBox="0 0 16 16"
+								width="13"
+								height="13"
+								fill="currentColor"
+								aria-hidden="true"
+							>
+								<path d="M11.5 1.5a2.121 2.121 0 0 1 3 3L5 14H2v-3L11.5 1.5z" />
+							</svg>
+						</button>
+						<button
+							class="mode-btn"
+							class:active={mode === 'select'}
+							on:click={() => pianoRollStore.setMode('select')}
+							title="Sélectionner (S)"
+							aria-label="Sélectionner"
+						>
+							<svg
+								viewBox="0 0 16 16"
+								width="13"
+								height="13"
+								fill="currentColor"
+								aria-hidden="true"
+							>
+								<path d="M3 2l10 6-5 1.5L6.5 14 3 2z" />
+							</svg>
+						</button>
+						<button
+							class="mode-btn"
+							class:active={mode === 'erase'}
+							on:click={() => pianoRollStore.setMode('erase')}
+							title="Effacer (E)"
+							aria-label="Effacer"
+						>
+							<svg
+								viewBox="0 0 16 16"
+								width="13"
+								height="13"
+								fill="currentColor"
+								aria-hidden="true"
+							>
+								<path d="M9.5 2.5L14 7l-7 7H3v-3l6.5-8.5zM2 13h5.5l1-1.5H2V13z" />
+							</svg>
+						</button>
 					</div>
-				{/each}
+
+					<div class="chrome-divider"></div>
+
+					<select
+						class="q-select"
+						value={quantize}
+						on:change={(e) => {
+							const beats = +e.currentTarget.value;
+							pianoRollStore.setQuantize(beats);
+							midiGridBeats.set(beats);
+							updateProjectMusical({ ...currentProjectMusical(), midi_grid_beats: beats }).catch(
+								console.error
+							);
+						}}
+						title="Quantification (enregistrée dans le projet)"
+						aria-label="Quantification"
+					>
+						{#each MIDI_GRID_OPTIONS as opt}
+							<option value={opt.beats}>{opt.label}</option>
+						{/each}
+					</select>
+
+					<div class="chrome-spacer"></div>
+
+					<button
+						class="chrome-close"
+						on:click={closeEditor}
+						title="Fermer (Tab)"
+						aria-label="Fermer"
+					>
+						<svg viewBox="0 0 10 10" width="10" height="10" fill="none" aria-hidden="true">
+							<path
+								d="M1.5 1.5L8.5 8.5M8.5 1.5L1.5 8.5"
+								stroke="currentColor"
+								stroke-width="1.5"
+								stroke-linecap="round"
+							/>
+						</svg>
+					</button>
+				</div>
 			</div>
-			<div class="keys-vel-label">VEL</div>
-			<div class="keys-hscroll-spacer"></div>
-		</div>
+		{:else}
+			<div class="chrome chrome--preview" style="--track-color: {trackColor}">
+				<div class="chrome-inner">
+					<div class="chrome-spacer"></div>
+					<button class="edit-btn" on:click={enterEditFromPreview}> Éditer </button>
+					<button
+						class="chrome-close"
+						on:click={closeEditor}
+						title="Fermer (Tab)"
+						aria-label="Fermer"
+					>
+						<svg viewBox="0 0 10 10" width="10" height="10" fill="none" aria-hidden="true">
+							<path
+								d="M1.5 1.5L8.5 8.5M8.5 1.5L1.5 8.5"
+								stroke="currentColor"
+								stroke-width="1.5"
+								stroke-linecap="round"
+							/>
+						</svg>
+					</button>
+				</div>
+			</div>
 		{/if}
 
-		<!-- Zone grille + velocity -->
-		<div class="grid-wrapper" class:grid-wrapper--preview={!editMode}>
-			<!-- Règle beats -->
-			<div class="ruler-wrap" style="height: {RULER_HEIGHT}px">
-				<TimeRuler
-					bind:rulerEl={pianoRulerEl}
-					pxPerBeat={zoom}
-					numerator={$tempo.numerator}
-					scrollPx={scrollLeft}
-					viewportWidthPx={rulerViewportWidth}
-					maxBars={rulerMaxBars}
-					on:mousedown={handleRulerMouseDown}
-				/>
-			</div>
+		<!-- Corps principal -->
+		<div class="body" class:body--preview={!editMode}>
+			{#if editMode}
+				<!-- Piano keys -->
+				<div class="keys-wrapper">
+					<div class="keys-ruler-spacer" style="height: {RULER_HEIGHT}px"></div>
+					<div class="keys-scroll" bind:this={keysContainer} role="list" aria-label="Touches piano">
+						{#each { length: TOTAL_PITCHES } as _, i}
+							{@const pitch = TOTAL_PITCHES - 1 - i}
+							<div
+								class="key"
+								class:key--black={isBlack(pitch)}
+								class:key--c={pitch % 12 === 0}
+								style="height: {NOTE_H}px"
+								role="listitem"
+							>
+								<span class="key-label">{getPianoKeyLabel(pitch)}</span>
+							</div>
+						{/each}
+					</div>
+					<div class="keys-vel-label">VEL</div>
+					<div class="keys-hscroll-spacer"></div>
+				</div>
+			{/if}
 
-			<!-- Grid scrollable + scrollbar vertical -->
-			<div class="grid-and-vscroll">
-				<!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
-				<div
-					id="piano-roll-grid"
-					class="grid-scroll"
-					class:grid-scroll--edit={editMode}
-					class:grid-scroll--preview={!editMode}
-					bind:this={scrollContainer}
-					on:scroll={onGridScroll}
-					on:wheel={onGridWheel}
-				>
-					<div class="grid-stack">
-						<!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
+			<!-- Zone grille + velocity -->
+			<div class="grid-wrapper" class:grid-wrapper--preview={!editMode}>
+				<!-- Règle beats -->
+				<div class="ruler-wrap" style="height: {RULER_HEIGHT}px">
+					<TimeRuler
+						bind:rulerEl={pianoRulerEl}
+						pxPerBeat={zoom}
+						numerator={$tempo.numerator}
+						scrollPx={scrollLeft}
+						viewportWidthPx={rulerViewportWidth}
+						maxBars={rulerMaxBars}
+						on:mousedown={handleRulerMouseDown}
+					/>
+				</div>
+
+				<!-- Grid scrollable + scrollbar vertical -->
+				<div class="grid-and-vscroll">
+					<div
+						id="piano-roll-grid"
+						class="grid-scroll"
+						class:grid-scroll--edit={editMode}
+						class:grid-scroll--preview={!editMode}
+						bind:this={scrollContainer}
+						on:scroll={onGridScroll}
+						on:wheel={onGridWheel}
+					>
+						<div class="grid-stack">
+							<canvas
+								class="grid-canvas"
+								bind:this={canvasGrid}
+								style="display:block"
+								on:mousedown={onGridMousedown}
+								on:mousemove={onGridMousemove}
+								on:mouseup={onGridMouseup}
+								on:mouseleave={onGridMouseleave}
+								on:contextmenu={onGridContextmenu}
+							></canvas>
+						</div>
+					</div>
+					{#if editMode}
+						<ZoomScrollbar
+							orientation="v"
+							controls="piano-roll-grid"
+							start={vScrollStart}
+							end={vScrollEnd}
+							on:change={onVScrollChange}
+						/>
+					{/if}
+				</div>
+
+				<!-- Velocity lane (édition uniquement) -->
+				{#if editMode}
+					<div class="vel-wrapper" bind:this={velWrapper}>
 						<canvas
-							class="grid-canvas"
-							bind:this={canvasGrid}
+							bind:this={canvasVel}
+							on:mousedown={onVelMousedown}
+							on:mousemove={onVelMousemove}
+							on:mouseup={onVelMouseup}
 							style="display:block"
-							on:mousedown={onGridMousedown}
-							on:mousemove={onGridMousemove}
-							on:mouseup={onGridMouseup}
-							on:mouseleave={onGridMouseleave}
-							on:contextmenu={onGridContextmenu}
 						></canvas>
 					</div>
-				</div>
+					<!-- Scrollbar horizontale avec poignées de zoom -->
+					<ZoomScrollbar
+						orientation="h"
+						controls="piano-roll-grid"
+						start={hScrollStart}
+						end={hScrollEnd}
+						on:change={onHScrollChange}
+					/>
+				{/if}
+
 				{#if editMode}
-				<ZoomScrollbar
-					orientation="v"
-					controls="piano-roll-grid"
-					start={vScrollStart}
-					end={vScrollEnd}
-					on:change={onVScrollChange}
-				/>
+					<div class="playhead-clip">
+						<Playhead x={playheadMarkerX} />
+					</div>
+				{:else}
+					<Playhead x={playheadMarkerX} />
 				{/if}
 			</div>
-
-			<!-- Velocity lane (édition uniquement) -->
-			{#if editMode}
-			<!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
-			<div class="vel-wrapper" bind:this={velWrapper}>
-				<!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
-				<canvas
-					bind:this={canvasVel}
-					on:mousedown={onVelMousedown}
-					on:mousemove={onVelMousemove}
-					on:mouseup={onVelMouseup}
-					style="display:block"
-				></canvas>
-			</div>
-			<!-- Scrollbar horizontale avec poignées de zoom -->
-			<ZoomScrollbar
-				orientation="h"
-				controls="piano-roll-grid"
-				start={hScrollStart}
-				end={hScrollEnd}
-				on:change={onHScrollChange}
-			/>
-			{/if}
-
-			{#if editMode}
-			<div class="playhead-clip">
-				<Playhead x={playheadMarkerX} />
-			</div>
-			{:else}
-			<Playhead x={playheadMarkerX} />
-			{/if}
 		</div>
 	</div>
-</div>
 {/if}
 
 <style lang="scss">
@@ -1725,7 +1803,9 @@
 		overflow-x: auto;
 		overflow-y: hidden;
 		scrollbar-width: none;
-		&::-webkit-scrollbar { display: none; }
+		&::-webkit-scrollbar {
+			display: none;
+		}
 	}
 
 	.chrome-divider {
@@ -1735,7 +1815,10 @@
 		flex-shrink: 0;
 	}
 
-	.chrome-spacer { flex: 1; min-width: 8px; }
+	.chrome-spacer {
+		flex: 1;
+		min-width: 8px;
+	}
 
 	.chrome-close {
 		display: flex;
@@ -1750,9 +1833,14 @@
 		color: #666678;
 		cursor: pointer;
 		flex-shrink: 0;
-		transition: background 0.12s, color 0.12s;
+		transition:
+			background 0.12s,
+			color 0.12s;
 
-		&:hover { background: rgba(255, 65, 54, 0.14); color: #ff6b60; }
+		&:hover {
+			background: rgba(255, 65, 54, 0.14);
+			color: #ff6b60;
+		}
 	}
 
 	.edit-btn {
@@ -1766,7 +1854,9 @@
 		font-weight: 500;
 		cursor: pointer;
 		flex-shrink: 0;
-		transition: background 0.12s, border-color 0.12s;
+		transition:
+			background 0.12s,
+			border-color 0.12s;
 
 		&:hover {
 			background: rgba(21, 113, 255, 0.2);
@@ -1784,10 +1874,18 @@
 		font-size: 11px;
 		cursor: pointer;
 		flex-shrink: 0;
-		transition: border-color 0.12s, background 0.12s;
+		transition:
+			border-color 0.12s,
+			background 0.12s;
 
-		&:hover { background: rgba(255, 255, 255, 0.07); border-color: rgba(255, 255, 255, 0.14); }
-		&:focus { outline: none; border-color: #1571ff; }
+		&:hover {
+			background: rgba(255, 255, 255, 0.07);
+			border-color: rgba(255, 255, 255, 0.14);
+		}
+		&:focus {
+			outline: none;
+			border-color: #1571ff;
+		}
 	}
 
 	.mode-group {
@@ -1812,9 +1910,14 @@
 		color: #666678;
 		cursor: pointer;
 		flex-shrink: 0;
-		transition: background 0.12s, color 0.12s;
+		transition:
+			background 0.12s,
+			color 0.12s;
 
-		&:hover { background: rgba(255, 255, 255, 0.07); color: #d0d0e0; }
+		&:hover {
+			background: rgba(255, 255, 255, 0.07);
+			color: #d0d0e0;
+		}
 
 		&.active {
 			background: rgba(21, 113, 255, 0.2);
@@ -1833,8 +1936,10 @@
 	// ── Piano keys ────────────────────────────────────────────────────────────
 
 	.keys-wrapper {
-		display: flex; flex-direction: column;
-		width: 64px; flex-shrink: 0;
+		display: flex;
+		flex-direction: column;
+		width: 64px;
+		flex-shrink: 0;
 		border-right: 1px solid #2a2a38;
 	}
 
@@ -1847,20 +1952,32 @@
 	.keys-scroll {
 		flex: 1;
 		overflow: hidden;
-		display: flex; flex-direction: column;
+		display: flex;
+		flex-direction: column;
 	}
 
 	.key {
-		display: flex; align-items: center; justify-content: flex-end;
-		padding-right: 5px; box-sizing: border-box; flex-shrink: 0;
-		background: #252535; border-bottom: 1px solid #1c1c28;
-		cursor: pointer; transition: background 0.07s;
+		display: flex;
+		align-items: center;
+		justify-content: flex-end;
+		padding-right: 5px;
+		box-sizing: border-box;
+		flex-shrink: 0;
+		background: #252535;
+		border-bottom: 1px solid #1c1c28;
+		cursor: pointer;
+		transition: background 0.07s;
 
-		&:hover { background: #303048; }
+		&:hover {
+			background: #303048;
+		}
 
 		&--black {
-			background: #17171e; border-bottom: 1px solid #101015;
-			&:hover { background: #21212e; }
+			background: #17171e;
+			border-bottom: 1px solid #101015;
+			&:hover {
+				background: #21212e;
+			}
 		}
 
 		&--c {
@@ -1869,17 +1986,25 @@
 	}
 
 	.key-label {
-		font-size: 9px; font-weight: 600; letter-spacing: 0.02em;
-		color: #4a4a60; pointer-events: none;
+		font-size: 9px;
+		font-weight: 600;
+		letter-spacing: 0.02em;
+		color: #4a4a60;
+		pointer-events: none;
 	}
 
 	.keys-vel-label {
 		height: 72px; // = VEL_H
 		flex-shrink: 0;
 		border-top: 1px solid #2a2a38;
-		display: flex; align-items: center; justify-content: center;
-		font-size: 9px; font-weight: 700; letter-spacing: 0.1em;
-		color: #383848; text-transform: uppercase;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		font-size: 9px;
+		font-weight: 700;
+		letter-spacing: 0.1em;
+		color: #383848;
+		text-transform: uppercase;
 	}
 
 	.keys-hscroll-spacer {
@@ -1926,21 +2051,26 @@
 
 	.playhead-clip {
 		position: absolute;
-		top: 0; left: 0;
-		right: 8px;  /* exclut la scrollbar verticale */
+		top: 0;
+		left: 0;
+		right: 8px; /* exclut la scrollbar verticale */
 		bottom: 8px; /* exclut la scrollbar horizontale */
 		pointer-events: none;
 		overflow: hidden;
 	}
 
 	.grid-scroll {
-		flex: 1; overflow: auto; position: relative;
+		flex: 1;
+		overflow: auto;
+		position: relative;
 	}
 
 	.grid-scroll--edit {
 		overflow: scroll;
 		scrollbar-width: none;
-		&::-webkit-scrollbar { display: none; }
+		&::-webkit-scrollbar {
+			display: none;
+		}
 	}
 
 	.grid-wrapper--preview {
@@ -1963,11 +2093,14 @@
 	// ── Velocity lane ─────────────────────────────────────────────────────────
 
 	.vel-wrapper {
-		height: 72px; flex-shrink: 0;
+		height: 72px;
+		flex-shrink: 0;
 		overflow-x: auto;
 		overflow-y: hidden;
 		cursor: ns-resize;
 		scrollbar-width: none;
-		&::-webkit-scrollbar { display: none; }
+		&::-webkit-scrollbar {
+			display: none;
+		}
 	}
 </style>

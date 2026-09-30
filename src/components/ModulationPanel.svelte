@@ -12,14 +12,14 @@
 		ModulatorKind,
 		ProjectModulationRoute,
 		ProjectModulator,
-		TrackEffect,
+		TrackEffect
 	} from '../types/global';
 	import {
 		addModulator,
 		removeModulator,
 		addModulationRoute,
 		removeModulationRoute,
-		setModulationDepth,
+		setModulationDepth
 	} from '../frontend/commands/dispatcher';
 	import {
 		buildTargetOptions,
@@ -28,7 +28,7 @@
 		pluginPlacements,
 		type ModulationTargetOption,
 		type PluginParamInfo,
-		type PluginPlacement,
+		type PluginPlacement
 	} from '../frontend/modulation/targets';
 	import { plugins, pluginDisplayName } from '../stores/plugins';
 	import { notify } from '../stores/status';
@@ -53,14 +53,16 @@
 		: null;
 	$: placements = pluginPlacements(trackId, effects, instrumentName);
 	$: placementSignature = placements.map((p) => `${p.key}=${p.name}`).join('|');
-	$: placementSignature, loadPluginParams(placements);
+	$: (placementSignature, loadPluginParams(placements));
 	$: options = buildTargetOptions(effects, placements, paramsByPlacement);
 	$: pickerOptions = options.filter((o) => o.listed);
 
 	async function loadPluginParams(list: PluginPlacement[]) {
 		const request = ++paramsRequest;
 		loadingParams = true;
-		const entries = await Promise.all(list.map(async (p) => [p.key, await fetchPluginParams(p.key)] as const));
+		const entries = await Promise.all(
+			list.map(async (p) => [p.key, await fetchPluginParams(p.key)] as const)
+		);
 		if (request !== paramsRequest) return;
 		paramsByPlacement = Object.fromEntries(entries);
 		loadingParams = false;
@@ -68,7 +70,8 @@
 
 	function routeTargetLabel(route: ProjectModulationRoute, list: ModulationTargetOption[]): string {
 		const option = findTargetOption(list, route.target);
-		if (option) return option.kind === 'track_gain' ? option.label : `${option.group} › ${option.label}`;
+		if (option)
+			return option.kind === 'track_gain' ? option.label : `${option.group} › ${option.label}`;
 		if (route.target.kind === 'plugin_param') return `Plugin › réglage ${route.target.native_id}`;
 		return route.target.kind === 'effect_param' ? `Effet › ${route.target.param}` : 'Volume';
 	}
@@ -93,7 +96,14 @@
 	async function handleAssign(modId: string, option: ModulationTargetOption) {
 		pickerModulatorId = null;
 		try {
-			await addModulationRoute(trackId, modId, option.kind, option.param, DEFAULT_DEPTH * option.depthScale, option.effectId);
+			await addModulationRoute(
+				trackId,
+				modId,
+				option.kind,
+				option.param,
+				DEFAULT_DEPTH * option.depthScale,
+				option.effectId
+			);
 		} catch (e) {
 			notify(`Erreur assignation : ${(e as Error)?.message ?? e}`, 'error');
 		}
@@ -115,25 +125,34 @@
 
 	async function handleAddModulator(kind: ModulatorKind) {
 		typeMenuOpen = false;
-		try { await addModulator(trackId, kind); }
-		catch (e) { notify(`Erreur ajout modulateur : ${(e as Error)?.message ?? e}`, 'error'); }
+		try {
+			await addModulator(trackId, kind);
+		} catch (e) {
+			notify(`Erreur ajout modulateur : ${(e as Error)?.message ?? e}`, 'error');
+		}
 	}
 
 	async function handleRemoveMod(modId: string) {
-		try { await removeModulator(trackId, modId); }
-		catch (e) { notify(`Erreur suppression : ${(e as Error)?.message ?? e}`, 'error'); }
+		try {
+			await removeModulator(trackId, modId);
+		} catch (e) {
+			notify(`Erreur suppression : ${(e as Error)?.message ?? e}`, 'error');
+		}
 	}
 
 	async function handleRemoveRoute(routeId: string) {
-		try { await removeModulationRoute(trackId, routeId); }
-		catch (e) { notify(`Erreur suppression route : ${(e as Error)?.message ?? e}`, 'error'); }
+		try {
+			await removeModulationRoute(trackId, routeId);
+		} catch (e) {
+			notify(`Erreur suppression route : ${(e as Error)?.message ?? e}`, 'error');
+		}
 	}
 
 	function assignByKey(modId: string, key: string) {
 		const option = options.find((o) => o.key === key && o.listed);
 		if (!option) return;
 		const alreadyRouted = mod_routes.some(
-			(r) => r.modulator_id === modId && findTargetOption(options, r.target)?.key === key,
+			(r) => r.modulator_id === modId && findTargetOption(options, r.target)?.key === key
 		);
 		if (alreadyRouted) {
 			notify('Ce modulateur pilote déjà ce réglage', 'info');
@@ -144,13 +163,15 @@
 
 	async function handleDepthChange(route: ProjectModulationRoute, e: Event) {
 		const slider = parseFloat((e.currentTarget as HTMLInputElement).value);
-		try { await setModulationDepth(trackId, route.id, slider * depthScale(route, options)); }
-		catch (err) { notify(`Erreur profondeur : ${(err as Error)?.message ?? err}`, 'error'); }
+		try {
+			await setModulationDepth(trackId, route.id, slider * depthScale(route, options));
+		} catch (err) {
+			notify(`Erreur profondeur : ${(err as Error)?.message ?? err}`, 'error');
+		}
 	}
 </script>
 
 <div class="mod-panel" class:compact>
-
 	<!-- ── Sources ─────────────────────────────────────────────────────────────── -->
 	<div class="section-header">
 		<span class="section-title">{compact ? 'Mod' : 'Modulateurs'}</span>
@@ -162,10 +183,13 @@
 			aria-haspopup="menu"
 			aria-expanded={typeMenuOpen}
 			on:mousedown|stopPropagation
-			on:click={() => (typeMenuOpen = !typeMenuOpen)}
-		>+</button>
+			on:click={() => (typeMenuOpen = !typeMenuOpen)}>+</button
+		>
 		{#if typeMenuOpen}
-			<ModulatorTypeMenu on:select={(e) => handleAddModulator(e.detail)} on:close={() => (typeMenuOpen = false)} />
+			<ModulatorTypeMenu
+				on:select={(e) => handleAddModulator(e.detail)}
+				on:close={() => (typeMenuOpen = false)}
+			/>
 		{/if}
 	</div>
 
@@ -179,29 +203,40 @@
 			mod,
 			label: modulatorLabel(modulators, mod),
 			color: modulatorColor(i),
-			pickerOpen: pickerModulatorId === mod.id,
+			pickerOpen: pickerModulatorId === mod.id
 		}}
 		<div class="slot">
 			{#if mod.kind === 'envelope'}
-				<EnvelopeCard {...card} hasInstrument={instrument !== null}
+				<EnvelopeCard
+					{...card}
+					hasInstrument={instrument !== null}
 					on:assign={(e) => assignByKey(mod.id, e.detail)}
 					on:togglepicker={() => togglePicker(mod.id)}
-					on:remove={() => handleRemoveMod(mod.id)} />
+					on:remove={() => handleRemoveMod(mod.id)}
+				/>
 			{:else if mod.kind === 'audio_follower'}
-				<FollowerCard {...card} {effects}
+				<FollowerCard
+					{...card}
+					{effects}
 					on:assign={(e) => assignByKey(mod.id, e.detail)}
 					on:togglepicker={() => togglePicker(mod.id)}
-					on:remove={() => handleRemoveMod(mod.id)} />
+					on:remove={() => handleRemoveMod(mod.id)}
+				/>
 			{:else if mod.kind === 'macro'}
-				<MacroCard {...card} routeCount={mod_routes.filter((r) => r.modulator_id === mod.id).length}
+				<MacroCard
+					{...card}
+					routeCount={mod_routes.filter((r) => r.modulator_id === mod.id).length}
 					on:assign={(e) => assignByKey(mod.id, e.detail)}
 					on:togglepicker={() => togglePicker(mod.id)}
-					on:remove={() => handleRemoveMod(mod.id)} />
+					on:remove={() => handleRemoveMod(mod.id)}
+				/>
 			{:else}
-				<LfoCard {...card}
+				<LfoCard
+					{...card}
 					on:assign={(e) => assignByKey(mod.id, e.detail)}
 					on:togglepicker={() => togglePicker(mod.id)}
-					on:remove={() => handleRemoveMod(mod.id)} />
+					on:remove={() => handleRemoveMod(mod.id)}
+				/>
 			{/if}
 			{#if pickerModulatorId === mod.id}
 				<ModulationTargetPicker
@@ -220,17 +255,20 @@
 	</div>
 
 	{#if mod_routes.length === 0}
-		<p class="empty">{compact ? '—' : "Aucune route — glissez l'icône d'un modulateur sur un réglage"}</p>
+		<p class="empty">
+			{compact ? '—' : "Aucune route — glissez l'icône d'un modulateur sur un réglage"}
+		</p>
 	{/if}
 
 	{#each mod_routes as route (route.id)}
 		{@const routeColor = colorForRoute(route)}
 		<div class="slot">
-			<!-- svelte-ignore a11y-no-static-element-interactions -->
 			<div class="route-row" style:border-left-color={routeColor}>
 				<span class="route-src" style:color={routeColor}>{modNameForRoute(route)}</span>
 				<span class="route-arrow">→</span>
-				<span class="route-tgt" title={routeTargetLabel(route, options)}>{routeTargetLabel(route, options)}</span>
+				<span class="route-tgt" title={routeTargetLabel(route, options)}
+					>{routeTargetLabel(route, options)}</span
+				>
 				<input
 					class="depth-slider"
 					type="range"
@@ -242,12 +280,15 @@
 					style:accent-color={routeColor}
 				/>
 				<span class="depth-val">{formatDepth(sliderDepth(route, options))}</span>
-				<button class="rm-btn" type="button"
-					on:click|stopPropagation={() => handleRemoveRoute(route.id)} title="Supprimer">×</button>
+				<button
+					class="rm-btn"
+					type="button"
+					on:click|stopPropagation={() => handleRemoveRoute(route.id)}
+					title="Supprimer">×</button
+				>
 			</div>
 		</div>
 	{/each}
-
 </div>
 
 <style lang="scss">
@@ -256,13 +297,31 @@
 	.mod-panel {
 		width: 100%;
 
-		&.compact .section-header { padding: 3px 5px; }
-		&.compact .route-row { padding: 2px 5px; gap: 3px; }
-		&.compact .empty { padding: 6px 5px; font-size: 9px; }
-		&.compact .depth-slider { width: 40px; }
-		&.compact .depth-val { min-width: 24px; font-size: 8px; }
-		&.compact .route-src { min-width: 22px; font-size: 8px; }
-		&.compact .route-tgt { font-size: 8px; }
+		&.compact .section-header {
+			padding: 3px 5px;
+		}
+		&.compact .route-row {
+			padding: 2px 5px;
+			gap: 3px;
+		}
+		&.compact .empty {
+			padding: 6px 5px;
+			font-size: 9px;
+		}
+		&.compact .depth-slider {
+			width: 40px;
+		}
+		&.compact .depth-val {
+			min-width: 24px;
+			font-size: 8px;
+		}
+		&.compact .route-src {
+			min-width: 22px;
+			font-size: 8px;
+		}
+		&.compact .route-tgt {
+			font-size: 8px;
+		}
 	}
 
 	.section-header {
@@ -293,66 +352,109 @@
 	}
 
 	.add-btn {
-		width: 18px; height: 18px;
-		border: 1px solid $border-subtle; border-radius: 3px;
-		background: transparent; color: $text-subtle;
-		font-size: 14px; line-height: 1; cursor: pointer;
-		display: flex; align-items: center; justify-content: center; padding: 0;
-		&:hover, &.active { background: rgba(21,113,255,0.15); color: $text-color; border-color: rgba(21,113,255,0.4); }
+		width: 18px;
+		height: 18px;
+		border: 1px solid $border-subtle;
+		border-radius: 3px;
+		background: transparent;
+		color: $text-subtle;
+		font-size: 14px;
+		line-height: 1;
+		cursor: pointer;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		padding: 0;
+		&:hover,
+		&.active {
+			background: rgba(21, 113, 255, 0.15);
+			color: $text-color;
+			border-color: rgba(21, 113, 255, 0.4);
+		}
 	}
 
 	.empty {
-		font-size: 10px; color: $text-faint; text-align: center;
-		padding: 12px 8px; margin: 0;
+		font-size: 10px;
+		color: $text-faint;
+		text-align: center;
+		padding: 12px 8px;
+		margin: 0;
 	}
 
-	.slot { border-bottom: 1px solid $border-faint; }
+	.slot {
+		border-bottom: 1px solid $border-faint;
+	}
 
 	.rm-btn {
-		width: 16px; height: 16px; border: none; background: transparent;
-		color: $text-faint; font-size: 14px; line-height: 1; cursor: pointer;
-		padding: 0; display: flex; align-items: center; justify-content: center;
+		width: 16px;
+		height: 16px;
+		border: none;
+		background: transparent;
+		color: $text-faint;
+		font-size: 14px;
+		line-height: 1;
+		cursor: pointer;
+		padding: 0;
+		display: flex;
+		align-items: center;
+		justify-content: center;
 		flex-shrink: 0;
-		&:hover { color: #ff4136; }
+		&:hover {
+			color: #ff4136;
+		}
 	}
 
 	// Routes
 	.route-row {
-		display: flex; align-items: center; gap: 5px;
+		display: flex;
+		align-items: center;
+		gap: 5px;
 		padding: 5px 6px 5px 4px;
 		border-left: 2px solid transparent;
-		&:hover { background: $surface-1; }
+		&:hover {
+			background: $surface-1;
+		}
 	}
 
 	.route-src {
 		flex-shrink: 0;
 		min-width: 36px;
-		font-size: 9px; font-family: $font-mono; font-weight: 700;
+		font-size: 9px;
+		font-family: $font-mono;
+		font-weight: 700;
 	}
 
 	.route-arrow {
 		flex-shrink: 0;
-		font-size: 10px; color: $text-faint;
+		font-size: 10px;
+		color: $text-faint;
 	}
 
 	.route-tgt {
 		flex: 1;
-		font-size: 9px; font-family: $font-mono; color: $text-subtle;
-		overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+		font-size: 9px;
+		font-family: $font-mono;
+		color: $text-subtle;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
 		min-width: 0;
 	}
 
 	.depth-slider {
 		flex-shrink: 0;
-		width: 52px; height: 3px;
+		width: 52px;
+		height: 3px;
 		cursor: pointer;
-		accent-color: rgba(21,113,255,0.85);
+		accent-color: rgba(21, 113, 255, 0.85);
 	}
 
 	.depth-val {
 		flex-shrink: 0;
 		min-width: 32px;
 		text-align: right;
-		font-size: 9px; font-family: $font-mono; color: $text-subtle;
+		font-size: 9px;
+		font-family: $font-mono;
+		color: $text-subtle;
 	}
 </style>

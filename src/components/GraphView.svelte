@@ -1,6 +1,6 @@
 <!-- GraphView.svelte — read-only audio graph visualization -->
 <script lang="ts">
-	import { onMount, onDestroy, tick } from 'svelte';
+	import { onMount, tick } from 'svelte';
 	import { graphSnapshot } from '../stores/graphSnapshot';
 	import { viewMode, type GraphScope } from '../stores/viewMode';
 	import { selectedTrack } from '../stores/selectedTrack';
@@ -10,7 +10,7 @@
 		layoutTrackGraph,
 		layoutProjectGraph,
 		visibleAudioEdges,
-		visibleModEdges,
+		visibleModEdges
 	} from '../frontend/graph/layout';
 	import { renderGraph, hitTestNode } from '../frontend/graph/render';
 	import type { GraphLayout, LayoutNode } from '../frontend/graph/types';
@@ -27,7 +27,6 @@
 	let zoom = 1;
 	let hoveredNodeId: number | null = null;
 	let modPhase = 0;
-	let animFrame = 0;
 	let isPanning = false;
 	let panStartX = 0;
 	let panStartY = 0;
@@ -48,17 +47,11 @@
 	$: modEdges = snapshot ? visibleModEdges(snapshot, layout) : [];
 	$: selectedNodeId = (() => {
 		if (!trackId || !snapshot || scope !== 'track') return null;
-		const gain = snapshot.nodes.find(
-			(n) => n.trackId === trackId && n.kind === 'track_gain',
-		);
+		const gain = snapshot.nodes.find((n) => n.trackId === trackId && n.kind === 'track_gain');
 		return gain?.id ?? null;
 	})();
 
-	function computeLayout(
-		snap: typeof snapshot,
-		sc: GraphScope,
-		tid: string | null,
-	): GraphLayout {
+	function computeLayout(snap: typeof snapshot, sc: GraphScope, tid: string | null): GraphLayout {
 		if (!snap) return { nodes: [], width: 400, height: 200 };
 		if (sc === 'project') return layoutProjectGraph(snap);
 		if (!tid) return { nodes: [], width: 400, height: 200 };
@@ -73,7 +66,7 @@
 		const pad = 32;
 		zoom = Math.min(
 			MAX_ZOOM,
-			Math.max(MIN_ZOOM, Math.min((cw - pad) / layout.width, (ch - pad) / layout.height)),
+			Math.max(MIN_ZOOM, Math.min((cw - pad) / layout.width, (ch - pad) / layout.height))
 		);
 		panX = (cw - layout.width * zoom) / 2;
 		panY = (ch - layout.height * zoom) / 2;
@@ -109,10 +102,10 @@
 				hoveredNodeId,
 				selectedNodeId,
 				modPhase,
-				dpr,
+				dpr
 			},
 			layout.width,
-			layout.height,
+			layout.height
 		);
 
 		ctx.restore();
@@ -191,7 +184,7 @@
 			instrument: t.instrument ?? null,
 			effects: t.effects ?? [],
 			modulators: t.modulators ?? [],
-			mod_routes: t.mod_routes ?? [],
+			mod_routes: t.mod_routes ?? []
 		});
 
 		leftPanel.open();
@@ -220,9 +213,9 @@
 		const tickAnim = () => {
 			modPhase += 0.04;
 			if ($viewMode.main === 'graph') paint();
-			animFrame = requestAnimationFrame(tickAnim);
+			requestAnimationFrame(tickAnim);
 		};
-		animFrame = requestAnimationFrame(tickAnim);
+		requestAnimationFrame(tickAnim);
 	});
 
 	$: if (layout && container) {

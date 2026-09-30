@@ -8,7 +8,7 @@
 
 Modulation in Echoes Studio is a **graph-level** system, not a plugin-level
 system. A plugin does not contain its own LFO or envelope. Instead, modulator
-*nodes* exist in the graph alongside DSP nodes, and their output is routed to
+_nodes_ exist in the graph alongside DSP nodes, and their output is routed to
 target parameters via modulation edges.
 
 ```
@@ -20,6 +20,7 @@ MacroKnob ──[modulation edge]──► filter.cutoff
 One LFO node can modulate 20 parameters with a single instance running once per
 block. Plugin-internal modulators would require one instance per plugin per
 modulated parameter, wasting DSP budget. This also means:
+
 - Modulators are reusable and visible/editable in the graph.
 - Plugins have zero internal modulation logic.
 - The modulation system is uniform across every plugin format.
@@ -37,9 +38,10 @@ When the scheduler applies modulation to a parameter before calling `process()`:
 effective_value[frame] = base_value + mod_signal[frame] * depth
 ```
 
-The plugin receives the *effective* value as a per-frame float array
+The plugin receives the _effective_ value as a per-frame float array
 (`ParameterBlock`). It does not know whether the value came from a user knob, an
 LFO, automation, or a macro. This uniformity is the entire point:
+
 - The plugin author does not handle modulation logic.
 - The system works identically for every plugin format (internal, VST3, AU,
   CLAP, future WASM).
@@ -77,16 +79,17 @@ These live in `audio_graph/modulation.rs`.
 
 ## Modulator Node Types
 
-| Kind            | Description                                                                 |
-|-----------------|-----------------------------------------------------------------------------|
-| `Lfo`           | Periodic waveform (sine/tri/saw/square); rate in Hz or tempo-synced          |
-| `Envelope`      | ADSR (0…1), gated by the track's `InstrumentNode` (any note held)            |
-| `Macro`         | User-controlled value (0…1), fans out to multiple targets                   |
-| `AudioFollower` | Level (0…1, RMS or peak) of the track's post-FX signal or of one effect     |
+| Kind            | Description                                                             |
+| --------------- | ----------------------------------------------------------------------- |
+| `Lfo`           | Periodic waveform (sine/tri/saw/square); rate in Hz or tempo-synced     |
+| `Envelope`      | ADSR (0…1), gated by the track's `InstrumentNode` (any note held)       |
+| `Macro`         | User-controlled value (0…1), fans out to multiple targets               |
+| `AudioFollower` | Level (0…1, RMS or peak) of the track's post-FX signal or of one effect |
 
 All four are exposed in the UI (`ModulationPanel` "+" menu, one card per kind).
 
 Any node acting as a modulation source must:
+
 1. Implement `AudioNode` normally (produce output on port 0).
 2. Output a normalised signal in the range `−1.0 … +1.0`.
 3. Be topologically ordered before its targets (the modulation edge creates the
@@ -163,12 +166,12 @@ value before being passed to the node.
 
 Units differ per target kind (the stored `depth` is always in the engine's unit):
 
-| Target | `depth` unit |
-|--------|--------------|
-| `TrackGain` | linear gain (fader 0…100 → 0…1); the result never goes below 0 |
-| `EffectParam` (internal effect) | plain units (Hz, dB, ms…) |
-| `EffectParam` on `low_freq_octaves` / `mid_freq_octaves` / `high_freq_octaves` (EQ) | octaves: `freq × 2^delta` (ADR-019 amendment) |
-| `PluginParam` | normalised (1.0 = the parameter's full range, ADR-021) |
+| Target                                                                              | `depth` unit                                                   |
+| ----------------------------------------------------------------------------------- | -------------------------------------------------------------- |
+| `TrackGain`                                                                         | linear gain (fader 0…100 → 0…1); the result never goes below 0 |
+| `EffectParam` (internal effect)                                                     | plain units (Hz, dB, ms…)                                      |
+| `EffectParam` on `low_freq_octaves` / `mid_freq_octaves` / `high_freq_octaves` (EQ) | octaves: `freq × 2^delta` (ADR-019 amendment)                  |
+| `PluginParam`                                                                       | normalised (1.0 = the parameter's full range, ADR-021)         |
 
 **Bounds on internal effects (2026-09-24).** `Eq`, `Compressor`, `Reverb` and
 `Delay` clamp `base + delta` to a per-parameter range (`EQ_RANGES`,
@@ -209,12 +212,12 @@ value (ADR-021 amendment).
 Both deliver per-frame float values to a parameter. They differ in source and
 timing:
 
-|            | Automation                          | Modulation                        |
-|------------|-------------------------------------|-----------------------------------|
-| **Source** | Pre-baked timeline curve (f32 slice)| Live DSP signal from another node |
-| **Computed** | Offline, before playback          | Real-time, every block            |
-| **Editable** | In the timeline/curve editor      | In the graph                      |
-| **Example** | Volume fade over 4 bars            | LFO on filter cutoff              |
+|              | Automation                           | Modulation                        |
+| ------------ | ------------------------------------ | --------------------------------- |
+| **Source**   | Pre-baked timeline curve (f32 slice) | Live DSP signal from another node |
+| **Computed** | Offline, before playback             | Real-time, every block            |
+| **Editable** | In the timeline/curve editor         | In the graph                      |
+| **Example**  | Volume fade over 4 bars              | LFO on filter cutoff              |
 
 Both are unified at the `ParameterBlock` level — the node's `process()` receives
 a single per-frame float array regardless of source.
@@ -255,12 +258,12 @@ position, computed in the UI: nothing is sent to the engine.
 _Verified 2026-09-24._ The runtime application pass is live: the scheduler
 evaluates every route on the absolute control grid (ADR-019, Tranches 1–3 done).
 
-| Target | Sub-block delivery |
-|--------|--------------------|
+| Target                                              | Sub-block delivery                                                                                                                                      |
+| --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | VST3 / CLAP plugin params (effects and instruments) | one native event per grid point; modulation offsets the value, automation sets it (ADR-021); CLAP automatable-only params get `base + offset` as values |
-| `GainNode` / `TrackGainNode` | per-sample one-pole smoother (12 Hz) whose target switches at each grid point; in `TrackGainNode` it rides on the dB-smoothed fader |
-| `Delay` / `Compressor` / `Reverb` / `Eq` | `process` loop segmented at grid points, params recomputed per segment and clamped to their range |
-| `PanNode` / `MasterNode` | not modulation targets |
+| `GainNode` / `TrackGainNode`                        | per-sample one-pole smoother (12 Hz) whose target switches at each grid point; in `TrackGainNode` it rides on the dB-smoothed fader                     |
+| `Delay` / `Compressor` / `Reverb` / `Eq`            | `process` loop segmented at grid points, params recomputed per segment and clamped to their range                                                       |
+| `PanNode` / `MasterNode`                            | not modulation targets                                                                                                                                  |
 
 The block-rate `ModSmooth` was removed on 2026-09-29 (unused since ADR-019;
 recoverable from git history). Projects without
@@ -268,12 +271,12 @@ modulation or automation render exactly as before ADR-019.
 
 **Editing a modulator (`UPDATE_MODULATOR`):**
 
-| Kind | Hot (atomics, no recompile) | Recompiles |
-|------|-----------------------------|------------|
-| LFO | `rate_hz`, `tempo_sync`, `beat_division` (`ModulatorCells`) | `waveform` — baked into `LfoNode`; the new node restarts its phase |
-| Envelope | `attack_ms`, `decay_ms`, `sustain_level`, `release_ms` (`EnvelopeCells`) | — |
-| Macro | `value` (`MacroCells`) | — |
-| AudioFollower | — | `window_ms`, `attack_ms`, `release_ms`, `mode` — baked into `AudioFollowerNode` (ring buffer sized in `prepare`); `source_effect_id` — rewires the follower's audio input edge |
+| Kind          | Hot (atomics, no recompile)                                              | Recompiles                                                                                                                                                                     |
+| ------------- | ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| LFO           | `rate_hz`, `tempo_sync`, `beat_division` (`ModulatorCells`)              | `waveform` — baked into `LfoNode`; the new node restarts its phase                                                                                                             |
+| Envelope      | `attack_ms`, `decay_ms`, `sustain_level`, `release_ms` (`EnvelopeCells`) | —                                                                                                                                                                              |
+| Macro         | `value` (`MacroCells`)                                                   | —                                                                                                                                                                              |
+| AudioFollower | —                                                                        | `window_ms`, `attack_ms`, `release_ms`, `mode` — baked into `AudioFollowerNode` (ring buffer sized in `prepare`); `source_effect_id` — rewires the follower's audio input edge |
 
 Every field is replayed from `MODULATOR_UPDATED` events (`apply_modulator_updated`).
 The follower's `source_effect_id` taps the output of that effect (`null` = track

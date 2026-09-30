@@ -1,16 +1,18 @@
 # Migration History
 
 Append-only log of what has been migrated and which decision realized it. This
-is *history* (what happened), not spec. The forward plan is
+is _history_ (what happened), not spec. The forward plan is
 `docs/active/migration/migration_plan.md`; rationale is in each ADR.
 
 ## Planning baseline (2026-05)
+
 - Audits produced: audio-engine (2026-05-29), plugin-system + plugin-GUI
   (2026-05-31) → `docs/active/audits/`.
 - Migration framing established: `current_engine_diagram.md` (now archived),
   `critical_issues.md`, `target_architecture.md` (C-1…C-10), `migration_plan.md`.
 
 ## Phases delivered
+
 - **Phase 1 — Plugin capabilities + latency reporting** (ADR-006). Capability
   types + PDC foundation; default impl derived from `DeviceInfo` for backward
   compat (C-2/C-4).
@@ -30,6 +32,7 @@ is *history* (what happened), not spec. The forward plan is
   in the bridge + RT audio processing, 6e watchdog for plugin timeouts.
 
 ## Documentation governance overhaul (2026-06-03)
+
 - Phase 1: restructured docs into `docs/active/` + `docs/archive/`, merged the
   diverged flat/hierarchy doc pairs, added the ADR index.
 - Phase 2: added `.claude/rules/` (pointer-based law) + `state_index.md` + sync
@@ -37,6 +40,7 @@ is *history* (what happened), not spec. The forward plan is
 - Phase 3: scoped `CLAUDE.md` per engine subdir, `.claude/skills/`, this memory.
 
 ## Later work (2026-09)
+
 Sub-block modulation (ADR-019), plugin param modulation + automation engine
 (ADR-021), live MIDI hardware input (ADR-022), library browser (ADR-023),
 progressive clip PCM (ADR-024), CLAP sidechain / multi-out, sandboxed CLAP
@@ -44,6 +48,7 @@ instruments. Docs pass 2026-09-29: June audits archived, `critical_issues.md`
 got a verified status table.
 
 ## Still open
+
 See the status section of `migration_plan.md` and the table atop
 `critical_issues.md` (UI for automation, MIDI recording, VST3 buses/latency/
 sandbox, CI, phase 7 cleanup).

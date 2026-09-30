@@ -2,7 +2,11 @@
 	import type { Track } from '../types/global';
 	import { dismissable } from '../frontend/dismiss';
 	import { addAutomationLane, removeAutomationLane } from '../frontend/commands/dispatcher';
-	import { buildAutomationOptions, pluginPlacements, type ModulationTargetOption } from '../frontend/modulation/targets';
+	import {
+		buildAutomationOptions,
+		pluginPlacements,
+		type ModulationTargetOption
+	} from '../frontend/modulation/targets';
 	import { targetKey } from '../frontend/automation/lanes';
 	import { automationRequest, type AutomationRequest } from '../stores/automation';
 	import { pluginParamsByPlacement } from '../stores/pluginParams';
@@ -13,20 +17,30 @@
 
 	const MENU_WIDTH_PX = 230;
 
-	let menu: { x: number; y: number; option: ModulationTargetOption; laneId: string | null } | null = null;
+	let menu: { x: number; y: number; option: ModulationTargetOption; laneId: string | null } | null =
+		null;
 
 	$: if ($automationRequest) show($automationRequest);
 
 	function show(request: AutomationRequest) {
 		automationRequest.set(null);
 		if (!track) return;
-		const placements = pluginPlacements(track.id, track.effects, instrumentDisplayName($plugins, track.instrument));
+		const placements = pluginPlacements(
+			track.id,
+			track.effects,
+			instrumentDisplayName($plugins, track.instrument)
+		);
 		const option = buildAutomationOptions(track.effects, placements, $pluginParamsByPlacement).find(
-			(o) => o.key === request.key,
+			(o) => o.key === request.key
 		);
 		if (!option) return;
 		const lane = track.automation_lanes.find((l) => targetKey(l.target) === request.key);
-		menu = { x: Math.min(request.x, window.innerWidth - MENU_WIDTH_PX - 8), y: request.y, option, laneId: lane?.id ?? null };
+		menu = {
+			x: Math.min(request.x, window.innerWidth - MENU_WIDTH_PX - 8),
+			y: request.y,
+			option,
+			laneId: lane?.id ?? null
+		};
 	}
 
 	function fail(error: unknown) {
@@ -56,7 +70,9 @@
 	>
 		<div class="menu-header">{menu.option.group} › {menu.option.label}</div>
 		{#if menu.laneId}
-			<button class="item item--danger" type="button" on:click={removeLane}>Supprimer l'automation</button>
+			<button class="item item--danger" type="button" on:click={removeLane}
+				>Supprimer l'automation</button
+			>
 		{:else}
 			<button class="item" type="button" on:click={automate}>Automatiser ce réglage</button>
 		{/if}
@@ -74,7 +90,9 @@
 		border: 1px solid $border-color;
 		border-radius: $radius-lg;
 		padding: 4px;
-		box-shadow: 0 8px 32px rgba(0, 0, 0, 0.55), 0 2px 8px rgba(0, 0, 0, 0.3);
+		box-shadow:
+			0 8px 32px rgba(0, 0, 0, 0.55),
+			0 2px 8px rgba(0, 0, 0, 0.3);
 		user-select: none;
 	}
 

@@ -23,7 +23,7 @@
 		moveAudioFileDragPointer,
 		requestAudioFileDragDrop,
 		type LibraryAsset,
-		type LibrarySourceId,
+		type LibrarySourceId
 	} from '../frontend/library';
 	import { tempo } from '../stores/tempo';
 	import { ARRANGE_POINTER_DRAG_THRESHOLD } from '../frontend/arrangeInteraction';
@@ -43,9 +43,9 @@
 
 	$: visible = $libraryVisibleAssets;
 	$: selected = $libraryStore.selectedId
-		? visible.find((a) => a.id === $libraryStore.selectedId) ??
+		? (visible.find((a) => a.id === $libraryStore.selectedId) ??
 			$libraryStore.assetsById[$libraryStore.selectedId] ??
-			null
+			null)
 		: null;
 
 	const ROW_HEIGHT = 24;
@@ -57,14 +57,14 @@
 	$: firstRow = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - ROW_OVERSCAN);
 	$: lastRow = Math.min(
 		visible.length,
-		Math.ceil((scrollTop + viewportHeight) / ROW_HEIGHT) + ROW_OVERSCAN,
+		Math.ceil((scrollTop + viewportHeight) / ROW_HEIGHT) + ROW_OVERSCAN
 	);
 	$: renderedRows = visible.slice(firstRow, lastRow);
 
 	function moveSelection(delta: number) {
 		libraryStore.moveSelection(
 			delta,
-			visible.map((a) => a.id),
+			visible.map((a) => a.id)
 		);
 		scrollSelectionIntoView();
 	}
@@ -106,7 +106,7 @@
 		try {
 			const result = await openDialog({
 				multiple: true,
-				filters: [{ name: 'Audio', extensions: [...AUDIO_EXTENSIONS] }],
+				filters: [{ name: 'Audio', extensions: [...AUDIO_EXTENSIONS] }]
 			});
 			if (!result) return;
 			const paths = Array.isArray(result) ? result : [result];
@@ -132,7 +132,7 @@
 	async function insertAsset(asset: LibraryAsset) {
 		const ok = await insertLibraryAsset({
 			asset,
-			trackId: insertTrackId,
+			trackId: insertTrackId
 		});
 		if (ok) onInserted?.();
 	}
@@ -179,7 +179,7 @@
 			asset,
 			startX: e.clientX,
 			startY: e.clientY,
-			active: false,
+			active: false
 		};
 		(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
 	}
@@ -202,7 +202,7 @@
 				durationSec,
 				assetId: drag.asset.id,
 				kind: drag.asset.kind,
-				lengthBeats: drag.asset.lengthBeats ?? null,
+				lengthBeats: drag.asset.lengthBeats ?? null
 			});
 			document.body.classList.add('library-file-dragging');
 			keyboardFocus.setLibraryResults();
@@ -332,9 +332,9 @@
 		<span class="chrome-title">Library</span>
 		{#if $libraryStore.indexer === 'scanning'}
 			<span class="chrome-status">
-				Indexing…{($libraryStore.indexerProgress != null
+				Indexing…{$libraryStore.indexerProgress != null
 					? ` ${Math.round($libraryStore.indexerProgress * 100)}%`
-					: '')}
+					: ''}
 			</span>
 		{:else if $libraryStore.indexer === 'error'}
 			<span class="chrome-status chrome-status--error" title={$libraryStore.indexerError ?? ''}>
@@ -342,7 +342,9 @@
 			</span>
 		{/if}
 		{#if variant === 'popup' && onRequestClose}
-			<button type="button" class="close-btn" title="Fermer (Esc)" on:click={onRequestClose}>×</button>
+			<button type="button" class="close-btn" title="Fermer (Esc)" on:click={onRequestClose}
+				>×</button
+			>
 		{/if}
 	</div>
 
@@ -365,7 +367,12 @@
 			{#if $libraryStore.query}
 				<button class="search-clear" type="button" on:click={() => libraryStore.clearQuery()}>
 					<svg width="8" height="8" viewBox="0 0 8 8" fill="none">
-						<path d="M1 1L7 7M7 1L1 7" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" />
+						<path
+							d="M1 1L7 7M7 1L1 7"
+							stroke="currentColor"
+							stroke-width="1.4"
+							stroke-linecap="round"
+						/>
 					</svg>
 				</button>
 			{/if}
@@ -414,13 +421,13 @@
 			{:else}
 				{#if $libraryStore.query}
 					<div class="results-meta">
-						{LIBRARY_SOURCE_LABELS[$libraryStore.source]} · {visible.length} result{visible.length === 1
+						{LIBRARY_SOURCE_LABELS[$libraryStore.source]} · {visible.length} result{visible.length ===
+						1
 							? ''
 							: 's'}
 					</div>
 				{/if}
 
-				<!-- svelte-ignore a11y-no-noninteractive-tabindex -->
 				<div
 					class="file-list"
 					bind:this={resultsEl}
@@ -432,7 +439,8 @@
 					on:focus={() => keyboardFocus.setLibraryResults()}
 					on:keydown={onResultsKeydown}
 					on:mousedown={() => keyboardFocus.setLibraryResults()}
-					style="padding-top: {LIST_PADDING + firstRow * ROW_HEIGHT}px; padding-bottom: {LIST_PADDING +
+					style="padding-top: {LIST_PADDING +
+						firstRow * ROW_HEIGHT}px; padding-bottom: {LIST_PADDING +
 						(visible.length - lastRow) * ROW_HEIGHT}px"
 				>
 					{#each renderedRows as asset (asset.id)}
@@ -441,7 +449,6 @@
 							$audioImportProgress.filePath != null &&
 							$audioImportProgress.filePath.replace(/\\/g, '/').toLowerCase() ===
 								asset.path.replace(/\\/g, '/').toLowerCase()}
-						<!-- svelte-ignore a11y-no-noninteractive-element-interactions a11y-click-events-have-key-events a11y-no-noninteractive-tabindex -->
 						<div
 							class="file-item"
 							class:selected={$libraryStore.selectedId === asset.id}
@@ -454,6 +461,12 @@
 							aria-busy={isImporting}
 							title={asset.path}
 							on:click={() => onRowClick(asset)}
+							on:keydown={(e) => {
+								if (e.key === 'Enter' || e.key === ' ') {
+									e.preventDefault();
+									onRowClick(asset);
+								}
+							}}
 							on:dblclick={() => {
 								if (!isImporting) onRowDblClick(asset);
 							}}
@@ -708,7 +721,10 @@
 		color: $text-subtle;
 		cursor: pointer;
 		flex-shrink: 0;
-		transition: background 0.12s, color 0.12s, border-color 0.12s;
+		transition:
+			background 0.12s,
+			color 0.12s,
+			border-color 0.12s;
 
 		&:hover {
 			background: rgba(21, 113, 255, 0.12);
@@ -909,7 +925,9 @@
 		cursor: pointer;
 		opacity: 0;
 		flex-shrink: 0;
-		transition: color 0.1s, opacity 0.1s;
+		transition:
+			color 0.1s,
+			opacity 0.1s;
 		font-size: 9px;
 		position: relative;
 

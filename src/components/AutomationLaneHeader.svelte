@@ -18,7 +18,7 @@
 		lane.target,
 		track.effects,
 		instrumentDisplayName($plugins, track.instrument),
-		$pluginParamsByPlacement,
+		$pluginParamsByPlacement
 	);
 </script>
 
@@ -27,7 +27,12 @@
 		<span class="group">{label.group}</span>
 		<span class="name">{label.name}</span>
 	</div>
-	<button class="remove" type="button" title="Supprimer l'automation" on:click={() => dispatch('remove')}>×</button>
+	<button
+		class="remove"
+		type="button"
+		title="Supprimer l'automation"
+		on:click={() => dispatch('remove')}>×</button
+	>
 </div>
 
 <style lang="scss">

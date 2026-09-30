@@ -1,10 +1,9 @@
 import type { Clip } from '../../types/global';
 
 /** Source-file length for trim / resize — prefer explicit duration, then peak lanes. */
-export function clipSourceDurationSec(clip: Pick<
-	Clip,
-	'sample_rate' | 'source_duration_sec' | 'peaks_64' | 'peaks_512' | 'peaks_4096'
->): number {
+export function clipSourceDurationSec(
+	clip: Pick<Clip, 'sample_rate' | 'source_duration_sec' | 'peaks_64' | 'peaks_512' | 'peaks_4096'>
+): number {
 	if (clip.source_duration_sec != null && clip.source_duration_sec > 0) {
 		return clip.source_duration_sec;
 	}

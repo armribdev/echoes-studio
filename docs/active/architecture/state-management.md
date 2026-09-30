@@ -4,10 +4,10 @@
 
 Echoes Studio has two fundamentally different kinds of state that must not be mixed:
 
-| Domain | Type | Owner | Persistence |
-|--------|------|-------|-------------|
-| **Project state** | Tracks, clips, tempo, routing, automation | Rust `EventStore` | Saved to `.echoes` file |
-| **Runtime state** | Transport position, meter levels, playback cursor | Atomics / Svelte stores | Ephemeral |
+| Domain            | Type                                              | Owner                   | Persistence             |
+| ----------------- | ------------------------------------------------- | ----------------------- | ----------------------- |
+| **Project state** | Tracks, clips, tempo, routing, automation         | Rust `EventStore`       | Saved to `.echoes` file |
+| **Runtime state** | Transport position, meter levels, playback cursor | Atomics / Svelte stores | Ephemeral               |
 
 Mixing these is one of the most common architectural mistakes. See
 `anti-patterns.md` for concrete examples.
@@ -17,35 +17,35 @@ Mixing these is one of the most common architectural mistakes. See
 ## Event Sourcing — Scope and Limits
 
 Event sourcing is applied **only to project structure**. The event log records
-what the user *decided* about their project, not what the audio engine is doing.
+what the user _decided_ about their project, not what the audio engine is doing.
 
 ### What IS event-sourced
 
-| Event | Why |
-|-------|-----|
-| `TRACK_CREATED` / `TRACK_DELETED` | Structural, undoable. `TRACK_CREATED` may carry the track's `instrument`, so "new track + pick instrument" is one event (absent = built-in PolySynth, as in older projects) |
-| `CLIP_ADDED` / `CLIP_MOVED` / `CLIP_REMOVED` | Structural, undoable (`CLIP_ADDED` and `CLIP_MOVED` carry the trim `offset` — ADR-018) |
-| `MIDI_CLIP_ADDED` | Structural, undoable. The clip may include its notes and left-trim `offset`, so pasting a MIDI clip is one event |
-| `TRACK_UPDATED` (name, volume, pan) | Structural, undoable |
-| `TRACK_MUTED` / `TRACK_SOLOED` | Structural, undoable |
-| `TRACK_INPUT_SET` | Structural, undoable, recompiles. Sets `AppTrack.input_source` — an aux output of a multi-out plugin fed into the track (`null` clears it; absent in older projects = none). ADR-014 |
-| `TEMPO_UPDATED` | Structural, affects rendering |
-| `PROJECT_NAME_UPDATED` | Structural |
-| `MARKER_ADDED` / `MARKER_UPDATED` / `MARKER_REMOVED` | Structural, undoable, no recompile. Locators in beats on the arrangement timeline |
-| `REGION_ADDED` / `REGION_UPDATED` / `REGION_REMOVED` | Structural, undoable, no recompile. Named arrangement spans in beats; may drive the ephemeral `SET_LOOP` brace from the UI |
+| Event                                                                           | Why                                                                                                                                                                                                                      |
+| ------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `TRACK_CREATED` / `TRACK_DELETED`                                               | Structural, undoable. `TRACK_CREATED` may carry the track's `instrument`, so "new track + pick instrument" is one event (absent = built-in PolySynth, as in older projects)                                              |
+| `CLIP_ADDED` / `CLIP_MOVED` / `CLIP_REMOVED`                                    | Structural, undoable (`CLIP_ADDED` and `CLIP_MOVED` carry the trim `offset` — ADR-018)                                                                                                                                   |
+| `MIDI_CLIP_ADDED`                                                               | Structural, undoable. The clip may include its notes and left-trim `offset`, so pasting a MIDI clip is one event                                                                                                         |
+| `TRACK_UPDATED` (name, volume, pan)                                             | Structural, undoable                                                                                                                                                                                                     |
+| `TRACK_MUTED` / `TRACK_SOLOED`                                                  | Structural, undoable                                                                                                                                                                                                     |
+| `TRACK_INPUT_SET`                                                               | Structural, undoable, recompiles. Sets `AppTrack.input_source` — an aux output of a multi-out plugin fed into the track (`null` clears it; absent in older projects = none). ADR-014                                     |
+| `TEMPO_UPDATED`                                                                 | Structural, affects rendering                                                                                                                                                                                            |
+| `PROJECT_NAME_UPDATED`                                                          | Structural                                                                                                                                                                                                               |
+| `MARKER_ADDED` / `MARKER_UPDATED` / `MARKER_REMOVED`                            | Structural, undoable, no recompile. Locators in beats on the arrangement timeline                                                                                                                                        |
+| `REGION_ADDED` / `REGION_UPDATED` / `REGION_REMOVED`                            | Structural, undoable, no recompile. Named arrangement spans in beats; may drive the ephemeral `SET_LOOP` brace from the UI                                                                                               |
 | `AUTOMATION_LANE_ADDED` / `AUTOMATION_LANE_REMOVED` / `AUTOMATION_CLIP_UPDATED` | Structural, undoable, recompile (ADR-021). `AUTOMATION_CLIP_UPDATED` replaces the clip with the same id or adds it. Mirrored in the frontend reducer (`TrackState.automation_lanes`) since 2026-09-29; no editing UI yet |
-| FX routing (future) | Structural, undoable |
+| FX routing (future)                                                             | Structural, undoable                                                                                                                                                                                                     |
 
 ### What is NOT event-sourced
 
-| State | Why NOT |
-|-------|---------|
-| Transport position | 60fps real-time, never undone |
-| Playback loop brace (`SET_LOOP`) | Session runtime; arrangement regions may *drive* it from the UI |
-| Audio meter levels | Real-time feedback, ephemeral |
-| UI selection / panels | Ephemeral UI-only state |
-| Drag gesture state | Temporary, resolved on drop |
-| Window scroll / zoom | UI preference, not project data |
+| State                            | Why NOT                                                         |
+| -------------------------------- | --------------------------------------------------------------- |
+| Transport position               | 60fps real-time, never undone                                   |
+| Playback loop brace (`SET_LOOP`) | Session runtime; arrangement regions may _drive_ it from the UI |
+| Audio meter levels               | Real-time feedback, ephemeral                                   |
+| UI selection / panels            | Ephemeral UI-only state                                         |
+| Drag gesture state               | Temporary, resolved on drop                                     |
+| Window scroll / zoom             | UI preference, not project data                                 |
 
 Attempting to event-source real-time state creates an unbounded event log,
 breaks the undo/redo model, and adds synchronization overhead to the hot path.
@@ -113,6 +113,7 @@ export function applyEvent(state: ProjectState, event: EngineEvent): ProjectStat
 ```
 
 **Rules:**
+
 - Never mutate `state`. Always return a new object or structurally-shared copy.
 - Unknown event types must be silently ignored (forward compatibility with future events).
 - The reducer has no knowledge of the UI, the audio engine, or Tauri IPC.

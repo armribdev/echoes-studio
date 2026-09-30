@@ -1,4 +1,19 @@
-# Ignore files for PNPM, NPM and YARN
+# Dependencies
+node_modules
+
+# Build / generated
+/build
+/.svelte-kit
+/package
+src-tauri/target
+src-tauri/gen
+
+# Env
+.env
+.env.*
+!.env.example
+
+# Lockfiles
 pnpm-lock.yaml
 package-lock.json
 yarn.lock

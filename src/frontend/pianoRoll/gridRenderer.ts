@@ -50,9 +50,7 @@ export function drawGridLayer(p: GridDrawParams): void {
 
 	ctx.lineWidth = 0.5;
 	for (let pitch = pStart; pitch <= pEnd + 1; pitch++) {
-		const y = p.editMode
-			? pitchToY(p, pitch)
-			: (p.previewPitchMax - pitch + 1) * p.previewRowH;
+		const y = p.editMode ? pitchToY(p, pitch) : (p.previewPitchMax - pitch + 1) * p.previewRowH;
 		const pitchForLine = p.editMode ? pitch : Math.min(pitch, p.previewPitchMax);
 		ctx.strokeStyle = pitchForLine % 12 === 0 ? '#38384a' : '#28282e';
 		ctx.beginPath();

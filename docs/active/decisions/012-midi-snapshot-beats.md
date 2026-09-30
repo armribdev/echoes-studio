@@ -15,8 +15,8 @@ requires before later phases build on the MIDI path.
 
 ## Context
 
-Audit / target (critical_issues **2.1**, target §6.5) — *"`UPDATE_TEMPO`
-désync"*:
+Audit / target (critical*issues **2.1**, target §6.5) — *"`UPDATE_TEMPO`
+désync"\_:
 
 - A naive bake stores MIDI note positions in **samples** computed from the BPM
   at compile time. Changing the tempo then either desyncs the timeline (notes
@@ -39,7 +39,7 @@ scheduler without a rebake or recompile.
 
 1. **[`audio_graph/midi.rs`](../../../src-tauri/src/audio_graph/midi.rs)**
    - `MidiNoteSnapshot { pitch, velocity, clip_start_sec, start_beats,
-     end_beats }`.
+end_beats }`.
    - `beats_to_sample(clip_start_sec, beats, bpm, sample_rate)` —
      `(clip_start_sec + beats·60/bpm)·sample_rate`. The clip anchor is in
      seconds (tempo-independent); only the beat offset scales with tempo.
@@ -53,7 +53,7 @@ scheduler without a rebake or recompile.
 
 3. **[`audio_graph/nodes/instrument.rs`](../../../src-tauri/src/audio_graph/nodes/instrument.rs)**
    - `InstrumentNode::process` resolves `note.start_sample(transport.bpm,
-     transport.sample_rate)` **every block**, emits `NoteOn`/`NoteOff` at the
+transport.sample_rate)` **every block**, emits `NoteOn`/`NoteOff` at the
      intra-block offset, and handles seek/resume discontinuity with a catch-up
      `NoteOn`. On a play→pause transition it emits a `NoteOff` for notes still
      sounding at the pause point, so voices release instead of ringing until the
@@ -77,6 +77,7 @@ scheduler without a rebake or recompile.
 5. **[`engine_gateway/api.rs`](../../../src-tauri/src/engine_gateway/api.rs)**
    - `UPDATE_TEMPO` calls `transport.set_tempo` + updates `project.bpm`, and
      **does not recompile**. The new BPM flows to the next block's snapshot.
+
 - _Updated 2026-09-24:_ `SET_CLIP_MIDI_NOTES` bakes a new `Vec<MidiNoteSnapshot>`
   on the command thread and publishes it through `MidiNotePublisher` (same
   swap/drop-ring shape as `RuntimeSnapshot`). The audio thread adopts the list
@@ -98,11 +99,11 @@ scheduler without a rebake or recompile.
 
 ## Real-time impact
 
-| Change | RT cost | RT risk |
-|---|---|---|
-| `start_sample` / `end_sample` per note per block | a few f64 mul/add + cast | none — bounded by note count, no alloc |
-| `TransportInfo.bpm` read | one `Relaxed` atomic load at snapshot | none |
-| `UPDATE_TEMPO` | `set_tempo` atomic stores (off-RT) | none — no recompile |
+| Change                                           | RT cost                               | RT risk                                |
+| ------------------------------------------------ | ------------------------------------- | -------------------------------------- |
+| `start_sample` / `end_sample` per note per block | a few f64 mul/add + cast              | none — bounded by note count, no alloc |
+| `TransportInfo.bpm` read                         | one `Relaxed` atomic load at snapshot | none                                   |
+| `UPDATE_TEMPO`                                   | `set_tempo` atomic stores (off-RT)    | none — no recompile                    |
 
 C-1 preserved: resolution is pure arithmetic over a pre-allocated, `Arc`-shared
 note list; the `CaptureDevice` `Mutex` exists only under `#[cfg(test)]`.
