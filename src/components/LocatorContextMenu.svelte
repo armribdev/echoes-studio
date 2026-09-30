@@ -1,18 +1,18 @@
 <script lang="ts">
 	import { createEventDispatcher, onMount } from 'svelte';
 	import { dismissable } from '../frontend/dismiss';
-	import type { LocatorKind } from '../stores/locatorSelection';
 
 	export let x = 0;
 	export let y = 0;
-	/** Empty lane click → add actions. Selected locator → edit actions. */
+	/** Empty lane click → add actions. Locator → edit actions. */
 	export let mode: 'empty' | 'locator' = 'empty';
-	export let kind: LocatorKind | null = null;
+	export let kind: 'marker' | 'region' | null = null;
 	export let name = '';
 
 	const dispatch = createEventDispatcher<{
 		addMarker: void;
 		addRegion: void;
+		goTo: void;
 		rename: void;
 		setLoop: void;
 		delete: void;
@@ -55,6 +55,9 @@
 	{:else}
 		<div class="menu-header">{name || (kind === 'region' ? 'Région' : 'Marqueur')}</div>
 		<div class="separator"></div>
+		<button class="item" on:click={() => { dispatch('goTo'); close(); }}>
+			<span>Aller ici</span>
+		</button>
 		<button class="item" on:click={() => { dispatch('rename'); close(); }}>
 			<span>Renommer</span>
 		</button>
@@ -66,7 +69,6 @@
 		<div class="separator"></div>
 		<button class="item item--danger" on:click={() => { dispatch('delete'); close(); }}>
 			<span>Supprimer</span>
-			<span class="item-shortcut">Suppr</span>
 		</button>
 	{/if}
 </div>

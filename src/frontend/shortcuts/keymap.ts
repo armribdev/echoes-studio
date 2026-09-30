@@ -14,7 +14,7 @@
 
 import { get } from 'svelte/store';
 import { invoke } from '@tauri-apps/api/core';
-import { undoCommand, redoCommand, play, pause, addMarker, addRegion } from '../commands/dispatcher';
+import { undoCommand, redoCommand, play, pause, addMarker, addRegion, seek } from '../commands/dispatcher';
 import { transport } from '../../stores/transport';
 import { tempo } from '../../stores/tempo';
 import { loopRegion } from '../../stores/loopRegion';
@@ -29,7 +29,8 @@ import { viewMode } from '../../stores/viewMode';
 import { dismissTopLayer } from '../dismiss';
 import { rightPanel } from '../../stores/rightPanel';
 import { keyboardFocus } from '../../stores/keyboardFocus';
-import { libraryStore, libraryPopup, requestLibrarySearchFocus } from '../library';
+import { libraryStore, libraryPopup, requestLibrarySearchFocus, beatsToSeconds } from '../library';
+import { collectLocators, navigateLocator, defaultRegionSpanAt } from '../arrangement/locators';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -50,6 +51,24 @@ interface Shortcut {
 function isLibraryFocus(): boolean {
   const focus = get(keyboardFocus);
   return focus === 'library-results' || focus === 'library-search';
+}
+
+function playheadBeat(): number {
+  const bpm = get(tempo).bpm;
+  return (get(transport).position * bpm) / 60;
+}
+
+/** Jump to previous/next locator relative to the playhead (no selection state). */
+function navigateLocators(direction: -1 | 1) {
+  const project = get(engineProject);
+  const entries = collectLocators(project.markers, project.regions);
+  const next = navigateLocator(entries, null, playheadBeat(), direction);
+  if (!next) return;
+  selection.clear();
+  keyboardFocus.setTimeline();
+  const positionSec = beatsToSeconds(Math.max(0, next.beat), get(tempo).bpm);
+  transport.update((t) => ({ ...t, position: positionSec }));
+  seek(positionSec).catch(console.error);
 }
 
 // ── Shortcut table ────────────────────────────────────────────────────────────
@@ -168,9 +187,27 @@ const SHORTCUTS: Shortcut[] = [
       const bpm = get(tempo).bpm;
       const numerator = get(tempo).numerator;
       const beat = (get(transport).position * bpm) / 60;
-      const start = Math.max(0, beat);
-      addRegion(start, start + 4 * numerator).catch(console.error);
+      const { start, end } = defaultRegionSpanAt(beat, numerator);
+      addRegion(start, end).catch(console.error);
     },
+  },
+  {
+    key: ',',
+    modifiers: [],
+    description: 'Locator précédent',
+    action: () => navigateLocators(-1),
+  },
+  {
+    key: '.',
+    modifiers: [],
+    description: 'Locator suivant',
+    action: () => navigateLocators(1),
+  },
+  {
+    key: ';',
+    modifiers: [],
+    description: 'Locator suivant (AZERTY)',
+    action: () => navigateLocators(1),
   },
 
   // ── Library ───────────────────────────────────────────────────────────────

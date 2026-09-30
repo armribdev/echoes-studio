@@ -75,7 +75,6 @@
 	import { preferences } from '../stores/preferences';
 	import { startTransportScrub } from '../frontend/transportScrub';
 	import { MARKER_LANE_HEIGHT, RULER_HEIGHT } from '../frontend/timeRuler/constants';
-	import { locatorSelection } from '../stores/locatorSelection';
 	import { engineProject } from '../frontend/store/engineStore';
 	import {
 		ARRANGE_POINTER_DRAG_THRESHOLD,
@@ -171,7 +170,6 @@
 
 	function selectTrackIndex(trackIndex: number) {
 		if (trackIndex < 0 || trackIndex >= tracks.length) return;
-		locatorSelection.clear();
 		selectedTrackIndex = trackIndex;
 		keyboardFocus.setTimeline();
 		leftPanel.open();
@@ -265,7 +263,6 @@
 
 	async function loadProject(dto: Project) {
 		selectedTrackIndex = null;
-		locatorSelection.clear();
 		transport.update((t) => ({ ...t, isPlaying: false, position: 0 }));
 
 		const { applyProjectUiLayout } = await import('../lib/projectUiLayout');
@@ -545,7 +542,6 @@
 	let instrumentsOverflow = false;
 	let instrumentsResizeObserver: ResizeObserver | undefined;
 	let arrangeRulerEl: HTMLDivElement;
-	let markerLane: { deleteSelectedLocator: () => boolean } | undefined;
 
 	/** Extra arrange height so both columns scroll the same distance (the track list is shorter by its footer). */
 	let arrangeBottomPadPx = 0;
@@ -1103,8 +1099,6 @@
 	}
 
 	function deleteSelected() {
-		if (markerLane?.deleteSelectedLocator()) return;
-
 		const sel = $selection.ids;
 		// In-flight imports only: cancel decode. Settled slots are normal clips —
 		// cancelAudioImport(path) would also wipe other clips of the same file.
@@ -2240,7 +2234,6 @@
 		{/if}
 
 		<MarkerLane
-			bind:this={markerLane}
 			markers={$engineProject.markers}
 			regions={$engineProject.regions}
 			{pxPerBeat}
