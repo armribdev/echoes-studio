@@ -136,6 +136,10 @@ impl MidiRecorder {
         ))
     }
 
+    pub fn is_recording(&self) -> bool {
+        self.lock().is_some()
+    }
+
     fn lock(&self) -> MutexGuard<'_, Option<Recording>> {
         self.recording
             .lock()

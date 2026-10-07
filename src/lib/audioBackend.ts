@@ -33,7 +33,7 @@ export interface AudioDeviceList {
 export interface AudioSettingsPayload {
 	/** CPAL device name, or `"default"` for the system default. */
 	outputDevice: string;
-	/** CPAL device name, or `"default"` (reserved — not yet used). */
+	/** CPAL device name, or `"default"` — used for recording / monitoring (ADR-027). */
 	inputDevice: string;
 	/** Sample rate in Hz — must be one the device supports. */
 	sampleRate: number;

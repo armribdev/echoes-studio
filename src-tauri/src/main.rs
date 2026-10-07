@@ -1,6 +1,8 @@
 mod audio_clip;
 mod audio_engine;
 mod audio_graph;
+mod audio_input;
+mod audio_recording;
 mod audio_settings;
 mod app_menu;
 mod engine_gateway;
@@ -14,9 +16,10 @@ mod project;
 mod windows_theme;
 
 use engine_gateway::api::{
-    arm_track_for_midi_input, cancel_audio_import, get_graph_snapshot, get_snapshot,
-    prepare_audio_import, preview_midi_note, redo, send_batch, send_command, set_metronome_enabled,
-    set_track_mix, start_midi_recording, stop_midi_recording, undo,
+    arm_track_for_midi_input, cancel_audio_import, get_audio_recording_peaks, get_graph_snapshot,
+    get_input_monitor_enabled, get_snapshot, prepare_audio_import, preview_midi_note, redo, send_batch, send_command,
+    set_input_monitor_enabled, set_metronome_enabled, set_track_mix, start_audio_recording,
+    start_midi_recording, stop_audio_recording, stop_midi_recording, undo,
 };
 use project::{AppProject, AppState, ProjectDto, ProjectFile, ProjectUiLayout};
 use tauri::{Emitter, Manager, Theme};
@@ -101,7 +104,12 @@ fn main() {
             arm_track_for_midi_input,
             start_midi_recording,
             stop_midi_recording,
+            start_audio_recording,
+            stop_audio_recording,
+            get_audio_recording_peaks,
             set_metronome_enabled,
+            set_input_monitor_enabled,
+            get_input_monitor_enabled,
             get_snapshot,
             get_graph_snapshot,
             undo,

@@ -1166,11 +1166,15 @@ pub struct AppState {
     /// Hardware MIDI input device registry (ADR-022). Command-thread only —
     /// never touched by the audio thread.
     pub midi_input: Mutex<crate::midi_input::MidiInputRegistry>,
-    /// The track that currently receives hardware MIDI input, if any.
+    /// The track that currently receives hardware MIDI / audio input, if any.
     /// Ephemeral session state, not part of `AppProject` (ADR-002 scope).
     pub armed_track_id: Arc<Mutex<Option<String>>>,
     /// Notes captured from the armed track while recording (ADR-022 amendment).
     pub midi_recorder: Arc<crate::midi_recording::MidiRecorder>,
+    /// Shared CPAL input rings / monitor flag (ADR-027).
+    pub audio_input: Arc<crate::audio_input::AudioInputHub>,
+    /// Audio takes captured from the input while recording (ADR-027).
+    pub audio_recorder: Arc<crate::audio_recording::AudioRecorder>,
     /// Absolute paths (normalized) whose in-flight `prepare_audio_import` should abort.
     pub import_cancels: Mutex<HashSet<String>>,
 }
@@ -1196,6 +1200,12 @@ impl AppState {
             Arc::clone(&transport),
             Arc::clone(&live_params.live_input_clock),
         ));
+        let audio_input = crate::audio_input::AudioInputHub::new();
+        let audio_recorder = crate::audio_recording::AudioRecorder::new(
+            Arc::clone(&transport),
+            Arc::clone(&live_params.live_input_clock),
+            Arc::clone(&audio_input),
+        );
 
         Self {
             project: Mutex::new(AppProject::new()),
@@ -1205,6 +1215,7 @@ impl AppState {
             audio_engine: Mutex::new(crate::audio_engine::engine::AudioEngine::new(
                 std::sync::Arc::clone(&transport),
                 Arc::clone(&live_params),
+                Arc::clone(&audio_input),
             )),
             transport,
             live_params,
@@ -1214,6 +1225,8 @@ impl AppState {
             midi_input: Mutex::new(crate::midi_input::MidiInputRegistry::new()),
             armed_track_id: Arc::new(Mutex::new(None)),
             midi_recorder,
+            audio_input,
+            audio_recorder,
             import_cancels: Mutex::new(HashSet::new()),
         }
     }

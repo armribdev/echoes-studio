@@ -46,6 +46,7 @@ use crate::audio_graph::denormal::enable_flush_to_zero;
 use crate::audio_graph::midi::LiveInputClock;
 use crate::audio_graph::node::TimeSignature;
 use crate::audio_graph::{CompileConfig, GraphScheduler, LiveParams, MeterCell, RuntimeSnapshot};
+use crate::audio_input::{open_input_stream, AudioInputHub};
 use crate::audio_settings::AudioSettings;
 use crate::engine_gateway::events::{
     ev, LevelsUpdatedPayload, PositionUpdatedPayload, TelemetryEngineEvent,
@@ -65,7 +66,7 @@ use crate::project::AppProject;
 /// All mainstream CPAL applications use this pattern; see also
 /// https://github.com/RustAudio/cpal/issues/818.
 // Field 0 is never read: holding it is what keeps the CPAL stream playing.
-struct SendStream(#[allow(dead_code)] cpal::Stream);
+pub(crate) struct SendStream(#[allow(dead_code)] pub(crate) cpal::Stream);
 // SAFETY: see doc comment above.
 unsafe impl Send for SendStream {}
 
@@ -73,7 +74,7 @@ unsafe impl Send for SendStream {}
 ///
 /// Pre-allocates the mix buffer.  Must be ≥ the device's actual block size.
 /// 4096 frames @ 48 kHz = ~85 ms — well above any typical WASAPI buffer.
-const MAX_BLOCK_FRAMES: usize = 4096;
+pub(crate) const MAX_BLOCK_FRAMES: usize = 4096;
 
 /// Position-reporter poll interval in milliseconds.
 const REPORTER_INTERVAL_MS: u64 = 33;
@@ -178,10 +179,10 @@ fn log_new_xruns(last_reported: &mut u64, current: u64) {
 ///
 /// Levels are stored as f32 bit-patterns in `AtomicU32`, following the same
 /// pattern used in `SharedTransport` for `bpm_bits` / `sample_rate_bits`.
-struct ChannelLevels {
+pub(crate) struct ChannelLevels {
     /// Output peak per channel, written each audio block.
     output: Box<[AtomicU32; MAX_METER_CHANNELS]>,
-    /// Input peak per channel — zeroed until an input stream is opened.
+    /// Input peak per channel — written by the CPAL input callback (ADR-027).
     input: Box<[AtomicU32; MAX_METER_CHANNELS]>,
 }
 
@@ -198,6 +199,14 @@ impl ChannelLevels {
     fn set_output(&self, ch: usize, peak: f32) {
         if ch < MAX_METER_CHANNELS {
             self.output[ch].store(peak.to_bits(), Ordering::Relaxed);
+        }
+    }
+
+    /// Write a peak amplitude to input channel `ch` (no-op if `ch` ≥ 16).
+    #[inline]
+    pub(crate) fn set_input(&self, ch: usize, peak: f32) {
+        if ch < MAX_METER_CHANNELS {
+            self.input[ch].store(peak.to_bits(), Ordering::Relaxed);
         }
     }
 
@@ -221,9 +230,15 @@ pub struct AudioEngine {
     /// position reporter thread).
     pub transport: Arc<SharedTransport>,
 
-    /// Keeps the CPAL stream alive for the lifetime of the engine.
+    /// Keeps the CPAL output stream alive for the lifetime of the engine.
     /// Dropping this stops audio.
     _stream: Option<SendStream>,
+
+    /// Optional CPAL input stream (ADR-027). Dropped with the output stream.
+    _input_stream: Option<SendStream>,
+
+    /// Shared input rings / monitor flag — also held by `AppState` for recording.
+    pub input_hub: Arc<AudioInputHub>,
 
     /// Set to `true` to signal the position reporter thread to exit.
     /// Replaced with a fresh `Arc` on every `start_stream_with_settings` call.
@@ -262,11 +277,17 @@ pub struct AudioEngine {
 }
 
 impl AudioEngine {
-    pub fn new(transport: Arc<SharedTransport>, live_params: Arc<LiveParams>) -> Self {
+    pub fn new(
+        transport: Arc<SharedTransport>,
+        live_params: Arc<LiveParams>,
+        input_hub: Arc<AudioInputHub>,
+    ) -> Self {
         Self {
             snapshot: Arc::new(RuntimeSnapshot::new()),
             transport,
             _stream: None,
+            _input_stream: None,
+            input_hub,
             // `true` so any stale reporter from a previous engine instance exits.
             reporter_stop: Arc::new(AtomicBool::new(true)),
             levels: ChannelLevels::new(),
@@ -325,7 +346,11 @@ impl AudioEngine {
     /// any pending buffer before the `Stream` destructor returns).
     pub fn stop_stream(&mut self) {
         self.reporter_stop.store(true, Ordering::Relaxed);
+        self._input_stream = None;
         self._stream = None;
+        self.input_hub.available.store(false, Ordering::Relaxed);
+        self.input_hub.sample_rate_bits.store(0, Ordering::Relaxed);
+        self.input_hub.reset_rings();
     }
 
     /// Open an output stream using the provided `settings`, compile the initial
@@ -402,6 +427,7 @@ impl AudioEngine {
             levels: Arc::clone(&self.levels),
             xrun_stats: Arc::clone(&self.xrun_stats),
             live_clock: Arc::clone(&self.live_params.live_input_clock),
+            input_hub: Arc::clone(&self.input_hub),
         };
 
         let fixed_cfg = cpal::StreamConfig {
@@ -424,6 +450,15 @@ impl AudioEngine {
         stream
             .play()
             .map_err(|e| format!("Impossible de démarrer le flux audio : {e}"))?;
+
+        self._input_stream = open_input_stream(
+            &host,
+            &settings.input_device,
+            settings.sample_rate,
+            settings.buffer_size,
+            Arc::clone(&self.input_hub),
+            Arc::clone(&self.levels),
+        );
 
         self.reporter_stop = Arc::new(AtomicBool::new(false));
         let stop = Arc::clone(&self.reporter_stop);
@@ -457,6 +492,7 @@ impl Default for AudioEngine {
         Self::new(
             SharedTransport::new(48_000.0, 120.0),
             Arc::new(LiveParams::new()),
+            AudioInputHub::new(),
         )
     }
 }
@@ -593,6 +629,7 @@ struct StreamShared {
     levels: Arc<ChannelLevels>,
     xrun_stats: Arc<XrunStats>,
     live_clock: Arc<LiveInputClock>,
+    input_hub: Arc<AudioInputHub>,
 }
 
 fn build_typed_stream(
@@ -636,9 +673,11 @@ where
         levels,
         xrun_stats,
         live_clock,
+        input_hub,
     } = shared;
     let mut mix_buf = vec![0.0_f32; MAX_BLOCK_FRAMES * 2];
     let mut click_buf = vec![0.0_f32; MAX_BLOCK_FRAMES];
+    let mut monitor_scratch = vec![0.0_f32; MAX_BLOCK_FRAMES * 2];
     let mut metronome = Metronome::new();
     // Boxed so pointer swaps displace the old scheduler without drop on the audio thread.
     let mut scheduler = Box::new(GraphScheduler::empty(transport.sample_rate()));
@@ -798,14 +837,33 @@ where
                     levels.set_output(ch, if ch % 2 == 0 { peak_l } else { peak_r });
                 }
 
+                // Pull monitor into scratch once per callback (after meters, like the click).
+                let monitor_on = input_hub.monitor_enabled.load(Ordering::Relaxed);
+                if monitor_on {
+                    monitor_scratch[..frames * 2].fill(0.0);
+                    let _ = input_hub
+                        .monitor_ring
+                        .pop_slice(&mut monitor_scratch[..frames * 2]);
+                }
+
                 // Mono: ITU-R BS.775 downmix (L+R)×(1/√2) broadcast to all hw
                 //       channels so both ears hear the mono mix.
                 // Stereo/multi: L→even channels, R→odd channels.
                 // Channels beyond `active` receive silence.
                 for frame in 0..frames {
                     let click = click_buf[frame];
-                    let mix_l = mix[frame * 2] + click;
-                    let mix_r = mix[frame * 2 + 1] + click;
+                    let mon_l = if monitor_on {
+                        monitor_scratch[frame * 2]
+                    } else {
+                        0.0
+                    };
+                    let mon_r = if monitor_on {
+                        monitor_scratch[frame * 2 + 1]
+                    } else {
+                        0.0
+                    };
+                    let mix_l = mix[frame * 2] + click + mon_l;
+                    let mix_r = mix[frame * 2 + 1] + click + mon_r;
                     let mono_s = if mono {
                         (mix_l + mix_r) * mono_gain
                     } else {

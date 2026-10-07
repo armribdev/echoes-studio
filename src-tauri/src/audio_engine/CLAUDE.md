@@ -19,11 +19,11 @@ plumbing, and the offline (non-realtime) render path.
 
 ## Key files
 
-`engine.rs` (CPAL stream) · `transport.rs` (clock/atomics) · `snapshot.rs`
-(swap plumbing) · `offline.rs` (deterministic render) · `graph.rs`.
+`engine.rs` (CPAL output + input streams, ADR-027) · `transport.rs` (clock/atomics) ·
+`snapshot.rs` (swap plumbing) · `offline.rs` (deterministic render) · `graph.rs`.
 
 ## Read before changing
 
 - `docs/active/threading/threading-model.md`, `.../realtime-safety.md`
 - `docs/active/architecture/snapshot-rebuild-flow.md`
-- ADR-004 · then run `.claude/rules/completion_protocol.md`.
+- ADR-004 · ADR-026 · ADR-027 · then run `.claude/rules/completion_protocol.md`.

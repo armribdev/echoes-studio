@@ -88,6 +88,11 @@ values, never allocate.**
 The audio thread is scheduled by the OS at elevated priority. Any blocking
 operation risks a **priority inversion** (see below) or an underrun.
 
+When an input device is available, a **second** CPAL stream runs on its own
+callback thread (ADR-027). Same RT rules: peaks + SPSC ring pushes only. The
+output callback may drain the monitor ring and mix after the graph (with the
+metronome click).
+
 ### MIDI Capture Thread(s) (ADR-022)
 
 **Owns:** One `midir::MidiInputConnection` per enabled hardware MIDI input
@@ -190,6 +195,13 @@ thread so the UI can draw the growing clip; the capture thread is not real-time.
 Metronome / count-in (ADR-026): the command thread arms the count-in
 (`start_count_in`) and toggles the click (`set_metronome_enabled`) through
 `SharedTransport` atomics; the CPAL callback consumes them. Nothing is sent back.
+
+Audio recording (ADR-027): a dedicated `audio-record-drain` thread pops the
+record ring and appends into `AudioRecorder` (skipped during count-in). Finish
+writes a WAV under app-data `recordings/` and emits `audio-recording-finished`
+from the command thread (● / PAUSE / STOP) — never from a CPAL callback.
+Software monitoring is a session atomic (`input_monitor_enabled`) mixed in the
+output callback outside the project graph.
 
 ### Project state → Audio thread
 

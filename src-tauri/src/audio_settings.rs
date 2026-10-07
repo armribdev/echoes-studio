@@ -33,7 +33,7 @@ pub struct AudioDeviceList {
 pub struct AudioSettings {
     /// Output device name, or `"default"` for the system default.
     pub output_device: String,
-    /// Input device name (reserved — not yet used for recording).
+    /// Input device name (CPAL capture for recording / monitoring, ADR-027).
     pub input_device: String,
     /// Requested output sample rate in Hz (e.g. 44100, 48000, 96000).
     pub sample_rate: u32,

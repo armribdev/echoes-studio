@@ -50,19 +50,21 @@ lives there.
 | [024](024-progressive-clip-pcm.md)                       | Progressive clip PCM via immutable prefixes (early ADD_CLIP, throttled recompile)                                                                                                                                                    | Threading / RT safety / state         |
 | [025](025-absolute-automation-internal-targets.md)       | Absolute automation for track volume and internal effects (accepted 2026-09-29, rolling out per node)                                                                                                                                | Modulation / determinism              |
 | [026](026-metronome-and-count-in.md)                     | Metronome click and recording count-in, generated in the callback outside the mix graph (2026-09-30)                                                                                                                                 | Threading / RT safety / transport     |
+| [027](027-audio-input-recording.md)                      | Audio input capture via separate CPAL stream, software monitoring after the mix, recording into WAV + `ADD_CLIP` (2026-09-30)                                                                                                        | Threading / RT safety / transport     |
 
 ---
 
 ## By theme
 
 - **Graph / DSP core:** 001, 011, 012, 018, 020, 022
-- **Threading / RT safety:** 004, 007, 008, 016, 022, 024, 026
+- **Threading / RT safety:** 004, 007, 008, 016, 022, 024, 026, 027
 - **State / persistence:** 002, 010, 017, 018, 020, 024
 - **Architecture boundary:** 005, 017, 023
 - **Plugins:** 003, 006, 007, 008, 010, 013, 014, 015, 016, 017, 020, 021
 - **Modulation / parameters:** 009, 019, 021, 025
 - **Scheduling / determinism:** 019, 025
 - **UX / product boundary:** 023
+- **Transport / recording:** 022, 026, 027
 
 > Note: several ADRs span more than one theme; listed under each that applies.
 

@@ -7,6 +7,7 @@
 	import { pendingImports } from '../frontend/audio/pendingImports';
 	import { buildClipDisplayItems } from '../frontend/audio/clipDisplay';
 	import { midiRecordingPreview } from '../stores/midiRecording';
+	import { audioRecordingPreview } from '../stores/audioRecording';
 	import { transport } from '../stores/transport';
 	import { buildPreviewClip } from '../frontend/midiRecordingPreview';
 	import { getPreviewPitchRange } from '../frontend/pianoRoll/previewLayout';
@@ -60,7 +61,19 @@
 		$midiRecordingPreview?.trackId === trackId
 			? buildPreviewClip($midiRecordingPreview, $transport.position, bpm)
 			: null;
-	$: laneEmpty = displayClips.length === 0 && midiClips.length === 0 && !recordingClip;
+	$: audioPreview =
+		$audioRecordingPreview?.trackId === trackId
+			? {
+					start: $audioRecordingPreview.finished?.start ?? $audioRecordingPreview.start,
+					end:
+						$audioRecordingPreview.finished?.end ??
+						Math.max($transport.position, $audioRecordingPreview.start),
+					peaks: $audioRecordingPreview.peaks,
+					sampleRate: $audioRecordingPreview.sampleRate
+				}
+			: null;
+	$: laneEmpty =
+		displayClips.length === 0 && midiClips.length === 0 && !recordingClip && !audioPreview;
 	$: lanePitchRange = getPreviewPitchRange([
 		...midiClips.flatMap((c) => c.notes),
 		...(recordingClip?.notes ?? [])
@@ -159,6 +172,21 @@
 			minPitch={lanePitchRange.min}
 			maxPitch={lanePitchRange.max}
 			recording
+		/>
+	{/if}
+	{#if audioPreview}
+		<Clip
+			id="audio-recording"
+			start={audioPreview.start}
+			end={audioPreview.end}
+			offset={0}
+			{scale}
+			sample_rate={audioPreview.sampleRate}
+			peaks_64={[]}
+			peaks_512={audioPreview.peaks}
+			peaks_4096={[]}
+			pending
+			loadProgress={0}
 		/>
 	{/if}
 

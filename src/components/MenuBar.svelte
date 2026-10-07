@@ -7,9 +7,21 @@
 	import { leftPanel } from '../stores/leftPanel';
 	import { rightPanel } from '../stores/rightPanel';
 	import { isMidiRecording } from '../stores/midiRecording';
+	import { isAudioRecording, inputMonitorEnabled } from '../stores/audioRecording';
 	import { metronomeEnabled, countInEnabled } from '../stores/metronome';
-	import { toggleMidiRecording } from '../frontend/midiRecording';
+	import { toggleRecording } from '../frontend/audioRecording';
+	import { setInputMonitorEnabled } from '../lib/audioRecordingBackend';
 	import Icon from './Icon.svelte';
+
+	$: isRecording = $isMidiRecording || $isAudioRecording;
+
+	function toggleMonitor() {
+		inputMonitorEnabled.update((enabled) => {
+			const next = !enabled;
+			setInputMonitorEnabled(next).catch(console.error);
+			return next;
+		});
+	}
 
 	function togglePlayPause() {
 		if ($transport.isPlaying) {
@@ -114,10 +126,10 @@
 			</button>
 			<button
 				class="btn btn--record"
-				class:active={$isMidiRecording}
-				on:click={() => toggleMidiRecording().catch(console.error)}
+				class:active={isRecording}
+				on:click={() => toggleRecording().catch(console.error)}
 				title={$t('menuBar.record')}
-				aria-pressed={$isMidiRecording}
+				aria-pressed={isRecording}
 			>
 				<svg
 					width="12"
@@ -127,6 +139,35 @@
 					xmlns="http://www.w3.org/2000/svg"
 				>
 					<circle cx="6" cy="6" r="5" fill="currentColor" />
+				</svg>
+			</button>
+			<button
+				class="btn btn--toggle"
+				class:active={$inputMonitorEnabled}
+				on:click={toggleMonitor}
+				title={$t('menuBar.monitorTitle')}
+				aria-label={$t('menuBar.monitor')}
+				aria-pressed={$inputMonitorEnabled}
+			>
+				<svg
+					width="14"
+					height="13"
+					viewBox="0 0 14 13"
+					fill="none"
+					xmlns="http://www.w3.org/2000/svg"
+				>
+					<path
+						d="M2 4.5H4.5L7.5 2V11L4.5 8.5H2V4.5Z"
+						stroke="currentColor"
+						stroke-width="1.2"
+						stroke-linejoin="round"
+					/>
+					<path
+						d="M9.2 4.2C10.1 5.1 10.1 7.9 9.2 8.8"
+						stroke="currentColor"
+						stroke-width="1.2"
+						stroke-linecap="round"
+					/>
 				</svg>
 			</button>
 			<button

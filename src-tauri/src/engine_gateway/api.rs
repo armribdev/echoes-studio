@@ -144,6 +144,9 @@ pub fn start_midi_recording(
     state: tauri::State<'_, AppState>,
     count_in_bars: u32,
 ) -> Result<f64, String> {
+    if state.audio_recorder.is_recording() {
+        return Err("Un enregistrement audio est déjà en cours".into());
+    }
     let armed = state
         .armed_track_id
         .lock()
@@ -159,10 +162,58 @@ pub fn start_midi_recording(
     Ok(start_seconds)
 }
 
+/// Start recording CPAL input onto the armed audio track (ADR-027).
+#[tauri::command]
+pub fn start_audio_recording(
+    state: tauri::State<'_, AppState>,
+    count_in_bars: u32,
+) -> Result<f64, String> {
+    if state.midi_recorder.is_recording() {
+        return Err("Un enregistrement MIDI est déjà en cours".into());
+    }
+    let armed = state
+        .armed_track_id
+        .lock()
+        .ok()
+        .and_then(|armed| armed.clone());
+    let track_id = armed.ok_or("Aucune piste armée pour l'enregistrement")?;
+    {
+        let project = state.project.lock().map_err(|e| e.to_string())?;
+        let track = project
+            .tracks
+            .iter()
+            .find(|t| t.id == track_id)
+            .ok_or("Piste armée introuvable")?;
+        if track.instrument.as_ref().is_some_and(|s| !s.is_empty()) {
+            return Err(
+                "Cette piste est une piste instrument — utilise l'enregistrement MIDI".into(),
+            );
+        }
+    }
+    let start_seconds = state.audio_recorder.start(track_id)?;
+    if !state.transport.is_playing.load(Ordering::Relaxed) {
+        state
+            .transport
+            .start_count_in(count_in_samples(&state.transport, count_in_bars));
+    }
+    Ok(start_seconds)
+}
+
 /// Metronome click on the live output (ADR-026). Session state, no project event.
 #[tauri::command]
 pub fn set_metronome_enabled(state: tauri::State<'_, AppState>, enabled: bool) {
     state.transport.set_metronome_enabled(enabled);
+}
+
+/// Software input monitoring (ADR-027). Session state, no project event.
+#[tauri::command]
+pub fn set_input_monitor_enabled(state: tauri::State<'_, AppState>, enabled: bool) {
+    state.audio_input.set_monitor_enabled(enabled);
+}
+
+#[tauri::command]
+pub fn get_input_monitor_enabled(state: tauri::State<'_, AppState>) -> bool {
+    state.audio_input.monitor_enabled()
 }
 
 fn count_in_samples(transport: &SharedTransport, bars: u32) -> u64 {
@@ -173,6 +224,20 @@ fn count_in_samples(transport: &SharedTransport, bars: u32) -> u64 {
 #[tauri::command]
 pub fn stop_midi_recording(app: tauri::AppHandle, state: tauri::State<'_, AppState>) {
     crate::midi_recording::finish_and_emit(&app, &state.midi_recorder);
+}
+
+#[tauri::command]
+pub fn stop_audio_recording(app: tauri::AppHandle, state: tauri::State<'_, AppState>) {
+    crate::audio_recording::finish_and_emit(&app, &state.audio_recorder);
+}
+
+/// Live waveform of the running take, polled by the UI (never pushed from audio).
+#[tauri::command]
+pub fn get_audio_recording_peaks(
+    state: tauri::State<'_, AppState>,
+    from: usize,
+) -> Option<crate::audio_recording::RecordingPeaks> {
+    state.audio_recorder.peaks_since(from)
 }
 
 /// Send a single typed command to the engine.
@@ -1138,6 +1203,7 @@ fn process_command(
 
         cmd::STOP => {
             crate::midi_recording::finish_and_emit(app, &state.midi_recorder);
+            crate::audio_recording::finish_and_emit(app, &state.audio_recorder);
             state.transport.stop();
             let ev_stop = EngineEvent::new(ev::PLAY_STOPPED, &project_id, json!({}));
             let ev_pos = EngineEvent::new(
@@ -1155,6 +1221,7 @@ fn process_command(
 
         cmd::PAUSE => {
             crate::midi_recording::finish_and_emit(app, &state.midi_recorder);
+            crate::audio_recording::finish_and_emit(app, &state.audio_recorder);
             state.transport.pause();
             Ok(emit_and_ok(
                 app,

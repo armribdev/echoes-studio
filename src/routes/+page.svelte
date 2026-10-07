@@ -33,6 +33,9 @@
 	import type { MidiInputDeviceInfo } from '../lib/midiBackend';
 	import { midiDeviceList } from '../stores/midiDevices';
 	import { connectMidiRecording } from '../frontend/midiRecording';
+	import { connectAudioRecording } from '../frontend/audioRecording';
+	import { setInputMonitorEnabled } from '../lib/audioRecordingBackend';
+	import { inputMonitorEnabled } from '../stores/audioRecording';
 	import { setMetronomeEnabled } from '../lib/metronomeBackend';
 	import { metronomeEnabled } from '../stores/metronome';
 	import { projectSettingsPanelOpen } from '../stores/project';
@@ -96,7 +99,11 @@
 		const unsubMetronome = metronomeEnabled.subscribe((enabled) => {
 			setMetronomeEnabled(enabled).catch(console.error);
 		});
+		const unsubMonitor = inputMonitorEnabled.subscribe((enabled) => {
+			setInputMonitorEnabled(enabled).catch(console.error);
+		});
 		const unlistenMidiRecording = connectMidiRecording();
+		const unlistenAudioRecording = connectAudioRecording();
 		const disconnectBridge = connectTransportBridge();
 		const disconnectLoop = connectLoopSync();
 		const unregisterShortcuts = registerShortcuts();
@@ -159,7 +166,9 @@
 			unsubMidi();
 			void unlistenMidiDevices.then((fn) => fn());
 			unsubMetronome();
+			unsubMonitor();
 			void unlistenMidiRecording.then((fn) => fn());
+			void unlistenAudioRecording.then((fn) => fn());
 			void unlistenMenu.then((fns) => fns.forEach((fn) => fn()));
 			window.removeEventListener('keydown', handleGlobalKey);
 		};
