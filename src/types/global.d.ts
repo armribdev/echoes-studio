@@ -156,6 +156,29 @@ export interface PluginOutputInfo {
 	channel_count: number;
 }
 
+export type PadPlayMode = 'one_shot' | 'gate';
+
+/** One sampler pad (ADR-028) — mirrors Rust `SamplerPadDto`. */
+export interface SamplerPad {
+	note: number;
+	sample_path: string | null;
+	gain_db: number;
+	/** −1 (left) … +1 (right). */
+	pan: number;
+	tune_semitones: number;
+	mode: PadPlayMode;
+	attack_ms: number;
+	release_ms: number;
+	/** 0 = none, 1–4. */
+	choke_group: number;
+	/** A file was chosen but could not be read: the pad is silent. */
+	missing: boolean;
+}
+
+export interface SamplerKit {
+	pads: SamplerPad[];
+}
+
 export interface Track {
 	/** Stable ID used by the event-sourcing system. Added in architecture v2. */
 	id: string;
@@ -166,8 +189,10 @@ export interface Track {
 	solo: boolean;
 	/** Optional UI color override (`#rrggbb`). Absent → stable default from id. */
 	color?: string | null;
-	/** Plugin id (e.g. `clap:…`) or null for built-in PolySynth. */
+	/** Plugin id (e.g. `clap:…`), `builtin:sampler`, or null for built-in PolySynth. */
 	instrument?: string | null;
+	/** Sampler pads, kept when another instrument is chosen. */
+	sampler?: SamplerKit | null;
 	/** Plugin output mixed into the track's input, or null/absent for none. */
 	input_source?: PluginOutputSource | null;
 	clips: Clip[];

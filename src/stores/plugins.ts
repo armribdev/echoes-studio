@@ -1,6 +1,7 @@
 import { writable, derived, readable } from 'svelte/store';
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
+import { isSamplerInstrument, SAMPLER_INSTRUMENT_ID } from '../shared/project/sampler';
 
 export interface PluginInfo {
 	id: string;
@@ -54,6 +55,16 @@ export const BUILTIN_INSTRUMENT_PLUGIN: PluginInfo = {
 	vendor: 'Echoes Studio',
 	format: 'Internal',
 	categories: ['Synth'],
+	is_instrument: true
+};
+
+/** Picker entry for the built-in drum sampler (ADR-028). */
+export const BUILTIN_SAMPLER_PLUGIN: PluginInfo = {
+	id: SAMPLER_INSTRUMENT_ID,
+	name: 'Sampler',
+	vendor: 'Echoes Studio',
+	format: 'Internal',
+	categories: ['Drums'],
 	is_instrument: true
 };
 
@@ -153,11 +164,11 @@ export function pluginDisplayName(pluginId: string): string {
 	return bare.split('.').pop() || bare;
 }
 
-/** Name of a track's plugin instrument, or null for the built-in PolySynth. */
+/** Name of a track's plugin instrument, or null for a built-in instrument. */
 export function instrumentDisplayName(
 	list: PluginInfo[],
 	instrument: string | null | undefined
 ): string | null {
-	if (!instrument) return null;
+	if (!instrument || isSamplerInstrument(instrument)) return null;
 	return list.find((p) => p.id === instrument)?.name ?? pluginDisplayName(instrument);
 }

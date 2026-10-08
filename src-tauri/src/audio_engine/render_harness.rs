@@ -19,6 +19,7 @@ use crate::project::{
     LfoWaveform, MacroParams, MidiNote, ModulationTargetRef, ModulatorParams,
     ProjectModulationRoute, ProjectModulator, ReverbParams, TrackEffect,
 };
+use crate::sampler_kit::{PadPlayMode, PadSample, SamplerKit, SamplerPad, SAMPLER_INSTRUMENT_ID};
 
 const SAMPLE_RATE: u32 = 48_000;
 const CLIP_SAMPLE_RATE: u32 = 44_100;
@@ -88,6 +89,7 @@ fn empty_track(id: &str) -> AppTrack {
         midi_notes: vec![],
         midi_clips: vec![],
         instrument: None,
+        sampler: None,
         input_source: None,
         automation_lanes: vec![],
         color: None,
@@ -409,7 +411,166 @@ fn eq_octave_modulation() -> AppProject {
     project_with(vec![audio, midi_track()])
 }
 
-fn reference_projects() -> [(&'static str, AppProject); 10] {
+fn decaying_noise(seconds: f32, decay: f32, mut seed: u32) -> Vec<f32> {
+    let frames = (seconds * CLIP_SAMPLE_RATE as f32) as usize;
+    (0..frames)
+        .map(|i| {
+            seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            let noise = (seed >> 8) as f32 / (1u32 << 24) as f32 * 2.0 - 1.0;
+            noise * (-(i as f32 / CLIP_SAMPLE_RATE as f32) * decay).exp()
+        })
+        .collect()
+}
+
+fn kick_samples() -> Vec<f32> {
+    let frames = (0.4 * CLIP_SAMPLE_RATE as f32) as usize;
+    (0..frames)
+        .map(|i| {
+            let t = i as f32 / CLIP_SAMPLE_RATE as f32;
+            let frequency = 45.0 + 75.0 * (-t * 20.0).exp();
+            (std::f32::consts::TAU * frequency * t).sin() * (-t * 8.0).exp()
+        })
+        .collect()
+}
+
+/// Native rate equal to the engine's, unlike the other pads.
+fn tone_samples() -> Vec<f32> {
+    let frames = (1.2 * SAMPLE_RATE as f32) as usize;
+    (0..frames)
+        .map(|i| {
+            let t = i as f32 / SAMPLE_RATE as f32;
+            (std::f32::consts::TAU * 330.0 * t).sin() * (-t * 1.5).exp()
+        })
+        .collect()
+}
+
+fn pad_with(
+    kit: &mut SamplerKit,
+    index: usize,
+    samples: Vec<f32>,
+    sample_rate: u32,
+    settings: SamplerPad,
+) {
+    kit.pads[index] = SamplerPad {
+        note: kit.pads[index].note,
+        sample: Some(PadSample {
+            samples: Arc::new(samples),
+            sample_rate,
+        }),
+        ..settings
+    };
+}
+
+/// One-shot, gate, choke group, layering, tuning, 44.1 → 48 kHz and voice
+/// stealing (ADR-028).
+fn sampler_track() -> AppTrack {
+    let mut kit = SamplerKit::default();
+    pad_with(
+        &mut kit,
+        0,
+        kick_samples(),
+        CLIP_SAMPLE_RATE,
+        SamplerPad::default(),
+    );
+    pad_with(
+        &mut kit,
+        2,
+        decaying_noise(0.3, 12.0, 7),
+        CLIP_SAMPLE_RATE,
+        SamplerPad {
+            mode: PadPlayMode::Gate,
+            attack_ms: 2.0,
+            release_ms: 60.0,
+            tune_semitones: 3.5,
+            pan: -0.4,
+            gain_db: -2.0,
+            ..SamplerPad::default()
+        },
+    );
+    let hat = |pan: f32, gain_db: f32| SamplerPad {
+        choke_group: 1,
+        pan,
+        gain_db,
+        ..SamplerPad::default()
+    };
+    let closed_hat = decaying_noise(0.08, 50.0, 11);
+    pad_with(&mut kit, 6, closed_hat, CLIP_SAMPLE_RATE, hat(0.5, -6.0));
+    let open_hat = decaying_noise(0.8, 4.0, 13);
+    pad_with(&mut kit, 10, open_hat, CLIP_SAMPLE_RATE, hat(0.3, -4.0));
+    pad_with(
+        &mut kit,
+        13,
+        tone_samples(),
+        SAMPLE_RATE,
+        SamplerPad {
+            tune_semitones: -7.25,
+            gain_db: -12.0,
+            ..SamplerPad::default()
+        },
+    );
+    pad_with(
+        &mut kit,
+        15,
+        tone_samples(),
+        SAMPLE_RATE,
+        SamplerPad {
+            tune_semitones: 12.0,
+            gain_db: -18.0,
+            ..SamplerPad::default()
+        },
+    );
+    kit.pads[15].note = 36;
+
+    let note = |index: usize, pitch: u8, start: f32, duration: f32, velocity: u8| MidiNote {
+        id: format!("n{index}"),
+        pitch,
+        start,
+        duration,
+        velocity,
+    };
+    let mut notes = vec![
+        note(0, 36, 0.0, 0.2, 110),
+        note(1, 36, 1.0, 0.2, 100),
+        note(2, 36, 2.0, 0.2, 110),
+        note(3, 36, 3.0, 0.2, 90),
+        note(4, 36, 4.0, 0.2, 120),
+        note(5, 38, 1.0, 0.25, 100),
+        note(6, 38, 3.0, 0.5, 80),
+        note(7, 46, 0.5, 0.25, 90),
+        note(8, 42, 0.75, 0.1, 70),
+        note(9, 42, 1.5, 0.1, 75),
+        note(10, 46, 2.5, 0.25, 95),
+        note(11, 42, 2.75, 0.1, 60),
+        note(12, 42, 3.5, 0.1, 80),
+    ];
+    notes.extend((0..40).map(|i| {
+        note(
+            100 + i,
+            49,
+            2.0 + i as f32 / 40.0,
+            0.02,
+            40 + (i * 7 % 80) as u8,
+        )
+    }));
+
+    let mut track = empty_track("drums");
+    track.instrument = Some(SAMPLER_INSTRUMENT_ID.into());
+    track.sampler = Some(kit);
+    track.midi_clips.push(AppMidiClip {
+        id: "drum-clip".into(),
+        start: 0.0,
+        end: DURATION_S,
+        offset: 0.0,
+        notes,
+    });
+    track
+}
+
+fn sampler_kit() -> AppProject {
+    project_with(vec![sampler_track()])
+}
+
+fn reference_projects() -> [(&'static str, AppProject); 11] {
     [
         ("static_mix", static_mix()),
         ("modulated_effects", modulated_effects()),
@@ -421,12 +582,13 @@ fn reference_projects() -> [(&'static str, AppProject); 10] {
         ("automated_compressor", automated_compressor()),
         ("automated_reverb", automated_reverb()),
         ("automated_delay", automated_delay()),
+        ("sampler_kit", sampler_kit()),
     ]
 }
 
 /// Recorded on Windows x86_64.  Only update a value when an ADR sanctions the
 /// render change, and say so in the commit.
-const GOLDEN_HASHES: [(&str, u64); 10] = [
+const GOLDEN_HASHES: [(&str, u64); 11] = [
     ("static_mix", 0x7dec_d259_cfd9_6694),
     ("modulated_effects", 0x29ea_1120_1ae0_2d53),
     ("modulated_gain", 0x23ef_388b_80d0_9a52),
@@ -437,6 +599,7 @@ const GOLDEN_HASHES: [(&str, u64); 10] = [
     ("automated_compressor", 0x6f12_51b4_7ba9_2a1a),
     ("automated_reverb", 0x8aef_85dc_383f_a3bc),
     ("automated_delay", 0xed2b_9373_7df4_ac29),
+    ("sampler_kit", 0x8151_d7f3_7a3c_1e57),
 ];
 
 fn assert_block_size_independent(name: &str, project: &AppProject) {
@@ -508,6 +671,20 @@ fn automated_reverb_is_block_size_independent() {
 #[test]
 fn automated_delay_is_block_size_independent() {
     assert_block_size_independent("automated_delay", &automated_delay());
+}
+
+#[test]
+fn sampler_kit_is_block_size_independent() {
+    assert_block_size_independent("sampler_kit", &sampler_kit());
+}
+
+#[test]
+fn sampler_is_not_reported_as_a_missing_plugin() {
+    let live_params = LiveParams::new();
+    let mut host = PluginHost::new();
+    render_project_in_blocks(&sampler_kit(), &live_params, &mut host, SAMPLE_RATE, 512)
+        .expect("project must render");
+    assert!(host.unavailable_plugins().is_empty());
 }
 
 #[test]

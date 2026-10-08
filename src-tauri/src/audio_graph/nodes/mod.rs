@@ -34,6 +34,7 @@ pub mod modulator;
 pub mod pan;
 pub mod poly_synth;
 pub mod reverb;
+pub mod sampler;
 pub mod send;
 pub mod track;
 pub mod track_gain;

@@ -42,6 +42,8 @@ import {
 	type RemoveAutomationLanePayload,
 	type UpdateAutomationClipPayload,
 	type AddModulatorPayload,
+	type SamplerPadPatch,
+	type SetSamplerPadPayload,
 	type SetTrackInputPayload,
 	type SetTrackInstrumentPayload,
 	type SoloTrackPayload,
@@ -201,6 +203,14 @@ export function setTrackInstrument(
 		track_id: trackId,
 		instrument
 	});
+}
+
+export function setSamplerPad(
+	trackId: string,
+	pad: number,
+	patch: SamplerPadPatch
+): Promise<CommandResult> {
+	return dispatch<SetSamplerPadPayload>(cmd.SET_SAMPLER_PAD, { track_id: trackId, pad, patch });
 }
 
 export function setTrackInput(

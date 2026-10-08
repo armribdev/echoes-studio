@@ -24,10 +24,10 @@ use super::commands::{
     MoveMidiClipPayload, MuteTrackPayload, RemoveAutomationLanePayload, RemoveClipPayload,
     RemoveEffectPayload, RemoveMarkerPayload, RemoveMidiClipPayload, RemoveModulationRoutePayload,
     RemoveModulatorPayload, RemoveRegionPayload, SeekPayload, SetClipMidiNotesPayload,
-    SetLoopPayload, SetMidiNotesPayload, SetModulationDepthPayload, SetTrackInputPayload,
-    SetTrackInstrumentPayload, SoloTrackPayload, UpdateAutomationClipPayload, UpdateEffectPayload,
-    UpdateMarkerPayload, UpdateModulatorPayload, UpdateProjectNamePayload, UpdateRegionPayload,
-    UpdateTempoPayload, UpdateTrackPayload,
+    SetLoopPayload, SetMidiNotesPayload, SetModulationDepthPayload, SetSamplerPadPayload,
+    SetTrackInputPayload, SetTrackInstrumentPayload, SoloTrackPayload, UpdateAutomationClipPayload,
+    UpdateEffectPayload, UpdateMarkerPayload, UpdateModulatorPayload, UpdateProjectNamePayload,
+    UpdateRegionPayload, UpdateTempoPayload, UpdateTrackPayload,
 };
 use super::events::{ev, EngineEvent, ProjectEvent};
 use crate::audio_clip::{AudioClip, AudioClipData};
@@ -41,6 +41,7 @@ use crate::project::{
     CachedAudioData, CompressorParams, DelayParams, EffectParams, EqParams, MidiClipDto, MidiNote,
     PluginParams, ProjectUiLayout, ReverbParams, TrackEffect,
 };
+use crate::sampler_kit::{PadSample, SamplerKit, SamplerPad, SAMPLER_INSTRUMENT_ID};
 
 /// Returned by `send_command` / `send_batch` to the UI.
 ///
@@ -400,6 +401,7 @@ fn empty_app_track(id: String, name: String) -> AppTrack {
         midi_notes: vec![],
         midi_clips: vec![],
         instrument: None,
+        sampler: None,
         input_source: None,
         automation_lanes: vec![],
         color: None,
@@ -407,6 +409,9 @@ fn empty_app_track(id: String, name: String) -> AppTrack {
 }
 
 fn validate_instrument(state: &tauri::State<'_, AppState>, plugin_id: &str) -> Result<(), String> {
+    if plugin_id == SAMPLER_INSTRUMENT_ID {
+        return Ok(());
+    }
     let engine = state
         .audio_engine
         .lock()
@@ -931,6 +936,36 @@ fn resolve_clip_audio(
     }
 }
 
+/// Pad PCM from the shared path cache, decoded and cached on a miss.
+fn resolve_pad_sample(state: &tauri::State<'_, AppState>, path: &str) -> Option<PadSample> {
+    let cached = match state.audio_cache.get_by_path(path).filter(|c| c.complete) {
+        Some(cached) => cached,
+        None => {
+            let audio = AudioClip::from_file(path)
+                .map_err(|e| eprintln!("[audio] Échantillon introuvable '{path}': {e}"))
+                .ok()?;
+            let cached = cached_audio_from_clip_data(audio.into_clip_data());
+            state
+                .audio_cache
+                .insert_path(path.to_string(), Arc::clone(&cached));
+            cached
+        }
+    };
+    Some(PadSample {
+        samples: Arc::clone(&cached.raw_samples),
+        sample_rate: cached.sample_rate,
+    })
+}
+
+fn sampler_pad_payload(track_id: &str, index: usize, pad: &SamplerPad) -> Value {
+    json!({
+        "track_id": track_id,
+        "pad": index,
+        "settings": pad,
+        "missing": pad.is_missing(),
+    })
+}
+
 fn app_clip_from_audio(
     clip_id: String,
     start: f64,
@@ -1260,19 +1295,18 @@ fn process_command(
             }
             let track_id = generate_id();
 
-            with_project_mut(state, |project| {
+            let sampler = with_project_mut(state, |project| {
                 let mut track = empty_app_track(track_id.clone(), p.name.clone());
-                track.instrument = p.instrument.clone();
+                track.set_instrument(p.instrument.clone());
+                let sampler = track.sampler.as_ref().map(SamplerKit::to_dto);
                 project.tracks.push(track);
-                Ok(())
+                Ok(sampler)
             })?;
 
-            commit_same_payload(
-                &ctx,
-                ev::TRACK_CREATED,
-                json!({ "id": track_id, "name": p.name, "instrument": p.instrument }),
-                true,
-            )
+            let payload = json!({ "id": track_id, "name": p.name, "instrument": p.instrument });
+            let mut engine_payload = payload.clone();
+            engine_payload["sampler"] = json!(sampler);
+            commit_project_change(&ctx, ev::TRACK_CREATED, payload, engine_payload, true)
         }
 
         cmd::DELETE_TRACK => {
@@ -1385,15 +1419,56 @@ fn process_command(
                 validate_instrument(state, plugin_id)?;
             }
 
-            with_project_mut(state, |project| {
-                require_track_mut(project, &p.track_id)?.instrument = p.instrument.clone();
-                Ok(())
+            let sampler = with_project_mut(state, |project| {
+                let track = require_track_mut(project, &p.track_id)?;
+                track.set_instrument(p.instrument.clone());
+                Ok(track.sampler.as_ref().map(SamplerKit::to_dto))
+            })?;
+
+            let payload = json!({ "id": p.track_id, "instrument": p.instrument });
+            let mut engine_payload = payload.clone();
+            engine_payload["sampler"] = json!(sampler);
+            commit_project_change(
+                &ctx,
+                ev::TRACK_INSTRUMENT_SET,
+                payload,
+                engine_payload,
+                true,
+            )
+        }
+
+        cmd::SET_SAMPLER_PAD => {
+            let p: SetSamplerPadPayload = serde_json::from_value(command.payload)
+                .map_err(|e| format!("SET_SAMPLER_PAD payload invalid: {e}"))?;
+            // Decoded before taking the project lock: a long file must not stall the UI.
+            let new_sample = p
+                .patch
+                .sample_path
+                .clone()
+                .map(|path| path.and_then(|path| resolve_pad_sample(state, &path)));
+
+            let pad = with_project_mut(state, |project| {
+                let track = require_track_mut(project, &p.track_id)?;
+                let kit = track
+                    .sampler
+                    .as_mut()
+                    .ok_or("SET_SAMPLER_PAD: cette piste n'a pas de sampler")?;
+                let slot = kit
+                    .pads
+                    .get_mut(p.pad)
+                    .ok_or_else(|| format!("SET_SAMPLER_PAD: pad {} introuvable", p.pad))?;
+                let mut pad = p.patch.apply_to(slot);
+                if let Some(sample) = new_sample {
+                    pad.sample = sample;
+                }
+                *slot = pad.clone();
+                Ok(pad)
             })?;
 
             commit_same_payload(
                 &ctx,
-                ev::TRACK_INSTRUMENT_SET,
-                json!({ "id": p.track_id, "instrument": p.instrument }),
+                ev::SAMPLER_PAD_SET,
+                sampler_pad_payload(&p.track_id, p.pad, &pad),
                 true,
             )
         }
@@ -2453,6 +2528,7 @@ fn snapshot_track(t: &AppTrack) -> AppTrack {
         midi_notes: t.midi_notes.clone(),
         midi_clips: t.midi_clips.clone(),
         instrument: t.instrument.clone(),
+        sampler: t.sampler.clone(),
         input_source: t.input_source.clone(),
         automation_lanes: t.automation_lanes.clone(),
         clips: t.clips.iter().map(snapshot_clip).collect(),
@@ -2582,7 +2658,7 @@ fn apply_track_created(project: &mut AppProject, payload: &Value) {
         return;
     }
     let mut track = empty_app_track(id, payload_str_default(payload, "name", "Track"));
-    track.instrument = payload["instrument"].as_str().map(|s| s.to_string());
+    track.set_instrument(payload["instrument"].as_str().map(|s| s.to_string()));
     project.tracks.push(track);
 }
 
@@ -2631,7 +2707,33 @@ fn apply_track_instrument_set(project: &mut AppProject, payload: &Value) {
     let Some(track) = find_track_mut(project, &id) else {
         return;
     };
-    track.instrument = payload["instrument"].as_str().map(|s| s.to_string());
+    track.set_instrument(payload["instrument"].as_str().map(|s| s.to_string()));
+}
+
+fn apply_sampler_pad_set(
+    project: &mut AppProject,
+    payload: &Value,
+    resolve_sample: impl FnOnce(&str) -> Option<PadSample>,
+) {
+    let track_id = payload_str(payload, "track_id");
+    let Some(index) = payload["pad"].as_u64().map(|i| i as usize) else {
+        return;
+    };
+    let Ok(mut pad) = serde_json::from_value::<SamplerPad>(payload["settings"].clone()) else {
+        return;
+    };
+    pad.sample = pad.sample_path.as_deref().and_then(resolve_sample);
+    let Some(track) = find_track_mut(project, &track_id) else {
+        return;
+    };
+    if let Some(slot) = track
+        .sampler
+        .get_or_insert_with(SamplerKit::default)
+        .pads
+        .get_mut(index)
+    {
+        *slot = pad;
+    }
 }
 
 fn apply_track_input_set(project: &mut AppProject, payload: &Value) {
@@ -3202,6 +3304,9 @@ fn apply_events(
             ev::TRACK_SOLOED => apply_track_soloed(&mut project, &event.payload),
             ev::TRACK_INSTRUMENT_SET => apply_track_instrument_set(&mut project, &event.payload),
             ev::TRACK_INPUT_SET => apply_track_input_set(&mut project, &event.payload),
+            ev::SAMPLER_PAD_SET => apply_sampler_pad_set(&mut project, &event.payload, |path| {
+                resolve_pad_sample(state, path)
+            }),
             ev::CLIP_ADDED => apply_clip_added(state, &mut project, &event.payload),
             ev::CLIP_MOVED => apply_clip_moved(&mut project, &event.payload),
             ev::CLIP_MOVED_TO_TRACK => {
@@ -3299,6 +3404,7 @@ mod tests {
             midi_notes: vec![],
             midi_clips: vec![],
             instrument: None,
+            sampler: None,
             input_source: None,
             automation_lanes: vec![],
             color: None,
@@ -3412,6 +3518,88 @@ mod tests {
             &json!({ "track_id": "t", "modulator_id": "lfo", "source_effect_id": null }),
         );
         assert_eq!(source(&project), None);
+    }
+
+    fn pcm(frames: usize) -> PadSample {
+        PadSample {
+            samples: Arc::new(vec![0.5; frames]),
+            sample_rate: 44_100,
+        }
+    }
+
+    #[test]
+    fn choosing_the_sampler_on_replay_creates_the_default_kit_once() {
+        let mut project = project_with_lfo();
+        let choose = |instrument: Value| json!({ "id": "t", "instrument": instrument });
+        apply_track_instrument_set(&mut project, &choose(json!(SAMPLER_INSTRUMENT_ID)));
+        assert_eq!(project.tracks[0].sampler.as_ref().unwrap().pads.len(), 16);
+
+        project.tracks[0].sampler.as_mut().unwrap().pads[0].gain_db = -6.0;
+        apply_track_instrument_set(&mut project, &choose(json!(null)));
+        apply_track_instrument_set(&mut project, &choose(json!(SAMPLER_INSTRUMENT_ID)));
+        assert_eq!(
+            project.tracks[0].sampler.as_ref().unwrap().pads[0].gain_db,
+            -6.0,
+            "switching instruments keeps the kit"
+        );
+    }
+
+    #[test]
+    fn replayed_sampler_pad_set_restores_settings_and_sample() {
+        let mut project = project_with_lfo();
+        let pad = SamplerPad {
+            sample_path: Some("kick.wav".into()),
+            gain_db: -3.0,
+            ..SamplerPad::default()
+        };
+        apply_sampler_pad_set(&mut project, &sampler_pad_payload("t", 2, &pad), |path| {
+            (path == "kick.wav").then(|| pcm(10))
+        });
+        let replayed = &project.tracks[0].sampler.as_ref().unwrap().pads[2];
+        assert_eq!(replayed.gain_db, -3.0);
+        assert_eq!(replayed.sample.as_ref().unwrap().samples.len(), 10);
+    }
+
+    #[test]
+    fn replayed_pad_with_a_vanished_file_is_missing() {
+        let mut project = project_with_lfo();
+        let pad = SamplerPad {
+            sample_path: Some("gone.wav".into()),
+            ..SamplerPad::default()
+        };
+        apply_sampler_pad_set(&mut project, &sampler_pad_payload("t", 0, &pad), |_| None);
+        assert!(project.tracks[0].sampler.as_ref().unwrap().pads[0].is_missing());
+    }
+
+    #[test]
+    fn sampler_patch_changes_only_the_given_fields() {
+        let pad = SamplerPad {
+            sample_path: Some("snare.wav".into()),
+            sample: Some(pcm(4)),
+            ..SamplerPad::default()
+        };
+        let patch = |value: Value| {
+            serde_json::from_value::<SetSamplerPadPayload>(
+                json!({ "track_id": "t", "pad": 0, "patch": value }),
+            )
+            .unwrap()
+            .patch
+        };
+
+        let tuned = patch(json!({ "tune_semitones": 40.0 })).apply_to(&pad);
+        assert_eq!(tuned.tune_semitones, 24.0, "held in range");
+        assert!(tuned.sample.is_some(), "same file keeps its PCM");
+
+        let cleared = patch(json!({ "sample_path": null })).apply_to(&pad);
+        assert_eq!(cleared.sample_path, None);
+        assert!(cleared.sample.is_none());
+
+        let replaced = patch(json!({ "sample_path": "clap.wav" })).apply_to(&pad);
+        assert_eq!(replaced.sample_path.as_deref(), Some("clap.wav"));
+        assert!(
+            replaced.sample.is_none(),
+            "a new file is decoded by the caller"
+        );
     }
 
     #[test]

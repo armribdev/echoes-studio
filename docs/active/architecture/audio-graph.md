@@ -71,6 +71,15 @@ not read it.
 playable window `[start, end]`. Both stem from the clip `offset` field — see
 `decisions/018-clip-source-offset-trim.md`.
 
+`InstrumentNode` turns notes into events and hands them to an inner
+`InstrumentDevice`, chosen by the compiler (`build_instrument_device`) from
+`AppTrack.instrument`: `None` → `PolySynth`; `builtin:sampler` → `Sampler`
+(16 drum pads, one mono sample each, built from `AppTrack.sampler`); any other
+id → the CLAP plugin, or `SilentInstrument` if it cannot load. A sampler track
+gets its `InstrumentNode` even before its first MIDI clip, so pads can be
+auditioned; other instrument tracks still need a MIDI clip. See
+`decisions/028-builtin-sampler-instrument.md`.
+
 ---
 
 ## Routing Philosophy

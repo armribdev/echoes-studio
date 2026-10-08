@@ -10,7 +10,13 @@
  * Those live exclusively in the frontend UI store.
  */
 
-import { ev, type EngineEvent } from '../protocol/events';
+import {
+	ev,
+	type EngineEvent,
+	type SamplerPadSetPayload,
+	type TrackCreatedPayload,
+	type TrackInstrumentSetPayload
+} from '../protocol/events';
 import type {
 	ArrangementMarker,
 	ArrangementRegion,
@@ -21,6 +27,7 @@ import type {
 	MidiNote,
 	PluginOutputSource,
 	Project,
+	SamplerKit,
 	ProjectModulationRoute,
 	ProjectModulator,
 	TrackEffect
@@ -87,6 +94,7 @@ export interface TrackState {
 	midi_notes: MidiNote[];
 	midi_clips: MidiClip[];
 	instrument: string | null;
+	sampler: SamplerKit | null;
 	input_source: PluginOutputSource | null;
 	automation_lanes: AutomationLane[];
 }
@@ -119,7 +127,7 @@ export function emptyProjectState(): ProjectState {
 export function applyEvent(state: ProjectState, event: EngineEvent): ProjectState {
 	switch (event.type) {
 		case ev.TRACK_CREATED: {
-			const p = event.payload as { id: string; name: string; instrument?: string | null };
+			const p = event.payload as TrackCreatedPayload;
 			if (state.tracks.some((t) => t.id === p.id)) return state; // idempotent
 			return {
 				...state,
@@ -134,6 +142,7 @@ export function applyEvent(state: ProjectState, event: EngineEvent): ProjectStat
 						solo: false,
 						color: null,
 						instrument: p.instrument ?? null,
+						sampler: p.sampler ?? null,
 						input_source: null,
 						clips: [],
 						effects: [],
@@ -199,11 +208,32 @@ export function applyEvent(state: ProjectState, event: EngineEvent): ProjectStat
 		}
 
 		case ev.TRACK_INSTRUMENT_SET: {
-			const p = event.payload as { id: string; instrument: string | null };
+			const p = event.payload as TrackInstrumentSetPayload;
 			return {
 				...state,
 				tracks: state.tracks.map((t) =>
-					t.id !== p.id ? t : { ...t, instrument: p.instrument ?? null }
+					t.id !== p.id
+						? t
+						: { ...t, instrument: p.instrument ?? null, sampler: p.sampler ?? t.sampler }
+				)
+			};
+		}
+
+		case ev.SAMPLER_PAD_SET: {
+			const p = event.payload as SamplerPadSetPayload;
+			return {
+				...state,
+				tracks: state.tracks.map((t) =>
+					t.id !== p.track_id || !t.sampler
+						? t
+						: {
+								...t,
+								sampler: {
+									pads: t.sampler.pads.map((pad, index) =>
+										index !== p.pad ? pad : { ...p.settings, missing: p.missing }
+									)
+								}
+							}
 				)
 			};
 		}
@@ -712,6 +742,7 @@ export function projectFromSnapshot(dto: Project): ProjectState {
 			midi_notes: t.midi_notes ?? [],
 			midi_clips: t.midi_clips ?? [],
 			instrument: t.instrument ?? null,
+			sampler: t.sampler ?? null,
 			input_source: t.input_source ?? null,
 			automation_lanes: t.automation_lanes ?? []
 		})),

@@ -30,7 +30,7 @@
 		type PluginParamInfo,
 		type PluginPlacement
 	} from '../frontend/modulation/targets';
-	import { plugins, pluginDisplayName } from '../stores/plugins';
+	import { instrumentDisplayName, plugins } from '../stores/plugins';
 	import { notify } from '../stores/status';
 
 	export let trackId: string;
@@ -48,9 +48,7 @@
 	let loadingParams = false;
 	let paramsRequest = 0;
 
-	$: instrumentName = instrument
-		? ($plugins.find((p) => p.id === instrument)?.name ?? pluginDisplayName(instrument))
-		: null;
+	$: instrumentName = instrumentDisplayName($plugins, instrument);
 	$: placements = pluginPlacements(trackId, effects, instrumentName);
 	$: placementSignature = placements.map((p) => `${p.key}=${p.name}`).join('|');
 	$: (placementSignature, loadPluginParams(placements));

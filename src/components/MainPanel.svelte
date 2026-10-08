@@ -38,8 +38,10 @@
 		moveMidiClip,
 		removeMidiClip,
 		addAutomationLane,
-		removeAutomationLane
+		removeAutomationLane,
+		setSamplerPad
 	} from '../frontend/commands/dispatcher';
+	import { padDropTargetAt, type PadDropTarget } from '../frontend/sampler/pads';
 	import { clipboard } from '../stores/clipboard';
 	import type { ClipboardEntry } from '../stores/clipboard';
 	import type { CommandResult } from '../shared/protocol/commands';
@@ -262,6 +264,7 @@
 				trackName: t.name,
 				trackColor: trackColor(t.id, t.color),
 				instrument: t.instrument ?? null,
+				sampler: t.sampler ?? null,
 				effects: t.effects ?? [],
 				modulators: t.modulators ?? [],
 				mod_routes: t.mod_routes ?? []
@@ -272,6 +275,7 @@
 				trackName: '',
 				trackColor: '#4d96ff',
 				instrument: null,
+				sampler: null,
 				effects: [],
 				modulators: [],
 				mod_routes: []
@@ -376,6 +380,8 @@
 				listen<DragPayload>('tauri://drag-drop', ({ payload }) => {
 					updateOsDragPreview(payload.position.x, payload.position.y);
 					const path = payload.paths[0];
+					const dpr = window.devicePixelRatio || 1;
+					const padTarget = padDropTargetAt(payload.position.x / dpr, payload.position.y / dpr);
 					const preview = fileDragPreview;
 					const drag = getActiveAudioFileDrag();
 					clearFileDragPreview();
@@ -383,6 +389,10 @@
 					if (!path) return;
 					if (!isAudioPath(path)) {
 						notify(`Format non supporté. Utilisez WAV, MP3, FLAC ou OGG.`, 'error');
+						return;
+					}
+					if (padTarget) {
+						void assignPadSample(padTarget, path);
 						return;
 					}
 					if (!preview || preview.rejected) return;
@@ -1945,6 +1955,14 @@
 		};
 	}
 
+	async function assignPadSample(target: PadDropTarget, path: string) {
+		try {
+			await setSamplerPad(target.trackId, target.pad, { sample_path: path });
+		} catch (e) {
+			notify(`Erreur sampler : ${(e as Error)?.message ?? e}`, 'error');
+		}
+	}
+
 	async function commitAudioFileDrop(opts: {
 		path: string;
 		source: 'library' | 'os';
@@ -2014,6 +2032,13 @@
 		audioFileDragDrop.set(null);
 		if (!drag || drag.source !== 'library') {
 			endAudioFileDrag();
+			return;
+		}
+		const padTarget = padDropTargetAt(drop.clientX, drop.clientY);
+		if (padTarget && !isMidiLibraryKind(drag.kind ?? 'one_shot')) {
+			clearFileDragPreview();
+			endAudioFileDrag();
+			void assignPadSample(padTarget, drag.path);
 			return;
 		}
 		updateFileDragPreview(drop.clientX, drop.clientY, true);

@@ -6,6 +6,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::sampler_kit::{PadPlayMode, SamplerPad};
+
 /// The outer wrapper for every command sent from the UI.
 ///
 /// `rename_all = "camelCase"` bridges TypeScript (camelCase) ↔ Rust (snake_case).
@@ -48,6 +50,7 @@ pub mod cmd {
     pub const SOLO_TRACK: &str = "SOLO_TRACK";
     pub const SET_TRACK_INSTRUMENT: &str = "SET_TRACK_INSTRUMENT";
     pub const SET_TRACK_INPUT: &str = "SET_TRACK_INPUT";
+    pub const SET_SAMPLER_PAD: &str = "SET_SAMPLER_PAD";
     pub const ADD_CLIP: &str = "ADD_CLIP";
     pub const MOVE_CLIP: &str = "MOVE_CLIP";
     pub const REMOVE_CLIP: &str = "REMOVE_CLIP";
@@ -124,6 +127,49 @@ pub struct SetTrackInstrumentPayload {
     pub track_id: String,
     /// `None` → built-in PolySynth.  `Some(plugin_id)` → CLAP instrument (Phase 5c).
     pub instrument: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SetSamplerPadPayload {
+    pub track_id: String,
+    pub pad: usize,
+    pub patch: SamplerPadPatch,
+}
+
+/// Sampler pad settings to change (ADR-028); absent fields stay unchanged.
+#[derive(Debug, Default, Deserialize)]
+pub struct SamplerPadPatch {
+    pub note: Option<u8>,
+    /// Absent = unchanged, `null` = empty the pad.
+    #[serde(default, deserialize_with = "deserialize_present")]
+    pub sample_path: Option<Option<String>>,
+    pub gain_db: Option<f32>,
+    pub pan: Option<f32>,
+    pub tune_semitones: Option<f32>,
+    pub mode: Option<PadPlayMode>,
+    pub attack_ms: Option<f32>,
+    pub release_ms: Option<f32>,
+    pub choke_group: Option<u8>,
+}
+
+impl SamplerPadPatch {
+    /// The pad with this patch applied; a new sample path drops the old PCM.
+    pub fn apply_to(&self, pad: &SamplerPad) -> SamplerPad {
+        let mut next = pad.clone();
+        if let Some(path) = &self.sample_path {
+            next.sample_path = path.clone();
+            next.sample = None;
+        }
+        next.note = self.note.unwrap_or(next.note);
+        next.gain_db = self.gain_db.unwrap_or(next.gain_db);
+        next.pan = self.pan.unwrap_or(next.pan);
+        next.tune_semitones = self.tune_semitones.unwrap_or(next.tune_semitones);
+        next.mode = self.mode.unwrap_or(next.mode);
+        next.attack_ms = self.attack_ms.unwrap_or(next.attack_ms);
+        next.release_ms = self.release_ms.unwrap_or(next.release_ms);
+        next.choke_group = self.choke_group.unwrap_or(next.choke_group);
+        next.clamped()
+    }
 }
 
 #[derive(Debug, Deserialize)]

@@ -334,7 +334,9 @@ impl AudioGraph {
 
         for (port_idx, track) in project.tracks.iter().enumerate() {
             let mut instrument_node = None;
-            let track_node = if !track.clips.is_empty() && !track.midi_clips.is_empty() {
+            // The sampler plays pads and live notes even before the first MIDI clip (ADR-028).
+            let plays_instrument = !track.midi_clips.is_empty() || track.uses_sampler();
+            let track_node = if !track.clips.is_empty() && plays_instrument {
                 // Track has both audio and MIDI clips — run each through its own
                 // source node then sum them through a Bus before the FX chain.
                 let audio_node = graph.add_node(
@@ -354,7 +356,7 @@ impl AudioGraph {
                 graph.connect(audio_node, 0, bus_node, 0);
                 graph.connect(instr_node, 0, bus_node, 1);
                 bus_node
-            } else if !track.midi_clips.is_empty() {
+            } else if plays_instrument {
                 let instr_node = graph.add_node(
                     NodeKind::Instrument {
                         track_id: track.id.clone(),
@@ -392,7 +394,7 @@ impl AudioGraph {
             // Plugin placements a `PluginParam` target can name: effects by id,
             // and the track's plugin instrument by `instrument:{track_id}`.
             let mut effect_node_ids: HashMap<String, NodeId> = HashMap::new();
-            if let (Some(node), Some(_)) = (instrument_node, &track.instrument) {
+            if let (Some(node), Some(_)) = (instrument_node, track.plugin_instrument()) {
                 effect_node_ids.insert(instrument_instance_key(&track.id), node);
             }
 
@@ -734,6 +736,7 @@ mod routing_tests {
             midi_notes: vec![],
             midi_clips: vec![],
             instrument: None,
+            sampler: None,
             input_source: None,
             automation_lanes: vec![],
             color: None,
@@ -874,6 +877,28 @@ mod routing_tests {
             notes: vec![],
         }];
         track
+    }
+
+    /// Pads can be clicked and played live before any MIDI clip exists (ADR-028);
+    /// a plugin instrument without clips keeps its previous graph.
+    #[test]
+    fn sampler_track_without_clips_gets_an_instrument_node() {
+        let mut sampler = track("drums", vec![]);
+        sampler.set_instrument(Some(crate::sampler_kit::SAMPLER_INSTRUMENT_ID.into()));
+        let mut plugin = track("synth", vec![]);
+        plugin.instrument = Some("clap:synth".into());
+        let mut project = AppProject::new();
+        project.tracks = vec![sampler, plugin];
+
+        let graph = AudioGraph::from_project(&project);
+        let instrument_tracks: Vec<&str> = graph
+            .all_nodes()
+            .filter_map(|n| match &n.kind {
+                NodeKind::Instrument { track_id } => Some(track_id.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(instrument_tracks, ["drums"]);
     }
 
     fn fed_from(track_id: &str, effect_id: &str, port: u32) -> AppTrack {

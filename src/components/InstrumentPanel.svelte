@@ -1,5 +1,6 @@
 <script lang="ts">
 	import PluginPicker from './PluginPicker.svelte';
+	import SamplerPads from './SamplerPads.svelte';
 	import EffectContextMenu from './EffectContextMenu.svelte';
 	import { preferences } from '../stores/preferences';
 	import type { PluginInfo } from '../stores/plugins';
@@ -16,6 +17,8 @@
 	import { setTrackInstrument } from '../frontend/commands/dispatcher';
 	import { notify } from '../stores/status';
 	import { t } from 'svelte-i18n';
+	import type { SamplerKit } from '../types/global';
+	import { isSamplerInstrument } from '../shared/project/sampler';
 
 	const REASON_KEYS: Record<UnavailableReason, string> = {
 		not_installed: 'missingPlugins.notInstalled',
@@ -26,6 +29,7 @@
 
 	export let trackId: string;
 	export let instrument: string | null;
+	export let sampler: SamplerKit | null = null;
 	export let compact = false;
 	export let trackName = '';
 	export let trackColor = '#4d96ff';
@@ -50,11 +54,15 @@
 
 	$: unavailable = instrument ? $unavailablePlugins.get(editorKey) : undefined;
 
+	$: isSampler = isSamplerInstrument(instrument);
+
 	$: label = activePlugin
 		? activePlugin.name
-		: instrument
-			? pluginDisplayName(instrument)
-			: 'PolySynth (intégré)';
+		: isSampler
+			? 'Sampler'
+			: instrument
+				? pluginDisplayName(instrument)
+				: 'PolySynth (intégré)';
 
 	$: canOpenEditor = !!instrument && !!activePlugin && !unavailable;
 
@@ -187,9 +195,7 @@
 	<div class="instr-slot" class:unavailable on:contextmenu={openContextMenu}>
 		<span class="instr-name" title={instrument ?? label}>{label}</span>
 		{#if sandboxed}
-			<span class="sandbox-badge" title={$t('instrument.isolated')}
-				>ISO</span
-			>
+			<span class="sandbox-badge" title={$t('instrument.isolated')}>ISO</span>
 		{/if}
 		{#if unavailable}
 			<span class="missing-badge" title={UNAVAILABLE_HELP[unavailable.reason]}>
@@ -211,8 +217,11 @@
 			>
 		{/if}
 		{#if instrument}
-			<button class="rm-btn" type="button" on:click={handleClear} title={$t('instrument.builtinPoly')}
-				>×</button
+			<button
+				class="rm-btn"
+				type="button"
+				on:click={handleClear}
+				title={$t('instrument.builtinPoly')}>×</button
 			>
 		{/if}
 	</div>
@@ -239,6 +248,8 @@
 				{editorOpen ? "Fermer l'éditeur" : "Ouvrir l'éditeur"}
 			</button>
 		</div>
+	{:else if isSampler && sampler}
+		<SamplerPads {trackId} kit={sampler} />
 	{:else if !compact && !instrument}
 		<p class="hint">Synthé intégré par défaut — choisissez un instrument CLAP (ex. Vital).</p>
 	{/if}

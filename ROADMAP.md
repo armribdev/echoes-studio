@@ -45,7 +45,7 @@
 - [x] **Transport auxiliaire**
   - [x] Métronome + count-in (ADR-026 ; pas encore hand-testé)
   - [x] Marqueurs / régions d'arrangement (event-sourcés en beats ; piste sous la règle ; boucle depuis une région via `SET_LOOP` ; 2026-09-30)
-- [ ] **Compléter les plugins** : VST3 (bus auxiliaires, latence dynamique, sandbox), AU (macOS, stub), synthés natifs supplémentaires (sampler)
+- [ ] **Compléter les plugins** : VST3 (bus auxiliaires, latence dynamique, sandbox), AU (macOS, stub), synthés natifs supplémentaires — sampler à pads livré (ADR-028, 2026-10-09, pas encore testé à l'oreille) ; one-shots de la bibliothèque à brancher
 
 ---
 

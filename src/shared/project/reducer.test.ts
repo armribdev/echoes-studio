@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { ev, type EngineEvent } from '../protocol/events';
-import type { Clip, MidiClip, MidiNote, Project } from '../../types/global';
+import type { Clip, MidiClip, MidiNote, Project, SamplerPad } from '../../types/global';
+import { SAMPLER_INSTRUMENT_ID } from './sampler';
 import {
 	applyEvent,
 	emptyProjectState,
@@ -295,5 +296,95 @@ describe('projectFromSnapshot', () => {
 		expect(state.key_root).toBe('C');
 		expect(state.markers).toEqual([]);
 		expect(state.regions).toEqual([]);
+	});
+});
+
+function samplerPad(note: number): SamplerPad {
+	return {
+		note,
+		sample_path: null,
+		gain_db: 0,
+		pan: 0,
+		tune_semitones: 0,
+		mode: 'one_shot',
+		attack_ms: 0,
+		release_ms: 10,
+		choke_group: 0,
+		missing: false
+	};
+}
+
+describe('sampler (ADR-028)', () => {
+	const kit = { pads: [samplerPad(36), samplerPad(37)] };
+	const withTrack = () =>
+		replayEvents([event(ev.TRACK_CREATED, { id: 'd', name: 'Drums', instrument: null })]);
+
+	it('takes the kit the engine created when the sampler is chosen', () => {
+		const state = applyEvent(
+			withTrack(),
+			event(ev.TRACK_INSTRUMENT_SET, {
+				id: 'd',
+				instrument: SAMPLER_INSTRUMENT_ID,
+				sampler: kit
+			})
+		);
+		expect(state.tracks[0].instrument).toBe(SAMPLER_INSTRUMENT_ID);
+		expect(state.tracks[0].sampler?.pads).toHaveLength(2);
+	});
+
+	it('keeps the kit when another instrument is chosen', () => {
+		let state = applyEvent(
+			withTrack(),
+			event(ev.TRACK_INSTRUMENT_SET, { id: 'd', instrument: SAMPLER_INSTRUMENT_ID, sampler: kit })
+		);
+		state = applyEvent(state, event(ev.TRACK_INSTRUMENT_SET, { id: 'd', instrument: null }));
+		expect(state.tracks[0].instrument).toBeNull();
+		expect(state.tracks[0].sampler).toEqual(kit);
+	});
+
+	it('replaces only the edited pad', () => {
+		let state = applyEvent(
+			withTrack(),
+			event(ev.TRACK_INSTRUMENT_SET, { id: 'd', instrument: SAMPLER_INSTRUMENT_ID, sampler: kit })
+		);
+		const { missing: _missing, ...settings } = samplerPad(37);
+		state = applyEvent(
+			state,
+			event(ev.SAMPLER_PAD_SET, {
+				track_id: 'd',
+				pad: 1,
+				settings: { ...settings, sample_path: 'gone.wav', gain_db: -6 },
+				missing: true
+			})
+		);
+		const pads = state.tracks[0].sampler!.pads;
+		expect(pads[0]).toEqual(kit.pads[0]);
+		expect(pads[1]).toMatchObject({ sample_path: 'gone.wav', gain_db: -6, missing: true });
+	});
+
+	it('reads the kit from a snapshot', () => {
+		const state = projectFromSnapshot({
+			...emptyProjectState(),
+			tracks: [
+				{
+					id: 'd',
+					name: 'Drums',
+					volume: 80,
+					pan: 0,
+					muted: false,
+					solo: false,
+					clips: [],
+					effects: [],
+					modulators: [],
+					mod_routes: [],
+					midi_notes: [],
+					midi_clips: [],
+					automation_lanes: [],
+					instrument: SAMPLER_INSTRUMENT_ID,
+					sampler: kit
+				}
+			]
+		} as Project);
+		expect(state.tracks[0].sampler).toEqual(kit);
 	});
 });

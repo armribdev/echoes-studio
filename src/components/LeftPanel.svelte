@@ -37,6 +37,7 @@
 					compact
 					trackId={$selectedTrack.trackId}
 					instrument={$selectedTrack.instrument}
+					sampler={$selectedTrack.sampler}
 					trackName={$selectedTrack.trackName}
 					trackColor={$selectedTrack.trackColor}
 				/>

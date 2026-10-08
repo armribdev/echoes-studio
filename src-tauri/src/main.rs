@@ -13,6 +13,7 @@ mod midi_recording;
 mod plugin_formats;
 mod plugin_system;
 mod project;
+mod sampler_kit;
 mod windows_theme;
 
 use engine_gateway::api::{

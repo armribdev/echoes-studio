@@ -183,6 +183,7 @@
 			trackName: t.name,
 			trackColor: colorForTrack(t.id, t.color),
 			instrument: t.instrument ?? null,
+			sampler: t.sampler ?? null,
 			effects: t.effects ?? [],
 			modulators: t.modulators ?? [],
 			mod_routes: t.mod_routes ?? []
@@ -281,12 +282,7 @@
 	{#if hoveredNodeId !== null && snapshot}
 		{@const node = layout.nodes.find((n) => n.id === hoveredNodeId)}
 		{#if node}
-			<div
-				class="tooltip"
-				role="tooltip"
-				tabindex="-1"
-				aria-hidden="true"
-			>
+			<div class="tooltip" role="tooltip" tabindex="-1" aria-hidden="true">
 				{node.dto.label}{node.dto.summary ? ` · ${node.dto.summary}` : ''}
 			</div>
 		{/if}

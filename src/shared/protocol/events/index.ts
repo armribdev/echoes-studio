@@ -16,7 +16,7 @@
  * All events arrive via Tauri's event channel named `"engine-event"`.
  */
 
-import type { Clip } from '../../../types/global';
+import type { Clip, SamplerKit, SamplerPad } from '../../../types/global';
 
 // ── Event type constants ──────────────────────────────────────────────────────
 
@@ -29,6 +29,7 @@ export const ev = {
 	TRACK_SOLOED: 'TRACK_SOLOED',
 	TRACK_INSTRUMENT_SET: 'TRACK_INSTRUMENT_SET',
 	TRACK_INPUT_SET: 'TRACK_INPUT_SET',
+	SAMPLER_PAD_SET: 'SAMPLER_PAD_SET',
 	CLIP_ADDED: 'CLIP_ADDED',
 	CLIP_MOVED: 'CLIP_MOVED',
 	CLIP_MOVED_TO_TRACK: 'CLIP_MOVED_TO_TRACK',
@@ -99,6 +100,21 @@ export interface TrackCreatedPayload {
 	id: string;
 	name: string;
 	instrument?: string | null;
+	sampler?: SamplerKit | null;
+}
+
+export interface TrackInstrumentSetPayload {
+	id: string;
+	instrument: string | null;
+	/** The track's kit after the change (created when the sampler is first chosen). */
+	sampler?: SamplerKit | null;
+}
+
+export interface SamplerPadSetPayload {
+	track_id: string;
+	pad: number;
+	settings: Omit<SamplerPad, 'missing'>;
+	missing: boolean;
 }
 
 export interface TrackDeletedPayload {

@@ -1,4 +1,5 @@
 use crate::audio_clip::AudioClip;
+use crate::sampler_kit::{decode_pad_sample, SamplerKit, SamplerKitDto, SAMPLER_INSTRUMENT_ID};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -483,6 +484,8 @@ pub struct AppTrack {
     /// bit-identical).  When `Some(device_id)`, the compiler instantiates that
     /// plugin as the instrument node's generator.
     pub instrument: Option<String>,
+    /// Built-in sampler pads (ADR-028), kept when another instrument is chosen.
+    pub sampler: Option<SamplerKit>,
     /// Plugin output mixed into this track's input, ahead of its effects.
     /// `None` for every project saved before multi-out existed (C-4).
     pub input_source: Option<PluginOutputSource>,
@@ -787,6 +790,7 @@ impl AppProject {
                         })
                         .collect(),
                     instrument: t.instrument.clone(),
+                    sampler: t.sampler.clone(),
                     input_source: t.input_source.clone(),
                     automation_lanes: t.automation_lanes.clone(),
                     color: t.color.clone(),
@@ -829,6 +833,10 @@ impl AppProject {
                 });
             }
             let track_id = tf.id.unwrap_or_else(generate_id);
+            let mut sampler = tf.sampler;
+            if let Some(kit) = &mut sampler {
+                kit.load_samples(decode_pad_sample);
+            }
             let midi_clips = tf
                 .midi_clips
                 .into_iter()
@@ -854,6 +862,7 @@ impl AppProject {
                 midi_notes: tf.midi_notes,
                 midi_clips,
                 instrument: tf.instrument,
+                sampler,
                 input_source: tf.input_source,
                 automation_lanes: tf.automation_lanes,
                 color: tf.color,
@@ -909,9 +918,9 @@ fn map_legacy_plugin_state(
                     .or_insert_with(|| e.id.clone());
             }
         }
-        if let Some(device_id) = &t.instrument {
+        if let Some(device_id) = t.plugin_instrument() {
             by_device
-                .entry(device_id.as_str())
+                .entry(device_id)
                 .or_insert_with(|| format!("instrument:{}", t.id));
         }
     }
@@ -926,6 +935,25 @@ fn map_legacy_plugin_state(
 }
 
 impl AppTrack {
+    /// The chosen instrument when it is a plugin (not a built-in device).
+    pub fn plugin_instrument(&self) -> Option<&str> {
+        self.instrument
+            .as_deref()
+            .filter(|id| *id != SAMPLER_INSTRUMENT_ID)
+    }
+
+    pub fn uses_sampler(&self) -> bool {
+        self.instrument.as_deref() == Some(SAMPLER_INSTRUMENT_ID)
+    }
+
+    /// Choosing the sampler gives the track a default kit the first time.
+    pub fn set_instrument(&mut self, instrument: Option<String>) {
+        self.instrument = instrument;
+        if self.uses_sampler() && self.sampler.is_none() {
+            self.sampler = Some(SamplerKit::default());
+        }
+    }
+
     pub fn to_dto(&self) -> TrackDto {
         TrackDto {
             id: self.id.clone(),
@@ -951,6 +979,7 @@ impl AppTrack {
                 })
                 .collect(),
             instrument: self.instrument.clone(),
+            sampler: self.sampler.as_ref().map(SamplerKit::to_dto),
             input_source: self.input_source.clone(),
             automation_lanes: self.automation_lanes.clone(),
             color: self.color.clone(),
@@ -1299,6 +1328,8 @@ pub struct TrackFile {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub instrument: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sampler: Option<SamplerKit>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub input_source: Option<PluginOutputSource>,
     #[serde(default)]
     pub automation_lanes: Vec<AutomationLane>,
@@ -1369,6 +1400,7 @@ pub struct TrackDto {
     pub midi_notes: Vec<MidiNote>,
     pub midi_clips: Vec<MidiClipDto>,
     pub instrument: Option<String>,
+    pub sampler: Option<SamplerKitDto>,
     pub input_source: Option<PluginOutputSource>,
     pub automation_lanes: Vec<AutomationLane>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1420,6 +1452,7 @@ mod tests {
                 notes: vec![],
             }],
             instrument: None,
+            sampler: None,
             input_source: None,
             automation_lanes: vec![],
             color: None,
@@ -1482,6 +1515,7 @@ mod tests {
         let tf: TrackFile = serde_json::from_str(json).expect("deserialize legacy track");
         assert_eq!(tf.instrument, None);
         assert_eq!(tf.input_source, None);
+        assert!(tf.sampler.is_none());
     }
 
     /// A track's plugin-output input survives a save to JSON and a reload.
@@ -1526,6 +1560,7 @@ mod tests {
             midi_notes: vec![],
             midi_clips: vec![],
             instrument: Some("clap://surge.dll?org.surge-synth.surge-xt".into()),
+            sampler: None,
             input_source: None,
             automation_lanes: vec![],
             color: None,
@@ -1537,6 +1572,28 @@ mod tests {
             restored.tracks[0].instrument.as_deref(),
             Some("clap://surge.dll?org.surge-synth.surge-xt")
         );
+    }
+
+    /// Pad settings survive save → load; a vanished sample file leaves the
+    /// pad silent and reported instead of failing the whole project (ADR-028).
+    #[test]
+    fn sampler_kit_round_trips_and_tolerates_a_missing_file() {
+        let mut project = AppProject::new();
+        let mut track = track_with_plugin("drums", "fx", "clap:any");
+        track.effects.clear();
+        track.set_instrument(Some(SAMPLER_INSTRUMENT_ID.into()));
+        let pad = &mut track.sampler.as_mut().unwrap().pads[1];
+        pad.sample_path = Some("Z:/nowhere/snare.wav".into());
+        pad.tune_semitones = -2.5;
+        project.tracks.push(track);
+
+        let restored = AppProject::from_file(project.to_file()).expect("from_file");
+        let track = &restored.tracks[0];
+        assert!(track.uses_sampler());
+        assert_eq!(track.plugin_instrument(), None);
+        let pad = &track.sampler.as_ref().unwrap().pads[1];
+        assert_eq!(pad.tune_semitones, -2.5);
+        assert!(pad.is_missing());
     }
 
     fn track_with_plugin(track_id: &str, effect_id: &str, plugin_id: &str) -> AppTrack {
@@ -1565,6 +1622,7 @@ mod tests {
             midi_notes: vec![],
             midi_clips: vec![],
             instrument: None,
+            sampler: None,
             input_source: None,
             automation_lanes: vec![],
             color: None,

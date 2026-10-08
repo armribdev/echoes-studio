@@ -3,7 +3,7 @@
 	import { engineProject } from '../frontend/store/engineStore';
 	import { setTrackInput } from '../frontend/commands/dispatcher';
 	import { pluginPlacements } from '../frontend/modulation/targets';
-	import { plugins, pluginDisplayName, unavailablePlugins } from '../stores/plugins';
+	import { instrumentDisplayName, plugins, unavailablePlugins } from '../stores/plugins';
 	import { notify } from '../stores/status';
 	import type { PluginOutputInfo, PluginOutputSource } from '../types/global';
 
@@ -27,9 +27,7 @@
 
 	/** Every plugin this track could listen to: any track's instrument, other tracks' effects (an own effect would loop). */
 	$: candidates = $engineProject.tracks.flatMap((t) => {
-		const instrumentName = t.instrument
-			? ($plugins.find((p) => p.id === t.instrument)?.name ?? pluginDisplayName(t.instrument))
-			: null;
+		const instrumentName = instrumentDisplayName($plugins, t.instrument);
 		const effects = t.id === trackId ? [] : t.effects;
 		return pluginPlacements(t.id, effects, instrumentName).map((placement) => ({
 			...placement,

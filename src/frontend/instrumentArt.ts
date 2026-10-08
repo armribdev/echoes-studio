@@ -1,3 +1,5 @@
+import { isSamplerInstrument } from '../shared/project/sampler';
+
 export type InstrumentArtKind =
 	| 'keys'
 	| 'synth'
@@ -27,6 +29,7 @@ export function instrumentArtKind(
 	displayName?: string | null
 ): InstrumentArtKind {
 	if (!instrumentId) return 'synth';
+	if (isSamplerInstrument(instrumentId)) return 'drums';
 	const haystack = `${instrumentId} ${displayName ?? ''}`;
 	for (const { kind, re } of KIND_PATTERNS) {
 		if (re.test(haystack)) return kind;

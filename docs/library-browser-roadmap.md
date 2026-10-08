@@ -195,6 +195,10 @@ or offline render.
 | Evaluate **Devices** source merge — go/no-go ADR                        | Merging devices without decision     |
 | Optional grid results; shortcuts cleanup (Loop key restored)            | —                                    |
 
+Prerequisite landed 2026-10-09: the built-in drum sampler (ADR-028) — a
+`one_shot` dragged from the library onto a pad loads it. Still open for the
+hybrid `drums` source: factory one-shot sounds to list next to drum MIDI.
+
 ### Exit criteria
 
 - [ ] Power user can rebuild a personal “Drums for this genre” source in &lt; 1 min

@@ -34,6 +34,9 @@ use crate::audio_graph::graph::{instrument_instance_key, AudioGraph, NodeKind};
 use crate::audio_graph::live_params::LiveParams;
 use crate::audio_graph::midi::MidiNoteSnapshot;
 use crate::audio_graph::node::{AudioNode, NodeId, PortId, PortKind, PrepareContext};
+use crate::audio_graph::nodes::instrument::{InstrumentDevice, SilentInstrument};
+use crate::audio_graph::nodes::poly_synth::PolySynth;
+use crate::audio_graph::nodes::sampler::Sampler;
 use crate::audio_graph::plugin_params::{parse_plugin_param_name, PluginParamControl};
 use crate::plugin_system::PluginHost;
 use crate::project::{AppProject, AppTrack};
@@ -394,7 +397,7 @@ impl GraphCompiler {
                         .tracks
                         .iter()
                         .find(|t| &t.id == track_id)
-                        .and_then(|t| t.instrument.as_ref())
+                        .and_then(|t| t.plugin_instrument())
                         .is_some();
                     if has_plugin {
                         active_keys.insert(instrument_instance_key(track_id));
@@ -683,7 +686,7 @@ impl GraphCompiler {
                     .tracks
                     .iter()
                     .find(|track| &track.id == track_id)
-                    .filter(|track| track.instrument.is_some())
+                    .filter(|track| track.plugin_instrument().is_some())
                     .map(|_| (node.id, instrument_instance_key(track_id))),
                 _ => None,
             })
@@ -709,6 +712,34 @@ impl GraphCompiler {
         }
     }
 
+    /// Built-in `PolySynth` when nothing is chosen.  A chosen plugin that fails
+    /// to load stays silent (the host reports it as unavailable) rather than
+    /// being swapped for another sound.
+    fn build_instrument_device(
+        track: Option<&AppTrack>,
+        track_id: &str,
+        plugin_host: &mut PluginHost,
+    ) -> Box<dyn InstrumentDevice> {
+        let Some(track) = track else {
+            return Box::new(PolySynth::new());
+        };
+        if track.uses_sampler() {
+            let pads = track.sampler.as_ref().map_or(&[][..], |kit| &kit.pads);
+            return Box::new(Sampler::new(pads));
+        }
+        let Some(device_id) = track.plugin_instrument() else {
+            return Box::new(PolySynth::new());
+        };
+        let instance_key = instrument_instance_key(track_id);
+        match plugin_host.instantiate_instrument(&instance_key, device_id) {
+            Ok(device) => device,
+            Err(e) => {
+                eprintln!("[audio] Instrument '{device_id}' unavailable ({e}) — track silent");
+                Box::new(SilentInstrument)
+            }
+        }
+    }
+
     fn build_node(
         kind: &NodeKind,
         project: &AppProject,
@@ -722,37 +753,14 @@ impl GraphCompiler {
 
         match kind {
             NodeKind::Instrument { track_id } => {
-                use crate::audio_graph::nodes::instrument::{
-                    InstrumentDevice, InstrumentNode, SilentInstrument,
-                };
-                use crate::audio_graph::nodes::poly_synth::PolySynth;
+                use crate::audio_graph::nodes::instrument::InstrumentNode;
 
-                let mut instrument_id: Option<&str> = None;
-
-                let notes = if let Some(track) = project.tracks.iter().find(|t| &t.id == track_id) {
-                    instrument_id = track.instrument.as_deref();
-                    bake_track_midi_notes(track, engine_sample_rate)
-                } else {
-                    Vec::new()
-                };
+                let track = project.tracks.iter().find(|t| &t.id == track_id);
+                let notes = track
+                    .map(|track| bake_track_midi_notes(track, engine_sample_rate))
+                    .unwrap_or_default();
                 let notes = live_params.install_track_notes(track_id, notes);
-
-                // Phase 5c: CLAP instrument, built-in PolySynth when none is chosen.
-                // A chosen plugin that fails to load stays silent (the host reports
-                // it as unavailable) rather than being swapped for another sound.
-                let instr_key = instrument_instance_key(track_id);
-                let device: Box<dyn InstrumentDevice> = match instrument_id {
-                    Some(device_id) => {
-                        match plugin_host.instantiate_instrument(&instr_key, device_id) {
-                            Ok(dev) => dev,
-                            Err(e) => {
-                                eprintln!("[audio] Instrument '{device_id}' unavailable ({e}) — track silent");
-                                Box::new(SilentInstrument)
-                            }
-                        }
-                    }
-                    None => Box::new(PolySynth::new()),
-                };
+                let device = Self::build_instrument_device(track, track_id, plugin_host);
 
                 let mut node = InstrumentNode::from_publisher(notes, device);
                 if live {
@@ -1093,6 +1101,7 @@ mod tests {
             midi_notes: vec![],
             midi_clips: vec![],
             instrument: None,
+            sampler: None,
             input_source: None,
             automation_lanes: vec![],
             color: None,
@@ -1179,6 +1188,7 @@ mod tests {
                 notes: vec![],
             }],
             instrument: Some("clap:synth".into()),
+            sampler: None,
             input_source: None,
             automation_lanes: vec![AutomationLane {
                 id: "lane".into(),

@@ -257,6 +257,7 @@ mod tests {
             midi_notes: vec![],
             midi_clips: vec![],
             instrument: None,
+            sampler: None,
             input_source: None,
             automation_lanes: vec![],
             color: None,

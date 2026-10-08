@@ -11,7 +11,12 @@
  *   await dispatch(command);
  */
 
-import type { AutomationClip, InterpolationMode, PluginOutputSource } from '../../../types/global';
+import type {
+	AutomationClip,
+	InterpolationMode,
+	PluginOutputSource,
+	SamplerPad
+} from '../../../types/global';
 
 // ── Command type constants ────────────────────────────────────────────────────
 
@@ -31,6 +36,7 @@ export const cmd = {
 	SOLO_TRACK: 'SOLO_TRACK',
 	SET_TRACK_INSTRUMENT: 'SET_TRACK_INSTRUMENT',
 	SET_TRACK_INPUT: 'SET_TRACK_INPUT',
+	SET_SAMPLER_PAD: 'SET_SAMPLER_PAD',
 	ADD_CLIP: 'ADD_CLIP',
 	MOVE_CLIP: 'MOVE_CLIP',
 	REMOVE_CLIP: 'REMOVE_CLIP',
@@ -128,6 +134,15 @@ export interface SoloTrackPayload {
 export interface SetTrackInstrumentPayload {
 	track_id: string;
 	instrument: string | null;
+}
+
+/** Pad settings to change; absent fields stay unchanged, `sample_path: null` empties the pad. */
+export type SamplerPadPatch = Partial<Omit<SamplerPad, 'missing'>>;
+
+export interface SetSamplerPadPayload {
+	track_id: string;
+	pad: number;
+	patch: SamplerPadPatch;
 }
 
 export interface SetTrackInputPayload {

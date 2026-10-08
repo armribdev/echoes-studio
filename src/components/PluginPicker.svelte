@@ -4,6 +4,7 @@
 	import {
 		BUILTIN_EFFECT_PLUGINS,
 		BUILTIN_INSTRUMENT_PLUGIN,
+		BUILTIN_SAMPLER_PLUGIN,
 		plugins,
 		pluginsLoading,
 		rescanPlugins
@@ -28,7 +29,7 @@
 		mode === 'effect'
 			? BUILTIN_EFFECT_PLUGINS
 			: mode === 'instrument'
-				? [BUILTIN_INSTRUMENT_PLUGIN]
+				? [BUILTIN_INSTRUMENT_PLUGIN, BUILTIN_SAMPLER_PLUGIN]
 				: [];
 
 	$: scanned = $plugins
@@ -109,12 +110,7 @@
 			</button>
 		</div>
 
-		<input
-			class="search"
-			type="text"
-			placeholder="Rechercher…"
-			bind:value={query}
-		/>
+		<input class="search" type="text" placeholder="Rechercher…" bind:value={query} />
 
 		<div class="list" role="listbox">
 			{#if filtered.length === 0}
