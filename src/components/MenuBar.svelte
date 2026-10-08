@@ -6,22 +6,18 @@
 	import { play, pause, stop, seek } from '../frontend/commands/dispatcher';
 	import { leftPanel } from '../stores/leftPanel';
 	import { rightPanel } from '../stores/rightPanel';
+	import { projectSettingsPanelOpen } from '../stores/project';
+	import { shortcutLabels } from '../frontend/shortcuts/label';
 	import { isMidiRecording } from '../stores/midiRecording';
-	import { isAudioRecording, inputMonitorEnabled } from '../stores/audioRecording';
-	import { metronomeEnabled, countInEnabled } from '../stores/metronome';
+	import { isAudioRecording } from '../stores/audioRecording';
+	import { metronomeEnabled } from '../stores/metronome';
 	import { toggleRecording } from '../frontend/audioRecording';
-	import { setInputMonitorEnabled } from '../lib/audioRecordingBackend';
 	import Icon from './Icon.svelte';
+	import RecordOptionsMenu from './RecordOptionsMenu.svelte';
 
 	$: isRecording = $isMidiRecording || $isAudioRecording;
 
-	function toggleMonitor() {
-		inputMonitorEnabled.update((enabled) => {
-			const next = !enabled;
-			setInputMonitorEnabled(next).catch(console.error);
-			return next;
-		});
-	}
+	let recordOptionsOpen = false;
 
 	function togglePlayPause() {
 		if ($transport.isPlaying) {
@@ -36,6 +32,15 @@
 			.then(() => stop())
 			.catch(console.error);
 	}
+
+	function formatBarBeat(totalBeats: number, beatsPerBar: number): string {
+		const bar = Math.floor(totalBeats / beatsPerBar) + 1;
+		const beat = Math.floor(totalBeats % beatsPerBar) + 1;
+		return `${bar}.${beat}`;
+	}
+
+	$: loopStartLabel = formatBarBeat($loopRegion.startBeat, $tempo.numerator);
+	$: loopEndLabel = formatBarBeat($loopRegion.endBeat, $tempo.numerator);
 
 	// Live position in bar.beat format
 	let barStr = '001';
@@ -99,7 +104,7 @@
 			<button
 				class="btn btn--play"
 				on:click={togglePlayPause}
-				title={$transport.isPlaying ? $t('menuBar.pause') : $t('menuBar.play')}
+				title={`${$transport.isPlaying ? $t('menuBar.pause') : $t('menuBar.play')} (${$shortcutLabels('transport.playPause')})`}
 			>
 				{#if $transport.isPlaying}
 					<svg
@@ -124,54 +129,54 @@
 					</svg>
 				{/if}
 			</button>
-			<button
-				class="btn btn--record"
-				class:active={isRecording}
-				on:click={() => toggleRecording().catch(console.error)}
-				title={$t('menuBar.record')}
-				aria-pressed={isRecording}
-			>
-				<svg
-					width="12"
-					height="12"
-					viewBox="0 0 12 12"
-					fill="none"
-					xmlns="http://www.w3.org/2000/svg"
+			<div class="split-button">
+				<button
+					class="btn btn--record"
+					class:active={isRecording}
+					on:click={() => toggleRecording().catch(console.error)}
+					title={$t('menuBar.record')}
+					aria-pressed={isRecording}
 				>
-					<circle cx="6" cy="6" r="5" fill="currentColor" />
-				</svg>
-			</button>
-			<button
-				class="btn btn--toggle"
-				class:active={$inputMonitorEnabled}
-				on:click={toggleMonitor}
-				title={$t('menuBar.monitorTitle')}
-				aria-label={$t('menuBar.monitor')}
-				aria-pressed={$inputMonitorEnabled}
-			>
-				<svg
-					width="14"
-					height="13"
-					viewBox="0 0 14 13"
-					fill="none"
-					xmlns="http://www.w3.org/2000/svg"
+					<svg
+						width="12"
+						height="12"
+						viewBox="0 0 12 12"
+						fill="none"
+						xmlns="http://www.w3.org/2000/svg"
+					>
+						<circle cx="6" cy="6" r="5" fill="currentColor" />
+					</svg>
+				</button>
+				<button
+					class="btn btn--chevron"
+					on:click={() => (recordOptionsOpen = true)}
+					title={$t('menuBar.recordOptions')}
+					aria-label={$t('menuBar.recordOptions')}
+					aria-haspopup="menu"
+					aria-expanded={recordOptionsOpen}
 				>
-					<path
-						d="M2 4.5H4.5L7.5 2V11L4.5 8.5H2V4.5Z"
-						stroke="currentColor"
-						stroke-width="1.2"
-						stroke-linejoin="round"
-					/>
-					<path
-						d="M9.2 4.2C10.1 5.1 10.1 7.9 9.2 8.8"
-						stroke="currentColor"
-						stroke-width="1.2"
-						stroke-linecap="round"
-					/>
-				</svg>
-			</button>
+					<svg
+						width="8"
+						height="5"
+						viewBox="0 0 8 5"
+						fill="none"
+						xmlns="http://www.w3.org/2000/svg"
+					>
+						<path
+							d="M1 1L4 4L7 1"
+							stroke="currentColor"
+							stroke-width="1.2"
+							stroke-linecap="round"
+							stroke-linejoin="round"
+						/>
+					</svg>
+				</button>
+				{#if recordOptionsOpen}
+					<RecordOptionsMenu on:close={() => (recordOptionsOpen = false)} />
+				{/if}
+			</div>
 			<button
-				class="btn btn--toggle"
+				class="btn btn--toggle btn--option"
 				class:active={$metronomeEnabled}
 				on:click={() => metronomeEnabled.update((enabled) => !enabled)}
 				title={$t('menuBar.metronome')}
@@ -194,31 +199,6 @@
 					<path d="M6 9L8.6 3.6" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" />
 				</svg>
 			</button>
-			<button
-				class="btn btn--toggle"
-				class:active={$countInEnabled}
-				on:click={() => countInEnabled.update((enabled) => !enabled)}
-				title={$t('menuBar.countInTitle')}
-				aria-label={$t('menuBar.countIn')}
-				aria-pressed={$countInEnabled}
-			>
-				<svg
-					width="14"
-					height="13"
-					viewBox="0 0 14 13"
-					fill="none"
-					xmlns="http://www.w3.org/2000/svg"
-				>
-					<circle cx="7" cy="6.5" r="5.6" stroke="currentColor" stroke-width="1.2" />
-					<path
-						d="M6 4.6L7.4 3.9V9.1"
-						stroke="currentColor"
-						stroke-width="1.2"
-						stroke-linecap="round"
-						stroke-linejoin="round"
-					/>
-				</svg>
-			</button>
 		</div>
 
 		<div class="sep"></div>
@@ -231,6 +211,32 @@
 				<span class="pos-beat">{beatStr}</span>
 			</div>
 		</div>
+
+		<div class="sep"></div>
+
+		<button
+			class="tempo"
+			on:click={() => projectSettingsPanelOpen.set(true)}
+			title={$t('menuBar.tempoTitle')}
+		>
+			<span class="ctrl-label">{$t('menuBar.tempo')}</span>
+			<span class="tempo-display">
+				<span class="tempo-bpm">{$tempo.bpm}</span>
+				<span class="tempo-signature">{$tempo.numerator}/{$tempo.denominator}</span>
+			</span>
+		</button>
+
+		<div class="loop-range" class:loop-range--hidden={!$loopRegion.enabled}>
+			<div class="sep"></div>
+			<div class="position">
+				<span class="ctrl-label">{$t('menuBar.loopLabel')}</span>
+				<span class="tempo-display">
+					<span class="tempo-bpm">{loopStartLabel}</span>
+					<span class="tempo-signature">→</span>
+					<span class="tempo-bpm">{loopEndLabel}</span>
+				</span>
+			</div>
+		</div>
 	</div>
 
 	<div class="zone zone--right">
@@ -238,7 +244,7 @@
 			class="btn btn--panel-toggle"
 			class:active={$rightPanel.open}
 			on:click={() => rightPanel.toggle()}
-			title={$t('menuBar.libraryTitle')}
+			title={`${$t('menuBar.libraryTitle')} (${$shortcutLabels('library.toggle')})`}
 			aria-label={$t('menuBar.library')}
 		>
 			<Icon name="library" size={14} />
@@ -285,7 +291,7 @@
 	.transport {
 		display: flex;
 		align-items: center;
-		gap: 2px;
+		gap: 4px;
 	}
 
 	.btn {
@@ -312,15 +318,65 @@
 		&--loop.active,
 		&--toggle.active {
 			color: #4d94ff;
+			background: rgba(77, 148, 255, 0.15);
+		}
+
+		&--play,
+		&--record,
+		&--chevron {
+			width: 38px;
+			height: 32px;
+			border-radius: $radius-sm;
+			border: 1px solid $border-subtle;
+			background: $surface-2;
+
+			&:hover {
+				background: $surface-3;
+				border-color: rgba(255, 255, 255, 0.16);
+			}
+		}
+
+		&--play {
+			color: $text-color;
+		}
+
+		&--option {
+			width: 24px;
+			height: 24px;
+
+			svg {
+				width: 11px;
+				height: auto;
+			}
+		}
+
+		&--chevron {
+			width: 16px;
+			border-radius: 0 $radius-sm $radius-sm 0;
 		}
 
 		&--record {
+			width: 34px;
+			border-right: none;
+			border-radius: $radius-sm 0 0 $radius-sm;
+
 			&.active {
 				color: $color-error;
+				background: rgba(255, 65, 54, 0.15);
 			}
 			&:hover {
 				color: #ff6b5f;
 			}
+		}
+	}
+
+	.split-button {
+		position: relative;
+		display: flex;
+		align-items: center;
+
+		+ .btn--option {
+			margin-left: 6px;
 		}
 	}
 
@@ -400,5 +456,57 @@
 	.pos-beat {
 		font-size: 21px;
 		color: rgba(247, 247, 249, 0.65);
+	}
+
+	.tempo {
+		display: flex;
+		flex-direction: column;
+		gap: 2px;
+		padding: 2px 6px;
+		margin: -2px -6px;
+		background: none;
+		border: none;
+		border-radius: 4px;
+		cursor: pointer;
+		text-align: left;
+		transition: background 0.1s;
+
+		&:hover {
+			background: rgba(255, 255, 255, 0.08);
+		}
+
+		&:focus-visible {
+			outline: 2px solid $accent-color;
+			outline-offset: 2px;
+		}
+	}
+
+	.tempo-display {
+		display: flex;
+		align-items: baseline;
+		gap: 6px;
+		font-family: $font-mono;
+		line-height: 1;
+	}
+
+	.tempo-bpm {
+		font-size: 16px;
+		font-weight: 500;
+		color: $text-color;
+	}
+
+	.tempo-signature {
+		font-size: 12px;
+		color: rgba(247, 247, 249, 0.65);
+	}
+
+	.loop-range {
+		display: flex;
+		align-items: center;
+		gap: 12px;
+
+		&--hidden {
+			visibility: hidden;
+		}
 	}
 </style>
