@@ -23,7 +23,7 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
 
 use crate::audio_graph::live_params::LiveParams;
-use crate::audio_graph::midi::MidiLiveInputMessage;
+use crate::audio_graph::midi::{MidiEventKind, MidiLiveInputMessage};
 use crate::midi_recording::{MidiRecorder, MIDI_RECORDING_NOTE_EVENT};
 use crate::project::AppState;
 
@@ -189,7 +189,7 @@ impl MidiInputRegistry {
                 move |_timestamp, message, _| {
                     // First, before any lock: the stamp must be the arrival time.
                     let received_at = live_params.live_input_clock.now_nanos();
-                    let Some(parsed) = parse_note_message(message, received_at) else {
+                    let Some(parsed) = parse_live_message(message, received_at) else {
                         return;
                     };
                     let track_id = armed_track_id.lock().ok().and_then(|guard| guard.clone());
@@ -283,64 +283,87 @@ fn local_control_messages(on: bool) -> impl Iterator<Item = [u8; 3]> {
     (0..16u8).map(move |channel| [CONTROL_CHANGE | channel, LOCAL_CONTROL, value])
 }
 
-/// Parse a raw MIDI message into a note event. Only Note On / Note Off are
-/// handled — CC, pitch bend, program change, etc. are out of scope for this
-/// iteration (ADR-022 follow-ups). A Note On with velocity 0 is a Note Off
-/// per the MIDI spec.
-fn parse_note_message(message: &[u8], received_at: u64) -> Option<MidiLiveInputMessage> {
-    let &[status, pitch, velocity] = message else {
+/// Parse a raw MIDI message into a live event: notes, plus pitch bend, control
+/// change and aftertouch for plugin instruments. The channel is dropped (notes
+/// play on one channel), program change and 2-byte messages are ignored. A
+/// Note On with velocity 0 is a Note Off per the MIDI spec.
+fn parse_live_message(message: &[u8], received_at: u64) -> Option<MidiLiveInputMessage> {
+    let &[status, data1, data2] = message else {
         return None;
     };
-    match status & 0xF0 {
-        0x90 if velocity > 0 => Some(MidiLiveInputMessage {
-            note_on: true,
-            pitch,
-            velocity,
-            received_at,
-        }),
-        0x90 | 0x80 => Some(MidiLiveInputMessage {
-            note_on: false,
-            pitch,
-            velocity: 0,
-            received_at,
-        }),
-        _ => None,
-    }
+    let message_type = status & 0xF0;
+    let kind = match message_type {
+        0x90 if data2 > 0 => MidiEventKind::NoteOn {
+            pitch: data1,
+            velocity: data2,
+        },
+        0x90 | 0x80 => MidiEventKind::NoteOff { pitch: data1 },
+        0xA0 | 0xB0 | 0xE0 => MidiEventKind::Control {
+            message: [message_type, data1, data2],
+        },
+        _ => return None,
+    };
+    Some(MidiLiveInputMessage { kind, received_at })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    fn parsed_kind(message: &[u8]) -> Option<MidiEventKind> {
+        parse_live_message(message, 0).map(|parsed| parsed.kind)
+    }
+
     #[test]
     fn note_on_with_velocity_parses_as_note_on() {
-        let message = parse_note_message(&[0x90, 60, 100], 0).unwrap();
-        assert!(message.note_on);
-        assert_eq!(message.pitch, 60);
-        assert_eq!(message.velocity, 100);
+        assert_eq!(
+            parsed_kind(&[0x90, 60, 100]),
+            Some(MidiEventKind::NoteOn {
+                pitch: 60,
+                velocity: 100
+            })
+        );
     }
 
     #[test]
     fn note_on_with_zero_velocity_parses_as_note_off() {
-        let message = parse_note_message(&[0x90, 60, 0], 0).unwrap();
-        assert!(!message.note_on);
+        assert_eq!(
+            parsed_kind(&[0x90, 60, 0]),
+            Some(MidiEventKind::NoteOff { pitch: 60 })
+        );
     }
 
     #[test]
     fn note_off_status_parses_as_note_off() {
-        let message = parse_note_message(&[0x80, 60, 64], 0).unwrap();
-        assert!(!message.note_on);
+        assert_eq!(
+            parsed_kind(&[0x80, 60, 64]),
+            Some(MidiEventKind::NoteOff { pitch: 60 })
+        );
     }
 
     #[test]
-    fn other_status_bytes_are_ignored() {
-        // Control change (0xB0) — out of scope for this iteration.
-        assert!(parse_note_message(&[0xB0, 7, 127], 0).is_none());
+    fn controls_parse_on_channel_one() {
+        for (raw, expected) in [
+            ([0xB3, 1, 90], [0xB0, 1, 90]),
+            ([0xE5, 0x00, 0x60], [0xE0, 0x00, 0x60]),
+            ([0xA0, 60, 40], [0xA0, 60, 40]),
+        ] {
+            assert_eq!(
+                parsed_kind(&raw),
+                Some(MidiEventKind::Control { message: expected })
+            );
+        }
+    }
+
+    #[test]
+    fn program_change_and_system_messages_are_ignored() {
+        assert!(parsed_kind(&[0xC0, 5]).is_none());
+        assert!(parsed_kind(&[0xF2, 0, 0]).is_none());
     }
 
     #[test]
     fn wrong_length_messages_are_ignored() {
-        assert!(parse_note_message(&[0x90, 60], 0).is_none());
+        assert!(parsed_kind(&[0x90, 60]).is_none());
     }
 
     #[test]

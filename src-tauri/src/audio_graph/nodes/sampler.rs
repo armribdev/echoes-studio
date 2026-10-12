@@ -276,6 +276,7 @@ impl Sampler {
             match events[next].kind {
                 MidiEventKind::NoteOn { pitch, velocity } => self.note_on(pitch, velocity),
                 MidiEventKind::NoteOff { pitch } => self.note_off(pitch),
+                MidiEventKind::Control { .. } => {}
             }
             next += 1;
         }

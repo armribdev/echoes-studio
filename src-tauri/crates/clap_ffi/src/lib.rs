@@ -642,6 +642,8 @@ pub const CLAP_EVENT_PARAM_MOD: u16 = 6;
 /// stops dragging a control in the plugin window (`clap_event_param_gesture`).
 pub const CLAP_EVENT_PARAM_GESTURE_BEGIN: u16 = 7;
 pub const CLAP_EVENT_PARAM_GESTURE_END: u16 = 8;
+/// `CLAP_EVENT_MIDI` — a raw 3-byte MIDI 1.0 message (`clap_event_midi`).
+pub const CLAP_EVENT_MIDI: u16 = 10;
 pub const CLAP_CORE_EVENT_SPACE: u16 = 0;
 
 #[repr(C)]
@@ -671,6 +673,16 @@ pub struct ClapEventNote {
     pub key: i16, // 0..127
     pub _pad: i16,
     pub velocity: f64, // 0..1
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct ClapEventMidi {
+    pub header: ClapEventHeader,
+    pub port_index: u16,
+    pub data: [u8; 3],
+    /// Spells out the C tail padding so `write_bytes` never copies uninitialised bytes.
+    pub _pad: [u8; 3],
 }
 
 // Fixed-capacity event list (no allocation in process).
@@ -879,6 +891,7 @@ union ClapEventSlot {
     header: ClapEventHeader,
     note: ClapEventNote,
     param: ClapEventParamValue,
+    midi: ClapEventMidi,
 }
 
 /// Fixed-capacity `clap_input_events` list mixing notes, parameter values and
@@ -941,6 +954,24 @@ impl ClapEventBuffer {
         });
     }
 
+    /// Pitch bend, control change or aftertouch, on the main note port.
+    pub fn push_midi(&mut self, time: u32, data: [u8; 3]) {
+        self.push(ClapEventSlot {
+            midi: ClapEventMidi {
+                header: ClapEventHeader {
+                    size: std::mem::size_of::<ClapEventMidi>() as u32,
+                    time,
+                    space_id: CLAP_CORE_EVENT_SPACE,
+                    r#type: CLAP_EVENT_MIDI,
+                    flags: 0,
+                },
+                port_index: 0,
+                data,
+                _pad: [0; 3],
+            },
+        });
+    }
+
     /// Sets the parameter to `value` (plain units).
     pub fn push_param_value(&mut self, time: u32, param_id: u32, value: f64) {
         self.push(ClapEventSlot {
@@ -980,8 +1011,8 @@ impl ClapEventBuffer {
         Some(end)
     }
 
-    /// Appends one note or parameter event given as raw CLAP bytes (possibly
-    /// unaligned).  Other event types and malformed bytes are ignored.
+    /// Appends one note, MIDI or parameter event given as raw CLAP bytes
+    /// (possibly unaligned).  Other event types and malformed bytes are ignored.
     pub fn push_bytes(&mut self, bytes: &[u8]) {
         let Some(header) = read_pod::<ClapEventHeader>(bytes) else {
             return;
@@ -993,6 +1024,11 @@ impl ClapEventBuffer {
             CLAP_EVENT_NOTE_ON | CLAP_EVENT_NOTE_OFF => {
                 if let Some(note) = read_sized::<ClapEventNote>(bytes, &header) {
                     self.push(ClapEventSlot { note });
+                }
+            }
+            CLAP_EVENT_MIDI => {
+                if let Some(midi) = read_sized::<ClapEventMidi>(bytes, &header) {
+                    self.push(ClapEventSlot { midi });
                 }
             }
             CLAP_EVENT_PARAM_VALUE | CLAP_EVENT_PARAM_MOD => {
@@ -1737,6 +1773,7 @@ mod event_buffer_tests {
         let mut buffer = ClapEventBuffer::new();
         buffer.push_param_mod(64, 1, 0.5);
         buffer.push_note_on(32, 0, 62, 1.0);
+        buffer.push_midi(16, [0xE0, 0x00, 0x60]);
         buffer.push_param_value(0, 1, 0.25);
         buffer.sort();
 
@@ -1748,6 +1785,18 @@ mod event_buffer_tests {
         }
         copy.sort();
         assert_eq!(delivered(&copy), delivered(&buffer));
+    }
+
+    #[test]
+    fn midi_event_matches_the_c_layout_and_keeps_its_bytes() {
+        assert_eq!(std::mem::size_of::<ClapEventMidi>(), 24);
+        let mut buffer = ClapEventBuffer::new();
+        buffer.push_midi(7, [0xB0, 64, 127]);
+        buffer.sort();
+        let header = buffer.header(0).unwrap();
+        let event = unsafe { &*(header as *const ClapEventHeader as *const ClapEventMidi) };
+        assert_eq!((header.r#type, header.time), (CLAP_EVENT_MIDI, 7));
+        assert_eq!(event.data, [0xB0, 64, 127]);
     }
 
     #[test]

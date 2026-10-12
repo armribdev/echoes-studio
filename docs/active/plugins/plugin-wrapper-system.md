@@ -214,7 +214,10 @@ effect wrapper and the instrument: it reads `clap.params` at `prepare`, and
 each block fills one time-sorted `ClapEventBuffer` with queued edits and
 automation (`PARAM_VALUE`), modulation (`PARAM_MOD` on modulatable parameters;
 `PARAM_VALUE` of `base + offset` on automatable-only ones — ADR-021 amendment)
-and, for instruments, notes. `get_plugin_params` exposes the parameter list to
+and, for instruments, notes plus live keyboard controls (pitch bend, CC,
+aftertouch) as raw `CLAP_EVENT_MIDI` on the main note port — ADR-022
+amendment 2026-10-13; the note-port dialect is not checked, a plugin without
+MIDI support ignores them. `get_plugin_params` exposes the parameter list to
 the UI. The plugin's output events go to `observe_output_event`, which tracks
 `PARAM_GESTURE_BEGIN/END` and the dragged value of value-modulated parameters
 (everything else is still discarded).

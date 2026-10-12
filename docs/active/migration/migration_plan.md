@@ -524,9 +524,17 @@ rétabli à la désactivation et à la fermeture. Correctif : les claviers
 activés sont rouverts au démarrage (abonnement aux préférences dans
 `routes/+page.svelte`). Détails : amendement d'ADR-022.
 
+### Amendement 2026-10-13
+
+Pitch bend, CC (molette, sustain…) et aftertouch du clavier transmis aux
+instruments CLAP (`MidiEventKind::Control` → `CLAP_EVENT_MIDI`, y compris en
+sandbox) ; ignorés par les instruments intégrés et non enregistrés dans les
+clips. File live portée à 1024 messages. Pas encore testé à la main.
+Détails : amendement d'ADR-022.
+
 ### Suites (hors périmètre, notées dans ADR-022)
 
-MIDI CC/Learn, sortie MIDI matérielle générale, enregistrement en boucle
+Enregistrement des CC/pitch bend dans les clips, MIDI Learn, sortie MIDI matérielle générale, enregistrement en boucle
 (overdub / take), routing par piste (plusieurs pistes armées / device →
 piste).
 

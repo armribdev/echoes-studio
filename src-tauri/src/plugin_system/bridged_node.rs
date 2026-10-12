@@ -25,7 +25,7 @@ use plugin_bridge::session::{BlockOutcome, BlockRequest};
 use crate::audio_graph::buffer::AudioBuffer;
 use crate::audio_graph::midi::MidiEventList;
 use crate::audio_graph::node::{AudioNode, PrepareContext, TransportInfo};
-use crate::audio_graph::nodes::clap_instrument::push_clap_notes;
+use crate::audio_graph::nodes::clap_instrument::push_clap_midi_events;
 use crate::audio_graph::nodes::instrument::InstrumentDevice;
 use crate::audio_graph::plugin_params::{
     parse_plugin_param_name, PluginParamControl, PluginParamControls,
@@ -133,7 +133,7 @@ impl BridgeRoundTrip {
         let end = append_event(&mut self.events, 0, &transport_event.header)?;
         self.param_events.fill(&self.instance);
         if let Some(notes) = notes {
-            push_clap_notes(notes, &mut self.param_events.buffer);
+            push_clap_midi_events(notes, &mut self.param_events.buffer);
         }
         self.param_events.buffer.sort();
         self.param_events.buffer.write_bytes(&mut self.events, end)

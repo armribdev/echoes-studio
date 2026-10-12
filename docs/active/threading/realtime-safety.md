@@ -64,7 +64,9 @@ MidiLiveInputQueue::push (capture threads, serialized by a producer mutex)
 ```
 
 The producer mutex is only ever taken by the capture threads (one per enabled
-keyboard); the audio thread reads head/tail atomics only.
+keyboard); the audio thread reads head/tail atomics only. Keyboard controls
+(bend, CC, aftertouch) are `Copy` events in the same pre-allocated ring and
+event lists — no new RT cost (ADR-022 amendment 2026-10-13).
 
 MIDI recording adds three relaxed atomic stores per rendered slice
 (`LiveInputClock::set_event_window`: transport position + a seqlock counter,

@@ -172,7 +172,8 @@ self.drain_live_input(); // same shape as drain_preview()
 ```
 
 Same ring shape as piano-roll audition (`MidiPreviewQueue`), but a distinct
-queue per track, and multi-producer: each enabled keyboard has its own capture
+queue per track (1024 slots, sized for dense pitch-bend / CC streams — ADR-022
+amendment 2026-10-13), and multi-producer: each enabled keyboard has its own capture
 thread, so pushes are serialized by a producer mutex inside the queue (never
 taken by the audio thread, whose drain stays lock-free).
 

@@ -60,7 +60,7 @@ for this ourselves.
 
 Documented in `threading/threading-model.md`. One per enabled device, owned
 by `midir`. The callback parses raw bytes (Note On/Off only; everything else
-ignored for this iteration), reads the armed-track id, and calls
+ignored for this iteration — controls added by the 2026-10-13 amendment), reads the armed-track id, and calls
 `LiveParams::push_live_input`. No lock held across the push; parsing
 allocates nothing beyond primitive byte reads. This thread never touches the
 audio thread or its data directly — only the lock-free ring.
@@ -279,6 +279,33 @@ Count-in and metronome: ADR-026. Known limits (follow-ups): with a playback loop
 one clip instead of separate takes; `buildPreviewClip` is not unit-tested (no JS
 test runner in the repo).
 
+## Amendment 2026-10-13 — Keyboard controls to plugin instruments
+
+A hardware keyboard's pitch bend, control changes (mod wheel, sustain pedal…)
+and aftertouch now reach CLAP instruments. Not hand-tested yet.
+
+- **Model.** `MidiEventKind` gains `Control { message: [u8; 3] }`: the raw
+  MIDI bytes, channel nibble cleared (notes already play on one channel).
+  `MidiLiveInputMessage` now carries a `MidiEventKind` instead of
+  note-only fields. `midi_input::parse_live_message` accepts `0xA0`, `0xB0`,
+  `0xE0`; program change and system messages are still ignored.
+- **Delivery.** `InstrumentNode::drain_live_input` passes controls through
+  untouched (no voice bookkeeping). `push_clap_midi_events` turns them into
+  `CLAP_EVENT_MIDI` events (`clap_ffi::ClapEventMidi`, main note port) in the
+  same time-sorted buffer as notes and parameters; at an equal offset a control
+  sorts after a NoteOff and before a NoteOn, so a bend set with a key applies
+  to it. The sandbox bridge forwards them too (`ClapEventBuffer::push_bytes`).
+  The host does not check the plugin's `clap.note-ports` dialects: a plugin
+  without the MIDI dialect ignores the event, as CLAP requires.
+- **Built-in instruments** (`PolySynth`, sampler) ignore controls for now.
+- **Recording** keeps notes only: `MidiRecorder::capture` skips controls,
+  since clips have no controller data (that needs a project-schema change, C-4).
+- **Queue size.** `LIVE_INPUT_CAPACITY` 64 → 1024: a fast bend or mod-wheel
+  stream could fill the ring, and a dropped NoteOff would leave a note hanging.
+- **RT / C-2.** One more `Copy` enum variant in pre-allocated lists, no
+  alloc/lock. Offline render never drains the live queue: harness green,
+  hashes unchanged.
+
 ## Alternatives considered
 
 - **Route hardware input through `PortKind::Midi` graph edges** (a real
@@ -295,7 +322,9 @@ test runner in the repo).
 
 - ~~Recording captured hardware notes into a MIDI clip~~ — done, see the
   2026-09-29 amendment.
-- MIDI CC / Learn mapping to parameters.
+- MIDI CC / Learn mapping to parameters. (Raw CC, bend and aftertouch to
+  CLAP instruments: done, see the 2026-10-13 amendment. Recording them into
+  clips and Learn are still open.)
 - MIDI output to external hardware (beyond Local Control, see amendment).
 - Per-track device routing (today: one global armed track receives every
   enabled device).

@@ -15,10 +15,20 @@ pub struct MidiEvent {
     pub kind: MidiEventKind,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum MidiEventKind {
-    NoteOn { pitch: u8, velocity: u8 },
-    NoteOff { pitch: u8 },
+    NoteOn {
+        pitch: u8,
+        velocity: u8,
+    },
+    NoteOff {
+        pitch: u8,
+    },
+    /// Pitch bend, control change or aftertouch from a hardware keyboard, as
+    /// raw MIDI bytes on channel 1. Plugin instruments only; built-in ones ignore it.
+    Control {
+        message: [u8; 3],
+    },
 }
 
 const MAX_EVENTS_PER_BLOCK: usize = 256;
@@ -63,7 +73,8 @@ impl MidiEventList {
 
     /// Sort events by sample offset (ascending).  At equal offsets, NoteOff
     /// precedes NoteOn so that a re-triggered note (NoteOff + NoteOn at the
-    /// same offset, e.g. after a seek) releases cleanly before retriggering.
+    /// same offset, e.g. after a seek) releases cleanly before retriggering,
+    /// and a control lands before the NoteOn it should shape (bend, mod wheel).
     ///
     /// In-place — no allocation.
     #[inline]
@@ -72,7 +83,8 @@ impl MidiEventList {
             a.offset.cmp(&b.offset).then_with(|| {
                 let priority = |event: &MidiEvent| match event.kind {
                     MidiEventKind::NoteOff { .. } => 0,
-                    MidiEventKind::NoteOn { .. } => 1,
+                    MidiEventKind::Control { .. } => 1,
+                    MidiEventKind::NoteOn { .. } => 2,
                 };
                 priority(a).cmp(&priority(b))
             })
@@ -413,19 +425,19 @@ fn live_event_slot(
     }
 }
 
-/// One hardware note event (MIDI capture thread → audio thread).
+/// One hardware MIDI event (MIDI capture thread → audio thread).
 #[derive(Debug, Clone, Copy)]
 pub struct MidiLiveInputMessage {
-    pub note_on: bool,
-    pub pitch: u8,
-    pub velocity: u8,
+    pub kind: MidiEventKind,
     /// `LiveInputClock::now_nanos` when the capture thread received it.
     pub received_at: u64,
 }
 
-const LIVE_INPUT_CAPACITY: usize = 64;
+/// Sized for a dense pitch-bend / mod-wheel stream: a full ring drops the
+/// newest message, which could be a NoteOff and leave a note hanging.
+const LIVE_INPUT_CAPACITY: usize = 1024;
 
-/// Ring of live hardware MIDI note events, lock-free on the consumer side.
+/// Ring of live hardware MIDI events, lock-free on the consumer side.
 ///
 /// Producers are the MIDI capture threads — one per enabled device, so there
 /// can be several; `producer` serializes them (never taken by the audio
@@ -448,9 +460,7 @@ unsafe impl Sync for MidiLiveInputQueue {}
 impl MidiLiveInputQueue {
     pub fn new(clock: Arc<LiveInputClock>) -> Self {
         let empty = MidiLiveInputMessage {
-            note_on: false,
-            pitch: 0,
-            velocity: 0,
+            kind: EMPTY_EVENT.kind,
             received_at: 0,
         };
         let mut slots = Vec::with_capacity(LIVE_INPUT_CAPACITY);
@@ -568,20 +578,51 @@ mod tests {
     }
 
     fn live_note(note_on: bool, pitch: u8, received_at: u64) -> MidiLiveInputMessage {
-        MidiLiveInputMessage {
-            note_on,
-            pitch,
-            velocity: 100,
-            received_at,
-        }
+        let kind = if note_on {
+            MidiEventKind::NoteOn {
+                pitch,
+                velocity: 100,
+            }
+        } else {
+            MidiEventKind::NoteOff { pitch }
+        };
+        MidiLiveInputMessage { kind, received_at }
     }
 
     fn drain_all(queue: &MidiLiveInputQueue, block_size: usize) -> Vec<(u8, u32)> {
         let mut drained = Vec::new();
         queue.drain_due(48_000.0, block_size, |message, offset| {
-            drained.push((message.pitch, offset))
+            let (MidiEventKind::NoteOn { pitch, .. } | MidiEventKind::NoteOff { pitch }) =
+                message.kind
+            else {
+                panic!("unexpected control message");
+            };
+            drained.push((pitch, offset))
         });
         drained
+    }
+
+    #[test]
+    fn control_sorts_between_note_off_and_note_on_at_the_same_offset() {
+        let bend = MidiEventKind::Control {
+            message: [0xE0, 0, 0x60],
+        };
+        let mut list = MidiEventList::new();
+        for kind in [
+            MidiEventKind::NoteOn {
+                pitch: 60,
+                velocity: 100,
+            },
+            bend,
+            MidiEventKind::NoteOff { pitch: 60 },
+        ] {
+            list.push(MidiEvent { offset: 8, kind });
+        }
+        list.sort_by_offset();
+        let kinds: Vec<MidiEventKind> = list.as_slice().iter().map(|e| e.kind).collect();
+        assert_eq!(kinds[0], MidiEventKind::NoteOff { pitch: 60 });
+        assert_eq!(kinds[1], bend);
+        assert!(matches!(kinds[2], MidiEventKind::NoteOn { .. }));
     }
 
     #[test]

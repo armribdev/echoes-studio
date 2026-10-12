@@ -166,24 +166,24 @@ impl InstrumentNode {
             transport.sample_rate,
             transport.block_size,
             |message, offset| {
-                let pitch = message.pitch as usize;
-                if message.note_on {
-                    self.event_buf.push(MidiEvent {
-                        offset,
-                        kind: MidiEventKind::NoteOn {
-                            pitch: message.pitch,
-                            velocity: message.velocity,
-                        },
-                    });
-                    self.live_input_count[pitch] = self.live_input_count[pitch].saturating_add(1);
-                } else if self.live_input_count[pitch] > 0 {
-                    self.event_buf.push(MidiEvent {
-                        offset,
-                        kind: MidiEventKind::NoteOff {
-                            pitch: message.pitch,
-                        },
-                    });
-                    self.live_input_count[pitch] -= 1;
+                let event = MidiEvent {
+                    offset,
+                    kind: message.kind,
+                };
+                match message.kind {
+                    MidiEventKind::NoteOn { pitch, .. } => {
+                        let count = &mut self.live_input_count[pitch as usize];
+                        *count = count.saturating_add(1);
+                        self.event_buf.push(event);
+                    }
+                    MidiEventKind::NoteOff { pitch } => {
+                        let count = &mut self.live_input_count[pitch as usize];
+                        if *count > 0 {
+                            *count -= 1;
+                            self.event_buf.push(event);
+                        }
+                    }
+                    MidiEventKind::Control { .. } => self.event_buf.push(event),
                 }
             },
         );
@@ -758,9 +758,10 @@ mod tests {
         node.set_live_input(Arc::clone(&queue));
         clock.set_event_window(50_000_000, 0);
         queue.push(crate::audio_graph::midi::MidiLiveInputMessage {
-            note_on: true,
-            pitch: 67,
-            velocity: 80,
+            kind: MidiEventKind::NoteOn {
+                pitch: 67,
+                velocity: 80,
+            },
             received_at: 52_000_000,
         });
 
@@ -772,5 +773,30 @@ mod tests {
             .find(|e| matches!(e.kind, MidiEventKind::NoteOn { pitch: 67, .. }))
             .expect("live NoteOn emitted");
         assert_eq!(note_on.offset, 96);
+    }
+
+    /// Pitch bend and controllers reach the device during playback, without
+    /// touching the per-pitch voice bookkeeping.
+    #[test]
+    fn live_control_reaches_the_device_while_playing() {
+        let captured = Arc::new(Mutex::new(Vec::new()));
+        let mut node = make_node(captured.clone());
+        let queue = Arc::new(crate::audio_graph::midi::MidiLiveInputQueue::new(Arc::new(
+            crate::audio_graph::midi::LiveInputClock::new(),
+        )));
+        node.set_live_input(Arc::clone(&queue));
+        let sustain = MidiEventKind::Control {
+            message: [0xB0, 64, 127],
+        };
+        queue.push(crate::audio_graph::midi::MidiLiveInputMessage {
+            kind: sustain,
+            received_at: 0,
+        });
+
+        run_block(&mut node, &transport_at(true, 0, 512));
+
+        let events = captured.lock().unwrap();
+        assert!(events.iter().any(|e| e.kind == sustain));
+        assert!(node.live_input_count.iter().all(|&count| count == 0));
     }
 }

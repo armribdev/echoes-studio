@@ -131,12 +131,15 @@ not attach the queue, so a render stays independent of audition.
 Hardware MIDI input (ADR-022) uses the same queue-injection shape, on a
 second, dedicated queue: a MIDI capture thread (owned by `midir`, one per
 enabled device) pushes note events for the currently armed track, and
-`InstrumentNode` drains them every block alongside the audition queue. This
+`InstrumentNode` drains them every block alongside the audition queue. Pitch
+bend, control changes and aftertouch ride the same queue as
+`MidiEventKind::Control` and reach CLAP instruments as `CLAP_EVENT_MIDI`;
+built-in instruments ignore them (ADR-022 amendment 2026-10-13). This
 is independent of `PortKind::Midi` graph edges, which the compiler still
 rejects (Phase 5c, plugin instruments) — live hardware input never goes
 through the graph/edge model at all.
 
-The same capture path can record: while `MidiRecorder` is active, each note of
+The same capture path can record (notes only): while `MidiRecorder` is active, each note of
 the armed track is also stamped with its transport position and, when the
 recording ends (record button, pause or stop), becomes a MIDI clip added
 through the regular `ADD_MIDI_CLIP` command — nothing new in the graph.
