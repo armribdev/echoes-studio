@@ -32,6 +32,7 @@ pub struct RecordedAudioClip {
 }
 
 const PEAK_CHUNK_FRAMES: usize = 512;
+const RECORDING_CHANNELS: u16 = 2;
 
 /// Live waveform of the running take, polled by the arrange view.
 #[derive(Debug, Clone, Serialize)]
@@ -244,13 +245,18 @@ fn write_recording_wav(
         .join("recordings");
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let path = dir.join(format!("rec-{}.wav", generate_id()));
-    write_wav(&path, samples, sample_rate)?;
+    write_wav(&path, samples, RECORDING_CHANNELS, sample_rate)?;
     Ok(path)
 }
 
-fn write_wav(path: &Path, samples: &[f32], sample_rate: u32) -> Result<(), String> {
+pub(crate) fn write_wav(
+    path: &Path,
+    samples: &[f32],
+    channels: u16,
+    sample_rate: u32,
+) -> Result<(), String> {
     let spec = hound::WavSpec {
-        channels: 2,
+        channels,
         sample_rate,
         bits_per_sample: 32,
         sample_format: hound::SampleFormat::Float,

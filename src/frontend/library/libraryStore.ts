@@ -10,11 +10,13 @@ import {
 import { filterAssetsByQuery } from './search';
 import { libraryPreviewPlayer } from './previewPlayer';
 import { libraryMidiPreviewPlayer } from './midiPreview';
-import { FACTORY_LIBRARY_ASSETS } from './factoryCatalog';
+import { FACTORY_LIBRARY_ASSETS, isFactoryAssetId } from './factoryCatalog';
+import { drumIdsWithSoundsFirst, loadFactoryDrumAssets } from './factoryDrums';
 import { resolveLibraryMidiNotes } from './resolveMidi';
 import { isMidiLibraryKind } from './types';
 import { projectEventStore } from '../../shared/project/eventStore';
 import { tempo } from '../../stores/tempo';
+import { notify } from '../../stores/status';
 import {
 	assetFromPath,
 	assetFromScanEntry,
@@ -245,6 +247,23 @@ function createLibraryStore() {
 			if (hydrated) return;
 			hydrated = true;
 			set(initialState());
+			void api.loadFactoryDrums();
+		},
+
+		async loadFactoryDrums() {
+			try {
+				const sounds = await loadFactoryDrumAssets();
+				update((s) => ({
+					...s,
+					assetsById: sounds.reduce(mergeAsset, s.assetsById),
+					drumIds: drumIdsWithSoundsFirst(
+						s.drumIds,
+						sounds.map((sound) => sound.id)
+					)
+				}));
+			} catch (e) {
+				notify(`Sons de batterie indisponibles : ${(e as Error)?.message ?? String(e)}`, 'error');
+			}
 		},
 
 		setSource(source: LibrarySourceId) {
@@ -473,7 +492,7 @@ export const libraryVisibleAssets = derived(libraryStore, ($lib) => {
 			assets.push(asset);
 			continue;
 		}
-		if ($lib.source === 'favorites' || $lib.source === 'recents') {
+		if (($lib.source === 'favorites' || $lib.source === 'recents') && !isFactoryAssetId(id)) {
 			assets.push(assetFromPath(id));
 		}
 	}

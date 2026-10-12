@@ -1,9 +1,10 @@
 //! Async folder indexer for the content library (ADR-023 Phase 1).
 //! Runs off the audio callback — scan work is background-only.
 
+use crate::factory_drums::{self, FactoryDrumFile};
 use serde::Serialize;
 use std::path::{Path, PathBuf};
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 
 const AUDIO_EXTS: &[&str] = &["wav", "mp3", "flac", "ogg", "oga"];
 const BATCH_SIZE: usize = 1000;
@@ -140,4 +141,11 @@ pub fn scan_library_folder(app: AppHandle, folder_path: String, token: u64) -> R
     });
 
     Ok(())
+}
+
+/// Creates the factory drum files that are missing and lists them.
+#[tauri::command]
+pub fn ensure_factory_drums(app: AppHandle) -> Result<Vec<FactoryDrumFile>, String> {
+    let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    factory_drums::ensure_files(&factory_drums::samples_directory(&app_data_dir))
 }

@@ -51,7 +51,7 @@ lives there.
 | [025](025-absolute-automation-internal-targets.md)       | Absolute automation for track volume and internal effects (accepted 2026-09-29, rolling out per node)                                                                                                                                | Modulation / determinism              |
 | [026](026-metronome-and-count-in.md)                     | Metronome click and recording count-in, generated in the callback outside the mix graph (2026-09-30)                                                                                                                                 | Threading / RT safety / transport     |
 | [027](027-audio-input-recording.md)                      | Audio input capture via separate CPAL stream, software monitoring after the mix, recording into WAV + `ADD_CLIP` (2026-09-30)                                                                                                        | Threading / RT safety / transport     |
-| [028](028-builtin-sampler-instrument.md)                 | Built-in sampler instrument (16 drum pads, `builtin:sampler` reserved id, typed `AppTrack.sampler` kit, file-referenced samples, 32+8 voices with 5 ms fades) (2026-10-09)                                                           | Graph / DSP / state                   |
+| [028](028-builtin-sampler-instrument.md)                 | Built-in sampler instrument (16 drum pads, `builtin:sampler` reserved id, typed `AppTrack.sampler` kit, file-referenced samples, 32+8 voices with 5 ms fades; factory drum sounds + starting kit amendment 2026-10-13) (2026-10-09)  | Graph / DSP / state                   |
 
 ---
 

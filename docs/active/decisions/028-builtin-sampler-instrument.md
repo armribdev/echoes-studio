@@ -37,7 +37,7 @@ device configuration, like `EffectParams` for a built-in EQ in `effects`; all
 DSP stays in the `Sampler` device inside `InstrumentNode` (ADR-001 holds). The
 kit is kept when the track switches to another instrument, like plugin state.
 Selecting the sampler on a track without a kit creates the default kit in the
-same event (one undo step). Rejected: storing the kit as an opaque blob in
+same event (one undo step) — the factory kit since 2026-10-13, see Amendments. Rejected: storing the kit as an opaque blob in
 `plugin_states` — unreadable, untestable, outside the event-sourced history.
 
 ### 3. Sample storage — file reference
@@ -136,3 +136,40 @@ graph changes.
 - **Copy samples into the project.** Deferred — needs a project-folder model
   shared with audio clips.
 - **Hard voice stealing.** Rejected — audible click.
+
+## Amendments
+
+### 2026-10-13 — Factory drum sounds and starting kit
+
+Approved by the user after four choices were explained in plain terms.
+
+- **Sounds.** 16 drum one-shots (General MIDI notes 36–51, the pad notes) are
+  synthesised in code by `factory_drums.rs`: mono, 48 kHz, peak −2 dBFS,
+  starting and ending on zero, fixed-seed noise (no clock, no system RNG). No
+  licence, no binary in the repository.
+- **Files.** Written as float32 WAV to `<app data>/factory_samples/v1/<slug>.wav`
+  by the `ensure_factory_drums` command (library module), only for the files
+  that are missing (temporary name + rename, so no truncated file). The folder
+  carries a version: a changed sound goes in `v2/` and saved projects keep the
+  old files. Deleting the folder is safe — the files return on the next call;
+  until then the pads concerned are silent and reported `missing` (§3).
+- **Library.** The 16 sounds are `one_shot` assets with id
+  `factory://drums/<slug>` (stable for favourites and recents) and the real
+  file as `path`, listed in the `drums` source before the drum MIDI. Preview,
+  drop on an audio lane and drop on a pad use the existing paths (ADR-023).
+- **Starting kit (amends §2).** Choosing the sampler on a track without a kit
+  (`CREATE_TRACK` or `SET_TRACK_INSTRUMENT`) now gives it the factory kit: one
+  sound per pad, the three hi-hat pads (42, 44, 46) in choke group 1. Files are
+  written and decoded on the command thread before the project lock is taken;
+  if they cannot be written the track gets the empty default kit. The stored
+  event carries the kit (`sampler`) when it gave one, so undo/redo replay
+  restores it and re-resolves the samples; events without it (older logs)
+  replay to the empty 16-pad kit. Still one event, one undo step.
+  `SamplerKit::default()` stays empty: the `sampler_kit` harness project and
+  every existing golden hash are unchanged (C-2); no engine code changed.
+- **Limit (§3).** A factory pad stores an absolute path under the user's data
+  folder, so a project opened on another machine finds those pads missing —
+  the same limit as any sample file, until the "collect files" command.
+- **Tests.** Property tests (length, −3…−1 dBFS peak, zero start/end, no DC
+  offset, no silence, two renders identical in-process, WAV read-back) instead
+  of a byte hash: f32 `sin`/`exp` may differ between operating systems.

@@ -34,6 +34,7 @@ use crate::audio_clip::{AudioClip, AudioClipData};
 use crate::audio_engine::transport::SharedTransport;
 use crate::audio_graph::nodes::track_gain::VOLUME_RANGE;
 use crate::audio_graph::GraphSnapshotDto;
+use crate::factory_drums;
 use crate::plugin_system::wrapper::DeviceFormat;
 use crate::project::{
     default_marker_name, default_region_name, generate_id, normalize_region_span, AppClip,
@@ -957,6 +958,29 @@ fn resolve_pad_sample(state: &tauri::State<'_, AppState>, path: &str) -> Option<
     })
 }
 
+/// The factory kit for a track that is choosing the sampler; the files are
+/// written and decoded here, before the project lock is taken.
+fn starting_sampler_kit(
+    app: &tauri::AppHandle,
+    state: &tauri::State<'_, AppState>,
+    instrument: Option<&str>,
+) -> Option<SamplerKit> {
+    if instrument != Some(SAMPLER_INSTRUMENT_ID) {
+        return None;
+    }
+    let mut kit = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())
+        .and_then(|dir| factory_drums::starting_kit(&factory_drums::samples_directory(&dir)))
+        .unwrap_or_else(|e| {
+            eprintln!("[sampler] Kit d'usine indisponible : {e}");
+            SamplerKit::default()
+        });
+    kit.load_samples(|path| resolve_pad_sample(state, path));
+    Some(kit)
+}
+
 fn sampler_pad_payload(track_id: &str, index: usize, pad: &SamplerPad) -> Value {
     json!({
         "track_id": track_id,
@@ -1295,17 +1319,22 @@ fn process_command(
             }
             let track_id = generate_id();
 
-            let sampler = with_project_mut(state, |project| {
+            let starting_kit = starting_sampler_kit(ctx.app, state, p.instrument.as_deref());
+            let (sampler, given_kit) = with_project_mut(state, |project| {
                 let mut track = empty_app_track(track_id.clone(), p.name.clone());
-                track.set_instrument(p.instrument.clone());
+                let given_kit =
+                    track.set_instrument_with_starting_kit(p.instrument.clone(), starting_kit);
                 let sampler = track.sampler.as_ref().map(SamplerKit::to_dto);
                 project.tracks.push(track);
-                Ok(sampler)
+                Ok((sampler, given_kit))
             })?;
 
-            let payload = json!({ "id": track_id, "name": p.name, "instrument": p.instrument });
+            let mut payload = json!({ "id": track_id, "name": p.name, "instrument": p.instrument });
             let mut engine_payload = payload.clone();
             engine_payload["sampler"] = json!(sampler);
+            if let Some(kit) = given_kit {
+                payload["sampler"] = json!(kit);
+            }
             commit_project_change(&ctx, ev::TRACK_CREATED, payload, engine_payload, true)
         }
 
@@ -1419,15 +1448,20 @@ fn process_command(
                 validate_instrument(state, plugin_id)?;
             }
 
-            let sampler = with_project_mut(state, |project| {
+            let starting_kit = starting_sampler_kit(ctx.app, state, p.instrument.as_deref());
+            let (sampler, given_kit) = with_project_mut(state, |project| {
                 let track = require_track_mut(project, &p.track_id)?;
-                track.set_instrument(p.instrument.clone());
-                Ok(track.sampler.as_ref().map(SamplerKit::to_dto))
+                let given_kit =
+                    track.set_instrument_with_starting_kit(p.instrument.clone(), starting_kit);
+                Ok((track.sampler.as_ref().map(SamplerKit::to_dto), given_kit))
             })?;
 
-            let payload = json!({ "id": p.track_id, "instrument": p.instrument });
+            let mut payload = json!({ "id": p.track_id, "instrument": p.instrument });
             let mut engine_payload = payload.clone();
             engine_payload["sampler"] = json!(sampler);
+            if let Some(kit) = given_kit {
+                payload["sampler"] = json!(kit);
+            }
             commit_project_change(
                 &ctx,
                 ev::TRACK_INSTRUMENT_SET,
@@ -2652,14 +2686,31 @@ pub fn rebuild_project_from_store(state: &tauri::State<'_, AppState>) -> Result<
     Ok(())
 }
 
-fn apply_track_created(project: &mut AppProject, payload: &Value) {
+fn apply_track_created(
+    project: &mut AppProject,
+    payload: &Value,
+    resolve_sample: impl FnMut(&str) -> Option<PadSample>,
+) {
     let id = payload_str(payload, "id");
     if project.tracks.iter().any(|t| t.id == id) {
         return;
     }
     let mut track = empty_app_track(id, payload_str_default(payload, "name", "Track"));
-    track.set_instrument(payload["instrument"].as_str().map(|s| s.to_string()));
+    track.set_instrument_with_starting_kit(
+        payload["instrument"].as_str().map(|s| s.to_string()),
+        kit_from_payload(payload, resolve_sample),
+    );
     project.tracks.push(track);
+}
+
+/// The kit an event handed to the track; older events carry none.
+fn kit_from_payload(
+    payload: &Value,
+    resolve_sample: impl FnMut(&str) -> Option<PadSample>,
+) -> Option<SamplerKit> {
+    let mut kit: SamplerKit = serde_json::from_value(payload["sampler"].clone()).ok()?;
+    kit.load_samples(resolve_sample);
+    Some(kit)
 }
 
 fn apply_track_deleted(project: &mut AppProject, payload: &Value) {
@@ -2702,12 +2753,19 @@ fn apply_track_soloed(project: &mut AppProject, payload: &Value) {
     );
 }
 
-fn apply_track_instrument_set(project: &mut AppProject, payload: &Value) {
+fn apply_track_instrument_set(
+    project: &mut AppProject,
+    payload: &Value,
+    resolve_sample: impl FnMut(&str) -> Option<PadSample>,
+) {
     let id = payload_str(payload, "id");
     let Some(track) = find_track_mut(project, &id) else {
         return;
     };
-    track.set_instrument(payload["instrument"].as_str().map(|s| s.to_string()));
+    track.set_instrument_with_starting_kit(
+        payload["instrument"].as_str().map(|s| s.to_string()),
+        kit_from_payload(payload, resolve_sample),
+    );
 }
 
 fn apply_sampler_pad_set(
@@ -3297,12 +3355,18 @@ fn apply_events(
 
     for event in events {
         match event.event_type.as_str() {
-            ev::TRACK_CREATED => apply_track_created(&mut project, &event.payload),
+            ev::TRACK_CREATED => apply_track_created(&mut project, &event.payload, |path| {
+                resolve_pad_sample(state, path)
+            }),
             ev::TRACK_DELETED => apply_track_deleted(&mut project, &event.payload),
             ev::TRACK_UPDATED => apply_track_updated(&mut project, &event.payload),
             ev::TRACK_MUTED => apply_track_muted(&mut project, &event.payload),
             ev::TRACK_SOLOED => apply_track_soloed(&mut project, &event.payload),
-            ev::TRACK_INSTRUMENT_SET => apply_track_instrument_set(&mut project, &event.payload),
+            ev::TRACK_INSTRUMENT_SET => {
+                apply_track_instrument_set(&mut project, &event.payload, |path| {
+                    resolve_pad_sample(state, path)
+                })
+            }
             ev::TRACK_INPUT_SET => apply_track_input_set(&mut project, &event.payload),
             ev::SAMPLER_PAD_SET => apply_sampler_pad_set(&mut project, &event.payload, |path| {
                 resolve_pad_sample(state, path)
@@ -3436,8 +3500,13 @@ mod tests {
         apply_track_created(
             &mut project,
             &json!({ "id": "a", "name": "Vital", "instrument": "vital" }),
+            |_| None,
         );
-        apply_track_created(&mut project, &json!({ "id": "b", "name": "Piste 2" }));
+        apply_track_created(
+            &mut project,
+            &json!({ "id": "b", "name": "Piste 2" }),
+            |_| None,
+        );
         assert_eq!(project.tracks[0].instrument.as_deref(), Some("vital"));
         assert_eq!(project.tracks[1].instrument, None);
     }
@@ -3531,16 +3600,48 @@ mod tests {
     fn choosing_the_sampler_on_replay_creates_the_default_kit_once() {
         let mut project = project_with_lfo();
         let choose = |instrument: Value| json!({ "id": "t", "instrument": instrument });
-        apply_track_instrument_set(&mut project, &choose(json!(SAMPLER_INSTRUMENT_ID)));
+        apply_track_instrument_set(&mut project, &choose(json!(SAMPLER_INSTRUMENT_ID)), |_| {
+            None
+        });
         assert_eq!(project.tracks[0].sampler.as_ref().unwrap().pads.len(), 16);
 
         project.tracks[0].sampler.as_mut().unwrap().pads[0].gain_db = -6.0;
-        apply_track_instrument_set(&mut project, &choose(json!(null)));
-        apply_track_instrument_set(&mut project, &choose(json!(SAMPLER_INSTRUMENT_ID)));
+        apply_track_instrument_set(&mut project, &choose(json!(null)), |_| None);
+        apply_track_instrument_set(&mut project, &choose(json!(SAMPLER_INSTRUMENT_ID)), |_| {
+            None
+        });
         assert_eq!(
             project.tracks[0].sampler.as_ref().unwrap().pads[0].gain_db,
             -6.0,
             "switching instruments keeps the kit"
+        );
+    }
+
+    #[test]
+    fn replayed_instrument_set_restores_the_starting_kit_with_its_samples() {
+        let mut project = project_with_lfo();
+        let mut kit = SamplerKit::default();
+        kit.pads[0].sample_path = Some("kick.wav".into());
+        kit.pads[0].choke_group = 1;
+        let payload = json!({ "id": "t", "instrument": SAMPLER_INSTRUMENT_ID, "sampler": kit });
+        apply_track_instrument_set(&mut project, &payload, |path| {
+            (path == "kick.wav").then(|| pcm(10))
+        });
+        let pad = &project.tracks[0].sampler.as_ref().unwrap().pads[0];
+        assert_eq!(pad.choke_group, 1);
+        assert_eq!(pad.sample.as_ref().unwrap().samples.len(), 10);
+    }
+
+    #[test]
+    fn replayed_track_created_restores_the_starting_kit() {
+        let mut project = AppProject::new();
+        let mut kit = SamplerKit::default();
+        kit.pads[2].choke_group = 3;
+        let payload = json!({ "id": "a", "name": "Drums", "instrument": SAMPLER_INSTRUMENT_ID, "sampler": kit });
+        apply_track_created(&mut project, &payload, |_| None);
+        assert_eq!(
+            project.tracks[0].sampler.as_ref().unwrap().pads[2].choke_group,
+            3
         );
     }
 

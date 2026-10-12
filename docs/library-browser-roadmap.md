@@ -142,7 +142,7 @@ deferred; audio↔MIDI reject landed with Phase 3 lane focus.
 
 ## Phase 3 — Musical content
 
-**Status:** `done` (2026-09-30) — hybrid drums one-shots deferred to Phase 4  
+**Status:** `done` (2026-09-30) — hybrid drums one-shots delivered 2026-10-13  
 **Depends on:** Phase 2
 
 ### Scope
@@ -162,15 +162,17 @@ Factory catalogue (chord progressions + MIDI patterns + drum MIDI), sources
 `chords` / `midi` / `drums` in the shared browser, insert via `ADD_MIDI_CLIP`
 (block-chord expand for progressions), WebAudio MIDI preview with project-key
 transpose (preview only), lane focus for pop-up defaults + audio↔MIDI reject on
-drag/insert. Warp deferred — detail tip “longueur d'origine”. Drums source is
-factory drum MIDI only (hybrid one-shots deferred). Piano-roll miniature peek
-deferred (audition via oscillators).
+drag/insert. Warp deferred — detail tip “longueur d'origine”. Drums source: 16
+factory one-shots generated in code (ADR-028 amendment, 2026-10-13; preview,
+audio-lane drop and pad drop work, not yet hand-tested by ear) listed before the
+factory drum MIDI. Piano-roll miniature peek deferred (audition via
+oscillators).
 
 ### Exit criteria
 
 - [x] Drop a chord progression on MIDI lane → notes audible via PolySynth _(code-verified)_
 - [x] Project key change + re-preview reflects transpose (preview only) _(code-verified)_
-- [x] Hybrid `drums` source returns both one-shots and drum MIDI _(deferred: factory drum MIDI only; one-shots → Phase 4)_
+- [x] Hybrid `drums` source returns both one-shots and drum MIDI _(2026-10-13: 16 generated factory one-shots + factory drum MIDI)_
 - [x] Warp-on-drop explicitly deferred with UX copy (“placed at original length”)
 
 ### Follow-up ADR likely
@@ -196,8 +198,8 @@ or offline render.
 | Optional grid results; shortcuts cleanup (Loop key restored)            | —                                    |
 
 Prerequisite landed 2026-10-09: the built-in drum sampler (ADR-028) — a
-`one_shot` dragged from the library onto a pad loads it. Still open for the
-hybrid `drums` source: factory one-shot sounds to list next to drum MIDI.
+`one_shot` dragged from the library onto a pad loads it. The hybrid `drums`
+source landed 2026-10-13 (factory one-shots listed next to drum MIDI).
 
 ### Exit criteria
 

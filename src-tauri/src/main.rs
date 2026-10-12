@@ -6,6 +6,7 @@ mod audio_recording;
 mod audio_settings;
 mod app_menu;
 mod engine_gateway;
+mod factory_drums;
 mod library;
 mod menu_state;
 mod midi_input;
@@ -85,6 +86,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             get_audio_clip_duration,
             library::scan_library_folder,
+            library::ensure_factory_drums,
             prepare_audio_import,
             cancel_audio_import,
             get_project,

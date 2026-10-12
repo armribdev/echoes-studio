@@ -30,7 +30,7 @@
 - Hébergement de plugins CLAP et VST3 (effets et instruments CLAP), paramètres, état, éditeur natif, sidechain et sorties multiples CLAP.
 - Isolation des plugins CLAP dans un processus séparé (opt-in, ADR-015).
 
-**Bibliothèque de sons** (phases 1–3, 2026-09-30) : dock + préécoute WebAudio + DnD `ADD_CLIP` ; pop-up Bitwig dual-surface (`+` lane) ; factory accords/MIDI/drums + `ADD_MIDI_CLIP` + reject audio↔MIDI. Critères de sortie code-vérifiés ; drums hybrides (one-shots) et packs → phase 4. Voir [`docs/library-browser-roadmap.md`](docs/library-browser-roadmap.md).
+**Bibliothèque de sons** (phases 1–3, 2026-09-30) : dock + préécoute WebAudio + DnD `ADD_CLIP` ; pop-up Bitwig dual-surface (`+` lane) ; factory accords/MIDI/drums + `ADD_MIDI_CLIP` + reject audio↔MIDI. Critères de sortie code-vérifiés ; drums hybrides livrés le 2026-10-13 (16 one-shots générés par code, pas encore testés à l'oreille) ; packs → phase 4. Voir [`docs/library-browser-roadmap.md`](docs/library-browser-roadmap.md).
 
 ---
 
@@ -45,7 +45,7 @@
 - [x] **Transport auxiliaire**
   - [x] Métronome + count-in (ADR-026 ; pas encore hand-testé)
   - [x] Marqueurs / régions d'arrangement (event-sourcés en beats ; piste sous la règle ; boucle depuis une région via `SET_LOOP` ; 2026-09-30)
-- [ ] **Compléter les plugins** : VST3 (bus auxiliaires, latence dynamique, sandbox), AU (macOS, stub), synthés natifs supplémentaires — sampler à pads livré (ADR-028, 2026-10-09, pas encore testé à l'oreille) ; one-shots de la bibliothèque à brancher
+- [ ] **Compléter les plugins** : VST3 (bus auxiliaires, latence dynamique, sandbox), AU (macOS, stub), synthés natifs supplémentaires — sampler à pads livré (ADR-028, 2026-10-09, pas encore testé à l'oreille) ; kit d'usine de 16 sons générés par code, chargé à la sélection du Sampler et listé dans la bibliothèque (2026-10-13, pas encore testé à l'oreille)
 
 ---
 

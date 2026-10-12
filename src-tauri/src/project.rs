@@ -954,6 +954,22 @@ impl AppTrack {
         }
     }
 
+    /// Like `set_instrument`, but a sampler track without a kit gets
+    /// `starting_kit`. Returns the kit it gave, for the event log.
+    pub fn set_instrument_with_starting_kit(
+        &mut self,
+        instrument: Option<String>,
+        starting_kit: Option<SamplerKit>,
+    ) -> Option<SamplerKit> {
+        let choosing_sampler = instrument.as_deref() == Some(SAMPLER_INSTRUMENT_ID);
+        let given_kit = starting_kit.filter(|_| choosing_sampler && self.sampler.is_none());
+        if given_kit.is_some() {
+            self.sampler = given_kit.clone();
+        }
+        self.set_instrument(instrument);
+        given_kit
+    }
+
     pub fn to_dto(&self) -> TrackDto {
         TrackDto {
             id: self.id.clone(),
@@ -1594,6 +1610,36 @@ mod tests {
         let pad = &track.sampler.as_ref().unwrap().pads[1];
         assert_eq!(pad.tune_semitones, -2.5);
         assert!(pad.is_missing());
+    }
+
+    #[test]
+    fn starting_kit_is_given_once_and_only_to_the_sampler() {
+        let mut starting_kit = SamplerKit::default();
+        starting_kit.pads[0].choke_group = 1;
+        let mut track = track_with_plugin("drums", "fx", "clap:any");
+
+        assert!(track
+            .set_instrument_with_starting_kit(None, Some(starting_kit.clone()))
+            .is_none());
+        assert!(track.sampler.is_none());
+
+        let given = track
+            .set_instrument_with_starting_kit(
+                Some(SAMPLER_INSTRUMENT_ID.into()),
+                Some(starting_kit.clone()),
+            )
+            .expect("kit given on first choice");
+        assert_eq!(given.pads[0].choke_group, 1);
+        assert_eq!(track.sampler.as_ref().unwrap().pads[0].choke_group, 1);
+
+        track.sampler.as_mut().unwrap().pads[0].choke_group = 2;
+        assert!(track
+            .set_instrument_with_starting_kit(
+                Some(SAMPLER_INSTRUMENT_ID.into()),
+                Some(starting_kit)
+            )
+            .is_none());
+        assert_eq!(track.sampler.as_ref().unwrap().pads[0].choke_group, 2);
     }
 
     fn track_with_plugin(track_id: &str, effect_id: &str, plugin_id: &str) -> AppTrack {
