@@ -201,7 +201,7 @@ struct LiveParamsInner {
     plugin_param_shadows: HashMap<String, HashMap<u32, Arc<AtomicU32>>>,
     /// Latest note list per track. Replaced on each compile; note edits publish
     /// into the slot the live instrument node already holds.
-    midi_notes: HashMap<String, Arc<crate::audio_graph::midi::MidiNotePublisher>>,
+    midi_notes: HashMap<String, Arc<crate::audio_graph::midi::MidiTrackPublisher>>,
     /// Piano-roll audition. Reused across compiles so only the live instrument
     /// drains it (one consumer).
     midi_preview: HashMap<String, Arc<crate::audio_graph::midi::MidiPreviewQueue>>,
@@ -564,32 +564,32 @@ impl LiveParams {
         self.any_solo.store(any_solo, Ordering::Relaxed);
     }
 
-    /// Install a fresh note list for `track_id` and return the publisher the
+    /// Install a fresh note and control content for `track_id` and return the publisher the
     /// new instrument node must hold. Replaces any previous slot so later
     /// edits reach this compile, not a retired graph.
-    pub fn install_track_notes(
+    pub fn install_track_midi(
         &self,
         track_id: &str,
-        notes: Vec<crate::audio_graph::midi::MidiNoteSnapshot>,
-    ) -> Arc<crate::audio_graph::midi::MidiNotePublisher> {
-        let publisher = crate::audio_graph::midi::MidiNotePublisher::with_notes(notes);
+        content: crate::audio_graph::midi::MidiTrackContent,
+    ) -> Arc<crate::audio_graph::midi::MidiTrackPublisher> {
+        let publisher = crate::audio_graph::midi::MidiTrackPublisher::with_content(content);
         self.lock_inner()
             .midi_notes
             .insert(track_id.to_string(), Arc::clone(&publisher));
         publisher
     }
 
-    /// Publish a note edit to the live instrument. Returns false when the
-    /// track has no slot yet (the graph has not been compiled).
-    pub fn publish_track_notes(
+    /// Publish a note or control edit to the live instrument. Returns false
+    /// when the track has no slot yet (the graph has not been compiled).
+    pub fn publish_track_midi(
         &self,
         track_id: &str,
-        notes: Vec<crate::audio_graph::midi::MidiNoteSnapshot>,
+        content: crate::audio_graph::midi::MidiTrackContent,
     ) -> bool {
         let Some(publisher) = self.lock_inner().midi_notes.get(track_id).cloned() else {
             return false;
         };
-        publisher.publish(notes);
+        publisher.publish(content);
         true
     }
 

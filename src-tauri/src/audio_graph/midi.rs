@@ -1,8 +1,9 @@
 //! MIDI event types for intra-block note scheduling.
 //!
-//! Event types are stack-allocated and `Copy`. The note list itself is a
-//! `Vec` published off the audio thread and swapped in with an atomic pointer.
+//! Event types are stack-allocated and `Copy`. A track's notes and controls are
+//! `Vec`s published off the audio thread and swapped in with an atomic pointer.
 
+use crate::audio_graph::midi_controls::MidiControlClip;
 use std::ptr;
 use std::sync::atomic::{fence, AtomicPtr, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -24,14 +25,17 @@ pub enum MidiEventKind {
     NoteOff {
         pitch: u8,
     },
-    /// Pitch bend, control change or aftertouch from a hardware keyboard, as
-    /// raw MIDI bytes on channel 1. Plugin instruments only; built-in ones ignore it.
+    /// Pitch bend, control change or aftertouch (from a keyboard or a clip), as
+    /// raw MIDI bytes on channel 1. Plugin instruments only; built-in ones
+    /// ignore it. A channel pressure uses two bytes; the third is `0`.
     Control {
         message: [u8; 3],
     },
 }
 
 const MAX_EVENTS_PER_BLOCK: usize = 256;
+/// Places `push_control` leaves free for notes and live input.
+const NOTE_EVENT_RESERVE: usize = 32;
 const EMPTY_EVENT: MidiEvent = MidiEvent {
     offset: 0,
     kind: MidiEventKind::NoteOff { pitch: 0 },
@@ -69,6 +73,16 @@ impl MidiEventList {
     #[inline]
     pub fn as_slice(&self) -> &[MidiEvent] {
         &self.events[..self.len]
+    }
+
+    /// Like `push`, but keeps the last `NOTE_EVENT_RESERVE` places for events
+    /// pushed with `push`, so a dense control stream cannot crowd out a NoteOff.
+    #[inline]
+    pub fn push_control(&mut self, event: MidiEvent) {
+        if self.len + NOTE_EVENT_RESERVE < MAX_EVENTS_PER_BLOCK {
+            self.events[self.len] = event;
+            self.len += 1;
+        }
     }
 
     /// Sort events by sample offset (ascending).  At equal offsets, NoteOff
@@ -139,39 +153,53 @@ pub fn beats_to_sample(clip_start_sec: f64, beats: f32, bpm: f32, sample_rate: f
 
 const MIDI_DROP_RING_CAPACITY: usize = 8;
 
-/// Lock-free note list shared by the command thread (writer) and the audio
-/// thread (reader). A note edit publishes a new `Vec` here; the instrument
-/// node picks it up on the next block without rebuilding the graph.
+static EMPTY_CONTENT: MidiTrackContent = MidiTrackContent {
+    notes: Vec::new(),
+    control_clips: Vec::new(),
+};
+
+/// Everything a track's instrument plays from its clips, published as one unit
+/// so an undo replaces notes and controls together (ADR-029).
+#[derive(Debug, Clone, Default)]
+pub struct MidiTrackContent {
+    pub notes: Vec<MidiNoteSnapshot>,
+    pub control_clips: Vec<MidiControlClip>,
+}
+
+/// Lock-free track content shared by the command thread (writer) and the
+/// audio thread (reader). A note or control edit publishes a new
+/// `MidiTrackContent` here; the instrument node picks it up on the next block
+/// without rebuilding the graph.
 ///
-/// Displaced lists are returned through an SPSC ring and freed on the command
-/// thread. The audio thread never drops them.
-pub struct MidiNotePublisher {
-    pending: AtomicPtr<Vec<MidiNoteSnapshot>>,
-    current: AtomicPtr<Vec<MidiNoteSnapshot>>,
-    slots: [AtomicPtr<Vec<MidiNoteSnapshot>>; MIDI_DROP_RING_CAPACITY],
+/// Displaced contents are returned through an SPSC ring and freed on the
+/// command thread. The audio thread never drops them.
+pub struct MidiTrackPublisher {
+    pending: AtomicPtr<MidiTrackContent>,
+    current: AtomicPtr<MidiTrackContent>,
+    slots: [AtomicPtr<MidiTrackContent>; MIDI_DROP_RING_CAPACITY],
     head: AtomicUsize,
     tail: AtomicUsize,
 }
 
-unsafe impl Send for MidiNotePublisher {}
-unsafe impl Sync for MidiNotePublisher {}
+unsafe impl Send for MidiTrackPublisher {}
+unsafe impl Sync for MidiTrackPublisher {}
 
-impl MidiNotePublisher {
-    pub fn with_notes(notes: Vec<MidiNoteSnapshot>) -> Arc<Self> {
+impl MidiTrackPublisher {
+    pub fn with_content(content: MidiTrackContent) -> Arc<Self> {
         Arc::new(Self {
             pending: AtomicPtr::new(ptr::null_mut()),
-            current: AtomicPtr::new(Box::into_raw(Box::new(notes))),
+            current: AtomicPtr::new(Box::into_raw(Box::new(content))),
             slots: std::array::from_fn(|_| AtomicPtr::new(ptr::null_mut())),
             head: AtomicUsize::new(0),
             tail: AtomicUsize::new(0),
         })
     }
 
-    /// Command thread. Replaces the pending list; the audio thread adopts it
-    /// on the next block. A list still waiting in `pending` is dropped here.
-    pub fn publish(&self, notes: Vec<MidiNoteSnapshot>) {
+    /// Command thread. Replaces the pending content; the audio thread adopts it
+    /// on the next block. A content still waiting in `pending` is dropped here.
+    pub fn publish(&self, content: MidiTrackContent) {
         self.drain_retired();
-        let new_ptr = Box::into_raw(Box::new(notes));
+        let new_ptr = Box::into_raw(Box::new(content));
         let old_ptr = self.pending.swap(new_ptr, Ordering::AcqRel);
         if !old_ptr.is_null() {
             // SAFETY: published by a previous `publish` and never taken by the
@@ -180,8 +208,8 @@ impl MidiNotePublisher {
         }
     }
 
-    /// Audio thread. Adopts a pending list if one is waiting. The displaced
-    /// list is pushed to the retire ring — never dropped here.
+    /// Audio thread. Adopts a pending content if one is waiting. The displaced
+    /// one is pushed to the retire ring — never dropped here.
     pub fn try_swap(&self) -> bool {
         let new_ptr = self.pending.swap(ptr::null_mut(), Ordering::AcqRel);
         if new_ptr.is_null() {
@@ -197,19 +225,19 @@ impl MidiNotePublisher {
     /// Audio thread. The returned slice stays valid for this block: `current`
     /// is only freed after the node has left the audio thread, or after a
     /// later `try_swap` has retired it and the command thread has drained.
-    pub fn notes(&self) -> &[MidiNoteSnapshot] {
+    pub fn content(&self) -> &MidiTrackContent {
         let ptr = self.current.load(Ordering::Acquire);
         if ptr.is_null() {
-            &[]
+            &EMPTY_CONTENT
         } else {
-            // SAFETY: `current` is installed by `with_notes` or `try_swap`
+            // SAFETY: `current` is installed by `with_content` or `try_swap`
             // from `Box::into_raw`, and is not freed while this thread is
             // inside `process`.
             unsafe { &*ptr }
         }
     }
 
-    fn retire(&self, ptr: *mut Vec<MidiNoteSnapshot>) -> bool {
+    fn retire(&self, ptr: *mut MidiTrackContent) -> bool {
         let head = self.head.load(Ordering::Relaxed);
         let next = (head + 1) % MIDI_DROP_RING_CAPACITY;
         if next == self.tail.load(Ordering::Acquire) {
@@ -521,7 +549,7 @@ impl MidiLiveInputQueue {
     }
 }
 
-impl Drop for MidiNotePublisher {
+impl Drop for MidiTrackPublisher {
     fn drop(&mut self) {
         self.drain_retired();
         for ptr in [

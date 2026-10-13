@@ -16,8 +16,8 @@ use crate::plugin_system::PluginHost;
 use crate::project::{
     AppClip, AppMidiClip, AppProject, AppTrack, AutomationClip, AutomationLane, AutomationPoint,
     CompressorParams, DelayParams, EffectParams, EqParams, InterpolationMode, LfoParams,
-    LfoWaveform, MacroParams, MidiNote, ModulationTargetRef, ModulatorParams,
-    ProjectModulationRoute, ProjectModulator, ReverbParams, TrackEffect,
+    LfoWaveform, MacroParams, MidiControlKind, MidiControlPoint, MidiNote, ModulationTargetRef,
+    ModulatorParams, ProjectModulationRoute, ProjectModulator, ReverbParams, TrackEffect,
 };
 use crate::sampler_kit::{PadPlayMode, PadSample, SamplerKit, SamplerPad, SAMPLER_INSTRUMENT_ID};
 
@@ -166,6 +166,7 @@ fn midi_track() -> AppTrack {
             note("n3", 67, 1.25, 2.0),
             note("n4", 72, 3.0, 1.5),
         ],
+        channel_controls: vec![],
     });
     track.effects = full_effect_chain();
     track
@@ -562,6 +563,7 @@ fn sampler_track() -> AppTrack {
         end: DURATION_S,
         offset: 0.0,
         notes,
+        channel_controls: vec![],
     });
     track
 }
@@ -570,7 +572,30 @@ fn sampler_kit() -> AppProject {
     project_with(vec![sampler_track()])
 }
 
-fn reference_projects() -> [(&'static str, AppProject); 11] {
+/// The built-in synth ignores controls (ADR-029): this proves recorded
+/// controls cannot disturb the render, and that the clip path with controls
+/// stays block-size independent.
+fn midi_controls() -> AppProject {
+    let control = |start: f32, kind, number: u8, value: u16| MidiControlPoint {
+        start,
+        kind,
+        number,
+        value,
+    };
+    let mut midi = midi_track();
+    midi.midi_clips[0].channel_controls = vec![
+        control(0.0, MidiControlKind::ControlChange, 64, 127),
+        control(0.5, MidiControlKind::PitchBend, 0, 0x3000),
+        control(1.0, MidiControlKind::ControlChange, 1, 90),
+        control(1.5, MidiControlKind::PitchBend, 0, 0x2000),
+        control(2.0, MidiControlKind::ChannelPressure, 0, 70),
+        control(2.5, MidiControlKind::PolyPressure, 60, 40),
+        control(3.0, MidiControlKind::ControlChange, 64, 0),
+    ];
+    project_with(vec![audio_track(), midi])
+}
+
+fn reference_projects() -> [(&'static str, AppProject); 12] {
     [
         ("static_mix", static_mix()),
         ("modulated_effects", modulated_effects()),
@@ -583,12 +608,13 @@ fn reference_projects() -> [(&'static str, AppProject); 11] {
         ("automated_reverb", automated_reverb()),
         ("automated_delay", automated_delay()),
         ("sampler_kit", sampler_kit()),
+        ("midi_controls", midi_controls()),
     ]
 }
 
 /// Recorded on Windows x86_64.  Only update a value when an ADR sanctions the
 /// render change, and say so in the commit.
-const GOLDEN_HASHES: [(&str, u64); 11] = [
+const GOLDEN_HASHES: [(&str, u64); 12] = [
     ("static_mix", 0x7dec_d259_cfd9_6694),
     ("modulated_effects", 0x29ea_1120_1ae0_2d53),
     ("modulated_gain", 0x23ef_388b_80d0_9a52),
@@ -600,6 +626,7 @@ const GOLDEN_HASHES: [(&str, u64); 11] = [
     ("automated_reverb", 0x8aef_85dc_383f_a3bc),
     ("automated_delay", 0xed2b_9373_7df4_ac29),
     ("sampler_kit", 0x8151_d7f3_7a3c_1e57),
+    ("midi_controls", 0x7dec_d259_cfd9_6694),
 ];
 
 fn assert_block_size_independent(name: &str, project: &AppProject) {
@@ -676,6 +703,19 @@ fn automated_delay_is_block_size_independent() {
 #[test]
 fn sampler_kit_is_block_size_independent() {
     assert_block_size_independent("sampler_kit", &sampler_kit());
+}
+
+#[test]
+fn midi_controls_are_block_size_independent() {
+    assert_block_size_independent("midi_controls", &midi_controls());
+}
+
+#[test]
+fn controls_do_not_change_what_the_built_in_synth_plays() {
+    assert_eq!(
+        render(&midi_controls(), BLOCK_SIZES[0]),
+        render(&static_mix(), BLOCK_SIZES[0])
+    );
 }
 
 #[test]

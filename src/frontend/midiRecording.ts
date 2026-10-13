@@ -53,7 +53,10 @@ function nextFrame(): Promise<void> {
 async function addRecordedClip(clip: RecordedMidiClip): Promise<void> {
 	midiRecordingPreview.update((preview) => preview && { ...preview, finished: clip });
 	try {
-		await addMidiClip(clip.trackId, clip.start, clip.end, { notes: clip.notes });
+		await addMidiClip(clip.trackId, clip.start, clip.end, {
+			notes: clip.notes,
+			channelControls: clip.channelControls
+		});
 		await nextFrame();
 		await nextFrame();
 	} finally {

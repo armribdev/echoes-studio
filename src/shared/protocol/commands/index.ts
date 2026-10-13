@@ -14,6 +14,7 @@
 import type {
 	AutomationClip,
 	InterpolationMode,
+	MidiControlPoint,
 	PluginOutputSource,
 	SamplerPad
 } from '../../../types/global';
@@ -74,6 +75,7 @@ export const cmd = {
 	REMOVE_MIDI_CLIP: 'REMOVE_MIDI_CLIP',
 	MOVE_MIDI_CLIP: 'MOVE_MIDI_CLIP',
 	SET_CLIP_MIDI_NOTES: 'SET_CLIP_MIDI_NOTES',
+	SET_CLIP_MIDI_CONTROLS: 'SET_CLIP_MIDI_CONTROLS',
 
 	// Batch
 	BATCH: 'BATCH'
@@ -311,6 +313,8 @@ export interface AddMidiClipPayload {
 	offset?: number;
 	/** Notes seeded with the clip (paste). Omit for an empty clip. */
 	notes?: { id: string; pitch: number; start: number; duration: number; velocity: number }[];
+	/** Controls seeded with the clip (paste, recording). Omit for none. */
+	channel_controls?: MidiControlPoint[];
 }
 
 export interface RemoveMidiClipPayload {
@@ -333,6 +337,12 @@ export interface SetClipMidiNotesPayload {
 	track_id: string;
 	clip_id: string;
 	notes: { id: string; pitch: number; start: number; duration: number; velocity: number }[];
+}
+
+export interface SetClipMidiControlsPayload {
+	track_id: string;
+	clip_id: string;
+	channel_controls: MidiControlPoint[];
 }
 
 export interface AddMarkerPayload {

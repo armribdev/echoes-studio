@@ -24,6 +24,7 @@ import type {
 	AutomationLane,
 	Clip,
 	MidiClip,
+	MidiControlPoint,
 	MidiNote,
 	PluginOutputSource,
 	Project,
@@ -624,6 +625,27 @@ export function applyEvent(state: ProjectState, event: EngineEvent): ProjectStat
 								...t,
 								midi_clips: t.midi_clips.map((c) =>
 									c.id !== p.clip_id ? c : { ...c, notes: p.notes }
+								)
+							}
+				)
+			};
+		}
+
+		case ev.MIDI_CLIP_CONTROLS_SET: {
+			const p = event.payload as {
+				track_id: string;
+				clip_id: string;
+				channel_controls: MidiControlPoint[];
+			};
+			return {
+				...state,
+				tracks: state.tracks.map((t) =>
+					t.id !== p.track_id
+						? t
+						: {
+								...t,
+								midi_clips: t.midi_clips.map((c) =>
+									c.id !== p.clip_id ? c : { ...c, channel_controls: p.channel_controls }
 								)
 							}
 				)

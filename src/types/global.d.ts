@@ -131,6 +131,23 @@ export interface MidiNote {
 	velocity: number;
 }
 
+export type MidiControlKind =
+	| 'pitch_bend'
+	| 'control_change'
+	| 'channel_pressure'
+	| 'poly_pressure';
+
+/** A channel-wide control value (ADR-029); holds until the next point of the same control. */
+export interface MidiControlPoint {
+	/** Beat position relative to the clip content origin, like a note's `start`. */
+	start: number;
+	kind: MidiControlKind;
+	/** CC number, or the key of a polyphonic pressure; `0` otherwise. */
+	number: number;
+	/** 0..16383 for a pitch bend, 0..127 for the others. */
+	value: number;
+}
+
 export interface MidiClip {
 	id: string;
 	/** Position on the timeline in seconds. */
@@ -139,6 +156,7 @@ export interface MidiClip {
 	/** Seconds of content hidden past the left edge (left-trim). Defaults to 0. */
 	offset: number;
 	notes: MidiNote[];
+	channel_controls: MidiControlPoint[];
 }
 
 /** An aux output of a multi-out plugin, taken as a track's audio input. */

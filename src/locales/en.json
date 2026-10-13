@@ -154,7 +154,19 @@
 		"eraseTitle": "Erase (E)",
 		"quantize": "Quantize",
 		"quantizeTitle": "Quantize (saved in the project)",
-		"keys": "Piano keys"
+		"keys": "Piano keys",
+		"controls": {
+			"add": "+ Control",
+			"lane": "Lane control",
+			"hide": "Hide lane",
+			"clear": "Clear the lane's points",
+			"pitchBend": "Pitch bend",
+			"modulation": "Modulation",
+			"expression": "Expression",
+			"sustain": "Sustain",
+			"aftertouch": "Aftertouch",
+			"controller": "CC {number}"
+		}
 	},
 	"trackStrip": {
 		"muteSoloArm": "Mute, solo, arm",

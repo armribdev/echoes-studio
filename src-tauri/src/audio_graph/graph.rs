@@ -875,6 +875,7 @@ mod routing_tests {
             end: 1.0,
             offset: 0.0,
             notes: vec![],
+            channel_controls: vec![],
         }];
         track
     }

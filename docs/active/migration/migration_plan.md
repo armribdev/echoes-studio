@@ -460,6 +460,10 @@ sortie MIDI, pas de routing par piste — une seule piste « armée » globale r
 tous les devices activés). **Enregistrement dans un clip livré le 2026-09-29**
 (amendement ADR-022, `midi_recording.rs` ; pas encore testé à la main) :
 bouton ● de la barre de transport, un clip créé à l'arrêt/pause/re-clic.
+**Contrôles (pitch bend, CC, aftertouch) enregistrés et rejoués le 2026-10-13**
+(ADR-029 : stockés en beats dans le clip, rattrapage de valeur au seek / boucle /
+bords de clip, lignes de contrôle dans la piano roll ; pas encore testé à la
+main).
 
 ### Justification
 

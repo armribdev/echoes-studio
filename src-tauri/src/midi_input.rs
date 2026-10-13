@@ -285,25 +285,32 @@ fn local_control_messages(on: bool) -> impl Iterator<Item = [u8; 3]> {
 
 /// Parse a raw MIDI message into a live event: notes, plus pitch bend, control
 /// change and aftertouch for plugin instruments. The channel is dropped (notes
-/// play on one channel), program change and 2-byte messages are ignored. A
+/// play on one channel); program change and system messages are ignored. A
 /// Note On with velocity 0 is a Note Off per the MIDI spec.
 fn parse_live_message(message: &[u8], received_at: u64) -> Option<MidiLiveInputMessage> {
-    let &[status, data1, data2] = message else {
-        return None;
-    };
-    let message_type = status & 0xF0;
-    let kind = match message_type {
-        0x90 if data2 > 0 => MidiEventKind::NoteOn {
-            pitch: data1,
-            velocity: data2,
-        },
-        0x90 | 0x80 => MidiEventKind::NoteOff { pitch: data1 },
-        0xA0 | 0xB0 | 0xE0 => MidiEventKind::Control {
-            message: [message_type, data1, data2],
+    let kind = match *message {
+        [status, data1, data2] => parse_three_byte_message(status, data1, data2)?,
+        [status, pressure] if status & 0xF0 == 0xD0 => MidiEventKind::Control {
+            message: [0xD0, pressure, 0],
         },
         _ => return None,
     };
     Some(MidiLiveInputMessage { kind, received_at })
+}
+
+fn parse_three_byte_message(status: u8, data1: u8, data2: u8) -> Option<MidiEventKind> {
+    let message_type = status & 0xF0;
+    match message_type {
+        0x90 if data2 > 0 => Some(MidiEventKind::NoteOn {
+            pitch: data1,
+            velocity: data2,
+        }),
+        0x90 | 0x80 => Some(MidiEventKind::NoteOff { pitch: data1 }),
+        0xA0 | 0xB0 | 0xE0 => Some(MidiEventKind::Control {
+            message: [message_type, data1, data2],
+        }),
+        _ => None,
+    }
 }
 
 #[cfg(test)]
@@ -353,6 +360,16 @@ mod tests {
                 Some(MidiEventKind::Control { message: expected })
             );
         }
+    }
+
+    #[test]
+    fn channel_pressure_has_two_bytes() {
+        assert_eq!(
+            parsed_kind(&[0xD4, 70]),
+            Some(MidiEventKind::Control {
+                message: [0xD0, 70, 0]
+            })
+        );
     }
 
     #[test]

@@ -391,9 +391,60 @@ pub struct MidiNote {
     pub velocity: u8,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MidiControlKind {
+    PitchBend,
+    ControlChange,
+    ChannelPressure,
+    PolyPressure,
+}
+
+impl MidiControlKind {
+    pub fn status(self) -> u8 {
+        match self {
+            Self::PolyPressure => 0xA0,
+            Self::ControlChange => 0xB0,
+            Self::ChannelPressure => 0xD0,
+            Self::PitchBend => 0xE0,
+        }
+    }
+
+    pub fn max_value(self) -> u16 {
+        match self {
+            Self::PitchBend => 0x3FFF,
+            _ => 0x7F,
+        }
+    }
+}
+
+/// One channel-wide control value (ADR-029). Holds until the next point of the
+/// same control. `number` is the CC number or the key of a polyphonic pressure,
+/// `0` otherwise; `value` is 14-bit for a pitch bend, 7-bit for the others.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MidiControlPoint {
+    /// Position in beats, relative to the clip content origin like `MidiNote::start`.
+    pub start: f32,
+    pub kind: MidiControlKind,
+    #[serde(default)]
+    pub number: u8,
+    pub value: u16,
+}
+
+/// Drops invalid points, clamps values to their range and orders by position.
+pub fn sanitize_control_points(mut points: Vec<MidiControlPoint>) -> Vec<MidiControlPoint> {
+    points.retain(|point| point.start.is_finite() && point.start >= 0.0);
+    for point in &mut points {
+        point.number = point.number.min(0x7F);
+        point.value = point.value.min(point.kind.max_value());
+    }
+    points.sort_by(|a, b| a.start.total_cmp(&b.start));
+    points
+}
+
 /// A MIDI clip placed on the timeline.
 /// `start`/`end` are in seconds (same coordinate space as audio clips).
-/// Notes are beat-relative to the clip start.
+/// Notes and controls are beat-relative to the clip content origin.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppMidiClip {
     pub id: String,
@@ -404,6 +455,7 @@ pub struct AppMidiClip {
     /// `[start, end]`. `0.0` for untrimmed clips.
     pub offset: f64,
     pub notes: Vec<MidiNote>,
+    pub channel_controls: Vec<MidiControlPoint>,
 }
 
 use std::collections::{HashMap, HashSet};
@@ -787,6 +839,7 @@ impl AppProject {
                             end: mc.end,
                             offset: mc.offset,
                             notes: mc.notes.clone(),
+                            channel_controls: mc.channel_controls.clone(),
                         })
                         .collect(),
                     instrument: t.instrument.clone(),
@@ -846,6 +899,7 @@ impl AppProject {
                     end: mc.end,
                     offset: mc.offset,
                     notes: mc.notes,
+                    channel_controls: sanitize_control_points(mc.channel_controls),
                 })
                 .collect();
             tracks.push(AppTrack {
@@ -992,6 +1046,7 @@ impl AppTrack {
                     end: mc.end,
                     offset: mc.offset,
                     notes: mc.notes.clone(),
+                    channel_controls: mc.channel_controls.clone(),
                 })
                 .collect(),
             instrument: self.instrument.clone(),
@@ -1362,6 +1417,8 @@ pub struct MidiClipFile {
     pub offset: f64,
     #[serde(default)]
     pub notes: Vec<MidiNote>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub channel_controls: Vec<MidiControlPoint>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -1399,6 +1456,7 @@ pub struct MidiClipDto {
     pub end: f64,
     pub offset: f64,
     pub notes: Vec<MidiNote>,
+    pub channel_controls: Vec<MidiControlPoint>,
 }
 
 #[derive(Serialize, Clone)]
@@ -1466,6 +1524,7 @@ mod tests {
                 end: 12.5,
                 offset: 0.0,
                 notes: vec![],
+                channel_controls: vec![],
             }],
             instrument: None,
             sampler: None,
@@ -1532,6 +1591,79 @@ mod tests {
         assert_eq!(tf.instrument, None);
         assert_eq!(tf.input_source, None);
         assert!(tf.sampler.is_none());
+    }
+
+    fn track_with_midi_clip(controls: Vec<MidiControlPoint>) -> AppTrack {
+        let mut track = track_with_plugin("keys", "fx", "clap:any");
+        track.midi_clips.push(AppMidiClip {
+            id: "clip".into(),
+            start: 0.0,
+            end: 4.0,
+            offset: 0.0,
+            notes: vec![],
+            channel_controls: controls,
+        });
+        track
+    }
+
+    /// Channel controls survive save → load, and a clip without any writes no
+    /// `channel_controls` key (older builds read the file unchanged).
+    #[test]
+    fn channel_controls_round_trip_through_file() {
+        let controls = vec![
+            MidiControlPoint {
+                start: 1.0,
+                kind: MidiControlKind::PitchBend,
+                number: 0,
+                value: 0x3000,
+            },
+            MidiControlPoint {
+                start: 2.0,
+                kind: MidiControlKind::ControlChange,
+                number: 64,
+                value: 127,
+            },
+        ];
+        let mut project = AppProject::new();
+        project.tracks.push(track_with_midi_clip(controls.clone()));
+        project.tracks.push(track_with_midi_clip(vec![]));
+
+        let json = serde_json::to_string(&project.to_file()).expect("serialize");
+        assert_eq!(json.matches("channel_controls").count(), 1);
+        let file: ProjectFile = serde_json::from_str(&json).expect("deserialize");
+        let restored = AppProject::from_file(file).expect("from_file");
+
+        assert_eq!(restored.tracks[0].midi_clips[0].channel_controls, controls);
+        assert!(restored.tracks[1].midi_clips[0].channel_controls.is_empty());
+    }
+
+    #[test]
+    fn midi_clip_without_channel_controls_loads_from_an_older_file() {
+        let json = r#"{"id":"c","start":0.0,"end":2.0,"notes":[]}"#;
+        let clip: MidiClipFile = serde_json::from_str(json).expect("deserialize older clip");
+        assert!(clip.channel_controls.is_empty());
+    }
+
+    #[test]
+    fn control_points_are_sanitized_and_ordered() {
+        let point = |start: f32, kind, value| MidiControlPoint {
+            start,
+            kind,
+            number: 200,
+            value,
+        };
+        let sanitized = sanitize_control_points(vec![
+            point(2.0, MidiControlKind::PitchBend, 60_000),
+            point(-1.0, MidiControlKind::ControlChange, 5),
+            point(f32::NAN, MidiControlKind::ControlChange, 5),
+            point(1.0, MidiControlKind::ControlChange, 300),
+        ]);
+
+        assert_eq!(sanitized.len(), 2);
+        assert_eq!(sanitized[0].start, 1.0);
+        assert_eq!(sanitized[0].value, 127);
+        assert_eq!(sanitized[0].number, 127);
+        assert_eq!(sanitized[1].value, 0x3FFF);
     }
 
     /// A track's plugin-output input survives a save to JSON and a reload.

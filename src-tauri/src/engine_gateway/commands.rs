@@ -84,6 +84,7 @@ pub mod cmd {
     pub const REMOVE_MIDI_CLIP: &str = "REMOVE_MIDI_CLIP";
     pub const MOVE_MIDI_CLIP: &str = "MOVE_MIDI_CLIP";
     pub const SET_CLIP_MIDI_NOTES: &str = "SET_CLIP_MIDI_NOTES";
+    pub const SET_CLIP_MIDI_CONTROLS: &str = "SET_CLIP_MIDI_CONTROLS";
 }
 
 // Each struct is deserialised from `CommandEnvelope::payload` for its matching
@@ -385,6 +386,9 @@ pub struct AddMidiClipPayload {
     /// Seed notes (paste). Empty when omitted; ids are regenerated on insert.
     #[serde(default)]
     pub notes: Vec<crate::project::MidiNote>,
+    /// Seed controls (paste, recording). Empty when omitted.
+    #[serde(default)]
+    pub channel_controls: Vec<crate::project::MidiControlPoint>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -413,6 +417,13 @@ pub struct SetClipMidiNotesPayload {
     pub track_id: String,
     pub clip_id: String,
     pub notes: Vec<crate::project::MidiNote>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SetClipMidiControlsPayload {
+    pub track_id: String,
+    pub clip_id: String,
+    pub channel_controls: Vec<crate::project::MidiControlPoint>,
 }
 
 #[derive(Debug, Deserialize)]

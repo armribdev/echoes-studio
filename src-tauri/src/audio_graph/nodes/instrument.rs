@@ -16,12 +16,15 @@ use std::sync::Arc;
 
 use crate::audio_graph::buffer::AudioBuffer;
 use crate::audio_graph::live_params::EnvelopeCells;
-#[cfg(test)]
-use crate::audio_graph::midi::MidiNoteSnapshot;
 use crate::audio_graph::midi::{
-    MidiEvent, MidiEventKind, MidiEventList, MidiLiveInputQueue, MidiNotePublisher,
-    MidiPreviewQueue,
+    MidiEvent, MidiEventKind, MidiEventList, MidiLiveInputQueue, MidiPreviewQueue,
+    MidiTrackPublisher,
 };
+#[cfg(test)]
+use crate::audio_graph::midi::{MidiNoteSnapshot, MidiTrackContent};
+use crate::audio_graph::midi_controls::ControlState;
+#[cfg(test)]
+use crate::audio_graph::midi_controls::{MidiControlClip, MidiControlSnapshot};
 use crate::audio_graph::node::{AudioNode, PrepareContext, TransportInfo};
 use crate::audio_graph::plugin_params::{
     parse_plugin_param_name, PluginParamControl, PluginParamControls,
@@ -82,10 +85,12 @@ impl InstrumentDevice for SilentInstrument {
 }
 
 pub struct InstrumentNode {
-    /// All notes for this instrument, in any order.
+    /// All notes (in any order) and control points for this instrument.
     /// Stored in beat space; sample positions are derived per block from transport BPM.
-    /// Replaced in place when the piano roll edits notes — no graph rebuild.
-    notes: Arc<MidiNotePublisher>,
+    /// Replaced in place when the piano roll edits clips — no graph rebuild.
+    track_content: Arc<MidiTrackPublisher>,
+    /// Which timeline controls (sustain, bend…) are away from neutral.
+    controls: ControlState,
     /// Piano-roll audition. Independent of transport and of the timeline note list.
     preview: Option<Arc<MidiPreviewQueue>>,
     /// Voices opened by audition, so a seek or stop does not release them.
@@ -118,7 +123,10 @@ impl InstrumentNode {
     #[cfg(test)]
     pub fn new(notes: Arc<Vec<MidiNoteSnapshot>>, device: Box<dyn InstrumentDevice>) -> Self {
         Self::from_publisher(
-            MidiNotePublisher::with_notes(notes.as_ref().clone()),
+            MidiTrackPublisher::with_content(MidiTrackContent {
+                notes: notes.as_ref().clone(),
+                control_clips: Vec::new(),
+            }),
             device,
         )
     }
@@ -190,11 +198,12 @@ impl InstrumentNode {
     }
 
     pub fn from_publisher(
-        notes: Arc<MidiNotePublisher>,
+        track_content: Arc<MidiTrackPublisher>,
         device: Box<dyn InstrumentDevice>,
     ) -> Self {
         Self {
-            notes,
+            track_content,
+            controls: ControlState::new(),
             preview: None,
             preview_count: [0u8; 128],
             live_input: None,
@@ -216,7 +225,7 @@ impl InstrumentNode {
     fn reconcile_sounding_notes(&mut self, block_start: u64, bpm: f32, sample_rate: f32) {
         let mut should_sound = [0u8; 128];
         let mut velocity = [0u8; 128];
-        for note in self.notes.notes() {
+        for note in &self.track_content.content().notes {
             let start_sample = note
                 .start_sample(bpm, sample_rate)
                 .max(note.window_start_sample);
@@ -286,7 +295,7 @@ impl AudioNode for InstrumentNode {
         transport: &TransportInfo,
     ) {
         self.event_buf.clear();
-        let notes_swapped = self.notes.try_swap();
+        let notes_swapped = self.track_content.try_swap();
 
         if transport.is_playing {
             let block_start = transport.position_samples;
@@ -295,10 +304,12 @@ impl AudioNode for InstrumentNode {
             let sample_rate = transport.sample_rate;
             let discontinuity = !self.was_playing || block_start != self.next_expected_block_start;
 
+            let resync_controls = discontinuity || notes_swapped;
+
             if discontinuity {
                 self.release_sounding_notes();
 
-                for note in self.notes.notes() {
+                for note in &self.track_content.content().notes {
                     let start_sample = note
                         .start_sample(bpm, sample_rate)
                         .max(note.window_start_sample);
@@ -324,7 +335,13 @@ impl AudioNode for InstrumentNode {
                 self.reconcile_sounding_notes(block_start, bpm, sample_rate);
             }
 
-            for note in self.notes.notes() {
+            let control_clips = &self.track_content.content().control_clips;
+            if resync_controls {
+                self.controls
+                    .sync(control_clips, &mut self.event_buf, transport);
+            }
+
+            for note in &self.track_content.content().notes {
                 // Clamp the note to the clip's playable window (trim).
                 let start_sample = note
                     .start_sample(bpm, sample_rate)
@@ -356,6 +373,13 @@ impl AudioNode for InstrumentNode {
                 }
             }
 
+            self.controls.play_block(
+                control_clips,
+                &mut self.event_buf,
+                transport,
+                block_start + resync_controls as u64,
+            );
+
             self.drain_preview();
             self.drain_live_input(transport);
             self.event_buf.sort_by_offset();
@@ -366,6 +390,7 @@ impl AudioNode for InstrumentNode {
             // say should sound at the current position.
             if self.was_playing {
                 self.release_sounding_notes();
+                self.controls.release(&mut self.event_buf);
             }
             self.drain_preview();
             self.drain_live_input(transport);
@@ -398,6 +423,7 @@ impl AudioNode for InstrumentNode {
         self.active_pitch_count = [0u8; 128];
         self.preview_count = [0u8; 128];
         self.live_input_count = [0u8; 128];
+        self.controls.reset();
         // Release envelopes on graph reset so they don't hang in Sustain.
         for cells in &self.envelope_cells {
             cells.gate.store(false, Ordering::Relaxed);
@@ -678,13 +704,16 @@ mod tests {
     #[test]
     fn note_swap_releases_only_the_deleted_pitch() {
         let captured = Arc::new(Mutex::new(Vec::new()));
-        let publisher = MidiNotePublisher::with_notes(vec![
-            one_beat_note(),
-            MidiNoteSnapshot {
-                pitch: 64,
-                ..one_beat_note()
-            },
-        ]);
+        let publisher = MidiTrackPublisher::with_content(MidiTrackContent {
+            notes: vec![
+                one_beat_note(),
+                MidiNoteSnapshot {
+                    pitch: 64,
+                    ..one_beat_note()
+                },
+            ],
+            control_clips: Vec::new(),
+        });
         let mut node = InstrumentNode::from_publisher(
             Arc::clone(&publisher),
             Box::new(CaptureDevice {
@@ -700,7 +729,10 @@ mod tests {
 
         run_block(&mut node, &transport_at(true, 0, 30_000));
         run_block(&mut node, &transport_at(true, 30_000, 512));
-        publisher.publish(vec![one_beat_note()]);
+        publisher.publish(MidiTrackContent {
+            notes: vec![one_beat_note()],
+            control_clips: Vec::new(),
+        });
         run_block(&mut node, &transport_at(true, 30_512, 512));
 
         let events = captured.lock().unwrap();
@@ -798,5 +830,114 @@ mod tests {
         let events = captured.lock().unwrap();
         assert!(events.iter().any(|e| e.kind == sustain));
         assert!(node.live_input_count.iter().all(|&count| count == 0));
+    }
+
+    const SAMPLES_PER_BEAT: u64 = 24_000;
+
+    fn sustain_clip() -> MidiControlClip {
+        let sustain = |start_beats: f32, value: u16| MidiControlSnapshot {
+            start_beats,
+            status: 0xB0,
+            number: 64,
+            value,
+        };
+        MidiControlClip {
+            clip_start_sec: 0.0,
+            window_start_sample: 0,
+            window_end_sample: 4 * SAMPLES_PER_BEAT,
+            points: vec![sustain(1.0, 127), sustain(3.0, 0)],
+        }
+    }
+
+    fn node_with_sustain(captured: Arc<Mutex<Vec<MidiEvent>>>) -> InstrumentNode {
+        let publisher = MidiTrackPublisher::with_content(MidiTrackContent {
+            notes: Vec::new(),
+            control_clips: vec![sustain_clip()],
+        });
+        let mut node =
+            InstrumentNode::from_publisher(publisher, Box::new(CaptureDevice { captured }));
+        node.prepare(PrepareContext {
+            sample_rate: 48_000.0,
+            max_block_size: 64_000,
+            num_channels: 2,
+            live: true,
+        });
+        node
+    }
+
+    fn sustain_messages(captured: &Arc<Mutex<Vec<MidiEvent>>>) -> Vec<(u32, u8)> {
+        captured
+            .lock()
+            .unwrap()
+            .iter()
+            .filter_map(|event| match event.kind {
+                MidiEventKind::Control { message } if message[1] == 64 => {
+                    Some((event.offset, message[2]))
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn recorded_control_plays_at_its_position_in_the_block() {
+        let captured = Arc::new(Mutex::new(Vec::new()));
+        let mut node = node_with_sustain(captured.clone());
+
+        run_block(&mut node, &transport_at(true, 0, 30_000));
+
+        assert_eq!(sustain_messages(&captured), vec![(24_000, 127)]);
+    }
+
+    #[test]
+    fn seeking_into_a_clip_catches_up_the_held_control() {
+        let captured = Arc::new(Mutex::new(Vec::new()));
+        let mut node = node_with_sustain(captured.clone());
+
+        run_block(&mut node, &transport_at(true, 0, 512));
+        run_block(&mut node, &transport_at(true, 2 * SAMPLES_PER_BEAT, 512));
+
+        assert_eq!(sustain_messages(&captured), vec![(0, 127)]);
+    }
+
+    #[test]
+    fn stopping_releases_a_pedal_the_timeline_pressed() {
+        let captured = Arc::new(Mutex::new(Vec::new()));
+        let mut node = node_with_sustain(captured.clone());
+
+        run_block(&mut node, &transport_at(true, 0, 30_000));
+        run_block(&mut node, &transport_at(false, 0, 512));
+
+        assert_eq!(sustain_messages(&captured), vec![(0, 0)]);
+    }
+
+    #[test]
+    fn editing_controls_while_playing_resends_the_held_value() {
+        let captured = Arc::new(Mutex::new(Vec::new()));
+        let publisher = MidiTrackPublisher::with_content(MidiTrackContent::default());
+        let mut node = InstrumentNode::from_publisher(
+            Arc::clone(&publisher),
+            Box::new(CaptureDevice {
+                captured: Arc::clone(&captured),
+            }),
+        );
+        node.prepare(PrepareContext {
+            sample_rate: 48_000.0,
+            max_block_size: 64_000,
+            num_channels: 2,
+            live: true,
+        });
+        run_block(
+            &mut node,
+            &transport_at(true, 0, 2 * SAMPLES_PER_BEAT as usize),
+        );
+
+        publisher.publish(MidiTrackContent {
+            notes: Vec::new(),
+            control_clips: vec![sustain_clip()],
+        });
+        run_block(&mut node, &transport_at(true, 2 * SAMPLES_PER_BEAT, 512));
+
+        assert_eq!(sustain_messages(&captured), vec![(0, 127)]);
     }
 }

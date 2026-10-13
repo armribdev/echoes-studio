@@ -1,10 +1,12 @@
-//! Recording of hardware MIDI notes into a clip (ADR-022 amendment).
+//! Recording of hardware MIDI notes and controls into a clip (ADR-022
+//! amendment, ADR-029).
 //!
-//! The MIDI capture thread hands every note of the armed track to
+//! The MIDI capture thread hands every message of the armed track to
 //! `MidiRecorder::capture`, which stamps it with the transport sample that was
 //! playing when the key was pressed. When the recording ends — record button,
-//! pause or stop — the notes are paired into a clip that the frontend adds
-//! through the regular `ADD_MIDI_CLIP` command (one undo step).
+//! pause or stop — the notes are paired into a clip, with the pitch bend,
+//! control changes and aftertouch alongside, that the frontend adds through
+//! the regular `ADD_MIDI_CLIP` command (one undo step).
 //!
 //! Nothing here runs on the audio thread: the only audio-side cost is the
 //! transport position published next to the live-input window
@@ -19,7 +21,10 @@ use tauri::{AppHandle, Emitter};
 
 use crate::audio_engine::transport::SharedTransport;
 use crate::audio_graph::midi::{LiveInputClock, MidiEventKind, MidiLiveInputMessage};
-use crate::project::{generate_id, MidiNote};
+use crate::audio_graph::midi_controls::control_neutral_value;
+use crate::project::{
+    generate_id, sanitize_control_points, MidiControlKind, MidiControlPoint, MidiNote,
+};
 
 /// Emitted when a recording ends. Payload: `Option<RecordedMidiClip>`, `null`
 /// when no note was played.
@@ -31,6 +36,10 @@ pub const MIDI_RECORDING_NOTE_EVENT: &str = "midi-recording-note";
 
 const MIN_NOTE_BEATS: f64 = 0.0625;
 
+/// A fast bend or mod-wheel sweep sends hundreds of values per second; one per
+/// bucket keeps the gesture and the clip small.
+const CONTROL_BUCKET_SECONDS: f64 = 0.005;
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RecordedMidiClip {
@@ -39,6 +48,7 @@ pub struct RecordedMidiClip {
     pub start: f64,
     pub end: f64,
     pub notes: Vec<MidiNote>,
+    pub channel_controls: Vec<MidiControlPoint>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -58,10 +68,28 @@ struct RecordedEvent {
     position_samples: u64,
 }
 
+#[derive(Clone, Copy)]
+struct RecordedControl {
+    kind: MidiControlKind,
+    number: u8,
+    value: u16,
+    position_samples: u64,
+}
+
+impl RecordedControl {
+    fn key(&self) -> (MidiControlKind, u8) {
+        (self.kind, self.number)
+    }
+}
+
 struct Recording {
     track_id: String,
     start_position_samples: u64,
     events: Vec<RecordedEvent>,
+    controls: Vec<RecordedControl>,
+    /// Last value of each held control seen during the count-in, so a pedal
+    /// pressed before the first beat is down at the start of the clip.
+    count_in_controls: HashMap<(MidiControlKind, u8), u16>,
 }
 
 pub struct MidiRecorder {
@@ -91,28 +119,46 @@ impl MidiRecorder {
             track_id,
             start_position_samples,
             events: Vec::new(),
+            controls: Vec::new(),
+            count_in_controls: HashMap::new(),
         });
         Ok(start_position_samples as f64 / self.transport.sample_rate() as f64)
     }
 
-    /// MIDI capture thread. Ignores notes played during the count-in, notes
-    /// that are not for the recorded track, and controls (clips hold notes only);
-    /// returns the recorded note so the caller can show it right away.
+    /// MIDI capture thread. Ignores messages that are not for the recorded
+    /// track; notes played during the count-in are dropped, and controls played
+    /// then only set the value the clip starts with. Returns the recorded note
+    /// so the caller can show it right away.
     pub fn capture(&self, track_id: &str, message: &MidiLiveInputMessage) -> Option<RecordedNote> {
+        let counting_in = self.transport.count_in_remaining() > 0;
+        let mut recording = self.lock();
+        let recording = recording.as_mut().filter(|r| r.track_id == track_id)?;
+
         let (note_on, pitch, velocity) = match message.kind {
             MidiEventKind::NoteOn { pitch, velocity } => (true, pitch, velocity),
             MidiEventKind::NoteOff { pitch } => (false, pitch, 0),
-            MidiEventKind::Control { .. } => return None,
+            MidiEventKind::Control { message: raw } => {
+                let (kind, number, value) = decode_control(raw)?;
+                if counting_in {
+                    if kind != MidiControlKind::PolyPressure {
+                        recording.count_in_controls.insert((kind, number), value);
+                    }
+                    return None;
+                }
+                let position_samples = self.position_of(message)?;
+                recording.controls.push(RecordedControl {
+                    kind,
+                    number,
+                    value,
+                    position_samples,
+                });
+                return None;
+            }
         };
-        if self.transport.count_in_remaining() > 0 {
+        if counting_in {
             return None;
         }
-        let mut recording = self.lock();
-        let recording = recording.as_mut().filter(|r| r.track_id == track_id)?;
-        let sample_rate = self.transport.sample_rate();
-        let position_samples = self
-            .clock
-            .transport_position_at(message.received_at, sample_rate)?;
+        let position_samples = self.position_of(message)?;
         recording.events.push(RecordedEvent {
             note_on,
             pitch,
@@ -123,8 +169,13 @@ impl MidiRecorder {
             note_on,
             pitch,
             velocity,
-            position: position_samples as f64 / sample_rate as f64,
+            position: position_samples as f64 / self.transport.sample_rate() as f64,
         })
+    }
+
+    fn position_of(&self, message: &MidiLiveInputMessage) -> Option<u64> {
+        self.clock
+            .transport_position_at(message.received_at, self.transport.sample_rate())
     }
 
     /// Ends the recording, if any. `Some(None)` when it held no note.
@@ -212,6 +263,12 @@ fn build_clip(
     let clip_end = end_position_samples.max(last_note_end);
 
     let beats_per_sample = bpm / 60.0 / sample_rate;
+    let channel_controls = build_controls(
+        &recording,
+        clip_start,
+        beats_per_sample,
+        (CONTROL_BUCKET_SECONDS * sample_rate) as u64,
+    );
     let notes = spans
         .iter()
         .map(|span| MidiNote {
@@ -228,7 +285,77 @@ fn build_clip(
         start: clip_start as f64 / sample_rate,
         end: clip_end as f64 / sample_rate,
         notes,
+        channel_controls,
     })
+}
+
+fn decode_control(raw: [u8; 3]) -> Option<(MidiControlKind, u8, u16)> {
+    match raw[0] {
+        0xA0 => Some((MidiControlKind::PolyPressure, raw[1], raw[2] as u16)),
+        0xB0 => Some((MidiControlKind::ControlChange, raw[1], raw[2] as u16)),
+        0xD0 => Some((MidiControlKind::ChannelPressure, 0, raw[1] as u16)),
+        0xE0 => Some((
+            MidiControlKind::PitchBend,
+            0,
+            raw[1] as u16 | (raw[2] as u16) << 7,
+        )),
+        _ => None,
+    }
+}
+
+/// Keeps the last value of each control per bucket, then drops values that
+/// repeat the previous one.
+fn thin_controls(controls: &[RecordedControl], bucket_samples: u64) -> Vec<RecordedControl> {
+    let bucket_samples = bucket_samples.max(1);
+    let mut kept: Vec<RecordedControl> = Vec::new();
+    let mut last_kept: HashMap<(MidiControlKind, u8), usize> = HashMap::new();
+    for control in controls {
+        let same_bucket = last_kept.get(&control.key()).copied().filter(|&index| {
+            kept[index].position_samples / bucket_samples
+                == control.position_samples / bucket_samples
+        });
+        match same_bucket {
+            Some(index) => kept[index] = *control,
+            None => {
+                last_kept.insert(control.key(), kept.len());
+                kept.push(*control);
+            }
+        }
+    }
+
+    let mut last_value: HashMap<(MidiControlKind, u8), u16> = HashMap::new();
+    kept.retain(|control| last_value.insert(control.key(), control.value) != Some(control.value));
+    kept
+}
+
+fn build_controls(
+    recording: &Recording,
+    clip_start: u64,
+    beats_per_sample: f64,
+    bucket_samples: u64,
+) -> Vec<MidiControlPoint> {
+    let held_at_start = recording
+        .count_in_controls
+        .iter()
+        .filter(|((kind, number), value)| {
+            control_neutral_value(kind.status(), *number) != Some(**value)
+        })
+        .map(|((kind, number), value)| MidiControlPoint {
+            start: 0.0,
+            kind: *kind,
+            number: *number,
+            value: *value,
+        });
+    let played = thin_controls(&recording.controls, bucket_samples)
+        .into_iter()
+        .map(|control| MidiControlPoint {
+            start: (control.position_samples.saturating_sub(clip_start) as f64 * beats_per_sample)
+                as f32,
+            kind: control.kind,
+            number: control.number,
+            value: control.value,
+        });
+    sanitize_control_points(held_at_start.chain(played).collect())
 }
 
 #[cfg(test)]
@@ -253,6 +380,8 @@ mod tests {
             track_id: "track".into(),
             start_position_samples,
             events,
+            controls: vec![],
+            count_in_controls: HashMap::new(),
         }
     }
 
@@ -292,22 +421,142 @@ mod tests {
         assert!(recorder.capture("track", &note).is_some());
     }
 
-    #[test]
-    fn controls_are_not_recorded() {
+    fn recorder_with_clock() -> (MidiRecorder, Arc<SharedTransport>) {
         let transport = SharedTransport::new(48_000.0, 120.0);
         let clock = Arc::new(LiveInputClock::new());
         clock.set_event_window(10_000_000, 0);
         let recorder = MidiRecorder::new(Arc::clone(&transport), clock);
         recorder.start("track".into()).unwrap();
-        let bend = MidiLiveInputMessage {
-            kind: MidiEventKind::Control {
-                message: [0xE0, 0, 0x60],
-            },
-            received_at: 20_000_000,
-        };
+        (recorder, transport)
+    }
 
-        assert!(recorder.capture("track", &bend).is_none());
+    fn control_message(raw: [u8; 3], received_at: u64) -> MidiLiveInputMessage {
+        MidiLiveInputMessage {
+            kind: MidiEventKind::Control { message: raw },
+            received_at,
+        }
+    }
+
+    fn played_note(received_at: u64) -> MidiLiveInputMessage {
+        MidiLiveInputMessage {
+            kind: MidiEventKind::NoteOn {
+                pitch: 60,
+                velocity: 100,
+            },
+            received_at,
+        }
+    }
+
+    #[test]
+    fn controls_alone_do_not_make_a_clip() {
+        let (recorder, _) = recorder_with_clock();
+        recorder.capture("track", &control_message([0xE0, 0, 0x60], 20_000_000));
+
         assert_eq!(recorder.finish().map(|clip| clip.is_none()), Some(true));
+    }
+
+    #[test]
+    fn controls_are_recorded_next_to_the_notes() {
+        let (recorder, _) = recorder_with_clock();
+        recorder.capture("track", &played_note(20_000_000));
+        recorder.capture("track", &control_message([0xB0, 64, 127], 520_000_000));
+        recorder.capture("track", &control_message([0xE0, 0x00, 0x60], 1_020_000_000));
+
+        let clip = recorder.finish().unwrap().unwrap();
+        assert_eq!(clip.channel_controls.len(), 2);
+        assert_eq!(
+            clip.channel_controls[0].kind,
+            MidiControlKind::ControlChange
+        );
+        assert_eq!(clip.channel_controls[0].number, 64);
+        assert_eq!(clip.channel_controls[0].value, 127);
+        assert!((clip.channel_controls[0].start - 1.02).abs() < 1e-4);
+        assert_eq!(clip.channel_controls[1].kind, MidiControlKind::PitchBend);
+        assert_eq!(clip.channel_controls[1].value, 0x3000);
+        assert!((clip.channel_controls[1].start - 2.02).abs() < 1e-4);
+    }
+
+    #[test]
+    fn controls_for_another_track_are_ignored() {
+        let (recorder, _) = recorder_with_clock();
+        recorder.capture("track", &played_note(20_000_000));
+        recorder.capture("other", &control_message([0xB0, 1, 50], 30_000_000));
+
+        assert!(recorder
+            .finish()
+            .unwrap()
+            .unwrap()
+            .channel_controls
+            .is_empty());
+    }
+
+    #[test]
+    fn pedal_pressed_during_the_count_in_is_down_at_the_clip_start() {
+        let (recorder, transport) = recorder_with_clock();
+        transport.start_count_in(1_000);
+        recorder.capture("track", &control_message([0xB0, 64, 127], 15_000_000));
+        recorder.capture("track", &control_message([0xE0, 0, 0x40], 16_000_000));
+        transport.cancel_count_in();
+        recorder.capture("track", &played_note(20_000_000));
+
+        let clip = recorder.finish().unwrap().unwrap();
+        assert_eq!(clip.channel_controls.len(), 1);
+        assert_eq!(clip.channel_controls[0].number, 64);
+        assert_eq!(clip.channel_controls[0].value, 127);
+        assert_eq!(clip.channel_controls[0].start, 0.0);
+    }
+
+    #[test]
+    fn channel_pressure_and_poly_pressure_are_decoded() {
+        assert_eq!(
+            decode_control([0xD0, 70, 0]),
+            Some((MidiControlKind::ChannelPressure, 0, 70))
+        );
+        assert_eq!(
+            decode_control([0xA0, 60, 40]),
+            Some((MidiControlKind::PolyPressure, 60, 40))
+        );
+        assert_eq!(
+            decode_control([0xE0, 0x7F, 0x7F]),
+            Some((MidiControlKind::PitchBend, 0, 0x3FFF))
+        );
+    }
+
+    fn bend_at(position_samples: u64, value: u16) -> RecordedControl {
+        RecordedControl {
+            kind: MidiControlKind::PitchBend,
+            number: 0,
+            value,
+            position_samples,
+        }
+    }
+
+    #[test]
+    fn a_sweep_keeps_the_last_value_of_each_bucket() {
+        let sweep = vec![
+            bend_at(0, 8200),
+            bend_at(48, 8300),
+            bend_at(96, 8400),
+            bend_at(300, 8500),
+        ];
+        let thinned = thin_controls(&sweep, 240);
+        let values: Vec<u16> = thinned.iter().map(|control| control.value).collect();
+        assert_eq!(values, vec![8400, 8500]);
+    }
+
+    #[test]
+    fn repeated_values_are_dropped() {
+        let held = vec![bend_at(0, 9000), bend_at(1_000, 9000), bend_at(2_000, 9500)];
+        assert_eq!(thin_controls(&held, 240).len(), 2);
+    }
+
+    #[test]
+    fn thinning_is_per_control() {
+        let mut mod_wheel = bend_at(10, 40);
+        mod_wheel.kind = MidiControlKind::ControlChange;
+        mod_wheel.number = 1;
+        let thinned = thin_controls(&[bend_at(0, 9000), mod_wheel], 240);
+        assert_eq!(thinned.len(), 2);
     }
 
     #[test]

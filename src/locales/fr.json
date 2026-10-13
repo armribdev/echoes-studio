@@ -154,7 +154,19 @@
 		"eraseTitle": "Effacer (E)",
 		"quantize": "Quantification",
 		"quantizeTitle": "Quantification (enregistrée dans le projet)",
-		"keys": "Touches piano"
+		"keys": "Touches piano",
+		"controls": {
+			"add": "+ Contrôle",
+			"lane": "Contrôle de la ligne",
+			"hide": "Masquer la ligne",
+			"clear": "Effacer les points de la ligne",
+			"pitchBend": "Pitch bend",
+			"modulation": "Modulation",
+			"expression": "Expression",
+			"sustain": "Sustain",
+			"aftertouch": "Aftertouch",
+			"controller": "CC {number}"
+		}
 	},
 	"trackStrip": {
 		"muteSoloArm": "Mute, solo, armement",

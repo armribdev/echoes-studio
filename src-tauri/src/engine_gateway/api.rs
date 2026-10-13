@@ -23,11 +23,11 @@ use super::commands::{
     BatchCommand, CommandEnvelope, CreateTrackPayload, DeleteTrackPayload, MoveClipPayload,
     MoveMidiClipPayload, MuteTrackPayload, RemoveAutomationLanePayload, RemoveClipPayload,
     RemoveEffectPayload, RemoveMarkerPayload, RemoveMidiClipPayload, RemoveModulationRoutePayload,
-    RemoveModulatorPayload, RemoveRegionPayload, SeekPayload, SetClipMidiNotesPayload,
-    SetLoopPayload, SetMidiNotesPayload, SetModulationDepthPayload, SetSamplerPadPayload,
-    SetTrackInputPayload, SetTrackInstrumentPayload, SoloTrackPayload, UpdateAutomationClipPayload,
-    UpdateEffectPayload, UpdateMarkerPayload, UpdateModulatorPayload, UpdateProjectNamePayload,
-    UpdateRegionPayload, UpdateTempoPayload, UpdateTrackPayload,
+    RemoveModulatorPayload, RemoveRegionPayload, SeekPayload, SetClipMidiControlsPayload,
+    SetClipMidiNotesPayload, SetLoopPayload, SetMidiNotesPayload, SetModulationDepthPayload,
+    SetSamplerPadPayload, SetTrackInputPayload, SetTrackInstrumentPayload, SoloTrackPayload,
+    UpdateAutomationClipPayload, UpdateEffectPayload, UpdateMarkerPayload, UpdateModulatorPayload,
+    UpdateProjectNamePayload, UpdateRegionPayload, UpdateTempoPayload, UpdateTrackPayload,
 };
 use super::events::{ev, EngineEvent, ProjectEvent};
 use crate::audio_clip::{AudioClip, AudioClipData};
@@ -37,10 +37,11 @@ use crate::audio_graph::GraphSnapshotDto;
 use crate::factory_drums;
 use crate::plugin_system::wrapper::DeviceFormat;
 use crate::project::{
-    default_marker_name, default_region_name, generate_id, normalize_region_span, AppClip,
-    AppMidiClip, AppProject, AppState, AppTrack, ArrangementMarker, ArrangementRegion,
-    CachedAudioData, CompressorParams, DelayParams, EffectParams, EqParams, MidiClipDto, MidiNote,
-    PluginParams, ProjectUiLayout, ReverbParams, TrackEffect,
+    default_marker_name, default_region_name, generate_id, normalize_region_span,
+    sanitize_control_points, AppClip, AppMidiClip, AppProject, AppState, AppTrack,
+    ArrangementMarker, ArrangementRegion, CachedAudioData, CompressorParams, DelayParams,
+    EffectParams, EqParams, MidiClipDto, MidiControlPoint, MidiNote, PluginParams, ProjectUiLayout,
+    ReverbParams, TrackEffect,
 };
 use crate::sampler_kit::{PadSample, SamplerKit, SamplerPad, SAMPLER_INSTRUMENT_ID};
 
@@ -323,6 +324,28 @@ fn lock_project<'a>(
     state: &'a tauri::State<'a, AppState>,
 ) -> Result<MutexGuard<'a, AppProject>, String> {
     state.project.lock().map_err(|e| e.to_string())
+}
+
+/// Note and control content is not a graph change: it goes into the live
+/// instrument so playback keeps its plugin state. `false` when the track has
+/// no slot yet and needs a recompile.
+fn publish_track_midi(state: &tauri::State<'_, AppState>, track_id: &str) -> bool {
+    let sample_rate = state
+        .audio_engine
+        .lock()
+        .map(|engine| engine.transport.sample_rate())
+        .unwrap_or(48_000.0);
+    let content = lock_project(state).ok().and_then(|project| {
+        project
+            .tracks
+            .iter()
+            .find(|t| t.id == track_id)
+            .map(|track| crate::audio_graph::compiler::bake_track_midi(track, sample_rate))
+    });
+    match content {
+        Some(content) => state.live_params.publish_track_midi(track_id, content),
+        None => false,
+    }
 }
 
 fn with_project_mut<'a, R, F>(state: &'a tauri::State<'a, AppState>, f: F) -> Result<R, String>
@@ -1751,12 +1774,7 @@ fn process_command(
                 })?;
                 built.expect("marker built")
             };
-            commit_same_payload(
-                &ctx,
-                ev::MARKER_ADDED,
-                json!({ "marker": marker }),
-                false,
-            )
+            commit_same_payload(&ctx, ev::MARKER_ADDED, json!({ "marker": marker }), false)
         }
 
         cmd::UPDATE_MARKER => {
@@ -1787,12 +1805,7 @@ fn process_command(
                 })?;
                 updated.expect("marker updated")
             };
-            commit_same_payload(
-                &ctx,
-                ev::MARKER_UPDATED,
-                json!({ "marker": marker }),
-                false,
-            )
+            commit_same_payload(&ctx, ev::MARKER_UPDATED, json!({ "marker": marker }), false)
         }
 
         cmd::REMOVE_MARKER => {
@@ -1806,12 +1819,7 @@ fn process_command(
                 }
                 Ok(())
             })?;
-            commit_same_payload(
-                &ctx,
-                ev::MARKER_REMOVED,
-                json!({ "id": p.id }),
-                false,
-            )
+            commit_same_payload(&ctx, ev::MARKER_REMOVED, json!({ "id": p.id }), false)
         }
 
         cmd::ADD_REGION => {
@@ -1841,12 +1849,7 @@ fn process_command(
                 })?;
                 built.expect("region built")
             };
-            commit_same_payload(
-                &ctx,
-                ev::REGION_ADDED,
-                json!({ "region": region }),
-                false,
-            )
+            commit_same_payload(&ctx, ev::REGION_ADDED, json!({ "region": region }), false)
         }
 
         cmd::UPDATE_REGION => {
@@ -1879,12 +1882,7 @@ fn process_command(
                 })?;
                 updated.expect("region updated")
             };
-            commit_same_payload(
-                &ctx,
-                ev::REGION_UPDATED,
-                json!({ "region": region }),
-                false,
-            )
+            commit_same_payload(&ctx, ev::REGION_UPDATED, json!({ "region": region }), false)
         }
 
         cmd::REMOVE_REGION => {
@@ -1898,12 +1896,7 @@ fn process_command(
                 }
                 Ok(())
             })?;
-            commit_same_payload(
-                &ctx,
-                ev::REGION_REMOVED,
-                json!({ "id": p.id }),
-                false,
-            )
+            commit_same_payload(&ctx, ev::REGION_REMOVED, json!({ "id": p.id }), false)
         }
 
         cmd::ADD_EFFECT => {
@@ -2277,6 +2270,7 @@ fn process_command(
                 end: p.end,
                 offset: p.offset.max(0.0),
                 notes,
+                channel_controls: sanitize_control_points(p.channel_controls),
             };
             let clip_dto = MidiClipDto {
                 id: clip.id.clone(),
@@ -2284,6 +2278,7 @@ fn process_command(
                 end: clip.end,
                 offset: clip.offset,
                 notes: clip.notes.clone(),
+                channel_controls: clip.channel_controls.clone(),
             };
 
             with_project_mut(state, |project| {
@@ -2355,6 +2350,7 @@ fn process_command(
                         end: clip.end,
                         offset: clip.offset,
                         notes: clip.notes.clone(),
+                        channel_controls: clip.channel_controls.clone(),
                     };
                     let dst_idx = project
                         .tracks
@@ -2410,27 +2406,7 @@ fn process_command(
                 Ok(())
             })?;
 
-            // Note content is not a graph change. Publish into the live
-            // instrument so playback keeps its plugin state. Recompile only
-            // when the track has no slot yet.
-            let sample_rate = state
-                .audio_engine
-                .lock()
-                .map(|engine| engine.transport.sample_rate())
-                .unwrap_or(48_000.0);
-            let baked = lock_project(state).ok().and_then(|project| {
-                project
-                    .tracks
-                    .iter()
-                    .find(|t| t.id == p.track_id)
-                    .map(|track| {
-                        crate::audio_graph::compiler::bake_track_midi_notes(track, sample_rate)
-                    })
-            });
-            let published = match baked {
-                Some(notes) => state.live_params.publish_track_notes(&p.track_id, notes),
-                None => false,
-            };
+            let published = publish_track_midi(state, &p.track_id);
 
             let result = commit_same_payload(
                 &ctx,
@@ -2439,6 +2415,36 @@ fn process_command(
                     "track_id": p.track_id,
                     "clip_id": p.clip_id,
                     "notes": serde_json::to_value(&p.notes).unwrap_or_default(),
+                }),
+                false,
+            )?;
+            if !published {
+                recompile_if_needed(ctx.app, ctx.state);
+            }
+            Ok(result)
+        }
+
+        cmd::SET_CLIP_MIDI_CONTROLS => {
+            let p: SetClipMidiControlsPayload = serde_json::from_value(command.payload)
+                .map_err(|e| format!("SET_CLIP_MIDI_CONTROLS payload invalid: {e}"))?;
+            let channel_controls = sanitize_control_points(p.channel_controls);
+
+            with_project_mut(state, |project| {
+                let track = require_track_mut(project, &p.track_id)?;
+                require_midi_clip_mut(track, &p.clip_id)?.channel_controls =
+                    channel_controls.clone();
+                Ok(())
+            })?;
+
+            let published = publish_track_midi(state, &p.track_id);
+
+            let result = commit_same_payload(
+                &ctx,
+                ev::MIDI_CLIP_CONTROLS_SET,
+                json!({
+                    "track_id": p.track_id,
+                    "clip_id": p.clip_id,
+                    "channel_controls": serde_json::to_value(&channel_controls).unwrap_or_default(),
                 }),
                 false,
             )?;
@@ -3249,12 +3255,17 @@ fn apply_midi_clip_added(project: &mut AppProject, payload: &Value) {
         .get("notes")
         .and_then(|v| serde_json::from_value(v.clone()).ok())
         .unwrap_or_default();
+    let channel_controls = raw_clip
+        .get("channel_controls")
+        .and_then(|v| serde_json::from_value(v.clone()).ok())
+        .unwrap_or_default();
     track.midi_clips.push(AppMidiClip {
         id,
         start,
         end,
         offset: raw_clip["offset"].as_f64().unwrap_or(0.0),
         notes,
+        channel_controls,
     });
 }
 
@@ -3296,6 +3307,23 @@ fn apply_midi_clip_notes_set(project: &mut AppProject, payload: &Value) {
     };
     if let Ok(clip) = require_midi_clip_mut(track, &clip_id) {
         clip.notes = notes;
+    }
+}
+
+fn apply_midi_clip_controls_set(project: &mut AppProject, payload: &Value) {
+    let track_id = payload_str(payload, "track_id");
+    let clip_id = payload_str(payload, "clip_id");
+    let Some(raw_controls) = payload.get("channel_controls") else {
+        return;
+    };
+    let Ok(controls) = serde_json::from_value::<Vec<MidiControlPoint>>(raw_controls.clone()) else {
+        return;
+    };
+    let Some(track) = find_track_mut(project, &track_id) else {
+        return;
+    };
+    if let Ok(clip) = require_midi_clip_mut(track, &clip_id) {
+        clip.channel_controls = controls;
     }
 }
 
@@ -3415,6 +3443,9 @@ fn apply_events(
                 apply_midi_clip_moved_to_track(&mut project, &event.payload)
             }
             ev::MIDI_CLIP_NOTES_SET => apply_midi_clip_notes_set(&mut project, &event.payload),
+            ev::MIDI_CLIP_CONTROLS_SET => {
+                apply_midi_clip_controls_set(&mut project, &event.payload)
+            }
             _ => {}
         }
     }
@@ -3447,7 +3478,9 @@ pub const PLUGIN_AVAILABILITY_EVENT: &str = "plugin-availability";
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::project::{AppTrack, LfoParams, LfoWaveform, ModulatorParams, ProjectModulator};
+    use crate::project::{
+        AppTrack, LfoParams, LfoWaveform, MidiControlKind, ModulatorParams, ProjectModulator,
+    };
 
     fn project_with_lfo() -> AppProject {
         let mut project = AppProject::new();
@@ -3538,6 +3571,46 @@ mod tests {
         assert_eq!(clip.notes.len(), 1);
         assert_eq!(clip.notes[0].pitch, 60);
         assert_eq!(clip.notes[0].id, "n");
+    }
+
+    #[test]
+    fn replayed_midi_clip_keeps_its_channel_controls() {
+        let mut project = project_with_lfo();
+        apply_midi_clip_added(
+            &mut project,
+            &json!({
+                "track_id": "t",
+                "clip": {
+                    "id": "c",
+                    "start": 0.0,
+                    "end": 2.0,
+                    "offset": 0.0,
+                    "notes": [],
+                    "channel_controls": [
+                        { "start": 0.5, "kind": "control_change", "number": 64, "value": 127 }
+                    ]
+                }
+            }),
+        );
+        let controls = &project.tracks[0].midi_clips[0].channel_controls;
+        assert_eq!(controls.len(), 1);
+        assert_eq!(controls[0].kind, MidiControlKind::ControlChange);
+        assert_eq!(controls[0].value, 127);
+
+        apply_midi_clip_controls_set(
+            &mut project,
+            &json!({
+                "track_id": "t",
+                "clip_id": "c",
+                "channel_controls": [
+                    { "start": 1.0, "kind": "pitch_bend", "value": 12288 }
+                ]
+            }),
+        );
+        let controls = &project.tracks[0].midi_clips[0].channel_controls;
+        assert_eq!(controls.len(), 1);
+        assert_eq!(controls[0].kind, MidiControlKind::PitchBend);
+        assert_eq!(controls[0].number, 0);
     }
 
     #[test]

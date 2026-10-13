@@ -119,10 +119,11 @@ thread never modifies the graph topology.
 
 ## Compilation Pipeline
 
-Every structural project change triggers a full graph recompile. MIDI note
-content (`SET_CLIP_MIDI_NOTES`) does not: the command thread publishes a new
-note list into the live instrument, and the audio thread adopts it on the next
-block. A selection that does not change notes does not publish anything.
+Every structural project change triggers a full graph recompile. MIDI clip
+content (`SET_CLIP_MIDI_NOTES`, `SET_CLIP_MIDI_CONTROLS`) does not: the command
+thread publishes a new `MidiTrackContent` (notes + control points, one unit so
+an undo swaps both) into the live instrument, and the audio thread adopts it on
+the next block. A selection that does not change notes does not publish anything.
 Placing or moving a note in the piano roll also pushes a short audition
 (note on, then note off) through a lock-free queue on that track. The live
 instrument plays it even when the transport is stopped. Offline export does
@@ -139,10 +140,22 @@ is independent of `PortKind::Midi` graph edges, which the compiler still
 rejects (Phase 5c, plugin instruments) — live hardware input never goes
 through the graph/edge model at all.
 
-The same capture path can record (notes only): while `MidiRecorder` is active, each note of
-the armed track is also stamped with its transport position and, when the
-recording ends (record button, pause or stop), becomes a MIDI clip added
-through the regular `ADD_MIDI_CLIP` command — nothing new in the graph.
+The same capture path can record: while `MidiRecorder` is active, each note
+and control of the armed track is also stamped with its transport position
+and, when the recording ends (record button, pause or stop), becomes a MIDI
+clip added through the regular `ADD_MIDI_CLIP` command — nothing new in the
+graph.
+
+Clip controls (ADR-029) are stored in beats like notes
+(`AppMidiClip.channel_controls`) and cut by the same clip window. Because a
+control is a state, `InstrumentNode` keeps a `ControlState`
+(`audio_graph/midi_controls.rs`): on a seek, a loop wrap or a content swap it
+re-sends the value the timeline holds at the block start; entering a clip sends
+the clip's held value at its window start (points hidden by a left-trim count);
+leaving a clip, pausing or stopping returns what the timeline moved to neutral
+(bend centre, sustain / mod / pressure off). Timeline controls use
+`MidiEventList::push_control`, which keeps the last 32 places of the 256-event
+block for notes and live input.
 
 The metronome click (ADR-026) is the other thing outside the graph: it is added
 to the device output after the mix and the meters, so it is never in a track, a

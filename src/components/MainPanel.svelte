@@ -10,7 +10,8 @@
 	import PluginPicker from './PluginPicker.svelte';
 	import LibraryPopup from './LibraryPopup.svelte';
 	import { instrumentIdOf, type PluginInfo } from '../stores/plugins';
-	import type { Track as TrackType, Project, MidiNote } from '../types/global';
+	import type { Track as TrackType, Project } from '../types/global';
+	import { midiClipSeed, type MidiClipSeed } from '../frontend/midiClipSeed';
 	import { invoke } from '@tauri-apps/api/core';
 	import { listen } from '@tauri-apps/api/event';
 	import { getCurrentWindow } from '@tauri-apps/api/window';
@@ -643,8 +644,7 @@
 		startScrollLeft: number;
 		count: number;
 		partialPx: number;
-		offset: number;
-		notes: MidiNote[];
+		seed: MidiClipSeed;
 	} | null = null;
 	let resizing: {
 		kind: 'audio' | 'midi';
@@ -1210,8 +1210,7 @@
 						trackId: track.id,
 						durationSec: clip.end - clip.start,
 						relativeStart: clip.start - minStart,
-						offset: clip.offset ?? 0,
-						notes: clip.notes.map((n) => ({ ...n }))
+						...midiClipSeed(clip)
 					});
 				}
 			}
@@ -1271,10 +1270,7 @@
 				if (!sel.has(clip.id)) continue;
 				const start = clip.start + span;
 				jobs.push(
-					addMidiClip(track.id, start, start + (clip.end - clip.start), {
-						offset: clip.offset ?? 0,
-						notes: clip.notes.map((n) => ({ ...n }))
-					})
+					addMidiClip(track.id, start, start + (clip.end - clip.start), midiClipSeed(clip))
 				);
 			}
 		}
@@ -1296,10 +1292,7 @@
 				if (entry.kind === 'audio') {
 					return addClip(targetTrackId, entry.filePath, start, end);
 				}
-				return addMidiClip(targetTrackId, start, end, {
-					offset: entry.offset,
-					notes: entry.notes
-				});
+				return addMidiClip(targetTrackId, start, end, entry);
 			})
 		);
 	}
@@ -1410,10 +1403,7 @@
 
 		let draggedClipId = clipId;
 		if (duplicate) {
-			const result = await addMidiClip(track.id, clip.start, clip.end, {
-				offset: clip.offset ?? 0,
-				notes: clip.notes.map((n) => ({ ...n }))
-			});
+			const result = await addMidiClip(track.id, clip.start, clip.end, midiClipSeed(clip));
 			const newId = clipIdFromResult(result);
 			if (!newId) return;
 			draggedClipId = newId;
@@ -1758,8 +1748,7 @@
 			startScrollLeft: tracksEl?.scrollLeft ?? 0,
 			count: 0,
 			partialPx: 0,
-			offset: clip.offset ?? 0,
-			notes: clip.notes.map((n) => ({ ...n }))
+			seed: midiClipSeed(clip)
 		};
 		beginArrangeMaxBarsHold();
 		window.addEventListener('mousemove', onRepeatMove);
@@ -1794,7 +1783,7 @@
 			endArrangeMaxBarsHold();
 			return;
 		}
-		const { trackId, origStart, duration, offset, notes, count, partialPx } = repeating;
+		const { trackId, origStart, duration, seed, count, partialPx } = repeating;
 		if (count === 0 && partialPx <= MIN_REPEAT_PARTIAL_PX) {
 			repeating = null;
 			endArrangeMaxBarsHold();
@@ -1805,23 +1794,13 @@
 		const jobs: Promise<CommandResult>[] = [];
 		for (let i = 1; i <= count; i++) {
 			const start = origStart + i * duration;
-			jobs.push(
-				addMidiClip(trackId, start, start + duration, {
-					offset,
-					notes: notes.map((n) => ({ ...n }))
-				})
-			);
+			jobs.push(addMidiClip(trackId, start, start + duration, seed));
 		}
 		if (partialPx > MIN_REPEAT_PARTIAL_PX) {
 			// Trailing cut-off repeat, same trim mechanism as a right-edge resize:
 			// the underlying notes are kept whole, only the visible window shrinks.
 			const start = origStart + (count + 1) * duration;
-			jobs.push(
-				addMidiClip(trackId, start, start + partialPx / scale, {
-					offset,
-					notes: notes.map((n) => ({ ...n }))
-				})
-			);
+			jobs.push(addMidiClip(trackId, start, start + partialPx / scale, seed));
 		}
 		const scrollLeft = tracksEl?.scrollLeft;
 		const results = await Promise.all(jobs);

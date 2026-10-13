@@ -8,6 +8,7 @@
 
 import { invoke } from '@tauri-apps/api/core';
 import type { MidiPreferences } from '../stores/preferences';
+import type { MidiControlPoint } from '../types/global';
 
 // ── Types (mirror of src-tauri/src/midi_input.rs) ────────────────────────────
 
@@ -90,6 +91,7 @@ export interface RecordedMidiClip {
 	start: number;
 	end: number;
 	notes: { id: string; pitch: number; start: number; duration: number; velocity: number }[];
+	channelControls: MidiControlPoint[];
 }
 
 /** Backend event fired for every note edge while recording. Payload: `RecordedNote`. */

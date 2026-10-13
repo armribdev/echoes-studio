@@ -68,6 +68,13 @@ keyboard); the audio thread reads head/tail atomics only. Keyboard controls
 (bend, CC, aftertouch) are `Copy` events in the same pre-allocated ring and
 event lists — no new RT cost (ADR-022 amendment 2026-10-13).
 
+Recorded clip controls (ADR-029) are read from the published
+`MidiTrackContent` like notes; the catch-up state is a fixed 130-slot array in
+`InstrumentNode`, and `push_control` keeps 32 of the 256 per-block event slots
+for notes. `MAX_EVENTS_PER_BLOCK` must stay ≤ 512: `sort_by_offset` is a stable
+sort whose scratch fits its 4 KB stack buffer only up to 512 eight-byte
+events — beyond that it would allocate on the audio thread.
+
 MIDI recording adds three relaxed atomic stores per rendered slice
 (`LiveInputClock::set_event_window`: transport position + a seqlock counter,
 wait-free) and one per callback (`set_record_latency`: period + CPAL output

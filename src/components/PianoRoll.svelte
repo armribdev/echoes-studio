@@ -22,9 +22,10 @@
 	} from '../frontend/pianoRoll/coords';
 	import { transport } from '../stores/transport';
 	import { tempo } from '../stores/tempo';
-	import type { MidiNote } from '../types/global';
+	import type { MidiControlPoint, MidiNote } from '../types/global';
 	import { engineProject } from '../frontend/store/engineStore';
 	import {
+		setClipMidiControls,
 		setClipMidiNotes,
 		undoCommand,
 		redoCommand,
@@ -57,6 +58,19 @@
 	import Playhead from './Playhead.svelte';
 	import ZoomScrollbar from './ZoomScrollbar.svelte';
 	import { RULER_HEIGHT } from '../frontend/timeRuler/constants';
+	import PianoRollControlLane from './PianoRollControlLane.svelte';
+	import {
+		ADD_ROW_HEIGHT,
+		LANE_HEIGHT,
+		LANE_PRESETS,
+		MAX_VISIBLE_LANES,
+		laneKey,
+		lanePoints,
+		lanesWithData,
+		replaceLanePoints,
+		sameLane,
+		type ControlLane
+	} from '../frontend/pianoRoll/controlLanes';
 	const VEL_H = 72;
 	const VEL_BAR_MIN = 3;
 	const MIN_DURATION = 0.0625;
@@ -244,6 +258,78 @@
 	}
 
 	let dragNoteSignature = '';
+
+	// ── Lignes de contrôle (pitch bend, CC, aftertouch) ─────────────────────────
+
+	const NO_CONTROLS: MidiControlPoint[] = [];
+	let controlLanes: ControlLane[] = [];
+	let controlLanesClipId: string | null = null;
+
+	$: clipControls = (() => {
+		if (!trackId || !clipId) return NO_CONTROLS;
+		const track = $engineProject.tracks.find((t) => t.id === trackId);
+		const clip = track?.midi_clips.find((c) => c.id === clipId);
+		return clip?.channel_controls ?? NO_CONTROLS;
+	})();
+
+	$: if (clipId !== controlLanesClipId) {
+		controlLanesClipId = clipId;
+		controlLanes = lanesWithData(clipControls).slice(0, MAX_VISIBLE_LANES);
+	}
+
+	$: laneCandidates = [...LANE_PRESETS, ...lanesWithData(clipControls)].filter(
+		(lane, index, all) =>
+			all.findIndex((other) => sameLane(other, lane)) === index &&
+			!controlLanes.some((shown) => sameLane(shown, lane))
+	);
+	$: showAddRow = controlLanes.length < MAX_VISIBLE_LANES && laneCandidates.length > 0;
+	$: lanesWidthPx = Math.max(hTotalBeats * zoom, 1);
+
+	function laneLabel(lane: ControlLane, translate: typeof $t): string {
+		if (lane.kind === 'pitch_bend') return translate('pianoRoll.controls.pitchBend');
+		if (lane.kind === 'channel_pressure') return translate('pianoRoll.controls.aftertouch');
+		const named: Record<number, string> = {
+			1: 'pianoRoll.controls.modulation',
+			11: 'pianoRoll.controls.expression',
+			64: 'pianoRoll.controls.sustain'
+		};
+		return named[lane.number]
+			? translate(named[lane.number])
+			: translate('pianoRoll.controls.controller', { values: { number: lane.number } });
+	}
+
+	function laneOptionLabel(lane: ControlLane, controls: MidiControlPoint[], translate: typeof $t) {
+		const marker = lanePoints(controls, lane).length > 0 ? '• ' : '';
+		return `${marker}${laneLabel(lane, translate)}`;
+	}
+
+	function commitControls(next: MidiControlPoint[]): Promise<unknown> {
+		const { trackId, clipId } = get(pianoRollStore);
+		if (!trackId || !clipId) return Promise.resolve();
+		return setClipMidiControls(trackId, clipId, next);
+	}
+
+	function pickLane(key: string): ControlLane | undefined {
+		return [...controlLanes, ...laneCandidates].find((lane) => laneKey(lane) === key);
+	}
+
+	function switchLane(index: number, key: string) {
+		const lane = pickLane(key);
+		if (lane) controlLanes = controlLanes.map((current, i) => (i === index ? lane : current));
+	}
+
+	function addLane(key: string) {
+		const lane = pickLane(key);
+		if (lane) controlLanes = [...controlLanes, lane];
+	}
+
+	function hideLane(index: number) {
+		controlLanes = controlLanes.filter((_, i) => i !== index);
+	}
+
+	function clearLane(lane: ControlLane) {
+		commitControls(replaceLanePoints(clipControls, lane, [])).catch(console.error);
+	}
 
 	async function commitNotes() {
 		const { trackId, clipId } = get(pianoRollStore);
@@ -1660,6 +1746,76 @@
 						{/each}
 					</div>
 					<div class="keys-vel-label">VEL</div>
+					{#each controlLanes as lane, index (laneKey(lane))}
+						<div class="keys-lane" style="height: {LANE_HEIGHT}px">
+							<select
+								class="lane-select"
+								value={laneKey(lane)}
+								aria-label={$t('pianoRoll.controls.lane')}
+								on:change={(e) => switchLane(index, e.currentTarget.value)}
+							>
+								{#each [lane, ...laneCandidates] as option (laneKey(option))}
+									<option value={laneKey(option)}>
+										{laneOptionLabel(option, clipControls, $t)}
+									</option>
+								{/each}
+							</select>
+							<div class="lane-actions">
+								<button
+									class="lane-btn"
+									disabled={lanePoints(clipControls, lane).length === 0}
+									title={$t('pianoRoll.controls.clear')}
+									aria-label={$t('pianoRoll.controls.clear')}
+									on:click={() => clearLane(lane)}
+								>
+									<svg viewBox="0 0 10 10" width="10" height="10" fill="none" aria-hidden="true">
+										<path
+											d="M1.5 3h7M4 3V1.8h2V3M2.6 3l.4 5.2h4l.4-5.2"
+											stroke="currentColor"
+											stroke-width="1.1"
+											stroke-linecap="round"
+											stroke-linejoin="round"
+										/>
+									</svg>
+								</button>
+								<button
+									class="lane-btn"
+									title={$t('pianoRoll.controls.hide')}
+									aria-label={$t('pianoRoll.controls.hide')}
+									on:click={() => hideLane(index)}
+								>
+									<svg viewBox="0 0 10 10" width="10" height="10" fill="none" aria-hidden="true">
+										<path
+											d="M2 2L8 8M8 2L2 8"
+											stroke="currentColor"
+											stroke-width="1.2"
+											stroke-linecap="round"
+										/>
+									</svg>
+								</button>
+							</div>
+						</div>
+					{/each}
+					{#if showAddRow}
+						<div class="keys-add" style="height: {ADD_ROW_HEIGHT}px">
+							<select
+								class="lane-select"
+								value=""
+								aria-label={$t('pianoRoll.controls.add')}
+								on:change={(e) => {
+									addLane(e.currentTarget.value);
+									e.currentTarget.value = '';
+								}}
+							>
+								<option value="">{$t('pianoRoll.controls.add')}</option>
+								{#each laneCandidates as option (laneKey(option))}
+									<option value={laneKey(option)}>
+										{laneOptionLabel(option, clipControls, $t)}
+									</option>
+								{/each}
+							</select>
+						</div>
+					{/if}
 					<div class="keys-hscroll-spacer"></div>
 				</div>
 			{/if}
@@ -1725,6 +1881,28 @@
 							style="display:block"
 						></canvas>
 					</div>
+					{#if controlLanes.length > 0 || showAddRow}
+						<div class="lanes-wrapper">
+							<div class="lanes-track" style="transform: translateX({-scrollLeft}px)">
+								{#each controlLanes as lane (laneKey(lane))}
+									<div class="lane-row" style="height: {LANE_HEIGHT}px">
+										<PianoRollControlLane
+											{lane}
+											controls={clipControls}
+											pxPerBeat={zoom}
+											widthPx={lanesWidthPx}
+											color={trackColor}
+											{quantize}
+											commit={commitControls}
+										/>
+									</div>
+								{/each}
+							</div>
+							{#if showAddRow}
+								<div class="lane-add-spacer" style="height: {ADD_ROW_HEIGHT}px"></div>
+							{/if}
+						</div>
+					{/if}
 					<!-- Scrollbar horizontale avec poignées de zoom -->
 					<ZoomScrollbar
 						orientation="h"
@@ -1987,6 +2165,76 @@
 		text-transform: uppercase;
 	}
 
+	.keys-lane {
+		flex-shrink: 0;
+		box-sizing: border-box;
+		border-top: 1px solid #2a2a38;
+		padding: 4px 3px 0;
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
+	}
+
+	.keys-add {
+		flex-shrink: 0;
+		box-sizing: border-box;
+		border-top: 1px solid #2a2a38;
+		padding: 2px 3px;
+	}
+
+	.lane-select {
+		width: 100%;
+		min-width: 0;
+		height: 18px;
+		box-sizing: border-box;
+		padding: 0 2px;
+		font-size: 9px;
+		font-weight: 600;
+		color: #8a8aa0;
+		background: #20202c;
+		border: 1px solid #2e2e3c;
+		border-radius: 3px;
+		text-overflow: ellipsis;
+
+		&:focus-visible {
+			outline: 1px solid var(--track-color, #4d96ff);
+		}
+	}
+
+	.lane-actions {
+		display: flex;
+		justify-content: flex-end;
+		gap: 2px;
+	}
+
+	.lane-btn {
+		width: 18px;
+		height: 16px;
+		padding: 0;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		color: #5a5a70;
+		background: transparent;
+		border: none;
+		border-radius: 3px;
+		cursor: pointer;
+
+		&:hover:not(:disabled) {
+			color: #c8c8d8;
+			background: #2a2a38;
+		}
+
+		&:disabled {
+			opacity: 0.35;
+			cursor: default;
+		}
+
+		&:focus-visible {
+			outline: 1px solid var(--track-color, #4d96ff);
+		}
+	}
+
 	.keys-hscroll-spacer {
 		height: 8px;
 		flex-shrink: 0;
@@ -2082,5 +2330,22 @@
 		&::-webkit-scrollbar {
 			display: none;
 		}
+	}
+
+	// ── Lignes de contrôle ────────────────────────────────────────────────────
+
+	.lanes-wrapper {
+		flex-shrink: 0;
+		overflow: hidden;
+	}
+
+	.lanes-track {
+		will-change: transform;
+	}
+
+	.lane-row {
+		box-sizing: border-box;
+		border-top: 1px solid #2a2a38;
+		overflow: hidden;
 	}
 </style>

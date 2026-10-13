@@ -1,5 +1,5 @@
 import { writable } from 'svelte/store';
-import type { MidiNote } from '../types/global';
+import type { MidiControlPoint, MidiNote } from '../types/global';
 
 interface ClipboardBase {
 	trackId: string;
@@ -18,6 +18,7 @@ export interface MidiClipboardEntry extends ClipboardBase {
 	/** Left-trim offset in seconds. */
 	offset: number;
 	notes: MidiNote[];
+	channelControls: MidiControlPoint[];
 }
 
 export type ClipboardEntry = AudioClipboardEntry | MidiClipboardEntry;

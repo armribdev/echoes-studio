@@ -300,6 +300,9 @@ and aftertouch now reach CLAP instruments. Not hand-tested yet.
 - **Built-in instruments** (`PolySynth`, sampler) ignore controls for now.
 - **Recording** keeps notes only: `MidiRecorder::capture` skips controls,
   since clips have no controller data (that needs a project-schema change, C-4).
+  _Superseded the same day by ADR-029: controls are recorded into the clip and
+  replayed. ADR-029 also fixed channel aftertouch (`0xD0`, a 2-byte message),
+  which this amendment's parser still dropped._
 - **Queue size.** `LIVE_INPUT_CAPACITY` 64 → 1024: a fast bend or mod-wheel
   stream could fill the ring, and a dropped NoteOff would leave a note hanging.
 - **RT / C-2.** One more `Copy` enum variant in pre-allocated lists, no
@@ -324,7 +327,7 @@ and aftertouch now reach CLAP instruments. Not hand-tested yet.
   2026-09-29 amendment.
 - MIDI CC / Learn mapping to parameters. (Raw CC, bend and aftertouch to
   CLAP instruments: done, see the 2026-10-13 amendment. Recording them into
-  clips and Learn are still open.)
+  clips: done, ADR-029. Learn is still open.)
 - MIDI output to external hardware (beyond Local Control, see amendment).
 - Per-track device routing (today: one global armed track receives every
   enabled device).

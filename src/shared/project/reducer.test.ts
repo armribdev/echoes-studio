@@ -29,7 +29,7 @@ function audioClip(id: string, start = 0, end = 1): Clip {
 }
 
 function midiClip(id: string, start = 0, end = 2, notes: MidiNote[] = []): MidiClip {
-	return { id, start, end, offset: 0, notes };
+	return { id, start, end, offset: 0, notes, channel_controls: [] };
 }
 
 describe('emptyProjectState', () => {
@@ -160,6 +160,19 @@ describe('replayEvents — project integration stream', () => {
 		expect(state.tracks[0].midi_clips[0].notes).toEqual([
 			{ id: 'n2', pitch: 64, start: 1, duration: 0.5, velocity: 80 }
 		]);
+
+		state = applyEvent(
+			state,
+			event(ev.MIDI_CLIP_CONTROLS_SET, {
+				track_id: 't1',
+				clip_id: 'mc1',
+				channel_controls: [{ start: 1, kind: 'control_change', number: 64, value: 127 }]
+			})
+		);
+		expect(state.tracks[0].midi_clips[0].channel_controls).toEqual([
+			{ start: 1, kind: 'control_change', number: 64, value: 127 }
+		]);
+		expect(state.tracks[0].midi_clips[0].notes).toHaveLength(1);
 
 		state = applyEvent(
 			state,
