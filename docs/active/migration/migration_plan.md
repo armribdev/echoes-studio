@@ -464,6 +464,10 @@ bouton ● de la barre de transport, un clip créé à l'arrêt/pause/re-clic.
 (ADR-029 : stockés en beats dans le clip, rattrapage de valeur au seek / boucle /
 bords de clip, lignes de contrôle dans la piano roll ; pas encore testé à la
 main).
+**Arpégiateur livré le 2026-10-13** (ADR-030 : étage de notes dans
+`InstrumentNode`, réglages `AppTrack.arpeggiator`, grille sur le transport en
+lecture / ancrée sur l'accord à l'arrêt ; l'enregistrement ● capte toujours les
+notes jouées ; pas encore testé à l'oreille).
 
 ### Justification
 

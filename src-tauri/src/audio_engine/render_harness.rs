@@ -11,6 +11,7 @@
 use std::sync::Arc;
 
 use super::offline::render_project_in_blocks;
+use crate::arpeggiator_settings::{ArpMode, ArpRate, ArpeggiatorSettings};
 use crate::audio_graph::LiveParams;
 use crate::plugin_system::PluginHost;
 use crate::project::{
@@ -90,6 +91,7 @@ fn empty_track(id: &str) -> AppTrack {
         midi_clips: vec![],
         instrument: None,
         sampler: None,
+        arpeggiator: None,
         input_source: None,
         automation_lanes: vec![],
         color: None,
@@ -595,7 +597,68 @@ fn midi_controls() -> AppProject {
     project_with(vec![audio_track(), midi])
 }
 
-fn reference_projects() -> [(&'static str, AppProject); 12] {
+/// Chords of one, three and four notes through the arpeggiator (ADR-030): two
+/// modes, two rates (one a triplet), octaves, gate, and a chord change.
+fn arpeggiator_track(
+    id: &str,
+    chords: &[(&[u8], f32, f32)],
+    settings: ArpeggiatorSettings,
+) -> AppTrack {
+    let notes = chords
+        .iter()
+        .enumerate()
+        .flat_map(|(chord_index, &(pitches, start, duration))| {
+            pitches.iter().map(move |&pitch| MidiNote {
+                id: format!("{chord_index}-{pitch}"),
+                pitch,
+                start,
+                duration,
+                velocity: 90 + pitch % 7,
+            })
+        })
+        .collect();
+    let mut track = empty_track(id);
+    track.midi_clips.push(AppMidiClip {
+        id: format!("{id}-clip"),
+        start: 0.0,
+        end: DURATION_S,
+        offset: 0.0,
+        notes,
+        channel_controls: vec![],
+    });
+    track.arpeggiator = Some(settings);
+    track
+}
+
+fn arpeggiator() -> AppProject {
+    let up_down = arpeggiator_track(
+        "arp-up-down",
+        &[(&[60, 64, 67], 0.0, 2.0), (&[62, 65, 69, 72], 2.0, 3.0)],
+        ArpeggiatorSettings {
+            enabled: true,
+            mode: ArpMode::UpDown,
+            rate: ArpRate::Sixteenth,
+            gate_percent: 70,
+            octaves: 2,
+            ..ArpeggiatorSettings::default()
+        },
+    );
+    let random = arpeggiator_track(
+        "arp-random",
+        &[(&[48, 55, 60], 0.5, 2.5), (&[43], 3.0, 2.0)],
+        ArpeggiatorSettings {
+            enabled: true,
+            mode: ArpMode::Random,
+            rate: ArpRate::Eighth,
+            triplet: true,
+            gate_percent: 100,
+            ..ArpeggiatorSettings::default()
+        },
+    );
+    project_with(vec![up_down, random])
+}
+
+fn reference_projects() -> [(&'static str, AppProject); 13] {
     [
         ("static_mix", static_mix()),
         ("modulated_effects", modulated_effects()),
@@ -609,12 +672,13 @@ fn reference_projects() -> [(&'static str, AppProject); 12] {
         ("automated_delay", automated_delay()),
         ("sampler_kit", sampler_kit()),
         ("midi_controls", midi_controls()),
+        ("arpeggiator", arpeggiator()),
     ]
 }
 
 /// Recorded on Windows x86_64.  Only update a value when an ADR sanctions the
 /// render change, and say so in the commit.
-const GOLDEN_HASHES: [(&str, u64); 12] = [
+const GOLDEN_HASHES: [(&str, u64); 13] = [
     ("static_mix", 0x7dec_d259_cfd9_6694),
     ("modulated_effects", 0x29ea_1120_1ae0_2d53),
     ("modulated_gain", 0x23ef_388b_80d0_9a52),
@@ -627,6 +691,7 @@ const GOLDEN_HASHES: [(&str, u64); 12] = [
     ("automated_delay", 0xed2b_9373_7df4_ac29),
     ("sampler_kit", 0x8151_d7f3_7a3c_1e57),
     ("midi_controls", 0x7dec_d259_cfd9_6694),
+    ("arpeggiator", 0x94de_c710_d2b7_1fe1),
 ];
 
 fn assert_block_size_independent(name: &str, project: &AppProject) {
@@ -708,6 +773,43 @@ fn sampler_kit_is_block_size_independent() {
 #[test]
 fn midi_controls_are_block_size_independent() {
     assert_block_size_independent("midi_controls", &midi_controls());
+}
+
+#[test]
+fn arpeggiator_is_block_size_independent() {
+    assert_block_size_independent("arpeggiator", &arpeggiator());
+}
+
+fn without_arpeggiator(mut project: AppProject) -> AppProject {
+    for track in &mut project.tracks {
+        track.arpeggiator = None;
+    }
+    project
+}
+
+fn with_arpeggiator_disabled(mut project: AppProject) -> AppProject {
+    for track in &mut project.tracks {
+        if let Some(settings) = &mut track.arpeggiator {
+            settings.enabled = false;
+        }
+    }
+    project
+}
+
+#[test]
+fn an_enabled_arpeggiator_changes_the_render() {
+    assert_ne!(
+        render(&arpeggiator(), BLOCK_SIZES[0]),
+        render(&without_arpeggiator(arpeggiator()), BLOCK_SIZES[0])
+    );
+}
+
+#[test]
+fn a_disabled_arpeggiator_renders_exactly_like_none() {
+    assert_eq!(
+        render(&with_arpeggiator_disabled(arpeggiator()), BLOCK_SIZES[0]),
+        render(&without_arpeggiator(arpeggiator()), BLOCK_SIZES[0])
+    );
 }
 
 #[test]

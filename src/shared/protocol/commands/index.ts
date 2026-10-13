@@ -12,6 +12,7 @@
  */
 
 import type {
+	ArpeggiatorSettings,
 	AutomationClip,
 	InterpolationMode,
 	MidiControlPoint,
@@ -38,6 +39,7 @@ export const cmd = {
 	SET_TRACK_INSTRUMENT: 'SET_TRACK_INSTRUMENT',
 	SET_TRACK_INPUT: 'SET_TRACK_INPUT',
 	SET_SAMPLER_PAD: 'SET_SAMPLER_PAD',
+	SET_ARPEGGIATOR: 'SET_ARPEGGIATOR',
 	ADD_CLIP: 'ADD_CLIP',
 	MOVE_CLIP: 'MOVE_CLIP',
 	REMOVE_CLIP: 'REMOVE_CLIP',
@@ -145,6 +147,14 @@ export interface SetSamplerPadPayload {
 	track_id: string;
 	pad: number;
 	patch: SamplerPadPatch;
+}
+
+/** Arpeggiator settings to change; absent fields stay unchanged. */
+export type ArpeggiatorPatch = Partial<ArpeggiatorSettings>;
+
+export interface SetArpeggiatorPayload {
+	track_id: string;
+	patch: ArpeggiatorPatch;
 }
 
 export interface SetTrackInputPayload {

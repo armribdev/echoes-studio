@@ -183,6 +183,7 @@ Statut : seuls les problèmes **encore présents dans le code** sont listés. Le
 - **Impact réel** : pas de workflow MIDI standard.
 - **Sévérité** : medium
 - **Cause probable** : la chaîne MIDI n'est pas un graphe.
+- **Statut 2026-10-13** : partiellement traité — l'arpégiateur existe comme étage de notes dans `InstrumentNode` (ADR-030). Les autres Note FX (transpose, accord, scale…) restent à faire et déclencheront le vrai nœud MIDI (option B de l'ADR-030).
 
 ### 2.7 Pas de modulator global / projet
 

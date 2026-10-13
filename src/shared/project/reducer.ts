@@ -12,12 +12,14 @@
 
 import {
 	ev,
+	type ArpeggiatorSetPayload,
 	type EngineEvent,
 	type SamplerPadSetPayload,
 	type TrackCreatedPayload,
 	type TrackInstrumentSetPayload
 } from '../protocol/events';
 import type {
+	ArpeggiatorSettings,
 	ArrangementMarker,
 	ArrangementRegion,
 	AutomationClip,
@@ -96,6 +98,7 @@ export interface TrackState {
 	midi_clips: MidiClip[];
 	instrument: string | null;
 	sampler: SamplerKit | null;
+	arpeggiator: ArpeggiatorSettings | null;
 	input_source: PluginOutputSource | null;
 	automation_lanes: AutomationLane[];
 }
@@ -144,6 +147,7 @@ export function applyEvent(state: ProjectState, event: EngineEvent): ProjectStat
 						color: null,
 						instrument: p.instrument ?? null,
 						sampler: p.sampler ?? null,
+						arpeggiator: null,
 						input_source: null,
 						clips: [],
 						effects: [],
@@ -235,6 +239,16 @@ export function applyEvent(state: ProjectState, event: EngineEvent): ProjectStat
 									)
 								}
 							}
+				)
+			};
+		}
+
+		case ev.ARPEGGIATOR_SET: {
+			const p = event.payload as ArpeggiatorSetPayload;
+			return {
+				...state,
+				tracks: state.tracks.map((t) =>
+					t.id !== p.track_id ? t : { ...t, arpeggiator: p.settings }
 				)
 			};
 		}
@@ -765,6 +779,7 @@ export function projectFromSnapshot(dto: Project): ProjectState {
 			midi_clips: t.midi_clips ?? [],
 			instrument: t.instrument ?? null,
 			sampler: t.sampler ?? null,
+			arpeggiator: t.arpeggiator ?? null,
 			input_source: t.input_source ?? null,
 			automation_lanes: t.automation_lanes ?? []
 		})),

@@ -258,6 +258,7 @@ mod tests {
             midi_clips: vec![],
             instrument: None,
             sampler: None,
+            arpeggiator: None,
             input_source: None,
             automation_lanes: vec![],
             color: None,

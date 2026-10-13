@@ -1,3 +1,4 @@
+use crate::arpeggiator_settings::ArpeggiatorSettings;
 use crate::audio_clip::AudioClip;
 use crate::sampler_kit::{decode_pad_sample, SamplerKit, SamplerKitDto, SAMPLER_INSTRUMENT_ID};
 use serde::{Deserialize, Serialize};
@@ -538,6 +539,8 @@ pub struct AppTrack {
     pub instrument: Option<String>,
     /// Built-in sampler pads (ADR-028), kept when another instrument is chosen.
     pub sampler: Option<SamplerKit>,
+    /// Note stage ahead of the instrument (ADR-030). `None` = never configured.
+    pub arpeggiator: Option<ArpeggiatorSettings>,
     /// Plugin output mixed into this track's input, ahead of its effects.
     /// `None` for every project saved before multi-out existed (C-4).
     pub input_source: Option<PluginOutputSource>,
@@ -844,6 +847,7 @@ impl AppProject {
                         .collect(),
                     instrument: t.instrument.clone(),
                     sampler: t.sampler.clone(),
+                    arpeggiator: t.arpeggiator,
                     input_source: t.input_source.clone(),
                     automation_lanes: t.automation_lanes.clone(),
                     color: t.color.clone(),
@@ -917,6 +921,7 @@ impl AppProject {
                 midi_clips,
                 instrument: tf.instrument,
                 sampler,
+                arpeggiator: tf.arpeggiator.map(ArpeggiatorSettings::clamped),
                 input_source: tf.input_source,
                 automation_lanes: tf.automation_lanes,
                 color: tf.color,
@@ -1000,6 +1005,12 @@ impl AppTrack {
         self.instrument.as_deref() == Some(SAMPLER_INSTRUMENT_ID)
     }
 
+    /// The graph gives a track an instrument node once it has MIDI to play,
+    /// or a sampler / arpeggiator that live notes can reach (ADR-028, ADR-030).
+    pub fn has_instrument_node(&self) -> bool {
+        !self.midi_clips.is_empty() || self.uses_sampler() || self.arpeggiator.is_some()
+    }
+
     /// Choosing the sampler gives the track a default kit the first time.
     pub fn set_instrument(&mut self, instrument: Option<String>) {
         self.instrument = instrument;
@@ -1051,6 +1062,7 @@ impl AppTrack {
                 .collect(),
             instrument: self.instrument.clone(),
             sampler: self.sampler.as_ref().map(SamplerKit::to_dto),
+            arpeggiator: self.arpeggiator,
             input_source: self.input_source.clone(),
             automation_lanes: self.automation_lanes.clone(),
             color: self.color.clone(),
@@ -1401,6 +1413,8 @@ pub struct TrackFile {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sampler: Option<SamplerKit>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub arpeggiator: Option<ArpeggiatorSettings>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub input_source: Option<PluginOutputSource>,
     #[serde(default)]
     pub automation_lanes: Vec<AutomationLane>,
@@ -1475,6 +1489,7 @@ pub struct TrackDto {
     pub midi_clips: Vec<MidiClipDto>,
     pub instrument: Option<String>,
     pub sampler: Option<SamplerKitDto>,
+    pub arpeggiator: Option<ArpeggiatorSettings>,
     pub input_source: Option<PluginOutputSource>,
     pub automation_lanes: Vec<AutomationLane>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1528,6 +1543,7 @@ mod tests {
             }],
             instrument: None,
             sampler: None,
+            arpeggiator: None,
             input_source: None,
             automation_lanes: vec![],
             color: None,
@@ -1709,6 +1725,7 @@ mod tests {
             midi_clips: vec![],
             instrument: Some("clap://surge.dll?org.surge-synth.surge-xt".into()),
             sampler: None,
+            arpeggiator: None,
             input_source: None,
             automation_lanes: vec![],
             color: None,
@@ -1742,6 +1759,50 @@ mod tests {
         let pad = &track.sampler.as_ref().unwrap().pads[1];
         assert_eq!(pad.tune_semitones, -2.5);
         assert!(pad.is_missing());
+    }
+
+    /// Settings survive save → load, and a project saved before ADR-030 loads
+    /// without any (C-4).
+    #[test]
+    fn arpeggiator_round_trips_and_is_absent_in_older_files() {
+        let mut project = AppProject::new();
+        let mut track = track_with_plugin("lead", "fx", "clap:any");
+        track.effects.clear();
+        track.arpeggiator = Some(ArpeggiatorSettings {
+            enabled: true,
+            gate_percent: 55,
+            octaves: 3,
+            ..ArpeggiatorSettings::default()
+        });
+        project.tracks.push(track);
+
+        let file = project.to_file();
+        let json = serde_json::to_value(&file).expect("serialize");
+        assert_eq!(json["tracks"][0]["arpeggiator"]["octaves"], 3);
+
+        let restored = AppProject::from_file(file).expect("from_file");
+        let settings = restored.tracks[0].arpeggiator.expect("settings kept");
+        assert!(settings.enabled);
+        assert_eq!(settings.gate_percent, 55);
+
+        let mut older = json;
+        older["tracks"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("arpeggiator");
+        let older: ProjectFile = serde_json::from_value(older).expect("older file");
+        assert!(AppProject::from_file(older).unwrap().tracks[0]
+            .arpeggiator
+            .is_none());
+    }
+
+    #[test]
+    fn an_arpeggiator_gives_a_track_without_clips_an_instrument_node() {
+        let mut track = track_with_plugin("lead", "fx", "clap:any");
+        track.effects.clear();
+        assert!(!track.has_instrument_node());
+        track.arpeggiator = Some(ArpeggiatorSettings::default());
+        assert!(track.has_instrument_node());
     }
 
     #[test]
@@ -1801,6 +1862,7 @@ mod tests {
             midi_clips: vec![],
             instrument: None,
             sampler: None,
+            arpeggiator: None,
             input_source: None,
             automation_lanes: vec![],
             color: None,

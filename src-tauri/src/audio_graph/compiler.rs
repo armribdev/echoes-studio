@@ -784,6 +784,10 @@ impl GraphCompiler {
                 let device = Self::build_instrument_device(track, track_id, plugin_host);
 
                 let mut node = InstrumentNode::from_publisher(notes, device);
+                let arpeggiator = track
+                    .and_then(|track| track.arpeggiator)
+                    .unwrap_or_default();
+                node.set_arpeggiator_cells(live_params.install_arpeggiator(track_id, &arpeggiator));
                 if live {
                     node.set_preview(live_params.preview_queue(track_id));
                     node.set_live_input(live_params.live_input_queue(track_id));
@@ -1123,6 +1127,7 @@ mod tests {
             midi_clips: vec![],
             instrument: None,
             sampler: None,
+            arpeggiator: None,
             input_source: None,
             automation_lanes: vec![],
             color: None,
@@ -1211,6 +1216,7 @@ mod tests {
             }],
             instrument: Some("clap:synth".into()),
             sampler: None,
+            arpeggiator: None,
             input_source: None,
             automation_lanes: vec![AutomationLane {
                 id: "lane".into(),

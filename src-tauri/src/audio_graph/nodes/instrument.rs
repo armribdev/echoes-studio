@@ -14,8 +14,9 @@
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
+use crate::audio_graph::arpeggiator::{Arpeggiator, Routing};
 use crate::audio_graph::buffer::AudioBuffer;
-use crate::audio_graph::live_params::EnvelopeCells;
+use crate::audio_graph::live_params::{ArpeggiatorCells, EnvelopeCells};
 use crate::audio_graph::midi::{
     MidiEvent, MidiEventKind, MidiEventList, MidiLiveInputQueue, MidiPreviewQueue,
     MidiTrackPublisher,
@@ -117,6 +118,11 @@ pub struct InstrumentNode {
     /// the node writes the gate state after processing each block so that
     /// `EnvelopeNode::process` sees the correct gate on the next block.
     envelope_cells: Vec<Arc<EnvelopeCells>>,
+    /// Note stage between the sources and the device (ADR-030). Dormant while
+    /// its settings are disabled.
+    arpeggiator: Arpeggiator,
+    arpeggiator_cells: Option<Arc<ArpeggiatorCells>>,
+    arpeggiated_events: MidiEventList,
 }
 
 impl InstrumentNode {
@@ -214,7 +220,29 @@ impl InstrumentNode {
             was_playing: false,
             active_pitch_count: [0u8; 128],
             envelope_cells: Vec::new(),
+            arpeggiator: Arpeggiator::new(),
+            arpeggiator_cells: None,
+            arpeggiated_events: MidiEventList::new(),
         }
+    }
+
+    pub fn set_arpeggiator_cells(&mut self, cells: Arc<ArpeggiatorCells>) {
+        self.arpeggiator_cells = Some(cells);
+    }
+
+    fn apply_arpeggiator(&mut self, transport: &TransportInfo) -> Routing {
+        let settings = self
+            .arpeggiator_cells
+            .as_ref()
+            .map(|cells| cells.load())
+            .unwrap_or_default();
+        self.arpeggiated_events.clear();
+        self.arpeggiator.process(
+            &settings,
+            transport,
+            self.event_buf.as_slice(),
+            &mut self.arpeggiated_events,
+        )
     }
 }
 
@@ -412,8 +440,11 @@ impl AudioNode for InstrumentNode {
             }
         }
 
-        self.device
-            .process_midi(&self.event_buf, outputs, transport);
+        let events = match self.apply_arpeggiator(transport) {
+            Routing::Passthrough => &self.event_buf,
+            Routing::Replaced => &self.arpeggiated_events,
+        };
+        self.device.process_midi(events, outputs, transport);
     }
 
     fn reset(&mut self) {
@@ -424,6 +455,7 @@ impl AudioNode for InstrumentNode {
         self.preview_count = [0u8; 128];
         self.live_input_count = [0u8; 128];
         self.controls.reset();
+        self.arpeggiator.reset();
         // Release envelopes on graph reset so they don't hang in Sustain.
         for cells in &self.envelope_cells {
             cells.gate.store(false, Ordering::Relaxed);
@@ -939,5 +971,151 @@ mod tests {
         run_block(&mut node, &transport_at(true, 2 * SAMPLES_PER_BEAT, 512));
 
         assert_eq!(sustain_messages(&captured), vec![(0, 127)]);
+    }
+    fn chord_node(
+        captured: Arc<Mutex<Vec<MidiEvent>>>,
+        settings: crate::arpeggiator_settings::ArpeggiatorSettings,
+    ) -> (InstrumentNode, Arc<ArpeggiatorCells>) {
+        let note = |pitch| MidiNoteSnapshot {
+            pitch,
+            start_beats: 0.0,
+            end_beats: 4.0,
+            ..one_beat_note()
+        };
+        let mut node = InstrumentNode::new(
+            Arc::new(vec![note(60), note(64), note(67)]),
+            Box::new(CaptureDevice { captured }),
+        );
+        let cells = crate::audio_graph::live_params::LiveParams::new()
+            .install_arpeggiator("track", &settings);
+        node.set_arpeggiator_cells(Arc::clone(&cells));
+        node.prepare(PrepareContext {
+            sample_rate: 48_000.0,
+            max_block_size: 64_000,
+            num_channels: 2,
+            live: true,
+        });
+        (node, cells)
+    }
+
+    fn arpeggiating() -> crate::arpeggiator_settings::ArpeggiatorSettings {
+        crate::arpeggiator_settings::ArpeggiatorSettings {
+            enabled: true,
+            ..Default::default()
+        }
+    }
+
+    fn captured_kinds(captured: &Arc<Mutex<Vec<MidiEvent>>>) -> Vec<(u32, MidiEventKind)> {
+        captured
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|event| (event.offset, event.kind))
+            .collect()
+    }
+
+    #[test]
+    fn arpeggiator_plays_the_clip_chord_one_note_at_a_time() {
+        let captured = Arc::new(Mutex::new(Vec::new()));
+        let (mut node, _) = chord_node(captured.clone(), arpeggiating());
+
+        run_block(&mut node, &transport_at(true, 0, 6_001));
+
+        let on = |pitch| MidiEventKind::NoteOn {
+            pitch,
+            velocity: 100,
+        };
+        assert_eq!(
+            captured_kinds(&captured),
+            vec![
+                (0, on(60)),
+                (4_800, MidiEventKind::NoteOff { pitch: 60 }),
+                (6_000, on(64)),
+            ]
+        );
+    }
+
+    #[test]
+    fn stopping_releases_the_arpeggiated_note() {
+        let captured = Arc::new(Mutex::new(Vec::new()));
+        let (mut node, _) = chord_node(captured.clone(), arpeggiating());
+
+        run_block(&mut node, &transport_at(true, 0, 512));
+        run_block(&mut node, &transport_at(false, 0, 512));
+
+        assert_eq!(
+            captured_kinds(&captured),
+            vec![(0, MidiEventKind::NoteOff { pitch: 60 })]
+        );
+    }
+
+    #[test]
+    fn seeking_releases_the_arpeggiated_note() {
+        let captured = Arc::new(Mutex::new(Vec::new()));
+        let (mut node, _) = chord_node(captured.clone(), arpeggiating());
+
+        run_block(&mut node, &transport_at(true, 0, 512));
+        run_block(&mut node, &transport_at(true, 200_000, 512));
+
+        assert_eq!(
+            captured_kinds(&captured),
+            vec![(0, MidiEventKind::NoteOff { pitch: 60 })]
+        );
+    }
+
+    #[test]
+    fn switching_the_arpeggiator_off_while_it_sounds_hands_over_the_chord() {
+        let captured = Arc::new(Mutex::new(Vec::new()));
+        let (mut node, cells) = chord_node(captured.clone(), arpeggiating());
+
+        run_block(&mut node, &transport_at(true, 0, 512));
+        cells.store(&Default::default());
+        run_block(&mut node, &transport_at(true, 512, 512));
+
+        let on = |pitch| MidiEventKind::NoteOn {
+            pitch,
+            velocity: 100,
+        };
+        assert_eq!(
+            captured_kinds(&captured),
+            vec![
+                (0, MidiEventKind::NoteOff { pitch: 60 }),
+                (0, on(60)),
+                (0, on(64)),
+                (0, on(67)),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_disabled_arpeggiator_sends_the_same_events_as_no_arpeggiator() {
+        let plain = Arc::new(Mutex::new(Vec::new()));
+        let with_cells = Arc::new(Mutex::new(Vec::new()));
+        let (mut node_with, _) = chord_node(with_cells.clone(), Default::default());
+        let (mut node_without, _) = chord_node(plain.clone(), Default::default());
+        node_without.arpeggiator_cells = None;
+
+        for start in [0, 30_000, 60_000] {
+            run_block(&mut node_with, &transport_at(true, start, 30_000));
+            run_block(&mut node_without, &transport_at(true, start, 30_000));
+            assert_eq!(
+                captured_kinds(&with_cells),
+                captured_kinds(&plain),
+                "block at {start}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_envelope_gate_follows_the_played_notes_not_the_arpeggiator() {
+        let captured = Arc::new(Mutex::new(Vec::new()));
+        let (mut node, _) = chord_node(captured, arpeggiating());
+        let envelope = EnvelopeCells::new(&crate::project::EnvelopeParams::default());
+        node.inject_envelope_cells(vec![Arc::clone(&envelope)]);
+
+        run_block(&mut node, &transport_at(true, 0, 5_000));
+        run_block(&mut node, &transport_at(true, 5_000, 1_000));
+
+        assert!(envelope.gate.load(Ordering::Relaxed));
     }
 }

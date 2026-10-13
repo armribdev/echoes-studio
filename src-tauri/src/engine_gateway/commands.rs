@@ -6,6 +6,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::arpeggiator_settings::{ArpMode, ArpRate, ArpeggiatorSettings};
 use crate::sampler_kit::{PadPlayMode, SamplerPad};
 
 /// The outer wrapper for every command sent from the UI.
@@ -51,6 +52,7 @@ pub mod cmd {
     pub const SET_TRACK_INSTRUMENT: &str = "SET_TRACK_INSTRUMENT";
     pub const SET_TRACK_INPUT: &str = "SET_TRACK_INPUT";
     pub const SET_SAMPLER_PAD: &str = "SET_SAMPLER_PAD";
+    pub const SET_ARPEGGIATOR: &str = "SET_ARPEGGIATOR";
     pub const ADD_CLIP: &str = "ADD_CLIP";
     pub const MOVE_CLIP: &str = "MOVE_CLIP";
     pub const REMOVE_CLIP: &str = "REMOVE_CLIP";
@@ -170,6 +172,37 @@ impl SamplerPadPatch {
         next.release_ms = self.release_ms.unwrap_or(next.release_ms);
         next.choke_group = self.choke_group.unwrap_or(next.choke_group);
         next.clamped()
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SetArpeggiatorPayload {
+    pub track_id: String,
+    pub patch: ArpeggiatorPatch,
+}
+
+/// Arpeggiator settings to change (ADR-030); absent fields stay unchanged.
+#[derive(Debug, Default, Deserialize)]
+pub struct ArpeggiatorPatch {
+    pub enabled: Option<bool>,
+    pub mode: Option<ArpMode>,
+    pub rate: Option<ArpRate>,
+    pub triplet: Option<bool>,
+    pub gate_percent: Option<u8>,
+    pub octaves: Option<u8>,
+}
+
+impl ArpeggiatorPatch {
+    pub fn apply_to(&self, settings: &ArpeggiatorSettings) -> ArpeggiatorSettings {
+        ArpeggiatorSettings {
+            enabled: self.enabled.unwrap_or(settings.enabled),
+            mode: self.mode.unwrap_or(settings.mode),
+            rate: self.rate.unwrap_or(settings.rate),
+            triplet: self.triplet.unwrap_or(settings.triplet),
+            gate_percent: self.gate_percent.unwrap_or(settings.gate_percent),
+            octaves: self.octaves.unwrap_or(settings.octaves),
+        }
+        .clamped()
     }
 }
 

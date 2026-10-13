@@ -197,6 +197,21 @@ export interface SamplerKit {
 	pads: SamplerPad[];
 }
 
+export type ArpMode = 'up' | 'down' | 'up_down' | 'played' | 'random';
+export type ArpRate = 'quarter' | 'eighth' | 'sixteenth' | 'thirty_second';
+
+/** Arpeggiator note stage of an instrument track (ADR-030) — mirrors Rust `ArpeggiatorSettings`. */
+export interface ArpeggiatorSettings {
+	enabled: boolean;
+	mode: ArpMode;
+	rate: ArpRate;
+	triplet: boolean;
+	/** Note length as a share of the step, 5–100. */
+	gate_percent: number;
+	/** 1–4. */
+	octaves: number;
+}
+
 export interface Track {
 	/** Stable ID used by the event-sourcing system. Added in architecture v2. */
 	id: string;
@@ -211,6 +226,8 @@ export interface Track {
 	instrument?: string | null;
 	/** Sampler pads, kept when another instrument is chosen. */
 	sampler?: SamplerKit | null;
+	/** Arpeggiator settings; null/absent until first configured. */
+	arpeggiator?: ArpeggiatorSettings | null;
 	/** Plugin output mixed into the track's input, or null/absent for none. */
 	input_source?: PluginOutputSource | null;
 	clips: Clip[];

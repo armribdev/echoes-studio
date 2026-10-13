@@ -75,6 +75,13 @@ for notes. `MAX_EVENTS_PER_BLOCK` must stay ≤ 512: `sort_by_offset` is a stabl
 sort whose scratch fits its 4 KB stack buffer only up to 512 eight-byte
 events — beyond that it would allocate on the audio thread.
 
+The arpeggiator (ADR-030) keeps the same 256-event list: its output list is a
+second pre-allocated `MidiEventList` inside `InstrumentNode`, it emits at most
+two events per step, and when fewer than three places remain it skips the step
+but never a due `NoteOff` (one note sounds at a time, so one release is ever
+pending). Held notes, the step state and the random generator are fixed arrays;
+settings are read as relaxed atomics, once per block.
+
 MIDI recording adds three relaxed atomic stores per rendered slice
 (`LiveInputClock::set_event_window`: transport position + a seqlock counter,
 wait-free) and one per callback (`set_record_latency`: period + CPAL output

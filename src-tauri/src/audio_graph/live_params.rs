@@ -20,9 +20,10 @@
 //!   `AtomicU32` / `AtomicBool` fields directly — lock-free, allocation-free.
 
 use std::collections::{HashMap, HashSet};
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 
+use crate::arpeggiator_settings::{ArpMode, ArpRate, ArpeggiatorSettings};
 use crate::audio_graph::parameter_block::ParameterBlock;
 use crate::project::{AppProject, EnvelopeParams};
 
@@ -186,8 +187,58 @@ impl MacroCells {
     }
 }
 
+/// One atomic per setting, written by the command thread and read once per
+/// block by the instrument node (ADR-030).
+pub struct ArpeggiatorCells {
+    enabled: AtomicBool,
+    mode: AtomicU8,
+    rate: AtomicU8,
+    triplet: AtomicBool,
+    gate_percent: AtomicU8,
+    octaves: AtomicU8,
+}
+
+impl ArpeggiatorCells {
+    fn new(settings: &ArpeggiatorSettings) -> Arc<Self> {
+        let cells = Arc::new(Self {
+            enabled: AtomicBool::new(false),
+            mode: AtomicU8::new(0),
+            rate: AtomicU8::new(0),
+            triplet: AtomicBool::new(false),
+            gate_percent: AtomicU8::new(0),
+            octaves: AtomicU8::new(0),
+        });
+        cells.store(settings);
+        cells
+    }
+
+    pub fn store(&self, settings: &ArpeggiatorSettings) {
+        self.enabled.store(settings.enabled, Ordering::Relaxed);
+        self.mode.store(settings.mode.index(), Ordering::Relaxed);
+        self.rate.store(settings.rate.index(), Ordering::Relaxed);
+        self.triplet.store(settings.triplet, Ordering::Relaxed);
+        self.gate_percent
+            .store(settings.gate_percent, Ordering::Relaxed);
+        self.octaves.store(settings.octaves, Ordering::Relaxed);
+    }
+
+    #[inline]
+    pub fn load(&self) -> ArpeggiatorSettings {
+        ArpeggiatorSettings {
+            enabled: self.enabled.load(Ordering::Relaxed),
+            mode: ArpMode::from_index(self.mode.load(Ordering::Relaxed)),
+            rate: ArpRate::from_index(self.rate.load(Ordering::Relaxed)),
+            triplet: self.triplet.load(Ordering::Relaxed),
+            gate_percent: self.gate_percent.load(Ordering::Relaxed),
+            octaves: self.octaves.load(Ordering::Relaxed),
+        }
+        .clamped()
+    }
+}
+
 #[derive(Default)]
 struct LiveParamsInner {
+    arpeggiators: HashMap<String, Arc<ArpeggiatorCells>>,
     tracks: HashMap<String, Arc<TrackParams>>,
     modulators: HashMap<String, Arc<ModulatorCells>>,
     macros: HashMap<String, Arc<MacroCells>>,
@@ -403,6 +454,37 @@ impl LiveParams {
         cells
     }
 
+    /// Cells the track's instrument node reads. A compile writes the project's
+    /// values over any previous ones, so an undo that rebuilt the project reaches
+    /// the audio thread.
+    pub fn install_arpeggiator(
+        &self,
+        track_id: &str,
+        settings: &ArpeggiatorSettings,
+    ) -> Arc<ArpeggiatorCells> {
+        let mut inner = self.lock_inner();
+        if let Some(existing) = inner.arpeggiators.get(track_id) {
+            existing.store(settings);
+            return Arc::clone(existing);
+        }
+        let cells = ArpeggiatorCells::new(settings);
+        inner
+            .arpeggiators
+            .insert(track_id.to_string(), Arc::clone(&cells));
+        cells
+    }
+
+    /// No recompile. Returns false when the track has no cells yet (graph not
+    /// compiled); the caller then relies on the next compile.
+    pub fn set_arpeggiator(&self, track_id: &str, settings: &ArpeggiatorSettings) -> bool {
+        let inner = self.lock_inner();
+        let Some(cells) = inner.arpeggiators.get(track_id) else {
+            return false;
+        };
+        cells.store(settings);
+        true
+    }
+
     pub fn set_master_soft_clip(&self, enabled: bool) {
         self.master_soft_clip.store(enabled, Ordering::Relaxed);
     }
@@ -550,6 +632,9 @@ impl LiveParams {
             .plugin_param_shadows
             .retain(|id, _| live_effect_ids.contains(id.as_str()));
 
+        inner
+            .arpeggiators
+            .retain(|id, _| live_track_ids.contains(id.as_str()));
         inner
             .midi_notes
             .retain(|id, _| live_track_ids.contains(id.as_str()));

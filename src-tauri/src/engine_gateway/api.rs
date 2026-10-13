@@ -23,13 +23,15 @@ use super::commands::{
     BatchCommand, CommandEnvelope, CreateTrackPayload, DeleteTrackPayload, MoveClipPayload,
     MoveMidiClipPayload, MuteTrackPayload, RemoveAutomationLanePayload, RemoveClipPayload,
     RemoveEffectPayload, RemoveMarkerPayload, RemoveMidiClipPayload, RemoveModulationRoutePayload,
-    RemoveModulatorPayload, RemoveRegionPayload, SeekPayload, SetClipMidiControlsPayload,
-    SetClipMidiNotesPayload, SetLoopPayload, SetMidiNotesPayload, SetModulationDepthPayload,
-    SetSamplerPadPayload, SetTrackInputPayload, SetTrackInstrumentPayload, SoloTrackPayload,
-    UpdateAutomationClipPayload, UpdateEffectPayload, UpdateMarkerPayload, UpdateModulatorPayload,
-    UpdateProjectNamePayload, UpdateRegionPayload, UpdateTempoPayload, UpdateTrackPayload,
+    RemoveModulatorPayload, RemoveRegionPayload, SeekPayload, SetArpeggiatorPayload,
+    SetClipMidiControlsPayload, SetClipMidiNotesPayload, SetLoopPayload, SetMidiNotesPayload,
+    SetModulationDepthPayload, SetSamplerPadPayload, SetTrackInputPayload,
+    SetTrackInstrumentPayload, SoloTrackPayload, UpdateAutomationClipPayload, UpdateEffectPayload,
+    UpdateMarkerPayload, UpdateModulatorPayload, UpdateProjectNamePayload, UpdateRegionPayload,
+    UpdateTempoPayload, UpdateTrackPayload,
 };
 use super::events::{ev, EngineEvent, ProjectEvent};
+use crate::arpeggiator_settings::ArpeggiatorSettings;
 use crate::audio_clip::{AudioClip, AudioClipData};
 use crate::audio_engine::transport::SharedTransport;
 use crate::audio_graph::nodes::track_gain::VOLUME_RANGE;
@@ -426,6 +428,7 @@ fn empty_app_track(id: String, name: String) -> AppTrack {
         midi_clips: vec![],
         instrument: None,
         sampler: None,
+        arpeggiator: None,
         input_source: None,
         automation_lanes: vec![],
         color: None,
@@ -1530,6 +1533,28 @@ fn process_command(
             )
         }
 
+        cmd::SET_ARPEGGIATOR => {
+            let p: SetArpeggiatorPayload = serde_json::from_value(command.payload)
+                .map_err(|e| format!("SET_ARPEGGIATOR payload invalid: {e}"))?;
+
+            let (settings, node_appears) = with_project_mut(state, |project| {
+                let track = require_track_mut(project, &p.track_id)?;
+                let had_node = track.has_instrument_node();
+                let settings = p.patch.apply_to(&track.arpeggiator.unwrap_or_default());
+                track.arpeggiator = Some(settings);
+                Ok((settings, !had_node))
+            })?;
+
+            // Only a track that had no instrument node needs the graph rebuilt.
+            let applied_live = state.live_params.set_arpeggiator(&p.track_id, &settings);
+            commit_same_payload(
+                &ctx,
+                ev::ARPEGGIATOR_SET,
+                json!({ "track_id": p.track_id, "settings": settings }),
+                node_appears || !applied_live,
+            )
+        }
+
         cmd::SET_TRACK_INPUT => {
             let p: SetTrackInputPayload = serde_json::from_value(command.payload)
                 .map_err(|e| format!("SET_TRACK_INPUT payload invalid: {e}"))?;
@@ -2569,6 +2594,7 @@ fn snapshot_track(t: &AppTrack) -> AppTrack {
         midi_clips: t.midi_clips.clone(),
         instrument: t.instrument.clone(),
         sampler: t.sampler.clone(),
+        arpeggiator: t.arpeggiator,
         input_source: t.input_source.clone(),
         automation_lanes: t.automation_lanes.clone(),
         clips: t.clips.iter().map(snapshot_clip).collect(),
@@ -2797,6 +2823,16 @@ fn apply_sampler_pad_set(
         .get_mut(index)
     {
         *slot = pad;
+    }
+}
+
+fn apply_arpeggiator_set(project: &mut AppProject, payload: &Value) {
+    let Ok(settings) = serde_json::from_value::<ArpeggiatorSettings>(payload["settings"].clone())
+    else {
+        return;
+    };
+    if let Some(track) = find_track_mut(project, &payload_str(payload, "track_id")) {
+        track.arpeggiator = Some(settings.clamped());
     }
 }
 
@@ -3396,6 +3432,7 @@ fn apply_events(
                 })
             }
             ev::TRACK_INPUT_SET => apply_track_input_set(&mut project, &event.payload),
+            ev::ARPEGGIATOR_SET => apply_arpeggiator_set(&mut project, &event.payload),
             ev::SAMPLER_PAD_SET => apply_sampler_pad_set(&mut project, &event.payload, |path| {
                 resolve_pad_sample(state, path)
             }),
@@ -3502,6 +3539,7 @@ mod tests {
             midi_clips: vec![],
             instrument: None,
             sampler: None,
+            arpeggiator: None,
             input_source: None,
             automation_lanes: vec![],
             color: None,
@@ -3807,5 +3845,43 @@ mod tests {
         );
         assert_eq!(lfo_params(&project).waveform, LfoWaveform::Square);
         assert_eq!(lfo_params(&project).rate_hz, 3.0);
+    }
+
+    #[test]
+    fn replayed_arpeggiator_set_restores_the_settings_within_range() {
+        let mut project = AppProject::new();
+        project.tracks.push(empty_app_track("t".into(), "t".into()));
+
+        apply_arpeggiator_set(
+            &mut project,
+            &json!({
+                "track_id": "t",
+                "settings": { "enabled": true, "mode": "down", "octaves": 9 }
+            }),
+        );
+
+        let settings = project.tracks[0].arpeggiator.expect("settings set");
+        assert!(settings.enabled);
+        assert_eq!(settings.mode, crate::arpeggiator_settings::ArpMode::Down);
+        assert_eq!(settings.octaves, crate::arpeggiator_settings::MAX_OCTAVES);
+    }
+
+    #[test]
+    fn an_arpeggiator_patch_changes_only_the_fields_it_names() {
+        let before = ArpeggiatorSettings {
+            octaves: 3,
+            ..ArpeggiatorSettings::default()
+        };
+        let patch: super::super::commands::ArpeggiatorPatch =
+            serde_json::from_value(json!({ "enabled": true, "gate_percent": 0 })).unwrap();
+
+        let after = patch.apply_to(&before);
+
+        assert!(after.enabled);
+        assert_eq!(after.octaves, 3);
+        assert_eq!(
+            after.gate_percent,
+            crate::arpeggiator_settings::MIN_GATE_PERCENT
+        );
     }
 }

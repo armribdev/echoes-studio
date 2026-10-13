@@ -1,6 +1,7 @@
 <script lang="ts">
 	import PluginPicker from './PluginPicker.svelte';
 	import SamplerPads from './SamplerPads.svelte';
+	import ArpeggiatorPanel from './ArpeggiatorPanel.svelte';
 	import EffectContextMenu from './EffectContextMenu.svelte';
 	import { preferences } from '../stores/preferences';
 	import type { PluginInfo } from '../stores/plugins';
@@ -17,7 +18,7 @@
 	import { setTrackInstrument } from '../frontend/commands/dispatcher';
 	import { notify } from '../stores/status';
 	import { t } from 'svelte-i18n';
-	import type { SamplerKit } from '../types/global';
+	import type { ArpeggiatorSettings, SamplerKit } from '../types/global';
 	import { isSamplerInstrument } from '../shared/project/sampler';
 
 	const REASON_KEYS: Record<UnavailableReason, string> = {
@@ -30,6 +31,7 @@
 	export let trackId: string;
 	export let instrument: string | null;
 	export let sampler: SamplerKit | null = null;
+	export let arpeggiator: ArpeggiatorSettings | null = null;
 	export let compact = false;
 	export let trackName = '';
 	export let trackColor = '#4d96ff';
@@ -253,6 +255,8 @@
 	{:else if !compact && !instrument}
 		<p class="hint">Synthé intégré par défaut — choisissez un instrument CLAP (ex. Vital).</p>
 	{/if}
+
+	<ArpeggiatorPanel {trackId} {arpeggiator} />
 </div>
 
 <style lang="scss">

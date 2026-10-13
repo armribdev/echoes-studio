@@ -1,3 +1,4 @@
+mod arpeggiator_settings;
 mod audio_clip;
 mod audio_engine;
 mod audio_graph;

@@ -334,8 +334,7 @@ impl AudioGraph {
 
         for (port_idx, track) in project.tracks.iter().enumerate() {
             let mut instrument_node = None;
-            // The sampler plays pads and live notes even before the first MIDI clip (ADR-028).
-            let plays_instrument = !track.midi_clips.is_empty() || track.uses_sampler();
+            let plays_instrument = track.has_instrument_node();
             let track_node = if !track.clips.is_empty() && plays_instrument {
                 // Track has both audio and MIDI clips — run each through its own
                 // source node then sum them through a Bus before the FX chain.
@@ -737,6 +736,7 @@ mod routing_tests {
             midi_clips: vec![],
             instrument: None,
             sampler: None,
+            arpeggiator: None,
             input_source: None,
             automation_lanes: vec![],
             color: None,

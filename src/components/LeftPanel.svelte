@@ -38,6 +38,7 @@
 					trackId={$selectedTrack.trackId}
 					instrument={$selectedTrack.instrument}
 					sampler={$selectedTrack.sampler}
+					arpeggiator={$selectedTrack.arpeggiator}
 					trackName={$selectedTrack.trackName}
 					trackColor={$selectedTrack.trackColor}
 				/>

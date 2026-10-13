@@ -1,5 +1,6 @@
 import { writable } from 'svelte/store';
 import type {
+	ArpeggiatorSettings,
 	TrackEffect,
 	ProjectModulator,
 	ProjectModulationRoute,
@@ -12,6 +13,7 @@ export interface SelectedTrackInfo {
 	trackColor: string;
 	instrument: string | null;
 	sampler: SamplerKit | null;
+	arpeggiator: ArpeggiatorSettings | null;
 	effects: TrackEffect[];
 	modulators: ProjectModulator[];
 	mod_routes: ProjectModulationRoute[];
@@ -23,6 +25,7 @@ export const selectedTrack = writable<SelectedTrackInfo>({
 	trackColor: '#4d96ff',
 	instrument: null,
 	sampler: null,
+	arpeggiator: null,
 	effects: [],
 	modulators: [],
 	mod_routes: []

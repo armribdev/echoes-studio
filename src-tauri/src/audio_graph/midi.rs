@@ -75,6 +75,11 @@ impl MidiEventList {
         &self.events[..self.len]
     }
 
+    #[inline]
+    pub fn remaining_capacity(&self) -> usize {
+        MAX_EVENTS_PER_BLOCK - self.len
+    }
+
     /// Like `push`, but keeps the last `NOTE_EVENT_RESERVE` places for events
     /// pushed with `push`, so a dense control stream cannot crowd out a NoteOff.
     #[inline]

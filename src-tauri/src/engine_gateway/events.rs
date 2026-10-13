@@ -28,6 +28,7 @@ pub mod ev {
     pub const TRACK_INSTRUMENT_SET: &str = "TRACK_INSTRUMENT_SET";
     pub const TRACK_INPUT_SET: &str = "TRACK_INPUT_SET";
     pub const SAMPLER_PAD_SET: &str = "SAMPLER_PAD_SET";
+    pub const ARPEGGIATOR_SET: &str = "ARPEGGIATOR_SET";
     pub const CLIP_ADDED: &str = "CLIP_ADDED";
     pub const CLIP_MOVED: &str = "CLIP_MOVED";
     pub const CLIP_MOVED_TO_TRACK: &str = "CLIP_MOVED_TO_TRACK";

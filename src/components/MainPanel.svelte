@@ -266,6 +266,7 @@
 				trackColor: trackColor(t.id, t.color),
 				instrument: t.instrument ?? null,
 				sampler: t.sampler ?? null,
+				arpeggiator: t.arpeggiator ?? null,
 				effects: t.effects ?? [],
 				modulators: t.modulators ?? [],
 				mod_routes: t.mod_routes ?? []
@@ -277,6 +278,7 @@
 				trackColor: '#4d96ff',
 				instrument: null,
 				sampler: null,
+				arpeggiator: null,
 				effects: [],
 				modulators: [],
 				mod_routes: []

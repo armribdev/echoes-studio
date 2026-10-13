@@ -157,6 +157,21 @@ leaving a clip, pausing or stopping returns what the timeline moved to neutral
 `MidiEventList::push_control`, which keeps the last 32 places of the 256-event
 block for notes and live input.
 
+The arpeggiator (ADR-030) is a note stage inside `InstrumentNode`, not a graph
+node: after the clip notes, audition and live input are merged and sorted,
+`Arpeggiator::process` (`audio_graph/arpeggiator.rs`, a pure events-in /
+events-out struct with fixed arrays) either lets them through unchanged
+(`Routing::Passthrough`, the case for every track without an enabled
+arpeggiator) or replaces the note events by its own, one note at a time;
+controls pass through. While the transport plays, step _k_ starts at the sample
+of beat _k_ × step, with the same beats→samples function as clip notes; while it
+is stopped, the grid starts on the chord and counts samples the stage owns.
+Settings come from one atomic per setting (`ArpeggiatorCells`, installed per
+instrument track at compile). The node's per-pitch counters, the envelope gate and the
+recorder keep working on the played notes. This is the node's single note-effect
+slot; a second note effect is the trigger for real `PortKind::Midi` edges
+(ADR-030 option B).
+
 The metronome click (ADR-026) is the other thing outside the graph: it is added
 to the device output after the mix and the meters, so it is never in a track, a
 meter or an export.
