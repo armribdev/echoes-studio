@@ -68,7 +68,7 @@ export function applyProjectUiLayout(layout?: ProjectUiLayout | null): void {
 
 export function persistProjectUiLayout(): void {
 	if (hydrating) return;
-	void invoke('sync_project_ui_layout', { ui_layout: collectProjectUiLayout() }).catch(
+	void invoke('sync_project_ui_layout', { uiLayout: collectProjectUiLayout() }).catch(
 		console.error
 	);
 }

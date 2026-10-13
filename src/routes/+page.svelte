@@ -1,5 +1,9 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+
+	export let params: Record<string, string> = {};
+	$: void params;
+
 	import { get } from 'svelte/store';
 	import { listen } from '@tauri-apps/api/event';
 	import { invoke } from '@tauri-apps/api/core';
