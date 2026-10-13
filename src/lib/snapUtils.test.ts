@@ -18,7 +18,7 @@ function trackWithClips(clips: { id: string; start: number; end: number }[]): Tr
 			peaks_512: [],
 			peaks_4096: []
 		}))
-	} as Track;
+	} as unknown as Track;
 }
 
 describe('getSnapSubdivisionSec', () => {

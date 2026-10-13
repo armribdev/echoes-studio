@@ -522,7 +522,7 @@
 				if (marker) seekToBeat(marker.position_beats);
 			} else {
 				const region = regions.find((r) => r.id === current.id);
-				if (region) goToRegion(region);
+				if (region) goToRegion(region.start_beats, region.end_beats);
 			}
 		}}
 		on:setLoop={() => {

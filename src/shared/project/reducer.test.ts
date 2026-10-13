@@ -304,7 +304,7 @@ describe('projectFromSnapshot', () => {
 			numerator: 4,
 			denominator: 4,
 			tracks: []
-		} as Project);
+		} as unknown as Project);
 		expect(state.midi_grid_beats).toBe(0.25);
 		expect(state.key_root).toBe('C');
 		expect(state.markers).toEqual([]);

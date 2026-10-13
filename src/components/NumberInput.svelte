@@ -73,6 +73,7 @@
 		text-align: center;
 		outline: none;
 		-moz-appearance: textfield;
+		appearance: textfield;
 		line-height: 1;
 
 		&::-webkit-inner-spin-button,
