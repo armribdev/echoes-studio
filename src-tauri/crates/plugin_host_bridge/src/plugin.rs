@@ -15,9 +15,9 @@ use clap_ffi::{
     audio_thread_scope, is_silent, read_pod, read_tail, split_events, BlockActivity,
     ClapAudioBuffer, ClapEventBuffer, ClapEventHeader, ClapEventTransport, ClapHost, ClapLibrary,
     ClapOutputEvents, ClapParamInfo, ClapPlugin, ClapPluginFactory, ClapPluginLatency,
-    ClapPluginParams, ClapProcess, ProcessSleep, CLAP_CORE_EVENT_SPACE, CLAP_EVENT_TRANSPORT,
-    CLAP_EXT_LATENCY, CLAP_EXT_PARAMS, CLAP_PLUGIN_FACTORY_ID, CLAP_PROCESS_ERROR,
-    CLAP_TRANSPORT_IS_PLAYING,
+    ClapPluginParams, ClapProcess, HostTrackInfo, ProcessSleep, CLAP_CORE_EVENT_SPACE,
+    CLAP_EVENT_TRANSPORT, CLAP_EXT_LATENCY, CLAP_EXT_PARAMS, CLAP_PLUGIN_FACTORY_ID,
+    CLAP_PROCESS_ERROR, CLAP_TRANSPORT_IS_PLAYING,
 };
 use plugin_bridge::protocol::{
     BLOCK_PARAMS_RESCAN_MASK, BLOCK_PARAMS_RESCAN_SHIFT, BLOCK_PASSED_THROUGH, BLOCK_PLUGIN_EDITED,
@@ -57,8 +57,9 @@ unsafe impl Send for LoadedPlugin {}
 unsafe impl Sync for LoadedPlugin {}
 
 impl LoadedPlugin {
-    /// Load the library, create the plugin `id` and `init` it.
-    pub fn load(dll: &Path, id: &str) -> Result<Self, String> {
+    /// Load the library, create the plugin `id` and `init` it.  `track_info` is
+    /// what `clap.track-info` answers from `init` on.
+    pub fn load(dll: &Path, id: &str, track_info: Option<&HostTrackInfo>) -> Result<Self, String> {
         let (library, entry) = ClapLibrary::load(dll)?;
         // SAFETY: `entry` is the live entry of the just-loaded library.
         let factory =
@@ -68,6 +69,9 @@ impl LoadedPlugin {
             return Err("clap_entry.get_factory returned null".into());
         }
         let host = clap_ffi::make_host();
+        if let (Some(context), Some(info)) = (host.context(), track_info) {
+            context.set_track_info(info);
+        }
         let id_c: Vec<u8> = id.bytes().chain(std::iter::once(0)).collect();
         // SAFETY: live factory and host; NUL-terminated id.
         let plugin = unsafe {
@@ -225,6 +229,18 @@ impl LoadedPlugin {
         unsafe { clap_ffi::read_param_text(self.plugin, native_id, value) }
             .map(String::into_bytes)
             .unwrap_or_default()
+    }
+
+    /// Main thread.  Records the plugin's track and, when it changed, tells the
+    /// plugin; `process` is not held back, CLAP lets the two run together.
+    pub fn set_track_info(&self, info: &HostTrackInfo) {
+        let Some(context) = self.host.context() else {
+            return;
+        };
+        if context.set_track_info(info) {
+            // SAFETY: live plugin, called on the bridge's main thread.
+            unsafe { clap_ffi::notify_track_info_changed(self.plugin) };
+        }
     }
 
     /// Sets plain parameter values outside `process` (`clap.params.flush`).

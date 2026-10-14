@@ -60,6 +60,7 @@ impl AudioGraphCompiler {
         // Keep existing atomics intact: an in-flight hot-path command racing
         // this recompile must not be clobbered.
         live_params.prune_to_project(project);
+        plugin_host.sync_track_info(project);
 
         let graph = AudioGraph::from_project(project);
 

@@ -290,6 +290,16 @@ atomic, polled by the plugin-edit watcher. The only new FFI call is
 other off-RT introspection; while it holds the gate a block in flight bypasses
 the plugin, which is why the UI asks at most every 100 ms.
 
+Host `clap.track-info` (2026-10-14) adds no audio-thread work and takes no lock.
+`get` is `[main-thread]` in the spec but reachable from any thread, so a plugin
+may call it where it should not: it reads a sequence lock on the plugin's
+`ClapHostContext` (atomics only, no allocation, bounded retries, never waits for
+the writer). The writer and `changed()` run on the command thread (the bridge's
+main thread when sandboxed), `changed()` under the instance FFI gate like
+`value_to_text` — a block in flight makes it wait up to 3 ms, never the other way
+round, and a notification that misses the gate is retried by the plugin-edit
+watcher. `changed()` is never called from the audio callback.
+
 ### Crash marker (ADR-015)
 
 In-process plugin wrappers mark the running plugin in a memory-mapped file

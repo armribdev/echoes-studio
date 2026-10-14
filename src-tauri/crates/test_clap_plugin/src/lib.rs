@@ -21,6 +21,14 @@
 //! - 10 `Rescan` — the value is sent to the host's `clap.params.rescan` as flags;
 //! - 11 `Request flush` — once set, calls the host's `clap.params.request_flush`.
 //!
+//! - 12..18 — read-only: what the plugin saw through the host's `clap.track-info`.
+//!   It reads the track in `init` and again whenever the host calls its
+//!   `clap_plugin_track_info.changed`: `Track flags`, `Track color` (ARGB),
+//!   `Track name` (its first 6 bytes, big-endian), `Track name length`,
+//!   `Track info reads` (successful `get` calls), `Track info changes`
+//!   (`changed` calls) and `Track info audio calls` (`changed` calls the host's
+//!   `clap.thread-check` reported as the audio thread — always 0 when it behaves).
+//!
 //! `Gain` renders its value as decibels through `clap.params.value_to_text`.
 //!
 //! A second plugin, `echoes.test.sleepy`, is the same code reporting `SLEEP`
@@ -41,14 +49,15 @@ use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, AtomicU64, Ordering};
 use clap_ffi::{
     ClapAudioPortInfo, ClapEventHeader, ClapEventNote, ClapEventParamGesture, ClapEventParamValue,
     ClapHost, ClapHostLatency, ClapHostParams, ClapHostState, ClapHostTail, ClapHostThreadCheck,
-    ClapIStream, ClapInputEvents, ClapOStream, ClapOutputEvents, ClapParamInfo, ClapPlugin,
-    ClapPluginAudioPorts, ClapPluginDescriptor, ClapPluginEntry, ClapPluginFactory,
-    ClapPluginLatency, ClapPluginParams, ClapPluginState, ClapPluginTail, ClapProcess,
-    ClapProcessStatus, CLAP_AUDIO_PORT_IS_MAIN, CLAP_CORE_EVENT_SPACE, CLAP_EVENT_NOTE_OFF,
-    CLAP_EVENT_NOTE_ON, CLAP_EVENT_PARAM_GESTURE_END, CLAP_EVENT_PARAM_MOD, CLAP_EVENT_PARAM_VALUE,
-    CLAP_EXT_AUDIO_PORTS, CLAP_EXT_LATENCY, CLAP_EXT_PARAMS, CLAP_EXT_STATE, CLAP_EXT_TAIL,
-    CLAP_EXT_THREAD_CHECK, CLAP_PARAM_IS_AUTOMATABLE, CLAP_PARAM_IS_MODULATABLE,
-    CLAP_PLUGIN_FACTORY_ID, CLAP_PROCESS_CONTINUE, CLAP_PROCESS_SLEEP, CLAP_VERSION_1,
+    ClapHostTrackInfo, ClapIStream, ClapInputEvents, ClapOStream, ClapOutputEvents, ClapParamInfo,
+    ClapPlugin, ClapPluginAudioPorts, ClapPluginDescriptor, ClapPluginEntry, ClapPluginFactory,
+    ClapPluginLatency, ClapPluginParams, ClapPluginState, ClapPluginTail, ClapPluginTrackInfo,
+    ClapProcess, ClapProcessStatus, ClapTrackInfo, CLAP_AUDIO_PORT_IS_MAIN, CLAP_CORE_EVENT_SPACE,
+    CLAP_EVENT_NOTE_OFF, CLAP_EVENT_NOTE_ON, CLAP_EVENT_PARAM_GESTURE_END, CLAP_EVENT_PARAM_MOD,
+    CLAP_EVENT_PARAM_VALUE, CLAP_EXT_AUDIO_PORTS, CLAP_EXT_LATENCY, CLAP_EXT_PARAMS,
+    CLAP_EXT_STATE, CLAP_EXT_TAIL, CLAP_EXT_THREAD_CHECK, CLAP_EXT_TRACK_INFO,
+    CLAP_PARAM_IS_AUTOMATABLE, CLAP_PARAM_IS_MODULATABLE, CLAP_PLUGIN_FACTORY_ID,
+    CLAP_PROCESS_CONTINUE, CLAP_PROCESS_SLEEP, CLAP_VERSION_1,
 };
 
 pub const PLUGIN_ID: &str = "echoes.test.gain";
@@ -67,6 +76,16 @@ const PROCESS_CALLS: u32 = 8;
 const LIAR: u32 = 9;
 const RESCAN: u32 = 10;
 const REQUEST_FLUSH: u32 = 11;
+const TRACK_FLAGS: u32 = 12;
+const TRACK_COLOR: u32 = 13;
+const TRACK_NAME: u32 = 14;
+const TRACK_NAME_LENGTH: u32 = 15;
+const TRACK_INFO_READS: u32 = 16;
+const TRACK_INFO_CHANGES: u32 = 17;
+const TRACK_INFO_AUDIO_CALLS: u32 = 18;
+const PARAM_COUNT: u32 = 19;
+/// Bytes of the track name `Track name` packs.
+const PACKED_NAME_BYTES: usize = 6;
 
 struct Descriptor(ClapPluginDescriptor);
 struct Features([*const c_char; 2]);
@@ -162,6 +181,13 @@ struct State {
     tail: AtomicU32,
     liar: AtomicBool,
     process_calls: AtomicU32,
+    track_flags: AtomicU64,
+    track_color: AtomicU32,
+    track_name: AtomicU64,
+    track_name_length: AtomicU32,
+    track_info_reads: AtomicU32,
+    track_info_changes: AtomicU32,
+    track_info_audio_calls: AtomicU32,
 }
 
 unsafe extern "C" fn factory_create(
@@ -192,6 +218,13 @@ unsafe extern "C" fn factory_create(
         tail: AtomicU32::new(0),
         liar: AtomicBool::new(false),
         process_calls: AtomicU32::new(0),
+        track_flags: AtomicU64::new(0),
+        track_color: AtomicU32::new(0),
+        track_name: AtomicU64::new(0),
+        track_name_length: AtomicU32::new(0),
+        track_info_reads: AtomicU32::new(0),
+        track_info_changes: AtomicU32::new(0),
+        track_info_audio_calls: AtomicU32::new(0),
     });
     Box::into_raw(Box::new(ClapPlugin {
         desc: &descriptor.0,
@@ -213,8 +246,67 @@ unsafe fn state<'a>(plugin: *const ClapPlugin) -> &'a mut State {
     &mut *((*plugin).plugin_data as *mut State)
 }
 
-unsafe extern "C" fn plugin_init(_: *const ClapPlugin) -> bool {
+unsafe extern "C" fn plugin_init(plugin: *const ClapPlugin) -> bool {
+    read_track_info(state(plugin));
     true
+}
+
+/// What a plugin does with `clap.track-info`: asks the host for its track.
+fn read_track_info(state: &State) {
+    // SAFETY: the host outlives the plugin; its extension tables are static.
+    let info = unsafe {
+        let extension = ((*state.host).get_extension)(
+            state.host,
+            CLAP_EXT_TRACK_INFO.as_ptr() as *const c_char,
+        );
+        let Some(extension) = (extension as *const ClapHostTrackInfo).as_ref() else {
+            return;
+        };
+        let mut info: ClapTrackInfo = std::mem::zeroed();
+        if !(extension.get)(state.host, &mut info) {
+            return;
+        }
+        info
+    };
+    let name_length = info.name.iter().position(|&byte| byte == 0).unwrap_or(0);
+    let packed_name = info.name[..name_length.min(PACKED_NAME_BYTES)]
+        .iter()
+        .fold(0u64, |packed, &byte| (packed << 8) | u64::from(byte));
+    let color = u32::from_be_bytes([
+        info.color.alpha,
+        info.color.red,
+        info.color.green,
+        info.color.blue,
+    ]);
+    state.track_flags.store(info.flags, Ordering::Relaxed);
+    state.track_color.store(color, Ordering::Relaxed);
+    state.track_name.store(packed_name, Ordering::Relaxed);
+    state
+        .track_name_length
+        .store(name_length as u32, Ordering::Relaxed);
+    state.track_info_reads.fetch_add(1, Ordering::Relaxed);
+}
+
+unsafe extern "C" fn track_info_changed(plugin: *const ClapPlugin) {
+    let state = state(plugin);
+    state.track_info_changes.fetch_add(1, Ordering::Relaxed);
+    if on_audio_thread(state) {
+        state.track_info_audio_calls.fetch_add(1, Ordering::Relaxed);
+    }
+    read_track_info(state);
+}
+
+fn on_audio_thread(state: &State) -> bool {
+    // SAFETY: the host outlives the plugin; its extension tables are static.
+    unsafe {
+        let check = ((*state.host).get_extension)(
+            state.host,
+            CLAP_EXT_THREAD_CHECK.as_ptr() as *const c_char,
+        );
+        (check as *const ClapHostThreadCheck)
+            .as_ref()
+            .is_some_and(|check| (check.is_audio_thread)(state.host))
+    }
 }
 
 unsafe extern "C" fn plugin_destroy(plugin: *const ClapPlugin) {
@@ -499,6 +591,10 @@ static AUDIO_PORTS: ClapPluginAudioPorts = ClapPluginAudioPorts {
     get: audio_ports_get,
 };
 
+static TRACK_INFO: ClapPluginTrackInfo = ClapPluginTrackInfo {
+    changed: track_info_changed,
+};
+
 unsafe extern "C" fn plugin_get_extension(
     plugin: *const ClapPlugin,
     id: *const c_char,
@@ -519,6 +615,8 @@ unsafe extern "C" fn plugin_get_extension(
         &LATENCY_EXT as *const ClapPluginLatency as *const c_void
     } else if id == CLAP_EXT_AUDIO_PORTS {
         &AUDIO_PORTS as *const ClapPluginAudioPorts as *const c_void
+    } else if id == CLAP_EXT_TRACK_INFO {
+        &TRACK_INFO as *const ClapPluginTrackInfo as *const c_void
     } else {
         std::ptr::null()
     }
@@ -556,7 +654,7 @@ unsafe extern "C" fn audio_ports_get(
 }
 
 unsafe extern "C" fn params_count(_: *const ClapPlugin) -> u32 {
-    12
+    PARAM_COUNT
 }
 
 unsafe extern "C" fn params_info(
@@ -582,6 +680,13 @@ unsafe extern "C" fn params_info(
         LIAR => (b"Liar", 1.0, 0.0, CLAP_PARAM_IS_AUTOMATABLE),
         RESCAN => (b"Rescan", 15.0, 0.0, CLAP_PARAM_IS_AUTOMATABLE),
         REQUEST_FLUSH => (b"Request flush", 1.0, 0.0, CLAP_PARAM_IS_AUTOMATABLE),
+        TRACK_FLAGS => (b"Track flags", f64::from(u32::MAX), 0.0, 0),
+        TRACK_COLOR => (b"Track color", f64::from(u32::MAX), 0.0, 0),
+        TRACK_NAME => (b"Track name", 281_474_976_710_655.0, 0.0, 0),
+        TRACK_NAME_LENGTH => (b"Track name length", 255.0, 0.0, 0),
+        TRACK_INFO_READS => (b"Track info reads", f64::from(u32::MAX), 0.0, 0),
+        TRACK_INFO_CHANGES => (b"Track info changes", f64::from(u32::MAX), 0.0, 0),
+        TRACK_INFO_AUDIO_CALLS => (b"Track info audio calls", f64::from(u32::MAX), 0.0, 0),
         _ => return false,
     };
     let info = &mut *info;
@@ -603,6 +708,13 @@ unsafe extern "C" fn params_value(plugin: *const ClapPlugin, id: u32, value: *mu
         GAIN => f64::from_bits(state.gain.load(Ordering::Relaxed)),
         WRONG_THREAD => f64::from(state.wrong_thread_calls.load(Ordering::Relaxed)),
         PROCESS_CALLS => f64::from(state.process_calls.load(Ordering::Relaxed)),
+        TRACK_FLAGS => state.track_flags.load(Ordering::Relaxed) as f64,
+        TRACK_COLOR => f64::from(state.track_color.load(Ordering::Relaxed)),
+        TRACK_NAME => state.track_name.load(Ordering::Relaxed) as f64,
+        TRACK_NAME_LENGTH => f64::from(state.track_name_length.load(Ordering::Relaxed)),
+        TRACK_INFO_READS => f64::from(state.track_info_reads.load(Ordering::Relaxed)),
+        TRACK_INFO_CHANGES => f64::from(state.track_info_changes.load(Ordering::Relaxed)),
+        TRACK_INFO_AUDIO_CALLS => f64::from(state.track_info_audio_calls.load(Ordering::Relaxed)),
         _ => return false,
     };
     true

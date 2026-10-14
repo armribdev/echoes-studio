@@ -258,7 +258,8 @@ owned and freed by that `ClapHost` (which outlives the plugin). It holds the
 plugin's editor HWND (set by `open_clap_editor`, cleared on close) and the
 `request_callback` coalescing flag, so two open CLAP editors no longer share
 one global window slot. It also holds the plugin's pending `request_restart`
-(see Latency Handling). `get_extension` also answers `clap.gui` (host side:
+(see Latency Handling) and the info of its track (`clap.track-info`, see Host
+`clap.track-info`). `get_extension` also answers `clap.gui` (host side:
 `request_resize` posts `CLAP_GUI_RESIZE_MESSAGE` to that HWND and the WndProc
 resizes the container; `closed` posts `WM_CLOSE`; `request_show/hide` return
 false because the editor is embedded) and `clap.log` (stderr, dropped on the
@@ -360,6 +361,75 @@ Tests: `crates/clap_ffi` (extension table), `crates/plugin_host_bridge/tests/bri
 (text, rescan flags, flush wake through the real bridge), `plugin_system/sandbox_tests.rs`
 (the same through `PluginHost`, in-process and sandboxed). The test plugin gained
 `Rescan` and `Request flush` parameters and renders `Gain` in dB.
+
+**Host `clap.track-info` (2026-10-14).** The host answers `clap.track-info/1` (and
+the draft id `clap.track-info.draft/1`, which the spec calls fully compatible):
+a plugin reads the name and color of its track, and the host calls the plugin's
+`clap_plugin_track_info.changed` when either changes. Layouts and ids were
+checked against `clap/ext/track-info.h` (`clap_track_info`: `flags:u64`,
+`name[256]`, `clap_color {alpha, red, green, blue}`, `audio_channel_count`,
+`audio_port_type`).
+
+- _Source._ The project, nothing new: `plugin_system/track_info.rs` derives, for
+  every placement key (the effect id, or `instrument:{track_id}`), the name and
+  color of the track the placement sits on. No project state, command, event or
+  `.echoes` change.
+- _What is reported._ Only `HAS_TRACK_NAME` and `HAS_TRACK_COLOR`. A flag the host
+  cannot honestly set stays 0: no audio channels or port type (so no
+  `HAS_AUDIO_CHANNEL`), and never `IS_FOR_RETURN_TRACK` / `IS_FOR_BUS` /
+  `IS_FOR_MASTER`, because the project has no return, bus or master track — a
+  plugin placed there would need a new project concept first.
+- _Track without a color._ The track's `color` is `None` until the user picks
+  one (the UI derives a default from the track id, which the host does not
+  know), so `HAS_TRACK_COLOR` is left unset and the color is zeroed. A color is
+  sent opaque (`alpha` 255) from the `#rrggbb` string; anything else counts as
+  none. An empty name leaves `HAS_TRACK_NAME` unset; a name longer than 255 bytes
+  is cut at a character boundary.
+- _`get` and threads._ `clap_host_track_info.get` is `[main-thread]` but reachable
+  from any thread through `get_extension`, so the info lives in the plugin's
+  `ClapHostContext` as a lock-free sequence lock (`TrackInfoCell`,
+  `crates/clap_ffi/src/track_info.rs`): readers never wait and never allocate
+  (after 8 tries against a write in progress they report no info), writers are
+  off-RT threads. No mutex is taken on any thread a plugin may call from. `get`
+  answers `false` for a placement the host never described (e.g. outside a
+  project) and `true` with flags 0 for a track with neither name nor color.
+- _Flow._ `PluginHost::sync_track_info(project)` runs at the start of every
+  compile (`AudioGraphCompiler::compile_scheduler` — live, offline and the C-2
+  harness alike) and after an `UPDATE_TRACK` that carries a name or color, which
+  does not recompile (`engine_gateway/api.rs::sync_plugin_track_info`; undo, redo
+  and project load recompile, so they go through the first path). A new
+  instance is created already knowing its track, so it reads it in `init`; a live
+  one is told only when the info really differs, so a recompile or an unrelated
+  edit calls nothing.
+- _`changed()`._ An outgoing FFI call like the other off-RT ones: command thread,
+  under the instance FFI gate (`offrt_try_acquire`, which also marks the crash
+  marker), no `audio_thread_scope` — it is a main-thread call, and
+  `clap.thread-check` reports it as such. A crashed plugin (`has_crashed`) is not
+  called. If a block holds the gate past the 3 ms budget the notification stays
+  pending on the instance and a process-wide flag (`take_undelivered_track_info`)
+  makes `main.rs::watch_plugin_edits` retry it within 250 ms.
+- _Sandbox._ The bridge hosts the same extension. The track at creation travels
+  as a launch argument (`--track-info <hex>`), because the bridge runs `init`
+  before it answers any request; later changes use a new control op,
+  `Op::TrackInfo` (the encoded `HostTrackInfo`), which the bridge's main thread
+  applies and follows with `changed()`. The engine remembers what it last sent
+  and skips a dead bridge. A failed request is retried by the next sync. The
+  shared-memory layout and `BRIDGE_PROTOCOL_VERSION` are unchanged.
+- _Limits._ VST3 has no equivalent wired. A plugin that calls main-thread
+  functions from its own GUI thread while Echoes calls `changed()` from the command
+  thread is not serialised (same exposure as `clap.params`). Not yet tried with
+  real plugins.
+
+Tests: `crates/clap_ffi` (extension table under both ids, struct layout, flags,
+no torn read under a concurrent writer, `changed` under the draft id),
+`plugin_system/track_info.rs` (derivation from the project),
+`plugin_system/sandbox_tests.rs` and `crates/plugin_host_bridge/tests/bridge.rs`
+(name, color, no color, no track, rename → one `changed`, same info → none,
+instrument, busy plugin retried, crashed plugin skipped, in process and
+sandboxed), `audio_engine/render_harness.rs::clap_plugins` (the plugins read their
+track through the real compile, and the golden hash is unchanged). The test
+plugin gained seven read-only parameters (ids 12–18, `Track flags` … `Track info
+audio calls`), 19 in all.
 
 ---
 

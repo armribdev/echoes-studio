@@ -31,7 +31,7 @@ use serde::Serialize;
 use crate::audio_graph::node::AudioNode;
 use crate::audio_graph::nodes::clap_instrument::ClapInstrument;
 use crate::audio_graph::nodes::instrument::InstrumentDevice;
-use crate::plugin_formats::clap::ffi::{ClapLibrary, CLAP_PLUGIN_FACTORY_ID};
+use crate::plugin_formats::clap::ffi::{ClapLibrary, HostTrackInfo, CLAP_PLUGIN_FACTORY_ID};
 use crate::plugin_formats::clap::host::decode_plugin_id as clap_decode_id;
 use crate::plugin_formats::clap::params::read_clap_params;
 use crate::plugin_formats::clap::wrapper::ClapWrapperNode;
@@ -46,7 +46,9 @@ use crate::plugin_system::lifecycle::{transition, LifecycleError, LifecycleState
 use crate::plugin_system::parameter::PluginParamInfo;
 use crate::plugin_system::registry::{PluginManifest, PluginRegistry};
 use crate::plugin_system::state::DeviceState;
+use crate::plugin_system::track_info::placement_track_infos;
 use crate::plugin_system::wrapper::{DeviceFormat, PassThroughDevice};
+use crate::project::AppProject;
 
 #[derive(Debug)]
 pub enum HostError {
@@ -139,6 +141,9 @@ pub struct PluginHost {
     isolation: PluginIsolation,
     /// Plugin ids isolated wherever they are used, in `Chosen` mode.
     always_isolated: HashSet<String>,
+    /// The track of each placement, from the project: a new instance is born
+    /// knowing it, a live one is told when it changes.
+    track_infos: HashMap<String, HostTrackInfo>,
 }
 
 impl PluginHost {
@@ -151,6 +156,31 @@ impl PluginHost {
             bridge_exe: locate_bridge_exe(),
             isolation: PluginIsolation::default(),
             always_isolated: HashSet::new(),
+            track_infos: HashMap::new(),
+        }
+    }
+
+    /// Takes the track of every placement from `project` and tells the live
+    /// plugins whose track changed (`clap.track-info`).  Call it before a compile,
+    /// so new instances start with it, and after a track edit that does not
+    /// recompile.  Command thread.
+    pub fn sync_track_info(&mut self, project: &AppProject) {
+        self.apply_track_infos(placement_track_infos(project));
+    }
+
+    pub(crate) fn apply_track_infos(&mut self, infos: HashMap<String, HostTrackInfo>) {
+        self.track_infos = infos;
+        for (instance_key, record) in &self.records {
+            if let Some(info) = self.track_infos.get(instance_key) {
+                record.instance.set_track_info(info);
+            }
+        }
+    }
+
+    /// Retries the `changed` notifications a busy plugin could not take yet.
+    pub fn notify_pending_track_info(&self) {
+        for record in self.records.values() {
+            record.instance.notify_track_info_changed();
         }
     }
 
@@ -330,9 +360,13 @@ impl PluginHost {
 
             DeviceFormat::Vst3 => self.instantiate_vst3(plugin_id, &manifest)?,
 
-            DeviceFormat::Clap if sandboxed => self.instantiate_bridged(plugin_id, &manifest)?,
+            DeviceFormat::Clap if sandboxed => {
+                self.instantiate_bridged(plugin_id, &manifest, self.track_infos.get(instance_key))?
+            }
 
-            DeviceFormat::Clap => self.instantiate_clap(plugin_id, &manifest)?,
+            DeviceFormat::Clap => {
+                self.instantiate_clap(plugin_id, &manifest, self.track_infos.get(instance_key))?
+            }
 
             #[cfg(feature = "au")]
             DeviceFormat::Au => {
@@ -521,8 +555,9 @@ impl PluginHost {
         &self,
         plugin_id: &str,
         manifest: &PluginManifest,
+        track_info: Option<&HostTrackInfo>,
     ) -> Result<(Arc<PluginInstance>, Box<dyn AudioNode>), HostError> {
-        let instance = self.create_clap_instance(plugin_id, manifest)?;
+        let instance = self.create_clap_instance(plugin_id, manifest, track_info)?;
         let node: Box<dyn AudioNode> = Box::new(ClapWrapperNode::new(
             Arc::clone(&instance),
             manifest.num_sidechain_inputs,
@@ -534,8 +569,9 @@ impl PluginHost {
         &self,
         plugin_id: &str,
         manifest: &PluginManifest,
+        track_info: Option<&HostTrackInfo>,
     ) -> Result<(Arc<PluginInstance>, Box<dyn AudioNode>), HostError> {
-        let instance = self.create_bridged_instance(plugin_id, manifest)?;
+        let instance = self.create_bridged_instance(plugin_id, manifest, track_info)?;
         let node: Box<dyn AudioNode> = Box::new(BridgedNode::new(Arc::clone(&instance)));
         Ok((instance, node))
     }
@@ -548,6 +584,7 @@ impl PluginHost {
         &self,
         plugin_id: &str,
         manifest: &PluginManifest,
+        track_info: Option<&HostTrackInfo>,
     ) -> Result<Arc<PluginInstance>, HostError> {
         let bridge_exe = self
             .bridge_exe
@@ -559,7 +596,7 @@ impl PluginHost {
             .path
             .as_ref()
             .ok_or_else(|| HostError::InstantiationFailed("no DLL path in manifest".into()))?;
-        let bridged = BridgedPlugin::spawn(bridge_exe, dll, clap_id)
+        let bridged = BridgedPlugin::spawn(bridge_exe, dll, clap_id, track_info)
             .map_err(|error| HostError::InstantiationFailed(format!("sandbox: {error}")))?;
         Ok(PluginInstance::new_bridged(plugin_id, bridged))
     }
@@ -573,6 +610,7 @@ impl PluginHost {
         &self,
         plugin_id: &str,
         manifest: &PluginManifest,
+        track_info: Option<&HostTrackInfo>,
     ) -> Result<Arc<PluginInstance>, HostError> {
         let clap_id = clap_decode_id(plugin_id)
             .ok_or_else(|| HostError::InstantiationFailed("invalid CLAP plugin_id".into()))?;
@@ -595,6 +633,9 @@ impl PluginHost {
         let factory = factory_ptr as *const crate::plugin_formats::clap::ffi::ClapPluginFactory;
 
         let host = crate::plugin_formats::clap::ffi::make_host();
+        if let (Some(context), Some(info)) = (host.context(), track_info) {
+            context.set_track_info(info);
+        }
 
         let clap_id_cstr: Vec<u8> = clap_id.bytes().chain(std::iter::once(0)).collect();
         let plugin = unsafe {
@@ -674,11 +715,12 @@ impl PluginHost {
             .ok_or_else(|| HostError::PluginNotFound(plugin_id.to_string()))?
             .clone();
 
+        let track_info = self.track_infos.get(instance_key);
         let instance = match manifest.format {
             DeviceFormat::Clap if sandboxed => {
-                self.create_bridged_instance(plugin_id, &manifest)?
+                self.create_bridged_instance(plugin_id, &manifest, track_info)?
             }
-            DeviceFormat::Clap => self.create_clap_instance(plugin_id, &manifest)?,
+            DeviceFormat::Clap => self.create_clap_instance(plugin_id, &manifest, track_info)?,
             other => {
                 return Err(HostError::UnsupportedFormat(format!(
                     "instrument format {other:?} not supported yet (CLAP only in Phase 5c)"

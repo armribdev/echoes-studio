@@ -964,6 +964,11 @@ fn watch_plugin_edits(app: tauri::AppHandle) {
                 recompile_audio_graph(&app, &state);
             }
             notify_params_rescan(&app, &state);
+            if plugin_system::instance::take_undelivered_track_info() {
+                if let Ok(engine) = state.audio_engine.lock() {
+                    engine.plugin_host.notify_pending_track_info();
+                }
+            }
             let crashes = plugin_system::crash_marker::crash_count();
             if crashes != crashes_seen {
                 crashes_seen = crashes;

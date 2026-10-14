@@ -20,6 +20,7 @@
 //! - [`registry`]     — `PluginManifest` + `PluginRegistry` (discovery)
 //! - [`host`]         — `PluginHost` (lifecycle, parameter routing, state)
 //! - [`instance`]     — `PluginInstance` (Phase 2a): Arc-shared native handle
+//! - [`track_info`]   — what each placement is told about its track (`clap.track-info`)
 //! - [`bridge`]       — out-of-process sandbox transport primitives (Phase 6c-i,
 //!   not yet wired; see ADR-015)
 
@@ -34,6 +35,7 @@ pub mod param_queue;
 pub mod parameter;
 pub mod registry;
 pub mod state;
+pub mod track_info;
 pub mod wrapper;
 
 #[cfg(test)]

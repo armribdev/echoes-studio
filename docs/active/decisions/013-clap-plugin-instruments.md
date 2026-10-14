@@ -188,3 +188,13 @@ the plugin's `value_to_text`. `request_flush` wakes a sleeping plugin like
 or modulation is a project change a plugin callback must not make (ADR-005) —
 undecided, needs the user. No invariant changes (no new ADR). Details:
 `../plugins/plugin-wrapper-system.md` (Host `clap.params`).
+
+## Amendment 2026-10-14 — the host answers `clap.track-info`
+
+A plugin instrument (like an effect) reads the name and color of its track and
+is told through `changed()` when either changes. The placement key is
+`instrument:{track_id}`; the info comes from the project and adds no state,
+command or file-format change. Only the name and color are reported — no audio
+channels, no return / bus / master flags (the project has none). No invariant
+changes (no new ADR). Details: `../plugins/plugin-wrapper-system.md` (Host
+`clap.track-info`); sandbox: ADR-015 amendment 2026-10-14.

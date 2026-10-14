@@ -52,7 +52,8 @@ use std::time::{Duration, Instant};
 use crate::audio_graph::plugin_params::ValueModulatedParam;
 use crate::plugin_formats::clap::audio_ports::{read_output_ports, ClapOutputPort};
 use crate::plugin_formats::clap::ffi::{
-    audio_thread_scope, ClapHost, ClapHostContext, ClapLibrary, ClapPlugin,
+    audio_thread_scope, notify_track_info_changed, ClapHost, ClapHostContext, ClapLibrary,
+    ClapPlugin, HostTrackInfo,
 };
 use crate::plugin_formats::vst3::ffi::{
     IAudioProcessor, IComponent, ProcessSetup, Vst3Library, SPEAKER_STEREO,
@@ -281,6 +282,18 @@ pub struct PluginInstance {
     /// after `init` — before the instance can be in any graph, so the read
     /// never races `process`.
     output_ports: OnceLock<Vec<ClapOutputPort>>,
+    /// The plugin's track changed and its `clap.track-info.changed` was not
+    /// delivered yet (the plugin was busy in a block).  Command thread only.
+    track_info_pending: AtomicBool,
+}
+
+/// Some in-process plugin still owes a `clap.track-info.changed`; the app polls
+/// [`take_undelivered_track_info`] to retry.
+static TRACK_INFO_UNDELIVERED: AtomicBool = AtomicBool::new(false);
+
+/// Returns whether a track-info notification is still owed, and clears it.
+pub fn take_undelivered_track_info() -> bool {
+    TRACK_INFO_UNDELIVERED.swap(false, Ordering::AcqRel)
 }
 
 impl PluginInstance {
@@ -302,6 +315,7 @@ impl PluginInstance {
             modulated_params: Mutex::new(Vec::new()),
             value_modulated_params: Mutex::new(Vec::new()),
             output_ports: OnceLock::new(),
+            track_info_pending: AtomicBool::new(false),
         })
     }
 
@@ -336,6 +350,7 @@ impl PluginInstance {
             modulated_params: Mutex::new(Vec::new()),
             value_modulated_params: Mutex::new(Vec::new()),
             output_ports: OnceLock::new(),
+            track_info_pending: AtomicBool::new(false),
         })
     }
 
@@ -366,6 +381,7 @@ impl PluginInstance {
             modulated_params: Mutex::new(Vec::new()),
             value_modulated_params: Mutex::new(Vec::new()),
             output_ports: OnceLock::new(),
+            track_info_pending: AtomicBool::new(false),
         })
     }
 
@@ -386,6 +402,7 @@ impl PluginInstance {
             modulated_params: Mutex::new(Vec::new()),
             value_modulated_params: Mutex::new(Vec::new()),
             output_ports: OnceLock::new(),
+            track_info_pending: AtomicBool::new(false),
         })
     }
 
@@ -464,6 +481,46 @@ impl PluginInstance {
         let _gate = self.offrt_try_acquire(FFI_GATE_HARVEST_BUDGET)?;
         // SAFETY: live CLAP plugin owned by this instance; FFI gate held.
         unsafe { crate::plugin_formats::clap::ffi::read_param_text(*plugin, native_id, value) }
+    }
+
+    /// Gives a CLAP plugin the info of its track, then tells it
+    /// (`clap.track-info.changed`) when it differs from the last one.  Command
+    /// thread.  Other formats ignore it.
+    pub fn set_track_info(&self, info: &HostTrackInfo) {
+        if let Some(bridged) = self.bridge() {
+            bridged.set_track_info(info);
+            return;
+        }
+        let Some(context) = self.clap_host_context() else {
+            return;
+        };
+        if context.set_track_info(info) {
+            self.track_info_pending.store(true, Ordering::Release);
+            self.notify_track_info_changed();
+        }
+    }
+
+    /// Delivers a pending `clap.track-info.changed` under the FFI gate, off the
+    /// audio thread.  A plugin busy in a block keeps it pending for a retry; a
+    /// crashed one never hears it.  Command thread.
+    pub fn notify_track_info_changed(&self) {
+        if !self.track_info_pending.load(Ordering::Acquire) {
+            return;
+        }
+        let Some(plugin) = self.clap_plugin() else {
+            return;
+        };
+        if self.has_crashed() {
+            self.track_info_pending.store(false, Ordering::Release);
+            return;
+        }
+        let Some(_gate) = self.offrt_try_acquire(FFI_GATE_HARVEST_BUDGET) else {
+            TRACK_INFO_UNDELIVERED.store(true, Ordering::Release);
+            return;
+        };
+        self.track_info_pending.store(false, Ordering::Release);
+        // SAFETY: live CLAP plugin owned by this instance; FFI gate held.
+        unsafe { notify_track_info_changed(plugin) };
     }
 
     /// Puts value-modulated parameters back on their base so a state save

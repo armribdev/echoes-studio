@@ -1397,6 +1397,10 @@ fn process_command(
                 Ok(())
             })?;
 
+            if p.name.is_some() || p.color.is_some() {
+                sync_plugin_track_info(state);
+            }
+
             // Hot-path: live atomics updated directly, no recompile.
             if let Some(vol) = p.volume {
                 let linear = (vol / 100.0).clamp(VOLUME_RANGE.0, VOLUME_RANGE.1);
@@ -3507,6 +3511,14 @@ pub fn recompile_if_needed(app: &tauri::AppHandle, state: &tauri::State<'_, AppS
             let _ = app.emit(PLUGIN_AVAILABILITY_EVENT, list);
         }
         None => eprintln!("[audio] Recompilation ignorée : verrous non disponibles"),
+    }
+}
+
+/// A track rename or recolor does not recompile, so the plugins placed on the
+/// track hear of it here (`clap.track-info`).  Lock order: project → engine.
+fn sync_plugin_track_info(state: &tauri::State<'_, AppState>) {
+    if let (Ok(project), Ok(mut engine)) = (state.project.lock(), state.audio_engine.lock()) {
+        engine.plugin_host.sync_track_info(&project);
     }
 }
 

@@ -9,7 +9,7 @@ use std::sync::OnceLock;
 use std::time::Duration;
 
 use clap_ffi::{
-    read_pod, split_events, ClapEventBuffer, ClapEventHeader, ClapParamInfo,
+    read_pod, split_events, ClapEventBuffer, ClapEventHeader, ClapParamInfo, HostTrackInfo,
     CLAP_EVENT_PARAM_GESTURE_END, CLAP_EVENT_PARAM_VALUE,
 };
 use plugin_bridge::control::{Op, PayloadReader};
@@ -33,6 +33,14 @@ const PROCESS_CALLS: u32 = 8;
 const LIAR: u32 = 9;
 const RESCAN: u32 = 10;
 const REQUEST_FLUSH: u32 = 11;
+const TRACK_FLAGS: u32 = 12;
+const TRACK_COLOR: u32 = 13;
+const TRACK_NAME: u32 = 14;
+const TRACK_NAME_LENGTH: u32 = 15;
+const TRACK_INFO_READS: u32 = 16;
+const TRACK_INFO_CHANGES: u32 = 17;
+const TRACK_INFO_AUDIO_CALLS: u32 = 18;
+const PARAM_COUNT: u32 = 19;
 const FRAMES: usize = 64;
 const CHANNELS: usize = 2;
 const TIMEOUT: Duration = Duration::from_secs(5);
@@ -55,12 +63,22 @@ fn test_plugin_dll() -> &'static Path {
 }
 
 fn spawn(plugin_id: &str) -> std::io::Result<BridgeProcess> {
-    let args: Vec<OsString> = vec![
+    spawn_with_track(plugin_id, None)
+}
+
+fn spawn_with_track(
+    plugin_id: &str,
+    track_info: Option<&HostTrackInfo>,
+) -> std::io::Result<BridgeProcess> {
+    let mut args: Vec<OsString> = vec![
         "--plugin-dll".into(),
         test_plugin_dll().into(),
         "--plugin-id".into(),
         plugin_id.into(),
     ];
+    if let Some(info) = track_info {
+        args.extend(["--track-info".into(), info.to_hex().into()]);
+    }
     BridgeProcess::spawn(
         Path::new(env!("CARGO_BIN_EXE_plugin_host_bridge")),
         BridgeLayout::new(4096, CHANNELS as u32, 64 * 1024),
@@ -74,7 +92,11 @@ fn activated() -> BridgeProcess {
 }
 
 fn activated_plugin(plugin_id: &str) -> BridgeProcess {
-    let bridge = spawn(plugin_id).expect("bridge starts");
+    activated_with_track(plugin_id, None)
+}
+
+fn activated_with_track(plugin_id: &str, track_info: Option<&HostTrackInfo>) -> BridgeProcess {
+    let bridge = spawn_with_track(plugin_id, track_info).expect("bridge starts");
     let mut payload = 48_000.0f64.to_le_bytes().to_vec();
     payload.extend_from_slice(&4096u32.to_le_bytes());
     let latency = bridge
@@ -199,7 +221,7 @@ fn state_and_parameters_travel_over_the_control_channel() {
 
     let params = bridge.request(Op::Params, &[], TIMEOUT).unwrap();
     let mut reader = PayloadReader::new(&params);
-    assert_eq!(reader.u32().unwrap(), 12);
+    assert_eq!(reader.u32().unwrap(), PARAM_COUNT);
     let first: ClapParamInfo = read_pod(&params[4..]).unwrap();
     assert_eq!(
         (first.id, &first.name[..4], first.max_value),
@@ -377,11 +399,141 @@ fn an_unknown_plugin_fails_to_start() {
     assert!(spawn("echoes.test.missing").is_err());
 }
 
-fn process_calls(bridge: &BridgeProcess) -> u32 {
+fn param_value(bridge: &BridgeProcess, native_id: u32) -> f64 {
     let value = bridge
-        .request(Op::ParamValue, &PROCESS_CALLS.to_le_bytes(), TIMEOUT)
+        .request(Op::ParamValue, &native_id.to_le_bytes(), TIMEOUT)
         .unwrap();
-    f64::from_le_bytes(value.try_into().unwrap()) as u32
+    f64::from_le_bytes(value.try_into().unwrap())
+}
+
+fn process_calls(bridge: &BridgeProcess) -> u32 {
+    param_value(bridge, PROCESS_CALLS) as u32
+}
+
+fn track_info_values(bridge: &BridgeProcess) -> [f64; 6] {
+    [
+        TRACK_FLAGS,
+        TRACK_COLOR,
+        TRACK_NAME,
+        TRACK_NAME_LENGTH,
+        TRACK_INFO_READS,
+        TRACK_INFO_CHANGES,
+    ]
+    .map(|native_id| param_value(bridge, native_id))
+}
+
+/// `[flags, color, name, name length, reads, changes]` the plugin reports.
+fn expected_track(flags: u32, color: [u8; 4], name: &str, reads: u32, changes: u32) -> [f64; 6] {
+    let packed_name = name
+        .bytes()
+        .take(6)
+        .fold(0u64, |packed, byte| (packed << 8) | u64::from(byte));
+    [
+        f64::from(flags),
+        f64::from(u32::from_be_bytes(color)),
+        packed_name as f64,
+        name.len() as f64,
+        f64::from(reads),
+        f64::from(changes),
+    ]
+}
+
+#[test]
+fn a_bridge_started_with_a_track_lets_the_plugin_read_it_in_init() {
+    let info = HostTrackInfo::new("Lead", Some([0x12, 0x34, 0x56]));
+    let bridge = activated_with_track("echoes.test.gain", Some(&info));
+
+    assert_eq!(
+        track_info_values(&bridge),
+        expected_track(3, [255, 0x12, 0x34, 0x56], "Lead", 1, 0)
+    );
+}
+
+#[test]
+fn a_bridge_started_without_a_track_gives_the_plugin_nothing_to_read() {
+    let bridge = activated();
+
+    assert_eq!(
+        track_info_values(&bridge),
+        expected_track(0, [0; 4], "", 0, 0)
+    );
+}
+
+#[test]
+fn a_track_without_color_is_read_without_the_color_flag() {
+    let bridge = activated_with_track("echoes.test.gain", Some(&HostTrackInfo::new("Bass", None)));
+
+    assert_eq!(
+        track_info_values(&bridge),
+        expected_track(1, [0; 4], "Bass", 1, 0)
+    );
+}
+
+#[test]
+fn a_new_track_over_the_control_channel_calls_changed_on_the_main_thread() {
+    let info = HostTrackInfo::new("Lead", Some([0x12, 0x34, 0x56]));
+    let bridge = activated_with_track("echoes.test.gain", Some(&info));
+
+    let renamed = HostTrackInfo::new("Pad", Some([0x12, 0x34, 0x56]));
+    bridge
+        .request(Op::TrackInfo, &renamed.encode(), TIMEOUT)
+        .unwrap();
+    assert_eq!(
+        track_info_values(&bridge),
+        expected_track(3, [255, 0x12, 0x34, 0x56], "Pad", 2, 1)
+    );
+
+    bridge
+        .request(Op::TrackInfo, &renamed.encode(), TIMEOUT)
+        .unwrap();
+    assert_eq!(
+        track_info_values(&bridge)[5],
+        1.0,
+        "the same track is not news"
+    );
+
+    let recolored = HostTrackInfo::new("Pad", None);
+    bridge
+        .request(Op::TrackInfo, &recolored.encode(), TIMEOUT)
+        .unwrap();
+    assert_eq!(
+        track_info_values(&bridge),
+        expected_track(1, [0; 4], "Pad", 3, 2)
+    );
+    assert_eq!(
+        param_value(&bridge, TRACK_INFO_AUDIO_CALLS),
+        0.0,
+        "never on the audio thread"
+    );
+}
+
+#[test]
+fn a_garbled_track_is_refused_and_the_channel_stays_open() {
+    let bridge = activated();
+
+    let error = bridge.request(Op::TrackInfo, &[1, 2], TIMEOUT).unwrap_err();
+    assert_eq!(error.kind(), std::io::ErrorKind::Other);
+    assert_eq!(track_info_values(&bridge)[5], 0.0);
+    assert!(bridge.request(Op::SaveState, &[], TIMEOUT).is_ok());
+}
+
+#[test]
+fn track_changes_do_not_stop_the_audio() {
+    let bridge = activated();
+    let input = ramp();
+    for (sequence, name) in ["A", "B", "C", "D"].into_iter().enumerate() {
+        bridge
+            .request(
+                Op::TrackInfo,
+                &HostTrackInfo::new(name, None).encode(),
+                TIMEOUT,
+            )
+            .unwrap();
+        assert_eq!(
+            process(&bridge, sequence as u64, &input, &[], TIMEOUT).output,
+            input
+        );
+    }
 }
 
 fn silence() -> Vec<f32> {

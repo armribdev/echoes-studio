@@ -13,6 +13,7 @@
 //! ```text
 //! plugin_host_bridge --region-name <N> --max-frames <F> --channels <C>
 //!                    --event-capacity <E> --plugin-dll <PATH> --plugin-id <ID>
+//!                    [--track-info <HEX>]
 //! plugin_host_bridge --print-protocol-version
 //! ```
 
@@ -26,6 +27,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 use std::sync::{mpsc, Arc};
 
+use clap_ffi::HostTrackInfo;
 use plugin::{ClapBlockProcessor, LoadedPlugin};
 use plugin_bridge::control::{self, Op, PayloadReader, STATUS_ERROR, STATUS_OK};
 use plugin_bridge::protocol::BRIDGE_PROTOCOL_VERSION;
@@ -41,6 +43,8 @@ struct Options {
     layout: BridgeLayout,
     plugin_dll: PathBuf,
     plugin_id: String,
+    /// The plugin's track at launch, so `init` already finds it.
+    track_info: Option<HostTrackInfo>,
 }
 
 fn parse_options(args: &[String]) -> Option<Options> {
@@ -61,6 +65,9 @@ fn parse_options(args: &[String]) -> Option<Options> {
         ),
         plugin_dll: PathBuf::from(values.get("--plugin-dll")?),
         plugin_id: values.get("--plugin-id")?.to_string(),
+        track_info: values
+            .get("--track-info")
+            .and_then(|hex| HostTrackInfo::from_hex(hex)),
     })
 }
 
@@ -89,7 +96,11 @@ fn run(options: Options) -> Result<(), String> {
     );
     #[cfg(windows)]
     editor::enable_per_monitor_dpi();
-    let plugin = match LoadedPlugin::load(&options.plugin_dll, &options.plugin_id) {
+    let plugin = match LoadedPlugin::load(
+        &options.plugin_dll,
+        &options.plugin_id,
+        options.track_info.as_ref(),
+    ) {
         Ok(plugin) => Arc::new(plugin),
         Err(error) => {
             peer.signal_error();
@@ -204,6 +215,11 @@ fn handle(plugin: &LoadedPlugin, op: u8, payload: &[u8]) -> Result<Vec<u8>, Stri
             Ok(plugin.param_text(native_id, value))
         }
         Op::OpenEditor => open_editor(plugin, &String::from_utf8_lossy(payload)),
+        Op::TrackInfo => {
+            let info = HostTrackInfo::decode(payload).ok_or("invalid track info")?;
+            plugin.set_track_info(&info);
+            Ok(Vec::new())
+        }
     }
 }
 

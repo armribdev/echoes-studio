@@ -45,6 +45,9 @@ pub enum Op {
     /// `native_id:u32, value:f64` → the plugin's text for that plain value, empty
     /// when it has none.
     ParamText = 8,
+    /// The plugin's track (`clap.track-info`, encoded by the CLAP bindings) → ().
+    /// The bridge calls the plugin's `changed` when it differs from the last one.
+    TrackInfo = 9,
 }
 
 impl Op {
@@ -58,6 +61,7 @@ impl Op {
             6 => Op::FlushValues,
             7 => Op::OpenEditor,
             8 => Op::ParamText,
+            9 => Op::TrackInfo,
             _ => return None,
         })
     }
@@ -165,6 +169,7 @@ mod tests {
             Op::FlushValues,
             Op::OpenEditor,
             Op::ParamText,
+            Op::TrackInfo,
         ] {
             assert_eq!(Op::from_u8(op as u8), Some(op));
         }

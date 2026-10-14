@@ -18,7 +18,9 @@ use std::time::Duration;
 use plugin_bridge::control::Op;
 use plugin_bridge::session::{AudioPort, BridgeLayout, BridgeProcess};
 
-use crate::plugin_formats::clap::ffi::{mark_plugin_restart_requested, read_pod, ClapParamInfo};
+use crate::plugin_formats::clap::ffi::{
+    mark_plugin_restart_requested, read_pod, ClapParamInfo, HostTrackInfo,
+};
 use crate::plugin_formats::clap::params::param_info;
 use crate::plugin_system::parameter::PluginParamInfo;
 
@@ -52,23 +54,35 @@ pub struct BridgedPlugin {
     activation: Mutex<Option<Activation>>,
     /// Set from the audio thread when the plugin requests a restart.
     restart_requested: AtomicBool,
+    /// The track the bridge was last given, to send only changes.
+    track_info: Mutex<Option<HostTrackInfo>>,
 }
 
 impl BridgedPlugin {
     /// Spawn a bridge hosting CLAP plugin `clap_id` from `dll`.  Returns once
-    /// the plugin is loaded and initialised in the child.
-    pub fn spawn(bridge_exe: &Path, dll: &Path, clap_id: &str) -> io::Result<Self> {
-        let args: Vec<OsString> = vec![
+    /// the plugin is loaded and initialised in the child, which already knows
+    /// `track_info`.
+    pub fn spawn(
+        bridge_exe: &Path,
+        dll: &Path,
+        clap_id: &str,
+        track_info: Option<&HostTrackInfo>,
+    ) -> io::Result<Self> {
+        let mut args: Vec<OsString> = vec![
             "--plugin-dll".into(),
             dll.into(),
             "--plugin-id".into(),
             clap_id.into(),
         ];
+        if let Some(info) = track_info {
+            args.extend(["--track-info".into(), info.to_hex().into()]);
+        }
         let layout = BridgeLayout::new(MAX_FRAMES, CHANNELS, EVENT_CAPACITY);
         Ok(BridgedPlugin {
             process: BridgeProcess::spawn(bridge_exe, layout, &args, START_TIMEOUT)?,
             activation: Mutex::new(None),
             restart_requested: AtomicBool::new(false),
+            track_info: Mutex::new(track_info.cloned()),
         })
     }
 
@@ -157,6 +171,19 @@ impl BridgedPlugin {
         String::from_utf8(reply)
             .ok()
             .filter(|text| !text.is_empty())
+    }
+
+    /// Gives the plugin its track when it differs from the last one sent; the
+    /// bridge then calls the plugin's `changed` on its main thread.  A dead
+    /// bridge is skipped, and a failed request is retried by the next call.
+    pub fn set_track_info(&self, info: &HostTrackInfo) {
+        let mut sent = self.track_info.lock().unwrap_or_else(|e| e.into_inner());
+        if sent.as_ref() == Some(info) || self.is_dead() {
+            return;
+        }
+        if self.request(Op::TrackInfo, &info.encode()).is_ok() {
+            *sent = Some(info.clone());
+        }
     }
 
     /// Set plain parameter values outside `process`.

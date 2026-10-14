@@ -25,7 +25,9 @@ use std::ffi::{c_char, c_void};
 use std::path::Path;
 
 mod process_sleep;
+mod track_info;
 pub use process_sleep::*;
+pub use track_info::*;
 
 // ── Version ────────────────────────────────────────────────────────────────────
 
@@ -166,6 +168,7 @@ pub struct ClapHostContext {
     restart_requested: std::sync::atomic::AtomicBool,
     process_requested: std::sync::atomic::AtomicBool,
     tail_changed: std::sync::atomic::AtomicBool,
+    track_info: track_info::TrackInfoCell,
 }
 
 impl ClapHostContext {
@@ -176,7 +179,19 @@ impl ClapHostContext {
             restart_requested: std::sync::atomic::AtomicBool::new(false),
             process_requested: std::sync::atomic::AtomicBool::new(false),
             tail_changed: std::sync::atomic::AtomicBool::new(false),
+            track_info: track_info::TrackInfoCell::new(),
         }
+    }
+
+    /// Records the plugin's track for `clap.track-info.get`; returns whether it
+    /// differs from the previous one (the caller then tells the plugin).  Runs
+    /// on an off-RT thread; readers never wait for it.
+    pub fn set_track_info(&self, info: &HostTrackInfo) -> bool {
+        self.track_info.store(info)
+    }
+
+    fn read_track_info(&self, out: &mut ClapTrackInfo) -> bool {
+        self.track_info.read_into(out)
     }
 
     /// Lock-free: the plugin asks to be processed even if the host put it to sleep.
@@ -336,6 +351,9 @@ pub unsafe extern "C" fn host_get_extension(
     }
     if id == CLAP_EXT_PARAMS {
         return &HOST_PARAMS as *const ClapHostParams as *const c_void;
+    }
+    if id == CLAP_EXT_TRACK_INFO || id == CLAP_EXT_TRACK_INFO_COMPAT {
+        return &track_info::HOST_TRACK_INFO as *const ClapHostTrackInfo as *const c_void;
     }
     std::ptr::null()
 }

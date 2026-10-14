@@ -792,3 +792,16 @@ stays 2): the plugin's `rescan` flags ride in bits 8–11 of the block flags
 has none). `request_flush` is handled inside `ClapBlockProcessor` like
 `request_process`. Tests: `plugin_host_bridge/tests/bridge.rs`,
 `plugin_system/sandbox_tests.rs`.
+
+### Amendment 2026-10-14 — `clap.track-info` through the bridge
+
+The bridge hosts the plugin's `clap.track-info` too. The bridge runs the plugin's
+`init` before it answers any control request, so the track at creation is a
+launch argument (`--track-info <hex>`, the `HostTrackInfo` wire form from
+`clap_ffi`); later changes use `Op::TrackInfo`, which the bridge's main thread
+applies before calling the plugin's `changed()`. `process` is not held back (CLAP
+lets main-thread and audio-thread calls run together). The engine sends only what
+differs from the last accepted request and skips a dead bridge. The
+shared-memory layout and `BRIDGE_PROTOCOL_VERSION` stay unchanged (an older
+bridge ignores the launch argument and refuses the op). Tests:
+`plugin_host_bridge/tests/bridge.rs`, `plugin_system/sandbox_tests.rs`.

@@ -1005,10 +1005,17 @@ mod clap_plugins {
         plugin_id: &str,
         block_size: usize,
     ) -> Vec<f32> {
+        render_with_host(&mut host_with_test_plugins(plugin_id), project, block_size)
+    }
+
+    fn render_with_host(
+        host: &mut PluginHost,
+        project: &AppProject,
+        block_size: usize,
+    ) -> Vec<f32> {
         let live_params = LiveParams::new();
-        let mut host = host_with_test_plugins(plugin_id);
         let (left, right) =
-            render_project_in_blocks(project, &live_params, &mut host, SAMPLE_RATE, block_size)
+            render_project_in_blocks(project, &live_params, host, SAMPLE_RATE, block_size)
                 .expect("reference project must render");
         assert!(
             host.unavailable_plugins().is_empty(),
@@ -1076,6 +1083,42 @@ mod clap_plugins {
     fn clap_plugins_match_golden_hash() {
         let render = render_with_plugin(&project(PLUGIN_ID, vec![]), PLUGIN_ID, BLOCK_SIZES[0]);
         assert_eq!(render_hash(&render), CLAP_PLUGINS_GOLDEN_HASH);
+    }
+
+    /// Track info is read by the plugins during the compile and never reaches the
+    /// audio: the golden hash holds, and a rename only tells the plugins of its track.
+    #[test]
+    fn clap_plugins_read_their_track_without_changing_the_render() {
+        const TRACK_NAME_LENGTH: u32 = 15;
+        const TRACK_INFO_READS: u32 = 16;
+        const TRACK_INFO_CHANGES: u32 = 17;
+        let mut project = project(PLUGIN_ID, vec![]);
+        let instrument_key = format!("instrument:{}", project.tracks[1].id);
+        let mut host = host_with_test_plugins(PLUGIN_ID);
+        let seen = |host: &PluginHost, key: &str, native_id: u32| {
+            host.instance_by_key(key)
+                .unwrap()
+                .clap_param_value(native_id)
+                .unwrap()
+        };
+
+        let render = render_with_host(&mut host, &project, BLOCK_SIZES[0]);
+        assert_eq!(render_hash(&render), CLAP_PLUGINS_GOLDEN_HASH);
+        for (key, track) in [("plugin", 0), (instrument_key.as_str(), 1)] {
+            assert_eq!(
+                seen(&host, key, TRACK_NAME_LENGTH),
+                project.tracks[track].name.len() as f64
+            );
+            assert_eq!(seen(&host, key, TRACK_INFO_READS), 1.0);
+            assert_eq!(seen(&host, key, TRACK_INFO_CHANGES), 0.0);
+        }
+
+        project.tracks[0].name = "Renamed".into();
+        let render = render_with_host(&mut host, &project, BLOCK_SIZES[0]);
+        assert_eq!(render_hash(&render), CLAP_PLUGINS_GOLDEN_HASH);
+        assert_eq!(seen(&host, "plugin", TRACK_INFO_CHANGES), 1.0);
+        assert_eq!(seen(&host, "plugin", TRACK_NAME_LENGTH), 7.0);
+        assert_eq!(seen(&host, &instrument_key, TRACK_INFO_CHANGES), 0.0);
     }
 
     const SLEEPY_ID: &str = "clap:echoes.test.sleepy";

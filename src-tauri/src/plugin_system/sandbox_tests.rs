@@ -13,13 +13,17 @@ use crate::audio_graph::midi::{MidiEvent, MidiEventKind, MidiEventList};
 use crate::audio_graph::node::{AudioNode, PrepareContext, TransportInfo};
 use crate::audio_graph::nodes::instrument::InstrumentDevice;
 use crate::plugin_formats::clap::ffi::{
-    take_plugin_params_rescan, ClapPluginParams, CLAP_EXT_PARAMS, CLAP_PARAM_RESCAN_INFO,
-    CLAP_PARAM_RESCAN_TEXT,
+    take_plugin_params_rescan, ClapPluginParams, HostTrackInfo, CLAP_EXT_PARAMS,
+    CLAP_PARAM_RESCAN_INFO, CLAP_PARAM_RESCAN_TEXT,
 };
 use crate::plugin_formats::clap::params::flush_clap_param_values;
 use crate::plugin_system::host::{PluginHost, PluginIsolation, UnavailableReason};
+use crate::plugin_system::instance::take_undelivered_track_info;
+use crate::plugin_system::lifecycle::LifecycleState;
 use crate::plugin_system::registry::PluginManifest;
+use crate::plugin_system::track_info::test_track;
 use crate::plugin_system::wrapper::DeviceFormat;
+use crate::project::AppProject;
 
 const PLUGIN_ID: &str = "clap:echoes.test.gain";
 const SLEEPY_PLUGIN_ID: &str = "clap:echoes.test.sleepy";
@@ -34,6 +38,16 @@ const TAIL: u32 = 7;
 const PROCESS_CALLS: u32 = 8;
 const RESCAN: u32 = 10;
 const REQUEST_FLUSH: u32 = 11;
+const TRACK_FLAGS: u32 = 12;
+const TRACK_COLOR: u32 = 13;
+const TRACK_NAME: u32 = 14;
+const TRACK_NAME_LENGTH: u32 = 15;
+const TRACK_INFO_READS: u32 = 16;
+const TRACK_INFO_CHANGES: u32 = 17;
+const TRACK_INFO_AUDIO_CALLS: u32 = 18;
+const PARAM_COUNT: usize = 19;
+const HAS_NAME: f64 = 1.0;
+const HAS_NAME_AND_COLOR: f64 = 3.0;
 const TAIL_RANGE: f32 = 1_000_000.0;
 const FRAMES: usize = 64;
 const NOTE_ON: MidiEventKind = MidiEventKind::NoteOn {
@@ -180,7 +194,7 @@ fn sandboxed_effect_processes_parameters_and_reports_latency() {
     let mut node = prepared(&mut host, true, false);
     assert!(host.instance_by_key(KEY).unwrap().is_sandboxed());
     assert_eq!(node.latency_samples(), 64);
-    assert_eq!(host.plugin_params(KEY).unwrap().len(), 12);
+    assert_eq!(host.plugin_params(KEY).unwrap().len(), PARAM_COUNT);
 
     assert!(run_block(&mut node).iter().all(|&s| s == 0.5));
     // Normalised 0.25 of the 0..2 range = gain 0.5.
@@ -666,4 +680,297 @@ fn a_sandboxed_sleeping_instrument_still_plays_the_next_note() {
     assert!(play_block(&mut instrument, &[NOTE_ON])
         .iter()
         .all(|&s| s == 1.0));
+}
+
+// ── clap.track-info ────────────────────────────────────────────────────────────
+
+/// Bytes `Track name` packs: the first 6 of the name, big-endian.
+fn packed_name(name: &str) -> f64 {
+    name.bytes()
+        .take(6)
+        .fold(0u64, |packed, byte| (packed << 8) | u64::from(byte)) as f64
+}
+
+fn argb(red: u8, green: u8, blue: u8) -> f64 {
+    f64::from(u32::from_be_bytes([255, red, green, blue]))
+}
+
+/// What the plugin placed at `key` read from the host, in process or sandboxed.
+fn seen(host: &PluginHost, key: &str, native_id: u32) -> f64 {
+    host.instance_by_key(key)
+        .unwrap()
+        .clap_param_value(native_id)
+        .unwrap()
+}
+
+fn tell(host: &mut PluginHost, key: &str, info: HostTrackInfo) {
+    host.apply_track_infos(HashMap::from([(key.to_string(), info)]));
+}
+
+fn lead() -> HostTrackInfo {
+    HostTrackInfo::new("Lead", Some([0x12, 0x34, 0x56]))
+}
+
+fn a_plugin_reads_its_track_name_and_color(sandboxed: bool) {
+    let mut host = host();
+    tell(&mut host, KEY, lead());
+    let _node = prepared(&mut host, sandboxed, false);
+    assert_eq!(is_sandboxed(&host, KEY), sandboxed);
+
+    assert_eq!(seen(&host, KEY, TRACK_FLAGS), HAS_NAME_AND_COLOR);
+    assert_eq!(seen(&host, KEY, TRACK_COLOR), argb(0x12, 0x34, 0x56));
+    assert_eq!(seen(&host, KEY, TRACK_NAME), packed_name("Lead"));
+    assert_eq!(seen(&host, KEY, TRACK_NAME_LENGTH), 4.0);
+    assert_eq!(seen(&host, KEY, TRACK_INFO_READS), 1.0, "read in init");
+    assert_eq!(
+        seen(&host, KEY, TRACK_INFO_CHANGES),
+        0.0,
+        "born knowing its track: nothing changed"
+    );
+}
+
+#[test]
+fn an_in_process_plugin_reads_its_track_name_and_color() {
+    a_plugin_reads_its_track_name_and_color(false);
+}
+
+#[test]
+fn a_sandboxed_plugin_reads_its_track_name_and_color() {
+    a_plugin_reads_its_track_name_and_color(true);
+}
+
+fn a_track_without_color_has_no_color_flag(sandboxed: bool) {
+    let mut host = host();
+    tell(&mut host, KEY, HostTrackInfo::new("Bass", None));
+    let _node = prepared(&mut host, sandboxed, false);
+
+    assert_eq!(seen(&host, KEY, TRACK_FLAGS), HAS_NAME);
+    assert_eq!(seen(&host, KEY, TRACK_COLOR), 0.0);
+    assert_eq!(seen(&host, KEY, TRACK_NAME), packed_name("Bass"));
+}
+
+#[test]
+fn an_in_process_track_without_color_has_no_color_flag() {
+    a_track_without_color_has_no_color_flag(false);
+}
+
+#[test]
+fn a_sandboxed_track_without_color_has_no_color_flag() {
+    a_track_without_color_has_no_color_flag(true);
+}
+
+fn a_placement_without_a_track_reads_nothing(sandboxed: bool) {
+    let mut host = host();
+    let _node = prepared(&mut host, sandboxed, false);
+
+    assert_eq!(seen(&host, KEY, TRACK_INFO_READS), 0.0, "get answers false");
+    assert_eq!(seen(&host, KEY, TRACK_FLAGS), 0.0);
+}
+
+#[test]
+fn an_in_process_placement_without_a_track_reads_nothing() {
+    a_placement_without_a_track_reads_nothing(false);
+}
+
+#[test]
+fn a_sandboxed_placement_without_a_track_reads_nothing() {
+    a_placement_without_a_track_reads_nothing(true);
+}
+
+fn a_change_of_track_reaches_the_plugin_once(sandboxed: bool) {
+    let mut host = host();
+    tell(&mut host, KEY, lead());
+    let _node = prepared(&mut host, sandboxed, false);
+
+    tell(
+        &mut host,
+        KEY,
+        HostTrackInfo::new("Pad", Some([0x12, 0x34, 0x56])),
+    );
+    assert_eq!(seen(&host, KEY, TRACK_INFO_CHANGES), 1.0, "renamed");
+    assert_eq!(seen(&host, KEY, TRACK_INFO_READS), 2.0, "read again");
+    assert_eq!(seen(&host, KEY, TRACK_NAME), packed_name("Pad"));
+    assert_eq!(seen(&host, KEY, TRACK_NAME_LENGTH), 3.0);
+
+    tell(
+        &mut host,
+        KEY,
+        HostTrackInfo::new("Pad", Some([0x12, 0x34, 0x56])),
+    );
+    assert_eq!(
+        seen(&host, KEY, TRACK_INFO_CHANGES),
+        1.0,
+        "the same track is not news"
+    );
+
+    tell(
+        &mut host,
+        KEY,
+        HostTrackInfo::new("Pad", Some([0x65, 0x43, 0x21])),
+    );
+    assert_eq!(seen(&host, KEY, TRACK_INFO_CHANGES), 2.0, "recolored");
+    assert_eq!(seen(&host, KEY, TRACK_COLOR), argb(0x65, 0x43, 0x21));
+
+    tell(&mut host, KEY, HostTrackInfo::new("Pad", None));
+    assert_eq!(seen(&host, KEY, TRACK_INFO_CHANGES), 3.0, "color removed");
+    assert_eq!(seen(&host, KEY, TRACK_FLAGS), HAS_NAME);
+    assert_eq!(seen(&host, KEY, TRACK_COLOR), 0.0);
+
+    let _recompiled = prepared(&mut host, sandboxed, false);
+    assert_eq!(
+        seen(&host, KEY, TRACK_INFO_CHANGES),
+        3.0,
+        "a recompile that reuses the plugin tells it nothing"
+    );
+    assert_eq!(seen(&host, KEY, TRACK_INFO_AUDIO_CALLS), 0.0);
+}
+
+#[test]
+fn a_change_of_track_reaches_an_in_process_plugin_once() {
+    a_change_of_track_reaches_the_plugin_once(false);
+}
+
+#[test]
+fn a_change_of_track_reaches_a_sandboxed_plugin_once() {
+    a_change_of_track_reaches_the_plugin_once(true);
+}
+
+fn an_instrument_reads_its_track_and_hears_changes(sandboxed: bool) {
+    let mut host = host();
+    if sandboxed {
+        host.set_isolation(PluginIsolation::All, HashSet::new());
+    }
+    tell(&mut host, INSTRUMENT_KEY, lead());
+    let _instrument = prepared_instrument(&mut host, false);
+    assert_eq!(is_sandboxed(&host, INSTRUMENT_KEY), sandboxed);
+    assert_eq!(seen(&host, INSTRUMENT_KEY, TRACK_NAME), packed_name("Lead"));
+
+    tell(&mut host, INSTRUMENT_KEY, HostTrackInfo::new("Keys", None));
+    assert_eq!(seen(&host, INSTRUMENT_KEY, TRACK_INFO_CHANGES), 1.0);
+    assert_eq!(seen(&host, INSTRUMENT_KEY, TRACK_NAME), packed_name("Keys"));
+    assert_eq!(seen(&host, INSTRUMENT_KEY, TRACK_FLAGS), HAS_NAME);
+}
+
+#[test]
+fn an_in_process_instrument_reads_its_track_and_hears_changes() {
+    an_instrument_reads_its_track_and_hears_changes(false);
+}
+
+#[test]
+fn a_sandboxed_instrument_reads_its_track_and_hears_changes() {
+    an_instrument_reads_its_track_and_hears_changes(true);
+}
+
+fn project_with_track_named(name: &str, color: Option<&str>) -> AppProject {
+    let mut project = AppProject::new();
+    project.tracks = vec![test_track("t1", name, color, &[KEY])];
+    project
+}
+
+fn a_rename_in_the_project_reaches_the_plugins_of_the_track(sandboxed: bool) {
+    let mut host = host();
+    host.sync_track_info(&project_with_track_named("Lead", Some("#123456")));
+    let _node = prepared(&mut host, sandboxed, false);
+    assert_eq!(seen(&host, KEY, TRACK_NAME), packed_name("Lead"));
+    assert_eq!(seen(&host, KEY, TRACK_COLOR), argb(0x12, 0x34, 0x56));
+
+    host.sync_track_info(&project_with_track_named("Pad", Some("#123456")));
+    assert_eq!(seen(&host, KEY, TRACK_INFO_CHANGES), 1.0);
+    assert_eq!(seen(&host, KEY, TRACK_NAME), packed_name("Pad"));
+
+    host.sync_track_info(&project_with_track_named("Pad", Some("#123456")));
+    assert_eq!(
+        seen(&host, KEY, TRACK_INFO_CHANGES),
+        1.0,
+        "an edit of something else tells the plugin nothing"
+    );
+
+    host.sync_track_info(&project_with_track_named("Pad", None));
+    assert_eq!(seen(&host, KEY, TRACK_INFO_CHANGES), 2.0);
+    assert_eq!(seen(&host, KEY, TRACK_FLAGS), HAS_NAME);
+}
+
+#[test]
+fn a_rename_in_the_project_reaches_an_in_process_plugin() {
+    a_rename_in_the_project_reaches_the_plugins_of_the_track(false);
+}
+
+#[test]
+fn a_rename_in_the_project_reaches_a_sandboxed_plugin() {
+    a_rename_in_the_project_reaches_the_plugins_of_the_track(true);
+}
+
+/// The undelivered flag is process-wide: only this test touches it.
+#[test]
+fn a_notification_missed_while_the_plugin_is_busy_is_retried() {
+    let mut host = host();
+    tell(&mut host, KEY, lead());
+    let _node = prepared(&mut host, false, false);
+    let instance = host.instance_by_key(KEY).unwrap();
+    take_undelivered_track_info();
+
+    {
+        let _block_in_flight = instance
+            .offrt_try_acquire(std::time::Duration::from_millis(1))
+            .unwrap();
+        tell(&mut host, KEY, HostTrackInfo::new("Pad", None));
+        assert_eq!(plugin_value(&host, KEY, TRACK_INFO_CHANGES), 0.0, "busy");
+        assert_eq!(
+            plugin_value(&host, KEY, TRACK_NAME),
+            packed_name("Lead"),
+            "not told yet"
+        );
+    }
+    assert!(take_undelivered_track_info(), "the app is asked to retry");
+
+    host.notify_pending_track_info();
+    assert_eq!(plugin_value(&host, KEY, TRACK_INFO_CHANGES), 1.0);
+    assert_eq!(plugin_value(&host, KEY, TRACK_NAME), packed_name("Pad"));
+    host.notify_pending_track_info();
+    assert_eq!(
+        plugin_value(&host, KEY, TRACK_INFO_CHANGES),
+        1.0,
+        "delivered once"
+    );
+    assert!(!take_undelivered_track_info());
+}
+
+#[test]
+fn an_in_process_plugin_that_crashed_is_not_told_about_its_track() {
+    let mut host = host();
+    tell(&mut host, KEY, lead());
+    let _node = prepared(&mut host, false, false);
+    host.instance_by_key(KEY)
+        .unwrap()
+        .set_lifecycle(LifecycleState::Error);
+
+    tell(&mut host, KEY, HostTrackInfo::new("Pad", None));
+    host.notify_pending_track_info();
+    assert_eq!(plugin_value(&host, KEY, TRACK_INFO_CHANGES), 0.0);
+}
+
+#[test]
+fn a_sandboxed_plugin_that_crashed_is_skipped_without_waiting() {
+    let mut host = host();
+    tell(&mut host, KEY, lead());
+    let mut node = prepared(&mut host, true, true);
+    assert!(host.push_plugin_param(KEY, CRASH, 1.0).unwrap());
+    for _ in 0..20 {
+        run_block(&mut node);
+    }
+    let bridge_is_dead = || {
+        host.instance_by_key(KEY)
+            .unwrap()
+            .bridge()
+            .unwrap()
+            .is_dead()
+    };
+    assert!(bridge_is_dead());
+
+    let started = std::time::Instant::now();
+    tell(&mut host, KEY, HostTrackInfo::new("Pad", None));
+    assert!(
+        started.elapsed() < std::time::Duration::from_millis(500),
+        "a dead bridge is not asked"
+    );
 }
