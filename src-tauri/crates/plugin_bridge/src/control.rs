@@ -50,6 +50,9 @@ pub enum Op {
     TrackInfo = 9,
     /// → the plugin's note names (`clap.note-name`, encoded by the CLAP bindings).
     NoteNames = 10,
+    /// A `clap_ffi::PresetRequest` in its wire form → ().  The plugin loads the
+    /// preset (`clap.preset-load`); a refusal is the plugin's own message.
+    PresetLoad = 11,
 }
 
 impl Op {
@@ -65,6 +68,7 @@ impl Op {
             8 => Op::ParamText,
             9 => Op::TrackInfo,
             10 => Op::NoteNames,
+            11 => Op::PresetLoad,
             _ => return None,
         })
     }

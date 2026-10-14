@@ -836,3 +836,24 @@ The bridge hosts the plugin's `clap.preset-load` with no new control op and no
 protocol change: a preset reported as loaded sets the process-wide edit flag the
 bridge already forwards as `BLOCK_PLUGIN_EDITED` (as for `clap.state.mark_dirty`),
 and an error is logged by the bridge process. Test: `plugin_host_bridge/tests/bridge.rs`.
+
+### Amendment 2026-10-15 — preset discovery stays in the app (ADR-031)
+
+Listing a plugin's presets (`clap.preset-discovery-factory`) runs in the app
+process for sandboxed plugins too: the factory belongs to the library, which the
+scan already loads in-process, and no plugin instance is involved. The bridge is
+not used and its protocol is unchanged. Loading a preset into a sandboxed plugin
+needs one control op (below).
+
+### Amendment 2026-10-15 — `Op::PresetLoad` (ADR-031 step 2)
+
+`Op::PresetLoad = 11` asks the bridge's plugin to load a preset
+(`clap.preset-load.from_location`). The payload is a `clap_ffi::PresetRequest` in
+its wire form (`kind:u32`, presence flags, then each text as `length:u16` + UTF-8);
+the reply is empty on success, else the plugin's own refusal message (a malformed
+payload is refused as "invalid preset request"). The bridge's main thread makes
+the call beside `process`, as for `LoadState`, then wakes a sleeping plugin on its
+own context; the engine side keeps the project's unsaved flag and the value
+bases. Shared memory and `BRIDGE_PROTOCOL_VERSION` are unchanged, as for
+`Op::ParamText` / `Op::NoteNames`. Tests: `plugin_host_bridge/tests/bridge.rs`,
+`plugin_system/sandbox_tests.rs`.

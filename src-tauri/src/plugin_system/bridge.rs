@@ -20,7 +20,7 @@ use plugin_bridge::session::{AudioPort, BridgeLayout, BridgeProcess};
 
 use crate::plugin_formats::clap::ffi::{
     decode_note_names, mark_plugin_restart_requested, read_pod, ClapParamInfo, HostTrackInfo,
-    NoteName,
+    NoteName, PresetRequest,
 };
 use crate::plugin_formats::clap::params::param_info;
 use crate::plugin_system::parameter::PluginParamInfo;
@@ -142,6 +142,14 @@ impl BridgedPlugin {
 
     pub fn load_state(&self, bytes: &[u8]) -> bool {
         self.request(Op::LoadState, bytes).is_ok()
+    }
+
+    /// Asks the plugin to load a preset; the error is the plugin's own message.
+    pub fn load_preset(&self, request: &PresetRequest) -> Result<(), String> {
+        let payload = request.encode().ok_or("the preset location is too long")?;
+        self.request(Op::PresetLoad, &payload)
+            .map(|_| ())
+            .map_err(|error| error.to_string())
     }
 
     pub fn params(&self) -> Vec<PluginParamInfo> {

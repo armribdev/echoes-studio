@@ -322,6 +322,20 @@ Host `clap.preset-load` (2026-10-14) adds no audio-thread work and takes no lock
 `loaded` is one atomic store (the unsaved-changes flag); `on_error` prints, but
 returns first when called from the audio thread.
 
+Preset discovery (ADR-031, 2026-10-15) touches no audio-thread path: it runs on a
+blocking worker thread without the engine lock, behind the SEH guard, one listing
+at a time, and neither takes nor waits on any instance FFI gate.
+
+Loading a preset (ADR-031 step 2) is an off-RT live-FFI caller and follows the
+ADR-010 rule: `PluginInstance::load_preset` claims the instance FFI gate
+(`offrt_try_acquire`, 50 ms) and holds it for the whole `from_location`. The audio
+thread never waits: `rt_try_enter` fails and the wrapper skips the block with its
+transparent bypass (an effect passes through, an instrument is silent) until the
+load is done. A load can therefore cut a plugin's sound for as long as the plugin
+takes to apply the preset; a block in flight past the budget refuses the load
+instead. Sandboxed plugins are loaded through the bridge and need no gate. The
+host's `loaded` stays one atomic store.
+
 ### Crash marker (ADR-015)
 
 In-process plugin wrappers mark the running plugin in a memory-mapped file

@@ -601,6 +601,137 @@ plugin gained `Preset loaded` (30) and `Preset error` (31): 32 parameters in all
 In process, the real-plugin call is not tested: the unsaved flag is process-wide
 and another unit test of the app reads it.
 
+**Host preset discovery (ADR-031, step 1 — listing; 2026-10-15).** Checked against
+`clap/factory/preset-discovery.h` (CLAP main; factory id
+`clap.preset-discovery-factory/2`, compat `…/draft-2`). The factory comes from the
+library entry, so the listing needs no plugin instance. Struct layouts follow the
+header field by field; tests pin the order (like the `clap_host` ABI guard).
+
+- _Command._ `list_plugin_presets(instance_key)` (`main.rs`, async): reads the
+  placement's library path and CLAP id under the engine lock
+  (`PluginHost::preset_source`), releases the lock, then runs
+  `plugin_system::presets::list_presets` on a blocking worker thread. Unknown
+  placement, VST3, internal or a library without the factory → an empty list.
+- _Cycle._ `clap_ffi::discover_presets` (`preset_discovery.rs`), per provider on
+  the calling thread: `create` → `init` (the provider declares file types,
+  locations, sound packs through the host's indexer) → crawl → `destroy`. A
+  `PLUGIN` location is read once with a null location. A `FILE` location is
+  walked by extension (case-insensitive, leading dot ignored, empty extension =
+  every file) in name order; a path that does not exist is skipped, a path that
+  is a file is read as is. Bounds: depth 6, 10 000 files per location, 20 000
+  presets, texts cut to 512 characters (guesses until measured on real plugins).
+- _What is kept._ A preset is kept when it names the plugin (`add_plugin_id`, abi
+  `clap`, the plugin's id); one that names nobody or another plugin is dropped.
+  A nameless preset (allowed for single-preset files) takes the file name, else
+  its key. Flags are those of the location unless `set_flags` overrides them; the
+  sound pack id becomes its declared name. Creator, description and features are
+  kept; timestamps and extra info are ignored.
+- _Output._ `PluginPreset` (`name`, `load_key`, `location_kind`, `location`,
+  `provider_id`, `flags`, `creator`, `description`, `features`, `soundpack`):
+  factory presets first, then user ones, then the rest, each by name. Nothing is
+  cached or persisted; no file watcher (`set_invalidation_watch_file` is not in
+  the header's indexer struct).
+- _Safety._ The provider is third-party code in the app process, like the scan's
+  probes: the cycle runs behind the SEH guard (`crash_guard`) and a fault lists
+  nothing; one listing runs at a time (providers are not thread-safe). Nothing
+  runs on the audio thread. A sandboxed plugin is listed the same way (its
+  library is already loaded in the app by the scan); isolating discovery is
+  deferred (ADR-031).
+- _Limits._ No loading yet (step 2) and no UI (step 3). Not yet tried with real
+  plugins (Vital, Surge XT): how long a real crawl takes is unknown.
+
+Tests: `crates/clap_ffi` (`preset_discovery.rs`: struct order, filtering by
+plugin id, bundled and file locations, nested directories, extensions, several
+presets per file, flag overrides, missing directory, no factory, compat id,
+failing `init`, crawl bounds) and `plugin_system/sandbox_tests.rs` (the real test
+plugin, in process and sandboxed: source, list, sorting, a user directory, the
+sleepy plugin's own presets, a provider that raises an exception). The test
+plugin gained a `clap.preset-discovery-factory/2` (one provider; the environment
+variables `ECHOES_TEST_PRESET_DIR` and `ECHOES_TEST_PRESET_CRASH` steer it).
+
+**Host preset loading (ADR-031, step 2 — 2026-10-15).** Checked against
+`clap/ext/preset-load.h`: the plugin side is
+`clap_plugin_preset_load.from_location(plugin, location_kind, location, load_key)`,
+`[main-thread]`, true on success; a `PLUGIN` location has a null `location`. The
+plugin answers through the host's `loaded` / `on_error` (see Host
+`clap.preset-load`).
+
+- _Command._ `load_plugin_preset(instance_key, location_kind, location, load_key)`
+  (`main.rs`, async). The host loads **only what the plugin's last listing
+  offered**: `list_plugin_presets` keeps its result per CLAP plugin id
+  (`PluginHost::remember_presets`) and `instance_for_preset` refuses any request
+  that is not one of its entries ("this preset is not offered by the plugin"; "this
+  plugin has no presets" for an unknown placement). The engine lock is held only
+  for that check; the load runs on a blocking worker thread.
+- _In process._ `PluginInstance::load_preset` claims the instance FFI gate
+  (`offrt_try_acquire`, 50 ms budget; "the plugin is busy, try again" past it),
+  calls `clap_ffi::load_preset` and keeps the gate until it is done, so the audio
+  thread **bypasses the plugin for the whole load** (an effect passes its input
+  through, an instrument is silent). A preset that loads samples can hold it for a
+  noticeable time. ADR-031 keeps the gate-free call (L2) as the fallback if this is
+  not acceptable by ear.
+- _Sandboxed._ `Op::PresetLoad = 11`: payload `PresetRequest::encode` (kind:u32,
+  presence flags:u8, then each text as length:u16 + UTF-8), reply empty or the
+  plugin's own message. The bridge's main thread calls `from_location` beside
+  `process`, as it does for `LoadState`. Shared memory and
+  `BRIDGE_PROTOCOL_VERSION` unchanged.
+- _Refusal._ `from_location` returning false is an error; the message is the one
+  the plugin gave to `on_error` during the call (kept in the plugin's
+  `ClapHostContext`, `take_preset_error`), else "the plugin could not load this
+  preset". A refused preset changes nothing.
+- _After a success._ The project is marked unsaved by the host itself
+  (`mark_plugin_state_edited`), whether or not the plugin called `loaded`. A
+  sleeping plugin is woken (`request_process`; in the bridge, on the bridge's own
+  context). The base of every **value-modulated parameter** (ADR-021 amendment) is
+  read again from the plugin — under the gate in process, through `Op::ParamValue`
+  sandboxed — so the next save and the next modulated block do not write the old
+  base over the preset. The command then emits `plugin-params-changed` so the
+  parameter lists, values and texts are fetched again.
+- _Not undoable_, like an edit in the plugin window; nothing about the preset is
+  stored in the project: the plugin state blob (ADR-010) carries the sound.
+  Automation lanes are absolute (ADR-025) and keep overriding the parameters they
+  target.
+- _Limits._ A plugin that applies a preset after `from_location` has returned
+  (deferred to its own thread) is read too early for the base refresh; the base
+  then follows the next drag only. Paths and load keys are carried up to 4096
+  characters (16 bits on the wire). No UI yet (step 3). Not yet tried with real
+  plugins.
+
+Tests: `crates/clap_ffi` (`presets.rs`: wire round trip and malformed requests,
+the plugin's message kept once; `preset_discovery.rs`: paths and keys are not cut
+like labels), `plugin_host_bridge/tests/bridge.rs` (the op over the real channel:
+loaded and forwarded as an edit, a refusal with the plugin's message keeps the
+channel open, a malformed payload) and `plugin_system/sandbox_tests.rs`, in
+process and sandboxed unless noted: the sound and the saved state change, only an
+offered preset loads, a refusal says why and changes nothing, the project is
+marked unsaved although the plugin stays quiet (file presets), in process: the
+FFI gate is held for the whole load and a busy plugin is refused after the
+budget, the base of a value-modulated parameter follows the preset, the state
+saved after a preset renders like the preset (C-2 equivalence, offline), a
+sleeping plugin wakes. The test plugin gained `clap.preset-load` (bundled `quiet`,
+`loud`, `sleepy`; `.testpreset` files `<gain> <tone> [<delay ms>]`) and the
+parameter `Preset tone` (32): 33 in all.
+
+**Preset picker (ADR-031, step 3 — 2026-10-15).** `PresetPicker.svelte`, a labelled
+`PRESET` select built like `SidechainPicker.svelte`, shown for a **CLAP** plugin
+that offers presets: in the expanded plugin effect (between the editor buttons and
+the sidechain row) and in the instrument panel (under the instrument row, above
+the arpeggiator, compact or not). It is an action menu: the select shows nothing
+at rest (the empty option is hidden), choosing an entry calls `load_plugin_preset`
+and the select returns to empty, since the host does not know the current preset.
+Entries are grouped Usine / Utilisateur / Autres by the provider's flags
+(`src/frontend/presets/pluginPresets.ts`, engine order kept inside a group). The
+row is absent when the list is empty, the plugin unavailable or the call fails.
+The list is fetched when the picker appears, when the placement or its
+availability changes, and when the select gets focus; an unchanged list leaves
+the DOM alone so an open menu stays open. While a load runs the select is
+disabled (`cursor: default`); a refusal is a red notification
+`Erreur preset : <the plugin's message>`; a success shows nothing, and the
+`plugin-params-changed` event refreshes the knobs. Tests:
+`src/frontend/presets/pluginPresets.test.ts` (grouping, change detection, keys,
+command arguments, errors). Not hand-tested: spacing in the compact instrument
+panel, and the behaviour with a real plugin.
+
 ---
 
 ## Editor Windows — DPI (Windows)

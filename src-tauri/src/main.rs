@@ -96,6 +96,8 @@ fn main() {
             get_plugin_params,
             get_plugin_param_text,
             get_plugin_note_names,
+            list_plugin_presets,
+            load_plugin_preset,
             get_plugin_outputs,
             scan_plugins,
             open_plugin_editor,
@@ -615,6 +617,63 @@ fn get_plugin_note_names(
 ) -> Result<Option<Vec<plugin_system::host::PluginNoteName>>, String> {
     let engine = state.audio_engine.lock().map_err(|e| e.to_string())?;
     Ok(engine.plugin_host.plugin_note_names(&instance_key))
+}
+
+/// The presets a loaded CLAP plugin offers (`clap.preset-discovery-factory`),
+/// listed on a worker thread so the engine lock is never held while a provider
+/// crawls files; empty when the placement is unknown or offers none.
+#[tauri::command]
+async fn list_plugin_presets(
+    app: tauri::AppHandle,
+    instance_key: String,
+) -> Result<Vec<plugin_system::presets::PluginPreset>, String> {
+    let source = {
+        let state = app.state::<AppState>();
+        let engine = state.audio_engine.lock().map_err(|e| e.to_string())?;
+        engine.plugin_host.preset_source(&instance_key)
+    };
+    let Some(source) = source else {
+        return Ok(Vec::new());
+    };
+    let listed = {
+        let source = source.clone();
+        tauri::async_runtime::spawn_blocking(move || plugin_system::presets::list_presets(&source))
+            .await
+            .map_err(|e| format!("Preset listing failed: {e}"))?
+    };
+    let state = app.state::<AppState>();
+    let mut engine = state.audio_engine.lock().map_err(|e| e.to_string())?;
+    engine.plugin_host.remember_presets(&source, listed.clone());
+    Ok(listed)
+}
+
+/// Loads one of the presets `list_plugin_presets` offered into a CLAP plugin
+/// (ADR-031).  The plugin's own message comes back as the error when it refuses.
+#[tauri::command]
+async fn load_plugin_preset(
+    app: tauri::AppHandle,
+    instance_key: String,
+    location_kind: u32,
+    location: Option<String>,
+    load_key: Option<String>,
+) -> Result<(), String> {
+    let request = plugin_formats::clap::ffi::PresetRequest {
+        location_kind,
+        location,
+        load_key,
+    };
+    let instance = {
+        let state = app.state::<AppState>();
+        let engine = state.audio_engine.lock().map_err(|e| e.to_string())?;
+        engine
+            .plugin_host
+            .instance_for_preset(&instance_key, &request)?
+    };
+    tauri::async_runtime::spawn_blocking(move || instance.load_preset(&request))
+        .await
+        .map_err(|e| format!("Preset loading failed: {e}"))??;
+    let _ = app.emit(engine_gateway::api::PLUGIN_PARAMS_EVENT, ());
+    Ok(())
 }
 
 /// Auxiliary outputs of a loaded plugin placement, for the track input picker.

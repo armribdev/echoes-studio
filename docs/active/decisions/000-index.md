@@ -54,6 +54,7 @@ lives there.
 | [028](028-builtin-sampler-instrument.md)                 | Built-in sampler instrument (16 drum pads, `builtin:sampler` reserved id, typed `AppTrack.sampler` kit, file-referenced samples, 32+8 voices with 5 ms fades; factory drum sounds + starting kit amendment 2026-10-13) (2026-10-09)                                                                                      | Graph / DSP / state                   |
 | [029](029-midi-clip-channel-controls.md)                 | Channel controls in MIDI clips (pitch bend, CC, aftertouch recorded in beats, replayed to CLAP instruments with state catch-up on seek / loop / clip edges, piano-roll control lanes) (2026-10-13)                                                                                                                       | Graph / MIDI / state                  |
 | [030](030-arpeggiator-note-stage.md)                     | Arpeggiator as a note stage inside `InstrumentNode` (typed per-track settings, lock-free cells, grid-locked when playing / chord-anchored when stopped) (accepted 2026-10-13)                                                                                                                                            | Graph / MIDI / state / determinism    |
+| [031](031-clap-preset-discovery-and-loading.md)          | CLAP preset discovery (on demand, per plugin, worker thread) and loading (`from_location` under the FFI gate, `Op::PresetLoad`), picker in the plugin panel (accepted 2026-10-15, implemented in three steps, not yet hand-tested with real plugins)  | Plugins / sandboxing / UX             |
 
 ---
 
@@ -63,7 +64,7 @@ lives there.
 - **Threading / RT safety:** 004, 007, 008, 016, 022, 024, 026, 027
 - **State / persistence:** 002, 010, 017, 018, 020, 024, 028, 029
 - **Architecture boundary:** 005, 017, 023
-- **Plugins:** 003, 006, 007, 008, 010, 013, 014, 015, 016, 017, 020, 021
+- **Plugins:** 003, 006, 007, 008, 010, 013, 014, 015, 016, 017, 020, 021, 031
 - **Modulation / parameters:** 009, 019, 021, 025
 - **Scheduling / determinism:** 019, 025, 028
 - **UX / product boundary:** 023

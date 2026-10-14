@@ -17,11 +17,14 @@ use crate::plugin_formats::clap::ffi::{
     take_plugin_note_names_changed, take_plugin_params_rescan, ClapPluginParams, HostTrackInfo,
     CLAP_EXT_PARAMS, CLAP_NOTE_DIALECT_CLAP, CLAP_NOTE_DIALECT_MIDI, CLAP_NOTE_PORTS_RESCAN_ALL,
     CLAP_NOTE_PORTS_RESCAN_NAMES, CLAP_PARAM_RESCAN_INFO, CLAP_PARAM_RESCAN_TEXT,
+    CLAP_PRESET_IS_FACTORY_CONTENT, CLAP_PRESET_IS_USER_CONTENT, CLAP_PRESET_LOCATION_FILE,
+    CLAP_PRESET_LOCATION_PLUGIN,
 };
 use crate::plugin_formats::clap::params::flush_clap_param_values;
 use crate::plugin_system::host::{PluginHost, PluginIsolation, PluginNoteName, UnavailableReason};
 use crate::plugin_system::instance::take_undelivered_track_info;
 use crate::plugin_system::lifecycle::LifecycleState;
+use crate::plugin_system::presets::{list_presets, PluginPreset};
 use crate::plugin_system::registry::PluginManifest;
 use crate::plugin_system::track_info::test_track;
 use crate::plugin_system::wrapper::DeviceFormat;
@@ -58,7 +61,8 @@ const TIMER_UNREGISTER_RESULT: u32 = 26;
 const TIMER_CALLS: u32 = 27;
 const TIMER_LAST_FIRED: u32 = 28;
 const TIMER_AUDIO_CALLS: u32 = 29;
-const PARAM_COUNT: usize = 32;
+const PRESET_TONE: u32 = 32;
+const PARAM_COUNT: usize = 33;
 const HAS_NAME: f64 = 1.0;
 const HAS_NAME_AND_COLOR: f64 = 3.0;
 const TAIL_RANGE: f32 = 1_000_000.0;
@@ -1338,4 +1342,434 @@ fn a_sandboxed_timer_does_not_run_while_its_editor_is_closed() {
 
     std::thread::sleep(std::time::Duration::from_millis(250));
     assert_eq!(seen(&host, KEY, TIMER_CALLS), 0.0);
+}
+
+// ── clap.preset-discovery-factory ──────────────────────────────────────────────
+
+const PRESET_DIRECTORY_VARIABLE: &str = "ECHOES_TEST_PRESET_DIR";
+const PRESET_CRASH_VARIABLE: &str = "ECHOES_TEST_PRESET_CRASH";
+
+/// The test plugin's provider reads the environment, which every test shares.
+static PRESET_ENVIRONMENT: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Holds the environment lock with no preset directory and no fault set.
+fn quiet_preset_environment() -> std::sync::MutexGuard<'static, ()> {
+    let guard = PRESET_ENVIRONMENT.lock().unwrap_or_else(|e| e.into_inner());
+    std::env::remove_var(PRESET_DIRECTORY_VARIABLE);
+    std::env::remove_var(PRESET_CRASH_VARIABLE);
+    guard
+}
+
+fn preset_names(presets: &[PluginPreset]) -> Vec<&str> {
+    presets.iter().map(|preset| preset.name.as_str()).collect()
+}
+
+fn presets_of(host: &PluginHost) -> Vec<PluginPreset> {
+    list_presets(&host.preset_source(KEY).expect("a CLAP placement has a source"))
+}
+
+fn scratch_directory(files: &[&str]) -> PathBuf {
+    let directory = std::env::temp_dir().join(format!("echoes_presets_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&directory);
+    std::fs::create_dir_all(&directory).unwrap();
+    for file in files {
+        std::fs::write(directory.join(file), b"x").unwrap();
+    }
+    directory
+}
+
+fn the_presets_of_a_plugin_are_listed(sandboxed: bool) {
+    let _environment = quiet_preset_environment();
+    let mut host = host();
+    let _node = prepared(&mut host, sandboxed, false);
+
+    let source = host.preset_source(KEY).unwrap();
+    assert_eq!(source.library, artifacts().1);
+    assert_eq!(source.clap_plugin_id, "echoes.test.gain");
+    assert_eq!(host.preset_source("unknown"), None);
+
+    let presets = list_presets(&source);
+    assert_eq!(preset_names(&presets), ["Loud", "Quiet"]);
+    let quiet = &presets[1];
+    assert_eq!(quiet.load_key.as_deref(), Some("quiet"));
+    assert_eq!(quiet.location_kind, CLAP_PRESET_LOCATION_PLUGIN);
+    assert_eq!(quiet.location, None);
+    assert_eq!(quiet.provider_id, "echoes.test.presets");
+    assert_eq!(quiet.flags, CLAP_PRESET_IS_FACTORY_CONTENT);
+    assert_eq!(quiet.creator.as_deref(), Some("Echoes"));
+    assert_eq!(quiet.features, ["quiet"]);
+}
+
+#[test]
+fn the_presets_of_an_in_process_plugin_are_listed() {
+    the_presets_of_a_plugin_are_listed(false);
+}
+
+#[test]
+fn the_presets_of_a_sandboxed_plugin_are_listed() {
+    the_presets_of_a_plugin_are_listed(true);
+}
+
+#[test]
+fn the_presets_in_a_user_directory_follow_the_bundled_ones() {
+    let _environment = quiet_preset_environment();
+    let directory = scratch_directory(&["b warm.testpreset", "a cold.TESTPRESET", "readme.txt"]);
+    std::env::set_var(PRESET_DIRECTORY_VARIABLE, &directory);
+    let mut host = host();
+    let _node = prepared(&mut host, false, false);
+
+    let presets = presets_of(&host);
+
+    assert_eq!(preset_names(&presets), ["Loud", "Quiet", "a cold", "b warm"]);
+    let warm = &presets[3];
+    assert_eq!(warm.location_kind, CLAP_PRESET_LOCATION_FILE);
+    assert!(warm.location.as_deref().unwrap().ends_with("b warm.testpreset"));
+    assert_eq!(warm.load_key, None);
+    assert_eq!(warm.flags, CLAP_PRESET_IS_USER_CONTENT);
+    let _ = std::fs::remove_dir_all(directory);
+}
+
+#[test]
+fn a_plugin_is_offered_only_the_presets_that_name_it() {
+    let _environment = quiet_preset_environment();
+    let mut host = host();
+    let _node = host
+        .instantiate(KEY, SLEEPY_PLUGIN_ID, false)
+        .expect("plugin starts");
+
+    assert_eq!(preset_names(&presets_of(&host)), ["Sleepy only"]);
+}
+
+#[test]
+fn a_provider_that_faults_lists_nothing_and_the_next_listing_works() {
+    let _environment = quiet_preset_environment();
+    let mut host = host();
+    let _node = prepared(&mut host, false, false);
+
+    std::env::set_var(PRESET_CRASH_VARIABLE, "1");
+    assert!(presets_of(&host).is_empty());
+
+    std::env::remove_var(PRESET_CRASH_VARIABLE);
+    assert_eq!(preset_names(&presets_of(&host)), ["Loud", "Quiet"]);
+}
+
+// ── clap.preset-load, from the host (ADR-031 step 2) ───────────────────────────
+
+use crate::plugin_formats::clap::ffi::{take_plugin_state_edited, PresetRequest};
+
+/// Lists the placement's presets and remembers them, as the app's command does.
+fn offered_presets(host: &mut PluginHost) -> Vec<PluginPreset> {
+    let source = host
+        .preset_source(KEY)
+        .expect("a CLAP placement has a source");
+    let presets = list_presets(&source);
+    host.remember_presets(&source, presets.clone());
+    presets
+}
+
+fn request_named(presets: &[PluginPreset], name: &str) -> PresetRequest {
+    presets
+        .iter()
+        .find(|preset| preset.name == name)
+        .unwrap_or_else(|| panic!("no preset named {name}"))
+        .request()
+}
+
+fn load_offered(host: &PluginHost, request: &PresetRequest) -> Result<(), String> {
+    host.instance_for_preset(KEY, request)?.load_preset(request)
+}
+
+/// A user directory holding one preset file per `(name, text)`.
+fn user_presets(files: &[(&str, &str)]) -> PathBuf {
+    let directory = scratch_directory(&[]);
+    for (name, text) in files {
+        std::fs::write(directory.join(format!("{name}.testpreset")), text).unwrap();
+    }
+    std::env::set_var(PRESET_DIRECTORY_VARIABLE, &directory);
+    directory
+}
+
+fn a_listed_preset_changes_the_sound_and_is_saved_with_the_state(sandboxed: bool) {
+    let _environment = quiet_preset_environment();
+    let mut host = host();
+    let mut node = prepared(&mut host, sandboxed, false);
+    let presets = offered_presets(&mut host);
+    assert!(run_block(&mut node).iter().all(|&s| s == 0.5));
+
+    load_offered(&host, &request_named(&presets, "Loud")).unwrap();
+    assert_eq!(seen(&host, KEY, GAIN), 2.0);
+    assert_eq!(seen(&host, KEY, PRESET_TONE), 0.9);
+    assert!(run_block(&mut node).iter().all(|&s| s == 1.0));
+
+    load_offered(&host, &request_named(&presets, "Quiet")).unwrap();
+    assert!(run_block(&mut node).iter().all(|&s| s == 0.25));
+    let saved = host.instance_by_key(KEY).unwrap().save_state_blob();
+    assert_eq!(saved, Some(gain_state(0.5)));
+}
+
+#[test]
+fn a_listed_preset_changes_the_sound_of_an_in_process_plugin() {
+    a_listed_preset_changes_the_sound_and_is_saved_with_the_state(false);
+}
+
+#[test]
+fn a_listed_preset_changes_the_sound_of_a_sandboxed_plugin() {
+    a_listed_preset_changes_the_sound_and_is_saved_with_the_state(true);
+}
+
+#[test]
+fn only_a_preset_the_plugin_offered_can_be_loaded() {
+    let _environment = quiet_preset_environment();
+    let mut host = host();
+    let _node = prepared(&mut host, false, false);
+    let guessed = PresetRequest {
+        location_kind: CLAP_PRESET_LOCATION_PLUGIN,
+        location: None,
+        load_key: Some("loud".into()),
+    };
+
+    let refused = host.instance_for_preset(KEY, &guessed).err();
+    assert_eq!(
+        refused.as_deref(),
+        Some("this preset is not offered by the plugin"),
+        "nothing was listed yet"
+    );
+
+    let presets = offered_presets(&mut host);
+    assert!(host.instance_for_preset(KEY, &guessed).is_ok());
+    let other_key = PresetRequest {
+        load_key: Some("louder".into()),
+        ..guessed.clone()
+    };
+    let other_path = PresetRequest {
+        location_kind: CLAP_PRESET_LOCATION_FILE,
+        location: Some("C:\\anywhere\\else.testpreset".into()),
+        load_key: None,
+    };
+    for request in [other_key, other_path] {
+        assert!(host.instance_for_preset(KEY, &request).is_err());
+    }
+    assert_eq!(
+        host.instance_for_preset("unknown", &request_named(&presets, "Loud"))
+            .err()
+            .as_deref(),
+        Some("this plugin has no presets")
+    );
+}
+
+fn a_plugin_that_refuses_a_preset_says_why(sandboxed: bool) {
+    let _environment = quiet_preset_environment();
+    let directory = user_presets(&[("broken", "not a preset")]);
+    let mut host = host();
+    let _node = prepared(&mut host, sandboxed, false);
+    let request = request_named(&offered_presets(&mut host), "broken");
+
+    let message = load_offered(&host, &request).unwrap_err();
+
+    assert!(message.contains("unreadable preset"), "{message}");
+    assert_eq!(
+        seen(&host, KEY, GAIN),
+        1.0,
+        "a refused preset changes nothing"
+    );
+    let _ = std::fs::remove_dir_all(directory);
+}
+
+#[test]
+fn an_in_process_plugin_that_refuses_a_preset_says_why() {
+    a_plugin_that_refuses_a_preset_says_why(false);
+}
+
+#[test]
+fn a_sandboxed_plugin_that_refuses_a_preset_says_why() {
+    a_plugin_that_refuses_a_preset_says_why(true);
+}
+
+fn a_loaded_preset_marks_the_project_unsaved_whatever_the_plugin_says(sandboxed: bool) {
+    let _environment = quiet_preset_environment();
+    let directory = user_presets(&[("warm", "0.75 0.2")]);
+    let mut host = host();
+    let _node = prepared(&mut host, sandboxed, false);
+    let request = request_named(&offered_presets(&mut host), "warm");
+
+    // The test plugin does not tell the host about a file preset. The unsaved flag
+    // is process-wide and one other unit test reads it, so one load may lose the
+    // race for it; fifty cannot all lose.
+    let marked = (0..50).any(|_| {
+        load_offered(&host, &request).unwrap();
+        take_plugin_state_edited()
+    });
+
+    assert!(marked);
+    assert_eq!(seen(&host, KEY, GAIN), 0.75);
+    let _ = std::fs::remove_dir_all(directory);
+}
+
+#[test]
+fn a_preset_marks_the_project_unsaved_in_process() {
+    a_loaded_preset_marks_the_project_unsaved_whatever_the_plugin_says(false);
+}
+
+#[test]
+fn a_preset_marks_the_project_unsaved_when_sandboxed() {
+    a_loaded_preset_marks_the_project_unsaved_whatever_the_plugin_says(true);
+}
+
+#[test]
+fn a_preset_load_holds_the_ffi_gate_until_it_is_done() {
+    let _environment = quiet_preset_environment();
+    let directory = user_presets(&[("slow", "1.5 0.3 400")]);
+    let mut host = host();
+    let _node = prepared(&mut host, false, false);
+    let request = request_named(&offered_presets(&mut host), "slow");
+    let instance = host.instance_by_key(KEY).unwrap();
+
+    let mut audio_thread_was_kept_out = false;
+    std::thread::scope(|scope| {
+        let load = scope.spawn(|| instance.load_preset(&request));
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+        while !load.is_finished() && std::time::Instant::now() < deadline {
+            audio_thread_was_kept_out |= instance.rt_try_enter().is_none();
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        load.join().unwrap().unwrap();
+    });
+
+    assert!(
+        audio_thread_was_kept_out,
+        "the audio thread skips the plugin meanwhile"
+    );
+    assert!(
+        instance.rt_try_enter().is_some(),
+        "and gets it back afterwards"
+    );
+    assert_eq!(seen(&host, KEY, GAIN), 1.5);
+    let _ = std::fs::remove_dir_all(directory);
+}
+
+#[test]
+fn a_plugin_busy_in_a_block_refuses_a_load_after_a_short_wait() {
+    let _environment = quiet_preset_environment();
+    let mut host = host();
+    let _node = prepared(&mut host, false, false);
+    let request = request_named(&offered_presets(&mut host), "Loud");
+    let instance = host.instance_by_key(KEY).unwrap();
+
+    let started = std::time::Instant::now();
+    let busy = {
+        let _block_in_flight = instance.rt_try_enter().expect("the gate is free");
+        instance.load_preset(&request)
+    };
+
+    assert_eq!(busy.unwrap_err(), "the plugin is busy, try again");
+    assert!(started.elapsed() >= std::time::Duration::from_millis(40));
+    assert_eq!(seen(&host, KEY, GAIN), 1.0);
+    assert!(instance.load_preset(&request).is_ok());
+}
+
+fn the_base_of_a_value_modulated_parameter_follows_a_preset(sandboxed: bool) {
+    use crate::audio_graph::plugin_params::{PluginParamRange, ValueModulatedParam};
+    use std::sync::atomic::{AtomicU32, Ordering};
+    use std::sync::Arc;
+
+    let _environment = quiet_preset_environment();
+    let mut host = host();
+    let _node = prepared(&mut host, sandboxed, false);
+    let presets = offered_presets(&mut host);
+    let base = Arc::new(AtomicU32::new(0.5f32.to_bits()));
+    let range = PluginParamRange {
+        min: 0.0,
+        max: 1.0,
+        modulatable: false,
+        automatable: true,
+    };
+    host.instance_by_key(KEY)
+        .unwrap()
+        .replace_value_modulated_params(vec![ValueModulatedParam::new(
+            PRESET_TONE,
+            range,
+            Arc::clone(&base),
+        )]);
+    let base_now = || f32::from_bits(base.load(Ordering::Relaxed));
+
+    load_offered(&host, &request_named(&presets, "Loud")).unwrap();
+    assert!((base_now() - 0.9).abs() < 1e-6, "{}", base_now());
+
+    load_offered(&host, &request_named(&presets, "Quiet")).unwrap();
+    assert!((base_now() - 0.1).abs() < 1e-6, "{}", base_now());
+}
+
+#[test]
+fn the_base_of_a_value_modulated_parameter_follows_a_preset_in_process() {
+    the_base_of_a_value_modulated_parameter_follows_a_preset(false);
+}
+
+#[test]
+fn the_base_of_a_value_modulated_parameter_follows_a_preset_when_sandboxed() {
+    the_base_of_a_value_modulated_parameter_follows_a_preset(true);
+}
+
+/// C-2: a project saved after a preset load renders like the preset itself.
+fn the_state_saved_after_a_preset_renders_like_the_preset(sandboxed: bool) {
+    let _environment = quiet_preset_environment();
+    let mut host = host();
+    let mut node = prepared(&mut host, sandboxed, false);
+    let request = request_named(&offered_presets(&mut host), "Quiet");
+    load_offered(&host, &request).unwrap();
+    let saved = host
+        .instance_by_key(KEY)
+        .unwrap()
+        .save_state_blob()
+        .unwrap();
+    let from_the_preset = run_block(&mut node);
+
+    let mut reopened = self::host();
+    let mut restored = prepared(&mut reopened, sandboxed, false);
+    assert!(reopened
+        .instance_by_key(KEY)
+        .unwrap()
+        .load_state_blob(&saved));
+
+    assert_eq!(run_block(&mut restored), from_the_preset);
+}
+
+#[test]
+fn the_state_saved_after_a_preset_renders_like_the_preset_in_process() {
+    the_state_saved_after_a_preset_renders_like_the_preset(false);
+}
+
+#[test]
+fn the_state_saved_after_a_preset_renders_like_the_preset_when_sandboxed() {
+    the_state_saved_after_a_preset_renders_like_the_preset(true);
+}
+
+fn a_sleeping_plugin_wakes_for_a_preset(sandboxed: bool) {
+    // Read through the parameter, which also reaches a sandboxed plugin.
+    let calls = |host: &PluginHost| seen(host, KEY, PROCESS_CALLS) as u32;
+    let _environment = quiet_preset_environment();
+    let mut host = host();
+    let mut node = prepared(&mut host, sandboxed, false);
+    let request = request_named(&offered_presets(&mut host), "Loud");
+    assert!(host.push_plugin_param(KEY, STATUS, 1.0).unwrap());
+    for _ in 0..10 {
+        run_block_with_input(&mut node, 0.0);
+    }
+    let asleep = calls(&host);
+    run_block_with_input(&mut node, 0.0);
+    assert_eq!(calls(&host), asleep, "asleep on silence");
+
+    load_offered(&host, &request).unwrap();
+    run_block_with_input(&mut node, 0.0);
+
+    assert_eq!(calls(&host), asleep + 1, "woken by the preset");
+}
+
+#[test]
+fn a_sleeping_in_process_plugin_wakes_for_a_preset() {
+    a_sleeping_plugin_wakes_for_a_preset(false);
+}
+
+#[test]
+fn a_sleeping_sandboxed_plugin_wakes_for_a_preset() {
+    a_sleeping_plugin_wakes_for_a_preset(true);
 }

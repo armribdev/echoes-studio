@@ -15,7 +15,7 @@ use clap_ffi::{
     audio_thread_scope, deliver_due_timers, is_silent, read_pod, read_tail, split_events,
     BlockActivity, ClapAudioBuffer, ClapEventBuffer, ClapEventHeader, ClapEventTransport, ClapHost,
     ClapLibrary, ClapOutputEvents, ClapParamInfo, ClapPlugin, ClapPluginFactory, ClapPluginLatency,
-    ClapPluginParams, ClapProcess, HostTrackInfo, ProcessSleep, TimerSchedule,
+    ClapPluginParams, ClapProcess, HostTrackInfo, PresetRequest, ProcessSleep, TimerSchedule,
     CLAP_CORE_EVENT_SPACE, CLAP_EVENT_TRANSPORT, CLAP_EXT_LATENCY, CLAP_EXT_PARAMS,
     CLAP_PLUGIN_FACTORY_ID, CLAP_PROCESS_ERROR, CLAP_TRANSPORT_IS_PLAYING,
 };
@@ -179,6 +179,26 @@ impl LoadedPlugin {
         } else {
             Err("the plugin rejected the state".into())
         }
+    }
+
+    /// Main thread.  The plugin loads one preset (`clap.preset-load`), beside
+    /// `process` as CLAP allows, like `load_state`; a sleeping plugin is woken.
+    pub fn load_preset(&self, request: &[u8]) -> Result<(), String> {
+        let request = PresetRequest::decode(request).ok_or("invalid preset request")?;
+        let context = self.host.context();
+        if let Some(context) = context {
+            context.take_preset_error();
+        }
+        // SAFETY: main thread.
+        if !unsafe { clap_ffi::load_preset(self.plugin, &request) } {
+            return Err(context
+                .and_then(|context| context.take_preset_error())
+                .unwrap_or_else(|| "the plugin could not load this preset".into()));
+        }
+        if let Some(context) = context {
+            context.request_process();
+        }
+        Ok(())
     }
 
     /// `count:u32` followed by each raw `clap_param_info`.

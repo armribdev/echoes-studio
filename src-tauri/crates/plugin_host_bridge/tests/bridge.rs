@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use clap_ffi::{
     decode_note_names, read_pod, split_events, ClapEventBuffer, ClapEventHeader, ClapParamInfo,
-    HostTrackInfo, NoteName, CLAP_EVENT_PARAM_GESTURE_END, CLAP_EVENT_PARAM_VALUE,
+    HostTrackInfo, NoteName, PresetRequest, CLAP_EVENT_PARAM_GESTURE_END, CLAP_EVENT_PARAM_VALUE,
     CLAP_NOTE_DIALECT_CLAP, CLAP_NOTE_DIALECT_MIDI, CLAP_NOTE_PORTS_RESCAN_ALL,
     CLAP_NOTE_PORTS_RESCAN_NAMES,
 };
@@ -55,7 +55,7 @@ const TIMER_LAST_FIRED: u32 = 28;
 const TIMER_AUDIO_CALLS: u32 = 29;
 const PRESET_LOADED: u32 = 30;
 const PRESET_ERROR: u32 = 31;
-const PARAM_COUNT: u32 = 32;
+const PARAM_COUNT: u32 = 33;
 const FRAMES: usize = 64;
 const CHANNELS: usize = 2;
 const TIMEOUT: Duration = Duration::from_secs(5);
@@ -681,6 +681,48 @@ fn a_preset_loaded_by_the_plugin_comes_back_as_an_edit_and_an_error_does_not() {
         0,
         "reported once"
     );
+}
+
+fn bundled_preset(key: &str) -> Vec<u8> {
+    PresetRequest {
+        location_kind: 1,
+        location: None,
+        load_key: Some(key.into()),
+    }
+    .encode()
+    .unwrap()
+}
+
+#[test]
+fn a_preset_load_travels_over_the_control_channel_and_a_refusal_keeps_it_open() {
+    let bridge = activated();
+
+    bridge
+        .request(Op::PresetLoad, &bundled_preset("loud"), TIMEOUT)
+        .expect("the plugin loads a bundled preset");
+    assert_eq!(param_value(&bridge, GAIN), 2.0);
+    assert_ne!(
+        block_flags(&bridge, 0, &[]) & BLOCK_PLUGIN_EDITED,
+        0,
+        "clap.preset-load.loaded is forwarded"
+    );
+
+    let refused = bridge
+        .request(Op::PresetLoad, &bundled_preset("nope"), TIMEOUT)
+        .unwrap_err();
+    assert!(
+        refused.to_string().contains("unreadable preset"),
+        "{refused}"
+    );
+    let malformed = bridge
+        .request(Op::PresetLoad, &[1, 2], TIMEOUT)
+        .unwrap_err();
+    assert!(
+        malformed.to_string().contains("invalid preset request"),
+        "{malformed}"
+    );
+    assert_eq!(param_value(&bridge, GAIN), 2.0, "a refusal changes nothing");
+    assert!(bridge.request(Op::SaveState, &[], TIMEOUT).is_ok());
 }
 
 #[test]

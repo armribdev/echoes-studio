@@ -2,6 +2,7 @@
 <script lang="ts">
 	import Knob from './Knob.svelte';
 	import PluginPicker from './PluginPicker.svelte';
+	import PresetPicker from './PresetPicker.svelte';
 	import SidechainPicker from './SidechainPicker.svelte';
 	import EffectContextMenu from './EffectContextMenu.svelte';
 	import { modulatorColor } from '../frontend/modulation/colors';
@@ -657,6 +658,9 @@
 								</button>
 							{/if}
 						</div>
+						{#if effectFormat(effect) === 'CLAP'}
+							<PresetPicker instanceKey={effect.id} />
+						{/if}
 						{#if hasSidechainInput(effect, $plugins)}
 							<SidechainPicker
 								{trackId}

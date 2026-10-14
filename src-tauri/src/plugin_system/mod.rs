@@ -33,6 +33,7 @@ pub mod instance;
 pub mod lifecycle;
 pub mod param_queue;
 pub mod parameter;
+pub mod presets;
 pub mod registry;
 pub mod state;
 pub mod track_info;

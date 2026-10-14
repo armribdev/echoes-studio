@@ -32,7 +32,7 @@ use crate::audio_graph::node::AudioNode;
 use crate::audio_graph::nodes::clap_instrument::ClapInstrument;
 use crate::audio_graph::nodes::instrument::InstrumentDevice;
 use crate::plugin_formats::clap::ffi::{
-    ClapLibrary, HostTrackInfo, NoteName, CLAP_PLUGIN_FACTORY_ID,
+    ClapLibrary, HostTrackInfo, NoteName, PresetRequest, CLAP_PLUGIN_FACTORY_ID,
 };
 use crate::plugin_formats::clap::host::decode_plugin_id as clap_decode_id;
 use crate::plugin_formats::clap::params::read_clap_params;
@@ -46,6 +46,7 @@ use crate::plugin_system::crash_marker::{self, plugin_tag, PluginThread};
 use crate::plugin_system::instance::{PluginInstance, FFI_GATE_HARVEST_BUDGET};
 use crate::plugin_system::lifecycle::{transition, LifecycleError, LifecycleState};
 use crate::plugin_system::parameter::PluginParamInfo;
+use crate::plugin_system::presets::{PluginPreset, PresetSource};
 use crate::plugin_system::registry::{PluginManifest, PluginRegistry};
 use crate::plugin_system::state::DeviceState;
 use crate::plugin_system::track_info::placement_track_infos;
@@ -146,6 +147,9 @@ pub struct PluginHost {
     /// The track of each placement, from the project: a new instance is born
     /// knowing it, a live one is told when it changes.
     track_infos: HashMap<String, HostTrackInfo>,
+    /// The last preset listing of each CLAP plugin id: only what a plugin offered
+    /// can be loaded (ADR-031).
+    preset_listings: HashMap<String, Vec<PluginPreset>>,
 }
 
 impl PluginHost {
@@ -159,6 +163,7 @@ impl PluginHost {
             isolation: PluginIsolation::default(),
             always_isolated: HashSet::new(),
             track_infos: HashMap::new(),
+            preset_listings: HashMap::new(),
         }
     }
 
@@ -967,6 +972,47 @@ impl PluginHost {
     pub fn plugin_note_names(&self, instance_key: &str) -> Option<Vec<PluginNoteName>> {
         let names = self.records.get(instance_key)?.instance.clap_note_names()?;
         Some(names.into_iter().map(PluginNoteName::from).collect())
+    }
+
+    /// Where to ask for the presets of a loaded CLAP placement (ADR-031); `None`
+    /// for an unknown placement or another format.
+    pub fn preset_source(&self, instance_key: &str) -> Option<PresetSource> {
+        let device_id = &self.records.get(instance_key)?.instance.device_id;
+        let manifest = self.registry.get(device_id)?;
+        if manifest.format != DeviceFormat::Clap {
+            return None;
+        }
+        Some(PresetSource {
+            library: manifest.path.clone()?,
+            clap_plugin_id: clap_decode_id(&manifest.id)?.to_owned(),
+        })
+    }
+
+    /// Keeps a plugin's latest preset listing, to check later loads against.
+    pub fn remember_presets(&mut self, source: &PresetSource, presets: Vec<PluginPreset>) {
+        self.preset_listings
+            .insert(source.clap_plugin_id.clone(), presets);
+    }
+
+    /// The instance to load `request` into, once the plugin's last listing has
+    /// offered that preset; the UI cannot make the host load any other path.
+    pub fn instance_for_preset(
+        &self,
+        instance_key: &str,
+        request: &PresetRequest,
+    ) -> Result<Arc<PluginInstance>, String> {
+        let source = self
+            .preset_source(instance_key)
+            .ok_or("this plugin has no presets")?;
+        let offered = self
+            .preset_listings
+            .get(&source.clap_plugin_id)
+            .is_some_and(|presets| presets.iter().any(|preset| preset.request() == *request));
+        if !offered {
+            return Err("this preset is not offered by the plugin".into());
+        }
+        self.instance_by_key(instance_key)
+            .ok_or_else(|| "this plugin is not loaded".into())
     }
 
     /// Auxiliary outputs of a loaded placement that a track can take as its

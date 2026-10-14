@@ -534,13 +534,20 @@ mod tests {
         context.set_track_info(&first);
 
         let host_address = &*host as *const ClapHost as usize;
+        let writer_done = std::sync::atomic::AtomicBool::new(false);
         std::thread::scope(|scope| {
             let reader = scope.spawn(|| {
                 let host = host_address as *const ClapHost;
                 let extension =
                     unsafe { host_track_info_extension(host, CLAP_EXT_TRACK_INFO) }.unwrap();
                 let mut seen = 0;
-                for _ in 0..200_000 {
+                // A reader gives up while a writer holds the cell, so it keeps
+                // reading until the writer is done and then reads with no rival.
+                let mut reads_after_writer = 0;
+                while reads_after_writer < 1_000 {
+                    if writer_done.load(Ordering::Acquire) {
+                        reads_after_writer += 1;
+                    }
                     let mut info = blank();
                     if !unsafe { (extension.get)(host, &mut info) } {
                         continue;
@@ -563,6 +570,7 @@ mod tests {
                 context.set_track_info(&second);
                 context.set_track_info(&first);
             }
+            writer_done.store(true, Ordering::Release);
             assert!(reader.join().unwrap() > 0);
         });
     }

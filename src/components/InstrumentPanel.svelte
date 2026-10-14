@@ -2,6 +2,7 @@
 	import PluginPicker from './PluginPicker.svelte';
 	import SamplerPads from './SamplerPads.svelte';
 	import ArpeggiatorPanel from './ArpeggiatorPanel.svelte';
+	import PresetPicker from './PresetPicker.svelte';
 	import EffectContextMenu from './EffectContextMenu.svelte';
 	import { preferences } from '../stores/preferences';
 	import type { PluginInfo } from '../stores/plugins';
@@ -254,6 +255,10 @@
 		<SamplerPads {trackId} kit={sampler} />
 	{:else if !compact && !instrument}
 		<p class="hint">Synthé intégré par défaut — choisissez un instrument CLAP (ex. Vital).</p>
+	{/if}
+
+	{#if isClap && canOpenEditor}
+		<PresetPicker instanceKey={editorKey} />
 	{/if}
 
 	<ArpeggiatorPanel {trackId} {arpeggiator} />

@@ -194,6 +194,7 @@ fn handle(plugin: &LoadedPlugin, op: u8, payload: &[u8]) -> Result<Vec<u8>, Stri
         }
         Op::SaveState => plugin.save_state(),
         Op::LoadState => plugin.load_state(payload).map(|()| Vec::new()),
+        Op::PresetLoad => plugin.load_preset(payload).map(|()| Vec::new()),
         Op::Params => Ok(plugin.params()),
         Op::ParamValue => {
             let native_id = reader.u32().map_err(invalid)?;

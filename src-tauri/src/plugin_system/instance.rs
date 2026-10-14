@@ -52,8 +52,9 @@ use std::time::{Duration, Instant};
 use crate::audio_graph::plugin_params::ValueModulatedParam;
 use crate::plugin_formats::clap::audio_ports::{read_output_ports, ClapOutputPort};
 use crate::plugin_formats::clap::ffi::{
-    audio_thread_scope, deliver_due_timers, notify_track_info_changed, read_note_names, ClapHost,
-    ClapHostContext, ClapLibrary, ClapPlugin, HostTrackInfo, NoteName, TimerSchedule,
+    audio_thread_scope, deliver_due_timers, load_preset, mark_plugin_state_edited,
+    notify_track_info_changed, read_note_names, ClapHost, ClapHostContext, ClapLibrary, ClapPlugin,
+    HostTrackInfo, NoteName, PresetRequest, TimerSchedule,
 };
 use crate::plugin_formats::vst3::ffi::{
     IAudioProcessor, IComponent, ProcessSetup, Vst3Library, SPEAKER_STEREO,
@@ -189,6 +190,9 @@ const GATE_OFFRT: u8 = 2;
 /// project-save path and R-4 re-instantiation.  A few ms spans a block period at
 /// typical buffer sizes; when stopped the gate is free, so acquisition is immediate.
 pub(crate) const FFI_GATE_HARVEST_BUDGET: Duration = Duration::from_millis(3);
+
+/// Time a preset load waits for a block in flight before it gives up.
+const FFI_GATE_PRESET_BUDGET: Duration = Duration::from_millis(50);
 
 /// RAII release for the audio-thread side of the FFI gate.  Dropping it returns
 /// the gate to `GATE_IDLE`, guaranteeing release on every exit path (including
@@ -495,6 +499,57 @@ impl PluginInstance {
         let _gate = self.offrt_try_acquire(FFI_GATE_HARVEST_BUDGET)?;
         // SAFETY: live CLAP plugin owned by this instance; FFI gate held.
         Some(unsafe { read_note_names(*plugin) })
+    }
+
+    /// Loads a preset into a CLAP plugin (ADR-031), in process or sandboxed; the
+    /// error is the plugin's own message.  In process the FFI gate is held for
+    /// the whole load, so the audio thread bypasses the plugin meanwhile (ADR-010);
+    /// a block in flight past the budget refuses the load.  On success the project
+    /// is marked unsaved, a sleeping plugin is woken, and the value-modulated
+    /// parameters take the preset's values as their base.  Command thread.
+    pub fn load_preset(&self, request: &PresetRequest) -> Result<(), String> {
+        const REFUSED: &str = "the plugin could not load this preset";
+        if self.has_crashed() {
+            return Err("the plugin has crashed".into());
+        }
+        if let Some(bridged) = self.bridge() {
+            bridged.load_preset(request)?;
+            self.rebase_value_modulated_params(|id| bridged.param_value(id));
+        } else {
+            let (Some(plugin), Some(context)) = (self.clap_plugin(), self.clap_host_context())
+            else {
+                return Err("this plugin has no presets".into());
+            };
+            let _gate = self
+                .offrt_try_acquire(FFI_GATE_PRESET_BUDGET)
+                .ok_or("the plugin is busy, try again")?;
+            context.take_preset_error();
+            // SAFETY: live CLAP plugin owned by this instance; FFI gate held.
+            if !unsafe { load_preset(plugin, request) } {
+                return Err(context.take_preset_error().unwrap_or_else(|| REFUSED.into()));
+            }
+            self.rebase_value_modulated_params(|id| {
+                // SAFETY: live CLAP plugin owned by this instance; FFI gate held.
+                unsafe { crate::plugin_formats::clap::params::read_clap_param_value(plugin, id) }
+            });
+            context.request_process();
+        }
+        mark_plugin_state_edited();
+        Ok(())
+    }
+
+    /// Value-modulated parameters move around a base that follows the user; a
+    /// preset sets them behind the host's back, so the base is read again.
+    fn rebase_value_modulated_params(&self, read: impl Fn(u32) -> Option<f64>) {
+        let params = self
+            .value_modulated_params
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        for param in params.iter() {
+            if let Some(plain) = read(param.native_id) {
+                param.set_base(param.range.normalise(plain as f32));
+            }
+        }
     }
 
     /// Gives a CLAP plugin the info of its track, then tells it

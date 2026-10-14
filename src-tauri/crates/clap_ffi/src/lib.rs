@@ -25,11 +25,13 @@ use std::ffi::{c_char, c_void};
 use std::path::Path;
 
 mod notes;
+mod preset_discovery;
 mod presets;
 mod process_sleep;
 mod timers;
 mod track_info;
 pub use notes::*;
+pub use preset_discovery::*;
 pub use presets::*;
 pub use process_sleep::*;
 pub use timers::*;
@@ -176,6 +178,7 @@ pub struct ClapHostContext {
     tail_changed: std::sync::atomic::AtomicBool,
     track_info: track_info::TrackInfoCell,
     timers: timers::TimerTable,
+    preset_error: std::sync::Mutex<Option<String>>,
 }
 
 impl ClapHostContext {
@@ -188,7 +191,22 @@ impl ClapHostContext {
             tail_changed: std::sync::atomic::AtomicBool::new(false),
             track_info: track_info::TrackInfoCell::new(),
             timers: timers::TimerTable::new(),
+            preset_error: std::sync::Mutex::new(None),
         }
+    }
+
+    /// Remembers the message of the plugin's last `clap.preset-load.on_error`.
+    /// Never called from the audio thread (it takes a lock).
+    pub fn note_preset_error(&self, message: String) {
+        *self.preset_error.lock().unwrap_or_else(|e| e.into_inner()) = Some(message);
+    }
+
+    /// The message of the last preset error since the previous call, and clears it.
+    pub fn take_preset_error(&self) -> Option<String> {
+        self.preset_error
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take()
     }
 
     /// The timers the plugin registered through `clap.timer-support`.

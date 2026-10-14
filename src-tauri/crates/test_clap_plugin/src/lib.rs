@@ -55,6 +55,22 @@
 //!   a preset picked in the plugin's window would;
 //! - 31 `Preset error` — setting it calls the host's `clap.preset-load.on_error`.
 //!
+//! `clap.preset-discovery-factory`: one provider, `echoes.test.presets`, with a
+//! bundled location (`Quiet` and `Loud` for the gain plugin, `Sleepy only` for
+//! the sleepy one, plus one preset naming nobody) and, when the environment
+//! variable `ECHOES_TEST_PRESET_DIR` is set, a user location: the files with
+//! the extension `.testpreset` in that directory, one nameless preset each.
+//! With `ECHOES_TEST_PRESET_CRASH` set, the provider raises a structured
+//! exception when asked for metadata, as a faulting plugin would.
+//!
+//! `clap.preset-load`: `from_location` loads a bundled preset by key (`quiet`,
+//! `loud`, `sleepy`: gain and tone) or a `.testpreset` file whose text is
+//! `<gain> <tone> [<delay in ms>]`; anything else is refused through the host's
+//! `on_error`. Bundled presets tell the host `loaded`, files do not, as plugins
+//! differ. The delay keeps the load running long enough to observe it.
+//! - 32 `Preset tone` — automatable only (the host modulates it by value),
+//!   default 0.5, set by every preset load.
+//!
 //! `Gain` renders its value as decibels through `clap.params.value_to_text`.
 //!
 //! A second plugin, `echoes.test.sleepy`, is the same code reporting `SLEEP`
@@ -80,15 +96,19 @@ use clap_ffi::{
     ClapHostTimerSupport, ClapHostTrackInfo, ClapIStream, ClapInputEvents, ClapNoteName,
     ClapOStream, ClapOutputEvents, ClapParamInfo, ClapPlugin, ClapPluginAudioPorts,
     ClapPluginDescriptor, ClapPluginEntry, ClapPluginFactory, ClapPluginLatency,
-    ClapPluginNoteName, ClapPluginParams, ClapPluginState, ClapPluginTail, ClapPluginTimerSupport,
-    ClapPluginTrackInfo, ClapProcess, ClapProcessStatus, ClapTrackInfo, ClapWindow,
-    CLAP_AUDIO_PORT_IS_MAIN, CLAP_CORE_EVENT_SPACE, CLAP_EVENT_NOTE_OFF, CLAP_EVENT_NOTE_ON,
-    CLAP_EVENT_PARAM_GESTURE_END, CLAP_EVENT_PARAM_MOD, CLAP_EVENT_PARAM_VALUE,
-    CLAP_EXT_AUDIO_PORTS, CLAP_EXT_GUI, CLAP_EXT_LATENCY, CLAP_EXT_NOTE_NAME, CLAP_EXT_NOTE_PORTS,
-    CLAP_EXT_PARAMS, CLAP_EXT_PRESET_LOAD, CLAP_EXT_STATE, CLAP_EXT_TAIL, CLAP_EXT_THREAD_CHECK,
-    CLAP_EXT_TIMER_SUPPORT, CLAP_EXT_TRACK_INFO, CLAP_PARAM_IS_AUTOMATABLE,
-    CLAP_PARAM_IS_MODULATABLE, CLAP_PLUGIN_FACTORY_ID, CLAP_PROCESS_CONTINUE, CLAP_PROCESS_SLEEP,
-    CLAP_VERSION_1, CLAP_WINDOW_API_WIN32,
+    ClapPluginNoteName, ClapPluginParams, ClapPluginPresetLoad, ClapPluginState, ClapPluginTail,
+    ClapPluginTimerSupport, ClapPluginTrackInfo, ClapPresetDiscoveryFactory, ClapPresetFiletype,
+    ClapPresetIndexer, ClapPresetLocation, ClapPresetMetadataReceiver, ClapPresetProvider,
+    ClapPresetProviderDescriptor, ClapProcess, ClapProcessStatus, ClapTrackInfo,
+    ClapUniversalPluginId, ClapWindow, CLAP_AUDIO_PORT_IS_MAIN, CLAP_CORE_EVENT_SPACE,
+    CLAP_EVENT_NOTE_OFF, CLAP_EVENT_NOTE_ON, CLAP_EVENT_PARAM_GESTURE_END, CLAP_EVENT_PARAM_MOD,
+    CLAP_EVENT_PARAM_VALUE, CLAP_EXT_AUDIO_PORTS, CLAP_EXT_GUI, CLAP_EXT_LATENCY,
+    CLAP_EXT_NOTE_NAME, CLAP_EXT_NOTE_PORTS, CLAP_EXT_PARAMS, CLAP_EXT_PRESET_LOAD, CLAP_EXT_STATE,
+    CLAP_EXT_TAIL, CLAP_EXT_THREAD_CHECK, CLAP_EXT_TIMER_SUPPORT, CLAP_EXT_TRACK_INFO,
+    CLAP_PARAM_IS_AUTOMATABLE, CLAP_PARAM_IS_MODULATABLE, CLAP_PLUGIN_FACTORY_ID,
+    CLAP_PRESET_DISCOVERY_FACTORY_ID, CLAP_PRESET_IS_FACTORY_CONTENT, CLAP_PRESET_IS_USER_CONTENT,
+    CLAP_PRESET_LOCATION_FILE, CLAP_PRESET_LOCATION_PLUGIN, CLAP_PROCESS_CONTINUE,
+    CLAP_PROCESS_SLEEP, CLAP_VERSION_1, CLAP_WINDOW_API_WIN32,
 };
 
 pub const PLUGIN_ID: &str = "echoes.test.gain";
@@ -127,7 +147,8 @@ const TIMER_LAST_FIRED: u32 = 28;
 const TIMER_AUDIO_CALLS: u32 = 29;
 const PRESET_LOADED: u32 = 30;
 const PRESET_ERROR: u32 = 31;
-const PARAM_COUNT: u32 = 32;
+const PRESET_TONE: u32 = 32;
+const PARAM_COUNT: u32 = 33;
 /// `Timer register result` / `Timer unregister result` once the host answered.
 const TIMER_ACCEPTED: u32 = 1;
 const TIMER_REFUSED: u32 = 2;
@@ -189,11 +210,171 @@ static FACTORY: ClapPluginFactory = ClapPluginFactory {
 };
 
 unsafe extern "C" fn entry_get_factory(id: *const c_char) -> *const c_void {
-    if CStr::from_ptr(id).to_bytes_with_nul() == CLAP_PLUGIN_FACTORY_ID {
+    let id = CStr::from_ptr(id).to_bytes_with_nul();
+    if id == CLAP_PLUGIN_FACTORY_ID {
         &FACTORY as *const ClapPluginFactory as *const c_void
+    } else if id == CLAP_PRESET_DISCOVERY_FACTORY_ID {
+        &PRESET_FACTORY.0 as *const ClapPresetDiscoveryFactory as *const c_void
     } else {
         std::ptr::null()
     }
+}
+
+// ── clap.preset-discovery-factory ──────────────────────────────────────────────
+
+/// Directory whose `.testpreset` files the user location offers.
+const PRESET_DIRECTORY_VARIABLE: &str = "ECHOES_TEST_PRESET_DIR";
+const PRESET_CRASH_VARIABLE: &str = "ECHOES_TEST_PRESET_CRASH";
+
+#[cfg(windows)]
+#[link(name = "kernel32")]
+extern "system" {
+    fn RaiseException(code: u32, flags: u32, argument_count: u32, arguments: *const usize);
+}
+
+/// A structured exception, which the host's crash guard has to catch.
+fn fault() {
+    #[cfg(windows)]
+    // SAFETY: raises a non-continuable exception with no arguments.
+    unsafe {
+        RaiseException(0xE000_0001, 1, 0, std::ptr::null());
+    }
+}
+
+struct PresetFactory(ClapPresetDiscoveryFactory);
+struct PresetProviderDescriptor(ClapPresetProviderDescriptor);
+// SAFETY: every pointer targets 'static, immutable data.
+unsafe impl Sync for PresetFactory {}
+unsafe impl Sync for PresetProviderDescriptor {}
+
+static PRESET_FACTORY: PresetFactory = PresetFactory(ClapPresetDiscoveryFactory {
+    count: preset_factory_count,
+    get_descriptor: preset_factory_descriptor,
+    create: preset_factory_create,
+});
+
+static PRESET_PROVIDER_DESCRIPTOR: PresetProviderDescriptor =
+    PresetProviderDescriptor(ClapPresetProviderDescriptor {
+        clap_version: CLAP_VERSION_1,
+        id: c"echoes.test.presets".as_ptr(),
+        name: c"Echoes test presets".as_ptr(),
+        vendor: c"Echoes Studio".as_ptr(),
+    });
+
+/// What a provider keeps between `create` and `destroy`.
+struct PresetProviderData {
+    indexer: *const ClapPresetIndexer,
+}
+
+unsafe extern "C" fn preset_factory_count(_: *const ClapPresetDiscoveryFactory) -> u32 {
+    1
+}
+
+unsafe extern "C" fn preset_factory_descriptor(
+    _: *const ClapPresetDiscoveryFactory,
+    index: u32,
+) -> *const ClapPresetProviderDescriptor {
+    if index == 0 {
+        &PRESET_PROVIDER_DESCRIPTOR.0
+    } else {
+        std::ptr::null()
+    }
+}
+
+unsafe extern "C" fn preset_factory_create(
+    _: *const ClapPresetDiscoveryFactory,
+    indexer: *const ClapPresetIndexer,
+    provider_id: *const c_char,
+) -> *const ClapPresetProvider {
+    if CStr::from_ptr(provider_id) != c"echoes.test.presets" {
+        return std::ptr::null();
+    }
+    Box::into_raw(Box::new(ClapPresetProvider {
+        desc: &PRESET_PROVIDER_DESCRIPTOR.0,
+        provider_data: Box::into_raw(Box::new(PresetProviderData { indexer })) as *mut c_void,
+        init: preset_provider_init,
+        destroy: preset_provider_destroy,
+        get_metadata: preset_provider_get_metadata,
+        get_extension: preset_provider_get_extension,
+    }))
+}
+
+unsafe extern "C" fn preset_provider_init(provider: *const ClapPresetProvider) -> bool {
+    let indexer = &*(*((*provider).provider_data as *const PresetProviderData)).indexer;
+    let filetype = ClapPresetFiletype {
+        name: c"Test preset".as_ptr(),
+        description: std::ptr::null(),
+        file_extension: c"testpreset".as_ptr(),
+    };
+    let bundled = ClapPresetLocation {
+        flags: CLAP_PRESET_IS_FACTORY_CONTENT,
+        name: c"Bundled".as_ptr(),
+        kind: CLAP_PRESET_LOCATION_PLUGIN,
+        location: std::ptr::null(),
+    };
+    let mut declared = (indexer.declare_filetype)(indexer, &filetype)
+        && (indexer.declare_location)(indexer, &bundled);
+    if let Ok(directory) = std::env::var(PRESET_DIRECTORY_VARIABLE) {
+        let directory = std::ffi::CString::new(directory).unwrap_or_default();
+        let user = ClapPresetLocation {
+            flags: CLAP_PRESET_IS_USER_CONTENT,
+            name: c"User".as_ptr(),
+            kind: CLAP_PRESET_LOCATION_FILE,
+            location: directory.as_ptr(),
+        };
+        declared &= (indexer.declare_location)(indexer, &user);
+    }
+    declared
+}
+
+unsafe extern "C" fn preset_provider_destroy(provider: *const ClapPresetProvider) {
+    let provider = Box::from_raw(provider as *mut ClapPresetProvider);
+    drop(Box::from_raw(
+        provider.provider_data as *mut PresetProviderData,
+    ));
+}
+
+unsafe extern "C" fn preset_provider_get_extension(
+    _: *const ClapPresetProvider,
+    _: *const c_char,
+) -> *const c_void {
+    std::ptr::null()
+}
+
+unsafe fn preset_for(receiver: *const ClapPresetMetadataReceiver, plugin: &CStr) {
+    let id = ClapUniversalPluginId {
+        abi: c"clap".as_ptr(),
+        id: plugin.as_ptr(),
+    };
+    ((*receiver).add_plugin_id)(receiver, &id);
+}
+
+unsafe extern "C" fn preset_provider_get_metadata(
+    _: *const ClapPresetProvider,
+    location_kind: u32,
+    _: *const c_char,
+    receiver: *const ClapPresetMetadataReceiver,
+) -> bool {
+    if std::env::var_os(PRESET_CRASH_VARIABLE).is_some() {
+        fault();
+    }
+    let gain = c"echoes.test.gain";
+    let r = &*receiver;
+    if location_kind == CLAP_PRESET_LOCATION_FILE {
+        (r.begin_preset)(receiver, std::ptr::null(), std::ptr::null());
+        preset_for(receiver, gain);
+        return true;
+    }
+    (r.begin_preset)(receiver, c"Quiet".as_ptr(), c"quiet".as_ptr());
+    preset_for(receiver, gain);
+    (r.add_creator)(receiver, c"Echoes".as_ptr());
+    (r.add_feature)(receiver, c"quiet".as_ptr());
+    (r.begin_preset)(receiver, c"Loud".as_ptr(), c"loud".as_ptr());
+    preset_for(receiver, gain);
+    (r.begin_preset)(receiver, c"Sleepy only".as_ptr(), c"sleepy".as_ptr());
+    preset_for(receiver, c"echoes.test.sleepy");
+    (r.begin_preset)(receiver, c"Names nobody".as_ptr(), c"nobody".as_ptr());
+    true
 }
 
 unsafe extern "C" fn factory_count(_: *const ClapPluginFactory) -> u32 {
@@ -243,6 +424,7 @@ struct State {
     timer_calls: AtomicU32,
     timer_last_fired: AtomicU32,
     timer_audio_calls: AtomicU32,
+    tone: AtomicU64,
 }
 
 unsafe extern "C" fn factory_create(
@@ -288,6 +470,7 @@ unsafe extern "C" fn factory_create(
         timer_calls: AtomicU32::new(0),
         timer_last_fired: AtomicU32::new(0),
         timer_audio_calls: AtomicU32::new(0),
+        tone: AtomicU64::new(0.5f64.to_bits()),
     });
     Box::into_raw(Box::new(ClapPlugin {
         desc: &descriptor.0,
@@ -492,6 +675,70 @@ fn report_preset_error(state: &State) {
     }
 }
 
+static PRESET_LOAD: ClapPluginPresetLoad = ClapPluginPresetLoad {
+    from_location: preset_load_from_location,
+};
+
+/// `(gain, tone, delay in ms)` of a preset, as a plugin would read its own format.
+fn read_preset(
+    kind: u32,
+    location: *const c_char,
+    load_key: *const c_char,
+) -> Option<(f64, f64, u64)> {
+    if kind == CLAP_PRESET_LOCATION_PLUGIN {
+        // SAFETY: the host gives NUL-terminated strings, or null.
+        let key = unsafe { load_key.as_ref().map(|_| CStr::from_ptr(load_key)) }?;
+        return match key.to_bytes() {
+            b"quiet" => Some((0.5, 0.1, 0)),
+            b"loud" => Some((2.0, 0.9, 0)),
+            b"sleepy" => Some((1.0, 0.5, 0)),
+            _ => None,
+        };
+    }
+    // SAFETY: as above.
+    let path = unsafe { location.as_ref().map(|_| CStr::from_ptr(location)) }?;
+    let text = std::fs::read_to_string(path.to_str().ok()?).ok()?;
+    let mut words = text.split_whitespace();
+    let gain = words.next()?.parse().ok()?;
+    let tone = words.next()?.parse().ok()?;
+    let delay = words.next().map_or(Some(0), |word| word.parse().ok())?;
+    Some((gain, tone, delay))
+}
+
+unsafe extern "C" fn preset_load_from_location(
+    plugin: *const ClapPlugin,
+    kind: u32,
+    location: *const c_char,
+    load_key: *const c_char,
+) -> bool {
+    let state = state(plugin);
+    let presets = host_preset_load(state);
+    let Some((gain, tone, delay)) = read_preset(kind, location, load_key) else {
+        if let Some(presets) = presets {
+            (presets.on_error)(
+                state.host,
+                kind,
+                location,
+                load_key,
+                2,
+                c"unreadable preset".as_ptr(),
+            );
+        }
+        return false;
+    };
+    if delay > 0 {
+        std::thread::sleep(std::time::Duration::from_millis(delay));
+    }
+    state.gain.store(gain.to_bits(), Ordering::Relaxed);
+    state.tone.store(tone.to_bits(), Ordering::Relaxed);
+    if kind == CLAP_PRESET_LOCATION_PLUGIN {
+        if let Some(presets) = presets {
+            (presets.loaded)(state.host, kind, location, load_key);
+        }
+    }
+    true
+}
+
 fn on_audio_thread(state: &State) -> bool {
     // SAFETY: the host outlives the plugin; its extension tables are static.
     unsafe {
@@ -634,6 +881,9 @@ fn apply_param(state: &mut State, header: &ClapEventHeader) {
         }
         (CLAP_EVENT_PARAM_VALUE, PRESET_LOADED) if on => report_preset_loaded(state),
         (CLAP_EVENT_PARAM_VALUE, PRESET_ERROR) if on => report_preset_error(state),
+        (CLAP_EVENT_PARAM_VALUE, PRESET_TONE) => {
+            state.tone.store(event.value.to_bits(), Ordering::Relaxed)
+        }
         _ => {}
     }
 }
@@ -918,6 +1168,8 @@ unsafe extern "C" fn plugin_get_extension(
         &AUDIO_PORTS as *const ClapPluginAudioPorts as *const c_void
     } else if id == CLAP_EXT_NOTE_NAME {
         &NOTE_NAME as *const ClapPluginNoteName as *const c_void
+    } else if id == CLAP_EXT_PRESET_LOAD {
+        &PRESET_LOAD as *const ClapPluginPresetLoad as *const c_void
     } else if id == CLAP_EXT_TRACK_INFO {
         &TRACK_INFO as *const ClapPluginTrackInfo as *const c_void
     } else if id == CLAP_EXT_TIMER_SUPPORT {
@@ -1048,6 +1300,7 @@ unsafe extern "C" fn params_info(
         TIMER_AUDIO_CALLS => (b"Timer audio calls", f64::from(u32::MAX), 0.0, 0),
         PRESET_LOADED => (b"Preset loaded", 1.0, 0.0, CLAP_PARAM_IS_AUTOMATABLE),
         PRESET_ERROR => (b"Preset error", 1.0, 0.0, CLAP_PARAM_IS_AUTOMATABLE),
+        PRESET_TONE => (b"Preset tone", 1.0, 0.5, CLAP_PARAM_IS_AUTOMATABLE),
         _ => return false,
     };
     let info = &mut *info;
@@ -1084,6 +1337,7 @@ unsafe extern "C" fn params_value(plugin: *const ClapPlugin, id: u32, value: *mu
         TIMER_CALLS => f64::from(state.timer_calls.load(Ordering::Relaxed)),
         TIMER_LAST_FIRED => f64::from(state.timer_last_fired.load(Ordering::Relaxed)),
         TIMER_AUDIO_CALLS => f64::from(state.timer_audio_calls.load(Ordering::Relaxed)),
+        PRESET_TONE => f64::from_bits(state.tone.load(Ordering::Relaxed)),
         _ => return false,
     };
     true
