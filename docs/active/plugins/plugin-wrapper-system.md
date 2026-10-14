@@ -566,6 +566,41 @@ real window for a moment. The test plugin gained a stub `clap.gui`, the plugin
 `clap.timer-support` and eight parameters (ids 22–29, `Timer register` …
 `Timer audio calls`): 30 in all.
 
+**Host `clap.preset-load` (2026-10-14).** Checked against
+`clap/ext/preset-load.h` (CLAP main; ids `clap.preset-load/2` and the compat id
+`clap.preset-load.draft/2`, "may be removed in 2026"). The host side is
+`clap_host_preset_load { on_error(host, location_kind, location, load_key,
+os_error, msg), loaded(host, location_kind, location, load_key) }`, both
+`[main-thread]`; `location` and `load_key` may be null. The plugin side
+(`from_location`, asking a plugin to load a preset file) is not used yet — it
+belongs to preset discovery.
+
+- _`loaded`._ A preset picked in the plugin's own window changes its state without
+  the host knowing, so `loaded` raises the same unsaved-changes flag as
+  `clap.state.mark_dirty` (`mark_plugin_state_edited`, one atomic store). The
+  location and key are not kept. The state itself needs nothing more: it is saved
+  with the project like any other (ADR-010). Parameter values are refreshed by
+  the plugin's own `clap.params.rescan(VALUES)`, as before.
+- _`on_error`._ Logged on stderr (`[clap.preset-load] <location> (os error N):
+  <message>`), never from the audio thread; it changes no state and does not
+  mark the project unsaved.
+- _Threads._ The spec reserves both for the main thread, but each is one atomic
+  store or one log line, so a call from any thread is harmless (the audio thread's
+  log line is dropped).
+- _Sandbox._ `loaded` reaches the engine through `BLOCK_PLUGIN_EDITED`, the flag
+  `mark_dirty` already uses. No op, no new flag, `BRIDGE_PROTOCOL_VERSION`
+  unchanged (ADR-015 amendment 2026-10-14).
+- _Limits._ No preset list, no `from_location` call, no UI: the user still picks
+  presets in the plugin's window. Not yet tried with real plugins.
+
+Tests: `crates/clap_ffi` (`presets.rs`: both ids answered with one table, `loaded`
+marks the project unsaved once, `on_error` does not and tolerates null strings),
+`crates/plugin_host_bridge/tests/bridge.rs` (the test plugin calls both host
+functions from its process: only `loaded` comes back as an edit, once). The test
+plugin gained `Preset loaded` (30) and `Preset error` (31): 32 parameters in all.
+In process, the real-plugin call is not tested: the unsaved flag is process-wide
+and another unit test of the app reads it.
+
 ---
 
 ## Editor Windows — DPI (Windows)

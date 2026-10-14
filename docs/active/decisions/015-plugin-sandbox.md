@@ -829,3 +829,10 @@ control requests (a very slow one can hit the engine's control timeout); a plugi
 crash ends its timers with the process. The engine knows nothing about them.
 Tests: `plugin_host_bridge/tests/bridge.rs` (a real editor window),
 `plugin_system/sandbox_tests.rs`.
+
+### Amendment 2026-10-14 — `clap.preset-load` through the bridge
+
+The bridge hosts the plugin's `clap.preset-load` with no new control op and no
+protocol change: a preset reported as loaded sets the process-wide edit flag the
+bridge already forwards as `BLOCK_PLUGIN_EDITED` (as for `clap.state.mark_dirty`),
+and an error is logged by the bridge process. Test: `plugin_host_bridge/tests/bridge.rs`.

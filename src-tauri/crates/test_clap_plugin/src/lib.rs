@@ -51,6 +51,10 @@
 //! - 29 `Timer audio calls` — read-only: `on_timer` calls `clap.thread-check`
 //!   reported as the audio thread (always 0 when the host behaves).
 //!
+//! - 30 `Preset loaded` — setting it calls the host's `clap.preset-load.loaded`, as
+//!   a preset picked in the plugin's window would;
+//! - 31 `Preset error` — setting it calls the host's `clap.preset-load.on_error`.
+//!
 //! `Gain` renders its value as decibels through `clap.params.value_to_text`.
 //!
 //! A second plugin, `echoes.test.sleepy`, is the same code reporting `SLEEP`
@@ -72,18 +76,19 @@ use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, AtomicU64, Ordering};
 use clap_ffi::{
     ClapAudioPortInfo, ClapEventHeader, ClapEventNote, ClapEventParamGesture, ClapEventParamValue,
     ClapGuiExtension, ClapHost, ClapHostLatency, ClapHostNoteName, ClapHostNotePorts,
-    ClapHostParams, ClapHostState, ClapHostTail, ClapHostThreadCheck, ClapHostTimerSupport,
-    ClapHostTrackInfo, ClapIStream, ClapInputEvents, ClapNoteName, ClapOStream, ClapOutputEvents,
-    ClapParamInfo, ClapPlugin, ClapPluginAudioPorts, ClapPluginDescriptor, ClapPluginEntry,
-    ClapPluginFactory, ClapPluginLatency, ClapPluginNoteName, ClapPluginParams, ClapPluginState,
-    ClapPluginTail, ClapPluginTimerSupport, ClapPluginTrackInfo, ClapProcess, ClapProcessStatus,
-    ClapTrackInfo, ClapWindow, CLAP_AUDIO_PORT_IS_MAIN, CLAP_CORE_EVENT_SPACE, CLAP_EVENT_NOTE_OFF,
-    CLAP_EVENT_NOTE_ON, CLAP_EVENT_PARAM_GESTURE_END, CLAP_EVENT_PARAM_MOD, CLAP_EVENT_PARAM_VALUE,
+    ClapHostParams, ClapHostPresetLoad, ClapHostState, ClapHostTail, ClapHostThreadCheck,
+    ClapHostTimerSupport, ClapHostTrackInfo, ClapIStream, ClapInputEvents, ClapNoteName,
+    ClapOStream, ClapOutputEvents, ClapParamInfo, ClapPlugin, ClapPluginAudioPorts,
+    ClapPluginDescriptor, ClapPluginEntry, ClapPluginFactory, ClapPluginLatency,
+    ClapPluginNoteName, ClapPluginParams, ClapPluginState, ClapPluginTail, ClapPluginTimerSupport,
+    ClapPluginTrackInfo, ClapProcess, ClapProcessStatus, ClapTrackInfo, ClapWindow,
+    CLAP_AUDIO_PORT_IS_MAIN, CLAP_CORE_EVENT_SPACE, CLAP_EVENT_NOTE_OFF, CLAP_EVENT_NOTE_ON,
+    CLAP_EVENT_PARAM_GESTURE_END, CLAP_EVENT_PARAM_MOD, CLAP_EVENT_PARAM_VALUE,
     CLAP_EXT_AUDIO_PORTS, CLAP_EXT_GUI, CLAP_EXT_LATENCY, CLAP_EXT_NOTE_NAME, CLAP_EXT_NOTE_PORTS,
-    CLAP_EXT_PARAMS, CLAP_EXT_STATE, CLAP_EXT_TAIL, CLAP_EXT_THREAD_CHECK, CLAP_EXT_TIMER_SUPPORT,
-    CLAP_EXT_TRACK_INFO, CLAP_PARAM_IS_AUTOMATABLE, CLAP_PARAM_IS_MODULATABLE,
-    CLAP_PLUGIN_FACTORY_ID, CLAP_PROCESS_CONTINUE, CLAP_PROCESS_SLEEP, CLAP_VERSION_1,
-    CLAP_WINDOW_API_WIN32,
+    CLAP_EXT_PARAMS, CLAP_EXT_PRESET_LOAD, CLAP_EXT_STATE, CLAP_EXT_TAIL, CLAP_EXT_THREAD_CHECK,
+    CLAP_EXT_TIMER_SUPPORT, CLAP_EXT_TRACK_INFO, CLAP_PARAM_IS_AUTOMATABLE,
+    CLAP_PARAM_IS_MODULATABLE, CLAP_PLUGIN_FACTORY_ID, CLAP_PROCESS_CONTINUE, CLAP_PROCESS_SLEEP,
+    CLAP_VERSION_1, CLAP_WINDOW_API_WIN32,
 };
 
 pub const PLUGIN_ID: &str = "echoes.test.gain";
@@ -120,7 +125,9 @@ const TIMER_UNREGISTER_RESULT: u32 = 26;
 const TIMER_CALLS: u32 = 27;
 const TIMER_LAST_FIRED: u32 = 28;
 const TIMER_AUDIO_CALLS: u32 = 29;
-const PARAM_COUNT: u32 = 30;
+const PRESET_LOADED: u32 = 30;
+const PRESET_ERROR: u32 = 31;
+const PARAM_COUNT: u32 = 32;
 /// `Timer register result` / `Timer unregister result` once the host answered.
 const TIMER_ACCEPTED: u32 = 1;
 const TIMER_REFUSED: u32 = 2;
@@ -444,6 +451,47 @@ unsafe extern "C" fn timer_on_timer(plugin: *const ClapPlugin, timer_id: u32) {
     state.timer_calls.fetch_add(1, Ordering::Relaxed);
 }
 
+fn host_preset_load(state: &State) -> Option<&ClapHostPresetLoad> {
+    // SAFETY: the host outlives the plugin; its extension tables are static.
+    unsafe {
+        let extension = ((*state.host).get_extension)(
+            state.host,
+            CLAP_EXT_PRESET_LOAD.as_ptr() as *const c_char,
+        );
+        (extension as *const ClapHostPresetLoad).as_ref()
+    }
+}
+
+fn report_preset_loaded(state: &State) {
+    if let Some(presets) = host_preset_load(state) {
+        // SAFETY: the location is a NUL-terminated literal; the load key may be null.
+        unsafe {
+            (presets.loaded)(
+                state.host,
+                0,
+                c"/presets/warm.clap-preset".as_ptr(),
+                std::ptr::null(),
+            )
+        };
+    }
+}
+
+fn report_preset_error(state: &State) {
+    if let Some(presets) = host_preset_load(state) {
+        // SAFETY: the strings are NUL-terminated literals; the load key may be null.
+        unsafe {
+            (presets.on_error)(
+                state.host,
+                0,
+                c"/presets/missing.clap-preset".as_ptr(),
+                std::ptr::null(),
+                2,
+                c"file not found".as_ptr(),
+            )
+        };
+    }
+}
+
 fn on_audio_thread(state: &State) -> bool {
     // SAFETY: the host outlives the plugin; its extension tables are static.
     unsafe {
@@ -584,6 +632,8 @@ fn apply_param(state: &mut State, header: &ClapEventHeader) {
         (CLAP_EVENT_PARAM_VALUE, TIMER_UNREGISTER) => {
             unregister_timer(state, event.value.round() as u32)
         }
+        (CLAP_EVENT_PARAM_VALUE, PRESET_LOADED) if on => report_preset_loaded(state),
+        (CLAP_EVENT_PARAM_VALUE, PRESET_ERROR) if on => report_preset_error(state),
         _ => {}
     }
 }
@@ -996,6 +1046,8 @@ unsafe extern "C" fn params_info(
         TIMER_CALLS => (b"Timer calls", f64::from(u32::MAX), 0.0, 0),
         TIMER_LAST_FIRED => (b"Timer last fired", f64::from(u32::MAX), 0.0, 0),
         TIMER_AUDIO_CALLS => (b"Timer audio calls", f64::from(u32::MAX), 0.0, 0),
+        PRESET_LOADED => (b"Preset loaded", 1.0, 0.0, CLAP_PARAM_IS_AUTOMATABLE),
+        PRESET_ERROR => (b"Preset error", 1.0, 0.0, CLAP_PARAM_IS_AUTOMATABLE),
         _ => return false,
     };
     let info = &mut *info;

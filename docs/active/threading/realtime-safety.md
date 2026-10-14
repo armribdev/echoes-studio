@@ -318,6 +318,10 @@ would make the audio thread bypass the blocks it overlaps; it only skips a tick
 while another off-RT caller holds the gate. The offline render opens no editor,
 so it never calls `on_timer` (C-2).
 
+Host `clap.preset-load` (2026-10-14) adds no audio-thread work and takes no lock:
+`loaded` is one atomic store (the unsaved-changes flag); `on_error` prints, but
+returns first when called from the audio thread.
+
 ### Crash marker (ADR-015)
 
 In-process plugin wrappers mark the running plugin in a memory-mapped file

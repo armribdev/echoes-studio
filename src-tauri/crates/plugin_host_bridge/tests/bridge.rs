@@ -53,7 +53,9 @@ const TIMER_UNREGISTER_RESULT: u32 = 26;
 const TIMER_CALLS: u32 = 27;
 const TIMER_LAST_FIRED: u32 = 28;
 const TIMER_AUDIO_CALLS: u32 = 29;
-const PARAM_COUNT: u32 = 30;
+const PRESET_LOADED: u32 = 30;
+const PRESET_ERROR: u32 = 31;
+const PARAM_COUNT: u32 = 32;
 const FRAMES: usize = 64;
 const CHANNELS: usize = 2;
 const TIMEOUT: Duration = Duration::from_secs(5);
@@ -655,6 +657,30 @@ fn block_flags(bridge: &BridgeProcess, sequence: u64, events: &[u8]) -> u32 {
         panic!("block not processed: {:?}", block.outcome);
     };
     flags
+}
+
+#[test]
+fn a_preset_loaded_by_the_plugin_comes_back_as_an_edit_and_an_error_does_not() {
+    let bridge = activated();
+
+    let failed = param_events(&[(CLAP_EVENT_PARAM_VALUE, PRESET_ERROR, 1.0)]);
+    assert_eq!(
+        block_flags(&bridge, 0, &failed) & BLOCK_PLUGIN_EDITED,
+        0,
+        "a failed load changed nothing"
+    );
+
+    let loaded = param_events(&[(CLAP_EVENT_PARAM_VALUE, PRESET_LOADED, 1.0)]);
+    assert_ne!(
+        block_flags(&bridge, 1, &loaded) & BLOCK_PLUGIN_EDITED,
+        0,
+        "clap.preset-load.loaded is forwarded"
+    );
+    assert_eq!(
+        block_flags(&bridge, 2, &[]) & BLOCK_PLUGIN_EDITED,
+        0,
+        "reported once"
+    );
 }
 
 #[test]

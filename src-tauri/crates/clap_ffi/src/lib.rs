@@ -25,10 +25,12 @@ use std::ffi::{c_char, c_void};
 use std::path::Path;
 
 mod notes;
+mod presets;
 mod process_sleep;
 mod timers;
 mod track_info;
 pub use notes::*;
+pub use presets::*;
 pub use process_sleep::*;
 pub use timers::*;
 pub use track_info::*;
@@ -382,6 +384,9 @@ pub unsafe extern "C" fn host_get_extension(
     }
     if id == CLAP_EXT_TIMER_SUPPORT {
         return &timers::HOST_TIMER_SUPPORT as *const ClapHostTimerSupport as *const c_void;
+    }
+    if id == CLAP_EXT_PRESET_LOAD || id == CLAP_EXT_PRESET_LOAD_COMPAT {
+        return &presets::HOST_PRESET_LOAD as *const ClapHostPresetLoad as *const c_void;
     }
     std::ptr::null()
 }

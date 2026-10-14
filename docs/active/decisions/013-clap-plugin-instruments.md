@@ -224,3 +224,14 @@ ids are unique per plugin and never reused. The offline render opens no editor
 and is unchanged (C-2). No invariant changes (no new ADR). Details:
 `../plugins/plugin-wrapper-system.md` (Host `clap.timer-support`); sandbox:
 ADR-015 amendment 2026-10-14.
+
+## Amendment 2026-10-14 — the host answers `clap.preset-load`
+
+A plugin (effect or instrument) tells the host that it loaded a preset (`loaded`)
+or failed to (`on_error`). `loaded` raises the unsaved-changes flag already used
+by `clap.state.mark_dirty`; `on_error` is only logged. No state, command, event or
+`.echoes` change: the plugin's state is saved as a blob, as before (ADR-010
+unchanged). The host does not yet list or load presets (`from_location`,
+preset discovery): that would be a separate decision. No invariant changes (no new
+ADR). Details: `../plugins/plugin-wrapper-system.md` (Host `clap.preset-load`);
+sandbox: ADR-015 amendment 2026-10-14.
