@@ -13,11 +13,12 @@ use crate::audio_graph::midi::{MidiEvent, MidiEventKind, MidiEventList};
 use crate::audio_graph::node::{AudioNode, PrepareContext, TransportInfo};
 use crate::audio_graph::nodes::instrument::InstrumentDevice;
 use crate::plugin_formats::clap::ffi::{
-    take_plugin_params_rescan, ClapPluginParams, HostTrackInfo, CLAP_EXT_PARAMS,
-    CLAP_PARAM_RESCAN_INFO, CLAP_PARAM_RESCAN_TEXT,
+    take_plugin_note_names_changed, take_plugin_params_rescan, ClapPluginParams, HostTrackInfo,
+    CLAP_EXT_PARAMS, CLAP_NOTE_DIALECT_CLAP, CLAP_NOTE_DIALECT_MIDI, CLAP_NOTE_PORTS_RESCAN_ALL,
+    CLAP_NOTE_PORTS_RESCAN_NAMES, CLAP_PARAM_RESCAN_INFO, CLAP_PARAM_RESCAN_TEXT,
 };
 use crate::plugin_formats::clap::params::flush_clap_param_values;
-use crate::plugin_system::host::{PluginHost, PluginIsolation, UnavailableReason};
+use crate::plugin_system::host::{PluginHost, PluginIsolation, PluginNoteName, UnavailableReason};
 use crate::plugin_system::instance::take_undelivered_track_info;
 use crate::plugin_system::lifecycle::LifecycleState;
 use crate::plugin_system::registry::PluginManifest;
@@ -45,7 +46,10 @@ const TRACK_NAME_LENGTH: u32 = 15;
 const TRACK_INFO_READS: u32 = 16;
 const TRACK_INFO_CHANGES: u32 = 17;
 const TRACK_INFO_AUDIO_CALLS: u32 = 18;
-const PARAM_COUNT: usize = 19;
+const NOTE_NAMES_SET: u32 = 19;
+const NOTE_PORTS_RESCAN: u32 = 20;
+const HOST_NOTE_DIALECTS: u32 = 21;
+const PARAM_COUNT: usize = 22;
 const HAS_NAME: f64 = 1.0;
 const HAS_NAME_AND_COLOR: f64 = 3.0;
 const TAIL_RANGE: f32 = 1_000_000.0;
@@ -973,4 +977,122 @@ fn a_sandboxed_plugin_that_crashed_is_skipped_without_waiting() {
         started.elapsed() < std::time::Duration::from_millis(500),
         "a dead bridge is not asked"
     );
+}
+
+// ── clap.note-ports and clap.note-name ─────────────────────────────────────────
+
+fn kick_and_snare() -> Vec<PluginNoteName> {
+    vec![
+        PluginNoteName {
+            name: "Kick".into(),
+            port: -1,
+            key: 36,
+            channel: -1,
+        },
+        PluginNoteName {
+            name: "Snare".into(),
+            port: -1,
+            key: 38,
+            channel: -1,
+        },
+    ]
+}
+
+fn tom() -> Vec<PluginNoteName> {
+    vec![PluginNoteName {
+        name: "Tom".into(),
+        port: 0,
+        key: 41,
+        channel: 9,
+    }]
+}
+
+fn the_host_tells_the_plugin_which_note_dialects_it_sends(sandboxed: bool) {
+    let mut host = host();
+    let _node = prepared(&mut host, sandboxed, false);
+
+    assert_eq!(
+        seen(&host, KEY, HOST_NOTE_DIALECTS),
+        f64::from(CLAP_NOTE_DIALECT_CLAP | CLAP_NOTE_DIALECT_MIDI)
+    );
+}
+
+#[test]
+fn the_host_tells_an_in_process_plugin_which_note_dialects_it_sends() {
+    the_host_tells_the_plugin_which_note_dialects_it_sends(false);
+}
+
+#[test]
+fn the_host_tells_a_sandboxed_plugin_which_note_dialects_it_sends() {
+    the_host_tells_the_plugin_which_note_dialects_it_sends(true);
+}
+
+fn the_note_names_of_a_plugin_are_read(sandboxed: bool) {
+    let mut host = host();
+    let _node = prepared(&mut host, sandboxed, false);
+
+    assert_eq!(host.plugin_note_names(KEY), Some(kick_and_snare()));
+    assert_eq!(host.plugin_note_names("unknown"), None);
+
+    flush_plugin_values(&host, KEY, &[(NOTE_NAMES_SET, 1.0)]);
+    assert_eq!(host.plugin_note_names(KEY), Some(tom()));
+}
+
+#[test]
+fn the_note_names_of_an_in_process_plugin_are_read() {
+    the_note_names_of_a_plugin_are_read(false);
+}
+
+#[test]
+fn the_note_names_of_a_sandboxed_plugin_are_read() {
+    the_note_names_of_a_plugin_are_read(true);
+}
+
+/// One test for both modes: the flag is process-wide.
+#[test]
+fn a_change_of_note_names_reaches_the_app_in_process_and_sandboxed() {
+    let mut host = host();
+    take_plugin_note_names_changed();
+
+    let _in_process = prepared(&mut host, false, false);
+    assert!(!take_plugin_note_names_changed(), "nothing changed yet");
+    flush_plugin_values(&host, KEY, &[(NOTE_NAMES_SET, 1.0)]);
+    assert!(take_plugin_note_names_changed());
+    assert!(!take_plugin_note_names_changed(), "reported once");
+    flush_plugin_values(&host, KEY, &[(NOTE_NAMES_SET, 1.0)]);
+    assert!(
+        !take_plugin_note_names_changed(),
+        "the plugin tells the host only when its names change"
+    );
+
+    let mut sandboxed = prepared(&mut host, true, false);
+    flush_plugin_values(&host, KEY, &[(NOTE_NAMES_SET, 1.0)]);
+    run_block(&mut sandboxed);
+    assert!(take_plugin_note_names_changed());
+    assert_eq!(host.plugin_note_names(KEY), Some(tom()));
+}
+
+#[test]
+fn a_rescan_of_all_note_ports_makes_an_in_process_plugin_restart() {
+    let mut host = host();
+    let _node = prepared(&mut host, false, false);
+    let instance = host.instance_by_key(KEY).unwrap();
+    let context = instance.clap_host_context().unwrap();
+
+    flush_plugin_values(
+        &host,
+        KEY,
+        &[(NOTE_PORTS_RESCAN, f64::from(CLAP_NOTE_PORTS_RESCAN_NAMES))],
+    );
+    assert!(
+        !context.take_restart_request(),
+        "a renamed port is not news"
+    );
+
+    flush_plugin_values(
+        &host,
+        KEY,
+        &[(NOTE_PORTS_RESCAN, f64::from(CLAP_NOTE_PORTS_RESCAN_ALL))],
+    );
+    assert!(context.take_restart_request());
 }

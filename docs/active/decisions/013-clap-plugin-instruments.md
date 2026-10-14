@@ -198,3 +198,13 @@ command or file-format change. Only the name and color are reported — no audio
 channels, no return / bus / master flags (the project has none). No invariant
 changes (no new ADR). Details: `../plugins/plugin-wrapper-system.md` (Host
 `clap.track-info`); sandbox: ADR-015 amendment 2026-10-14.
+
+## Amendment 2026-10-14 — the host answers `clap.note-ports` and `clap.note-name`
+
+The host announces the dialects it sends to an instrument (CLAP notes + raw MIDI)
+through `clap.note-ports`; a rescan of all ports is a restart request. It still
+does not read the plugin's note ports nor filter by dialect (ADR-022 unchanged).
+It reads an instrument's note names (`clap.note-name`, e.g. drum pads) on demand
+and reports `changed` as the `plugin-note-names-changed` event; no UI uses them
+yet. No invariant changes (no new ADR). Details: `../plugins/plugin-wrapper-system.md`
+(Host `clap.note-ports` and `clap.note-name`); sandbox: ADR-015 amendment 2026-10-14.

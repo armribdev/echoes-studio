@@ -20,8 +20,8 @@ use clap_ffi::{
     CLAP_PROCESS_ERROR, CLAP_TRANSPORT_IS_PLAYING,
 };
 use plugin_bridge::protocol::{
-    BLOCK_PARAMS_RESCAN_MASK, BLOCK_PARAMS_RESCAN_SHIFT, BLOCK_PASSED_THROUGH, BLOCK_PLUGIN_EDITED,
-    BLOCK_RESTART_REQUESTED,
+    BLOCK_NOTE_NAMES_CHANGED, BLOCK_PARAMS_RESCAN_MASK, BLOCK_PARAMS_RESCAN_SHIFT,
+    BLOCK_PASSED_THROUGH, BLOCK_PLUGIN_EDITED, BLOCK_RESTART_REQUESTED,
 };
 use plugin_bridge::session::{BlockContext, BridgeProcessor, EventWriter};
 
@@ -231,6 +231,13 @@ impl LoadedPlugin {
             .unwrap_or_default()
     }
 
+    /// The plugin's note names in the wire form of `clap_ffi::encode_note_names`;
+    /// empty when it has none.
+    pub fn note_names(&self) -> Vec<u8> {
+        // SAFETY: main thread.
+        clap_ffi::encode_note_names(&unsafe { clap_ffi::read_note_names(self.plugin) })
+    }
+
     /// Main thread.  Records the plugin's track and, when it changed, tells the
     /// plugin; `process` is not held back, CLAP lets the two run together.
     pub fn set_track_info(&self, info: &HostTrackInfo) {
@@ -409,6 +416,9 @@ fn signal_flags() -> u32 {
     }
     if clap_ffi::take_plugin_restart_requested() {
         flags |= BLOCK_RESTART_REQUESTED;
+    }
+    if clap_ffi::take_plugin_note_names_changed() {
+        flags |= BLOCK_NOTE_NAMES_CHANGED;
     }
     let rescan = clap_ffi::take_plugin_params_rescan() << BLOCK_PARAMS_RESCAN_SHIFT;
     flags | (rescan & BLOCK_PARAMS_RESCAN_MASK)

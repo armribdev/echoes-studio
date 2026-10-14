@@ -300,6 +300,12 @@ main thread when sandboxed), `changed()` under the instance FFI gate like
 round, and a notification that misses the gate is retried by the plugin-edit
 watcher. `changed()` is never called from the audio callback.
 
+Host `clap.note-ports` / `clap.note-name` (2026-10-14) add no audio-thread work
+either: `supported_dialects` returns a constant, `rescan(ALL)` is the lock-free
+restart flag, and `note-name.changed` is one atomic store (a plugin may call it
+from `process`). The plugin's names are read only on the command thread, under
+the instance FFI gate, by the `get_plugin_note_names` command.
+
 ### Crash marker (ADR-015)
 
 In-process plugin wrappers mark the running plugin in a memory-mapped file

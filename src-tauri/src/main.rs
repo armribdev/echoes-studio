@@ -95,6 +95,7 @@ fn main() {
             get_unavailable_plugins,
             get_plugin_params,
             get_plugin_param_text,
+            get_plugin_note_names,
             get_plugin_outputs,
             scan_plugins,
             open_plugin_editor,
@@ -605,6 +606,17 @@ fn get_plugin_param_text(
         .plugin_param_text(&instance_key, native_id, value))
 }
 
+/// The names a plugin gives to notes (`clap.note-name`), e.g. drum pads; `None`
+/// when the placement is unknown or the plugin is busy, so the caller retries.
+#[tauri::command]
+fn get_plugin_note_names(
+    state: tauri::State<'_, AppState>,
+    instance_key: String,
+) -> Result<Option<Vec<plugin_system::host::PluginNoteName>>, String> {
+    let engine = state.audio_engine.lock().map_err(|e| e.to_string())?;
+    Ok(engine.plugin_host.plugin_note_names(&instance_key))
+}
+
 /// Auxiliary outputs of a loaded plugin placement, for the track input picker.
 #[tauri::command]
 fn get_plugin_outputs(
@@ -964,6 +976,9 @@ fn watch_plugin_edits(app: tauri::AppHandle) {
                 recompile_audio_graph(&app, &state);
             }
             notify_params_rescan(&app, &state);
+            if plugin_formats::clap::ffi::take_plugin_note_names_changed() {
+                let _ = app.emit(engine_gateway::api::PLUGIN_NOTE_NAMES_EVENT, ());
+            }
             if plugin_system::instance::take_undelivered_track_info() {
                 if let Ok(engine) = state.audio_engine.lock() {
                     engine.plugin_host.notify_pending_track_info();

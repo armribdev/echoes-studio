@@ -19,7 +19,8 @@ use plugin_bridge::control::Op;
 use plugin_bridge::session::{AudioPort, BridgeLayout, BridgeProcess};
 
 use crate::plugin_formats::clap::ffi::{
-    mark_plugin_restart_requested, read_pod, ClapParamInfo, HostTrackInfo,
+    decode_note_names, mark_plugin_restart_requested, read_pod, ClapParamInfo, HostTrackInfo,
+    NoteName,
 };
 use crate::plugin_formats::clap::params::param_info;
 use crate::plugin_system::parameter::PluginParamInfo;
@@ -171,6 +172,11 @@ impl BridgedPlugin {
         String::from_utf8(reply)
             .ok()
             .filter(|text| !text.is_empty())
+    }
+
+    /// The plugin's note names (`clap.note-name`); `None` when the bridge cannot answer.
+    pub fn note_names(&self) -> Option<Vec<NoteName>> {
+        decode_note_names(&self.request(Op::NoteNames, &[]).ok()?)
     }
 
     /// Gives the plugin its track when it differs from the last one sent; the

@@ -52,8 +52,8 @@ use std::time::{Duration, Instant};
 use crate::audio_graph::plugin_params::ValueModulatedParam;
 use crate::plugin_formats::clap::audio_ports::{read_output_ports, ClapOutputPort};
 use crate::plugin_formats::clap::ffi::{
-    audio_thread_scope, notify_track_info_changed, ClapHost, ClapHostContext, ClapLibrary,
-    ClapPlugin, HostTrackInfo,
+    audio_thread_scope, notify_track_info_changed, read_note_names, ClapHost, ClapHostContext,
+    ClapLibrary, ClapPlugin, HostTrackInfo, NoteName,
 };
 use crate::plugin_formats::vst3::ffi::{
     IAudioProcessor, IComponent, ProcessSetup, Vst3Library, SPEAKER_STEREO,
@@ -481,6 +481,20 @@ impl PluginInstance {
         let _gate = self.offrt_try_acquire(FFI_GATE_HARVEST_BUDGET)?;
         // SAFETY: live CLAP plugin owned by this instance; FFI gate held.
         unsafe { crate::plugin_formats::clap::ffi::read_param_text(*plugin, native_id, value) }
+    }
+
+    /// The plugin's note names (`clap.note-name`), read under the FFI gate.  `None`
+    /// for other formats, or when a block is in flight past the budget.
+    pub fn clap_note_names(&self) -> Option<Vec<NoteName>> {
+        if let Some(bridged) = self.bridge() {
+            return bridged.note_names();
+        }
+        let NativeHandle::Clap { plugin, .. } = &self.handle else {
+            return None;
+        };
+        let _gate = self.offrt_try_acquire(FFI_GATE_HARVEST_BUDGET)?;
+        // SAFETY: live CLAP plugin owned by this instance; FFI gate held.
+        Some(unsafe { read_note_names(*plugin) })
     }
 
     /// Gives a CLAP plugin the info of its track, then tells it

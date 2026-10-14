@@ -48,6 +48,8 @@ pub enum Op {
     /// The plugin's track (`clap.track-info`, encoded by the CLAP bindings) → ().
     /// The bridge calls the plugin's `changed` when it differs from the last one.
     TrackInfo = 9,
+    /// → the plugin's note names (`clap.note-name`, encoded by the CLAP bindings).
+    NoteNames = 10,
 }
 
 impl Op {
@@ -62,6 +64,7 @@ impl Op {
             7 => Op::OpenEditor,
             8 => Op::ParamText,
             9 => Op::TrackInfo,
+            10 => Op::NoteNames,
             _ => return None,
         })
     }
@@ -170,6 +173,7 @@ mod tests {
             Op::OpenEditor,
             Op::ParamText,
             Op::TrackInfo,
+            Op::NoteNames,
         ] {
             assert_eq!(Op::from_u8(op as u8), Some(op));
         }

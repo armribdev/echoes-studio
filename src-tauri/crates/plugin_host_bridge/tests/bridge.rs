@@ -9,13 +9,15 @@ use std::sync::OnceLock;
 use std::time::Duration;
 
 use clap_ffi::{
-    read_pod, split_events, ClapEventBuffer, ClapEventHeader, ClapParamInfo, HostTrackInfo,
-    CLAP_EVENT_PARAM_GESTURE_END, CLAP_EVENT_PARAM_VALUE,
+    decode_note_names, read_pod, split_events, ClapEventBuffer, ClapEventHeader, ClapParamInfo,
+    HostTrackInfo, NoteName, CLAP_EVENT_PARAM_GESTURE_END, CLAP_EVENT_PARAM_VALUE,
+    CLAP_NOTE_DIALECT_CLAP, CLAP_NOTE_DIALECT_MIDI, CLAP_NOTE_PORTS_RESCAN_ALL,
+    CLAP_NOTE_PORTS_RESCAN_NAMES,
 };
 use plugin_bridge::control::{Op, PayloadReader};
 use plugin_bridge::protocol::{
-    BLOCK_PARAMS_RESCAN_MASK, BLOCK_PARAMS_RESCAN_SHIFT, BLOCK_PLUGIN_EDITED,
-    BLOCK_RESTART_REQUESTED,
+    BLOCK_NOTE_NAMES_CHANGED, BLOCK_PARAMS_RESCAN_MASK, BLOCK_PARAMS_RESCAN_SHIFT,
+    BLOCK_PLUGIN_EDITED, BLOCK_RESTART_REQUESTED,
 };
 use plugin_bridge::session::{
     BlockOutcome, BlockRequest, BridgeLayout, BridgeProcess, DEAD_AFTER_CONSECUTIVE_TIMEOUTS,
@@ -40,7 +42,10 @@ const TRACK_NAME_LENGTH: u32 = 15;
 const TRACK_INFO_READS: u32 = 16;
 const TRACK_INFO_CHANGES: u32 = 17;
 const TRACK_INFO_AUDIO_CALLS: u32 = 18;
-const PARAM_COUNT: u32 = 19;
+const NOTE_NAMES_SET: u32 = 19;
+const NOTE_PORTS_RESCAN: u32 = 20;
+const HOST_NOTE_DIALECTS: u32 = 21;
+const PARAM_COUNT: u32 = 22;
 const FRAMES: usize = 64;
 const CHANNELS: usize = 2;
 const TIMEOUT: Duration = Duration::from_secs(5);
@@ -620,4 +625,102 @@ fn a_plugin_that_claims_to_sleep_while_sounding_stays_awake() {
         6,
         "never put to sleep while audible"
     );
+}
+
+fn note_names(bridge: &BridgeProcess) -> Vec<NoteName> {
+    let reply = bridge.request(Op::NoteNames, &[], TIMEOUT).unwrap();
+    decode_note_names(&reply).expect("a well-formed list")
+}
+
+fn note_name(name: &str, port: i16, key: i16, channel: i16) -> NoteName {
+    NoteName {
+        name: name.into(),
+        port,
+        key,
+        channel,
+    }
+}
+
+fn block_flags(bridge: &BridgeProcess, sequence: u64, events: &[u8]) -> u32 {
+    let block = process(bridge, sequence, &ramp(), events, TIMEOUT);
+    let BlockOutcome::Processed { flags, .. } = block.outcome else {
+        panic!("block not processed: {:?}", block.outcome);
+    };
+    flags
+}
+
+#[test]
+fn the_plugin_sees_the_note_dialects_the_host_sends() {
+    let bridge = activated();
+
+    assert_eq!(
+        param_value(&bridge, HOST_NOTE_DIALECTS),
+        f64::from(CLAP_NOTE_DIALECT_CLAP | CLAP_NOTE_DIALECT_MIDI)
+    );
+}
+
+#[test]
+fn the_note_names_of_the_plugin_travel_over_the_control_channel() {
+    let bridge = activated();
+    assert_eq!(
+        note_names(&bridge),
+        [
+            note_name("Kick", -1, 36, -1),
+            note_name("Snare", -1, 38, -1)
+        ]
+    );
+
+    let events = param_events(&[(CLAP_EVENT_PARAM_VALUE, NOTE_NAMES_SET, 1.0)]);
+    block_flags(&bridge, 0, &events);
+    assert_eq!(note_names(&bridge), [note_name("Tom", 0, 41, 9)]);
+}
+
+#[test]
+fn a_change_of_note_names_comes_back_with_the_block_once() {
+    let bridge = activated();
+    assert_eq!(
+        block_flags(&bridge, 0, &[]) & BLOCK_NOTE_NAMES_CHANGED,
+        0,
+        "nothing changed yet"
+    );
+
+    let events = param_events(&[(CLAP_EVENT_PARAM_VALUE, NOTE_NAMES_SET, 1.0)]);
+    assert_ne!(
+        block_flags(&bridge, 1, &events) & BLOCK_NOTE_NAMES_CHANGED,
+        0,
+        "clap.note-name.changed is forwarded"
+    );
+    assert_eq!(
+        block_flags(&bridge, 2, &[]) & BLOCK_NOTE_NAMES_CHANGED,
+        0,
+        "reported once"
+    );
+    assert_eq!(
+        block_flags(&bridge, 3, &events) & BLOCK_NOTE_NAMES_CHANGED,
+        0,
+        "the plugin tells the host only when its names change"
+    );
+}
+
+#[test]
+fn a_rescan_of_all_note_ports_comes_back_as_a_restart_request() {
+    let bridge = activated();
+
+    let renamed = param_events(&[(
+        CLAP_EVENT_PARAM_VALUE,
+        NOTE_PORTS_RESCAN,
+        f64::from(CLAP_NOTE_PORTS_RESCAN_NAMES),
+    )]);
+    assert_eq!(
+        block_flags(&bridge, 0, &renamed) & BLOCK_RESTART_REQUESTED,
+        0,
+        "a renamed port is not news"
+    );
+
+    let all = param_events(&[(
+        CLAP_EVENT_PARAM_VALUE,
+        NOTE_PORTS_RESCAN,
+        f64::from(CLAP_NOTE_PORTS_RESCAN_ALL),
+    )]);
+    assert_ne!(block_flags(&bridge, 1, &all) & BLOCK_RESTART_REQUESTED, 0);
 }

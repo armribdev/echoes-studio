@@ -29,6 +29,15 @@
 //!   (`changed` calls) and `Track info audio calls` (`changed` calls the host's
 //!   `clap.thread-check` reported as the audio thread — always 0 when it behaves).
 //!
+//! - 19 `Note names set` — 0 (default) or 1 picks which note names the plugin
+//!   gives through `clap.note-name` (0: Kick on key 36 and Snare on 38, any
+//!   port and channel; 1: Tom on key 41, port 0, channel 9); changing it calls
+//!   the host's `clap.note-name.changed`;
+//! - 20 `Note ports rescan` — the value is sent to the host's
+//!   `clap.note-ports.rescan` as flags;
+//! - 21 `Host note dialects` — read-only: what the host's
+//!   `clap.note-ports.supported_dialects` answered in `init`.
+//!
 //! `Gain` renders its value as decibels through `clap.params.value_to_text`.
 //!
 //! A second plugin, `echoes.test.sleepy`, is the same code reporting `SLEEP`
@@ -48,16 +57,17 @@ use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, AtomicU64, Ordering};
 
 use clap_ffi::{
     ClapAudioPortInfo, ClapEventHeader, ClapEventNote, ClapEventParamGesture, ClapEventParamValue,
-    ClapHost, ClapHostLatency, ClapHostParams, ClapHostState, ClapHostTail, ClapHostThreadCheck,
-    ClapHostTrackInfo, ClapIStream, ClapInputEvents, ClapOStream, ClapOutputEvents, ClapParamInfo,
-    ClapPlugin, ClapPluginAudioPorts, ClapPluginDescriptor, ClapPluginEntry, ClapPluginFactory,
-    ClapPluginLatency, ClapPluginParams, ClapPluginState, ClapPluginTail, ClapPluginTrackInfo,
+    ClapHost, ClapHostLatency, ClapHostNoteName, ClapHostNotePorts, ClapHostParams, ClapHostState,
+    ClapHostTail, ClapHostThreadCheck, ClapHostTrackInfo, ClapIStream, ClapInputEvents,
+    ClapNoteName, ClapOStream, ClapOutputEvents, ClapParamInfo, ClapPlugin, ClapPluginAudioPorts,
+    ClapPluginDescriptor, ClapPluginEntry, ClapPluginFactory, ClapPluginLatency,
+    ClapPluginNoteName, ClapPluginParams, ClapPluginState, ClapPluginTail, ClapPluginTrackInfo,
     ClapProcess, ClapProcessStatus, ClapTrackInfo, CLAP_AUDIO_PORT_IS_MAIN, CLAP_CORE_EVENT_SPACE,
     CLAP_EVENT_NOTE_OFF, CLAP_EVENT_NOTE_ON, CLAP_EVENT_PARAM_GESTURE_END, CLAP_EVENT_PARAM_MOD,
-    CLAP_EVENT_PARAM_VALUE, CLAP_EXT_AUDIO_PORTS, CLAP_EXT_LATENCY, CLAP_EXT_PARAMS,
-    CLAP_EXT_STATE, CLAP_EXT_TAIL, CLAP_EXT_THREAD_CHECK, CLAP_EXT_TRACK_INFO,
-    CLAP_PARAM_IS_AUTOMATABLE, CLAP_PARAM_IS_MODULATABLE, CLAP_PLUGIN_FACTORY_ID,
-    CLAP_PROCESS_CONTINUE, CLAP_PROCESS_SLEEP, CLAP_VERSION_1,
+    CLAP_EVENT_PARAM_VALUE, CLAP_EXT_AUDIO_PORTS, CLAP_EXT_LATENCY, CLAP_EXT_NOTE_NAME,
+    CLAP_EXT_NOTE_PORTS, CLAP_EXT_PARAMS, CLAP_EXT_STATE, CLAP_EXT_TAIL, CLAP_EXT_THREAD_CHECK,
+    CLAP_EXT_TRACK_INFO, CLAP_PARAM_IS_AUTOMATABLE, CLAP_PARAM_IS_MODULATABLE,
+    CLAP_PLUGIN_FACTORY_ID, CLAP_PROCESS_CONTINUE, CLAP_PROCESS_SLEEP, CLAP_VERSION_1,
 };
 
 pub const PLUGIN_ID: &str = "echoes.test.gain";
@@ -83,7 +93,10 @@ const TRACK_NAME_LENGTH: u32 = 15;
 const TRACK_INFO_READS: u32 = 16;
 const TRACK_INFO_CHANGES: u32 = 17;
 const TRACK_INFO_AUDIO_CALLS: u32 = 18;
-const PARAM_COUNT: u32 = 19;
+const NOTE_NAMES_SET: u32 = 19;
+const NOTE_PORTS_RESCAN: u32 = 20;
+const HOST_NOTE_DIALECTS: u32 = 21;
+const PARAM_COUNT: u32 = 22;
 /// Bytes of the track name `Track name` packs.
 const PACKED_NAME_BYTES: usize = 6;
 
@@ -188,6 +201,8 @@ struct State {
     track_info_reads: AtomicU32,
     track_info_changes: AtomicU32,
     track_info_audio_calls: AtomicU32,
+    note_names_set: AtomicU32,
+    host_note_dialects: AtomicU32,
 }
 
 unsafe extern "C" fn factory_create(
@@ -225,6 +240,8 @@ unsafe extern "C" fn factory_create(
         track_info_reads: AtomicU32::new(0),
         track_info_changes: AtomicU32::new(0),
         track_info_audio_calls: AtomicU32::new(0),
+        note_names_set: AtomicU32::new(0),
+        host_note_dialects: AtomicU32::new(0),
     });
     Box::into_raw(Box::new(ClapPlugin {
         desc: &descriptor.0,
@@ -247,8 +264,52 @@ unsafe fn state<'a>(plugin: *const ClapPlugin) -> &'a mut State {
 }
 
 unsafe extern "C" fn plugin_init(plugin: *const ClapPlugin) -> bool {
-    read_track_info(state(plugin));
+    let state = state(plugin);
+    read_track_info(state);
+    read_host_note_dialects(state);
     true
+}
+
+fn read_host_note_dialects(state: &State) {
+    // SAFETY: the host outlives the plugin; its extension tables are static.
+    let dialects = unsafe {
+        let extension = ((*state.host).get_extension)(
+            state.host,
+            CLAP_EXT_NOTE_PORTS.as_ptr() as *const c_char,
+        );
+        match (extension as *const ClapHostNotePorts).as_ref() {
+            Some(ports) => (ports.supported_dialects)(state.host),
+            None => 0,
+        }
+    };
+    state.host_note_dialects.store(dialects, Ordering::Relaxed);
+}
+
+fn rescan_note_ports(state: &State, flags: u32) {
+    // SAFETY: the host outlives the plugin; `rescan` only records the request.
+    unsafe {
+        let extension = ((*state.host).get_extension)(
+            state.host,
+            CLAP_EXT_NOTE_PORTS.as_ptr() as *const c_char,
+        );
+        if let Some(ports) = (extension as *const ClapHostNotePorts).as_ref() {
+            (ports.rescan)(state.host, flags);
+        }
+    }
+}
+
+fn change_note_names(state: &State, set: u32) {
+    if state.note_names_set.swap(set, Ordering::AcqRel) == set {
+        return;
+    }
+    // SAFETY: the host outlives the plugin; `changed` is thread-safe.
+    unsafe {
+        let extension =
+            ((*state.host).get_extension)(state.host, CLAP_EXT_NOTE_NAME.as_ptr() as *const c_char);
+        if let Some(names) = (extension as *const ClapHostNoteName).as_ref() {
+            (names.changed)(state.host);
+        }
+    }
 }
 
 /// What a plugin does with `clap.track-info`: asks the host for its track.
@@ -426,6 +487,10 @@ fn apply_param(state: &mut State, header: &ClapEventHeader) {
         (CLAP_EVENT_PARAM_VALUE, LIAR) => state.liar.store(on, Ordering::Relaxed),
         (CLAP_EVENT_PARAM_VALUE, RESCAN) => rescan_params(state, event.value.round() as u32),
         (CLAP_EVENT_PARAM_VALUE, REQUEST_FLUSH) if on => request_flush(state),
+        (CLAP_EVENT_PARAM_VALUE, NOTE_NAMES_SET) => change_note_names(state, u32::from(on)),
+        (CLAP_EVENT_PARAM_VALUE, NOTE_PORTS_RESCAN) => {
+            rescan_note_ports(state, event.value.round() as u32)
+        }
         _ => {}
     }
 }
@@ -591,6 +656,11 @@ static AUDIO_PORTS: ClapPluginAudioPorts = ClapPluginAudioPorts {
     get: audio_ports_get,
 };
 
+static NOTE_NAME: ClapPluginNoteName = ClapPluginNoteName {
+    count: note_name_count,
+    get: note_name_get,
+};
+
 static TRACK_INFO: ClapPluginTrackInfo = ClapPluginTrackInfo {
     changed: track_info_changed,
 };
@@ -615,6 +685,8 @@ unsafe extern "C" fn plugin_get_extension(
         &LATENCY_EXT as *const ClapPluginLatency as *const c_void
     } else if id == CLAP_EXT_AUDIO_PORTS {
         &AUDIO_PORTS as *const ClapPluginAudioPorts as *const c_void
+    } else if id == CLAP_EXT_NOTE_NAME {
+        &NOTE_NAME as *const ClapPluginNoteName as *const c_void
     } else if id == CLAP_EXT_TRACK_INFO {
         &TRACK_INFO as *const ClapPluginTrackInfo as *const c_void
     } else {
@@ -653,6 +725,37 @@ unsafe extern "C" fn audio_ports_get(
     true
 }
 
+/// The two sets of note names `Note names set` switches between:
+/// `(name, port, key, channel)`, `-1` meaning every one.
+type TestNoteName = (&'static [u8], i16, i16, i16);
+
+const NOTE_NAME_SETS: [&[TestNoteName]; 2] = [
+    &[(b"Kick", -1, 36, -1), (b"Snare", -1, 38, -1)],
+    &[(b"Tom", 0, 41, 9)],
+];
+
+unsafe extern "C" fn note_name_count(plugin: *const ClapPlugin) -> u32 {
+    NOTE_NAME_SETS[state(plugin).note_names_set.load(Ordering::Acquire) as usize].len() as u32
+}
+
+unsafe extern "C" fn note_name_get(
+    plugin: *const ClapPlugin,
+    index: u32,
+    note_name: *mut ClapNoteName,
+) -> bool {
+    let set = NOTE_NAME_SETS[state(plugin).note_names_set.load(Ordering::Acquire) as usize];
+    let Some(&(name, port, key, channel)) = set.get(index as usize) else {
+        return false;
+    };
+    let note_name = &mut *note_name;
+    note_name.name = [0; clap_ffi::CLAP_NAME_SIZE];
+    note_name.name[..name.len()].copy_from_slice(name);
+    note_name.port = port;
+    note_name.key = key;
+    note_name.channel = channel;
+    true
+}
+
 unsafe extern "C" fn params_count(_: *const ClapPlugin) -> u32 {
     PARAM_COUNT
 }
@@ -687,6 +790,9 @@ unsafe extern "C" fn params_info(
         TRACK_INFO_READS => (b"Track info reads", f64::from(u32::MAX), 0.0, 0),
         TRACK_INFO_CHANGES => (b"Track info changes", f64::from(u32::MAX), 0.0, 0),
         TRACK_INFO_AUDIO_CALLS => (b"Track info audio calls", f64::from(u32::MAX), 0.0, 0),
+        NOTE_NAMES_SET => (b"Note names set", 1.0, 0.0, CLAP_PARAM_IS_AUTOMATABLE),
+        NOTE_PORTS_RESCAN => (b"Note ports rescan", 3.0, 0.0, CLAP_PARAM_IS_AUTOMATABLE),
+        HOST_NOTE_DIALECTS => (b"Host note dialects", 15.0, 0.0, 0),
         _ => return false,
     };
     let info = &mut *info;
@@ -715,6 +821,8 @@ unsafe extern "C" fn params_value(plugin: *const ClapPlugin, id: u32, value: *mu
         TRACK_INFO_READS => f64::from(state.track_info_reads.load(Ordering::Relaxed)),
         TRACK_INFO_CHANGES => f64::from(state.track_info_changes.load(Ordering::Relaxed)),
         TRACK_INFO_AUDIO_CALLS => f64::from(state.track_info_audio_calls.load(Ordering::Relaxed)),
+        NOTE_NAMES_SET => f64::from(state.note_names_set.load(Ordering::Relaxed)),
+        HOST_NOTE_DIALECTS => f64::from(state.host_note_dialects.load(Ordering::Relaxed)),
         _ => return false,
     };
     true

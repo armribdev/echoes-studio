@@ -20,8 +20,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use plugin_bridge::protocol::{
-    BLOCK_PARAMS_RESCAN_MASK, BLOCK_PARAMS_RESCAN_SHIFT, BLOCK_PLUGIN_EDITED,
-    BLOCK_RESTART_REQUESTED,
+    BLOCK_NOTE_NAMES_CHANGED, BLOCK_PARAMS_RESCAN_MASK, BLOCK_PARAMS_RESCAN_SHIFT,
+    BLOCK_PLUGIN_EDITED, BLOCK_RESTART_REQUESTED,
 };
 use plugin_bridge::session::{BlockOutcome, BlockRequest};
 
@@ -34,8 +34,8 @@ use crate::audio_graph::plugin_params::{
     parse_plugin_param_name, PluginParamControl, PluginParamControls,
 };
 use crate::plugin_formats::clap::ffi::{
-    append_event, mark_plugin_params_rescan, mark_plugin_state_edited, split_events,
-    ClapEventHeader, ClapOutputEvents,
+    append_event, mark_plugin_note_names_changed, mark_plugin_params_rescan,
+    mark_plugin_state_edited, split_events, ClapEventHeader, ClapOutputEvents,
 };
 use crate::plugin_formats::clap::params::{observe_output_event, ClapParamEvents};
 use crate::plugin_formats::clap::transport::clap_transport_event;
@@ -220,6 +220,9 @@ impl BridgeRoundTrip {
                     if let Some(bridge) = self.instance.bridge() {
                         bridge.request_restart();
                     }
+                }
+                if flags & BLOCK_NOTE_NAMES_CHANGED != 0 {
+                    mark_plugin_note_names_changed();
                 }
                 if flags & BLOCK_PARAMS_RESCAN_MASK != 0 {
                     mark_plugin_params_rescan(

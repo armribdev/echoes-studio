@@ -31,7 +31,9 @@ use serde::Serialize;
 use crate::audio_graph::node::AudioNode;
 use crate::audio_graph::nodes::clap_instrument::ClapInstrument;
 use crate::audio_graph::nodes::instrument::InstrumentDevice;
-use crate::plugin_formats::clap::ffi::{ClapLibrary, HostTrackInfo, CLAP_PLUGIN_FACTORY_ID};
+use crate::plugin_formats::clap::ffi::{
+    ClapLibrary, HostTrackInfo, NoteName, CLAP_PLUGIN_FACTORY_ID,
+};
 use crate::plugin_formats::clap::host::decode_plugin_id as clap_decode_id;
 use crate::plugin_formats::clap::params::read_clap_params;
 use crate::plugin_formats::clap::wrapper::ClapWrapperNode;
@@ -959,6 +961,14 @@ impl PluginHost {
             .map(|r| Arc::clone(&r.instance))
     }
 
+    /// The names a loaded plugin gives to notes (`clap.note-name`), e.g. the
+    /// pads of a drum kit.  `None` when the placement is unknown or busy in a
+    /// block, empty when the plugin names none.
+    pub fn plugin_note_names(&self, instance_key: &str) -> Option<Vec<PluginNoteName>> {
+        let names = self.records.get(instance_key)?.instance.clap_note_names()?;
+        Some(names.into_iter().map(PluginNoteName::from).collect())
+    }
+
     /// Auxiliary outputs of a loaded placement that a track can take as its
     /// input (ADR-014 multi-out).  Empty when the placement is not loaded or
     /// has no aux output.
@@ -978,6 +988,26 @@ impl PluginHost {
                 channel_count: info.channel_count,
             })
             .collect()
+    }
+}
+
+/// A name a plugin gives to notes; `-1` in `port`, `key` or `channel` means every one.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct PluginNoteName {
+    pub name: String,
+    pub port: i16,
+    pub key: i16,
+    pub channel: i16,
+}
+
+impl From<NoteName> for PluginNoteName {
+    fn from(note: NoteName) -> Self {
+        Self {
+            name: note.name,
+            port: note.port,
+            key: note.key,
+            channel: note.channel,
+        }
     }
 }
 

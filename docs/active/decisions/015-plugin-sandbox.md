@@ -805,3 +805,13 @@ differs from the last accepted request and skips a dead bridge. The
 shared-memory layout and `BRIDGE_PROTOCOL_VERSION` stay unchanged (an older
 bridge ignores the launch argument and refuses the op). Tests:
 `plugin_host_bridge/tests/bridge.rs`, `plugin_system/sandbox_tests.rs`.
+
+### Amendment 2026-10-14 — `clap.note-ports` and `clap.note-name` through the bridge
+
+The bridge hosts both extensions. The plugin's `clap.note-name.changed` rides in
+bit 12 of the block flags (`BLOCK_NOTE_NAMES_CHANGED`, bridge → engine, reported
+once, like the `clap.params` rescan bits); its names are read by a new control op,
+`Op::NoteNames` (empty request → the list in the `clap_ffi` wire form). A rescan
+of all note ports reuses `BLOCK_RESTART_REQUESTED`. The shared-memory layout and
+`BRIDGE_PROTOCOL_VERSION` stay unchanged. Tests: `plugin_host_bridge/tests/bridge.rs`,
+`plugin_system/sandbox_tests.rs`.

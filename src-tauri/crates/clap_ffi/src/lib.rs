@@ -24,8 +24,10 @@
 use std::ffi::{c_char, c_void};
 use std::path::Path;
 
+mod notes;
 mod process_sleep;
 mod track_info;
+pub use notes::*;
 pub use process_sleep::*;
 pub use track_info::*;
 
@@ -352,6 +354,12 @@ pub unsafe extern "C" fn host_get_extension(
     if id == CLAP_EXT_PARAMS {
         return &HOST_PARAMS as *const ClapHostParams as *const c_void;
     }
+    if id == CLAP_EXT_NOTE_PORTS {
+        return &notes::HOST_NOTE_PORTS as *const ClapHostNotePorts as *const c_void;
+    }
+    if id == CLAP_EXT_NOTE_NAME {
+        return &notes::HOST_NOTE_NAME as *const ClapHostNoteName as *const c_void;
+    }
     if id == CLAP_EXT_TRACK_INFO || id == CLAP_EXT_TRACK_INFO_COMPAT {
         return &track_info::HOST_TRACK_INFO as *const ClapHostTrackInfo as *const c_void;
     }
@@ -667,6 +675,18 @@ mod host_abi_tests {
         assert!(!take_plugin_restart_requested());
         assert!(context.take_restart_request());
         assert!(!context.take_restart_request());
+
+        // A rescan of all note ports is a restart request too; a rename is not.
+        // Same test: the flag is process-wide.
+        unsafe {
+            let ports = host_get_extension(&*host, CLAP_EXT_NOTE_PORTS.as_ptr() as *const c_char)
+                as *const ClapHostNotePorts;
+            ((*ports).rescan)(&*host, CLAP_NOTE_PORTS_RESCAN_NAMES);
+            assert!(!context.take_restart_request());
+            ((*ports).rescan)(&*host, CLAP_NOTE_PORTS_RESCAN_ALL);
+        }
+        assert!(context.take_restart_request());
+        assert!(take_plugin_restart_requested());
     }
 
     #[test]

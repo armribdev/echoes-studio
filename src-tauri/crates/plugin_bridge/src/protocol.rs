@@ -40,6 +40,9 @@ pub const BLOCK_RESTART_REQUESTED: u32 = 1 << 4;
 /// block (`CLAP_PARAM_RESCAN_*`, four bits) sit at this shift.
 pub const BLOCK_PARAMS_RESCAN_SHIFT: u32 = 8;
 pub const BLOCK_PARAMS_RESCAN_MASK: u32 = 0xF << BLOCK_PARAMS_RESCAN_SHIFT;
+/// Bridge → engine: the plugin reported new note names (`clap.note-name.changed`)
+/// since the last block.
+pub const BLOCK_NOTE_NAMES_CHANGED: u32 = 1 << 12;
 
 /// Header prefixed to every audio block, in both directions.
 #[repr(C)]

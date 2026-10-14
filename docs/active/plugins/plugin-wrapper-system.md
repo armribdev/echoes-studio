@@ -431,6 +431,44 @@ track through the real compile, and the golden hash is unchanged). The test
 plugin gained seven read-only parameters (ids 12–18, `Track flags` … `Track info
 audio calls`), 19 in all.
 
+**Host `clap.note-ports` and `clap.note-name` (2026-10-14).** Checked against
+`clap/ext/note-ports.h` and `note-name.h` (no compat id for either).
+
+- _`clap.note-ports` (host)._ `supported_dialects` answers
+  `CLAP_NOTE_DIALECT_CLAP | CLAP_NOTE_DIALECT_MIDI`: the host sends note events and
+  raw `CLAP_EVENT_MIDI` (pitch bend, CC, aftertouch; ADR-022), no MPE, no MIDI 2.
+  `rescan(ALL)` is a restart request (the same path as `request_restart`: poll →
+  recompile → reactivation); `rescan(NAMES)` is accepted and shows nowhere. The
+  host **does not read the plugin's note ports** and does not filter what it
+  sends by dialect — decided, so what reaches a plugin and the offline render are
+  unchanged (ADR-022: a plugin without the MIDI dialect ignores the raw MIDI).
+- _`clap.note-name` (host)._ `changed` sets a process-wide lock-free flag
+  (`clap_ffi::take_plugin_note_names_changed`, callable from any thread);
+  `main.rs::watch_plugin_edits` turns it into the `plugin-note-names-changed`
+  event within 250 ms. Like `plugin-params-changed` it carries no payload: the
+  listener refetches. Nothing in the UI listens yet.
+- _Reading the names._ The `get_plugin_note_names(instance_key)` command returns
+  the plugin's names (`name`, `port`, `key`, `channel`, `-1` = every one) through
+  `PluginHost::plugin_note_names` — `clap_note_name.count/get` on the command
+  thread under the instance FFI gate, never on the audio thread. `None` means the
+  placement is unknown, not a CLAP plugin, or busy in a block past the 3 ms
+  budget (retry); an empty list means the plugin names no note. At most 4096
+  names are read. **No UI uses it yet**: showing drum-pad names in the piano roll
+  is a separate step.
+- _Sandbox._ The bridge hosts both extensions. `changed` travels in the block
+  flags (`BLOCK_NOTE_NAMES_CHANGED`, bit 12, next to the `clap.params` rescan
+  bits); the names are read by a new control op, `Op::NoteNames`, in the wire form
+  of `clap_ffi::encode_note_names`. The shared-memory layout and
+  `BRIDGE_PROTOCOL_VERSION` are unchanged.
+- _Limits._ No VST3 equivalent. Not yet tried with real plugins.
+
+Tests: `crates/clap_ffi` (layouts, dialects, a rescan of all ports vs a rename,
+`changed` reported once, wire round trip), `plugin_system/sandbox_tests.rs` and
+`crates/plugin_host_bridge/tests/bridge.rs` (dialects read by the plugin, names
+read and re-read after a change, `changed` reaching the app once, rescan → restart,
+in process and sandboxed). The test plugin gained `Note names set` (19),
+`Note ports rescan` (20) and `Host note dialects` (21): 22 parameters in all.
+
 ---
 
 ## Editor Windows — DPI (Windows)

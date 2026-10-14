@@ -3527,6 +3527,9 @@ pub const PLUGIN_AVAILABILITY_EVENT: &str = "plugin-availability";
 /// A plugin changed its parameter list or the text of its values (`clap.params.rescan`).
 pub const PLUGIN_PARAMS_EVENT: &str = "plugin-params-changed";
 
+/// A plugin changed the names it gives to notes (`clap.note-name.changed`).
+pub const PLUGIN_NOTE_NAMES_EVENT: &str = "plugin-note-names-changed";
+
 #[cfg(test)]
 mod tests {
     use super::*;

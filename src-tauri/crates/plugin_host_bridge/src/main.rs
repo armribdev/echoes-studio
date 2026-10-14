@@ -215,6 +215,7 @@ fn handle(plugin: &LoadedPlugin, op: u8, payload: &[u8]) -> Result<Vec<u8>, Stri
             Ok(plugin.param_text(native_id, value))
         }
         Op::OpenEditor => open_editor(plugin, &String::from_utf8_lossy(payload)),
+        Op::NoteNames => Ok(plugin.note_names()),
         Op::TrackInfo => {
             let info = HostTrackInfo::decode(payload).ok_or("invalid track info")?;
             plugin.set_track_info(&info);
