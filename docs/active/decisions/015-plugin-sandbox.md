@@ -815,3 +815,17 @@ once, like the `clap.params` rescan bits); its names are read by a new control o
 of all note ports reuses `BLOCK_RESTART_REQUESTED`. The shared-memory layout and
 `BRIDGE_PROTOCOL_VERSION` stay unchanged. Tests: `plugin_host_bridge/tests/bridge.rs`,
 `plugin_system/sandbox_tests.rs`.
+
+### Amendment 2026-10-14 — `clap.timer-support` through the bridge
+
+The bridge hosts the plugin's `clap.timer-support` with no new control op, no
+block flag and no change to the shared memory or `BRIDGE_PROTOCOL_VERSION`: the
+timers live in the plugin's `ClapHostContext` inside the bridge, and the bridge's
+main thread — the one that answers control requests and runs the editor window —
+calls `on_timer` from its loop (`serve_requests`, at least every 5 ms), only while
+the editor window is open. A control request and an `on_timer` therefore never
+overlap; `process` may run beside it, as CLAP allows. A slow `on_timer` delays
+control requests (a very slow one can hit the engine's control timeout); a plugin
+crash ends its timers with the process. The engine knows nothing about them.
+Tests: `plugin_host_bridge/tests/bridge.rs` (a real editor window),
+`plugin_system/sandbox_tests.rs`.

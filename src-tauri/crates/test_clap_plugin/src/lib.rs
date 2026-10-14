@@ -38,12 +38,26 @@
 //! - 21 `Host note dialects` — read-only: what the host's
 //!   `clap.note-ports.supported_dialects` answered in `init`.
 //!
+//! - 22 `Timer register` — setting it calls the host's `clap.timer-support`
+//!   `register_timer` with the value as the period in ms (from whatever thread
+//!   applies the event; 0 is an invalid period the host must refuse);
+//! - 23 `Timer unregister` — setting it calls `unregister_timer` with the value as the id;
+//! - 24 `Timer register result` — read-only: 0 never called, 1 accepted, 2 refused;
+//! - 25 `Timer last id` — read-only: the id the last `register_timer` wrote
+//!   (`u32::MAX` after a refusal);
+//! - 26 `Timer unregister result` — read-only: 0 never called, 1 accepted, 2 refused;
+//! - 27 `Timer calls` — read-only: how many times the host called `on_timer`;
+//! - 28 `Timer last fired` — read-only: the id of the last `on_timer`;
+//! - 29 `Timer audio calls` — read-only: `on_timer` calls `clap.thread-check`
+//!   reported as the audio thread (always 0 when the host behaves).
+//!
 //! `Gain` renders its value as decibels through `clap.params.value_to_text`.
 //!
 //! A second plugin, `echoes.test.sleepy`, is the same code reporting `SLEEP`
 //! by default, for projects that cannot set parameters.
 //!
-//! Reports 64 samples of latency by default.  No GUI.
+//! Reports 64 samples of latency by default.  Its `clap.gui` is a stub (a 320×200
+//! area that draws nothing) so a test can open the host's real editor window.
 //!
 //! Declares `clap.audio-ports`: one main stereo input/output plus one
 //! auxiliary stereo input (sidechain), so a test can prove real bus
@@ -57,17 +71,19 @@ use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, AtomicU64, Ordering};
 
 use clap_ffi::{
     ClapAudioPortInfo, ClapEventHeader, ClapEventNote, ClapEventParamGesture, ClapEventParamValue,
-    ClapHost, ClapHostLatency, ClapHostNoteName, ClapHostNotePorts, ClapHostParams, ClapHostState,
-    ClapHostTail, ClapHostThreadCheck, ClapHostTrackInfo, ClapIStream, ClapInputEvents,
-    ClapNoteName, ClapOStream, ClapOutputEvents, ClapParamInfo, ClapPlugin, ClapPluginAudioPorts,
-    ClapPluginDescriptor, ClapPluginEntry, ClapPluginFactory, ClapPluginLatency,
-    ClapPluginNoteName, ClapPluginParams, ClapPluginState, ClapPluginTail, ClapPluginTrackInfo,
-    ClapProcess, ClapProcessStatus, ClapTrackInfo, CLAP_AUDIO_PORT_IS_MAIN, CLAP_CORE_EVENT_SPACE,
-    CLAP_EVENT_NOTE_OFF, CLAP_EVENT_NOTE_ON, CLAP_EVENT_PARAM_GESTURE_END, CLAP_EVENT_PARAM_MOD,
-    CLAP_EVENT_PARAM_VALUE, CLAP_EXT_AUDIO_PORTS, CLAP_EXT_LATENCY, CLAP_EXT_NOTE_NAME,
-    CLAP_EXT_NOTE_PORTS, CLAP_EXT_PARAMS, CLAP_EXT_STATE, CLAP_EXT_TAIL, CLAP_EXT_THREAD_CHECK,
+    ClapGuiExtension, ClapHost, ClapHostLatency, ClapHostNoteName, ClapHostNotePorts,
+    ClapHostParams, ClapHostState, ClapHostTail, ClapHostThreadCheck, ClapHostTimerSupport,
+    ClapHostTrackInfo, ClapIStream, ClapInputEvents, ClapNoteName, ClapOStream, ClapOutputEvents,
+    ClapParamInfo, ClapPlugin, ClapPluginAudioPorts, ClapPluginDescriptor, ClapPluginEntry,
+    ClapPluginFactory, ClapPluginLatency, ClapPluginNoteName, ClapPluginParams, ClapPluginState,
+    ClapPluginTail, ClapPluginTimerSupport, ClapPluginTrackInfo, ClapProcess, ClapProcessStatus,
+    ClapTrackInfo, ClapWindow, CLAP_AUDIO_PORT_IS_MAIN, CLAP_CORE_EVENT_SPACE, CLAP_EVENT_NOTE_OFF,
+    CLAP_EVENT_NOTE_ON, CLAP_EVENT_PARAM_GESTURE_END, CLAP_EVENT_PARAM_MOD, CLAP_EVENT_PARAM_VALUE,
+    CLAP_EXT_AUDIO_PORTS, CLAP_EXT_GUI, CLAP_EXT_LATENCY, CLAP_EXT_NOTE_NAME, CLAP_EXT_NOTE_PORTS,
+    CLAP_EXT_PARAMS, CLAP_EXT_STATE, CLAP_EXT_TAIL, CLAP_EXT_THREAD_CHECK, CLAP_EXT_TIMER_SUPPORT,
     CLAP_EXT_TRACK_INFO, CLAP_PARAM_IS_AUTOMATABLE, CLAP_PARAM_IS_MODULATABLE,
     CLAP_PLUGIN_FACTORY_ID, CLAP_PROCESS_CONTINUE, CLAP_PROCESS_SLEEP, CLAP_VERSION_1,
+    CLAP_WINDOW_API_WIN32,
 };
 
 pub const PLUGIN_ID: &str = "echoes.test.gain";
@@ -96,7 +112,18 @@ const TRACK_INFO_AUDIO_CALLS: u32 = 18;
 const NOTE_NAMES_SET: u32 = 19;
 const NOTE_PORTS_RESCAN: u32 = 20;
 const HOST_NOTE_DIALECTS: u32 = 21;
-const PARAM_COUNT: u32 = 22;
+const TIMER_REGISTER: u32 = 22;
+const TIMER_UNREGISTER: u32 = 23;
+const TIMER_REGISTER_RESULT: u32 = 24;
+const TIMER_LAST_ID: u32 = 25;
+const TIMER_UNREGISTER_RESULT: u32 = 26;
+const TIMER_CALLS: u32 = 27;
+const TIMER_LAST_FIRED: u32 = 28;
+const TIMER_AUDIO_CALLS: u32 = 29;
+const PARAM_COUNT: u32 = 30;
+/// `Timer register result` / `Timer unregister result` once the host answered.
+const TIMER_ACCEPTED: u32 = 1;
+const TIMER_REFUSED: u32 = 2;
 /// Bytes of the track name `Track name` packs.
 const PACKED_NAME_BYTES: usize = 6;
 
@@ -203,6 +230,12 @@ struct State {
     track_info_audio_calls: AtomicU32,
     note_names_set: AtomicU32,
     host_note_dialects: AtomicU32,
+    timer_register_result: AtomicU32,
+    timer_last_id: AtomicU32,
+    timer_unregister_result: AtomicU32,
+    timer_calls: AtomicU32,
+    timer_last_fired: AtomicU32,
+    timer_audio_calls: AtomicU32,
 }
 
 unsafe extern "C" fn factory_create(
@@ -242,6 +275,12 @@ unsafe extern "C" fn factory_create(
         track_info_audio_calls: AtomicU32::new(0),
         note_names_set: AtomicU32::new(0),
         host_note_dialects: AtomicU32::new(0),
+        timer_register_result: AtomicU32::new(0),
+        timer_last_id: AtomicU32::new(0),
+        timer_unregister_result: AtomicU32::new(0),
+        timer_calls: AtomicU32::new(0),
+        timer_last_fired: AtomicU32::new(0),
+        timer_audio_calls: AtomicU32::new(0),
     });
     Box::into_raw(Box::new(ClapPlugin {
         desc: &descriptor.0,
@@ -355,6 +394,54 @@ unsafe extern "C" fn track_info_changed(plugin: *const ClapPlugin) {
         state.track_info_audio_calls.fetch_add(1, Ordering::Relaxed);
     }
     read_track_info(state);
+}
+
+fn host_timers(state: &State) -> Option<&ClapHostTimerSupport> {
+    // SAFETY: the host outlives the plugin; its extension tables are static.
+    unsafe {
+        let extension = ((*state.host).get_extension)(
+            state.host,
+            CLAP_EXT_TIMER_SUPPORT.as_ptr() as *const c_char,
+        );
+        (extension as *const ClapHostTimerSupport).as_ref()
+    }
+}
+
+fn answer(accepted: bool) -> u32 {
+    if accepted {
+        TIMER_ACCEPTED
+    } else {
+        TIMER_REFUSED
+    }
+}
+
+fn register_timer(state: &State, period_ms: u32) {
+    let mut id = 0;
+    let accepted = host_timers(state).is_some_and(|timers|
+        // SAFETY: `register_timer` writes the id through the pointer it is given.
+        unsafe { (timers.register_timer)(state.host, period_ms, &mut id) });
+    state.timer_last_id.store(id, Ordering::Relaxed);
+    state
+        .timer_register_result
+        .store(answer(accepted), Ordering::Relaxed);
+}
+
+fn unregister_timer(state: &State, id: u32) {
+    let accepted = host_timers(state)
+        // SAFETY: `unregister_timer` only reads the id.
+        .is_some_and(|timers| unsafe { (timers.unregister_timer)(state.host, id) });
+    state
+        .timer_unregister_result
+        .store(answer(accepted), Ordering::Relaxed);
+}
+
+unsafe extern "C" fn timer_on_timer(plugin: *const ClapPlugin, timer_id: u32) {
+    let state = state(plugin);
+    state.timer_last_fired.store(timer_id, Ordering::Relaxed);
+    if on_audio_thread(state) {
+        state.timer_audio_calls.fetch_add(1, Ordering::Relaxed);
+    }
+    state.timer_calls.fetch_add(1, Ordering::Relaxed);
 }
 
 fn on_audio_thread(state: &State) -> bool {
@@ -490,6 +577,12 @@ fn apply_param(state: &mut State, header: &ClapEventHeader) {
         (CLAP_EVENT_PARAM_VALUE, NOTE_NAMES_SET) => change_note_names(state, u32::from(on)),
         (CLAP_EVENT_PARAM_VALUE, NOTE_PORTS_RESCAN) => {
             rescan_note_ports(state, event.value.round() as u32)
+        }
+        (CLAP_EVENT_PARAM_VALUE, TIMER_REGISTER) => {
+            register_timer(state, event.value.round() as u32)
+        }
+        (CLAP_EVENT_PARAM_VALUE, TIMER_UNREGISTER) => {
+            unregister_timer(state, event.value.round() as u32)
         }
         _ => {}
     }
@@ -665,6 +758,94 @@ static TRACK_INFO: ClapPluginTrackInfo = ClapPluginTrackInfo {
     changed: track_info_changed,
 };
 
+static TIMER_SUPPORT: ClapPluginTimerSupport = ClapPluginTimerSupport {
+    on_timer: timer_on_timer,
+};
+
+static GUI: ClapGuiExtension = ClapGuiExtension {
+    is_api_supported: gui_is_api_supported,
+    get_preferred_api: gui_get_preferred_api,
+    create: gui_create,
+    destroy: plugin_noop,
+    set_scale: gui_accept_scale,
+    get_size: gui_get_size,
+    can_resize: gui_can_resize,
+    get_resize_hints: gui_refuse_hints,
+    adjust_size: gui_accept_adjusted_size,
+    set_size: gui_set_size,
+    set_parent: gui_set_parent,
+    set_transient: gui_set_transient,
+    suggest_title: gui_suggest_title,
+    show: gui_accept,
+    hide: gui_accept,
+};
+
+const GUI_SIZE: (u32, u32) = (320, 200);
+
+unsafe extern "C" fn gui_is_api_supported(
+    _: *const ClapPlugin,
+    api: *const c_char,
+    floating: bool,
+) -> bool {
+    !floating && CStr::from_ptr(api).to_bytes_with_nul() == CLAP_WINDOW_API_WIN32
+}
+
+unsafe extern "C" fn gui_get_preferred_api(
+    _: *const ClapPlugin,
+    _: *mut *const c_char,
+    _: *mut bool,
+) -> bool {
+    false
+}
+
+unsafe extern "C" fn gui_create(_: *const ClapPlugin, _: *const c_char, _: bool) -> bool {
+    true
+}
+
+unsafe extern "C" fn gui_accept_scale(_: *const ClapPlugin, _: f64) -> bool {
+    true
+}
+
+unsafe extern "C" fn gui_get_size(_: *const ClapPlugin, width: *mut u32, height: *mut u32) -> bool {
+    *width = GUI_SIZE.0;
+    *height = GUI_SIZE.1;
+    true
+}
+
+unsafe extern "C" fn gui_can_resize(_: *const ClapPlugin) -> bool {
+    false
+}
+
+unsafe extern "C" fn gui_refuse_hints(_: *const ClapPlugin, _: *mut c_void) -> bool {
+    false
+}
+
+unsafe extern "C" fn gui_accept_adjusted_size(
+    _: *const ClapPlugin,
+    _: *mut u32,
+    _: *mut u32,
+) -> bool {
+    true
+}
+
+unsafe extern "C" fn gui_set_size(_: *const ClapPlugin, _: u32, _: u32) -> bool {
+    true
+}
+
+unsafe extern "C" fn gui_set_parent(_: *const ClapPlugin, _: *const ClapWindow) -> bool {
+    true
+}
+
+unsafe extern "C" fn gui_set_transient(_: *const ClapPlugin, _: *const ClapWindow) -> bool {
+    false
+}
+
+unsafe extern "C" fn gui_suggest_title(_: *const ClapPlugin, _: *const c_char) {}
+
+unsafe extern "C" fn gui_accept(_: *const ClapPlugin) -> bool {
+    true
+}
+
 unsafe extern "C" fn plugin_get_extension(
     plugin: *const ClapPlugin,
     id: *const c_char,
@@ -689,6 +870,10 @@ unsafe extern "C" fn plugin_get_extension(
         &NOTE_NAME as *const ClapPluginNoteName as *const c_void
     } else if id == CLAP_EXT_TRACK_INFO {
         &TRACK_INFO as *const ClapPluginTrackInfo as *const c_void
+    } else if id == CLAP_EXT_TIMER_SUPPORT {
+        &TIMER_SUPPORT as *const ClapPluginTimerSupport as *const c_void
+    } else if id == CLAP_EXT_GUI {
+        &GUI as *const ClapGuiExtension as *const c_void
     } else {
         std::ptr::null()
     }
@@ -793,6 +978,24 @@ unsafe extern "C" fn params_info(
         NOTE_NAMES_SET => (b"Note names set", 1.0, 0.0, CLAP_PARAM_IS_AUTOMATABLE),
         NOTE_PORTS_RESCAN => (b"Note ports rescan", 3.0, 0.0, CLAP_PARAM_IS_AUTOMATABLE),
         HOST_NOTE_DIALECTS => (b"Host note dialects", 15.0, 0.0, 0),
+        TIMER_REGISTER => (
+            b"Timer register",
+            3_600_000.0,
+            0.0,
+            CLAP_PARAM_IS_AUTOMATABLE,
+        ),
+        TIMER_UNREGISTER => (
+            b"Timer unregister",
+            f64::from(u32::MAX),
+            0.0,
+            CLAP_PARAM_IS_AUTOMATABLE,
+        ),
+        TIMER_REGISTER_RESULT => (b"Timer register result", 2.0, 0.0, 0),
+        TIMER_LAST_ID => (b"Timer last id", f64::from(u32::MAX), 0.0, 0),
+        TIMER_UNREGISTER_RESULT => (b"Timer unregister result", 2.0, 0.0, 0),
+        TIMER_CALLS => (b"Timer calls", f64::from(u32::MAX), 0.0, 0),
+        TIMER_LAST_FIRED => (b"Timer last fired", f64::from(u32::MAX), 0.0, 0),
+        TIMER_AUDIO_CALLS => (b"Timer audio calls", f64::from(u32::MAX), 0.0, 0),
         _ => return false,
     };
     let info = &mut *info;
@@ -823,6 +1026,12 @@ unsafe extern "C" fn params_value(plugin: *const ClapPlugin, id: u32, value: *mu
         TRACK_INFO_AUDIO_CALLS => f64::from(state.track_info_audio_calls.load(Ordering::Relaxed)),
         NOTE_NAMES_SET => f64::from(state.note_names_set.load(Ordering::Relaxed)),
         HOST_NOTE_DIALECTS => f64::from(state.host_note_dialects.load(Ordering::Relaxed)),
+        TIMER_REGISTER_RESULT => f64::from(state.timer_register_result.load(Ordering::Relaxed)),
+        TIMER_LAST_ID => f64::from(state.timer_last_id.load(Ordering::Relaxed)),
+        TIMER_UNREGISTER_RESULT => f64::from(state.timer_unregister_result.load(Ordering::Relaxed)),
+        TIMER_CALLS => f64::from(state.timer_calls.load(Ordering::Relaxed)),
+        TIMER_LAST_FIRED => f64::from(state.timer_last_fired.load(Ordering::Relaxed)),
+        TIMER_AUDIO_CALLS => f64::from(state.timer_audio_calls.load(Ordering::Relaxed)),
         _ => return false,
     };
     true

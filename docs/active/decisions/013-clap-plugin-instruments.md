@@ -208,3 +208,19 @@ It reads an instrument's note names (`clap.note-name`, e.g. drum pads) on demand
 and reports `changed` as the `plugin-note-names-changed` event; no UI uses them
 yet. No invariant changes (no new ADR). Details: `../plugins/plugin-wrapper-system.md`
 (Host `clap.note-ports` and `clap.note-name`); sandbox: ADR-015 amendment 2026-10-14.
+
+## Amendment 2026-10-14 — the host answers `clap.timer-support`
+
+A plugin (effect or instrument) registers periodic timers and the host calls its
+`on_timer` on the main thread — the Win32 thread of its open editor, or the
+bridge's main loop when sandboxed — from a message loop only, never from a host
+callback or the audio thread. Registration is a lock-free table in the plugin's
+`ClapHostContext` (no state, command, event or `.echoes` change). Decided with the
+user: timers run only while the plugin's editor window exists; `on_timer` does
+not take the instance FFI gate (a gate held by a periodic call would make the
+audio thread bypass blocks) and only waits while another off-RT caller holds it;
+a crashed plugin is not called; periods under 16 ms are raised, 0 is refused;
+ids are unique per plugin and never reused. The offline render opens no editor
+and is unchanged (C-2). No invariant changes (no new ADR). Details:
+`../plugins/plugin-wrapper-system.md` (Host `clap.timer-support`); sandbox:
+ADR-015 amendment 2026-10-14.

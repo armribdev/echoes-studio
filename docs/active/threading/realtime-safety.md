@@ -306,6 +306,18 @@ restart flag, and `note-name.changed` is one atomic store (a plugin may call it
 from `process`). The plugin's names are read only on the command thread, under
 the instance FFI gate, by the `get_plugin_note_names` command.
 
+Host `clap.timer-support` (2026-10-14) adds no audio-thread work and takes no
+lock. `register_timer` / `unregister_timer` are `[main-thread]` in the spec but a
+plugin may call them from `process`: they only touch a fixed table of atomics in
+the plugin's `ClapHostContext` (compare-and-swap on a slot, no allocation, no
+lock, no wait). `on_timer` is never called from a host callback nor from the
+audio thread: it comes from the editor window's `WM_TIMER` (Win32 thread) or the
+bridge's main loop, and only while the editor is open. Unlike the other off-RT
+calls it does **not** take the instance FFI gate — a periodic call holding it
+would make the audio thread bypass the blocks it overlaps; it only skips a tick
+while another off-RT caller holds the gate. The offline render opens no editor,
+so it never calls `on_timer` (C-2).
+
 ### Crash marker (ADR-015)
 
 In-process plugin wrappers mark the running plugin in a memory-mapped file

@@ -15,9 +15,10 @@
 //! 2. `WM_NCCREATE` installs the userdata pointer into `GWLP_USERDATA` *before*
 //!    any other message can arrive — closing the W1 race where `attached` /
 //!    `set_parent` could send messages while USERDATA was still zero.
-//! 3. A `WM_TIMER` (16 ms) drains `on_main_thread` for CLAP (A4) — required
-//!    for plugins like Vital that queue deferred GUI work after every user
-//!    interaction.
+//! 3. A `WM_TIMER` (every Windows timer tick, ~15.6 ms) runs the plugin's
+//!    `clap.timer-support` timers that are due.  They run only while this
+//!    window exists; `on_main_thread` is drained by `CLAP_GUI_DRAIN_MESSAGE`
+//!    (A4, below), not by the timer.
 //! 4. `WM_CLOSE` (× button, Alt-F4, `post_close`) takes USERDATA back via
 //!    `Box::from_raw`, runs the `cleanup` closure (destroys plugin GUI, then
 //!    plugin instance, in that order), removes the entry from `open_editors`,
@@ -34,13 +35,17 @@
 
 #![cfg(windows)]
 
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::ffi::{c_char, c_void};
 use std::ptr::null_mut;
 use std::sync::atomic::{AtomicPtr, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
+use std::time::Instant;
 
-use crate::plugin_formats::clap::ffi::{CLAP_GUI_DRAIN_MESSAGE, CLAP_GUI_RESIZE_MESSAGE};
+use crate::plugin_formats::clap::ffi::{
+    TimerSchedule, CLAP_GUI_DRAIN_MESSAGE, CLAP_GUI_RESIZE_MESSAGE,
+};
 use crate::plugin_system::crash_marker::PluginThread;
 use crate::plugin_system::instance::PluginInstance;
 
@@ -304,8 +309,10 @@ const DWMWCP_ROUND: u32 = 2;
 const CLASS_NAME: &str = "EchoesPluginWindow";
 const PLUGIN_AREA_CLASS_NAME: &str = "EchoesPluginArea";
 
-const TIMER_ID_DRAIN: usize = 1;
-const TIMER_INTERVAL_MS: u32 = 16;
+const TIMER_ID_PUMP: usize = 1;
+/// `USER_TIMER_MINIMUM`: Windows fires the timer on every system tick (~15.6 ms).
+/// A larger value would skip a tick, e.g. 16 ms would fire every other one.
+const TIMER_PUMP_INTERVAL_MS: u32 = 10;
 
 /// Sentinel placed at the head of every valid `WindowUserData`.  Verified
 /// before each USERDATA dereference (W2: protects against third-party hooks
@@ -316,9 +323,12 @@ struct WindowUserData {
     magic: u64,
     effect_id: String,
     open_editors: Arc<Mutex<HashMap<String, usize>>>,
-    /// Called on each `WM_TIMER` and `WM_APP_DRAIN` — drains pending
-    /// main-thread tasks (CLAP `on_main_thread`).  No-op for VST3.
+    /// Called on `CLAP_GUI_DRAIN_MESSAGE` — drains pending main-thread tasks
+    /// (CLAP `on_main_thread`).  No-op for VST3.
     tick: Box<dyn Fn()>,
+    /// Called on each `WM_TIMER`: runs the plugin's due `clap.timer-support`
+    /// timers.  No-op for VST3.
+    on_timer: Box<dyn Fn()>,
     /// Called on `WM_DPICHANGED` with the window's new DPI: hands the new
     /// scale to the plugin and fits the window to its resulting size.
     on_dpi_changed: Box<dyn Fn(*mut c_void, u32)>,
@@ -453,14 +463,19 @@ unsafe extern "system" fn plugin_wnd_proc(
                 return 0;
             }
         }
-        WM_TIMER => return 0,
+        WM_TIMER => {
+            if let Some(ud) = userdata(hwnd) {
+                (ud.on_timer)();
+            }
+            return 0;
+        }
         WM_CLOSE => {
             let ptr = user32::GetWindowLongPtrW(hwnd, GWLP_USERDATA);
             if ptr != 0 {
                 // Atomically take ownership so a re-entrant WM_CLOSE can't
                 // double-free.  Validate magic *after* take.
                 user32::SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
-                user32::KillTimer(hwnd, TIMER_ID_DRAIN);
+                user32::KillTimer(hwnd, TIMER_ID_PUMP);
 
                 let mut data: WindowUserData = *Box::from_raw(ptr as *mut WindowUserData);
                 if data.magic == USERDATA_MAGIC {
@@ -735,11 +750,11 @@ unsafe fn resize_to_client(hwnd: *mut c_void, client_w: i32, client_h: i32) {
     );
 }
 
-/// Show the window and install the 16 ms drain timer.
+/// Show the window and install the timer that pumps the plugin's timers.
 unsafe fn show_and_start_timer(hwnd: *mut c_void) {
     user32::ShowWindow(hwnd, SW_SHOW);
     user32::UpdateWindow(hwnd);
-    user32::SetTimer(hwnd, TIMER_ID_DRAIN, TIMER_INTERVAL_MS, null_mut());
+    user32::SetTimer(hwnd, TIMER_ID_PUMP, TIMER_PUMP_INTERVAL_MS, null_mut());
 }
 
 use crate::plugin_formats::clap::ffi::{ClapGuiExtension, ClapPlugin};
@@ -1124,6 +1139,7 @@ pub unsafe fn open_vst3_editor(
         // now runs terminate + release on the IComponent.
     });
     let tick: Box<dyn Fn()> = Box::new(|| {});
+    let on_timer: Box<dyn Fn()> = Box::new(|| {});
     let instance_for_dpi = Arc::clone(&instance);
     let on_dpi_changed: Box<dyn Fn(*mut c_void, u32)> = Box::new(move |hwnd, dpi| {
         let _running = instance_for_dpi.mark(PluginThread::Ui);
@@ -1135,6 +1151,7 @@ pub unsafe fn open_vst3_editor(
         effect_id: effect_id.to_string(),
         open_editors: Arc::clone(&open_editors),
         tick,
+        on_timer,
         on_dpi_changed,
         hover: std::cell::Cell::new(false),
         cleanup: Some(cleanup),
@@ -1251,6 +1268,20 @@ pub unsafe fn open_clap_editor(
         }
     });
 
+    // `RefCell`: a plugin that runs a nested message loop inside `on_timer`
+    // re-enters this closure, and that call must not touch the schedule.
+    let schedule = RefCell::new(TimerSchedule::default());
+    let instance_for_timers = Arc::clone(&instance);
+    let live_plugin_for_timers = Arc::clone(&live_plugin);
+    let on_timer: Box<dyn Fn()> = Box::new(move || {
+        if live_plugin_for_timers.load(Ordering::Acquire).is_null() {
+            return;
+        }
+        if let Ok(mut schedule) = schedule.try_borrow_mut() {
+            instance_for_timers.run_due_timers(&mut schedule, Instant::now());
+        }
+    });
+
     let instance_for_tick = Arc::clone(&instance);
     let tick: Box<dyn Fn()> = Box::new(move || {
         let p = live_plugin.load(Ordering::Acquire);
@@ -1281,6 +1312,7 @@ pub unsafe fn open_clap_editor(
         effect_id: effect_id.to_string(),
         open_editors: Arc::clone(&open_editors),
         tick,
+        on_timer,
         on_dpi_changed,
         hover: std::cell::Cell::new(false),
         cleanup: Some(cleanup),
@@ -1336,6 +1368,54 @@ pub fn post_close(hwnd: usize) {
     if hwnd != 0 {
         unsafe {
             user32::PostMessageW(hwnd as *mut c_void, WM_CLOSE, 0, 0);
+        }
+    }
+}
+
+#[cfg(test)]
+pub(crate) mod test_support {
+    use std::ffi::c_void;
+    use std::time::{Duration, Instant};
+
+    #[repr(C)]
+    struct Point {
+        x: i32,
+        y: i32,
+    }
+
+    #[repr(C)]
+    struct Msg {
+        hwnd: *mut c_void,
+        message: u32,
+        wparam: usize,
+        lparam: isize,
+        time: u32,
+        pt: Point,
+    }
+
+    const PM_REMOVE: u32 = 1;
+
+    #[link(name = "user32")]
+    extern "system" {
+        fn PeekMessageW(msg: *mut Msg, hwnd: *mut c_void, min: u32, max: u32, remove: u32) -> i32;
+        fn TranslateMessage(msg: *const Msg) -> i32;
+        fn DispatchMessageW(msg: *const Msg) -> isize;
+    }
+
+    /// Runs the calling thread's message loop for `duration`, as Tauri's loop
+    /// does for the editor windows the thread created.
+    pub(crate) fn pump_thread_messages(duration: Duration) {
+        let deadline = Instant::now() + duration;
+        while Instant::now() < deadline {
+            // SAFETY: plain Win32 message dispatch on this thread's own queue.
+            unsafe {
+                let mut msg: Msg = std::mem::zeroed();
+                while PeekMessageW(&mut msg, std::ptr::null_mut(), 0, 0, PM_REMOVE) != 0 {
+                    TranslateMessage(&msg);
+                    DispatchMessageW(&msg);
+                }
+            }
+            std::thread::sleep(Duration::from_millis(2));
         }
     }
 }

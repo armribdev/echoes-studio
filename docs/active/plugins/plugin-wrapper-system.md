@@ -258,8 +258,9 @@ owned and freed by that `ClapHost` (which outlives the plugin). It holds the
 plugin's editor HWND (set by `open_clap_editor`, cleared on close) and the
 `request_callback` coalescing flag, so two open CLAP editors no longer share
 one global window slot. It also holds the plugin's pending `request_restart`
-(see Latency Handling) and the info of its track (`clap.track-info`, see Host
-`clap.track-info`). `get_extension` also answers `clap.gui` (host side:
+(see Latency Handling), the info of its track (`clap.track-info`, see Host
+`clap.track-info`) and its timers (`clap.timer-support`, see Host
+`clap.timer-support`). `get_extension` also answers `clap.gui` (host side:
 `request_resize` posts `CLAP_GUI_RESIZE_MESSAGE` to that HWND and the WndProc
 resizes the container; `closed` posts `WM_CLOSE`; `request_show/hide` return
 false because the editor is embedded) and `clap.log` (stderr, dropped on the
@@ -468,6 +469,102 @@ Tests: `crates/clap_ffi` (layouts, dialects, a rescan of all ports vs a rename,
 read and re-read after a change, `changed` reaching the app once, rescan → restart,
 in process and sandboxed). The test plugin gained `Note names set` (19),
 `Note ports rescan` (20) and `Host note dialects` (21): 22 parameters in all.
+
+**Host `clap.timer-support` (2026-10-14).** Checked against
+`clap/ext/timer-support.h` (CLAP main; id `clap.timer-support`, no compat id).
+What the spec says: the plugin's `on_timer(plugin, timer_id)` is `[main-thread]`;
+the host's `register_timer(host, period_ms, *timer_id)` "registers a periodic
+timer", "may adjust the period if it is under a certain threshold", "30 Hz should
+be allowed", and `unregister_timer(host, timer_id)` returns whether it worked;
+both are `[main-thread]`; `clap_id` is a `uint32_t` with `CLAP_INVALID_ID =
+UINT32_MAX` (`clap/id.h`). What it leaves open — and Echoes therefore decides:
+how ids are chosen, a maximum period, any link with `clap.gui` (`gui.h` only
+advises a hidden window to "stop painting timers"), and what happens when the
+plugin is destroyed. The decisions below were validated by the user on 2026-10-14.
+
+- _Registration._ A lock-free table in the plugin's `ClapHostContext`
+  (`TimerTable`, `crates/clap_ffi/src/timers.rs`; 16 slots of one atomic each), so
+  `register_timer` / `unregister_timer` take no lock and allocate nothing, whatever
+  thread a plugin calls from — the audio thread included, although the spec reserves
+  them for the main thread. A period of 0 is refused, a period under 16 ms is
+  raised to 16 ms (the Windows timer tick is about 15.6 ms, so a shorter period
+  could not be honoured), there is no ceiling (a long period costs nothing).
+  Refused too: no out parameter (the id would be lost) and a full table (17th
+  timer). The out parameter is set to `CLAP_INVALID_ID` on a refusal. Ids start
+  at 1 (a plugin may use 0 for "no timer"), are unique for the plugin's lifetime,
+  and are never reused after `unregister_timer`; `CLAP_INVALID_ID` is never given.
+- _Who calls `on_timer`._ Only a message loop, never a host callback: a plugin that
+  registers a timer gets no `on_timer` before `register_timer` has returned.
+  In process: the editor window's `WM_TIMER` (`plugin_system/gui.rs`; set to 10 ms,
+  i.e. every Windows tick, ~15.6 ms) on the Win32 thread, through
+  `PluginInstance::run_due_timers`. Sandboxed: the bridge's main loop
+  (`serve_requests`, which wakes at least every 5 ms) through
+  `LoadedPlugin::run_due_timers`. No new thread, no new window. `clap.thread-check`
+  reports both as the main thread; no `audio_thread_scope`.
+- _Editor closed._ **A timer runs only while its plugin's editor window exists**,
+  in process and sandboxed alike. A timer registered before `gui.create` or after
+  `gui.destroy` is remembered and answers `true`, but is frozen until the editor
+  opens; it then starts one period after the window appears, with no catch-up. A
+  plugin that needs timers with no editor (rare on Windows, where plugins use their
+  own timers) gets none; running them without an editor would need a permanent pump
+  on the app's Win32 thread and a registry of instances — not done. The host does
+  not unregister timers on `gui.destroy`: that is the plugin's job (the spec
+  advises it for painting timers), a timer left registered resumes with the next
+  editor. The offline render opens no editor, so no plugin ever gets a timer
+  there and the C-2 harness is unchanged.
+- _Schedule._ Each pump owns a `TimerSchedule` (due time per id). A timer is first
+  due one period after the pump first sees it; after a call the next due time is
+  `due + period`, which keeps the average rate exact (jitter: at most one pump
+  interval), unless the loop was a whole period late, in which case it restarts
+  from now. So a stalled loop never makes up for lost ticks, and each timer is
+  called at most once per pass. A closed editor drops its schedule.
+- _Unregister._ The registration is checked again just before every call, so
+  after `unregister_timer` has returned `true` the plugin gets no further
+  `on_timer` for that id, even from the same pass, and a plugin may unregister
+  (or register) from inside `on_timer`.
+- _Destroy and crash._ The table dies with the plugin's `ClapHost`, which outlives
+  the plugin; the editor window holds an `Arc<PluginInstance>` until it closes, so
+  no pump can outlive the instance, and closing the window ends the pump. A crashed
+  plugin (`has_crashed`) is never called. A sandboxed plugin's timers die with its
+  bridge process.
+- _FFI gate._ In process, `on_timer` does **not** take the instance FFI gate
+  (decision: the user's brief asked for it, and was changed after the cost was
+  shown). A held gate makes the audio thread bypass the block it overlaps, so a
+  periodic call would cut blocks for as long as an editor is open (estimate, not
+  measured: about one block per 10 s for a 20 µs `on_timer` at 30 Hz, more for a
+  slower one), and CLAP lets `on_timer` run beside
+  `process`; `on_main_thread` and the `clap.gui` calls already run without the
+  gate. What it does: leave a timer due — retried at the next pass, not one
+  period later — while another off-RT caller (state save, `changed()`) holds the
+  gate, and mark the crash marker as a UI-thread call. Remaining risk: an off-RT
+  caller that takes the gate during an `on_timer` is not excluded (same exposure
+  as the editor's other calls). In the bridge, control requests run on the same
+  thread as the pump, so they never overlap an `on_timer`.
+- _A slow `on_timer`._ It blocks the loop that called it: the Win32 thread (the
+  app's UI, as with a slow `on_main_thread`) or the bridge's main thread (control
+  requests wait, so a very slow one can hit the engine's control timeout). There is
+  no watchdog and no abort; the loop only avoids a burst afterwards.
+- _Sandbox._ The bridge hosts the same extension. No control op, no block flag,
+  no shared-memory change, `BRIDGE_PROTOCOL_VERSION` unchanged (ADR-015
+  amendment 2026-10-14).
+- _Limits._ No VST3 equivalent. At most 16 timers per plugin. Not yet tried with
+  real plugins (an animated editor: Vital, Surge XT, u-he).
+- _Docs vs code._ `gui.rs` used to say a 16 ms `WM_TIMER` drained `on_main_thread`;
+  the timer was a no-op (the drain is `CLAP_GUI_DRAIN_MESSAGE`). The timer now
+  pumps the plugin's timers and the comments say so.
+
+Tests: `crates/clap_ffi` (`timers.rs`: extension table, ids, refusals, bounds,
+schedule — rhythm, stall, declined, unregistered, registered during a pass —
+many threads), `plugin_system/sandbox_tests.rs` (in process and sandboxed:
+registration and refusals; in process: delivery on a fake clock, registration
+from the audio thread, crashed plugin, off-RT holder and block in flight, and a
+real editor window pumped by the test; sandboxed: frozen without an editor),
+`crates/plugin_host_bridge/tests/bridge.rs` (registration from the audio and main
+thread, frozen without an editor, both timers firing in a real editor window
+until unregistered, never on the audio thread). The two window tests open a small
+real window for a moment. The test plugin gained a stub `clap.gui`, the plugin
+`clap.timer-support` and eight parameters (ids 22–29, `Timer register` …
+`Timer audio calls`): 30 in all.
 
 ---
 

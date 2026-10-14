@@ -12,6 +12,7 @@ use crate::audio_graph::buffer::AudioBuffer;
 use crate::audio_graph::midi::{MidiEvent, MidiEventKind, MidiEventList};
 use crate::audio_graph::node::{AudioNode, PrepareContext, TransportInfo};
 use crate::audio_graph::nodes::instrument::InstrumentDevice;
+use crate::plugin_formats::clap::ffi::TimerSchedule;
 use crate::plugin_formats::clap::ffi::{
     take_plugin_note_names_changed, take_plugin_params_rescan, ClapPluginParams, HostTrackInfo,
     CLAP_EXT_PARAMS, CLAP_NOTE_DIALECT_CLAP, CLAP_NOTE_DIALECT_MIDI, CLAP_NOTE_PORTS_RESCAN_ALL,
@@ -49,7 +50,15 @@ const TRACK_INFO_AUDIO_CALLS: u32 = 18;
 const NOTE_NAMES_SET: u32 = 19;
 const NOTE_PORTS_RESCAN: u32 = 20;
 const HOST_NOTE_DIALECTS: u32 = 21;
-const PARAM_COUNT: usize = 22;
+const TIMER_REGISTER: u32 = 22;
+const TIMER_UNREGISTER: u32 = 23;
+const TIMER_REGISTER_RESULT: u32 = 24;
+const TIMER_LAST_ID: u32 = 25;
+const TIMER_UNREGISTER_RESULT: u32 = 26;
+const TIMER_CALLS: u32 = 27;
+const TIMER_LAST_FIRED: u32 = 28;
+const TIMER_AUDIO_CALLS: u32 = 29;
+const PARAM_COUNT: usize = 30;
 const HAS_NAME: f64 = 1.0;
 const HAS_NAME_AND_COLOR: f64 = 3.0;
 const TAIL_RANGE: f32 = 1_000_000.0;
@@ -1095,4 +1104,238 @@ fn a_rescan_of_all_note_ports_makes_an_in_process_plugin_restart() {
         &[(NOTE_PORTS_RESCAN, f64::from(CLAP_NOTE_PORTS_RESCAN_ALL))],
     );
     assert!(context.take_restart_request());
+}
+
+// ── clap.timer-support ─────────────────────────────────────────────────────────
+
+const ACCEPTED: f64 = 1.0;
+const REFUSED: f64 = 2.0;
+const INVALID_ID: f64 = u32::MAX as f64;
+
+/// The id the plugin placed at `key` got from `register_timer`, if it was accepted.
+fn register_timer(host: &PluginHost, key: &str, period_ms: f64) -> Option<f64> {
+    flush_plugin_values(host, key, &[(TIMER_REGISTER, period_ms)]);
+    (seen(host, key, TIMER_REGISTER_RESULT) == ACCEPTED).then(|| seen(host, key, TIMER_LAST_ID))
+}
+
+fn unregister_timer(host: &PluginHost, key: &str, id: f64) -> bool {
+    flush_plugin_values(host, key, &[(TIMER_UNREGISTER, id)]);
+    seen(host, key, TIMER_UNREGISTER_RESULT) == ACCEPTED
+}
+
+fn the_plugin_registers_timers_and_a_zero_period_is_refused(sandboxed: bool) {
+    let mut host = host();
+    let _node = prepared(&mut host, sandboxed, false);
+
+    let first = register_timer(&host, KEY, 33.0).expect("30 Hz is allowed");
+    let second = register_timer(&host, KEY, 50.0).expect("a second timer");
+    assert_ne!(first, second, "ids are distinct");
+    assert!(first > 0.0 && second > 0.0 && first != INVALID_ID);
+
+    assert_eq!(register_timer(&host, KEY, 0.0), None);
+    assert_eq!(seen(&host, KEY, TIMER_REGISTER_RESULT), REFUSED);
+    assert_eq!(seen(&host, KEY, TIMER_LAST_ID), INVALID_ID);
+
+    assert!(unregister_timer(&host, KEY, first));
+    assert!(!unregister_timer(&host, KEY, first), "already gone");
+    assert!(!unregister_timer(&host, KEY, 12_345.0), "never registered");
+    assert!(unregister_timer(&host, KEY, second));
+}
+
+#[test]
+fn an_in_process_plugin_registers_timers_and_a_zero_period_is_refused() {
+    the_plugin_registers_timers_and_a_zero_period_is_refused(false);
+}
+
+#[test]
+fn a_sandboxed_plugin_registers_timers_and_a_zero_period_is_refused() {
+    the_plugin_registers_timers_and_a_zero_period_is_refused(true);
+}
+
+fn after(start: std::time::Instant, millis: u64) -> std::time::Instant {
+    start + std::time::Duration::from_millis(millis)
+}
+
+/// The clock is the test's: no wait, no window.
+#[test]
+fn an_in_process_timer_gets_on_timer_until_it_is_unregistered() {
+    let mut host = host();
+    let _node = prepared(&mut host, false, false);
+    let instance = host.instance_by_key(KEY).unwrap();
+    let first = register_timer(&host, KEY, 33.0).unwrap();
+    let second = register_timer(&host, KEY, 50.0).unwrap();
+    let start = std::time::Instant::now();
+    let mut schedule = TimerSchedule::default();
+    let calls = || seen(&host, KEY, TIMER_CALLS);
+
+    assert_eq!(instance.run_due_timers(&mut schedule, start), 0);
+    assert_eq!(instance.run_due_timers(&mut schedule, after(start, 32)), 0);
+    assert_eq!(instance.run_due_timers(&mut schedule, after(start, 33)), 1);
+    assert_eq!(seen(&host, KEY, TIMER_LAST_FIRED), first);
+    assert_eq!(instance.run_due_timers(&mut schedule, after(start, 50)), 1);
+    assert_eq!(seen(&host, KEY, TIMER_LAST_FIRED), second);
+    assert_eq!(calls(), 2.0);
+
+    assert!(unregister_timer(&host, KEY, first));
+    assert_eq!(instance.run_due_timers(&mut schedule, after(start, 120)), 1);
+    assert_eq!(seen(&host, KEY, TIMER_LAST_FIRED), second);
+    assert_eq!(calls(), 3.0);
+
+    assert!(unregister_timer(&host, KEY, second));
+    assert_eq!(
+        instance.run_due_timers(&mut schedule, after(start, 5_000)),
+        0
+    );
+    assert_eq!(calls(), 3.0, "no timer, no call");
+    assert_eq!(
+        seen(&host, KEY, TIMER_AUDIO_CALLS),
+        0.0,
+        "never reported as the audio thread"
+    );
+}
+
+#[test]
+fn a_timer_registered_from_the_audio_thread_still_arrives_on_the_main_thread() {
+    let mut host = host();
+    let mut node = prepared(&mut host, false, true);
+    let instance = host.instance_by_key(KEY).unwrap();
+
+    // The plugin applies this event inside `process`: the audio thread calls
+    // `register_timer`, which the spec reserves for the main thread.
+    assert!(host
+        .push_plugin_param(KEY, TIMER_REGISTER, 33.0 / 3_600_000.0)
+        .unwrap());
+    run_block(&mut node);
+    assert_eq!(seen(&host, KEY, TIMER_REGISTER_RESULT), ACCEPTED);
+
+    let start = std::time::Instant::now();
+    let mut schedule = TimerSchedule::default();
+    instance.run_due_timers(&mut schedule, start);
+    assert_eq!(instance.run_due_timers(&mut schedule, after(start, 33)), 1);
+    assert_eq!(seen(&host, KEY, TIMER_CALLS), 1.0);
+    assert_eq!(seen(&host, KEY, TIMER_AUDIO_CALLS), 0.0);
+}
+
+#[test]
+fn an_in_process_plugin_that_crashed_gets_no_more_timers() {
+    let mut host = host();
+    let _node = prepared(&mut host, false, false);
+    let instance = host.instance_by_key(KEY).unwrap();
+    register_timer(&host, KEY, 20.0).unwrap();
+    let start = std::time::Instant::now();
+    let mut schedule = TimerSchedule::default();
+    instance.run_due_timers(&mut schedule, start);
+
+    instance.set_lifecycle(LifecycleState::Error);
+    assert_eq!(
+        instance.run_due_timers(&mut schedule, after(start, 1_000)),
+        0
+    );
+    assert_eq!(
+        instance.clap_param_value(TIMER_CALLS),
+        Some(0.0),
+        "the plugin was not called"
+    );
+}
+
+/// A timer never holds the FFI gate, so it never makes the audio thread skip a
+/// block; it only waits for an off-RT caller (state save, `changed()`) to finish.
+#[test]
+fn a_timer_waits_for_an_off_rt_caller_and_runs_beside_a_block() {
+    let mut host = host();
+    let _node = prepared(&mut host, false, false);
+    let instance = host.instance_by_key(KEY).unwrap();
+    register_timer(&host, KEY, 20.0).unwrap();
+    let start = std::time::Instant::now();
+    let mut schedule = TimerSchedule::default();
+    instance.run_due_timers(&mut schedule, start);
+
+    {
+        let _saving_state = instance
+            .offrt_try_acquire(std::time::Duration::from_millis(1))
+            .unwrap();
+        assert_eq!(
+            instance.run_due_timers(&mut schedule, after(start, 20)),
+            0,
+            "skipped, without waiting"
+        );
+    }
+    assert_eq!(
+        instance.run_due_timers(&mut schedule, after(start, 21)),
+        1,
+        "still due at the next pass"
+    );
+
+    let block_in_flight = instance.rt_try_enter().expect("the gate is free");
+    assert_eq!(
+        instance.run_due_timers(&mut schedule, after(start, 60)),
+        1,
+        "CLAP lets on_timer run beside process"
+    );
+    drop(block_in_flight);
+    assert!(
+        instance.rt_try_enter().is_some(),
+        "the timer left the gate alone"
+    );
+}
+
+/// The Win32 wiring: the editor window's `WM_TIMER` drives the plugin's timers.
+/// Opens a real (stub) editor window on this thread and runs its message loop.
+#[test]
+fn an_open_in_process_editor_runs_the_timers_through_its_window() {
+    use crate::plugin_system::gui::{self, test_support::pump_thread_messages};
+    use std::sync::{Arc, Mutex};
+    use std::time::Duration;
+
+    let mut host = host();
+    let _node = prepared(&mut host, false, false);
+    let instance = host.instance_by_key(KEY).unwrap();
+    let context = instance.clap_host_context().unwrap();
+    let first = register_timer(&host, KEY, 20.0).unwrap();
+
+    let hwnd = unsafe {
+        gui::open_clap_editor(
+            Arc::clone(&instance),
+            "Timer test",
+            KEY,
+            Arc::new(Mutex::new(HashMap::new())),
+        )
+    }
+    .expect("the editor opens");
+    assert!(context.editor_open());
+
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while seen(&host, KEY, TIMER_CALLS) < 3.0 {
+        assert!(std::time::Instant::now() < deadline, "no timer fired");
+        pump_thread_messages(Duration::from_millis(10));
+    }
+    assert_eq!(seen(&host, KEY, TIMER_LAST_FIRED), first);
+    assert_eq!(seen(&host, KEY, TIMER_AUDIO_CALLS), 0.0);
+
+    assert!(unregister_timer(&host, KEY, first));
+    let calls = seen(&host, KEY, TIMER_CALLS);
+    pump_thread_messages(Duration::from_millis(150));
+    assert_eq!(seen(&host, KEY, TIMER_CALLS), calls, "unregistered");
+
+    let second = register_timer(&host, KEY, 20.0).unwrap();
+    gui::post_close(hwnd);
+    pump_thread_messages(Duration::from_millis(50));
+    assert!(!context.editor_open(), "the window is gone");
+    let calls = seen(&host, KEY, TIMER_CALLS);
+    pump_thread_messages(Duration::from_millis(150));
+    assert_eq!(
+        seen(&host, KEY, TIMER_CALLS),
+        calls,
+        "timer {second} waits for the next editor"
+    );
+}
+
+#[test]
+fn a_sandboxed_timer_does_not_run_while_its_editor_is_closed() {
+    let mut host = host();
+    let _node = prepared(&mut host, true, false);
+    register_timer(&host, KEY, 20.0).expect("accepted");
+
+    std::thread::sleep(std::time::Duration::from_millis(250));
+    assert_eq!(seen(&host, KEY, TIMER_CALLS), 0.0);
 }

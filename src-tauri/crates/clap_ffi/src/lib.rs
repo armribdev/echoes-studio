@@ -26,9 +26,11 @@ use std::path::Path;
 
 mod notes;
 mod process_sleep;
+mod timers;
 mod track_info;
 pub use notes::*;
 pub use process_sleep::*;
+pub use timers::*;
 pub use track_info::*;
 
 // ── Version ────────────────────────────────────────────────────────────────────
@@ -171,6 +173,7 @@ pub struct ClapHostContext {
     process_requested: std::sync::atomic::AtomicBool,
     tail_changed: std::sync::atomic::AtomicBool,
     track_info: track_info::TrackInfoCell,
+    timers: timers::TimerTable,
 }
 
 impl ClapHostContext {
@@ -182,7 +185,21 @@ impl ClapHostContext {
             process_requested: std::sync::atomic::AtomicBool::new(false),
             tail_changed: std::sync::atomic::AtomicBool::new(false),
             track_info: track_info::TrackInfoCell::new(),
+            timers: timers::TimerTable::new(),
         }
+    }
+
+    /// The timers the plugin registered through `clap.timer-support`.
+    pub fn timers(&self) -> &timers::TimerTable {
+        &self.timers
+    }
+
+    /// Whether the plugin's editor window exists.  Its timers only run then.
+    pub fn editor_open(&self) -> bool {
+        !self
+            .gui_hwnd
+            .load(std::sync::atomic::Ordering::Acquire)
+            .is_null()
     }
 
     /// Records the plugin's track for `clap.track-info.get`; returns whether it
@@ -362,6 +379,9 @@ pub unsafe extern "C" fn host_get_extension(
     }
     if id == CLAP_EXT_TRACK_INFO || id == CLAP_EXT_TRACK_INFO_COMPAT {
         return &track_info::HOST_TRACK_INFO as *const ClapHostTrackInfo as *const c_void;
+    }
+    if id == CLAP_EXT_TIMER_SUPPORT {
+        return &timers::HOST_TIMER_SUPPORT as *const ClapHostTimerSupport as *const c_void;
     }
     std::ptr::null()
 }

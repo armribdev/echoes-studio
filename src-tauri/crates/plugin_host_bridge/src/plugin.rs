@@ -12,12 +12,12 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use clap_ffi::{
-    audio_thread_scope, is_silent, read_pod, read_tail, split_events, BlockActivity,
-    ClapAudioBuffer, ClapEventBuffer, ClapEventHeader, ClapEventTransport, ClapHost, ClapLibrary,
-    ClapOutputEvents, ClapParamInfo, ClapPlugin, ClapPluginFactory, ClapPluginLatency,
-    ClapPluginParams, ClapProcess, HostTrackInfo, ProcessSleep, CLAP_CORE_EVENT_SPACE,
-    CLAP_EVENT_TRANSPORT, CLAP_EXT_LATENCY, CLAP_EXT_PARAMS, CLAP_PLUGIN_FACTORY_ID,
-    CLAP_PROCESS_ERROR, CLAP_TRANSPORT_IS_PLAYING,
+    audio_thread_scope, deliver_due_timers, is_silent, read_pod, read_tail, split_events,
+    BlockActivity, ClapAudioBuffer, ClapEventBuffer, ClapEventHeader, ClapEventTransport, ClapHost,
+    ClapLibrary, ClapOutputEvents, ClapParamInfo, ClapPlugin, ClapPluginFactory, ClapPluginLatency,
+    ClapPluginParams, ClapProcess, HostTrackInfo, ProcessSleep, TimerSchedule,
+    CLAP_CORE_EVENT_SPACE, CLAP_EVENT_TRANSPORT, CLAP_EXT_LATENCY, CLAP_EXT_PARAMS,
+    CLAP_PLUGIN_FACTORY_ID, CLAP_PROCESS_ERROR, CLAP_TRANSPORT_IS_PLAYING,
 };
 use plugin_bridge::protocol::{
     BLOCK_NOTE_NAMES_CHANGED, BLOCK_PARAMS_RESCAN_MASK, BLOCK_PARAMS_RESCAN_SHIFT,
@@ -248,6 +248,23 @@ impl LoadedPlugin {
             // SAFETY: live plugin, called on the bridge's main thread.
             unsafe { clap_ffi::notify_track_info_changed(self.plugin) };
         }
+    }
+
+    /// Main thread.  Calls the `clap.timer-support` `on_timer` of every timer due
+    /// at `now`, only while the plugin's editor is open (a closed editor starts
+    /// `schedule` over, so its timers do not catch up).  Returns the number of
+    /// calls.  The control requests run on this same thread, so no off-RT call
+    /// can overlap one; `process` may, as CLAP allows.
+    pub fn run_due_timers(&self, schedule: &mut TimerSchedule, now: Instant) -> usize {
+        let Some(context) = self.host.context() else {
+            return 0;
+        };
+        if !context.editor_open() {
+            *schedule = TimerSchedule::default();
+            return 0;
+        }
+        // SAFETY: live plugin, called on the bridge's main thread.
+        unsafe { deliver_due_timers(self.plugin, context, schedule, now, || Some(())) }
     }
 
     /// Sets plain parameter values outside `process` (`clap.params.flush`).

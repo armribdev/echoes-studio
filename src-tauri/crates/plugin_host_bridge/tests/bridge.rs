@@ -45,7 +45,15 @@ const TRACK_INFO_AUDIO_CALLS: u32 = 18;
 const NOTE_NAMES_SET: u32 = 19;
 const NOTE_PORTS_RESCAN: u32 = 20;
 const HOST_NOTE_DIALECTS: u32 = 21;
-const PARAM_COUNT: u32 = 22;
+const TIMER_REGISTER: u32 = 22;
+const TIMER_UNREGISTER: u32 = 23;
+const TIMER_REGISTER_RESULT: u32 = 24;
+const TIMER_LAST_ID: u32 = 25;
+const TIMER_UNREGISTER_RESULT: u32 = 26;
+const TIMER_CALLS: u32 = 27;
+const TIMER_LAST_FIRED: u32 = 28;
+const TIMER_AUDIO_CALLS: u32 = 29;
+const PARAM_COUNT: u32 = 30;
 const FRAMES: usize = 64;
 const CHANNELS: usize = 2;
 const TIMEOUT: Duration = Duration::from_secs(5);
@@ -723,4 +731,115 @@ fn a_rescan_of_all_note_ports_comes_back_as_a_restart_request() {
         f64::from(CLAP_NOTE_PORTS_RESCAN_ALL),
     )]);
     assert_ne!(block_flags(&bridge, 1, &all) & BLOCK_RESTART_REQUESTED, 0);
+}
+
+// ── clap.timer-support ─────────────────────────────────────────────────────────
+
+const ACCEPTED: f64 = 1.0;
+const REFUSED: f64 = 2.0;
+const INVALID_ID: f64 = u32::MAX as f64;
+
+/// Sets plain values on the bridge's main thread (`clap.params.flush`).
+fn flush_values(bridge: &BridgeProcess, values: &[(u32, f64)]) {
+    let mut payload = Vec::new();
+    for &(native_id, value) in values {
+        payload.extend_from_slice(&native_id.to_le_bytes());
+        payload.extend_from_slice(&value.to_le_bytes());
+    }
+    bridge.request(Op::FlushValues, &payload, TIMEOUT).unwrap();
+}
+
+/// Registers a timer from the bridge's main thread; the id the plugin got, if accepted.
+fn register_timer(bridge: &BridgeProcess, period_ms: f64) -> Option<f64> {
+    flush_values(bridge, &[(TIMER_REGISTER, period_ms)]);
+    (param_value(bridge, TIMER_REGISTER_RESULT) == ACCEPTED)
+        .then(|| param_value(bridge, TIMER_LAST_ID))
+}
+
+fn unregister_timer(bridge: &BridgeProcess, id: f64) -> bool {
+    flush_values(bridge, &[(TIMER_UNREGISTER, id)]);
+    param_value(bridge, TIMER_UNREGISTER_RESULT) == ACCEPTED
+}
+
+fn wait_until(what: &str, mut condition: impl FnMut() -> bool) {
+    let deadline = std::time::Instant::now() + TIMEOUT;
+    while !condition() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "timed out waiting for {what}"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
+#[test]
+fn the_plugin_registers_timers_from_any_thread_and_a_zero_period_is_refused() {
+    let bridge = activated();
+
+    // From the audio thread: a plugin may call the host from the wrong thread.
+    let events = param_events(&[(CLAP_EVENT_PARAM_VALUE, TIMER_REGISTER, 33.0)]);
+    block_flags(&bridge, 0, &events);
+    assert_eq!(param_value(&bridge, TIMER_REGISTER_RESULT), ACCEPTED);
+    let from_audio = param_value(&bridge, TIMER_LAST_ID);
+
+    let from_main = register_timer(&bridge, 50.0).expect("a second timer");
+    assert_ne!(from_audio, from_main, "ids are distinct");
+    assert!(from_audio > 0.0 && from_main > 0.0 && from_audio != INVALID_ID);
+
+    assert_eq!(register_timer(&bridge, 0.0), None, "a zero period");
+    assert_eq!(param_value(&bridge, TIMER_REGISTER_RESULT), REFUSED);
+    assert_eq!(param_value(&bridge, TIMER_LAST_ID), INVALID_ID);
+
+    assert!(unregister_timer(&bridge, from_audio));
+    assert!(!unregister_timer(&bridge, from_audio), "already gone");
+    assert!(!unregister_timer(&bridge, 12_345.0), "never registered");
+}
+
+#[test]
+fn a_timer_does_not_run_while_the_editor_is_closed() {
+    let bridge = activated();
+    register_timer(&bridge, 20.0).expect("accepted");
+
+    std::thread::sleep(Duration::from_millis(250));
+    assert_eq!(param_value(&bridge, TIMER_CALLS), 0.0);
+}
+
+/// Opens the bridge's real editor window (the test plugin's `clap.gui` is a stub),
+/// so the timers are driven by the same message loop as with a real plugin.
+#[test]
+fn an_open_editor_runs_the_timers_until_they_are_unregistered() {
+    let bridge = activated();
+    let first = register_timer(&bridge, 20.0).expect("first timer");
+    let second = register_timer(&bridge, 25.0).expect("second timer");
+    assert_ne!(first, second);
+    bridge
+        .request(Op::OpenEditor, b"Timer test", TIMEOUT)
+        .expect("the editor opens");
+
+    let mut fired = std::collections::BTreeSet::new();
+    wait_until("both timers to fire", || {
+        fired.insert(param_value(&bridge, TIMER_LAST_FIRED) as u32);
+        fired.contains(&(first as u32)) && fired.contains(&(second as u32))
+    });
+    assert_eq!(
+        param_value(&bridge, TIMER_AUDIO_CALLS),
+        0.0,
+        "never from the audio thread"
+    );
+
+    assert!(unregister_timer(&bridge, first));
+    let calls = param_value(&bridge, TIMER_CALLS);
+    wait_until("the other timer to keep firing", || {
+        param_value(&bridge, TIMER_CALLS) >= calls + 3.0
+    });
+    assert_eq!(
+        param_value(&bridge, TIMER_LAST_FIRED),
+        second,
+        "the unregistered timer is silent"
+    );
+
+    assert!(unregister_timer(&bridge, second));
+    let calls = param_value(&bridge, TIMER_CALLS);
+    std::thread::sleep(Duration::from_millis(150));
+    assert_eq!(param_value(&bridge, TIMER_CALLS), calls, "no timer left");
 }

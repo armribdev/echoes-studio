@@ -52,8 +52,8 @@ use std::time::{Duration, Instant};
 use crate::audio_graph::plugin_params::ValueModulatedParam;
 use crate::plugin_formats::clap::audio_ports::{read_output_ports, ClapOutputPort};
 use crate::plugin_formats::clap::ffi::{
-    audio_thread_scope, notify_track_info_changed, read_note_names, ClapHost, ClapHostContext,
-    ClapLibrary, ClapPlugin, HostTrackInfo, NoteName,
+    audio_thread_scope, deliver_due_timers, notify_track_info_changed, read_note_names, ClapHost,
+    ClapHostContext, ClapLibrary, ClapPlugin, HostTrackInfo, NoteName, TimerSchedule,
 };
 use crate::plugin_formats::vst3::ffi::{
     IAudioProcessor, IComponent, ProcessSetup, Vst3Library, SPEAKER_STEREO,
@@ -535,6 +535,34 @@ impl PluginInstance {
         self.track_info_pending.store(false, Ordering::Release);
         // SAFETY: live CLAP plugin owned by this instance; FFI gate held.
         unsafe { notify_track_info_changed(plugin) };
+    }
+
+    /// Calls the `clap.timer-support` `on_timer` of every timer due at `now`, on
+    /// the calling thread, which is the Win32 thread of the plugin's open editor
+    /// (the "main thread" `clap.thread-check` reports).  Returns the number of calls.
+    ///
+    /// Unlike the other off-RT calls it does not take the FFI gate: a periodic
+    /// call that held it would make the audio thread skip every block it overlaps,
+    /// and CLAP lets `on_timer` run beside `process`.  It does leave a timer due
+    /// while another off-RT caller (state save, `changed()`) holds the gate, and
+    /// never calls a crashed plugin.
+    pub fn run_due_timers(&self, schedule: &mut TimerSchedule, now: Instant) -> usize {
+        let (Some(plugin), Some(context)) = (self.clap_plugin(), self.clap_host_context()) else {
+            return 0;
+        };
+        if self.has_crashed() {
+            return 0;
+        }
+        // SAFETY: live CLAP plugin owned by this instance, on its editor thread.
+        unsafe {
+            deliver_due_timers(plugin, context, schedule, now, || {
+                (!self.off_rt_holds_ffi_gate()).then(|| self.mark(PluginThread::Ui))
+            })
+        }
+    }
+
+    fn off_rt_holds_ffi_gate(&self) -> bool {
+        self.ffi_gate.load(Ordering::Acquire) == GATE_OFFRT
     }
 
     /// Puts value-modulated parameters back on their base so a state save

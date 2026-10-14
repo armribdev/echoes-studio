@@ -26,8 +26,9 @@ use std::io::{self, BufReader, Write};
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::sync::{mpsc, Arc};
+use std::time::Instant;
 
-use clap_ffi::HostTrackInfo;
+use clap_ffi::{HostTrackInfo, TimerSchedule};
 use plugin::{ClapBlockProcessor, LoadedPlugin};
 use plugin_bridge::control::{self, Op, PayloadReader, STATUS_ERROR, STATUS_OK};
 use plugin_bridge::protocol::BRIDGE_PROTOCOL_VERSION;
@@ -156,6 +157,7 @@ fn serve_requests(
     requests: &mpsc::Receiver<Option<(u8, Vec<u8>)>>,
 ) {
     let mut stdout = io::stdout().lock();
+    let mut timers = TimerSchedule::default();
     while !peer.shutdown_requested() {
         loop {
             match requests.try_recv() {
@@ -173,6 +175,7 @@ fn serve_requests(
             }
         }
         let _ = stdout.flush();
+        plugin.run_due_timers(&mut timers, Instant::now());
         wait_for_work();
     }
 }
