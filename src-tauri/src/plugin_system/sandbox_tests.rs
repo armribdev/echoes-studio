@@ -12,7 +12,11 @@ use crate::audio_graph::buffer::AudioBuffer;
 use crate::audio_graph::midi::{MidiEvent, MidiEventKind, MidiEventList};
 use crate::audio_graph::node::{AudioNode, PrepareContext, TransportInfo};
 use crate::audio_graph::nodes::instrument::InstrumentDevice;
-use crate::plugin_formats::clap::ffi::{ClapPluginParams, CLAP_EXT_PARAMS};
+use crate::plugin_formats::clap::ffi::{
+    take_plugin_params_rescan, ClapPluginParams, CLAP_EXT_PARAMS, CLAP_PARAM_RESCAN_INFO,
+    CLAP_PARAM_RESCAN_TEXT,
+};
+use crate::plugin_formats::clap::params::flush_clap_param_values;
 use crate::plugin_system::host::{PluginHost, PluginIsolation, UnavailableReason};
 use crate::plugin_system::registry::PluginManifest;
 use crate::plugin_system::wrapper::DeviceFormat;
@@ -28,6 +32,8 @@ const WRONG_THREAD: u32 = 5;
 const STATUS: u32 = 6;
 const TAIL: u32 = 7;
 const PROCESS_CALLS: u32 = 8;
+const RESCAN: u32 = 10;
+const REQUEST_FLUSH: u32 = 11;
 const TAIL_RANGE: f32 = 1_000_000.0;
 const FRAMES: usize = 64;
 const NOTE_ON: MidiEventKind = MidiEventKind::NoteOn {
@@ -174,7 +180,7 @@ fn sandboxed_effect_processes_parameters_and_reports_latency() {
     let mut node = prepared(&mut host, true, false);
     assert!(host.instance_by_key(KEY).unwrap().is_sandboxed());
     assert_eq!(node.latency_samples(), 64);
-    assert_eq!(host.plugin_params(KEY).unwrap().len(), 10);
+    assert_eq!(host.plugin_params(KEY).unwrap().len(), 12);
 
     assert!(run_block(&mut node).iter().all(|&s| s == 0.5));
     // Normalised 0.25 of the 0..2 range = gain 0.5.
@@ -241,6 +247,106 @@ fn plugin_value(host: &PluginHost, key: &str, native_id: u32) -> f64 {
         assert!(((*params).get_value)(plugin, native_id, &mut value));
         value
     }
+}
+
+/// Sets plain values the way a plugin window would: outside `process`.
+fn flush_plugin_values(host: &PluginHost, key: &str, values: &[(u32, f64)]) {
+    let instance = host.instance_by_key(key).unwrap();
+    match instance.bridge() {
+        Some(bridge) => bridge.flush_values(values),
+        // SAFETY: live instance held by the host; no block is in flight.
+        None => unsafe { flush_clap_param_values(instance.clap_plugin().unwrap(), values) },
+    }
+}
+
+fn the_plugin_renders_its_own_text(sandboxed: bool) {
+    let mut host = host();
+    let _node = prepared(&mut host, sandboxed, false);
+
+    assert_eq!(
+        host.plugin_param_text(KEY, GAIN, 0.5).as_deref(),
+        Some("-6.0 dB")
+    );
+    assert_eq!(
+        host.plugin_param_text(KEY, GAIN, 2.0).as_deref(),
+        Some("6.0 dB")
+    );
+    assert_eq!(host.plugin_param_text(KEY, TAIL, 10.0), None);
+    assert_eq!(host.plugin_param_text("unknown", GAIN, 0.5), None);
+}
+
+#[test]
+fn an_in_process_plugin_renders_its_own_text() {
+    the_plugin_renders_its_own_text(false);
+}
+
+#[test]
+fn a_sandboxed_plugin_renders_its_own_text() {
+    the_plugin_renders_its_own_text(true);
+}
+
+/// One test for both modes: the rescan flags are process-wide.
+#[test]
+fn a_parameter_rescan_reaches_the_app_in_process_and_sandboxed() {
+    let mut host = host();
+    take_plugin_params_rescan();
+
+    let _in_process = prepared(&mut host, false, false);
+    flush_plugin_values(&host, KEY, &[(RESCAN, f64::from(CLAP_PARAM_RESCAN_TEXT))]);
+    assert_eq!(take_plugin_params_rescan(), CLAP_PARAM_RESCAN_TEXT);
+    assert_eq!(take_plugin_params_rescan(), 0, "reported once");
+
+    let mut sandboxed = prepared(&mut host, true, false);
+    flush_plugin_values(&host, KEY, &[(RESCAN, f64::from(CLAP_PARAM_RESCAN_INFO))]);
+    run_block(&mut sandboxed);
+    assert_eq!(take_plugin_params_rescan(), CLAP_PARAM_RESCAN_INFO);
+}
+
+fn a_flush_request_wakes_a_sleeping_instrument(sandboxed: bool) {
+    let mut host = host();
+    if sandboxed {
+        host.set_isolation(PluginIsolation::All, HashSet::new());
+    }
+    let mut instrument = prepared_instrument_of(&mut host, SLEEPY_PLUGIN_ID, false);
+    assert_eq!(is_sandboxed(&host, INSTRUMENT_KEY), sandboxed);
+    let calls = || {
+        host.instance_by_key(INSTRUMENT_KEY)
+            .unwrap()
+            .clap_param_value(PROCESS_CALLS)
+            .unwrap() as u32
+    };
+
+    play_block(&mut instrument, &[NOTE_ON]);
+    play_block(&mut instrument, &[NOTE_OFF]);
+    for _ in 0..5 {
+        play_block(&mut instrument, &[]);
+    }
+    let calls_when_asleep = calls();
+
+    flush_plugin_values(&host, INSTRUMENT_KEY, &[(REQUEST_FLUSH, 1.0)]);
+    assert_eq!(
+        calls(),
+        calls_when_asleep,
+        "the request alone does not process"
+    );
+    play_block(&mut instrument, &[]);
+    assert_eq!(
+        calls(),
+        calls_when_asleep + 1,
+        "the next block runs the plugin"
+    );
+    play_block(&mut instrument, &[]);
+    assert_eq!(calls(), calls_when_asleep + 1, "and it falls asleep again");
+}
+
+#[test]
+fn a_flush_request_wakes_a_sleeping_in_process_instrument() {
+    a_flush_request_wakes_a_sleeping_instrument(false);
+}
+
+#[test]
+fn a_flush_request_wakes_a_sleeping_sandboxed_instrument() {
+    a_flush_request_wakes_a_sleeping_instrument(true);
 }
 
 #[test]

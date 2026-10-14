@@ -451,6 +451,21 @@ impl PluginInstance {
         unsafe { crate::plugin_formats::clap::params::read_clap_param_value(*plugin, native_id) }
     }
 
+    /// The plugin's own text for a plain parameter value (`-6.0 dB`), read under
+    /// the FFI gate.  `None` for other formats, when the plugin cannot render
+    /// it, or when a block is in flight past the budget.
+    pub fn clap_param_text(&self, native_id: u32, value: f64) -> Option<String> {
+        if let Some(bridged) = self.bridge() {
+            return bridged.param_text(native_id, value);
+        }
+        let NativeHandle::Clap { plugin, .. } = &self.handle else {
+            return None;
+        };
+        let _gate = self.offrt_try_acquire(FFI_GATE_HARVEST_BUDGET)?;
+        // SAFETY: live CLAP plugin owned by this instance; FFI gate held.
+        unsafe { crate::plugin_formats::clap::ffi::read_param_text(*plugin, native_id, value) }
+    }
+
     /// Puts value-modulated parameters back on their base so a state save
     /// captures the user's setting, not a point of the modulation.
     ///

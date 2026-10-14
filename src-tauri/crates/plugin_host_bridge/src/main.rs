@@ -198,6 +198,11 @@ fn handle(plugin: &LoadedPlugin, op: u8, payload: &[u8]) -> Result<Vec<u8>, Stri
             plugin.flush_values(&values);
             Ok(Vec::new())
         }
+        Op::ParamText => {
+            let native_id = reader.u32().map_err(invalid)?;
+            let value = reader.f64().map_err(invalid)?;
+            Ok(plugin.param_text(native_id, value))
+        }
         Op::OpenEditor => open_editor(plugin, &String::from_utf8_lossy(payload)),
     }
 }

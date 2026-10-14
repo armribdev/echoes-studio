@@ -150,6 +150,15 @@ impl BridgedPlugin {
         Some(f64::from_le_bytes(reply.get(..8)?.try_into().ok()?))
     }
 
+    pub fn param_text(&self, native_id: u32, value: f64) -> Option<String> {
+        let mut payload = native_id.to_le_bytes().to_vec();
+        payload.extend_from_slice(&value.to_le_bytes());
+        let reply = self.request(Op::ParamText, &payload).ok()?;
+        String::from_utf8(reply)
+            .ok()
+            .filter(|text| !text.is_empty())
+    }
+
     /// Set plain parameter values outside `process`.
     pub fn flush_values(&self, values: &[(u32, f64)]) {
         let payload: Vec<u8> = values

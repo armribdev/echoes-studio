@@ -178,3 +178,13 @@ release longer than the declared tail is never cut; without `clap.tail` only
 `SLEEP` sleeps. No invariant changes (no new ADR). Details:
 `../plugins/plugin-wrapper-system.md` (Plugin sleep). Tests:
 `plugin_system/sandbox_tests.rs`, `audio_engine/render_harness.rs::clap_plugins`.
+
+## Amendment 2026-10-14 — the host answers `clap.params`
+
+The host now exposes `clap.params` (`rescan`, `clear`, `request_flush`) and uses
+the plugin's `value_to_text`. `request_flush` wakes a sleeping plugin like
+`request_process`; `rescan` makes the UI refetch parameters and texts (and
+`ALL` recompile); `clear` is accepted but ignored, because dropping automation
+or modulation is a project change a plugin callback must not make (ADR-005) —
+undecided, needs the user. No invariant changes (no new ADR). Details:
+`../plugins/plugin-wrapper-system.md` (Host `clap.params`).

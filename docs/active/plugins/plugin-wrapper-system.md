@@ -323,6 +323,44 @@ Not done: VST3 (no equivalent wired); not yet tried with real plugins (Vital,
 Surge XT, u-he) — only the test plugin (`crates/test_clap_plugin`: `Status`,
 `Tail`, `Liar`, `Process calls` parameters and the `echoes.test.sleepy` plugin).
 
+**Host `clap.params` (2026-10-14).** `host_get_extension` answers `clap.params`
+(`clap_ffi::ClapHostParams`); every callback is lock-free and callable from any
+thread.
+
+- _`request_flush`_ sets the same flag as `request_process`. A plugin that is
+  processing gets its flush through the next `process`; a sleeping one is woken
+  for it, so a plugin that changes a parameter from its own window (and asks for
+  a flush) is heard again. A plugin that is not active has no flush the host
+  could schedule.
+- _`rescan(flags)`_ ORs the `CLAP_PARAM_RESCAN_*` flags into a process-wide atomic
+  (`clap_ffi::mark_plugin_params_rescan`). `main.rs::watch_plugin_edits` takes it
+  every 250 ms (`notify_params_rescan`): `TEXT` / `INFO` / `ALL` emit the
+  `plugin-params-changed` event, after which the UI refetches the parameter lists
+  of the placements it knows and forgets its cached value texts
+  (`src/stores/pluginParams.ts`); `ALL` also recompiles, so the wrappers re-read
+  the parameter ranges in `prepare`. `VALUES` is recorded but nothing mirrors the
+  plugin's values yet, so it triggers nothing — a plugin that loads a preset
+  reports it through `clap.state.mark_dirty`.
+- _`clear`_ is **accepted and ignored**: removing a parameter's automation or
+  modulation would be a project change made by a plugin callback, outside the
+  command/event path (ADR-005). Doing it needs a decision.
+- _Value text._ `get_plugin_param_text` calls the plugin's `value_to_text` under
+  the instance FFI gate (command thread, never the audio thread) and the
+  automation lane shows the result (`-6.0 dB`) instead of the number; without
+  text the previous display is kept. The UI asks at most every 100 ms and caches
+  answers, because a call that holds the gate makes a block in flight bypass the
+  plugin. `text_to_value` still has no caller.
+- _Sandbox._ The bridge process hosts the same extension. Its rescan flags travel
+  in the block flags (`BLOCK_PARAMS_RESCAN_*`, bits 8–11 of the existing field;
+  the shared-memory layout and `BRIDGE_PROTOCOL_VERSION` are unchanged), and
+  `request_flush` wakes the plugin inside `ClapBlockProcessor`. `value_to_text`
+  is a new control op (`Op::ParamText`, empty reply = no text).
+
+Tests: `crates/clap_ffi` (extension table), `crates/plugin_host_bridge/tests/bridge.rs`
+(text, rescan flags, flush wake through the real bridge), `plugin_system/sandbox_tests.rs`
+(the same through `PluginHost`, in-process and sandboxed). The test plugin gained
+`Rescan` and `Request flush` parameters and renders `Gain` in dB.
+
 ---
 
 ## Editor Windows — DPI (Windows)

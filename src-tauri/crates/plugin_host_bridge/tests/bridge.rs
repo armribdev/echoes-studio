@@ -13,7 +13,10 @@ use clap_ffi::{
     CLAP_EVENT_PARAM_GESTURE_END, CLAP_EVENT_PARAM_VALUE,
 };
 use plugin_bridge::control::{Op, PayloadReader};
-use plugin_bridge::protocol::{BLOCK_PLUGIN_EDITED, BLOCK_RESTART_REQUESTED};
+use plugin_bridge::protocol::{
+    BLOCK_PARAMS_RESCAN_MASK, BLOCK_PARAMS_RESCAN_SHIFT, BLOCK_PLUGIN_EDITED,
+    BLOCK_RESTART_REQUESTED,
+};
 use plugin_bridge::session::{
     BlockOutcome, BlockRequest, BridgeLayout, BridgeProcess, DEAD_AFTER_CONSECUTIVE_TIMEOUTS,
 };
@@ -28,6 +31,8 @@ const STATUS: u32 = 6;
 const TAIL: u32 = 7;
 const PROCESS_CALLS: u32 = 8;
 const LIAR: u32 = 9;
+const RESCAN: u32 = 10;
+const REQUEST_FLUSH: u32 = 11;
 const FRAMES: usize = 64;
 const CHANNELS: usize = 2;
 const TIMEOUT: Duration = Duration::from_secs(5);
@@ -194,7 +199,7 @@ fn state_and_parameters_travel_over_the_control_channel() {
 
     let params = bridge.request(Op::Params, &[], TIMEOUT).unwrap();
     let mut reader = PayloadReader::new(&params);
-    assert_eq!(reader.u32().unwrap(), 10);
+    assert_eq!(reader.u32().unwrap(), 12);
     let first: ClapParamInfo = read_pod(&params[4..]).unwrap();
     assert_eq!(
         (first.id, &first.name[..4], first.max_value),
@@ -263,6 +268,68 @@ fn a_restart_request_comes_back_with_the_block_and_the_next_activate_applies_it(
         input,
         "processing resumes"
     );
+}
+
+fn param_text(bridge: &BridgeProcess, native_id: u32, value: f64) -> Vec<u8> {
+    let mut payload = native_id.to_le_bytes().to_vec();
+    payload.extend_from_slice(&value.to_le_bytes());
+    bridge.request(Op::ParamText, &payload, TIMEOUT).unwrap()
+}
+
+#[test]
+fn the_plugin_writes_the_text_of_its_values() {
+    let bridge = activated();
+    assert_eq!(param_text(&bridge, GAIN, 0.5), b"-6.0 dB");
+    assert_eq!(param_text(&bridge, GAIN, 2.0), b"6.0 dB");
+    assert!(
+        param_text(&bridge, TAIL, 10.0).is_empty(),
+        "no text, no error"
+    );
+}
+
+#[test]
+fn a_parameter_rescan_comes_back_with_the_block_once() {
+    let bridge = activated();
+    let events = param_events(&[(CLAP_EVENT_PARAM_VALUE, RESCAN, 6.0)]);
+    let block = process(&bridge, 0, &ramp(), &events, TIMEOUT);
+
+    let BlockOutcome::Processed { flags, .. } = block.outcome else {
+        panic!("block not processed: {:?}", block.outcome);
+    };
+    assert_eq!(
+        (flags & BLOCK_PARAMS_RESCAN_MASK) >> BLOCK_PARAMS_RESCAN_SHIFT,
+        6,
+        "the plugin's rescan flags are forwarded"
+    );
+    let later = process(&bridge, 1, &ramp(), &[], TIMEOUT);
+    let BlockOutcome::Processed { flags, .. } = later.outcome else {
+        panic!("block not processed: {:?}", later.outcome);
+    };
+    assert_eq!(flags & BLOCK_PARAMS_RESCAN_MASK, 0, "reported once");
+}
+
+#[test]
+fn a_flush_request_from_outside_the_audio_thread_wakes_a_sleeping_plugin() {
+    let bridge = activated_plugin("echoes.test.sleepy");
+    process(&bridge, 0, &silence(), &[], TIMEOUT);
+    for sequence in 1..=3 {
+        process(&bridge, sequence, &silence(), &[], TIMEOUT);
+    }
+    assert_eq!(process_calls(&bridge), 1, "asleep");
+
+    let mut flush = REQUEST_FLUSH.to_le_bytes().to_vec();
+    flush.extend_from_slice(&1.0f64.to_le_bytes());
+    bridge.request(Op::FlushValues, &flush, TIMEOUT).unwrap();
+    assert_eq!(
+        process_calls(&bridge),
+        1,
+        "the request alone does not process"
+    );
+
+    process(&bridge, 4, &silence(), &[], TIMEOUT);
+    assert_eq!(process_calls(&bridge), 2, "the next block runs the plugin");
+    process(&bridge, 5, &silence(), &[], TIMEOUT);
+    assert_eq!(process_calls(&bridge), 2, "and it falls asleep again");
 }
 
 #[test]

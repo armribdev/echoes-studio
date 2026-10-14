@@ -19,7 +19,10 @@ use clap_ffi::{
     CLAP_EXT_LATENCY, CLAP_EXT_PARAMS, CLAP_PLUGIN_FACTORY_ID, CLAP_PROCESS_ERROR,
     CLAP_TRANSPORT_IS_PLAYING,
 };
-use plugin_bridge::protocol::{BLOCK_PASSED_THROUGH, BLOCK_PLUGIN_EDITED, BLOCK_RESTART_REQUESTED};
+use plugin_bridge::protocol::{
+    BLOCK_PARAMS_RESCAN_MASK, BLOCK_PARAMS_RESCAN_SHIFT, BLOCK_PASSED_THROUGH, BLOCK_PLUGIN_EDITED,
+    BLOCK_RESTART_REQUESTED,
+};
 use plugin_bridge::session::{BlockContext, BridgeProcessor, EventWriter};
 
 /// How long `activate` waits for the audio thread to stop processing.
@@ -216,6 +219,14 @@ impl LoadedPlugin {
         }
     }
 
+    /// The plugin's text for a plain parameter value; empty when it has none.
+    pub fn param_text(&self, native_id: u32, value: f64) -> Vec<u8> {
+        // SAFETY: main thread; `value_to_text` may run beside `process`.
+        unsafe { clap_ffi::read_param_text(self.plugin, native_id, value) }
+            .map(String::into_bytes)
+            .unwrap_or_default()
+    }
+
     /// Sets plain parameter values outside `process` (`clap.params.flush`).
     pub fn flush_values(&self, values: &[(u32, f64)]) {
         let Some(params) = self.extension::<ClapPluginParams>(CLAP_EXT_PARAMS) else {
@@ -383,7 +394,8 @@ fn signal_flags() -> u32 {
     if clap_ffi::take_plugin_restart_requested() {
         flags |= BLOCK_RESTART_REQUESTED;
     }
-    flags
+    let rescan = clap_ffi::take_plugin_params_rescan() << BLOCK_PARAMS_RESCAN_SHIFT;
+    flags | (rescan & BLOCK_PARAMS_RESCAN_MASK)
 }
 
 impl BridgeProcessor for ClapBlockProcessor {

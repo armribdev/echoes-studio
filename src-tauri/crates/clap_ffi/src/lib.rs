@@ -334,7 +334,59 @@ pub unsafe extern "C" fn host_get_extension(
     if id == CLAP_EXT_TAIL {
         return &HOST_TAIL as *const ClapHostTail as *const c_void;
     }
+    if id == CLAP_EXT_PARAMS {
+        return &HOST_PARAMS as *const ClapHostParams as *const c_void;
+    }
     std::ptr::null()
+}
+
+pub const CLAP_PARAM_RESCAN_VALUES: u32 = 1 << 0;
+pub const CLAP_PARAM_RESCAN_TEXT: u32 = 1 << 1;
+pub const CLAP_PARAM_RESCAN_INFO: u32 = 1 << 2;
+pub const CLAP_PARAM_RESCAN_ALL: u32 = 1 << 3;
+
+/// Host-side `clap.params`.
+#[repr(C)]
+pub struct ClapHostParams {
+    pub rescan: unsafe extern "C" fn(*const ClapHost, u32),
+    pub clear: unsafe extern "C" fn(*const ClapHost, u32, u32),
+    pub request_flush: unsafe extern "C" fn(*const ClapHost),
+}
+
+static HOST_PARAMS: ClapHostParams = ClapHostParams {
+    rescan: host_params_rescan,
+    clear: host_params_clear,
+    request_flush: host_params_request_flush,
+};
+
+unsafe extern "C" fn host_params_rescan(_: *const ClapHost, flags: u32) {
+    mark_plugin_params_rescan(flags);
+}
+
+// Dropping the automation or modulation of a parameter is a project change; a
+// plugin callback does not get to make it.
+unsafe extern "C" fn host_params_clear(_: *const ClapHost, _: u32, _: u32) {}
+
+// A plugin that is processing gets its flush through the next `process`; a
+// sleeping one is woken for it. One that is not active has no parameter work
+// the host could schedule.
+unsafe extern "C" fn host_params_request_flush(host: *const ClapHost) {
+    if let Some(context) = host_context(host) {
+        context.request_process();
+    }
+}
+
+/// `CLAP_PARAM_RESCAN_*` flags reported by any hosted plugin since the last take.
+static PLUGIN_PARAMS_RESCAN: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+/// Lock-free: callable from any thread.
+pub fn mark_plugin_params_rescan(flags: u32) {
+    PLUGIN_PARAMS_RESCAN.fetch_or(flags, std::sync::atomic::Ordering::AcqRel);
+}
+
+/// The rescan flags reported since the last call, and clears them.
+pub fn take_plugin_params_rescan() -> u32 {
+    PLUGIN_PARAMS_RESCAN.swap(0, std::sync::atomic::Ordering::AcqRel)
 }
 
 /// Host-side `clap.tail`: the audio thread rereads the tail after `changed`.
@@ -613,6 +665,29 @@ mod host_abi_tests {
         assert!(!context.take_process_request());
         assert!(context.take_tail_changed());
         assert!(!context.take_tail_changed());
+    }
+
+    #[test]
+    fn host_params_collects_rescans_and_wakes_the_plugin_for_a_flush() {
+        let host = make_host();
+        let context = host.context().unwrap();
+        take_plugin_params_rescan();
+        unsafe {
+            let params = host_get_extension(&*host, CLAP_EXT_PARAMS.as_ptr() as *const c_char)
+                as *const ClapHostParams;
+            assert!(!params.is_null());
+            ((*params).rescan)(&*host, CLAP_PARAM_RESCAN_TEXT);
+            ((*params).rescan)(&*host, CLAP_PARAM_RESCAN_INFO);
+            ((*params).clear)(&*host, 7, 1);
+            assert!(!context.take_process_request());
+            ((*params).request_flush)(&*host);
+        }
+        assert_eq!(
+            take_plugin_params_rescan(),
+            CLAP_PARAM_RESCAN_TEXT | CLAP_PARAM_RESCAN_INFO
+        );
+        assert_eq!(take_plugin_params_rescan(), 0);
+        assert!(context.take_process_request());
     }
 
     #[test]
@@ -1253,6 +1328,38 @@ pub struct ClapPluginParams {
         unsafe extern "C" fn(*const ClapPlugin, u32, *const c_char, *mut f64) -> bool,
     pub flush:
         unsafe extern "C" fn(*const ClapPlugin, *const ClapInputEvents, *const ClapOutputEvents),
+}
+
+const PARAM_TEXT_CAPACITY: usize = 256;
+
+/// The plugin's own text for a plain parameter value (`-6.0 dB`), or `None`
+/// when it has no `clap.params` or cannot render that value.  `[main-thread]`.
+///
+/// # Safety
+/// `plugin` must be a live, initialised CLAP plugin, and no other thread may
+/// call into it meanwhile (the instance FFI gate).
+pub unsafe fn read_param_text(
+    plugin: *const ClapPlugin,
+    param_id: u32,
+    value: f64,
+) -> Option<String> {
+    let extension = ((*plugin).get_extension)(plugin, CLAP_EXT_PARAMS.as_ptr() as *const c_char)
+        as *const ClapPluginParams;
+    let params = extension.as_ref()?;
+    let mut buffer = [0 as c_char; PARAM_TEXT_CAPACITY];
+    if !(params.value_to_text)(
+        plugin,
+        param_id,
+        value,
+        buffer.as_mut_ptr(),
+        buffer.len() as u32,
+    ) {
+        return None;
+    }
+    buffer[PARAM_TEXT_CAPACITY - 1] = 0;
+    let text = std::ffi::CStr::from_ptr(buffer.as_ptr()).to_string_lossy();
+    let text = text.trim();
+    (!text.is_empty()).then(|| text.to_owned())
 }
 
 // ── Transport event ────────────────────────────────────────────────────────────

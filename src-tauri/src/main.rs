@@ -94,6 +94,7 @@ fn main() {
             list_plugins,
             get_unavailable_plugins,
             get_plugin_params,
+            get_plugin_param_text,
             get_plugin_outputs,
             scan_plugins,
             open_plugin_editor,
@@ -590,6 +591,20 @@ fn get_plugin_params(
         .map_err(|e| e.to_string())
 }
 
+/// The plugin's own text for a plain value of one parameter (`-6.0 dB`).
+#[tauri::command]
+fn get_plugin_param_text(
+    state: tauri::State<'_, AppState>,
+    instance_key: String,
+    native_id: u32,
+    value: f64,
+) -> Result<Option<String>, String> {
+    let engine = state.audio_engine.lock().map_err(|e| e.to_string())?;
+    Ok(engine
+        .plugin_host
+        .plugin_param_text(&instance_key, native_id, value))
+}
+
 /// Auxiliary outputs of a loaded plugin placement, for the track input picker.
 #[tauri::command]
 fn get_plugin_outputs(
@@ -948,6 +963,7 @@ fn watch_plugin_edits(app: tauri::AppHandle) {
             if plugin_formats::clap::ffi::take_plugin_restart_requested() {
                 recompile_audio_graph(&app, &state);
             }
+            notify_params_rescan(&app, &state);
             let crashes = plugin_system::crash_marker::crash_count();
             if crashes != crashes_seen {
                 crashes_seen = crashes;
@@ -958,6 +974,22 @@ fn watch_plugin_edits(app: tauri::AppHandle) {
             }
         }
     });
+}
+
+/// A plugin that rescanned its parameters: the UI refetches the lists and
+/// texts, and a changed list recompiles so the wrappers re-read the ranges.
+fn notify_params_rescan(app: &tauri::AppHandle, state: &tauri::State<'_, AppState>) {
+    use plugin_formats::clap::ffi::{
+        take_plugin_params_rescan, CLAP_PARAM_RESCAN_ALL, CLAP_PARAM_RESCAN_INFO,
+        CLAP_PARAM_RESCAN_TEXT,
+    };
+    let rescan = take_plugin_params_rescan();
+    if rescan & CLAP_PARAM_RESCAN_ALL != 0 {
+        recompile_audio_graph(app, state);
+    }
+    if rescan & (CLAP_PARAM_RESCAN_TEXT | CLAP_PARAM_RESCAN_INFO | CLAP_PARAM_RESCAN_ALL) != 0 {
+        let _ = app.emit(engine_gateway::api::PLUGIN_PARAMS_EVENT, ());
+    }
 }
 
 fn start_native_audio(app: &mut tauri::App) {

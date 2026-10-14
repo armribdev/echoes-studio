@@ -766,6 +766,20 @@ impl PluginHost {
         Ok(unsafe { read_clap_params(plugin) })
     }
 
+    /// The plugin's own text for a plain value of one parameter (`-6.0 dB`);
+    /// `None` when the plugin has no text for it or is busy in a block.
+    pub fn plugin_param_text(
+        &self,
+        instance_key: &str,
+        native_id: u32,
+        value: f64,
+    ) -> Option<String> {
+        self.records
+            .get(instance_key)?
+            .instance
+            .clap_param_text(native_id, value)
+    }
+
     #[cfg(test)]
     pub fn destroy_device(&mut self, device_id: &str) {
         // Records are keyed by `instance_key`; remove every record whose

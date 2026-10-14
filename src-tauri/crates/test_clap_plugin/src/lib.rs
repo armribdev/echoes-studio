@@ -17,7 +17,11 @@
 //! - 7 `Tail` — samples reported by `clap.tail`; 0 (default) means the plugin
 //!   does not provide the extension.  Changing it calls the host's `tail.changed`;
 //! - 8 `Process calls` — read-only: how many times `process` ran;
-//! - 9 `Liar` — once set, `Status` is reported even while the output sounds.
+//! - 9 `Liar` — once set, `Status` is reported even while the output sounds;
+//! - 10 `Rescan` — the value is sent to the host's `clap.params.rescan` as flags;
+//! - 11 `Request flush` — once set, calls the host's `clap.params.request_flush`.
+//!
+//! `Gain` renders its value as decibels through `clap.params.value_to_text`.
 //!
 //! A second plugin, `echoes.test.sleepy`, is the same code reporting `SLEEP`
 //! by default, for projects that cannot set parameters.
@@ -36,8 +40,8 @@ use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, AtomicU64, Ordering};
 
 use clap_ffi::{
     ClapAudioPortInfo, ClapEventHeader, ClapEventNote, ClapEventParamGesture, ClapEventParamValue,
-    ClapHost, ClapHostLatency, ClapHostState, ClapHostTail, ClapHostThreadCheck, ClapIStream,
-    ClapInputEvents, ClapOStream, ClapOutputEvents, ClapParamInfo, ClapPlugin,
+    ClapHost, ClapHostLatency, ClapHostParams, ClapHostState, ClapHostTail, ClapHostThreadCheck,
+    ClapIStream, ClapInputEvents, ClapOStream, ClapOutputEvents, ClapParamInfo, ClapPlugin,
     ClapPluginAudioPorts, ClapPluginDescriptor, ClapPluginEntry, ClapPluginFactory,
     ClapPluginLatency, ClapPluginParams, ClapPluginState, ClapPluginTail, ClapProcess,
     ClapProcessStatus, CLAP_AUDIO_PORT_IS_MAIN, CLAP_CORE_EVENT_SPACE, CLAP_EVENT_NOTE_OFF,
@@ -61,6 +65,8 @@ const STATUS: u32 = 6;
 const TAIL: u32 = 7;
 const PROCESS_CALLS: u32 = 8;
 const LIAR: u32 = 9;
+const RESCAN: u32 = 10;
+const REQUEST_FLUSH: u32 = 11;
 
 struct Descriptor(ClapPluginDescriptor);
 struct Features([*const c_char; 2]);
@@ -243,6 +249,29 @@ fn set_tail(state: &State, tail: u32) {
     }
 }
 
+fn host_params(state: &State) -> Option<&ClapHostParams> {
+    // SAFETY: the host outlives the plugin; its extension tables are static.
+    unsafe {
+        let extension =
+            ((*state.host).get_extension)(state.host, CLAP_EXT_PARAMS.as_ptr() as *const c_char);
+        (extension as *const ClapHostParams).as_ref()
+    }
+}
+
+fn rescan_params(state: &State, flags: u32) {
+    if let Some(params) = host_params(state) {
+        // SAFETY: `rescan` only records the flags.
+        unsafe { (params.rescan)(state.host, flags) };
+    }
+}
+
+fn request_flush(state: &State) {
+    if let Some(params) = host_params(state) {
+        // SAFETY: `request_flush` is thread-safe.
+        unsafe { (params.request_flush)(state.host) };
+    }
+}
+
 /// CLAP: an active plugin may only change its latency inside `activate`.
 fn request_latency(state: &State, latency: u32) {
     if state.pending_latency.swap(latency, Ordering::AcqRel) != latency {
@@ -298,11 +327,13 @@ fn apply_param(state: &mut State, header: &ClapEventHeader) {
         (CLAP_EVENT_PARAM_VALUE, LOOKAHEAD) => {
             request_latency(state, if on { LOOKAHEAD_LATENCY } else { LATENCY })
         }
-        (CLAP_EVENT_PARAM_VALUE, STATUS) => {
-            state.status.store(event.value.round() as i32, Ordering::Relaxed)
-        }
+        (CLAP_EVENT_PARAM_VALUE, STATUS) => state
+            .status
+            .store(event.value.round() as i32, Ordering::Relaxed),
         (CLAP_EVENT_PARAM_VALUE, TAIL) => set_tail(state, event.value.round() as u32),
         (CLAP_EVENT_PARAM_VALUE, LIAR) => state.liar.store(on, Ordering::Relaxed),
+        (CLAP_EVENT_PARAM_VALUE, RESCAN) => rescan_params(state, event.value.round() as u32),
+        (CLAP_EVENT_PARAM_VALUE, REQUEST_FLUSH) if on => request_flush(state),
         _ => {}
     }
 }
@@ -525,7 +556,7 @@ unsafe extern "C" fn audio_ports_get(
 }
 
 unsafe extern "C" fn params_count(_: *const ClapPlugin) -> u32 {
-    10
+    12
 }
 
 unsafe extern "C" fn params_info(
@@ -549,6 +580,8 @@ unsafe extern "C" fn params_info(
         TAIL => (b"Tail", 1_000_000.0, 0.0, CLAP_PARAM_IS_AUTOMATABLE),
         PROCESS_CALLS => (b"Process calls", f64::from(u32::MAX), 0.0, 0),
         LIAR => (b"Liar", 1.0, 0.0, CLAP_PARAM_IS_AUTOMATABLE),
+        RESCAN => (b"Rescan", 15.0, 0.0, CLAP_PARAM_IS_AUTOMATABLE),
+        REQUEST_FLUSH => (b"Request flush", 1.0, 0.0, CLAP_PARAM_IS_AUTOMATABLE),
         _ => return false,
     };
     let info = &mut *info;
@@ -577,12 +610,24 @@ unsafe extern "C" fn params_value(plugin: *const ClapPlugin, id: u32, value: *mu
 
 unsafe extern "C" fn params_value_to_text(
     _: *const ClapPlugin,
-    _: u32,
-    _: f64,
-    _: *mut c_char,
-    _: u32,
+    id: u32,
+    value: f64,
+    text: *mut c_char,
+    capacity: u32,
 ) -> bool {
-    false
+    if id != GAIN || capacity == 0 {
+        return false;
+    }
+    let decibels = if value > 0.0 {
+        format!("{:.1} dB", 20.0 * value.log10())
+    } else {
+        "-inf dB".to_string()
+    };
+    let bytes = decibels.as_bytes();
+    let length = bytes.len().min(capacity as usize - 1);
+    std::ptr::copy_nonoverlapping(bytes.as_ptr(), text as *mut u8, length);
+    *text.add(length) = 0;
+    true
 }
 
 unsafe extern "C" fn params_text_to_value(

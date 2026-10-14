@@ -236,7 +236,10 @@ After every recompile, `engine_gateway::api::recompile_if_needed` emits the
 `plugin-availability` event with `PluginHost::unavailable_plugins()`; the
 `get_unavailable_plugins` command returns the same list for hydration
 (`src/stores/plugins.ts`). `scan_plugins` recompiles after rescanning, so a
-plugin installed mid-session loads without reopening the project. A missing
+plugin installed mid-session loads without reopening the project. A plugin that
+rescans its parameters (`clap.params.rescan`) is announced the same way by the
+`plugin-params-changed` event; the UI refetches the lists (`get_plugin_params`)
+and texts (`get_plugin_param_text`). A missing
 **instrument** plays silence (`SilentInstrument`); a missing **effect** still
 passes audio through unprocessed, and is reported the same way.
 

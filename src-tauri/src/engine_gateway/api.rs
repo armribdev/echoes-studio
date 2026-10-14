@@ -3512,6 +3512,9 @@ pub fn recompile_if_needed(app: &tauri::AppHandle, state: &tauri::State<'_, AppS
 
 pub const PLUGIN_AVAILABILITY_EVENT: &str = "plugin-availability";
 
+/// A plugin changed its parameter list or the text of its values (`clap.params.rescan`).
+pub const PLUGIN_PARAMS_EVENT: &str = "plugin-params-changed";
+
 #[cfg(test)]
 mod tests {
     use super::*;

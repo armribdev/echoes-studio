@@ -42,6 +42,9 @@ pub enum Op {
     /// already open editor to the front.  The engine closes it by posting
     /// `WM_CLOSE` to that window.
     OpenEditor = 7,
+    /// `native_id:u32, value:f64` → the plugin's text for that plain value, empty
+    /// when it has none.
+    ParamText = 8,
 }
 
 impl Op {
@@ -54,6 +57,7 @@ impl Op {
             5 => Op::ParamValue,
             6 => Op::FlushValues,
             7 => Op::OpenEditor,
+            8 => Op::ParamText,
             _ => return None,
         })
     }
@@ -160,6 +164,7 @@ mod tests {
             Op::ParamValue,
             Op::FlushValues,
             Op::OpenEditor,
+            Op::ParamText,
         ] {
             assert_eq!(Op::from_u8(op as u8), Some(op));
         }

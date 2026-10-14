@@ -10,10 +10,15 @@
 		laneClipFor,
 		lanePoints,
 		simplifyPolyline,
+		toPlainValue,
 		valueToY,
 		yToValue
 	} from '../frontend/automation/lanes';
-	import { pluginParamsByPlacement } from '../stores/pluginParams';
+	import {
+		cachedPluginParamText,
+		pluginParamText,
+		pluginParamsByPlacement
+	} from '../stores/pluginParams';
 	import { notify } from '../stores/status';
 
 	export let trackId: string;
@@ -25,6 +30,8 @@
 	export let snapTime: (seconds: number, altKey: boolean) => number;
 
 	const HIT_RADIUS_PX = 7;
+	/** Each text request briefly holds the plugin, so a drag asks at this pace. */
+	const PARAM_TEXT_INTERVAL_MS = 100;
 	const PENCIL_TOLERANCE_PX = 1.5;
 	const height = ARRANGE_LANE_HEIGHT;
 
@@ -49,6 +56,34 @@
 	$: range = automationRange(lane.target, effects, $pluginParamsByPlacement);
 	$: labelIndex = stroke ? null : (dragIndex ?? hoverIndex);
 	$: labelPoint = labelIndex !== null ? points[labelIndex] : undefined;
+	$: plainValue = labelPoint && range ? toPlainValue(labelPoint.value, range) : null;
+	$: scheduleParamText(lane.target, plainValue);
+	$: shownText =
+		paramText && (dragIndex !== null || paramText.plain === plainValue) ? paramText.text : null;
+
+	let paramText: { plain: number; text: string } | null = null;
+	let paramTextTimer: ReturnType<typeof setTimeout> | undefined;
+	let paramTextAskedAt = 0;
+
+	function scheduleParamText(target: AutomationLane['target'], plain: number | null) {
+		clearTimeout(paramTextTimer);
+		if (target.kind !== 'plugin_param' || plain === null) {
+			paramText = null;
+			return;
+		}
+		const { effect_id: placementKey, native_id: nativeId } = target;
+		const cached = cachedPluginParamText(placementKey, nativeId, plain);
+		if (cached !== undefined) {
+			paramText = cached === null ? null : { plain, text: cached };
+			return;
+		}
+		const wait = Math.max(0, paramTextAskedAt + PARAM_TEXT_INTERVAL_MS - Date.now());
+		paramTextTimer = setTimeout(async () => {
+			paramTextAskedAt = Date.now();
+			const text = await pluginParamText(placementKey, nativeId, plain);
+			if (plain === plainValue) paramText = text === null ? null : { plain, text };
+		}, wait);
+	}
 
 	function localPosition(e: MouseEvent): { x: number; y: number } {
 		const rect = svg.getBoundingClientRect();
@@ -186,7 +221,10 @@
 		hoverIndex = pointAt(x, y);
 	}
 
-	onDestroy(() => stopListening?.());
+	onDestroy(() => {
+		stopListening?.();
+		clearTimeout(paramTextTimer);
+	});
 </script>
 
 <!-- svelte-ignore a11y-no-static-element-interactions -->
@@ -218,7 +256,7 @@
 	{#if labelPoint}
 		{@const cy = valueToY(labelPoint.value, height)}
 		<text class="value" x={labelPoint.time_s * scale + 8} y={cy < 16 ? cy + 14 : cy - 7}>
-			{formatAutomationValue(labelPoint.value, range)}
+			{shownText ?? formatAutomationValue(labelPoint.value, range)}
 		</text>
 	{/if}
 </svg>

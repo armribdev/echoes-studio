@@ -36,6 +36,10 @@ pub const BLOCK_PASSED_THROUGH: u32 = 1 << 2;
 /// Bridge → engine: the plugin requested a restart (e.g. its latency changed);
 /// the next `Activate` reactivates it and replies with its new latency.
 pub const BLOCK_RESTART_REQUESTED: u32 = 1 << 4;
+/// Bridge → engine: the plugin's `clap.params.rescan` flags since the last
+/// block (`CLAP_PARAM_RESCAN_*`, four bits) sit at this shift.
+pub const BLOCK_PARAMS_RESCAN_SHIFT: u32 = 8;
+pub const BLOCK_PARAMS_RESCAN_MASK: u32 = 0xF << BLOCK_PARAMS_RESCAN_SHIFT;
 
 /// Header prefixed to every audio block, in both directions.
 #[repr(C)]

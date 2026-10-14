@@ -283,6 +283,13 @@ The decision never reads a clock, so the offline render sleeps at the same
 blocks as the live one (C-2). A sandboxed plugin decides inside the bridge;
 the engine's bounded wait is unchanged.
 
+Host `clap.params` (2026-10-14) adds no audio-thread work: `request_flush` sets
+the `request_process` flag above, and `rescan` is one `fetch_or` on a global
+atomic, polled by the plugin-edit watcher. The only new FFI call is
+`value_to_text`, made on the command thread under the instance FFI gate like the
+other off-RT introspection; while it holds the gate a block in flight bypasses
+the plugin, which is why the UI asks at most every 100 ms.
+
 ### Crash marker (ADR-015)
 
 In-process plugin wrappers mark the running plugin in a memory-mapped file

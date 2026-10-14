@@ -781,3 +781,14 @@ every block, so the bounded live wait, the 10 s offline wait and the shared
 memory protocol are unchanged (no version bump), and the offline render stays
 deterministic. Tests: `plugin_host_bridge/tests/bridge.rs` (sleep and wake, tail,
 plugin that lies), `plugin_system/sandbox_tests.rs`.
+
+### Amendment 2026-10-14 — `clap.params` through the bridge
+
+The bridge process answers the plugin's host `clap.params` calls. Two additions,
+neither of which touches the shared-memory layout (`BRIDGE_PROTOCOL_VERSION`
+stays 2): the plugin's `rescan` flags ride in bits 8–11 of the block flags
+(bridge → engine, `BLOCK_PARAMS_RESCAN_*`), and the control channel gets
+`Op::ParamText` (`native_id, value` → the plugin's `value_to_text`, empty when it
+has none). `request_flush` is handled inside `ClapBlockProcessor` like
+`request_process`. Tests: `plugin_host_bridge/tests/bridge.rs`,
+`plugin_system/sandbox_tests.rs`.
