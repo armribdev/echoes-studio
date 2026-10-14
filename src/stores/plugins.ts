@@ -10,6 +10,7 @@ export interface PluginInfo {
 	format: 'VST3' | 'CLAP' | 'AU' | string;
 	categories: string[];
 	is_instrument: boolean;
+	num_sidechain_inputs: number;
 }
 
 /** Built-in insert effects shown alongside scanned plugins in the effect picker. */
@@ -20,7 +21,8 @@ export const BUILTIN_EFFECT_PLUGINS: PluginInfo[] = [
 		vendor: 'Echoes Studio',
 		format: 'Internal',
 		categories: ['EQ'],
-		is_instrument: false
+		is_instrument: false,
+		num_sidechain_inputs: 0
 	},
 	{
 		id: 'compressor',
@@ -28,7 +30,8 @@ export const BUILTIN_EFFECT_PLUGINS: PluginInfo[] = [
 		vendor: 'Echoes Studio',
 		format: 'Internal',
 		categories: ['Dynamics'],
-		is_instrument: false
+		is_instrument: false,
+		num_sidechain_inputs: 0
 	},
 	{
 		id: 'reverb',
@@ -36,7 +39,8 @@ export const BUILTIN_EFFECT_PLUGINS: PluginInfo[] = [
 		vendor: 'Echoes Studio',
 		format: 'Internal',
 		categories: ['Reverb'],
-		is_instrument: false
+		is_instrument: false,
+		num_sidechain_inputs: 0
 	},
 	{
 		id: 'delay',
@@ -44,7 +48,8 @@ export const BUILTIN_EFFECT_PLUGINS: PluginInfo[] = [
 		vendor: 'Echoes Studio',
 		format: 'Internal',
 		categories: ['Delay'],
-		is_instrument: false
+		is_instrument: false,
+		num_sidechain_inputs: 0
 	}
 ];
 
@@ -55,7 +60,8 @@ export const BUILTIN_INSTRUMENT_PLUGIN: PluginInfo = {
 	vendor: 'Echoes Studio',
 	format: 'Internal',
 	categories: ['Synth'],
-	is_instrument: true
+	is_instrument: true,
+	num_sidechain_inputs: 0
 };
 
 /** Picker entry for the built-in drum sampler (ADR-028). */
@@ -65,7 +71,8 @@ export const BUILTIN_SAMPLER_PLUGIN: PluginInfo = {
 	vendor: 'Echoes Studio',
 	format: 'Internal',
 	categories: ['Drums'],
-	is_instrument: true
+	is_instrument: true,
+	num_sidechain_inputs: 0
 };
 
 /** The engine's `instrument` id for a picked plugin (`null` = built-in PolySynth). */

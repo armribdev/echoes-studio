@@ -227,6 +227,7 @@ impl PluginHost {
                 format: format_tag(m.format),
                 categories: m.categories.clone(),
                 is_instrument: m.is_instrument,
+                num_sidechain_inputs: m.num_sidechain_inputs,
             })
             .collect()
     }
@@ -946,6 +947,7 @@ pub struct PluginInfo {
     pub format: String,
     pub categories: Vec<String>,
     pub is_instrument: bool,
+    pub num_sidechain_inputs: usize,
 }
 
 /// Only CLAP plugins can run sandboxed so far (ADR-015); for other formats the

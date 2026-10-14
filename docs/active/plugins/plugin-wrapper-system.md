@@ -192,8 +192,13 @@ in the project than the plugin sidechaining from it. A self-reference or a
 routing that would close a track-level cycle is dropped silently — the aux
 port just keeps reading silence, same as a plugin with no declared aux bus —
 rather than failing the whole compile; `UPDATE_EFFECT` additionally rejects a
-self-reference outright (`patch_effect`, `engine_gateway/api.rs`). No UI
-control yet — set via `UPDATE_EFFECT { sidechain_source }`.
+self-reference outright (`patch_effect`, `engine_gateway/api.rs`). UI
+(2026-10-14): `SidechainPicker.svelte`, shown in an expanded plugin effect whose
+scanned `num_sidechain_inputs` is above 0 (exposed on `PluginInfo`), lists the
+other tracks — minus any that would close a loop
+(`frontend/routing/sidechain.ts`) — and sends `UPDATE_EFFECT { sidechain_source }`.
+The picker is disabled for an isolated plugin: the sandbox bridge carries a single
+input (`BridgedNode::num_input_ports() == 1`), so the aux port is not fed there.
 
 **Multi-out (ADR-014 update, 2026-09-25).** `PluginInstance` reads the
 plugin's `clap.audio-ports` outputs once, right after the first `init`

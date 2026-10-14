@@ -2,6 +2,7 @@
 <script lang="ts">
 	import Knob from './Knob.svelte';
 	import PluginPicker from './PluginPicker.svelte';
+	import SidechainPicker from './SidechainPicker.svelte';
 	import EffectContextMenu from './EffectContextMenu.svelte';
 	import { modulatorColor } from '../frontend/modulation/colors';
 	import { modulationDrag } from '../stores/modulationDrag';
@@ -121,6 +122,13 @@
 
 	function pluginId(effect: TrackEffect): string | null {
 		return effect.params.kind === 'plugin' ? effect.params.params.plugin_id : null;
+	}
+
+	function hasSidechainInput(effect: TrackEffect, installed = $plugins): boolean {
+		if (effect.params.kind !== 'plugin') return false;
+		const { plugin_id, sidechain_source } = effect.params.params;
+		const info = installed.find((p) => p.id === plugin_id);
+		return (info?.num_sidechain_inputs ?? 0) > 0 || !!sidechain_source;
 	}
 
 	function isChosen(effect: TrackEffect): boolean {
@@ -649,6 +657,16 @@
 								</button>
 							{/if}
 						</div>
+						{#if hasSidechainInput(effect, $plugins)}
+							<SidechainPicker
+								{trackId}
+								effectId={effect.id}
+								params={effect.params.params}
+								disabledReason={isSandboxed(effect, isolation, alwaysIsolated)
+									? 'Le sidechain ne fonctionne pas quand le plugin est isolé'
+									: null}
+							/>
+						{/if}
 					{/if}
 				</div>
 			{/if}

@@ -111,8 +111,11 @@ change, no allocation/lock added.
   _not_ the generic return-bus/aux-send model critical issues §2.4 describes
   (no `ReturnNode` wiring) — a plugin names one source track directly, which
   covers the standard "duck compressor" case without that larger data model.
-- **UI control** — `sidechain_source` is settable via `UPDATE_EFFECT` but has
-  no picker in `EffectChain.svelte` yet. Still open.
+- **UI control** — ~~`sidechain_source` is settable via `UPDATE_EFFECT` but has
+  no picker in `EffectChain.svelte`~~ **done (2026-10-14)**: `SidechainPicker.svelte`
+  in the expanded plugin effect (see the update below). Still open: sandboxed
+  plugins ignore the aux input (the bridge carries one input), so the picker is
+  disabled for them.
 - **Multi-out** — ~~size outputs from the manifest once downstream routing
   reads the extra ports~~ **done for CLAP (2026-09-25)**, see the update below.
   Still open: sandboxed plugins and VST3 (one output), and a plugin changing
@@ -193,8 +196,10 @@ issues §2.4 describes:
   dangling source track id (never existed, or was deleted) is dropped the same
   way. Port 1 only: a plugin with more than one declared aux bus gets its
   first bus fed; further buses are unaddressed by this single-source field.
-- **Not done**: a UI control (`sidechain_source` is only settable via
-  `UPDATE_EFFECT` today) and VST3 `getBusInfo`.
+- **Not done**: VST3 `getBusInfo`. The UI control landed 2026-10-14:
+  `PluginInfo.num_sidechain_inputs` is sent to the frontend, and
+  `SidechainPicker.svelte` offers the other tracks, hiding those that would
+  close a loop (same rule as `sidechain_would_cycle`).
 
 Tests: `audio_graph/graph.rs::routing_tests` (module renamed from
 `sidechain_tests` when multi-out landed) — edge lands on port 1 from the

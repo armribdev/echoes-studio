@@ -240,7 +240,7 @@ Statut : seuls les problèmes **encore présents dans le code** sont listés. Le
   - Plugin multi-out (Kontakt, Battery) : on ne lit qu'une sortie.
 - **Sévérité** : critical
 - **Cause probable** : abstraction `PluginCapabilities` introduite (Phase 1 audit plugin) mais le compileur ne la consulte pas encore.
-- **Mise à jour 2026-09-25 (ADR-014)** : résolu pour le **sidechain CLAP** — `clap.audio-ports` est introspecté au scan (`num_sidechain_inputs` réel), le port aux est câblé et nourri, et `PluginParams.sidechain_source` route une piste source dedans (`AudioGraph::from_project`). Reste ouvert : mono/surround/multi-out et tout VST3 (`getBusInfo` toujours ignoré).
+- **Mise à jour 2026-09-25 (ADR-014)** : résolu pour le **sidechain CLAP** — `clap.audio-ports` est introspecté au scan (`num_sidechain_inputs` réel), le port aux est câblé et nourri, et `PluginParams.sidechain_source` route une piste source dedans (`AudioGraph::from_project`) ; sélecteur « Sidechain » dans l'effet déplié depuis le 2026-10-14 (grisé pour un plugin isolé). Reste ouvert : mono/surround/multi-out et tout VST3 (`getBusInfo` toujours ignoré).
 - **Mise à jour 2026-09-25 (ADR-014, multi-out)** : résolu pour le **multi-out CLAP** (effets et instruments) — chaque sortie déclarée reçoit son buffer, et `AppTrack.input_source` fait entrer une sortie auxiliaire dans une autre piste (sélecteur « Entrée » du panneau gauche). Reste ouvert : plugins isolés (sandbox) et VST3 (une seule sortie), surround.
 
 ### 3.4 `ParameterMap` jamais peuplée
