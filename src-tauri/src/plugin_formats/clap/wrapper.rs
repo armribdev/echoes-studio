@@ -36,6 +36,7 @@ use crate::plugin_formats::clap::audio_ports::ClapOutputBuses;
 use crate::plugin_formats::clap::params::{
     observe_output_event, read_clap_params, ClapParamEvents,
 };
+use crate::plugin_formats::clap::sleep::{clear_outputs, PluginSleep};
 use crate::plugin_formats::clap::transport::clap_transport_event;
 use crate::plugin_formats::crash_guard;
 use crate::plugin_system::instance::{PluginInstance, FFI_GATE_HARVEST_BUDGET};
@@ -99,6 +100,9 @@ pub struct ClapWrapperNode {
     /// thread through `latency_samples()`.
     reported_latency: u32,
     steady_time: i64,
+
+    /// Stops calling the plugin while it is silent and has no tail left.
+    sleep: PluginSleep,
 }
 
 // SAFETY: see module-level doc.  CLAP pointers are reached via Arc-shared
@@ -134,6 +138,7 @@ impl ClapWrapperNode {
             crashed: false,
             steady_time: 0,
             reported_latency: 0,
+            sleep: PluginSleep::new(),
         }
     }
 
@@ -198,6 +203,7 @@ impl AudioNode for ClapWrapperNode {
 
                     self.param_events.set_ranges(&read_clap_params(p));
                 }
+                self.sleep.start(&self.instance);
             }
         }
 
@@ -241,6 +247,16 @@ impl AudioNode for ClapWrapperNode {
         self.param_events.fill(&self.instance);
         self.param_events.buffer.sort();
         self.out_events.ctx = self.param_events.output_context();
+
+        let has_events = !self.param_events.buffer.is_empty();
+        if self
+            .sleep
+            .skip_block(&self.instance, inputs, nf, has_events, transport.is_playing)
+        {
+            clear_outputs(outputs, nf);
+            self.steady_time = self.steady_time.wrapping_add(nf as i64);
+            return;
+        }
 
         // Port 0 = main bus (from the upstream connection); ports 1.. = aux
         // buses (sidechain — silence until something is routed into them, cf.
@@ -309,9 +325,11 @@ impl AudioNode for ClapWrapperNode {
             outputs[0].copy_from(inputs[0]);
         }
         self.outputs.finish(outputs);
+        self.sleep.finish_block(status, outputs, nf);
     }
 
     fn reset(&mut self) {
+        self.sleep.wake();
         if self.active {
             let p = self.plugin_ptr();
             unsafe {

@@ -37,11 +37,11 @@ use crate::plugin_system::instance::{PluginInstance, FFI_GATE_HARVEST_BUDGET};
 use crate::plugin_formats::clap::audio_ports::ClapOutputBuses;
 use crate::plugin_formats::clap::ffi::{
     audio_thread_scope, ClapEventBuffer, ClapOutputEvents, ClapPlugin, ClapProcess,
-    CLAP_PROCESS_ERROR,
 };
 use crate::plugin_formats::clap::params::{
     observe_output_event, read_clap_params, ClapParamEvents,
 };
+use crate::plugin_formats::clap::sleep::{clear_outputs, PluginSleep};
 use crate::plugin_formats::clap::transport::clap_transport_event;
 
 /// Append the engine's per-block `MidiEventList` as CLAP events: notes as CLAP
@@ -79,6 +79,8 @@ pub struct ClapInstrument {
     /// Sample counter passed as `steady_time`. Must grow by `frames_count`
     /// every block so GUI notes (Vital's keyboard) land on a continuous clock.
     steady_time: i64,
+    /// Stops calling the plugin while it is silent and its release has ended.
+    sleep: PluginSleep,
 }
 
 // SAFETY: identical discipline to `ClapWrapperNode` — CLAP access is
@@ -105,6 +107,7 @@ impl ClapInstrument {
             },
             active: false,
             steady_time: 0,
+            sleep: PluginSleep::new(),
         }
     }
 
@@ -137,6 +140,7 @@ impl InstrumentDevice for ClapInstrument {
             if let Some(_gate) = self.instance.offrt_try_acquire(FFI_GATE_HARVEST_BUDGET) {
                 let params = unsafe { read_clap_params(self.plugin_ptr()) };
                 self.param_events.set_ranges(&params);
+                self.sleep.start(&self.instance);
             }
         }
     }
@@ -164,13 +168,23 @@ impl InstrumentDevice for ClapInstrument {
         self.param_events.buffer.sort();
         self.out_events.ctx = self.param_events.output_context();
 
+        let nf = transport.block_size;
+        let has_events = !self.param_events.buffer.is_empty();
+        if self
+            .sleep
+            .skip_block(&self.instance, &[], nf, has_events, transport.is_playing)
+        {
+            clear_outputs(outputs, nf);
+            self.steady_time = self.steady_time.wrapping_add(nf as i64);
+            return;
+        }
+
         // Frame count MUST be the current block size, not the buffer's allocated
         // capacity (`num_frames` = MAX_BLOCK_FRAMES).  Telling the plugin to
         // render the full 4096-frame capacity every callback advances its clock
         // far past the real block (e.g. 8× at a 512-frame device buffer), so the
         // synth races ahead and renders garbage that is mostly discarded — heard
         // as "no sound" / glitching.  Matches `PolySynth`, which uses block_size.
-        let nf = transport.block_size;
         let (audio_outputs, audio_outputs_count) = self.outputs.bind(outputs);
 
         let transport_event = clap_transport_event(transport);
@@ -189,10 +203,8 @@ impl InstrumentDevice for ClapInstrument {
         let p = self.plugin_ptr();
         let status = unsafe { ((*p).process)(p, &process) };
         self.steady_time = self.steady_time.wrapping_add(nf as i64);
-        // On error an instrument has no input to pass through — leave the
-        // scheduler-zeroed output as silence.
-        let _ = status == CLAP_PROCESS_ERROR;
         self.outputs.finish(outputs);
+        self.sleep.finish_block(status, outputs, nf);
     }
 
     fn inject_param_controls(&mut self, controls: Vec<PluginParamControl>) {
@@ -204,6 +216,7 @@ impl InstrumentDevice for ClapInstrument {
     }
 
     fn reset(&mut self) {
+        self.sleep.wake();
         if self.active {
             let p = self.plugin_ptr();
             unsafe {

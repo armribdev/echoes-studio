@@ -7,22 +7,26 @@
 
 use std::ffi::{c_char, c_void};
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use clap_ffi::{
-    audio_thread_scope, read_pod, split_events, ClapAudioBuffer, ClapEventBuffer, ClapEventHeader,
-    ClapEventTransport, ClapHost, ClapLibrary, ClapOutputEvents, ClapParamInfo, ClapPlugin,
-    ClapPluginFactory, ClapPluginLatency, ClapPluginParams, ClapProcess, CLAP_CORE_EVENT_SPACE,
-    CLAP_EVENT_TRANSPORT, CLAP_EXT_LATENCY, CLAP_EXT_PARAMS, CLAP_PLUGIN_FACTORY_ID,
-    CLAP_PROCESS_ERROR,
+    audio_thread_scope, is_silent, read_pod, read_tail, split_events, BlockActivity,
+    ClapAudioBuffer, ClapEventBuffer, ClapEventHeader, ClapEventTransport, ClapHost, ClapLibrary,
+    ClapOutputEvents, ClapParamInfo, ClapPlugin, ClapPluginFactory, ClapPluginLatency,
+    ClapPluginParams, ClapProcess, ProcessSleep, CLAP_CORE_EVENT_SPACE, CLAP_EVENT_TRANSPORT,
+    CLAP_EXT_LATENCY, CLAP_EXT_PARAMS, CLAP_PLUGIN_FACTORY_ID, CLAP_PROCESS_ERROR,
+    CLAP_TRANSPORT_IS_PLAYING,
 };
 use plugin_bridge::protocol::{BLOCK_PASSED_THROUGH, BLOCK_PLUGIN_EDITED, BLOCK_RESTART_REQUESTED};
 use plugin_bridge::session::{BlockContext, BridgeProcessor, EventWriter};
 
 /// How long `activate` waits for the audio thread to stop processing.
 const HOLD_TIMEOUT: Duration = Duration::from_secs(2);
+
+/// Stored in [`LoadedPlugin::tail`] when the plugin has no `clap.tail`.
+const NO_TAIL: u32 = u32::MAX;
 
 pub struct LoadedPlugin {
     plugin: *const ClapPlugin,
@@ -39,6 +43,8 @@ pub struct LoadedPlugin {
     /// Held around `process` and around a parameter flush while active, so the
     /// two never overlap.
     process_lock: Mutex<()>,
+    /// The plugin's `clap.tail` in samples, [`NO_TAIL`] when it has none.
+    tail: AtomicU32,
 }
 
 // SAFETY: the plugin is reached from the main and audio threads only through
@@ -81,6 +87,7 @@ impl LoadedPlugin {
             processing: AtomicBool::new(false),
             config: Mutex::new(None),
             process_lock: Mutex::new(()),
+            tail: AtomicU32::new(NO_TAIL),
         })
     }
 
@@ -114,6 +121,9 @@ impl LoadedPlugin {
             self.reactivate(sample_rate, max_frames)?;
             *config = Some((sample_rate, max_frames));
         }
+        // SAFETY: main thread, after activate.
+        let tail = unsafe { read_tail(self.plugin) };
+        self.tail.store(tail.unwrap_or(NO_TAIL), Ordering::Release);
         Ok(self.latency())
     }
 
@@ -265,6 +275,11 @@ pub struct ClapBlockProcessor {
     events: Box<ClapEventBuffer>,
     input_pointers: Vec<*mut f32>,
     output_pointers: Vec<*mut f32>,
+    /// Stops calling the plugin while it is silent and has no tail left.  The
+    /// engine keeps exchanging every block with the bridge, so its bounded
+    /// wait and the offline render are unchanged.
+    sleep: ProcessSleep,
+    applied_tail: u32,
 }
 
 // SAFETY: moved once into the audio thread, which is its only user.
@@ -277,6 +292,8 @@ impl ClapBlockProcessor {
             events: ClapEventBuffer::new(),
             input_pointers: vec![std::ptr::null_mut(); channels],
             output_pointers: vec![std::ptr::null_mut(); channels],
+            sleep: ProcessSleep::new(),
+            applied_tail: NO_TAIL,
         }
     }
 
@@ -300,9 +317,40 @@ impl ClapBlockProcessor {
                     return false;
                 }
                 plugin.processing.store(true, Ordering::Release);
+                self.sleep.wake();
             }
         }
         true
+    }
+
+    /// Whether this block can skip `process`: the plugin is asleep and nothing
+    /// reached it.  `playing` comes from the engine's transport event.
+    fn skip_block(&mut self, block: &BlockContext, input: &[f32], playing: bool) -> bool {
+        let plugin = &self.plugin;
+        let context = plugin.host().context();
+        if context.is_some_and(|context| context.take_tail_changed()) {
+            // SAFETY: audio thread, plugin active; `clap.tail` is audio-thread callable.
+            let tail = unsafe { read_tail(plugin.plugin) };
+            plugin
+                .tail
+                .store(tail.unwrap_or(NO_TAIL), Ordering::Release);
+        }
+        let tail = plugin.tail.load(Ordering::Acquire);
+        if tail != self.applied_tail {
+            self.sleep.set_tail(Some(tail));
+            self.applied_tail = tail;
+        }
+        let samples = block.frames * block.channels;
+        let input_audible = self.sleep.wants_input_scan()
+            && block.has_input
+            && !is_silent(&input[..samples.min(input.len())]);
+        self.sleep.begin_block(BlockActivity {
+            frames: block.frames as u32,
+            has_events: !self.events.is_empty(),
+            input_audible,
+            playing,
+            process_requested: context.is_some_and(|context| context.take_process_request()),
+        })
     }
 
     /// Fills the event buffer from the engine's events and returns its transport.
@@ -354,8 +402,16 @@ impl BridgeProcessor for ClapBlockProcessor {
         if block.reset {
             // SAFETY: audio thread, plugin active and processing.
             unsafe { ((*self.plugin.plugin).reset)(self.plugin.plugin) };
+            self.sleep.wake();
         }
         let transport = self.read_events(block.events);
+        let playing = transport
+            .as_ref()
+            .is_some_and(|t| t.flags & CLAP_TRANSPORT_IS_PLAYING != 0);
+        if self.skip_block(block, input, playing) {
+            output.fill(0.0);
+            return signal_flags();
+        }
         let frames = block.frames;
         for channel in 0..block.channels {
             self.input_pointers[channel] = input[channel * frames..].as_ptr() as *mut f32;
@@ -402,6 +458,7 @@ impl BridgeProcessor for ClapBlockProcessor {
             // SAFETY: audio thread, plugin processing; every buffer outlives the call.
             unsafe { ((*self.plugin.plugin).process)(self.plugin.plugin, &process) }
         };
+        self.sleep.end_block(status, || is_silent(output));
         if status == CLAP_PROCESS_ERROR {
             output.copy_from_slice(input);
             return BLOCK_PASSED_THROUGH | signal_flags();

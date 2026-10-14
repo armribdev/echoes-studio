@@ -955,3 +955,232 @@ fn automation_cost_report() {
         audio_seconds / log.as_secs_f64()
     );
 }
+
+#[cfg(windows)]
+mod clap_plugins {
+    use std::path::{Path, PathBuf};
+    use std::process::Command;
+    use std::sync::OnceLock;
+
+    use super::*;
+    use crate::plugin_system::registry::PluginManifest;
+    use crate::plugin_system::wrapper::DeviceFormat;
+    use crate::project::PluginParams;
+
+    pub const PLUGIN_ID: &str = "clap:echoes.test.gain";
+
+    fn test_plugin_dll() -> &'static PathBuf {
+        static DLL: OnceLock<PathBuf> = OnceLock::new();
+        DLL.get_or_init(|| {
+            let workspace = Path::new(env!("CARGO_MANIFEST_DIR"));
+            let target = workspace.join("target").join("clap-render-harness");
+            let status = Command::new(env!("CARGO"))
+                .args(["build", "--quiet", "-p", "test_clap_plugin", "--target-dir"])
+                .arg(&target)
+                .current_dir(workspace)
+                .status()
+                .expect("run cargo");
+            assert!(status.success(), "building test_clap_plugin failed");
+            target.join("debug").join("test_clap_plugin.dll")
+        })
+    }
+
+    fn host_with_test_plugins(plugin_id: &str) -> PluginHost {
+        let mut host = PluginHost::new();
+        host.registry_mut().add(PluginManifest {
+            id: plugin_id.into(),
+            name: "Echoes Test Gain".into(),
+            vendor: "Echoes Studio".into(),
+            format: DeviceFormat::Clap,
+            path: Some(test_plugin_dll().clone()),
+            categories: vec![],
+            num_sidechain_inputs: 0,
+            is_instrument: false,
+        });
+        host
+    }
+
+    pub fn render_with_plugin(
+        project: &AppProject,
+        plugin_id: &str,
+        block_size: usize,
+    ) -> Vec<f32> {
+        let live_params = LiveParams::new();
+        let mut host = host_with_test_plugins(plugin_id);
+        let (left, right) =
+            render_project_in_blocks(project, &live_params, &mut host, SAMPLE_RATE, block_size)
+                .expect("reference project must render");
+        assert!(
+            host.unavailable_plugins().is_empty(),
+            "the test plugin must load"
+        );
+        left.into_iter()
+            .zip(right)
+            .flat_map(|(l, r)| [l, r])
+            .collect()
+    }
+
+    /// Clip starting at 1.0 s (silent lead-in) through the plugin as an
+    /// effect, and a CLAP instrument playing two notes with a gap between.
+    pub fn project(plugin_id: &str, effect_params: Vec<(u32, f32)>) -> AppProject {
+        let mut audio = audio_track();
+        audio.clips[0].start = 1.0;
+        audio.clips[0].end = 1.0 + DURATION_S;
+        audio.effects = vec![effect(
+            "plugin",
+            EffectParams::Plugin(PluginParams {
+                plugin_id: plugin_id.into(),
+                name: "Echoes Test Gain".into(),
+                format: "clap".into(),
+                params: effect_params,
+                sandboxed: false,
+                sidechain_source: None,
+            }),
+        )];
+
+        let mut midi = midi_track();
+        midi.effects.clear();
+        midi.instrument = Some(plugin_id.into());
+        let note = |id: &str, pitch: u8, start: f32| MidiNote {
+            id: id.into(),
+            pitch,
+            start,
+            duration: 1.0,
+            velocity: 100,
+        };
+        midi.midi_clips[0].notes = vec![note("n1", 60, 0.0), note("n2", 64, 3.0)];
+
+        project_with(vec![audio, midi])
+    }
+
+    #[test]
+    fn clap_plugins_are_audible_with_silent_gaps() {
+        let render = render_with_plugin(&project(PLUGIN_ID, vec![]), PLUGIN_ID, BLOCK_SIZES[0]);
+        assert!(render.iter().any(|s| s.abs() > 1e-3), "silent render");
+        let frame = |seconds: f64| (seconds * SAMPLE_RATE as f64) as usize * 2;
+        assert!(
+            render[frame(0.1)..frame(0.2)]
+                .iter()
+                .any(|s| s.abs() > 1e-3),
+            "first instrument note must sound"
+        );
+        assert!(
+            render[frame(0.6)..frame(0.9)]
+                .iter()
+                .all(|s| s.abs() <= 1e-3),
+            "the gap before the second note and the audio clip must be silent"
+        );
+    }
+
+    #[test]
+    fn clap_plugins_match_golden_hash() {
+        let render = render_with_plugin(&project(PLUGIN_ID, vec![]), PLUGIN_ID, BLOCK_SIZES[0]);
+        assert_eq!(render_hash(&render), CLAP_PLUGINS_GOLDEN_HASH);
+    }
+
+    const SLEEPY_ID: &str = "clap:echoes.test.sleepy";
+    const STATUS: u32 = 6;
+    const TAIL: u32 = 7;
+    const PROCESS_CALLS: u32 = 8;
+    const TAIL_RANGE: f32 = 1_000_000.0;
+    const TAIL_SAMPLES: f32 = 200.0;
+
+    fn effect_process_calls(host: &PluginHost, key: &str) -> u32 {
+        use crate::plugin_formats::clap::ffi::{ClapPluginParams, CLAP_EXT_PARAMS};
+        let plugin = host
+            .instance_by_key(key)
+            .unwrap()
+            .clap_plugin()
+            .expect("in-process CLAP plugin");
+        // SAFETY: the render is over; the host still holds the live instance.
+        unsafe {
+            let params = ((*plugin).get_extension)(plugin, CLAP_EXT_PARAMS.as_ptr() as *const _)
+                as *const ClapPluginParams;
+            let mut value = f64::NAN;
+            assert!(((*params).get_value)(plugin, PROCESS_CALLS, &mut value));
+            value as u32
+        }
+    }
+
+    /// `(render, process calls of the effect, process calls of the instrument)`.
+    fn render_counting_calls(
+        project: &AppProject,
+        plugin_id: &str,
+        queued_effect_params: &[(u32, f32)],
+        block_size: usize,
+    ) -> (Vec<f32>, u32, u32) {
+        let live_params = LiveParams::new();
+        let mut host = host_with_test_plugins(plugin_id);
+        if !queued_effect_params.is_empty() {
+            // The compiler reuses a live instance (ADR-016): configure it first.
+            host.instantiate("plugin", plugin_id, false)
+                .expect("the effect must load");
+            for &(native_id, value) in queued_effect_params {
+                assert!(host.push_plugin_param("plugin", native_id, value).unwrap());
+            }
+        }
+        let (left, right) =
+            render_project_in_blocks(project, &live_params, &mut host, SAMPLE_RATE, block_size)
+                .expect("reference project must render");
+        let render = left
+            .into_iter()
+            .zip(right)
+            .flat_map(|(l, r)| [l, r])
+            .collect();
+        (
+            render,
+            effect_process_calls(&host, "plugin"),
+            effect_process_calls(&host, "instrument:midi"),
+        )
+    }
+
+    fn tail_effect_params() -> [(u32, f32); 2] {
+        [(STATUS, 3.0 / 4.0), (TAIL, TAIL_SAMPLES / TAIL_RANGE)]
+    }
+
+    #[test]
+    fn a_sleeping_instrument_renders_exactly_like_an_awake_one() {
+        for block_size in BLOCK_SIZES {
+            let (awake, _, awake_calls) =
+                render_counting_calls(&project(PLUGIN_ID, vec![]), PLUGIN_ID, &[], block_size);
+            let (asleep, _, asleep_calls) =
+                render_counting_calls(&project(SLEEPY_ID, vec![]), SLEEPY_ID, &[], block_size);
+            assert_eq!(
+                first_difference(&awake, &asleep),
+                None,
+                "block size {block_size}"
+            );
+            assert!(
+                asleep_calls < awake_calls,
+                "block size {block_size}: the instrument must really sleep                  ({asleep_calls} calls vs {awake_calls})"
+            );
+        }
+    }
+
+    #[test]
+    fn a_sleeping_effect_renders_exactly_like_an_awake_one() {
+        for block_size in BLOCK_SIZES {
+            let (awake, awake_calls, _) =
+                render_counting_calls(&project(PLUGIN_ID, vec![]), PLUGIN_ID, &[], block_size);
+            let (asleep, asleep_calls, _) = render_counting_calls(
+                &project(PLUGIN_ID, vec![]),
+                PLUGIN_ID,
+                &tail_effect_params(),
+                block_size,
+            );
+            assert_eq!(
+                first_difference(&awake, &asleep),
+                None,
+                "block size {block_size}"
+            );
+            assert!(
+                asleep_calls < awake_calls,
+                "block size {block_size}: the effect must really sleep                  ({asleep_calls} calls vs {awake_calls})"
+            );
+        }
+    }
+
+    /// Recorded on Windows x86_64, separate from `GOLDEN_HASHES` because it
+    /// needs the built test plugin.
+    const CLAP_PLUGINS_GOLDEN_HASH: u64 = 0x928da7dcd260c4e1;
+}

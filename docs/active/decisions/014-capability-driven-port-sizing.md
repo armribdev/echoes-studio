@@ -279,3 +279,12 @@ host lists it; `compiler.rs::steps_grow_to_the_loaded_plugin_outputs_and_missing
 `graph.rs::routing_tests` (input routing, C-4 default, port 0, own-effect
 cycle, unknown placement); `project.rs` save/load round trip. No manual pass
 with a real multi-out plugin (e.g. a drum machine) yet.
+
+## Note 2026-10-14 — sleeping effects and ports
+
+The effect wrapper (`ClapWrapperNode`) now skips `process()` while the plugin is
+asleep (status `SLEEP`, or `TAIL` / `CONTINUE_IF_NOT_QUIET` with `clap.tail`
+elapsed, output silent). Port sizing is unchanged; a sleeping effect zeroes
+every declared output port, and a non-silent signal on any input port —
+including the sidechain — wakes it. See `../plugins/plugin-wrapper-system.md`
+(Plugin sleep).

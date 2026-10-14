@@ -24,6 +24,10 @@ const CRASH: u32 = 2;
 const TOUCH: u32 = 3;
 const LOOKAHEAD: u32 = 4;
 const WRONG_THREAD: u32 = 5;
+const STATUS: u32 = 6;
+const TAIL: u32 = 7;
+const PROCESS_CALLS: u32 = 8;
+const LIAR: u32 = 9;
 const FRAMES: usize = 64;
 const CHANNELS: usize = 2;
 const TIMEOUT: Duration = Duration::from_secs(5);
@@ -61,7 +65,11 @@ fn spawn(plugin_id: &str) -> std::io::Result<BridgeProcess> {
 }
 
 fn activated() -> BridgeProcess {
-    let bridge = spawn("echoes.test.gain").expect("bridge starts");
+    activated_plugin("echoes.test.gain")
+}
+
+fn activated_plugin(plugin_id: &str) -> BridgeProcess {
+    let bridge = spawn(plugin_id).expect("bridge starts");
     let mut payload = 48_000.0f64.to_le_bytes().to_vec();
     payload.extend_from_slice(&4096u32.to_le_bytes());
     let latency = bridge
@@ -186,7 +194,7 @@ fn state_and_parameters_travel_over_the_control_channel() {
 
     let params = bridge.request(Op::Params, &[], TIMEOUT).unwrap();
     let mut reader = PayloadReader::new(&params);
-    assert_eq!(reader.u32().unwrap(), 6);
+    assert_eq!(reader.u32().unwrap(), 10);
     let first: ClapParamInfo = read_pod(&params[4..]).unwrap();
     assert_eq!(
         (first.id, &first.name[..4], first.max_value),
@@ -300,4 +308,97 @@ fn a_hung_plugin_times_out_then_is_condemned() {
 #[test]
 fn an_unknown_plugin_fails_to_start() {
     assert!(spawn("echoes.test.missing").is_err());
+}
+
+fn process_calls(bridge: &BridgeProcess) -> u32 {
+    let value = bridge
+        .request(Op::ParamValue, &PROCESS_CALLS.to_le_bytes(), TIMEOUT)
+        .unwrap();
+    f64::from_le_bytes(value.try_into().unwrap()) as u32
+}
+
+fn silence() -> Vec<f32> {
+    vec![0.0; FRAMES * CHANNELS]
+}
+
+#[test]
+fn a_sleeping_plugin_is_not_processed_until_a_signal_reaches_it() {
+    let bridge = activated_plugin("echoes.test.sleepy");
+
+    let first = process(&bridge, 0, &silence(), &[], TIMEOUT);
+    assert_eq!(first.output, silence());
+    assert_eq!(
+        process_calls(&bridge),
+        1,
+        "the first block shows it is quiet"
+    );
+
+    for sequence in 1..=5 {
+        let block = process(&bridge, sequence, &silence(), &[], TIMEOUT);
+        assert_eq!(block.output, silence(), "an asleep plugin outputs silence");
+    }
+    assert_eq!(process_calls(&bridge), 1, "asleep: process is not called");
+
+    let input = ramp();
+    assert_eq!(process(&bridge, 6, &input, &[], TIMEOUT).output, input);
+    assert_eq!(process_calls(&bridge), 2, "a signal wakes it");
+
+    process(&bridge, 7, &silence(), &[], TIMEOUT);
+    assert_eq!(
+        process_calls(&bridge),
+        3,
+        "awake while it was still sounding"
+    );
+    process(&bridge, 8, &silence(), &[], TIMEOUT);
+    assert_eq!(process_calls(&bridge), 3, "asleep again once quiet");
+
+    let events = param_events(&[(CLAP_EVENT_PARAM_VALUE, GAIN, 1.0)]);
+    process(&bridge, 9, &silence(), &events, TIMEOUT);
+    assert_eq!(process_calls(&bridge), 4, "an event wakes it");
+    assert_eq!(bridge.audio().timeout_count(), 0);
+}
+
+#[test]
+fn a_tail_is_not_cut_before_its_length_of_quiet_input() {
+    let bridge = activated();
+    let tail = 200.0;
+    let events = param_events(&[
+        (CLAP_EVENT_PARAM_VALUE, STATUS, 3.0),
+        (CLAP_EVENT_PARAM_VALUE, TAIL, tail),
+    ]);
+    process(&bridge, 0, &silence(), &events, TIMEOUT);
+
+    let mut calls = Vec::new();
+    for sequence in 1..=20 {
+        process(&bridge, sequence, &silence(), &[], TIMEOUT);
+        calls.push(process_calls(&bridge));
+    }
+    let quiet_blocks_needed = (tail as usize).div_ceil(FRAMES) as u32;
+    assert!(
+        calls[(quiet_blocks_needed - 1) as usize] > quiet_blocks_needed,
+        "the plugin ran through the whole tail: {calls:?}"
+    );
+    assert_eq!(calls[10], calls[19], "then it sleeps: {calls:?}");
+}
+
+#[test]
+fn a_plugin_that_claims_to_sleep_while_sounding_stays_awake() {
+    let bridge = activated();
+    let events = param_events(&[
+        (CLAP_EVENT_PARAM_VALUE, STATUS, 4.0),
+        (CLAP_EVENT_PARAM_VALUE, LIAR, 1.0),
+    ]);
+    let input = ramp();
+    process(&bridge, 0, &input, &events, TIMEOUT);
+    for sequence in 1..=5 {
+        assert_eq!(
+            process(&bridge, sequence, &input, &[], TIMEOUT).output,
+            input
+        );
+    }
+    assert_eq!(
+        process_calls(&bridge),
+        6,
+        "never put to sleep while audible"
+    );
 }

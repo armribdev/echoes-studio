@@ -770,3 +770,14 @@ switches its latency 64 → 128).
 - **Installer**: `tauri build` builds the bridge next to the app binary, but
   the installer does not bundle it yet (`bundle.externalBin`).
 - The live wait still spins a core for the plugin's processing time.
+
+### Amendment 2026-10-14 — sleep decided in the bridge
+
+A sandboxed CLAP plugin may sleep (status + `clap.tail`) like an in-process one.
+The decision is taken by `ClapBlockProcessor` inside the bridge process, using
+the same `ProcessSleep` rule; the bridge then returns silence for the block
+instead of calling `process()`. The engine↔bridge round trip still happens on
+every block, so the bounded live wait, the 10 s offline wait and the shared
+memory protocol are unchanged (no version bump), and the offline render stays
+deterministic. Tests: `plugin_host_bridge/tests/bridge.rs` (sleep and wake, tail,
+plugin that lies), `plugin_system/sandbox_tests.rs`.

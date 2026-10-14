@@ -24,6 +24,9 @@
 use std::ffi::{c_char, c_void};
 use std::path::Path;
 
+mod process_sleep;
+pub use process_sleep::*;
+
 // ── Version ────────────────────────────────────────────────────────────────────
 
 #[repr(C)]
@@ -138,7 +141,11 @@ pub unsafe extern "C" fn host_request_restart(host: *const ClapHost) {
         context.request_restart();
     }
 }
-pub unsafe extern "C" fn host_request_process(_: *const ClapHost) {}
+pub unsafe extern "C" fn host_request_process(host: *const ClapHost) {
+    if let Some(context) = host_context(host) {
+        context.request_process();
+    }
+}
 pub unsafe extern "C" fn host_request_callback(host: *const ClapHost) {
     if let Some(context) = host_context(host) {
         context.request_gui_drain();
@@ -157,6 +164,8 @@ pub struct ClapHostContext {
     gui_hwnd: std::sync::atomic::AtomicPtr<c_void>,
     gui_drain_pending: std::sync::atomic::AtomicBool,
     restart_requested: std::sync::atomic::AtomicBool,
+    process_requested: std::sync::atomic::AtomicBool,
+    tail_changed: std::sync::atomic::AtomicBool,
 }
 
 impl ClapHostContext {
@@ -165,7 +174,32 @@ impl ClapHostContext {
             gui_hwnd: std::sync::atomic::AtomicPtr::new(std::ptr::null_mut()),
             gui_drain_pending: std::sync::atomic::AtomicBool::new(false),
             restart_requested: std::sync::atomic::AtomicBool::new(false),
+            process_requested: std::sync::atomic::AtomicBool::new(false),
+            tail_changed: std::sync::atomic::AtomicBool::new(false),
         }
+    }
+
+    /// Lock-free: the plugin asks to be processed even if the host put it to sleep.
+    pub fn request_process(&self) {
+        self.process_requested
+            .store(true, std::sync::atomic::Ordering::Release);
+    }
+
+    /// Whether the plugin asked to be processed since the last call, and clears it.
+    pub fn take_process_request(&self) -> bool {
+        self.process_requested
+            .swap(false, std::sync::atomic::Ordering::AcqRel)
+    }
+
+    pub fn note_tail_changed(&self) {
+        self.tail_changed
+            .store(true, std::sync::atomic::Ordering::Release);
+    }
+
+    /// Whether the plugin reported a new tail since the last call, and clears it.
+    pub fn take_tail_changed(&self) -> bool {
+        self.tail_changed
+            .swap(false, std::sync::atomic::Ordering::AcqRel)
     }
 
     /// Lock-free: `request_restart` is callable from any thread, the audio
@@ -297,7 +331,26 @@ pub unsafe extern "C" fn host_get_extension(
     if id == CLAP_EXT_LATENCY {
         return &HOST_LATENCY as *const ClapHostLatency as *const c_void;
     }
+    if id == CLAP_EXT_TAIL {
+        return &HOST_TAIL as *const ClapHostTail as *const c_void;
+    }
     std::ptr::null()
+}
+
+/// Host-side `clap.tail`: the audio thread rereads the tail after `changed`.
+#[repr(C)]
+pub struct ClapHostTail {
+    pub changed: unsafe extern "C" fn(*const ClapHost),
+}
+
+static HOST_TAIL: ClapHostTail = ClapHostTail {
+    changed: host_tail_changed,
+};
+
+unsafe extern "C" fn host_tail_changed(host: *const ClapHost) {
+    if let Some(context) = host_context(host) {
+        context.note_tail_changed();
+    }
 }
 
 /// Host-side `clap.latency`.  `changed` is only allowed during `activate`, and
@@ -547,10 +600,31 @@ mod host_abi_tests {
     }
 
     #[test]
+    fn process_and_tail_requests_reach_the_plugin_context_once() {
+        let host = make_host();
+        let context = host.context().unwrap();
+        unsafe {
+            host_request_process(&*host);
+            let tail = host_get_extension(&*host, CLAP_EXT_TAIL.as_ptr() as *const c_char)
+                as *const ClapHostTail;
+            ((*tail).changed)(&*host);
+        }
+        assert!(context.take_process_request());
+        assert!(!context.take_process_request());
+        assert!(context.take_tail_changed());
+        assert!(!context.take_tail_changed());
+    }
+
+    #[test]
     fn host_exposes_gui_log_and_latency_extensions() {
         let host = make_host();
         unsafe {
-            for id in [CLAP_EXT_HOST_GUI, CLAP_EXT_LOG, CLAP_EXT_LATENCY] {
+            for id in [
+                CLAP_EXT_HOST_GUI,
+                CLAP_EXT_LOG,
+                CLAP_EXT_LATENCY,
+                CLAP_EXT_TAIL,
+            ] {
                 let ext = host_get_extension(&*host, id.as_ptr() as *const c_char);
                 assert!(!ext.is_null());
             }
@@ -1231,6 +1305,9 @@ pub struct ClapProcess {
 pub type ClapProcessStatus = i32;
 pub const CLAP_PROCESS_ERROR: ClapProcessStatus = 0;
 pub const CLAP_PROCESS_CONTINUE: ClapProcessStatus = 1;
+pub const CLAP_PROCESS_CONTINUE_IF_NOT_QUIET: ClapProcessStatus = 2;
+pub const CLAP_PROCESS_TAIL: ClapProcessStatus = 3;
+pub const CLAP_PROCESS_SLEEP: ClapProcessStatus = 4;
 
 // ── GUI extension ─────────────────────────────────────────────────────────────
 
@@ -1263,6 +1340,24 @@ pub const CLAP_EXT_LATENCY: &[u8] = b"clap.latency\0";
 #[repr(C)]
 pub struct ClapPluginLatency {
     pub get: unsafe extern "C" fn(*const ClapPlugin) -> u32,
+}
+
+// ── clap.tail extension (how long the plugin keeps sounding after its input) ───
+
+pub const CLAP_EXT_TAIL: &[u8] = b"clap.tail\0";
+
+/// `clap.tail` plugin-side vtable.  `get` is callable from the main and the
+/// audio thread; the host rereads it after `clap_host_tail.changed`.
+#[repr(C)]
+pub struct ClapPluginTail {
+    pub get: unsafe extern "C" fn(*const ClapPlugin) -> u32,
+}
+
+/// The plugin's tail in samples, or `None` when it does not provide `clap.tail`.
+pub unsafe fn read_tail(plugin: *const ClapPlugin) -> Option<u32> {
+    let extension = ((*plugin).get_extension)(plugin, CLAP_EXT_TAIL.as_ptr() as *const c_char)
+        as *const ClapPluginTail;
+    extension.as_ref().map(|tail| (tail.get)(plugin))
 }
 
 // ── clap.audio-ports extension (plugin bus layout — Phase 5d, ADR-014) ────────

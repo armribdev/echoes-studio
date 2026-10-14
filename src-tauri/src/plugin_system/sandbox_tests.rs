@@ -18,12 +18,17 @@ use crate::plugin_system::registry::PluginManifest;
 use crate::plugin_system::wrapper::DeviceFormat;
 
 const PLUGIN_ID: &str = "clap:echoes.test.gain";
+const SLEEPY_PLUGIN_ID: &str = "clap:echoes.test.sleepy";
 const KEY: &str = "fx0";
 const INSTRUMENT_KEY: &str = "instrument:t1";
 const GAIN: u32 = 0;
 const CRASH: u32 = 2;
 const LOOKAHEAD: u32 = 4;
 const WRONG_THREAD: u32 = 5;
+const STATUS: u32 = 6;
+const TAIL: u32 = 7;
+const PROCESS_CALLS: u32 = 8;
+const TAIL_RANGE: f32 = 1_000_000.0;
 const FRAMES: usize = 64;
 const NOTE_ON: MidiEventKind = MidiEventKind::NoteOn {
     pitch: 60,
@@ -67,16 +72,18 @@ fn host() -> PluginHost {
     let (bridge_exe, dll) = artifacts();
     let mut host = PluginHost::new();
     host.set_bridge_exe(bridge_exe.clone());
-    host.registry_mut().add(PluginManifest {
-        id: PLUGIN_ID.into(),
-        name: "Echoes Test Gain".into(),
-        vendor: "Echoes Studio".into(),
-        format: DeviceFormat::Clap,
-        path: Some(dll.clone()),
-        categories: vec![],
-        num_sidechain_inputs: 0,
-        is_instrument: false,
-    });
+    for id in [PLUGIN_ID, SLEEPY_PLUGIN_ID] {
+        host.registry_mut().add(PluginManifest {
+            id: id.into(),
+            name: "Echoes Test Gain".into(),
+            vendor: "Echoes Studio".into(),
+            format: DeviceFormat::Clap,
+            path: Some(dll.clone()),
+            categories: vec![],
+            num_sidechain_inputs: 0,
+            is_instrument: false,
+        });
+    }
     host
 }
 
@@ -94,9 +101,13 @@ fn prepared(host: &mut PluginHost, sandboxed: bool, live: bool) -> Box<dyn Audio
 }
 
 fn run_block(node: &mut Box<dyn AudioNode>) -> Vec<f32> {
+    run_block_with_input(node, 0.5)
+}
+
+fn run_block_with_input(node: &mut Box<dyn AudioNode>, level: f32) -> Vec<f32> {
     let mut input = AudioBuffer::new(2, 4096);
     for channel in 0..2 {
-        input.channel_mut(channel)[..FRAMES].fill(0.5);
+        input.channel_mut(channel)[..FRAMES].fill(level);
     }
     let mut outputs = vec![AudioBuffer::new(2, 4096)];
     let transport = TransportInfo {
@@ -108,8 +119,16 @@ fn run_block(node: &mut Box<dyn AudioNode>) -> Vec<f32> {
 }
 
 fn prepared_instrument(host: &mut PluginHost, live: bool) -> Box<dyn InstrumentDevice> {
+    prepared_instrument_of(host, PLUGIN_ID, live)
+}
+
+fn prepared_instrument_of(
+    host: &mut PluginHost,
+    plugin_id: &str,
+    live: bool,
+) -> Box<dyn InstrumentDevice> {
     let mut device = host
-        .instantiate_instrument(INSTRUMENT_KEY, PLUGIN_ID)
+        .instantiate_instrument(INSTRUMENT_KEY, plugin_id)
         .expect("instrument starts");
     device.prepare(PrepareContext {
         sample_rate: 48_000.0,
@@ -155,7 +174,7 @@ fn sandboxed_effect_processes_parameters_and_reports_latency() {
     let mut node = prepared(&mut host, true, false);
     assert!(host.instance_by_key(KEY).unwrap().is_sandboxed());
     assert_eq!(node.latency_samples(), 64);
-    assert_eq!(host.plugin_params(KEY).unwrap().len(), 6);
+    assert_eq!(host.plugin_params(KEY).unwrap().len(), 10);
 
     assert!(run_block(&mut node).iter().all(|&s| s == 0.5));
     // Normalised 0.25 of the 0..2 range = gain 0.5.
@@ -200,8 +219,17 @@ fn a_sandboxed_latency_change_is_applied_by_the_next_recompile() {
 /// Audio-thread calls the test plugin saw on a thread `clap.thread-check` did
 /// not report as the audio thread.
 fn wrong_thread_calls(host: &PluginHost) -> f64 {
+    plugin_value(host, KEY, WRONG_THREAD)
+}
+
+/// How many times `process` ran on the in-process plugin placed at `key`.
+fn process_calls(host: &PluginHost, key: &str) -> u32 {
+    plugin_value(host, key, PROCESS_CALLS) as u32
+}
+
+fn plugin_value(host: &PluginHost, key: &str, native_id: u32) -> f64 {
     let plugin = host
-        .instance_by_key(KEY)
+        .instance_by_key(key)
         .unwrap()
         .clap_plugin()
         .expect("in-process CLAP plugin");
@@ -210,7 +238,7 @@ fn wrong_thread_calls(host: &PluginHost) -> f64 {
         let params = ((*plugin).get_extension)(plugin, CLAP_EXT_PARAMS.as_ptr() as *const c_char)
             as *const ClapPluginParams;
         let mut value = f64::NAN;
-        assert!(((*params).get_value)(plugin, WRONG_THREAD, &mut value));
+        assert!(((*params).get_value)(plugin, native_id, &mut value));
         value
     }
 }
@@ -433,4 +461,103 @@ fn a_crashed_instrument_is_contained_reported_and_restarted() {
             .all(|&s| s == 0.5),
         "restarted with its last known state"
     );
+}
+
+#[test]
+fn a_sleeping_instrument_is_not_processed_and_plays_again_on_the_next_note() {
+    let mut host = host();
+    let mut instrument = prepared_instrument_of(&mut host, SLEEPY_PLUGIN_ID, false);
+
+    assert!(play_block(&mut instrument, &[NOTE_ON])
+        .iter()
+        .all(|&s| s == 1.0));
+    assert!(play_block(&mut instrument, &[NOTE_OFF])
+        .iter()
+        .all(|&s| s == 0.0));
+    let calls_when_asleep = process_calls(&host, INSTRUMENT_KEY);
+    assert_eq!(calls_when_asleep, 2);
+
+    for _ in 0..10 {
+        assert!(play_block(&mut instrument, &[]).iter().all(|&s| s == 0.0));
+    }
+    assert_eq!(
+        process_calls(&host, INSTRUMENT_KEY),
+        calls_when_asleep,
+        "no process call while asleep"
+    );
+
+    assert!(play_block(&mut instrument, &[NOTE_ON])
+        .iter()
+        .all(|&s| s == 1.0));
+    assert_eq!(process_calls(&host, INSTRUMENT_KEY), calls_when_asleep + 1);
+}
+
+#[test]
+fn an_effect_tail_is_processed_in_full_before_the_plugin_sleeps() {
+    const TAIL_SAMPLES: usize = 200;
+    let mut host = host();
+    let mut node = prepared(&mut host, false, false);
+    assert!(host.push_plugin_param(KEY, STATUS, 3.0 / 4.0).unwrap());
+    assert!(host
+        .push_plugin_param(KEY, TAIL, TAIL_SAMPLES as f32 / TAIL_RANGE)
+        .unwrap());
+
+    run_block_with_input(&mut node, 0.0);
+    let mut calls = Vec::new();
+    for _ in 0..20 {
+        run_block_with_input(&mut node, 0.0);
+        calls.push(process_calls(&host, KEY));
+    }
+
+    let quiet_blocks_needed = TAIL_SAMPLES.div_ceil(FRAMES);
+    assert!(
+        calls[quiet_blocks_needed - 1] as usize > quiet_blocks_needed,
+        "still processed through the tail: {calls:?}"
+    );
+    assert_eq!(
+        calls[10], calls[19],
+        "asleep once the tail has ended: {calls:?}"
+    );
+
+    let asleep_calls = calls[19];
+    assert!(
+        run_block_with_input(&mut node, 0.25)
+            .iter()
+            .all(|&s| s == 0.25),
+        "a signal wakes the effect"
+    );
+    assert_eq!(process_calls(&host, KEY), asleep_calls + 1);
+}
+
+#[test]
+fn an_effect_without_clap_tail_never_sleeps_on_a_tail_status() {
+    let mut host = host();
+    let mut node = prepared(&mut host, false, false);
+    assert!(host.push_plugin_param(KEY, STATUS, 3.0 / 4.0).unwrap());
+
+    for _ in 0..30 {
+        run_block_with_input(&mut node, 0.0);
+    }
+    assert_eq!(process_calls(&host, KEY), 30);
+}
+
+#[test]
+fn a_sandboxed_sleeping_instrument_still_plays_the_next_note() {
+    let mut host = host();
+    host.set_isolation(PluginIsolation::All, HashSet::new());
+    let mut instrument = prepared_instrument_of(&mut host, SLEEPY_PLUGIN_ID, false);
+    assert!(is_sandboxed(&host, INSTRUMENT_KEY));
+
+    assert!(play_block(&mut instrument, &[NOTE_ON])
+        .iter()
+        .all(|&s| s == 1.0));
+    assert!(play_block(&mut instrument, &[NOTE_OFF])
+        .iter()
+        .all(|&s| s == 0.0));
+    for _ in 0..10 {
+        assert!(play_block(&mut instrument, &[]).iter().all(|&s| s == 0.0));
+    }
+    assert!(play_block(&mut instrument, &[NOTE_ON])
+        .iter()
+        .all(|&s| s == 1.0));
 }

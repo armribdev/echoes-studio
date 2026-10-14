@@ -273,8 +273,55 @@ musical math lives in `TransportInfo::musical_position` (`audio_graph/node.rs`)
 so the VST3 `ProcessContext` can reuse it. `steady_time` is a sample counter
 advanced by the block size on every call (including a skipped block), so a
 plugin can place GUI notes on a continuous clock. Not covered: loop points
-(Echoes has no loop) and the out-of-process bridge (`plugin_host_bridge`
-still passes no transport).
+(Echoes has no loop). The out-of-process bridge receives the same transport
+event as the first event of every block (`BridgeRoundTrip::write_events`).
+
+**Plugin sleep (2026-10-14).** The host stops calling `process()` on a CLAP
+plugin that has nothing left to play, using the status `process()` returns and
+the `clap.tail` extension. The rule is one pure type, `ProcessSleep`
+(`crates/clap_ffi/src/process_sleep.rs`), shared by the in-process wrappers
+(`ClapWrapperNode`, `ClapInstrument`, through `plugin_formats/clap/sleep.rs`)
+and the bridge process (`ClapBlockProcessor`).
+
+- _Falling asleep_ (after a `process` call): the block's output must be silent
+  (every sample within 1e-6, −120 dBFS) **and** either the plugin answered
+  `SLEEP`, or it answered `CONTINUE_IF_NOT_QUIET` / `TAIL`, declares
+  `clap.tail`, and the input (all ports, sidechain included) and the event list
+  have been quiet for at least the tail, counted in samples. `CONTINUE`,
+  `ERROR` and unknown statuses never put it to sleep. Without `clap.tail` (or
+  with a tail of `i32::MAX` samples or more, which the spec calls infinite)
+  only `SLEEP` can; the tail is never guessed.
+- _Asleep_: no FFI call at all; every output is zeroed (an effect too: its
+  input is silent by construction) and `steady_time` keeps advancing.
+- _Waking_ (checked every block while asleep): any incoming event (notes, MIDI,
+  queued edits, modulation, automation), a non-silent input, the plugin's own
+  `request_process`, a play/stop change, `reset`, a reactivation. A plugin that
+  claims to sleep while still sounding is not followed (its output is not
+  silent), and one that gets any event is woken, so it cannot stay mute. The
+  CLAP contract makes `request_process` the plugin's way to wake itself (e.g.
+  from its own window), so a plugin that skips it keeps sleeping until the
+  next event. Active modulation or automation sends events every block, so a
+  modulated plugin does not sleep.
+- _Cost_: the input is scanned only when a decision needs it (while asleep, or
+  while a tail is being counted), so the common `CONTINUE` plugin pays nothing.
+- _Tail_: read in `prepare` under the instance FFI gate (like `clap.latency`),
+  and again on the audio thread after the plugin's `clap_host_tail.changed`
+  (`clap.tail.get` is callable from the audio thread). The host answers
+  `clap.tail` in `host_get_extension`; `request_process` and `tail.changed`
+  set lock-free flags on the plugin's `ClapHostContext`.
+- _Determinism_ (C-2): the decision depends only on samples and sample counts,
+  never on wall time, so offline and live sleep at the same blocks. For a real
+  plugin whose silent output is not exactly zero but under 1e-6, sleeping
+  replaces it by zero (below −120 dBFS, reproducible). The harness proves bit
+  identity with the test plugin (`render_harness.rs::clap_plugins`).
+- _Sandbox_ (ADR-015): the decision is taken inside the bridge process
+  (`ClapBlockProcessor`); the engine still exchanges every block with the
+  bridge, so the bounded wait, the offline wait and the protocol are
+  unchanged. A sleeping bridge answers the block with silence.
+
+Not done: VST3 (no equivalent wired); not yet tried with real plugins (Vital,
+Surge XT, u-he) — only the test plugin (`crates/test_clap_plugin`: `Status`,
+`Tail`, `Liar`, `Process calls` parameters and the `echoes.test.sleepy` plugin).
 
 ---
 

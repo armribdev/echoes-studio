@@ -12,6 +12,15 @@
 //! - 5 `Wrong thread` — read-only: how many `start_processing` / `process` /
 //!   `stop_processing` calls the host's `clap.thread-check` did not report as
 //!   the audio thread.
+//! - 6 `Status` — the `clap_process_status` reported while the output is silent
+//!   (default `CONTINUE`; 2 `CONTINUE_IF_NOT_QUIET`, 3 `TAIL`, 4 `SLEEP`);
+//! - 7 `Tail` — samples reported by `clap.tail`; 0 (default) means the plugin
+//!   does not provide the extension.  Changing it calls the host's `tail.changed`;
+//! - 8 `Process calls` — read-only: how many times `process` ran;
+//! - 9 `Liar` — once set, `Status` is reported even while the output sounds.
+//!
+//! A second plugin, `echoes.test.sleepy`, is the same code reporting `SLEEP`
+//! by default, for projects that cannot set parameters.
 //!
 //! Reports 64 samples of latency by default.  No GUI.
 //!
@@ -23,21 +32,23 @@
 //! auxiliary **mono** output (multi-out), carrying half the main output.
 
 use std::ffi::{c_char, c_void, CStr};
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, AtomicU64, Ordering};
 
 use clap_ffi::{
     ClapAudioPortInfo, ClapEventHeader, ClapEventNote, ClapEventParamGesture, ClapEventParamValue,
-    ClapHost, ClapHostLatency, ClapHostState, ClapHostThreadCheck, ClapIStream, ClapInputEvents,
-    ClapOStream, ClapOutputEvents, ClapParamInfo, ClapPlugin, ClapPluginAudioPorts,
-    ClapPluginDescriptor, ClapPluginEntry, ClapPluginFactory, ClapPluginLatency, ClapPluginParams,
-    ClapPluginState, ClapProcess, ClapProcessStatus, CLAP_AUDIO_PORT_IS_MAIN,
-    CLAP_CORE_EVENT_SPACE, CLAP_EVENT_NOTE_OFF, CLAP_EVENT_NOTE_ON, CLAP_EVENT_PARAM_GESTURE_END,
-    CLAP_EVENT_PARAM_MOD, CLAP_EVENT_PARAM_VALUE, CLAP_EXT_AUDIO_PORTS, CLAP_EXT_LATENCY,
-    CLAP_EXT_PARAMS, CLAP_EXT_STATE, CLAP_EXT_THREAD_CHECK, CLAP_PARAM_IS_AUTOMATABLE,
-    CLAP_PARAM_IS_MODULATABLE, CLAP_PLUGIN_FACTORY_ID, CLAP_PROCESS_CONTINUE, CLAP_VERSION_1,
+    ClapHost, ClapHostLatency, ClapHostState, ClapHostTail, ClapHostThreadCheck, ClapIStream,
+    ClapInputEvents, ClapOStream, ClapOutputEvents, ClapParamInfo, ClapPlugin,
+    ClapPluginAudioPorts, ClapPluginDescriptor, ClapPluginEntry, ClapPluginFactory,
+    ClapPluginLatency, ClapPluginParams, ClapPluginState, ClapPluginTail, ClapProcess,
+    ClapProcessStatus, CLAP_AUDIO_PORT_IS_MAIN, CLAP_CORE_EVENT_SPACE, CLAP_EVENT_NOTE_OFF,
+    CLAP_EVENT_NOTE_ON, CLAP_EVENT_PARAM_GESTURE_END, CLAP_EVENT_PARAM_MOD, CLAP_EVENT_PARAM_VALUE,
+    CLAP_EXT_AUDIO_PORTS, CLAP_EXT_LATENCY, CLAP_EXT_PARAMS, CLAP_EXT_STATE, CLAP_EXT_TAIL,
+    CLAP_EXT_THREAD_CHECK, CLAP_PARAM_IS_AUTOMATABLE, CLAP_PARAM_IS_MODULATABLE,
+    CLAP_PLUGIN_FACTORY_ID, CLAP_PROCESS_CONTINUE, CLAP_PROCESS_SLEEP, CLAP_VERSION_1,
 };
 
 pub const PLUGIN_ID: &str = "echoes.test.gain";
+pub const SLEEPY_PLUGIN_ID: &str = "echoes.test.sleepy";
 pub const LATENCY: u32 = 64;
 pub const LOOKAHEAD_LATENCY: u32 = 128;
 const GAIN: u32 = 0;
@@ -46,6 +57,10 @@ const CRASH: u32 = 2;
 const TOUCH: u32 = 3;
 const LOOKAHEAD: u32 = 4;
 const WRONG_THREAD: u32 = 5;
+const STATUS: u32 = 6;
+const TAIL: u32 = 7;
+const PROCESS_CALLS: u32 = 8;
+const LIAR: u32 = 9;
 
 struct Descriptor(ClapPluginDescriptor);
 struct Features([*const c_char; 2]);
@@ -65,6 +80,19 @@ static DESCRIPTOR: Descriptor = Descriptor(ClapPluginDescriptor {
     support_url: c"".as_ptr(),
     version: c"1.0.0".as_ptr(),
     description: c"Sandbox test plugin".as_ptr(),
+    features: FEATURES.0.as_ptr(),
+});
+
+static SLEEPY_DESCRIPTOR: Descriptor = Descriptor(ClapPluginDescriptor {
+    clap_version: CLAP_VERSION_1,
+    id: c"echoes.test.sleepy".as_ptr(),
+    name: c"Echoes Test Sleepy".as_ptr(),
+    vendor: c"Echoes Studio".as_ptr(),
+    url: c"".as_ptr(),
+    manual_url: c"".as_ptr(),
+    support_url: c"".as_ptr(),
+    version: c"1.0.0".as_ptr(),
+    description: c"Sandbox test plugin that reports SLEEP when silent".as_ptr(),
     features: FEATURES.0.as_ptr(),
 });
 
@@ -97,17 +125,17 @@ unsafe extern "C" fn entry_get_factory(id: *const c_char) -> *const c_void {
 }
 
 unsafe extern "C" fn factory_count(_: *const ClapPluginFactory) -> u32 {
-    1
+    2
 }
 
 unsafe extern "C" fn factory_descriptor(
     _: *const ClapPluginFactory,
     index: u32,
 ) -> *const ClapPluginDescriptor {
-    if index == 0 {
-        &DESCRIPTOR.0
-    } else {
-        std::ptr::null()
+    match index {
+        0 => &DESCRIPTOR.0,
+        1 => &SLEEPY_DESCRIPTOR.0,
+        _ => std::ptr::null(),
     }
 }
 
@@ -124,6 +152,10 @@ struct State {
     /// Latency the next `activate` applies.
     pending_latency: AtomicU32,
     wrong_thread_calls: AtomicU32,
+    status: AtomicI32,
+    tail: AtomicU32,
+    liar: AtomicBool,
+    process_calls: AtomicU32,
 }
 
 unsafe extern "C" fn factory_create(
@@ -131,9 +163,14 @@ unsafe extern "C" fn factory_create(
     host: *const ClapHost,
     id: *const c_char,
 ) -> *const ClapPlugin {
-    if CStr::from_ptr(id).to_bytes() != PLUGIN_ID.as_bytes() {
+    let id = CStr::from_ptr(id).to_bytes();
+    let (descriptor, status) = if id == PLUGIN_ID.as_bytes() {
+        (&DESCRIPTOR, CLAP_PROCESS_CONTINUE)
+    } else if id == SLEEPY_PLUGIN_ID.as_bytes() {
+        (&SLEEPY_DESCRIPTOR, CLAP_PROCESS_SLEEP)
+    } else {
         return std::ptr::null();
-    }
+    };
     let state = Box::new(State {
         host,
         gain: AtomicU64::new(1.0f64.to_bits()),
@@ -145,9 +182,13 @@ unsafe extern "C" fn factory_create(
         latency: LATENCY,
         pending_latency: AtomicU32::new(LATENCY),
         wrong_thread_calls: AtomicU32::new(0),
+        status: AtomicI32::new(status),
+        tail: AtomicU32::new(0),
+        liar: AtomicBool::new(false),
+        process_calls: AtomicU32::new(0),
     });
     Box::into_raw(Box::new(ClapPlugin {
-        desc: &DESCRIPTOR.0,
+        desc: &descriptor.0,
         plugin_data: Box::into_raw(state) as *mut c_void,
         init: plugin_init,
         destroy: plugin_destroy,
@@ -187,6 +228,19 @@ unsafe extern "C" fn plugin_activate(plugin: *const ClapPlugin, _: f64, _: u32, 
         }
     }
     true
+}
+
+fn set_tail(state: &State, tail: u32) {
+    if state.tail.swap(tail, Ordering::AcqRel) != tail {
+        // SAFETY: the host outlives the plugin; `changed` is thread-safe.
+        unsafe {
+            let host_tail =
+                ((*state.host).get_extension)(state.host, CLAP_EXT_TAIL.as_ptr() as *const c_char);
+            if !host_tail.is_null() {
+                ((*(host_tail as *const ClapHostTail)).changed)(state.host);
+            }
+        }
+    }
 }
 
 /// CLAP: an active plugin may only change its latency inside `activate`.
@@ -244,6 +298,11 @@ fn apply_param(state: &mut State, header: &ClapEventHeader) {
         (CLAP_EVENT_PARAM_VALUE, LOOKAHEAD) => {
             request_latency(state, if on { LOOKAHEAD_LATENCY } else { LATENCY })
         }
+        (CLAP_EVENT_PARAM_VALUE, STATUS) => {
+            state.status.store(event.value.round() as i32, Ordering::Relaxed)
+        }
+        (CLAP_EVENT_PARAM_VALUE, TAIL) => set_tail(state, event.value.round() as u32),
+        (CLAP_EVENT_PARAM_VALUE, LIAR) => state.liar.store(on, Ordering::Relaxed),
         _ => {}
     }
 }
@@ -315,6 +374,7 @@ unsafe extern "C" fn plugin_process(
     let state = state(plugin);
     let process = &*process;
     check_audio_thread(state);
+    state.process_calls.fetch_add(1, Ordering::Relaxed);
     apply_events(state, process.in_events);
     if state.crash {
         std::process::abort();
@@ -363,7 +423,26 @@ unsafe extern "C" fn plugin_process(
             *sample = main * 0.5;
         }
     }
-    CLAP_PROCESS_CONTINUE
+    reported_status(state, output, frames)
+}
+
+/// A plugin reports its sleepy status only once it has gone quiet, unless it lies.
+unsafe fn reported_status(
+    state: &State,
+    output: &clap_ffi::ClapAudioBuffer,
+    frames: usize,
+) -> ClapProcessStatus {
+    let silent = (0..output.channel_count as usize).all(|channel| {
+        clap_ffi::is_silent(std::slice::from_raw_parts(
+            *output.data32.add(channel),
+            frames,
+        ))
+    });
+    if silent || state.liar.load(Ordering::Relaxed) {
+        state.status.load(Ordering::Relaxed)
+    } else {
+        CLAP_PROCESS_CONTINUE
+    }
 }
 
 static PARAMS: ClapPluginParams = ClapPluginParams {
@@ -382,16 +461,25 @@ static STATE: ClapPluginState = ClapPluginState {
 
 static LATENCY_EXT: ClapPluginLatency = ClapPluginLatency { get: latency_get };
 
+static TAIL_EXT: ClapPluginTail = ClapPluginTail { get: tail_get };
+
 static AUDIO_PORTS: ClapPluginAudioPorts = ClapPluginAudioPorts {
     count: audio_ports_count,
     get: audio_ports_get,
 };
 
 unsafe extern "C" fn plugin_get_extension(
-    _: *const ClapPlugin,
+    plugin: *const ClapPlugin,
     id: *const c_char,
 ) -> *const c_void {
     let id = CStr::from_ptr(id).to_bytes_with_nul();
+    if id == CLAP_EXT_TAIL {
+        return if state(plugin).tail.load(Ordering::Acquire) == 0 {
+            std::ptr::null()
+        } else {
+            &TAIL_EXT as *const ClapPluginTail as *const c_void
+        };
+    }
     if id == CLAP_EXT_PARAMS {
         &PARAMS as *const ClapPluginParams as *const c_void
     } else if id == CLAP_EXT_STATE {
@@ -437,7 +525,7 @@ unsafe extern "C" fn audio_ports_get(
 }
 
 unsafe extern "C" fn params_count(_: *const ClapPlugin) -> u32 {
-    6
+    10
 }
 
 unsafe extern "C" fn params_info(
@@ -457,6 +545,10 @@ unsafe extern "C" fn params_info(
         TOUCH => (b"Touch", 1.0, 0.0, CLAP_PARAM_IS_AUTOMATABLE),
         LOOKAHEAD => (b"Lookahead", 1.0, 0.0, CLAP_PARAM_IS_AUTOMATABLE),
         WRONG_THREAD => (b"Wrong thread", f64::from(u32::MAX), 0.0, 0),
+        STATUS => (b"Status", 4.0, 1.0, CLAP_PARAM_IS_AUTOMATABLE),
+        TAIL => (b"Tail", 1_000_000.0, 0.0, CLAP_PARAM_IS_AUTOMATABLE),
+        PROCESS_CALLS => (b"Process calls", f64::from(u32::MAX), 0.0, 0),
+        LIAR => (b"Liar", 1.0, 0.0, CLAP_PARAM_IS_AUTOMATABLE),
         _ => return false,
     };
     let info = &mut *info;
@@ -477,6 +569,7 @@ unsafe extern "C" fn params_value(plugin: *const ClapPlugin, id: u32, value: *mu
     *value = match id {
         GAIN => f64::from_bits(state.gain.load(Ordering::Relaxed)),
         WRONG_THREAD => f64::from(state.wrong_thread_calls.load(Ordering::Relaxed)),
+        PROCESS_CALLS => f64::from(state.process_calls.load(Ordering::Relaxed)),
         _ => return false,
     };
     true
@@ -528,4 +621,8 @@ unsafe extern "C" fn state_load(plugin: *const ClapPlugin, stream: *const ClapIS
 
 unsafe extern "C" fn latency_get(plugin: *const ClapPlugin) -> u32 {
     state(plugin).latency
+}
+
+unsafe extern "C" fn tail_get(plugin: *const ClapPlugin) -> u32 {
+    state(plugin).tail.load(Ordering::Acquire)
 }

@@ -263,6 +263,26 @@ only wait allowed in the callback, and it is bounded:
 Offline (`PrepareContext.live == false`) the node waits up to 10 s per block so
 the export does not depend on scheduling (C-2).
 
+### Sleeping CLAP plugins (2026-10-14)
+
+A CLAP plugin that is silent and has no tail left is not called at all
+(`plugin_formats/clap/sleep.rs`, `clap_ffi::ProcessSleep`; rule in
+`../plugins/plugin-wrapper-system.md`). On the audio thread this adds:
+
+- plain integers and booleans in the node (no allocation, no lock);
+- bounded scans of the block's buffers (frames × channels), only when a
+  decision needs them;
+- three lock-free flag swaps on the plugin's `ClapHostContext`
+  (`request_process`, `tail.changed`; set by the plugin from any thread);
+- one FFI call, `clap.tail.get`, only after `tail.changed` (callable from the
+  audio thread per the CLAP spec), inside the same FFI gate and
+  `audio_thread_scope` as `process`;
+- a zero-fill of the outputs instead of the `process` call while asleep.
+
+The decision never reads a clock, so the offline render sleeps at the same
+blocks as the live one (C-2). A sandboxed plugin decides inside the bridge;
+the engine's bounded wait is unchanged.
+
 ### Crash marker (ADR-015)
 
 In-process plugin wrappers mark the running plugin in a memory-mapped file

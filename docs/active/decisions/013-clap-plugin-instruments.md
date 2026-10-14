@@ -166,3 +166,15 @@ thread.
   parameter events share one time-sorted `ClapEventBuffer`.
 - **VST3i** — `IEventList` note events, same `InstrumentDevice` adapter shape.
 - **Live MIDI input** — `MidiInputNode` + per-instance MIDI SPSC queue.
+
+## Amendment 2026-10-14 — a silent instrument is put to sleep
+
+`ClapInstrument` used to discard the status returned by `process()`. It now
+follows `ProcessSleep` (`crates/clap_ffi/src/process_sleep.rs`): once the plugin
+answers `SLEEP` — or `CONTINUE_IF_NOT_QUIET` / `TAIL` with a `clap.tail` that has
+elapsed with no event — and its output is silent, `process()` is not called and
+the output is zero until a note, a parameter event or a `request_process`. A
+release longer than the declared tail is never cut; without `clap.tail` only
+`SLEEP` sleeps. No invariant changes (no new ADR). Details:
+`../plugins/plugin-wrapper-system.md` (Plugin sleep). Tests:
+`plugin_system/sandbox_tests.rs`, `audio_engine/render_harness.rs::clap_plugins`.
