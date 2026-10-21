@@ -35,8 +35,8 @@
 	$: scanned = $plugins
 		.filter((p) => {
 			if (mode === 'instrument' && !(p.is_instrument ?? false)) return false;
-			// The engine can only host CLAP instruments so far (ADR-013).
-			if (mode === 'instrument' && p.format !== 'CLAP') return false;
+			// The engine hosts CLAP and VST3 instruments (ADR-013).
+			if (mode === 'instrument' && p.format !== 'CLAP' && p.format !== 'VST3') return false;
 			if (mode === 'effect' && (p.is_instrument ?? false)) return false;
 			return true;
 		})
@@ -120,7 +120,7 @@
 						: query
 							? 'Aucun résultat'
 							: mode === 'instrument'
-								? 'Aucun instrument détecté (CLAP)'
+								? 'Aucun instrument détecté'
 								: 'Aucun plugin détecté'}
 				</p>
 			{:else}

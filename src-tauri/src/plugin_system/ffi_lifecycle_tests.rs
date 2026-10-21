@@ -550,3 +550,110 @@ fn vst3_manifest(device_id: &str, path: &Path) -> PluginManifest {
         is_instrument: false,
     }
 }
+
+/// A VST3 instrument found on disk: its manifest, from the factory's
+/// sub-categories rather than its name.
+fn first_vst3_instrument(candidates: &[PathBuf]) -> Option<PluginManifest> {
+    use crate::plugin_formats::vst3::ffi::{
+        enumerate_classes, is_instrument_subcategory, Vst3Library,
+    };
+    use crate::plugin_formats::vst3::host::hex_cid;
+
+    candidates.iter().find_map(|path| {
+        let (_lib, factory) = Vst3Library::load(path).ok()?;
+        let classes = unsafe { enumerate_classes(factory) };
+        unsafe {
+            ((*(*factory).vtbl).release)(factory);
+        }
+        let class = classes.into_iter().find(|class| {
+            class
+                .sub_categories
+                .as_deref()
+                .is_some_and(is_instrument_subcategory)
+        })?;
+        let mut manifest = vst3_manifest(&format!("vst3:{}", hex_cid(&class.cid)), path);
+        manifest.name = class.name;
+        manifest.is_instrument = true;
+        Some(manifest)
+    })
+}
+
+/// A real VST3 instrument turns a note into sound and goes quiet once the
+/// note is released and the adapter is reset.
+#[test]
+fn vst3_instrument_plays_a_note() {
+    use crate::audio_graph::midi::{MidiEvent, MidiEventKind, MidiEventList};
+
+    let candidates = discover_all("ECHOES_TEST_VST3", "vst3");
+    let Some(manifest) = first_vst3_instrument(&candidates) else {
+        eprintln!("{LOG} SKIP vst3_instrument_plays_a_note — no VST3 instrument found");
+        return;
+    };
+    eprintln!("{LOG} VST3 instrument: {} ({})", manifest.name, manifest.id);
+
+    let key = "harness:vst3:instrument0";
+    let mut host = PluginHost::new();
+    host.registry_mut().add(manifest.clone());
+    let mut device = host
+        .instantiate_instrument(key, &manifest.id)
+        .expect("a VST3 instrument must instantiate");
+
+    let frames = 256;
+    device.prepare(PrepareContext {
+        sample_rate: 48_000.0,
+        max_block_size: 512,
+        num_channels: 2,
+        live: true,
+    });
+    let transport = TransportInfo {
+        is_playing: true,
+        position_samples: 0,
+        position_seconds: 0.0,
+        bpm: 120.0,
+        time_signature: crate::audio_graph::node::TimeSignature::default(),
+        sample_rate: 48_000.0,
+        block_size: frames,
+    };
+    let render = |device: &mut Box<dyn crate::audio_graph::nodes::instrument::InstrumentDevice>,
+                  events: &MidiEventList|
+     -> f32 {
+        let mut outputs = vec![AudioBuffer::new(2, frames)];
+        device.process_midi(events, &mut outputs, &transport);
+        let mut peak = 0.0f32;
+        for channel in 0..2 {
+            for &sample in outputs[0].channel(channel).iter().take(frames) {
+                assert!(sample.is_finite(), "output must be finite");
+                peak = peak.max(sample.abs());
+            }
+        }
+        peak
+    };
+
+    let mut note_on = MidiEventList::new();
+    note_on.push(MidiEvent {
+        offset: 0,
+        kind: MidiEventKind::NoteOn {
+            pitch: 60,
+            velocity: 100,
+        },
+    });
+    let silence = MidiEventList::new();
+
+    let mut peak = render(&mut device, &note_on);
+    for _ in 0..32 {
+        peak = peak.max(render(&mut device, &silence));
+    }
+    eprintln!("{LOG} instrument peak after a note: {peak}");
+    assert!(peak > 0.0, "a played note must produce a non-silent signal");
+
+    let mut note_off = MidiEventList::new();
+    note_off.push(MidiEvent {
+        offset: 0,
+        kind: MidiEventKind::NoteOff { pitch: 60 },
+    });
+    render(&mut device, &note_off);
+    device.reset();
+    for _ in 0..8 {
+        render(&mut device, &silence);
+    }
+}

@@ -41,6 +41,7 @@ use crate::plugin_formats::vst3::component_handler::ComponentHandler;
 use crate::plugin_formats::vst3::ffi::{create_controller, instantiate_processor, Vst3Library};
 use crate::plugin_formats::vst3::host::decode_plugin_id as vst3_decode_id;
 use crate::plugin_formats::vst3::host_context::host_application;
+use crate::plugin_formats::vst3::instrument::VstInstrument;
 use crate::plugin_formats::vst3::params::read_vst3_params;
 use crate::plugin_formats::vst3::wrapper::VstWrapperNode;
 use crate::plugin_system::bridge::{locate_bridge_exe, BridgedPlugin};
@@ -531,6 +532,20 @@ impl PluginHost {
         plugin_id: &str,
         manifest: &PluginManifest,
     ) -> Result<(Arc<PluginInstance>, Box<dyn AudioNode>), HostError> {
+        let instance = self.create_vst3_instance(plugin_id, manifest)?;
+        let node: Box<dyn AudioNode> = Box::new(VstWrapperNode::new(Arc::clone(&instance)));
+        Ok((instance, node))
+    }
+
+    /// Load the DLL, create the component and its edit controller, and build the
+    /// shared `PluginInstance` — **without** an audio wrapper.  Shared by the
+    /// effect path ([`instantiate_vst3`]) and the instrument path, like
+    /// [`create_clap_instance`].
+    fn create_vst3_instance(
+        &self,
+        plugin_id: &str,
+        manifest: &PluginManifest,
+    ) -> Result<Arc<PluginInstance>, HostError> {
         let cid = vst3_decode_id(plugin_id)
             .ok_or_else(|| HostError::InstantiationFailed("invalid VST3 plugin_id".into()))?;
 
@@ -568,12 +583,9 @@ impl PluginHost {
             }
         };
 
-        let instance =
-            PluginInstance::new_vst3(plugin_id, comp_nn, proc_nn, controller, handler, lib);
-
-        let node: Box<dyn AudioNode> = Box::new(VstWrapperNode::new(Arc::clone(&instance)));
-
-        Ok((instance, node))
+        Ok(PluginInstance::new_vst3(
+            plugin_id, comp_nn, proc_nn, controller, handler, lib,
+        ))
     }
 
     fn instantiate_clap(
@@ -685,17 +697,20 @@ impl PluginHost {
     /// (same as [`instantiate`]) so parameter / state / lifecycle calls address
     /// the live instance.
     ///
-    /// Only CLAP is wired in this phase (C-3 variant-by-variant).  Other formats
-    /// return `Err` so the caller falls back to the built-in `PolySynth`.
+    /// CLAP and VST3 are wired (C-3 variant-by-variant); other formats return
+    /// `Err`, which the compiler turns into a silent instrument.
     ///
-    /// Runs sandboxed per the isolation preference (ADR-015); a track instrument
-    /// has no per-placement choice of its own.
+    /// A CLAP instrument runs sandboxed per the isolation preference (ADR-015); a
+    /// track instrument has no per-placement choice of its own.  A VST3 one
+    /// always runs in-process.
     pub fn instantiate_instrument(
         &mut self,
         instance_key: &str,
         plugin_id: &str,
     ) -> Result<Box<dyn InstrumentDevice>, HostError> {
-        let sandboxed = self.isolates(plugin_id, false);
+        let format = self.registry.get(plugin_id).map(|manifest| manifest.format);
+        let sandboxed = self.isolates(plugin_id, false)
+            && format.map_or(true, |format| runs_sandboxed(format, true));
         let _running =
             (!sandboxed).then(|| crash_marker::enter(PluginThread::Control, plugin_tag(plugin_id)));
         let result = self.instantiate_instrument_placement(instance_key, plugin_id, sandboxed);
@@ -716,14 +731,14 @@ impl PluginHost {
         plugin_id: &str,
         sandboxed: bool,
     ) -> Result<Box<dyn InstrumentDevice>, HostError> {
-        // ADR-016: reuse the live CLAP instrument for this track instead of
-        // rebuilding it, preserving its internal voice/DSP state across recompiles.
+        // ADR-016: reuse the live CLAP or VST3 instrument for this track instead
+        // of rebuilding it, preserving its internal voice/DSP state across recompiles.
         if self.pending_state_blobs.is_empty() {
             if let Some(record) = self.records.get(instance_key) {
                 let inst = &record.instance;
                 if inst.device_id == plugin_id
-                    && inst.format == DeviceFormat::Clap
-                    && inst.is_sandboxed() == sandboxed
+                    && matches!(inst.format, DeviceFormat::Clap | DeviceFormat::Vst3)
+                    && inst.is_sandboxed() == runs_sandboxed(inst.format, sandboxed)
                     && !matches!(
                         inst.lifecycle(),
                         LifecycleState::Destroyed | LifecycleState::Error
@@ -746,9 +761,10 @@ impl PluginHost {
                 self.create_bridged_instance(plugin_id, &manifest, track_info)?
             }
             DeviceFormat::Clap => self.create_clap_instance(plugin_id, &manifest, track_info)?,
+            DeviceFormat::Vst3 => self.create_vst3_instance(plugin_id, &manifest)?,
             other => {
                 return Err(HostError::UnsupportedFormat(format!(
-                    "instrument format {other:?} not supported yet (CLAP only in Phase 5c)"
+                    "instrument format {other:?} not supported (CLAP and VST3 only)"
                 )))
             }
         };
@@ -1115,9 +1131,12 @@ fn runs_sandboxed(format: DeviceFormat, sandboxed: bool) -> bool {
     sandboxed && format == DeviceFormat::Clap
 }
 
-/// The instrument adapter for a live CLAP instance, in-process or sandboxed.
+/// The instrument adapter for a live CLAP or VST3 instance (CLAP: in-process or
+/// sandboxed).
 fn instrument_device(instance: Arc<PluginInstance>) -> Box<dyn InstrumentDevice> {
-    if instance.is_sandboxed() {
+    if instance.format == DeviceFormat::Vst3 {
+        Box::new(VstInstrument::new(instance))
+    } else if instance.is_sandboxed() {
         Box::new(BridgedInstrument::new(instance))
     } else {
         Box::new(ClapInstrument::new(instance))
@@ -1481,6 +1500,38 @@ mod tests {
             .is_err());
 
         assert_eq!(saved_blob(&host, "instrument:t1"), Some(vec![1, 2, 3]));
+    }
+
+    #[test]
+    fn a_vst3_instrument_is_attempted_not_refused_as_unsupported() {
+        let mut host = PluginHost::new();
+        host.registry_mut().add(PluginManifest {
+            format: DeviceFormat::Vst3,
+            path: None,
+            is_instrument: true,
+            ..manifest_with_sidechain("vst3:00112233445566778899AABBCCDDEEFF", 0)
+        });
+
+        let error = host
+            .instantiate_instrument("instrument:t1", "vst3:00112233445566778899AABBCCDDEEFF")
+            .err()
+            .expect("no DLL to load");
+        assert!(
+            matches!(error, HostError::InstantiationFailed(_)),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn an_internal_device_is_still_refused_as_an_instrument() {
+        let mut host = PluginHost::new();
+        host.registry_mut().add(internal_manifest("echoes.gain"));
+
+        let error = host
+            .instantiate_instrument("instrument:t1", "echoes.gain")
+            .err()
+            .expect("not an instrument");
+        assert!(matches!(error, HostError::UnsupportedFormat(_)), "{error}");
     }
 
     #[test]

@@ -101,10 +101,12 @@ impl HostEventList {
         self.count = 0;
     }
 
+    #[cfg(test)]
     pub fn len(&self) -> usize {
         self.count
     }
 
+    #[cfg(test)]
     pub fn as_slice(&self) -> &[Event] {
         &self.events[..self.count]
     }

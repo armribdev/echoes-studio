@@ -36,26 +36,26 @@ use std::sync::Arc;
 use crate::audio_graph::buffer::AudioBuffer;
 use crate::audio_graph::node::{AudioNode, PrepareContext, TransportInfo};
 use crate::audio_graph::plugin_params::{
-    parse_plugin_param_name, PluginParamControl, PluginParamControls, ValueModulatedParam,
+    parse_plugin_param_name, PluginParamControl, PluginParamControls,
 };
 use crate::plugin_formats::crash_guard;
 use crate::plugin_system::instance::{PluginInstance, FFI_GATE_HARVEST_BUDGET};
 use crate::plugin_system::lifecycle::LifecycleState;
-use crate::plugin_system::param_queue::ParamChange;
 
 use super::ffi::{
     AudioBusBuffers, HostParameterChanges, IAudioProcessor, IComponent, ProcessContext,
     ProcessData, K_RESULT_OK,
 };
+use super::param_delivery::{fill_param_changes, track_value_modulation};
 use super::transport::vst3_process_context;
 
 // Stack context passed to the SEH trampoline — no heap allocation.
-struct Vst3ProcessCtx {
-    proc_ptr: *mut IAudioProcessor,
-    data_ptr: *mut ProcessData,
+pub(super) struct Vst3ProcessCtx {
+    pub(super) proc_ptr: *mut IAudioProcessor,
+    pub(super) data_ptr: *mut ProcessData,
 }
 
-unsafe extern "C" fn vst3_process_trampoline(raw: *mut c_void) -> i32 {
+pub(super) unsafe extern "C" fn vst3_process_trampoline(raw: *mut c_void) -> i32 {
     let ctx = &*(raw as *const Vst3ProcessCtx);
     ((*(*ctx.proc_ptr).vtbl).process)(ctx.proc_ptr, ctx.data_ptr)
 }
@@ -135,44 +135,6 @@ impl VstWrapperNode {
         self.instance
             .vst3_handles()
             .expect("VstWrapperNode missing VST3 handles (programmer error)")
-    }
-
-    /// Off the audio thread (ADR-021): a newly modulated parameter starts from
-    /// the plugin's current value; one no longer modulated is put back on its base.
-    fn track_value_modulation(&self, controls: &[PluginParamControl]) {
-        let Some(edit_state) = self.instance.vst3_edit_state() else {
-            return;
-        };
-        let params: Vec<ValueModulatedParam> = controls
-            .iter()
-            .filter(|control| control.modulated)
-            .map(|control| {
-                ValueModulatedParam::new(
-                    control.native_id,
-                    control.range,
-                    Arc::clone(&control.base),
-                )
-            })
-            .collect();
-        let previous = edit_state.replace_followed(params.clone());
-        let was_modulated =
-            |native_id: u32| previous.iter().any(|param| param.native_id == native_id);
-
-        for param in params
-            .iter()
-            .filter(|param| !was_modulated(param.native_id))
-        {
-            if let Some(value) = self.instance.param_value(param.native_id) {
-                param.set_base(value as f32);
-            }
-        }
-        for released in previous
-            .iter()
-            .filter(|old| !params.iter().any(|param| param.native_id == old.native_id))
-        {
-            self.instance
-                .push_param(released.native_id, released.base_value());
-        }
     }
 }
 
@@ -255,49 +217,9 @@ impl AudioNode for VstWrapperNode {
         let nc = self.num_channels;
         let nf = transport.block_size; // real block, not MAX_BLOCK_FRAMES capacity
 
-        // ADR-007: drain pending parameter changes.
-        // VST3 `IParameterChanges` carries normalised values directly, so the
-        // queued `normalised` field maps 1:1.  No allocation: the list lives in
-        // `self.param_changes`, reset and refilled in place each block.
+        // ADR-007: refill the pre-allocated parameter-change list for this block.
         let param_changes_ptr: *mut c_void = if let Some(pc) = self.param_changes.as_mut() {
-            pc.reset();
-            let edit_state = self.instance.vst3_edit_state();
-            let mut push_change = |change: ParamChange| {
-                pc.push(
-                    change.native_id,
-                    change.sample_offset as i32,
-                    change.normalised as f64,
-                );
-            };
-            self.instance.drain_params(&mut push_change);
-            // The controller never reaches its processor on its own: what the
-            // user does in the plugin window is forwarded here (IComponentHandler).
-            if let Some(edit_state) = edit_state {
-                edit_state.drain_edits(&mut push_change);
-            }
-            // ADR-021: VST3 has no host modulation, so modulation is added to
-            // the tracked base value.  Automation sets the value outright and,
-            // on the same parameter, takes precedence over modulation.
-            for control in self.param_controls.iter() {
-                if control.automation.is_empty() {
-                    // A drag in the plugin window pauses the modulation.
-                    if edit_state.is_some_and(|state| state.is_editing(control.native_id)) {
-                        continue;
-                    }
-                    for (offset, value) in control.modulation.iter() {
-                        let effective = (control.base_value() + value).clamp(0.0, 1.0);
-                        pc.push(control.native_id, offset as i32, effective as f64);
-                    }
-                } else {
-                    for (offset, value) in control.automation.iter() {
-                        pc.push(
-                            control.native_id,
-                            offset as i32,
-                            value.clamp(0.0, 1.0) as f64,
-                        );
-                    }
-                }
-            }
+            fill_param_changes(&self.instance, &self.param_controls, pc);
             if pc.count > 0 {
                 pc.as_mut() as *mut HostParameterChanges as *mut c_void
             } else {
@@ -402,7 +324,7 @@ impl AudioNode for VstWrapperNode {
     }
 
     fn inject_plugin_param_controls(&mut self, controls: Vec<PluginParamControl>) {
-        self.track_value_modulation(&controls);
+        track_value_modulation(&self.instance, &controls);
         self.param_controls = PluginParamControls::new(controls);
     }
 
