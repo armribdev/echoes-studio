@@ -82,6 +82,13 @@ but never a due `NoteOff` (one note sounds at a time, so one release is ever
 pending). Held notes, the step state and the random generator are fixed arrays;
 settings are read as relaxed atomics, once per block.
 
+A VST3 instrument (ADR-013 amendment 2026-10-21) hands its notes to the plugin in
+a fixed `HostEventList` (512 `Event`s, ~24 KB, boxed in `prepare`), reset and
+refilled each block; a full list drops the event, except that a NoteOff it cannot
+take is kept for the next block. Its `IMidiMapping` table is read in `prepare`
+under the FFI gate; `process_midi` only looks it up and pushes points into the
+pre-allocated parameter-change list.
+
 MIDI recording adds three relaxed atomic stores per rendered slice
 (`LiveInputClock::set_event_window`: transport position + a seqlock counter,
 wait-free) and one per callback (`set_record_latency`: period + CPAL output

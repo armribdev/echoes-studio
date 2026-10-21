@@ -87,8 +87,9 @@ call only fills pointer values — no `Vec::push`, no `Box`.
   `plugin_formats/vst3/host_context.rs` (name "Echoes Studio"; `createInstance`
   answers `kResultFalse`, so no `IMessage` / `IAttributeList` yet).
 - **Activation order** (`PluginInstance::vst3_ensure_active`):
-  `setBusArrangements` → `activateBus` ×2 → `setupProcessing` → `setActive(1)`
-  → `setProcessing(1)`, as the spec requires. A config change on a live instance
+  `setBusArrangements` → `activateBus` (audio in when the plugin has one, audio
+  out, event in when the plugin has one) → `setupProcessing` → `setActive(1)` →
+  `setProcessing(1)`, as the spec requires. A config change on a live instance
   deactivates and reactivates it under the FFI gate, like CLAP.
 - **Edit controller.** It lives with the instance, not with the editor window.
   `PluginHost::instantiate_vst3` builds it right after the component
@@ -184,6 +185,37 @@ Valid flags set: `kProjectTimeMusicValid`, `kBarPositionValid`, `kTempoValid`,
 SMPTE, clock, chord. `IProcessContextRequirements` is not queried, so a plugin
 gets all of the above whether it asks or not. The layout (112 bytes) and the
 flag values were checked against Steinberg's `ivstprocesscontext.h`.
+
+### Instruments (ADR-013 amendment, 2026-10-21)
+
+A VST3 instrument is a `VstInstrument` (`vst3/instrument.rs`) behind
+`InstrumentDevice`, built by `PluginHost::instantiate_instrument` from the same
+`create_vst3_instance` as the effect wrapper. It is reused across recompiles
+(ADR-016) and always runs in-process (the sandbox is CLAP only).
+
+- **Detection.** The scan reads `PClassInfo2.subCategories` through
+  `IPluginFactory2`: the first `|` token `Instrument` makes an instrument
+  (`is_instrument_subcategory`; `Fx|Instrument` is an effect). Without
+  `IPluginFactory2` the name guess of `classify_instrument` is used.
+- **Buses.** `vst3_ensure_active` asks `getBusCount`. No audio input →
+  `setBusArrangements(null, 0, stereo, 1)` and no input bus; an event input bus is
+  activated. The output is the first stereo bus only.
+- **Events.** Each block, `HostEventList` (512 events, `IEventList`) is reset and
+  filled: pending releases at offset 0, then the block's `MidiEventList` as
+  `kNoteOnEvent` / `kNoteOffEvent` / `kPolyPressureEvent`, and passed as
+  `ProcessData.inputEvents` (`numInputs = 0`). The `Event` layout (48 bytes) and the
+  event type values were checked against `ivstevents.h`.
+- **Notes never hang.** `SoundingNotes` counts what the plugin received. A NoteOff
+  lost to a busy FFI gate or a full list, and every sounding note after `reset`, is
+  sent at offset 0 of the next block.
+- **MIDI controllers.** Pitch bend, CC and channel aftertouch go through the
+  controller's `IMidiMapping` (`vst3/midi_mapping.rs`) and reach the plugin as
+  parameter changes at the control's sample offset; an unmapped controller is
+  dropped. The table is read in `prepare` under the FFI gate and again after
+  `restartComponent(kMidiCCAssignmentChanged)` (a recompile; no reactivation).
+- **Parameters.** Queued edits, plugin-window edits, modulation and automation use
+  the same delivery as the effect (`vst3/param_delivery.rs`).
+- Not done: plugin latency, note expressions, `outputEvents`, extra output buses.
 
 ### State serialisation
 

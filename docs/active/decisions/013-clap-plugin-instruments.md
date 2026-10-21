@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted (CLAP slice). Implements the **plugin-instrument** half of **Phase 5c**
+Accepted (CLAP slice; the VST3 slice is the amendment of 2026-10-21). Implements the **plugin-instrument** half of **Phase 5c**
 of [`docs/active/migration/migration_plan.md`](../migration/migration_plan.md) — audit **P0-2**
 (_"Aucun support des plugins instruments"_) and target **BP-4**
 (`InstrumentNode` inner accepts a plugin or PolySynth).
@@ -114,7 +114,8 @@ thread.
   - **No instrument parameter automation yet.** _Resolved 2026-09-24 by ADR-021._ The param ring is
     drained-and-discarded; a merged note+param input list (ADR-008 follow-up)
     is needed to apply automation to instruments.
-  - **VST3i not wired** (returns `Err` → PolySynth).
+  - **VST3i not wired** (returns `Err` → PolySynth). _Resolved 2026-10-21, see the
+    last amendment._
   - A track needs MIDI clips to get an `Instrument` node (graph.rs unchanged);
     an instrument with no clips produces silence.
 - **Reversibility.** Additive. Clearing `instrument` (or an instantiation
@@ -128,7 +129,8 @@ thread.
    `PluginHost::unavailable_plugins` and the `plugin-availability` event, and
    the instrument panel shows the reason with a retry button. `PolySynth` is
    used only when no instrument is chosen. The instrument picker offers CLAP
-   instruments only until VST3i lands. Original text: A saved project whose
+   instruments only until VST3i lands (_VST3 instruments are offered since
+   2026-10-21_). Original text: A saved project whose
    CLAP synth fails to instantiate (missing DLL, version mismatch) plays a
    `PolySynth` **silently** — the render is wrong with no signal to the user.
    Robust against crashing, but "your instrument was substituted without telling
@@ -164,7 +166,8 @@ thread.
   add the Rust mock plugin (B4) for CI coverage.
 - ~~**Instrument param automation**~~ — done 2026-09-24 (ADR-021): notes and
   parameter events share one time-sorted `ClapEventBuffer`.
-- **VST3i** — `IEventList` note events, same `InstrumentDevice` adapter shape.
+- ~~**VST3i**~~ — done 2026-10-21: `IEventList` note events behind the same
+  `InstrumentDevice` adapter shape (last amendment).
 - **Live MIDI input** — `MidiInputNode` + per-instance MIDI SPSC queue.
 
 ## Amendment 2026-10-14 — a silent instrument is put to sleep
@@ -235,3 +238,65 @@ unchanged). The host does not yet list or load presets (`from_location`,
 preset discovery): that would be a separate decision. No invariant changes (no new
 ADR). Details: `../plugins/plugin-wrapper-system.md` (Host `clap.preset-load`);
 sandbox: ADR-015 amendment 2026-10-14.
+
+## Amendment 2026-10-21 — VST3 instruments
+
+A VST3 instrument generates a track's audio behind the same `InstrumentDevice`
+seam as CLAP (C-3, variant by variant). No invariant changes (no new ADR): no new
+node, no compiler or scheduler change, no file-format change — `AppTrack.instrument`
+already names the device. Step 4 of the VST3 catch-up. Unit-tested; not yet
+validated with a real VST3 instrument (none was installed when this was written:
+the real-FFI tests `vst3_instrument_plays_a_note` and
+`vst3_instrument_reports_its_midi_controller_mapping` skip until one is).
+
+- **Detection.** The scan reads `PClassInfo2.subCategories` through
+  `IPluginFactory2` (`vst3/ffi.rs`). A class is an instrument when the first
+  `|`-separated token is `Instrument`, so `Fx|Instrument` stays an effect. Only a
+  factory without `IPluginFactory2` falls back to the name guess.
+- **Adapter.** `VstInstrument` (`plugin_formats/vst3/instrument.rs`) wraps the shared
+  `Arc<PluginInstance>`. `prepare` allocates the parameter list and the event list;
+  `process_midi` refills them, then calls `IAudioProcessor::process` with
+  `numInputs = 0`, the transport `ProcessContext` and `inputEvents`, under the FFI
+  gate and `crash_guard` (a crash sets the instance `Error`, so it is not reused).
+  The lifecycle stays on the instance (ADR-016): reuse across recompiles works for
+  VST3 instruments as for CLAP.
+- **Events.** `HostEventList` (`vst3/event_list.rs`) is a fixed 512-event
+  `IEventList` allocated in `prepare`. `MidiEventList` notes become `kNoteOnEvent` /
+  `kNoteOffEvent` (velocity `0..127` → `0..1`, `noteId = -1`, matched by pitch as in
+  the CLAP path) at their sample offsets; polyphonic aftertouch becomes
+  `kPolyPressureEvent`. The `Event` layout (48 bytes, payload at offset 24) is
+  asserted at compile time against `ivstevents.h` / `ivstnoteexpression.h`.
+- **Buses.** Activation (`vst3_ensure_active`) reads `getBusCount`: a plugin with no
+  audio input gets `setBusArrangements` without an input and no input bus; one with
+  an event input bus gets it activated. An ordinary effect keeps its sequence.
+  One stereo output only: extra output buses are not passed (ADR-014 multi-out
+  stays CLAP only).
+- **MIDI controllers.** VST3 has no raw MIDI: pitch bend, CC (0..127) and channel
+  aftertouch reach the plugin as parameter changes through the controller's
+  `IMidiMapping` (`vst3/midi_mapping.rs`). The table is read in `prepare` under the
+  FFI gate (busy gate: unmapped until the next recompile) and applied each block at
+  the control's offset (CC `/127`, bend `/16383`); an unmapped controller is dropped.
+  `restartComponent(kMidiCCAssignmentChanged)` requests a recompile, which reads the
+  table again, without reactivating the plugin.
+- **No lost note-off.** The adapter counts the notes the plugin received. A NoteOff
+  of a block the FFI gate skipped, or that a full event list could not take, is sent
+  at offset 0 of the next block; `reset` marks every sounding note the same way (no
+  FFI call), and each pitch is released once. `InstrumentNode` already ends played
+  notes on stop, pause, seek and loop (ADR-012, ADR-022, ADR-030).
+- **Sandbox (ADR-015)** stays CLAP only: a VST3 instrument always runs in-process,
+  whatever the isolation preference.
+- **Parameters (ADR-021)** reach a VST3 instrument as for the VST3 effect: queued
+  edits, plugin-window edits, modulation and automation are delivered by the code
+  both share (`vst3/param_delivery.rs`).
+- **Not done.** Plugin latency is not read (`InstrumentDevice` has no latency hook,
+  as for CLAP instruments); no `kNoteExpression*` events, no `IMidiLearn`; no
+  `outputEvents`; a single output bus (ADR-014).
+- **C-2.** No VST3 plugin is in the render harness; internal and CLAP instruments
+  are untouched and the golden hashes are unchanged. Known risk #2 above (third-party
+  synths are not bit-deterministic) applies to VST3 too.
+- **Boundary (ADR-003).** `VstInstrument` lives in `plugin_formats/`, not in
+  `audio_graph/` (unlike `ClapInstrument`, an existing debt left as is).
+
+Details: `../plugins/plugin-wrapper-system.md` (VST3 instruments). Tests:
+`vst3/instrument.rs`, `vst3/event_list.rs`, `vst3/midi_mapping.rs`,
+`plugin_system/host.rs`, `plugin_system/ffi_lifecycle_tests.rs`.
