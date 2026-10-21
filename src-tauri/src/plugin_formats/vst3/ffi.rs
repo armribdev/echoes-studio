@@ -86,6 +86,9 @@ pub const IID_IMESSAGE: Tuid = interface_iid([
 pub const IID_IATTRIBUTE_LIST: Tuid = interface_iid([
     0x1E, 0x5F, 0x0A, 0xEB, 0xCC, 0x7F, 0x45, 0x33, 0xA2, 0x54, 0x40, 0x11, 0x38, 0xAD, 0x5E, 0xE4,
 ]);
+pub const IID_IINFO_LISTENER: Tuid = interface_iid([
+    0x0F, 0x19, 0x47, 0x81, 0x8D, 0x98, 0x4A, 0xDA, 0xBB, 0xA0, 0xC1, 0xEF, 0xC0, 0x11, 0xD8, 0xD0,
+]);
 
 /// L | R  (bits 0 and 1)
 pub const SPEAKER_STEREO: u64 = 0x0000_0003;
@@ -1250,6 +1253,17 @@ pub struct IMessageVtbl {
     pub get_attributes: unsafe extern "C" fn(*mut FUnknown) -> *mut FUnknown,
 }
 
+/// `IInfoListener` (`ivstchannelcontextinfo.h`): implemented by the edit controller,
+/// which the host tells about its channel with an `IAttributeList`.
+#[repr(C)]
+pub struct IInfoListenerVtbl {
+    pub query_interface:
+        unsafe extern "C" fn(*mut FUnknown, *const Tuid, *mut *mut c_void) -> TResult,
+    pub add_ref: unsafe extern "C" fn(*mut FUnknown) -> u32,
+    pub release: unsafe extern "C" fn(*mut FUnknown) -> u32,
+    pub set_channel_context_infos: unsafe extern "C" fn(*mut FUnknown, *mut FUnknown) -> TResult,
+}
+
 // Plugins call this to notify the host of parameter edits (begin/perform/end)
 // and to request a component restart.  Many plugins assume the handler is
 // non-null and crash on the first knob touch without one.
@@ -1670,6 +1684,10 @@ mod tests {
             (
                 IID_IATTRIBUTE_LIST,
                 sdk_iid(0x1E5F0AEB, 0xCC7F4533, 0xA2544011, 0x38AD5EE4),
+            ),
+            (
+                IID_IINFO_LISTENER,
+                sdk_iid(0x0F194781, 0x8D984ADA, 0xBBA0C1EF, 0xC011D8D0),
             ),
         ];
         for (index, (actual, sdk)) in expected.iter().enumerate() {

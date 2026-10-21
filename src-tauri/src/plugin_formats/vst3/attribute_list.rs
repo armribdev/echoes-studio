@@ -89,8 +89,18 @@ impl HostAttributeList {
             .and_then(|entry| pick(&entry.value))
     }
 
+    pub fn set_int(&self, key: &str, value: i64) -> TResult {
+        self.set_value(key.as_bytes(), Value::Int(value))
+    }
+
+    /// Stored as UTF-16 without a terminator.
+    pub fn set_text(&self, key: &str, text: &str) -> TResult {
+        let units = text.encode_utf16().collect();
+        self.set_value(key.as_bytes(), Value::Text(units))
+    }
+
     #[cfg(test)]
-    fn value(&self, key: &str) -> Option<Value> {
+    pub fn value(&self, key: &str) -> Option<Value> {
         self.find(key.as_bytes(), |value| Some(value.clone()))
     }
 }
