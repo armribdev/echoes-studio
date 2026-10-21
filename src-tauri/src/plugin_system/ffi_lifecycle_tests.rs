@@ -292,7 +292,47 @@ fn first_vst3_id(path: &Path) -> Option<String> {
     }
     classes
         .first()
-        .map(|(cid, _)| format!("vst3:{}", hex_cid(cid)))
+        .map(|class| format!("vst3:{}", hex_cid(&class.cid)))
+}
+
+/// Every installed VST3 offering `IPluginFactory2` reports sub-categories, and an
+/// instrument is told from an effect by them, not by its name.
+#[test]
+fn vst3_classes_report_their_sub_categories() {
+    use crate::plugin_formats::vst3::ffi::{
+        enumerate_classes, is_instrument_subcategory, Vst3Library,
+    };
+
+    let candidates = discover_all("ECHOES_TEST_VST3", "vst3");
+    if candidates.is_empty() {
+        eprintln!("{LOG} SKIP vst3_classes_report_their_sub_categories — no .vst3 found");
+        return;
+    }
+    for path in &candidates {
+        let Ok((_lib, factory)) = Vst3Library::load(path) else {
+            continue;
+        };
+        let classes = unsafe { enumerate_classes(factory) };
+        unsafe {
+            ((*(*factory).vtbl).release)(factory);
+        }
+        for class in classes {
+            let Some(sub_categories) = &class.sub_categories else {
+                eprintln!("{LOG} {} — no IPluginFactory2", class.name);
+                continue;
+            };
+            eprintln!(
+                "{LOG} {} → \"{sub_categories}\" (instrument: {})",
+                class.name,
+                is_instrument_subcategory(sub_categories)
+            );
+            assert!(
+                !sub_categories.is_empty(),
+                "{} reports empty sub-categories",
+                class.name
+            );
+        }
+    }
 }
 
 /// Big-endian VST3 TUID → Windows COM byte order: reverse Data1 (`[0..4]`),
@@ -318,7 +358,7 @@ fn vst3_iid_byteorder_probe(path: &Path) -> Option<String> {
     };
 
     let (_lib, factory) = Vst3Library::load(path).ok()?;
-    let (cid, _) = unsafe { enumerate_classes(factory) }.first()?.clone();
+    let cid = unsafe { enumerate_classes(factory) }.first()?.cid;
     let swapped = com_swap(IID_ICOMPONENT);
 
     unsafe {

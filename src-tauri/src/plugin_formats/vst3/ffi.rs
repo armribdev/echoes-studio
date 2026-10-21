@@ -54,6 +54,10 @@ pub const IID_IAUDIO_PROCESSOR: Tuid = interface_iid([
     0x42, 0x04, 0x3F, 0x99, 0xB7, 0xDA, 0x45, 0x3C, 0xA5, 0x69, 0xE7, 0x9D, 0x9A, 0xAE, 0xC3, 0x3D,
 ]);
 
+pub const IID_IPLUGIN_FACTORY2: Tuid = interface_iid([
+    0x00, 0x07, 0xB6, 0x50, 0xF2, 0x4B, 0x4C, 0x0B, 0xA4, 0x64, 0xED, 0xB9, 0xF0, 0x0B, 0x2A, 0xBB,
+]);
+
 /// L | R  (bits 0 and 1)
 pub const SPEAKER_STEREO: u64 = 0x0000_0003;
 
@@ -70,12 +74,7 @@ pub struct PClassInfo {
 
 impl PClassInfo {
     pub fn name_str(&self) -> &str {
-        let end = self
-            .name
-            .iter()
-            .position(|&b| b == 0)
-            .unwrap_or(self.name.len());
-        std::str::from_utf8(&self.name[..end]).unwrap_or("")
+        nul_terminated_str(&self.name)
     }
     pub fn is_audio_module(&self) -> bool {
         self.category.starts_with(CATEGORY_AUDIO_MODULE)
@@ -118,6 +117,65 @@ pub struct IPluginFactoryVtbl {
         *const u8,
         *mut *mut c_void,
     ) -> TResult,
+}
+
+/// `PClassInfo2` (`ipluginbase.h`): `PClassInfo` plus the sub-categories.
+#[repr(C)]
+pub struct PClassInfo2 {
+    pub cid: [u8; 16],
+    pub cardinality: i32,
+    pub category: [u8; 32],
+    pub name: [u8; 64],
+    pub class_flags: u32,
+    pub sub_categories: [u8; 128],
+    pub vendor: [u8; 64],
+    pub version: [u8; 64],
+    pub sdk_version: [u8; 64],
+}
+
+const _: () = assert!(
+    std::mem::size_of::<PClassInfo2>() == 440,
+    "PClassInfo2 layout drift"
+);
+
+impl PClassInfo2 {
+    pub fn sub_categories_str(&self) -> &str {
+        nul_terminated_str(&self.sub_categories)
+    }
+}
+
+fn nul_terminated_str(bytes: &[u8]) -> &str {
+    let end = bytes.iter().position(|&b| b == 0).unwrap_or(bytes.len());
+    std::str::from_utf8(&bytes[..end]).unwrap_or("")
+}
+
+#[repr(C)]
+pub struct IPluginFactory2Vtbl {
+    // FUnknown
+    pub query_interface:
+        unsafe extern "C" fn(*mut IPluginFactory, *const Tuid, *mut *mut c_void) -> TResult,
+    pub add_ref: unsafe extern "C" fn(*mut IPluginFactory) -> u32,
+    pub release: unsafe extern "C" fn(*mut IPluginFactory) -> u32,
+    // IPluginFactory
+    pub get_factory_info: unsafe extern "C" fn(*mut IPluginFactory, *mut c_void) -> TResult,
+    pub count_classes: unsafe extern "C" fn(*mut IPluginFactory) -> i32,
+    pub get_class_info: unsafe extern "C" fn(*mut IPluginFactory, i32, *mut PClassInfo) -> TResult,
+    pub create_instance: unsafe extern "C" fn(
+        *mut IPluginFactory,
+        *const u8,
+        *const u8,
+        *mut *mut c_void,
+    ) -> TResult,
+    // IPluginFactory2
+    pub get_class_info2:
+        unsafe extern "C" fn(*mut IPluginFactory, i32, *mut PClassInfo2) -> TResult,
+}
+
+/// Whether a `PClassInfo2` sub-category string names an instrument: its first
+/// `|`-separated token is `Instrument`.  `Fx|Instrument` is an effect that
+/// processes the audio of an instrument.
+pub fn is_instrument_subcategory(sub_categories: &str) -> bool {
+    sub_categories.split('|').next() == Some("Instrument")
 }
 
 // Extends FUnknown (0–2) + IPluginBase (3–4) + IComponent own methods (5–13).
@@ -1020,13 +1078,29 @@ pub struct IPlugFrameVtbl {
     pub resize_view: unsafe extern "C" fn(*mut FUnknown, *mut IPlugView, *mut ViewRect) -> TResult,
 }
 
-/// Enumerate all audio-module classes in a loaded factory.
-///
-/// Returns `(class_id, plugin_name)` pairs.  The class_id is passed back to
+/// An audio-module class of a factory.  `cid` is passed back to
 /// `IPluginFactory::createInstance` to create the audio component.
-pub unsafe fn enumerate_classes(factory: *mut IPluginFactory) -> Vec<([u8; 16], String)> {
+pub struct Vst3Class {
+    pub cid: [u8; 16],
+    pub name: String,
+    /// `None` when the factory does not implement `IPluginFactory2`.
+    pub sub_categories: Option<String>,
+}
+
+/// Enumerate all audio-module classes in a loaded factory, with their
+/// sub-categories when the factory offers `IPluginFactory2`.
+///
+/// # Safety
+/// `factory` must be a live `IPluginFactory`.
+pub unsafe fn enumerate_classes(factory: *mut IPluginFactory) -> Vec<Vst3Class> {
     let count = ((*(*factory).vtbl).count_classes)(factory);
     let mut out = Vec::with_capacity(count.max(0) as usize);
+
+    let mut factory2: *mut c_void = std::ptr::null_mut();
+    let has_factory2 =
+        ((*(*factory).vtbl).query_interface)(factory, &IID_IPLUGIN_FACTORY2, &mut factory2)
+            == K_RESULT_OK
+            && !factory2.is_null();
 
     for i in 0..count {
         let mut info: PClassInfo = std::mem::zeroed();
@@ -1037,7 +1111,25 @@ pub unsafe fn enumerate_classes(factory: *mut IPluginFactory) -> Vec<([u8; 16], 
         if !info.is_audio_module() {
             continue;
         }
-        out.push((info.cid, info.name_str().to_string()));
+        let sub_categories = if has_factory2 {
+            let factory2 = factory2 as *mut IPluginFactory;
+            let vtbl = (*factory2).vtbl as *const IPluginFactory2Vtbl;
+            let mut info2: PClassInfo2 = std::mem::zeroed();
+            let read = ((*vtbl).get_class_info2)(factory2, i, &mut info2);
+            (read == K_RESULT_OK).then(|| info2.sub_categories_str().to_string())
+        } else {
+            None
+        };
+        out.push(Vst3Class {
+            cid: info.cid,
+            name: info.name_str().to_string(),
+            sub_categories,
+        });
+    }
+
+    if has_factory2 {
+        let factory2 = factory2 as *mut IPluginFactory;
+        ((*(*factory2).vtbl).release)(factory2);
     }
     out
 }
@@ -1352,10 +1444,34 @@ mod tests {
                 IID_IBSTREAM,
                 sdk_iid(0xC3BF6EA2, 0x30994752, 0x9B6BF990, 0x1EE33E9B),
             ),
+            (
+                IID_IPLUGIN_FACTORY2,
+                sdk_iid(0x0007B650, 0xF24B4C0B, 0xA464EDB9, 0xF00B2ABB),
+            ),
         ];
         for (index, (actual, sdk)) in expected.iter().enumerate() {
             assert_eq!(actual, sdk, "IID #{index} differs from the SDK");
         }
+    }
+
+    #[test]
+    fn instrument_subcategories_are_told_from_effects() {
+        assert!(is_instrument_subcategory("Instrument"));
+        assert!(is_instrument_subcategory("Instrument|Synth"));
+        assert!(is_instrument_subcategory("Instrument|Synth|Sampler"));
+        assert!(!is_instrument_subcategory("Fx|Instrument"));
+        assert!(!is_instrument_subcategory("Fx|Instrument|External"));
+        assert!(!is_instrument_subcategory("Fx"));
+        assert!(!is_instrument_subcategory(""));
+    }
+
+    #[test]
+    fn class_info2_sub_categories_stop_at_nul() {
+        let mut info: PClassInfo2 = unsafe { std::mem::zeroed() };
+        for (slot, byte) in info.sub_categories.iter_mut().zip(b"Instrument|Synth") {
+            *slot = *byte;
+        }
+        assert_eq!(info.sub_categories_str(), "Instrument|Synth");
     }
 
     #[test]

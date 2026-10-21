@@ -56,7 +56,7 @@ impl Vst3Host {
             None => return,
         };
 
-        use crate::plugin_formats::vst3::ffi::Vst3Library;
+        use crate::plugin_formats::vst3::ffi::{is_instrument_subcategory, Vst3Library};
         let (lib, factory) = match Vst3Library::load(&dll) {
             Ok(r) => r,
             Err(e) => {
@@ -67,15 +67,19 @@ impl Vst3Host {
         let _ = lib; // keep DLL alive through enumeration scope
 
         let classes = unsafe { crate::plugin_formats::vst3::ffi::enumerate_classes(factory) };
-        for (cid, name) in classes {
+        for class in classes {
             // Encode CID into the plugin_id so no extra storage is needed.
             // Format: "vst3:<32-hex-chars>"
-            let plugin_id = format!("vst3:{}", hex_cid(&cid));
+            let plugin_id = format!("vst3:{}", hex_cid(&class.cid));
             if registry.get(&plugin_id).is_some() {
                 continue;
             }
 
-            let is_instrument = classify_instrument(&[], &name);
+            let name = class.name;
+            let is_instrument = match &class.sub_categories {
+                Some(sub_categories) => is_instrument_subcategory(sub_categories),
+                None => classify_instrument(&[], &name),
+            };
             let categories: Vec<String> = if is_instrument {
                 vec!["Instrument".into(), "VST3".into()]
             } else {
