@@ -44,8 +44,10 @@ use crate::plugin_system::lifecycle::LifecycleState;
 use crate::plugin_system::param_queue::ParamChange;
 
 use super::ffi::{
-    AudioBusBuffers, HostParameterChanges, IAudioProcessor, IComponent, ProcessData, K_RESULT_OK,
+    AudioBusBuffers, HostParameterChanges, IAudioProcessor, IComponent, ProcessContext,
+    ProcessData, K_RESULT_OK,
 };
+use super::transport::vst3_process_context;
 
 // Stack context passed to the SEH trampoline — no heap allocation.
 struct Vst3ProcessCtx {
@@ -329,6 +331,7 @@ impl AudioNode for VstWrapperNode {
             channel_buffers32: self.out_channel_ptrs.as_mut_ptr(),
         };
 
+        let mut context = vst3_process_context(transport);
         let mut data = ProcessData {
             process_mode: 0,
             symbolic_sample_size: 0,
@@ -341,7 +344,7 @@ impl AudioNode for VstWrapperNode {
             output_param_changes: std::ptr::null_mut(),
             input_events: std::ptr::null_mut(),
             output_events: std::ptr::null_mut(),
-            process_context: std::ptr::null_mut(),
+            process_context: &mut context as *mut ProcessContext as *mut c_void,
         };
 
         // Non-atomic load through Arc::deref → identical cost to a field read.

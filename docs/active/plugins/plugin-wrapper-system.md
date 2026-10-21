@@ -167,28 +167,23 @@ them `plugin_param:<id>`, `parse_plugin_param_name`). Values travel
 
 ### Transport sync
 
-> **Not implemented yet (verified 2026-09-23):** the VST3 wrapper passes
-> `process_context = null`, so VST3 plugins get no tempo or position. The CLAP
-> path below is the reference to copy.
+`vst3/transport.rs::vst3_process_context` builds a `ProcessContext` on the stack
+every block from the `TransportInfo` passed by the scheduler (same
+`musical_position()` as the CLAP event) and hands it to the plugin through
+`ProcessData.processContext`. No allocation, no global state.
 
-```rust
-let position = transport.musical_position();   // shared, format-agnostic
-let ctx = ProcessContext {
-    state:              if transport.is_playing { kPlaying } else { 0 },
-    sampleRate:         transport.sample_rate as f64,
-    projectTimeSamples: transport.position_samples as i64,
-    projectTimeMusic:   position.beats,
-    barPositionMusic:   position.bar_start_beats,
-    tempo:              transport.bpm as f64,
-    timeSigNumerator:   transport.time_signature.numerator,
-    timeSigDenominator: transport.time_signature.denominator,
-    // ...
-};
-```
+| Field                                     | Value                                               |
+| ----------------------------------------- | --------------------------------------------------- |
+| `state`                                   | `kPlaying` when playing, plus the valid flags below |
+| `sampleRate`, `projectTimeSamples`        | the engine's                                        |
+| `projectTimeMusic`, `barPositionMusic`    | beats, start of the bar in beats                    |
+| `tempo`, `timeSigNumerator`/`Denominator` | the engine's                                        |
 
-All transport data comes from the `TransportInfo` passed by the scheduler —
-never from global state or a separate lookup. Straightforward data translation,
-no allocation.
+Valid flags set: `kProjectTimeMusicValid`, `kBarPositionValid`, `kTempoValid`,
+`kTimeSigValid`. Not provided (flag off): cycle, system time, continuous time,
+SMPTE, clock, chord. `IProcessContextRequirements` is not queried, so a plugin
+gets all of the above whether it asks or not. The layout (112 bytes) and the
+flag values were checked against Steinberg's `ivstprocesscontext.h`.
 
 ### State serialisation
 
@@ -648,7 +643,7 @@ belongs to preset discovery.
   with the project like any other (ADR-010). Parameter values are refreshed by
   the plugin's own `clap.params.rescan(VALUES)`, as before.
 - _`on_error`._ Logged on stderr (`[clap.preset-load] <location> (os error N):
-  <message>`), never from the audio thread; it changes no state and does not
+<message>`), never from the audio thread; it changes no state and does not
   mark the project unsaved.
 - _Threads._ The spec reserves both for the main thread, but each is one atomic
   store or one log line, so a call from any thread is harmless (the audio thread's

@@ -191,6 +191,43 @@ pub struct ProcessData {
     pub process_context: *mut c_void,
 }
 
+/// `Vst::ProcessContext` (`ivstprocesscontext.h`): where the host's transport is.
+/// Only the fields behind a `*_VALID` flag are meaningful.
+#[repr(C)]
+#[derive(Debug, Default, Clone, Copy)]
+pub struct ProcessContext {
+    pub state: u32,
+    pub sample_rate: f64,
+    pub project_time_samples: i64,
+    pub system_time: i64,
+    pub continuous_time_samples: i64,
+    pub project_time_music: f64,
+    pub bar_position_music: f64,
+    pub cycle_start_music: f64,
+    pub cycle_end_music: f64,
+    pub tempo: f64,
+    pub time_sig_numerator: i32,
+    pub time_sig_denominator: i32,
+    /// `Chord { keyNote: u8, rootNote: u8, chordMask: i16 }`, unused.
+    pub chord: [u8; 4],
+    pub smpte_offset_subframes: i32,
+    /// `FrameRate { framesPerSecond: u32, flags: u32 }`, unused.
+    pub frame_rate: [u32; 2],
+    pub samples_to_next_clock: i32,
+}
+
+const _: () = assert!(
+    std::mem::size_of::<ProcessContext>() == 112,
+    "ProcessContext layout drift"
+);
+
+/// `ProcessContext::state` bits.
+pub const CONTEXT_PLAYING: u32 = 1 << 1;
+pub const CONTEXT_PROJECT_TIME_MUSIC_VALID: u32 = 1 << 9;
+pub const CONTEXT_TEMPO_VALID: u32 = 1 << 10;
+pub const CONTEXT_BAR_POSITION_VALID: u32 = 1 << 11;
+pub const CONTEXT_TIME_SIG_VALID: u32 = 1 << 13;
+
 #[repr(C)]
 pub struct IAudioProcessorVtbl {
     // FUnknown
