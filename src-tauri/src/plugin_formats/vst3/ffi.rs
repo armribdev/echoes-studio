@@ -807,6 +807,14 @@ impl Vst3Library {
             Some(factory)
         }
     }
+
+    /// A library that maps nothing, for tests with a hand-made plugin.
+    #[cfg(test)]
+    pub(crate) fn placeholder() -> std::sync::Arc<Self> {
+        std::sync::Arc::new(Self {
+            handle: std::ptr::null_mut(),
+        })
+    }
 }
 
 #[cfg(windows)]

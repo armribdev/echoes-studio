@@ -13,9 +13,9 @@ use super::ffi::{FUnknown, IInfoListenerVtbl, IID_IINFO_LISTENER, K_RESULT_OK};
 use crate::plugin_formats::clap::ffi::HostTrackInfo;
 
 // `ivstchannelcontextinfo.h`, `namespace ChannelContext`.
-const CHANNEL_NAME_KEY: &str = "channel name";
-const CHANNEL_NAME_LENGTH_KEY: &str = "channel name length";
-const CHANNEL_COLOR_KEY: &str = "channel color";
+pub(crate) const CHANNEL_NAME_KEY: &str = "channel name";
+pub(crate) const CHANNEL_NAME_LENGTH_KEY: &str = "channel name length";
+pub(crate) const CHANNEL_COLOR_KEY: &str = "channel color";
 
 const OPAQUE: u32 = 0xFF00_0000;
 
@@ -58,11 +58,7 @@ pub(crate) unsafe fn notify_channel_context(object: *mut FUnknown, info: &HostTr
 mod tests {
     use super::*;
     use crate::plugin_formats::vst3::attribute_list::Value;
-    use crate::plugin_formats::vst3::ffi::{
-        IAttributeListVtbl, Tuid, IID_FUNKNOWN, K_NO_INTERFACE,
-    };
-    use std::cell::{Cell, RefCell};
-    use std::ffi::CString;
+    use crate::plugin_formats::vst3::fake_plugin::{FakeListener, Received};
 
     fn text(units: &str) -> Value {
         Value::Text(units.encode_utf16().collect())
@@ -117,109 +113,9 @@ mod tests {
         assert_eq!(list.value(CHANNEL_NAME_LENGTH_KEY), Some(Value::Int(127)));
     }
 
-    #[derive(Debug, PartialEq)]
-    struct Received {
-        name: Option<String>,
-        name_length: Option<i64>,
-        color: Option<i64>,
-    }
-
-    /// A controller that implements `IInfoListener` and records what it is told.
-    #[repr(C)]
-    struct FakeController {
-        vtbl: *const IInfoListenerVtbl,
-        references: Cell<u32>,
-        listens: bool,
-        received: RefCell<Vec<Received>>,
-    }
-
-    impl FakeController {
-        fn new(listens: bool) -> Box<Self> {
-            Box::new(Self {
-                vtbl: &FAKE_VTBL,
-                references: Cell::new(1),
-                listens,
-                received: RefCell::new(Vec::new()),
-            })
-        }
-
-        fn as_funknown(&mut self) -> *mut FUnknown {
-            self as *mut Self as *mut FUnknown
-        }
-    }
-
-    unsafe fn fake<'a>(this: *mut FUnknown) -> &'a FakeController {
-        &*(this as *const FakeController)
-    }
-
-    unsafe extern "C" fn fake_query_interface(
-        this: *mut FUnknown,
-        iid: *const Tuid,
-        obj: *mut *mut c_void,
-    ) -> i32 {
-        let controller = fake(this);
-        if controller.listens && (*iid == IID_IINFO_LISTENER || *iid == IID_FUNKNOWN) {
-            controller.references.set(controller.references.get() + 1);
-            *obj = this as *mut c_void;
-            return K_RESULT_OK;
-        }
-        *obj = null_mut();
-        K_NO_INTERFACE
-    }
-
-    unsafe extern "C" fn fake_add_ref(this: *mut FUnknown) -> u32 {
-        let controller = fake(this);
-        controller.references.set(controller.references.get() + 1);
-        controller.references.get()
-    }
-
-    unsafe extern "C" fn fake_release(this: *mut FUnknown) -> u32 {
-        let controller = fake(this);
-        controller.references.set(controller.references.get() - 1);
-        controller.references.get()
-    }
-
-    unsafe fn read_int(list: *mut FUnknown, name: &str) -> Option<i64> {
-        let vtbl = &*((*list).vtbl as *const IAttributeListVtbl);
-        let key = CString::new(name).unwrap();
-        let mut value = 0;
-        ((vtbl.get_int)(list, key.as_ptr(), &mut value) == K_RESULT_OK).then_some(value)
-    }
-
-    unsafe fn read_text(list: *mut FUnknown, name: &str) -> Option<String> {
-        let vtbl = &*((*list).vtbl as *const IAttributeListVtbl);
-        let key = CString::new(name).unwrap();
-        let mut buffer = [0u16; 512];
-        let size = std::mem::size_of_val(&buffer) as u32;
-        let result = (vtbl.get_string)(list, key.as_ptr(), buffer.as_mut_ptr(), size);
-        (result == K_RESULT_OK).then(|| {
-            let length = buffer.iter().position(|&unit| unit == 0).unwrap();
-            String::from_utf16_lossy(&buffer[..length])
-        })
-    }
-
-    unsafe extern "C" fn fake_set_channel_context_infos(
-        this: *mut FUnknown,
-        list: *mut FUnknown,
-    ) -> i32 {
-        fake(this).received.borrow_mut().push(Received {
-            name: read_text(list, CHANNEL_NAME_KEY),
-            name_length: read_int(list, CHANNEL_NAME_LENGTH_KEY),
-            color: read_int(list, CHANNEL_COLOR_KEY),
-        });
-        K_RESULT_OK
-    }
-
-    static FAKE_VTBL: IInfoListenerVtbl = IInfoListenerVtbl {
-        query_interface: fake_query_interface,
-        add_ref: fake_add_ref,
-        release: fake_release,
-        set_channel_context_infos: fake_set_channel_context_infos,
-    };
-
     #[test]
     fn a_listening_controller_receives_the_list() {
-        let mut controller = FakeController::new(true);
+        let mut controller = FakeListener::new(true);
         let info = HostTrackInfo::new("Lead", Some([1, 2, 3]));
         assert!(unsafe { notify_channel_context(controller.as_funknown(), &info) });
         assert_eq!(
@@ -239,7 +135,7 @@ mod tests {
 
     #[test]
     fn a_controller_without_the_interface_is_left_alone() {
-        let mut controller = FakeController::new(false);
+        let mut controller = FakeListener::new(false);
         let info = HostTrackInfo::new("Lead", None);
         assert!(!unsafe { notify_channel_context(controller.as_funknown(), &info) });
         assert!(controller.received.borrow().is_empty());

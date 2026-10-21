@@ -56,10 +56,12 @@ use crate::plugin_formats::clap::ffi::{
     notify_track_info_changed, read_note_names, ClapHost, ClapHostContext, ClapLibrary, ClapPlugin,
     HostTrackInfo, NoteName, PresetRequest, TimerSchedule,
 };
+use crate::plugin_formats::vst3::channel_context::notify_channel_context;
 use crate::plugin_formats::vst3::component_handler::{ComponentHandler, EditState};
 use crate::plugin_formats::vst3::ffi::{
-    release_controller, sync_controller_to_state, IAudioProcessor, IComponent, IEditController,
-    ProcessSetup, Vst3Controller, Vst3Library, K_AUDIO, K_EVENT, K_INPUT, K_OUTPUT, SPEAKER_STEREO,
+    release_controller, sync_controller_to_state, FUnknown, IAudioProcessor, IComponent,
+    IEditController, ProcessSetup, Vst3Controller, Vst3Library, K_AUDIO, K_EVENT, K_INPUT,
+    K_OUTPUT, SPEAKER_STEREO,
 };
 use crate::plugin_formats::vst3::params::{read_vst3_param_text, read_vst3_param_value};
 use crate::plugin_system::bridge::BridgedPlugin;
@@ -294,14 +296,23 @@ pub struct PluginInstance {
     /// after `init` — before the instance can be in any graph, so the read
     /// never races `process`.
     output_ports: OnceLock<Vec<ClapOutputPort>>,
-    /// The plugin's track changed and its `clap.track-info.changed` was not
-    /// delivered yet (the plugin was busy in a block).  Command thread only.
+    /// The plugin's track changed and its `clap.track-info.changed` (or VST3
+    /// `setChannelContextInfos`) was not delivered yet (the plugin was busy in a
+    /// block).  Command thread only.
     track_info_pending: AtomicBool,
+    /// The track of a VST3 controller as last handed to it, or owed to it while
+    /// `track_info_pending`; empty until a track with a name or color is known.
+    /// Command thread only.
+    vst3_track_info: Mutex<HostTrackInfo>,
 }
 
 /// Some in-process plugin still owes a `clap.track-info.changed`; the app polls
 /// [`take_undelivered_track_info`] to retry.
 static TRACK_INFO_UNDELIVERED: AtomicBool = AtomicBool::new(false);
+
+/// The flag above is process-wide: tests that raise or read it take this lock.
+#[cfg(test)]
+pub(crate) static UNDELIVERED_FLAG_TEST_LOCK: Mutex<()> = Mutex::new(());
 
 /// Returns whether a track-info notification is still owed, and clears it.
 pub fn take_undelivered_track_info() -> bool {
@@ -328,6 +339,7 @@ impl PluginInstance {
             value_modulated_params: Mutex::new(Vec::new()),
             output_ports: OnceLock::new(),
             track_info_pending: AtomicBool::new(false),
+            vst3_track_info: Mutex::new(HostTrackInfo::default()),
         })
     }
 
@@ -367,6 +379,7 @@ impl PluginInstance {
             value_modulated_params: Mutex::new(Vec::new()),
             output_ports: OnceLock::new(),
             track_info_pending: AtomicBool::new(false),
+            vst3_track_info: Mutex::new(HostTrackInfo::default()),
         })
     }
 
@@ -398,6 +411,7 @@ impl PluginInstance {
             value_modulated_params: Mutex::new(Vec::new()),
             output_ports: OnceLock::new(),
             track_info_pending: AtomicBool::new(false),
+            vst3_track_info: Mutex::new(HostTrackInfo::default()),
         })
     }
 
@@ -419,6 +433,7 @@ impl PluginInstance {
             value_modulated_params: Mutex::new(Vec::new()),
             output_ports: OnceLock::new(),
             track_info_pending: AtomicBool::new(false),
+            vst3_track_info: Mutex::new(HostTrackInfo::default()),
         })
     }
 
@@ -579,11 +594,16 @@ impl PluginInstance {
     }
 
     /// Gives a CLAP plugin the info of its track, then tells it
-    /// (`clap.track-info.changed`) when it differs from the last one.  Command
-    /// thread.  Other formats ignore it.
+    /// (`clap.track-info.changed`) when it differs from the last one; a VST3
+    /// controller hears it through `IInfoListener`.  Command thread.  Other
+    /// formats ignore it.
     pub fn set_track_info(&self, info: &HostTrackInfo) {
         if let Some(bridged) = self.bridge() {
             bridged.set_track_info(info);
+            return;
+        }
+        if self.vst3_controller().is_some() {
+            self.set_vst3_track_info(info);
             return;
         }
         let Some(context) = self.clap_host_context() else {
@@ -595,16 +615,36 @@ impl PluginInstance {
         }
     }
 
-    /// Delivers a pending `clap.track-info.changed` under the FFI gate, off the
-    /// audio thread.  A plugin busy in a block keeps it pending for a retry; a
-    /// crashed one never hears it.  Command thread.
+    /// Retains the track of a VST3 controller and owes it a notification when it
+    /// differs from the last one.  A track with neither name nor color is the
+    /// initial state, so a plugin never hears of an empty track.
+    fn set_vst3_track_info(&self, info: &HostTrackInfo) {
+        {
+            let mut owed = self
+                .vst3_track_info
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            if *owed == *info {
+                return;
+            }
+            owed.clone_from(info);
+        }
+        self.track_info_pending.store(true, Ordering::Release);
+        self.notify_track_info_changed();
+    }
+
+    /// Delivers a pending `clap.track-info.changed` (VST3: `setChannelContextInfos`)
+    /// under the FFI gate, off the audio thread.  A plugin busy in a block keeps it
+    /// pending for a retry; a crashed one never hears it.  Command thread.
     pub fn notify_track_info_changed(&self) {
         if !self.track_info_pending.load(Ordering::Acquire) {
             return;
         }
-        let Some(plugin) = self.clap_plugin() else {
+        let clap_plugin = self.clap_plugin();
+        let vst3_controller = self.vst3_controller();
+        if clap_plugin.is_none() && vst3_controller.is_none() {
             return;
-        };
+        }
         if self.has_crashed() {
             self.track_info_pending.store(false, Ordering::Release);
             return;
@@ -614,8 +654,18 @@ impl PluginInstance {
             return;
         };
         self.track_info_pending.store(false, Ordering::Release);
-        // SAFETY: live CLAP plugin owned by this instance; FFI gate held.
-        unsafe { notify_track_info_changed(plugin) };
+        if let Some(plugin) = clap_plugin {
+            // SAFETY: live CLAP plugin owned by this instance; FFI gate held.
+            unsafe { notify_track_info_changed(plugin) };
+        } else if let Some(controller) = vst3_controller {
+            let info = self
+                .vst3_track_info
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .clone();
+            // SAFETY: live VST3 controller owned by this instance; FFI gate held.
+            unsafe { notify_channel_context(controller.as_ptr() as *mut FUnknown, &info) };
+        }
     }
 
     /// Calls the `clap.timer-support` `on_timer` of every timer due at `now`, on

@@ -13,6 +13,8 @@ pub mod channel_context;
 mod com_object;
 pub mod component_handler;
 pub mod event_list;
+#[cfg(all(test, windows))]
+pub(crate) mod fake_plugin;
 pub mod ffi;
 pub mod host;
 pub mod host_context;

@@ -22,7 +22,7 @@ use crate::plugin_formats::clap::ffi::{
 };
 use crate::plugin_formats::clap::params::flush_clap_param_values;
 use crate::plugin_system::host::{PluginHost, PluginIsolation, PluginNoteName, UnavailableReason};
-use crate::plugin_system::instance::take_undelivered_track_info;
+use crate::plugin_system::instance::{take_undelivered_track_info, UNDELIVERED_FLAG_TEST_LOCK};
 use crate::plugin_system::lifecycle::LifecycleState;
 use crate::plugin_system::presets::{list_presets, PluginPreset};
 use crate::plugin_system::registry::PluginManifest;
@@ -920,6 +920,9 @@ fn a_rename_in_the_project_reaches_a_sandboxed_plugin() {
 /// The undelivered flag is process-wide: only this test touches it.
 #[test]
 fn a_notification_missed_while_the_plugin_is_busy_is_retried() {
+    let _flag = UNDELIVERED_FLAG_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let mut host = host();
     tell(&mut host, KEY, lead());
     let _node = prepared(&mut host, false, false);

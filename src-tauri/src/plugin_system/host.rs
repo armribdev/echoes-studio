@@ -369,7 +369,9 @@ impl PluginHost {
                 (inst, node)
             }
 
-            DeviceFormat::Vst3 => self.instantiate_vst3(plugin_id, &manifest)?,
+            DeviceFormat::Vst3 => {
+                self.instantiate_vst3(plugin_id, &manifest, self.track_infos.get(instance_key))?
+            }
 
             DeviceFormat::Clap if sandboxed => {
                 self.instantiate_bridged(plugin_id, &manifest, self.track_infos.get(instance_key))?
@@ -531,8 +533,9 @@ impl PluginHost {
         &self,
         plugin_id: &str,
         manifest: &PluginManifest,
+        track_info: Option<&HostTrackInfo>,
     ) -> Result<(Arc<PluginInstance>, Box<dyn AudioNode>), HostError> {
-        let instance = self.create_vst3_instance(plugin_id, manifest)?;
+        let instance = self.create_vst3_instance(plugin_id, manifest, track_info)?;
         let node: Box<dyn AudioNode> = Box::new(VstWrapperNode::new(Arc::clone(&instance)));
         Ok((instance, node))
     }
@@ -545,6 +548,7 @@ impl PluginHost {
         &self,
         plugin_id: &str,
         manifest: &PluginManifest,
+        track_info: Option<&HostTrackInfo>,
     ) -> Result<Arc<PluginInstance>, HostError> {
         let cid = vst3_decode_id(plugin_id)
             .ok_or_else(|| HostError::InstantiationFailed("invalid VST3 plugin_id".into()))?;
@@ -583,9 +587,12 @@ impl PluginHost {
             }
         };
 
-        Ok(PluginInstance::new_vst3(
-            plugin_id, comp_nn, proc_nn, controller, handler, lib,
-        ))
+        let instance =
+            PluginInstance::new_vst3(plugin_id, comp_nn, proc_nn, controller, handler, lib);
+        if let Some(info) = track_info {
+            instance.set_track_info(info);
+        }
+        Ok(instance)
     }
 
     fn instantiate_clap(
@@ -761,7 +768,7 @@ impl PluginHost {
                 self.create_bridged_instance(plugin_id, &manifest, track_info)?
             }
             DeviceFormat::Clap => self.create_clap_instance(plugin_id, &manifest, track_info)?,
-            DeviceFormat::Vst3 => self.create_vst3_instance(plugin_id, &manifest)?,
+            DeviceFormat::Vst3 => self.create_vst3_instance(plugin_id, &manifest, track_info)?,
             other => {
                 return Err(HostError::UnsupportedFormat(format!(
                     "instrument format {other:?} not supported (CLAP and VST3 only)"
