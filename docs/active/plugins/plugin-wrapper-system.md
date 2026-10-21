@@ -96,8 +96,7 @@ call only fills pointer values — no `Vec::push`, no `Box`.
   - **Single-component plugin:** the controller is found by QI on the component.
   - **Dual-component plugin:** it is created through the factory, initialised,
     synced with `setComponentState`, and connected through `IConnectionPoint`.
-  - It receives the static `IComponentHandler`. This handler is still a no-op:
-    edits made in the plugin window and `restartComponent` are not acted on yet.
+  - It receives the instance's `IComponentHandler` (see the next section).
   - Failure leaves it `None`. The plugin still plays, but has no parameters and
     no editor.
   - `load_state_blob` passes the restored blob to a separate controller.
@@ -109,6 +108,37 @@ call only fills pointer values — no `Vec::push`, no `Box`.
   `IComponentHandler`; `IPlugFrame` too). With these wrong values, no controller
   was ever reached, so the VST3 editor and dual-component wiring could not work.
   All values were verified byte for byte in the TDR Nova binary.
+
+### Plugin window edits (`IComponentHandler`, 2026-10-21)
+
+A VST3 controller does not talk to its processor: the host forwards. The handler
+(`vst3/component_handler.rs`, one per instance, owned by `NativeHandle::Vst3`)
+is lock-free and keeps its state in `EditState`:
+
+- **`performEdit`** pushes the value into a second SPSC ring, producer = the
+  plugin window thread, consumer = the audio thread. `VstWrapperNode::process`
+  drains it into `inputParameterChanges` right after the queue of host edits.
+  It also moves the base of a value-modulated parameter and marks the project
+  unsaved (`mark_plugin_state_edited`, the flag CLAP uses).
+- **`beginEdit` / `endEdit`** open and close a gesture (up to 8 at once). While
+  a parameter is being dragged its modulation is paused. `endEdit` marks the
+  project unsaved.
+- **`restartComponent`:**
+  - `kLatencyChanged`, `kIoChanged` and `kReloadComponent` flag the instance
+    for reactivation and request a recompile (`mark_plugin_restart_requested`,
+    polled by `watch_plugin_edits`). `vst3_ensure_active` then reactivates the
+    plugin under the FFI gate, and `prepare` reads the new latency. A plugin busy
+    in a block is retried at the next recompile.
+  - `kParamValuesChanged` and `kParamTitlesChanged` report a params rescan
+    (`TEXT`, plus `INFO` for titles), so the UI refetches the lists and texts.
+- Not done yet:
+  - `IComponentHandler2` (`setDirty`, group edits) and `IComponentHandler3`.
+  - Processor to controller sync: `outputParameterChanges` are not read, and
+    host automation does not move the knobs of an open plugin window.
+  - The modulated value is not put back on its base before a state save, as CLAP
+    does (`restore_value_modulated_bases`).
+  - `performEdit` is expected on the window thread; a plugin that calls it from
+    several threads breaks the single-producer rule of the ring.
 
 ### Parameters (ADR-021)
 
@@ -851,8 +881,8 @@ recompile `BridgedPlugin::activate` skips its activation cache; the bridge
 reactivates the plugin (same hold handshake as a config change) and replies
 with the new latency.
 
-Not covered: VST3 `restartComponent(kLatencyChanged)` — the component handler
-is still a no-op, so a VST3 latency change waits for the next re-instantiation.
+VST3 `restartComponent(kLatencyChanged)` takes the same path: see "Plugin window
+edits" above. Not hand-tested with a plugin that changes its latency.
 
 ---
 

@@ -1,15 +1,14 @@
-//! Host-side COM objects a VST3 plugin receives: the host context passed to
-//! `initialize` (`IHostApplication`) and the controller's `IComponentHandler`.
+//! The host context a VST3 plugin receives in `initialize` (`IHostApplication`).
 //!
-//! Both are stateless statics with dummy refcounts: the host owns them for the
-//! whole process, so plugins may keep the pointers as long as they like.
+//! A stateless static with dummy refcounts: the host owns it for the whole
+//! process, so plugins may keep the pointer as long as they like.
 
 use std::ffi::c_void;
 use std::ptr::null_mut;
 
 use super::ffi::{
-    FUnknown, IComponentHandlerVtbl, IHostApplicationVtbl, TResult, Tuid, IID_FUNKNOWN,
-    IID_ICOMPONENT_HANDLER, IID_IHOST_APPLICATION, K_RESULT_FALSE, K_RESULT_OK,
+    FUnknown, IHostApplicationVtbl, TResult, Tuid, IID_FUNKNOWN, IID_IHOST_APPLICATION,
+    K_RESULT_FALSE, K_RESULT_OK,
 };
 
 pub(crate) fn tuid_eq(a: *const Tuid, b: &Tuid) -> bool {
@@ -91,61 +90,4 @@ static HOST_APP: HostApplication = HostApplication {
 /// The host context every component and separate controller is initialised with.
 pub fn host_application() -> *mut FUnknown {
     &HOST_APP as *const HostApplication as *mut FUnknown
-}
-
-unsafe extern "C" fn handler_qi(
-    this: *mut FUnknown,
-    iid: *const Tuid,
-    obj: *mut *mut c_void,
-) -> TResult {
-    if obj.is_null() {
-        return -1;
-    }
-    if tuid_eq(iid, &IID_ICOMPONENT_HANDLER) || tuid_eq(iid, &IID_FUNKNOWN) {
-        *obj = this as *mut c_void;
-        return K_RESULT_OK;
-    }
-    *obj = null_mut();
-    -1
-}
-
-unsafe extern "C" fn handler_begin_edit(_: *mut FUnknown, _: u32) -> TResult {
-    K_RESULT_OK
-}
-unsafe extern "C" fn handler_perform_edit(_: *mut FUnknown, _: u32, _: f64) -> TResult {
-    K_RESULT_OK
-}
-unsafe extern "C" fn handler_end_edit(_: *mut FUnknown, _: u32) -> TResult {
-    K_RESULT_OK
-}
-unsafe extern "C" fn handler_restart_component(_: *mut FUnknown, _: i32) -> TResult {
-    K_RESULT_OK
-}
-
-static HANDLER_VTBL: IComponentHandlerVtbl = IComponentHandlerVtbl {
-    query_interface: handler_qi,
-    add_ref: static_add_ref,
-    release: static_release,
-    begin_edit: handler_begin_edit,
-    perform_edit: handler_perform_edit,
-    end_edit: handler_end_edit,
-    restart_component: handler_restart_component,
-};
-
-#[repr(C)]
-struct ComponentHandler {
-    vtbl: *const IComponentHandlerVtbl,
-}
-
-// SAFETY: see `HostApplication`.
-unsafe impl Sync for ComponentHandler {}
-
-static COMPONENT_HANDLER: ComponentHandler = ComponentHandler {
-    vtbl: &HANDLER_VTBL,
-};
-
-/// Many plugins crash on the first knob touch without a non-null handler.
-/// Edits and restart requests are acknowledged but not acted on yet.
-pub fn component_handler() -> *mut FUnknown {
-    &COMPONENT_HANDLER as *const ComponentHandler as *mut FUnknown
 }

@@ -56,6 +56,7 @@ use crate::plugin_formats::clap::ffi::{
     notify_track_info_changed, read_note_names, ClapHost, ClapHostContext, ClapLibrary, ClapPlugin,
     HostTrackInfo, NoteName, PresetRequest, TimerSchedule,
 };
+use crate::plugin_formats::vst3::component_handler::{ComponentHandler, EditState};
 use crate::plugin_formats::vst3::ffi::{
     release_controller, sync_controller_to_state, IAudioProcessor, IComponent, IEditController,
     ProcessSetup, Vst3Controller, Vst3Library, SPEAKER_STEREO,
@@ -113,6 +114,9 @@ pub enum NativeHandle {
         component: NonNull<IComponent>,
         processor: NonNull<IAudioProcessor>,
         controller: Option<Vst3Controller>,
+        /// What the controller reports through `IComponentHandler`.  Outlives the
+        /// controller, which holds a pointer to it until `Drop` releases it.
+        handler: Box<ComponentHandler>,
         _lib: Arc<Vst3Library>,
     },
 
@@ -336,6 +340,7 @@ impl PluginInstance {
         component: NonNull<IComponent>,
         processor: NonNull<IAudioProcessor>,
         controller: Option<Vst3Controller>,
+        handler: Box<ComponentHandler>,
         lib: Arc<Vst3Library>,
     ) -> Arc<Self> {
         let device_id: String = device_id.into();
@@ -349,6 +354,7 @@ impl PluginInstance {
                 component,
                 processor,
                 controller,
+                handler,
                 _lib: lib,
             },
             lifecycle: AtomicU8::new(encode_lifecycle(LifecycleState::Created)),
@@ -794,6 +800,14 @@ impl PluginInstance {
         }
     }
 
+    /// The edits and restart requests of the VST3 plugin window.
+    pub fn vst3_edit_state(&self) -> Option<&EditState> {
+        match &self.handle {
+            NativeHandle::Vst3 { handler, .. } => Some(handler.state()),
+            _ => None,
+        }
+    }
+
     /// The VST3 edit controller, which lives as long as this instance; `None`
     /// for other formats or a VST3 that offers none.
     pub fn vst3_controller(&self) -> Option<NonNull<IEditController>> {
@@ -947,8 +961,9 @@ impl PluginInstance {
     /// (ADR-016 reuse).  Mirrors [`clap_ensure_active`]:
     ///
     /// - Already active at the same `(sample_rate, max_block)` → no-op.
-    /// - Already active at a different config → `setProcessing(0)` +
-    ///   `setActive(0)`, then re-setup.
+    /// - Already active at a different config, or after a `restartComponent`
+    ///   that changes latency or I/O → `setProcessing(0)` + `setActive(0)`, then
+    ///   re-setup.
     /// - Not active → `setBusArrangements` + `activateBus` ×2 +
     ///   `setupProcessing` + `setActive(1)` + `setProcessing(1)`.
     ///
@@ -967,16 +982,27 @@ impl PluginInstance {
         let sr_bits = sample_rate.to_bits();
         let act = &self.vst3_activation;
 
-        // Config changed on a live instance: the outgoing graph may still be
-        // processing it, so fence the reactivation when the gate can be claimed.
+        // Config changed (or the plugin asked for a restart, e.g. a new latency)
+        // on a live instance: the outgoing graph may still be processing it, so
+        // fence the reactivation when the gate can be claimed.
+        let restart_requested = self
+            .vst3_edit_state()
+            .is_some_and(EditState::take_reactivation_request);
         let mut _gate = None;
         if act.active.load(Ordering::Acquire) {
-            if act.sr_bits.load(Ordering::Relaxed) == sr_bits
-                && act.block.load(Ordering::Relaxed) == max_block
-            {
+            let unchanged = act.sr_bits.load(Ordering::Relaxed) == sr_bits
+                && act.block.load(Ordering::Relaxed) == max_block;
+            if unchanged && !restart_requested {
                 return true;
             }
             _gate = self.offrt_try_acquire(FFI_GATE_HARVEST_BUDGET);
+            if unchanged && _gate.is_none() {
+                // Busy in a block: the next recompile asks again.
+                if let Some(edit_state) = self.vst3_edit_state() {
+                    edit_state.request_reactivation();
+                }
+                return true;
+            }
             unsafe {
                 ((*(*proc).vtbl).set_processing)(proc, 0);
                 ((*(*comp).vtbl).set_active)(comp, 0);

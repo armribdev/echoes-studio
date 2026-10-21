@@ -37,9 +37,10 @@ use crate::plugin_formats::clap::ffi::{
 use crate::plugin_formats::clap::host::decode_plugin_id as clap_decode_id;
 use crate::plugin_formats::clap::params::read_clap_params;
 use crate::plugin_formats::clap::wrapper::ClapWrapperNode;
+use crate::plugin_formats::vst3::component_handler::ComponentHandler;
 use crate::plugin_formats::vst3::ffi::{create_controller, instantiate_processor, Vst3Library};
 use crate::plugin_formats::vst3::host::decode_plugin_id as vst3_decode_id;
-use crate::plugin_formats::vst3::host_context::{component_handler, host_application};
+use crate::plugin_formats::vst3::host_context::host_application;
 use crate::plugin_formats::vst3::params::read_vst3_params;
 use crate::plugin_formats::vst3::wrapper::VstWrapperNode;
 use crate::plugin_system::bridge::{locate_bridge_exe, BridgedPlugin};
@@ -556,17 +557,19 @@ impl PluginHost {
 
         // Without a controller the plugin still plays; it only lacks parameters
         // and an editor.
-        let controller =
-            match unsafe { create_controller(&lib, comp, host_application(), component_handler()) }
-            {
-                Ok(controller) => Some(controller),
-                Err(e) => {
-                    eprintln!("[host] VST3 '{plugin_id}' has no edit controller: {e}");
-                    None
-                }
-            };
+        let handler = ComponentHandler::boxed();
+        let controller = match unsafe {
+            create_controller(&lib, comp, host_application(), handler.as_funknown())
+        } {
+            Ok(controller) => Some(controller),
+            Err(e) => {
+                eprintln!("[host] VST3 '{plugin_id}' has no edit controller: {e}");
+                None
+            }
+        };
 
-        let instance = PluginInstance::new_vst3(plugin_id, comp_nn, proc_nn, controller, lib);
+        let instance =
+            PluginInstance::new_vst3(plugin_id, comp_nn, proc_nn, controller, handler, lib);
 
         let node: Box<dyn AudioNode> = Box::new(VstWrapperNode::new(Arc::clone(&instance)));
 

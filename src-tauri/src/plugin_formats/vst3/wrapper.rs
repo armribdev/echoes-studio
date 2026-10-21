@@ -41,6 +41,7 @@ use crate::audio_graph::plugin_params::{
 use crate::plugin_formats::crash_guard;
 use crate::plugin_system::instance::{PluginInstance, FFI_GATE_HARVEST_BUDGET};
 use crate::plugin_system::lifecycle::LifecycleState;
+use crate::plugin_system::param_queue::ParamChange;
 
 use super::ffi::{
     AudioBusBuffers, HostParameterChanges, IAudioProcessor, IComponent, ProcessData, K_RESULT_OK,
@@ -137,6 +138,9 @@ impl VstWrapperNode {
     /// Off the audio thread (ADR-021): a newly modulated parameter starts from
     /// the plugin's current value; one no longer modulated is put back on its base.
     fn track_value_modulation(&self, controls: &[PluginParamControl]) {
+        let Some(edit_state) = self.instance.vst3_edit_state() else {
+            return;
+        };
         let params: Vec<ValueModulatedParam> = controls
             .iter()
             .filter(|control| control.modulated)
@@ -148,7 +152,7 @@ impl VstWrapperNode {
                 )
             })
             .collect();
-        let previous = self.instance.replace_value_modulated_params(params.clone());
+        let previous = edit_state.replace_followed(params.clone());
         let was_modulated =
             |native_id: u32| previous.iter().any(|param| param.native_id == native_id);
 
@@ -255,18 +259,29 @@ impl AudioNode for VstWrapperNode {
         // `self.param_changes`, reset and refilled in place each block.
         let param_changes_ptr: *mut c_void = if let Some(pc) = self.param_changes.as_mut() {
             pc.reset();
-            self.instance.drain_params(|change| {
+            let edit_state = self.instance.vst3_edit_state();
+            let mut push_change = |change: ParamChange| {
                 pc.push(
                     change.native_id,
                     change.sample_offset as i32,
                     change.normalised as f64,
                 );
-            });
+            };
+            self.instance.drain_params(&mut push_change);
+            // The controller never reaches its processor on its own: what the
+            // user does in the plugin window is forwarded here (IComponentHandler).
+            if let Some(edit_state) = edit_state {
+                edit_state.drain_edits(&mut push_change);
+            }
             // ADR-021: VST3 has no host modulation, so modulation is added to
             // the tracked base value.  Automation sets the value outright and,
             // on the same parameter, takes precedence over modulation.
             for control in self.param_controls.iter() {
                 if control.automation.is_empty() {
+                    // A drag in the plugin window pauses the modulation.
+                    if edit_state.is_some_and(|state| state.is_editing(control.native_id)) {
+                        continue;
+                    }
                     for (offset, value) in control.modulation.iter() {
                         let effective = (control.base_value() + value).clamp(0.0, 1.0);
                         pc.push(control.native_id, offset as i32, effective as f64);
