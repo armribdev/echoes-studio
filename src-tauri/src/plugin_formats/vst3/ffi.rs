@@ -13,7 +13,7 @@
 //! It must outlive every `VstWrapperNode` that was created from it — callers
 //! must keep an `Arc<Vst3Library>` alive alongside the node.
 
-use std::ffi::c_void;
+use std::ffi::{c_char, c_void};
 use std::path::Path;
 
 /// VST3 result code (0 = OK, 1 = FALSE, negative = error).
@@ -23,6 +23,23 @@ pub type Tuid = [u8; 16];
 
 pub const K_RESULT_OK: TResult = 0;
 pub const K_RESULT_FALSE: TResult = 1;
+
+// `funknown.h`: on Windows the codes are the COM HRESULTs.
+pub const K_NO_INTERFACE: TResult = if cfg!(windows) {
+    0x8000_4002_u32 as TResult
+} else {
+    -1
+};
+pub const K_INVALID_ARGUMENT: TResult = if cfg!(windows) {
+    0x8007_0057_u32 as TResult
+} else {
+    2
+};
+pub const K_OUT_OF_MEMORY: TResult = if cfg!(windows) {
+    0x8007_000E_u32 as TResult
+} else {
+    6
+};
 
 // Derived from the VST3 SDK using FUID::toTUID() big-endian serialisation.
 
@@ -62,6 +79,12 @@ pub const IID_IEVENT_LIST: Tuid = interface_iid([
 ]);
 pub const IID_IPLUGIN_FACTORY2: Tuid = interface_iid([
     0x00, 0x07, 0xB6, 0x50, 0xF2, 0x4B, 0x4C, 0x0B, 0xA4, 0x64, 0xED, 0xB9, 0xF0, 0x0B, 0x2A, 0xBB,
+]);
+pub const IID_IMESSAGE: Tuid = interface_iid([
+    0x93, 0x6F, 0x03, 0x3B, 0xC6, 0xC0, 0x47, 0xDB, 0xBB, 0x08, 0x82, 0xF8, 0x13, 0xC1, 0xE6, 0x13,
+]);
+pub const IID_IATTRIBUTE_LIST: Tuid = interface_iid([
+    0x1E, 0x5F, 0x0A, 0xEB, 0xCC, 0x7F, 0x45, 0x33, 0xA2, 0x54, 0x40, 0x11, 0x38, 0xAD, 0x5E, 0xE4,
 ]);
 
 /// L | R  (bits 0 and 1)
@@ -1194,6 +1217,39 @@ pub struct IHostApplicationVtbl {
         unsafe extern "C" fn(*mut FUnknown, *const Tuid, *const Tuid, *mut *mut c_void) -> TResult,
 }
 
+/// `IAttributeList`: `AttrID` is a `const char*`, `TChar` is UTF-16, and the
+/// `get*` references of the SDK are pointers.
+#[repr(C)]
+pub struct IAttributeListVtbl {
+    pub query_interface:
+        unsafe extern "C" fn(*mut FUnknown, *const Tuid, *mut *mut c_void) -> TResult,
+    pub add_ref: unsafe extern "C" fn(*mut FUnknown) -> u32,
+    pub release: unsafe extern "C" fn(*mut FUnknown) -> u32,
+    pub set_int: unsafe extern "C" fn(*mut FUnknown, *const c_char, i64) -> TResult,
+    pub get_int: unsafe extern "C" fn(*mut FUnknown, *const c_char, *mut i64) -> TResult,
+    pub set_float: unsafe extern "C" fn(*mut FUnknown, *const c_char, f64) -> TResult,
+    pub get_float: unsafe extern "C" fn(*mut FUnknown, *const c_char, *mut f64) -> TResult,
+    pub set_string: unsafe extern "C" fn(*mut FUnknown, *const c_char, *const u16) -> TResult,
+    /// The size is in bytes, not in characters.
+    pub get_string: unsafe extern "C" fn(*mut FUnknown, *const c_char, *mut u16, u32) -> TResult,
+    pub set_binary:
+        unsafe extern "C" fn(*mut FUnknown, *const c_char, *const c_void, u32) -> TResult,
+    pub get_binary:
+        unsafe extern "C" fn(*mut FUnknown, *const c_char, *mut *const c_void, *mut u32) -> TResult,
+}
+
+/// `IMessage`: an identifier and an `IAttributeList` the message owns.
+#[repr(C)]
+pub struct IMessageVtbl {
+    pub query_interface:
+        unsafe extern "C" fn(*mut FUnknown, *const Tuid, *mut *mut c_void) -> TResult,
+    pub add_ref: unsafe extern "C" fn(*mut FUnknown) -> u32,
+    pub release: unsafe extern "C" fn(*mut FUnknown) -> u32,
+    pub get_message_id: unsafe extern "C" fn(*mut FUnknown) -> *const c_char,
+    pub set_message_id: unsafe extern "C" fn(*mut FUnknown, *const c_char),
+    pub get_attributes: unsafe extern "C" fn(*mut FUnknown) -> *mut FUnknown,
+}
+
 // Plugins call this to notify the host of parameter edits (begin/perform/end)
 // and to request a component restart.  Many plugins assume the handler is
 // non-null and crash on the first knob touch without one.
@@ -1606,6 +1662,14 @@ mod tests {
             (
                 IID_IEVENT_LIST,
                 sdk_iid(0x3A2C4214, 0x346349FE, 0xB2C4F397, 0xB9695A44),
+            ),
+            (
+                IID_IMESSAGE,
+                sdk_iid(0x936F033B, 0xC6C047DB, 0xBB0882F8, 0x13C1E613),
+            ),
+            (
+                IID_IATTRIBUTE_LIST,
+                sdk_iid(0x1E5F0AEB, 0xCC7F4533, 0xA2544011, 0x38AD5EE4),
             ),
         ];
         for (index, (actual, sdk)) in expected.iter().enumerate() {
