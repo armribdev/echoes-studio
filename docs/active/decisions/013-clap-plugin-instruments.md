@@ -300,3 +300,22 @@ the real-FFI tests `vst3_instrument_plays_a_note` and
 Details: `../plugins/plugin-wrapper-system.md` (VST3 instruments). Tests:
 `vst3/instrument.rs`, `vst3/event_list.rs`, `vst3/midi_mapping.rs`,
 `plugin_system/host.rs`, `plugin_system/ffi_lifecycle_tests.rs`.
+
+## Amendment 2026-10-21 — VST3 track info (`IInfoListener`, `IHostApplication::createInstance`)
+
+The host now creates `IMessage` and `IAttributeList` (reference-counted,
+heap-allocated, bounded: 32 entries per list) when a plugin asks
+`IHostApplication::createInstance` with `cid == iid`; any other request still
+answers `kResultFalse`. A VST3 edit controller that implements `IInfoListener` is
+told the name and color of its track through `setChannelContextInfos`: at
+instantiation, then when either changes. Only `kChannelNameKey` /
+`kChannelNameLengthKey` and `kChannelColorKey` are sent; a track without a color
+announces none. The info comes from the project (`placement_track_infos`), through
+the path used by `clap.track-info`; delivery is an off-RT controller call under
+the instance FFI gate, retried by `watch_plugin_edits` if a block holds the gate.
+No invariant changes (no new ADR): no project state, command, event or file-format
+change; the audio thread is untouched. Message relay through `IConnectionPoint` is
+not provided: a dual-component plugin's halves are connected directly. Step 5 of
+the VST3 catch-up. Details: `../plugins/plugin-wrapper-system.md` (Host
+`IInfoListener` / `IMessage`). Checked on TDR Nova (an effect): its controller
+implements `IInfoListener` and accepts the list; not tried with a VST3 instrument.

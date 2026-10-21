@@ -85,7 +85,8 @@ call only fills pointer values — no `Vec::push`, no `Box`.
 - **Host context.** `IComponent::initialize` and a separate controller's
   `initialize` receive the static `IHostApplication` of
   `plugin_formats/vst3/host_context.rs` (name "Echoes Studio"; `createInstance`
-  answers `kResultFalse`, so no `IMessage` / `IAttributeList` yet).
+  makes an `IMessage` or an `IAttributeList`, see "Host `IInfoListener` /
+  `IMessage`").
 - **Activation order** (`PluginInstance::vst3_ensure_active`):
   `setBusArrangements` → `activateBus` (audio in when the plugin has one, audio
   out, event in when the plugin has one) → `setupProcessing` → `setActive(1)` →
@@ -509,7 +510,7 @@ checked against `clap/ext/track-info.h` (`clap_track_info`: `flags:u64`,
   applies and follows with `changed()`. The engine remembers what it last sent
   and skips a dead bridge. A failed request is retried by the next sync. The
   shared-memory layout and `BRIDGE_PROTOCOL_VERSION` are unchanged.
-- _Limits._ VST3 has no equivalent wired. A plugin that calls main-thread
+- _Limits._ VST3 has its own (`IInfoListener`, below). A plugin that calls main-thread
   functions from its own GUI thread while Echoes calls `changed()` from the command
   thread is not serialised (same exposure as `clap.params`). Not yet tried with
   real plugins.
@@ -524,6 +525,82 @@ sandboxed), `audio_engine/render_harness.rs::clap_plugins` (the plugins read the
 track through the real compile, and the golden hash is unchanged). The test
 plugin gained seven read-only parameters (ids 12–18, `Track flags` … `Track info
 audio calls`), 19 in all.
+
+**Host `IInfoListener` / `IMessage` (2026-10-21).** Step 5 of the VST3 catch-up: a
+VST3 edit controller is told the name and color of its track, as a CLAP plugin
+is through `clap.track-info`. Interface ids, method order, keys and result codes
+were checked against `ivstmessage.h`, `ivstattributes.h`, `ivstchannelcontextinfo.h`,
+`ivsthostapplication.h` and `funknown.h` (steinbergmedia/vst3_pluginterfaces) and
+against the SDK's reference host (`vst3_public_sdk`, `hostclasses.cpp`). The three
+new ids (`IMessage`, `IAttributeList`, `IInfoListener`) are in
+`interface_iids_match_the_sdk` and, in COM byte order, in the TDR Nova binary.
+
+- _`createInstance`._ `IHostApplication::createInstance` (`vst3/host_context.rs`)
+  makes an `IMessage` or an `IAttributeList` only when `cid` and `iid` are the same
+  interface (the SDK's `allocateMessage` passes `IMessage::iid` twice); anything
+  else answers `kResultFalse` with a null object, a null output pointer answers
+  `kInvalidArgument`. The host context itself stays a static with dummy counts.
+- _Objects._ `HostAttributeList` (`vst3/attribute_list.rs`) and `HostMessage`
+  (`vst3/message.rs`) are heap objects with a real reference count
+  (`vst3/com_object.rs`): a plugin may keep one past the call, `queryInterface`
+  adds a reference, the last `release` frees. A message owns its list and
+  `getAttributes` returns it without `addRef`, like the SDK; a list the plugin
+  kept outlives the message. Limits are host policy, not the SDK's: 32 entries
+  per list, key <= 64 bytes, string <= 1024 UTF-16 units, binary <= 64 KiB, message
+  id cut at 256 bytes. A full list answers `kOutOfMemory`; an oversized value or
+  bad argument `kInvalidArgument`; a missing key or another type `kResultFalse`.
+  `getString` takes its size in **bytes**, cuts a too-long string and always ends
+  it with a NUL. Values are copied in. The list is behind a mutex: these objects
+  live on the plugin's non-real-time threads (the spec calls them from the UI
+  thread) and the host never touches one from the audio thread.
+- _What is sent._ `vst3/channel_context.rs` builds the list from `HostTrackInfo`
+  (the CLAP type, from `placement_track_infos`, so the project stays the source):
+  `kChannelNameKey` (`"channel name"`, UTF-16) with `kChannelNameLengthKey`
+  (UTF-16 units, terminator excluded: the header says only "number of
+  characters"), and `kChannelColorKey` (`"channel color"`, an opaque ARGB
+  `ColorSpec` stored with `setInt`). Nothing else: no index, UID, plug-in
+  location or image. A track without a color announces none and an empty name is
+  left out, as in `clap.track-info`; no default color is invented.
+- _Flow._ Unchanged from `clap.track-info`: `sync_track_info` -> `set_track_info`
+  -> `notify_track_info_changed`. For a VST3 controller `PluginInstance` keeps the
+  last track it handed over (`vst3_track_info`, starting empty, so a plugin never
+  hears of an empty track, and one that loses name and color hears an empty
+  list). `create_vst3_instance` gives a new instance its track right after the
+  controller exists (the spec allows `setChannelContextInfos` from
+  `Initialized`); a live instance is told only when the info differs. The
+  delivery is `queryInterface(IInfoListener)` on the controller then
+  `setChannelContextInfos`, off the audio thread, under the instance FFI gate
+  (`offrt_try_acquire`, 3 ms), with the CLAP retry (`take_undelivered_track_info`
+  -> `watch_plugin_edits` within 250 ms). The latest info wins after a busy
+  period. A crashed plugin is not called; a controller without `IInfoListener` is
+  left alone. No project state, command, event or `.echoes` change; nothing runs
+  on the audio thread.
+- _Messages between the two halves._ The host connects a dual-component plugin's
+  component and controller directly (`IConnectionPoint::connect` on both), so
+  their messages never pass through the host; there is nothing to relay and the
+  host implements no `notify`. What these plugins lacked was `createInstance`
+  answering for `IMessage`, which they now get. A relay would matter only for a
+  sandboxed VST3, which does not exist.
+- _Limits._ Not tried with a VST3 instrument (none installed). What a plugin does
+  with the name is not observable from the tests. `vst3/` imports `HostTrackInfo`
+  from `plugin_formats::clap::ffi`, a neutral type living in the CLAP crate. The
+  older VST3 code still answers `-1` for "no interface" (`host_context.rs`,
+  `component_handler.rs`, the `IBStream`), where `funknown.h` has `0x80004002` on
+  Windows: plugins test `!= kResultOk`, so it works, but it does not follow the
+  SDK. The new objects use the SDK values.
+
+Tests: `vst3/attribute_list.rs`, `vst3/message.rs`, `vst3/com_object.rs` (round
+trips, missing key, full list, bad arguments, cut string, reference counts, the
+last `release` frees, checked per object with a probe — no global counter),
+`vst3/host_context.rs` (`createInstance`: both ids, other ids, `cid != iid`, null
+arguments), `vst3/channel_context.rs` (name, no color, no name, neither, UTF-16
+length, 255-byte cut, exact ARGB, a listening controller and one without the
+interface), `plugin_system/vst3_track_info_tests.rs` (a hand-made plugin,
+`vst3/fake_plugin.rs`: announced once, rename, color removed, empty track, busy
+gate and retry), `plugin_system/ffi_lifecycle_tests.rs`
+(`vst3_real_controller_takes_host_messages_and_track_info`: TDR Nova implements
+`IInfoListener` and accepts the list, the host makes messages the plugin ignores
+without crashing). The render harness is unchanged: it holds no VST3 plugin.
 
 **Host `clap.note-ports` and `clap.note-name` (2026-10-14).** Checked against
 `clap/ext/note-ports.h` and `note-name.h` (no compat id for either).
