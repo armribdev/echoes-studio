@@ -695,3 +695,185 @@ fn vst3_instrument_reports_its_midi_controller_mapping() {
         map.param_for(CTRL_AFTER_TOUCH),
     );
 }
+
+/// Step 5 — a real controller is told its track, and the host creates messages
+/// for it: nothing crashes, and a controller that offers `IInfoListener` accepts
+/// the list.  What the plugin does with the name is not observable from here.
+#[test]
+fn vst3_real_controller_takes_host_messages_and_track_info() {
+    use crate::plugin_system::track_info::test_track;
+    use crate::project::AppProject;
+
+    let candidates = discover_all("ECHOES_TEST_VST3", "vst3");
+    if candidates.is_empty() {
+        eprintln!(
+            "{LOG} SKIP vst3_real_controller_takes_host_messages_and_track_info — no .vst3 found"
+        );
+        return;
+    }
+
+    let key = "harness:vst3:track-info";
+    for path in &candidates {
+        let Some(device_id) = first_vst3_id(path) else {
+            continue;
+        };
+        let mut host = PluginHost::new();
+        host.registry_mut().add(vst3_manifest(&device_id, path));
+        let mut project = AppProject::new();
+        project.tracks = vec![test_track("t1", "Lead", Some("#102030"), &[key])];
+        host.sync_track_info(&project);
+        let Ok(_node) = host.instantiate(key, &device_id, false) else {
+            continue;
+        };
+        let instance = host.instance_by_key(key).expect("instance registered");
+        eprintln!(
+            "{LOG} VST3 track-info target: {device_id}  ({})",
+            path.display()
+        );
+
+        check_vst3_track_info(&mut host, &mut project, &instance);
+        check_vst3_host_messages(&instance);
+        return;
+    }
+    panic!("no real VST3 could be instantiated by the engine");
+}
+
+/// QI of `object` for `iid`, giving the reference straight back.
+unsafe fn offers(
+    object: *mut crate::plugin_formats::vst3::ffi::FUnknown,
+    iid: &crate::plugin_formats::vst3::ffi::Tuid,
+) -> bool {
+    let mut found: *mut std::ffi::c_void = std::ptr::null_mut();
+    let result = ((*(*object).vtbl).query_interface)(object, iid, &mut found);
+    if result != 0 || found.is_null() {
+        return false;
+    }
+    let found = found as *mut crate::plugin_formats::vst3::ffi::FUnknown;
+    ((*(*found).vtbl).release)(found);
+    true
+}
+
+fn check_vst3_track_info(
+    host: &mut PluginHost,
+    project: &mut crate::project::AppProject,
+    instance: &PluginInstance,
+) {
+    use crate::plugin_formats::clap::ffi::HostTrackInfo;
+    use crate::plugin_formats::vst3::channel_context::notify_channel_context;
+    use crate::plugin_formats::vst3::ffi::{FUnknown, IID_IINFO_LISTENER};
+
+    let Some(controller) = instance.vst3_controller() else {
+        eprintln!("{LOG} T5 SKIP — this VST3 offers no edit controller");
+        return;
+    };
+    let object = controller.as_ptr() as *mut FUnknown;
+    let listens = unsafe { offers(object, &IID_IINFO_LISTENER) };
+    eprintln!("{LOG} T5 controller implements IInfoListener: {listens}");
+
+    {
+        let _gate = instance
+            .offrt_try_acquire(std::time::Duration::from_millis(50))
+            .expect("T5: an idle instance gives its FFI gate");
+        let info = HostTrackInfo::new("Lead", Some([0x10, 0x20, 0x30]));
+        let told = unsafe { notify_channel_context(object, &info) };
+        assert_eq!(
+            told, listens,
+            "T5: a controller with IInfoListener must accept the list"
+        );
+    }
+
+    // What the app does on a rename and a recolor: no recompile, no crash.
+    project.tracks[0].name = "Pad".into();
+    project.tracks[0].color = None;
+    host.sync_track_info(project);
+    host.notify_pending_track_info();
+    assert!(
+        !instance.has_crashed(),
+        "T5: telling the plugin its track must not crash it"
+    );
+}
+
+fn check_vst3_host_messages(instance: &PluginInstance) {
+    use crate::plugin_formats::vst3::ffi::{
+        FUnknown, IAttributeListVtbl, IConnectionPoint, IHostApplicationVtbl, IMessageVtbl,
+        IID_IATTRIBUTE_LIST, IID_IBSTREAM, IID_ICONNECTION_POINT, IID_IMESSAGE, K_RESULT_FALSE,
+        K_RESULT_OK,
+    };
+    use crate::plugin_formats::vst3::host_context::host_application;
+    use std::ffi::{c_void, CString};
+
+    let host_app = host_application();
+    let create = unsafe { (*(*(host_app as *const *const IHostApplicationVtbl))).create_instance };
+
+    let mut refused: *mut c_void = std::ptr::null_mut();
+    let result = unsafe { create(host_app, &IID_IBSTREAM, &IID_IBSTREAM, &mut refused) };
+    assert_eq!(
+        result, K_RESULT_FALSE,
+        "T5: an unknown interface is refused"
+    );
+    assert!(refused.is_null());
+
+    let mut list: *mut c_void = std::ptr::null_mut();
+    let result = unsafe {
+        create(
+            host_app,
+            &IID_IATTRIBUTE_LIST,
+            &IID_IATTRIBUTE_LIST,
+            &mut list,
+        )
+    };
+    assert_eq!(result, K_RESULT_OK, "T5: the host makes an IAttributeList");
+    let list = list as *mut FUnknown;
+    unsafe { ((*(*list).vtbl).release)(list) };
+
+    let mut raw: *mut c_void = std::ptr::null_mut();
+    let result = unsafe { create(host_app, &IID_IMESSAGE, &IID_IMESSAGE, &mut raw) };
+    assert_eq!(result, K_RESULT_OK, "T5: the host makes an IMessage");
+    let message = raw as *mut FUnknown;
+    unsafe {
+        let vtbl = &*((*message).vtbl as *const IMessageVtbl);
+        (vtbl.set_message_id)(message, CString::new("EchoesHarness").unwrap().as_ptr());
+        let attributes = (vtbl.get_attributes)(message);
+        let attributes_vtbl = &*((*attributes).vtbl as *const IAttributeListVtbl);
+        (attributes_vtbl.set_int)(attributes, CString::new("n").unwrap().as_ptr(), 1);
+    }
+
+    // As a plugin half would: through the connection points, which the host
+    // wired together; a message the plugin does not know must be ignored.
+    let Some((component, _)) = instance.vst3_handles() else {
+        return;
+    };
+    let halves = [
+        ("component", component.as_ptr() as *mut FUnknown),
+        (
+            "controller",
+            instance
+                .vst3_controller()
+                .map_or(std::ptr::null_mut(), |c| c.as_ptr() as *mut FUnknown),
+        ),
+    ];
+    {
+        let _gate = instance
+            .offrt_try_acquire(std::time::Duration::from_millis(50))
+            .expect("T5: an idle instance gives its FFI gate");
+        for (name, half) in halves {
+            if half.is_null() {
+                continue;
+            }
+            let mut found: *mut c_void = std::ptr::null_mut();
+            let queried = unsafe {
+                ((*(*half).vtbl).query_interface)(half, &IID_ICONNECTION_POINT, &mut found)
+            };
+            if queried != K_RESULT_OK || found.is_null() {
+                eprintln!("{LOG} T5 {name} has no IConnectionPoint");
+                continue;
+            }
+            let point = found as *mut IConnectionPoint;
+            let answer = unsafe { ((*(*point).vtbl).notify)(point, message as *mut c_void) };
+            eprintln!("{LOG} T5 {name} answered the message with {answer:#x}");
+            unsafe { ((*(*point).vtbl).release)(point) };
+        }
+    }
+    let remaining = unsafe { ((*(*message).vtbl).release)(message) };
+    eprintln!("{LOG} T5 message references left after release: {remaining}");
+}
