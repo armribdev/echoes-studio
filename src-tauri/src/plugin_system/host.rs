@@ -37,8 +37,10 @@ use crate::plugin_formats::clap::ffi::{
 use crate::plugin_formats::clap::host::decode_plugin_id as clap_decode_id;
 use crate::plugin_formats::clap::params::read_clap_params;
 use crate::plugin_formats::clap::wrapper::ClapWrapperNode;
-use crate::plugin_formats::vst3::ffi::{instantiate_processor, Vst3Library};
+use crate::plugin_formats::vst3::ffi::{create_controller, instantiate_processor, Vst3Library};
 use crate::plugin_formats::vst3::host::decode_plugin_id as vst3_decode_id;
+use crate::plugin_formats::vst3::host_context::{component_handler, host_application};
+use crate::plugin_formats::vst3::params::read_vst3_params;
 use crate::plugin_formats::vst3::wrapper::VstWrapperNode;
 use crate::plugin_system::bridge::{locate_bridge_exe, BridgedPlugin};
 use crate::plugin_system::bridged_node::{BridgedInstrument, BridgedNode};
@@ -539,7 +541,8 @@ impl PluginHost {
         let (lib, factory) = Vst3Library::load(dll).map_err(HostError::InstantiationFailed)?;
 
         let (comp, proc) = unsafe {
-            instantiate_processor(factory, &cid).map_err(HostError::InstantiationFailed)?
+            instantiate_processor(factory, &cid, host_application())
+                .map_err(HostError::InstantiationFailed)?
         };
 
         unsafe {
@@ -551,7 +554,19 @@ impl PluginHost {
         let proc_nn = NonNull::new(proc)
             .ok_or_else(|| HostError::InstantiationFailed("null IAudioProcessor".into()))?;
 
-        let instance = PluginInstance::new_vst3(plugin_id, comp_nn, proc_nn, lib);
+        // Without a controller the plugin still plays; it only lacks parameters
+        // and an editor.
+        let controller =
+            match unsafe { create_controller(&lib, comp, host_application(), component_handler()) }
+            {
+                Ok(controller) => Some(controller),
+                Err(e) => {
+                    eprintln!("[host] VST3 '{plugin_id}' has no edit controller: {e}");
+                    None
+                }
+            };
+
+        let instance = PluginInstance::new_vst3(plugin_id, comp_nn, proc_nn, controller, lib);
 
         let node: Box<dyn AudioNode> = Box::new(VstWrapperNode::new(Arc::clone(&instance)));
 
@@ -793,8 +808,8 @@ impl PluginHost {
         Ok(record.instance.push_param(native_id, normalised))
     }
 
-    /// Parameters of a loaded placement, as the plugin reports them (ADR-021).
-    /// Only CLAP is wired so far; VST3 reports none yet.  Fails if the plugin
+    /// Parameters of a loaded placement, as the plugin reports them (ADR-021):
+    /// plain ranges for CLAP, normalised `0..1` for VST3.  Fails if the plugin
     /// is busy in a block that outlasts the harvest budget — the caller retries.
     pub fn plugin_params(&self, instance_key: &str) -> Result<Vec<PluginParamInfo>, HostError> {
         let instance = &self
@@ -805,18 +820,27 @@ impl PluginHost {
         if let Some(bridged) = instance.bridge() {
             return Ok(bridged.params());
         }
-        let Some(plugin) = instance.clap_plugin() else {
+        let clap_plugin = instance.clap_plugin();
+        let vst3_controller = instance.vst3_controller();
+        if clap_plugin.is_none() && vst3_controller.is_none() {
             return Ok(Vec::new());
-        };
+        }
         let _gate = instance
             .offrt_try_acquire(FFI_GATE_HARVEST_BUDGET)
             .ok_or_else(|| HostError::InstantiationFailed("plugin busy, retry".into()))?;
-        // SAFETY: live CLAP instance held by its record; FFI gate held above.
-        Ok(unsafe { read_clap_params(plugin) })
+        // SAFETY: live instance held by its record; FFI gate held above.
+        Ok(unsafe {
+            match (clap_plugin, vst3_controller) {
+                (Some(plugin), _) => read_clap_params(plugin),
+                (None, Some(controller)) => read_vst3_params(controller.as_ptr()),
+                (None, None) => Vec::new(),
+            }
+        })
     }
 
-    /// The plugin's own text for a plain value of one parameter (`-6.0 dB`);
-    /// `None` when the plugin has no text for it or is busy in a block.
+    /// The plugin's own text for a value of one parameter (`-6.0 dB`), in the
+    /// units [`plugin_params`](Self::plugin_params) reports; `None` when the
+    /// plugin has no text for it or is busy in a block.
     pub fn plugin_param_text(
         &self,
         instance_key: &str,
@@ -826,7 +850,7 @@ impl PluginHost {
         self.records
             .get(instance_key)?
             .instance
-            .clap_param_text(native_id, value)
+            .param_text(native_id, value)
     }
 
     #[cfg(test)]

@@ -318,7 +318,7 @@ fn value_modulation(controls: &[PluginParamControl], instance: &PluginInstance) 
         .iter()
         .filter(|param| !was_modulated(param.native_id))
     {
-        if let Some(plain) = instance.clap_param_value(param.native_id) {
+        if let Some(plain) = instance.param_value(param.native_id) {
             param.set_base(param.range.normalise(plain as f32));
         }
     }

@@ -775,161 +775,10 @@ unsafe fn fit_clap_gui_to_dpi(
 }
 
 use crate::plugin_formats::vst3::ffi::{
-    FUnknown, IComponentHandlerVtbl, IHostApplicationVtbl, IPlugFrameVtbl, IPlugView,
-    IPlugViewContentScaleSupport, TResult, Tuid, ViewRect, IID_FUNKNOWN, IID_ICOMPONENT_HANDLER,
-    IID_IHOST_APPLICATION, IID_IPLUG_FRAME, IID_IPLUG_VIEW_CONTENT_SCALE_SUPPORT, K_RESULT_FALSE,
-    K_RESULT_OK,
+    FUnknown, IPlugFrameVtbl, IPlugView, IPlugViewContentScaleSupport, TResult, Tuid, ViewRect,
+    IID_FUNKNOWN, IID_IPLUG_FRAME, IID_IPLUG_VIEW_CONTENT_SCALE_SUPPORT, K_RESULT_OK,
 };
-
-fn tuid_eq(a: *const Tuid, b: &Tuid) -> bool {
-    if a.is_null() {
-        return false;
-    }
-    unsafe { (*a) == *b }
-}
-
-unsafe extern "C" fn vst3_refcount_addref(_: *mut FUnknown) -> u32 {
-    1
-}
-unsafe extern "C" fn vst3_refcount_release(_: *mut FUnknown) -> u32 {
-    1
-}
-
-// Phase 2c park: the audio-side `instantiate_processor` currently passes a
-// null host context to `IComponent::initialize` (single shared instance, so
-// the GUI can no longer hand its own context).  The vtable below is retained
-// for Phase 4, when `instantiate_processor` will be threaded with a real
-// host-application pointer and the GUI will reach it through the shared
-// `Arc<PluginInstance>`.
-
-#[allow(dead_code)] // Phase 2c park
-unsafe extern "C" fn host_app_qi(
-    this: *mut FUnknown,
-    iid: *const Tuid,
-    obj: *mut *mut c_void,
-) -> TResult {
-    if obj.is_null() {
-        return -1;
-    }
-    if tuid_eq(iid, &IID_IHOST_APPLICATION) || tuid_eq(iid, &IID_FUNKNOWN) {
-        *obj = this as *mut c_void;
-        return K_RESULT_OK;
-    }
-    *obj = null_mut();
-    -1
-}
-
-#[allow(dead_code)] // Phase 2c park
-unsafe extern "C" fn host_app_get_name(_this: *mut FUnknown, name: *mut u16) -> TResult {
-    if name.is_null() {
-        return -1;
-    }
-    let host_name = "Echoes Studio";
-    let bytes: Vec<u16> = host_name.encode_utf16().take(127).collect();
-    for (i, &b) in bytes.iter().enumerate() {
-        *name.add(i) = b;
-    }
-    *name.add(bytes.len()) = 0;
-    K_RESULT_OK
-}
-
-#[allow(dead_code)] // Phase 2c park
-unsafe extern "C" fn host_app_create_instance(
-    _this: *mut FUnknown,
-    _cid: *const Tuid,
-    _iid: *const Tuid,
-    obj: *mut *mut c_void,
-) -> TResult {
-    // We don't expose IMessage / IAttributeList yet; plugins fall back.
-    if !obj.is_null() {
-        *obj = null_mut();
-    }
-    K_RESULT_FALSE
-}
-
-#[allow(dead_code)] // Phase 2c park
-static HOST_APP_VTBL: IHostApplicationVtbl = IHostApplicationVtbl {
-    query_interface: host_app_qi,
-    add_ref: vst3_refcount_addref,
-    release: vst3_refcount_release,
-    get_name: host_app_get_name,
-    create_instance: host_app_create_instance,
-};
-
-#[allow(dead_code)] // Phase 2c park
-#[repr(C)]
-struct HostApplication {
-    vtbl: *const IHostApplicationVtbl,
-}
-
-// SAFETY: `vtbl` is a `'static` pointer to an immutable static; all callbacks
-// are stateless and re-entrant-safe.
-unsafe impl Sync for HostApplication {}
-
-#[allow(dead_code)] // Phase 2c park
-static HOST_APP: HostApplication = HostApplication {
-    vtbl: &HOST_APP_VTBL,
-};
-
-#[allow(dead_code)] // Phase 2c park
-fn host_app_as_funknown() -> *mut FUnknown {
-    &HOST_APP as *const HostApplication as *mut FUnknown
-}
-
-unsafe extern "C" fn handler_qi(
-    this: *mut FUnknown,
-    iid: *const Tuid,
-    obj: *mut *mut c_void,
-) -> TResult {
-    if obj.is_null() {
-        return -1;
-    }
-    if tuid_eq(iid, &IID_ICOMPONENT_HANDLER) || tuid_eq(iid, &IID_FUNKNOWN) {
-        *obj = this as *mut c_void;
-        return K_RESULT_OK;
-    }
-    *obj = null_mut();
-    -1
-}
-
-unsafe extern "C" fn handler_begin_edit(_: *mut FUnknown, _: u32) -> TResult {
-    K_RESULT_OK
-}
-unsafe extern "C" fn handler_perform_edit(_: *mut FUnknown, _: u32, _: f64) -> TResult {
-    K_RESULT_OK
-}
-unsafe extern "C" fn handler_end_edit(_: *mut FUnknown, _: u32) -> TResult {
-    K_RESULT_OK
-}
-unsafe extern "C" fn handler_restart_component(_: *mut FUnknown, _: i32) -> TResult {
-    K_RESULT_OK
-}
-
-static HANDLER_VTBL: IComponentHandlerVtbl = IComponentHandlerVtbl {
-    query_interface: handler_qi,
-    add_ref: vst3_refcount_addref,
-    release: vst3_refcount_release,
-    begin_edit: handler_begin_edit,
-    perform_edit: handler_perform_edit,
-    end_edit: handler_end_edit,
-    restart_component: handler_restart_component,
-};
-
-#[repr(C)]
-struct ComponentHandler {
-    vtbl: *const IComponentHandlerVtbl,
-}
-
-// SAFETY: see HostApplication above — stateless static, vtbl is `'static`.
-unsafe impl Sync for ComponentHandler {}
-
-static COMPONENT_HANDLER: ComponentHandler = ComponentHandler {
-    vtbl: &HANDLER_VTBL,
-};
-
-fn component_handler_as_funknown() -> *mut FUnknown {
-    &COMPONENT_HANDLER as *const ComponentHandler as *mut FUnknown
-}
+use crate::plugin_formats::vst3::host_context::{static_add_ref, static_release, tuid_eq};
 
 // Per-editor instance so `resizeView` can route to the right container HWND.
 
@@ -977,8 +826,8 @@ unsafe extern "C" fn frame_resize_view(
 
 static PLUG_FRAME_VTBL: IPlugFrameVtbl = IPlugFrameVtbl {
     query_interface: frame_qi,
-    add_ref: vst3_refcount_addref,
-    release: vst3_refcount_release,
+    add_ref: static_add_ref,
+    release: static_release,
     resize_view: frame_resize_view,
 };
 
@@ -1026,73 +875,28 @@ unsafe fn fit_vst3_view_to_dpi(view: *mut IPlugView, hwnd: *mut c_void, dpi: u32
 /// the editor window closes — even if the audio side retires its own clone in
 /// the meantime (e.g. through a recompile).
 ///
-/// Phase 2c: this function no longer instantiates a second IComponent — it
-/// reuses the audio-side one through `instance.vst3_handles()`.  Closes A1 of
-/// the plugin-GUI audit (one COM object per device, audio + GUI sharing).
+/// The view comes from the instance's own edit controller, created with the
+/// instance and released by `PluginInstance::Drop` — one COM object per device
+/// (A1 of the plugin-GUI audit).
 pub unsafe fn open_vst3_editor(
     instance: Arc<PluginInstance>,
     name: &str,
     effect_id: &str,
     open_editors: Arc<Mutex<HashMap<String, usize>>>,
 ) -> Result<usize, String> {
-    use crate::plugin_formats::vst3::ffi::{
-        create_separate_controller, teardown_separate_controller, IEditController,
-        SeparateController, IID_IEDIT_CONTROLLER,
-    };
-
     let _running = instance.mark(PluginThread::Ui);
-    // MUST NOT call `initialize` again — already done at instantiation (VST3 spec).
-    let (comp_nn, _proc_nn) = instance
-        .vst3_handles()
-        .ok_or_else(|| "VST3 GUI: shared instance has no VST3 handles".to_string())?;
-    let comp = comp_nn.as_ptr();
-
-    // Single-component plugins expose IEditController through QI on the
-    // component.  Dual-component plugins (audit V4) don't — fall back to
-    // creating, initialising, and connecting a separate controller.  `separate`
-    // is `Some` only in that case and owns the extra teardown.
-    let mut ctrl_raw: *mut c_void = null_mut();
-    let r = ((*(*comp).vtbl).query_interface)(
-        comp,
-        IID_IEDIT_CONTROLLER.as_ptr() as *const Tuid,
-        &mut ctrl_raw,
-    );
-    let (ctrl, mut separate): (*mut IEditController, Option<SeparateController>) =
-        if r == K_RESULT_OK && !ctrl_raw.is_null() {
-            (ctrl_raw as *mut IEditController, None)
-        } else {
-            let library = instance
-                .vst3_library()
-                .ok_or_else(|| "VST3 GUI: shared instance has no VST3 library".to_string())?;
-            let sc = create_separate_controller(&library, comp, host_app_as_funknown())
-                .map_err(|e| format!("VST3 GUI: dual-component controller setup failed: {e}"))?;
-            (sc.controller, Some(sc))
-        };
-
-    // Release the controller using whichever teardown matches how it was
-    // acquired: the QI'd ref is a plain release; a separate controller needs
-    // disconnect + terminate + release of every ref we added.
-    let release_controller = |separate: &mut Option<SeparateController>,
-                              ctrl: *mut IEditController| unsafe {
-        if let Some(sc) = separate.take() {
-            teardown_separate_controller(sc);
-        } else {
-            ((*(*ctrl).vtbl).release)(ctrl as *mut _);
-        }
-    };
-
-    // Many plugins crash without a non-null component handler.
-    let _ = ((*(*ctrl).vtbl).set_component_handler)(ctrl, component_handler_as_funknown());
+    let ctrl = instance
+        .vst3_controller()
+        .ok_or_else(|| "VST3 GUI: the plugin has no edit controller".to_string())?
+        .as_ptr();
 
     let view = ((*(*ctrl).vtbl).create_view)(ctrl, c"editor".as_ptr().cast());
     if view.is_null() {
-        release_controller(&mut separate, ctrl);
         return Err("VST3 GUI: IEditController::createView returned null".into());
     }
 
     if ((*(*view).vtbl).is_platform_type_supported)(view, c"HWND".as_ptr().cast()) != K_RESULT_OK {
         ((*(*view).vtbl).release)(view as *mut _);
-        release_controller(&mut separate, ctrl);
         return Err("VST3 GUI: plugin view does not support HWND".into());
     }
 
@@ -1114,12 +918,10 @@ pub unsafe fn open_vst3_editor(
     // Build cleanup + tick closures.  The shared `Arc<PluginInstance>` is
     // captured here so the plugin stays live until the editor closes.  The
     // closure does NOT call `terminate` on IComponent and does NOT release
-    // its primary ref — those are owned by `PluginInstance::Drop`.  It only
-    // tears down the editor-side resources (view, frame, the controller ref —
-    // plus the separate-controller wiring when this is a dual-component plugin).
+    // its primary ref, nor the controller — those are owned by
+    // `PluginInstance::Drop`.  It only tears down the view and the frame.
     let frame_owned = plug_frame;
     let instance_owned = instance.clone();
-    let mut separate_owned = separate;
     let cleanup: Box<dyn FnOnce()> = Box::new(move || {
         let _frame = frame_owned;
         let _instance = instance_owned; // keep plugin alive through teardown
@@ -1130,10 +932,6 @@ pub unsafe fn open_vst3_editor(
             let _ = ((*(*view).vtbl).set_frame)(view, null_mut());
             ((*(*view).vtbl).release)(view as *mut _);
         }
-        // Release the controller (and, for dual-component, disconnect +
-        // terminate it).  The primary IComponent ref is held by
-        // PluginInstance and untouched here.
-        release_controller(&mut separate_owned, ctrl);
         // _instance Arc drops last — if this was the last clone, the host
         // already released its own clone earlier, and PluginInstance::Drop
         // now runs terminate + release on the IComponent.

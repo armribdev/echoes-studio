@@ -27,7 +27,7 @@ Légende : ✅ résolu · ◐ partiel · ⬜ ouvert · ❓ non vérifié (laiss�
 | 3.1       | ✅   | File SPSC des paramètres (ADR-008)                                                                                     |
 | 3.2       | ◐    | Instruments CLAP oui ; VST3 non                                                                                        |
 | 3.3       | ◐    | Sidechain et multi-sorties CLAP réels (ADR-014) ; VST3 `getBusInfo` ignoré                                             |
-| 3.4       | ◐    | Paramètres CLAP énumérés (`clap/params.rs`) ; VST3 non vérifié                                                         |
+| 3.4       | ✅    | Paramètres CLAP (`clap/params.rs`) et VST3 (`vst3/params.rs`, 2026-10-21) énumérés                                  |
 | 3.5       | ✅   | Persistance d'état via `plugin_system/state.rs` (ADR-010) ; les `save_state` des wrappers restent vides par conception |
 | 3.6       | ✅   | `latency_samples` surchargé (CLAP, VST3, sandbox)                                                                      |
 | 3.7–3.9   | ✅   | `Arc<PluginInstance>` unique, cycle de vie atomique, paramètres adressables (ADR-007/008/016/017)                      |

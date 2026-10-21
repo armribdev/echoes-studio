@@ -393,6 +393,7 @@ fn vst3_real_instance_full_lifecycle() {
             Ok(node) => {
                 eprintln!("{LOG} VST3 target: {device_id}  ({})", path.display());
                 let instance = host.instance_by_key(key).expect("instance registered");
+                check_vst3_params(&host, key, &instance);
                 run_lifecycle(
                     host,
                     Subject {
@@ -435,6 +436,52 @@ fn vst3_real_instance_full_lifecycle() {
         "no real VST3 could be instantiated by the engine ({} candidate(s) all failed): {:#?}",
         candidates.len(),
         divergences
+    );
+}
+
+/// T0 (VST3) — the edit controller lives with the instance: parameters are
+/// listed with their text, and a state round-trip keeps their values.
+fn check_vst3_params(host: &PluginHost, key: &str, instance: &PluginInstance) {
+    if instance.vst3_controller().is_none() {
+        eprintln!("{LOG} T0 SKIP — this VST3 offers no edit controller");
+        return;
+    }
+    let params = host
+        .plugin_params(key)
+        .expect("T0: parameters must be readable");
+    eprintln!("{LOG} T0 {} parameter(s)", params.len());
+    let Some(param) = params.iter().find(|param| param.automatable) else {
+        eprintln!("{LOG} T0 no automatable parameter — text check skipped");
+        return;
+    };
+    assert_eq!(
+        (param.min, param.max),
+        (0.0, 1.0),
+        "T0: VST3 ranges are normalised"
+    );
+    let text = host.plugin_param_text(key, param.native_id, param.default);
+    eprintln!(
+        "{LOG} T0 '{}' default {} → {text:?}",
+        param.name, param.default
+    );
+    assert!(
+        text.is_some(),
+        "T0: the plugin must render its own parameter text"
+    );
+
+    let before = instance.param_value(param.native_id);
+    let Some(state) = instance.save_state_blob() else {
+        eprintln!("{LOG} T0 the plugin reports no state — round-trip skipped");
+        return;
+    };
+    assert!(
+        instance.load_state_blob(&state),
+        "T0: VST3 state must reload"
+    );
+    assert_eq!(
+        instance.param_value(param.native_id),
+        before,
+        "T0: a state round-trip keeps the controller's value"
     );
 }
 

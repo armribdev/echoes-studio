@@ -564,7 +564,7 @@ impl Vst3Library {
 /// COM byte order on Windows like `IID_ICOMPONENT` (F1/V4 — the GUI half of the
 /// IID byte-order defect; without the swap QI/createInstance return E_NOINTERFACE).
 pub const IID_IEDIT_CONTROLLER: Tuid = interface_iid([
-    0xDC, 0xD7, 0xBB, 0xE3, 0x77, 0x42, 0x44, 0x8D, 0xA8, 0x74, 0xAA, 0xCC, 0x97, 0x9C, 0x9D, 0x2C,
+    0xDC, 0xD7, 0xBB, 0xE3, 0x77, 0x42, 0x44, 0x8D, 0xA8, 0x74, 0xAA, 0xCC, 0x97, 0x9C, 0x75, 0x9E,
 ]);
 
 #[repr(C)]
@@ -582,24 +582,61 @@ pub struct IEditControllerVtbl {
     // IPluginBase (3–4)
     pub initialize: unsafe extern "C" fn(*mut IEditController, *mut FUnknown) -> TResult,
     pub terminate: unsafe extern "C" fn(*mut IEditController) -> TResult,
-    // IEditController own — methods 5–16 mostly unused; *const c_void as placeholder
-    // (5) setComponentState — typed so a separate controller can be synced to the
-    // processor's current state (dual-component plugins, audit V4).
+    // IEditController own (5–17); untyped slots are `*const c_void` placeholders.
+    // (5) setComponentState — syncs a separate controller to the processor's
+    // state (dual-component plugins, audit V4).
     pub set_component_state: unsafe extern "C" fn(*mut IEditController, *mut c_void) -> TResult,
-    pub _pad6: *const c_void,  // setState
-    pub _pad7: *const c_void,  // getState
-    pub _pad8: *const c_void,  // getParameterCount
-    pub _pad9: *const c_void,  // getParameterInfo
-    pub _pad10: *const c_void, // getParamStringByValue
+    pub _pad6: *const c_void, // setState
+    pub _pad7: *const c_void, // getState
+    pub get_parameter_count: unsafe extern "C" fn(*mut IEditController) -> i32,
+    pub get_parameter_info:
+        unsafe extern "C" fn(*mut IEditController, i32, *mut ParameterInfo) -> TResult,
+    pub get_param_string_by_value:
+        unsafe extern "C" fn(*mut IEditController, u32, f64, *mut u16) -> TResult,
     pub _pad11: *const c_void, // getParamValueByString
     pub _pad12: *const c_void, // normalizedParamToPlain
     pub _pad13: *const c_void, // plainParamToNormalized
-    pub _pad14: *const c_void, // getParamNormalized
+    pub get_param_normalized: unsafe extern "C" fn(*mut IEditController, u32) -> f64,
     pub _pad15: *const c_void, // setParamNormalized
     // (16) setComponentHandler — typed so we can wire IComponentHandler
     pub set_component_handler: unsafe extern "C" fn(*mut IEditController, *mut FUnknown) -> TResult,
     // (17) createView — the one we call
     pub create_view: unsafe extern "C" fn(*mut IEditController, *const u8) -> *mut IPlugView,
+}
+
+/// Steinberg `String128`: UTF-16, NUL-terminated.
+pub type String128 = [u16; 128];
+
+/// `Vst::ParameterInfo`, as `IEditController::getParameterInfo` fills it.
+#[repr(C)]
+pub struct ParameterInfo {
+    pub id: u32,
+    pub title: String128,
+    pub short_title: String128,
+    pub units: String128,
+    pub step_count: i32,
+    pub default_normalized_value: f64,
+    pub unit_id: i32,
+    pub flags: i32,
+}
+
+const _: () = assert!(
+    std::mem::size_of::<ParameterInfo>() == 792,
+    "ParameterInfo layout drift"
+);
+
+/// `ParameterInfo::flags` bits.
+pub const PARAM_CAN_AUTOMATE: i32 = 1 << 0;
+pub const PARAM_IS_READ_ONLY: i32 = 1 << 1;
+pub const PARAM_IS_HIDDEN: i32 = 1 << 4;
+
+/// Decodes a `String128` up to its NUL.
+pub fn string128_to_string(text: &[u16]) -> String {
+    let end = text
+        .iter()
+        .position(|&unit| unit == 0)
+        .unwrap_or(text.len());
+    String::from_utf16_lossy(&text[..end])
 }
 
 /// Plugin-preferred view rectangle (in screen pixels).
@@ -678,7 +715,7 @@ pub struct IPlugViewContentScaleSupportVtbl {
 // processor and controller can exchange IMessage notifications.
 
 pub const IID_ICONNECTION_POINT: Tuid = interface_iid([
-    0x70, 0xA4, 0x15, 0x6F, 0x6E, 0x6E, 0x65, 0x63, 0x74, 0x69, 0x6F, 0x6E, 0x50, 0x6F, 0x69, 0x6E,
+    0x70, 0xA4, 0x15, 0x6F, 0x6E, 0x6E, 0x40, 0x26, 0x98, 0x91, 0x48, 0xBF, 0xAA, 0x60, 0xD8, 0xD1,
 ]);
 
 #[repr(C)]
@@ -783,6 +820,63 @@ pub unsafe fn teardown_separate_controller(sc: SeparateController) {
     ((*(*sc.controller).vtbl).release)(sc.controller as *mut _);
 }
 
+/// The `IEditController` of a live instance: the component itself for a
+/// single-component plugin, or a separately created one (audit V4).
+pub enum Vst3Controller {
+    Shared(std::ptr::NonNull<IEditController>),
+    Separate(SeparateController),
+}
+
+impl Vst3Controller {
+    pub fn as_ptr(&self) -> *mut IEditController {
+        match self {
+            Self::Shared(controller) => controller.as_ptr(),
+            Self::Separate(separate) => separate.controller,
+        }
+    }
+}
+
+/// Find (single-component) or create (dual-component) the controller of `comp`
+/// and give it the host's component handler.
+///
+/// # Safety
+/// As [`create_separate_controller`].
+pub unsafe fn create_controller(
+    library: &Vst3Library,
+    comp: *mut IComponent,
+    host_context: *mut FUnknown,
+    component_handler: *mut FUnknown,
+) -> Result<Vst3Controller, String> {
+    let mut shared: *mut c_void = std::ptr::null_mut();
+    let r = ((*(*comp).vtbl).query_interface)(
+        comp,
+        IID_IEDIT_CONTROLLER.as_ptr() as *const Tuid,
+        &mut shared,
+    );
+    let controller = match std::ptr::NonNull::new(shared as *mut IEditController) {
+        Some(shared) if r == K_RESULT_OK => Vst3Controller::Shared(shared),
+        _ => Vst3Controller::Separate(create_separate_controller(library, comp, host_context)?),
+    };
+    let ctrl = controller.as_ptr();
+    ((*(*ctrl).vtbl).set_component_handler)(ctrl, component_handler);
+    Ok(controller)
+}
+
+/// Reverse [`create_controller`].  Must run before the component's `terminate`.
+///
+/// # Safety
+/// `controller` must come from [`create_controller`].  Call off the audio thread.
+pub unsafe fn release_controller(controller: Vst3Controller) {
+    let ctrl = controller.as_ptr();
+    ((*(*ctrl).vtbl).set_component_handler)(ctrl, std::ptr::null_mut());
+    match controller {
+        Vst3Controller::Shared(_) => {
+            ((*(*ctrl).vtbl).release)(ctrl);
+        }
+        Vst3Controller::Separate(separate) => teardown_separate_controller(separate),
+    }
+}
+
 /// Copy the processor's current state into the controller so the editor opens
 /// with the right values (`IComponent::getState` → `IEditController::setComponentState`).
 /// Best-effort: a plugin that reports no state simply leaves the controller at
@@ -839,7 +933,7 @@ unsafe fn query_connection_point(
 // is the documented fall-back; well-behaved plugins must accept it.
 
 pub const IID_IHOST_APPLICATION: Tuid = interface_iid([
-    0x58, 0xE5, 0x95, 0xCD, 0x9A, 0x2C, 0x44, 0x49, 0xAD, 0xCA, 0xED, 0xA9, 0x96, 0xDC, 0xEA, 0xA0,
+    0x58, 0xE5, 0x95, 0xCC, 0xDB, 0x2D, 0x49, 0x69, 0x8B, 0x6A, 0xAF, 0x8C, 0x36, 0xA6, 0x64, 0xE5,
 ]);
 
 #[repr(C)]
@@ -859,7 +953,7 @@ pub struct IHostApplicationVtbl {
 // non-null and crash on the first knob touch without one.
 
 pub const IID_ICOMPONENT_HANDLER: Tuid = interface_iid([
-    0x93, 0xA0, 0xBE, 0xA3, 0x94, 0xB8, 0xB4, 0x85, 0xBC, 0xBE, 0x57, 0xDB, 0x18, 0xA5, 0x2D, 0xB7,
+    0x93, 0xA0, 0xBE, 0xA3, 0x0B, 0xD0, 0x45, 0xDB, 0x8E, 0x89, 0x0B, 0x0C, 0xC1, 0xE4, 0x6A, 0xC6,
 ]);
 
 #[repr(C)]
@@ -877,7 +971,7 @@ pub struct IComponentHandlerVtbl {
 // Set on the IPlugView so the plugin can request a resize of its container.
 
 pub const IID_IPLUG_FRAME: Tuid = interface_iid([
-    0x36, 0x7F, 0xAF, 0x01, 0xAF, 0xA9, 0x46, 0x93, 0x8D, 0x4D, 0xA2, 0xA0, 0xED, 0x05, 0x70, 0xE6,
+    0x36, 0x7F, 0xAF, 0x01, 0xAF, 0xA9, 0x46, 0x93, 0x8D, 0x4D, 0xA2, 0xA0, 0xED, 0x08, 0x82, 0xA3,
 ]);
 
 #[repr(C)]
@@ -917,6 +1011,7 @@ pub unsafe fn enumerate_classes(factory: *mut IPluginFactory) -> Vec<([u8; 16], 
 pub unsafe fn instantiate_processor(
     factory: *mut IPluginFactory,
     cid: &[u8; 16],
+    host_context: *mut FUnknown,
 ) -> Result<(*mut IComponent, *mut IAudioProcessor), String> {
     // Create IComponent
     let mut component: *mut c_void = std::ptr::null_mut();
@@ -931,8 +1026,7 @@ pub unsafe fn instantiate_processor(
     }
     let comp = component as *mut IComponent;
 
-    // Initialize with a null host context (acceptable for audio-only hosts)
-    let r = ((*(*comp).vtbl).initialize)(comp, std::ptr::null_mut());
+    let r = ((*(*comp).vtbl).initialize)(comp, host_context);
     if r != K_RESULT_OK && r != K_RESULT_FALSE {
         ((*(*comp).vtbl).release)(comp);
         return Err(format!("IComponent::initialize failed: {r}"));
@@ -1152,4 +1246,87 @@ pub unsafe fn write_component_state(comp: *mut IComponent, bytes: &[u8]) -> bool
     let mut stream = HostStream::with_data(bytes.to_vec());
     let ib = stream.as_mut() as *mut HostStream as *mut c_void;
     ((*(*comp).vtbl).set_state)(comp, ib) == K_RESULT_OK
+}
+
+/// Hand a restored processor state to a separate controller
+/// (`IEditController::setComponentState`), so its parameters match the sound.
+/// A single-component controller already shares the component's state.
+///
+/// # Safety
+/// As [`read_component_state`].
+pub unsafe fn sync_controller_to_state(controller: &Vst3Controller, bytes: &[u8]) {
+    let Vst3Controller::Separate(separate) = controller else {
+        return;
+    };
+    let mut stream = HostStream::with_data(bytes.to_vec());
+    let ib = stream.as_mut() as *mut HostStream as *mut c_void;
+    ((*(*separate.controller).vtbl).set_component_state)(separate.controller, ib);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// An interface IID in the SDK's `DECLARE_CLASS_IID (I, l1, l2, l3, l4)` form.
+    fn sdk_iid(l1: u32, l2: u32, l3: u32, l4: u32) -> Tuid {
+        let mut bytes = [0u8; 16];
+        for (chunk, long) in bytes.chunks_mut(4).zip([l1, l2, l3, l4]) {
+            chunk.copy_from_slice(&long.to_be_bytes());
+        }
+        interface_iid(bytes)
+    }
+
+    #[test]
+    fn interface_iids_match_the_sdk() {
+        let expected = [
+            (
+                IID_ICOMPONENT,
+                sdk_iid(0xE831FF31, 0xF2D54301, 0x928EBBEE, 0x25697802),
+            ),
+            (
+                IID_IAUDIO_PROCESSOR,
+                sdk_iid(0x42043F99, 0xB7DA453C, 0xA569E79D, 0x9AAEC33D),
+            ),
+            (
+                IID_IEDIT_CONTROLLER,
+                sdk_iid(0xDCD7BBE3, 0x7742448D, 0xA874AACC, 0x979C759E),
+            ),
+            (
+                IID_IPLUG_VIEW_CONTENT_SCALE_SUPPORT,
+                sdk_iid(0x65ED9690, 0x8AC44525, 0x8AADEF7A, 0x72EA703F),
+            ),
+            (
+                IID_ICONNECTION_POINT,
+                sdk_iid(0x70A4156F, 0x6E6E4026, 0x989148BF, 0xAA60D8D1),
+            ),
+            (
+                IID_IHOST_APPLICATION,
+                sdk_iid(0x58E595CC, 0xDB2D4969, 0x8B6AAF8C, 0x36A664E5),
+            ),
+            (
+                IID_ICOMPONENT_HANDLER,
+                sdk_iid(0x93A0BEA3, 0x0BD045DB, 0x8E890B0C, 0xC1E46AC6),
+            ),
+            (
+                IID_IPLUG_FRAME,
+                sdk_iid(0x367FAF01, 0xAFA94693, 0x8D4DA2A0, 0xED0882A3),
+            ),
+            (
+                IID_IBSTREAM,
+                sdk_iid(0xC3BF6EA2, 0x30994752, 0x9B6BF990, 0x1EE33E9B),
+            ),
+        ];
+        for (index, (actual, sdk)) in expected.iter().enumerate() {
+            assert_eq!(actual, sdk, "IID #{index} differs from the SDK");
+        }
+    }
+
+    #[test]
+    fn string128_stops_at_nul() {
+        let mut text = [0u16; 128];
+        for (slot, unit) in text.iter_mut().zip("Gain".encode_utf16()) {
+            *slot = unit;
+        }
+        assert_eq!(string128_to_string(&text), "Gain");
+    }
 }

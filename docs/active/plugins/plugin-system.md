@@ -150,8 +150,10 @@ off the audio thread (ADR-007 removal path).
 
 A plugin's parameters are described by `PluginParamInfo` (native id, name,
 module, plain min/max/default, automatable / modulatable / hidden flags),
-read from the live plugin by `PluginHost::plugin_params` (ADR-021; CLAP only so
-far, VST3 reports none yet). The host keeps no parameter map of its own: the
+read from the live plugin by `PluginHost::plugin_params` (ADR-021). CLAP reports
+plain ranges. VST3 reports normalised `0..1` ranges, read from the edit
+controller that lives with the instance (2026-10-21, see
+`plugin-wrapper-system.md`). The host keeps no parameter map of its own: the
 plugin remains the owner of its values.
 
 ### Parameter change path

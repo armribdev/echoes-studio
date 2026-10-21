@@ -137,6 +137,22 @@ pub const IID_IAUDIO_PROCESSOR: Tuid = interface_iid([/* big-endian literal */])
   `interface_iid()` (plus their own validation) before VST3 state save/load (ADR-010)
   and the VST3 editor GUI work on Windows. Tracked under open audit item **V4**.
 
+> **Update 2026-10-21.** All interface IIDs now go through `interface_iid()`.
+> (`IID_IPLUG_VIEW` was never defined; the view comes from `createView`.) The
+> swap alone was not enough: the literals of `IEditController`,
+> `IConnectionPoint`, `IHostApplication`, `IComponentHandler` and `IPlugFrame`
+> were themselves wrong. They were corrected and verified byte for byte in the
+> TDR Nova binary.
+>
+> - **Guard.** `interface_iids_match_the_sdk` (`vst3/ffi.rs`) compares all nine
+>   IIDs to their SDK `DECLARE_CLASS_IID` form.
+> - **Real-plugin check.** `vst3_real_instance_full_lifecycle` now also checks
+>   the edit controller (T0): TDR Nova lists 76 parameters with their text, and a
+>   state round-trip keeps their values.
+> - **Stale probe.** `vst3_iid_byteorder_probe` swaps an IID that is already in
+>   COM order, so its "engine vs swapped" labels are inverted. It only runs when
+>   every candidate fails to instantiate.
+
 ## Divergences: bypass/mock path vs. real FFI
 
 | Aspect                  | Existing suite (internal/pass-through) | Real FFI (this harness)                                       |

@@ -119,6 +119,22 @@ l'éditeur : `IEditController not available via QI (single-component only)`.
   comme contexte host. Le teardown correspondant (disconnect + terminate + release) est
   routé selon le chemin emprunté.
 
+> **Mise à jour 2026-10-21 — ce correctif n'était pas effectif.** Les IID de
+> `IEditController` et `IConnectionPoint` étaient faux, ainsi que ceux de
+> `IHostApplication`, `IComponentHandler` et `IPlugFrame`.
+>
+> - **Conséquence :** ni le QI ni `createInstance(IEditController)` ne pouvaient
+>   réussir (TDR Nova répondait `E_NOINTERFACE`), et les deux moitiés n'étaient
+>   jamais connectées. L'éditeur VST3 ne s'ouvrait donc pour aucun plugin.
+> - **Correction :** les IID sont corrigés et vérifiés octet par octet dans le
+>   binaire de TDR Nova. Le test `interface_iids_match_the_sdk` les garde.
+> - **Changement de structure :** le contrôleur est désormais créé avec
+>   l'instance et non à l'ouverture de l'éditeur (`ffi::create_controller`,
+>   `PluginInstance::vst3_controller`). L'éditeur l'emprunte et
+>   `PluginInstance::Drop` le libère.
+> - Détail : `../plugins/plugin-wrapper-system.md` (Lifecycle and edit controller).
+> - **Pas encore vérifié à la main** dans l'app.
+
 ### V5 — Vtable `IEditController` / `IPlugView` sans assert de taille ✅ Corrigé
 
 **Correctif appliqué** ([vst3/ffi.rs](../../../src-tauri/src/plugin_formats/vst3/ffi.rs)) :

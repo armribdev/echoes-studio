@@ -1098,7 +1098,7 @@ mod clap_plugins {
         let seen = |host: &PluginHost, key: &str, native_id: u32| {
             host.instance_by_key(key)
                 .unwrap()
-                .clap_param_value(native_id)
+                .param_value(native_id)
                 .unwrap()
         };
 

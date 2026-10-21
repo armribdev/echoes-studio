@@ -36,7 +36,7 @@ use std::sync::Arc;
 use crate::audio_graph::buffer::AudioBuffer;
 use crate::audio_graph::node::{AudioNode, PrepareContext, TransportInfo};
 use crate::audio_graph::plugin_params::{
-    parse_plugin_param_name, PluginParamControl, PluginParamControls,
+    parse_plugin_param_name, PluginParamControl, PluginParamControls, ValueModulatedParam,
 };
 use crate::plugin_formats::crash_guard;
 use crate::plugin_system::instance::{PluginInstance, FFI_GATE_HARVEST_BUDGET};
@@ -132,6 +132,41 @@ impl VstWrapperNode {
         self.instance
             .vst3_handles()
             .expect("VstWrapperNode missing VST3 handles (programmer error)")
+    }
+
+    /// Off the audio thread (ADR-021): a newly modulated parameter starts from
+    /// the plugin's current value; one no longer modulated is put back on its base.
+    fn track_value_modulation(&self, controls: &[PluginParamControl]) {
+        let params: Vec<ValueModulatedParam> = controls
+            .iter()
+            .filter(|control| control.modulated)
+            .map(|control| {
+                ValueModulatedParam::new(
+                    control.native_id,
+                    control.range,
+                    Arc::clone(&control.base),
+                )
+            })
+            .collect();
+        let previous = self.instance.replace_value_modulated_params(params.clone());
+        let was_modulated =
+            |native_id: u32| previous.iter().any(|param| param.native_id == native_id);
+
+        for param in params
+            .iter()
+            .filter(|param| !was_modulated(param.native_id))
+        {
+            if let Some(value) = self.instance.param_value(param.native_id) {
+                param.set_base(value as f32);
+            }
+        }
+        for released in previous
+            .iter()
+            .filter(|old| !params.iter().any(|param| param.native_id == old.native_id))
+        {
+            self.instance
+                .push_param(released.native_id, released.base_value());
+        }
     }
 }
 
@@ -349,6 +384,7 @@ impl AudioNode for VstWrapperNode {
     }
 
     fn inject_plugin_param_controls(&mut self, controls: Vec<PluginParamControl>) {
+        self.track_value_modulation(&controls);
         self.param_controls = PluginParamControls::new(controls);
     }
 

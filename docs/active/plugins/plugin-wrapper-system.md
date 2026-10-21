@@ -80,22 +80,58 @@ fn process(&mut self, inputs: &[&AudioBuffer], outputs: &mut [AudioBuffer], tran
 and `self.output_bus_buffers` are all allocated in `prepare()`. The `process()`
 call only fills pointer values — no `Vec::push`, no `Box`.
 
-### Parameter mirroring
+### Lifecycle and edit controller (2026-10-21)
 
-VST3 parameters use integer IDs (`ParamID: u32`); the engine uses string keys.
-The wrapper builds the mapping in `prepare()`:
+- **Host context.** `IComponent::initialize` and a separate controller's
+  `initialize` receive the static `IHostApplication` of
+  `plugin_formats/vst3/host_context.rs` (name "Echoes Studio"; `createInstance`
+  answers `kResultFalse`, so no `IMessage` / `IAttributeList` yet).
+- **Activation order** (`PluginInstance::vst3_ensure_active`):
+  `setBusArrangements` → `activateBus` ×2 → `setupProcessing` → `setActive(1)`
+  → `setProcessing(1)`, as the spec requires. A config change on a live instance
+  deactivates and reactivates it under the FFI gate, like CLAP.
+- **Edit controller.** It lives with the instance, not with the editor window.
+  `PluginHost::instantiate_vst3` builds it right after the component
+  (`ffi::create_controller`):
+  - **Single-component plugin:** the controller is found by QI on the component.
+  - **Dual-component plugin:** it is created through the factory, initialised,
+    synced with `setComponentState`, and connected through `IConnectionPoint`.
+  - It receives the static `IComponentHandler`. This handler is still a no-op:
+    edits made in the plugin window and `restartComponent` are not acted on yet.
+  - Failure leaves it `None`. The plugin still plays, but has no parameters and
+    no editor.
+  - `load_state_blob` passes the restored blob to a separate controller.
+  - The editor borrows the controller (`PluginInstance::vst3_controller`).
+  - `PluginInstance::Drop` releases it before the component's `terminate`.
+- **Interface IIDs** are checked against the SDK's `DECLARE_CLASS_IID` form by
+  `interface_iids_match_the_sdk` (`vst3/ffi.rs`). Four IIDs were wrong before
+  2026-10-21 (`IEditController`, `IConnectionPoint`, `IHostApplication`,
+  `IComponentHandler`; `IPlugFrame` too). With these wrong values, no controller
+  was ever reached, so the VST3 editor and dual-component wiring could not work.
+  All values were verified byte for byte in the TDR Nova binary.
 
-```
-string key "gain"  ↔  VST3 ParamID 0x12345678
-```
+### Parameters (ADR-021)
 
-When the host calls `set_parameter_normalised("gain", 0.75)`:
+VST3 parameters are addressed by their `ParamID` (`native_id: u32`; lanes name
+them `plugin_param:<id>`, `parse_plugin_param_name`). Values travel
+**normalised** end to end:
 
-1. Look up the VST3 ID in the mapping.
-2. Queue a `ParamChange { id, value: 0.75 }` in a pre-allocated ring buffer
-   (on the command thread).
-3. On the next `process()` call, deliver the queued changes via
-   `ProcessData.inputParameterChanges` — the VST3 sample-accurate mechanism.
+- **Listing.** `PluginHost::plugin_params` reads the controller under the FFI
+  gate (`vst3/params.rs::read_vst3_params`).
+  - Range `0..1`, `default = defaultNormalizedValue`.
+  - `automatable = kCanAutomate && !kIsReadOnly`, `hidden = kIsHidden`.
+  - `modulatable = false`: VST3 has no host modulation, so modulation moves the
+    value around a base.
+  - `module` is empty; units (`IUnitInfo`) are not read yet.
+- **Text.** `PluginInstance::param_text` calls `getParamStringByValue` for a
+  normalised value.
+- **Value.** `PluginInstance::param_value` reads `getParamNormalized`.
+- **Delivery.** UI edits (`push_plugin_param` → SPSC `ParamChange`), automation
+  and modulation are delivered in `process()` via
+  `ProcessData.inputParameterChanges`, the VST3 sample-accurate mechanism.
+- **Modulation base.** A newly modulated parameter starts from the plugin's
+  current value. When modulation is removed, the base is pushed back
+  (`VstWrapperNode::track_value_modulation`).
 
 **Never** call `IEditController::setParamNormalized` from the audio thread.
 

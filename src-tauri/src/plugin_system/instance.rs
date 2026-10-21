@@ -57,8 +57,10 @@ use crate::plugin_formats::clap::ffi::{
     HostTrackInfo, NoteName, PresetRequest, TimerSchedule,
 };
 use crate::plugin_formats::vst3::ffi::{
-    IAudioProcessor, IComponent, ProcessSetup, Vst3Library, SPEAKER_STEREO,
+    release_controller, sync_controller_to_state, IAudioProcessor, IComponent, IEditController,
+    ProcessSetup, Vst3Controller, Vst3Library, SPEAKER_STEREO,
 };
+use crate::plugin_formats::vst3::params::{read_vst3_param_text, read_vst3_param_value};
 use crate::plugin_system::bridge::BridgedPlugin;
 use crate::plugin_system::crash_marker::{self, MarkerGuard, PluginThread};
 use crate::plugin_system::lifecycle::LifecycleState;
@@ -103,12 +105,14 @@ pub enum NativeHandle {
     /// In-process internal device — no FFI handle to manage.
     Internal,
 
-    /// Live VST3 IComponent + IAudioProcessor (often the same COM object).
-    /// The `Vst3Library` Arc keeps the DLL mapped until the last consumer
-    /// drops its reference.
+    /// Live VST3 IComponent + IAudioProcessor (often the same COM object), and
+    /// its edit controller (`None` when the plugin offers none).  The
+    /// `Vst3Library` Arc keeps the DLL mapped until the last consumer drops its
+    /// reference.
     Vst3 {
         component: NonNull<IComponent>,
         processor: NonNull<IAudioProcessor>,
+        controller: Option<Vst3Controller>,
         _lib: Arc<Vst3Library>,
     },
 
@@ -331,6 +335,7 @@ impl PluginInstance {
         device_id: impl Into<String>,
         component: NonNull<IComponent>,
         processor: NonNull<IAudioProcessor>,
+        controller: Option<Vst3Controller>,
         lib: Arc<Vst3Library>,
     ) -> Arc<Self> {
         let device_id: String = device_id.into();
@@ -343,6 +348,7 @@ impl PluginInstance {
             handle: NativeHandle::Vst3 {
                 component,
                 processor,
+                controller,
                 _lib: lib,
             },
             lifecycle: AtomicU8::new(encode_lifecycle(LifecycleState::Created)),
@@ -458,11 +464,17 @@ impl PluginInstance {
         std::mem::replace(&mut *params, now)
     }
 
-    /// Current plain value of a CLAP parameter, read under the FFI gate.
-    /// `None` for other formats, or when a block is in flight past the budget.
-    pub fn clap_param_value(&self, native_id: u32) -> Option<f64> {
+    /// Current value of a parameter, in the units `plugin_params` reports (plain
+    /// for CLAP, normalised for VST3), read under the FFI gate.  `None` for
+    /// formats without parameters, or when a block is in flight past the budget.
+    pub fn param_value(&self, native_id: u32) -> Option<f64> {
         if let Some(bridged) = self.bridge() {
             return bridged.param_value(native_id);
+        }
+        if let Some(controller) = self.vst3_controller() {
+            let _gate = self.offrt_try_acquire(FFI_GATE_HARVEST_BUDGET)?;
+            // SAFETY: live VST3 controller owned by this instance; FFI gate held.
+            return Some(unsafe { read_vst3_param_value(controller.as_ptr(), native_id) });
         }
         let NativeHandle::Clap { plugin, .. } = &self.handle else {
             return None;
@@ -472,12 +484,18 @@ impl PluginInstance {
         unsafe { crate::plugin_formats::clap::params::read_clap_param_value(*plugin, native_id) }
     }
 
-    /// The plugin's own text for a plain parameter value (`-6.0 dB`), read under
-    /// the FFI gate.  `None` for other formats, when the plugin cannot render
-    /// it, or when a block is in flight past the budget.
-    pub fn clap_param_text(&self, native_id: u32, value: f64) -> Option<String> {
+    /// The plugin's own text for a parameter value (`-6.0 dB`), in the units of
+    /// [`param_value`](Self::param_value), read under the FFI gate.  `None` for
+    /// formats without parameters, when the plugin cannot render it, or when a
+    /// block is in flight past the budget.
+    pub fn param_text(&self, native_id: u32, value: f64) -> Option<String> {
         if let Some(bridged) = self.bridge() {
             return bridged.param_text(native_id, value);
+        }
+        if let Some(controller) = self.vst3_controller() {
+            let _gate = self.offrt_try_acquire(FFI_GATE_HARVEST_BUDGET)?;
+            // SAFETY: live VST3 controller owned by this instance; FFI gate held.
+            return unsafe { read_vst3_param_text(controller.as_ptr(), native_id, value) };
         }
         let NativeHandle::Clap { plugin, .. } = &self.handle else {
             return None;
@@ -526,7 +544,9 @@ impl PluginInstance {
             context.take_preset_error();
             // SAFETY: live CLAP plugin owned by this instance; FFI gate held.
             if !unsafe { load_preset(plugin, request) } {
-                return Err(context.take_preset_error().unwrap_or_else(|| REFUSED.into()));
+                return Err(context
+                    .take_preset_error()
+                    .unwrap_or_else(|| REFUSED.into()));
             }
             self.rebase_value_modulated_params(|id| {
                 // SAFETY: live CLAP plugin owned by this instance; FFI gate held.
@@ -701,8 +721,19 @@ impl PluginInstance {
     /// `false` if unsupported for this format or the plugin rejected the blob.
     pub fn load_state_blob(&self, bytes: &[u8]) -> bool {
         match &self.handle {
-            NativeHandle::Vst3 { component, .. } => unsafe {
-                crate::plugin_formats::vst3::ffi::write_component_state(component.as_ptr(), bytes)
+            NativeHandle::Vst3 {
+                component,
+                controller,
+                ..
+            } => unsafe {
+                let loaded = crate::plugin_formats::vst3::ffi::write_component_state(
+                    component.as_ptr(),
+                    bytes,
+                );
+                if let (true, Some(controller)) = (loaded, controller) {
+                    sync_controller_to_state(controller, bytes);
+                }
+                loaded
             },
             NativeHandle::Clap { plugin, .. } => unsafe {
                 crate::plugin_formats::clap::ffi::write_plugin_state(*plugin, bytes)
@@ -763,12 +794,14 @@ impl PluginInstance {
         }
     }
 
-    /// Clone the VST3 library Arc if this instance is VST3.  Used by the editor
-    /// to re-obtain the factory for dual-component plugins (audit V4); the DLL
-    /// stays mapped as long as the returned Arc lives.
-    pub fn vst3_library(&self) -> Option<Arc<Vst3Library>> {
+    /// The VST3 edit controller, which lives as long as this instance; `None`
+    /// for other formats or a VST3 that offers none.
+    pub fn vst3_controller(&self) -> Option<NonNull<IEditController>> {
         match &self.handle {
-            NativeHandle::Vst3 { _lib, .. } => Some(Arc::clone(_lib)),
+            NativeHandle::Vst3 {
+                controller: Some(controller),
+                ..
+            } => NonNull::new(controller.as_ptr()),
             _ => None,
         }
     }
@@ -916,8 +949,8 @@ impl PluginInstance {
     /// - Already active at the same `(sample_rate, max_block)` → no-op.
     /// - Already active at a different config → `setProcessing(0)` +
     ///   `setActive(0)`, then re-setup.
-    /// - Not active → `setBusArrangements` + `activateBus` ×2 + `setActive(1)` +
-    ///   `setupProcessing` + `setProcessing(1)`.
+    /// - Not active → `setBusArrangements` + `activateBus` ×2 +
+    ///   `setupProcessing` + `setActive(1)` + `setProcessing(1)`.
     ///
     /// No-op (`false`) for non-VST3 handles.  Runs on the command thread during
     /// graph prepare — never the audio thread.
@@ -934,12 +967,16 @@ impl PluginInstance {
         let sr_bits = sample_rate.to_bits();
         let act = &self.vst3_activation;
 
+        // Config changed on a live instance: the outgoing graph may still be
+        // processing it, so fence the reactivation when the gate can be claimed.
+        let mut _gate = None;
         if act.active.load(Ordering::Acquire) {
             if act.sr_bits.load(Ordering::Relaxed) == sr_bits
                 && act.block.load(Ordering::Relaxed) == max_block
             {
                 return true;
             }
+            _gate = self.offrt_try_acquire(FFI_GATE_HARVEST_BUDGET);
             unsafe {
                 ((*(*proc).vtbl).set_processing)(proc, 0);
                 ((*(*comp).vtbl).set_active)(comp, 0);
@@ -947,6 +984,8 @@ impl PluginInstance {
             act.active.store(false, Ordering::Release);
         }
 
+        // VST3 order: bus setup and `setupProcessing` while inactive, then
+        // `setActive`, then `setProcessing`.
         unsafe {
             let mut in_arr = SPEAKER_STEREO;
             let mut out_arr = SPEAKER_STEREO;
@@ -954,7 +993,6 @@ impl PluginInstance {
             // kAudio=0; input bus (dir=0) and output bus (dir=1), index 0, on.
             ((*(*comp).vtbl).activate_bus)(comp, 0, 0, 0, 1);
             ((*(*comp).vtbl).activate_bus)(comp, 0, 1, 0, 1);
-            ((*(*comp).vtbl).set_active)(comp, 1);
             let setup = ProcessSetup {
                 process_mode: 0,
                 symbolic_sample_size: 0,
@@ -962,6 +1000,7 @@ impl PluginInstance {
                 sample_rate: sample_rate as f64,
             };
             ((*(*proc).vtbl).setup_processing)(proc, &setup);
+            ((*(*comp).vtbl).set_active)(comp, 1);
             ((*(*proc).vtbl).set_processing)(proc, 1);
         }
         act.sr_bits.store(sr_bits, Ordering::Relaxed);
@@ -1057,12 +1096,13 @@ impl PluginInstance {
 impl Drop for PluginInstance {
     fn drop(&mut self) {
         let _running = self.mark(PluginThread::Control);
-        match &self.handle {
+        match &mut self.handle {
             NativeHandle::Internal => {}
 
             NativeHandle::Vst3 {
                 component,
                 processor,
+                controller,
                 ..
             } => {
                 let proc = processor.as_ptr();
@@ -1074,6 +1114,9 @@ impl Drop for PluginInstance {
                     if self.vst3_activation.active.load(Ordering::Acquire) {
                         ((*(*proc).vtbl).set_processing)(proc, 0);
                         ((*(*comp).vtbl).set_active)(comp, 0);
+                    }
+                    if let Some(controller) = controller.take() {
+                        release_controller(controller);
                     }
                     ((*(*comp).vtbl).terminate)(comp);
                     // IAudioProcessor and IComponent may be the same COM object;

@@ -343,7 +343,7 @@ fn a_flush_request_wakes_a_sleeping_instrument(sandboxed: bool) {
     let calls = || {
         host.instance_by_key(INSTRUMENT_KEY)
             .unwrap()
-            .clap_param_value(PROCESS_CALLS)
+            .param_value(PROCESS_CALLS)
             .unwrap() as u32
     };
 
@@ -716,7 +716,7 @@ fn argb(red: u8, green: u8, blue: u8) -> f64 {
 fn seen(host: &PluginHost, key: &str, native_id: u32) -> f64 {
     host.instance_by_key(key)
         .unwrap()
-        .clap_param_value(native_id)
+        .param_value(native_id)
         .unwrap()
 }
 
@@ -1236,7 +1236,7 @@ fn an_in_process_plugin_that_crashed_gets_no_more_timers() {
         0
     );
     assert_eq!(
-        instance.clap_param_value(TIMER_CALLS),
+        instance.param_value(TIMER_CALLS),
         Some(0.0),
         "the plugin was not called"
     );
