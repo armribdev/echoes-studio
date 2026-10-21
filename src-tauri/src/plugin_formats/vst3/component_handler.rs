@@ -33,6 +33,7 @@ const RESTART_IO_CHANGED: i32 = 1 << 1;
 const RESTART_PARAM_VALUES_CHANGED: i32 = 1 << 2;
 const RESTART_LATENCY_CHANGED: i32 = 1 << 3;
 const RESTART_PARAM_TITLES_CHANGED: i32 = 1 << 4;
+const RESTART_MIDI_CC_ASSIGNMENT_CHANGED: i32 = 1 << 5;
 
 /// Reactivating the component is the way to take these into account.
 const REACTIVATING_RESTARTS: i32 =
@@ -106,6 +107,10 @@ impl EditState {
     fn restart(&self, flags: i32) {
         if flags & REACTIVATING_RESTARTS != 0 {
             self.reactivation_requested.store(true, Ordering::Release);
+            mark_plugin_restart_requested();
+        }
+        // A recompile prepares the instrument again, which reads the new mapping.
+        if flags & RESTART_MIDI_CC_ASSIGNMENT_CHANGED != 0 {
             mark_plugin_restart_requested();
         }
         if flags & (RESTART_PARAM_VALUES_CHANGED | RESTART_PARAM_TITLES_CHANGED) != 0 {
@@ -300,6 +305,14 @@ mod tests {
         let this = handler.as_funknown();
         unsafe { ((*handler.vtbl).restart_component)(this, RESTART_LATENCY_CHANGED) };
         assert!(handler.state().take_reactivation_request());
+        assert!(!handler.state().take_reactivation_request());
+    }
+
+    #[test]
+    fn a_new_midi_mapping_does_not_reactivate_the_plugin() {
+        let handler = ComponentHandler::boxed();
+        let this = handler.as_funknown();
+        unsafe { ((*handler.vtbl).restart_component)(this, RESTART_MIDI_CC_ASSIGNMENT_CHANGED) };
         assert!(!handler.state().take_reactivation_request());
     }
 }

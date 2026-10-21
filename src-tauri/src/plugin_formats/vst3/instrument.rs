@@ -28,11 +28,12 @@ use crate::audio_graph::node::{PrepareContext, TransportInfo};
 use crate::audio_graph::nodes::instrument::InstrumentDevice;
 use crate::audio_graph::plugin_params::{PluginParamControl, PluginParamControls};
 use crate::plugin_formats::crash_guard;
-use crate::plugin_system::instance::PluginInstance;
+use crate::plugin_system::instance::{PluginInstance, FFI_GATE_HARVEST_BUDGET};
 use crate::plugin_system::lifecycle::LifecycleState;
 
 use super::event_list::HostEventList;
 use super::ffi::{AudioBusBuffers, Event, HostParameterChanges, ProcessContext, ProcessData};
+use super::midi_mapping::{push_mapped_controls, read_midi_mapping, MidiControllerMap};
 use super::param_delivery::{fill_param_changes, track_value_modulation};
 use super::transport::vst3_process_context;
 use super::wrapper::{vst3_process_trampoline, Vst3ProcessCtx};
@@ -115,7 +116,7 @@ impl Default for SoundingNotes {
 
 /// Append the engine's per-block `MidiEventList` as VST3 events: notes as note
 /// events (velocity `0..127` → `0..1`), polyphonic aftertouch as poly pressure.
-/// Other controls need the controller's `IMidiMapping` and are not sent here.
+/// Other controls go through the controller's `IMidiMapping` (`midi_mapping`).
 ///
 /// Pure — no FFI, no allocation.  A NoteOff the full list cannot take is kept
 /// in `notes` for the next block.
@@ -167,6 +168,7 @@ pub struct VstInstrument {
     num_channels: usize,
     active: bool,
     notes: SoundingNotes,
+    midi_map: MidiControllerMap,
     /// Set after the first SEH exception from `process()`: silent until the
     /// graph is next recompiled.
     crashed: bool,
@@ -195,6 +197,7 @@ impl VstInstrument {
             num_channels: 2,
             active: false,
             notes: SoundingNotes::new(),
+            midi_map: MidiControllerMap::empty(),
             crashed: false,
             param_controls: PluginParamControls::default(),
         }
@@ -211,6 +214,15 @@ impl InstrumentDevice for VstInstrument {
         self.active = self
             .instance
             .vst3_ensure_active(ctx.sample_rate, ctx.max_block_size as u32);
+
+        // Skipped when a block is in flight: the controllers stay unmapped until
+        // the next recompile.
+        if let (Some(controller), Some(_gate)) = (
+            self.instance.vst3_controller(),
+            self.instance.offrt_try_acquire(FFI_GATE_HARVEST_BUDGET),
+        ) {
+            self.midi_map = unsafe { read_midi_mapping(controller.as_ptr()) };
+        }
     }
 
     fn process_midi(
@@ -238,6 +250,7 @@ impl InstrumentDevice for VstInstrument {
         self.notes.push_pending_releases(event_list);
         push_vst3_events(events, event_list, &mut self.notes);
         fill_param_changes(&self.instance, &self.param_controls, param_changes);
+        push_mapped_controls(events, &self.midi_map, param_changes);
         let param_changes_ptr = if param_changes.count > 0 {
             param_changes.as_mut() as *mut HostParameterChanges as *mut c_void
         } else {
@@ -399,7 +412,7 @@ mod tests {
     }
 
     #[test]
-    fn controls_without_a_mapping_are_not_sent() {
+    fn controls_are_not_sent_as_events() {
         let events = list_of(&[
             midi(
                 0,

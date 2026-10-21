@@ -657,3 +657,41 @@ fn vst3_instrument_plays_a_note() {
         render(&mut device, &silence);
     }
 }
+
+/// A real VST3 instrument tells which parameters its MIDI controllers drive;
+/// the host reads the table without crashing the plugin.
+#[test]
+fn vst3_instrument_reports_its_midi_controller_mapping() {
+    use crate::plugin_formats::vst3::midi_mapping::{
+        read_midi_mapping, CTRL_AFTER_TOUCH, CTRL_PITCH_BEND,
+    };
+
+    let candidates = discover_all("ECHOES_TEST_VST3", "vst3");
+    let Some(manifest) = first_vst3_instrument(&candidates) else {
+        eprintln!("{LOG} SKIP vst3_instrument_reports_its_midi_controller_mapping — no VST3 instrument found");
+        return;
+    };
+    let key = "harness:vst3:instrument1";
+    let mut host = PluginHost::new();
+    host.registry_mut().add(manifest.clone());
+    let _device = host
+        .instantiate_instrument(key, &manifest.id)
+        .expect("a VST3 instrument must instantiate");
+    let instance = host.instance_by_key(key).expect("instance registered");
+
+    let Some(controller) = instance.vst3_controller() else {
+        eprintln!("{LOG} {} has no edit controller", manifest.name);
+        return;
+    };
+    let _gate = instance
+        .offrt_try_acquire(crate::plugin_system::instance::FFI_GATE_HARVEST_BUDGET)
+        .expect("the FFI gate is free");
+    let map = unsafe { read_midi_mapping(controller.as_ptr()) };
+    eprintln!(
+        "{LOG} {} maps pitch bend → {:?}, mod wheel → {:?}, aftertouch → {:?}",
+        manifest.name,
+        map.param_for(CTRL_PITCH_BEND),
+        map.param_for(1),
+        map.param_for(CTRL_AFTER_TOUCH),
+    );
+}
