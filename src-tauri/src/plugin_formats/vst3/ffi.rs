@@ -54,6 +54,9 @@ pub const IID_IAUDIO_PROCESSOR: Tuid = interface_iid([
     0x42, 0x04, 0x3F, 0x99, 0xB7, 0xDA, 0x45, 0x3C, 0xA5, 0x69, 0xE7, 0x9D, 0x9A, 0xAE, 0xC3, 0x3D,
 ]);
 
+pub const IID_IEVENT_LIST: Tuid = interface_iid([
+    0x3A, 0x2C, 0x42, 0x14, 0x34, 0x63, 0x49, 0xFE, 0xB2, 0xC4, 0xF3, 0x97, 0xB9, 0x69, 0x5A, 0x44,
+]);
 pub const IID_IPLUGIN_FACTORY2: Tuid = interface_iid([
     0x00, 0x07, 0xB6, 0x50, 0xF2, 0x4B, 0x4C, 0x0B, 0xA4, 0x64, 0xED, 0xB9, 0xF0, 0x0B, 0x2A, 0xBB,
 ]);
@@ -285,6 +288,151 @@ pub const CONTEXT_PROJECT_TIME_MUSIC_VALID: u32 = 1 << 9;
 pub const CONTEXT_TEMPO_VALID: u32 = 1 << 10;
 pub const CONTEXT_BAR_POSITION_VALID: u32 = 1 << 11;
 pub const CONTEXT_TIME_SIG_VALID: u32 = 1 << 13;
+
+/// `MediaTypes` and `BusDirections` (`ivstcomponent.h`), the first two arguments
+/// of `getBusCount` and `activateBus`.
+pub const K_AUDIO: i32 = 0;
+pub const K_EVENT: i32 = 1;
+pub const K_INPUT: i32 = 0;
+pub const K_OUTPUT: i32 = 1;
+
+/// `Event::EventTypes` (`ivstevents.h`).
+pub const K_NOTE_ON_EVENT: u16 = 0;
+pub const K_NOTE_OFF_EVENT: u16 = 1;
+pub const K_POLY_PRESSURE_EVENT: u16 = 3;
+
+/// `NoteOnEvent`, `NoteOffEvent` and `PolyPressureEvent` (`ivstevents.h`).
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct NoteOnEvent {
+    pub channel: i16,
+    pub pitch: i16,
+    pub tuning: f32,
+    pub velocity: f32,
+    pub length: i32,
+    pub note_id: i32,
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct NoteOffEvent {
+    pub channel: i16,
+    pub pitch: i16,
+    pub velocity: f32,
+    pub note_id: i32,
+    pub tuning: f32,
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct PolyPressureEvent {
+    pub channel: i16,
+    pub pitch: i16,
+    pub pressure: f32,
+    pub note_id: i32,
+}
+
+/// The anonymous union of `Vst::Event`.  `raw` stands for the members this host
+/// never builds (data, chord, scale, note expression): the widest of them,
+/// `NoteExpressionTextEvent`, is 24 bytes with 8-byte alignment.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub union EventPayload {
+    pub note_on: NoteOnEvent,
+    pub note_off: NoteOffEvent,
+    pub poly_pressure: PolyPressureEvent,
+    raw: [u64; 3],
+}
+
+/// `Vst::Event` (`ivstevents.h`).
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct Event {
+    pub bus_index: i32,
+    pub sample_offset: i32,
+    pub ppq_position: f64,
+    pub flags: u16,
+    pub kind: u16,
+    pub payload: EventPayload,
+}
+
+const _: () = {
+    assert!(std::mem::size_of::<Event>() == 48, "Event layout drift");
+    assert!(
+        std::mem::offset_of!(Event, payload) == 24,
+        "Event layout drift"
+    );
+};
+
+impl Event {
+    pub const EMPTY: Event = Event {
+        bus_index: 0,
+        sample_offset: 0,
+        ppq_position: 0.0,
+        flags: 0,
+        kind: K_NOTE_ON_EVENT,
+        payload: EventPayload { raw: [0; 3] },
+    };
+
+    fn on_main_bus(sample_offset: u32, kind: u16, payload: EventPayload) -> Self {
+        Event {
+            sample_offset: sample_offset as i32,
+            kind,
+            payload,
+            ..Event::EMPTY
+        }
+    }
+
+    /// `velocity` is normalised (0..1).  Channel 0, `note_id` -1: the plugin
+    /// matches the note by pitch.
+    pub fn note_on(sample_offset: u32, pitch: u8, velocity: f32, note_id: i32) -> Self {
+        Self::on_main_bus(
+            sample_offset,
+            K_NOTE_ON_EVENT,
+            EventPayload {
+                note_on: NoteOnEvent {
+                    channel: 0,
+                    pitch: pitch as i16,
+                    tuning: 0.0,
+                    velocity,
+                    length: 0,
+                    note_id,
+                },
+            },
+        )
+    }
+
+    pub fn note_off(sample_offset: u32, pitch: u8, note_id: i32) -> Self {
+        Self::on_main_bus(
+            sample_offset,
+            K_NOTE_OFF_EVENT,
+            EventPayload {
+                note_off: NoteOffEvent {
+                    channel: 0,
+                    pitch: pitch as i16,
+                    velocity: 0.0,
+                    note_id,
+                    tuning: 0.0,
+                },
+            },
+        )
+    }
+
+    pub fn poly_pressure(sample_offset: u32, pitch: u8, pressure: f32, note_id: i32) -> Self {
+        Self::on_main_bus(
+            sample_offset,
+            K_POLY_PRESSURE_EVENT,
+            EventPayload {
+                poly_pressure: PolyPressureEvent {
+                    channel: 0,
+                    pitch: pitch as i16,
+                    pressure,
+                    note_id,
+                },
+            },
+        )
+    }
+}
 
 #[repr(C)]
 pub struct IAudioProcessorVtbl {
@@ -1447,6 +1595,10 @@ mod tests {
             (
                 IID_IPLUGIN_FACTORY2,
                 sdk_iid(0x0007B650, 0xF24B4C0B, 0xA464EDB9, 0xF00B2ABB),
+            ),
+            (
+                IID_IEVENT_LIST,
+                sdk_iid(0x3A2C4214, 0x346349FE, 0xB2C4F397, 0xB9695A44),
             ),
         ];
         for (index, (actual, sdk)) in expected.iter().enumerate() {

@@ -59,7 +59,7 @@ use crate::plugin_formats::clap::ffi::{
 use crate::plugin_formats::vst3::component_handler::{ComponentHandler, EditState};
 use crate::plugin_formats::vst3::ffi::{
     release_controller, sync_controller_to_state, IAudioProcessor, IComponent, IEditController,
-    ProcessSetup, Vst3Controller, Vst3Library, SPEAKER_STEREO,
+    ProcessSetup, Vst3Controller, Vst3Library, K_AUDIO, K_EVENT, K_INPUT, K_OUTPUT, SPEAKER_STEREO,
 };
 use crate::plugin_formats::vst3::params::{read_vst3_param_text, read_vst3_param_value};
 use crate::plugin_system::bridge::BridgedPlugin;
@@ -1013,12 +1013,29 @@ impl PluginInstance {
         // VST3 order: bus setup and `setupProcessing` while inactive, then
         // `setActive`, then `setProcessing`.
         unsafe {
+            let bus_count = (*(*comp).vtbl).get_bus_count;
+            // An instrument declares no audio input: it is told so, and no input bus is opened.
+            let has_audio_input = bus_count(comp, K_AUDIO, K_INPUT) > 0;
+            let has_event_input = bus_count(comp, K_EVENT, K_INPUT) > 0;
+
             let mut in_arr = SPEAKER_STEREO;
             let mut out_arr = SPEAKER_STEREO;
-            ((*(*proc).vtbl).set_bus_arrangements)(proc, &mut in_arr, 1, &mut out_arr, 1);
-            // kAudio=0; input bus (dir=0) and output bus (dir=1), index 0, on.
-            ((*(*comp).vtbl).activate_bus)(comp, 0, 0, 0, 1);
-            ((*(*comp).vtbl).activate_bus)(comp, 0, 1, 0, 1);
+            if has_audio_input {
+                ((*(*proc).vtbl).set_bus_arrangements)(proc, &mut in_arr, 1, &mut out_arr, 1);
+                ((*(*comp).vtbl).activate_bus)(comp, K_AUDIO, K_INPUT, 0, 1);
+            } else {
+                ((*(*proc).vtbl).set_bus_arrangements)(
+                    proc,
+                    std::ptr::null_mut(),
+                    0,
+                    &mut out_arr,
+                    1,
+                );
+            }
+            ((*(*comp).vtbl).activate_bus)(comp, K_AUDIO, K_OUTPUT, 0, 1);
+            if has_event_input {
+                ((*(*comp).vtbl).activate_bus)(comp, K_EVENT, K_INPUT, 0, 1);
+            }
             let setup = ProcessSetup {
                 process_mode: 0,
                 symbolic_sample_size: 0,
