@@ -6,7 +6,8 @@
 //! enumeration (`params`), the transport (`transport`), the events sent to an
 //! instrument (`event_list`), the instrument adapter (`instrument`), its MIDI
 //! controllers (`midi_mapping`), the per-block parameter changes
-//! (`param_delivery`) and the graph node (`wrapper`).
+//! (`param_delivery`), the reader of `.vstpreset` files (`preset_file`) and the
+//! graph node (`wrapper`).
 
 pub mod attribute_list;
 pub mod channel_context;
@@ -23,5 +24,6 @@ pub mod message;
 pub mod midi_mapping;
 pub mod param_delivery;
 pub mod params;
+pub mod preset_file;
 pub mod transport;
 pub mod wrapper;
