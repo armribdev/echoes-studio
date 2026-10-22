@@ -61,12 +61,11 @@ use crate::plugin_formats::vst3::channel_context::notify_channel_context;
 use crate::plugin_formats::vst3::component_handler::{ComponentHandler, EditState};
 use crate::plugin_formats::vst3::ffi::{
     release_controller, set_controller_component_state, set_controller_state,
-    sync_controller_to_state, FUnknown,
-    IAudioProcessor, IComponent,
-    IEditController, ProcessSetup, Vst3Controller, Vst3Library, K_AUDIO, K_EVENT, K_INPUT,
-    K_OUTPUT, SPEAKER_STEREO,
+    sync_controller_to_state, FUnknown, IAudioProcessor, IComponent, IEditController, ProcessSetup,
+    Vst3Controller, Vst3Library, K_AUDIO, K_EVENT, K_INPUT, K_OUTPUT, SPEAKER_STEREO,
 };
 use crate::plugin_formats::vst3::host::decode_plugin_id;
+use crate::plugin_formats::vst3::param_delivery::flush_param_bases;
 use crate::plugin_formats::vst3::params::{read_vst3_param_text, read_vst3_param_value};
 use crate::plugin_formats::vst3::preset_file::{class_id_text, read_preset_chunks};
 use crate::plugin_formats::vst3::units::{read_program_lists, select_program};
@@ -670,7 +669,10 @@ impl PluginInstance {
         else {
             return Err("this plugin has no presets".into());
         };
-        let path = request.location.as_deref().ok_or("this preset has no file")?;
+        let path = request
+            .location
+            .as_deref()
+            .ok_or("this preset has no file")?;
         let class_id = decode_plugin_id(&self.device_id)
             .map(|id| class_id_text(&id))
             .ok_or("this plugin has no VST3 class id")?;
@@ -913,6 +915,9 @@ impl PluginInstance {
     pub fn save_state_blob(&self) -> Option<Vec<u8>> {
         match &self.handle {
             NativeHandle::Vst3 { component, .. } => unsafe {
+                if self.vst3_activation.active.load(Ordering::Acquire) {
+                    flush_param_bases(self);
+                }
                 crate::plugin_formats::vst3::ffi::read_component_state(component.as_ptr())
             },
             NativeHandle::Clap { plugin, .. } => unsafe {

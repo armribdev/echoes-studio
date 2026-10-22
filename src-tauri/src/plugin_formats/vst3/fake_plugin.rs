@@ -15,10 +15,11 @@ use std::sync::Arc;
 use super::channel_context::{CHANNEL_COLOR_KEY, CHANNEL_NAME_KEY, CHANNEL_NAME_LENGTH_KEY};
 use super::component_handler::ComponentHandler;
 use super::ffi::{
-    FUnknown, IAttributeListVtbl, IAudioProcessor, IAudioProcessorVtbl, IBStreamVtbl, IComponent,
-    IComponentVtbl, IEditController, IEditControllerVtbl, IInfoListenerVtbl, ParameterInfo,
-    TResult, Tuid, Vst3Controller, Vst3Library, IID_FUNKNOWN, IID_IINFO_LISTENER, IID_IUNIT_INFO,
-    K_INVALID_ARGUMENT, K_NO_INTERFACE, K_RESULT_FALSE, K_RESULT_OK, PARAM_IS_PROGRAM_CHANGE,
+    FUnknown, HostParameterChanges, IAttributeListVtbl, IAudioProcessor, IAudioProcessorVtbl,
+    IBStreamVtbl, IComponent, IComponentVtbl, IEditController, IEditControllerVtbl,
+    IInfoListenerVtbl, ParameterInfo, ProcessData, ProcessSetup, TResult, Tuid, Vst3Controller,
+    Vst3Library, IID_FUNKNOWN, IID_IINFO_LISTENER, IID_IUNIT_INFO, K_AUDIO, K_INVALID_ARGUMENT,
+    K_NO_INTERFACE, K_RESULT_FALSE, K_RESULT_OK, PARAM_IS_PROGRAM_CHANGE,
 };
 use super::units::{IUnitInfoVtbl, ProgramListInfo, UnitInfo};
 use crate::plugin_system::instance::PluginInstance;
@@ -136,6 +137,16 @@ static LISTENER_VTBL: IInfoListenerVtbl = IInfoListenerVtbl {
     set_channel_context_infos: listener_set_channel_context_infos,
 };
 
+/// What the processor was given by one `process` call.
+#[derive(Debug, PartialEq)]
+pub(crate) struct ProcessCall {
+    pub num_samples: i32,
+    /// `(parameter id, last value)` of each queue of the input list, in its order.
+    pub changes: Vec<(u32, f64)>,
+    /// How many times the component's state had been read before this call.
+    pub state_reads: usize,
+}
+
 /// The `IUnitInfo` of a controller, with the parameters its program lists need.
 /// Counts and failures can be forced to play a misbehaving plugin.
 #[repr(C)]
@@ -174,6 +185,10 @@ pub(crate) struct FakeUnits {
     pub controller_loads: RefCell<Vec<Vec<u8>>>,
     pub refuses_component_state: bool,
     pub refuses_controller_state: bool,
+    /// Every `process` call of the processor, in order.
+    pub process_calls: RefCell<Vec<ProcessCall>>,
+    /// How many times the processor's `getState` was called.
+    pub state_reads: Cell<usize>,
 }
 
 impl FakeUnits {
@@ -231,6 +246,8 @@ impl FakeUnits {
             controller_loads: RefCell::new(Vec::new()),
             refuses_component_state: false,
             refuses_controller_state: false,
+            process_calls: RefCell::new(Vec::new()),
+            state_reads: Cell::new(0),
         })
     }
 
@@ -502,6 +519,9 @@ struct FakeComponent {
 
 unsafe extern "C" fn component_get_state(this: *mut IComponent, stream: *mut c_void) -> TResult {
     let component = &*(this as *const FakeComponent);
+    if let Some(units) = component.units.as_ref() {
+        units.state_reads.set(units.state_reads.get() + 1);
+    }
     let vtbl = &**(stream as *mut *const IBStreamVtbl);
     let mut written = 0;
     (vtbl.write)(
@@ -589,6 +609,90 @@ unsafe extern "C" fn component_release(_: *mut IComponent) -> u32 {
 
 unsafe extern "C" fn processor_release(_: *mut IAudioProcessor) -> u32 {
     0
+}
+
+/// One audio input and one audio output, no event bus: an effect.
+unsafe extern "C" fn component_get_bus_count(_: *mut IComponent, media: i32, _: i32) -> i32 {
+    i32::from(media == K_AUDIO)
+}
+
+unsafe extern "C" fn component_activate_bus(
+    _: *mut IComponent,
+    _: i32,
+    _: i32,
+    _: i32,
+    _: u8,
+) -> TResult {
+    K_RESULT_OK
+}
+
+unsafe extern "C" fn component_set_active(_: *mut IComponent, _: u8) -> TResult {
+    K_RESULT_OK
+}
+
+#[repr(C)]
+struct FakeProcessor {
+    vtbl: *const IAudioProcessorVtbl,
+    units: *mut FakeUnits,
+}
+
+unsafe extern "C" fn processor_set_bus_arrangements(
+    _: *mut IAudioProcessor,
+    _: *mut u64,
+    _: i32,
+    _: *mut u64,
+    _: i32,
+) -> TResult {
+    K_RESULT_OK
+}
+
+unsafe extern "C" fn processor_setup_processing(
+    _: *mut IAudioProcessor,
+    _: *const ProcessSetup,
+) -> TResult {
+    K_RESULT_OK
+}
+
+unsafe extern "C" fn processor_set_processing(_: *mut IAudioProcessor, _: u8) -> TResult {
+    K_RESULT_OK
+}
+
+unsafe extern "C" fn processor_get_latency_samples(_: *mut IAudioProcessor) -> u32 {
+    0
+}
+
+/// Reads the input parameter list the way a plugin does, through its vtables.
+unsafe extern "C" fn processor_process(
+    this: *mut IAudioProcessor,
+    data: *mut ProcessData,
+) -> TResult {
+    let processor = &*(this as *const FakeProcessor);
+    let Some(units) = processor.units.as_ref() else {
+        return K_RESULT_OK;
+    };
+    let mut changes = Vec::new();
+    let list = (*data).input_param_changes as *mut HostParameterChanges;
+    if !list.is_null() {
+        let list_table = &*(*list).vtbl;
+        for index in 0..(list_table.get_parameter_count)(list) {
+            let queue = (list_table.get_parameter_data)(list, index);
+            let queue_table = &*(*queue).vtbl;
+            let points = (queue_table.get_point_count)(queue);
+            let (mut offset, mut value) = (0, 0.0);
+            if points > 0
+                && (queue_table.get_point)(queue, points - 1, &mut offset, &mut value)
+                    == K_RESULT_OK
+            {
+                changes.push(((queue_table.get_parameter_id)(queue), value));
+            }
+        }
+    }
+    units.process_calls.borrow_mut().push(ProcessCall {
+        num_samples: (*data).num_samples,
+        changes,
+        state_reads: units.state_reads.get(),
+    });
+    K_RESULT_OK
 }
 
 unsafe extern "C" fn unexpected_call() {
@@ -688,6 +792,18 @@ fn build_instance(listener: *mut FakeListener, units: *mut FakeUnits) -> Arc<Plu
                 component_terminate as *const (),
             ),
             (
+                offset_of!(IComponentVtbl, get_bus_count),
+                component_get_bus_count as *const (),
+            ),
+            (
+                offset_of!(IComponentVtbl, activate_bus),
+                component_activate_bus as *const (),
+            ),
+            (
+                offset_of!(IComponentVtbl, set_active),
+                component_set_active as *const (),
+            ),
+            (
                 offset_of!(IComponentVtbl, release),
                 component_release as *const (),
             ),
@@ -701,17 +817,40 @@ fn build_instance(listener: *mut FakeListener, units: *mut FakeUnits) -> Arc<Plu
             ),
         ]),
     }));
-    let processor = Box::leak(Box::new(IAudioProcessor {
-        vtbl: vtbl_of::<IAudioProcessorVtbl>(&[(
-            offset_of!(IAudioProcessorVtbl, release),
-            processor_release as *const (),
-        )]),
+    let processor = Box::leak(Box::new(FakeProcessor {
+        vtbl: vtbl_of::<IAudioProcessorVtbl>(&[
+            (
+                offset_of!(IAudioProcessorVtbl, release),
+                processor_release as *const (),
+            ),
+            (
+                offset_of!(IAudioProcessorVtbl, set_bus_arrangements),
+                processor_set_bus_arrangements as *const (),
+            ),
+            (
+                offset_of!(IAudioProcessorVtbl, setup_processing),
+                processor_setup_processing as *const (),
+            ),
+            (
+                offset_of!(IAudioProcessorVtbl, set_processing),
+                processor_set_processing as *const (),
+            ),
+            (
+                offset_of!(IAudioProcessorVtbl, get_latency_samples),
+                processor_get_latency_samples as *const (),
+            ),
+            (
+                offset_of!(IAudioProcessorVtbl, process),
+                processor_process as *const (),
+            ),
+        ]),
+        units,
     }));
     let controller = NonNull::from(controller);
     PluginInstance::new_vst3(
         FAKE_PLUGIN_ID,
         NonNull::from(component).cast(),
-        NonNull::from(processor),
+        NonNull::from(processor).cast(),
         Some(Vst3Controller::Shared(controller.cast())),
         ComponentHandler::boxed(),
         Vst3Library::placeholder(),

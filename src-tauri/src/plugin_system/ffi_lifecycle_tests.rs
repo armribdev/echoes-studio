@@ -34,7 +34,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use crate::audio_graph::buffer::AudioBuffer;
-use crate::audio_graph::node::{PrepareContext, TransportInfo};
+use crate::audio_graph::node::{AudioNode, PrepareContext, TransportInfo};
 use crate::plugin_system::host::PluginHost;
 use crate::plugin_system::instance::PluginInstance;
 use crate::plugin_system::lifecycle::LifecycleState;
@@ -1070,6 +1070,133 @@ fn vst3_real_program_can_be_chosen() {
         return;
     }
     eprintln!("{LOG} SKIP vst3_real_program_can_be_chosen — no VST3 with several programs");
+}
+
+/// Runs `count` blocks, adding `modulation` (`(parameter id, offset)`) to each.
+fn run_blocks(node: &mut dyn AudioNode, count: usize, modulation: Option<(u32, f32)>) {
+    let frames = 256;
+    let input = AudioBuffer::new(2, frames);
+    let transport = TransportInfo {
+        block_size: frames,
+        ..TransportInfo::stopped(48_000.0)
+    };
+    for _ in 0..count {
+        node.reset_modulation();
+        if let Some((native_id, offset)) = modulation {
+            node.apply_modulation_at(native_id, 0, offset);
+        }
+        let mut outputs = vec![AudioBuffer::new(2, frames)];
+        node.process(&[&input], &mut outputs, &transport);
+    }
+}
+
+/// Step S2 — a state save captures the user's setting, not a point of the
+/// modulation: a parameter modulated by value goes back on its base first.
+#[test]
+fn vst3_real_state_save_puts_a_modulated_parameter_back_on_its_base() {
+    use crate::audio_graph::plugin_params::{
+        PluginParamControl, PluginParamRange, ValueModulatedParam,
+    };
+    use std::sync::atomic::AtomicU32;
+
+    const BASE: f32 = 0.3;
+    const OFFSET: f32 = 0.4;
+    const TOLERANCE: f64 = 0.02;
+    const MIN_SHIFT: f64 = 0.05;
+
+    let candidates = discover_all("ECHOES_TEST_VST3", "vst3");
+    if candidates.is_empty() {
+        eprintln!("{LOG} SKIP vst3_real_state_save_puts_a_modulated_parameter_back_on_its_base — no .vst3 found");
+        return;
+    }
+
+    let key = "harness:vst3:modulated-state";
+    for path in &candidates {
+        let Some(device_id) = first_vst3_id(path) else {
+            continue;
+        };
+        let mut host = PluginHost::new();
+        host.registry_mut().add(vst3_manifest(&device_id, path));
+        let Ok(mut node) = host.instantiate(key, &device_id, false) else {
+            continue;
+        };
+        let instance = host.instance_by_key(key).expect("instance registered");
+        assert!(instance.vst3_ensure_active(48_000.0, 512));
+        node.prepare(PrepareContext {
+            sample_rate: 48_000.0,
+            max_block_size: 512,
+            num_channels: 2,
+            live: true,
+        });
+        let params = host.plugin_params(key).expect("parameters are readable");
+
+        let saved_value = |native_id: u32| -> f64 {
+            {
+                let _gate = instance
+                    .offrt_try_acquire(std::time::Duration::from_millis(50))
+                    .expect("the plugin is idle");
+                let state = instance.save_state_blob().expect("the plugin has a state");
+                assert!(instance.load_state_blob(&state), "the state reloads");
+            }
+            instance
+                .param_value(native_id)
+                .expect("the value is readable")
+        };
+
+        for param in params.iter().filter(|p| p.automatable && !p.hidden).take(8) {
+            let id = param.native_id;
+            let base = Arc::new(AtomicU32::new(BASE.to_bits()));
+            let mut control = PluginParamControl::new(id, Arc::clone(&base));
+            control.modulated = true;
+
+            // The controller decodes a state with its own curve, so values are only
+            // compared with each other: the state of the base alone is the reference.
+            instance.push_param(id, BASE);
+            run_blocks(&mut *node, 3, None);
+            let reference = saved_value(id);
+
+            node.inject_plugin_param_controls(vec![control]);
+            run_blocks(&mut *node, 3, Some((id, OFFSET)));
+            instance
+                .vst3_edit_state()
+                .unwrap()
+                .replace_followed(Vec::new());
+            let modulated = saved_value(id);
+            eprintln!(
+                "{LOG} S2 '{}': base {reference:.3}, saved while modulated {modulated:.3}",
+                param.name
+            );
+            if (modulated - reference).abs() < MIN_SHIFT {
+                continue;
+            }
+
+            instance
+                .vst3_edit_state()
+                .unwrap()
+                .replace_followed(vec![ValueModulatedParam::new(
+                    id,
+                    PluginParamRange::UNKNOWN,
+                    Arc::clone(&base),
+                )]);
+            run_blocks(&mut *node, 3, Some((id, OFFSET)));
+            let restored = saved_value(id);
+            eprintln!(
+                "{LOG} S2 '{}': saved with the base put back {restored:.3}",
+                param.name
+            );
+            assert!(
+                (restored - reference).abs() <= TOLERANCE,
+                "S2: the state holds the base ({reference}), not the modulated value ({modulated})"
+            );
+            assert!(
+                !instance.has_crashed(),
+                "S2: a zero-sample process must not crash the plugin"
+            );
+            return;
+        }
+        eprintln!("{LOG} S2 {device_id}: no parameter followed the modulation, nothing to check");
+    }
+    eprintln!("{LOG} SKIP vst3_real_state_save_puts_a_modulated_parameter_back_on_its_base — no usable VST3");
 }
 
 /// Logs the units of a controller and every parameter flagged `kIsProgramChange`,

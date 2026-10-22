@@ -1,15 +1,20 @@
 //! Parameter changes sent to a VST3 plugin each block, shared by the effect
 //! wrapper and the instrument adapter.
 
+use std::ffi::c_void;
 use std::sync::Arc;
 
 use crate::audio_graph::plugin_params::{
     PluginParamControl, PluginParamControls, ValueModulatedParam,
 };
+use crate::plugin_formats::crash_guard;
+use crate::plugin_system::crash_marker;
 use crate::plugin_system::instance::PluginInstance;
+use crate::plugin_system::lifecycle::LifecycleState;
 use crate::plugin_system::param_queue::ParamChange;
 
-use super::ffi::HostParameterChanges;
+use super::ffi::{HostParameterChanges, ProcessData};
+use super::wrapper::{vst3_process_trampoline, Vst3ProcessCtx};
 
 /// Refill `changes` for the block (ADR-007, ADR-021).  No allocation: the list
 /// is reset and filled in place.
@@ -55,6 +60,55 @@ pub fn fill_param_changes(
                 );
             }
         }
+    }
+}
+
+/// Off the audio thread, FFI gate held (ADR-010): puts each parameter modulated by
+/// value back on its base with a zero-sample `process`, the parameter flush that
+/// `ProcessData` allows, so a state save captures the user's setting and not a
+/// point of the modulation.  The next block modulates again.
+pub fn flush_param_bases(instance: &PluginInstance) {
+    let (Some(edit_state), Some((_, processor))) =
+        (instance.vst3_edit_state(), instance.vst3_handles())
+    else {
+        return;
+    };
+    let bases = edit_state.followed_bases();
+    if bases.is_empty() {
+        return;
+    }
+    let mut changes = HostParameterChanges::boxed();
+    for (native_id, base) in bases {
+        changes.push(native_id, 0, base);
+    }
+    let mut data = ProcessData {
+        process_mode: 0,
+        symbolic_sample_size: 0,
+        num_samples: 0,
+        num_inputs: 0,
+        num_outputs: 0,
+        inputs: std::ptr::null_mut(),
+        outputs: std::ptr::null_mut(),
+        input_param_changes: changes.as_mut() as *mut HostParameterChanges as *mut c_void,
+        output_param_changes: std::ptr::null_mut(),
+        input_events: std::ptr::null_mut(),
+        output_events: std::ptr::null_mut(),
+        process_context: std::ptr::null_mut(),
+    };
+    let mut ctx = Vst3ProcessCtx {
+        proc_ptr: processor.as_ptr(),
+        data_ptr: &mut data,
+    };
+    // SAFETY: live VST3 processor owned by this instance; the caller holds the FFI gate.
+    let outcome = unsafe {
+        crash_guard::guarded(
+            vst3_process_trampoline,
+            &mut ctx as *mut Vst3ProcessCtx as *mut c_void,
+        )
+    };
+    if outcome == crash_guard::CAUGHT {
+        instance.set_lifecycle(LifecycleState::Error);
+        crash_marker::note_crash();
     }
 }
 

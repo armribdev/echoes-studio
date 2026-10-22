@@ -164,6 +164,16 @@ impl EditState {
         std::mem::replace(&mut *followed, now)
     }
 
+    /// Command thread: the parameters modulated by value, each with the normalised
+    /// base its modulation moves around.
+    pub fn followed_bases(&self) -> Vec<(u32, f64)> {
+        let followed = self.followed.lock().unwrap_or_else(|e| e.into_inner());
+        followed
+            .iter()
+            .map(|param| (param.native_id, f64::from(param.base_value())))
+            .collect()
+    }
+
     /// Command thread: a program or preset moved values behind the host's back, so
     /// the base of each parameter modulated by value is read from the plugin again.
     pub fn rebase_followed(&self, read: impl Fn(u32) -> Option<f64>) {
