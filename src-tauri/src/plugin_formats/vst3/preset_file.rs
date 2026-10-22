@@ -9,8 +9,6 @@
 //! the chunks, then at the offset: `List`, entry count `i32`, and per entry the
 //! chunk id (4 bytes), its offset `i64` and its size `i64`.
 
-#![allow(dead_code)] // used by the preset listing and loading, which come next
-
 use std::fmt;
 use std::fs::File;
 use std::io::{self, Read, Seek, SeekFrom};
@@ -229,7 +227,7 @@ fn read_chunk<R: Read + Seek>(reader: &mut R, entry: &Entry) -> Result<Vec<u8>, 
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::plugin_formats::vst3::ffi::IID_ICOMPONENT;
     use std::io::Cursor;
@@ -237,10 +235,10 @@ mod tests {
     const CLASS: &str = "E831FF31F2D54301928EBBEE25697802";
 
     /// A chunk as the test writes it: its id and bytes.
-    type Chunk<'a> = (&'a [u8; 4], &'a [u8]);
+    pub(crate) type Chunk<'a> = (&'a [u8; 4], &'a [u8]);
 
     /// A well-formed file in the SDK's layout: header, chunks, then the list.
-    fn preset_file(class_id: &str, chunks: &[Chunk]) -> Vec<u8> {
+    pub(crate) fn preset_file(class_id: &str, chunks: &[Chunk]) -> Vec<u8> {
         let mut file = Vec::new();
         file.extend_from_slice(SIGNATURE);
         file.extend_from_slice(&1i32.to_le_bytes());

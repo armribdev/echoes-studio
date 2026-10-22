@@ -42,6 +42,7 @@
 //! instance — only the wrapper does, from the audio thread.  Phase 2c will
 //! introduce GUI calls and must coordinate via the lifecycle state machine.
 
+use std::path::Path;
 use std::ptr::NonNull;
 #[cfg(test)]
 use std::sync::atomic::AtomicU64;
@@ -54,17 +55,20 @@ use crate::plugin_formats::clap::audio_ports::{read_output_ports, ClapOutputPort
 use crate::plugin_formats::clap::ffi::{
     audio_thread_scope, deliver_due_timers, load_preset, mark_plugin_state_edited,
     notify_track_info_changed, read_note_names, ClapHost, ClapHostContext, ClapLibrary, ClapPlugin,
-    HostTrackInfo, NoteName, PresetRequest, TimerSchedule,
+    HostTrackInfo, NoteName, PresetRequest, TimerSchedule, CLAP_PRESET_LOCATION_FILE,
 };
 use crate::plugin_formats::vst3::channel_context::notify_channel_context;
 use crate::plugin_formats::vst3::component_handler::{ComponentHandler, EditState};
 use crate::plugin_formats::vst3::ffi::{
-    release_controller, set_controller_component_state, sync_controller_to_state, FUnknown,
+    release_controller, set_controller_component_state, set_controller_state,
+    sync_controller_to_state, FUnknown,
     IAudioProcessor, IComponent,
     IEditController, ProcessSetup, Vst3Controller, Vst3Library, K_AUDIO, K_EVENT, K_INPUT,
     K_OUTPUT, SPEAKER_STEREO,
 };
+use crate::plugin_formats::vst3::host::decode_plugin_id;
 use crate::plugin_formats::vst3::params::{read_vst3_param_text, read_vst3_param_value};
+use crate::plugin_formats::vst3::preset_file::{class_id_text, read_preset_chunks};
 use crate::plugin_formats::vst3::units::{read_program_lists, select_program};
 use crate::plugin_system::bridge::BridgedPlugin;
 use crate::plugin_system::crash_marker::{self, MarkerGuard, PluginThread};
@@ -571,7 +575,11 @@ impl PluginInstance {
             return Err("the plugin has crashed".into());
         }
         if self.vst3_controller().is_some() {
-            return self.load_vst3_program(request);
+            return if request.location_kind == CLAP_PRESET_LOCATION_FILE {
+                self.load_vst3_preset_file(request)
+            } else {
+                self.load_vst3_program(request)
+            };
         }
         if let Some(bridged) = self.bridge() {
             bridged.load_preset(request)?;
@@ -650,6 +658,40 @@ impl PluginInstance {
             self.wait_for_vst3_processor();
             self.sync_vst3_controller_with_processor(controller);
         }
+        Ok(())
+    }
+
+    /// Loads a `.vstpreset` file the plugin's listing offered: the plugin's state
+    /// goes in where a project's would (ADR-010), then its controller's own state
+    /// if the file has one.  The file is read and checked again first, since the
+    /// disk may have changed since the listing, and before the FFI gate is taken.
+    fn load_vst3_preset_file(&self, request: &PresetRequest) -> Result<(), String> {
+        let (Some(controller), Some(edit_state)) = (self.vst3_controller(), self.vst3_edit_state())
+        else {
+            return Err("this plugin has no presets".into());
+        };
+        let path = request.location.as_deref().ok_or("this preset has no file")?;
+        let class_id = decode_plugin_id(&self.device_id)
+            .map(|id| class_id_text(&id))
+            .ok_or("this plugin has no VST3 class id")?;
+        let chunks = read_preset_chunks(Path::new(path), &class_id).map_err(|e| e.to_string())?;
+        let _gate = self
+            .offrt_try_acquire(FFI_GATE_PRESET_BUDGET)
+            .ok_or("the plugin is busy, try again")?;
+        if !self.load_state_blob(&chunks.component) {
+            return Err("the plugin could not load this preset".into());
+        }
+        if let Some(own_state) = chunks.controller {
+            // SAFETY: live VST3 controller owned by this instance; FFI gate held.
+            if !unsafe { set_controller_state(controller.as_ptr(), &own_state) } {
+                eprintln!("[vst3] a preset's controller state was refused: {path}");
+            }
+        }
+        edit_state.rebase_followed(|id| {
+            // SAFETY: as above.
+            Some(unsafe { read_vst3_param_value(controller.as_ptr(), id) })
+        });
+        self.mark_state_edited();
         Ok(())
     }
 

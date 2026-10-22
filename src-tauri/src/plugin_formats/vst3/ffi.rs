@@ -869,7 +869,7 @@ pub struct IEditControllerVtbl {
     // (5) setComponentState — syncs a separate controller to the processor's
     // state (dual-component plugins, audit V4).
     pub set_component_state: unsafe extern "C" fn(*mut IEditController, *mut c_void) -> TResult,
-    pub _pad6: *const c_void, // setState
+    pub set_state: unsafe extern "C" fn(*mut IEditController, *mut c_void) -> TResult,
     pub _pad7: *const c_void, // getState
     pub get_parameter_count: unsafe extern "C" fn(*mut IEditController) -> i32,
     pub get_parameter_info:
@@ -1621,6 +1621,17 @@ pub unsafe fn sync_controller_to_state(controller: &Vst3Controller, bytes: &[u8]
         return;
     };
     set_controller_component_state(separate.controller, bytes);
+}
+
+/// `IEditController::setState` with `bytes`: the controller's own state, which a
+/// preset file may hold besides the processor's.  Returns `true` on `kResultOk`.
+///
+/// # Safety
+/// As [`read_component_state`], with `controller` a live `IEditController`.
+pub unsafe fn set_controller_state(controller: *mut IEditController, bytes: &[u8]) -> bool {
+    let mut stream = HostStream::with_data(bytes.to_vec());
+    let ib = stream.as_mut() as *mut HostStream as *mut c_void;
+    ((*(*controller).vtbl).set_state)(controller, ib) == K_RESULT_OK
 }
 
 /// `IEditController::setComponentState` with `bytes`, for a controller of either

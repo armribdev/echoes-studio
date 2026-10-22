@@ -50,7 +50,7 @@ use crate::plugin_system::crash_marker::{self, plugin_tag, PluginThread};
 use crate::plugin_system::instance::{PluginInstance, FFI_GATE_HARVEST_BUDGET};
 use crate::plugin_system::lifecycle::{transition, LifecycleError, LifecycleState};
 use crate::plugin_system::parameter::PluginParamInfo;
-use crate::plugin_system::presets::{PluginPreset, PresetListing, PresetSource};
+use crate::plugin_system::presets::{PluginPreset, PresetListing, PresetSource, Vst3PresetFiles};
 use crate::plugin_system::registry::{PluginManifest, PluginRegistry};
 use crate::plugin_system::state::DeviceState;
 use crate::plugin_system::track_info::placement_track_infos;
@@ -1045,10 +1045,12 @@ impl PluginHost {
             return Some(PresetListing::Clap(source));
         }
         let instance = self.instance_by_key(instance_key)?;
-        instance
-            .vst3_controller()
-            .is_some()
-            .then_some(PresetListing::Vst3Programs(instance))
+        instance.vst3_controller()?;
+        let files = self
+            .registry
+            .get(&instance.device_id)
+            .and_then(|manifest| Vst3PresetFiles::new(&manifest.name, &manifest.id));
+        Some(PresetListing::Vst3 { instance, files })
     }
 
     /// Keeps a plugin's latest preset listing, to check later loads against.
@@ -1685,6 +1687,62 @@ mod tests {
             }
             let error = host.instance_for_preset("unknown", &warm).err();
             assert_eq!(error.as_deref(), Some("this plugin has no presets"));
+        }
+
+        #[test]
+        fn only_a_file_the_last_listing_offered_can_be_loaded() {
+            use crate::plugin_formats::vst3::fake_plugin::FAKE_PLUGIN_ID;
+            use crate::plugin_formats::vst3::preset_locations::PresetRoots;
+
+            let mut units = two_programs();
+            let (_listener, mut host) = host_with_two_programs(&mut units);
+            let directory = std::env::temp_dir()
+                .join(format!("echoes-host-file-whitelist-{}", std::process::id()));
+            let folder = directory.join("docs/VST3 Presets/Vendor/Fake Synth");
+            std::fs::create_dir_all(&folder).unwrap();
+            let class_id = crate::plugin_formats::vst3::preset_file::class_id_text(
+                &crate::plugin_formats::vst3::host::decode_plugin_id(FAKE_PLUGIN_ID).unwrap(),
+            );
+            let offered_file = folder.join("Offered.vstpreset");
+            let unlisted_file = folder.join("Unlisted.vstpreset");
+            let file = crate::plugin_formats::vst3::preset_file::tests::preset_file(
+                &class_id,
+                &[(b"Comp", b"state")],
+            );
+            std::fs::write(&offered_file, &file).unwrap();
+            let listing = PresetListing::Vst3 {
+                instance: host.instance_by_key(KEY).unwrap(),
+                files: Some(
+                    Vst3PresetFiles::new("Fake Synth", FAKE_PLUGIN_ID)
+                        .unwrap()
+                        .under(PresetRoots {
+                            documents: Some(directory.join("docs")),
+                            ..PresetRoots::default()
+                        }),
+                ),
+            };
+            let presets = listing.list();
+            host.remember_listing(&listing, presets.clone());
+            std::fs::write(&unlisted_file, &file).unwrap();
+            let offered = presets
+                .iter()
+                .find(|preset| preset.name == "Offered")
+                .expect("the file is listed")
+                .request();
+
+            assert!(host.instance_for_preset(KEY, &offered).is_ok());
+
+            let mut unlisted = offered.clone();
+            unlisted.location = unlisted_file.to_str().map(String::from);
+            let mut elsewhere = offered.clone();
+            elsewhere.location = Some("C:\\Windows\\win.ini".into());
+            let mut as_a_program = offered.clone();
+            as_a_program.load_key = Some("40:1".into());
+            for forged in [unlisted, elsewhere, as_a_program] {
+                let error = host.instance_for_preset(KEY, &forged).err();
+                assert_eq!(error.as_deref(), Some("this preset is not offered by the plugin"));
+            }
+            let _ = std::fs::remove_dir_all(directory);
         }
 
         #[test]

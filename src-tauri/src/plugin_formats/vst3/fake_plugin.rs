@@ -23,6 +23,9 @@ use super::ffi::{
 use super::units::{IUnitInfoVtbl, ProgramListInfo, UnitInfo};
 use crate::plugin_system::instance::PluginInstance;
 
+/// The id the fake is registered under: `vst3:` and the 32 hex digits of a class id.
+pub(crate) const FAKE_PLUGIN_ID: &str = "vst3:0123456789ABCDEFFEDCBA9876543210";
+
 /// What a controller read from the list it was given.
 #[derive(Debug, PartialEq)]
 pub(crate) struct Received {
@@ -165,6 +168,12 @@ pub(crate) struct FakeUnits {
     pub processor_state: Vec<u8>,
     /// What the controller was given through `setComponentState`, in order.
     pub component_states: RefCell<Vec<Vec<u8>>>,
+    /// What the processor was given through `setState`, in order.
+    pub component_loads: RefCell<Vec<Vec<u8>>>,
+    /// What the controller was given through `setState`, in order.
+    pub controller_loads: RefCell<Vec<Vec<u8>>>,
+    pub refuses_component_state: bool,
+    pub refuses_controller_state: bool,
 }
 
 impl FakeUnits {
@@ -218,6 +227,10 @@ impl FakeUnits {
             refuses_selection: false,
             processor_state: Vec::new(),
             component_states: RefCell::new(Vec::new()),
+            component_loads: RefCell::new(Vec::new()),
+            controller_loads: RefCell::new(Vec::new()),
+            refuses_component_state: false,
+            refuses_controller_state: false,
         })
     }
 
@@ -433,6 +446,12 @@ unsafe extern "C" fn controller_set_component_state(
     let Some(units) = controller.units.as_ref() else {
         return K_INVALID_ARGUMENT;
     };
+    units.component_states.borrow_mut().push(read_all(stream));
+    K_RESULT_OK
+}
+
+/// Everything a plugin can read from the host's stream.
+unsafe fn read_all(stream: *mut c_void) -> Vec<u8> {
     let vtbl = &**(stream as *mut *const IBStreamVtbl);
     let mut state = Vec::new();
     let mut chunk = [0u8; 64];
@@ -444,7 +463,33 @@ unsafe extern "C" fn controller_set_component_state(
         }
         state.extend_from_slice(&chunk[..read as usize]);
     }
-    units.component_states.borrow_mut().push(state);
+    state
+}
+
+unsafe extern "C" fn controller_set_state(
+    this: *mut IEditController,
+    stream: *mut c_void,
+) -> TResult {
+    let controller = &*(this as *const FakeController);
+    let Some(units) = controller.units.as_ref() else {
+        return K_INVALID_ARGUMENT;
+    };
+    if units.refuses_controller_state {
+        return K_RESULT_FALSE;
+    }
+    units.controller_loads.borrow_mut().push(read_all(stream));
+    K_RESULT_OK
+}
+
+unsafe extern "C" fn component_set_state(this: *mut IComponent, stream: *mut c_void) -> TResult {
+    let component = &*(this as *const FakeComponent);
+    let Some(units) = component.units.as_ref() else {
+        return K_INVALID_ARGUMENT;
+    };
+    if units.refuses_component_state {
+        return K_RESULT_FALSE;
+    }
+    units.component_loads.borrow_mut().push(read_all(stream));
     K_RESULT_OK
 }
 
@@ -452,6 +497,7 @@ unsafe extern "C" fn controller_set_component_state(
 struct FakeComponent {
     vtbl: *const IComponentVtbl,
     state: Vec<u8>,
+    units: *mut FakeUnits,
 }
 
 unsafe extern "C" fn component_get_state(this: *mut IComponent, stream: *mut c_void) -> TResult {
@@ -620,6 +666,10 @@ fn build_instance(listener: *mut FakeListener, units: *mut FakeUnits) -> Arc<Plu
                 controller_set_component_state as *const (),
             ),
             (
+                offset_of!(IEditControllerVtbl, set_state),
+                controller_set_state as *const (),
+            ),
+            (
                 offset_of!(IEditControllerVtbl, set_component_handler),
                 controller_set_component_handler as *const (),
             ),
@@ -631,6 +681,7 @@ fn build_instance(listener: *mut FakeListener, units: *mut FakeUnits) -> Arc<Plu
         unsafe { units.as_ref() }.map_or_else(Vec::new, |units| units.processor_state.clone());
     let component = Box::leak(Box::new(FakeComponent {
         state,
+        units,
         vtbl: vtbl_of::<IComponentVtbl>(&[
             (
                 offset_of!(IComponentVtbl, terminate),
@@ -644,6 +695,10 @@ fn build_instance(listener: *mut FakeListener, units: *mut FakeUnits) -> Arc<Plu
                 offset_of!(IComponentVtbl, get_state),
                 component_get_state as *const (),
             ),
+            (
+                offset_of!(IComponentVtbl, set_state),
+                component_set_state as *const (),
+            ),
         ]),
     }));
     let processor = Box::leak(Box::new(IAudioProcessor {
@@ -654,7 +709,7 @@ fn build_instance(listener: *mut FakeListener, units: *mut FakeUnits) -> Arc<Plu
     }));
     let controller = NonNull::from(controller);
     PluginInstance::new_vst3(
-        "fake://vst3",
+        FAKE_PLUGIN_ID,
         NonNull::from(component).cast(),
         NonNull::from(processor),
         Some(Vst3Controller::Shared(controller.cast())),

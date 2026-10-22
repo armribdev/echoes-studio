@@ -805,6 +805,143 @@ fn vst3_real_controller_program_lists() {
     panic!("no real VST3 could be instantiated by the engine");
 }
 
+/// Step 6 — a `.vstpreset` file made from a real plugin's own state is listed under
+/// the standard folders, and loading it brings that state back, whatever the
+/// plugin was set to meanwhile.  No such file exists on this machine, so the file
+/// is made here; what is checked is the host's side of the format.
+#[test]
+fn vst3_real_preset_file_is_listed_and_loaded() {
+    use crate::plugin_formats::vst3::host::decode_plugin_id;
+    use crate::plugin_formats::vst3::preset_file::{class_id_text, tests::preset_file};
+    use crate::plugin_formats::vst3::preset_locations::PresetRoots;
+    use crate::plugin_system::presets::{PresetListing, Vst3PresetFiles};
+
+    let candidates = discover_all("ECHOES_TEST_VST3", "vst3");
+    if candidates.is_empty() {
+        eprintln!("{LOG} SKIP vst3_real_preset_file_is_listed_and_loaded — no .vst3 found");
+        return;
+    }
+
+    let key = "harness:vst3:preset-file";
+    for path in &candidates {
+        let Some(device_id) = first_vst3_id(path) else {
+            continue;
+        };
+        let mut host = PluginHost::new();
+        host.registry_mut().add(vst3_manifest(&device_id, path));
+        let Ok(mut node) = host.instantiate(key, &device_id, false) else {
+            continue;
+        };
+        let instance = host.instance_by_key(key).expect("instance registered");
+        assert!(instance.vst3_ensure_active(48_000.0, 512));
+        node.prepare(PrepareContext {
+            sample_rate: 48_000.0,
+            max_block_size: 512,
+            num_channels: 2,
+            live: true,
+        });
+        let programs = instance.vst3_program_presets();
+        if programs.len() < 3 {
+            eprintln!("{LOG} F0 {device_id}: too few programs to tell states apart");
+            continue;
+        }
+
+        let directory =
+            std::env::temp_dir().join(format!("echoes-real-vstpreset-{}", std::process::id()));
+        let folder = directory.join("docs/VST3 Presets/Harness/Harness VST3");
+        std::fs::create_dir_all(&folder).unwrap();
+        let class_id = class_id_text(&decode_plugin_id(&device_id).unwrap());
+        let listing = PresetListing::Vst3 {
+            instance: Arc::clone(&instance),
+            files: Some(
+                Vst3PresetFiles::new("Harness VST3", &device_id)
+                    .unwrap()
+                    .under(PresetRoots {
+                        documents: Some(directory.join("docs")),
+                        ..PresetRoots::default()
+                    }),
+            ),
+        };
+
+        let running = std::sync::atomic::AtomicBool::new(true);
+        let frames = 256;
+        let outcome = std::thread::scope(|scope| {
+            let audio = scope.spawn(|| {
+                let input = AudioBuffer::new(2, frames);
+                let transport = TransportInfo {
+                    block_size: frames,
+                    ..TransportInfo::stopped(48_000.0)
+                };
+                while running.load(std::sync::atomic::Ordering::Acquire) {
+                    let mut outputs = vec![AudioBuffer::new(2, frames)];
+                    node.process(&[&input], &mut outputs, &transport);
+                    std::thread::sleep(std::time::Duration::from_millis(2));
+                }
+            });
+            let choose = |index: usize| {
+                let request = programs[index].request();
+                instance.load_preset(&request).expect("a program loads");
+            };
+            let values = || -> Vec<f64> {
+                host.plugin_params(key)
+                    .expect("parameters are readable")
+                    .iter()
+                    .map(|param| instance.param_value(param.native_id).unwrap_or(f64::NAN))
+                    .collect()
+            };
+            choose(2);
+            let saved_values = values();
+            let saved_state = instance.save_state_blob().expect("the plugin has a state");
+            std::fs::write(
+                folder.join("Mine.vstpreset"),
+                preset_file(&class_id, &[(b"Comp", &saved_state)]),
+            )
+            .unwrap();
+            choose(5);
+            let other_values = values();
+
+            let listed = listing.list();
+            let file = listed
+                .iter()
+                .find(|preset| preset.name == "Mine")
+                .expect("the file is listed")
+                .clone();
+            let edits_before = instance.state_edit_count();
+            let loaded = instance.load_preset(&file.request());
+            let values_after = values();
+            running.store(false, std::sync::atomic::Ordering::Release);
+            audio.join().expect("the audio thread must not crash");
+            (
+                file,
+                loaded,
+                saved_state.len(),
+                (saved_values, other_values, values_after),
+                edits_before,
+            )
+        });
+        let (file, loaded, state_length, (saved, other, after), edits_before) = outcome;
+        eprintln!(
+            "{LOG} F0 {device_id}: listed '{}' ({} bytes of state) → {loaded:?}",
+            file.name, state_length
+        );
+        loaded.expect("F0: a file the listing offered must load");
+        assert_ne!(saved, other, "F0: the two programs differ");
+        assert_eq!(after, saved, "F0: the file brought the parameters back");
+        assert_eq!(
+            instance.state_edit_count(),
+            edits_before + 1,
+            "F0: marked unsaved"
+        );
+        assert!(
+            !instance.has_crashed(),
+            "F0: loading a file must not crash the plugin"
+        );
+        let _ = std::fs::remove_dir_all(directory);
+        return;
+    }
+    eprintln!("{LOG} SKIP vst3_real_preset_file_is_listed_and_loaded — no VST3 with programs");
+}
+
 /// Step 6 — a program a real plugin lists can be chosen: the selector moves, the
 /// other parameters follow when the plugin's controller shares its processor's
 /// state (what the log shows), the project reads as unsaved, nothing crashes.

@@ -10,9 +10,15 @@ use std::sync::{Arc, Mutex};
 
 use crate::plugin_formats::clap::ffi::{
     discover_presets, ClapLibrary, ClapPluginEntry, PresetEntry, PresetRequest,
-    CLAP_PRESET_IS_FACTORY_CONTENT, CLAP_PRESET_IS_USER_CONTENT, CLAP_PRESET_LOCATION_PLUGIN,
+    CLAP_PRESET_IS_FACTORY_CONTENT, CLAP_PRESET_IS_USER_CONTENT, CLAP_PRESET_LOCATION_FILE,
+    CLAP_PRESET_LOCATION_PLUGIN,
 };
 use crate::plugin_formats::crash_guard;
+use crate::plugin_formats::vst3::host::decode_plugin_id;
+use crate::plugin_formats::vst3::preset_file::class_id_text;
+use crate::plugin_formats::vst3::preset_locations::{
+    list_preset_files, preset_folders, PresetRoots,
+};
 use crate::plugin_formats::vst3::units::ProgramList;
 use crate::plugin_system::instance::PluginInstance;
 
@@ -23,18 +29,78 @@ pub struct PresetSource {
     pub clap_plugin_id: String,
 }
 
+/// Whose a preset is, which decides the group it is shown in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PresetOrigin {
+    Factory,
+    User,
+}
+
+impl PresetOrigin {
+    fn flags(self) -> u32 {
+        match self {
+            Self::Factory => CLAP_PRESET_IS_FACTORY_CONTENT,
+            Self::User => CLAP_PRESET_IS_USER_CONTENT,
+        }
+    }
+}
+
+/// The `.vstpreset` files a VST3 plugin may have on disk.  The folders are only
+/// looked at when listing, on the worker thread.
+pub struct Vst3PresetFiles {
+    plugin_name: String,
+    class_id: String,
+    roots: Option<PresetRoots>,
+}
+
+impl Vst3PresetFiles {
+    /// `None` when the plugin id is not a VST3 class id.
+    pub fn new(plugin_name: &str, plugin_id: &str) -> Option<Self> {
+        let class_id = decode_plugin_id(plugin_id)?;
+        Some(Self {
+            plugin_name: plugin_name.to_owned(),
+            class_id: class_id_text(&class_id),
+            roots: None,
+        })
+    }
+
+    /// Looks under these roots instead of the machine's own.
+    #[cfg(test)]
+    pub fn under(mut self, roots: PresetRoots) -> Self {
+        self.roots = Some(roots);
+        self
+    }
+
+    fn list(&self) -> Vec<PluginPreset> {
+        let roots = self
+            .roots
+            .clone()
+            .unwrap_or_else(PresetRoots::of_this_machine);
+        list_preset_files(&preset_folders(&roots, &self.plugin_name), &self.class_id)
+    }
+}
+
 /// Where the presets of one placement come from.
 pub enum PresetListing {
     Clap(PresetSource),
-    Vst3Programs(Arc<PluginInstance>),
+    Vst3 {
+        instance: Arc<PluginInstance>,
+        files: Option<Vst3PresetFiles>,
+    },
 }
 
 impl PresetListing {
-    /// Runs the listing; meant for a worker thread, outside the engine lock.
+    /// Runs the listing; meant for a worker thread, outside the engine lock.  A
+    /// VST3 plugin's own programs come first within their group, then its files.
     pub fn list(&self) -> Vec<PluginPreset> {
         match self {
             Self::Clap(source) => list_presets(source),
-            Self::Vst3Programs(instance) => instance.vst3_program_presets(),
+            Self::Vst3 { instance, files } => {
+                let mut presets = instance.vst3_program_presets();
+                presets.extend(files.iter().flat_map(Vst3PresetFiles::list));
+                presets.sort_by_key(|preset| group_rank(preset.flags));
+                presets
+            }
         }
     }
 
@@ -42,7 +108,7 @@ impl PresetListing {
     pub fn whitelist_key(&self) -> String {
         match self {
             Self::Clap(source) => source.clap_plugin_id.clone(),
-            Self::Vst3Programs(instance) => instance.device_id.clone(),
+            Self::Vst3 { instance, .. } => instance.device_id.clone(),
         }
     }
 }
@@ -64,6 +130,23 @@ pub struct PluginPreset {
 }
 
 impl PluginPreset {
+    /// A `.vstpreset` file the host found: it is loaded by its path.
+    pub fn vst3_file(name: String, path: String, origin: PresetOrigin) -> Self {
+        Self {
+            name,
+            load_key: None,
+            location_kind: CLAP_PRESET_LOCATION_FILE,
+            location: Some(path),
+            provider_id: "vst3:file".into(),
+            flags: origin.flags(),
+            creator: None,
+            description: None,
+            features: Vec::new(),
+            soundpack: None,
+            active: false,
+        }
+    }
+
     pub fn request(&self) -> PresetRequest {
         PresetRequest {
             location_kind: self.location_kind,

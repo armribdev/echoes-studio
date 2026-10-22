@@ -25,6 +25,7 @@ pub mod midi_mapping;
 pub mod param_delivery;
 pub mod params;
 pub mod preset_file;
+pub mod preset_locations;
 pub mod transport;
 pub mod units;
 pub mod wrapper;
