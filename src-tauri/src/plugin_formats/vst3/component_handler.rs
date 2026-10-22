@@ -6,18 +6,24 @@
 //! `performEdit` value to `IAudioProcessor::process` as an input parameter
 //! change, and that is what [`EditState::drain_edits`] feeds.
 //!
+//! The same object also answers `IComponentHandler2` (`setDirty`, group edits).
+//!
 //! The callbacks come from the plugin's UI thread (the Win32 thread of its
 //! editor) and are lock-free, so a plugin that calls them from elsewhere cannot
 //! block the audio thread.
 
-use std::ffi::c_void;
-use std::ptr::null_mut;
+use std::ffi::{c_char, c_void};
+use std::mem::offset_of;
+use std::ptr::{addr_of_mut, null_mut};
+#[cfg(test)]
+use std::sync::atomic::AtomicU32;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use super::ffi::{
-    FUnknown, IComponentHandlerVtbl, TResult, Tuid, IID_FUNKNOWN, IID_ICOMPONENT_HANDLER,
-    K_INVALID_ARGUMENT, K_NO_INTERFACE, K_RESULT_OK,
+    FUnknown, IComponentHandler2Vtbl, IComponentHandlerVtbl, TResult, Tuid, IID_FUNKNOWN,
+    IID_ICOMPONENT_HANDLER, IID_ICOMPONENT_HANDLER2, K_INVALID_ARGUMENT, K_NO_INTERFACE,
+    K_RESULT_FALSE, K_RESULT_OK,
 };
 use super::host_context::{static_add_ref, static_release, tuid_eq};
 use crate::audio_graph::plugin_params::ValueModulatedParam;
@@ -52,6 +58,8 @@ pub struct EditState {
     /// Parameters the host moves by value around a base that follows the user.
     followed: Mutex<Vec<ValueModulatedParam>>,
     reactivation_requested: AtomicBool,
+    #[cfg(test)]
+    dirty_requests: AtomicU32,
 }
 
 impl EditState {
@@ -61,7 +69,23 @@ impl EditState {
             gestures: std::array::from_fn(|_| AtomicU64::new(0)),
             followed: Mutex::new(Vec::new()),
             reactivation_requested: AtomicBool::new(false),
+            #[cfg(test)]
+            dirty_requests: AtomicU32::new(0),
         }
+    }
+
+    /// The unsaved flag belongs to the project, so a plugin can only raise it.
+    fn set_dirty(&self, dirty: bool) {
+        if dirty {
+            #[cfg(test)]
+            self.dirty_requests.fetch_add(1, Ordering::Relaxed);
+            mark_plugin_state_edited();
+        }
+    }
+
+    #[cfg(test)]
+    fn dirty_requests(&self) -> u32 {
+        self.dirty_requests.load(Ordering::Relaxed)
     }
 
     fn begin(&self, native_id: u32) {
@@ -163,14 +187,17 @@ impl EditState {
     }
 }
 
-/// The COM object handed to the controller.  `vtbl` MUST stay at offset 0.
+/// The COM object handed to the controller.  `vtbl` MUST stay at offset 0: it is
+/// the object's identity (`IComponentHandler`); the `IComponentHandler2` pointer
+/// handed out by a query is the address of `vtbl2`.
 #[repr(C)]
 pub struct ComponentHandler {
     vtbl: *const IComponentHandlerVtbl,
+    vtbl2: *const IComponentHandler2Vtbl,
     state: Arc<EditState>,
 }
 
-// SAFETY: `vtbl` points to an immutable static and `EditState` is `Sync`.
+// SAFETY: the vtable pointers point to immutable statics and `EditState` is `Sync`.
 unsafe impl Send for ComponentHandler {}
 unsafe impl Sync for ComponentHandler {}
 
@@ -178,6 +205,7 @@ impl ComponentHandler {
     pub fn boxed() -> Box<Self> {
         Box::new(Self {
             vtbl: &HANDLER_VTBL,
+            vtbl2: &HANDLER2_VTBL,
             state: Arc::new(EditState::new()),
         })
     }
@@ -196,8 +224,19 @@ unsafe fn state<'a>(this: *mut FUnknown) -> &'a EditState {
     &(*(this as *const ComponentHandler)).state
 }
 
-unsafe extern "C" fn handler_qi(
-    this: *mut FUnknown,
+/// The object behind an `IComponentHandler2` pointer.
+unsafe fn handler_of_second_interface(this: *mut FUnknown) -> *mut ComponentHandler {
+    (this as *mut u8).sub(offset_of!(ComponentHandler, vtbl2)) as *mut ComponentHandler
+}
+
+unsafe fn state2<'a>(this: *mut FUnknown) -> &'a EditState {
+    &(*handler_of_second_interface(this)).state
+}
+
+/// Every interface of the object answers for all of them, and the same pointer for
+/// `FUnknown`, as COM requires.
+unsafe fn query_handler(
+    handler: *mut ComponentHandler,
     iid: *const Tuid,
     obj: *mut *mut c_void,
 ) -> TResult {
@@ -205,11 +244,31 @@ unsafe extern "C" fn handler_qi(
         return K_INVALID_ARGUMENT;
     }
     if tuid_eq(iid, &IID_ICOMPONENT_HANDLER) || tuid_eq(iid, &IID_FUNKNOWN) {
-        *obj = this as *mut c_void;
+        *obj = handler as *mut c_void;
+        return K_RESULT_OK;
+    }
+    if tuid_eq(iid, &IID_ICOMPONENT_HANDLER2) {
+        *obj = addr_of_mut!((*handler).vtbl2) as *mut c_void;
         return K_RESULT_OK;
     }
     *obj = null_mut();
     K_NO_INTERFACE
+}
+
+unsafe extern "C" fn handler_qi(
+    this: *mut FUnknown,
+    iid: *const Tuid,
+    obj: *mut *mut c_void,
+) -> TResult {
+    query_handler(this as *mut ComponentHandler, iid, obj)
+}
+
+unsafe extern "C" fn handler2_qi(
+    this: *mut FUnknown,
+    iid: *const Tuid,
+    obj: *mut *mut c_void,
+) -> TResult {
+    query_handler(handler_of_second_interface(this), iid, obj)
 }
 
 unsafe extern "C" fn handler_begin_edit(this: *mut FUnknown, id: u32) -> TResult {
@@ -234,6 +293,21 @@ unsafe extern "C" fn handler_restart_component(this: *mut FUnknown, flags: i32) 
     K_RESULT_OK
 }
 
+unsafe extern "C" fn handler2_set_dirty(this: *mut FUnknown, dirty: u8) -> TResult {
+    state2(this).set_dirty(dirty != 0);
+    K_RESULT_OK
+}
+
+/// Opening a window at the plugin's request is not supported: the answer says so.
+unsafe extern "C" fn handler2_request_open_editor(_: *mut FUnknown, _: *const c_char) -> TResult {
+    K_RESULT_FALSE
+}
+
+// The window's edits already reach the processor in order, at offset 0 of one block.
+unsafe extern "C" fn handler2_group_edit(_: *mut FUnknown) -> TResult {
+    K_RESULT_OK
+}
+
 static HANDLER_VTBL: IComponentHandlerVtbl = IComponentHandlerVtbl {
     query_interface: handler_qi,
     add_ref: static_add_ref,
@@ -242,6 +316,16 @@ static HANDLER_VTBL: IComponentHandlerVtbl = IComponentHandlerVtbl {
     perform_edit: handler_perform_edit,
     end_edit: handler_end_edit,
     restart_component: handler_restart_component,
+};
+
+static HANDLER2_VTBL: IComponentHandler2Vtbl = IComponentHandler2Vtbl {
+    query_interface: handler2_qi,
+    add_ref: static_add_ref,
+    release: static_release,
+    set_dirty: handler2_set_dirty,
+    request_open_editor: handler2_request_open_editor,
+    start_group_edit: handler2_group_edit,
+    finish_group_edit: handler2_group_edit,
 };
 
 #[cfg(test)]
@@ -272,6 +356,96 @@ mod tests {
             query(&IID_ICOMPONENT_HANDLER, null_mut()),
             K_INVALID_ARGUMENT
         );
+    }
+
+    fn second_interface(handler: &ComponentHandler) -> *mut FUnknown {
+        let this = handler.as_funknown();
+        let mut found: *mut c_void = null_mut();
+        let result = unsafe {
+            ((*(*this).vtbl).query_interface)(this, &IID_ICOMPONENT_HANDLER2, &mut found)
+        };
+        assert_eq!(result, K_RESULT_OK);
+        found as *mut FUnknown
+    }
+
+    fn second_table<'a>(second: *mut FUnknown) -> &'a IComponentHandler2Vtbl {
+        unsafe { &**(second as *const *const IComponentHandler2Vtbl) }
+    }
+
+    #[test]
+    fn the_two_interfaces_are_one_object() {
+        let handler = ComponentHandler::boxed();
+        let this = handler.as_funknown();
+        let second = second_interface(&handler);
+        let table = second_table(second);
+        let query = |iid: &Tuid, obj: *mut *mut c_void| unsafe {
+            (table.query_interface)(second, iid, obj)
+        };
+        let mut found: *mut c_void = null_mut();
+
+        assert_ne!(second, this);
+        assert_eq!(query(&IID_FUNKNOWN, &mut found), K_RESULT_OK);
+        assert_eq!(found, this as *mut c_void, "one identity for FUnknown");
+        assert_eq!(query(&IID_ICOMPONENT_HANDLER, &mut found), K_RESULT_OK);
+        assert_eq!(found, this as *mut c_void);
+        assert_eq!(query(&IID_ICOMPONENT_HANDLER2, &mut found), K_RESULT_OK);
+        assert_eq!(found, second as *mut c_void);
+        assert_eq!(query(&[7u8; 16], &mut found), K_NO_INTERFACE);
+        assert!(found.is_null());
+        assert_eq!(
+            query(&IID_ICOMPONENT_HANDLER2, null_mut()),
+            K_INVALID_ARGUMENT
+        );
+        assert_eq!(unsafe { (table.add_ref)(second) }, 1);
+        assert_eq!(unsafe { (table.release)(second) }, 1);
+    }
+
+    #[test]
+    fn a_dirty_plugin_asks_for_a_save_and_a_clean_one_changes_nothing() {
+        let handler = ComponentHandler::boxed();
+        let second = second_interface(&handler);
+        let table = second_table(second);
+
+        assert_eq!(unsafe { (table.set_dirty)(second, 1) }, K_RESULT_OK);
+        assert_eq!(handler.state().dirty_requests(), 1);
+        assert_eq!(unsafe { (table.set_dirty)(second, 0) }, K_RESULT_OK);
+        assert_eq!(handler.state().dirty_requests(), 1);
+    }
+
+    #[test]
+    fn the_editor_is_not_opened_at_the_plugins_request() {
+        let handler = ComponentHandler::boxed();
+        let second = second_interface(&handler);
+        let table = second_table(second);
+
+        assert_eq!(
+            unsafe { (table.request_open_editor)(second, c"editor".as_ptr()) },
+            K_RESULT_FALSE
+        );
+        assert_eq!(
+            unsafe { (table.request_open_editor)(second, std::ptr::null()) },
+            K_RESULT_FALSE
+        );
+    }
+
+    #[test]
+    fn a_group_edit_keeps_the_edits_in_order() {
+        let handler = ComponentHandler::boxed();
+        let second = second_interface(&handler);
+        let table = second_table(second);
+
+        assert_eq!(unsafe { (table.start_group_edit)(second) }, K_RESULT_OK);
+        call_begin(&handler, 1);
+        call_begin(&handler, 3);
+        call_perform(&handler, 1, 1.0);
+        call_perform(&handler, 3, 0.0);
+        call_end(&handler, 1);
+        call_end(&handler, 3);
+        assert_eq!(unsafe { (table.finish_group_edit)(second) }, K_RESULT_OK);
+
+        assert_eq!(drained(&handler), vec![(1, 1.0), (3, 0.0)]);
+        assert!(!handler.state().is_editing(1));
+        assert!(!handler.state().is_editing(3));
     }
 
     fn call_begin(handler: &ComponentHandler, id: u32) {

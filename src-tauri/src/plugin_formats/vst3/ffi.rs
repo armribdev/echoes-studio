@@ -1296,6 +1296,23 @@ pub struct IComponentHandlerVtbl {
     pub restart_component: unsafe extern "C" fn(*mut FUnknown, i32) -> TResult,
 }
 
+pub const IID_ICOMPONENT_HANDLER2: Tuid = interface_iid([
+    0xF0, 0x40, 0xB4, 0xB3, 0xA3, 0x60, 0x45, 0xEC, 0xAB, 0xCD, 0xC0, 0x45, 0xB4, 0xD5, 0xA2, 0xCC,
+]);
+
+/// `TBool` is a `uint8` and `FIDString` a `const char*` (`ftypes.h`).
+#[repr(C)]
+pub struct IComponentHandler2Vtbl {
+    pub query_interface:
+        unsafe extern "C" fn(*mut FUnknown, *const Tuid, *mut *mut c_void) -> TResult,
+    pub add_ref: unsafe extern "C" fn(*mut FUnknown) -> u32,
+    pub release: unsafe extern "C" fn(*mut FUnknown) -> u32,
+    pub set_dirty: unsafe extern "C" fn(*mut FUnknown, u8) -> TResult,
+    pub request_open_editor: unsafe extern "C" fn(*mut FUnknown, *const c_char) -> TResult,
+    pub start_group_edit: unsafe extern "C" fn(*mut FUnknown) -> TResult,
+    pub finish_group_edit: unsafe extern "C" fn(*mut FUnknown) -> TResult,
+}
+
 // Set on the IPlugView so the plugin can request a resize of its container.
 
 pub const IID_IPLUG_FRAME: Tuid = interface_iid([
@@ -1688,6 +1705,10 @@ mod tests {
             (
                 IID_ICOMPONENT_HANDLER,
                 sdk_iid(0x93A0BEA3, 0x0BD045DB, 0x8E890B0C, 0xC1E46AC6),
+            ),
+            (
+                IID_ICOMPONENT_HANDLER2,
+                sdk_iid(0xF040B4B3, 0xA36045EC, 0xABCDC045, 0xB4D5A2CC),
             ),
             (
                 IID_IPLUG_FRAME,
