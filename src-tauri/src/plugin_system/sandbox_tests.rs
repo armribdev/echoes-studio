@@ -1462,11 +1462,11 @@ use crate::plugin_formats::clap::ffi::{take_plugin_state_edited, PresetRequest};
 
 /// Lists the placement's presets and remembers them, as the app's command does.
 fn offered_presets(host: &mut PluginHost) -> Vec<PluginPreset> {
-    let source = host
-        .preset_source(KEY)
-        .expect("a CLAP placement has a source");
-    let presets = list_presets(&source);
-    host.remember_presets(&source, presets.clone());
+    let listing = host
+        .preset_listing(KEY)
+        .expect("a CLAP placement has a listing");
+    let presets = listing.list();
+    host.remember_listing(&listing, presets.clone());
     presets
 }
 

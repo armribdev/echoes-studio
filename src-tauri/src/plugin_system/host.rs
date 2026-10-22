@@ -50,7 +50,7 @@ use crate::plugin_system::crash_marker::{self, plugin_tag, PluginThread};
 use crate::plugin_system::instance::{PluginInstance, FFI_GATE_HARVEST_BUDGET};
 use crate::plugin_system::lifecycle::{transition, LifecycleError, LifecycleState};
 use crate::plugin_system::parameter::PluginParamInfo;
-use crate::plugin_system::presets::{PluginPreset, PresetSource};
+use crate::plugin_system::presets::{PluginPreset, PresetListing, PresetSource};
 use crate::plugin_system::registry::{PluginManifest, PluginRegistry};
 use crate::plugin_system::state::DeviceState;
 use crate::plugin_system::track_info::placement_track_infos;
@@ -151,8 +151,8 @@ pub struct PluginHost {
     /// The track of each placement, from the project: a new instance is born
     /// knowing it, a live one is told when it changes.
     track_infos: HashMap<String, HostTrackInfo>,
-    /// The last preset listing of each CLAP plugin id: only what a plugin offered
-    /// can be loaded (ADR-031).
+    /// The last preset listing of each plugin (its CLAP id, or its VST3 device
+    /// id): only what a plugin offered can be loaded (ADR-031).
     preset_listings: HashMap<String, Vec<PluginPreset>>,
 }
 
@@ -1038,10 +1038,23 @@ impl PluginHost {
         })
     }
 
+    /// Where to ask for the presets of a loaded placement: a CLAP library's
+    /// providers, or the programs of a VST3 plugin; `None` for any other.
+    pub fn preset_listing(&self, instance_key: &str) -> Option<PresetListing> {
+        if let Some(source) = self.preset_source(instance_key) {
+            return Some(PresetListing::Clap(source));
+        }
+        let instance = self.instance_by_key(instance_key)?;
+        instance
+            .vst3_controller()
+            .is_some()
+            .then_some(PresetListing::Vst3Programs(instance))
+    }
+
     /// Keeps a plugin's latest preset listing, to check later loads against.
-    pub fn remember_presets(&mut self, source: &PresetSource, presets: Vec<PluginPreset>) {
+    pub fn remember_listing(&mut self, listing: &PresetListing, presets: Vec<PluginPreset>) {
         self.preset_listings
-            .insert(source.clap_plugin_id.clone(), presets);
+            .insert(listing.whitelist_key(), presets);
     }
 
     /// The instance to load `request` into, once the plugin's last listing has
@@ -1051,12 +1064,12 @@ impl PluginHost {
         instance_key: &str,
         request: &PresetRequest,
     ) -> Result<Arc<PluginInstance>, String> {
-        let source = self
-            .preset_source(instance_key)
+        let listing = self
+            .preset_listing(instance_key)
             .ok_or("this plugin has no presets")?;
         let offered = self
             .preset_listings
-            .get(&source.clap_plugin_id)
+            .get(&listing.whitelist_key())
             .is_some_and(|presets| presets.iter().any(|preset| preset.request() == *request));
         if !offered {
             return Err("this preset is not offered by the plugin".into());
@@ -1584,5 +1597,106 @@ mod tests {
             "saved once, from the live record"
         );
         assert_eq!(host.collect_plugin_states().len(), 1);
+    }
+
+    #[cfg(windows)]
+    mod vst3_programs {
+        use super::*;
+        use crate::plugin_formats::vst3::fake_plugin::{
+            fake_vst3_instance_with_units, FakeListener, FakeUnits,
+        };
+
+        const KEY: &str = "fx0";
+
+        /// A host with one placement of a hand-made VST3 with two programs.
+        fn host_with_two_programs(units: &mut FakeUnits) -> (Box<FakeListener>, PluginHost) {
+            units.program_change_params = vec![(0, 40, 1)];
+            let mut listener = FakeListener::new(false);
+            let instance = fake_vst3_instance_with_units(&mut listener, units);
+            let mut host = PluginHost::new();
+            host.records.insert(
+                KEY.into(),
+                DeviceRecord {
+                    saved_state: DeviceState::empty(&instance.device_id),
+                    instance,
+                },
+            );
+            (listener, host)
+        }
+
+        fn two_programs() -> Box<FakeUnits> {
+            let mut units = FakeUnits::root_only();
+            units.add_list(4, "Factory", &["Default", "Warm"]);
+            units
+        }
+
+        fn offered(host: &mut PluginHost) -> Vec<PluginPreset> {
+            let listing = host.preset_listing(KEY).expect("a VST3 placement lists");
+            let presets = listing.list();
+            host.remember_listing(&listing, presets.clone());
+            presets
+        }
+
+        #[test]
+        fn a_vst3_placement_lists_its_programs() {
+            let mut units = two_programs();
+            let (_listener, mut host) = host_with_two_programs(&mut units);
+            let names: Vec<_> = offered(&mut host).into_iter().map(|p| p.name).collect();
+            assert_eq!(names, ["Default", "Warm"]);
+        }
+
+        #[test]
+        fn an_unknown_placement_or_an_internal_plugin_has_no_listing() {
+            let mut units = two_programs();
+            let (_listener, host) = host_with_two_programs(&mut units);
+            assert!(host.preset_listing("unknown").is_none());
+
+            let mut internal = PluginHost::new();
+            internal.records.insert(
+                "gain".into(),
+                DeviceRecord {
+                    instance: PluginInstance::new_internal("echoes.gain"),
+                    saved_state: DeviceState::empty("echoes.gain"),
+                },
+            );
+            assert!(internal.preset_listing("gain").is_none());
+        }
+
+        #[test]
+        fn only_a_program_the_last_listing_offered_can_be_loaded() {
+            let mut units = two_programs();
+            let (_listener, mut host) = host_with_two_programs(&mut units);
+            let presets = offered(&mut host);
+            let warm = presets[1].request();
+
+            assert!(host.instance_for_preset(KEY, &warm).is_ok());
+
+            let mut other_index = warm.clone();
+            other_index.load_key = Some("40:7".into());
+            let mut other_parameter = warm.clone();
+            other_parameter.load_key = Some("41:1".into());
+            let mut a_path = warm.clone();
+            a_path.location = Some("C:\\Windows\\win.ini".into());
+            let mut other_kind = warm.clone();
+            other_kind.location_kind = 0;
+            for forged in [other_index, other_parameter, a_path, other_kind] {
+                let error = host.instance_for_preset(KEY, &forged).err();
+                assert_eq!(error.as_deref(), Some("this preset is not offered by the plugin"));
+            }
+            let error = host.instance_for_preset("unknown", &warm).err();
+            assert_eq!(error.as_deref(), Some("this plugin has no presets"));
+        }
+
+        #[test]
+        fn nothing_is_loadable_before_a_listing() {
+            let mut units = two_programs();
+            let (_listener, host) = host_with_two_programs(&mut units);
+            let request = host
+                .instance_by_key(KEY)
+                .unwrap()
+                .vst3_program_presets()[1]
+                .request();
+            assert!(host.instance_for_preset(KEY, &request).is_err());
+        }
     }
 }

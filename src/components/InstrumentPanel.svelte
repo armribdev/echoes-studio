@@ -71,6 +71,7 @@
 
 	$: isolation = $preferences.audio.pluginIsolation;
 	$: isClap = activePlugin?.format === 'CLAP';
+	$: hasPresets = isClap || activePlugin?.format === 'VST3';
 	/** Whether the engine runs this instrument in its own process, given the preferences. */
 	$: sandboxed =
 		!!instrument &&
@@ -257,7 +258,7 @@
 		<p class="hint">Synthé intégré par défaut — choisissez un instrument CLAP (ex. Vital).</p>
 	{/if}
 
-	{#if isClap && canOpenEditor}
+	{#if hasPresets && canOpenEditor}
 		<PresetPicker instanceKey={editorKey} />
 	{/if}
 

@@ -658,7 +658,7 @@
 								</button>
 							{/if}
 						</div>
-						{#if effectFormat(effect) === 'CLAP'}
+						{#if effectFormat(effect) === 'CLAP' || effectFormat(effect) === 'VST3'}
 							<PresetPicker instanceKey={effect.id} />
 						{/if}
 						{#if hasSidechainInput(effect, $plugins)}

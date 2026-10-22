@@ -3,10 +3,8 @@
 //! A controller that implements `IUnitInfo` describes its units, the program
 //! lists they use and the name of every program.  Choosing a program means
 //! setting the parameter flagged `kIsProgramChange` on the unit that uses the
-//! list.  This module only reads; the plugin is third-party code, so every count
-//! it reports is bounded before it drives a loop.
-
-#![allow(dead_code)] // used by the preset listing and loading, which come next
+//! list.  The plugin is third-party code, so every count it reports is bounded
+//! before it drives a loop.
 
 use std::ffi::c_void;
 use std::mem::size_of;
@@ -205,6 +203,29 @@ unsafe fn read_program_name(
     } else {
         String::new()
     }
+}
+
+/// Chooses a program of the list a program-change parameter drives, as a host
+/// does: the controller takes the value (the plugin's own `plainParamToNormalized`
+/// turns the index into it) and the caller forwards it to the processor.  Returns
+/// the normalised value, or `None` when the plugin does not accept it.
+///
+/// # Safety
+/// `controller` must be a live, initialised `IEditController`, called off the
+/// audio thread with the instance's FFI gate held.
+pub unsafe fn select_program(
+    controller: *mut IEditController,
+    param_id: u32,
+    index: i32,
+) -> Option<f64> {
+    let vtbl = &*(*controller).vtbl;
+    let normalised = (vtbl.plain_param_to_normalized)(controller, param_id, f64::from(index));
+    if !normalised.is_finite() {
+        return None;
+    }
+    let normalised = normalised.clamp(0.0, 1.0);
+    ((vtbl.set_param_normalized)(controller, param_id, normalised) == K_RESULT_OK)
+        .then_some(normalised)
 }
 
 #[cfg(test)]

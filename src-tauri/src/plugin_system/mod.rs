@@ -44,6 +44,8 @@ mod ffi_lifecycle_tests;
 #[cfg(all(test, windows))]
 mod sandbox_tests;
 #[cfg(all(test, windows))]
+mod vst3_program_tests;
+#[cfg(all(test, windows))]
 mod vst3_track_info_tests;
 
 pub use host::PluginHost;

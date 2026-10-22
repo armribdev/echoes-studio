@@ -1,24 +1,50 @@
-//! Preset listing for CLAP plugins (ADR-031).
+//! Preset listing (ADR-031): CLAP presets, and the programs of VST3 plugins.
 //!
-//! A library's preset providers are third-party code that crawls the user's
+//! A CLAP library's preset providers are third-party code that crawls the user's
 //! files, so the whole cycle runs on a worker thread, outside the engine lock,
 //! behind the same SEH guard as the scan's probes.
 
 use std::ffi::c_void;
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use crate::plugin_formats::clap::ffi::{
     discover_presets, ClapLibrary, ClapPluginEntry, PresetEntry, PresetRequest,
-    CLAP_PRESET_IS_FACTORY_CONTENT, CLAP_PRESET_IS_USER_CONTENT,
+    CLAP_PRESET_IS_FACTORY_CONTENT, CLAP_PRESET_IS_USER_CONTENT, CLAP_PRESET_LOCATION_PLUGIN,
 };
 use crate::plugin_formats::crash_guard;
+use crate::plugin_formats::vst3::units::ProgramList;
+use crate::plugin_system::instance::PluginInstance;
 
 /// Where to ask for the presets of one hosted plugin.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PresetSource {
     pub library: PathBuf,
     pub clap_plugin_id: String,
+}
+
+/// Where the presets of one placement come from.
+pub enum PresetListing {
+    Clap(PresetSource),
+    Vst3Programs(Arc<PluginInstance>),
+}
+
+impl PresetListing {
+    /// Runs the listing; meant for a worker thread, outside the engine lock.
+    pub fn list(&self) -> Vec<PluginPreset> {
+        match self {
+            Self::Clap(source) => list_presets(source),
+            Self::Vst3Programs(instance) => instance.vst3_program_presets(),
+        }
+    }
+
+    /// What the host's list of offered presets is kept under.
+    pub fn whitelist_key(&self) -> String {
+        match self {
+            Self::Clap(source) => source.clap_plugin_id.clone(),
+            Self::Vst3Programs(instance) => instance.device_id.clone(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
@@ -105,6 +131,61 @@ pub fn list_presets(source: &PresetSource) -> Vec<PluginPreset> {
     presets
 }
 
+/// Identifies a program in its preset: the parameter that selects it and its
+/// index.  Only the host writes it, and a load accepts only what a listing offered.
+fn program_key(param_id: u32, index: usize) -> String {
+    format!("{param_id}:{index}")
+}
+
+pub fn parse_program_key(key: &str) -> Option<(u32, i32)> {
+    let (param_id, index) = key.split_once(':')?;
+    let index = index.parse::<i32>().ok().filter(|index| *index >= 0)?;
+    Some((param_id.parse().ok()?, index))
+}
+
+/// The programs of the lists a host can select, in the plugin's own order, as
+/// factory presets.  With several lists each name starts with its list's name.
+pub fn programs_as_presets(lists: &[ProgramList]) -> Vec<PluginPreset> {
+    let selectable: Vec<_> = lists
+        .iter()
+        .filter(|list| !list.programs.is_empty())
+        .filter_map(|list| Some((list, list.program_change_param?)))
+        .collect();
+    let several = selectable.len() > 1;
+    selectable
+        .into_iter()
+        .flat_map(|(list, param_id)| {
+            list.programs
+                .iter()
+                .enumerate()
+                .map(move |(index, program)| {
+                    let program = if program.is_empty() {
+                        format!("Program {}", index + 1)
+                    } else {
+                        program.clone()
+                    };
+                    let name = if several && !list.name.is_empty() {
+                        format!("{} / {program}", list.name)
+                    } else {
+                        program
+                    };
+                    PluginPreset {
+                        name,
+                        load_key: Some(program_key(param_id, index)),
+                        location_kind: CLAP_PRESET_LOCATION_PLUGIN,
+                        location: None,
+                        provider_id: "vst3:program".into(),
+                        flags: CLAP_PRESET_IS_FACTORY_CONTENT,
+                        creator: None,
+                        description: None,
+                        features: Vec::new(),
+                        soundpack: None,
+                    }
+                })
+        })
+        .collect()
+}
+
 fn group_rank(flags: u32) -> u8 {
     if flags & CLAP_PRESET_IS_FACTORY_CONTENT != 0 {
         0
@@ -112,5 +193,89 @@ fn group_rank(flags: u32) -> u8 {
         1
     } else {
         2
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn list(id: i32, name: &str, selector: Option<u32>, programs: &[&str]) -> ProgramList {
+        ProgramList {
+            id,
+            name: name.into(),
+            program_change_param: selector,
+            programs: programs.iter().map(|program| program.to_string()).collect(),
+        }
+    }
+
+    fn names(presets: &[PluginPreset]) -> Vec<&str> {
+        presets.iter().map(|preset| preset.name.as_str()).collect()
+    }
+
+    #[test]
+    fn no_lists_no_presets() {
+        assert!(programs_as_presets(&[]).is_empty());
+    }
+
+    #[test]
+    fn a_list_is_offered_in_the_plugins_order_as_factory_presets() {
+        let presets = programs_as_presets(&[list(1, "Factory", Some(5), &["Zebra", "Apple"])]);
+        assert_eq!(names(&presets), ["Zebra", "Apple"]);
+        assert!(presets
+            .iter()
+            .all(|preset| preset.flags == CLAP_PRESET_IS_FACTORY_CONTENT));
+        assert_eq!(presets[1].load_key.as_deref(), Some("5:1"));
+        assert_eq!(presets[1].provider_id, "vst3:program");
+    }
+
+    #[test]
+    fn a_list_the_host_cannot_select_or_without_programs_is_not_offered() {
+        let presets = programs_as_presets(&[
+            list(1, "No selector", None, &["a"]),
+            list(2, "Empty", Some(6), &[]),
+        ]);
+        assert!(presets.is_empty());
+    }
+
+    #[test]
+    fn a_program_without_a_name_is_numbered() {
+        let presets = programs_as_presets(&[list(1, "F", Some(5), &["First", "", "Third"])]);
+        assert_eq!(names(&presets), ["First", "Program 2", "Third"]);
+    }
+
+    #[test]
+    fn several_lists_are_told_apart_by_their_names() {
+        let presets = programs_as_presets(&[
+            list(1, "Pads", Some(5), &["Warm"]),
+            list(2, "", Some(6), &["Bass"]),
+            list(3, "No selector", None, &["Ignored"]),
+        ]);
+        assert_eq!(names(&presets), ["Pads / Warm", "Bass"]);
+        assert_eq!(presets[0].load_key.as_deref(), Some("5:0"));
+        assert_eq!(presets[1].load_key.as_deref(), Some("6:0"));
+    }
+
+    #[test]
+    fn a_program_key_reads_back_and_garbage_does_not() {
+        assert_eq!(
+            parse_program_key(&program_key(1_886_548_852, 72)),
+            Some((1_886_548_852, 72))
+        );
+        for key in [
+            "",
+            "5",
+            ":",
+            "5:",
+            ":5",
+            "x:1",
+            "5:x",
+            "5:-1",
+            "5:1:2",
+            "4294967296:1",
+            "5:2147483648",
+        ] {
+            assert_eq!(parse_program_key(key), None, "{key:?}");
+        }
     }
 }

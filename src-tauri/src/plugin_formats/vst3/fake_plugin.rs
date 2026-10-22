@@ -6,6 +6,7 @@
 //! what the host tells it through `IInfoListener`.
 
 use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
 use std::ffi::{c_void, CString};
 use std::mem::{offset_of, size_of};
 use std::ptr::{null_mut, NonNull};
@@ -17,7 +18,7 @@ use super::ffi::{
     FUnknown, IAttributeListVtbl, IAudioProcessor, IAudioProcessorVtbl, IComponent, IComponentVtbl,
     IEditController, IEditControllerVtbl, IInfoListenerVtbl, ParameterInfo, TResult, Tuid,
     Vst3Controller, Vst3Library, IID_FUNKNOWN, IID_IINFO_LISTENER, IID_IUNIT_INFO,
-    K_INVALID_ARGUMENT, K_NO_INTERFACE, K_RESULT_OK, PARAM_IS_PROGRAM_CHANGE,
+    K_INVALID_ARGUMENT, K_NO_INTERFACE, K_RESULT_FALSE, K_RESULT_OK, PARAM_IS_PROGRAM_CHANGE,
 };
 use super::units::{IUnitInfoVtbl, ProgramListInfo, UnitInfo};
 use crate::plugin_system::instance::PluginInstance;
@@ -153,6 +154,13 @@ pub(crate) struct FakeUnits {
     pub failing_unit: Option<i32>,
     pub failing_list: Option<i32>,
     pub failing_program: Option<i32>,
+    /// `(parameter id, value)` of every `setParamNormalized`, in order.
+    pub selections: RefCell<Vec<(u32, f64)>>,
+    /// What `getParamNormalized` answers; a selection stores its value here.
+    pub values: RefCell<HashMap<u32, f64>>,
+    /// Values a selection changes besides its own, as choosing a program does.
+    pub selection_side_effects: Vec<(u32, f64)>,
+    pub refuses_selection: bool,
 }
 
 impl FakeUnits {
@@ -200,6 +208,10 @@ impl FakeUnits {
             failing_unit: None,
             failing_list: None,
             failing_program: None,
+            selections: RefCell::new(Vec::new()),
+            values: RefCell::new(HashMap::new()),
+            selection_side_effects: Vec::new(),
+            refuses_selection: false,
         })
     }
 
@@ -347,6 +359,52 @@ unsafe extern "C" fn units_get_program_name(
     }
 }
 
+unsafe extern "C" fn controller_get_param_normalized(this: *mut IEditController, id: u32) -> f64 {
+    let controller = &*(this as *const FakeController);
+    controller
+        .units
+        .as_ref()
+        .and_then(|units| units.values.borrow().get(&id).copied())
+        .unwrap_or(0.0)
+}
+
+/// A program-change parameter with `n` steps maps index `i` to `i / n`.
+unsafe extern "C" fn controller_plain_param_to_normalized(
+    this: *mut IEditController,
+    id: u32,
+    plain: f64,
+) -> f64 {
+    let controller = &*(this as *const FakeController);
+    let steps = controller.units.as_ref().and_then(|units| {
+        units
+            .parameters()
+            .find_map(|(_, param, _, steps)| (param == id).then_some(steps))
+    });
+    match steps {
+        Some(steps) if steps > 0 => plain / f64::from(steps),
+        _ => 0.0,
+    }
+}
+
+unsafe extern "C" fn controller_set_param_normalized(
+    this: *mut IEditController,
+    id: u32,
+    value: f64,
+) -> TResult {
+    let controller = &*(this as *const FakeController);
+    let Some(units) = controller.units.as_ref() else {
+        return K_INVALID_ARGUMENT;
+    };
+    if units.refuses_selection {
+        return K_RESULT_FALSE;
+    }
+    units.selections.borrow_mut().push((id, value));
+    let mut values = units.values.borrow_mut();
+    values.insert(id, value);
+    values.extend(units.selection_side_effects.iter().copied());
+    K_RESULT_OK
+}
+
 #[repr(C)]
 struct FakeController {
     vtbl: *const IEditControllerVtbl,
@@ -479,6 +537,18 @@ fn build_instance(listener: *mut FakeListener, units: *mut FakeUnits) -> Arc<Plu
             (
                 offset_of!(IEditControllerVtbl, get_parameter_info),
                 controller_get_parameter_info as *const (),
+            ),
+            (
+                offset_of!(IEditControllerVtbl, plain_param_to_normalized),
+                controller_plain_param_to_normalized as *const (),
+            ),
+            (
+                offset_of!(IEditControllerVtbl, get_param_normalized),
+                controller_get_param_normalized as *const (),
+            ),
+            (
+                offset_of!(IEditControllerVtbl, set_param_normalized),
+                controller_set_param_normalized as *const (),
             ),
             (
                 offset_of!(IEditControllerVtbl, set_component_handler),

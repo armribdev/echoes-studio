@@ -140,6 +140,17 @@ impl EditState {
         std::mem::replace(&mut *followed, now)
     }
 
+    /// Command thread: a program or preset moved values behind the host's back, so
+    /// the base of each parameter modulated by value is read from the plugin again.
+    pub fn rebase_followed(&self, read: impl Fn(u32) -> Option<f64>) {
+        let followed = self.followed.lock().unwrap_or_else(|e| e.into_inner());
+        for param in followed.iter() {
+            if let Some(value) = read(param.native_id) {
+                param.set_base(value as f32);
+            }
+        }
+    }
+
     /// Whether the plugin asked to be reactivated since the last call.
     pub fn take_reactivation_request(&self) -> bool {
         self.reactivation_requested.swap(false, Ordering::AcqRel)

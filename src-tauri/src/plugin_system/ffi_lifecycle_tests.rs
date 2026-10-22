@@ -805,6 +805,124 @@ fn vst3_real_controller_program_lists() {
     panic!("no real VST3 could be instantiated by the engine");
 }
 
+/// Step 6 — a program a real plugin lists can be chosen: the selector moves, the
+/// other parameters follow when the plugin's controller shares its processor's
+/// state (what the log shows), the project reads as unsaved, nothing crashes.
+#[test]
+fn vst3_real_program_can_be_chosen() {
+    let candidates = discover_all("ECHOES_TEST_VST3", "vst3");
+    if candidates.is_empty() {
+        eprintln!("{LOG} SKIP vst3_real_program_can_be_chosen — no .vst3 found");
+        return;
+    }
+
+    let key = "harness:vst3:program";
+    for path in &candidates {
+        let Some(device_id) = first_vst3_id(path) else {
+            continue;
+        };
+        let mut host = PluginHost::new();
+        host.registry_mut().add(vst3_manifest(&device_id, path));
+        let Ok(mut node) = host.instantiate(key, &device_id, false) else {
+            continue;
+        };
+        let instance = host.instance_by_key(key).expect("instance registered");
+        assert!(instance.vst3_ensure_active(48_000.0, 512));
+        node.prepare(PrepareContext {
+            sample_rate: 48_000.0,
+            max_block_size: 512,
+            num_channels: 2,
+            live: true,
+        });
+        let programs = instance.vst3_program_presets();
+        if programs.len() < 2 {
+            eprintln!(
+                "{LOG} P0 {device_id}: {} program(s), nothing to choose",
+                programs.len()
+            );
+            continue;
+        }
+        let listing = host.preset_listing(key).expect("a VST3 placement lists");
+        host.remember_listing(&listing, programs.clone());
+
+        let values_of = |instance: &PluginInstance| -> Vec<f64> {
+            host.plugin_params(key)
+                .expect("parameters are readable")
+                .iter()
+                .map(|param| instance.param_value(param.native_id).unwrap_or(f64::NAN))
+                .collect()
+        };
+        let before = values_of(&instance);
+        let state_before = instance.save_state_blob();
+        let edits_before = instance.state_edit_count();
+
+        let chosen = &programs[2];
+        let request = chosen.request();
+        let loaded = host
+            .instance_for_preset(key, &request)
+            .and_then(|instance| instance.load_preset(&request));
+        eprintln!(
+            "{LOG} P0 {device_id}: chose '{}' of {} → {loaded:?}",
+            chosen.name,
+            programs.len()
+        );
+        loaded.expect("P0: a program the plugin listed must load");
+
+        let report = |when: &str| {
+            let after = values_of(&instance);
+            let changed = before.iter().zip(&after).filter(|(a, b)| a != b).count();
+            let state_changed = state_before != instance.save_state_blob();
+            eprintln!(
+                "{LOG} P0   {when}: {changed} of {} parameter value(s) changed, state changed: {state_changed}",
+                before.len()
+            );
+            (changed, state_changed)
+        };
+        let (changed, _) = report("right after the load");
+        assert!(
+            changed > 0,
+            "P0: choosing a program must move the selector at least"
+        );
+        let frames = 256;
+        let input = AudioBuffer::new(2, frames);
+        let transport = TransportInfo {
+            block_size: frames,
+            ..TransportInfo::stopped(48_000.0)
+        };
+        for _ in 0..4 {
+            let mut outputs = vec![AudioBuffer::new(2, frames)];
+            node.process(&[&input], &mut outputs, &transport);
+        }
+        let (_, state_changed) = report("after four audio blocks");
+        // EXPERIMENT: does handing the processor's state back to the controller
+        // make its parameter values follow?
+        let state = instance.save_state_blob().expect("state");
+        assert!(instance.load_state_blob(&state));
+        report("after the state was handed back to the controller");
+        assert!(
+            state_changed,
+            "P0: once the processor ran, the saved state holds the program"
+        );
+        assert_eq!(
+            instance.state_edit_count(),
+            edits_before + 1,
+            "P0: marked unsaved"
+        );
+        assert!(
+            instance
+                .offrt_try_acquire(std::time::Duration::ZERO)
+                .is_some(),
+            "P0: gate freed"
+        );
+        assert!(
+            !instance.has_crashed(),
+            "P0: choosing a program must not crash the plugin"
+        );
+        return;
+    }
+    eprintln!("{LOG} SKIP vst3_real_program_can_be_chosen — no VST3 with several programs");
+}
+
 /// Logs the units of a controller and every parameter flagged `kIsProgramChange`,
 /// to see why a program list has no selector.
 unsafe fn log_units_and_program_change_params(

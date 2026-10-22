@@ -878,9 +878,9 @@ pub struct IEditControllerVtbl {
         unsafe extern "C" fn(*mut IEditController, u32, f64, *mut u16) -> TResult,
     pub _pad11: *const c_void, // getParamValueByString
     pub _pad12: *const c_void, // normalizedParamToPlain
-    pub _pad13: *const c_void, // plainParamToNormalized
+    pub plain_param_to_normalized: unsafe extern "C" fn(*mut IEditController, u32, f64) -> f64,
     pub get_param_normalized: unsafe extern "C" fn(*mut IEditController, u32) -> f64,
-    pub _pad15: *const c_void, // setParamNormalized
+    pub set_param_normalized: unsafe extern "C" fn(*mut IEditController, u32, f64) -> TResult,
     // (16) setComponentHandler — typed so we can wire IComponentHandler
     pub set_component_handler: unsafe extern "C" fn(*mut IEditController, *mut FUnknown) -> TResult,
     // (17) createView — the one we call

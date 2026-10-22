@@ -64,10 +64,12 @@ use crate::plugin_formats::vst3::ffi::{
     K_OUTPUT, SPEAKER_STEREO,
 };
 use crate::plugin_formats::vst3::params::{read_vst3_param_text, read_vst3_param_value};
+use crate::plugin_formats::vst3::units::{read_program_lists, select_program};
 use crate::plugin_system::bridge::BridgedPlugin;
 use crate::plugin_system::crash_marker::{self, MarkerGuard, PluginThread};
 use crate::plugin_system::lifecycle::LifecycleState;
 use crate::plugin_system::param_queue::{ParamChange, ParamQueue};
+use crate::plugin_system::presets::{parse_program_key, programs_as_presets, PluginPreset};
 use crate::plugin_system::wrapper::DeviceFormat;
 
 /// Capacity of the per-instance parameter SPSC ring (ADR-007).  1024 slots ≈
@@ -304,6 +306,10 @@ pub struct PluginInstance {
     /// `track_info_pending`; empty until a track with a name or color is known.
     /// Command thread only.
     vst3_track_info: Mutex<HostTrackInfo>,
+    /// How many times this instance marked the project unsaved: the process-wide
+    /// flag is shared by every test, so tests look at this one instead.
+    #[cfg(test)]
+    state_edits: AtomicU32,
 }
 
 /// Some in-process plugin still owes a `clap.track-info.changed`; the app polls
@@ -340,6 +346,8 @@ impl PluginInstance {
             output_ports: OnceLock::new(),
             track_info_pending: AtomicBool::new(false),
             vst3_track_info: Mutex::new(HostTrackInfo::default()),
+            #[cfg(test)]
+            state_edits: AtomicU32::new(0),
         })
     }
 
@@ -380,6 +388,8 @@ impl PluginInstance {
             output_ports: OnceLock::new(),
             track_info_pending: AtomicBool::new(false),
             vst3_track_info: Mutex::new(HostTrackInfo::default()),
+            #[cfg(test)]
+            state_edits: AtomicU32::new(0),
         })
     }
 
@@ -412,6 +422,8 @@ impl PluginInstance {
             output_ports: OnceLock::new(),
             track_info_pending: AtomicBool::new(false),
             vst3_track_info: Mutex::new(HostTrackInfo::default()),
+            #[cfg(test)]
+            state_edits: AtomicU32::new(0),
         })
     }
 
@@ -434,6 +446,8 @@ impl PluginInstance {
             output_ports: OnceLock::new(),
             track_info_pending: AtomicBool::new(false),
             vst3_track_info: Mutex::new(HostTrackInfo::default()),
+            #[cfg(test)]
+            state_edits: AtomicU32::new(0),
         })
     }
 
@@ -551,6 +565,9 @@ impl PluginInstance {
         if self.has_crashed() {
             return Err("the plugin has crashed".into());
         }
+        if self.vst3_controller().is_some() {
+            return self.load_vst3_program(request);
+        }
         if let Some(bridged) = self.bridge() {
             bridged.load_preset(request)?;
             self.rebase_value_modulated_params(|id| bridged.param_value(id));
@@ -575,8 +592,67 @@ impl PluginInstance {
             });
             context.request_process();
         }
-        mark_plugin_state_edited();
+        self.mark_state_edited();
         Ok(())
+    }
+
+    /// The programs of a VST3 plugin as presets (ADR-031 amendment), read under the
+    /// FFI gate.  Empty for another format, a plugin without program lists, one
+    /// that cannot be selected, or one busy in a block past the budget.
+    pub fn vst3_program_presets(&self) -> Vec<PluginPreset> {
+        let Some(controller) = self.vst3_controller() else {
+            return Vec::new();
+        };
+        if self.has_crashed() {
+            return Vec::new();
+        }
+        let Some(_gate) = self.offrt_try_acquire(FFI_GATE_PRESET_BUDGET) else {
+            return Vec::new();
+        };
+        // SAFETY: live VST3 controller owned by this instance; FFI gate held.
+        let lists = unsafe { read_program_lists(controller.as_ptr()) };
+        programs_as_presets(&lists)
+    }
+
+    /// Chooses a program the plugin listed: the controller takes the new value of
+    /// the program-change parameter, the processor gets it with the next block.
+    /// Like a CLAP preset, the load holds the FFI gate, marks the project unsaved
+    /// and re-reads the base of the parameters modulated by value.
+    fn load_vst3_program(&self, request: &PresetRequest) -> Result<(), String> {
+        let (Some(controller), Some(edit_state)) = (self.vst3_controller(), self.vst3_edit_state())
+        else {
+            return Err("this plugin has no presets".into());
+        };
+        let (param_id, index) = request
+            .load_key
+            .as_deref()
+            .and_then(parse_program_key)
+            .ok_or("this preset is not a program of the plugin")?;
+        let _gate = self
+            .offrt_try_acquire(FFI_GATE_PRESET_BUDGET)
+            .ok_or("the plugin is busy, try again")?;
+        // SAFETY: live VST3 controller owned by this instance; FFI gate held.
+        let normalised = unsafe { select_program(controller.as_ptr(), param_id, index) }
+            .ok_or("the plugin could not load this preset")?;
+        self.push_param(param_id, normalised as f32);
+        edit_state.rebase_followed(|id| {
+            // SAFETY: as above.
+            Some(unsafe { read_vst3_param_value(controller.as_ptr(), id) })
+        });
+        self.mark_state_edited();
+        Ok(())
+    }
+
+    /// Tells the app the plugin's state changed, so the project reads as unsaved.
+    fn mark_state_edited(&self) {
+        #[cfg(test)]
+        self.state_edits.fetch_add(1, Ordering::Relaxed);
+        mark_plugin_state_edited();
+    }
+
+    #[cfg(test)]
+    pub fn state_edit_count(&self) -> u32 {
+        self.state_edits.load(Ordering::Relaxed)
     }
 
     /// Value-modulated parameters move around a base that follows the user; a

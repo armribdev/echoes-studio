@@ -619,36 +619,37 @@ fn get_plugin_note_names(
     Ok(engine.plugin_host.plugin_note_names(&instance_key))
 }
 
-/// The presets a loaded CLAP plugin offers (`clap.preset-discovery-factory`),
-/// listed on a worker thread so the engine lock is never held while a provider
-/// crawls files; empty when the placement is unknown or offers none.
+/// The presets a loaded plugin offers: a CLAP plugin's `clap.preset-discovery-factory`,
+/// or the programs of a VST3 plugin.  Listed on a worker thread so the engine lock
+/// is never held while a provider crawls files; empty when the placement is
+/// unknown or offers none.
 #[tauri::command]
 async fn list_plugin_presets(
     app: tauri::AppHandle,
     instance_key: String,
 ) -> Result<Vec<plugin_system::presets::PluginPreset>, String> {
-    let source = {
+    let listing = {
         let state = app.state::<AppState>();
         let engine = state.audio_engine.lock().map_err(|e| e.to_string())?;
-        engine.plugin_host.preset_source(&instance_key)
+        engine.plugin_host.preset_listing(&instance_key)
     };
-    let Some(source) = source else {
+    let Some(listing) = listing else {
         return Ok(Vec::new());
     };
-    let listed = {
-        let source = source.clone();
-        tauri::async_runtime::spawn_blocking(move || plugin_system::presets::list_presets(&source))
-            .await
-            .map_err(|e| format!("Preset listing failed: {e}"))?
-    };
+    let (listing, listed) = tauri::async_runtime::spawn_blocking(move || {
+        let listed = listing.list();
+        (listing, listed)
+    })
+    .await
+    .map_err(|e| format!("Preset listing failed: {e}"))?;
     let state = app.state::<AppState>();
     let mut engine = state.audio_engine.lock().map_err(|e| e.to_string())?;
-    engine.plugin_host.remember_presets(&source, listed.clone());
+    engine.plugin_host.remember_listing(&listing, listed.clone());
     Ok(listed)
 }
 
-/// Loads one of the presets `list_plugin_presets` offered into a CLAP plugin
-/// (ADR-031).  The plugin's own message comes back as the error when it refuses.
+/// Loads one of the presets `list_plugin_presets` offered into a plugin (ADR-031).
+/// The plugin's own message comes back as the error when it refuses.
 #[tauri::command]
 async fn load_plugin_preset(
     app: tauri::AppHandle,
