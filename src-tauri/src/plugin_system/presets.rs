@@ -59,6 +59,8 @@ pub struct PluginPreset {
     pub description: Option<String>,
     pub features: Vec<String>,
     pub soundpack: Option<String>,
+    /// The plugin says this is the preset in use; only a VST3 program can tell.
+    pub active: bool,
 }
 
 impl PluginPreset {
@@ -84,6 +86,7 @@ impl From<PresetEntry> for PluginPreset {
             description: entry.description,
             features: entry.features,
             soundpack: entry.soundpack,
+            active: false,
         }
     }
 }
@@ -180,6 +183,7 @@ pub fn programs_as_presets(lists: &[ProgramList]) -> Vec<PluginPreset> {
                         description: None,
                         features: Vec::new(),
                         soundpack: None,
+                        active: list.current_program == Some(index),
                     }
                 })
         })
@@ -206,6 +210,7 @@ mod tests {
             name: name.into(),
             program_change_param: selector,
             programs: programs.iter().map(|program| program.to_string()).collect(),
+            current_program: None,
         }
     }
 
@@ -254,6 +259,22 @@ mod tests {
         assert_eq!(names(&presets), ["Pads / Warm", "Bass"]);
         assert_eq!(presets[0].load_key.as_deref(), Some("5:0"));
         assert_eq!(presets[1].load_key.as_deref(), Some("6:0"));
+    }
+
+    #[test]
+    fn only_the_current_program_is_active() {
+        let mut pads = list(1, "Pads", Some(5), &["Warm", "Cold", "Wide"]);
+        pads.current_program = Some(1);
+        let active: Vec<_> = programs_as_presets(&[pads])
+            .into_iter()
+            .map(|preset| preset.active)
+            .collect();
+        assert_eq!(active, [false, true, false]);
+
+        let unknown = list(1, "Pads", Some(5), &["Warm", "Cold"]);
+        assert!(programs_as_presets(&[unknown])
+            .iter()
+            .all(|preset| !preset.active));
     }
 
     #[test]

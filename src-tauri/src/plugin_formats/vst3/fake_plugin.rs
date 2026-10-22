@@ -15,9 +15,9 @@ use std::sync::Arc;
 use super::channel_context::{CHANNEL_COLOR_KEY, CHANNEL_NAME_KEY, CHANNEL_NAME_LENGTH_KEY};
 use super::component_handler::ComponentHandler;
 use super::ffi::{
-    FUnknown, IAttributeListVtbl, IAudioProcessor, IAudioProcessorVtbl, IComponent, IComponentVtbl,
-    IEditController, IEditControllerVtbl, IInfoListenerVtbl, ParameterInfo, TResult, Tuid,
-    Vst3Controller, Vst3Library, IID_FUNKNOWN, IID_IINFO_LISTENER, IID_IUNIT_INFO,
+    FUnknown, IAttributeListVtbl, IAudioProcessor, IAudioProcessorVtbl, IBStreamVtbl, IComponent,
+    IComponentVtbl, IEditController, IEditControllerVtbl, IInfoListenerVtbl, ParameterInfo,
+    TResult, Tuid, Vst3Controller, Vst3Library, IID_FUNKNOWN, IID_IINFO_LISTENER, IID_IUNIT_INFO,
     K_INVALID_ARGUMENT, K_NO_INTERFACE, K_RESULT_FALSE, K_RESULT_OK, PARAM_IS_PROGRAM_CHANGE,
 };
 use super::units::{IUnitInfoVtbl, ProgramListInfo, UnitInfo};
@@ -161,6 +161,10 @@ pub(crate) struct FakeUnits {
     /// Values a selection changes besides its own, as choosing a program does.
     pub selection_side_effects: Vec<(u32, f64)>,
     pub refuses_selection: bool,
+    /// What the processor's `getState` writes.
+    pub processor_state: Vec<u8>,
+    /// What the controller was given through `setComponentState`, in order.
+    pub component_states: RefCell<Vec<Vec<u8>>>,
 }
 
 impl FakeUnits {
@@ -212,6 +216,8 @@ impl FakeUnits {
             values: RefCell::new(HashMap::new()),
             selection_side_effects: Vec::new(),
             refuses_selection: false,
+            processor_state: Vec::new(),
+            component_states: RefCell::new(Vec::new()),
         })
     }
 
@@ -369,6 +375,20 @@ unsafe extern "C" fn controller_get_param_normalized(this: *mut IEditController,
 }
 
 /// A program-change parameter with `n` steps maps index `i` to `i / n`.
+unsafe extern "C" fn controller_normalized_param_to_plain(
+    this: *mut IEditController,
+    id: u32,
+    normalised: f64,
+) -> f64 {
+    let controller = &*(this as *const FakeController);
+    let steps = controller.units.as_ref().and_then(|units| {
+        units
+            .parameters()
+            .find_map(|(_, param, _, steps)| (param == id).then_some(steps))
+    });
+    normalised * f64::from(steps.unwrap_or(0))
+}
+
 unsafe extern "C" fn controller_plain_param_to_normalized(
     this: *mut IEditController,
     id: u32,
@@ -403,6 +423,47 @@ unsafe extern "C" fn controller_set_param_normalized(
     values.insert(id, value);
     values.extend(units.selection_side_effects.iter().copied());
     K_RESULT_OK
+}
+
+unsafe extern "C" fn controller_set_component_state(
+    this: *mut IEditController,
+    stream: *mut c_void,
+) -> TResult {
+    let controller = &*(this as *const FakeController);
+    let Some(units) = controller.units.as_ref() else {
+        return K_INVALID_ARGUMENT;
+    };
+    let vtbl = &**(stream as *mut *const IBStreamVtbl);
+    let mut state = Vec::new();
+    let mut chunk = [0u8; 64];
+    loop {
+        let mut read = 0;
+        let result = (vtbl.read)(stream.cast(), chunk.as_mut_ptr().cast(), 64, &mut read);
+        if result != K_RESULT_OK || read <= 0 {
+            break;
+        }
+        state.extend_from_slice(&chunk[..read as usize]);
+    }
+    units.component_states.borrow_mut().push(state);
+    K_RESULT_OK
+}
+
+#[repr(C)]
+struct FakeComponent {
+    vtbl: *const IComponentVtbl,
+    state: Vec<u8>,
+}
+
+unsafe extern "C" fn component_get_state(this: *mut IComponent, stream: *mut c_void) -> TResult {
+    let component = &*(this as *const FakeComponent);
+    let vtbl = &**(stream as *mut *const IBStreamVtbl);
+    let mut written = 0;
+    (vtbl.write)(
+        stream.cast(),
+        component.state.as_ptr() as *mut c_void,
+        component.state.len() as i32,
+        &mut written,
+    )
 }
 
 #[repr(C)]
@@ -539,6 +600,10 @@ fn build_instance(listener: *mut FakeListener, units: *mut FakeUnits) -> Arc<Plu
                 controller_get_parameter_info as *const (),
             ),
             (
+                offset_of!(IEditControllerVtbl, normalized_param_to_plain),
+                controller_normalized_param_to_plain as *const (),
+            ),
+            (
                 offset_of!(IEditControllerVtbl, plain_param_to_normalized),
                 controller_plain_param_to_normalized as *const (),
             ),
@@ -551,6 +616,10 @@ fn build_instance(listener: *mut FakeListener, units: *mut FakeUnits) -> Arc<Plu
                 controller_set_param_normalized as *const (),
             ),
             (
+                offset_of!(IEditControllerVtbl, set_component_state),
+                controller_set_component_state as *const (),
+            ),
+            (
                 offset_of!(IEditControllerVtbl, set_component_handler),
                 controller_set_component_handler as *const (),
             ),
@@ -558,7 +627,10 @@ fn build_instance(listener: *mut FakeListener, units: *mut FakeUnits) -> Arc<Plu
         listener,
         units,
     }));
-    let component = Box::leak(Box::new(IComponent {
+    let state =
+        unsafe { units.as_ref() }.map_or_else(Vec::new, |units| units.processor_state.clone());
+    let component = Box::leak(Box::new(FakeComponent {
+        state,
         vtbl: vtbl_of::<IComponentVtbl>(&[
             (
                 offset_of!(IComponentVtbl, terminate),
@@ -567,6 +639,10 @@ fn build_instance(listener: *mut FakeListener, units: *mut FakeUnits) -> Arc<Plu
             (
                 offset_of!(IComponentVtbl, release),
                 component_release as *const (),
+            ),
+            (
+                offset_of!(IComponentVtbl, get_state),
+                component_get_state as *const (),
             ),
         ]),
     }));
@@ -579,7 +655,7 @@ fn build_instance(listener: *mut FakeListener, units: *mut FakeUnits) -> Arc<Plu
     let controller = NonNull::from(controller);
     PluginInstance::new_vst3(
         "fake://vst3",
-        NonNull::from(component),
+        NonNull::from(component).cast(),
         NonNull::from(processor),
         Some(Vst3Controller::Shared(controller.cast())),
         ComponentHandler::boxed(),

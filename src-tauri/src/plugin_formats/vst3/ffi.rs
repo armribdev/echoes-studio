@@ -877,7 +877,7 @@ pub struct IEditControllerVtbl {
     pub get_param_string_by_value:
         unsafe extern "C" fn(*mut IEditController, u32, f64, *mut u16) -> TResult,
     pub _pad11: *const c_void, // getParamValueByString
-    pub _pad12: *const c_void, // normalizedParamToPlain
+    pub normalized_param_to_plain: unsafe extern "C" fn(*mut IEditController, u32, f64) -> f64,
     pub plain_param_to_normalized: unsafe extern "C" fn(*mut IEditController, u32, f64) -> f64,
     pub get_param_normalized: unsafe extern "C" fn(*mut IEditController, u32) -> f64,
     pub set_param_normalized: unsafe extern "C" fn(*mut IEditController, u32, f64) -> TResult,
@@ -1620,9 +1620,18 @@ pub unsafe fn sync_controller_to_state(controller: &Vst3Controller, bytes: &[u8]
     let Vst3Controller::Separate(separate) = controller else {
         return;
     };
+    set_controller_component_state(separate.controller, bytes);
+}
+
+/// `IEditController::setComponentState` with `bytes`, for a controller of either
+/// kind: how a host tells a controller what its processor now holds.
+///
+/// # Safety
+/// As [`read_component_state`], with `controller` a live `IEditController`.
+pub unsafe fn set_controller_component_state(controller: *mut IEditController, bytes: &[u8]) {
     let mut stream = HostStream::with_data(bytes.to_vec());
     let ib = stream.as_mut() as *mut HostStream as *mut c_void;
-    ((*(*separate.controller).vtbl).set_component_state)(separate.controller, ib);
+    ((*(*controller).vtbl).set_component_state)(controller, ib);
 }
 
 #[cfg(test)]

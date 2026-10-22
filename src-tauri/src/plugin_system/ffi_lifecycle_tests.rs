@@ -856,11 +856,31 @@ fn vst3_real_program_can_be_chosen() {
         let state_before = instance.save_state_blob();
         let edits_before = instance.state_edit_count();
 
+        // The audio thread runs while the program is chosen, as in the app.
+        let running = std::sync::atomic::AtomicBool::new(true);
+        let frames = 256;
         let chosen = &programs[2];
         let request = chosen.request();
-        let loaded = host
-            .instance_for_preset(key, &request)
-            .and_then(|instance| instance.load_preset(&request));
+        let loaded = std::thread::scope(|scope| {
+            let audio = scope.spawn(|| {
+                let input = AudioBuffer::new(2, frames);
+                let transport = TransportInfo {
+                    block_size: frames,
+                    ..TransportInfo::stopped(48_000.0)
+                };
+                while running.load(std::sync::atomic::Ordering::Acquire) {
+                    let mut outputs = vec![AudioBuffer::new(2, frames)];
+                    node.process(&[&input], &mut outputs, &transport);
+                    std::thread::sleep(std::time::Duration::from_millis(2));
+                }
+            });
+            let loaded = host
+                .instance_for_preset(key, &request)
+                .and_then(|instance| instance.load_preset(&request));
+            running.store(false, std::sync::atomic::Ordering::Release);
+            audio.join().expect("the audio thread must not crash");
+            loaded
+        });
         eprintln!(
             "{LOG} P0 {device_id}: chose '{}' of {} → {loaded:?}",
             chosen.name,
@@ -868,41 +888,33 @@ fn vst3_real_program_can_be_chosen() {
         );
         loaded.expect("P0: a program the plugin listed must load");
 
-        let report = |when: &str| {
-            let after = values_of(&instance);
-            let changed = before.iter().zip(&after).filter(|(a, b)| a != b).count();
-            let state_changed = state_before != instance.save_state_blob();
-            eprintln!(
-                "{LOG} P0   {when}: {changed} of {} parameter value(s) changed, state changed: {state_changed}",
-                before.len()
-            );
-            (changed, state_changed)
+        let active = |instance: &PluginInstance| -> Vec<String> {
+            instance
+                .vst3_program_presets()
+                .into_iter()
+                .filter(|preset| preset.active)
+                .map(|preset| preset.name)
+                .collect()
         };
-        let (changed, _) = report("right after the load");
-        assert!(
-            changed > 0,
-            "P0: choosing a program must move the selector at least"
+        eprintln!("{LOG} P0   active program now: {:?}", active(&instance));
+        assert_eq!(
+            active(&instance),
+            std::slice::from_ref(&chosen.name),
+            "P0: the plugin names the program that was chosen"
         );
-        let frames = 256;
-        let input = AudioBuffer::new(2, frames);
-        let transport = TransportInfo {
-            block_size: frames,
-            ..TransportInfo::stopped(48_000.0)
-        };
-        for _ in 0..4 {
-            let mut outputs = vec![AudioBuffer::new(2, frames)];
-            node.process(&[&input], &mut outputs, &transport);
-        }
-        let (_, state_changed) = report("after four audio blocks");
-        // EXPERIMENT: does handing the processor's state back to the controller
-        // make its parameter values follow?
-        let state = instance.save_state_blob().expect("state");
-        assert!(instance.load_state_blob(&state));
-        report("after the state was handed back to the controller");
-        assert!(
-            state_changed,
-            "P0: once the processor ran, the saved state holds the program"
+
+        let after = values_of(&instance);
+        let changed = before.iter().zip(&after).filter(|(a, b)| a != b).count();
+        let state_changed = state_before != instance.save_state_blob();
+        eprintln!(
+            "{LOG} P0   {changed} of {} parameter value(s) changed, state changed: {state_changed}",
+            before.len()
         );
+        assert!(
+            changed > 1,
+            "P0: the knobs must follow the program, not only its selector"
+        );
+        assert!(state_changed, "P0: the saved state holds the program");
         assert_eq!(
             instance.state_edit_count(),
             edits_before + 1,

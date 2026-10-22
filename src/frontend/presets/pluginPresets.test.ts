@@ -4,6 +4,7 @@ const invoke = vi.hoisted(() => vi.fn());
 vi.mock('@tauri-apps/api/core', () => ({ invoke }));
 
 const {
+	activePresetKey,
 	fetchPluginPresets,
 	groupPresets,
 	loadPluginPreset,
@@ -27,7 +28,8 @@ function preset(name: string, flags = FACTORY, loadKey: string | null = name): P
 		creator: null,
 		description: null,
 		features: [],
-		soundpack: null
+		soundpack: null,
+		active: false
 	};
 }
 
@@ -65,6 +67,15 @@ describe('samePresets', () => {
 		expect(samePresets(list, [preset('A'), preset('B', FACTORY, 'other-key')])).toBe(false);
 	});
 
+	it('is false once the plugin names another preset as the one in use', () => {
+		const list = [preset('A'), preset('B')];
+
+		expect(samePresets(list, [{ ...preset('A'), active: true }, preset('B')])).toBe(false);
+		expect(
+			samePresets([{ ...preset('A'), active: true }], [{ ...preset('A'), active: true }])
+		).toBe(true);
+	});
+
 	it('keys a preset by where it lives and its key, as the engine checks it', () => {
 		const file = {
 			...preset('Warm'),
@@ -75,6 +86,19 @@ describe('samePresets', () => {
 
 		expect(JSON.parse(presetKey(file))).toEqual([0, 'C:\\P\\warm.fxp', null]);
 		expect(presetKey(preset('A'))).not.toBe(presetKey(preset('B')));
+	});
+});
+
+describe('activePresetKey', () => {
+	it('is the key of the preset the plugin says is in use', () => {
+		const list = [preset('A'), { ...preset('B'), active: true }, preset('C')];
+
+		expect(activePresetKey(list)).toBe(presetKey(list[1]));
+	});
+
+	it('is empty when the plugin cannot tell, as for a CLAP plugin', () => {
+		expect(activePresetKey([preset('A'), preset('B')])).toBe('');
+		expect(activePresetKey([])).toBe('');
 	});
 });
 

@@ -59,7 +59,8 @@ use crate::plugin_formats::clap::ffi::{
 use crate::plugin_formats::vst3::channel_context::notify_channel_context;
 use crate::plugin_formats::vst3::component_handler::{ComponentHandler, EditState};
 use crate::plugin_formats::vst3::ffi::{
-    release_controller, sync_controller_to_state, FUnknown, IAudioProcessor, IComponent,
+    release_controller, set_controller_component_state, sync_controller_to_state, FUnknown,
+    IAudioProcessor, IComponent,
     IEditController, ProcessSetup, Vst3Controller, Vst3Library, K_AUDIO, K_EVENT, K_INPUT,
     K_OUTPUT, SPEAKER_STEREO,
 };
@@ -75,6 +76,10 @@ use crate::plugin_system::wrapper::DeviceFormat;
 /// Capacity of the per-instance parameter SPSC ring (ADR-007).  1024 slots ≈
 /// 17 s of edits at a 60 Hz UI — far more than the drain interval needs.
 const PARAM_QUEUE_CAPACITY: usize = 1024;
+
+/// How long a program chosen in a VST3 plugin waits for its processor to take
+/// the change, before the controller is brought up to date with it.
+const VST3_PROGRAM_SYNC_WAIT: Duration = Duration::from_millis(200);
 
 // Every `PluginInstance` is stamped at construction with a process-unique,
 // monotonically increasing `instance_id`.  Unlike `device_id` — which is the
@@ -639,8 +644,42 @@ impl PluginInstance {
             // SAFETY: as above.
             Some(unsafe { read_vst3_param_value(controller.as_ptr(), id) })
         });
+        drop(_gate);
         self.mark_state_edited();
+        if self.vst3_activation.active.load(Ordering::Acquire) {
+            self.wait_for_vst3_processor();
+            self.sync_vst3_controller_with_processor(controller);
+        }
         Ok(())
+    }
+
+    /// The processor takes a queued value with the next audio block.
+    fn wait_for_vst3_processor(&self) {
+        let deadline = Instant::now() + VST3_PROGRAM_SYNC_WAIT;
+        while !self.param_queue.is_empty() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    /// A program changes many values in the processor that the controller never
+    /// hears about: hands it the processor's state, as a host does after loading a
+    /// preset, so the knobs follow.  Does nothing while a block is in flight past
+    /// the budget or when the plugin reports no state.
+    pub(crate) fn sync_vst3_controller_with_processor(&self, controller: NonNull<IEditController>) {
+        let Some(_gate) = self.offrt_try_acquire(FFI_GATE_PRESET_BUDGET) else {
+            return;
+        };
+        let Some(state) = self.save_state_blob() else {
+            return;
+        };
+        // SAFETY: live VST3 controller owned by this instance; FFI gate held.
+        unsafe { set_controller_component_state(controller.as_ptr(), &state) };
+        if let Some(edit_state) = self.vst3_edit_state() {
+            edit_state.rebase_followed(|id| {
+                // SAFETY: as above.
+                Some(unsafe { read_vst3_param_value(controller.as_ptr(), id) })
+            });
+        }
     }
 
     /// Tells the app the plugin's state changed, so the project reads as unsaved.

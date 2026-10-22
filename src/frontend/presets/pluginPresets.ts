@@ -12,6 +12,8 @@ export interface PluginPreset {
 	description: string | null;
 	features: string[];
 	soundpack: string | null;
+	/** The plugin says this preset is in use (a VST3 program); false when it cannot tell. */
+	active: boolean;
 }
 
 export type PresetGroup = 'factory' | 'user' | 'other';
@@ -56,9 +58,19 @@ export function samePresets(a: PluginPreset[], b: PluginPreset[]): boolean {
 		a.length === b.length &&
 		a.every((preset, index) => {
 			const other = b[index];
-			return presetKey(preset) === presetKey(other) && preset.name === other.name;
+			return (
+				presetKey(preset) === presetKey(other) &&
+				preset.name === other.name &&
+				preset.active === other.active
+			);
 		})
 	);
+}
+
+/** The key of the preset the plugin says is in use, or '' when it cannot tell. */
+export function activePresetKey(presets: PluginPreset[]): string {
+	const active = presets.find((preset) => preset.active);
+	return active ? presetKey(active) : '';
 }
 
 /** The presets of a loaded plugin placement; empty when it has none or is not loaded. */

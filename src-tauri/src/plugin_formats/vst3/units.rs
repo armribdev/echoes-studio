@@ -81,6 +81,8 @@ pub struct ProgramList {
     pub program_change_param: Option<u32>,
     /// Program names by index; a plugin may leave one empty.
     pub programs: Vec<String>,
+    /// The program the selector says is active, if it names one of `programs`.
+    pub current_program: Option<usize>,
 }
 
 /// Reads the program lists of a controller.  A controller without `IUnitInfo`, or
@@ -104,8 +106,25 @@ pub unsafe fn read_program_lists(controller: *mut IEditController) -> Vec<Progra
     let list_count = lists.len();
     for list in &mut lists {
         list.program_change_param = program_change_param(list, list_count, &unit_lists, &selectors);
+        list.current_program = list
+            .program_change_param
+            .and_then(|selector| current_program(controller, selector, list.programs.len()));
     }
     lists
+}
+
+/// The program a selector is set to, as the plugin's own conversion reads it.
+unsafe fn current_program(
+    controller: *mut IEditController,
+    selector: u32,
+    program_count: usize,
+) -> Option<usize> {
+    let vtbl = &*(*controller).vtbl;
+    let normalised = (vtbl.get_param_normalized)(controller, selector);
+    let index = (vtbl.normalized_param_to_plain)(controller, selector, normalised).round();
+    (0.0..program_count as f64)
+        .contains(&index)
+        .then_some(index as usize)
 }
 
 struct ProgramChangeParam {
@@ -186,6 +205,7 @@ unsafe fn read_lists(interface: *mut c_void, vtbl: &IUnitInfoVtbl) -> Vec<Progra
             programs: (0..programs as i32)
                 .map(|program| read_program_name(interface, vtbl, info.id, program))
                 .collect(),
+            current_program: None,
         });
     }
     lists
@@ -266,8 +286,35 @@ mod tests {
                 name: "Factory".into(),
                 program_change_param: Some(99),
                 programs: vec!["Piano".into(), "Strings".into(), "Bass".into()],
+                current_program: Some(0),
             }]
         );
+    }
+
+    #[test]
+    fn the_current_program_is_the_one_the_selector_is_set_to() {
+        let mut units = unlinked_unit(&["a", "b", "c", "d"], 3);
+        for (value, expected) in [(0.0, 0), (1.0 / 3.0, 1), (2.0 / 3.0, 2), (1.0, 3)] {
+            units.values.borrow_mut().insert(40, value);
+            assert_eq!(lists_of(&mut units)[0].current_program, Some(expected));
+        }
+    }
+
+    #[test]
+    fn a_selector_between_two_programs_is_rounded_and_one_outside_the_list_is_unknown() {
+        let mut units = unlinked_unit(&["a", "b", "c", "d"], 3);
+        units.values.borrow_mut().insert(40, 0.49);
+        assert_eq!(lists_of(&mut units)[0].current_program, Some(1));
+        for value in [-1.0, 2.0, f64::NAN] {
+            units.values.borrow_mut().insert(40, value);
+            assert_eq!(lists_of(&mut units)[0].current_program, None, "{value}");
+        }
+    }
+
+    #[test]
+    fn a_list_without_a_selector_has_no_current_program() {
+        let lists = lists_of(&mut FakeUnits::with_list(1, "A", &["a1", "a2"]));
+        assert_eq!(lists[0].current_program, None);
     }
 
     #[test]

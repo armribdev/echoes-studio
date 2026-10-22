@@ -112,6 +112,11 @@ impl ParamQueue {
         true
     }
 
+    /// Whether the consumer has taken every change pushed so far.
+    pub fn is_empty(&self) -> bool {
+        self.head.load(Ordering::Acquire) == self.tail.load(Ordering::Acquire)
+    }
+
     /// Consumer side (audio thread).  Drains every pending change, calling `f`
     /// for each in FIFO order.
     pub fn drain(&self, mut f: impl FnMut(ParamChange)) {

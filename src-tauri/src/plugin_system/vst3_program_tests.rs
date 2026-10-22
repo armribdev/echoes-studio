@@ -71,6 +71,46 @@ fn the_programs_of_a_plugin_are_listed_in_its_own_order() {
     assert_eq!(units.references(), 0, "no reference is left behind");
 }
 
+fn active_name(instance: &PluginInstance) -> Option<String> {
+    let active: Vec<_> = instance
+        .vst3_program_presets()
+        .into_iter()
+        .filter(|preset| preset.active)
+        .map(|preset| preset.name)
+        .collect();
+    assert!(
+        active.len() <= 1,
+        "at most one program is active: {active:?}"
+    );
+    active.into_iter().next()
+}
+
+#[test]
+fn the_active_program_is_the_one_the_plugin_is_set_to() {
+    let mut units = four_programs();
+    let (_listener, instance) = plugin_with(&mut units);
+    assert_eq!(active_name(&instance).as_deref(), Some("Default"));
+
+    for name in ["Bright", "Wide", "Warm"] {
+        instance
+            .load_preset(&program_named(&instance, name).request())
+            .unwrap();
+        assert_eq!(active_name(&instance).as_deref(), Some(name));
+    }
+}
+
+#[test]
+fn a_program_the_plugin_refuses_does_not_become_active() {
+    let mut units = four_programs();
+    let (_listener, instance) = plugin_with(&mut units);
+    let warm = program_named(&instance, "Warm").request();
+    units.refuses_selection = true;
+
+    assert!(instance.load_preset(&warm).is_err());
+
+    assert_eq!(active_name(&instance).as_deref(), Some("Default"));
+}
+
 #[test]
 fn a_plugin_without_selectable_programs_lists_nothing() {
     let mut without_interface = FakeUnits::absent();
@@ -194,6 +234,66 @@ fn a_request_that_is_not_a_program_is_refused() {
     }
     assert!(units.selections.borrow().is_empty());
     assert_eq!(instance.state_edit_count(), 0);
+}
+
+#[test]
+fn the_controller_is_given_the_processors_state_so_the_knobs_follow() {
+    let mut units = four_programs();
+    units.processor_state = b"the processor state".to_vec();
+    units.selection_side_effects = vec![(7, 0.9)];
+    let (_listener, instance) = plugin_with(&mut units);
+    let base = Arc::new(AtomicU32::new(0.1f32.to_bits()));
+    instance
+        .vst3_edit_state()
+        .unwrap()
+        .replace_followed(vec![ValueModulatedParam::new(
+            7,
+            PluginParamRange::UNKNOWN,
+            Arc::clone(&base),
+        )]);
+
+    instance.sync_vst3_controller_with_processor(instance.vst3_controller().unwrap());
+
+    assert_eq!(
+        *units.component_states.borrow(),
+        [b"the processor state".to_vec()]
+    );
+    assert_eq!(
+        f32::from_bits(base.load(Ordering::Relaxed)),
+        0.0,
+        "the bases are read again after the controller moved"
+    );
+    assert!(instance.offrt_try_acquire(Duration::ZERO).is_some());
+}
+
+#[test]
+fn a_busy_plugin_is_not_given_its_state() {
+    let mut units = four_programs();
+    units.processor_state = b"state".to_vec();
+    let (_listener, instance) = plugin_with(&mut units);
+    let gate = instance
+        .offrt_try_acquire(Duration::from_millis(50))
+        .unwrap();
+
+    instance.sync_vst3_controller_with_processor(instance.vst3_controller().unwrap());
+
+    assert!(units.component_states.borrow().is_empty());
+    drop(gate);
+}
+
+#[test]
+fn a_plugin_that_is_not_processing_is_not_waited_for_nor_synced() {
+    let mut units = four_programs();
+    units.processor_state = b"state".to_vec();
+    let (_listener, instance) = plugin_with(&mut units);
+    let started = std::time::Instant::now();
+
+    instance
+        .load_preset(&program_named(&instance, "Warm").request())
+        .unwrap();
+
+    assert!(started.elapsed() < Duration::from_millis(150));
+    assert!(units.component_states.borrow().is_empty());
 }
 
 #[test]

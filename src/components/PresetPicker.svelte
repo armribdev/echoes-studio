@@ -3,6 +3,7 @@
 	import { notify } from '../stores/status';
 	import {
 		PRESET_GROUP_LABELS,
+		activePresetKey,
 		fetchPluginPresets,
 		groupPresets,
 		loadPluginPreset,
@@ -12,7 +13,10 @@
 		type PluginPreset
 	} from '../frontend/presets/pluginPresets';
 
-	/** Loads a preset into a CLAP plugin. Absent while the plugin offers none. */
+	/**
+	 * Loads a preset into a plugin. Absent while the plugin offers none. Shows the
+	 * preset the plugin says is in use (a VST3 program); empty when it cannot tell.
+	 */
 	export let instanceKey: string;
 
 	let presets: PluginPreset[] = [];
@@ -20,6 +24,7 @@
 	let select: HTMLSelectElement | undefined;
 	let latestRequest = 0;
 
+	$: activeKey = activePresetKey(presets);
 	$: unavailable = $unavailablePlugins.has(instanceKey);
 	$: refresh(instanceKey, unavailable);
 
@@ -33,7 +38,6 @@
 
 	async function handleChange() {
 		const chosen = presets.find((preset) => presetKey(preset) === select?.value);
-		if (select) select.value = '';
 		if (!chosen) return;
 		loading = true;
 		try {
@@ -41,6 +45,8 @@
 		} catch (e) {
 			notify(`Erreur preset : ${presetErrorMessage(e)}`, 'error');
 		} finally {
+			await refresh(instanceKey, unavailable);
+			if (select) select.value = activePresetKey(presets);
 			loading = false;
 		}
 	}
@@ -57,11 +63,13 @@
 			on:focus={() => refresh(instanceKey, unavailable)}
 			on:change={handleChange}
 		>
-			<option value="" hidden></option>
+			<option value="" hidden selected={activeKey === ''}></option>
 			{#each groupPresets(presets) as { group, presets: grouped } (group)}
 				<optgroup label={PRESET_GROUP_LABELS[group]}>
 					{#each grouped as preset (presetKey(preset))}
-						<option value={presetKey(preset)}>{preset.name}</option>
+						<option value={presetKey(preset)} selected={presetKey(preset) === activeKey}
+							>{preset.name}</option
+						>
 					{/each}
 				</optgroup>
 			{/each}
