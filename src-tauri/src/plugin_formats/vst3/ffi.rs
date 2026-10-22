@@ -89,6 +89,9 @@ pub const IID_IATTRIBUTE_LIST: Tuid = interface_iid([
 pub const IID_IINFO_LISTENER: Tuid = interface_iid([
     0x0F, 0x19, 0x47, 0x81, 0x8D, 0x98, 0x4A, 0xDA, 0xBB, 0xA0, 0xC1, 0xEF, 0xC0, 0x11, 0xD8, 0xD0,
 ]);
+pub const IID_IUNIT_INFO: Tuid = interface_iid([
+    0x3D, 0x4B, 0xD6, 0xB5, 0x91, 0x3A, 0x4F, 0xD2, 0xA8, 0x86, 0xE7, 0x68, 0xA5, 0xEB, 0x92, 0xC1,
+]);
 
 /// L | R  (bits 0 and 1)
 pub const SPEAKER_STEREO: u64 = 0x0000_0003;
@@ -909,6 +912,7 @@ const _: () = assert!(
 pub const PARAM_CAN_AUTOMATE: i32 = 1 << 0;
 pub const PARAM_IS_READ_ONLY: i32 = 1 << 1;
 pub const PARAM_IS_HIDDEN: i32 = 1 << 4;
+pub const PARAM_IS_PROGRAM_CHANGE: i32 = 1 << 15;
 
 /// Decodes a `String128` up to its NUL.
 pub fn string128_to_string(text: &[u16]) -> String {
@@ -1696,6 +1700,10 @@ mod tests {
             (
                 IID_IINFO_LISTENER,
                 sdk_iid(0x0F194781, 0x8D984ADA, 0xBBA0C1EF, 0xC011D8D0),
+            ),
+            (
+                IID_IUNIT_INFO,
+                sdk_iid(0x3D4BD6B5, 0x913A4FD2, 0xA886E768, 0xA5EB92C1),
             ),
         ];
         for (index, (actual, sdk)) in expected.iter().enumerate() {

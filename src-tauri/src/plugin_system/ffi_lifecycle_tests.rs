@@ -738,6 +738,124 @@ fn vst3_real_controller_takes_host_messages_and_track_info() {
     panic!("no real VST3 could be instantiated by the engine");
 }
 
+/// Step 6 — what a real controller says about `IUnitInfo`: whether it offers the
+/// interface, and its program lists.  Read-only; the findings are logged, only
+/// consistency is asserted.
+#[test]
+fn vst3_real_controller_program_lists() {
+    use crate::plugin_formats::vst3::ffi::{FUnknown, IID_IUNIT_INFO};
+    use crate::plugin_formats::vst3::units::read_program_lists;
+
+    let candidates = discover_all("ECHOES_TEST_VST3", "vst3");
+    if candidates.is_empty() {
+        eprintln!("{LOG} SKIP vst3_real_controller_program_lists — no .vst3 found");
+        return;
+    }
+
+    let key = "harness:vst3:units";
+    for path in &candidates {
+        let Some(device_id) = first_vst3_id(path) else {
+            continue;
+        };
+        let mut host = PluginHost::new();
+        host.registry_mut().add(vst3_manifest(&device_id, path));
+        let Ok(_node) = host.instantiate(key, &device_id, false) else {
+            continue;
+        };
+        let instance = host.instance_by_key(key).expect("instance registered");
+        let Some(controller) = instance.vst3_controller() else {
+            eprintln!("{LOG} U0 SKIP — {device_id} offers no edit controller");
+            continue;
+        };
+        let _gate = instance
+            .offrt_try_acquire(std::time::Duration::from_millis(50))
+            .expect("U0: an idle instance gives its FFI gate");
+        let offered = unsafe { offers(controller.as_ptr() as *mut FUnknown, &IID_IUNIT_INFO) };
+        let lists = unsafe { read_program_lists(controller.as_ptr()) };
+        eprintln!(
+            "{LOG} U0 {device_id} ({}): IUnitInfo offered: {offered}, {} program list(s)",
+            path.display(),
+            lists.len()
+        );
+        for list in &lists {
+            eprintln!(
+                "{LOG} U0   list {} '{}': {} program(s), selector {:?}, first: {:?}",
+                list.id,
+                list.name,
+                list.programs.len(),
+                list.program_change_param,
+                list.programs.iter().take(3).collect::<Vec<_>>()
+            );
+        }
+        unsafe { log_units_and_program_change_params(controller.as_ptr()) };
+        assert!(
+            offered || lists.is_empty(),
+            "U0: lists come only from a controller that offers IUnitInfo"
+        );
+        let mut ids: Vec<_> = lists.iter().map(|list| list.id).collect();
+        ids.sort_unstable();
+        ids.dedup();
+        assert_eq!(ids.len(), lists.len(), "U0: program list ids are unique");
+        assert!(
+            !instance.has_crashed(),
+            "U0: reading must not crash the plugin"
+        );
+        return;
+    }
+    panic!("no real VST3 could be instantiated by the engine");
+}
+
+/// Logs the units of a controller and every parameter flagged `kIsProgramChange`,
+/// to see why a program list has no selector.
+unsafe fn log_units_and_program_change_params(
+    controller: *mut crate::plugin_formats::vst3::ffi::IEditController,
+) {
+    use crate::plugin_formats::vst3::ffi::{
+        string128_to_string, ParameterInfo, IID_IUNIT_INFO, K_RESULT_OK, PARAM_IS_PROGRAM_CHANGE,
+    };
+    use crate::plugin_formats::vst3::units::{IUnitInfoVtbl, UnitInfo};
+
+    let vtbl = &*(*controller).vtbl;
+    let count = (vtbl.get_parameter_count)(controller);
+    let mut flagged = 0;
+    for index in 0..count {
+        let mut info: ParameterInfo = std::mem::zeroed();
+        if (vtbl.get_parameter_info)(controller, index, &mut info) != K_RESULT_OK {
+            continue;
+        }
+        if info.flags & PARAM_IS_PROGRAM_CHANGE != 0 {
+            flagged += 1;
+            eprintln!(
+                "{LOG} U0   program-change parameter {} '{}' unit {} steps {}",
+                info.id,
+                string128_to_string(&info.title),
+                info.unit_id,
+                info.step_count
+            );
+        }
+    }
+    eprintln!("{LOG} U0   {count} parameter(s), {flagged} flagged kIsProgramChange");
+
+    let mut interface: *mut std::ffi::c_void = std::ptr::null_mut();
+    if (vtbl.query_interface)(controller, &IID_IUNIT_INFO, &mut interface) != K_RESULT_OK {
+        return;
+    }
+    let units = &**(interface as *mut *const IUnitInfoVtbl);
+    for index in 0..(units.get_unit_count)(interface) {
+        let mut info: UnitInfo = std::mem::zeroed();
+        if (units.get_unit_info)(interface, index, &mut info) == K_RESULT_OK {
+            eprintln!(
+                "{LOG} U0   unit {} '{}' parent {} list {}",
+                info.id,
+                string128_to_string(&info.name),
+                info.parent_unit_id,
+                info.program_list_id
+            );
+        }
+    }
+    (units.release)(interface);
+}
+
 /// QI of `object` for `iid`, giving the reference straight back.
 unsafe fn offers(
     object: *mut crate::plugin_formats::vst3::ffi::FUnknown,

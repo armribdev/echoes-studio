@@ -15,9 +15,11 @@ use super::channel_context::{CHANNEL_COLOR_KEY, CHANNEL_NAME_KEY, CHANNEL_NAME_L
 use super::component_handler::ComponentHandler;
 use super::ffi::{
     FUnknown, IAttributeListVtbl, IAudioProcessor, IAudioProcessorVtbl, IComponent, IComponentVtbl,
-    IEditController, IEditControllerVtbl, IInfoListenerVtbl, TResult, Tuid, Vst3Controller,
-    Vst3Library, IID_FUNKNOWN, IID_IINFO_LISTENER, K_NO_INTERFACE, K_RESULT_OK,
+    IEditController, IEditControllerVtbl, IInfoListenerVtbl, ParameterInfo, TResult, Tuid,
+    Vst3Controller, Vst3Library, IID_FUNKNOWN, IID_IINFO_LISTENER, IID_IUNIT_INFO,
+    K_INVALID_ARGUMENT, K_NO_INTERFACE, K_RESULT_OK, PARAM_IS_PROGRAM_CHANGE,
 };
+use super::units::{IUnitInfoVtbl, ProgramListInfo, UnitInfo};
 use crate::plugin_system::instance::PluginInstance;
 
 /// What a controller read from the list it was given.
@@ -130,10 +132,226 @@ static LISTENER_VTBL: IInfoListenerVtbl = IInfoListenerVtbl {
     set_channel_context_infos: listener_set_channel_context_infos,
 };
 
+/// The `IUnitInfo` of a controller, with the parameters its program lists need.
+/// Counts and failures can be forced to play a misbehaving plugin.
+#[repr(C)]
+pub(crate) struct FakeUnits {
+    vtbl: *const IUnitInfoVtbl,
+    references: Cell<u32>,
+    offered: bool,
+    /// `(id, parent id, name, program list id)`
+    units: Vec<(i32, i32, String, i32)>,
+    /// `(id, name, program names)`
+    lists: Vec<(i32, String, Vec<String>)>,
+    /// `(unit id, parameter id, step count)`, flagged `kIsProgramChange`.
+    pub program_change_params: Vec<(i32, u32, i32)>,
+    /// `(unit id, parameter id)`, without the flag.
+    pub plain_params: Vec<(i32, u32)>,
+    pub reported_unit_count: Option<i32>,
+    pub reported_list_count: Option<i32>,
+    pub reported_program_count: Option<i32>,
+    pub failing_unit: Option<i32>,
+    pub failing_list: Option<i32>,
+    pub failing_program: Option<i32>,
+}
+
+impl FakeUnits {
+    fn new(offered: bool) -> Box<Self> {
+        Box::new(Self {
+            vtbl: vtbl_of(&[
+                (
+                    offset_of!(IUnitInfoVtbl, add_ref),
+                    units_add_ref as *const (),
+                ),
+                (
+                    offset_of!(IUnitInfoVtbl, release),
+                    units_release as *const (),
+                ),
+                (
+                    offset_of!(IUnitInfoVtbl, get_unit_count),
+                    units_get_unit_count as *const (),
+                ),
+                (
+                    offset_of!(IUnitInfoVtbl, get_unit_info),
+                    units_get_unit_info as *const (),
+                ),
+                (
+                    offset_of!(IUnitInfoVtbl, get_program_list_count),
+                    units_get_program_list_count as *const (),
+                ),
+                (
+                    offset_of!(IUnitInfoVtbl, get_program_list_info),
+                    units_get_program_list_info as *const (),
+                ),
+                (
+                    offset_of!(IUnitInfoVtbl, get_program_name),
+                    units_get_program_name as *const (),
+                ),
+            ]),
+            references: Cell::new(0),
+            offered,
+            units: Vec::new(),
+            lists: Vec::new(),
+            program_change_params: Vec::new(),
+            plain_params: Vec::new(),
+            reported_unit_count: None,
+            reported_list_count: None,
+            reported_program_count: None,
+            failing_unit: None,
+            failing_list: None,
+            failing_program: None,
+        })
+    }
+
+    /// A controller that does not implement `IUnitInfo`.
+    pub fn absent() -> Box<Self> {
+        Self::new(false)
+    }
+
+    /// Only the root unit, which uses no program list.
+    pub fn root_only() -> Box<Self> {
+        let mut units = Self::new(true);
+        units.add_unit(0, -1, "", -1);
+        units
+    }
+
+    /// The root unit uses one program list.
+    pub fn with_list(id: i32, name: &str, programs: &[&str]) -> Box<Self> {
+        let mut units = Self::new(true);
+        units.add_unit(0, -1, "", id);
+        units.add_list(id, name, programs);
+        units
+    }
+
+    pub fn add_unit(&mut self, id: i32, parent_id: i32, name: &str, list_id: i32) {
+        self.units.push((id, parent_id, name.into(), list_id));
+    }
+
+    pub fn add_list(&mut self, id: i32, name: &str, programs: &[&str]) {
+        let programs = programs.iter().map(|&program| program.into()).collect();
+        self.lists.push((id, name.into(), programs));
+    }
+
+    pub fn references(&self) -> u32 {
+        self.references.get()
+    }
+
+    /// `(unit id, parameter id, flags, step count)`
+    fn parameters(&self) -> impl Iterator<Item = (i32, u32, i32, i32)> + '_ {
+        let flagged = self
+            .program_change_params
+            .iter()
+            .map(|&(unit, id, steps)| (unit, id, PARAM_IS_PROGRAM_CHANGE, steps));
+        let plain = self.plain_params.iter().map(|&(unit, id)| (unit, id, 0, 0));
+        flagged.chain(plain)
+    }
+}
+
+unsafe fn units<'a>(this: *mut c_void) -> &'a FakeUnits {
+    &*(this as *const FakeUnits)
+}
+
+/// Writes `text` the way a plugin fills a `String128`: cut at 128 units, with no
+/// terminator when it fills the buffer.
+unsafe fn write_string128(out: *mut u16, text: &str) {
+    let mut written = 0;
+    for (slot, unit) in text.encode_utf16().take(128).enumerate() {
+        *out.add(slot) = unit;
+        written = slot + 1;
+    }
+    if written < 128 {
+        *out.add(written) = 0;
+    }
+}
+
+unsafe extern "C" fn units_add_ref(this: *mut c_void) -> u32 {
+    let fake = units(this);
+    fake.references.set(fake.references.get() + 1);
+    fake.references.get()
+}
+
+unsafe extern "C" fn units_release(this: *mut c_void) -> u32 {
+    let fake = units(this);
+    fake.references.set(fake.references.get() - 1);
+    fake.references.get()
+}
+
+unsafe extern "C" fn units_get_unit_count(this: *mut c_void) -> i32 {
+    let fake = units(this);
+    fake.reported_unit_count.unwrap_or(fake.units.len() as i32)
+}
+
+unsafe extern "C" fn units_get_unit_info(
+    this: *mut c_void,
+    index: i32,
+    info: *mut UnitInfo,
+) -> TResult {
+    let fake = units(this);
+    let Some((id, parent_id, name, list_id)) = usize::try_from(index)
+        .ok()
+        .and_then(|index| fake.units.get(index))
+        .filter(|_| fake.failing_unit != Some(index))
+    else {
+        return K_INVALID_ARGUMENT;
+    };
+    (*info).id = *id;
+    (*info).parent_unit_id = *parent_id;
+    (*info).program_list_id = *list_id;
+    write_string128((*info).name.as_mut_ptr(), name);
+    K_RESULT_OK
+}
+
+unsafe extern "C" fn units_get_program_list_count(this: *mut c_void) -> i32 {
+    let fake = units(this);
+    fake.reported_list_count.unwrap_or(fake.lists.len() as i32)
+}
+
+unsafe extern "C" fn units_get_program_list_info(
+    this: *mut c_void,
+    index: i32,
+    info: *mut ProgramListInfo,
+) -> TResult {
+    let fake = units(this);
+    let Some((id, name, programs)) = usize::try_from(index)
+        .ok()
+        .and_then(|index| fake.lists.get(index))
+        .filter(|_| fake.failing_list != Some(index))
+    else {
+        return K_INVALID_ARGUMENT;
+    };
+    (*info).id = *id;
+    (*info).program_count = fake.reported_program_count.unwrap_or(programs.len() as i32);
+    write_string128((*info).name.as_mut_ptr(), name);
+    K_RESULT_OK
+}
+
+unsafe extern "C" fn units_get_program_name(
+    this: *mut c_void,
+    list_id: i32,
+    index: i32,
+    out: *mut u16,
+) -> TResult {
+    let fake = units(this);
+    let name = fake
+        .lists
+        .iter()
+        .find(|(id, ..)| *id == list_id)
+        .and_then(|(_, _, programs)| programs.get(usize::try_from(index).ok()?))
+        .filter(|_| fake.failing_program != Some(index));
+    match name {
+        Some(name) => {
+            write_string128(out, name);
+            K_RESULT_OK
+        }
+        None => K_INVALID_ARGUMENT,
+    }
+}
+
 #[repr(C)]
 struct FakeController {
     vtbl: *const IEditControllerVtbl,
     listener: *mut FakeListener,
+    units: *mut FakeUnits,
 }
 
 unsafe extern "C" fn controller_query_interface(
@@ -141,8 +359,44 @@ unsafe extern "C" fn controller_query_interface(
     iid: *const Tuid,
     obj: *mut *mut c_void,
 ) -> TResult {
-    let listener = (*(this as *const FakeController)).listener as *mut FUnknown;
+    let controller = &*(this as *const FakeController);
+    if let Some(units) = controller.units.as_ref().filter(|units| units.offered) {
+        if *iid == IID_IUNIT_INFO {
+            units.references.set(units.references.get() + 1);
+            *obj = controller.units.cast();
+            return K_RESULT_OK;
+        }
+    }
+    let listener = controller.listener as *mut FUnknown;
     ((*(*listener).vtbl).query_interface)(listener, iid, obj)
+}
+
+unsafe extern "C" fn controller_get_parameter_count(this: *mut IEditController) -> i32 {
+    let controller = &*(this as *const FakeController);
+    controller
+        .units
+        .as_ref()
+        .map_or(0, |units| units.parameters().count() as i32)
+}
+
+unsafe extern "C" fn controller_get_parameter_info(
+    this: *mut IEditController,
+    index: i32,
+    info: *mut ParameterInfo,
+) -> TResult {
+    let controller = &*(this as *const FakeController);
+    let parameter = controller
+        .units
+        .as_ref()
+        .and_then(|units| units.parameters().nth(usize::try_from(index).ok()?));
+    let Some((unit_id, id, flags, step_count)) = parameter else {
+        return K_INVALID_ARGUMENT;
+    };
+    (*info).id = id;
+    (*info).unit_id = unit_id;
+    (*info).flags = flags;
+    (*info).step_count = step_count;
+    K_RESULT_OK
 }
 
 unsafe extern "C" fn controller_add_ref(_: *mut IEditController) -> u32 {
@@ -191,6 +445,19 @@ fn vtbl_of<T>(methods: &[(usize, *const ())]) -> *const T {
 /// A single-controller VST3 instance whose controller answers `listener`.  Nothing
 /// is activated; dropping the instance tears the fakes down as for a real plugin.
 pub(crate) fn fake_vst3_instance(listener: &mut FakeListener) -> Arc<PluginInstance> {
+    build_instance(listener, null_mut())
+}
+
+/// As [`fake_vst3_instance`], with a controller that offers `units` and the
+/// parameters it describes.
+pub(crate) fn fake_vst3_instance_with_units(
+    listener: &mut FakeListener,
+    units: &mut FakeUnits,
+) -> Arc<PluginInstance> {
+    build_instance(listener, units)
+}
+
+fn build_instance(listener: *mut FakeListener, units: *mut FakeUnits) -> Arc<PluginInstance> {
     let controller = Box::leak(Box::new(FakeController {
         vtbl: vtbl_of(&[
             (
@@ -206,11 +473,20 @@ pub(crate) fn fake_vst3_instance(listener: &mut FakeListener) -> Arc<PluginInsta
                 controller_release as *const (),
             ),
             (
+                offset_of!(IEditControllerVtbl, get_parameter_count),
+                controller_get_parameter_count as *const (),
+            ),
+            (
+                offset_of!(IEditControllerVtbl, get_parameter_info),
+                controller_get_parameter_info as *const (),
+            ),
+            (
                 offset_of!(IEditControllerVtbl, set_component_handler),
                 controller_set_component_handler as *const (),
             ),
         ]),
         listener,
+        units,
     }));
     let component = Box::leak(Box::new(IComponent {
         vtbl: vtbl_of::<IComponentVtbl>(&[
