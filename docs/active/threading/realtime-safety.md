@@ -343,6 +343,17 @@ takes to apply the preset; a block in flight past the budget refuses the load
 instead. Sandboxed plugins are loaded through the bridge and need no gate. The
 host's `loaded` stays one atomic store.
 
+VST3 presets (ADR-031 amendment, 2026-10-22) follow the same rule and add nothing to
+the audio thread. Loading a `.vstpreset` file reads and checks the file **before**
+the gate is taken, then holds the gate (`offrt_try_acquire`, 50 ms) for
+`setState` / `setComponentState` / `setState` of the controller; the plugin is
+bypassed meanwhile. Choosing a program holds the gate for the controller call, then
+releases it and waits (a bounded sleep, up to 200 ms, on the command-side worker
+thread) for the audio thread to drain the parameter queue — the audio thread only
+does what it already does with a queued change — before taking the gate again for
+`getState` / `setComponentState`. Listing programs reads the controller under the
+gate; listing files touches the disk without any gate or engine lock.
+
 ### Crash marker (ADR-015)
 
 In-process plugin wrappers mark the running plugin in a memory-mapped file

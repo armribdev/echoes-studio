@@ -244,7 +244,8 @@ ADR-015 amendments, and `state_index.md`.
 See D2/D3, L2/L3 and U2/U3 above. Also rejected:
 
 - **VST3 / AU presets** (program lists, `IUnitInfo`): other formats, other
-  mechanisms; out of scope.
+  mechanisms; out of scope. _VST3 was taken in by the amendment of 2026-10-22
+  below; AU stays out of scope._
 - **Preset name stored in the project**: a second source of truth next to the
   state blob; the host cannot know the current preset after the user edits it.
 - **Letting the UI load any file**: the host loads only what a provider listed.
@@ -265,3 +266,39 @@ See D2/D3, L2/L3 and U2/U3 above. Also rejected:
   to be checked by ear after step 2; L2 is the fallback if not.
 - Whether real providers meet the spec's "fast `get_metadata`" on large libraries;
   the bounds in D1 are a guess until measured.
+
+## Amendment — 2026-10-22: VST3 presets
+
+VST3 plugins use the same two commands (`list_plugin_presets` /
+`load_plugin_preset`), the same last-listing whitelist, the same FFI gate (50 ms)
+and the same `PresetPicker.svelte` as CLAP: D1, L1 and U1 are unchanged. Windows
+only, in the app process (the sandbox stays CLAP-only). Two sources:
+
+1. **The plugin's own programs** (`IUnitInfo`): the programs of every list the host
+   can select, offered as factory presets in the plugin's order. A program is chosen
+   by setting the parameter flagged `kIsProgramChange` (the plugin's own
+   `plainParamToNormalized` gives the value), sending the same value to the
+   processor, and — when the plugin is active — giving the processor's state to the
+   controller (`setComponentState`) so the other knobs follow.
+2. **`.vstpreset` files** in Steinberg's standard locations (`Documents` = user,
+   `%APPDATA%` and `%PROGRAMDATA%` = factory, under `VST3 Presets\<vendor>\<plugin>`),
+   listed on demand on the worker thread. A file must carry the plugin's class id;
+   loading it goes through the ADR-010 state path (`setState` of the component,
+   `setComponentState` / `setState` of the controller).
+
+The files come from the user's disk and are untrusted: every size and offset is
+checked against the real file length before use, the walk is bounded (depth,
+number of entries and presets, no links), the listing reads 48 bytes per file, and
+a file is read and checked again just before it is loaded.
+
+Consequences are those of CLAP: not undoable, the plugin is bypassed (silent for an
+instrument) while the gate is held, nothing in the project (the state blob carries
+the sound; no preset name is stored). No project, command or event change, no audio
+thread change, no VST3 in the render harness (C-2 unchanged). **Decided not to do
+now:** `IUnitHandler` (the list is read again each time the picker is shown, so a
+stale list corrects itself and no load waits for the callback),
+`IProgramListData` / `IUnitData`, the `Prog` / `Info` chunks, presets bundled in
+the plugin, a file watcher. No invariant is touched, hence this amendment instead
+of a new ADR. Details and bounds: `../plugins/plugin-wrapper-system.md` ("Host
+VST3 presets"). Unverified: the class-id byte order against a `.vstpreset` written
+by another host (none on the development machine), and the whole feature by hand.

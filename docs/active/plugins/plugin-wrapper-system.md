@@ -154,7 +154,8 @@ them `plugin_param:<id>`, `parse_plugin_param_name`). Values travel
   - `automatable = kCanAutomate && !kIsReadOnly`, `hidden = kIsHidden`.
   - `modulatable = false`: VST3 has no host modulation, so modulation moves the
     value around a base.
-  - `module` is empty; units (`IUnitInfo`) are not read yet.
+  - `module` is empty; units are read only for the program lists of the preset
+    picker (see "Host VST3 presets").
 - **Text.** `PluginInstance::param_text` calls `getParamStringByValue` for a
   normalised value.
 - **Value.** `PluginInstance::param_value` reads `getParamNormalized`.
@@ -883,12 +884,14 @@ sleeping plugin wakes. The test plugin gained `clap.preset-load` (bundled `quiet
 parameter `Preset tone` (32): 33 in all.
 
 **Preset picker (ADR-031, step 3 — 2026-10-15).** `PresetPicker.svelte`, a labelled
-`PRESET` select built like `SidechainPicker.svelte`, shown for a **CLAP** plugin
-that offers presets: in the expanded plugin effect (between the editor buttons and
-the sidechain row) and in the instrument panel (under the instrument row, above
-the arpeggiator, compact or not). It is an action menu: the select shows nothing
-at rest (the empty option is hidden), choosing an entry calls `load_plugin_preset`
-and the select returns to empty, since the host does not know the current preset.
+`PRESET` select built like `SidechainPicker.svelte`, shown for a **CLAP** or **VST3**
+plugin that offers presets: in the expanded plugin effect (between the editor
+buttons and the sidechain row) and in the instrument panel (under the instrument
+row, above the arpeggiator, compact or not). It is an action menu: choosing an
+entry calls `load_plugin_preset`. For CLAP the select shows nothing at rest (the
+empty option is hidden) and returns to empty after a load, since the host does not
+know the current preset; for a VST3 program it shows the program the plugin says is
+in use (`PluginPreset.active`) and is empty when the plugin cannot tell.
 Entries are grouped Usine / Utilisateur / Autres by the provider's flags
 (`src/frontend/presets/pluginPresets.ts`, engine order kept inside a group). The
 row is absent when the list is empty, the plugin unavailable or the call fails.
@@ -901,6 +904,128 @@ disabled (`cursor: default`); a refusal is a red notification
 `src/frontend/presets/pluginPresets.test.ts` (grouping, change detection, keys,
 command arguments, errors). Not hand-tested: spacing in the compact instrument
 panel, and the behaviour with a real plugin.
+
+**Host VST3 presets (ADR-031 amendment, 2026-10-22).** Step 6 of the VST3 catch-up.
+Checked against `ivstunits.h`, `ivsteditcontroller.h`, `vsttypes.h`, the
+reference host's `vstpresetfile.h` / `.cpp` (vst3_public_sdk) and `funknown.cpp`;
+the `IUnitInfo` IID is in `interface_iids_match_the_sdk` and in the TDR Nova binary.
+A VST3 plugin has **two sources of presets**, offered through the same two
+commands, the same last-listing whitelist, the same FFI gate and the same
+`PresetPicker.svelte` as CLAP (no new command, event, project field or UI element).
+
+- _Listing._ `PluginHost::preset_listing` gives `PresetListing::Vst3 { instance,
+  files }`; `list_plugin_presets` runs it on the blocking worker thread. The
+  whitelist is kept under the plugin's `device_id`. Order: the plugin's programs
+  (its own order), then factory files, then user files (files by name).
+  `PluginPreset.active` (added during this step) is true for the program the
+  plugin's selector currently names (VST3 programs only; always false for CLAP and
+  files) so the picker can show it.
+- _Programs (`IUnitInfo`, `vst3/units.rs`)._ The controller is asked for
+  `IUnitInfo` by `queryInterface`; a controller without it, or without a list, offers
+  none. Units, program lists and program names are read under the FFI gate, every
+  count bounded (256 units, 64 lists, 4096 programs per list, 20 000 programs,
+  65 536 parameters; names cut at the 128 UTF-16 units of a `String128`; the sizes
+  of `UnitInfo` / `ProgramListInfo` and the vtable are asserted at compile time).
+  A list is offered only if the host can choose its programs: the **selector** is
+  the parameter flagged `kIsProgramChange` (`1 << 15`) of a unit that uses the list.
+  TDR Nova leaves its only unit unlinked (`programListId = -1`), so when no unit
+  uses the list the only program-change parameter is taken if there is one list and
+  `stepCount + 1` equals its number of programs. A nameless program is shown as
+  `Program N`; with several lists each name starts with its list's name. Key
+  `<parameter id>:<index>`, location kind `PLUGIN`, provider `vst3:program`, factory.
+- _Choosing a program (`PluginInstance::load_vst3_program`)._ The FFI gate is
+  claimed (50 ms, "the plugin is busy, try again" past it); the plugin's own
+  `plainParamToNormalized` turns the index into the selector's value;
+  `setParamNormalized` gives it to the controller and the same value goes into the
+  parameter SPSC queue for the processor (it reaches `inputParameterChanges` with
+  the next block); the bases of value-modulated parameters are read again; the gate
+  is released and the project is marked unsaved. If the plugin is active the host
+  then waits up to 200 ms for the audio thread to take the value, and gives the
+  processor's state (`getState`) to the controller (`setComponentState`, any
+  controller kind) under the gate, then reads the bases again — a program changes
+  many values only the processor knows, so without this only the selector's knob
+  moves. On TDR Nova 23 of 76 values follow. Nothing is waited for when the plugin
+  is not active, and the sync is skipped when a block is in flight or the plugin
+  reports no state. A plugin that applies a program over several blocks may be read
+  too early; the knobs then catch up at the next gesture.
+- _Files (`vst3/preset_file.rs`)._ Steinberg's `.vstpreset` layout, little-endian:
+  a 48-byte header (`VST3`, version `i32`, the class id as 32 ASCII hex digits, the
+  `i64` offset of the chunk list), the chunks, then `List`, an `i32` count and per
+  entry the chunk id, its `i64` offset and `i64` size. The version is read and
+  ignored like the SDK does; at most 128 entries are read. Only `Comp` (the
+  processor's state) is required; `Cont` (the controller's own state) is optional;
+  `Prog`, `Info` and unknown chunks are ignored. The file comes from the user's
+  disk, so nothing in it is trusted: files over 256 MiB are refused before any
+  read; the list and every chunk must lie inside the real file length (checked
+  arithmetic, so a huge or negative size or offset is an error, not an allocation);
+  a chunk is read with `take(size)`, never into a buffer sized from the file; an
+  error is a readable message, never a panic. The class id in the file must be the
+  plugin's: on Windows `FUID::toString` prints `l1 l2 l3 l4`, so the first three
+  groups of the plugin's class bytes are swapped back before the comparison
+  (`class_id_text`; the CID itself is not permuted anywhere else).
+- _Where the files are (`vst3/preset_locations.rs`)._ `<root>\VST3 Presets\<vendor>\<plugin
+  name>\…` under `Documents` (the shell's folder, so a moved one is found; user
+  presets), `%APPDATA%` and `%PROGRAMDATA%` (factory). The scan does not know the
+  vendor folder, so each vendor folder is searched for one named like the plugin
+  (case-insensitive, characters Windows forbids replaced by `_`). The walk is
+  bounded (depth 6, 10 000 entries per folder, 1 000 vendor folders, 20 000
+  presets), does not follow links or junctions, takes `.vstpreset` files only, and
+  reads **only the 48-byte header** of each to see whether it is this plugin's. A
+  file whose path is not valid Unicode is not offered. The preset is named after
+  its file; location kind `FILE`, the path as `location`, provider `vst3:file`.
+  The `Documents` lookup uses `SHGetKnownFolderPath`, which needs the
+  `Win32_UI_Shell` and `Win32_System_Com` features of the existing `windows-sys`
+  dependency (no new crate).
+- _Loading a file (`PluginInstance::load_vst3_preset_file`)._ Only a file the last
+  listing offered is accepted (`instance_for_preset`: kind, path and key must match
+  an entry). The file is then **read and checked again, class id included, before
+  the gate is taken** (the disk may have changed since the listing). Under the gate
+  (50 ms) the `Comp` chunk goes through `load_state_blob` — the ADR-010 state path,
+  unchanged: `IComponent::setState`, and `setComponentState` for a separate
+  controller — then `Cont`, if present, through `IEditController::setState` (a
+  refusal is only logged, as the SDK's `loadPreset` treats it). A processor that
+  refuses its state is an error and nothing else changes. Value-modulated bases are
+  read again, the project is marked unsaved by the host, the gate is released and
+  the command emits `plugin-params-changed`. `setState` on an active component may
+  ask for `restartComponent`; the existing handler deals with it.
+- _Consequences, as for CLAP._ While the gate is held (a file load, the two gate
+  holds of a program) the audio thread bypasses the plugin: an effect passes its
+  input through, an instrument is silent. Loading is **not undoable**, like an edit
+  in the plugin window. Nothing about the preset is stored: the plugin state
+  (ADR-010) carries the sound through a project save and reopen, and there is no
+  preset name field. VST3 plugins always run in the app process; the sandbox is
+  unchanged. The render harness has no VST3 plugin, so the golden hashes are
+  unchanged (C-2); nothing runs on the audio thread that did not already.
+- _Not done._ `IUnitHandler` / `IUnitHandler2` (the host does not answer
+  `notifyProgramListChange` or `notifyUnitSelection`; the list is read again each
+  time the picker is shown or focused, and nothing in the load waits for them),
+  `IProgramListData` / `IUnitData` (program data without the selector), program
+  pitch names, `selectUnit`, the `Prog` and `Info` chunks, presets bundled inside the
+  plugin's `.vst3`, a file watcher, saving a preset from the host, macOS and Linux
+  locations, and multi-block program application.
+- _Checked and not checked._ The program path and the file path are tested on TDR
+  Nova (73 factory programs, all selectable). **No `.vstpreset` exists on this
+  machine**, so the file tests use files the tests write themselves, and the byte
+  order of the class id rests on reading the SDK, not on a file from another host.
+  A plugin's `getState` is not canonical: TDR Nova re-serialises a loaded state
+  differently, so the real test compares parameter values, not state bytes. Not
+  hand-tested in the app; no VST3 instrument was available.
+
+Tests: `vst3/preset_file.rs` (valid with and without `Cont`, first of a kind wins,
+wrong signature / version ignored / other plugin / non-hex id, no `Comp`, a file
+truncated at every length, list offset negative / in the header / past the end,
+absurd and negative counts, chunks outside the file, overflowing and huge sizes,
+size cap, class id order), `vst3/preset_locations.rs` (folder names, vendor
+search, bounds and depth, filtering by header, extension case, missing and
+non-folder paths), `vst3/units.rs` (no interface, root only, one and several lists,
+selector rules and fallback, nameless and very long names, failing and absurd
+counts, release of the interface), `plugin_system/presets.rs`,
+`vst3_program_tests.rs` and `vst3_preset_file_tests.rs` with the hand-made plugin
+`vst3/fake_plugin.rs` (state of the processor and the controller, refusals, busy
+plugin, gate freed, bases re-read, controller sync, plugin not active), the
+whitelist in `host.rs`, and the real-plugin tests of `ffi_lifecycle_tests.rs`
+(`vst3_real_controller_program_lists`, `vst3_real_program_can_be_chosen`,
+`vst3_real_preset_file_is_listed_and_loaded`).
 
 ---
 
