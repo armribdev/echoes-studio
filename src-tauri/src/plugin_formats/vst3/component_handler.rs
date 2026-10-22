@@ -17,7 +17,7 @@ use std::sync::{Arc, Mutex};
 
 use super::ffi::{
     FUnknown, IComponentHandlerVtbl, TResult, Tuid, IID_FUNKNOWN, IID_ICOMPONENT_HANDLER,
-    K_RESULT_OK,
+    K_INVALID_ARGUMENT, K_NO_INTERFACE, K_RESULT_OK,
 };
 use super::host_context::{static_add_ref, static_release, tuid_eq};
 use crate::audio_graph::plugin_params::ValueModulatedParam;
@@ -202,14 +202,14 @@ unsafe extern "C" fn handler_qi(
     obj: *mut *mut c_void,
 ) -> TResult {
     if obj.is_null() {
-        return -1;
+        return K_INVALID_ARGUMENT;
     }
     if tuid_eq(iid, &IID_ICOMPONENT_HANDLER) || tuid_eq(iid, &IID_FUNKNOWN) {
         *obj = this as *mut c_void;
         return K_RESULT_OK;
     }
     *obj = null_mut();
-    -1
+    K_NO_INTERFACE
 }
 
 unsafe extern "C" fn handler_begin_edit(this: *mut FUnknown, id: u32) -> TResult {
@@ -249,6 +249,30 @@ mod tests {
     use super::*;
     use crate::audio_graph::plugin_params::PluginParamRange;
     use std::sync::atomic::AtomicU32;
+
+    #[test]
+    fn the_handler_answers_the_sdk_codes_to_a_query() {
+        let handler = ComponentHandler::boxed();
+        let this = handler.as_funknown();
+        let query = |iid: &Tuid, obj: *mut *mut c_void| unsafe {
+            ((*(*this).vtbl).query_interface)(this, iid, obj)
+        };
+        let mut found: *mut c_void = null_mut();
+        let unknown = [7u8; 16];
+
+        assert_eq!(query(&IID_ICOMPONENT_HANDLER, &mut found), K_RESULT_OK);
+        assert_eq!(found, this as *mut c_void);
+        assert_eq!(query(&IID_FUNKNOWN, &mut found), K_RESULT_OK);
+        assert_eq!(query(&unknown, &mut found), K_NO_INTERFACE);
+        assert!(
+            found.is_null(),
+            "nothing is handed out for an unknown interface"
+        );
+        assert_eq!(
+            query(&IID_ICOMPONENT_HANDLER, null_mut()),
+            K_INVALID_ARGUMENT
+        );
+    }
 
     fn call_begin(handler: &ComponentHandler, id: u32) {
         let this = handler.as_funknown();

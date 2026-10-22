@@ -584,11 +584,16 @@ new ids (`IMessage`, `IAttributeList`, `IInfoListener`) are in
   sandboxed VST3, which does not exist.
 - _Limits._ Not tried with a VST3 instrument (none installed). What a plugin does
   with the name is not observable from the tests. `vst3/` imports `HostTrackInfo`
-  from `plugin_formats::clap::ffi`, a neutral type living in the CLAP crate. The
-  older VST3 code still answers `-1` for "no interface" (`host_context.rs`,
-  `component_handler.rs`, the `IBStream`), where `funknown.h` has `0x80004002` on
-  Windows: plugins test `!= kResultOk`, so it works, but it does not follow the
-  SDK. The new objects use the SDK values.
+  from `plugin_formats::clap::ffi`, a neutral type living in the CLAP crate.
+  _Result codes (2026-10-22):_ every host object (`IHostApplication`,
+  `IComponentHandler`, `IBStream`, `IEventList`, `IParameterChanges` /
+  `IParamValueQueue`, `IPlugFrame`, `IMessage`, `IAttributeList`) now answers with the
+  SDK's codes (`K_NO_INTERFACE` = `0x80004002`, `K_INVALID_ARGUMENT` = `0x80070057`,
+  `K_RESULT_FALSE` = 1 on Windows, `funknown.h` with `COM_COMPATIBLE`); the older
+  code used to answer `-1` for both, and `S_FALSE` for a null `obj` in the event
+  list. A `resizeView` with no window attached answers `K_RESULT_FALSE` (refused),
+  a null argument `K_INVALID_ARGUMENT`. Tests: one per object, plus a guard on the
+  numeric values (`result_codes_are_the_windows_values_of_funknown_h`).
 
 Tests: `vst3/attribute_list.rs`, `vst3/message.rs`, `vst3/com_object.rs` (round
 trips, missing key, full list, bad arguments, cut string, reference counts, the

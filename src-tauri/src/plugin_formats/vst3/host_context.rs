@@ -11,7 +11,8 @@ use std::ptr::null_mut;
 use super::attribute_list::OwnedAttributeList;
 use super::ffi::{
     FUnknown, IHostApplicationVtbl, TResult, Tuid, IID_FUNKNOWN, IID_IATTRIBUTE_LIST,
-    IID_IHOST_APPLICATION, IID_IMESSAGE, K_INVALID_ARGUMENT, K_RESULT_FALSE, K_RESULT_OK,
+    IID_IHOST_APPLICATION, IID_IMESSAGE, K_INVALID_ARGUMENT, K_NO_INTERFACE, K_RESULT_FALSE,
+    K_RESULT_OK,
 };
 use super::message::HostMessage;
 
@@ -35,19 +36,19 @@ unsafe extern "C" fn host_app_qi(
     obj: *mut *mut c_void,
 ) -> TResult {
     if obj.is_null() {
-        return -1;
+        return K_INVALID_ARGUMENT;
     }
     if tuid_eq(iid, &IID_IHOST_APPLICATION) || tuid_eq(iid, &IID_FUNKNOWN) {
         *obj = this as *mut c_void;
         return K_RESULT_OK;
     }
     *obj = null_mut();
-    -1
+    K_NO_INTERFACE
 }
 
 unsafe extern "C" fn host_app_get_name(_this: *mut FUnknown, name: *mut u16) -> TResult {
     if name.is_null() {
-        return -1;
+        return K_INVALID_ARGUMENT;
     }
     let host_name = "Echoes Studio";
     let units: Vec<u16> = host_name.encode_utf16().take(127).collect();
@@ -120,6 +121,28 @@ mod tests {
             (vtbl.create_instance)(host, cid, iid, &mut obj)
         };
         (result, obj)
+    }
+
+    #[test]
+    fn the_host_application_answers_the_sdk_codes() {
+        let host = host_application();
+        let vtbl = unsafe { &*(*(host as *const HostApplication)).vtbl };
+        let mut found: *mut c_void = null_mut();
+        let unknown = [7u8; 16];
+
+        let query =
+            |iid: &Tuid, obj: *mut *mut c_void| unsafe { (vtbl.query_interface)(host, iid, obj) };
+        assert_eq!(query(&IID_IHOST_APPLICATION, &mut found), K_RESULT_OK);
+        assert_eq!(query(&unknown, &mut found), K_NO_INTERFACE);
+        assert!(found.is_null());
+        assert_eq!(
+            query(&IID_IHOST_APPLICATION, null_mut()),
+            K_INVALID_ARGUMENT
+        );
+        assert_eq!(
+            unsafe { (vtbl.get_name)(host, null_mut()) },
+            K_INVALID_ARGUMENT
+        );
     }
 
     #[test]

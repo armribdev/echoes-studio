@@ -776,7 +776,8 @@ unsafe fn fit_clap_gui_to_dpi(
 
 use crate::plugin_formats::vst3::ffi::{
     FUnknown, IPlugFrameVtbl, IPlugView, IPlugViewContentScaleSupport, TResult, Tuid, ViewRect,
-    IID_FUNKNOWN, IID_IPLUG_FRAME, IID_IPLUG_VIEW_CONTENT_SCALE_SUPPORT, K_RESULT_OK,
+    IID_FUNKNOWN, IID_IPLUG_FRAME, IID_IPLUG_VIEW_CONTENT_SCALE_SUPPORT, K_INVALID_ARGUMENT,
+    K_NO_INTERFACE, K_RESULT_FALSE, K_RESULT_OK,
 };
 use crate::plugin_formats::vst3::host_context::{static_add_ref, static_release, tuid_eq};
 
@@ -794,14 +795,14 @@ unsafe extern "C" fn frame_qi(
     obj: *mut *mut c_void,
 ) -> TResult {
     if obj.is_null() {
-        return -1;
+        return K_INVALID_ARGUMENT;
     }
     if tuid_eq(iid, &IID_IPLUG_FRAME) || tuid_eq(iid, &IID_FUNKNOWN) {
         *obj = this as *mut c_void;
         return K_RESULT_OK;
     }
     *obj = null_mut();
-    -1
+    K_NO_INTERFACE
 }
 
 unsafe extern "C" fn frame_resize_view(
@@ -810,12 +811,12 @@ unsafe extern "C" fn frame_resize_view(
     rect: *mut ViewRect,
 ) -> TResult {
     if this.is_null() || rect.is_null() {
-        return -1;
+        return K_INVALID_ARGUMENT;
     }
     let frame = this as *const PlugFrame;
     let hwnd = (*frame).container_hwnd.load(Ordering::Acquire);
     if hwnd.is_null() {
-        return -1;
+        return K_RESULT_FALSE;
     }
     let r = &*rect;
     let cw = (r.right - r.left).max(1);
@@ -1166,6 +1167,61 @@ pub fn post_close(hwnd: usize) {
     if hwnd != 0 {
         unsafe {
             user32::PostMessageW(hwnd as *mut c_void, WM_CLOSE, 0, 0);
+        }
+    }
+}
+
+#[cfg(test)]
+mod plug_frame_tests {
+    use super::*;
+
+    #[test]
+    fn the_frame_answers_the_sdk_codes() {
+        let frame = make_plug_frame();
+        let this = &*frame as *const PlugFrame as *mut FUnknown;
+        let table = unsafe { &*frame.vtbl };
+        let mut found: *mut c_void = null_mut();
+        let unknown = [7u8; 16];
+
+        unsafe {
+            assert_eq!(
+                (table.query_interface)(this, &IID_IPLUG_FRAME, &mut found),
+                K_RESULT_OK
+            );
+            assert_eq!(
+                (table.query_interface)(this, &unknown, &mut found),
+                K_NO_INTERFACE
+            );
+            assert!(found.is_null());
+            assert_eq!(
+                (table.query_interface)(this, &IID_IPLUG_FRAME, null_mut()),
+                K_INVALID_ARGUMENT
+            );
+        }
+    }
+
+    #[test]
+    fn a_resize_without_a_window_or_a_size_is_refused_with_the_right_code() {
+        let frame = make_plug_frame();
+        let this = &*frame as *const PlugFrame as *mut FUnknown;
+        let table = unsafe { &*frame.vtbl };
+        let mut rect = ViewRect {
+            left: 0,
+            top: 0,
+            right: 100,
+            bottom: 50,
+        };
+
+        unsafe {
+            assert_eq!(
+                (table.resize_view)(this, null_mut(), null_mut()),
+                K_INVALID_ARGUMENT
+            );
+            assert_eq!(
+                (table.resize_view)(this, null_mut(), &mut rect),
+                K_RESULT_FALSE,
+                "no window is attached to this frame"
+            );
         }
     }
 }

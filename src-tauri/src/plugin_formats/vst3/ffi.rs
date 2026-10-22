@@ -557,7 +557,7 @@ unsafe extern "C" fn pvq_query_interface(
     if !obj.is_null() {
         *obj = std::ptr::null_mut();
     }
-    -1 // kNoInterface
+    K_NO_INTERFACE
 }
 unsafe extern "C" fn pvq_add_ref(_this: *mut HostParamValueQueue) -> u32 {
     1
@@ -619,7 +619,7 @@ unsafe extern "C" fn pc_query_interface(
     if !obj.is_null() {
         *obj = std::ptr::null_mut();
     }
-    -1
+    K_NO_INTERFACE
 }
 unsafe extern "C" fn pc_add_ref(_this: *mut HostParameterChanges) -> u32 {
     1
@@ -1463,14 +1463,14 @@ unsafe extern "C" fn stream_query_interface(
     obj: *mut *mut c_void,
 ) -> TResult {
     if obj.is_null() {
-        return -1;
+        return K_INVALID_ARGUMENT;
     }
     if !iid.is_null() && (*iid == IID_IBSTREAM || *iid == IID_FUNKNOWN) {
         *obj = this as *mut c_void;
         return K_RESULT_OK;
     }
     *obj = std::ptr::null_mut();
-    -1 // kNoInterface
+    K_NO_INTERFACE
 }
 unsafe extern "C" fn stream_add_ref(_this: *mut HostStream) -> u32 {
     1
@@ -1544,7 +1544,7 @@ unsafe extern "C" fn stream_seek(
 
 unsafe extern "C" fn stream_tell(this: *mut HostStream, pos: *mut i64) -> TResult {
     if pos.is_null() {
-        return -1;
+        return K_INVALID_ARGUMENT;
     }
     *pos = (*this).pos as i64;
     K_RESULT_OK
@@ -1728,6 +1728,66 @@ mod tests {
         ];
         for (index, (actual, sdk)) in expected.iter().enumerate() {
             assert_eq!(actual, sdk, "IID #{index} differs from the SDK");
+        }
+    }
+
+    #[test]
+    fn result_codes_are_the_windows_values_of_funknown_h() {
+        if cfg!(windows) {
+            assert_eq!(K_NO_INTERFACE as u32, 0x8000_4002);
+            assert_eq!(K_INVALID_ARGUMENT as u32, 0x8007_0057);
+            assert_eq!(K_OUT_OF_MEMORY as u32, 0x8007_000E);
+        }
+        assert_eq!((K_RESULT_OK, K_RESULT_FALSE), (0, 1));
+    }
+
+    #[test]
+    fn the_host_stream_answers_the_sdk_codes() {
+        let mut stream = HostStream::empty();
+        let this: *mut HostStream = &mut *stream;
+        let table = unsafe { &*(*this).vtbl };
+        let mut found: *mut c_void = std::ptr::null_mut();
+        let unknown = [7u8; 16];
+
+        unsafe {
+            assert_eq!(
+                (table.query_interface)(this, &IID_IBSTREAM, &mut found),
+                K_RESULT_OK
+            );
+            assert_eq!(
+                (table.query_interface)(this, &unknown, &mut found),
+                K_NO_INTERFACE
+            );
+            assert!(found.is_null());
+            assert_eq!(
+                (table.query_interface)(this, &IID_IBSTREAM, std::ptr::null_mut()),
+                K_INVALID_ARGUMENT
+            );
+            assert_eq!((table.tell)(this, std::ptr::null_mut()), K_INVALID_ARGUMENT);
+        }
+    }
+
+    #[test]
+    fn the_parameter_lists_refuse_every_interface_with_the_sdk_code() {
+        let mut changes = HostParameterChanges::boxed();
+        let this: *mut HostParameterChanges = &mut *changes;
+        let queue: *mut HostParamValueQueue = unsafe { &mut (*this).queues[0] };
+        let mut found: *mut c_void = 1 as *mut c_void;
+
+        unsafe {
+            let table = &*(*this).vtbl;
+            assert_eq!(
+                (table.query_interface)(this, &IID_FUNKNOWN, &mut found),
+                K_NO_INTERFACE
+            );
+            assert!(found.is_null());
+            let queue_table = &*(*queue).vtbl;
+            found = 1 as *mut c_void;
+            assert_eq!(
+                (queue_table.query_interface)(queue, &IID_FUNKNOWN, &mut found),
+                K_NO_INTERFACE
+            );
+            assert!(found.is_null());
         }
     }
 

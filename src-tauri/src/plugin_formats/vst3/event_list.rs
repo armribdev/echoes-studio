@@ -6,7 +6,8 @@
 use std::ffi::c_void;
 
 use super::ffi::{
-    Event, TResult, Tuid, IID_FUNKNOWN, IID_IEVENT_LIST, K_RESULT_FALSE, K_RESULT_OK,
+    Event, TResult, Tuid, IID_FUNKNOWN, IID_IEVENT_LIST, K_INVALID_ARGUMENT, K_NO_INTERFACE,
+    K_RESULT_FALSE, K_RESULT_OK,
 };
 
 /// Events one block can carry.  `MidiEventList` holds 256, and the host may add
@@ -39,14 +40,14 @@ unsafe extern "C" fn query_interface(
     obj: *mut *mut c_void,
 ) -> TResult {
     if obj.is_null() {
-        return K_RESULT_FALSE;
+        return K_INVALID_ARGUMENT;
     }
     if !iid.is_null() && (*iid == IID_IEVENT_LIST || *iid == IID_FUNKNOWN) {
         *obj = this as *mut c_void;
         return K_RESULT_OK;
     }
     *obj = std::ptr::null_mut();
-    -1
+    K_NO_INTERFACE
 }
 
 unsafe extern "C" fn add_ref(_this: *mut HostEventList) -> u32 {
@@ -134,6 +135,30 @@ mod tests {
     /// Calls the list the way a plugin does: through its vtable.
     fn vtbl(list: &mut HostEventList) -> &'static IEventListVtbl {
         unsafe { &*list.vtbl }
+    }
+
+    #[test]
+    fn the_list_answers_the_sdk_codes_to_a_query() {
+        let mut list = HostEventList::boxed();
+        let this: *mut HostEventList = &mut *list;
+        let table = vtbl(&mut list);
+        let mut found: *mut c_void = std::ptr::null_mut();
+        let unknown = [7u8; 16];
+
+        assert_eq!(
+            unsafe { (table.query_interface)(this, &IID_IEVENT_LIST, &mut found) },
+            K_RESULT_OK
+        );
+        assert_eq!(found, this as *mut c_void);
+        assert_eq!(
+            unsafe { (table.query_interface)(this, &unknown, &mut found) },
+            K_NO_INTERFACE
+        );
+        assert!(found.is_null());
+        assert_eq!(
+            unsafe { (table.query_interface)(this, &IID_IEVENT_LIST, std::ptr::null_mut()) },
+            K_INVALID_ARGUMENT
+        );
     }
 
     #[test]
