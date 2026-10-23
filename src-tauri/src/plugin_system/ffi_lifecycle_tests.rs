@@ -1918,3 +1918,83 @@ fn vst3_real_plugins_report_their_latency_and_tail() {
         assert!(!instance.has_crashed());
     }
 }
+
+/// What the plugin itself answers to `getLatencySamples` right now.
+fn latency_asked_directly(instance: &PluginInstance) -> u32 {
+    use crate::plugin_system::instance::FFI_GATE_HARVEST_BUDGET;
+
+    let (_, processor) = instance.vst3_handles().expect("a VST3 instance");
+    let processor = processor.as_ptr();
+    let _gate = instance
+        .offrt_try_acquire(FFI_GATE_HARVEST_BUDGET)
+        .expect("an idle instance gives its gate");
+    unsafe { ((*(*processor).vtbl).get_latency_samples)(processor) }
+}
+
+/// The effect node hands the graph compiler the latency its plugin reports.
+#[test]
+fn vst3_real_effect_reports_the_latency_of_its_plugin() {
+    let candidates = discover_all("ECHOES_TEST_VST3", "vst3");
+    if candidates.is_empty() {
+        eprintln!("{LOG} SKIP vst3_real_effect_reports_the_latency_of_its_plugin — no .vst3 found");
+        return;
+    }
+    let key = "harness:vst3:effect-latency";
+    for path in &candidates {
+        let Some(device_id) = first_vst3_id(path) else {
+            continue;
+        };
+        let mut host = PluginHost::new();
+        host.registry_mut().add(vst3_manifest(&device_id, path));
+        let Ok(mut node) = host.instantiate(key, &device_id, false) else {
+            continue;
+        };
+        node.prepare(PrepareContext {
+            sample_rate: 48_000.0,
+            max_block_size: 512,
+            num_channels: 2,
+            live: true,
+        });
+        let instance = host.instance_by_key(key).expect("instance registered");
+        let asked = latency_asked_directly(&instance);
+        eprintln!(
+            "{LOG} {device_id} effect latency: node {} samples, plugin {asked}",
+            node.latency_samples()
+        );
+        assert_eq!(node.latency_samples(), asked);
+        assert!(!instance.has_crashed());
+    }
+}
+
+/// The instrument adapter hands the graph compiler the latency its plugin reports.
+#[test]
+fn vst3_real_instrument_reports_the_latency_of_its_plugin() {
+    let candidates = discover_all("ECHOES_TEST_VST3", "vst3");
+    let Some(manifest) = first_vst3_instrument(&candidates) else {
+        eprintln!(
+            "{LOG} SKIP vst3_real_instrument_reports_the_latency_of_its_plugin — no VST3 instrument found"
+        );
+        return;
+    };
+    let key = "harness:vst3:instrument-latency";
+    let mut host = PluginHost::new();
+    host.registry_mut().add(manifest.clone());
+    let mut device = host
+        .instantiate_instrument(key, &manifest.id)
+        .expect("a VST3 instrument must instantiate");
+    device.prepare(PrepareContext {
+        sample_rate: 48_000.0,
+        max_block_size: 512,
+        num_channels: 2,
+        live: true,
+    });
+    let instance = host.instance_by_key(key).expect("instance registered");
+    let asked = latency_asked_directly(&instance);
+    eprintln!(
+        "{LOG} {} instrument latency: adapter {} samples, plugin {asked}",
+        manifest.name,
+        device.latency_samples()
+    );
+    assert_eq!(device.latency_samples(), asked);
+    assert!(!instance.has_crashed());
+}

@@ -599,6 +599,8 @@ pub(crate) struct FakeBuses {
     arrangement_calls: RefCell<Vec<(Vec<u64>, Vec<u64>)>>,
     /// `(direction, index, state)` of every audio `activateBus`.
     activations: RefCell<Vec<(i32, i32, bool)>>,
+    /// What `getLatencySamples` answers.
+    latency: Cell<u32>,
 }
 
 impl FakeBuses {
@@ -613,7 +615,14 @@ impl FakeBuses {
             inputs_seen: RefCell::new(Vec::new()),
             arrangement_calls: RefCell::new(Vec::new()),
             activations: RefCell::new(Vec::new()),
+            latency: Cell::new(0),
         })
+    }
+
+    /// The plugin now reports `samples` of latency, as after a
+    /// `restartComponent(kLatencyChanged)`.
+    pub fn set_latency(&self, samples: u32) {
+        self.latency.set(samples);
     }
 
     /// The plugin counts `extra` more output buses than it will describe.
@@ -914,8 +923,11 @@ unsafe extern "C" fn processor_set_processing(_: *mut IAudioProcessor, _: u8) ->
     K_RESULT_OK
 }
 
-unsafe extern "C" fn processor_get_latency_samples(_: *mut IAudioProcessor) -> u32 {
-    0
+unsafe extern "C" fn processor_get_latency_samples(this: *mut IAudioProcessor) -> u32 {
+    (*(this as *const FakeProcessor))
+        .buses
+        .as_ref()
+        .map_or(0, |buses| buses.latency.get())
 }
 
 /// Renders each output bus the host handed over at its level.

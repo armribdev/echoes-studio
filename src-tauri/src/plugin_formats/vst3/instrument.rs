@@ -172,6 +172,8 @@ pub struct VstInstrument {
 
     num_channels: usize,
     active: bool,
+    /// Read at each `prepare`, after the activation it belongs to.
+    reported_latency: u32,
     notes: SoundingNotes,
     midi_map: MidiControllerMap,
     /// Set after the first SEH exception from `process()`: silent until the
@@ -201,6 +203,7 @@ impl VstInstrument {
             events: None,
             num_channels: 2,
             active: false,
+            reported_latency: 0,
             notes: SoundingNotes::new(),
             midi_map: MidiControllerMap::empty(),
             crashed: false,
@@ -214,6 +217,10 @@ impl InstrumentDevice for VstInstrument {
         self.outputs.num_ports()
     }
 
+    fn latency_samples(&self) -> u32 {
+        self.reported_latency
+    }
+
     fn prepare(&mut self, ctx: PrepareContext) {
         self.num_channels = ctx.num_channels;
         self.param_changes = Some(HostParameterChanges::boxed());
@@ -225,6 +232,10 @@ impl InstrumentDevice for VstInstrument {
             .vst3_ensure_active(ctx.sample_rate, ctx.max_block_size as u32);
         self.outputs = Vst3OutputBuses::new(&self.instance.vst3_output_buses());
         self.outputs.prepare(ctx.num_channels, ctx.max_block_size);
+
+        if let Some(latency) = self.instance.vst3_latency_samples() {
+            self.reported_latency = latency;
+        }
 
         // Skipped when a block is in flight: the controllers stay unmapped until
         // the next recompile.

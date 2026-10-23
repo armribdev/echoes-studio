@@ -1099,6 +1099,20 @@ impl PluginInstance {
         }
     }
 
+    /// What the VST3 plugin reports as its latency (`getLatencySamples`) at its
+    /// current activation, read under the FFI gate so it cannot race a block.
+    /// `None` for other formats, or when a block keeps the gate past the budget:
+    /// the caller keeps the value it has. Command thread.
+    pub fn vst3_latency_samples(&self) -> Option<u32> {
+        let NativeHandle::Vst3 { processor, .. } = &self.handle else {
+            return None;
+        };
+        let _running = self.mark(PluginThread::Control);
+        let _gate = self.offrt_try_acquire(FFI_GATE_HARVEST_BUDGET)?;
+        let processor = processor.as_ptr();
+        Some(unsafe { ((*(*processor).vtbl).get_latency_samples)(processor) })
+    }
+
     /// The VST3 edit controller, which lives as long as this instance; `None`
     /// for other formats or a VST3 that offers none.
     pub fn vst3_controller(&self) -> Option<NonNull<IEditController>> {

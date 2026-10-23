@@ -39,7 +39,7 @@ use crate::audio_graph::plugin_params::{
     parse_plugin_param_name, PluginParamControl, PluginParamControls,
 };
 use crate::plugin_formats::crash_guard;
-use crate::plugin_system::instance::{PluginInstance, FFI_GATE_HARVEST_BUDGET};
+use crate::plugin_system::instance::PluginInstance;
 use crate::plugin_system::lifecycle::LifecycleState;
 
 use super::buses::{Vst3InputBuses, Vst3OutputBuses};
@@ -183,12 +183,8 @@ impl AudioNode for VstWrapperNode {
         // instance FFI gate so it can't race `process()`; if a block is in flight
         // and the gate can't be claimed in time, keep the current latency (a
         // transient — corrected on a later recompile).
-        if let Some(_gate) = self.instance.offrt_try_acquire(FFI_GATE_HARVEST_BUDGET) {
-            let (_, proc_nn) = self.handles();
-            let proc = proc_nn.as_ptr();
-            unsafe {
-                self.reported_latency = ((*(*proc).vtbl).get_latency_samples)(proc);
-            }
+        if let Some(latency) = self.instance.vst3_latency_samples() {
+            self.reported_latency = latency;
         }
 
         self.instance.set_lifecycle(LifecycleState::Running);
