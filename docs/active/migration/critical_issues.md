@@ -26,7 +26,7 @@ Légende : ✅ résolu · ◐ partiel · ⬜ ouvert · ❓ non vérifié (laiss�
 | 2.9       | ❓   | Interpolation de `track.rs` non revérifiée                                                                             |
 | 3.1       | ✅   | File SPSC des paramètres (ADR-008)                                                                                     |
 | 3.2       | ◐    | Instruments CLAP oui ; VST3 non                                                                                        |
-| 3.3       | ◐    | Sidechain et multi-sorties CLAP réels (ADR-014) ; VST3 `getBusInfo` ignoré                                             |
+| 3.3       | ◐    | Sidechain et multi-sorties CLAP réels, sorties VST3 réelles (ADR-014) ; sidechain VST3 ignoré                                      |
 | 3.4       | ✅    | Paramètres CLAP (`clap/params.rs`) et VST3 (`vst3/params.rs`, 2026-10-21) énumérés                                  |
 | 3.5       | ✅   | Persistance d'état via `plugin_system/state.rs` (ADR-010) ; les `save_state` des wrappers restent vides par conception |
 | 3.6       | ✅   | `latency_samples` surchargé (CLAP, VST3, sandbox)                                                                      |
@@ -242,6 +242,7 @@ Statut : seuls les problèmes **encore présents dans le code** sont listés. Le
 - **Cause probable** : abstraction `PluginCapabilities` introduite (Phase 1 audit plugin) mais le compileur ne la consulte pas encore.
 - **Mise à jour 2026-09-25 (ADR-014)** : résolu pour le **sidechain CLAP** — `clap.audio-ports` est introspecté au scan (`num_sidechain_inputs` réel), le port aux est câblé et nourri, et `PluginParams.sidechain_source` route une piste source dedans (`AudioGraph::from_project`) ; sélecteur « Sidechain » dans l'effet déplié depuis le 2026-10-14 (grisé pour un plugin isolé). Reste ouvert : mono/surround/multi-out et tout VST3 (`getBusInfo` toujours ignoré).
 - **Mise à jour 2026-09-25 (ADR-014, multi-out)** : résolu pour le **multi-out CLAP** (effets et instruments) — chaque sortie déclarée reçoit son buffer, et `AppTrack.input_source` fait entrer une sortie auxiliaire dans une autre piste (sélecteur « Entrée » du panneau gauche). Reste ouvert : plugins isolés (sandbox) et VST3 (une seule sortie), surround.
+- **Mise à jour 2026-10-23 (ADR-014, multi-out VST3)** : résolu pour les **sorties VST3** (effets et instruments, en processus) — les bus de sortie sont lus sur l'instance chargée, un bus auxiliaire n'est ouvert que tant qu'une piste le prend, même `input_source` et même sélecteur « Entrée ». Reste ouvert : entrées auxiliaires (sidechain) VST3, plugins isolés ; pas encore essayé avec un vrai plugin multi-sorties.
 
 ### 3.4 `ParameterMap` jamais peuplée
 

@@ -88,10 +88,12 @@ call only fills pointer values — no `Vec::push`, no `Box`.
   makes an `IMessage` or an `IAttributeList`, see "Host `IInfoListener` /
   `IMessage`").
 - **Activation order** (`PluginInstance::vst3_ensure_active`):
-  `setBusArrangements` → `activateBus` (audio in when the plugin has one, audio
-  out, event in when the plugin has one) → `setupProcessing` → `setActive(1)` →
-  `setProcessing(1)`, as the spec requires. A config change on a live instance
-  deactivates and reactivates it under the FFI gate, like CLAP.
+  `setBusArrangements` (every audio bus named, see "VST3 multi-out") →
+  `activateBus` (audio in when the plugin has one, audio out and the auxiliary
+  outputs the graph reads, event in when the plugin has one) → `setupProcessing`
+  → `setActive(1)` → `setProcessing(1)`, as the spec requires. A config change,
+  a `restartComponent`, or a change of the auxiliary outputs read on a live
+  instance deactivates and reactivates it under the FFI gate, like CLAP.
 - **Edit controller.** It lives with the instance, not with the editor window.
   `PluginHost::instantiate_vst3` builds it right after the component
   (`ffi::create_controller`):
@@ -253,8 +255,8 @@ A VST3 instrument is a `VstInstrument` (`vst3/instrument.rs`) behind
   (`is_instrument_subcategory`; `Fx|Instrument` is an effect). Without
   `IPluginFactory2` the name guess of `classify_instrument` is used.
 - **Buses.** `vst3_ensure_active` asks `getBusCount`. No audio input →
-  `setBusArrangements(null, 0, stereo, 1)` and no input bus; an event input bus is
-  activated. The output is the first stereo bus only.
+  `setBusArrangements(null, 0, outputs…)` and no input bus; an event input bus is
+  activated. The main output is stereo; further output buses: "VST3 multi-out".
 - **Events.** Each block, `HostEventList` (512 events, `IEventList`) is reset and
   filled: pending releases at offset 0, then the block's `MidiEventList` as
   `kNoteOnEvent` / `kNoteOffEvent` / `kPolyPressureEvent`, and passed as
@@ -270,8 +272,71 @@ A VST3 instrument is a `VstInstrument` (`vst3/instrument.rs`) behind
   `restartComponent(kMidiCCAssignmentChanged)` (a recompile; no reactivation).
 - **Parameters.** Queued edits, plugin-window edits, modulation and automation use
   the same delivery as the effect (`vst3/param_delivery.rs`).
-- Not done: plugin latency, note expressions, `outputEvents`, extra output buses.
+- Not done: plugin latency, note expressions, `outputEvents`.
   `outputParameterChanges` are read (see "The controller follows the processor").
+  Extra output buses: see "VST3 multi-out".
+
+### VST3 multi-out (ADR-014 amendment, 2026-10-23)
+
+A VST3 plugin (effect or instrument) with several audio output buses feeds the
+same routing as a CLAP multi-out plugin: `AppTrack.input_source`,
+`SET_TRACK_INPUT`, the left-panel "Entrée" picker, `get_plugin_outputs`. No
+project, command or event change. In-process only (the sandbox is CLAP only).
+
+- **Reading** (`vst3/buses.rs`). At every activation `vst3_ensure_active` reads
+  the output buses (`getBusCount`, then `getBusInfo` after `setBusArrangements`)
+  into `PluginInstance::vst3_output_buses`, so a `restartComponent(kIoChanged)`
+  is followed by the reactivation it already requests. Not at scan time: a scan
+  creates no component, and instantiating every plugin at startup would load
+  their samples. At most 32 buses and 64 channels per bus are read; reading
+  stops at the first bus the plugin will not describe. `BusInfo` (276 bytes) was
+  checked against `ivstcomponent.h`. A bus flagged `kIsControlVoltage` is never
+  offered nor opened.
+- **Port ↔ bus.** Graph output port `p` is output bus `p`; the main bus is port 0
+  and is always open.
+- **Arrangements.** `setBusArrangements` names every audio bus, inputs and
+  outputs, as the spec requires. The main bus of each direction is asked for
+  stereo (unchanged); any other bus is offered the arrangement it already has
+  (`getBusArrangement`), so a mono or surround bus is not forced. The plugin may
+  keep its own layout (it answers `kResultFalse`): the buses are read again after,
+  so its answer wins. Auxiliary input buses (a sidechain) are named but stay
+  closed.
+- **Which buses open.** A closed output bus is mixed by the plugin into its main
+  bus, so opening all of them would take sound out of the main bus while nobody
+  reads them. A bus is opened only when an edge of the graph reads its port:
+  `GraphCompiler::demanded_plugin_outputs` collects the ports ≥ 1 read from each
+  plugin placement (after cycles are cut), `PluginHost::set_demanded_outputs`
+  gives them to the instances (live ones at once, new ones when created), and
+  `vst3_ensure_active` compares them with the buses opened at the last
+  activation. A change reactivates through the existing FFI-gated branch (a short
+  gap, like a latency change); a busy gate re-arms the request for the next
+  recompile. A bus stays open across a reactivation, so one no longer read is
+  closed explicitly. Nothing routed ⇒ one stereo main bus, `ProcessData` as
+  before. (That an inactive bus is mixed into the main one is the Steinberg
+  convention for multi-out plugins; check it with a real plugin.)
+- **Process** (`Vst3OutputBuses`, shared by `VstWrapperNode` and `VstInstrument`).
+  Built in `prepare`: one `AudioBusBuffers` per bus up to the last open one, each
+  with a pointer array of its channel count. A closed bus between two open ones
+  points at a spare buffer (never null). The main bus has the engine's channel
+  count; an auxiliary bus its declared one, its first channels on the graph
+  buffer and the extra ones (e.g. a 5.1 bus) on the spare buffer, a mono bus
+  spread over both channels after `process`. `num_output_ports()` is the number
+  of declared buses, which widens the plan steps (graph-compiler step 7).
+  `bind` / `finish` only write pointers and copy samples.
+- **Listing.** `PluginHost::plugin_outputs` offers the buses ≥ 1 of a loaded VST3
+  (name, channels), once it has been activated.
+- **Not done:** auxiliary inputs for VST3 (the sidechain picker is CLAP only),
+  `kDefaultActive`, a user-chosen activation, `IComponentHandlerBusActivation`.
+
+Tests: `vst3/buses.rs` (layout, arrangements, activation, tables) and
+`plugin_system/vst3_output_bus_tests.rs` (effect and instrument rendering on the
+hand-made plugin `vst3/fake_plugin.rs`, whose buses are configurable);
+`plugin_system/host.rs` (`vst3_demanded_outputs`: demand, listing, and a compiled
+project whose second track hears the first track's aux bus);
+`audio_graph/graph.rs::routing_tests` (the demand); `ffi_lifecycle_tests.rs`
+(`vst3_real_plugins_report_their_output_buses` on TDR Nova: one stereo output,
+two audio inputs; `vst3_real_instrument_opens_an_aux_output_on_demand` skips until
+an installed instrument has an auxiliary output).
 
 ### State serialisation
 
@@ -339,7 +404,8 @@ probes `clap.audio-ports` at scan time — a throwaway create → init → query
 destroy cycle, SEH-guarded — so `PluginManifest.num_sidechain_inputs` is the
 plugin's real aux input count, not always `0`. `ClapWrapperNode` builds one
 `ClapAudioBuffer` per input port (main at 0, aux at `1..`) and reports the real
-total from `num_input_ports()`. VST3 `getBusInfo` introspection is untouched.
+total from `num_input_ports()`. VST3 aux inputs (sidechain) are not read: VST3
+`getBusInfo` is used for outputs only (see "VST3 multi-out").
 
 **Sidechain routing (ADR-014 update, 2026-09-25).** `PluginParams.sidechain_source`
 names the track whose post-fader signal feeds a plugin's aux port 1.
@@ -369,7 +435,8 @@ their declared channel count, a mono one spread over both channels. Any port
 without a graph buffer writes into a spare buffer, never a null pointer.
 `PluginHost::plugin_outputs` / the `get_plugin_outputs` command list the aux
 ports with their names; `AppTrack.input_source` routes one into a track (see
-ADR-014). Sandboxed plugins and VST3 still expose one output.
+ADR-014). Sandboxed plugins still expose one output; VST3 has its own path
+(see "VST3 multi-out").
 
 **Parameters (ADR-021).** `plugin_formats/clap/params.rs` is shared by the
 effect wrapper and the instrument: it reads `clap.params` at `prepare`, and

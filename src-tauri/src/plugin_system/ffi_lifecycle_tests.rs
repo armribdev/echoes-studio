@@ -658,6 +658,138 @@ fn vst3_instrument_plays_a_note() {
     }
 }
 
+/// A real VST3 instrument with several output buses keeps them closed until the
+/// graph reads one, then opens it and renders on that port (ADR-014 multi-out).
+#[test]
+fn vst3_real_instrument_opens_an_aux_output_on_demand() {
+    use crate::audio_graph::midi::{MidiEvent, MidiEventKind, MidiEventList};
+    use std::collections::HashMap;
+
+    let candidates = discover_all("ECHOES_TEST_VST3", "vst3");
+    let key = "harness:vst3:multi-out";
+    let frames = 256;
+    let transport = TransportInfo {
+        is_playing: true,
+        position_samples: 0,
+        position_seconds: 0.0,
+        bpm: 120.0,
+        time_signature: crate::audio_graph::node::TimeSignature::default(),
+        sample_rate: 48_000.0,
+        block_size: frames,
+    };
+    let context = PrepareContext {
+        sample_rate: 48_000.0,
+        max_block_size: 512,
+        num_channels: 2,
+        live: true,
+    };
+    // A note, then silence: the peak of each output port over the first blocks.
+    let peaks = |device: &mut Box<dyn crate::audio_graph::nodes::instrument::InstrumentDevice>|
+     -> Vec<f32> {
+        let mut peaks = vec![0.0f32; device.num_output_ports()];
+        for block in 0..32 {
+            let mut events = MidiEventList::new();
+            if block == 0 {
+                events.push(MidiEvent {
+                    offset: 0,
+                    kind: MidiEventKind::NoteOn {
+                        pitch: 60,
+                        velocity: 100,
+                    },
+                });
+            }
+            let mut outputs: Vec<_> = peaks.iter().map(|_| AudioBuffer::new(2, frames)).collect();
+            device.process_midi(&events, &mut outputs, &transport);
+            for (peak, output) in peaks.iter_mut().zip(&outputs) {
+                for channel in 0..2 {
+                    for &sample in output.channel(channel).iter().take(frames) {
+                        assert!(sample.is_finite(), "output must be finite");
+                        *peak = peak.max(sample.abs());
+                    }
+                }
+            }
+        }
+        peaks
+    };
+
+    let mut tried = 0;
+    for path in &candidates {
+        let Some(manifest) = first_vst3_instrument(std::slice::from_ref(path)) else {
+            continue;
+        };
+        let mut host = PluginHost::new();
+        host.registry_mut().add(manifest.clone());
+        let Ok(mut closed) = host.instantiate_instrument(key, &manifest.id) else {
+            continue;
+        };
+        closed.prepare(context);
+        let instance = host.instance_by_key(key).expect("instance registered");
+        let buses = instance.vst3_output_buses();
+        let layout: Vec<_> = buses
+            .iter()
+            .map(|bus| format!("'{}' {}ch", bus.name, bus.channel_count))
+            .collect();
+        eprintln!("{LOG} {} output buses: {layout:?}", manifest.name);
+        let Some(aux) = buses
+            .iter()
+            .enumerate()
+            .skip(1)
+            .find(|(_, bus)| !bus.control_voltage)
+            .map(|(index, _)| index)
+        else {
+            eprintln!(
+                "{LOG} {} declares no auxiliary output, skipped",
+                manifest.name
+            );
+            continue;
+        };
+        tried += 1;
+
+        assert_eq!(closed.num_output_ports(), buses.len());
+        assert!(
+            instance
+                .vst3_output_buses()
+                .iter()
+                .skip(1)
+                .all(|bus| !bus.active),
+            "nothing reads an aux bus: only the main one is open"
+        );
+        let before = peaks(&mut closed);
+        drop(closed);
+
+        host.set_demanded_outputs(HashMap::from([(key.to_string(), 1 << aux)]));
+        let mut open = host
+            .instantiate_instrument(key, &manifest.id)
+            .expect("the live instrument is reused");
+        open.prepare(context);
+        assert!(
+            instance.vst3_output_buses()[aux].active,
+            "the demanded bus is open"
+        );
+        let after = peaks(&mut open);
+
+        eprintln!("{LOG} peaks with only the main bus open: {before:?}");
+        eprintln!("{LOG} peaks with bus {aux} open:         {after:?}");
+        eprintln!(
+            "{LOG} AUX SIGNAL on bus {aux}: {}",
+            if after[aux] > 0.0 { "yes" } else { "no" }
+        );
+        assert!(
+            !instance.has_crashed(),
+            "opening a bus must not crash the plugin"
+        );
+        assert!(
+            after.iter().any(|&peak| peak > 0.0),
+            "a played note is heard on some bus"
+        );
+    }
+    if tried == 0 {
+        eprintln!(
+            "{LOG} SKIP vst3_real_instrument_opens_an_aux_output_on_demand — no VST3 instrument with an auxiliary output"
+        );
+    }
+}
+
 /// A real VST3 instrument tells which parameters its MIDI controllers drive;
 /// the host reads the table without crashing the plugin.
 #[test]
@@ -1529,62 +1661,4 @@ fn vst3_real_plugins_report_their_output_buses() {
         );
         assert!(!instance.has_crashed());
     }
-}
-
-// TEMPORARY (VST3 multi-out, step 4e): fingerprint of a render through the first
-// real VST3 effect, to compare before and after the bus changes.  Removed at the end.
-#[test]
-#[ignore]
-fn tmp_vst3_effect_render_fingerprint() {
-    let candidates = discover_all("ECHOES_TEST_VST3", "vst3");
-    let key = "harness:vst3:fingerprint";
-    for path in &candidates {
-        let Some(device_id) = first_vst3_id(path) else {
-            continue;
-        };
-        let render = || -> Option<u64> {
-            let mut host = PluginHost::new();
-            host.registry_mut().add(vst3_manifest(&device_id, path));
-            let mut node = host.instantiate(key, &device_id, false).ok()?;
-            node.prepare(PrepareContext {
-                sample_rate: 48_000.0,
-                max_block_size: 512,
-                num_channels: 2,
-                live: true,
-            });
-            let frames = 256;
-            let transport = TransportInfo {
-                block_size: frames,
-                ..TransportInfo::stopped(48_000.0)
-            };
-            let mut seed: u32 = 1;
-            let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
-            let mut input = AudioBuffer::new(2, frames);
-            for _ in 0..64 {
-                for channel in 0..2 {
-                    for sample in input.channel_mut(channel).iter_mut() {
-                        seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
-                        *sample = (seed >> 8) as f32 / (1u32 << 24) as f32 - 0.5;
-                    }
-                }
-                let mut outputs = vec![AudioBuffer::new(2, frames)];
-                node.process(&[&input], &mut outputs, &transport);
-                for channel in 0..2 {
-                    for sample in outputs[0].channel(channel) {
-                        hash = (hash ^ u64::from(sample.to_bits())).wrapping_mul(0x0100_0000_01b3);
-                    }
-                }
-            }
-            Some(hash)
-        };
-        let (Some(first), Some(second)) = (render(), render()) else {
-            continue;
-        };
-        eprintln!(
-            "{LOG} FINGERPRINT {device_id} first={first:016x} second={second:016x} stable={}",
-            first == second
-        );
-        return;
-    }
-    eprintln!("{LOG} FINGERPRINT no VST3 effect could be rendered");
 }

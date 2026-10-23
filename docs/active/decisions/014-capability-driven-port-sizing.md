@@ -3,8 +3,8 @@
 ## Status
 
 Accepted (foundation) + **CLAP introspection/feed landed 2026-09-25** + **routing
-landed 2026-09-25** + **CLAP multi-out landed 2026-09-25** (see the updates at
-the bottom). Implements the
+landed 2026-09-25** + **CLAP multi-out landed 2026-09-25** + **VST3 multi-out
+landed 2026-10-23** (see the updates at the bottom). Implements the
 **compiler** half of **Phase 5d** of
 [`docs/active/migration/migration_plan.md`](../migration/migration_plan.md) — audit **P0-3**
 (capabilities câblées en dur) and **P1-5** (sidechain inexpressible).
@@ -12,9 +12,8 @@ the bottom). Implements the
 Scope: make the graph compiler size plugin input ports from cached plugin
 metadata instead of a hardcoded constant, and — as of the updates below — make
 that metadata real for CLAP, route the aux signal into the plugin, and connect
-a track into the aux port. Still open: a **UI control** for
-`sidechain_source` (settable today only via `UPDATE_EFFECT`) and **VST3
-`getBusInfo`** introspection.
+a track into the aux port. Still open: **VST3 aux inputs** (sidechain; VST3
+`getBusInfo` is read for outputs only since 2026-10-23).
 
 ---
 
@@ -79,7 +78,8 @@ change, no allocation/lock added.
   No pipeline reorder, no port-model change.
 - **Limits / debt (the rest of P0-3 / P1-5).**
   - ~~**Bus introspection not wired**~~ — done for CLAP (2026-09-25, see
-    update below); VST3 `getBusInfo` still caches `0`.
+    update below); VST3 `getBusInfo` still caches `0` for aux _inputs_ (VST3
+    outputs: 2026-10-23 amendment).
   - ~~**Sidechain not functional yet**~~ — the CLAP wrapper now feeds every
     declared aux bus (2026-09-25).
   - ~~**No routing**~~ — `from_project` now connects a `sidechain_source`
@@ -118,8 +118,9 @@ change, no allocation/lock added.
   disabled for them.
 - **Multi-out** — ~~size outputs from the manifest once downstream routing
   reads the extra ports~~ **done for CLAP (2026-09-25)**, see the update below.
-  Still open: sandboxed plugins and VST3 (one output), and a plugin changing
-  its port layout at runtime (`clap.audio-ports` rescan).
+  Still open: sandboxed plugins (one output), and a CLAP plugin changing its
+  port layout at runtime (`clap.audio-ports` rescan). VST3: done 2026-10-23
+  (last amendment).
 
 ## Update — 2026-09-25: real CLAP bus introspection + wrapper feed
 
@@ -266,9 +267,9 @@ port }>` (`project.rs`), where `effect_id` is a placement (an effect id or
   (`PluginHost::plugin_outputs`: aux ports of a loaded placement, with the
   plugin's port names) in a `TrackInputPicker` row of the left panel, shown
   only when some loaded plugin has an aux output.
-- **Not done**: sandboxed plugins (the bridge still passes one output) and
-  VST3 keep a single output — a track routed to one of their aux outputs
-  stays silent; a runtime port-layout change (`clap.audio-ports` rescan
+- **Not done**: sandboxed plugins (the bridge still passes one output) keep a
+  single output — a track routed to one of their aux outputs stays silent (VST3
+  followed on 2026-10-23, see the last amendment); a runtime port-layout change (`clap.audio-ports` rescan
   after `request_restart`) is not re-read.
 
 Tests: `plugin_formats/clap/audio_ports.rs` (port mapping, spare buffers, mono
@@ -288,3 +289,48 @@ elapsed, output silent). Port sizing is unchanged; a sleeping effect zeroes
 every declared output port, and a non-silent signal on any input port —
 including the sidechain — wakes it. See `../plugins/plugin-wrapper-system.md`
 (Plugin sleep).
+
+## Amendment 2026-10-23 — VST3 multi-out (aux outputs into other tracks)
+
+The CLAP multi-out path now serves VST3 too, in-process only (the sandbox stays
+CLAP only). Step 4e of the VST3 catch-up. No hard invariant changes (no new ADR):
+`audio_graph/` still sees only `Box<dyn AudioNode>` (ADR-003), the snapshot swap and
+determinism are untouched, and the project file does not change.
+
+- **Where the outputs come from.** A VST3 plugin's audio output buses are read from
+  the loaded instance — `getBusInfo` after `setBusArrangements`, inside
+  `vst3_ensure_active`, so again after every `restartComponent(kIoChanged)` — not
+  from the scan manifest (a scan creates no component). Graph output port `p` is
+  output bus `p`; the main bus is port 0. A bus flagged `kIsControlVoltage` is
+  never offered.
+- **Buses are opened by demand.** Unlike CLAP ports, a VST3 bus must be activated
+  by the host, and a closed bus is mixed by the plugin into its main output. So
+  the compiler tells the host which aux ports an edge reads
+  (`GraphCompiler::demanded_plugin_outputs` →
+  `PluginHost::set_demanded_outputs`, before the nodes are built), and only those
+  buses are activated. Nothing routed ⇒ one stereo main bus, `ProcessData` exactly
+  as before (C-2, C-4). Changing the routing recompiles and reactivates the
+  instance through the existing FFI-gated branch of `vst3_ensure_active` (a short
+  gap, as for a latency change); a bus stays open across a reactivation, so one no
+  longer read is closed explicitly.
+- **Arrangements.** `setBusArrangements` names every audio bus. The main bus of each
+  direction keeps the stereo request; any other bus is offered the arrangement it
+  has (`getBusArrangement`). Aux inputs (a sidechain) are named and stay closed.
+- **Wrappers.** `VstWrapperNode` and `VstInstrument` share `Vst3OutputBuses`
+  (`plugin_formats/vst3/buses.rs`), the counterpart of `ClapOutputBuses`: tables
+  allocated in `prepare`, one `AudioBusBuffers` per bus up to the last open one.
+  An aux bus with more channels than the engine (5.1) gets its full channel
+  array, the extra channels writing into a spare buffer; a mono bus is spread over
+  both channels; a closed bus between two open ones points at the spare buffer.
+  `num_output_ports()` is the number of declared buses, which widens the plan steps
+  (`size_outputs_from_processors`).
+- **UI.** `PluginHost::plugin_outputs` lists the VST3 aux buses; the "Entrée"
+  picker (`TrackInputPicker.svelte`) is unchanged.
+- **Not done:** VST3 aux inputs (sidechain) and its picker, `kDefaultActive`, a
+  user-chosen activation, `IComponentHandlerBusActivation`.
+- **Verification.** Unit tests and the hand-made plugin (buses configurable in
+  `vst3/fake_plugin.rs`), including a compiled project whose second track hears the
+  first track's aux bus; TDR Nova (one stereo output, two audio inputs) reads its
+  buses and renders bit for bit as before. **No manual pass with a real multi-out
+  VST3 yet** (none installed; the real-plugin test skips): that a closed bus is
+  mixed into the main one is the SDK convention, to confirm with a real plugin.

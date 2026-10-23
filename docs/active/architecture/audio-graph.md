@@ -111,6 +111,9 @@ the sidechains; a routing that would close a cycle (exact node reachability)
 is dropped. A plugin node's output count is only known once it is loaded:
 the compiler widens the step to the prepared node's `num_output_ports()` and
 cuts any edge from an output that does not exist (ADR-014 multi-out update).
+VST3 plugins work the same way (ADR-014 amendment 2026-10-23), with one extra
+step: the compiler tells the host which aux ports an edge reads before building
+the nodes, and the plugin opens only those output buses.
 
 Edges are only added during graph compilation on the command thread. The audio
 thread never modifies the graph topology.

@@ -134,6 +134,15 @@ The scheduler relies on this to safely share buffer references without aliasing.
 For unknown plugin IDs, `build_node` logs a warning and returns a
 `PassThroughDevice` (silence pass-through) so compilation always succeeds.
 
+### 5b. Demanded plugin outputs (ADR-014 VST3 multi-out)
+
+Before the nodes are built, `demanded_plugin_outputs` collects, for each plugin
+placement (effect or instrument, `plugin_instance_keys`), the output ports ≥ 1
+that an edge of the graph reads — after cycles were cut in `from_project` — and
+`PluginHost::set_demanded_outputs` hands them to the instances. A VST3 plugin
+opens only those buses (`vst3_ensure_active`); CLAP ignores them. Placements read
+by no edge are left out, which closes the aux buses they had open.
+
 ### 6. Node Preparation
 
 ```rust
@@ -154,6 +163,7 @@ only multi-out plugin wrappers exceed their static count), and cuts to `None`
 any input connection whose `src_port` does not exist on its source step, so an
 edge to a missing plugin output reads silence rather than the scheduler's
 clamp onto output 0. Runs before latency compensation and level assignment.
+VST3 plugins report one port per declared output bus (`Vst3OutputBuses`).
 
 ---
 

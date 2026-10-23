@@ -270,7 +270,8 @@ the real-FFI tests `vst3_instrument_plays_a_note` and
   audio input gets `setBusArrangements` without an input and no input bus; one with
   an event input bus gets it activated. An ordinary effect keeps its sequence.
   One stereo output only: extra output buses are not passed (ADR-014 multi-out
-  stays CLAP only).
+  stays CLAP only). _Since 2026-10-23, extra output buses are passed once a track
+  reads them (ADR-014 amendment 2026-10-23)._
 - **MIDI controllers.** VST3 has no raw MIDI: pitch bend, CC (0..127) and channel
   aftertouch reach the plugin as parameter changes through the controller's
   `IMidiMapping` (`vst3/midi_mapping.rs`). The table is read in `prepare` under the
@@ -290,7 +291,7 @@ the real-FFI tests `vst3_instrument_plays_a_note` and
   both share (`vst3/param_delivery.rs`).
 - **Not done.** Plugin latency is not read (`InstrumentDevice` has no latency hook,
   as for CLAP instruments); no `kNoteExpression*` events, no `IMidiLearn`; no
-  `outputEvents`; a single output bus (ADR-014).
+  `outputEvents`; a single output bus (ADR-014) _— multi-out since 2026-10-23_.
 - **C-2.** No VST3 plugin is in the render harness; internal and CLAP instruments
   are untouched and the golden hashes are unchanged. Known risk #2 above (third-party
   synths are not bit-deterministic) applies to VST3 too.
