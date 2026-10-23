@@ -99,6 +99,11 @@ Le plugin n'était jamais informé de l'échelle de l'écran (`gui.set_scale` / 
 
 **Correctif appliqué** : `PlugFrame` alloué par éditeur (`make_plug_frame()`), `set_frame` appelé avant `attached()`. `frame_resize_view` route vers `resize_to_client(container_hwnd, ...)` via `AtomicPtr<c_void>` câblé après `CreateWindowExW`. `set_frame(null)` dans le cleanup avant `removed()`.
 
+**Complément 2026-10-23** : le code appelait en réalité `removed()` _avant_ `set_frame(null)`, et
+`resizeView` ne prévenait jamais la vue. Corrigé : `onSize` après un `resizeView` accepté (avec `getSize`
+avant/après, vue vérifiée, réentrance limitée à 3 niveaux) et vrai ordre `setFrame(null)` → `removed()`.
+Voir `plugin-wrapper-system.md` (« Editor Windows — VST3 resize »).
+
 ### V4 — Modèle « single-component » exclusif ✅ Corrigé (2026-06-04)
 
 Plugins dual-component (Steinberg pro, NI, **TDR Nova**) rejetés à l'ouverture de

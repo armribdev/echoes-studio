@@ -1281,6 +1281,40 @@ in the plugin's _own_ redraw during the drag is the plugin's rendering, not
 the host. Such plugins may report `can_resize = false`, so the host does not
 call `set_size` after `request_resize` (the CLAP spec makes it optional).
 
+## Editor Windows — VST3 resize (Windows, 2026-10-23)
+
+`IPlugFrame::resizeView` (`frame_resize_view` in `plugin_system/gui.rs`) follows
+`iplugview.h` and the SDK's `editorhost.cpp`, in the same call stack:
+
+1. a `view` other than the frame's own, or a null pointer → `kInvalidArgument`;
+   no window, or the nesting limit reached → `kResultFalse`;
+2. `getSize` already equals the request → `kResultTrue`, nothing else;
+3. the window follows (`resize_to_client`), then `getSize` again: a view that
+   still reports another size gets `onSize(request)`;
+4. `kResultTrue`.
+
+A view keeps its old size until `onSize` (the header says so), which is why the
+host must call it: without it a plugin that resizes its platform window only on
+`onSize` stays at the old size inside the new window. A plugin may call
+`resizeView` again from `onSize`; the nesting is limited to `MAX_RESIZE_DEPTH`
+(3) rounds, the next request gets `kResultFalse`. If `getSize` fails after the
+window resize, `onSize` is still sent (the SDK host answers `kInternalError`
+instead; refusing would break a plugin that works).
+
+Closing detaches the frame first: `setFrame(null)`, then `removed()`, then
+`release` (SDK order; it was the reverse before 2026-10-23).
+
+**Not done on purpose:** `canResize` / `checkSizeConstraint` only serve a user
+dragging the host window's edge, and these windows are borderless (`WS_POPUP`),
+so the user cannot; a plugin may call `resizeView` whatever `canResize` says.
+Dragging would need a new visible element (frame, handle), which is a UI
+decision. Measured 2026-10-23 (`vst3_real_editor_view_reports_its_size_rules`):
+TDR Nova `canResize = kResultFalse`, 830×598; Surge XT `kResultTrue`, 1141×711,
+with a fixed aspect ratio in `checkSizeConstraint`. Both change the rectangle
+while answering `kResultTrue`. VST3 is not sandboxable, so the bridge editor is
+unaffected. Tests: `gui.rs` (`plug_frame_tests`, `vst3_resize_tests`) with the
+view of `vst3/fake_plugin.rs` (`FakeView`).
+
 ---
 
 ## Latency Handling
