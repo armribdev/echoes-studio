@@ -35,7 +35,7 @@
 
 #![cfg(windows)]
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::ffi::{c_char, c_void};
 use std::ptr::null_mut;
@@ -787,7 +787,13 @@ use crate::plugin_formats::vst3::host_context::{static_add_ref, static_release, 
 struct PlugFrame {
     vtbl: *const IPlugFrameVtbl,
     container_hwnd: AtomicPtr<c_void>,
+    view: *mut IPlugView,
+    /// `onSize` calls in progress: a plugin may call `resizeView` from `onSize`.
+    resize_depth: Cell<u8>,
 }
+
+/// Nested `onSize` → `resizeView` → `onSize` rounds accepted before a request is refused.
+const MAX_RESIZE_DEPTH: u8 = 3;
 
 unsafe extern "C" fn frame_qi(
     this: *mut FUnknown,
@@ -805,23 +811,47 @@ unsafe extern "C" fn frame_qi(
     K_NO_INTERFACE
 }
 
+/// `IPlugFrame::resizeView`: resizes the window, then tells the view with `onSize`
+/// in the same call stack, as `iplugview.h` requires.
 unsafe extern "C" fn frame_resize_view(
     this: *mut FUnknown,
-    _view: *mut IPlugView,
+    view: *mut IPlugView,
     rect: *mut ViewRect,
 ) -> TResult {
     if this.is_null() || rect.is_null() {
         return K_INVALID_ARGUMENT;
     }
-    let frame = this as *const PlugFrame;
-    let hwnd = (*frame).container_hwnd.load(Ordering::Acquire);
-    if hwnd.is_null() {
+    let frame = &*(this as *const PlugFrame);
+    if view.is_null() || view != frame.view {
+        return K_INVALID_ARGUMENT;
+    }
+    let hwnd = frame.container_hwnd.load(Ordering::Acquire);
+    let depth = frame.resize_depth.get();
+    if hwnd.is_null() || depth >= MAX_RESIZE_DEPTH {
         return K_RESULT_FALSE;
     }
-    let r = &*rect;
-    let cw = (r.right - r.left).max(1);
-    let ch = (r.bottom - r.top).max(1);
-    resize_to_client(hwnd, cw, ch);
+
+    let mut requested = *rect;
+    let vtbl = &*(*view).vtbl;
+    let mut reported = requested;
+    if (vtbl.get_size)(view, &mut reported) == K_RESULT_OK && reported == requested {
+        return K_RESULT_OK;
+    }
+
+    resize_to_client(
+        hwnd,
+        (requested.right - requested.left).max(1),
+        (requested.bottom - requested.top).max(1),
+    );
+
+    // A view that already follows the new size on its own needs no `onSize`.
+    let mut after = requested;
+    let follows = (vtbl.get_size)(view, &mut after) == K_RESULT_OK && after == requested;
+    if !follows {
+        frame.resize_depth.set(depth + 1);
+        let _ = (vtbl.on_size)(view, &mut requested);
+        frame.resize_depth.set(depth);
+    }
     K_RESULT_OK
 }
 
@@ -832,10 +862,12 @@ static PLUG_FRAME_VTBL: IPlugFrameVtbl = IPlugFrameVtbl {
     resize_view: frame_resize_view,
 };
 
-fn make_plug_frame() -> Box<PlugFrame> {
+fn make_plug_frame(view: *mut IPlugView) -> Box<PlugFrame> {
     Box::new(PlugFrame {
         vtbl: &PLUG_FRAME_VTBL,
         container_hwnd: AtomicPtr::new(null_mut()),
+        view,
+        resize_depth: Cell::new(0),
     })
 }
 
@@ -903,7 +935,7 @@ pub unsafe fn open_vst3_editor(
         return Err("VST3 GUI: plugin view does not support HWND".into());
     }
 
-    let plug_frame = make_plug_frame(); // before attached(); owned by cleanup
+    let plug_frame = make_plug_frame(view); // before attached(); owned by cleanup
     let plug_frame_ptr = &*plug_frame as *const PlugFrame;
     let frame_funknown = plug_frame_ptr as *mut FUnknown;
     let _ = ((*(*view).vtbl).set_frame)(view, frame_funknown);
@@ -930,9 +962,9 @@ pub unsafe fn open_vst3_editor(
         let _instance = instance_owned; // keep plugin alive through teardown
         let _running = _instance.mark(PluginThread::Ui);
         unsafe {
-            ((*(*view).vtbl).removed)(view);
-            // Drop our frame ref before releasing ctrl — set_frame(null).
+            // Frame first, as the SDK host does: a plugin must not ask for a size while detaching.
             let _ = ((*(*view).vtbl).set_frame)(view, null_mut());
+            ((*(*view).vtbl).removed)(view);
             ((*(*view).vtbl).release)(view as *mut _);
         }
         drop(mirror_watch);
@@ -1181,7 +1213,7 @@ mod plug_frame_tests {
 
     #[test]
     fn the_frame_answers_the_sdk_codes() {
-        let frame = make_plug_frame();
+        let frame = make_plug_frame(null_mut());
         let this = &*frame as *const PlugFrame as *mut FUnknown;
         let table = unsafe { &*frame.vtbl };
         let mut found: *mut c_void = null_mut();
@@ -1206,7 +1238,8 @@ mod plug_frame_tests {
 
     #[test]
     fn a_resize_without_a_window_or_a_size_is_refused_with_the_right_code() {
-        let frame = make_plug_frame();
+        let view = 0x10 as *mut IPlugView;
+        let frame = make_plug_frame(view);
         let this = &*frame as *const PlugFrame as *mut FUnknown;
         let table = unsafe { &*frame.vtbl };
         let mut rect = ViewRect {
@@ -1218,11 +1251,16 @@ mod plug_frame_tests {
 
         unsafe {
             assert_eq!(
-                (table.resize_view)(this, null_mut(), null_mut()),
+                (table.resize_view)(this, view, null_mut()),
                 K_INVALID_ARGUMENT
             );
             assert_eq!(
                 (table.resize_view)(this, null_mut(), &mut rect),
+                K_INVALID_ARGUMENT,
+                "not the view of this frame"
+            );
+            assert_eq!(
+                (table.resize_view)(this, view, &mut rect),
                 K_RESULT_FALSE,
                 "no window is attached to this frame"
             );

@@ -933,6 +933,7 @@ pub fn string128_to_string(text: &[u16]) -> String {
 
 /// Plugin-preferred view rectangle (in screen pixels).
 #[repr(C)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub struct ViewRect {
     pub left: i32,
     pub top: i32,
