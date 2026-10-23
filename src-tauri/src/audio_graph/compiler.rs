@@ -1343,4 +1343,89 @@ mod tests {
             "output 1 of a single-output node reads silence"
         );
     }
+
+    struct Latent(u32);
+
+    impl AudioNode for Latent {
+        fn num_input_ports(&self) -> usize {
+            0
+        }
+        fn num_output_ports(&self) -> usize {
+            1
+        }
+        fn prepare(&mut self, _ctx: PrepareContext) {}
+        fn reset(&mut self) {}
+        fn process(
+            &mut self,
+            _inputs: &[&AudioBuffer],
+            _outputs: &mut [AudioBuffer],
+            _t: &TransportInfo,
+        ) {
+        }
+        fn latency_samples(&self) -> u32 {
+            self.0
+        }
+    }
+
+    /// Steps `main source → [main latency] → plugin(port 0)` and
+    /// `sidechain source → [sidechain latency] → plugin(port 1)`; the plugin's own
+    /// latency is 64.
+    fn sidechain_plan(main_latency: u32, sidechain_latency: u32) -> ExecutionPlan {
+        let mut plan = ExecutionPlan::empty(48_000.0);
+        let step = |node, input_connections| ExecutionStep {
+            node_id: NodeId(node),
+            input_connections,
+            num_outputs: 1,
+        };
+        plan.steps = vec![
+            step(1, vec![]),
+            step(2, vec![reading(0, 0)]),
+            step(3, vec![]),
+            step(4, vec![reading(2, 0)]),
+            step(5, vec![reading(1, 0), reading(3, 0)]),
+        ];
+        let processors: Vec<Box<dyn AudioNode>> = vec![
+            Box::new(Latent(0)),
+            Box::new(Latent(main_latency)),
+            Box::new(Latent(0)),
+            Box::new(Latent(sidechain_latency)),
+            Box::new(Latent(64)),
+        ];
+        GraphCompiler::compute_latency_compensation(&mut plan, &processors);
+        plan
+    }
+
+    fn delays(plan: &ExecutionPlan, step: usize) -> Vec<u32> {
+        plan.steps[step]
+            .input_connections
+            .iter()
+            .flatten()
+            .map(|connection| connection.delay_samples)
+            .collect()
+    }
+
+    /// ADR-006 / ADR-014: the sidechain port is aligned like any other input, so a
+    /// plugin sees the key signal at the same time as the track it acts on.
+    #[test]
+    fn a_sidechain_arriving_early_is_delayed_to_the_main_input() {
+        let plan = sidechain_plan(128, 0);
+
+        assert_eq!(delays(&plan, 4), vec![0, 128]);
+        assert_eq!(plan.step_cumulative_latency[4], 128 + 64);
+    }
+
+    #[test]
+    fn a_main_input_arriving_early_is_delayed_to_the_sidechain() {
+        let plan = sidechain_plan(0, 96);
+
+        assert_eq!(delays(&plan, 4), vec![96, 0]);
+        assert_eq!(plan.step_cumulative_latency[4], 96 + 64);
+    }
+
+    #[test]
+    fn a_sidechain_with_no_latency_anywhere_adds_no_delay() {
+        let plan = sidechain_plan(0, 0);
+
+        assert_eq!(delays(&plan, 4), vec![0, 0]);
+    }
 }
