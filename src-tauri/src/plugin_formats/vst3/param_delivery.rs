@@ -13,6 +13,7 @@ use crate::plugin_system::instance::PluginInstance;
 use crate::plugin_system::lifecycle::LifecycleState;
 use crate::plugin_system::param_queue::ParamChange;
 
+use super::component_handler::EditState;
 use super::ffi::{HostParameterChanges, ProcessData};
 use super::wrapper::{vst3_process_trampoline, Vst3ProcessCtx};
 
@@ -30,6 +31,7 @@ pub fn fill_param_changes(
 ) {
     changes.reset();
     let edit_state = instance.vst3_edit_state();
+    let mirror = edit_state.map(EditState::mirror);
     let mut push_change = |change: ParamChange| {
         changes.push(
             change.native_id,
@@ -37,11 +39,18 @@ pub fn fill_param_changes(
             change.normalised as f64,
         );
     };
-    instance.drain_params(&mut push_change);
+    instance.drain_params(|change| {
+        if let Some(mirror) = mirror {
+            mirror.record(change.native_id, f64::from(change.normalised));
+        }
+        push_change(change);
+    });
     if let Some(edit_state) = edit_state {
+        // The window's own edits are not mirrored back: its controller has them.
         edit_state.drain_edits(&mut push_change);
     }
     for control in controls.iter() {
+        let mut latest = None;
         if control.automation.is_empty() {
             // A drag in the plugin window pauses the modulation.
             if edit_state.is_some_and(|state| state.is_editing(control.native_id)) {
@@ -50,15 +59,17 @@ pub fn fill_param_changes(
             for (offset, value) in control.modulation.iter() {
                 let effective = (control.base_value() + value).clamp(0.0, 1.0);
                 changes.push(control.native_id, offset as i32, effective as f64);
+                latest = Some(effective);
             }
         } else {
             for (offset, value) in control.automation.iter() {
-                changes.push(
-                    control.native_id,
-                    offset as i32,
-                    value.clamp(0.0, 1.0) as f64,
-                );
+                let value = value.clamp(0.0, 1.0);
+                changes.push(control.native_id, offset as i32, value as f64);
+                latest = Some(value);
             }
+        }
+        if let (Some(mirror), Some(latest)) = (mirror, latest) {
+            mirror.record(control.native_id, f64::from(latest));
         }
     }
 }

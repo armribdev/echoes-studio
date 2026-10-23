@@ -49,6 +49,15 @@ pub unsafe fn read_vst3_param_value(controller: *mut IEditController, native_id:
     ((*(*controller).vtbl).get_param_normalized)(controller, native_id)
 }
 
+/// Moves the controller (and its views) to a value that comes from the host.
+///
+/// # Safety
+/// `controller` must be a live, initialised `IEditController`, called on the
+/// thread of its editor window.
+pub unsafe fn write_vst3_param_value(controller: *mut IEditController, native_id: u32, value: f64) {
+    ((*(*controller).vtbl).set_param_normalized)(controller, native_id, value);
+}
+
 /// The plugin's text for a normalised value (`-6.0 dB`).
 ///
 /// # Safety

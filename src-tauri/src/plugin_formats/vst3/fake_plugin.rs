@@ -16,10 +16,10 @@ use super::channel_context::{CHANNEL_COLOR_KEY, CHANNEL_NAME_KEY, CHANNEL_NAME_L
 use super::component_handler::ComponentHandler;
 use super::ffi::{
     FUnknown, HostParameterChanges, IAttributeListVtbl, IAudioProcessor, IAudioProcessorVtbl,
-    IBStreamVtbl, IComponent, IComponentVtbl, IEditController, IEditControllerVtbl,
-    IInfoListenerVtbl, ParameterInfo, ProcessData, ProcessSetup, TResult, Tuid, Vst3Controller,
-    Vst3Library, IID_FUNKNOWN, IID_IINFO_LISTENER, IID_IUNIT_INFO, K_AUDIO, K_INVALID_ARGUMENT,
-    K_NO_INTERFACE, K_RESULT_FALSE, K_RESULT_OK, PARAM_IS_PROGRAM_CHANGE,
+    IBStreamVtbl, IComponent, IComponentHandlerVtbl, IComponentVtbl, IEditController,
+    IEditControllerVtbl, IInfoListenerVtbl, ParameterInfo, ProcessData, ProcessSetup, TResult,
+    Tuid, Vst3Controller, Vst3Library, IID_FUNKNOWN, IID_IINFO_LISTENER, IID_IUNIT_INFO, K_AUDIO,
+    K_INVALID_ARGUMENT, K_NO_INTERFACE, K_RESULT_FALSE, K_RESULT_OK, PARAM_IS_PROGRAM_CHANGE,
 };
 use super::units::{IUnitInfoVtbl, ProgramListInfo, UnitInfo};
 use crate::plugin_system::instance::PluginInstance;
@@ -189,6 +189,10 @@ pub(crate) struct FakeUnits {
     pub process_calls: RefCell<Vec<ProcessCall>>,
     /// How many times the processor's `getState` was called.
     pub state_reads: Cell<usize>,
+    /// The host's `IComponentHandler`, as `setComponentHandler` would have given it.
+    handler: Cell<*mut FUnknown>,
+    /// A faulty controller: it reports to the host the value it is just given.
+    pub echoes_values: bool,
 }
 
 impl FakeUnits {
@@ -248,6 +252,8 @@ impl FakeUnits {
             refuses_controller_state: false,
             process_calls: RefCell::new(Vec::new()),
             state_reads: Cell::new(0),
+            handler: Cell::new(null_mut()),
+            echoes_values: false,
         })
     }
 
@@ -452,6 +458,14 @@ unsafe extern "C" fn controller_set_param_normalized(
     let mut values = units.values.borrow_mut();
     values.insert(id, value);
     values.extend(units.selection_side_effects.iter().copied());
+    drop(values);
+    let handler = units.handler.get();
+    if units.echoes_values && !handler.is_null() {
+        let table = &**(handler as *const *const IComponentHandlerVtbl);
+        (table.begin_edit)(handler, id);
+        (table.perform_edit)(handler, id, value);
+        (table.end_edit)(handler, id);
+    }
     K_RESULT_OK
 }
 
@@ -847,12 +861,16 @@ fn build_instance(listener: *mut FakeListener, units: *mut FakeUnits) -> Arc<Plu
         units,
     }));
     let controller = NonNull::from(controller);
+    let handler = ComponentHandler::boxed();
+    if let Some(units) = unsafe { units.as_ref() } {
+        units.handler.set(handler.as_funknown());
+    }
     PluginInstance::new_vst3(
         FAKE_PLUGIN_ID,
         NonNull::from(component).cast(),
         NonNull::from(processor).cast(),
         Some(Vst3Controller::Shared(controller.cast())),
-        ComponentHandler::boxed(),
+        handler,
         Vst3Library::placeholder(),
     )
 }

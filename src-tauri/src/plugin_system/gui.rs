@@ -890,6 +890,8 @@ pub unsafe fn open_vst3_editor(
         .vst3_controller()
         .ok_or_else(|| "VST3 GUI: the plugin has no edit controller".to_string())?
         .as_ptr();
+    // Before the view exists, so it opens on current values; dropped with the window.
+    let mirror_watch = instance.watch_vst3_params();
 
     let view = ((*(*ctrl).vtbl).create_view)(ctrl, c"editor".as_ptr().cast());
     if view.is_null() {
@@ -933,12 +935,14 @@ pub unsafe fn open_vst3_editor(
             let _ = ((*(*view).vtbl).set_frame)(view, null_mut());
             ((*(*view).vtbl).release)(view as *mut _);
         }
+        drop(mirror_watch);
         // _instance Arc drops last — if this was the last clone, the host
         // already released its own clone earlier, and PluginInstance::Drop
         // now runs terminate + release on the IComponent.
     });
     let tick: Box<dyn Fn()> = Box::new(|| {});
-    let on_timer: Box<dyn Fn()> = Box::new(|| {});
+    let instance_for_timer = Arc::clone(&instance);
+    let on_timer: Box<dyn Fn()> = Box::new(move || instance_for_timer.mirror_to_controller());
     let instance_for_dpi = Arc::clone(&instance);
     let on_dpi_changed: Box<dyn Fn(*mut c_void, u32)> = Box::new(move |hwnd, dpi| {
         let _running = instance_for_dpi.mark(PluginThread::Ui);

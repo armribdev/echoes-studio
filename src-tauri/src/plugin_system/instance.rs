@@ -66,7 +66,9 @@ use crate::plugin_formats::vst3::ffi::{
 };
 use crate::plugin_formats::vst3::host::decode_plugin_id;
 use crate::plugin_formats::vst3::param_delivery::flush_param_bases;
-use crate::plugin_formats::vst3::params::{read_vst3_param_text, read_vst3_param_value};
+use crate::plugin_formats::vst3::params::{
+    read_vst3_param_text, read_vst3_param_value, write_vst3_param_value,
+};
 use crate::plugin_formats::vst3::preset_file::{class_id_text, read_preset_chunks};
 use crate::plugin_formats::vst3::units::{read_program_lists, select_program};
 use crate::plugin_system::bridge::BridgedPlugin;
@@ -318,6 +320,17 @@ pub struct PluginInstance {
     /// flag is shared by every test, so tests look at this one instead.
     #[cfg(test)]
     state_edits: AtomicU32,
+}
+
+/// Keeps the processor's values for the controller of an open VST3 editor.
+pub struct ParamMirrorWatch(Arc<PluginInstance>);
+
+impl Drop for ParamMirrorWatch {
+    fn drop(&mut self) {
+        if let Some(edit_state) = self.0.vst3_edit_state() {
+            edit_state.mirror().unwatch();
+        }
+    }
 }
 
 /// Some in-process plugin still owes a `clap.track-info.changed`; the app polls
@@ -724,6 +737,41 @@ impl PluginInstance {
                 Some(unsafe { read_vst3_param_value(controller.as_ptr(), id) })
             });
         }
+    }
+
+    /// Window thread: hands the controller the values the host and the plugin gave
+    /// the processor since the last call, so the knobs of the open editor follow.
+    /// No FFI gate: a controller is called from its UI thread while the processor
+    /// runs, as its own window does.
+    pub fn mirror_to_controller(&self) {
+        let (Some(controller), Some(edit_state)) = (self.vst3_controller(), self.vst3_edit_state())
+        else {
+            return;
+        };
+        if self.has_crashed() {
+            return;
+        }
+        let _running = self.mark(PluginThread::Ui);
+        edit_state.drain_mirrored(|native_id, value| {
+            // SAFETY: live VST3 controller owned by this instance, on its window thread.
+            unsafe { write_vst3_param_value(controller.as_ptr(), native_id, value) }
+        });
+    }
+
+    /// An editor window opens on this plugin: the processor's values are kept for
+    /// its controller (see [`mirror_to_controller`](Self::mirror_to_controller))
+    /// until the guard drops.  The controller first takes the processor's state, so
+    /// the window opens on current values.
+    pub fn watch_vst3_params(self: &Arc<Self>) -> ParamMirrorWatch {
+        if let Some(edit_state) = self.vst3_edit_state() {
+            edit_state.mirror().watch();
+            if let Some(controller) = self.vst3_controller() {
+                if self.vst3_activation.active.load(Ordering::Acquire) {
+                    self.sync_vst3_controller_with_processor(controller);
+                }
+            }
+        }
+        ParamMirrorWatch(Arc::clone(self))
     }
 
     /// Tells the app the plugin's state changed, so the project reads as unsaved.

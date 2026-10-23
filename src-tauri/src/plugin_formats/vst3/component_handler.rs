@@ -12,6 +12,7 @@
 //! editor) and are lock-free, so a plugin that calls them from elsewhere cannot
 //! block the audio thread.
 
+use std::cell::Cell;
 use std::ffi::{c_char, c_void};
 use std::mem::offset_of;
 use std::ptr::{addr_of_mut, null_mut};
@@ -26,6 +27,7 @@ use super::ffi::{
     K_RESULT_FALSE, K_RESULT_OK,
 };
 use super::host_context::{static_add_ref, static_release, tuid_eq};
+use super::param_mirror::ParamMirror;
 use crate::audio_graph::plugin_params::ValueModulatedParam;
 use crate::plugin_formats::clap::ffi::{
     mark_plugin_params_rescan, mark_plugin_restart_requested, mark_plugin_state_edited,
@@ -58,8 +60,36 @@ pub struct EditState {
     /// Parameters the host moves by value around a base that follows the user.
     followed: Mutex<Vec<ValueModulatedParam>>,
     reactivation_requested: AtomicBool,
+    /// What the processor got from the host, for the controller to follow.
+    mirror: ParamMirror,
     #[cfg(test)]
     dirty_requests: AtomicU32,
+}
+
+thread_local! {
+    /// This thread is handing the controller a value of the host (`drain_mirrored`).
+    static APPLYING_MIRROR: Cell<bool> = const { Cell::new(false) };
+}
+
+fn applying_mirror() -> bool {
+    APPLYING_MIRROR.with(Cell::get)
+}
+
+/// A controller must not report the value it is given back to the host; one that
+/// does is ignored while the value is being set.
+struct MirrorApplication;
+
+impl MirrorApplication {
+    fn begin() -> Self {
+        APPLYING_MIRROR.with(|applying| applying.set(true));
+        Self
+    }
+}
+
+impl Drop for MirrorApplication {
+    fn drop(&mut self) {
+        APPLYING_MIRROR.with(|applying| applying.set(false));
+    }
 }
 
 impl EditState {
@@ -69,9 +99,26 @@ impl EditState {
             gestures: std::array::from_fn(|_| AtomicU64::new(0)),
             followed: Mutex::new(Vec::new()),
             reactivation_requested: AtomicBool::new(false),
+            mirror: ParamMirror::new(),
             #[cfg(test)]
             dirty_requests: AtomicU32::new(0),
         }
+    }
+
+    pub fn mirror(&self) -> &ParamMirror {
+        &self.mirror
+    }
+
+    /// Window thread: calls `apply` with the latest value the host or the processor
+    /// gave each parameter since the last call, except one being dragged.  A report
+    /// the controller makes meanwhile is ignored.
+    pub fn drain_mirrored(&self, mut apply: impl FnMut(u32, f64)) {
+        let _application = MirrorApplication::begin();
+        self.mirror.take_changes(|native_id, value| {
+            if !self.is_editing(native_id) {
+                apply(native_id, value);
+            }
+        });
     }
 
     /// The unsaved flag belongs to the project, so a plugin can only raise it.
@@ -88,7 +135,7 @@ impl EditState {
         self.dirty_requests.load(Ordering::Relaxed)
     }
 
-    fn begin(&self, native_id: u32) {
+    pub(crate) fn begin(&self, native_id: u32) {
         let tag = GESTURE_OCCUPIED | u64::from(native_id);
         if self
             .gestures
@@ -114,7 +161,7 @@ impl EditState {
         }
     }
 
-    fn perform(&self, native_id: u32, normalised: f64) {
+    pub(crate) fn perform(&self, native_id: u32, normalised: f64) {
         self.edits.push(ParamChange {
             native_id,
             normalised: normalised as f32,
@@ -282,19 +329,25 @@ unsafe extern "C" fn handler2_qi(
 }
 
 unsafe extern "C" fn handler_begin_edit(this: *mut FUnknown, id: u32) -> TResult {
-    state(this).begin(id);
+    if !applying_mirror() {
+        state(this).begin(id);
+    }
     K_RESULT_OK
 }
 
 unsafe extern "C" fn handler_perform_edit(this: *mut FUnknown, id: u32, value: f64) -> TResult {
-    state(this).perform(id, value);
-    mark_plugin_state_edited();
+    if !applying_mirror() {
+        state(this).perform(id, value);
+        mark_plugin_state_edited();
+    }
     K_RESULT_OK
 }
 
 unsafe extern "C" fn handler_end_edit(this: *mut FUnknown, id: u32) -> TResult {
-    state(this).end(id);
-    mark_plugin_state_edited();
+    if !applying_mirror() {
+        state(this).end(id);
+        mark_plugin_state_edited();
+    }
     K_RESULT_OK
 }
 

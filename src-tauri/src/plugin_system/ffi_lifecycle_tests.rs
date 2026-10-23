@@ -1199,6 +1199,96 @@ fn vst3_real_state_save_puts_a_modulated_parameter_back_on_its_base() {
     eprintln!("{LOG} SKIP vst3_real_state_save_puts_a_modulated_parameter_back_on_its_base — no usable VST3");
 }
 
+/// Step S3 — what the host sends the processor reaches the controller while an
+/// editor is open: before the tick the controller still holds the old value.
+#[test]
+fn vst3_real_controller_follows_the_values_the_host_sends() {
+    use crate::audio_graph::plugin_params::PluginParamControl;
+    use std::sync::atomic::AtomicU32;
+
+    const TOLERANCE: f64 = 0.01;
+
+    let candidates = discover_all("ECHOES_TEST_VST3", "vst3");
+    if candidates.is_empty() {
+        eprintln!(
+            "{LOG} SKIP vst3_real_controller_follows_the_values_the_host_sends — no .vst3 found"
+        );
+        return;
+    }
+
+    let key = "harness:vst3:mirror";
+    for path in &candidates {
+        let Some(device_id) = first_vst3_id(path) else {
+            continue;
+        };
+        let mut host = PluginHost::new();
+        host.registry_mut().add(vst3_manifest(&device_id, path));
+        let Ok(mut node) = host.instantiate(key, &device_id, false) else {
+            continue;
+        };
+        let instance = host.instance_by_key(key).expect("instance registered");
+        assert!(instance.vst3_ensure_active(48_000.0, 512));
+        node.prepare(PrepareContext {
+            sample_rate: 48_000.0,
+            max_block_size: 512,
+            num_channels: 2,
+            live: true,
+        });
+        let params = host.plugin_params(key).expect("parameters are readable");
+        let _watch = instance.watch_vst3_params();
+
+        for param in params.iter().filter(|p| p.automatable && !p.hidden).take(8) {
+            let id = param.native_id;
+            let target = if param.default < 0.5 { 0.8 } else { 0.2 };
+            let value_of = || instance.param_value(id).expect("the value is readable");
+            let before = value_of();
+            if (before - target).abs() < 0.05 {
+                continue;
+            }
+
+            instance.push_param(id, target as f32);
+            run_blocks(&mut *node, 3, None);
+            let untouched = value_of();
+            instance.mirror_to_controller();
+            let followed = value_of();
+            eprintln!(
+                "{LOG} S3 '{}': {before:.3} → host sends {target} → controller {untouched:.3} before the tick, {followed:.3} after",
+                param.name
+            );
+            if (followed - target).abs() > TOLERANCE {
+                continue;
+            }
+            assert!(
+                (untouched - target).abs() > TOLERANCE,
+                "S3: the controller must not know the value before the tick"
+            );
+
+            let base = Arc::new(AtomicU32::new((target as f32).to_bits()));
+            let mut control = PluginParamControl::new(id, base);
+            control.modulated = true;
+            node.inject_plugin_param_controls(vec![control]);
+            run_blocks(&mut *node, 3, Some((id, 0.1)));
+            instance.mirror_to_controller();
+            let modulated = value_of();
+            eprintln!(
+                "{LOG} S3 '{}': modulated by 0.1 → controller {modulated:.3}",
+                param.name
+            );
+            assert!(
+                (modulated - (target + 0.1)).abs() <= TOLERANCE,
+                "S3: the controller follows the modulation ({modulated})"
+            );
+            assert!(
+                !instance.has_crashed(),
+                "S3: mirroring must not crash the plugin"
+            );
+            return;
+        }
+        eprintln!("{LOG} S3 {device_id}: no parameter followed, nothing to check");
+    }
+    eprintln!("{LOG} SKIP vst3_real_controller_follows_the_values_the_host_sends — no usable VST3");
+}
+
 /// Logs the units of a controller and every parameter flagged `kIsProgramChange`,
 /// to see why a program list has no selector.
 unsafe fn log_units_and_program_change_params(
