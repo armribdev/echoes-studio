@@ -1269,6 +1269,119 @@ mod plug_frame_tests {
 }
 
 #[cfg(test)]
+mod vst3_resize_tests {
+    use super::test_support::pump_thread_messages;
+    use super::*;
+    use crate::plugin_formats::vst3::fake_plugin::{
+        fake_vst3_instance_with_view, FakeListener, FakeView, ViewCall,
+    };
+    use std::time::Duration;
+
+    /// Opens the editor of a fake plugin whose view is `view`, runs `while_open` on
+    /// the window, then closes it and lets the window procedure tear it down.
+    fn open_and_close(view: &mut FakeView, while_open: impl FnOnce(*mut c_void)) {
+        let mut listener = FakeListener::new(false);
+        let instance = fake_vst3_instance_with_view(&mut listener, view);
+        let hwnd = unsafe {
+            open_vst3_editor(
+                instance,
+                "Fake",
+                "fake",
+                Arc::new(Mutex::new(HashMap::new())),
+            )
+        }
+        .expect("the editor opens");
+        while_open(hwnd as *mut c_void);
+        post_close(hwnd);
+        pump_thread_messages(Duration::from_millis(100));
+    }
+
+    fn plugin_area_size(hwnd: *mut c_void) -> (i32, i32) {
+        let mut rect = user32::RECT {
+            left: 0,
+            top: 0,
+            right: 0,
+            bottom: 0,
+        };
+        unsafe { user32::GetClientRect(plugin_area(hwnd), &mut rect) };
+        (rect.right - rect.left, rect.bottom - rect.top)
+    }
+
+    fn on_size(width: i32, height: i32) -> ViewCall {
+        ViewCall::OnSize { width, height }
+    }
+
+    #[test]
+    fn a_size_asked_while_attaching_resizes_the_window_and_reaches_on_size() {
+        let mut view = FakeView::new(400, 300).asking_when_attached(640, 480);
+
+        open_and_close(&mut view, |hwnd| {
+            assert_eq!(plugin_area_size(hwnd), (640, 480));
+        });
+
+        assert_eq!(
+            view.calls(),
+            [
+                ViewCall::SetFrame { given: true },
+                ViewCall::Attached,
+                on_size(640, 480),
+                ViewCall::ResizeAnswered(K_RESULT_OK),
+                ViewCall::SetFrame { given: false },
+                ViewCall::Removed,
+            ],
+            "onSize comes inside resizeView; the frame is dropped before removed()"
+        );
+        assert_eq!(view.size(), (640, 480));
+    }
+
+    #[test]
+    fn asking_for_the_size_it_already_has_does_not_reach_on_size() {
+        let mut view = FakeView::new(400, 300).asking_when_attached(400, 300);
+
+        open_and_close(&mut view, |hwnd| {
+            assert_eq!(plugin_area_size(hwnd), (400, 300));
+        });
+
+        assert!(!view
+            .calls()
+            .iter()
+            .any(|call| matches!(call, ViewCall::OnSize { .. })));
+        assert!(view
+            .calls()
+            .contains(&ViewCall::ResizeAnswered(K_RESULT_OK)));
+    }
+
+    #[test]
+    fn a_view_that_asks_again_from_on_size_is_stopped_after_a_few_rounds() {
+        let mut view = FakeView::new(400, 300)
+            .asking_when_attached(500, 400)
+            .asking_again_from_on_size();
+
+        open_and_close(&mut view, |hwnd| {
+            assert_eq!(
+                plugin_area_size(hwnd),
+                (520, 420),
+                "the 530 x 430 ask is refused"
+            );
+        });
+
+        let calls = view.calls();
+        let on_size_calls: Vec<_> = calls
+            .iter()
+            .filter(|call| matches!(call, ViewCall::OnSize { .. }))
+            .collect();
+        assert_eq!(on_size_calls.len(), usize::from(MAX_RESIZE_DEPTH));
+        assert_eq!(
+            calls
+                .iter()
+                .filter(|call| **call == ViewCall::ResizeAnswered(K_RESULT_FALSE))
+                .count(),
+            1
+        );
+    }
+}
+
+#[cfg(test)]
 pub(crate) mod test_support {
     use std::ffi::c_void;
     use std::time::{Duration, Instant};

@@ -18,10 +18,10 @@ use super::component_handler::ComponentHandler;
 use super::ffi::{
     FUnknown, HostParameterChanges, IAttributeListVtbl, IAudioProcessor, IAudioProcessorVtbl,
     IBStreamVtbl, IComponent, IComponentHandlerVtbl, IComponentVtbl, IEditController,
-    IEditControllerVtbl, IInfoListenerVtbl, ParameterInfo, ProcessData, ProcessSetup, TResult,
-    Tuid, Vst3Controller, Vst3Library, IID_FUNKNOWN, IID_IINFO_LISTENER, IID_IUNIT_INFO, K_AUDIO,
-    K_INVALID_ARGUMENT, K_NO_INTERFACE, K_OUTPUT, K_RESULT_FALSE, K_RESULT_OK,
-    PARAM_IS_PROGRAM_CHANGE,
+    IEditControllerVtbl, IInfoListenerVtbl, IPlugFrameVtbl, IPlugView, IPlugViewVtbl,
+    ParameterInfo, ProcessData, ProcessSetup, TResult, Tuid, ViewRect, Vst3Controller, Vst3Library,
+    IID_FUNKNOWN, IID_IINFO_LISTENER, IID_IUNIT_INFO, K_AUDIO, K_INVALID_ARGUMENT, K_NO_INTERFACE,
+    K_OUTPUT, K_RESULT_FALSE, K_RESULT_OK, PARAM_IS_PROGRAM_CHANGE,
 };
 use super::units::{IUnitInfoVtbl, ProgramListInfo, UnitInfo};
 use crate::plugin_system::instance::PluginInstance;
@@ -697,6 +697,7 @@ struct FakeController {
     vtbl: *const IEditControllerVtbl,
     listener: *mut FakeListener,
     units: *mut FakeUnits,
+    view: *mut FakeView,
 }
 
 unsafe extern "C" fn controller_query_interface(
@@ -1029,6 +1030,192 @@ unsafe extern "C" fn processor_process(
     K_RESULT_OK
 }
 
+/// What the host did to a [`FakeView`], or heard back from its own `resizeView`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ViewCall {
+    SetFrame { given: bool },
+    Attached,
+    Removed,
+    OnSize { width: i32, height: i32 },
+    ResizeAnswered(TResult),
+}
+
+/// The editor view of the fake plugin.  Like a real one it keeps its size until
+/// the host tells it `onSize`.
+#[repr(C)]
+pub(crate) struct FakeView {
+    vtbl: *const IPlugViewVtbl,
+    size: Cell<(i32, i32)>,
+    calls: RefCell<Vec<ViewCall>>,
+    frame: Cell<*mut FUnknown>,
+    asks_when_attached: Cell<Option<(i32, i32)>>,
+    asks_again_from_on_size: Cell<bool>,
+}
+
+impl FakeView {
+    pub fn new(width: i32, height: i32) -> Box<Self> {
+        Box::new(Self {
+            vtbl: vtbl_of(&[
+                (
+                    offset_of!(IPlugViewVtbl, query_interface),
+                    view_query_interface as *const (),
+                ),
+                (
+                    offset_of!(IPlugViewVtbl, add_ref),
+                    view_reference as *const (),
+                ),
+                (
+                    offset_of!(IPlugViewVtbl, release),
+                    view_reference as *const (),
+                ),
+                (
+                    offset_of!(IPlugViewVtbl, is_platform_type_supported),
+                    view_is_platform_type_supported as *const (),
+                ),
+                (
+                    offset_of!(IPlugViewVtbl, attached),
+                    view_attached as *const (),
+                ),
+                (
+                    offset_of!(IPlugViewVtbl, removed),
+                    view_removed as *const (),
+                ),
+                (
+                    offset_of!(IPlugViewVtbl, get_size),
+                    view_get_size as *const (),
+                ),
+                (
+                    offset_of!(IPlugViewVtbl, on_size),
+                    view_on_size as *const (),
+                ),
+                (
+                    offset_of!(IPlugViewVtbl, set_frame),
+                    view_set_frame as *const (),
+                ),
+            ]),
+            size: Cell::new((width, height)),
+            calls: RefCell::new(Vec::new()),
+            frame: Cell::new(null_mut()),
+            asks_when_attached: Cell::new(None),
+            asks_again_from_on_size: Cell::new(false),
+        })
+    }
+
+    /// The view calls `resizeView` with this size from inside `attached`.
+    pub fn asking_when_attached(self: Box<Self>, width: i32, height: i32) -> Box<Self> {
+        self.asks_when_attached.set(Some((width, height)));
+        self
+    }
+
+    /// Every `onSize` makes the view ask for a size 10 pixels larger each way.
+    pub fn asking_again_from_on_size(self: Box<Self>) -> Box<Self> {
+        self.asks_again_from_on_size.set(true);
+        self
+    }
+
+    pub fn calls(&self) -> Vec<ViewCall> {
+        self.calls.borrow().clone()
+    }
+
+    pub fn size(&self) -> (i32, i32) {
+        self.size.get()
+    }
+
+    fn record(&self, call: ViewCall) {
+        self.calls.borrow_mut().push(call);
+    }
+
+    unsafe fn ask_host_to_resize(&self, width: i32, height: i32) {
+        let frame = self.frame.get();
+        if frame.is_null() {
+            return;
+        }
+        let mut rect = ViewRect {
+            left: 0,
+            top: 0,
+            right: width,
+            bottom: height,
+        };
+        let table = &**(frame as *const *const IPlugFrameVtbl);
+        let answer = (table.resize_view)(frame, self as *const Self as *mut IPlugView, &mut rect);
+        self.record(ViewCall::ResizeAnswered(answer));
+    }
+}
+
+unsafe fn view<'a>(this: *mut IPlugView) -> &'a FakeView {
+    &*(this as *const FakeView)
+}
+
+unsafe extern "C" fn view_query_interface(
+    _: *mut IPlugView,
+    _: *const Tuid,
+    obj: *mut *mut c_void,
+) -> TResult {
+    *obj = null_mut();
+    K_NO_INTERFACE
+}
+
+unsafe extern "C" fn view_reference(_: *mut IPlugView) -> u32 {
+    1
+}
+
+unsafe extern "C" fn view_is_platform_type_supported(_: *mut IPlugView, _: *const u8) -> TResult {
+    K_RESULT_OK
+}
+
+unsafe extern "C" fn view_attached(this: *mut IPlugView, _: *mut c_void, _: *const u8) -> TResult {
+    let view = view(this);
+    view.record(ViewCall::Attached);
+    if let Some((width, height)) = view.asks_when_attached.get() {
+        view.ask_host_to_resize(width, height);
+    }
+    K_RESULT_OK
+}
+
+unsafe extern "C" fn view_removed(this: *mut IPlugView) -> TResult {
+    view(this).record(ViewCall::Removed);
+    K_RESULT_OK
+}
+
+unsafe extern "C" fn view_get_size(this: *mut IPlugView, rect: *mut ViewRect) -> TResult {
+    let (width, height) = view(this).size.get();
+    *rect = ViewRect {
+        left: 0,
+        top: 0,
+        right: width,
+        bottom: height,
+    };
+    K_RESULT_OK
+}
+
+unsafe extern "C" fn view_on_size(this: *mut IPlugView, rect: *mut ViewRect) -> TResult {
+    let view = view(this);
+    let (width, height) = ((*rect).right - (*rect).left, (*rect).bottom - (*rect).top);
+    view.record(ViewCall::OnSize { width, height });
+    view.size.set((width, height));
+    if view.asks_again_from_on_size.get() {
+        view.ask_host_to_resize(width + 10, height + 10);
+    }
+    K_RESULT_OK
+}
+
+unsafe extern "C" fn view_set_frame(this: *mut IPlugView, frame: *mut FUnknown) -> TResult {
+    let view = view(this);
+    view.record(ViewCall::SetFrame {
+        given: !frame.is_null(),
+    });
+    view.frame.set(frame);
+    K_RESULT_OK
+}
+
+unsafe extern "C" fn controller_create_view(
+    this: *mut IEditController,
+    _: *const u8,
+) -> *mut IPlugView {
+    let controller = &*(this as *const FakeController);
+    controller.view.cast()
+}
+
 unsafe extern "C" fn unexpected_call() {
     eprintln!("the fake VST3 plugin was called through a method it does not implement");
     std::process::abort();
@@ -1048,7 +1235,15 @@ fn vtbl_of<T>(methods: &[(usize, *const ())]) -> *const T {
 /// A single-controller VST3 instance whose controller answers `listener`.  Nothing
 /// is activated; dropping the instance tears the fakes down as for a real plugin.
 pub(crate) fn fake_vst3_instance(listener: &mut FakeListener) -> Arc<PluginInstance> {
-    build_instance(listener, null_mut(), null_mut())
+    build_instance(listener, null_mut(), null_mut(), null_mut())
+}
+
+/// As [`fake_vst3_instance`], with a controller whose `createView` returns `view`.
+pub(crate) fn fake_vst3_instance_with_view(
+    listener: &mut FakeListener,
+    view: &mut FakeView,
+) -> Arc<PluginInstance> {
+    build_instance(listener, null_mut(), null_mut(), view)
 }
 
 /// As [`fake_vst3_instance`], with the audio buses `buses` describes.
@@ -1056,7 +1251,7 @@ pub(crate) fn fake_vst3_instance_with_buses(
     listener: &mut FakeListener,
     buses: &mut FakeBuses,
 ) -> Arc<PluginInstance> {
-    build_instance(listener, null_mut(), buses)
+    build_instance(listener, null_mut(), buses, null_mut())
 }
 
 /// As [`fake_vst3_instance`], with a controller that offers `units` and the
@@ -1065,13 +1260,14 @@ pub(crate) fn fake_vst3_instance_with_units(
     listener: &mut FakeListener,
     units: &mut FakeUnits,
 ) -> Arc<PluginInstance> {
-    build_instance(listener, units, null_mut())
+    build_instance(listener, units, null_mut(), null_mut())
 }
 
 fn build_instance(
     listener: *mut FakeListener,
     units: *mut FakeUnits,
     buses: *mut FakeBuses,
+    view: *mut FakeView,
 ) -> Arc<PluginInstance> {
     let controller = Box::leak(Box::new(FakeController {
         vtbl: vtbl_of(&[
@@ -1123,9 +1319,14 @@ fn build_instance(
                 offset_of!(IEditControllerVtbl, set_component_handler),
                 controller_set_component_handler as *const (),
             ),
+            (
+                offset_of!(IEditControllerVtbl, create_view),
+                controller_create_view as *const (),
+            ),
         ]),
         listener,
         units,
+        view,
     }));
     let state =
         unsafe { units.as_ref() }.map_or_else(Vec::new, |units| units.processor_state.clone());
