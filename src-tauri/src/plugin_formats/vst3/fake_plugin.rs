@@ -575,6 +575,15 @@ impl FakeBus {
     }
 }
 
+/// What the plugin saw on one input bus during `process`.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct SeenInput {
+    pub channels: i32,
+    pub silence_flags: u64,
+    /// First sample of every channel; `None` for a null channel pointer.
+    pub first_samples: Vec<Option<f32>>,
+}
+
 /// The audio buses of a fake plugin, and what the host did to them.
 pub(crate) struct FakeBuses {
     inputs: Vec<FakeBus>,
@@ -585,6 +594,8 @@ pub(crate) struct FakeBuses {
     reported_outputs: Cell<usize>,
     /// Channels of each output bus `process` was given, per call.
     process_shapes: RefCell<Vec<Vec<i32>>>,
+    /// Every input bus `process` was given, per call.
+    inputs_seen: RefCell<Vec<Vec<SeenInput>>>,
     arrangement_calls: RefCell<Vec<(Vec<u64>, Vec<u64>)>>,
     /// `(direction, index, state)` of every audio `activateBus`.
     activations: RefCell<Vec<(i32, i32, bool)>>,
@@ -599,6 +610,7 @@ impl FakeBuses {
             undescribed_outputs: 0,
             reported_outputs: Cell::new(usize::MAX),
             process_shapes: RefCell::new(Vec::new()),
+            inputs_seen: RefCell::new(Vec::new()),
             arrangement_calls: RefCell::new(Vec::new()),
             activations: RefCell::new(Vec::new()),
         })
@@ -626,6 +638,11 @@ impl FakeBuses {
     /// Per `process` call, the channel count of each output bus it was given.
     pub fn process_shapes(&self) -> Vec<Vec<i32>> {
         self.process_shapes.borrow().clone()
+    }
+
+    /// Per `process` call, every input bus the plugin was given.
+    pub fn inputs_seen(&self) -> Vec<Vec<SeenInput>> {
+        self.inputs_seen.borrow().clone()
     }
 
     /// The plugin now declares only its first `count` output buses, as after a
@@ -924,6 +941,34 @@ unsafe fn write_output_buses(buses: &FakeBuses, data: &ProcessData) {
     }
 }
 
+/// Reads every input bus the host handed over, as a plugin would.
+unsafe fn read_input_buses(buses: &FakeBuses, data: &ProcessData) {
+    let handed_over: &[_] = if data.inputs.is_null() {
+        &[]
+    } else {
+        std::slice::from_raw_parts(data.inputs, data.num_inputs.max(0) as usize)
+    };
+    let seen = handed_over
+        .iter()
+        .map(|bus| {
+            let channels = if bus.channel_buffers32.is_null() {
+                &[]
+            } else {
+                std::slice::from_raw_parts(bus.channel_buffers32, bus.num_channels.max(0) as usize)
+            };
+            SeenInput {
+                channels: bus.num_channels,
+                silence_flags: bus.silence_flags,
+                first_samples: channels
+                    .iter()
+                    .map(|&channel| (!channel.is_null()).then(|| *channel))
+                    .collect(),
+            }
+        })
+        .collect();
+    buses.inputs_seen.borrow_mut().push(seen);
+}
+
 /// Reads the input parameter list the way a plugin does, through its vtables.
 unsafe extern "C" fn processor_process(
     this: *mut IAudioProcessor,
@@ -931,6 +976,7 @@ unsafe extern "C" fn processor_process(
 ) -> TResult {
     let processor = &*(this as *const FakeProcessor);
     if let Some(buses) = processor.buses.as_ref() {
+        read_input_buses(buses, &*data);
         write_output_buses(buses, &*data);
     }
     let Some(units) = processor.units.as_ref() else {

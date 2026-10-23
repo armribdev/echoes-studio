@@ -42,10 +42,9 @@ use crate::plugin_formats::crash_guard;
 use crate::plugin_system::instance::{PluginInstance, FFI_GATE_HARVEST_BUDGET};
 use crate::plugin_system::lifecycle::LifecycleState;
 
-use super::buses::Vst3OutputBuses;
+use super::buses::{Vst3InputBuses, Vst3OutputBuses};
 use super::ffi::{
-    AudioBusBuffers, HostParameterChanges, IAudioProcessor, IComponent, ProcessContext,
-    ProcessData, K_RESULT_OK,
+    HostParameterChanges, IAudioProcessor, IComponent, ProcessContext, ProcessData, K_RESULT_OK,
 };
 use super::param_delivery::{
     begin_output_changes, fill_param_changes, publish_output_changes, track_value_modulation,
@@ -72,8 +71,9 @@ pub struct VstWrapperNode {
 
     // Per-block scratch — pre-allocated in prepare, pointer-stable until next prepare.
     // Vecs are never resized on the audio thread.
-    in_channel_ptrs: Vec<*mut f32>,
-    in_bus: AudioBusBuffers,
+    /// The main input bus and one bus per auxiliary input port (ADR-014
+    /// sidechain), built in `prepare`.
+    inputs: Vst3InputBuses,
     /// One bus per graph output port (ADR-014 multi-out), built in `prepare`.
     outputs: Vst3OutputBuses,
 
@@ -119,8 +119,7 @@ impl VstWrapperNode {
         );
         Self {
             instance,
-            in_channel_ptrs: Vec::new(),
-            in_bus: unsafe { std::mem::zeroed() },
+            inputs: Vst3InputBuses::new(&[]),
             outputs: Vst3OutputBuses::new(&[]),
             num_channels: 2,
             param_changes: None,
@@ -150,7 +149,7 @@ impl AudioNode for VstWrapperNode {
         "VstWrapperNode"
     }
     fn num_input_ports(&self) -> usize {
-        1
+        self.inputs.num_ports()
     }
     fn num_output_ports(&self) -> usize {
         self.outputs.num_ports()
@@ -158,8 +157,6 @@ impl AudioNode for VstWrapperNode {
 
     fn prepare(&mut self, ctx: PrepareContext) {
         self.num_channels = ctx.num_channels;
-
-        self.in_channel_ptrs = vec![std::ptr::null_mut(); ctx.num_channels];
 
         // Pre-allocate the parameter-change list (ADR-007) — heap, off-RT.
         self.param_changes = Some(HostParameterChanges::boxed());
@@ -171,6 +168,8 @@ impl AudioNode for VstWrapperNode {
         // (no double `setActive`).
         self.instance
             .vst3_ensure_active(ctx.sample_rate, ctx.max_block_size as u32);
+        self.inputs = Vst3InputBuses::new(&self.instance.vst3_aux_inputs());
+        self.inputs.prepare(ctx.num_channels, ctx.max_block_size);
         self.outputs = Vst3OutputBuses::new(&self.instance.vst3_output_buses());
         self.outputs.prepare(ctx.num_channels, ctx.max_block_size);
 
@@ -223,7 +222,6 @@ impl AudioNode for VstWrapperNode {
             }
         };
 
-        let nc = self.num_channels;
         let nf = transport.block_size; // real block, not MAX_BLOCK_FRAMES capacity
 
         // ADR-007: refill the pre-allocated parameter-change list for this block.
@@ -239,19 +237,7 @@ impl AudioNode for VstWrapperNode {
         };
 
         // SAFETY: VST3 spec — plugins must not write input buffers.
-        for c in 0..nc {
-            self.in_channel_ptrs[c] = if !inputs.is_empty() {
-                inputs[0].channel(c).as_ptr() as *mut f32
-            } else {
-                std::ptr::null_mut()
-            };
-        }
-
-        self.in_bus = AudioBusBuffers {
-            num_channels: nc as i32,
-            silence_flags: if inputs.is_empty() { u64::MAX } else { 0 },
-            channel_buffers32: self.in_channel_ptrs.as_mut_ptr(),
-        };
+        let (input_buses, input_bus_count) = self.inputs.bind(inputs, nf);
         let (output_buses, output_bus_count) = self.outputs.bind(outputs);
 
         let output_changes_ptr = self
@@ -266,9 +252,9 @@ impl AudioNode for VstWrapperNode {
             process_mode: 0,
             symbolic_sample_size: 0,
             num_samples: nf as i32,
-            num_inputs: 1,
+            num_inputs: input_bus_count,
             num_outputs: output_bus_count,
-            inputs: &mut self.in_bus,
+            inputs: input_buses,
             outputs: output_buses,
             input_param_changes: param_changes_ptr,
             output_param_changes: output_changes_ptr,

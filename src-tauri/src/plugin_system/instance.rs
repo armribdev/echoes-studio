@@ -58,7 +58,8 @@ use crate::plugin_formats::clap::ffi::{
     HostTrackInfo, NoteName, PresetRequest, TimerSchedule, CLAP_PRESET_LOCATION_FILE,
 };
 use crate::plugin_formats::vst3::buses::{
-    open_output_buses, propose_arrangements, read_output_buses, Vst3OutputBus, AUX_OUTPUT_BUSES,
+    open_output_buses, propose_arrangements, read_aux_inputs, read_output_buses, Vst3AuxInput,
+    Vst3OutputBus, AUX_OUTPUT_BUSES,
 };
 use crate::plugin_formats::vst3::channel_context::notify_channel_context;
 use crate::plugin_formats::vst3::component_handler::{ComponentHandler, EditState};
@@ -320,6 +321,9 @@ pub struct PluginInstance {
     /// `restartComponent(kIoChanged)` is followed.  Off-RT readers only: a wrapper
     /// copies what it needs in `prepare`.
     vst3_output_buses: Mutex<Arc<[Vst3OutputBus]>>,
+    /// VST3 auxiliary input buses (ADR-014 sidechain), opened and read at every
+    /// activation, like the output buses.
+    vst3_aux_inputs: Mutex<Arc<[Vst3AuxInput]>>,
     /// Auxiliary output buses the graph reads, set by the compiler before it
     /// prepares the nodes (see [`Self::set_vst3_wanted_outputs`]).
     vst3_wanted_outputs: AtomicU32,
@@ -381,6 +385,7 @@ impl PluginInstance {
             value_modulated_params: Mutex::new(Vec::new()),
             output_ports: OnceLock::new(),
             vst3_output_buses: Mutex::new(Arc::default()),
+            vst3_aux_inputs: Mutex::new(Arc::default()),
             vst3_wanted_outputs: AtomicU32::new(0),
             track_info_pending: AtomicBool::new(false),
             vst3_track_info: Mutex::new(HostTrackInfo::default()),
@@ -425,6 +430,7 @@ impl PluginInstance {
             value_modulated_params: Mutex::new(Vec::new()),
             output_ports: OnceLock::new(),
             vst3_output_buses: Mutex::new(Arc::default()),
+            vst3_aux_inputs: Mutex::new(Arc::default()),
             vst3_wanted_outputs: AtomicU32::new(0),
             track_info_pending: AtomicBool::new(false),
             vst3_track_info: Mutex::new(HostTrackInfo::default()),
@@ -461,6 +467,7 @@ impl PluginInstance {
             value_modulated_params: Mutex::new(Vec::new()),
             output_ports: OnceLock::new(),
             vst3_output_buses: Mutex::new(Arc::default()),
+            vst3_aux_inputs: Mutex::new(Arc::default()),
             vst3_wanted_outputs: AtomicU32::new(0),
             track_info_pending: AtomicBool::new(false),
             vst3_track_info: Mutex::new(HostTrackInfo::default()),
@@ -487,6 +494,7 @@ impl PluginInstance {
             value_modulated_params: Mutex::new(Vec::new()),
             output_ports: OnceLock::new(),
             vst3_output_buses: Mutex::new(Arc::default()),
+            vst3_aux_inputs: Mutex::new(Arc::default()),
             vst3_wanted_outputs: AtomicU32::new(0),
             track_info_pending: AtomicBool::new(false),
             vst3_track_info: Mutex::new(HostTrackInfo::default()),
@@ -1248,6 +1256,16 @@ impl PluginInstance {
             .clone()
     }
 
+    /// The auxiliary audio input buses (sidechains) the VST3 plugin declared and
+    /// opened at its last activation; empty before the first one and for other
+    /// formats.
+    pub fn vst3_aux_inputs(&self) -> Arc<[Vst3AuxInput]> {
+        self.vst3_aux_inputs
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
+    }
+
     /// Idempotently bring the VST3 component/processor to the active, processing
     /// state, owned by the instance so it survives wrapper rebuilds on recompile
     /// (ADR-016 reuse).  Mirrors [`clap_ensure_active`]:
@@ -1258,8 +1276,9 @@ impl PluginInstance {
     ///   re-setup.
     /// - Already active but the graph now reads other auxiliary output buses →
     ///   the same reactivation, which opens and closes buses.
-    /// - Not active → `setBusArrangements` + `activateBus` ×2 +
-    ///   `setupProcessing` + `setActive(1)` + `setProcessing(1)`.
+    /// - Not active → `setBusArrangements` + `activateBus` ×2 (plus the
+    ///   auxiliary input buses, always open) + `setupProcessing` +
+    ///   `setActive(1)` + `setProcessing(1)`.
     ///
     /// No-op (`false`) for non-VST3 handles.  Runs on the command thread during
     /// graph prepare — never the audio thread.
@@ -1315,6 +1334,14 @@ impl PluginInstance {
             if has_audio_input {
                 ((*(*comp).vtbl).activate_bus)(comp, K_AUDIO, K_INPUT, 0, 1);
             }
+            let aux_inputs = read_aux_inputs(comp);
+            for index in 1..=aux_inputs.len() {
+                ((*(*comp).vtbl).activate_bus)(comp, K_AUDIO, K_INPUT, index as i32, 1);
+            }
+            *self
+                .vst3_aux_inputs
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner()) = aux_inputs.into();
             let mut output_buses = read_output_buses(comp);
             open_output_buses(comp, &mut output_buses, wanted_outputs, previous_outputs);
             *self

@@ -1727,6 +1727,97 @@ fn vst3_real_plugins_report_their_input_buses() {
     }
 }
 
+/// An effect with a sidechain, run with its auxiliary bus fed.
+#[test]
+fn vst3_real_sidechain_effect_processes_with_its_aux_bus_fed() {
+    use crate::plugin_formats::vst3::host::Vst3Host;
+    use crate::plugin_system::registry::PluginRegistry;
+
+    let candidates = discover_all("ECHOES_TEST_VST3", "vst3");
+    let mut registry = PluginRegistry::new();
+    for path in &candidates {
+        Vst3Host::new().register_bundle(path, &mut registry);
+    }
+    let Some(manifest) = registry
+        .all()
+        .find(|m| m.format == DeviceFormat::Vst3 && m.num_sidechain_inputs > 0)
+        .cloned()
+    else {
+        eprintln!("{LOG} SKIP vst3_real_sidechain_effect — no VST3 effect with a sidechain");
+        return;
+    };
+    let key = "harness:vst3:sidechain";
+    let mut host = PluginHost::new();
+    host.registry_mut().add(manifest.clone());
+    let mut node = host
+        .instantiate(key, &manifest.id, false)
+        .expect("the effect instantiates");
+    node.prepare(PrepareContext {
+        sample_rate: 48_000.0,
+        max_block_size: 512,
+        num_channels: 2,
+        live: true,
+    });
+    let instance = host.instance_by_key(key).expect("instance registered");
+    assert_eq!(node.num_input_ports(), 1 + manifest.num_sidechain_inputs);
+
+    let tone = |level: f32| {
+        let mut buffer = AudioBuffer::new(2, 512);
+        for channel in 0..2 {
+            for (index, sample) in buffer.channel_mut(channel).iter_mut().enumerate() {
+                *sample = level * (index as f32 * 0.07).sin();
+            }
+        }
+        buffer
+    };
+    let (main, kick, silence) = (tone(0.5), tone(0.9), AudioBuffer::new(2, 512));
+    let transport = TransportInfo {
+        block_size: 512,
+        ..TransportInfo::stopped(48_000.0)
+    };
+    let mut energy_with = |aux: &AudioBuffer| {
+        let mut energy = 0.0f64;
+        for _ in 0..64 {
+            let mut outputs = [AudioBuffer::new(2, 512)];
+            node.process(&[&main, aux], &mut outputs, &transport);
+            assert!(outputs[0]
+                .channel(0)
+                .iter()
+                .all(|sample| sample.is_finite()));
+            energy += outputs[0]
+                .channel(0)
+                .iter()
+                .map(|&s| f64::from(s * s))
+                .sum::<f64>();
+        }
+        energy
+    };
+    let quiet = energy_with(&silence);
+    let loud = energy_with(&kick);
+    eprintln!(
+        "{LOG} {}: energy with a silent aux {quiet:.4}, with a loud aux {loud:.4}",
+        manifest.name
+    );
+    if manifest.name == "TDR Nova" {
+        // Band 1 dynamic (threshold at the bottom, full ratio, wide Q) listening to
+        // the external sidechain: the main bus is pulled down only while the
+        // auxiliary bus carries sound.
+        for (native_id, value) in [(55, 0.0), (56, 1.0), (51, 0.0), (54, 0.25), (52, 0.25)] {
+            instance.push_param(native_id, value);
+        }
+        let external_sidechain = 0.25;
+        instance.push_param(1755, external_sidechain);
+        energy_with(&silence);
+        let (quiet, loud) = (energy_with(&silence), energy_with(&kick));
+        eprintln!("{LOG} TDR Nova, external sidechain: silent aux {quiet:.4}, loud aux {loud:.4}");
+        assert!(
+            loud < quiet * 0.1,
+            "the auxiliary bus drives the detector: {loud} vs {quiet}"
+        );
+    }
+    assert!(!instance.has_crashed());
+}
+
 /// The scan reads each effect's sidechain buses in the library it already loaded.
 #[test]
 fn vst3_scan_counts_the_sidechain_inputs_of_real_effects() {

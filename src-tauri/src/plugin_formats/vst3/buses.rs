@@ -339,6 +339,150 @@ impl Vst3OutputBuses {
     }
 }
 
+/// The bus table handed to `ProcessData::inputs` (ADR-014 sidechain), shared by
+/// the effect wrappers: the main bus, then every auxiliary bus the plugin opened.
+/// Input port `p` is input bus `p`.
+///
+/// An auxiliary bus the graph does not feed is given silence, with its silence
+/// flags set; one that is fed gets the channels of its source, a mono mix when
+/// the plugin wants a single channel, and a silence flag only on the channels
+/// that are exactly zero.  The plugin never gets a null channel pointer for an
+/// auxiliary bus.
+///
+/// ## Real-time contract
+///
+/// Everything is allocated in `prepare`; `bind` only writes pointer tables, the
+/// mono mix and the silence flags.
+pub struct Vst3InputBuses {
+    /// Channels each auxiliary bus declared; 0 when the plugin did not say.
+    aux_declared: Vec<usize>,
+    /// Sample pointers of each bus, the main bus first.
+    channel_ptrs: Vec<Vec<*mut f32>>,
+    table: Vec<AudioBusBuffers>,
+    /// Channel `k` is the mono mix handed to auxiliary bus `k`.
+    mono_mix: AudioBuffer,
+    /// Read-only zeros standing in for a missing source or channel.
+    silent: AudioBuffer,
+    num_channels: usize,
+}
+
+impl Vst3InputBuses {
+    /// A plugin with no auxiliary input has the single main bus, as before the
+    /// sidechain.
+    pub fn new(aux_inputs: &[Vst3AuxInput]) -> Self {
+        Vst3InputBuses {
+            aux_declared: aux_inputs
+                .iter()
+                .map(|bus| bus.channel_count as usize)
+                .collect(),
+            channel_ptrs: Vec::new(),
+            table: Vec::new(),
+            mono_mix: AudioBuffer::silence(),
+            silent: AudioBuffer::silence(),
+            num_channels: 0,
+        }
+    }
+
+    /// Input ports the graph node exposes: the main bus and each auxiliary one.
+    pub fn num_ports(&self) -> usize {
+        1 + self.aux_declared.len()
+    }
+
+    pub fn prepare(&mut self, num_channels: usize, max_block_size: usize) {
+        self.num_channels = num_channels;
+        self.mono_mix = AudioBuffer::new(self.aux_declared.len().max(1), max_block_size);
+        self.silent = AudioBuffer::new(1, max_block_size);
+        let silent = self.silent.channel(0).as_ptr() as *mut f32;
+        self.channel_ptrs = (0..self.num_ports())
+            .map(|bus| match bus {
+                0 => vec![std::ptr::null_mut(); num_channels],
+                aux => vec![silent; self.plugin_channels(aux - 1)],
+            })
+            .collect();
+        self.table = self
+            .channel_ptrs
+            .iter_mut()
+            .map(|pointers| AudioBusBuffers {
+                num_channels: pointers.len() as i32,
+                silence_flags: 0,
+                channel_buffers32: pointers.as_mut_ptr(),
+            })
+            .collect();
+    }
+
+    /// Channels the plugin reads on auxiliary bus `aux`.
+    fn plugin_channels(&self, aux: usize) -> usize {
+        match self.aux_declared[aux] {
+            0 => self.num_channels,
+            declared => declared,
+        }
+    }
+
+    /// Point every bus at the graph inputs of its port (`inputs[0]` is the main
+    /// bus, `inputs[1..]` the auxiliary ones, possibly fewer than the plugin has).
+    /// Returns the table and its length, for `ProcessData::inputs` / `numInputs`.
+    /// `frames` is the real block length, at most the buffers' capacity.
+    pub fn bind(&mut self, inputs: &[&AudioBuffer], frames: usize) -> (*mut AudioBusBuffers, i32) {
+        let frames = frames.min(self.silent.num_frames);
+        match inputs.first() {
+            Some(main) => {
+                for (channel, pointer) in self.channel_ptrs[0].iter_mut().enumerate() {
+                    *pointer = main.channel(channel).as_ptr() as *mut f32;
+                }
+                self.table[0].silence_flags = 0;
+            }
+            None => {
+                self.channel_ptrs[0].fill(std::ptr::null_mut());
+                self.table[0].silence_flags = u64::MAX;
+            }
+        }
+        for aux in 0..self.aux_declared.len() {
+            let source = inputs.get(1 + aux).copied();
+            self.bind_aux(aux, source, frames);
+        }
+        (self.table.as_mut_ptr(), self.table.len() as i32)
+    }
+
+    fn bind_aux(&mut self, aux: usize, source: Option<&AudioBuffer>, frames: usize) {
+        let wanted = self.plugin_channels(aux);
+        let mixed = match source {
+            Some(source) if wanted == 1 && source.num_channels > 1 => {
+                self.mix_to_mono(aux, source, frames);
+                true
+            }
+            _ => false,
+        };
+        let mut silence_flags = 0u64;
+        for channel in 0..wanted {
+            let samples: &[f32] = match source {
+                Some(_) if mixed => self.mono_mix.channel(aux),
+                Some(source) if channel < source.num_channels => source.channel(channel),
+                _ => self.silent.channel(0),
+            };
+            self.channel_ptrs[1 + aux][channel] = samples.as_ptr() as *mut f32;
+            if samples[..frames].iter().all(|&sample| sample == 0.0) {
+                silence_flags |= 1 << channel;
+            }
+        }
+        self.table[1 + aux].silence_flags = silence_flags;
+    }
+
+    /// The average of every channel of `source`, in the mix channel of `aux`.
+    fn mix_to_mono(&mut self, aux: usize, source: &AudioBuffer, frames: usize) {
+        let mix = &mut self.mono_mix.channel_mut(aux)[..frames];
+        mix.copy_from_slice(&source.channel(0)[..frames]);
+        for channel in 1..source.num_channels {
+            for (mixed, &sample) in mix.iter_mut().zip(&source.channel(channel)[..frames]) {
+                *mixed += sample;
+            }
+        }
+        let gain = 1.0 / source.num_channels as f32;
+        for mixed in mix.iter_mut() {
+            *mixed *= gain;
+        }
+    }
+}
+
 #[cfg(all(test, windows))]
 mod tests {
     use super::*;
@@ -431,7 +575,7 @@ mod tests {
     }
 
     #[test]
-    fn a_sidechain_input_is_named_in_the_request_and_stays_closed() {
+    fn a_sidechain_input_is_named_in_the_request_and_opened_with_the_main_one() {
         let mut listener = FakeListener::new(false);
         let mut buses = FakeBuses::new(
             vec![FakeBus::main("In", STEREO), FakeBus::aux("Sidechain", MONO)],
@@ -447,7 +591,11 @@ mod tests {
         );
         assert_eq!(
             buses.activations(),
-            vec![(K_INPUT, 0, true), (K_OUTPUT, 0, true)]
+            vec![(K_INPUT, 0, true), (K_INPUT, 1, true), (K_OUTPUT, 0, true)]
+        );
+        assert_eq!(
+            instance.vst3_aux_inputs().to_vec(),
+            vec![Vst3AuxInput { channel_count: 1 }]
         );
     }
 
@@ -792,6 +940,191 @@ mod tests {
 
         assert_eq!(count, 2);
         assert!(!seen_by_the_plugin(table, count)[1].1.is_null());
+    }
+
+    const FRAMES: usize = 8;
+
+    fn input_buses(aux_channels: &[u32]) -> Vst3InputBuses {
+        let aux: Vec<_> = aux_channels
+            .iter()
+            .map(|&channel_count| Vst3AuxInput { channel_count })
+            .collect();
+        let mut buses = Vst3InputBuses::new(&aux);
+        buses.prepare(2, FRAMES);
+        buses
+    }
+
+    fn stereo(left: f32, right: f32) -> AudioBuffer {
+        let mut buffer = AudioBuffer::new(2, FRAMES);
+        buffer.channel_mut(0).fill(left);
+        buffer.channel_mut(1).fill(right);
+        buffer
+    }
+
+    /// The bus `index` as the plugin sees it: channels, silence flags, first
+    /// sample of each channel.
+    fn seen_input(table: *mut AudioBusBuffers, index: usize) -> (i32, u64, Vec<f32>) {
+        unsafe {
+            let bus = &*table.add(index);
+            let channels =
+                std::slice::from_raw_parts(bus.channel_buffers32, bus.num_channels as usize);
+            let first = channels
+                .iter()
+                .map(|&channel| {
+                    assert!(!channel.is_null(), "an auxiliary bus has no null channel");
+                    *channel
+                })
+                .collect();
+            (bus.num_channels, bus.silence_flags, first)
+        }
+    }
+
+    #[test]
+    fn a_plugin_with_no_aux_input_has_the_single_main_bus_as_before() {
+        let mut buses = input_buses(&[]);
+        let main = stereo(0.5, 0.25);
+
+        let (table, count) = buses.bind(&[&main], FRAMES);
+
+        assert_eq!((buses.num_ports(), count), (1, 1));
+        assert_eq!(seen_input(table, 0), (2, 0, vec![0.5, 0.25]));
+    }
+
+    #[test]
+    fn a_main_bus_with_no_input_is_flagged_silent() {
+        let mut buses = input_buses(&[]);
+
+        let (table, count) = buses.bind(&[], FRAMES);
+
+        assert_eq!(count, 1);
+        assert_eq!(unsafe { (*table).silence_flags }, u64::MAX);
+    }
+
+    #[test]
+    fn a_stereo_aux_input_gets_the_channels_of_its_source() {
+        let mut buses = input_buses(&[2]);
+        let (main, source) = (stereo(0.5, 0.5), stereo(0.25, -0.75));
+
+        let (table, count) = buses.bind(&[&main, &source], FRAMES);
+
+        assert_eq!((buses.num_ports(), count), (2, 2));
+        assert_eq!(seen_input(table, 1), (2, 0, vec![0.25, -0.75]));
+    }
+
+    #[test]
+    fn an_aux_input_nothing_feeds_is_zeros_with_every_channel_flagged() {
+        let mut buses = input_buses(&[2]);
+        let main = stereo(0.5, 0.5);
+
+        let (table, count) = buses.bind(&[&main], FRAMES);
+
+        assert_eq!(
+            count, 2,
+            "the opened bus is handed over though no port feeds it"
+        );
+        assert_eq!(seen_input(table, 1), (2, 0b11, vec![0.0, 0.0]));
+    }
+
+    #[test]
+    fn a_source_with_no_signal_is_flagged_silent_per_channel() {
+        let mut buses = input_buses(&[2]);
+        let (main, source) = (stereo(0.5, 0.5), stereo(0.0, 0.1));
+
+        let (table, _) = buses.bind(&[&main, &source], FRAMES);
+
+        assert_eq!(
+            seen_input(table, 1).1,
+            0b01,
+            "only the left channel is zero"
+        );
+    }
+
+    #[test]
+    fn a_silence_flag_follows_the_block_not_the_last_one() {
+        let mut buses = input_buses(&[2]);
+        let main = stereo(0.5, 0.5);
+        buses.bind(&[&main, &stereo(0.0, 0.0)], FRAMES);
+
+        let (table, _) = buses.bind(&[&main, &stereo(0.3, 0.3)], FRAMES);
+
+        assert_eq!(seen_input(table, 1).1, 0);
+    }
+
+    #[test]
+    fn a_mono_aux_input_gets_the_average_of_a_stereo_source() {
+        let mut buses = input_buses(&[1]);
+        let (main, source) = (stereo(0.5, 0.5), stereo(0.5, -0.25));
+
+        let (table, _) = buses.bind(&[&main, &source], FRAMES);
+
+        assert_eq!(seen_input(table, 1), (1, 0, vec![0.125]));
+        assert_eq!(
+            seen_input(table, 0).2,
+            vec![0.5, 0.5],
+            "the main bus is left alone"
+        );
+    }
+
+    #[test]
+    fn a_mono_mix_of_opposite_signals_is_flagged_silent() {
+        let mut buses = input_buses(&[1]);
+        let (main, source) = (stereo(0.5, 0.5), stereo(0.5, -0.5));
+
+        let (table, _) = buses.bind(&[&main, &source], FRAMES);
+
+        assert_eq!(seen_input(table, 1), (1, 0b1, vec![0.0]));
+    }
+
+    #[test]
+    fn two_mono_aux_inputs_keep_their_own_mix() {
+        let mut buses = input_buses(&[1, 1]);
+        let main = stereo(0.5, 0.5);
+        let (first, second) = (stereo(0.2, 0.4), stereo(1.0, 0.0));
+
+        let (table, count) = buses.bind(&[&main, &first, &second], FRAMES);
+
+        assert_eq!(count, 3);
+        assert!((seen_input(table, 1).2[0] - 0.3).abs() < 1e-6);
+        assert_eq!(seen_input(table, 2).2, vec![0.5]);
+    }
+
+    #[test]
+    fn an_aux_bus_wider_than_the_engine_gets_zeros_on_the_extra_channels() {
+        let mut buses = input_buses(&[6]);
+        let (main, source) = (stereo(0.5, 0.5), stereo(0.25, 0.75));
+
+        let (table, _) = buses.bind(&[&main, &source], FRAMES);
+
+        let (channels, flags, first) = seen_input(table, 1);
+        assert_eq!(channels, 6);
+        assert_eq!(first, vec![0.25, 0.75, 0.0, 0.0, 0.0, 0.0]);
+        assert_eq!(flags, 0b111100);
+    }
+
+    #[test]
+    fn an_aux_bus_that_declares_no_channel_takes_the_engine_layout() {
+        let mut buses = input_buses(&[0]);
+        let (main, source) = (stereo(0.5, 0.5), stereo(0.25, 0.75));
+
+        let (table, _) = buses.bind(&[&main, &source], FRAMES);
+
+        assert_eq!(seen_input(table, 1), (2, 0, vec![0.25, 0.75]));
+    }
+
+    #[test]
+    fn a_block_shorter_than_the_buffers_is_judged_on_its_own_frames() {
+        let mut buses = input_buses(&[2]);
+        let main = stereo(0.5, 0.5);
+        let mut source = stereo(0.0, 0.0);
+        source.channel_mut(0)[FRAMES - 1] = 0.9;
+
+        let (table, _) = buses.bind(&[&main, &source], FRAMES / 2);
+
+        assert_eq!(
+            seen_input(table, 1).1,
+            0b11,
+            "the late sample is not in this block"
+        );
     }
 
     #[test]
