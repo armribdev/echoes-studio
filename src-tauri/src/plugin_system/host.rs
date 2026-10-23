@@ -1109,8 +1109,22 @@ impl PluginHost {
         let Some(record) = self.records.get(instance_key) else {
             return Vec::new();
         };
-        record
-            .instance
+        let instance = &record.instance;
+        if instance.format == DeviceFormat::Vst3 {
+            return instance
+                .vst3_output_buses()
+                .iter()
+                .enumerate()
+                .skip(1)
+                .filter(|(_, bus)| !bus.control_voltage)
+                .map(|(port, bus)| PluginOutputInfo {
+                    port: port as u32,
+                    name: bus.name.clone(),
+                    channel_count: bus.channel_count,
+                })
+                .collect();
+        }
+        instance
             .output_ports()
             .iter()
             .enumerate()
@@ -1629,6 +1643,7 @@ mod tests {
         use crate::plugin_formats::vst3::fake_plugin::{
             fake_vst3_instance_with_buses, FakeBus, FakeBuses, FakeListener, MONO, STEREO,
         };
+        use crate::project::AppTrack;
 
         fn open_flags(instance: &PluginInstance) -> Vec<bool> {
             instance
@@ -1668,6 +1683,162 @@ mod tests {
             host.set_demanded_outputs(HashMap::new());
             assert!(instance.vst3_ensure_active(48_000.0, 512));
             assert_eq!(open_flags(&instance), vec![true, false, false]);
+        }
+
+        fn host_with(instance: &Arc<PluginInstance>, key: &str) -> PluginHost {
+            let mut host = PluginHost::new();
+            host.records.insert(
+                key.into(),
+                DeviceRecord {
+                    saved_state: DeviceState::empty(&instance.device_id),
+                    instance: Arc::clone(instance),
+                },
+            );
+            host
+        }
+
+        fn track(id: &str) -> AppTrack {
+            AppTrack {
+                id: id.into(),
+                name: id.into(),
+                volume: 80.0,
+                pan: 0.0,
+                muted: false,
+                solo: false,
+                clips: vec![],
+                effects: vec![],
+                modulators: vec![],
+                mod_routes: vec![],
+                midi_notes: vec![],
+                midi_clips: vec![],
+                instrument: None,
+                sampler: None,
+                arpeggiator: None,
+                input_source: None,
+                automation_lanes: vec![],
+                color: None,
+            }
+        }
+
+        /// The master mix of a drum machine track, with its snare output taken
+        /// (or not) by a second track, and the channels `process` was given.
+        fn render_drums(snare_routed: bool) -> (f32, Vec<Vec<i32>>) {
+            use crate::audio_graph::compiler::{CompileConfig, GraphCompiler};
+            use crate::audio_graph::graph::AudioGraph;
+            use crate::audio_graph::live_params::LiveParams;
+            use crate::audio_graph::node::{TimeSignature, TransportInfo};
+            use crate::audio_graph::scheduler::GraphScheduler;
+            use crate::project::{AppMidiClip, PluginOutputSource};
+
+            let mut listener = FakeListener::new(false);
+            let mut buses = FakeBuses::new(
+                Vec::new(),
+                vec![
+                    FakeBus::main("Main", STEREO).writing(0.1),
+                    FakeBus::aux("Snare", MONO).writing(0.2),
+                ],
+            );
+            let instance = fake_vst3_instance_with_buses(&mut listener, &mut buses);
+            let mut host = host_with(&instance, "instrument:drums");
+
+            let mut project = AppProject::new();
+            let mut drums = track("drums");
+            drums.instrument = Some(instance.device_id.clone());
+            drums.midi_clips.push(AppMidiClip {
+                id: "clip".into(),
+                start: 0.0,
+                end: 4.0,
+                offset: 0.0,
+                notes: vec![],
+                channel_controls: vec![],
+            });
+            project.tracks.push(drums);
+            let mut snare = track("snare");
+            if snare_routed {
+                snare.input_source = Some(PluginOutputSource {
+                    effect_id: "instrument:drums".into(),
+                    port: 1,
+                });
+            }
+            project.tracks.push(snare);
+
+            let graph = AudioGraph::from_project(&project);
+            let compiled = GraphCompiler::compile(
+                &graph,
+                &project,
+                CompileConfig::default(),
+                &LiveParams::new(),
+                &mut host,
+            )
+            .expect("the project compiles");
+            let mut scheduler = GraphScheduler::new(compiled);
+
+            let block = 64;
+            let transport = TransportInfo {
+                is_playing: true,
+                position_samples: 0,
+                position_seconds: 0.0,
+                bpm: 120.0,
+                time_signature: TimeSignature::default(),
+                sample_rate: 48_000.0,
+                block_size: block,
+            };
+            let mut mix = vec![0.0_f32; block * 2];
+            let mut energy = 0.0;
+            for _ in 0..8 {
+                scheduler.process_block(&transport, &mut mix);
+                energy += mix.iter().map(|sample| sample.abs()).sum::<f32>();
+            }
+            assert!(!instance.has_crashed());
+            (energy, buses.process_shapes())
+        }
+
+        #[test]
+        fn a_vst3_placement_offers_its_aux_buses_and_skips_control_voltage() {
+            let mut listener = FakeListener::new(false);
+            let mut buses = FakeBuses::new(
+                Vec::new(),
+                vec![
+                    FakeBus::main("Main", STEREO),
+                    FakeBus::aux("Snare", MONO),
+                    FakeBus::aux("Gate", MONO).control_voltage(),
+                    FakeBus::aux("Hat", STEREO),
+                ],
+            );
+            let instance = fake_vst3_instance_with_buses(&mut listener, &mut buses);
+            let host = host_with(&instance, "fx0");
+            assert!(
+                host.plugin_outputs("fx0").is_empty(),
+                "nothing is read before activation"
+            );
+
+            assert!(instance.vst3_ensure_active(48_000.0, 512));
+
+            let offered: Vec<_> = host
+                .plugin_outputs("fx0")
+                .into_iter()
+                .map(|output| (output.port, output.name, output.channel_count))
+                .collect();
+            assert_eq!(
+                offered,
+                vec![(1, "Snare".to_string(), 1), (3, "Hat".to_string(), 2)],
+                "the port is the bus index, the main bus is not offered"
+            );
+            assert!(host.plugin_outputs("not-loaded").is_empty());
+        }
+
+        #[test]
+        fn a_track_taking_a_vst3_aux_output_hears_it_and_nothing_else_changes() {
+            let (alone, alone_shapes) = render_drums(false);
+            let (routed, routed_shapes) = render_drums(true);
+
+            assert!(alone > 0.0, "the main bus is heard");
+            assert!(
+                routed > alone * 2.0,
+                "the snare bus adds to the mix once a track takes it ({alone} → {routed})"
+            );
+            assert!(alone_shapes.iter().all(|shape| shape == &[2]));
+            assert!(routed_shapes.iter().all(|shape| shape == &[2, 1]));
         }
     }
 
