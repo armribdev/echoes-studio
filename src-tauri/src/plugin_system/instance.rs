@@ -1241,7 +1241,6 @@ impl PluginInstance {
 
     /// The audio output buses the VST3 plugin declared at its last activation;
     /// empty before the first one and for other formats.
-    #[allow(dead_code)] // read by the wrappers from step 4e-4
     pub fn vst3_output_buses(&self) -> Arc<[Vst3OutputBus]> {
         self.vst3_output_buses
             .lock()

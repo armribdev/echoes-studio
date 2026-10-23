@@ -7,9 +7,11 @@
 use std::ffi::c_void;
 use std::mem::{offset_of, size_of};
 
+use crate::audio_graph::buffer::AudioBuffer;
+
 use super::ffi::{
-    string128_to_string, IAudioProcessor, IComponent, String128, K_AUDIO, K_INPUT, K_OUTPUT,
-    K_RESULT_OK, SPEAKER_STEREO,
+    string128_to_string, AudioBusBuffers, IAudioProcessor, IComponent, String128, K_AUDIO, K_INPUT,
+    K_OUTPUT, K_RESULT_OK, SPEAKER_STEREO,
 };
 
 /// Audio buses read per direction.  The set of output buses a host asks for is a
@@ -173,6 +175,128 @@ fn arrangements_ptr(arrangements: &mut [u64]) -> *mut u64 {
         std::ptr::null_mut()
     } else {
         arrangements.as_mut_ptr()
+    }
+}
+
+/// One graph output port and the bus behind it.
+struct OutputSlot {
+    /// Channels the bus declared; 0 when the plugin did not say.
+    declared: usize,
+    open: bool,
+}
+
+/// Graph port → bus mapping plus the per-block tables handed to
+/// `ProcessData::outputs` (ADR-014 multi-out), shared by the effect and the
+/// instrument.  Port `p` is output bus `p`; the main bus keeps the engine's
+/// channel count, an auxiliary bus its declared one.
+///
+/// ## Real-time contract
+///
+/// Everything is allocated in `prepare`; `bind` and `finish` only write the
+/// pointer tables and copy samples.
+pub struct Vst3OutputBuses {
+    slots: Vec<OutputSlot>,
+    /// Sample pointers of each bus: the graph buffer's channels, or `spare` for a
+    /// channel the graph has no room for and for a closed bus.
+    channel_ptrs: Vec<Vec<*mut f32>>,
+    /// The `AudioBusBuffers` of every bus up to the last open one.
+    table: Vec<AudioBusBuffers>,
+    spare: AudioBuffer,
+    num_channels: usize,
+}
+
+impl Vst3OutputBuses {
+    /// A plugin whose buses are not known (none read yet, or none declared) has
+    /// the single main bus, as before multi-out.
+    pub fn new(buses: &[Vst3OutputBus]) -> Self {
+        let slots = if buses.is_empty() {
+            vec![OutputSlot {
+                declared: 0,
+                open: true,
+            }]
+        } else {
+            buses
+                .iter()
+                .map(|bus| OutputSlot {
+                    declared: bus.channel_count as usize,
+                    open: bus.active,
+                })
+                .collect()
+        };
+        Vst3OutputBuses {
+            slots,
+            channel_ptrs: Vec::new(),
+            table: Vec::new(),
+            spare: AudioBuffer::silence(),
+            num_channels: 0,
+        }
+    }
+
+    /// Output ports the graph node exposes: every declared bus, open or not.
+    pub fn num_ports(&self) -> usize {
+        self.slots.len()
+    }
+
+    pub fn prepare(&mut self, num_channels: usize, max_block_size: usize) {
+        self.num_channels = num_channels;
+        self.spare = AudioBuffer::new(num_channels, max_block_size);
+        let spare = self.spare.channel_mut(0).as_mut_ptr();
+        self.channel_ptrs = (0..self.slots.len())
+            .map(|port| vec![spare; self.plugin_channels(port)])
+            .collect();
+        let open_buses = self
+            .slots
+            .iter()
+            .rposition(|slot| slot.open)
+            .map_or(1, |last| last + 1);
+        let mut table = Vec::with_capacity(open_buses);
+        for port in 0..open_buses {
+            table.push(AudioBusBuffers {
+                num_channels: self.plugin_channels(port) as i32,
+                silence_flags: 0,
+                channel_buffers32: self.channel_ptrs[port].as_mut_ptr(),
+            });
+        }
+        self.table = table;
+    }
+
+    /// Channels the plugin writes on port `port`; an auxiliary bus may have more
+    /// than the engine, the plugin being told the layout it declared.
+    fn plugin_channels(&self, port: usize) -> usize {
+        match self.slots[port].declared {
+            declared if port == 0 || declared == 0 => self.num_channels,
+            declared => declared,
+        }
+    }
+
+    /// Point every open bus at its graph output.  Returns the table and its
+    /// length, for `ProcessData::outputs` / `numOutputs`: the buses up to the last
+    /// open one, so a closed bus between two open ones is still a valid entry.
+    pub fn bind(&mut self, outputs: &mut [AudioBuffer]) -> (*mut AudioBusBuffers, i32) {
+        for port in 0..self.table.len() {
+            if !self.slots[port].open {
+                continue;
+            }
+            let bound = self.plugin_channels(port).min(self.num_channels);
+            let target = match outputs.get_mut(port) {
+                Some(buffer) => buffer,
+                None => &mut self.spare,
+            };
+            for channel in 0..bound {
+                self.channel_ptrs[port][channel] = target.channel_mut(channel).as_mut_ptr();
+            }
+        }
+        (self.table.as_mut_ptr(), self.table.len() as i32)
+    }
+
+    /// Spread a mono auxiliary bus over every engine channel, so a receiving
+    /// track hears it centred rather than left only.
+    pub fn finish(&self, outputs: &mut [AudioBuffer]) {
+        for port in 1..self.table.len().min(outputs.len()) {
+            if self.slots[port].open && self.plugin_channels(port) == 1 {
+                outputs[port].mono_to_all_channels();
+            }
+        }
     }
 }
 
@@ -452,6 +576,118 @@ mod tests {
         assert!(instance.vst3_ensure_active(48_000.0, 512));
 
         assert_eq!(open_flags(&instance), vec![true]);
+    }
+
+    fn bus(channels: u32, active: bool) -> Vst3OutputBus {
+        Vst3OutputBus {
+            name: String::new(),
+            channel_count: channels,
+            control_voltage: false,
+            active,
+        }
+    }
+
+    fn blocks(count: usize) -> Vec<AudioBuffer> {
+        (0..count).map(|_| AudioBuffer::new(2, 8)).collect()
+    }
+
+    /// The bus table the plugin sees, as `(channels, first sample pointer)`.
+    fn seen_by_the_plugin(table: *mut AudioBusBuffers, count: i32) -> Vec<(i32, *mut f32)> {
+        (0..count as usize)
+            .map(|index| unsafe {
+                let bus = &*table.add(index);
+                (bus.num_channels, *bus.channel_buffers32)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_plugin_with_no_known_bus_has_the_single_main_bus() {
+        let mut buses = Vst3OutputBuses::new(&[]);
+        buses.prepare(2, 8);
+        let mut outputs = blocks(1);
+        let main = outputs[0].channel_mut(0).as_mut_ptr();
+
+        let (table, count) = buses.bind(&mut outputs);
+
+        assert_eq!((buses.num_ports(), count), (1, 1));
+        assert_eq!(seen_by_the_plugin(table, count), vec![(2, main)]);
+    }
+
+    #[test]
+    fn closed_buses_after_the_last_open_one_are_not_handed_over() {
+        let mut buses = Vst3OutputBuses::new(&[bus(2, true), bus(1, false), bus(1, false)]);
+        buses.prepare(2, 8);
+        let mut outputs = blocks(3);
+
+        let (_, count) = buses.bind(&mut outputs);
+
+        assert_eq!(buses.num_ports(), 3, "the graph still has a port per bus");
+        assert_eq!(count, 1, "the plugin sees what it saw before multi-out");
+    }
+
+    #[test]
+    fn a_closed_bus_between_open_ones_is_valid_memory_the_open_ones_are_bound() {
+        let mut buses = Vst3OutputBuses::new(&[bus(2, true), bus(1, false), bus(1, true)]);
+        buses.prepare(2, 8);
+        let mut outputs = blocks(3);
+        let main = outputs[0].channel_mut(0).as_mut_ptr();
+        let third = outputs[2].channel_mut(0).as_mut_ptr();
+
+        let (table, count) = buses.bind(&mut outputs);
+
+        let seen = seen_by_the_plugin(table, count);
+        assert_eq!(count, 3);
+        assert_eq!((seen[0], seen[2]), ((2, main), (1, third)));
+        assert_eq!(seen[1].0, 1, "the closed bus keeps its channel count");
+        assert!(!seen[1].1.is_null());
+        assert_ne!(seen[1].1, outputs[1].channel_mut(0).as_mut_ptr());
+    }
+
+    #[test]
+    fn a_bus_with_more_channels_than_the_engine_gets_valid_pointers_for_all() {
+        let mut buses = Vst3OutputBuses::new(&[bus(2, true), bus(6, true)]);
+        buses.prepare(2, 8);
+        let mut outputs = blocks(2);
+        let left = outputs[1].channel_mut(0).as_mut_ptr();
+        let right = outputs[1].channel_mut(1).as_mut_ptr();
+
+        let (table, _) = buses.bind(&mut outputs);
+
+        unsafe {
+            let surround = &*table.add(1);
+            assert_eq!(surround.num_channels, 6);
+            let channels = std::slice::from_raw_parts(surround.channel_buffers32, 6);
+            assert_eq!((channels[0], channels[1]), (left, right));
+            assert!(channels.iter().all(|channel| !channel.is_null()));
+        }
+    }
+
+    #[test]
+    fn a_mono_bus_is_spread_over_both_channels_and_the_main_bus_is_left_alone() {
+        let mut buses = Vst3OutputBuses::new(&[bus(2, true), bus(1, true)]);
+        buses.prepare(2, 8);
+        let mut outputs = blocks(2);
+        buses.bind(&mut outputs);
+        outputs[0].channel_mut(0).fill(0.5);
+        outputs[1].channel_mut(0).fill(0.25);
+
+        buses.finish(&mut outputs);
+
+        assert!(outputs[1].channel(1).iter().all(|&sample| sample == 0.25));
+        assert!(outputs[0].channel(1).iter().all(|&sample| sample == 0.0));
+    }
+
+    #[test]
+    fn a_graph_output_that_is_missing_gets_a_spare_buffer_not_null() {
+        let mut buses = Vst3OutputBuses::new(&[bus(2, true), bus(2, true)]);
+        buses.prepare(2, 8);
+        let mut outputs = blocks(1);
+
+        let (table, count) = buses.bind(&mut outputs);
+
+        assert_eq!(count, 2);
+        assert!(!seen_by_the_plugin(table, count)[1].1.is_null());
     }
 
     #[test]

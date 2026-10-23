@@ -31,8 +31,9 @@ use crate::plugin_formats::crash_guard;
 use crate::plugin_system::instance::{PluginInstance, FFI_GATE_HARVEST_BUDGET};
 use crate::plugin_system::lifecycle::LifecycleState;
 
+use super::buses::Vst3OutputBuses;
 use super::event_list::HostEventList;
-use super::ffi::{AudioBusBuffers, Event, HostParameterChanges, ProcessContext, ProcessData};
+use super::ffi::{Event, HostParameterChanges, ProcessContext, ProcessData};
 use super::midi_mapping::{push_mapped_controls, read_midi_mapping, MidiControllerMap};
 use super::param_delivery::{
     begin_output_changes, fill_param_changes, publish_output_changes, track_value_modulation,
@@ -162,8 +163,8 @@ pub struct VstInstrument {
     instance: Arc<PluginInstance>,
 
     // Per-block scratch — allocated in `prepare`, stable thereafter.
-    out_channel_ptrs: Vec<*mut f32>,
-    out_bus: AudioBusBuffers,
+    /// One bus per graph output port (ADR-014 multi-out).
+    outputs: Vst3OutputBuses,
     param_changes: Option<Box<HostParameterChanges>>,
     /// Where the plugin writes the changes it makes itself, for its controller.
     output_changes: Option<Box<HostParameterChanges>>,
@@ -194,8 +195,7 @@ impl VstInstrument {
         );
         VstInstrument {
             instance,
-            out_channel_ptrs: Vec::new(),
-            out_bus: unsafe { std::mem::zeroed() },
+            outputs: Vst3OutputBuses::new(&[]),
             param_changes: None,
             output_changes: None,
             events: None,
@@ -210,9 +210,12 @@ impl VstInstrument {
 }
 
 impl InstrumentDevice for VstInstrument {
+    fn num_output_ports(&self) -> usize {
+        self.outputs.num_ports()
+    }
+
     fn prepare(&mut self, ctx: PrepareContext) {
         self.num_channels = ctx.num_channels;
-        self.out_channel_ptrs = vec![std::ptr::null_mut(); ctx.num_channels];
         self.param_changes = Some(HostParameterChanges::boxed());
         self.output_changes = Some(HostParameterChanges::boxed());
         self.events = Some(HostEventList::boxed());
@@ -220,6 +223,8 @@ impl InstrumentDevice for VstInstrument {
         self.active = self
             .instance
             .vst3_ensure_active(ctx.sample_rate, ctx.max_block_size as u32);
+        self.outputs = Vst3OutputBuses::new(&self.instance.vst3_output_buses());
+        self.outputs.prepare(ctx.num_channels, ctx.max_block_size);
 
         // Skipped when a block is in flight: the controllers stay unmapped until
         // the next recompile.
@@ -263,14 +268,7 @@ impl InstrumentDevice for VstInstrument {
             std::ptr::null_mut()
         };
 
-        for (channel, slot) in self.out_channel_ptrs.iter_mut().enumerate() {
-            *slot = outputs[0].channel_mut(channel).as_mut_ptr();
-        }
-        self.out_bus = AudioBusBuffers {
-            num_channels: self.num_channels as i32,
-            silence_flags: 0,
-            channel_buffers32: self.out_channel_ptrs.as_mut_ptr(),
-        };
+        let (output_buses, output_bus_count) = self.outputs.bind(outputs);
 
         let output_changes_ptr = self
             .output_changes
@@ -285,9 +283,9 @@ impl InstrumentDevice for VstInstrument {
             symbolic_sample_size: 0,
             num_samples: transport.block_size as i32,
             num_inputs: 0,
-            num_outputs: 1,
+            num_outputs: output_bus_count,
             inputs: std::ptr::null_mut(),
-            outputs: &mut self.out_bus,
+            outputs: output_buses,
             input_param_changes: param_changes_ptr,
             output_param_changes: output_changes_ptr,
             input_events: event_list.as_ffi_ptr(),
@@ -314,8 +312,11 @@ impl InstrumentDevice for VstInstrument {
             // Not reused by the next compile: it gets a fresh instance.
             self.instance.set_lifecycle(LifecycleState::Error);
             crate::plugin_system::crash_marker::note_crash();
-        } else if let Some(changes) = self.output_changes.as_ref() {
-            publish_output_changes(&self.instance, changes);
+        } else {
+            self.outputs.finish(outputs);
+            if let Some(changes) = self.output_changes.as_ref() {
+                publish_output_changes(&self.instance, changes);
+            }
         }
     }
 

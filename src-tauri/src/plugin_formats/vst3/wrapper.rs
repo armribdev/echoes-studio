@@ -42,6 +42,7 @@ use crate::plugin_formats::crash_guard;
 use crate::plugin_system::instance::{PluginInstance, FFI_GATE_HARVEST_BUDGET};
 use crate::plugin_system::lifecycle::LifecycleState;
 
+use super::buses::Vst3OutputBuses;
 use super::ffi::{
     AudioBusBuffers, HostParameterChanges, IAudioProcessor, IComponent, ProcessContext,
     ProcessData, K_RESULT_OK,
@@ -72,9 +73,9 @@ pub struct VstWrapperNode {
     // Per-block scratch — pre-allocated in prepare, pointer-stable until next prepare.
     // Vecs are never resized on the audio thread.
     in_channel_ptrs: Vec<*mut f32>,
-    out_channel_ptrs: Vec<*mut f32>,
     in_bus: AudioBusBuffers,
-    out_bus: AudioBusBuffers,
+    /// One bus per graph output port (ADR-014 multi-out), built in `prepare`.
+    outputs: Vst3OutputBuses,
 
     num_channels: usize,
 
@@ -119,9 +120,8 @@ impl VstWrapperNode {
         Self {
             instance,
             in_channel_ptrs: Vec::new(),
-            out_channel_ptrs: Vec::new(),
             in_bus: unsafe { std::mem::zeroed() },
-            out_bus: unsafe { std::mem::zeroed() },
+            outputs: Vst3OutputBuses::new(&[]),
             num_channels: 2,
             param_changes: None,
             output_changes: None,
@@ -153,14 +153,13 @@ impl AudioNode for VstWrapperNode {
         1
     }
     fn num_output_ports(&self) -> usize {
-        1
+        self.outputs.num_ports()
     }
 
     fn prepare(&mut self, ctx: PrepareContext) {
         self.num_channels = ctx.num_channels;
 
         self.in_channel_ptrs = vec![std::ptr::null_mut(); ctx.num_channels];
-        self.out_channel_ptrs = vec![std::ptr::null_mut(); ctx.num_channels];
 
         // Pre-allocate the parameter-change list (ADR-007) — heap, off-RT.
         self.param_changes = Some(HostParameterChanges::boxed());
@@ -172,6 +171,8 @@ impl AudioNode for VstWrapperNode {
         // (no double `setActive`).
         self.instance
             .vst3_ensure_active(ctx.sample_rate, ctx.max_block_size as u32);
+        self.outputs = Vst3OutputBuses::new(&self.instance.vst3_output_buses());
+        self.outputs.prepare(ctx.num_channels, ctx.max_block_size);
 
         // Query intrinsic latency after setup so the value reflects the
         // configured sample rate / block size.  VST3 spec: callable from the
@@ -246,20 +247,12 @@ impl AudioNode for VstWrapperNode {
             };
         }
 
-        for c in 0..nc {
-            self.out_channel_ptrs[c] = outputs[0].channel_mut(c).as_mut_ptr();
-        }
-
         self.in_bus = AudioBusBuffers {
             num_channels: nc as i32,
             silence_flags: if inputs.is_empty() { u64::MAX } else { 0 },
             channel_buffers32: self.in_channel_ptrs.as_mut_ptr(),
         };
-        self.out_bus = AudioBusBuffers {
-            num_channels: nc as i32,
-            silence_flags: 0,
-            channel_buffers32: self.out_channel_ptrs.as_mut_ptr(),
-        };
+        let (output_buses, output_bus_count) = self.outputs.bind(outputs);
 
         let output_changes_ptr = self
             .output_changes
@@ -274,9 +267,9 @@ impl AudioNode for VstWrapperNode {
             symbolic_sample_size: 0,
             num_samples: nf as i32,
             num_inputs: 1,
-            num_outputs: 1,
+            num_outputs: output_bus_count,
             inputs: &mut self.in_bus,
-            outputs: &mut self.out_bus,
+            outputs: output_buses,
             input_param_changes: param_changes_ptr,
             output_param_changes: output_changes_ptr,
             input_events: std::ptr::null_mut(),
@@ -308,6 +301,7 @@ impl AudioNode for VstWrapperNode {
             return;
         }
         if r == K_RESULT_OK {
+            self.outputs.finish(outputs);
             if let Some(changes) = self.output_changes.as_ref() {
                 publish_output_changes(&self.instance, changes);
             }

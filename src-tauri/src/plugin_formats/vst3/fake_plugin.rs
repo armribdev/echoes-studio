@@ -540,6 +540,8 @@ pub(crate) struct FakeBus {
     aux: bool,
     control_voltage: bool,
     arrangement: Cell<u64>,
+    /// Written to every sample of every channel the host hands over; 0 = left alone.
+    level: f32,
 }
 
 impl FakeBus {
@@ -549,7 +551,13 @@ impl FakeBus {
             aux: false,
             control_voltage: false,
             arrangement: Cell::new(arrangement),
+            level: 0.0,
         }
+    }
+
+    /// The plugin renders `level` on this bus when `process` is given it.
+    pub fn writing(self, level: f32) -> Self {
+        FakeBus { level, ..self }
     }
 
     pub fn aux(name: &str, arrangement: u64) -> Self {
@@ -575,6 +583,8 @@ pub(crate) struct FakeBuses {
     accepts_arrangements: bool,
     undescribed_outputs: usize,
     reported_outputs: Cell<usize>,
+    /// Channels of each output bus `process` was given, per call.
+    process_shapes: RefCell<Vec<Vec<i32>>>,
     arrangement_calls: RefCell<Vec<(Vec<u64>, Vec<u64>)>>,
     /// `(direction, index, state)` of every audio `activateBus`.
     activations: RefCell<Vec<(i32, i32, bool)>>,
@@ -588,6 +598,7 @@ impl FakeBuses {
             accepts_arrangements: true,
             undescribed_outputs: 0,
             reported_outputs: Cell::new(usize::MAX),
+            process_shapes: RefCell::new(Vec::new()),
             arrangement_calls: RefCell::new(Vec::new()),
             activations: RefCell::new(Vec::new()),
         })
@@ -610,6 +621,11 @@ impl FakeBuses {
 
     pub fn activations(&self) -> Vec<(i32, i32, bool)> {
         self.activations.borrow().clone()
+    }
+
+    /// Per `process` call, the channel count of each output bus it was given.
+    pub fn process_shapes(&self) -> Vec<Vec<i32>> {
+        self.process_shapes.borrow().clone()
     }
 
     /// The plugin now declares only its first `count` output buses, as after a
@@ -885,12 +901,38 @@ unsafe extern "C" fn processor_get_latency_samples(_: *mut IAudioProcessor) -> u
     0
 }
 
+/// Renders each output bus the host handed over at its level.
+unsafe fn write_output_buses(buses: &FakeBuses, data: &ProcessData) {
+    let handed_over: &[_] = if data.outputs.is_null() {
+        &[]
+    } else {
+        std::slice::from_raw_parts(data.outputs, data.num_outputs.max(0) as usize)
+    };
+    buses
+        .process_shapes
+        .borrow_mut()
+        .push(handed_over.iter().map(|bus| bus.num_channels).collect());
+    for (bus, buffers) in buses.of_direction(K_OUTPUT).iter().zip(handed_over) {
+        if bus.level == 0.0 {
+            continue;
+        }
+        let channels =
+            std::slice::from_raw_parts(buffers.channel_buffers32, buffers.num_channels as usize);
+        for &channel in channels {
+            std::slice::from_raw_parts_mut(channel, data.num_samples as usize).fill(bus.level);
+        }
+    }
+}
+
 /// Reads the input parameter list the way a plugin does, through its vtables.
 unsafe extern "C" fn processor_process(
     this: *mut IAudioProcessor,
     data: *mut ProcessData,
 ) -> TResult {
     let processor = &*(this as *const FakeProcessor);
+    if let Some(buses) = processor.buses.as_ref() {
+        write_output_buses(buses, &*data);
+    }
     let Some(units) = processor.units.as_ref() else {
         return K_RESULT_OK;
     };

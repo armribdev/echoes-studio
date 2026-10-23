@@ -48,6 +48,8 @@ mod vst3_preset_file_tests;
 #[cfg(all(test, windows))]
 mod vst3_mirror_tests;
 #[cfg(all(test, windows))]
+mod vst3_output_bus_tests;
+#[cfg(all(test, windows))]
 mod vst3_modulated_state_tests;
 #[cfg(all(test, windows))]
 mod vst3_program_tests;
