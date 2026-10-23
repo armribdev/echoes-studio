@@ -202,3 +202,23 @@ the **save** direction's live reads are all fenced via the per-instance FFI gate
 the wrappers' `prepare` introspection — safe during playback. No save-direction
 follow-up remains; future live-FFI callers (GUI editor get/setState) must hold
 the gate.
+
+## Amendment 2026-10-23 — modulated bases before a VST3 state save
+
+VST3 has no host modulation (ADR-021): a parameter modulated by value is moved
+around a base, so the processor holds `base + offset` when `getState` runs and
+the saved project would keep a point of the modulation. CLAP restores the base
+with `clap.params.flush` before `clap.state.save`.
+
+**Decision.** `PluginInstance::save_state_blob` for VST3 first sends the base of
+every parameter modulated by value (`EditState::followed_bases`) in a
+**zero-sample `process`** — the parameter flush `ProcessData` allows — then reads
+`getState`. It follows the rule of this ADR: the caller holds the FFI gate, so
+the audio thread cannot be in `process` meanwhile, and the next block modulates
+again. The call runs behind the SEH guard (a crash marks the instance as in
+error). Nothing is sent when no parameter is modulated by value or the plugin is
+not active, so every other plugin keeps the previous path.
+
+Verified on TDR Nova: a state saved while modulated holds the modulated value,
+the same save with the base put back holds the base, and the plugin does not
+crash on a zero-sample `process`.

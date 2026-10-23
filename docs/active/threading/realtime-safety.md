@@ -354,6 +354,29 @@ does what it already does with a queued change — before taking the gate again 
 `getState` / `setComponentState`. Listing programs reads the controller under the
 gate; listing files touches the disk without any gate or engine lock.
 
+VST3 controller follow-up (ADR-008 amendment, 2026-10-23) adds three things the
+audio thread does and one it never does:
+
+- **Publishes** to `ParamMirror` (`vst3/param_mirror.rs`): per parameter, one
+  relaxed store of the value and one release store of a flag into a preallocated
+  table of 2048 slots. A slot is claimed with a compare-and-swap on its id;
+  probing is bounded (32), so a full table drops the value. No allocation, lock
+  or wait. When no editor is open, one acquire load of the watcher count and
+  nothing else.
+- **Fills** a second preallocated `HostParameterChanges` per wrapper (the plugin's
+  `outputParameterChanges`, about 200 KB boxed in `prepare`), emptied each block
+  with `reset()`; the plugin's `addParameterData` / `addPoint` use the same
+  allocation-free code as the input list, and a plugin that writes more than 128
+  parameters gets a null queue. The last point of each queue is then published.
+- It does **not** call the controller. The window thread does, from its
+  `WM_TIMER`, without the FFI gate: a held gate makes the audio thread bypass the
+  blocks it overlaps, which a 60 Hz call would turn into audible dropouts.
+
+A VST3 state save (ADR-010 amendment, 2026-10-23) runs a zero-sample `process` on
+the **command thread**, only with the FFI gate held, so it never overlaps a block
+(the audio thread bypasses the plugin meanwhile, like any other off-RT FFI call).
+It is sent only when a parameter is modulated by value.
+
 ### Crash marker (ADR-015)
 
 In-process plugin wrappers mark the running plugin in a memory-mapped file

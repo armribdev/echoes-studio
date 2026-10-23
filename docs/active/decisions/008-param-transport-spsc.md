@@ -203,3 +203,39 @@ Tracked debt for when the automation path (Phase 5e) is built on this queue:
   instead of calling `apply_modulation`.
 - **Sample-accurate** — populate `sample_offset` from intra-block scheduling
   behind the `sample_accurate_modulation` flag.
+
+## Amendment 2026-10-23 — values back to the VST3 controller
+
+The queue above carries host values **to the processor**. A VST3 controller
+never hears them, and the host must tell it (`setParamNormalized`) for the knobs
+of an open plugin window to follow automation, modulation and the plugin's own
+changes. Nothing here changes the queue, its single producer or its single
+consumer.
+
+**Decision.** The values that reach the processor through `inputParameterChanges`
+(the host queue above, modulation, automation) and the ones the plugin writes into
+`outputParameterChanges` are published by the **audio thread** into a preallocated
+table of atomics (`vst3/param_mirror.rs`, `ParamMirror`): the last value of each
+parameter, open addressing with a bounded number of probes, no allocation, no lock,
+a full table drops the value. The thread of the plugin window applies them to the
+controller from the editor's `WM_TIMER`, without the FFI gate. The audio thread
+never calls the controller.
+
+- **Why not the command thread.** `setParamNormalized` is a UI-thread call, and
+  holding the FFI gate makes the audio thread bypass every block that overlaps the
+  call. At 60 Hz that is an audible dropout every few seconds.
+- **Why not another ring.** The controller only wants the latest value; a table
+  coalesces by construction and cannot overflow.
+- **Nothing flows back.** While a value is applied, the controller's own
+  `beginEdit` / `performEdit` / `endEdit` are ignored (thread-local flag), a
+  parameter being dragged is skipped, and the window's own edits are never
+  published. The value given to the controller does not reach the processor.
+- **Only while a window is open.** A watcher count (`ParamMirror::watch`, kept by
+  `PluginInstance::watch_vst3_params`) turns the audio-thread writes on. Opening a
+  window first gives the controller the processor's state
+  (`sync_vst3_controller_with_processor`) so it starts on current values.
+- **The plugin's own changes** (`outputParameterChanges`, a second preallocated
+  `HostParameterChanges` per wrapper) do not mark the project unsaved and do not
+  move the base of a value-modulated parameter.
+- Cost: `MAX_PARAM_QUEUES = 128` still caps the output list of a plugin; it
+  receives a null queue beyond it.

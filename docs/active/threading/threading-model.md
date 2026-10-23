@@ -161,6 +161,16 @@ let peak = peak_atomic.load(Ordering::Acquire);
 Tauri events are **never emitted from the audio thread**. `app.emit()` acquires
 an internal lock — calling it from a real-time thread causes underruns.
 
+### Audio thread → plugin window thread (VST3 controller, ADR-008 amendment)
+
+While a VST3 editor is open, the audio thread publishes the last value of each
+parameter the processor received (host queue, modulation, automation) or wrote
+itself (`outputParameterChanges`) into a preallocated table of atomics
+(`ParamMirror`). The editor window's `WM_TIMER`, on the Win32 thread that owns the
+window, reads it and calls `setParamNormalized` on the controller. It takes no
+FFI gate (a held gate bypasses the audio blocks it overlaps) and the audio thread
+never calls the controller. Nothing is published while no window is open.
+
 ### MIDI capture thread → Audio thread (ADR-022)
 
 ```rust

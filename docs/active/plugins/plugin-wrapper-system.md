@@ -133,14 +133,65 @@ is lock-free and keeps its state in `EditState`:
     in a block is retried at the next recompile.
   - `kParamValuesChanged` and `kParamTitlesChanged` report a params rescan
     (`TEXT`, plus `INFO` for titles), so the UI refetches the lists and texts.
+- **`IComponentHandler2`** (2026-10-23). The same COM object answers it: the
+  handler holds two vtable pointers, the second is what a query returns for
+  `IComponentHandler2`, and a query from either pointer gives back the same
+  `FUnknown`. The IID was checked against the SDK and found in the TDR Nova binary.
+  - `setDirty(true)` marks the project unsaved; `setDirty(false)` does nothing
+    (the flag belongs to the project).
+  - `startGroupEdit` / `finishGroupEdit` answer OK without state: window edits
+    already reach the processor in order, at offset 0 of one block.
+  - `requestOpenEditor` answers `kResultFalse`: Echoes does not open a plugin
+    window on the plugin's own request (it would need an app handle and a new
+    command, and the SDK's use case is a plugin asking while a project loads).
 - Not done yet:
-  - `IComponentHandler2` (`setDirty`, group edits) and `IComponentHandler3`.
-  - Processor to controller sync: `outputParameterChanges` are not read, and
-    host automation does not move the knobs of an open plugin window.
-  - The modulated value is not put back on its base before a state save, as CLAP
-    does (`restore_value_modulated_bases`).
+  - `IComponentHandler3` (native context menus, would be new UI),
+    `IUnitHandler`, `IComponentHandlerBusActivation`, `IProgress`.
   - `performEdit` is expected on the window thread; a plugin that calls it from
     several threads breaks the single-producer rule of the ring.
+
+### The controller follows the processor (ADR-008 amendment, 2026-10-23)
+
+A plugin does not write back what the host sent it: for the knobs of an open
+window to follow automation, the host calls `setParamNormalized` itself. Two
+sources reach the controller through one channel, `ParamMirror`
+(`vst3/param_mirror.rs`, in `EditState`):
+
+- **Host values**, published by `fill_param_changes` (`vst3/param_delivery.rs`):
+  the host queue (`drain_params`: the Echoes UI, programs), the last modulation
+  point of the block and the last automation point. The window's own edits
+  (`drain_edits`) are not published.
+- **The plugin's own changes**, published after `process` by
+  `publish_output_changes`: `ProcessData.outputParameterChanges` is a second
+  preallocated `HostParameterChanges` in the effect and in the instrument, emptied
+  each block. They do not mark the project unsaved and do not move a modulation
+  base. A plugin that writes more than 128 parameters per block gets a null queue
+  beyond that.
+
+The audio thread only writes atomics, and only while an editor is open. The
+window's `WM_TIMER` (the VST3 `on_timer` of `plugin_system/gui.rs`) calls
+`PluginInstance::mirror_to_controller`, which applies the latest value of each
+parameter with `setParamNormalized` on the window thread, without the FFI gate,
+under the crash marker `Ui`. It skips a parameter being dragged (open gesture)
+and a crashed plugin, and while it applies a value it ignores the controller's own
+`beginEdit` / `performEdit` / `endEdit`, so a value given to the controller never
+reaches the processor.
+
+`open_vst3_editor` takes a `ParamMirrorWatch` (`PluginInstance::watch_vst3_params`)
+before the view is created: the table starts filling, and the controller first
+receives the processor's state (`sync_vst3_controller_with_processor`, the path
+programs use) so the window opens on current values. The guard drops with the
+window, also when the opening fails. That sync holds the FFI gate for the length
+of a `getState` / `setComponentState`, so the plugin may be bypassed for a block
+once per opening.
+
+Tests: `vst3/param_mirror.rs` (table), `plugin_system/vst3_mirror_tests.rs`
+(hand-made plugin: queue, modulation, automation, plugin outputs for the effect
+and the instrument, drag, echo of a faulty controller, closed window), and
+`vst3_real_controller_follows_the_values_the_host_sends` on a real plugin. Not
+verified: a real plugin that writes `outputParameterChanges` (TDR Nova may not;
+Surge XT would tell), and the real `WM_TIMER` (the test calls
+`mirror_to_controller` from the test thread).
 
 ### Parameters (ADR-021)
 
@@ -166,7 +217,9 @@ them `plugin_param:<id>`, `parse_plugin_param_name`). Values travel
   current value. When modulation is removed, the base is pushed back
   (`VstWrapperNode::track_value_modulation`).
 
-**Never** call `IEditController::setParamNormalized` from the audio thread.
+**Never** call `IEditController::setParamNormalized` from the audio thread. The
+controller is brought up to date by the window thread (see "The controller follows
+the processor").
 
 ### Transport sync
 
@@ -218,6 +271,7 @@ A VST3 instrument is a `VstInstrument` (`vst3/instrument.rs`) behind
 - **Parameters.** Queued edits, plugin-window edits, modulation and automation use
   the same delivery as the effect (`vst3/param_delivery.rs`).
 - Not done: plugin latency, note expressions, `outputEvents`, extra output buses.
+  `outputParameterChanges` are read (see "The controller follows the processor").
 
 ### State serialisation
 
@@ -240,6 +294,14 @@ fn load_state(&mut self, state: &DeviceState) {
 
 State travels as `IBStream` bytes, not JSON — VST3 spec compliance. See
 `../decisions/010-plugin-state-persistence.md`.
+
+**Modulated bases (ADR-010 amendment, 2026-10-23).** A parameter modulated by
+value holds `base + offset` in the processor, so `save_state_blob` first sends the
+bases (`EditState::followed_bases`) in a zero-sample `process`
+(`param_delivery::flush_param_bases`, SEH-guarded, FFI gate held by the caller),
+as CLAP does with `clap.params.flush`. Only when a parameter is modulated by value
+and the plugin is active. On TDR Nova a save while modulated held the modulated
+value; with the flush it holds the base.
 
 ---
 
