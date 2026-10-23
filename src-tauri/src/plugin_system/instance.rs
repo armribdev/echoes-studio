@@ -57,13 +57,13 @@ use crate::plugin_formats::clap::ffi::{
     notify_track_info_changed, read_note_names, ClapHost, ClapHostContext, ClapLibrary, ClapPlugin,
     HostTrackInfo, NoteName, PresetRequest, TimerSchedule, CLAP_PRESET_LOCATION_FILE,
 };
-use crate::plugin_formats::vst3::buses::{read_output_buses, Vst3OutputBus};
+use crate::plugin_formats::vst3::buses::{propose_arrangements, read_output_buses, Vst3OutputBus};
 use crate::plugin_formats::vst3::channel_context::notify_channel_context;
 use crate::plugin_formats::vst3::component_handler::{ComponentHandler, EditState};
 use crate::plugin_formats::vst3::ffi::{
     release_controller, set_controller_component_state, set_controller_state,
     sync_controller_to_state, FUnknown, IAudioProcessor, IComponent, IEditController, ProcessSetup,
-    Vst3Controller, Vst3Library, K_AUDIO, K_EVENT, K_INPUT, K_OUTPUT, SPEAKER_STEREO,
+    Vst3Controller, Vst3Library, K_AUDIO, K_EVENT, K_INPUT, K_OUTPUT,
 };
 use crate::plugin_formats::vst3::host::decode_plugin_id;
 use crate::plugin_formats::vst3::param_delivery::flush_param_bases;
@@ -1292,24 +1292,11 @@ impl PluginInstance {
         // VST3 order: bus setup and `setupProcessing` while inactive, then
         // `setActive`, then `setProcessing`.
         unsafe {
-            let bus_count = (*(*comp).vtbl).get_bus_count;
             // An instrument declares no audio input: it is told so, and no input bus is opened.
-            let has_audio_input = bus_count(comp, K_AUDIO, K_INPUT) > 0;
-            let has_event_input = bus_count(comp, K_EVENT, K_INPUT) > 0;
-
-            let mut in_arr = SPEAKER_STEREO;
-            let mut out_arr = SPEAKER_STEREO;
+            let has_audio_input = propose_arrangements(comp, proc);
+            let has_event_input = ((*(*comp).vtbl).get_bus_count)(comp, K_EVENT, K_INPUT) > 0;
             if has_audio_input {
-                ((*(*proc).vtbl).set_bus_arrangements)(proc, &mut in_arr, 1, &mut out_arr, 1);
                 ((*(*comp).vtbl).activate_bus)(comp, K_AUDIO, K_INPUT, 0, 1);
-            } else {
-                ((*(*proc).vtbl).set_bus_arrangements)(
-                    proc,
-                    std::ptr::null_mut(),
-                    0,
-                    &mut out_arr,
-                    1,
-                );
             }
             *self
                 .vst3_output_buses

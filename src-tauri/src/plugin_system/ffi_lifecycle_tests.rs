@@ -1505,6 +1505,12 @@ fn vst3_real_plugins_report_their_output_buses() {
         );
         assert!(instance.vst3_ensure_active(48_000.0, 512));
         let buses = instance.vst3_output_buses();
+        let (component, _) = instance.vst3_handles().expect("a VST3 instance");
+        let audio_inputs = unsafe {
+            use crate::plugin_formats::vst3::ffi::{K_AUDIO, K_INPUT};
+            ((*(*component.as_ptr()).vtbl).get_bus_count)(component.as_ptr(), K_AUDIO, K_INPUT)
+        };
+        eprintln!("{LOG} {device_id} declares {audio_inputs} audio input bus(es)");
         for (index, bus) in buses.iter().enumerate() {
             eprintln!(
                 "{LOG} {device_id} output bus {index}: '{}' {} channel(s){}",

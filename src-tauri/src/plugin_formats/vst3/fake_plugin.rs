@@ -530,11 +530,101 @@ unsafe extern "C" fn component_set_state(this: *mut IComponent, stream: *mut c_v
     K_RESULT_OK
 }
 
+pub(crate) const MONO: u64 = 1 << 19;
+pub(crate) const STEREO: u64 = 0x3;
+pub(crate) const SURROUND_5_1: u64 = 0x3F;
+
+/// One audio bus of the fake: its channel count is that of its arrangement.
+pub(crate) struct FakeBus {
+    name: String,
+    aux: bool,
+    control_voltage: bool,
+    arrangement: Cell<u64>,
+}
+
+impl FakeBus {
+    pub fn main(name: &str, arrangement: u64) -> Self {
+        FakeBus {
+            name: name.into(),
+            aux: false,
+            control_voltage: false,
+            arrangement: Cell::new(arrangement),
+        }
+    }
+
+    pub fn aux(name: &str, arrangement: u64) -> Self {
+        FakeBus {
+            aux: true,
+            ..FakeBus::main(name, arrangement)
+        }
+    }
+
+    pub fn control_voltage(self) -> Self {
+        FakeBus {
+            control_voltage: true,
+            ..self
+        }
+    }
+}
+
+/// The audio buses of a fake plugin, and what the host did to them.
+pub(crate) struct FakeBuses {
+    inputs: Vec<FakeBus>,
+    outputs: Vec<FakeBus>,
+    /// A plugin that keeps its own layout answers `kResultFalse` to a request.
+    accepts_arrangements: bool,
+    undescribed_outputs: usize,
+    arrangement_calls: RefCell<Vec<(Vec<u64>, Vec<u64>)>>,
+    /// `(direction, index, state)` of every audio `activateBus`.
+    activations: RefCell<Vec<(i32, i32, bool)>>,
+}
+
+impl FakeBuses {
+    pub fn new(inputs: Vec<FakeBus>, outputs: Vec<FakeBus>) -> Box<Self> {
+        Box::new(FakeBuses {
+            inputs,
+            outputs,
+            accepts_arrangements: true,
+            undescribed_outputs: 0,
+            arrangement_calls: RefCell::new(Vec::new()),
+            activations: RefCell::new(Vec::new()),
+        })
+    }
+
+    /// The plugin counts `extra` more output buses than it will describe.
+    pub fn declare_more_than_it_describes(&mut self, extra: usize) {
+        self.undescribed_outputs = extra;
+    }
+
+    pub fn keeping_its_layout(mut self: Box<Self>) -> Box<Self> {
+        self.accepts_arrangements = false;
+        self
+    }
+
+    /// `(inputs, outputs)` of every `setBusArrangements` the host made.
+    pub fn arrangement_calls(&self) -> Vec<(Vec<u64>, Vec<u64>)> {
+        self.arrangement_calls.borrow().clone()
+    }
+
+    pub fn activations(&self) -> Vec<(i32, i32, bool)> {
+        self.activations.borrow().clone()
+    }
+
+    fn of_direction(&self, direction: i32) -> &[FakeBus] {
+        if direction == K_OUTPUT {
+            &self.outputs
+        } else {
+            &self.inputs
+        }
+    }
+}
+
 #[repr(C)]
 struct FakeComponent {
     vtbl: *const IComponentVtbl,
     state: Vec<u8>,
     units: *mut FakeUnits,
+    buses: *mut FakeBuses,
 }
 
 unsafe extern "C" fn component_get_state(this: *mut IComponent, stream: *mut c_void) -> TResult {
@@ -631,43 +721,72 @@ unsafe extern "C" fn processor_release(_: *mut IAudioProcessor) -> u32 {
     0
 }
 
-/// One audio input and one audio output, no event bus: an effect.
-unsafe extern "C" fn component_get_bus_count(_: *mut IComponent, media: i32, _: i32) -> i32 {
-    i32::from(media == K_AUDIO)
+/// Without [`FakeBuses`]: one audio input and one audio output, no event bus, an
+/// effect.
+unsafe extern "C" fn component_get_bus_count(
+    this: *mut IComponent,
+    media: i32,
+    direction: i32,
+) -> i32 {
+    match (*(this as *const FakeComponent)).buses.as_ref() {
+        Some(buses) if media == K_AUDIO && direction == K_OUTPUT => {
+            (buses.outputs.len() + buses.undescribed_outputs) as i32
+        }
+        Some(buses) if media == K_AUDIO => buses.inputs.len() as i32,
+        Some(_) => 0,
+        None => i32::from(media == K_AUDIO),
+    }
 }
 
 unsafe extern "C" fn component_get_bus_info(
-    _: *mut IComponent,
+    this: *mut IComponent,
     media: i32,
     direction: i32,
     index: i32,
     bus: *mut c_void,
 ) -> TResult {
-    if media != K_AUDIO || index != 0 {
-        return K_INVALID_ARGUMENT;
-    }
     let bus = &mut *(bus as *mut BusInfo);
+    let index = usize::try_from(index).unwrap_or(usize::MAX);
+    let default_bus;
+    let declared = match (*(this as *const FakeComponent)).buses.as_ref() {
+        Some(buses) => buses.of_direction(direction).get(index),
+        None => {
+            let name = if direction == K_OUTPUT {
+                "Stereo Out"
+            } else {
+                "Stereo In"
+            };
+            default_bus = FakeBus::main(name, STEREO);
+            (index == 0).then_some(&default_bus)
+        }
+    };
+    let Some(declared) = declared.filter(|_| media == K_AUDIO) else {
+        return K_INVALID_ARGUMENT;
+    };
     bus.media_type = media;
     bus.direction = direction;
-    bus.channel_count = 2;
-    write_string128(
-        bus.name.as_mut_ptr(),
-        if direction == K_OUTPUT {
-            "Stereo Out"
-        } else {
-            "Stereo In"
-        },
-    );
+    bus.channel_count = declared.arrangement.get().count_ones() as i32;
+    bus.bus_type = i32::from(declared.aux);
+    bus.flags = if declared.control_voltage { 2 } else { 0 };
+    write_string128(bus.name.as_mut_ptr(), &declared.name);
     K_RESULT_OK
 }
 
 unsafe extern "C" fn component_activate_bus(
-    _: *mut IComponent,
-    _: i32,
-    _: i32,
-    _: i32,
-    _: u8,
+    this: *mut IComponent,
+    media: i32,
+    direction: i32,
+    index: i32,
+    state: u8,
 ) -> TResult {
+    if let Some(buses) = (*(this as *const FakeComponent)).buses.as_ref() {
+        if media == K_AUDIO {
+            buses
+                .activations
+                .borrow_mut()
+                .push((direction, index, state != 0));
+        }
+    }
     K_RESULT_OK
 }
 
@@ -679,16 +798,68 @@ unsafe extern "C" fn component_set_active(_: *mut IComponent, _: u8) -> TResult 
 struct FakeProcessor {
     vtbl: *const IAudioProcessorVtbl,
     units: *mut FakeUnits,
+    buses: *mut FakeBuses,
 }
 
+/// With [`FakeBuses`], the request must name every bus, as the spec requires;
+/// the plugin then takes it or keeps its own layout.
 unsafe extern "C" fn processor_set_bus_arrangements(
-    _: *mut IAudioProcessor,
-    _: *mut u64,
-    _: i32,
-    _: *mut u64,
-    _: i32,
+    this: *mut IAudioProcessor,
+    inputs: *mut u64,
+    input_count: i32,
+    outputs: *mut u64,
+    output_count: i32,
 ) -> TResult {
+    let Some(buses) = (*(this as *const FakeProcessor)).buses.as_ref() else {
+        return K_RESULT_OK;
+    };
+    let read = |arrangements: *mut u64, count: i32| -> Vec<u64> {
+        if arrangements.is_null() {
+            return Vec::new();
+        }
+        std::slice::from_raw_parts(arrangements, count.max(0) as usize).to_vec()
+    };
+    let (inputs, outputs) = (read(inputs, input_count), read(outputs, output_count));
+    buses
+        .arrangement_calls
+        .borrow_mut()
+        .push((inputs.clone(), outputs.clone()));
+    if !buses.accepts_arrangements
+        || inputs.len() != buses.inputs.len()
+        || outputs.len() != buses.outputs.len()
+    {
+        return K_RESULT_FALSE;
+    }
+    for (bus, arrangement) in buses.inputs.iter().zip(inputs) {
+        bus.arrangement.set(arrangement);
+    }
+    for (bus, arrangement) in buses.outputs.iter().zip(outputs) {
+        bus.arrangement.set(arrangement);
+    }
     K_RESULT_OK
+}
+
+unsafe extern "C" fn processor_get_bus_arrangement(
+    this: *mut IAudioProcessor,
+    direction: i32,
+    index: i32,
+    arrangement: *mut u64,
+) -> TResult {
+    let declared = (*(this as *const FakeProcessor))
+        .buses
+        .as_ref()
+        .and_then(|buses| {
+            buses
+                .of_direction(direction)
+                .get(usize::try_from(index).ok()?)
+        });
+    match declared {
+        Some(bus) => {
+            *arrangement = bus.arrangement.get();
+            K_RESULT_OK
+        }
+        None => K_INVALID_ARGUMENT,
+    }
 }
 
 unsafe extern "C" fn processor_setup_processing(
@@ -769,7 +940,15 @@ fn vtbl_of<T>(methods: &[(usize, *const ())]) -> *const T {
 /// A single-controller VST3 instance whose controller answers `listener`.  Nothing
 /// is activated; dropping the instance tears the fakes down as for a real plugin.
 pub(crate) fn fake_vst3_instance(listener: &mut FakeListener) -> Arc<PluginInstance> {
-    build_instance(listener, null_mut())
+    build_instance(listener, null_mut(), null_mut())
+}
+
+/// As [`fake_vst3_instance`], with the audio buses `buses` describes.
+pub(crate) fn fake_vst3_instance_with_buses(
+    listener: &mut FakeListener,
+    buses: &mut FakeBuses,
+) -> Arc<PluginInstance> {
+    build_instance(listener, null_mut(), buses)
 }
 
 /// As [`fake_vst3_instance`], with a controller that offers `units` and the
@@ -778,10 +957,14 @@ pub(crate) fn fake_vst3_instance_with_units(
     listener: &mut FakeListener,
     units: &mut FakeUnits,
 ) -> Arc<PluginInstance> {
-    build_instance(listener, units)
+    build_instance(listener, units, null_mut())
 }
 
-fn build_instance(listener: *mut FakeListener, units: *mut FakeUnits) -> Arc<PluginInstance> {
+fn build_instance(
+    listener: *mut FakeListener,
+    units: *mut FakeUnits,
+    buses: *mut FakeBuses,
+) -> Arc<PluginInstance> {
     let controller = Box::leak(Box::new(FakeController {
         vtbl: vtbl_of(&[
             (
@@ -841,6 +1024,7 @@ fn build_instance(listener: *mut FakeListener, units: *mut FakeUnits) -> Arc<Plu
     let component = Box::leak(Box::new(FakeComponent {
         state,
         units,
+        buses,
         vtbl: vtbl_of::<IComponentVtbl>(&[
             (
                 offset_of!(IComponentVtbl, terminate),
@@ -887,6 +1071,10 @@ fn build_instance(listener: *mut FakeListener, units: *mut FakeUnits) -> Arc<Plu
                 processor_set_bus_arrangements as *const (),
             ),
             (
+                offset_of!(IAudioProcessorVtbl, get_bus_arrangement),
+                processor_get_bus_arrangement as *const (),
+            ),
+            (
                 offset_of!(IAudioProcessorVtbl, setup_processing),
                 processor_setup_processing as *const (),
             ),
@@ -904,6 +1092,7 @@ fn build_instance(listener: *mut FakeListener, units: *mut FakeUnits) -> Arc<Plu
             ),
         ]),
         units,
+        buses,
     }));
     let controller = NonNull::from(controller);
     let handler = ComponentHandler::boxed();
