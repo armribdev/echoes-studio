@@ -112,8 +112,11 @@ is dropped. A plugin node's output count is only known once it is loaded:
 the compiler widens the step to the prepared node's `num_output_ports()` and
 cuts any edge from an output that does not exist (ADR-014 multi-out update).
 VST3 plugins work the same way (ADR-014 amendment 2026-10-23), with one extra
-step: the compiler tells the host which aux ports an edge reads before building
-the nodes, and the plugin opens only those output buses.
+step for outputs: the compiler tells the host which aux ports an edge reads before
+building the nodes, and the plugin opens only those output buses. The sidechain
+edge needs nothing more: the VST3 scan counts each effect's aux input buses into
+`num_sidechain_inputs`, and the wrapper opens and feeds them (ADR-014 amendment
+2026-10-23). Latency compensation aligns the sidechain port like any input.
 
 Edges are only added during graph compilation on the command thread. The audio
 thread never modifies the graph topology.

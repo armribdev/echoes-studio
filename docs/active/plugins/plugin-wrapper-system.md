@@ -89,8 +89,9 @@ call only fills pointer values — no `Vec::push`, no `Box`.
   `IMessage`").
 - **Activation order** (`PluginInstance::vst3_ensure_active`):
   `setBusArrangements` (every audio bus named, see "VST3 multi-out") →
-  `activateBus` (audio in when the plugin has one, audio out and the auxiliary
-  outputs the graph reads, event in when the plugin has one) → `setupProcessing`
+  `activateBus` (audio in when the plugin has one, its auxiliary inputs — a
+  sidechain, see "VST3 sidechain" —, audio out and the auxiliary outputs the
+  graph reads, event in when the plugin has one) → `setupProcessing`
   → `setActive(1)` → `setProcessing(1)`, as the spec requires. A config change,
   a `restartComponent`, or a change of the auxiliary outputs read on a live
   instance deactivates and reactivates it under the FFI gate, like CLAP.
@@ -286,9 +287,9 @@ project, command or event change. In-process only (the sandbox is CLAP only).
 - **Reading** (`vst3/buses.rs`). At every activation `vst3_ensure_active` reads
   the output buses (`getBusCount`, then `getBusInfo` after `setBusArrangements`)
   into `PluginInstance::vst3_output_buses`, so a `restartComponent(kIoChanged)`
-  is followed by the reactivation it already requests. Not at scan time: a scan
-  creates no component, and instantiating every plugin at startup would load
-  their samples. At most 32 buses and 64 channels per bus are read; reading
+  is followed by the reactivation it already requests. Not at scan time: the
+  scan only counts the auxiliary inputs of effects (see "VST3 sidechain"), and
+  instantiating every instrument at startup would load their samples. At most 32 buses and 64 channels per bus are read; reading
   stops at the first bus the plugin will not describe. `BusInfo` (276 bytes) was
   checked against `ivstcomponent.h`. A bus flagged `kIsControlVoltage` is never
   offered nor opened.
@@ -299,8 +300,8 @@ project, command or event change. In-process only (the sandbox is CLAP only).
   stereo (unchanged); any other bus is offered the arrangement it already has
   (`getBusArrangement`), so a mono or surround bus is not forced. The plugin may
   keep its own layout (it answers `kResultFalse`): the buses are read again after,
-  so its answer wins. Auxiliary input buses (a sidechain) are named but stay
-  closed.
+  so its answer wins. Auxiliary input buses (a sidechain) are named like the
+  others and opened, see "VST3 sidechain".
 - **Which buses open.** What a plugin does with a closed output bus is its own
   business: some mix that sound into their main bus (the Steinberg convention for
   multi-out instruments), so opening every bus would take sound out of the main
@@ -329,8 +330,8 @@ project, command or event change. In-process only (the sandbox is CLAP only).
   `bind` / `finish` only write pointers and copy samples.
 - **Listing.** `PluginHost::plugin_outputs` offers the buses ≥ 1 of a loaded VST3
   (name, channels), once it has been activated.
-- **Not done:** auxiliary inputs for VST3 (the sidechain picker is CLAP only),
-  `kDefaultActive`, a user-chosen activation, `IComponentHandlerBusActivation`.
+- **Not done:** `kDefaultActive` for outputs, a user-chosen activation,
+  `IComponentHandlerBusActivation`.
 
 Tests: `vst3/buses.rs` (layout, arrangements, activation, tables) and
 `plugin_system/vst3_output_bus_tests.rs` (effect and instrument rendering on the
@@ -346,6 +347,66 @@ it carries the note — peak 0.41 — while the main bus keeps its sound, a copy
 than a move; "Scene B" stays silent on the default patch). Surge XT lives in a
 vendor folder (`Surge Synth Team/Surge XT.vst3/Contents/x86_64-win/`), deeper than
 the harness's default search: point `ECHOES_TEST_VST3` at the inner `.vst3`.
+
+### VST3 sidechain (ADR-014 amendment, 2026-10-23)
+
+An effect with an auxiliary audio input bus receives the signal of another track
+through the same routing as a CLAP effect: `PluginParams.sidechain_source`,
+`UPDATE_EFFECT`, and `SidechainPicker.svelte` (shown when `num_sidechain_inputs`
+is above 0, whatever the format). No project, command, event or frontend change.
+In-process only (the sandbox is CLAP only).
+
+- **Scan** (`vst3/host.rs::probe_aux_input_count`). For each effect class
+  (instruments are not probed, as for CLAP) the scan creates a throwaway component
+  in the library it already loaded (`instantiate_processor`), reads its auxiliary
+  inputs (`vst3/buses.rs::read_aux_inputs`), then `terminate` and `release`, all in
+  one `crash_guard` call. A plugin that fails or crashes counts as having none. An
+  auxiliary input is an input bus after the main one, of type `kAux`, not flagged
+  control voltage, and consecutive from bus 1 (the SDK puts every `kMain` bus
+  first), so input port `p` is input bus `p`. The count fills
+  `PluginManifest.num_sidechain_inputs`, from which the compiler sizes the node's
+  inputs. This is the one place a scan creates a component: startup is a little
+  slower for each effect.
+- **Activation.** `vst3_ensure_active` opens every auxiliary input bus after
+  `setBusArrangements`, which already named it with the arrangement it had (TDR
+  Nova's sidechain is mono), then reads their channel counts again
+  (`PluginInstance::vst3_aux_inputs`). Unlike an auxiliary output, it is always
+  open: nothing depends on whether a track is routed to it, and choosing a source
+  needs no reactivation.
+- **Process** (`Vst3InputBuses`, built in `prepare`, used by `VstWrapperNode`; an
+  instrument has no audio input). `ProcessData.inputs` is the table `[main, aux…]`
+  and `numInputs` its length, so a plugin without an auxiliary input is called as
+  before (one bus, flags unchanged).
+  - A bus nothing feeds gets zeros with every channel's silence flag set.
+  - A fed bus gets its source's channels. If the plugin wants one channel and the
+    source is stereo, it gets the average `(L+R)/2` from a preallocated mix; a bus
+    wider than the engine gets zeros on its extra channels.
+  - A silence flag is set only on a channel that is exactly zero over the block
+    (never on a non-zero one), and an auxiliary bus never has a null channel
+    pointer. `bind` only writes pointers, the mix and the flags.
+  - The node reports `1 + n` input ports from the instance, while the compiler
+    sizes it from the scan: a bus the graph has no port for is still handed over,
+    fed with zeros.
+- **One source.** `sidechain_source` feeds port 1, the first auxiliary bus; further
+  ones receive silence (the same limit as CLAP).
+- **Latency.** Nothing specific: `compute_latency_compensation` aligns every
+  converging input port, port 1 included (ADR-006), and the plugin's own latency
+  comes from `getLatencySamples`.
+- **Not done:** a source per auxiliary bus, a bus added by a later
+  `restartComponent(kIoChanged)` is opened but the node keeps the port count of the
+  scan, `IAudioPresentationLatency`.
+
+Tests: `vst3/buses.rs` (reading the auxiliary inputs; `Vst3InputBuses`: mono mix,
+wide bus, flags, unfed bus, short block), `plugin_system/vst3_sidechain_tests.rs`
+(the hand-made plugin records every input bus it receives: signal, silence, no port,
+no auxiliary input, a wrapper rebuilt on a live instance), `audio_graph/compiler.rs`
+(sidechain alignment), `ffi_lifecycle_tests.rs` on TDR Nova (2026-10-23):
+`vst3_real_plugins_report_their_input_buses` (bus 0 "Input" `kMain` stereo, bus 1
+"Sidechain" `kAux` mono, both `kDefaultActive`), `vst3_scan_counts_the_sidechain_inputs_of_real_effects`
+(1) and `vst3_real_sidechain_effect_processes_with_its_aux_bus_fed` (band 1 dynamic on
+"Ext SC": the output energy over 64 blocks is 4057 with a silent auxiliary bus and 98
+with a loud one, about −16 dB, so the detector hears the bus). Not hand-tested in the
+app.
 
 ### State serialisation
 
@@ -413,8 +474,7 @@ probes `clap.audio-ports` at scan time — a throwaway create → init → query
 destroy cycle, SEH-guarded — so `PluginManifest.num_sidechain_inputs` is the
 plugin's real aux input count, not always `0`. `ClapWrapperNode` builds one
 `ClapAudioBuffer` per input port (main at 0, aux at `1..`) and reports the real
-total from `num_input_ports()`. VST3 aux inputs (sidechain) are not read: VST3
-`getBusInfo` is used for outputs only (see "VST3 multi-out").
+total from `num_input_ports()`. VST3 has its own path (see "VST3 sidechain").
 
 **Sidechain routing (ADR-014 update, 2026-09-25).** `PluginParams.sidechain_source`
 names the track whose post-fader signal feeds a plugin's aux port 1.
