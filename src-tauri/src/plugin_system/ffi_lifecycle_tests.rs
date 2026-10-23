@@ -1855,3 +1855,66 @@ fn vst3_scan_counts_the_sidechain_inputs_of_real_effects() {
         }
     }
 }
+
+/// Read-only probe: what every installed VST3 reports for its latency and tail
+/// once activated, and whether it answers `IProcessContextRequirements`.
+/// `kInfiniteTail` is `0xFFFFFFFF`.
+#[test]
+fn vst3_real_plugins_report_their_latency_and_tail() {
+    use crate::plugin_formats::vst3::ffi::Tuid;
+    use crate::plugin_system::instance::FFI_GATE_HARVEST_BUDGET;
+
+    // `IProcessContextRequirements` (0x2A654303, 0xEF764E3D, 0x95B5FE83, 0x730EF6D0)
+    // in COM byte order: the first three groups of the SDK's big-endian bytes swapped.
+    let mut iid: Tuid = [0; 16];
+    for (chunk, word) in iid
+        .chunks_mut(4)
+        .zip([0x2A654303u32, 0xEF764E3D, 0x95B5FE83, 0x730EF6D0])
+    {
+        chunk.copy_from_slice(&word.to_be_bytes());
+    }
+    iid[..4].reverse();
+    iid[4..6].reverse();
+    iid[6..8].reverse();
+
+    let candidates = discover_all("ECHOES_TEST_VST3", "vst3");
+    if candidates.is_empty() {
+        eprintln!("{LOG} SKIP vst3_real_plugins_report_their_latency_and_tail — no .vst3 found");
+        return;
+    }
+    let key = "harness:vst3:latency-tail";
+    for path in &candidates {
+        let Some(device_id) = first_vst3_id(path) else {
+            continue;
+        };
+        let mut host = PluginHost::new();
+        host.registry_mut().add(vst3_manifest(&device_id, path));
+        if host.instantiate(key, &device_id, false).is_err() {
+            continue;
+        }
+        let instance = host.instance_by_key(key).expect("instance registered");
+        assert!(instance.vst3_ensure_active(48_000.0, 512));
+        let (_, processor) = instance.vst3_handles().expect("a VST3 instance");
+        let processor = processor.as_ptr();
+        let _gate = instance
+            .offrt_try_acquire(FFI_GATE_HARVEST_BUDGET)
+            .expect("an idle instance gives its gate");
+        let (latency, tail, requirements) = unsafe {
+            let latency = ((*(*processor).vtbl).get_latency_samples)(processor);
+            let tail = ((*(*processor).vtbl).get_tail_samples)(processor);
+            let mut requirements = std::ptr::null_mut();
+            let answer = ((*(*processor).vtbl).query_interface)(processor, &iid, &mut requirements);
+            if answer == 0 && !requirements.is_null() {
+                let unknown = requirements as *mut crate::plugin_formats::vst3::ffi::FUnknown;
+                ((*(*unknown).vtbl).release)(unknown);
+            }
+            (latency, tail, answer)
+        };
+        eprintln!(
+            "{LOG} {device_id} latency={latency} samples, tail={tail} samples{}, \
+             IProcessContextRequirements answer={requirements:#x}",
+            if tail == u32::MAX { " (infinite)" } else { "" }
+        );
+        assert!(!instance.has_crashed());
+    }
+}
