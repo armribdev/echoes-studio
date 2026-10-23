@@ -16,6 +16,9 @@ use super::ffi::{
 /// `u32` mask, so no more than 32 can be named.
 pub const MAX_AUDIO_BUSES: i32 = 32;
 
+/// Every output bus but the main one (bus 0, which is always open).
+pub const AUX_OUTPUT_BUSES: u32 = !1;
+
 /// Channels one bus may declare; a 7th order ambisonic bus has 64.
 const MAX_BUS_CHANNELS: i32 = 64;
 
@@ -45,6 +48,9 @@ pub struct Vst3OutputBus {
     pub channel_count: u32,
     /// Carries control data at sample rate, not sound: never routed to a track.
     pub control_voltage: bool,
+    /// Opened by the host at the last activation; an open bus gets its own
+    /// sound, a closed one is mixed by the plugin into its main bus.
+    pub active: bool,
 }
 
 /// The audio output buses of `component`, in bus order.  Reading stops at the
@@ -71,9 +77,39 @@ pub unsafe fn read_output_buses(component: *mut IComponent) -> Vec<Vst3OutputBus
                 name: string128_to_string(&info.name),
                 channel_count: info.channel_count.clamp(0, MAX_BUS_CHANNELS) as u32,
                 control_voltage: info.flags & BUS_IS_CONTROL_VOLTAGE != 0,
+                active: false,
             })
         })
         .collect()
+}
+
+/// Opens the main output bus, and the auxiliary ones `wanted` names (bit `n` =
+/// bus `n`) unless they carry control voltage.  A bus opened by an earlier
+/// activation (`previous`) and no longer wanted is closed, because a bus stays
+/// open until the host says otherwise.  Marks each bus of `buses` accordingly.
+///
+/// # Safety
+/// As [`read_output_buses`], with the plugin not active.
+pub unsafe fn open_output_buses(
+    component: *mut IComponent,
+    buses: &mut [Vst3OutputBus],
+    wanted: u32,
+    previous: u32,
+) {
+    let activate_bus = (*(*component).vtbl).activate_bus;
+    activate_bus(component, K_AUDIO, K_OUTPUT, 0, 1);
+    for (index, bus) in buses.iter_mut().enumerate() {
+        let bit = 1u32 << index;
+        bus.active = index == 0 || (wanted & bit != 0 && !bus.control_voltage);
+        if index == 0 {
+            continue;
+        }
+        if bus.active {
+            activate_bus(component, K_AUDIO, K_OUTPUT, index as i32, 1);
+        } else if previous & bit != 0 {
+            activate_bus(component, K_AUDIO, K_OUTPUT, index as i32, 0);
+        }
+    }
 }
 
 /// Tells the plugin the arrangement of every audio bus it declared, as
@@ -163,6 +199,7 @@ mod tests {
                 name: "Stereo Out".into(),
                 channel_count: 2,
                 control_voltage: false,
+                active: false,
             }]
         );
     }
@@ -290,6 +327,131 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![false, true]
         );
+    }
+
+    fn three_outputs() -> Box<FakeBuses> {
+        FakeBuses::new(
+            Vec::new(),
+            vec![
+                FakeBus::main("Main", STEREO),
+                FakeBus::aux("Snare", MONO),
+                FakeBus::aux("Hat", MONO),
+            ],
+        )
+    }
+
+    fn open_flags(instance: &crate::plugin_system::instance::PluginInstance) -> Vec<bool> {
+        instance
+            .vst3_output_buses()
+            .iter()
+            .map(|bus| bus.active)
+            .collect()
+    }
+
+    #[test]
+    fn nothing_is_open_but_the_main_bus_until_the_graph_reads_another() {
+        let mut listener = FakeListener::new(false);
+        let mut buses = three_outputs();
+        let instance = fake_vst3_instance_with_buses(&mut listener, &mut buses);
+
+        assert!(instance.vst3_ensure_active(48_000.0, 512));
+
+        assert_eq!(buses.activations(), vec![(K_OUTPUT, 0, true)]);
+        assert_eq!(open_flags(&instance), vec![true, false, false]);
+    }
+
+    #[test]
+    fn a_bus_the_graph_reads_is_opened_with_the_main_one() {
+        let mut listener = FakeListener::new(false);
+        let mut buses = three_outputs();
+        let instance = fake_vst3_instance_with_buses(&mut listener, &mut buses);
+        instance.set_vst3_wanted_outputs(0b100);
+
+        assert!(instance.vst3_ensure_active(48_000.0, 512));
+
+        assert_eq!(
+            buses.activations(),
+            vec![(K_OUTPUT, 0, true), (K_OUTPUT, 2, true)]
+        );
+        assert_eq!(open_flags(&instance), vec![true, false, true]);
+    }
+
+    #[test]
+    fn a_live_plugin_is_reactivated_to_open_and_to_close_a_bus() {
+        let mut listener = FakeListener::new(false);
+        let mut buses = three_outputs();
+        let instance = fake_vst3_instance_with_buses(&mut listener, &mut buses);
+        assert!(instance.vst3_ensure_active(48_000.0, 512));
+
+        instance.set_vst3_wanted_outputs(0b10);
+        assert!(instance.vst3_ensure_active(48_000.0, 512));
+        assert_eq!(open_flags(&instance), vec![true, true, false]);
+
+        instance.set_vst3_wanted_outputs(0b100);
+        assert!(instance.vst3_ensure_active(48_000.0, 512));
+        assert_eq!(open_flags(&instance), vec![true, false, true]);
+        assert_eq!(
+            buses.activations()[buses.activations().len() - 3..],
+            [
+                (K_OUTPUT, 0, true),
+                (K_OUTPUT, 1, false),
+                (K_OUTPUT, 2, true)
+            ],
+            "bus 1 is closed explicitly: a bus stays open across a reactivation"
+        );
+    }
+
+    #[test]
+    fn the_same_demand_does_not_reactivate_the_plugin() {
+        let mut listener = FakeListener::new(false);
+        let mut buses = three_outputs();
+        let instance = fake_vst3_instance_with_buses(&mut listener, &mut buses);
+        instance.set_vst3_wanted_outputs(0b10);
+        assert!(instance.vst3_ensure_active(48_000.0, 512));
+        let activations = buses.activations();
+
+        assert!(instance.vst3_ensure_active(48_000.0, 512));
+
+        assert_eq!(buses.activations(), activations);
+        assert_eq!(buses.arrangement_calls().len(), 1);
+    }
+
+    #[test]
+    fn the_main_bus_a_missing_bus_and_a_control_voltage_bus_are_not_asked_for() {
+        let mut listener = FakeListener::new(false);
+        let mut buses = FakeBuses::new(
+            Vec::new(),
+            vec![
+                FakeBus::main("Main", STEREO),
+                FakeBus::aux("Gate", MONO).control_voltage(),
+            ],
+        );
+        let instance = fake_vst3_instance_with_buses(&mut listener, &mut buses);
+        instance.set_vst3_wanted_outputs(0b1 | 0b10 | 1 << 5);
+
+        assert!(instance.vst3_ensure_active(48_000.0, 512));
+
+        assert_eq!(buses.activations(), vec![(K_OUTPUT, 0, true)]);
+        assert_eq!(open_flags(&instance), vec![true, false]);
+    }
+
+    #[test]
+    fn a_restart_that_changes_the_buses_reads_them_again() {
+        let mut listener = FakeListener::new(false);
+        let mut buses = three_outputs();
+        let instance = fake_vst3_instance_with_buses(&mut listener, &mut buses);
+        instance.set_vst3_wanted_outputs(0b100);
+        assert!(instance.vst3_ensure_active(48_000.0, 512));
+        assert_eq!(instance.vst3_output_buses().len(), 3);
+
+        buses.limit_outputs_to(1);
+        instance
+            .vst3_edit_state()
+            .expect("a VST3 instance")
+            .request_reactivation();
+        assert!(instance.vst3_ensure_active(48_000.0, 512));
+
+        assert_eq!(open_flags(&instance), vec![true]);
     }
 
     #[test]

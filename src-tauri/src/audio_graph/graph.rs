@@ -916,6 +916,38 @@ mod routing_tests {
         graph.all_nodes().find(|n| n.label == label).map(|n| n.id)
     }
 
+    #[test]
+    fn the_aux_outputs_an_edge_reads_are_demanded_from_their_plugin() {
+        use crate::audio_graph::compiler::GraphCompiler;
+
+        let mut project = AppProject::new();
+        project.tracks.push(track(
+            "drums",
+            vec![plugin_effect("fx0", None), plugin_effect("fx1", None)],
+        ));
+        project.tracks.push(fed_from("snare", "fx0", 2));
+        project.tracks.push(fed_from("hat", "fx0", 3));
+        let graph = AudioGraph::from_project(&project);
+
+        let demand = GraphCompiler::demanded_plugin_outputs(&graph, &project);
+
+        assert_eq!(demand.get("fx0"), Some(&0b1100));
+        assert_eq!(demand.get("fx1"), None, "no edge reads fx1");
+    }
+
+    #[test]
+    fn nothing_is_demanded_while_no_track_takes_an_aux_output() {
+        use crate::audio_graph::compiler::GraphCompiler;
+
+        let mut project = AppProject::new();
+        project
+            .tracks
+            .push(track("drums", vec![plugin_effect("fx0", None)]));
+        let graph = AudioGraph::from_project(&project);
+
+        assert!(GraphCompiler::demanded_plugin_outputs(&graph, &project).is_empty());
+    }
+
     fn instrument_node_of(graph: &AudioGraph, track_id: &str) -> NodeId {
         graph
             .all_nodes()

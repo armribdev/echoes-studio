@@ -57,13 +57,15 @@ use crate::plugin_formats::clap::ffi::{
     notify_track_info_changed, read_note_names, ClapHost, ClapHostContext, ClapLibrary, ClapPlugin,
     HostTrackInfo, NoteName, PresetRequest, TimerSchedule, CLAP_PRESET_LOCATION_FILE,
 };
-use crate::plugin_formats::vst3::buses::{propose_arrangements, read_output_buses, Vst3OutputBus};
+use crate::plugin_formats::vst3::buses::{
+    open_output_buses, propose_arrangements, read_output_buses, Vst3OutputBus, AUX_OUTPUT_BUSES,
+};
 use crate::plugin_formats::vst3::channel_context::notify_channel_context;
 use crate::plugin_formats::vst3::component_handler::{ComponentHandler, EditState};
 use crate::plugin_formats::vst3::ffi::{
     release_controller, set_controller_component_state, set_controller_state,
     sync_controller_to_state, FUnknown, IAudioProcessor, IComponent, IEditController, ProcessSetup,
-    Vst3Controller, Vst3Library, K_AUDIO, K_EVENT, K_INPUT, K_OUTPUT,
+    Vst3Controller, Vst3Library, K_AUDIO, K_EVENT, K_INPUT,
 };
 use crate::plugin_formats::vst3::host::decode_plugin_id;
 use crate::plugin_formats::vst3::param_delivery::flush_param_bases;
@@ -178,6 +180,10 @@ struct ActivationState {
     sr_bits: AtomicU32,
     /// Max block size the plugin was activated at.
     block: AtomicU32,
+    /// VST3 only: the auxiliary output buses asked open at that activation.  A bus
+    /// stays open across a reactivation, so the next one closes what is no longer
+    /// wanted.
+    outputs: AtomicU32,
 }
 
 impl ActivationState {
@@ -188,6 +194,7 @@ impl ActivationState {
             processing: AtomicBool::new(false),
             sr_bits: AtomicU32::new(0),
             block: AtomicU32::new(0),
+            outputs: AtomicU32::new(0),
         }
     }
 }
@@ -313,6 +320,9 @@ pub struct PluginInstance {
     /// `restartComponent(kIoChanged)` is followed.  Off-RT readers only: a wrapper
     /// copies what it needs in `prepare`.
     vst3_output_buses: Mutex<Arc<[Vst3OutputBus]>>,
+    /// Auxiliary output buses the graph reads, set by the compiler before it
+    /// prepares the nodes (see [`Self::set_vst3_wanted_outputs`]).
+    vst3_wanted_outputs: AtomicU32,
     /// The plugin's track changed and its `clap.track-info.changed` (or VST3
     /// `setChannelContextInfos`) was not delivered yet (the plugin was busy in a
     /// block).  Command thread only.
@@ -371,6 +381,7 @@ impl PluginInstance {
             value_modulated_params: Mutex::new(Vec::new()),
             output_ports: OnceLock::new(),
             vst3_output_buses: Mutex::new(Arc::default()),
+            vst3_wanted_outputs: AtomicU32::new(0),
             track_info_pending: AtomicBool::new(false),
             vst3_track_info: Mutex::new(HostTrackInfo::default()),
             #[cfg(test)]
@@ -414,6 +425,7 @@ impl PluginInstance {
             value_modulated_params: Mutex::new(Vec::new()),
             output_ports: OnceLock::new(),
             vst3_output_buses: Mutex::new(Arc::default()),
+            vst3_wanted_outputs: AtomicU32::new(0),
             track_info_pending: AtomicBool::new(false),
             vst3_track_info: Mutex::new(HostTrackInfo::default()),
             #[cfg(test)]
@@ -449,6 +461,7 @@ impl PluginInstance {
             value_modulated_params: Mutex::new(Vec::new()),
             output_ports: OnceLock::new(),
             vst3_output_buses: Mutex::new(Arc::default()),
+            vst3_wanted_outputs: AtomicU32::new(0),
             track_info_pending: AtomicBool::new(false),
             vst3_track_info: Mutex::new(HostTrackInfo::default()),
             #[cfg(test)]
@@ -474,6 +487,7 @@ impl PluginInstance {
             value_modulated_params: Mutex::new(Vec::new()),
             output_ports: OnceLock::new(),
             vst3_output_buses: Mutex::new(Arc::default()),
+            vst3_wanted_outputs: AtomicU32::new(0),
             track_info_pending: AtomicBool::new(false),
             vst3_track_info: Mutex::new(HostTrackInfo::default()),
             #[cfg(test)]
@@ -1243,6 +1257,8 @@ impl PluginInstance {
     /// - Already active at a different config, or after a `restartComponent`
     ///   that changes latency or I/O → `setProcessing(0)` + `setActive(0)`, then
     ///   re-setup.
+    /// - Already active but the graph now reads other auxiliary output buses →
+    ///   the same reactivation, which opens and closes buses.
     /// - Not active → `setBusArrangements` + `activateBus` ×2 +
     ///   `setupProcessing` + `setActive(1)` + `setProcessing(1)`.
     ///
@@ -1260,10 +1276,12 @@ impl PluginInstance {
         };
         let sr_bits = sample_rate.to_bits();
         let act = &self.vst3_activation;
+        let wanted_outputs = self.vst3_wanted_outputs.load(Ordering::Relaxed) & AUX_OUTPUT_BUSES;
+        let previous_outputs = act.outputs.load(Ordering::Relaxed);
 
-        // Config changed (or the plugin asked for a restart, e.g. a new latency)
-        // on a live instance: the outgoing graph may still be processing it, so
-        // fence the reactivation when the gate can be claimed.
+        // Config or opened buses changed (or the plugin asked for a restart, e.g. a
+        // new latency) on a live instance: the outgoing graph may still be
+        // processing it, so fence the reactivation when the gate can be claimed.
         let restart_requested = self
             .vst3_edit_state()
             .is_some_and(EditState::take_reactivation_request);
@@ -1271,7 +1289,7 @@ impl PluginInstance {
         if act.active.load(Ordering::Acquire) {
             let unchanged = act.sr_bits.load(Ordering::Relaxed) == sr_bits
                 && act.block.load(Ordering::Relaxed) == max_block;
-            if unchanged && !restart_requested {
+            if unchanged && previous_outputs == wanted_outputs && !restart_requested {
                 return true;
             }
             _gate = self.offrt_try_acquire(FFI_GATE_HARVEST_BUDGET);
@@ -1298,11 +1316,12 @@ impl PluginInstance {
             if has_audio_input {
                 ((*(*comp).vtbl).activate_bus)(comp, K_AUDIO, K_INPUT, 0, 1);
             }
+            let mut output_buses = read_output_buses(comp);
+            open_output_buses(comp, &mut output_buses, wanted_outputs, previous_outputs);
             *self
                 .vst3_output_buses
                 .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner()) = read_output_buses(comp).into();
-            ((*(*comp).vtbl).activate_bus)(comp, K_AUDIO, K_OUTPUT, 0, 1);
+                .unwrap_or_else(|poisoned| poisoned.into_inner()) = output_buses.into();
             if has_event_input {
                 ((*(*comp).vtbl).activate_bus)(comp, K_EVENT, K_INPUT, 0, 1);
             }
@@ -1318,8 +1337,16 @@ impl PluginInstance {
         }
         act.sr_bits.store(sr_bits, Ordering::Relaxed);
         act.block.store(max_block, Ordering::Relaxed);
+        act.outputs.store(wanted_outputs, Ordering::Relaxed);
         act.active.store(true, Ordering::Release);
         true
+    }
+
+    /// The auxiliary audio output buses (bit `n` = bus `n`) to open the next time
+    /// this VST3 plugin is activated; the main bus is always open.  A bus the
+    /// plugin does not declare is ignored.  Command thread.
+    pub fn set_vst3_wanted_outputs(&self, buses: u32) {
+        self.vst3_wanted_outputs.store(buses, Ordering::Relaxed);
     }
 
     /// Convenience: extract the CLAP plugin pointer if this instance is CLAP.

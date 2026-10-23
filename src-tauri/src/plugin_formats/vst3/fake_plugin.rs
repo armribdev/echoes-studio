@@ -574,6 +574,7 @@ pub(crate) struct FakeBuses {
     /// A plugin that keeps its own layout answers `kResultFalse` to a request.
     accepts_arrangements: bool,
     undescribed_outputs: usize,
+    reported_outputs: Cell<usize>,
     arrangement_calls: RefCell<Vec<(Vec<u64>, Vec<u64>)>>,
     /// `(direction, index, state)` of every audio `activateBus`.
     activations: RefCell<Vec<(i32, i32, bool)>>,
@@ -586,6 +587,7 @@ impl FakeBuses {
             outputs,
             accepts_arrangements: true,
             undescribed_outputs: 0,
+            reported_outputs: Cell::new(usize::MAX),
             arrangement_calls: RefCell::new(Vec::new()),
             activations: RefCell::new(Vec::new()),
         })
@@ -610,9 +612,15 @@ impl FakeBuses {
         self.activations.borrow().clone()
     }
 
+    /// The plugin now declares only its first `count` output buses, as after a
+    /// `restartComponent(kIoChanged)`.
+    pub fn limit_outputs_to(&self, count: usize) {
+        self.reported_outputs.set(count);
+    }
+
     fn of_direction(&self, direction: i32) -> &[FakeBus] {
         if direction == K_OUTPUT {
-            &self.outputs
+            &self.outputs[..self.outputs.len().min(self.reported_outputs.get())]
         } else {
             &self.inputs
         }
@@ -730,7 +738,7 @@ unsafe extern "C" fn component_get_bus_count(
 ) -> i32 {
     match (*(this as *const FakeComponent)).buses.as_ref() {
         Some(buses) if media == K_AUDIO && direction == K_OUTPUT => {
-            (buses.outputs.len() + buses.undescribed_outputs) as i32
+            (buses.of_direction(K_OUTPUT).len() + buses.undescribed_outputs) as i32
         }
         Some(buses) if media == K_AUDIO => buses.inputs.len() as i32,
         Some(_) => 0,
@@ -826,14 +834,14 @@ unsafe extern "C" fn processor_set_bus_arrangements(
         .push((inputs.clone(), outputs.clone()));
     if !buses.accepts_arrangements
         || inputs.len() != buses.inputs.len()
-        || outputs.len() != buses.outputs.len()
+        || outputs.len() != buses.of_direction(K_OUTPUT).len()
     {
         return K_RESULT_FALSE;
     }
     for (bus, arrangement) in buses.inputs.iter().zip(inputs) {
         bus.arrangement.set(arrangement);
     }
-    for (bus, arrangement) in buses.outputs.iter().zip(outputs) {
+    for (bus, arrangement) in buses.of_direction(K_OUTPUT).iter().zip(outputs) {
         bus.arrangement.set(arrangement);
     }
     K_RESULT_OK

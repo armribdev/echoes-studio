@@ -257,6 +257,8 @@ impl GraphCompiler {
             live: config.live,
         };
 
+        plugin_host.set_demanded_outputs(Self::demanded_plugin_outputs(graph, project));
+
         let mut processors: Vec<Box<dyn AudioNode>> = Vec::with_capacity(order.len());
         let mut meter_cells: HashMap<String, MeterCell> = HashMap::new();
 
@@ -710,6 +712,25 @@ impl GraphCompiler {
                     .filter(|track| track.plugin_instrument().is_some())
                     .map(|_| (node.id, instrument_instance_key(track_id))),
                 _ => None,
+            })
+            .collect()
+    }
+
+    /// The auxiliary output ports (bit `n` = port `n`) that an edge reads from each
+    /// plugin placement; placements read by none are left out.
+    pub(crate) fn demanded_plugin_outputs(
+        graph: &AudioGraph,
+        project: &AppProject,
+    ) -> HashMap<String, u32> {
+        Self::plugin_instance_keys(graph, project)
+            .into_iter()
+            .filter_map(|(node_id, instance_key)| {
+                let ports = graph
+                    .edges_from(node_id)
+                    .map(|edge| edge.from.port as usize)
+                    .filter(|port| (1..u32::BITS as usize).contains(port))
+                    .fold(0u32, |ports, port| ports | 1 << port);
+                (ports != 0).then_some((instance_key, ports))
             })
             .collect()
     }

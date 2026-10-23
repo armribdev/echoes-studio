@@ -154,6 +154,9 @@ pub struct PluginHost {
     /// The last preset listing of each plugin (its CLAP id, or its VST3 device
     /// id): only what a plugin offered can be loaded (ADR-031).
     preset_listings: HashMap<String, Vec<PluginPreset>>,
+    /// The auxiliary output buses (bit `n` = bus `n`) the graph reads from each
+    /// placement, set by the compiler before it builds the nodes.
+    demanded_outputs: HashMap<String, u32>,
 }
 
 impl PluginHost {
@@ -168,7 +171,24 @@ impl PluginHost {
             always_isolated: HashSet::new(),
             track_infos: HashMap::new(),
             preset_listings: HashMap::new(),
+            demanded_outputs: HashMap::new(),
         }
+    }
+
+    /// Takes the auxiliary outputs the graph reads from each placement (a VST3
+    /// plugin opens only those buses).  Call it before building the nodes of a
+    /// compile: a live instance is told now, a new one when it is created.
+    /// A placement absent from `demand` reads none.  Command thread.
+    pub fn set_demanded_outputs(&mut self, demand: HashMap<String, u32>) {
+        self.demanded_outputs = demand;
+        for (instance_key, record) in &self.records {
+            self.apply_demanded_outputs(instance_key, &record.instance);
+        }
+    }
+
+    fn apply_demanded_outputs(&self, instance_key: &str, instance: &PluginInstance) {
+        let buses = self.demanded_outputs.get(instance_key).copied();
+        instance.set_vst3_wanted_outputs(buses.unwrap_or(0));
     }
 
     /// Takes the track of every placement from `project` and tells the live
@@ -421,6 +441,7 @@ impl PluginHost {
 
         let saved_state = self.restore_state_for(instance_key, plugin_id, &instance);
 
+        self.apply_demanded_outputs(instance_key, &instance);
         self.records.insert(
             instance_key.to_string(),
             DeviceRecord {
@@ -785,6 +806,7 @@ impl PluginHost {
             instance.set_lifecycle(state);
         }
         let saved_state = self.restore_state_for(instance_key, plugin_id, &instance);
+        self.apply_demanded_outputs(instance_key, &instance);
         self.records.insert(
             instance_key.to_string(),
             DeviceRecord {
@@ -1599,6 +1621,54 @@ mod tests {
             "saved once, from the live record"
         );
         assert_eq!(host.collect_plugin_states().len(), 1);
+    }
+
+    #[cfg(windows)]
+    mod vst3_demanded_outputs {
+        use super::*;
+        use crate::plugin_formats::vst3::fake_plugin::{
+            fake_vst3_instance_with_buses, FakeBus, FakeBuses, FakeListener, MONO, STEREO,
+        };
+
+        fn open_flags(instance: &PluginInstance) -> Vec<bool> {
+            instance
+                .vst3_output_buses()
+                .iter()
+                .map(|bus| bus.active)
+                .collect()
+        }
+
+        #[test]
+        fn the_buses_the_graph_reads_are_opened_on_a_live_placement_and_closed_again() {
+            let mut listener = FakeListener::new(false);
+            let mut buses = FakeBuses::new(
+                Vec::new(),
+                vec![
+                    FakeBus::main("Main", STEREO),
+                    FakeBus::aux("Snare", MONO),
+                    FakeBus::aux("Hat", MONO),
+                ],
+            );
+            let instance = fake_vst3_instance_with_buses(&mut listener, &mut buses);
+            let mut host = PluginHost::new();
+            host.records.insert(
+                "fx0".into(),
+                DeviceRecord {
+                    saved_state: DeviceState::empty(&instance.device_id),
+                    instance: Arc::clone(&instance),
+                },
+            );
+            assert!(instance.vst3_ensure_active(48_000.0, 512));
+            assert_eq!(open_flags(&instance), vec![true, false, false]);
+
+            host.set_demanded_outputs(HashMap::from([("fx0".to_string(), 0b100)]));
+            assert!(instance.vst3_ensure_active(48_000.0, 512));
+            assert_eq!(open_flags(&instance), vec![true, false, true]);
+
+            host.set_demanded_outputs(HashMap::new());
+            assert!(instance.vst3_ensure_active(48_000.0, 512));
+            assert_eq!(open_flags(&instance), vec![true, false, false]);
+        }
     }
 
     #[cfg(windows)]
