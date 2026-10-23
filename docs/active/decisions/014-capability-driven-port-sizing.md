@@ -304,7 +304,11 @@ determinism are untouched, and the project file does not change.
   output bus `p`; the main bus is port 0. A bus flagged `kIsControlVoltage` is
   never offered.
 - **Buses are opened by demand.** Unlike CLAP ports, a VST3 bus must be activated
-  by the host, and a closed bus is mixed by the plugin into its main output. So
+  by the host, and what the plugin does with a closed bus is its own business:
+  some mix that sound into their main output (the Steinberg convention), so
+  opening every bus would silence part of the main bus while nobody reads it;
+  others — Surge XT, measured — keep the main bus whole and send a copy. Opening
+  only what is read is safe for both. So
   the compiler tells the host which aux ports an edge reads
   (`GraphCompiler::demanded_plugin_outputs` →
   `PluginHost::set_demanded_outputs`, before the nodes are built), and only those
@@ -331,6 +335,10 @@ determinism are untouched, and the project file does not change.
 - **Verification.** Unit tests and the hand-made plugin (buses configurable in
   `vst3/fake_plugin.rs`), including a compiled project whose second track hears the
   first track's aux bus; TDR Nova (one stereo output, two audio inputs) reads its
-  buses and renders bit for bit as before. **No manual pass with a real multi-out
-  VST3 yet** (none installed; the real-plugin test skips): that a closed bus is
-  mixed into the main one is the SDK convention, to confirm with a real plugin.
+  buses and renders bit for bit as before. Surge XT (2026-10-23, real FFI test, the
+  first real VST3 instrument run): three stereo outputs "Output", "Scene A",
+  "Scene B"; opening "Scene A" makes it carry the note (peak 0.41) and leaves the
+  main bus as it was (same energy within the run-to-run variation of the plugin,
+  which is not bit-deterministic): its scene buses are copies, not moves. Not
+  hand-tested in the app, and no plugin that mixes a closed bus into its main
+  bus was available to confirm that convention.

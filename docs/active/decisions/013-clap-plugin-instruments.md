@@ -244,10 +244,13 @@ sandbox: ADR-015 amendment 2026-10-14.
 A VST3 instrument generates a track's audio behind the same `InstrumentDevice`
 seam as CLAP (C-3, variant by variant). No invariant changes (no new ADR): no new
 node, no compiler or scheduler change, no file-format change — `AppTrack.instrument`
-already names the device. Step 4 of the VST3 catch-up. Unit-tested; not yet
-validated with a real VST3 instrument (none was installed when this was written:
-the real-FFI tests `vst3_instrument_plays_a_note` and
-`vst3_instrument_reports_its_midi_controller_mapping` skip until one is).
+already names the device. Step 4 of the VST3 catch-up. Unit-tested. No VST3
+instrument was installed when this was written; the real-FFI tests
+`vst3_instrument_plays_a_note` and `vst3_instrument_reports_its_midi_controller_mapping`
+first ran on 2026-10-23 with Surge XT (a played note gives a peak of about 0.35;
+its controller maps pitch bend, mod wheel and aftertouch) and pass. Not
+hand-tested in the app. Surge XT sits deeper than the harness's default search:
+point `ECHOES_TEST_VST3` at its inner `.vst3`.
 
 - **Detection.** The scan reads `PClassInfo2.subCategories` through
   `IPluginFactory2` (`vst3/ffi.rs`). A class is an instrument when the first

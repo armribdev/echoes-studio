@@ -301,9 +301,13 @@ project, command or event change. In-process only (the sandbox is CLAP only).
   keep its own layout (it answers `kResultFalse`): the buses are read again after,
   so its answer wins. Auxiliary input buses (a sidechain) are named but stay
   closed.
-- **Which buses open.** A closed output bus is mixed by the plugin into its main
-  bus, so opening all of them would take sound out of the main bus while nobody
-  reads them. A bus is opened only when an edge of the graph reads its port:
+- **Which buses open.** What a plugin does with a closed output bus is its own
+  business: some mix that sound into their main bus (the Steinberg convention for
+  multi-out instruments), so opening every bus would take sound out of the main
+  bus while nobody reads it; others (Surge XT, measured) keep the main bus whole
+  and send a copy to the bus once it is open. Opening a bus only when an edge of
+  the graph reads its port is safe for both, and costs the plugin nothing for a
+  bus nobody hears:
   `GraphCompiler::demanded_plugin_outputs` collects the ports ≥ 1 read from each
   plugin placement (after cycles are cut), `PluginHost::set_demanded_outputs`
   gives them to the instances (live ones at once, new ones when created), and
@@ -312,8 +316,8 @@ project, command or event change. In-process only (the sandbox is CLAP only).
   gap, like a latency change); a busy gate re-arms the request for the next
   recompile. A bus stays open across a reactivation, so one no longer read is
   closed explicitly. Nothing routed ⇒ one stereo main bus, `ProcessData` as
-  before. (That an inactive bus is mixed into the main one is the Steinberg
-  convention for multi-out plugins; check it with a real plugin.)
+  before. So, depending on the plugin, a track taking an aux output either takes
+  that sound out of the main bus or only receives a copy of it.
 - **Process** (`Vst3OutputBuses`, shared by `VstWrapperNode` and `VstInstrument`).
   Built in `prepare`: one `AudioBusBuffers` per bus up to the last open one, each
   with a pointer array of its channel count. A closed bus between two open ones
@@ -335,8 +339,13 @@ hand-made plugin `vst3/fake_plugin.rs`, whose buses are configurable);
 project whose second track hears the first track's aux bus);
 `audio_graph/graph.rs::routing_tests` (the demand); `ffi_lifecycle_tests.rs`
 (`vst3_real_plugins_report_their_output_buses` on TDR Nova: one stereo output,
-two audio inputs; `vst3_real_instrument_opens_an_aux_output_on_demand` skips until
-an installed instrument has an auxiliary output).
+two audio inputs; and on Surge XT: three stereo outputs "Output", "Scene A",
+"Scene B", one input; `vst3_real_instrument_opens_an_aux_output_on_demand` on
+Surge XT, 2026-10-23: with only the main bus open "Scene A" is silent, once opened
+it carries the note — peak 0.41 — while the main bus keeps its sound, a copy rather
+than a move; "Scene B" stays silent on the default patch). Surge XT lives in a
+vendor folder (`Surge Synth Team/Surge XT.vst3/Contents/x86_64-win/`), deeper than
+the harness's default search: point `ECHOES_TEST_VST3` at the inner `.vst3`.
 
 ### State serialisation
 
@@ -711,7 +720,8 @@ new ids (`IMessage`, `IAttributeList`, `IInfoListener`) are in
   host implements no `notify`. What these plugins lacked was `createInstance`
   answering for `IMessage`, which they now get. A relay would matter only for a
   sandboxed VST3, which does not exist.
-- _Limits._ Not tried with a VST3 instrument (none installed). What a plugin does
+- _Limits._ Tried with Surge XT on 2026-10-23: its controller implements
+  `IInfoListener` and takes the host's messages. What a plugin does
   with the name is not observable from the tests. `vst3/` imports `HostTrackInfo`
   from `plugin_formats::clap::ffi`, a neutral type living in the CLAP crate.
   _Result codes (2026-10-22):_ every host object (`IHostApplication`,
