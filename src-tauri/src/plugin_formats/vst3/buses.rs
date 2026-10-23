@@ -27,6 +27,9 @@ const MAX_BUS_CHANNELS: i32 = 64;
 /// `BusInfo::BusFlags::kIsControlVoltage` (`ivstcomponent.h`).
 const BUS_IS_CONTROL_VOLTAGE: u32 = 1 << 1;
 
+/// `BusTypes::kAux` (`ivstcomponent.h`).
+const BUS_TYPE_AUX: i32 = 1;
+
 /// `Vst::BusInfo` (`ivstcomponent.h`).
 #[repr(C)]
 pub struct BusInfo {
@@ -63,24 +66,60 @@ pub struct Vst3OutputBus {
 /// `component` must be a live, initialised `IComponent`, called off the audio
 /// thread while no `process` call is in flight.
 pub unsafe fn read_output_buses(component: *mut IComponent) -> Vec<Vst3OutputBus> {
+    describe_buses(component, K_OUTPUT)
+        .into_iter()
+        .map(|info| Vst3OutputBus {
+            name: string128_to_string(&info.name),
+            channel_count: info.channel_count.clamp(0, MAX_BUS_CHANNELS) as u32,
+            control_voltage: info.flags & BUS_IS_CONTROL_VOLTAGE != 0,
+            active: false,
+        })
+        .collect()
+}
+
+/// One auxiliary audio input bus (a sidechain).  Graph input port `p` is input
+/// bus `p`, the main bus being port 0, so the first auxiliary input is port 1.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Vst3AuxInput {
+    pub channel_count: u32,
+}
+
+/// The auxiliary audio input buses of `component`: the buses after the main one
+/// that are of type `kAux`, up to the first that is not (the SDK puts every
+/// `kMain` bus before the `kAux` ones).  A control-voltage input is not sound,
+/// so it ends the run too.
+///
+/// # Safety
+/// As [`read_output_buses`].
+pub unsafe fn read_aux_inputs(component: *mut IComponent) -> Vec<Vst3AuxInput> {
+    describe_buses(component, K_INPUT)
+        .into_iter()
+        .skip(1)
+        .take_while(|info| {
+            info.bus_type == BUS_TYPE_AUX && info.flags & BUS_IS_CONTROL_VOLTAGE == 0
+        })
+        .map(|info| Vst3AuxInput {
+            channel_count: info.channel_count.clamp(0, MAX_BUS_CHANNELS) as u32,
+        })
+        .collect()
+}
+
+/// The audio buses of one direction as the plugin describes them, up to the
+/// first one it will not describe.
+unsafe fn describe_buses(component: *mut IComponent, direction: i32) -> Vec<BusInfo> {
     let vtbl = &*(*component).vtbl;
-    let declared = (vtbl.get_bus_count)(component, K_AUDIO, K_OUTPUT).clamp(0, MAX_AUDIO_BUSES);
+    let declared = (vtbl.get_bus_count)(component, K_AUDIO, direction).clamp(0, MAX_AUDIO_BUSES);
     (0..declared)
         .map_while(|index| {
             let mut info: BusInfo = std::mem::zeroed();
             let described = (vtbl.get_bus_info)(
                 component,
                 K_AUDIO,
-                K_OUTPUT,
+                direction,
                 index,
                 &mut info as *mut BusInfo as *mut c_void,
             );
-            (described == K_RESULT_OK).then(|| Vst3OutputBus {
-                name: string128_to_string(&info.name),
-                channel_count: info.channel_count.clamp(0, MAX_BUS_CHANNELS) as u32,
-                control_voltage: info.flags & BUS_IS_CONTROL_VOLTAGE != 0,
-                active: false,
-            })
+            (described == K_RESULT_OK).then_some(info)
         })
         .collect()
 }
@@ -450,6 +489,71 @@ mod tests {
                 .map(|bus| bus.control_voltage)
                 .collect::<Vec<_>>(),
             vec![false, true]
+        );
+    }
+
+    fn aux_inputs_of(inputs: Vec<FakeBus>) -> Vec<Vst3AuxInput> {
+        let mut listener = FakeListener::new(false);
+        let mut buses = FakeBuses::new(inputs, vec![FakeBus::main("Out", STEREO)]);
+        let instance = fake_vst3_instance_with_buses(&mut listener, &mut buses);
+        let (component, _) = instance.vst3_handles().expect("a VST3 instance");
+        unsafe { read_aux_inputs(component.as_ptr()) }
+    }
+
+    fn aux_input(channel_count: u32) -> Vst3AuxInput {
+        Vst3AuxInput { channel_count }
+    }
+
+    #[test]
+    fn a_sidechain_after_the_main_input_is_an_aux_input() {
+        let read = aux_inputs_of(vec![
+            FakeBus::main("In", STEREO),
+            FakeBus::aux("Sidechain", MONO),
+        ]);
+
+        assert_eq!(read, vec![aux_input(1)]);
+    }
+
+    #[test]
+    fn an_effect_with_only_a_main_input_and_a_plugin_with_none_have_no_aux_input() {
+        assert!(aux_inputs_of(vec![FakeBus::main("In", STEREO)]).is_empty());
+        assert!(aux_inputs_of(Vec::new()).is_empty());
+    }
+
+    #[test]
+    fn every_aux_input_is_read_with_its_own_channel_count() {
+        let read = aux_inputs_of(vec![
+            FakeBus::main("In", STEREO),
+            FakeBus::aux("Key", MONO),
+            FakeBus::aux("Detector", STEREO),
+        ]);
+
+        assert_eq!(read, vec![aux_input(1), aux_input(2)]);
+    }
+
+    #[test]
+    fn a_control_voltage_input_is_not_a_sidechain_and_ends_the_run() {
+        let read = aux_inputs_of(vec![
+            FakeBus::main("In", STEREO),
+            FakeBus::aux("Key", MONO),
+            FakeBus::aux("Cv", MONO).control_voltage(),
+            FakeBus::aux("Late", MONO),
+        ]);
+
+        assert_eq!(read, vec![aux_input(1)]);
+    }
+
+    #[test]
+    fn a_second_main_input_is_not_an_aux_input() {
+        let read = aux_inputs_of(vec![
+            FakeBus::main("In", STEREO),
+            FakeBus::main("In 2", STEREO),
+            FakeBus::aux("Key", MONO),
+        ]);
+
+        assert!(
+            read.is_empty(),
+            "port p stays input bus p: no gap is skipped"
         );
     }
 

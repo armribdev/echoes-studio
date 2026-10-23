@@ -1662,3 +1662,105 @@ fn vst3_real_plugins_report_their_output_buses() {
         assert!(!instance.has_crashed());
     }
 }
+
+/// Read-only probe: every audio input bus of every installed VST3, before and
+/// after activation, with its type (main / aux) and the arrangement it answers.
+#[test]
+fn vst3_real_plugins_report_their_input_buses() {
+    use std::ffi::c_void;
+
+    use crate::plugin_formats::vst3::buses::BusInfo;
+    use crate::plugin_formats::vst3::ffi::{string128_to_string, K_AUDIO, K_INPUT};
+
+    let candidates = discover_all("ECHOES_TEST_VST3", "vst3");
+    if candidates.is_empty() {
+        eprintln!("{LOG} SKIP vst3_real_plugins_report_their_input_buses — no .vst3 found");
+        return;
+    }
+    let key = "harness:vst3:input-buses";
+    for path in &candidates {
+        let Some(device_id) = first_vst3_id(path) else {
+            continue;
+        };
+        let mut host = PluginHost::new();
+        host.registry_mut().add(vst3_manifest(&device_id, path));
+        if host.instantiate(key, &device_id, false).is_err() {
+            continue;
+        }
+        let instance = host.instance_by_key(key).expect("instance registered");
+        let (component, processor) = instance.vst3_handles().expect("a VST3 instance");
+        let report = |stage: &str| unsafe {
+            let component = component.as_ptr();
+            let processor = processor.as_ptr();
+            let count = ((*(*component).vtbl).get_bus_count)(component, K_AUDIO, K_INPUT);
+            eprintln!("{LOG} {device_id} {stage}: {count} audio input bus(es)");
+            for index in 0..count.clamp(0, 32) {
+                let mut info: BusInfo = std::mem::zeroed();
+                let described = ((*(*component).vtbl).get_bus_info)(
+                    component,
+                    K_AUDIO,
+                    K_INPUT,
+                    index,
+                    &mut info as *mut BusInfo as *mut c_void,
+                );
+                let mut arrangement = 0u64;
+                let arranged = ((*(*processor).vtbl).get_bus_arrangement)(
+                    processor,
+                    K_INPUT,
+                    index,
+                    &mut arrangement,
+                );
+                eprintln!(
+                    "{LOG} {device_id} {stage} input bus {index}: described={described:#x} '{}' \
+                     type={} channels={} flags={:#b} arrangement={arrangement:#x} (answer {arranged:#x})",
+                    string128_to_string(&info.name),
+                    info.bus_type,
+                    info.channel_count,
+                    info.flags,
+                );
+            }
+        };
+        report("before activation");
+        assert!(instance.vst3_ensure_active(48_000.0, 512));
+        report("after activation");
+        assert!(!instance.has_crashed());
+    }
+}
+
+/// The scan reads each effect's sidechain buses in the library it already loaded.
+#[test]
+fn vst3_scan_counts_the_sidechain_inputs_of_real_effects() {
+    use crate::plugin_formats::vst3::host::Vst3Host;
+    use crate::plugin_system::registry::PluginRegistry;
+
+    let candidates = discover_all("ECHOES_TEST_VST3", "vst3");
+    if candidates.is_empty() {
+        eprintln!(
+            "{LOG} SKIP vst3_scan_counts_the_sidechain_inputs_of_real_effects — no .vst3 found"
+        );
+        return;
+    }
+    let host = Vst3Host::new();
+    for path in &candidates {
+        let mut registry = PluginRegistry::new();
+        host.register_bundle(path, &mut registry);
+        for manifest in registry.all().filter(|m| m.format == DeviceFormat::Vst3) {
+            eprintln!(
+                "{LOG} scan {} (instrument: {}): {} sidechain input(s)",
+                manifest.name, manifest.is_instrument, manifest.num_sidechain_inputs
+            );
+            if manifest.is_instrument {
+                assert_eq!(
+                    manifest.num_sidechain_inputs, 0,
+                    "instruments are not probed"
+                );
+            }
+            if manifest.name == "TDR Nova" {
+                assert_eq!(
+                    manifest.num_sidechain_inputs, 1,
+                    "TDR Nova has one sidechain"
+                );
+            }
+        }
+    }
+}

@@ -1,7 +1,12 @@
 //! VST3 host — scans platform plugin directories and populates the registry.
 
+use std::ffi::c_void;
 use std::path::{Path, PathBuf};
 
+use crate::plugin_formats::crash_guard;
+use crate::plugin_formats::vst3::buses::read_aux_inputs;
+use crate::plugin_formats::vst3::ffi::{instantiate_processor, IPluginFactory};
+use crate::plugin_formats::vst3::host_context::host_application;
 use crate::plugin_system::registry::{classify_instrument, PluginManifest, PluginRegistry};
 use crate::plugin_system::wrapper::DeviceFormat;
 
@@ -50,7 +55,7 @@ impl Vst3Host {
         }
     }
 
-    fn register_bundle(&self, bundle: &Path, registry: &mut PluginRegistry) {
+    pub(crate) fn register_bundle(&self, bundle: &Path, registry: &mut PluginRegistry) {
         let dll = match resolve_vst3_dll(bundle) {
             Some(p) => p,
             None => return,
@@ -86,6 +91,12 @@ impl Vst3Host {
                 vec!["VST3".into()]
             };
 
+            let num_sidechain_inputs = if is_instrument {
+                0
+            } else {
+                probe_aux_input_count(factory, &class.cid)
+            };
+
             registry.add(PluginManifest {
                 id: plugin_id,
                 name: name.clone(),
@@ -93,7 +104,7 @@ impl Vst3Host {
                 format: DeviceFormat::Vst3,
                 path: Some(dll.clone()),
                 categories,
-                num_sidechain_inputs: 0,
+                num_sidechain_inputs,
                 is_instrument,
             });
         }
@@ -109,6 +120,45 @@ impl Default for Vst3Host {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// Stack context for [`probe_aux_inputs_trampoline`] — no heap allocation.
+struct AuxProbeContext {
+    factory: *mut IPluginFactory,
+    cid: [u8; 16],
+}
+
+/// Create → read the auxiliary input buses → destroy, all inside one call so the
+/// SEH guard covers the whole cycle.  Returns the bus count, or `CAUGHT` (-1).
+///
+/// # Safety
+/// `raw` must point to a live `AuxProbeContext` whose factory is live.
+unsafe extern "C" fn probe_aux_inputs_trampoline(raw: *mut c_void) -> i32 {
+    let context = &*(raw as *const AuxProbeContext);
+    let Ok((component, processor)) =
+        instantiate_processor(context.factory, &context.cid, host_application())
+    else {
+        return 0;
+    };
+    let count = read_aux_inputs(component).len() as i32;
+    ((*(*component).vtbl).terminate)(component);
+    ((*(*processor).vtbl).release)(processor as *mut _);
+    ((*(*component).vtbl).release)(component as *mut _);
+    count
+}
+
+/// How many auxiliary input buses (sidechains) the effect `cid` declares.  The
+/// scan creates a throwaway component in the library it already loaded; a plugin
+/// that fails or crashes during the probe counts as having none, as for CLAP.
+fn probe_aux_input_count(factory: *mut IPluginFactory, cid: &[u8; 16]) -> usize {
+    let mut context = AuxProbeContext { factory, cid: *cid };
+    let count = unsafe {
+        crash_guard::guarded(
+            probe_aux_inputs_trampoline,
+            &mut context as *mut AuxProbeContext as *mut c_void,
+        )
+    };
+    usize::try_from(count).unwrap_or(0)
 }
 
 fn vst3_search_paths() -> Vec<PathBuf> {
