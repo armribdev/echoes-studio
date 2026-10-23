@@ -1269,7 +1269,9 @@ mod tests {
     }
 
     use crate::audio_graph::buffer::AudioBuffer;
+    use crate::audio_graph::midi::MidiEventList;
     use crate::audio_graph::node::TransportInfo;
+    use crate::audio_graph::nodes::instrument::{InstrumentDevice, InstrumentNode};
 
     struct MultiOut(usize);
 
@@ -1427,5 +1429,51 @@ mod tests {
         let plan = sidechain_plan(0, 0);
 
         assert_eq!(delays(&plan, 4), vec![0, 0]);
+    }
+
+    struct LatentInstrument(u32);
+
+    impl InstrumentDevice for LatentInstrument {
+        fn latency_samples(&self) -> u32 {
+            self.0
+        }
+        fn prepare(&mut self, _ctx: PrepareContext) {}
+        fn process_midi(
+            &mut self,
+            _events: &MidiEventList,
+            _outputs: &mut [AudioBuffer],
+            _transport: &TransportInfo,
+        ) {
+        }
+        fn reset(&mut self) {}
+    }
+
+    /// ADR-006: an instrument track that sounds late is met by delaying the
+    /// tracks that do not, so both reach the mixer together.
+    #[test]
+    fn a_track_converging_with_a_latent_instrument_is_delayed_to_it() {
+        let mut plan = ExecutionPlan::empty(48_000.0);
+        let step = |node, input_connections| ExecutionStep {
+            node_id: NodeId(node),
+            input_connections,
+            num_outputs: 1,
+        };
+        plan.steps = vec![
+            step(1, vec![]),
+            step(2, vec![]),
+            step(3, vec![reading(0, 0), reading(1, 0)]),
+        ];
+        let processors: Vec<Box<dyn AudioNode>> = vec![
+            Box::new(InstrumentNode::new(
+                std::sync::Arc::new(vec![]),
+                Box::new(LatentInstrument(128)),
+            )),
+            Box::new(Latent(0)),
+            Box::new(Latent(0)),
+        ];
+        GraphCompiler::compute_latency_compensation(&mut plan, &processors);
+
+        assert_eq!(delays(&plan, 2), vec![0, 128]);
+        assert_eq!(plan.step_cumulative_latency[2], 128);
     }
 }

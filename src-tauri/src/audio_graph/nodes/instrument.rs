@@ -43,6 +43,12 @@ pub trait InstrumentDevice: Send + 'static {
         1
     }
 
+    /// Samples the instrument delays its sound by, for plugin delay
+    /// compensation. Final once `prepare` has run.
+    fn latency_samples(&self) -> u32 {
+        0
+    }
+
     fn prepare(&mut self, ctx: PrepareContext);
 
     /// Render one block of audio from the provided MIDI events.
@@ -316,6 +322,10 @@ impl AudioNode for InstrumentNode {
         self.device.prepare(ctx);
     }
 
+    fn latency_samples(&self) -> u32 {
+        self.device.latency_samples()
+    }
+
     fn process(
         &mut self,
         _inputs: &[&AudioBuffer],
@@ -529,6 +539,42 @@ mod tests {
             g.extend_from_slice(events.as_slice());
         }
         fn reset(&mut self) {}
+    }
+
+    struct LatentDevice(u32);
+
+    impl InstrumentDevice for LatentDevice {
+        fn latency_samples(&self) -> u32 {
+            self.0
+        }
+        fn prepare(&mut self, _ctx: PrepareContext) {}
+        fn process_midi(
+            &mut self,
+            _events: &MidiEventList,
+            _outputs: &mut [AudioBuffer],
+            _transport: &TransportInfo,
+        ) {
+        }
+        fn reset(&mut self) {}
+    }
+
+    #[test]
+    fn the_node_reports_the_latency_of_its_device() {
+        let node = InstrumentNode::new(Arc::new(vec![]), Box::new(LatentDevice(256)));
+
+        assert_eq!(node.latency_samples(), 256);
+    }
+
+    #[test]
+    fn a_device_without_latency_reports_none() {
+        let node = InstrumentNode::new(
+            Arc::new(vec![]),
+            Box::new(CaptureDevice {
+                captured: Arc::new(Mutex::new(Vec::new())),
+            }),
+        );
+
+        assert_eq!(node.latency_samples(), 0);
     }
 
     fn one_beat_note() -> MidiNoteSnapshot {
