@@ -399,3 +399,12 @@ CLAP only.
   blocks is 4057 with a silent auxiliary bus and 98 with a loud one (about −16 dB),
   so its detector hears the bus; the plugin does not crash. Not hand-tested in the
   app.
+
+## Note 2026-10-23 — instrument latency and the ports
+
+An instrument is a source, so its own latency does not shift its inputs; it shifts
+what it hands to the nodes that read it. `InstrumentNode` now reports the latency of
+its device (VST3 only for now, ADR-013 amendment of the same date), and the
+compiler's `compute_latency_compensation` delays the other branches that converge
+with it, aux-output edges included, exactly as for an effect. No port sizing
+changes.

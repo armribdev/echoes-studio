@@ -205,3 +205,10 @@ ADR-021), and the per-wrapper `Device` impls. Decisions 3–5 (latency via
 A future capability source (VST3 `getBusInfo`, AU, WASM) extends the
 `PluginManifest` / `PluginInstance` route rather than reviving a parallel type.
 No runtime behaviour changed; the C-2 harness (golden hashes) stays green.
+
+## Note 2026-10-23 — instruments report latency too
+
+Decision 3 (latency via `AudioNode::latency_samples()`) now covers VST3 instruments:
+`InstrumentDevice::latency_samples()` is relayed by `InstrumentNode`, so an
+instrument track is aligned by the same compensation as an effect chain. Built-in
+and CLAP instruments report 0. See ADR-013 (amendment of the same date).

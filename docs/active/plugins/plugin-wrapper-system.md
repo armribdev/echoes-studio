@@ -273,7 +273,12 @@ A VST3 instrument is a `VstInstrument` (`vst3/instrument.rs`) behind
   `restartComponent(kMidiCCAssignmentChanged)` (a recompile; no reactivation).
 - **Parameters.** Queued edits, plugin-window edits, modulation and automation use
   the same delivery as the effect (`vst3/param_delivery.rs`).
-- Not done: plugin latency, note expressions, `outputEvents`.
+- **Latency (2026-10-23).** `VstInstrument::prepare` reads `getLatencySamples` after
+  `vst3_ensure_active` (`PluginInstance::vst3_latency_samples`, FFI gate, the same
+  read as the effect) and `InstrumentDevice::latency_samples()` hands it to the
+  compiler through `InstrumentNode`, so the PDC aligns an instrument track like an
+  effect chain (see "Latency Handling"). Built-in and CLAP instruments report 0.
+- Not done: note expressions, `outputEvents`.
   `outputParameterChanges` are read (see "The controller follows the processor").
   Extra output buses: see "VST3 multi-out".
 
@@ -614,7 +619,8 @@ and the bridge process (`ClapBlockProcessor`).
   bridge, so the bounded wait, the offline wait and the protocol are
   unchanged. A sleeping bridge answers the block with silence.
 
-Not done: VST3 (no equivalent wired); not yet tried with real plugins (Vital,
+Not done: VST3 (no plugin-driven sleep exists there; see "VST3 tail and processing
+mode"); not yet tried with real plugins (Vital,
 Surge XT, u-he) — only the test plugin (`crates/test_clap_plugin`: `Status`,
 `Tail`, `Liar`, `Process calls` parameters and the `echoes.test.sleepy` plugin).
 
@@ -1316,6 +1322,49 @@ with the new latency.
 
 VST3 `restartComponent(kLatencyChanged)` takes the same path: see "Plugin window
 edits" above. Not hand-tested with a plugin that changes its latency.
+
+**VST3 effects and instruments (2026-10-23).** Both read `getLatencySamples` in
+`prepare`, after `vst3_ensure_active`, through `PluginInstance::vst3_latency_samples`:
+off the audio thread, under the instance FFI gate (3 ms budget). A block that keeps
+the gate leaves the node with the value it had (a new node starts at 0); a pending
+restart request is re-armed by `vst3_ensure_active`, so the next recompile
+reactivates the plugin and reads the new value. An instrument
+reaches the compiler through `InstrumentDevice::latency_samples()`, relayed by
+`InstrumentNode::latency_samples()`; `audio_graph/` sees no VST3 type (ADR-003).
+Without it an instrument track with a latency `L` would sound `L` samples late
+against the others. CLAP instruments have the same gap (no `clap.latency` read yet).
+Tests: `plugin_system/vst3_latency_tests.rs` (hand-made plugin, restart, busy gate),
+`compiler.rs` (an instrument of latency 128 delays the track it meets by 128),
+`ffi_lifecycle_tests.rs` (TDR Nova effect: node 184 = plugin 184; Surge XT
+instrument: adapter 0 = plugin 0, so no real instrument checks a non-zero value).
+
+### VST3 tail and processing mode (read, not used — 2026-10-23)
+
+Probed on the machine (`vst3_real_plugins_report_their_latency_and_tail`): TDR Nova
+reports latency 184 and tail 184 samples and does not implement
+`IProcessContextRequirements` (its IID is absent from the binary); Surge XT reports
+latency 0 and a tail of 96 000 samples (2 s at 48 kHz) and implements it (IID found
+twice in the binary). SDK (`ivstaudioprocessor.h`): `kNoTail = 0`,
+`kInfiniteTail = 0xFFFFFFFF`; `kRealtime 0`, `kPrefetch 1`, `kOffline 2`; moving
+to or from `kOffline` needs `setupProcessing`, so a deactivated plugin.
+
+- **Tail: nothing reads it.** CLAP sleeps because the plugin answers `SLEEP`; VST3
+  has no such answer, so a VST3 sleep would be a guess from silence, which cuts a
+  synth's release when it reports a tail of 0. It would also change which blocks are
+  processed (C-2, ADR-019) for a CPU gain. The export length is the end of the last
+  clip (`timeline_end_secs`), so the tail of every plugin and internal effect is cut
+  already: extending the export is an export feature (all formats, a cap for an
+  infinite tail), not a VST3 gap.
+- **`kOffline`: not set.** `ProcessSetup.processMode` and `ProcessData.processMode`
+  stay `kRealtime` in the effect, the instrument and `vst3_ensure_active`. The export
+  runs on the live engine's `PluginHost`, so it shares the plugin instance (ADR-016)
+  with the audio stream that keeps running; switching it to `kOffline` means a
+  reactivation of that shared instance and one back, while the stream still calls
+  `process` with mode 0. Only plugins that stream from disk or have a render quality
+  would gain. To reconsider once the engine's behaviour during an export is decided.
+- **`IProcessContextRequirements` and `canProcessSampleSize`: not asked.** The host
+  fills every `ProcessContext` field, which is what a plugin without the interface
+  gets; the interface only lets a host skip work. The host processes in 32 bits only.
 
 ---
 

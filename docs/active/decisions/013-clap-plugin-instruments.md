@@ -292,8 +292,8 @@ point `ECHOES_TEST_VST3` at its inner `.vst3`.
 - **Parameters (ADR-021)** reach a VST3 instrument as for the VST3 effect: queued
   edits, plugin-window edits, modulation and automation are delivered by the code
   both share (`vst3/param_delivery.rs`).
-- **Not done.** Plugin latency is not read (`InstrumentDevice` has no latency hook,
-  as for CLAP instruments); no `kNoteExpression*` events, no `IMidiLearn`; no
+- **Not done.** Plugin latency is not read _— read for VST3 since 2026-10-23, see
+  the last amendment_; no `kNoteExpression*` events, no `IMidiLearn`; no
   `outputEvents`; a single output bus (ADR-014) _— multi-out since 2026-10-23_.
 - **C-2.** No VST3 plugin is in the render harness; internal and CLAP instruments
   are untouched and the golden hashes are unchanged. Known risk #2 above (third-party
@@ -323,3 +323,25 @@ not provided: a dual-component plugin's halves are connected directly. Step 5 of
 the VST3 catch-up. Details: `../plugins/plugin-wrapper-system.md` (Host
 `IInfoListener` / `IMessage`). Checked on TDR Nova (an effect): its controller
 implements `IInfoListener` and accepts the list; not tried with a VST3 instrument.
+
+## Amendment 2026-10-23 — VST3 instrument latency
+
+`InstrumentDevice` gains `latency_samples()` (default 0); `InstrumentNode` relays it
+as `AudioNode::latency_samples()`, so the compiler's latency compensation (ADR-006)
+sees an instrument like any other node. `VstInstrument` reads `getLatencySamples` in
+`prepare`, after `vst3_ensure_active`, off the audio thread and under the instance
+FFI gate (`PluginInstance::vst3_latency_samples`, shared with the VST3 effect). A
+`restartComponent(kLatencyChanged)` already reactivates the instance through
+`vst3_ensure_active` (ADR-016), so the next recompile reads the new value. Built-in
+and CLAP instruments keep reporting 0: the CLAP instrument does not read
+`clap.latency` yet, a later step with the same hook.
+
+No invariant changes (no new ADR): no new graph element, thread rule or state; the
+mechanism is the existing PDC, and `audio_graph/` still sees no VST3 type (ADR-003).
+C-2: no VST3 in the harness and every other instrument reports 0, so the plan and
+the golden hashes are unchanged. The VST3 tail and `kOffline` processing mode were
+studied and deliberately not used: `../plugins/plugin-wrapper-system.md` (VST3 tail
+and processing mode). Details and tests: `../plugins/plugin-wrapper-system.md`
+(Latency Handling). Checked on TDR Nova (effect, latency 184) and Surge XT
+(instrument, latency 0, so a non-zero instrument latency is checked only with the
+hand-made plugin); not hand-tested in the app.
