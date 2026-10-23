@@ -57,6 +57,7 @@ use crate::plugin_formats::clap::ffi::{
     notify_track_info_changed, read_note_names, ClapHost, ClapHostContext, ClapLibrary, ClapPlugin,
     HostTrackInfo, NoteName, PresetRequest, TimerSchedule, CLAP_PRESET_LOCATION_FILE,
 };
+use crate::plugin_formats::vst3::buses::{read_output_buses, Vst3OutputBus};
 use crate::plugin_formats::vst3::channel_context::notify_channel_context;
 use crate::plugin_formats::vst3::component_handler::{ComponentHandler, EditState};
 use crate::plugin_formats::vst3::ffi::{
@@ -308,6 +309,10 @@ pub struct PluginInstance {
     /// after `init` — before the instance can be in any graph, so the read
     /// never races `process`.
     output_ports: OnceLock<Vec<ClapOutputPort>>,
+    /// VST3 audio output buses (ADR-014 multi-out), read at every activation so a
+    /// `restartComponent(kIoChanged)` is followed.  Off-RT readers only: a wrapper
+    /// copies what it needs in `prepare`.
+    vst3_output_buses: Mutex<Arc<[Vst3OutputBus]>>,
     /// The plugin's track changed and its `clap.track-info.changed` (or VST3
     /// `setChannelContextInfos`) was not delivered yet (the plugin was busy in a
     /// block).  Command thread only.
@@ -365,6 +370,7 @@ impl PluginInstance {
             modulated_params: Mutex::new(Vec::new()),
             value_modulated_params: Mutex::new(Vec::new()),
             output_ports: OnceLock::new(),
+            vst3_output_buses: Mutex::new(Arc::default()),
             track_info_pending: AtomicBool::new(false),
             vst3_track_info: Mutex::new(HostTrackInfo::default()),
             #[cfg(test)]
@@ -407,6 +413,7 @@ impl PluginInstance {
             modulated_params: Mutex::new(Vec::new()),
             value_modulated_params: Mutex::new(Vec::new()),
             output_ports: OnceLock::new(),
+            vst3_output_buses: Mutex::new(Arc::default()),
             track_info_pending: AtomicBool::new(false),
             vst3_track_info: Mutex::new(HostTrackInfo::default()),
             #[cfg(test)]
@@ -441,6 +448,7 @@ impl PluginInstance {
             modulated_params: Mutex::new(Vec::new()),
             value_modulated_params: Mutex::new(Vec::new()),
             output_ports: OnceLock::new(),
+            vst3_output_buses: Mutex::new(Arc::default()),
             track_info_pending: AtomicBool::new(false),
             vst3_track_info: Mutex::new(HostTrackInfo::default()),
             #[cfg(test)]
@@ -465,6 +473,7 @@ impl PluginInstance {
             modulated_params: Mutex::new(Vec::new()),
             value_modulated_params: Mutex::new(Vec::new()),
             output_ports: OnceLock::new(),
+            vst3_output_buses: Mutex::new(Arc::default()),
             track_info_pending: AtomicBool::new(false),
             vst3_track_info: Mutex::new(HostTrackInfo::default()),
             #[cfg(test)]
@@ -1216,6 +1225,16 @@ impl PluginInstance {
         }
     }
 
+    /// The audio output buses the VST3 plugin declared at its last activation;
+    /// empty before the first one and for other formats.
+    #[allow(dead_code)] // read by the wrappers from step 4e-4
+    pub fn vst3_output_buses(&self) -> Arc<[Vst3OutputBus]> {
+        self.vst3_output_buses
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
+    }
+
     /// Idempotently bring the VST3 component/processor to the active, processing
     /// state, owned by the instance so it survives wrapper rebuilds on recompile
     /// (ADR-016 reuse).  Mirrors [`clap_ensure_active`]:
@@ -1292,6 +1311,10 @@ impl PluginInstance {
                     1,
                 );
             }
+            *self
+                .vst3_output_buses
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner()) = read_output_buses(comp).into();
             ((*(*comp).vtbl).activate_bus)(comp, K_AUDIO, K_OUTPUT, 0, 1);
             if has_event_input {
                 ((*(*comp).vtbl).activate_bus)(comp, K_EVENT, K_INPUT, 0, 1);

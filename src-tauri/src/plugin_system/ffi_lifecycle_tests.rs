@@ -1479,3 +1479,106 @@ fn check_vst3_host_messages(instance: &PluginInstance) {
     let remaining = unsafe { ((*(*message).vtbl).release)(message) };
     eprintln!("{LOG} T5 message references left after release: {remaining}");
 }
+
+/// Every installed VST3 reports its audio output buses once it is activated.
+#[test]
+fn vst3_real_plugins_report_their_output_buses() {
+    let candidates = discover_all("ECHOES_TEST_VST3", "vst3");
+    if candidates.is_empty() {
+        eprintln!("{LOG} SKIP vst3_real_plugins_report_their_output_buses — no .vst3 found");
+        return;
+    }
+    let key = "harness:vst3:buses";
+    for path in &candidates {
+        let Some(device_id) = first_vst3_id(path) else {
+            continue;
+        };
+        let mut host = PluginHost::new();
+        host.registry_mut().add(vst3_manifest(&device_id, path));
+        if host.instantiate(key, &device_id, false).is_err() {
+            continue;
+        }
+        let instance = host.instance_by_key(key).expect("instance registered");
+        assert!(
+            instance.vst3_output_buses().is_empty(),
+            "nothing read before activation"
+        );
+        assert!(instance.vst3_ensure_active(48_000.0, 512));
+        let buses = instance.vst3_output_buses();
+        for (index, bus) in buses.iter().enumerate() {
+            eprintln!(
+                "{LOG} {device_id} output bus {index}: '{}' {} channel(s){}",
+                bus.name,
+                bus.channel_count,
+                if bus.control_voltage {
+                    ", control voltage"
+                } else {
+                    ""
+                }
+            );
+        }
+        assert!(
+            !buses.is_empty(),
+            "{device_id}: a plugin declares an audio output"
+        );
+        assert!(!instance.has_crashed());
+    }
+}
+
+// TEMPORARY (VST3 multi-out, step 4e): fingerprint of a render through the first
+// real VST3 effect, to compare before and after the bus changes.  Removed at the end.
+#[test]
+#[ignore]
+fn tmp_vst3_effect_render_fingerprint() {
+    let candidates = discover_all("ECHOES_TEST_VST3", "vst3");
+    let key = "harness:vst3:fingerprint";
+    for path in &candidates {
+        let Some(device_id) = first_vst3_id(path) else {
+            continue;
+        };
+        let render = || -> Option<u64> {
+            let mut host = PluginHost::new();
+            host.registry_mut().add(vst3_manifest(&device_id, path));
+            let mut node = host.instantiate(key, &device_id, false).ok()?;
+            node.prepare(PrepareContext {
+                sample_rate: 48_000.0,
+                max_block_size: 512,
+                num_channels: 2,
+                live: true,
+            });
+            let frames = 256;
+            let transport = TransportInfo {
+                block_size: frames,
+                ..TransportInfo::stopped(48_000.0)
+            };
+            let mut seed: u32 = 1;
+            let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+            let mut input = AudioBuffer::new(2, frames);
+            for _ in 0..64 {
+                for channel in 0..2 {
+                    for sample in input.channel_mut(channel).iter_mut() {
+                        seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                        *sample = (seed >> 8) as f32 / (1u32 << 24) as f32 - 0.5;
+                    }
+                }
+                let mut outputs = vec![AudioBuffer::new(2, frames)];
+                node.process(&[&input], &mut outputs, &transport);
+                for channel in 0..2 {
+                    for sample in outputs[0].channel(channel) {
+                        hash = (hash ^ u64::from(sample.to_bits())).wrapping_mul(0x0100_0000_01b3);
+                    }
+                }
+            }
+            Some(hash)
+        };
+        let (Some(first), Some(second)) = (render(), render()) else {
+            continue;
+        };
+        eprintln!(
+            "{LOG} FINGERPRINT {device_id} first={first:016x} second={second:016x} stable={}",
+            first == second
+        );
+        return;
+    }
+    eprintln!("{LOG} FINGERPRINT no VST3 effect could be rendered");
+}

@@ -12,6 +12,7 @@ use std::mem::{offset_of, size_of};
 use std::ptr::{null_mut, NonNull};
 use std::sync::Arc;
 
+use super::buses::BusInfo;
 use super::channel_context::{CHANNEL_COLOR_KEY, CHANNEL_NAME_KEY, CHANNEL_NAME_LENGTH_KEY};
 use super::component_handler::ComponentHandler;
 use super::ffi::{
@@ -19,7 +20,8 @@ use super::ffi::{
     IBStreamVtbl, IComponent, IComponentHandlerVtbl, IComponentVtbl, IEditController,
     IEditControllerVtbl, IInfoListenerVtbl, ParameterInfo, ProcessData, ProcessSetup, TResult,
     Tuid, Vst3Controller, Vst3Library, IID_FUNKNOWN, IID_IINFO_LISTENER, IID_IUNIT_INFO, K_AUDIO,
-    K_INVALID_ARGUMENT, K_NO_INTERFACE, K_RESULT_FALSE, K_RESULT_OK, PARAM_IS_PROGRAM_CHANGE,
+    K_INVALID_ARGUMENT, K_NO_INTERFACE, K_OUTPUT, K_RESULT_FALSE, K_RESULT_OK,
+    PARAM_IS_PROGRAM_CHANGE,
 };
 use super::units::{IUnitInfoVtbl, ProgramListInfo, UnitInfo};
 use crate::plugin_system::instance::PluginInstance;
@@ -634,6 +636,31 @@ unsafe extern "C" fn component_get_bus_count(_: *mut IComponent, media: i32, _: 
     i32::from(media == K_AUDIO)
 }
 
+unsafe extern "C" fn component_get_bus_info(
+    _: *mut IComponent,
+    media: i32,
+    direction: i32,
+    index: i32,
+    bus: *mut c_void,
+) -> TResult {
+    if media != K_AUDIO || index != 0 {
+        return K_INVALID_ARGUMENT;
+    }
+    let bus = &mut *(bus as *mut BusInfo);
+    bus.media_type = media;
+    bus.direction = direction;
+    bus.channel_count = 2;
+    write_string128(
+        bus.name.as_mut_ptr(),
+        if direction == K_OUTPUT {
+            "Stereo Out"
+        } else {
+            "Stereo In"
+        },
+    );
+    K_RESULT_OK
+}
+
 unsafe extern "C" fn component_activate_bus(
     _: *mut IComponent,
     _: i32,
@@ -822,6 +849,10 @@ fn build_instance(listener: *mut FakeListener, units: *mut FakeUnits) -> Arc<Plu
             (
                 offset_of!(IComponentVtbl, get_bus_count),
                 component_get_bus_count as *const (),
+            ),
+            (
+                offset_of!(IComponentVtbl, get_bus_info),
+                component_get_bus_info as *const (),
             ),
             (
                 offset_of!(IComponentVtbl, activate_bus),

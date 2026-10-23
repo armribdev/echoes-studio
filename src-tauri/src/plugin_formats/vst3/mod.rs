@@ -10,6 +10,7 @@
 //! graph node (`wrapper`).
 
 pub mod attribute_list;
+pub mod buses;
 pub mod channel_context;
 mod com_object;
 pub mod component_handler;
