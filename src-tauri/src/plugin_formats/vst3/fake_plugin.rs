@@ -193,6 +193,9 @@ pub(crate) struct FakeUnits {
     handler: Cell<*mut FUnknown>,
     /// A faulty controller: it reports to the host the value it is just given.
     pub echoes_values: bool,
+    /// `(parameter id, value)` the processor writes to the output list of each
+    /// block it processes, one point each, in order.
+    pub outputs_to_write: Vec<(u32, f64)>,
 }
 
 impl FakeUnits {
@@ -254,6 +257,7 @@ impl FakeUnits {
             state_reads: Cell::new(0),
             handler: Cell::new(null_mut()),
             echoes_values: false,
+            outputs_to_write: Vec::new(),
         })
     }
 
@@ -698,6 +702,16 @@ unsafe extern "C" fn processor_process(
                     == K_RESULT_OK
             {
                 changes.push(((queue_table.get_parameter_id)(queue), value));
+            }
+        }
+    }
+    let output = (*data).output_param_changes as *mut HostParameterChanges;
+    if !output.is_null() {
+        let table = &*(*output).vtbl;
+        for &(id, value) in &units.outputs_to_write {
+            let queue = (table.add_parameter_data)(output, &id, &mut 0);
+            if !queue.is_null() {
+                ((*(*queue).vtbl).add_point)(queue, 0, value, &mut 0);
             }
         }
     }

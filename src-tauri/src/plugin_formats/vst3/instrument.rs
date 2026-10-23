@@ -34,7 +34,9 @@ use crate::plugin_system::lifecycle::LifecycleState;
 use super::event_list::HostEventList;
 use super::ffi::{AudioBusBuffers, Event, HostParameterChanges, ProcessContext, ProcessData};
 use super::midi_mapping::{push_mapped_controls, read_midi_mapping, MidiControllerMap};
-use super::param_delivery::{fill_param_changes, track_value_modulation};
+use super::param_delivery::{
+    begin_output_changes, fill_param_changes, publish_output_changes, track_value_modulation,
+};
 use super::transport::vst3_process_context;
 use super::wrapper::{vst3_process_trampoline, Vst3ProcessCtx};
 
@@ -163,6 +165,8 @@ pub struct VstInstrument {
     out_channel_ptrs: Vec<*mut f32>,
     out_bus: AudioBusBuffers,
     param_changes: Option<Box<HostParameterChanges>>,
+    /// Where the plugin writes the changes it makes itself, for its controller.
+    output_changes: Option<Box<HostParameterChanges>>,
     events: Option<Box<HostEventList>>,
 
     num_channels: usize,
@@ -193,6 +197,7 @@ impl VstInstrument {
             out_channel_ptrs: Vec::new(),
             out_bus: unsafe { std::mem::zeroed() },
             param_changes: None,
+            output_changes: None,
             events: None,
             num_channels: 2,
             active: false,
@@ -209,6 +214,7 @@ impl InstrumentDevice for VstInstrument {
         self.num_channels = ctx.num_channels;
         self.out_channel_ptrs = vec![std::ptr::null_mut(); ctx.num_channels];
         self.param_changes = Some(HostParameterChanges::boxed());
+        self.output_changes = Some(HostParameterChanges::boxed());
         self.events = Some(HostEventList::boxed());
         // Activation is owned by the shared instance (ADR-016); idempotent.
         self.active = self
@@ -266,6 +272,13 @@ impl InstrumentDevice for VstInstrument {
             channel_buffers32: self.out_channel_ptrs.as_mut_ptr(),
         };
 
+        let output_changes_ptr = self
+            .output_changes
+            .as_mut()
+            .map_or(std::ptr::null_mut(), |changes| {
+                begin_output_changes(changes)
+            });
+
         let mut context = vst3_process_context(transport);
         let mut data = ProcessData {
             process_mode: 0,
@@ -276,7 +289,7 @@ impl InstrumentDevice for VstInstrument {
             inputs: std::ptr::null_mut(),
             outputs: &mut self.out_bus,
             input_param_changes: param_changes_ptr,
-            output_param_changes: std::ptr::null_mut(),
+            output_param_changes: output_changes_ptr,
             input_events: event_list.as_ffi_ptr(),
             output_events: std::ptr::null_mut(),
             process_context: &mut context as *mut ProcessContext as *mut c_void,
@@ -301,6 +314,8 @@ impl InstrumentDevice for VstInstrument {
             // Not reused by the next compile: it gets a fresh instance.
             self.instance.set_lifecycle(LifecycleState::Error);
             crate::plugin_system::crash_marker::note_crash();
+        } else if let Some(changes) = self.output_changes.as_ref() {
+            publish_output_changes(&self.instance, changes);
         }
     }
 

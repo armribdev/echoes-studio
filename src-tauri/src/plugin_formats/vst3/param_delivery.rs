@@ -74,6 +74,24 @@ pub fn fill_param_changes(
     }
 }
 
+/// Empties the list the plugin writes its own parameter changes to
+/// (`outputParameterChanges`) and returns it for `ProcessData`.
+pub fn begin_output_changes(changes: &mut HostParameterChanges) -> *mut c_void {
+    changes.reset();
+    changes as *mut HostParameterChanges as *mut c_void
+}
+
+/// After `process`: what the plugin changed by itself (a program, a macro, a
+/// meter) is kept for its controller.  The processor already has these values and
+/// they neither mark the project unsaved nor move a modulation base.
+pub fn publish_output_changes(instance: &PluginInstance, changes: &HostParameterChanges) {
+    if let Some(edit_state) = instance.vst3_edit_state() {
+        for (native_id, value) in changes.latest_points() {
+            edit_state.mirror().record(native_id, value);
+        }
+    }
+}
+
 /// Off the audio thread, FFI gate held (ADR-010): puts each parameter modulated by
 /// value back on its base with a zero-sample `process`, the parameter flush that
 /// `ProcessData` allows, so a state save captures the user's setting and not a

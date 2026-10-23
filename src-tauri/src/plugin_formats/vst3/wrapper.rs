@@ -46,7 +46,9 @@ use super::ffi::{
     AudioBusBuffers, HostParameterChanges, IAudioProcessor, IComponent, ProcessContext,
     ProcessData, K_RESULT_OK,
 };
-use super::param_delivery::{fill_param_changes, track_value_modulation};
+use super::param_delivery::{
+    begin_output_changes, fill_param_changes, publish_output_changes, track_value_modulation,
+};
 use super::transport::vst3_process_context;
 
 // Stack context passed to the SEH trampoline — no heap allocation.
@@ -81,6 +83,10 @@ pub struct VstWrapperNode {
     /// `ProcessData::input_param_changes`.  Allocated in `prepare`; pointer
     /// stable thereafter.  `None` until prepared.
     param_changes: Option<Box<HostParameterChanges>>,
+
+    /// Where the plugin writes the changes it makes itself, for its controller.
+    /// Allocated in `prepare`, like `param_changes`.
+    output_changes: Option<Box<HostParameterChanges>>,
 
     /// Cached intrinsic latency (samples).  Read once at `prepare()` via
     /// `IAudioProcessor::getLatencySamples`; queried off-RT by the graph
@@ -118,6 +124,7 @@ impl VstWrapperNode {
             out_bus: unsafe { std::mem::zeroed() },
             num_channels: 2,
             param_changes: None,
+            output_changes: None,
             reported_latency: 0,
             crashed: false,
             param_controls: PluginParamControls::default(),
@@ -157,6 +164,7 @@ impl AudioNode for VstWrapperNode {
 
         // Pre-allocate the parameter-change list (ADR-007) — heap, off-RT.
         self.param_changes = Some(HostParameterChanges::boxed());
+        self.output_changes = Some(HostParameterChanges::boxed());
 
         // Activation lifecycle is owned by the shared instance (ADR-016) so it
         // survives a wrapper rebuild when the live instance is reused across a
@@ -253,6 +261,13 @@ impl AudioNode for VstWrapperNode {
             channel_buffers32: self.out_channel_ptrs.as_mut_ptr(),
         };
 
+        let output_changes_ptr = self
+            .output_changes
+            .as_mut()
+            .map_or(std::ptr::null_mut(), |changes| {
+                begin_output_changes(changes)
+            });
+
         let mut context = vst3_process_context(transport);
         let mut data = ProcessData {
             process_mode: 0,
@@ -263,7 +278,7 @@ impl AudioNode for VstWrapperNode {
             inputs: &mut self.in_bus,
             outputs: &mut self.out_bus,
             input_param_changes: param_changes_ptr,
-            output_param_changes: std::ptr::null_mut(),
+            output_param_changes: output_changes_ptr,
             input_events: std::ptr::null_mut(),
             output_events: std::ptr::null_mut(),
             process_context: &mut context as *mut ProcessContext as *mut c_void,
@@ -292,7 +307,11 @@ impl AudioNode for VstWrapperNode {
             crate::plugin_system::crash_marker::note_crash();
             return;
         }
-        if r != K_RESULT_OK && !inputs.is_empty() {
+        if r == K_RESULT_OK {
+            if let Some(changes) = self.output_changes.as_ref() {
+                publish_output_changes(&self.instance, changes);
+            }
+        } else if !inputs.is_empty() {
             outputs[0].copy_from(inputs[0]);
         }
     }

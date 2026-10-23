@@ -711,6 +711,14 @@ impl HostParameterChanges {
         self.count = 0;
     }
 
+    /// `(parameter id, last value)` of each queue that holds a point.
+    pub fn latest_points(&self) -> impl Iterator<Item = (u32, f64)> + '_ {
+        self.queues[..(self.count.max(0) as usize).min(MAX_PARAM_QUEUES)]
+            .iter()
+            .filter(|queue| queue.count > 0)
+            .map(|queue| (queue.param_id, queue.values[queue.count as usize - 1]))
+    }
+
     /// Append one normalised value point for `param_id` at `sample_offset`.
     /// Finds or creates the parameter's queue.  Silently drops if either the
     /// queue table or the per-queue point list is full.
