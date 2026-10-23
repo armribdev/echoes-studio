@@ -1919,6 +1919,71 @@ fn vst3_real_plugins_report_their_latency_and_tail() {
     }
 }
 
+/// Read-only probe of the size rules of each real editor view (`canResize`,
+/// `getSize`, `checkSizeConstraint`), without attaching it to a window.
+#[test]
+fn vst3_real_editor_view_reports_its_size_rules() {
+    use crate::plugin_formats::vst3::ffi::{ViewRect, K_RESULT_OK};
+    use crate::plugin_system::crash_marker::PluginThread;
+
+    let candidates = discover_all("ECHOES_TEST_VST3", "vst3");
+    if candidates.is_empty() {
+        eprintln!("{LOG} SKIP vst3_real_editor_view_reports_its_size_rules — no .vst3 found");
+        return;
+    }
+    let key = "harness:vst3:view-size";
+    for path in &candidates {
+        let Some(device_id) = first_vst3_id(path) else {
+            continue;
+        };
+        let mut host = PluginHost::new();
+        host.registry_mut().add(vst3_manifest(&device_id, path));
+        if host.instantiate(key, &device_id, false).is_err() {
+            continue;
+        }
+        let instance = host.instance_by_key(key).expect("instance registered");
+        let Some(controller) = instance.vst3_controller() else {
+            continue;
+        };
+        let controller = controller.as_ptr();
+        let _running = instance.mark(PluginThread::Ui);
+        unsafe {
+            let view = ((*(*controller).vtbl).create_view)(controller, c"editor".as_ptr().cast());
+            if view.is_null() {
+                eprintln!("{LOG} {device_id} has no editor view");
+                continue;
+            }
+            let vtbl = &*(*view).vtbl;
+            let mut size = ViewRect {
+                left: 0,
+                top: 0,
+                right: 0,
+                bottom: 0,
+            };
+            let got_size = (vtbl.get_size)(view, &mut size);
+            let can_resize = (vtbl.can_resize)(view);
+            let mut asked = ViewRect {
+                left: size.left,
+                top: size.top,
+                right: size.right + 100,
+                bottom: size.bottom + 100,
+            };
+            let constrained = (vtbl.check_size_constraint)(view, &mut asked);
+            eprintln!(
+                "{LOG} {device_id} view: getSize={got_size} {}x{}, canResize={can_resize}, \
+                 checkSizeConstraint(+100,+100)={constrained} -> {}x{}",
+                size.right - size.left,
+                size.bottom - size.top,
+                asked.right - asked.left,
+                asked.bottom - asked.top,
+            );
+            assert_eq!(got_size, K_RESULT_OK);
+            (vtbl.release)(view);
+        }
+        assert!(!instance.has_crashed());
+    }
+}
+
 /// What the plugin itself answers to `getLatencySamples` right now.
 fn latency_asked_directly(instance: &PluginInstance) -> u32 {
     use crate::plugin_system::instance::FFI_GATE_HARVEST_BUDGET;

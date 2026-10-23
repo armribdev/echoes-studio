@@ -960,11 +960,11 @@ pub struct IPlugViewVtbl {
     pub _pad7: *const c_void, // onKeyDown
     pub _pad8: *const c_void, // onKeyUp
     pub get_size: unsafe extern "C" fn(*mut IPlugView, *mut ViewRect) -> TResult,
-    pub _pad10: *const c_void, // onSize
+    pub on_size: unsafe extern "C" fn(*mut IPlugView, *mut ViewRect) -> TResult,
     pub _pad11: *const c_void, // onFocus
     pub set_frame: unsafe extern "C" fn(*mut IPlugView, *mut FUnknown) -> TResult,
-    pub _pad13: *const c_void, // canResize
-    pub _pad14: *const c_void, // checkSizeConstraint
+    pub can_resize: unsafe extern "C" fn(*mut IPlugView) -> TResult,
+    pub check_size_constraint: unsafe extern "C" fn(*mut IPlugView, *mut ViewRect) -> TResult,
 }
 
 // Fail-fast: vtable layouts depend on each entry being pointer-sized.  These
