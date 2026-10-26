@@ -316,3 +316,10 @@ no extra per-sample cost.
   never called in production. After a live seek, a held value from before the
   jump can apply to the first ≤ 31 samples until the next grid point. This is
   live-only and inaudible, but it is not yet deterministic.
+
+**Amendment 2026-10-26 — export length and alignment.** The export path
+(`render_project_offline`) now removes the master latency and keeps the tail after
+the last clip (until −80 dBFS for 2.5 s, capped at 10 s). The 4096-frame block, the
+grid and the held-value rule are unchanged, and `render_project_in_blocks` (the
+harness path) still renders exactly the timeline length, so every golden hash holds.
+See `dsp/dsp-runtime.md` § Offline Export.

@@ -1385,10 +1385,11 @@ to or from `kOffline` needs `setupProcessing`, so a deactivated plugin.
 - **Tail: nothing reads it.** CLAP sleeps because the plugin answers `SLEEP`; VST3
   has no such answer, so a VST3 sleep would be a guess from silence, which cuts a
   synth's release when it reports a tail of 0. It would also change which blocks are
-  processed (C-2, ADR-019) for a CPU gain. The export length is the end of the last
-  clip (`timeline_end_secs`), so the tail of every plugin and internal effect is cut
-  already: extending the export is an export feature (all formats, a cap for an
-  infinite tail), not a VST3 gap.
+  processed (C-2, ADR-019) for a CPU gain. Since 2026-10-26 the export keeps the tail
+  of every plugin and internal effect by listening, not by reading a reported tail:
+  it renders past the last clip until the output stays under −80 dBFS for 2.5 s, up
+  to 10 s (`dsp/dsp-runtime.md` § Offline Export). A reported tail is still read by
+  nothing.
 - **`kOffline`: not set.** `ProcessSetup.processMode` and `ProcessData.processMode`
   stay `kRealtime` in the effect, the instrument and `vst3_ensure_active`. The export
   runs on the live engine's `PluginHost`, so it shares the plugin instance (ADR-016)

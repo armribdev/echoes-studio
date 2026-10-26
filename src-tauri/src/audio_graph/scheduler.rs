@@ -312,6 +312,11 @@ impl GraphScheduler {
         }
     }
 
+    /// How many samples the master output lags the timeline (PDC, ADR-006).
+    pub fn latency_samples(&self) -> u32 {
+        self.plan.total_latency_samples()
+    }
+
     /// Audio thread only.  Output is interleaved `[L0, R0, L1, R1, …]`.
     pub fn process_block(&mut self, transport: &TransportInfo, interleaved_output: &mut [f32]) {
         self.run_levels(transport);

@@ -68,7 +68,6 @@ impl ExecutionPlan {
     }
 
     /// End-to-end latency at the master step (0 if empty).
-    #[cfg(test)]
     pub fn total_latency_samples(&self) -> u32 {
         self.master_step()
             .and_then(|i| self.step_cumulative_latency.get(i).copied())

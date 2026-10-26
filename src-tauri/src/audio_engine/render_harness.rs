@@ -10,7 +10,7 @@
 
 use std::sync::Arc;
 
-use super::offline::render_project_in_blocks;
+use super::offline::{render_project_in_blocks, render_project_offline};
 use crate::arpeggiator_settings::{ArpMode, ArpRate, ArpeggiatorSettings};
 use crate::audio_graph::LiveParams;
 use crate::plugin_system::PluginHost;
@@ -877,6 +877,83 @@ fn missing_instrument_plugin_is_silent_and_reported() {
     );
 }
 
+const EXPORT_CLIP_SECONDS: f64 = 0.5;
+const EXPORT_TAIL_CAP_SECONDS: f64 = 10.0;
+
+fn clip_through_delay(delay: DelayParams) -> AppProject {
+    let mut track = audio_track();
+    track.clips[0].end = EXPORT_CLIP_SECONDS;
+    track.effects = vec![effect("delay", EffectParams::Delay(delay))];
+    project_with(vec![track])
+}
+
+fn export(project: &AppProject) -> (Vec<f32>, Vec<f32>) {
+    render_project_offline(
+        project,
+        &LiveParams::new(),
+        &mut PluginHost::new(),
+        SAMPLE_RATE,
+    )
+    .expect("reference project must export")
+}
+
+#[test]
+fn export_keeps_the_echoes_after_the_last_clip() {
+    let project = clip_through_delay(DelayParams {
+        delay_ms: 400.0,
+        feedback: 0.5,
+        wet: 0.5,
+        dry: 1.0,
+        ping_pong: false,
+    });
+    let clip_frames = (EXPORT_CLIP_SECONDS * SAMPLE_RATE as f64) as usize;
+    let (left, right) = export(&project);
+
+    assert!(left.len() > clip_frames, "the echoes must not be cut");
+    assert!(
+        left.len() < clip_frames + (EXPORT_TAIL_CAP_SECONDS * SAMPLE_RATE as f64) as usize,
+        "the tail must end on silence, not on the cap"
+    );
+    assert!(
+        left[clip_frames..].iter().any(|s| s.abs() > 1e-3),
+        "an echo must sound after the clip"
+    );
+    assert!(
+        left[left.len() - 1].abs() > 1e-4 || right[right.len() - 1].abs() > 1e-4,
+        "the file must end on the last audible sample"
+    );
+
+    let cut = render(&project, BLOCK_SIZES[0]);
+    let exported: Vec<f32> = left
+        .iter()
+        .zip(&right)
+        .flat_map(|(l, r)| [*l, *r])
+        .collect();
+    assert_eq!(
+        first_difference(&exported[..cut.len()], &cut),
+        None,
+        "the tail must not change what comes before it"
+    );
+}
+
+#[test]
+fn export_tail_stops_at_the_cap_for_a_sound_that_never_ends() {
+    let project = clip_through_delay(DelayParams {
+        delay_ms: 200.0,
+        feedback: 0.95,
+        wet: 1.0,
+        dry: 1.0,
+        ping_pong: false,
+    });
+    let clip_frames = (EXPORT_CLIP_SECONDS * SAMPLE_RATE as f64) as usize;
+    let (left, _) = export(&project);
+
+    assert_eq!(
+        left.len(),
+        clip_frames + (EXPORT_TAIL_CAP_SECONDS * SAMPLE_RATE as f64) as usize
+    );
+}
+
 /// 16 tracks, each with three EQ lanes, so the cost of the automation mapping shows up in a render.
 fn stress_eq_project(params: [&str; 3]) -> AppProject {
     let points: &[(f64, f32)] = &[(0.0, 0.2), (0.6, 0.8), (1.3, 0.3), (2.2, 0.7)];
@@ -1027,23 +1104,27 @@ mod clap_plugins {
             .collect()
     }
 
+    fn gain_effect(plugin_id: &str, params: Vec<(u32, f32)>) -> TrackEffect {
+        effect(
+            "plugin",
+            EffectParams::Plugin(PluginParams {
+                plugin_id: plugin_id.into(),
+                name: "Echoes Test Gain".into(),
+                format: "clap".into(),
+                params,
+                sandboxed: false,
+                sidechain_source: None,
+            }),
+        )
+    }
+
     /// Clip starting at 1.0 s (silent lead-in) through the plugin as an
     /// effect, and a CLAP instrument playing two notes with a gap between.
     pub fn project(plugin_id: &str, effect_params: Vec<(u32, f32)>) -> AppProject {
         let mut audio = audio_track();
         audio.clips[0].start = 1.0;
         audio.clips[0].end = 1.0 + DURATION_S;
-        audio.effects = vec![effect(
-            "plugin",
-            EffectParams::Plugin(PluginParams {
-                plugin_id: plugin_id.into(),
-                name: "Echoes Test Gain".into(),
-                format: "clap".into(),
-                params: effect_params,
-                sandboxed: false,
-                sidechain_source: None,
-            }),
-        )];
+        audio.effects = vec![gain_effect(plugin_id, effect_params)];
 
         let mut midi = midi_track();
         midi.effects.clear();
@@ -1058,6 +1139,62 @@ mod clap_plugins {
         midi.midi_clips[0].notes = vec![note("n1", 60, 0.0), note("n2", 64, 3.0)];
 
         project_with(vec![audio, midi])
+    }
+
+    fn peak_frame(samples: &[f32]) -> usize {
+        samples
+            .iter()
+            .enumerate()
+            .max_by(|a, b| a.1.abs().total_cmp(&b.1.abs()))
+            .map(|(frame, _)| frame)
+            .expect("render must not be empty")
+    }
+
+    /// A plugin that reports 64 samples of latency delays the whole mix (the other
+    /// tracks wait for it); the export removes that delay, the harness path does
+    /// not.  The test plugin only reports its latency without delaying its audio,
+    /// so the impulse rides a plain track.
+    #[test]
+    fn export_lines_up_with_the_timeline_despite_plugin_latency() {
+        const PLUGIN_LATENCY: usize = 64;
+        const IMPULSE_FRAME: usize = 100;
+        const CLIP_START_SECONDS: f64 = 0.5;
+
+        let mut samples = vec![0.0_f32; SAMPLE_RATE as usize / 10];
+        samples[IMPULSE_FRAME] = 1.0;
+        let mut track = empty_track("audio");
+        track.clips.push(AppClip {
+            id: "impulse".into(),
+            start: CLIP_START_SECONDS,
+            end: CLIP_START_SECONDS + 0.1,
+            offset: 0.0,
+            file_path: String::new(),
+            raw_samples: Arc::new(samples),
+            sample_rate: SAMPLE_RATE,
+            peaks_64: vec![],
+            peaks_512: vec![],
+            peaks_4096: vec![],
+        });
+        let mut latent = empty_track("latent");
+        latent.effects = vec![gain_effect(PLUGIN_ID, vec![])];
+        let project = project_with(vec![track, latent]);
+
+        let (left, _) = render_project_offline(
+            &project,
+            &LiveParams::new(),
+            &mut host_with_test_plugins(PLUGIN_ID),
+            SAMPLE_RATE,
+        )
+        .expect("project must export");
+        let uncompensated: Vec<f32> = render_with_plugin(&project, PLUGIN_ID, BLOCK_SIZES[0])
+            .chunks_exact(2)
+            .map(|frame| frame[0])
+            .collect();
+
+        let timeline_frame = (CLIP_START_SECONDS * SAMPLE_RATE as f64) as usize + IMPULSE_FRAME;
+        assert_eq!(peak_frame(&left), timeline_frame);
+        assert_eq!(peak_frame(&uncompensated), timeline_frame + PLUGIN_LATENCY);
+        assert_eq!(left.len(), uncompensated.len());
     }
 
     #[test]

@@ -212,3 +212,13 @@ Decision 3 (latency via `AudioNode::latency_samples()`) now covers VST3 instrume
 `InstrumentDevice::latency_samples()` is relayed by `InstrumentNode`, so an
 instrument track is aligned by the same compensation as an effect chain. Built-in
 and CLAP instruments report 0. See ADR-013 (amendment of the same date).
+
+## Note 2026-10-26 — the export removes the master latency
+
+PDC aligns the tracks with each other, so the whole mix reaches the master
+`ExecutionPlan::total_latency_samples()` late. Live playback keeps that delay (it is
+the output latency). The export no longer does: `render_project_offline` skips the
+first `N` frames (`GraphScheduler::latency_samples()`, a read-only accessor; no
+`process` or scheduler logic changed) so the file lines up with the timeline. The
+C-2 harness path does not compensate, so the golden hashes are unchanged. See
+`dsp/dsp-runtime.md` § Offline Export.

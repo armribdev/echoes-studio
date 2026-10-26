@@ -769,6 +769,14 @@ Cohérent avec _« ~44 j avec bridge »_ de l'audit (légère réévaluation à 
   et compare un hash FNV-1a figé, pas un `.wav` + SHA256. La CI le rejoue à
   chaque PR (Windows uniquement). Restent ouverts : vérification cross-OS,
   projets avec plugins réels.
+- **Mise à jour 2026-10-26 : chemin d'export.** `render_project_in_blocks` (le
+  chemin du harness, hashes figés) rend exactement la durée de la timeline, sans
+  compensation. `render_project_offline` (l'export) retire la latence du master
+  et garde la queue après le dernier clip. Les hashes n'ont pas changé ; le
+  harness couvre l'export par `export_keeps_the_echoes_after_the_last_clip`,
+  `export_tail_stops_at_the_cap_for_a_sound_that_never_ends` et
+  `export_lines_up_with_the_timeline_despite_plugin_latency` (propriétés, pas de
+  hash).
 
 ### V2 — Suite XRun longue durée (à partir de Phase 1)
 

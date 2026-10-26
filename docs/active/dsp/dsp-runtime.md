@@ -150,6 +150,28 @@ priority (MMCSS "Pro Audio" / `SCHED_FIFO`) is a later, dedicated change.
 
 ---
 
+## Offline Export (`audio_engine/offline.rs`)
+
+The export drives the same `GraphScheduler` from the command thread, with two
+rules the live callback does not have (2026-10-26):
+
+- **Latency.** The master output lags the timeline by
+  `GraphScheduler::latency_samples()` (the plan's cumulative latency at the master
+  step, ADR-006). `render_project_offline` renders that many extra frames and
+  drops the first `N`, so the file starts at timeline zero.
+- **Tail.** After the last clip (`timeline_end_secs`) it keeps rendering until the
+  output has stayed under −80 dBFS for 2.5 s or the tail reaches 10 s, then drops
+  the trailing silence. The file ends at the later of the last clip's end and the
+  last audible sample. The 2.5 s hold is longer than the internal delay's maximum
+  time (2 s); a plugin echo spaced further apart would be cut.
+
+`render_project_in_blocks` (the C-2 harness path) applies neither rule: it renders
+exactly the timeline length so the golden hashes do not move. Both share
+`compile_for_render` and `BlockRenderer`. The live transport still stops at
+`timeline_end_secs` (`duration_samples`); only the export extends.
+
+---
+
 ## Runtime Isolation Rules
 
 1. The audio thread never reads from `AppProject`. It only reads from the
