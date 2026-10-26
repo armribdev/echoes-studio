@@ -107,20 +107,6 @@
 		}
 	}
 
-	function modIndexForRoute(route: ProjectModulationRoute): number {
-		return modulators.findIndex((m) => m.id === route.modulator_id);
-	}
-
-	function modNameForRoute(route: ProjectModulationRoute): string {
-		const mod = modulators[modIndexForRoute(route)];
-		return mod ? modulatorLabel(modulators, mod) : '?';
-	}
-
-	function colorForRoute(route: ProjectModulationRoute): string {
-		const idx = modIndexForRoute(route);
-		return modulatorColor(idx >= 0 ? idx : 0);
-	}
-
 	async function handleAddModulator(kind: ModulatorKind) {
 		typeMenuOpen = false;
 		try {
@@ -196,6 +182,7 @@
 	{/if}
 
 	{#each modulators as mod, i (mod.id)}
+		{@const modRoutes = mod_routes.filter((r) => r.modulator_id === mod.id)}
 		{@const card = {
 			trackId,
 			mod,
@@ -223,7 +210,7 @@
 			{:else if mod.kind === 'macro'}
 				<MacroCard
 					{...card}
-					routeCount={mod_routes.filter((r) => r.modulator_id === mod.id).length}
+					routeCount={modRoutes.length}
 					on:assign={(e) => assignByKey(mod.id, e.detail)}
 					on:togglepicker={() => togglePicker(mod.id)}
 					on:remove={() => handleRemoveMod(mod.id)}
@@ -244,49 +231,38 @@
 					on:close={() => (pickerModulatorId = null)}
 				/>
 			{/if}
+			{#each modRoutes as route (route.id)}
+				<div class="route-row" style:border-left-color={card.color}>
+					<span class="route-tgt" title={routeTargetLabel(route, options)}
+						>{routeTargetLabel(route, options)}</span
+					>
+					<input
+						class="depth-slider"
+						type="range"
+						min="-1"
+						max="1"
+						step="0.01"
+						value={sliderDepth(route, options)}
+						on:change={(e) => handleDepthChange(route, e)}
+						style:accent-color={card.color}
+					/>
+					<span class="depth-val">{formatDepth(sliderDepth(route, options))}</span>
+					<button
+						class="rm-btn"
+						type="button"
+						on:click|stopPropagation={() => handleRemoveRoute(route.id)}
+						title="Supprimer">×</button
+					>
+				</div>
+			{/each}
 		</div>
 	{/each}
 
-	<!-- ── Routes ──────────────────────────────────────────────────────────────── -->
-	<div class="section-header routes-header">
-		<span class="section-title">{compact ? 'Rtes' : 'Routes'}</span>
-	</div>
-
-	{#if mod_routes.length === 0}
+	{#if modulators.length > 0 && mod_routes.length === 0}
 		<p class="empty">
 			{compact ? '—' : "Aucune route — glissez l'icône d'un modulateur sur un réglage"}
 		</p>
 	{/if}
-
-	{#each mod_routes as route (route.id)}
-		{@const routeColor = colorForRoute(route)}
-		<div class="slot">
-			<div class="route-row" style:border-left-color={routeColor}>
-				<span class="route-src" style:color={routeColor}>{modNameForRoute(route)}</span>
-				<span class="route-arrow">→</span>
-				<span class="route-tgt" title={routeTargetLabel(route, options)}
-					>{routeTargetLabel(route, options)}</span
-				>
-				<input
-					class="depth-slider"
-					type="range"
-					min="-1"
-					max="1"
-					step="0.01"
-					value={sliderDepth(route, options)}
-					on:change={(e) => handleDepthChange(route, e)}
-					style:accent-color={routeColor}
-				/>
-				<span class="depth-val">{formatDepth(sliderDepth(route, options))}</span>
-				<button
-					class="rm-btn"
-					type="button"
-					on:click|stopPropagation={() => handleRemoveRoute(route.id)}
-					title="Supprimer">×</button
-				>
-			</div>
-		</div>
-	{/each}
 </div>
 
 <style lang="scss">
@@ -299,7 +275,7 @@
 			padding: 3px 5px;
 		}
 		&.compact .route-row {
-			padding: 2px 5px;
+			padding: 2px 5px 2px 9px;
 			gap: 3px;
 		}
 		&.compact .empty {
@@ -311,10 +287,6 @@
 		}
 		&.compact .depth-val {
 			min-width: 24px;
-			font-size: 8px;
-		}
-		&.compact .route-src {
-			min-width: 22px;
 			font-size: 8px;
 		}
 		&.compact .route-tgt {
@@ -332,11 +304,6 @@
 		position: sticky;
 		top: 0;
 		z-index: 1;
-
-		&.routes-header {
-			position: static;
-			margin-top: 2px;
-		}
 	}
 
 	.section-title {
@@ -407,25 +374,11 @@
 		display: flex;
 		align-items: center;
 		gap: 5px;
-		padding: 5px 6px 5px 4px;
+		padding: 5px 6px 5px 12px;
 		border-left: 2px solid transparent;
 		&:hover {
 			background: $surface-1;
 		}
-	}
-
-	.route-src {
-		flex-shrink: 0;
-		min-width: 36px;
-		font-size: 9px;
-		font-family: $font-mono;
-		font-weight: 700;
-	}
-
-	.route-arrow {
-		flex-shrink: 0;
-		font-size: 10px;
-		color: $text-faint;
 	}
 
 	.route-tgt {
