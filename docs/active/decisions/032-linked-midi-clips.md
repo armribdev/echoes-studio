@@ -3,8 +3,10 @@
 ## Status
 
 **Accepted — 2026-10-26 (approved by the user after one revision the same day).
-Implementation in progress, one plan step at a time with approval between steps;
-step 1 (harness) first.** Touches two hard constraints of
+Implementation in progress, one plan step at a time with approval between steps.
+Step 1 (harness `repeated_midi`) and step 2 (backend content pool, no sharing yet:
+every clip has its own content, all 14 golden hashes unchanged) are done;
+step 3 (frontend mirror) is next, and the frontend is out of sync until it lands.** Touches two hard constraints of
 `architecture_rules.md`: invariant 5 (Rust owns the state, the frontend mirrors
 it) and invariant 6 (event-sourcing scope, ADR-002), plus the project file format
 (C-4). Builds on ADR-002, ADR-005, ADR-012 (beat-space MIDI), ADR-018 (clip

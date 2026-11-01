@@ -42,8 +42,8 @@ use crate::project::{
     default_marker_name, default_region_name, generate_id, normalize_region_span,
     sanitize_control_points, AppClip, AppMidiClip, AppProject, AppState, AppTrack,
     ArrangementMarker, ArrangementRegion, CachedAudioData, CompressorParams, DelayParams,
-    EffectParams, EqParams, MidiClipDto, MidiControlPoint, MidiNote, PluginParams, ProjectUiLayout,
-    ReverbParams, TrackEffect,
+    EffectParams, EqParams, MidiClipDto, MidiContent, MidiControlPoint, MidiNote, PluginParams,
+    ProjectUiLayout, ReverbParams, TrackEffect,
 };
 use crate::sampler_kit::{PadSample, SamplerKit, SamplerPad, SAMPLER_INSTRUMENT_ID};
 
@@ -328,6 +328,26 @@ fn lock_project<'a>(
     state.project.lock().map_err(|e| e.to_string())
 }
 
+/// Publishes every track whose clips play `content_id` (ADR-032). `false` when
+/// one of them has no slot yet and needs a recompile.
+fn publish_midi_content(state: &tauri::State<'_, AppState>, content_id: &str) -> bool {
+    let track_ids: Vec<String> = lock_project(state)
+        .map(|project| {
+            project
+                .tracks
+                .iter()
+                .filter(|t| t.midi_clips.iter().any(|c| c.content_id == content_id))
+                .map(|t| t.id.clone())
+                .collect()
+        })
+        .unwrap_or_default();
+    let mut all_published = true;
+    for track_id in &track_ids {
+        all_published &= publish_track_midi(state, track_id);
+    }
+    all_published
+}
+
 /// Note and control content is not a graph change: it goes into the live
 /// instrument so playback keeps its plugin state. `false` when the track has
 /// no slot yet and needs a recompile.
@@ -342,7 +362,13 @@ fn publish_track_midi(state: &tauri::State<'_, AppState>, track_id: &str) -> boo
             .tracks
             .iter()
             .find(|t| t.id == track_id)
-            .map(|track| crate::audio_graph::compiler::bake_track_midi(track, sample_rate))
+            .map(|track| {
+                crate::audio_graph::compiler::bake_track_midi(
+                    track,
+                    &project.midi_contents,
+                    sample_rate,
+                )
+            })
     });
     match content {
         Some(content) => state.live_params.publish_track_midi(track_id, content),
@@ -1370,6 +1396,7 @@ fn process_command(
 
             with_project_mut(state, |project| {
                 project.tracks.retain(|t| t.id != p.track_id);
+                project.prune_unreferenced_midi_contents();
                 Ok(())
             })?;
 
@@ -2284,36 +2311,39 @@ fn process_command(
         cmd::ADD_MIDI_CLIP => {
             let p: AddMidiClipPayload = serde_json::from_value(command.payload)
                 .map_err(|e| format!("ADD_MIDI_CLIP payload invalid: {e}"))?;
-            let clip_id = generate_id();
-            let notes = p
-                .notes
-                .into_iter()
-                .map(|mut note| {
-                    note.id = generate_id();
-                    note
-                })
-                .collect();
+            let content = MidiContent {
+                notes: p
+                    .notes
+                    .into_iter()
+                    .map(|mut note| {
+                        note.id = generate_id();
+                        note
+                    })
+                    .collect(),
+                channel_controls: sanitize_control_points(p.channel_controls),
+            };
             let clip = AppMidiClip {
-                id: clip_id.clone(),
+                id: generate_id(),
                 start: p.start,
                 end: p.end,
                 offset: p.offset.max(0.0),
-                notes,
-                channel_controls: sanitize_control_points(p.channel_controls),
+                content_id: generate_id(),
             };
             let clip_dto = MidiClipDto {
                 id: clip.id.clone(),
                 start: clip.start,
                 end: clip.end,
                 offset: clip.offset,
-                notes: clip.notes.clone(),
-                channel_controls: clip.channel_controls.clone(),
+                content_id: clip.content_id.clone(),
             };
+            let content_json = serde_json::to_value(&content).unwrap_or_default();
 
             with_project_mut(state, |project| {
+                let content_id = clip.content_id.clone();
                 require_track_mut(project, &p.track_id)?
                     .midi_clips
                     .push(clip);
+                project.midi_contents.insert(content_id, content);
                 Ok(())
             })?;
 
@@ -2323,6 +2353,7 @@ fn process_command(
                 json!({
                     "track_id": p.track_id,
                     "clip": serde_json::to_value(&clip_dto).unwrap_or_default(),
+                    "content": content_json,
                 }),
                 true,
             )
@@ -2336,6 +2367,7 @@ fn process_command(
                 require_track_mut(project, &p.track_id)?
                     .midi_clips
                     .retain(|c| c.id != p.clip_id);
+                project.prune_unreferenced_midi_contents();
                 Ok(())
             })?;
 
@@ -2378,8 +2410,7 @@ fn process_command(
                         start: clip.start,
                         end: clip.end,
                         offset: clip.offset,
-                        notes: clip.notes.clone(),
-                        channel_controls: clip.channel_controls.clone(),
+                        content_id: clip.content_id.clone(),
                     };
                     let dst_idx = project
                         .tracks
@@ -2429,20 +2460,20 @@ fn process_command(
             let p: SetClipMidiNotesPayload = serde_json::from_value(command.payload)
                 .map_err(|e| format!("SET_CLIP_MIDI_NOTES payload invalid: {e}"))?;
 
-            with_project_mut(state, |project| {
-                let track = require_track_mut(project, &p.track_id)?;
-                require_midi_clip_mut(track, &p.clip_id)?.notes = p.notes.clone();
-                Ok(())
+            let content_id = with_project_mut(state, |project| {
+                let (content_id, content) =
+                    project.midi_content_of_clip_mut(&p.track_id, &p.clip_id)?;
+                content.notes = p.notes.clone();
+                Ok(content_id)
             })?;
 
-            let published = publish_track_midi(state, &p.track_id);
+            let published = publish_midi_content(state, &content_id);
 
             let result = commit_same_payload(
                 &ctx,
-                ev::MIDI_CLIP_NOTES_SET,
+                ev::MIDI_CONTENT_NOTES_SET,
                 json!({
-                    "track_id": p.track_id,
-                    "clip_id": p.clip_id,
+                    "content_id": content_id,
                     "notes": serde_json::to_value(&p.notes).unwrap_or_default(),
                 }),
                 false,
@@ -2458,21 +2489,20 @@ fn process_command(
                 .map_err(|e| format!("SET_CLIP_MIDI_CONTROLS payload invalid: {e}"))?;
             let channel_controls = sanitize_control_points(p.channel_controls);
 
-            with_project_mut(state, |project| {
-                let track = require_track_mut(project, &p.track_id)?;
-                require_midi_clip_mut(track, &p.clip_id)?.channel_controls =
-                    channel_controls.clone();
-                Ok(())
+            let content_id = with_project_mut(state, |project| {
+                let (content_id, content) =
+                    project.midi_content_of_clip_mut(&p.track_id, &p.clip_id)?;
+                content.channel_controls = channel_controls.clone();
+                Ok(content_id)
             })?;
 
-            let published = publish_track_midi(state, &p.track_id);
+            let published = publish_midi_content(state, &content_id);
 
             let result = commit_same_payload(
                 &ctx,
-                ev::MIDI_CLIP_CONTROLS_SET,
+                ev::MIDI_CONTENT_CONTROLS_SET,
                 json!({
-                    "track_id": p.track_id,
-                    "clip_id": p.clip_id,
+                    "content_id": content_id,
                     "channel_controls": serde_json::to_value(&channel_controls).unwrap_or_default(),
                 }),
                 false,
@@ -2620,6 +2650,7 @@ fn snapshot_project(project: &AppProject) -> AppProject {
         midi_ppq: project.midi_ppq,
         midi_grid_use_triplets: project.midi_grid_use_triplets,
         tracks: project.tracks.iter().map(snapshot_track).collect(),
+        midi_contents: project.midi_contents.clone(),
         markers: project.markers.clone(),
         regions: project.regions.clone(),
         // Plugin binary state mirrors live plugin internals and is restored
@@ -2752,6 +2783,7 @@ fn kit_from_payload(
 fn apply_track_deleted(project: &mut AppProject, payload: &Value) {
     let id = payload_str(payload, "id");
     project.tracks.retain(|t| t.id != id);
+    project.prune_unreferenced_midi_contents();
 }
 
 fn apply_track_updated(project: &mut AppProject, payload: &Value) {
@@ -3291,22 +3323,22 @@ fn apply_midi_clip_added(project: &mut AppProject, payload: &Value) {
     if track.midi_clips.iter().any(|c| c.id == id) {
         return;
     }
-    let notes = raw_clip
-        .get("notes")
-        .and_then(|v| serde_json::from_value(v.clone()).ok())
-        .unwrap_or_default();
-    let channel_controls = raw_clip
-        .get("channel_controls")
-        .and_then(|v| serde_json::from_value(v.clone()).ok())
-        .unwrap_or_default();
+    let Some(content_id) = raw_clip["content_id"].as_str().map(str::to_string) else {
+        return;
+    };
     track.midi_clips.push(AppMidiClip {
         id,
         start,
         end,
         offset: raw_clip["offset"].as_f64().unwrap_or(0.0),
-        notes,
-        channel_controls,
+        content_id: content_id.clone(),
     });
+    let created = payload
+        .get("content")
+        .and_then(|v| serde_json::from_value::<MidiContent>(v.clone()).ok());
+    if let Some(content) = created {
+        project.midi_contents.insert(content_id, content);
+    }
 }
 
 fn apply_midi_clip_removed(project: &mut AppProject, payload: &Value) {
@@ -3316,6 +3348,7 @@ fn apply_midi_clip_removed(project: &mut AppProject, payload: &Value) {
         return;
     };
     track.midi_clips.retain(|c| c.id != clip_id);
+    project.prune_unreferenced_midi_contents();
 }
 
 fn apply_midi_clip_moved(project: &mut AppProject, payload: &Value) {
@@ -3333,37 +3366,29 @@ fn apply_midi_clip_moved(project: &mut AppProject, payload: &Value) {
     }
 }
 
-fn apply_midi_clip_notes_set(project: &mut AppProject, payload: &Value) {
-    let track_id = payload_str(payload, "track_id");
-    let clip_id = payload_str(payload, "clip_id");
+fn apply_midi_content_notes_set(project: &mut AppProject, payload: &Value) {
+    let content_id = payload_str(payload, "content_id");
     let Some(raw_notes) = payload.get("notes") else {
         return;
     };
     let Ok(notes) = serde_json::from_value::<Vec<MidiNote>>(raw_notes.clone()) else {
         return;
     };
-    let Some(track) = find_track_mut(project, &track_id) else {
-        return;
-    };
-    if let Ok(clip) = require_midi_clip_mut(track, &clip_id) {
-        clip.notes = notes;
+    if let Some(content) = project.midi_contents.get_mut(&content_id) {
+        content.notes = notes;
     }
 }
 
-fn apply_midi_clip_controls_set(project: &mut AppProject, payload: &Value) {
-    let track_id = payload_str(payload, "track_id");
-    let clip_id = payload_str(payload, "clip_id");
+fn apply_midi_content_controls_set(project: &mut AppProject, payload: &Value) {
+    let content_id = payload_str(payload, "content_id");
     let Some(raw_controls) = payload.get("channel_controls") else {
         return;
     };
     let Ok(controls) = serde_json::from_value::<Vec<MidiControlPoint>>(raw_controls.clone()) else {
         return;
     };
-    let Some(track) = find_track_mut(project, &track_id) else {
-        return;
-    };
-    if let Ok(clip) = require_midi_clip_mut(track, &clip_id) {
-        clip.channel_controls = controls;
+    if let Some(content) = project.midi_contents.get_mut(&content_id) {
+        content.channel_controls = controls;
     }
 }
 
@@ -3483,9 +3508,11 @@ fn apply_events(
             ev::MIDI_CLIP_MOVED_TO_TRACK => {
                 apply_midi_clip_moved_to_track(&mut project, &event.payload)
             }
-            ev::MIDI_CLIP_NOTES_SET => apply_midi_clip_notes_set(&mut project, &event.payload),
-            ev::MIDI_CLIP_CONTROLS_SET => {
-                apply_midi_clip_controls_set(&mut project, &event.payload)
+            ev::MIDI_CONTENT_NOTES_SET => {
+                apply_midi_content_notes_set(&mut project, &event.payload)
+            }
+            ev::MIDI_CONTENT_CONTROLS_SET => {
+                apply_midi_content_controls_set(&mut project, &event.payload)
             }
             _ => {}
         }
@@ -3600,73 +3627,88 @@ mod tests {
         assert_eq!(project.tracks[1].instrument, None);
     }
 
-    #[test]
-    fn replayed_midi_clip_added_keeps_notes_and_offset() {
-        let mut project = project_with_lfo();
-        apply_midi_clip_added(
-            &mut project,
-            &json!({
-                "track_id": "t",
-                "clip": {
-                    "id": "c",
-                    "start": 1.0,
-                    "end": 3.0,
-                    "offset": 0.25,
-                    "notes": [{
-                        "id": "n",
-                        "pitch": 60,
-                        "start": 0.0,
-                        "duration": 1.0,
-                        "velocity": 100
-                    }]
-                }
-            }),
-        );
-        let clip = &project.tracks[0].midi_clips[0];
-        assert_eq!(clip.offset, 0.25);
-        assert_eq!(clip.notes.len(), 1);
-        assert_eq!(clip.notes[0].pitch, 60);
-        assert_eq!(clip.notes[0].id, "n");
+    fn midi_clip_added_payload(clip_id: &str, content_id: &str) -> Value {
+        json!({
+            "track_id": "t",
+            "clip": {
+                "id": clip_id,
+                "start": 1.0,
+                "end": 3.0,
+                "offset": 0.25,
+                "content_id": content_id
+            },
+            "content": {
+                "notes": [{
+                    "id": "n",
+                    "pitch": 60,
+                    "start": 0.0,
+                    "duration": 1.0,
+                    "velocity": 100
+                }],
+                "channel_controls": [
+                    { "start": 0.5, "kind": "control_change", "number": 64, "value": 127 }
+                ]
+            }
+        })
     }
 
     #[test]
-    fn replayed_midi_clip_keeps_its_channel_controls() {
+    fn replayed_midi_clip_added_creates_its_content_and_keeps_the_offset() {
         let mut project = project_with_lfo();
-        apply_midi_clip_added(
-            &mut project,
-            &json!({
-                "track_id": "t",
-                "clip": {
-                    "id": "c",
-                    "start": 0.0,
-                    "end": 2.0,
-                    "offset": 0.0,
-                    "notes": [],
-                    "channel_controls": [
-                        { "start": 0.5, "kind": "control_change", "number": 64, "value": 127 }
-                    ]
-                }
-            }),
-        );
-        let controls = &project.tracks[0].midi_clips[0].channel_controls;
-        assert_eq!(controls.len(), 1);
-        assert_eq!(controls[0].kind, MidiControlKind::ControlChange);
-        assert_eq!(controls[0].value, 127);
+        apply_midi_clip_added(&mut project, &midi_clip_added_payload("c", "k"));
 
-        apply_midi_clip_controls_set(
+        let clip = &project.tracks[0].midi_clips[0];
+        assert_eq!(clip.offset, 0.25);
+        assert_eq!(clip.content_id, "k");
+
+        let content = &project.midi_contents[&clip.content_id];
+        assert_eq!(content.notes.len(), 1);
+        assert_eq!(content.notes[0].pitch, 60);
+        assert_eq!(content.notes[0].id, "n");
+        assert_eq!(content.channel_controls.len(), 1);
+        assert_eq!(
+            content.channel_controls[0].kind,
+            MidiControlKind::ControlChange
+        );
+        assert_eq!(content.channel_controls[0].value, 127);
+    }
+
+    #[test]
+    fn replayed_content_edits_reach_the_content_of_the_clip() {
+        let mut project = project_with_lfo();
+        apply_midi_clip_added(&mut project, &midi_clip_added_payload("c", "k"));
+
+        apply_midi_content_controls_set(
             &mut project,
             &json!({
-                "track_id": "t",
-                "clip_id": "c",
+                "content_id": "k",
                 "channel_controls": [
                     { "start": 1.0, "kind": "pitch_bend", "value": 12288 }
                 ]
             }),
         );
-        let controls = &project.tracks[0].midi_clips[0].channel_controls;
-        assert_eq!(controls.len(), 1);
-        assert_eq!(controls[0].kind, MidiControlKind::PitchBend);
-        assert_eq!(controls[0].number, 0);
+        apply_midi_content_notes_set(&mut project, &json!({ "content_id": "k", "notes": [] }));
+
+        let content = &project.midi_contents["k"];
+        assert!(content.notes.is_empty());
+        assert_eq!(content.channel_controls.len(), 1);
+        assert_eq!(content.channel_controls[0].kind, MidiControlKind::PitchBend);
+        assert_eq!(content.channel_controls[0].number, 0);
+    }
+
+    #[test]
+    fn replayed_clip_removal_and_track_deletion_drop_unreferenced_content() {
+        let mut project = project_with_lfo();
+        apply_midi_clip_added(&mut project, &midi_clip_added_payload("c1", "k1"));
+        apply_midi_clip_added(&mut project, &midi_clip_added_payload("c2", "k2"));
+        assert_eq!(project.midi_contents.len(), 2);
+
+        apply_midi_clip_removed(&mut project, &json!({ "track_id": "t", "clip_id": "c1" }));
+        assert!(!project.midi_contents.contains_key("k1"));
+        assert!(project.midi_contents.contains_key("k2"));
+
+        apply_track_deleted(&mut project, &json!({ "id": "t" }));
+        assert!(project.midi_contents.is_empty());
     }
 
     #[test]

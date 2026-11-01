@@ -17,8 +17,9 @@ use crate::plugin_system::PluginHost;
 use crate::project::{
     AppClip, AppMidiClip, AppProject, AppTrack, AutomationClip, AutomationLane, AutomationPoint,
     CompressorParams, DelayParams, EffectParams, EqParams, InterpolationMode, LfoParams,
-    LfoWaveform, MacroParams, MidiControlKind, MidiControlPoint, MidiNote, ModulationTargetRef,
-    ModulatorParams, ProjectModulationRoute, ProjectModulator, ReverbParams, TrackEffect,
+    LfoWaveform, MacroParams, MidiContent, MidiControlKind, MidiControlPoint, MidiNote,
+    ModulationTargetRef, ModulatorParams, ProjectModulationRoute, ProjectModulator, ReverbParams,
+    TrackEffect,
 };
 use crate::sampler_kit::{PadPlayMode, PadSample, SamplerKit, SamplerPad, SAMPLER_INSTRUMENT_ID};
 
@@ -164,6 +165,15 @@ fn reference_midi_notes() -> Vec<MidiNote> {
     ]
 }
 
+fn reference_midi_content() -> MidiContent {
+    MidiContent {
+        notes: reference_midi_notes(),
+        channel_controls: vec![],
+    }
+}
+
+/// Its clip plays the content `"midi-clip"`; build the project with
+/// `project_with_reference_midi`.
 fn midi_track() -> AppTrack {
     let mut track = empty_track("midi");
     track.midi_clips.push(AppMidiClip {
@@ -171,8 +181,7 @@ fn midi_track() -> AppTrack {
         start: 0.0,
         end: DURATION_S,
         offset: 0.0,
-        notes: reference_midi_notes(),
-        channel_controls: vec![],
+        content_id: "midi-clip".into(),
     });
     track.effects = full_effect_chain();
     track
@@ -181,7 +190,7 @@ fn midi_track() -> AppTrack {
 /// Two full repeats of a one-bar clip (120 bpm) and a cut-off third, made by the
 /// repeat handle. `n4` runs past the bar and `n2` past the cut, so the clip
 /// window matters (ADR-018). ADR-032: sharing one content between these clips
-/// must not change a sample.
+/// must not change a sample. Each clip has a content of its own (`repeat-N`).
 const REPEAT_LENGTH_S: f64 = 2.0;
 const REPEAT_CUT_OFF_S: f64 = 0.6;
 
@@ -195,8 +204,7 @@ fn repeated_midi_track() -> AppTrack {
             start,
             end: start + length,
             offset: 0.0,
-            notes: reference_midi_notes(),
-            channel_controls: vec![],
+            content_id: format!("repeat-{index}"),
         });
     }
     track.effects = full_effect_chain();
@@ -310,8 +318,24 @@ fn project_with(tracks: Vec<AppTrack>) -> AppProject {
     project
 }
 
+fn project_with_midi(
+    tracks: Vec<AppTrack>,
+    contents: impl IntoIterator<Item = (String, MidiContent)>,
+) -> AppProject {
+    let mut project = project_with(tracks);
+    project.midi_contents.extend(contents);
+    project
+}
+
+fn project_with_reference_midi(tracks: Vec<AppTrack>) -> AppProject {
+    project_with_midi(
+        tracks,
+        [("midi-clip".to_string(), reference_midi_content())],
+    )
+}
+
 fn static_mix() -> AppProject {
-    project_with(vec![audio_track(), midi_track()])
+    project_with_reference_midi(vec![audio_track(), midi_track()])
 }
 
 fn modulated_effects() -> AppProject {
@@ -319,13 +343,13 @@ fn modulated_effects() -> AppProject {
     let mut midi = midi_track();
     add_effect_modulation(&mut audio);
     add_effect_modulation(&mut midi);
-    project_with(vec![audio, midi])
+    project_with_reference_midi(vec![audio, midi])
 }
 
 fn modulated_gain() -> AppProject {
     let mut audio = audio_track();
     add_gain_modulation(&mut audio);
-    project_with(vec![audio, midi_track()])
+    project_with_reference_midi(vec![audio, midi_track()])
 }
 
 fn automated() -> AppProject {
@@ -333,7 +357,7 @@ fn automated() -> AppProject {
     let mut midi = midi_track();
     add_automation(&mut audio);
     add_automation(&mut midi);
-    project_with(vec![audio, midi])
+    project_with_reference_midi(vec![audio, midi])
 }
 
 /// One project per automation target family (ADR-025), so converting a node to
@@ -357,7 +381,7 @@ fn automated_effect(effect_id: &str, params: &[(&str, &[(f64, f32)])]) -> AppPro
     let mut midi = midi_track();
     effect_lanes(&mut audio, effect_id, params);
     effect_lanes(&mut midi, effect_id, params);
-    project_with(vec![audio, midi])
+    project_with_reference_midi(vec![audio, midi])
 }
 
 fn automated_gain() -> AppProject {
@@ -372,7 +396,7 @@ fn automated_gain() -> AppProject {
             &[(0.0, 0.2), (0.7, 0.6), (1.4, 0.05), (2.2, 0.45)],
         ));
     }
-    project_with(vec![audio, midi])
+    project_with_reference_midi(vec![audio, midi])
 }
 
 fn automated_eq() -> AppProject {
@@ -440,7 +464,7 @@ fn eq_octave_modulation() -> AppProject {
         effect_route(&id, "lfo-fast", "eq", "mid_freq_octaves", 2.0),
         effect_route(&id, "lfo-slow", "eq", "low_freq_octaves", -1.0),
     ]);
-    project_with(vec![audio, midi_track()])
+    project_with_reference_midi(vec![audio, midi_track()])
 }
 
 fn decaying_noise(seconds: f32, decay: f32, mut seed: u32) -> Vec<f32> {
@@ -495,7 +519,7 @@ fn pad_with(
 
 /// One-shot, gate, choke group, layering, tuning, 44.1 → 48 kHz and voice
 /// stealing (ADR-028).
-fn sampler_track() -> AppTrack {
+fn sampler_track() -> (AppTrack, MidiContent) {
     let mut kit = SamplerKit::default();
     pad_with(
         &mut kit,
@@ -593,14 +617,18 @@ fn sampler_track() -> AppTrack {
         start: 0.0,
         end: DURATION_S,
         offset: 0.0,
+        content_id: "drum-clip".into(),
+    });
+    let content = MidiContent {
         notes,
         channel_controls: vec![],
-    });
-    track
+    };
+    (track, content)
 }
 
 fn sampler_kit() -> AppProject {
-    project_with(vec![sampler_track()])
+    let (track, content) = sampler_track();
+    project_with_midi(vec![track], [("drum-clip".to_string(), content)])
 }
 
 /// The built-in synth ignores controls (ADR-029): this proves recorded
@@ -613,8 +641,8 @@ fn midi_controls() -> AppProject {
         number,
         value,
     };
-    let mut midi = midi_track();
-    midi.midi_clips[0].channel_controls = vec![
+    let mut content = reference_midi_content();
+    content.channel_controls = vec![
         control(0.0, MidiControlKind::ControlChange, 64, 127),
         control(0.5, MidiControlKind::PitchBend, 0, 0x3000),
         control(1.0, MidiControlKind::ControlChange, 1, 90),
@@ -623,7 +651,10 @@ fn midi_controls() -> AppProject {
         control(2.5, MidiControlKind::PolyPressure, 60, 40),
         control(3.0, MidiControlKind::ControlChange, 64, 0),
     ];
-    project_with(vec![audio_track(), midi])
+    project_with_midi(
+        vec![audio_track(), midi_track()],
+        [("midi-clip".to_string(), content)],
+    )
 }
 
 /// Chords of one, three and four notes through the arpeggiator (ADR-030): two
@@ -632,7 +663,7 @@ fn arpeggiator_track(
     id: &str,
     chords: &[(&[u8], f32, f32)],
     settings: ArpeggiatorSettings,
-) -> AppTrack {
+) -> (AppTrack, MidiContent) {
     let notes = chords
         .iter()
         .enumerate()
@@ -652,15 +683,18 @@ fn arpeggiator_track(
         start: 0.0,
         end: DURATION_S,
         offset: 0.0,
-        notes,
-        channel_controls: vec![],
+        content_id: format!("{id}-clip"),
     });
     track.arpeggiator = Some(settings);
-    track
+    let content = MidiContent {
+        notes,
+        channel_controls: vec![],
+    };
+    (track, content)
 }
 
 fn arpeggiator() -> AppProject {
-    let up_down = arpeggiator_track(
+    let (up_down, up_down_content) = arpeggiator_track(
         "arp-up-down",
         &[(&[60, 64, 67], 0.0, 2.0), (&[62, 65, 69, 72], 2.0, 3.0)],
         ArpeggiatorSettings {
@@ -672,7 +706,7 @@ fn arpeggiator() -> AppProject {
             ..ArpeggiatorSettings::default()
         },
     );
-    let random = arpeggiator_track(
+    let (random, random_content) = arpeggiator_track(
         "arp-random",
         &[(&[48, 55, 60], 0.5, 2.5), (&[43], 3.0, 2.0)],
         ArpeggiatorSettings {
@@ -684,11 +718,20 @@ fn arpeggiator() -> AppProject {
             ..ArpeggiatorSettings::default()
         },
     );
-    project_with(vec![up_down, random])
+    project_with_midi(
+        vec![up_down, random],
+        [
+            ("arp-up-down-clip".to_string(), up_down_content),
+            ("arp-random-clip".to_string(), random_content),
+        ],
+    )
 }
 
 fn repeated_midi() -> AppProject {
-    project_with(vec![audio_track(), repeated_midi_track()])
+    project_with_midi(
+        vec![audio_track(), repeated_midi_track()],
+        (0..3).map(|index| (format!("repeat-{index}"), reference_midi_content())),
+    )
 }
 
 fn reference_projects() -> [(&'static str, AppProject); 14] {
@@ -913,7 +956,7 @@ fn missing_instrument_plugin_is_silent_and_reported() {
     let mut track = midi_track();
     track.effects.clear();
     track.instrument = Some("clap:not-installed".into());
-    let project = project_with(vec![track]);
+    let project = project_with_reference_midi(vec![track]);
 
     let live_params = LiveParams::new();
     let mut host = PluginHost::new();
@@ -1193,9 +1236,12 @@ mod clap_plugins {
             duration: 1.0,
             velocity: 100,
         };
-        midi.midi_clips[0].notes = vec![note("n1", 60, 0.0), note("n2", 64, 3.0)];
+        let content = MidiContent {
+            notes: vec![note("n1", 60, 0.0), note("n2", 64, 3.0)],
+            channel_controls: vec![],
+        };
 
-        project_with(vec![audio, midi])
+        project_with_midi(vec![audio, midi], [("midi-clip".to_string(), content)])
     }
 
     fn peak_frame(samples: &[f32]) -> usize {

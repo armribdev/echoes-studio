@@ -127,7 +127,7 @@ thread never modifies the graph topology.
 
 Every structural project change triggers a full graph recompile. MIDI clip
 content (`SET_CLIP_MIDI_NOTES`, `SET_CLIP_MIDI_CONTROLS`) does not: the command
-thread publishes a new `MidiTrackContent` (notes + control points, one unit so
+thread (which resolves each clip's `content_id` in `AppProject.midi_contents`, ADR-032, and republishes every track whose clips play that content) publishes a new `MidiTrackContent` (notes + control points, one unit so
 an undo swaps both) into the live instrument, and the audio thread adopts it on
 the next block. A selection that does not change notes does not publish anything.
 Placing or moving a note in the piano roll also pushes a short audition

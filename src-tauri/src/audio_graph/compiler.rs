@@ -40,7 +40,7 @@ use crate::audio_graph::nodes::poly_synth::PolySynth;
 use crate::audio_graph::nodes::sampler::Sampler;
 use crate::audio_graph::plugin_params::{parse_plugin_param_name, PluginParamControl};
 use crate::plugin_system::PluginHost;
-use crate::project::{sanitize_control_points, AppProject, AppTrack};
+use crate::project::{sanitize_control_points, AppProject, AppTrack, MidiContent};
 
 /// Shared peak cells for one track meter: (peak_L, peak_R).
 pub type MeterCell = (Arc<AtomicU32>, Arc<AtomicU32>);
@@ -126,15 +126,23 @@ pub struct CompiledGraph {
 }
 
 /// Bake one track's MIDI clips into beat-space snapshots. Clip anchors stay in
-/// seconds; the playable window is the clip's `[start, end]` in samples.
-pub fn bake_track_midi(track: &AppTrack, sample_rate: f32) -> MidiTrackContent {
+/// seconds; the playable window is the clip's `[start, end]` in samples. A clip
+/// whose content is missing from the pool plays nothing.
+pub fn bake_track_midi(
+    track: &AppTrack,
+    midi_contents: &BTreeMap<String, MidiContent>,
+    sample_rate: f32,
+) -> MidiTrackContent {
     let mut notes = Vec::new();
     let mut control_clips = Vec::new();
     for clip in &track.midi_clips {
+        let Some(content) = midi_contents.get(&clip.content_id) else {
+            continue;
+        };
         let content_origin = clip.start - clip.offset;
         let window_start_sample = (clip.start * sample_rate as f64) as u64;
         let window_end_sample = (clip.end * sample_rate as f64) as u64;
-        for note in &clip.notes {
+        for note in &content.notes {
             notes.push(MidiNoteSnapshot {
                 pitch: note.pitch,
                 velocity: note.velocity,
@@ -145,12 +153,12 @@ pub fn bake_track_midi(track: &AppTrack, sample_rate: f32) -> MidiTrackContent {
                 window_end_sample,
             });
         }
-        if !clip.channel_controls.is_empty() {
+        if !content.channel_controls.is_empty() {
             control_clips.push(MidiControlClip {
                 clip_start_sec: content_origin,
                 window_start_sample,
                 window_end_sample,
-                points: sanitize_control_points(clip.channel_controls.clone())
+                points: sanitize_control_points(content.channel_controls.clone())
                     .into_iter()
                     .map(|point| MidiControlSnapshot {
                         start_beats: point.start,
@@ -799,7 +807,7 @@ impl GraphCompiler {
 
                 let track = project.tracks.iter().find(|t| &t.id == track_id);
                 let content = track
-                    .map(|track| bake_track_midi(track, engine_sample_rate))
+                    .map(|track| bake_track_midi(track, &project.midi_contents, engine_sample_rate))
                     .unwrap_or_default();
                 let notes = live_params.install_track_midi(track_id, content);
                 let device = Self::build_instrument_device(track, track_id, plugin_host);
@@ -1232,8 +1240,7 @@ mod tests {
                 start: 0.0,
                 end: 1.0,
                 offset: 0.0,
-                notes: vec![],
-                channel_controls: vec![],
+                content_id: "c".into(),
             }],
             instrument: Some("clap:synth".into()),
             sampler: None,

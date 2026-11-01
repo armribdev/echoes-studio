@@ -1749,8 +1749,7 @@ mod tests {
                 start: 0.0,
                 end: 4.0,
                 offset: 0.0,
-                notes: vec![],
-                channel_controls: vec![],
+                content_id: "clip".into(),
             });
             project.tracks.push(drums);
             let mut snare = track("snare");

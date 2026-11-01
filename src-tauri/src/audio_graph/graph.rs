@@ -874,8 +874,7 @@ mod routing_tests {
             start: 0.0,
             end: 1.0,
             offset: 0.0,
-            notes: vec![],
-            channel_controls: vec![],
+            content_id: "c".into(),
         }];
         track
     }

@@ -379,7 +379,7 @@ pub struct ProjectModulationRoute {
     pub depth: f32,
 }
 /// One MIDI note stored in the project.  Coordinates are in beats (float).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MidiNote {
     pub id: String,
     /// MIDI pitch 0-127 (60 = C4).
@@ -443,9 +443,19 @@ pub fn sanitize_control_points(mut points: Vec<MidiControlPoint>) -> Vec<MidiCon
     points
 }
 
-/// A MIDI clip placed on the timeline.
+/// What a MIDI clip plays (ADR-032). Lives in `AppProject::midi_contents` and
+/// is referenced by one or more clips. Notes and controls are beat-relative to
+/// the clip content origin.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct MidiContent {
+    #[serde(default)]
+    pub notes: Vec<MidiNote>,
+    #[serde(default)]
+    pub channel_controls: Vec<MidiControlPoint>,
+}
+
+/// A window onto a `MidiContent`, placed on the timeline.
 /// `start`/`end` are in seconds (same coordinate space as audio clips).
-/// Notes and controls are beat-relative to the clip content origin.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppMidiClip {
     pub id: String,
@@ -455,11 +465,11 @@ pub struct AppMidiClip {
     /// content origin sits at `start - offset`; the playable window is
     /// `[start, end]`. `0.0` for untrimmed clips.
     pub offset: f64,
-    pub notes: Vec<MidiNote>,
-    pub channel_controls: Vec<MidiControlPoint>,
+    /// Key in `AppProject::midi_contents`. Every clip has one.
+    pub content_id: String,
 }
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -727,6 +737,9 @@ pub struct AppProject {
     /// Grille en triolet (subdivision T) — éditeur à venir.
     pub midi_grid_use_triplets: bool,
     pub tracks: Vec<AppTrack>,
+    /// MIDI content played by `AppMidiClip`s, keyed by content id (ADR-032). A
+    /// content exists only while a clip references it.
+    pub midi_contents: BTreeMap<String, MidiContent>,
     /// Locators — named points on the arrangement (beats). Empty in pre-marker projects.
     pub markers: Vec<ArrangementMarker>,
     /// Arrangement sections — named spans in beats. Empty in pre-region projects.
@@ -756,6 +769,41 @@ impl AppProject {
             .fold(0.0_f64, f64::max)
     }
 
+    /// The content of the clip `clip_id` on `track_id`, with its id.
+    pub fn midi_content_of_clip_mut(
+        &mut self,
+        track_id: &str,
+        clip_id: &str,
+    ) -> Result<(String, &mut MidiContent), String> {
+        let content_id = self
+            .tracks
+            .iter()
+            .find(|t| t.id == track_id)
+            .ok_or_else(|| format!("Track {track_id} not found"))?
+            .midi_clips
+            .iter()
+            .find(|c| c.id == clip_id)
+            .ok_or_else(|| format!("MidiClip {clip_id} not found"))?
+            .content_id
+            .clone();
+        let content = self
+            .midi_contents
+            .get_mut(&content_id)
+            .ok_or_else(|| format!("MidiContent {content_id} not found"))?;
+        Ok((content_id, content))
+    }
+
+    /// Drops the contents no clip references. Run wherever clips disappear.
+    pub fn prune_unreferenced_midi_contents(&mut self) {
+        let referenced: HashSet<&str> = self
+            .tracks
+            .iter()
+            .flat_map(|t| t.midi_clips.iter().map(|c| c.content_id.as_str()))
+            .collect();
+        self.midi_contents
+            .retain(|id, _| referenced.contains(id.as_str()));
+    }
+
     pub fn new() -> Self {
         Self {
             name: "Sans titre".to_string(),
@@ -769,6 +817,7 @@ impl AppProject {
             midi_ppq: default_midi_ppq(),
             midi_grid_use_triplets: false,
             tracks: vec![],
+            midi_contents: BTreeMap::new(),
             markers: vec![],
             regions: vec![],
             plugin_states: HashMap::new(),
@@ -789,6 +838,7 @@ impl AppProject {
             midi_ppq: self.midi_ppq,
             midi_grid_use_triplets: self.midi_grid_use_triplets,
             tracks: self.tracks.iter().map(AppTrack::to_dto).collect(),
+            midi_contents: self.midi_contents.clone(),
             markers: self.markers.clone(),
             regions: self.regions.clone(),
             ui_layout: self.ui_layout.clone(),
@@ -797,7 +847,7 @@ impl AppProject {
 
     pub fn to_file(&self) -> ProjectFile {
         ProjectFile {
-            version: 1,
+            version: PROJECT_FILE_VERSION,
             name: self.name.clone(),
             bpm: self.bpm,
             numerator: self.numerator,
@@ -841,8 +891,9 @@ impl AppProject {
                             start: mc.start,
                             end: mc.end,
                             offset: mc.offset,
-                            notes: mc.notes.clone(),
-                            channel_controls: mc.channel_controls.clone(),
+                            content_id: Some(mc.content_id.clone()),
+                            notes: vec![],
+                            channel_controls: vec![],
                         })
                         .collect(),
                     instrument: t.instrument.clone(),
@@ -853,6 +904,7 @@ impl AppProject {
                     color: t.color.clone(),
                 })
                 .collect(),
+            midi_contents: self.midi_contents.clone(),
             markers: self.markers.clone(),
             regions: self.regions.clone(),
             // New per-instance format (ADR-017): keyed by `instance_key`.
@@ -869,6 +921,18 @@ impl AppProject {
     }
 
     pub fn from_file(pf: ProjectFile) -> Result<AppProject, String> {
+        if pf.version > PROJECT_FILE_VERSION {
+            return Err(format!(
+                "Ce projet a été créé avec une version plus récente d'Echoes Studio \
+                 (format {}, cette version lit jusqu'au format {PROJECT_FILE_VERSION}).",
+                pf.version
+            ));
+        }
+        let mut midi_contents = pf.midi_contents;
+        for content in midi_contents.values_mut() {
+            content.channel_controls =
+                sanitize_control_points(std::mem::take(&mut content.channel_controls));
+        }
         let mut tracks = Vec::new();
         for tf in pf.tracks {
             let mut clips = Vec::new();
@@ -897,13 +961,15 @@ impl AppProject {
             let midi_clips = tf
                 .midi_clips
                 .into_iter()
-                .map(|mc| AppMidiClip {
-                    id: mc.id,
-                    start: mc.start,
-                    end: mc.end,
-                    offset: mc.offset,
-                    notes: mc.notes,
-                    channel_controls: sanitize_control_points(mc.channel_controls),
+                .map(|mc| {
+                    let content_id = resolve_clip_content(&mut midi_contents, &mc);
+                    AppMidiClip {
+                        id: mc.id,
+                        start: mc.start,
+                        end: mc.end,
+                        offset: mc.offset,
+                        content_id,
+                    }
                 })
                 .collect();
             tracks.push(AppTrack {
@@ -940,7 +1006,7 @@ impl AppProject {
         } else {
             map_legacy_plugin_state(&tracks, pf.plugin_state_blobs)
         };
-        Ok(Self {
+        let mut project = Self {
             name: pf.name,
             bpm: pf.bpm,
             numerator: pf.numerator,
@@ -952,11 +1018,14 @@ impl AppProject {
             midi_ppq: pf.midi_ppq,
             midi_grid_use_triplets: pf.midi_grid_use_triplets,
             tracks,
+            midi_contents,
             markers: pf.markers,
             regions: pf.regions,
             plugin_states,
             ui_layout: pf.ui_layout,
-        })
+        };
+        project.prune_unreferenced_midi_contents();
+        Ok(project)
     }
 }
 
@@ -1056,8 +1125,7 @@ impl AppTrack {
                     start: mc.start,
                     end: mc.end,
                     offset: mc.offset,
-                    notes: mc.notes.clone(),
-                    channel_controls: mc.channel_controls.clone(),
+                    content_id: mc.content_id.clone(),
                 })
                 .collect(),
             instrument: self.instrument.clone(),
@@ -1344,6 +1412,10 @@ impl AppState {
     }
 }
 
+/// Format 2 (ADR-032) stores MIDI content in `midi_contents`; format 1 kept
+/// notes inside each clip and is still read.
+pub const PROJECT_FILE_VERSION: u32 = 2;
+
 #[derive(Serialize, Deserialize)]
 pub struct ProjectFile {
     pub version: u32,
@@ -1364,6 +1436,9 @@ pub struct ProjectFile {
     #[serde(default)]
     pub midi_grid_use_triplets: bool,
     pub tracks: Vec<TrackFile>,
+    /// MIDI content shared by clips (ADR-032). Absent in format 1.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub midi_contents: BTreeMap<String, MidiContent>,
     /// Arrangement markers (beats). Absent in older saves → empty.
     #[serde(default)]
     pub markers: Vec<ArrangementMarker>,
@@ -1429,10 +1504,43 @@ pub struct MidiClipFile {
     pub end: f64,
     #[serde(default)]
     pub offset: f64,
-    #[serde(default)]
+    /// Absent in format 1, where `notes` / `channel_controls` below hold the content.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub notes: Vec<MidiNote>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub channel_controls: Vec<MidiControlPoint>,
+}
+
+/// The content id of a loaded clip. A format-1 clip (no `content_id`) gets a
+/// content of its own, named after the clip; a reference to a missing content
+/// gets an empty one so the clip survives.
+fn resolve_clip_content(
+    midi_contents: &mut BTreeMap<String, MidiContent>,
+    clip: &MidiClipFile,
+) -> String {
+    match &clip.content_id {
+        Some(content_id) => {
+            midi_contents.entry(content_id.clone()).or_default();
+            content_id.clone()
+        }
+        None => {
+            let content_id = if midi_contents.contains_key(&clip.id) {
+                generate_id()
+            } else {
+                clip.id.clone()
+            };
+            midi_contents.insert(
+                content_id.clone(),
+                MidiContent {
+                    notes: clip.notes.clone(),
+                    channel_controls: sanitize_control_points(clip.channel_controls.clone()),
+                },
+            );
+            content_id
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize)]
@@ -1458,6 +1566,7 @@ pub struct ProjectDto {
     pub midi_ppq: u16,
     pub midi_grid_use_triplets: bool,
     pub tracks: Vec<TrackDto>,
+    pub midi_contents: BTreeMap<String, MidiContent>,
     pub markers: Vec<ArrangementMarker>,
     pub regions: Vec<ArrangementRegion>,
     pub ui_layout: ProjectUiLayout,
@@ -1469,8 +1578,7 @@ pub struct MidiClipDto {
     pub start: f64,
     pub end: f64,
     pub offset: f64,
-    pub notes: Vec<MidiNote>,
-    pub channel_controls: Vec<MidiControlPoint>,
+    pub content_id: String,
 }
 
 #[derive(Serialize, Clone)]
@@ -1538,8 +1646,7 @@ mod tests {
                 start: 0.0,
                 end: 12.5,
                 offset: 0.0,
-                notes: vec![],
-                channel_controls: vec![],
+                content_id: "mc1".into(),
             }],
             instrument: None,
             sampler: None,
@@ -1609,21 +1716,149 @@ mod tests {
         assert!(tf.sampler.is_none());
     }
 
-    fn track_with_midi_clip(controls: Vec<MidiControlPoint>) -> AppTrack {
-        let mut track = track_with_plugin("keys", "fx", "clap:any");
-        track.midi_clips.push(AppMidiClip {
-            id: "clip".into(),
-            start: 0.0,
-            end: 4.0,
-            offset: 0.0,
-            notes: vec![],
-            channel_controls: controls,
-        });
-        track
+    /// A project with one clip per `(clip id, content)`, each on its own track.
+    fn project_with_midi_clips(clips: Vec<(&str, MidiContent)>) -> AppProject {
+        let mut project = AppProject::new();
+        for (clip_id, content) in clips {
+            let mut track = track_with_plugin(&format!("track-{clip_id}"), "fx", "clap:any");
+            track.midi_clips.push(AppMidiClip {
+                id: clip_id.into(),
+                start: 0.0,
+                end: 4.0,
+                offset: 0.0,
+                content_id: format!("content-{clip_id}"),
+            });
+            project.tracks.push(track);
+            project
+                .midi_contents
+                .insert(format!("content-{clip_id}"), content);
+        }
+        project
     }
 
-    /// Channel controls survive save → load, and a clip without any writes no
-    /// `channel_controls` key (older builds read the file unchanged).
+    fn note(id: &str, pitch: u8) -> MidiNote {
+        MidiNote {
+            id: id.into(),
+            pitch,
+            start: 0.0,
+            duration: 1.0,
+            velocity: 100,
+        }
+    }
+
+    fn reload(project: &AppProject) -> AppProject {
+        let json = serde_json::to_string(&project.to_file()).expect("serialize");
+        let file: ProjectFile = serde_json::from_str(&json).expect("deserialize");
+        AppProject::from_file(file).expect("from_file")
+    }
+
+    /// Notes and controls are written once, in the pool; a clip only names its
+    /// content (ADR-032).
+    #[test]
+    fn midi_content_round_trips_through_the_pool() {
+        let content = MidiContent {
+            notes: vec![note("n", 60)],
+            channel_controls: vec![MidiControlPoint {
+                start: 1.0,
+                kind: MidiControlKind::PitchBend,
+                number: 0,
+                value: 0x3000,
+            }],
+        };
+        let project = project_with_midi_clips(vec![("a", content.clone())]);
+
+        let json = serde_json::to_string(&project.to_file()).expect("serialize");
+        assert_eq!(json.matches("\"notes\"").count(), 1);
+        assert!(json.contains("\"content_id\":\"content-a\""));
+        assert!(json.contains("\"version\":2"));
+
+        let restored = reload(&project);
+        assert_eq!(restored.midi_contents["content-a"], content);
+        assert_eq!(restored.tracks[0].midi_clips[0].content_id, "content-a");
+    }
+
+    /// C-4: a format-1 project keeps notes inside each clip. Each clip gets a
+    /// content of its own, named after the clip, with the same notes.
+    #[test]
+    fn format_one_clips_get_a_content_of_their_own() {
+        let json = r#"{
+            "version": 1,
+            "name": "Legacy",
+            "bpm": 120.0,
+            "numerator": 4,
+            "denominator": 4,
+            "tracks": [{
+                "name": "Keys",
+                "volume": 80.0,
+                "clips": [],
+                "midi_clips": [
+                    { "id": "c1", "start": 0.0, "end": 2.0, "offset": 0.5,
+                      "notes": [{ "id": "n", "pitch": 60, "start": 0.0,
+                                  "duration": 1.0, "velocity": 100 }],
+                      "channel_controls": [
+                        { "start": 1.0, "kind": "control_change", "number": 200, "value": 5 },
+                        { "start": -1.0, "kind": "control_change", "number": 1, "value": 5 }
+                      ] },
+                    { "id": "c2", "start": 2.0, "end": 4.0, "notes": [] }
+                ]
+            }]
+        }"#;
+        let file: ProjectFile = serde_json::from_str(json).expect("deserialize format 1");
+        let project = AppProject::from_file(file).expect("from_file");
+
+        let clips = &project.tracks[0].midi_clips;
+        assert_eq!(clips[0].content_id, "c1");
+        assert_eq!(clips[0].offset, 0.5);
+        assert_eq!(clips[1].content_id, "c2");
+        assert_eq!(project.midi_contents.len(), 2);
+
+        let first = &project.midi_contents["c1"];
+        assert_eq!(first.notes, vec![note("n", 60)]);
+        assert_eq!(first.channel_controls.len(), 1);
+        assert_eq!(first.channel_controls[0].number, 127);
+        assert!(project.midi_contents["c2"].notes.is_empty());
+    }
+
+    #[test]
+    fn a_missing_content_becomes_empty_and_an_unused_one_is_dropped() {
+        let mut project = project_with_midi_clips(vec![("a", MidiContent::default())]);
+        project.midi_contents.remove("content-a");
+        project
+            .midi_contents
+            .insert("unused".into(), MidiContent::default());
+        let mut file = project.to_file();
+        file.midi_contents
+            .insert("unused".into(), MidiContent::default());
+
+        let restored = AppProject::from_file(file).expect("from_file");
+        assert_eq!(
+            restored.midi_contents.keys().collect::<Vec<_>>(),
+            vec!["content-a"]
+        );
+    }
+
+    #[test]
+    fn a_project_from_a_newer_format_is_refused() {
+        let mut file = AppProject::new().to_file();
+        file.version = PROJECT_FILE_VERSION + 1;
+        assert!(AppProject::from_file(file).is_err());
+    }
+
+    #[test]
+    fn contents_are_pruned_when_their_last_clip_goes() {
+        let mut project = project_with_midi_clips(vec![
+            ("a", MidiContent::default()),
+            ("b", MidiContent::default()),
+        ]);
+        project.tracks[0].midi_clips.clear();
+        project.prune_unreferenced_midi_contents();
+        assert_eq!(
+            project.midi_contents.keys().collect::<Vec<_>>(),
+            vec!["content-b"]
+        );
+    }
+
+    /// Channel controls survive save → load.
     #[test]
     fn channel_controls_round_trip_through_file() {
         let controls = vec![
@@ -1640,17 +1875,26 @@ mod tests {
                 value: 127,
             },
         ];
-        let mut project = AppProject::new();
-        project.tracks.push(track_with_midi_clip(controls.clone()));
-        project.tracks.push(track_with_midi_clip(vec![]));
+        let project = project_with_midi_clips(vec![
+            (
+                "a",
+                MidiContent {
+                    notes: vec![],
+                    channel_controls: controls.clone(),
+                },
+            ),
+            ("b", MidiContent::default()),
+        ]);
 
-        let json = serde_json::to_string(&project.to_file()).expect("serialize");
-        assert_eq!(json.matches("channel_controls").count(), 1);
-        let file: ProjectFile = serde_json::from_str(&json).expect("deserialize");
-        let restored = AppProject::from_file(file).expect("from_file");
+        let restored = reload(&project);
 
-        assert_eq!(restored.tracks[0].midi_clips[0].channel_controls, controls);
-        assert!(restored.tracks[1].midi_clips[0].channel_controls.is_empty());
+        assert_eq!(
+            restored.midi_contents["content-a"].channel_controls,
+            controls
+        );
+        assert!(restored.midi_contents["content-b"]
+            .channel_controls
+            .is_empty());
     }
 
     #[test]
