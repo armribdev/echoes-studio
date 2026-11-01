@@ -148,7 +148,7 @@ fn audio_track() -> AppTrack {
     track
 }
 
-fn midi_track() -> AppTrack {
+fn reference_midi_notes() -> Vec<MidiNote> {
     let note = |id: &str, pitch: u8, start: f32, duration: f32| MidiNote {
         id: id.into(),
         pitch,
@@ -156,20 +156,49 @@ fn midi_track() -> AppTrack {
         duration,
         velocity: 100,
     };
+    vec![
+        note("n1", 60, 0.0, 1.0),
+        note("n2", 64, 0.5, 1.5),
+        note("n3", 67, 1.25, 2.0),
+        note("n4", 72, 3.0, 1.5),
+    ]
+}
+
+fn midi_track() -> AppTrack {
     let mut track = empty_track("midi");
     track.midi_clips.push(AppMidiClip {
         id: "midi-clip".into(),
         start: 0.0,
         end: DURATION_S,
         offset: 0.0,
-        notes: vec![
-            note("n1", 60, 0.0, 1.0),
-            note("n2", 64, 0.5, 1.5),
-            note("n3", 67, 1.25, 2.0),
-            note("n4", 72, 3.0, 1.5),
-        ],
+        notes: reference_midi_notes(),
         channel_controls: vec![],
     });
+    track.effects = full_effect_chain();
+    track
+}
+
+/// Two full repeats of a one-bar clip (120 bpm) and a cut-off third, made by the
+/// repeat handle. `n4` runs past the bar and `n2` past the cut, so the clip
+/// window matters (ADR-018). ADR-032: sharing one content between these clips
+/// must not change a sample.
+const REPEAT_LENGTH_S: f64 = 2.0;
+const REPEAT_CUT_OFF_S: f64 = 0.6;
+
+fn repeated_midi_track() -> AppTrack {
+    let mut track = empty_track("repeats");
+    let ends = [REPEAT_LENGTH_S, REPEAT_LENGTH_S, REPEAT_CUT_OFF_S];
+    for (index, length) in ends.into_iter().enumerate() {
+        let start = index as f64 * REPEAT_LENGTH_S;
+        track.midi_clips.push(AppMidiClip {
+            id: format!("repeat-{index}"),
+            start,
+            end: start + length,
+            offset: 0.0,
+            notes: reference_midi_notes(),
+            channel_controls: vec![],
+        });
+    }
     track.effects = full_effect_chain();
     track
 }
@@ -658,7 +687,11 @@ fn arpeggiator() -> AppProject {
     project_with(vec![up_down, random])
 }
 
-fn reference_projects() -> [(&'static str, AppProject); 13] {
+fn repeated_midi() -> AppProject {
+    project_with(vec![audio_track(), repeated_midi_track()])
+}
+
+fn reference_projects() -> [(&'static str, AppProject); 14] {
     [
         ("static_mix", static_mix()),
         ("modulated_effects", modulated_effects()),
@@ -673,12 +706,13 @@ fn reference_projects() -> [(&'static str, AppProject); 13] {
         ("sampler_kit", sampler_kit()),
         ("midi_controls", midi_controls()),
         ("arpeggiator", arpeggiator()),
+        ("repeated_midi", repeated_midi()),
     ]
 }
 
 /// Recorded on Windows x86_64.  Only update a value when an ADR sanctions the
 /// render change, and say so in the commit.
-const GOLDEN_HASHES: [(&str, u64); 13] = [
+const GOLDEN_HASHES: [(&str, u64); 14] = [
     ("static_mix", 0x7dec_d259_cfd9_6694),
     ("modulated_effects", 0x29ea_1120_1ae0_2d53),
     ("modulated_gain", 0x23ef_388b_80d0_9a52),
@@ -692,6 +726,7 @@ const GOLDEN_HASHES: [(&str, u64); 13] = [
     ("sampler_kit", 0x8151_d7f3_7a3c_1e57),
     ("midi_controls", 0x7dec_d259_cfd9_6694),
     ("arpeggiator", 0x94de_c710_d2b7_1fe1),
+    ("repeated_midi", 0x50b2_08b5_fb7b_9696),
 ];
 
 fn assert_block_size_independent(name: &str, project: &AppProject) {
@@ -778,6 +813,28 @@ fn midi_controls_are_block_size_independent() {
 #[test]
 fn arpeggiator_is_block_size_independent() {
     assert_block_size_independent("arpeggiator", &arpeggiator());
+}
+
+#[test]
+fn repeated_midi_is_block_size_independent() {
+    assert_block_size_independent("repeated_midi", &repeated_midi());
+}
+
+#[test]
+fn every_repeat_of_a_midi_clip_is_heard() {
+    let mut first_repeat_only = repeated_midi();
+    first_repeat_only.tracks[1].midi_clips.truncate(1);
+    assert_ne!(
+        render(&repeated_midi(), BLOCK_SIZES[0]),
+        render(&first_repeat_only, BLOCK_SIZES[0])
+    );
+
+    let mut without_cut_off = repeated_midi();
+    without_cut_off.tracks[1].midi_clips.truncate(2);
+    assert_ne!(
+        render(&repeated_midi(), BLOCK_SIZES[0]),
+        render(&without_cut_off, BLOCK_SIZES[0])
+    );
 }
 
 fn without_arpeggiator(mut project: AppProject) -> AppProject {

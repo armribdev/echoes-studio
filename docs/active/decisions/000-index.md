@@ -55,6 +55,7 @@ lives there.
 | [029](029-midi-clip-channel-controls.md)                 | Channel controls in MIDI clips (pitch bend, CC, aftertouch recorded in beats, replayed to CLAP instruments with state catch-up on seek / loop / clip edges, piano-roll control lanes) (2026-10-13)                                                                                                                       | Graph / MIDI / state                  |
 | [030](030-arpeggiator-note-stage.md)                     | Arpeggiator as a note stage inside `InstrumentNode` (typed per-track settings, lock-free cells, grid-locked when playing / chord-anchored when stopped) (accepted 2026-10-13)                                                                                                                                            | Graph / MIDI / state / determinism    |
 | [031](031-clap-preset-discovery-and-loading.md)          | CLAP preset discovery (on demand, per plugin, worker thread) and loading (`from_location` under the FFI gate, `Op::PresetLoad`), picker in the plugin panel (accepted 2026-10-15, implemented in three steps, not yet hand-tested with real plugins); amended 2026-10-22: VST3 presets (the plugin's `IUnitInfo` programs and `.vstpreset` files) through the same commands and picker                                                                     | Plugins / sandboxing / UX             |
+| [032](032-linked-midi-clips.md)                          | Shared MIDI content and linked clip repeats (Logic-style aliases): project-level content pool, clips reference a `content_id`, edits are events on the content, "make independent" clones it, file format v2 (accepted 2026-10-26, implementation in progress)                                                                                  | State / MIDI / persistence            |
 
 ---
 
@@ -62,7 +63,7 @@ lives there.
 
 - **Graph / DSP core:** 001, 011, 012, 018, 020, 022, 028, 029
 - **Threading / RT safety:** 004, 007, 008, 016, 022, 024, 026, 027
-- **State / persistence:** 002, 010, 017, 018, 020, 024, 028, 029
+- **State / persistence:** 002, 010, 017, 018, 020, 024, 028, 029, 032
 - **Architecture boundary:** 005, 017, 023
 - **Plugins:** 003, 006, 007, 008, 010, 013, 014, 015, 016, 017, 020, 021, 031
 - **Modulation / parameters:** 009, 019, 021, 025
