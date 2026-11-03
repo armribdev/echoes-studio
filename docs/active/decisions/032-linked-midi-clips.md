@@ -315,8 +315,9 @@ confirmation.
    the refusal must be visible. `main.rs` used to only `eprintln!` any failed open;
    `show_open_error` now shows a native error dialog (path + reason, French) for
    every failed open from the menu. The debug auto-load (`ECHOES_DEBUG_PROJECT`)
-   still prints only, and a failed save still prints only. Done 2026-11-03, not
-   hand-tested.
+   still prints only, and a failed save still prints only. Done 2026-11-03; the
+   newer-version and the truncated-file cases were hand-tested by the user the same
+   day (a corrupt file shows the raw parser message, in English).
 5. **Not retained.** Logic's "edit the original or make a real copy?" dialog on
    double-click: Cubase and Reaper edit the shared content directly, and ADR §2 does
    the same, with the other clips following when the event returns.
