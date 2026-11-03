@@ -650,6 +650,7 @@
 		offsetPx: number;
 		origStart: number;
 		origEnd: number;
+		copy: { options: Parameters<typeof addMidiClip>[3]; start: number } | null;
 	} | null = null;
 	let repeating: {
 		trackIndex: number;
@@ -1413,7 +1414,7 @@
 		}
 	}
 
-	async function onMidiClipDragStart(
+	function onMidiClipDragStart(
 		e: CustomEvent<{
 			offsetPx: number;
 			trackIndex: number;
@@ -1428,27 +1429,19 @@
 		const clip = track?.midi_clips?.find((c) => c.id === clipId);
 		if (!clip) return;
 
-		let draggedClipId = clipId;
-		if (duplicate) {
-			const result = await addMidiClip(
-				track.id,
-				clip.start,
-				clip.end,
-				linked ? midiClipLink(clip) : midiClipSeed(clip, contentOf(clip))
-			);
-			const newId = clipIdFromResult(result);
-			if (!newId) return;
-			draggedClipId = newId;
-			selection.setSingle(newId);
-		}
-
 		midiDragging = {
 			origTrackIndex: trackIndex,
 			trackIndex,
-			clipId: draggedClipId,
+			clipId,
 			offsetPx,
 			origStart: clip.start,
-			origEnd: clip.end
+			origEnd: clip.end,
+			copy: duplicate
+				? {
+						options: linked ? midiClipLink(clip) : midiClipSeed(clip, contentOf(clip)),
+						start: clip.start
+					}
+				: null
 		};
 		beginArrangeMaxBarsHold();
 		window.addEventListener('mousemove', onMidiDragMove);
@@ -1468,6 +1461,15 @@
 		const y = e.clientY - rect.top + tracksEl.scrollTop;
 		const newTrackIndex = trackIndexFromArrangeY(y, tracks) ?? 0;
 		const prevTrackIndex = midiDragging.trackIndex;
+
+		if (midiDragging.copy) {
+			midiDragging = {
+				...midiDragging,
+				trackIndex: newTrackIndex,
+				copy: { ...midiDragging.copy, start: newStart }
+			};
+			return;
+		}
 
 		if (newTrackIndex !== prevTrackIndex) {
 			const prevTrack = tracks[prevTrackIndex];
@@ -1496,8 +1498,25 @@
 		tracks = tracks;
 	}
 
+	async function dropMidiCopy(drag: NonNullable<typeof midiDragging>) {
+		const dstTrack = tracks[drag.trackIndex];
+		const source = tracks[drag.origTrackIndex]?.midi_clips?.find((c) => c.id === drag.clipId);
+		if (!drag.copy || !dstTrack || !source) return;
+		if (drag.trackIndex === drag.origTrackIndex && drag.copy.start === source.start) return;
+		const result = await addMidiClip(
+			dstTrack.id,
+			drag.copy.start,
+			drag.copy.start + (source.end - source.start),
+			drag.copy.options
+		);
+		const newId = clipIdFromResult(result);
+		if (newId) selection.setSingle(newId);
+	}
+
 	function onMidiDragEnd() {
-		if (midiDragging) {
+		if (midiDragging?.copy) {
+			dropMidiCopy(midiDragging).catch(console.error);
+		} else if (midiDragging) {
 			const { origTrackIndex, trackIndex, clipId } = midiDragging;
 			const srcTrack = tracks[origTrackIndex];
 			const dstTrack = tracks[trackIndex];
@@ -2523,6 +2542,13 @@
 								scale}px; width: {fileDragPreview.durationSec != null
 								? fileDragPreview.durationSec * scale
 								: 150}px;"
+						></div>
+					{/if}
+					{#if midiDragging?.copy}
+						<div
+							class="clip-ghost"
+							style="top: {rowTops[midiDragging.trackIndex]}px; left: {midiDragging.copy.start *
+								scale}px; width: {(midiDragging.origEnd - midiDragging.origStart) * scale}px;"
 						></div>
 					{/if}
 					{#if repeating}

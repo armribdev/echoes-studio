@@ -297,7 +297,11 @@ confirmation.
    what Alt already means here (copy). The repeat handle already links. Paste and
    library drops stay independent. Done in `MidiClip.svelte` (`linked` flag of
    `midiclip_dragstart`) and `MainPanel.svelte`, which sends `content_id` through
-   `midiClipLink` instead of a seed, like the repeat handle.
+   `midiClipLink` instead of a seed, like the repeat handle. The copy is created on drop (a ghost follows the pointer),
+   as one `ADD_MIDI_CLIP` at its final position and track, so one undo removes it;
+   creating it at mouse-down and moving it on drop made two undo steps (found in the
+   hand test, also true of plain Alt+drag). A click with Alt and no movement creates
+   nothing.
 2. **Several clips at once. Decided: "Rendre indépendant" acts on every selected
    linked clip.** Cubase and Logic apply the command to the selection. The menu
    entry shows when at least one selected clip is linked, and the commands are sent
