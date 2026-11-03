@@ -105,8 +105,9 @@
 	.arp {
 		border-bottom: 1px solid $border-faint;
 
-		&.off .arp-selects,
-		&.off .arp-knobs {
+		&.off .arp-knobs,
+		&.off .triplet,
+		&.off .arp-selects :global(.cs-trigger) {
 			opacity: 0.5;
 		}
 	}
