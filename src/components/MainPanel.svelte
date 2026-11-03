@@ -11,8 +11,8 @@
 	import LibraryPopup from './LibraryPopup.svelte';
 	import { instrumentIdOf, type PluginInfo } from '../stores/plugins';
 	import type { Track as TrackType, Project, MidiClip, MidiContent } from '../types/global';
-	import { midiContentOf } from '../frontend/selectors';
-	import { midiClipSeed, type MidiClipSeed } from '../frontend/midiClipSeed';
+	import { linkedMidiClipIds, midiContentOf } from '../frontend/selectors';
+	import { midiClipSeed } from '../frontend/midiClipSeed';
 	import { invoke } from '@tauri-apps/api/core';
 	import { listen } from '@tauri-apps/api/event';
 	import { getCurrentWindow } from '@tauri-apps/api/window';
@@ -37,6 +37,7 @@
 		createTrack,
 		deleteTrack,
 		addMidiClip,
+		unlinkMidiClip,
 		moveMidiClip,
 		removeMidiClip,
 		addAutomationLane,
@@ -161,6 +162,8 @@
 	});
 	onDestroy(unsubStore);
 
+	$: linkedClipIds = linkedMidiClipIds({ tracks });
+
 	function contentOf(clip: MidiClip): MidiContent {
 		return midiContentOf({ midi_contents: midiContents }, clip);
 	}
@@ -200,7 +203,11 @@
 		trackName: string;
 		trackIndex: number;
 	} | null = null;
-	let clipContextMenu: { x: number; y: number } | null = null;
+	let clipContextMenu: {
+		x: number;
+		y: number;
+		unlink: { trackId: string; clipId: string } | null;
+	} | null = null;
 	let automationPicker: { x: number; y: number; trackIndex: number } | null = null;
 	let selectedTrackIndex: number | null = null;
 
@@ -653,7 +660,8 @@
 		startScrollLeft: number;
 		count: number;
 		partialPx: number;
-		seed: MidiClipSeed;
+		contentId: string;
+		offset: number;
 	} | null = null;
 	let resizing: {
 		kind: 'audio' | 'midi';
@@ -1322,7 +1330,7 @@
 			selection.setSingle(id);
 		}
 		contextMenu = null;
-		clipContextMenu = { x, y };
+		clipContextMenu = { x, y, unlink: null };
 	}
 
 	function handleKeyDown(e: KeyboardEvent) {
@@ -1535,7 +1543,12 @@
 		// Reuse clip context menu with a remove action handled via selection
 		selection.setSingle(id);
 		contextMenu = null;
-		clipContextMenu = { x, y };
+		const trackId = tracks[trackIndex]?.id;
+		clipContextMenu = {
+			x,
+			y,
+			unlink: trackId && linkedClipIds.has(id) ? { trackId, clipId: id } : null
+		};
 	}
 
 	function handleTrackDoubleClick(e: CustomEvent<{ offsetPx: number; trackIndex: number }>) {
@@ -1767,7 +1780,8 @@
 			startScrollLeft: tracksEl?.scrollLeft ?? 0,
 			count: 0,
 			partialPx: 0,
-			seed: midiClipSeed(clip, contentOf(clip))
+			contentId: clip.content_id,
+			offset: clip.offset ?? 0
 		};
 		beginArrangeMaxBarsHold();
 		window.addEventListener('mousemove', onRepeatMove);
@@ -1802,7 +1816,7 @@
 			endArrangeMaxBarsHold();
 			return;
 		}
-		const { trackId, origStart, duration, seed, count, partialPx } = repeating;
+		const { trackId, origStart, duration, contentId, offset, count, partialPx } = repeating;
 		if (count === 0 && partialPx <= MIN_REPEAT_PARTIAL_PX) {
 			repeating = null;
 			endArrangeMaxBarsHold();
@@ -1813,13 +1827,13 @@
 		const jobs: Promise<CommandResult>[] = [];
 		for (let i = 1; i <= count; i++) {
 			const start = origStart + i * duration;
-			jobs.push(addMidiClip(trackId, start, start + duration, seed));
+			jobs.push(addMidiClip(trackId, start, start + duration, { offset, contentId }));
 		}
 		if (partialPx > MIN_REPEAT_PARTIAL_PX) {
 			// Trailing cut-off repeat, same trim mechanism as a right-edge resize:
-			// the underlying notes are kept whole, only the visible window shrinks.
+			// the shared content is kept whole, only the visible window shrinks.
 			const start = origStart + (count + 1) * duration;
-			jobs.push(addMidiClip(trackId, start, start + partialPx / scale, seed));
+			jobs.push(addMidiClip(trackId, start, start + partialPx / scale, { offset, contentId }));
 		}
 		const scrollLeft = tracksEl?.scrollLeft;
 		const results = await Promise.all(jobs);
@@ -2267,10 +2281,15 @@
 		y={clipContextMenu.y}
 		selectionCount={$selection.ids.size}
 		canPaste={$clipboard.length > 0}
+		canUnlink={clipContextMenu.unlink !== null}
 		on:cut={() => cutSelected()}
 		on:copy={() => copySelected()}
 		on:paste={() => pasteClips().catch(console.error)}
 		on:duplicate={() => duplicateSelected().catch(console.error)}
+		on:unlink={() => {
+			const target = clipContextMenu?.unlink;
+			if (target) unlinkMidiClip(target.trackId, target.clipId).catch(console.error);
+		}}
 		on:delete={() => deleteSelected()}
 		on:close={() => {
 			clipContextMenu = null;
@@ -2529,6 +2548,7 @@
 							clips={track.clips}
 							midiClips={track.midi_clips ?? []}
 							{midiContents}
+							{linkedClipIds}
 							{scale}
 							{trackIndex}
 							bpm={$tempo.bpm}

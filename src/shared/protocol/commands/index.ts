@@ -75,6 +75,7 @@ export const cmd = {
 	SET_MIDI_NOTES: 'SET_MIDI_NOTES',
 	ADD_MIDI_CLIP: 'ADD_MIDI_CLIP',
 	REMOVE_MIDI_CLIP: 'REMOVE_MIDI_CLIP',
+	UNLINK_MIDI_CLIP: 'UNLINK_MIDI_CLIP',
 	MOVE_MIDI_CLIP: 'MOVE_MIDI_CLIP',
 	SET_CLIP_MIDI_NOTES: 'SET_CLIP_MIDI_NOTES',
 	SET_CLIP_MIDI_CONTROLS: 'SET_CLIP_MIDI_CONTROLS',
@@ -325,9 +326,16 @@ export interface AddMidiClipPayload {
 	notes?: { id: string; pitch: number; start: number; duration: number; velocity: number }[];
 	/** Controls seeded with the clip (paste, recording). Omit for none. */
 	channel_controls?: MidiControlPoint[];
+	/** Existing content the clip plays (repeat); excludes `notes` and `channel_controls`. */
+	content_id?: string;
 }
 
 export interface RemoveMidiClipPayload {
+	track_id: string;
+	clip_id: string;
+}
+
+export interface UnlinkMidiClipPayload {
 	track_id: string;
 	clip_id: string;
 }

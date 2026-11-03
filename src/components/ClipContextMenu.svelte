@@ -9,12 +9,14 @@
 	export let y = 0;
 	export let selectionCount = 0;
 	export let canPaste = false;
+	export let canUnlink = false;
 
 	const dispatch = createEventDispatcher<{
 		cut: void;
 		copy: void;
 		paste: void;
 		duplicate: void;
+		unlink: void;
 		delete: void;
 		close: void;
 	}>();
@@ -161,6 +163,19 @@
 		<span>{$t('clipMenu.duplicate')}</span>
 		<span class="item-shortcut">{$shortcutLabels('arrangement.duplicate')}</span>
 	</button>
+
+	{#if canUnlink}
+		<button
+			class="item"
+			role="menuitem"
+			on:click={() => {
+				dispatch('unlink');
+				close();
+			}}
+		>
+			<span>{$t('clipMenu.makeIndependent')}</span>
+		</button>
+	{/if}
 
 	<div class="separator"></div>
 

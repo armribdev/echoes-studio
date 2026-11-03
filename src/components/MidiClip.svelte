@@ -11,6 +11,8 @@
 	export let offset: number = 0;
 	export let scale: number;
 	export let notes: MidiNote[];
+	/** Another clip plays the same content (ADR-032). */
+	export let linked = false;
 	export let color: string = '#6c63ff';
 	export let bpm: number = 120;
 	/** Shared pitch bounds for all MIDI clips on the same lane. */
@@ -190,6 +192,23 @@
 			<rect x="5" y="3" width="1.5" height="5" rx="0.5" />
 			<rect x="7.5" y="1" width="1.5" height="7" rx="0.5" />
 		</svg>
+		{#if linked}
+			<svg
+				class="midi-clip__icon"
+				viewBox="0 0 24 24"
+				width="9"
+				height="9"
+				fill="none"
+				stroke="currentColor"
+				stroke-width="3"
+				stroke-linecap="round"
+				stroke-linejoin="round"
+				aria-hidden="true"
+			>
+				<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
+				<path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
+			</svg>
+		{/if}
 	</div>
 	<canvas bind:this={canvas} class="midi-clip__canvas"></canvas>
 	{#if !recording}

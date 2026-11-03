@@ -86,7 +86,8 @@
 		"cut": "Cut",
 		"copy": "Copy",
 		"paste": "Paste",
-		"duplicate": "Duplicate"
+		"duplicate": "Duplicate",
+		"makeIndependent": "Make independent"
 	},
 	"locatorMenu": {
 		"addMarker": "Add Marker",

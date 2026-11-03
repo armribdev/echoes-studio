@@ -57,6 +57,7 @@ import {
 	type SetMidiNotesPayload,
 	type AddMidiClipPayload,
 	type RemoveMidiClipPayload,
+	type UnlinkMidiClipPayload,
 	type MoveMidiClipPayload,
 	type SetClipMidiControlsPayload,
 	type SetClipMidiNotesPayload,
@@ -501,6 +502,7 @@ export function addMidiClip(
 		offset?: number;
 		notes?: AddMidiClipPayload['notes'];
 		channelControls?: AddMidiClipPayload['channel_controls'];
+		contentId?: string;
 	}
 ): Promise<CommandResult> {
 	return dispatch<AddMidiClipPayload>(cmd.ADD_MIDI_CLIP, {
@@ -509,7 +511,15 @@ export function addMidiClip(
 		end,
 		offset: options?.offset,
 		notes: options?.notes,
-		channel_controls: options?.channelControls
+		channel_controls: options?.channelControls,
+		content_id: options?.contentId
+	});
+}
+
+export function unlinkMidiClip(trackId: string, clipId: string): Promise<CommandResult> {
+	return dispatch<UnlinkMidiClipPayload>(cmd.UNLINK_MIDI_CLIP, {
+		track_id: trackId,
+		clip_id: clipId
 	});
 }
 

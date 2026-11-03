@@ -468,6 +468,73 @@ describe('MIDI content pool (ADR-032)', () => {
 		expect(after).not.toBe(before);
 		expect(before).toEqual(snapshot);
 	});
+
+	describe('linked clips', () => {
+		function withRepeat(): ProjectState {
+			const state = addClip(withTracks('t1', 't2'), 't1', 'a', [note('n1')]);
+			return applyEvent(
+				state,
+				event(ev.MIDI_CLIP_ADDED, {
+					track_id: 't2',
+					clip: midiClip('b', 4, 6, 'content-a')
+				})
+			);
+		}
+
+		function unlink(state: ProjectState, trackId: string, clipId: string): ProjectState {
+			return applyEvent(
+				state,
+				event(ev.MIDI_CLIP_UNLINKED, {
+					track_id: trackId,
+					clip_id: clipId,
+					content_id: 'content-copy',
+					content: midiContent([note('n1')])
+				})
+			);
+		}
+
+		it('adds a clip on an existing content without storing a second one', () => {
+			const state = withRepeat();
+			expect(state.tracks[1].midi_clips).toEqual([midiClip('b', 4, 6, 'content-a')]);
+			expect(Object.keys(state.midi_contents)).toEqual(['content-a']);
+		});
+
+		it('repoints an unlinked clip at its own copy and leaves the others on the original', () => {
+			const state = unlink(withRepeat(), 't2', 'b');
+			expect(state.tracks[1].midi_clips[0].content_id).toBe('content-copy');
+			expect(state.tracks[0].midi_clips[0].content_id).toBe('content-a');
+			expect(state.midi_contents['content-copy']).toEqual(midiContent([note('n1')]));
+			expect(state.midi_contents['content-a']).toEqual(midiContent([note('n1')]));
+		});
+
+		it('edits the copy without touching the original', () => {
+			let state = unlink(withRepeat(), 't2', 'b');
+			state = applyEvent(
+				state,
+				event(ev.MIDI_CONTENT_NOTES_SET, { content_id: 'content-copy', notes: [note('n2', 72)] })
+			);
+			expect(state.midi_contents['content-a'].notes).toEqual([note('n1')]);
+		});
+
+		it('prunes the content the clip no longer plays', () => {
+			const state = unlink(addClip(withTracks('t1'), 't1', 'a', [note('n1')]), 't1', 'a');
+			expect(Object.keys(state.midi_contents)).toEqual(['content-copy']);
+		});
+
+		it('ignores an unlink of an unknown clip or track and stores no content', () => {
+			const state = withRepeat();
+			expect(unlink(state, 't1', 'ghost')).toBe(state);
+			expect(unlink(state, 'ghost', 'a')).toBe(state);
+		});
+
+		it('does not mutate the previous state', () => {
+			const before = withRepeat();
+			const snapshot = structuredClone(before);
+			const after = unlink(before, 't2', 'b');
+			expect(after).not.toBe(before);
+			expect(before).toEqual(snapshot);
+		});
+	});
 });
 
 function samplerPad(note: number): SamplerPad {

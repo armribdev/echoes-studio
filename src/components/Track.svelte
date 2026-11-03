@@ -18,6 +18,7 @@
 	export let clips: ClipType[];
 	export let midiClips: MidiClipType[];
 	export let midiContents: Record<string, MidiContent>;
+	export let linkedClipIds: Set<string>;
 	export let scale: number;
 	export let trackIndex: number;
 	export let trackColor: string = '#4d96ff';
@@ -148,6 +149,7 @@
 			{scale}
 			{bpm}
 			notes={midiContentOf(contentPool, clip).notes}
+			linked={linkedClipIds.has(clip.id)}
 			color={trackColor}
 			minPitch={lanePitchRange.min}
 			maxPitch={lanePitchRange.max}

@@ -11,7 +11,10 @@ sharing, no new UI, reducer and selector unit-tested, not hand-tested in the app
 and step 4 (sharing, backend, 2026-11-03: `ADD_MIDI_CLIP` by `content_id`,
 `UNLINK_MIDI_CLIP` / `MIDI_CLIP_UNLINKED`, `repeated_midi_linked` renders
 bit-identical to `repeated_midi`, no UI can send either yet, not hand-tested)
-are done; step 5 (sharing, frontend) is next.** Touches two hard constraints of
+and step 5 (sharing, frontend, 2026-11-03: the repeat handle sends `content_id`, a
+link mark on linked clips, "Rendre indépendant" in the clip context menu, reducer
+and `linkedMidiClipIds` unit-tested, not hand-tested in the app) are done; step 6
+(docs sync) is next.** Touches two hard constraints of
 `architecture_rules.md`: invariant 5 (Rust owns the state, the frontend mirrors
 it) and invariant 6 (event-sourcing scope, ADR-002), plus the project file format
 (C-4). Builds on ADR-002, ADR-005, ADR-012 (beat-space MIDI), ADR-018 (clip
@@ -254,8 +257,12 @@ context menu. Nothing else without approval.
 4. **Sharing, backend** (done 2026-11-03): `ADD_MIDI_CLIP` by `content_id`, multi-track publish,
    `UNLINK_MIDI_CLIP` / `MIDI_CLIP_UNLINKED`; `repeated_midi_linked` hash equality;
    tests for edit-through-one-clip, cross-track, delete-the-first, undo/redo.
-5. **Sharing, frontend:** repeat handle sends `content_id`, `linked` marker,
-   "Rendre indépendant" in the clip context menu.
+5. **Sharing, frontend** (done 2026-11-03): repeat handle sends `content_id`
+   (read once when the drag starts, so the N parallel `ADD_MIDI_CLIP` do not depend on
+   optimistic state; the cut-off last repeat keeps its shorter `end` and the source
+   `offset`), `linked` marker (`linkedMidiClipIds`, computed once in `MainPanel`),
+   "Rendre indépendant" in the clip context menu for the right-clicked linked clip
+   only. Reducer case `MIDI_CLIP_UNLINKED`.
 6. **Docs sync** (`doc_sync_rules.md`): `state-management.md`, `audio-graph.md`,
    `state_index.md`, this ADR's status, `change_impact_mapping.md`, a note in
    `engine_gateway/CLAUDE.md` ("content is written only through the pool").

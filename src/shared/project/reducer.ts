@@ -583,6 +583,31 @@ export function applyEvent(state: ProjectState, event: EngineEvent): ProjectStat
 			});
 		}
 
+		case ev.MIDI_CLIP_UNLINKED: {
+			const p = event.payload as {
+				track_id: string;
+				clip_id: string;
+				content_id: string;
+				content: MidiContent;
+			};
+			const track = state.tracks.find((t) => t.id === p.track_id);
+			if (!track?.midi_clips.some((c) => c.id === p.clip_id)) return state;
+			return pruneMidiContents({
+				...state,
+				tracks: state.tracks.map((t) =>
+					t !== track
+						? t
+						: {
+								...t,
+								midi_clips: t.midi_clips.map((c) =>
+									c.id === p.clip_id ? { ...c, content_id: p.content_id } : c
+								)
+							}
+				),
+				midi_contents: { ...state.midi_contents, [p.content_id]: p.content }
+			});
+		}
+
 		case ev.MIDI_CLIP_MOVED: {
 			const p = event.payload as {
 				track_id: string;

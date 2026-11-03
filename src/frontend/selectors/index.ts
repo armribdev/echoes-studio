@@ -82,6 +82,18 @@ export function midiContentOf(
 	return state.midi_contents[clip.content_id] ?? NO_MIDI_CONTENT;
 }
 
+/** Ids of the MIDI clips whose content is played by at least one other clip, on any track. */
+export function linkedMidiClipIds(state: {
+	tracks: { midi_clips: Pick<MidiClip, 'id' | 'content_id'>[] }[];
+}): Set<string> {
+	const clips = state.tracks.flatMap((t) => t.midi_clips);
+	const referenceCount = new Map<string, number>();
+	for (const clip of clips) {
+		referenceCount.set(clip.content_id, (referenceCount.get(clip.content_id) ?? 0) + 1);
+	}
+	return new Set(clips.filter((c) => (referenceCount.get(c.content_id) ?? 0) > 1).map((c) => c.id));
+}
+
 // ── Transport selectors ───────────────────────────────────────────────────────
 
 /** Current transport state from engine state. */
