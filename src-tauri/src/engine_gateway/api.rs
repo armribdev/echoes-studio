@@ -26,9 +26,9 @@ use super::commands::{
     RemoveModulatorPayload, RemoveRegionPayload, SeekPayload, SetArpeggiatorPayload,
     SetClipMidiControlsPayload, SetClipMidiNotesPayload, SetLoopPayload, SetMidiNotesPayload,
     SetModulationDepthPayload, SetSamplerPadPayload, SetTrackInputPayload,
-    SetTrackInstrumentPayload, SoloTrackPayload, UpdateAutomationClipPayload, UpdateEffectPayload,
-    UpdateMarkerPayload, UpdateModulatorPayload, UpdateProjectNamePayload, UpdateRegionPayload,
-    UpdateTempoPayload, UpdateTrackPayload,
+    SetTrackInstrumentPayload, SoloTrackPayload, UnlinkMidiClipPayload,
+    UpdateAutomationClipPayload, UpdateEffectPayload, UpdateMarkerPayload, UpdateModulatorPayload,
+    UpdateProjectNamePayload, UpdateRegionPayload, UpdateTempoPayload, UpdateTrackPayload,
 };
 use super::events::{ev, EngineEvent, ProjectEvent};
 use crate::arpeggiator_settings::ArpeggiatorSettings;
@@ -331,15 +331,8 @@ fn lock_project<'a>(
 /// Publishes every track whose clips play `content_id` (ADR-032). `false` when
 /// one of them has no slot yet and needs a recompile.
 fn publish_midi_content(state: &tauri::State<'_, AppState>, content_id: &str) -> bool {
-    let track_ids: Vec<String> = lock_project(state)
-        .map(|project| {
-            project
-                .tracks
-                .iter()
-                .filter(|t| t.midi_clips.iter().any(|c| c.content_id == content_id))
-                .map(|t| t.id.clone())
-                .collect()
-        })
+    let track_ids = lock_project(state)
+        .map(|project| project.tracks_playing_midi_content(content_id))
         .unwrap_or_default();
     let mut all_published = true;
     for track_id in &track_ids {
@@ -2311,52 +2304,60 @@ fn process_command(
         cmd::ADD_MIDI_CLIP => {
             let p: AddMidiClipPayload = serde_json::from_value(command.payload)
                 .map_err(|e| format!("ADD_MIDI_CLIP payload invalid: {e}"))?;
-            let content = MidiContent {
-                notes: p
-                    .notes
-                    .into_iter()
-                    .map(|mut note| {
-                        note.id = generate_id();
-                        note
-                    })
-                    .collect(),
-                channel_controls: sanitize_control_points(p.channel_controls),
+            let content_id = p.content_id.clone().unwrap_or_else(generate_id);
+            let seeded = match &p.content_id {
+                Some(_) if !p.notes.is_empty() || !p.channel_controls.is_empty() => {
+                    return Err("ADD_MIDI_CLIP takes a content_id or a seed, not both".to_string());
+                }
+                Some(_) => None,
+                None => Some(MidiContent {
+                    notes: p
+                        .notes
+                        .into_iter()
+                        .map(|mut note| {
+                            note.id = generate_id();
+                            note
+                        })
+                        .collect(),
+                    channel_controls: sanitize_control_points(p.channel_controls),
+                }),
             };
             let clip = AppMidiClip {
                 id: generate_id(),
                 start: p.start,
                 end: p.end,
                 offset: p.offset.max(0.0),
-                content_id: generate_id(),
+                content_id: content_id.clone(),
             };
             let clip_dto = MidiClipDto {
                 id: clip.id.clone(),
                 start: clip.start,
                 end: clip.end,
                 offset: clip.offset,
-                content_id: clip.content_id.clone(),
+                content_id: content_id.clone(),
             };
-            let content_json = serde_json::to_value(&content).unwrap_or_default();
+            let mut event_payload = json!({
+                "track_id": p.track_id,
+                "clip": serde_json::to_value(&clip_dto).unwrap_or_default(),
+            });
+            if let Some(content) = &seeded {
+                event_payload["content"] = serde_json::to_value(content).unwrap_or_default();
+            }
 
             with_project_mut(state, |project| {
-                let content_id = clip.content_id.clone();
+                if seeded.is_none() && !project.midi_contents.contains_key(&content_id) {
+                    return Err(format!("MidiContent {content_id} not found"));
+                }
                 require_track_mut(project, &p.track_id)?
                     .midi_clips
                     .push(clip);
-                project.midi_contents.insert(content_id, content);
+                if let Some(content) = seeded {
+                    project.midi_contents.insert(content_id, content);
+                }
                 Ok(())
             })?;
 
-            commit_same_payload(
-                &ctx,
-                ev::MIDI_CLIP_ADDED,
-                json!({
-                    "track_id": p.track_id,
-                    "clip": serde_json::to_value(&clip_dto).unwrap_or_default(),
-                    "content": content_json,
-                }),
-                true,
-            )
+            commit_same_payload(&ctx, ev::MIDI_CLIP_ADDED, event_payload, true)
         }
 
         cmd::REMOVE_MIDI_CLIP => {
@@ -2376,6 +2377,32 @@ fn process_command(
                 ev::MIDI_CLIP_REMOVED,
                 json!({ "track_id": p.track_id, "clip_id": p.clip_id }),
                 true,
+            )
+        }
+
+        cmd::UNLINK_MIDI_CLIP => {
+            let p: UnlinkMidiClipPayload = serde_json::from_value(command.payload)
+                .map_err(|e| format!("UNLINK_MIDI_CLIP payload invalid: {e}"))?;
+
+            let unlinked = with_project_mut(state, |project| {
+                project.unlink_midi_clip(&p.track_id, &p.clip_id)
+            })?;
+
+            let Some((content_id, content)) = unlinked else {
+                return Ok(ok_transport_events(ctx.command_id, &[]));
+            };
+
+            // The new content equals the old one, so no track needs a rebake.
+            commit_same_payload(
+                &ctx,
+                ev::MIDI_CLIP_UNLINKED,
+                json!({
+                    "track_id": p.track_id,
+                    "clip_id": p.clip_id,
+                    "content_id": content_id,
+                    "content": serde_json::to_value(&content).unwrap_or_default(),
+                }),
+                false,
             )
         }
 
@@ -3351,6 +3378,19 @@ fn apply_midi_clip_removed(project: &mut AppProject, payload: &Value) {
     project.prune_unreferenced_midi_contents();
 }
 
+fn apply_midi_clip_unlinked(project: &mut AppProject, payload: &Value) {
+    let track_id = payload_str(payload, "track_id");
+    let clip_id = payload_str(payload, "clip_id");
+    let content_id = payload_str(payload, "content_id");
+    let Some(content) = payload
+        .get("content")
+        .and_then(|v| serde_json::from_value::<MidiContent>(v.clone()).ok())
+    else {
+        return;
+    };
+    let _ = project.assign_midi_clip_content(&track_id, &clip_id, content_id, content);
+}
+
 fn apply_midi_clip_moved(project: &mut AppProject, payload: &Value) {
     let track_id = payload_str(payload, "track_id");
     let clip_id = payload_str(payload, "clip_id");
@@ -3505,6 +3545,7 @@ fn apply_events(
             ev::MIDI_CLIP_ADDED => apply_midi_clip_added(&mut project, &event.payload),
             ev::MIDI_CLIP_REMOVED => apply_midi_clip_removed(&mut project, &event.payload),
             ev::MIDI_CLIP_MOVED => apply_midi_clip_moved(&mut project, &event.payload),
+            ev::MIDI_CLIP_UNLINKED => apply_midi_clip_unlinked(&mut project, &event.payload),
             ev::MIDI_CLIP_MOVED_TO_TRACK => {
                 apply_midi_clip_moved_to_track(&mut project, &event.payload)
             }
@@ -3943,5 +3984,110 @@ mod tests {
             after.gate_percent,
             crate::arpeggiator_settings::MIN_GATE_PERCENT
         );
+    }
+
+    fn shared_midi_clip_added_payload(clip_id: &str, content_id: &str) -> Value {
+        json!({
+            "track_id": "t",
+            "clip": {
+                "id": clip_id,
+                "start": 4.0,
+                "end": 6.0,
+                "offset": 0.0,
+                "content_id": content_id
+            }
+        })
+    }
+
+    fn project_with_shared_clips() -> AppProject {
+        let mut project = project_with_lfo();
+        apply_midi_clip_added(&mut project, &midi_clip_added_payload("c1", "k"));
+        apply_midi_clip_added(&mut project, &shared_midi_clip_added_payload("c2", "k"));
+        project
+    }
+
+    #[test]
+    fn replayed_shared_midi_clip_added_reuses_the_existing_content() {
+        let project = project_with_shared_clips();
+
+        let clips = &project.tracks[0].midi_clips;
+        assert_eq!(clips.len(), 2);
+        assert!(clips.iter().all(|c| c.content_id == "k"));
+        assert_eq!(project.midi_contents.len(), 1);
+        assert_eq!(project.midi_contents["k"].notes.len(), 1);
+    }
+
+    #[test]
+    fn replayed_removal_of_the_first_shared_clip_keeps_the_content() {
+        let mut project = project_with_shared_clips();
+
+        apply_midi_clip_removed(&mut project, &json!({ "track_id": "t", "clip_id": "c1" }));
+        assert_eq!(project.midi_contents["k"].notes.len(), 1);
+
+        apply_midi_clip_removed(&mut project, &json!({ "track_id": "t", "clip_id": "c2" }));
+        assert!(project.midi_contents.is_empty());
+    }
+
+    #[test]
+    fn replayed_unlink_gives_the_same_result_as_the_live_unlink() {
+        let mut live = project_with_shared_clips();
+        let (content_id, content) = live
+            .unlink_midi_clip("t", "c2")
+            .expect("unlink")
+            .expect("clip was shared");
+
+        let mut replayed = project_with_shared_clips();
+        apply_midi_clip_unlinked(
+            &mut replayed,
+            &json!({
+                "track_id": "t",
+                "clip_id": "c2",
+                "content_id": content_id,
+                "content": serde_json::to_value(&content).unwrap(),
+            }),
+        );
+
+        assert_eq!(replayed.midi_contents, live.midi_contents);
+        let content_ids = |p: &AppProject| -> Vec<String> {
+            p.tracks[0]
+                .midi_clips
+                .iter()
+                .map(|c| c.content_id.clone())
+                .collect()
+        };
+        assert_eq!(content_ids(&replayed), content_ids(&live));
+        assert_eq!(content_ids(&replayed), vec!["k".to_string(), content_id]);
+    }
+
+    #[test]
+    fn replayed_edit_after_an_unlink_reaches_only_the_unlinked_content() {
+        let mut project = project_with_shared_clips();
+        let (content_id, _) = project
+            .unlink_midi_clip("t", "c2")
+            .expect("unlink")
+            .expect("clip was shared");
+
+        apply_midi_content_notes_set(
+            &mut project,
+            &json!({ "content_id": content_id, "notes": [] }),
+        );
+
+        assert!(project.midi_contents[&content_id].notes.is_empty());
+        assert_eq!(project.midi_contents["k"].notes.len(), 1);
+    }
+
+    #[test]
+    fn replayed_unlink_of_an_unknown_clip_adds_no_content() {
+        let mut project = project_with_shared_clips();
+        apply_midi_clip_unlinked(
+            &mut project,
+            &json!({
+                "track_id": "t",
+                "clip_id": "ghost",
+                "content_id": "new",
+                "content": { "notes": [], "channel_controls": [] },
+            }),
+        );
+        assert_eq!(project.midi_contents.len(), 1);
     }
 }

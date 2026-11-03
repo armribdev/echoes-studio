@@ -793,6 +793,65 @@ impl AppProject {
         Ok((content_id, content))
     }
 
+    /// Ids of the tracks holding a clip that plays `content_id`.
+    pub fn tracks_playing_midi_content(&self, content_id: &str) -> Vec<String> {
+        self.tracks
+            .iter()
+            .filter(|t| t.midi_clips.iter().any(|c| c.content_id == content_id))
+            .map(|t| t.id.clone())
+            .collect()
+    }
+
+    /// How many clips, on any track, play `content_id`.
+    pub fn midi_content_reference_count(&self, content_id: &str) -> usize {
+        self.tracks
+            .iter()
+            .flat_map(|t| &t.midi_clips)
+            .filter(|c| c.content_id == content_id)
+            .count()
+    }
+
+    /// Points a clip at `content_id`, stored as `content`, and drops the content
+    /// it no longer plays. The one write behind "make independent" (ADR-032).
+    pub fn assign_midi_clip_content(
+        &mut self,
+        track_id: &str,
+        clip_id: &str,
+        content_id: String,
+        content: MidiContent,
+    ) -> Result<(), String> {
+        let clip = self
+            .tracks
+            .iter_mut()
+            .find(|t| t.id == track_id)
+            .ok_or_else(|| format!("Track {track_id} not found"))?
+            .midi_clips
+            .iter_mut()
+            .find(|c| c.id == clip_id)
+            .ok_or_else(|| format!("MidiClip {clip_id} not found"))?;
+        clip.content_id = content_id.clone();
+        self.midi_contents.insert(content_id, content);
+        self.prune_unreferenced_midi_contents();
+        Ok(())
+    }
+
+    /// Gives a clip that shares its content a copy of its own. `None` when no
+    /// other clip plays it, so there is nothing to make independent.
+    pub fn unlink_midi_clip(
+        &mut self,
+        track_id: &str,
+        clip_id: &str,
+    ) -> Result<Option<(String, MidiContent)>, String> {
+        let (shared_id, content) = self.midi_content_of_clip_mut(track_id, clip_id)?;
+        let content = content.clone();
+        if self.midi_content_reference_count(&shared_id) < 2 {
+            return Ok(None);
+        }
+        let content_id = generate_id();
+        self.assign_midi_clip_content(track_id, clip_id, content_id.clone(), content.clone())?;
+        Ok(Some((content_id, content)))
+    }
+
     /// Drops the contents no clip references. Run wherever clips disappear.
     pub fn prune_unreferenced_midi_contents(&mut self) {
         let referenced: HashSet<&str> = self
@@ -2157,5 +2216,103 @@ mod tests {
             Some(&vec![7, 7, 7]),
             "legacy device_id blob must map onto the effect's instance_key"
         );
+    }
+
+    /// Clips `a` and `b` (two tracks) play the content of `a`.
+    fn project_with_shared_content() -> AppProject {
+        let mut project = project_with_midi_clips(vec![
+            (
+                "a",
+                MidiContent {
+                    notes: vec![note("n1", 60)],
+                    channel_controls: vec![],
+                },
+            ),
+            ("b", MidiContent::default()),
+        ]);
+        project.tracks[1].midi_clips[0].content_id = "content-a".into();
+        project.prune_unreferenced_midi_contents();
+        project
+    }
+
+    #[test]
+    fn clips_on_several_tracks_can_play_one_content() {
+        let project = project_with_shared_content();
+        assert_eq!(project.midi_contents.len(), 1);
+        assert_eq!(project.midi_content_reference_count("content-a"), 2);
+        assert_eq!(
+            project.tracks_playing_midi_content("content-a"),
+            vec!["track-a".to_string(), "track-b".to_string()]
+        );
+    }
+
+    #[test]
+    fn editing_a_shared_content_through_one_clip_reaches_every_track() {
+        let mut project = project_with_shared_content();
+        let (_, content) = project
+            .midi_content_of_clip_mut("track-b", "b")
+            .expect("clip b");
+        content.notes = vec![note("n2", 72)];
+
+        for track in &project.tracks {
+            let baked = crate::audio_graph::compiler::bake_track_midi(
+                track,
+                &project.midi_contents,
+                48_000.0,
+            );
+            assert_eq!(baked.notes.len(), 1, "{}", track.id);
+            assert_eq!(baked.notes[0].pitch, 72, "{}", track.id);
+        }
+    }
+
+    #[test]
+    fn deleting_the_first_clip_leaves_the_others_untouched() {
+        let mut project = project_with_shared_content();
+        project.tracks.remove(0);
+        project.prune_unreferenced_midi_contents();
+
+        assert_eq!(project.midi_content_reference_count("content-a"), 1);
+        assert_eq!(project.midi_contents["content-a"].notes.len(), 1);
+
+        project.tracks.remove(0);
+        project.prune_unreferenced_midi_contents();
+        assert!(project.midi_contents.is_empty());
+    }
+
+    #[test]
+    fn unlinking_gives_the_clip_a_copy_of_its_own() {
+        let mut project = project_with_shared_content();
+        let (new_id, copy) = project
+            .unlink_midi_clip("track-b", "b")
+            .expect("unlink")
+            .expect("clip was shared");
+
+        assert_ne!(new_id, "content-a");
+        assert_eq!(copy.notes.len(), 1);
+        assert_eq!(project.tracks[0].midi_clips[0].content_id, "content-a");
+        assert_eq!(project.tracks[1].midi_clips[0].content_id, new_id);
+        assert_eq!(project.midi_contents.len(), 2);
+
+        let (_, content) = project
+            .midi_content_of_clip_mut("track-b", "b")
+            .expect("clip b");
+        content.notes.clear();
+        assert_eq!(project.midi_contents["content-a"].notes.len(), 1);
+    }
+
+    #[test]
+    fn unlinking_a_clip_nobody_shares_does_nothing() {
+        let mut project = project_with_midi_clips(vec![("a", MidiContent::default())]);
+        assert_eq!(project.unlink_midi_clip("track-a", "a"), Ok(None));
+        assert_eq!(project.tracks[0].midi_clips[0].content_id, "content-a");
+        assert_eq!(project.midi_contents.len(), 1);
+    }
+
+    #[test]
+    fn unlinking_an_unknown_clip_is_an_error() {
+        let mut project = project_with_shared_content();
+        assert!(project.unlink_midi_clip("track-b", "ghost").is_err());
+        assert!(project.unlink_midi_clip("ghost", "b").is_err());
+        assert_eq!(project.midi_contents.len(), 1);
     }
 }

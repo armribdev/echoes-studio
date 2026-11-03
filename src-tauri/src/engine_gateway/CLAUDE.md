@@ -13,7 +13,7 @@ UI/engine separation is enforced.
 - Structural changes recompile the graph and `enqueue` a new snapshot; transport
   changes do **not** recompile (they update atomics).
 - This thread runs the `drop` of displaced schedulers (off the audio thread).
-- MIDI notes and controls live in `AppProject.midi_contents`, never on a clip: write them through the clip's content (`midi_content_of_clip_mut`) and run `prune_unreferenced_midi_contents` wherever clips disappear (ADR-032).
+- MIDI notes and controls live in `AppProject.midi_contents`, never on a clip: write them through the clip's content (`midi_content_of_clip_mut`) and run `prune_unreferenced_midi_contents` wherever clips disappear (ADR-032). Clips may share a content: publish through `publish_midi_content` (every track playing it), and make a clip independent only through `AppProject::unlink_midi_clip`.
 - Watch the recompile cost: `UPDATE_EFFECT`/`UPDATE_TEMPO` quirks live in
   `.claude/memory/engine_quirks.md`.
 

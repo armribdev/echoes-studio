@@ -84,6 +84,7 @@ pub mod cmd {
     pub const SET_MIDI_NOTES: &str = "SET_MIDI_NOTES";
     pub const ADD_MIDI_CLIP: &str = "ADD_MIDI_CLIP";
     pub const REMOVE_MIDI_CLIP: &str = "REMOVE_MIDI_CLIP";
+    pub const UNLINK_MIDI_CLIP: &str = "UNLINK_MIDI_CLIP";
     pub const MOVE_MIDI_CLIP: &str = "MOVE_MIDI_CLIP";
     pub const SET_CLIP_MIDI_NOTES: &str = "SET_CLIP_MIDI_NOTES";
     pub const SET_CLIP_MIDI_CONTROLS: &str = "SET_CLIP_MIDI_CONTROLS";
@@ -422,6 +423,16 @@ pub struct AddMidiClipPayload {
     /// Seed controls (paste, recording). Empty when omitted.
     #[serde(default)]
     pub channel_controls: Vec<crate::project::MidiControlPoint>,
+    /// Plays an existing content (repeat handle) instead of a seeded one; it
+    /// excludes `notes` and `channel_controls` (ADR-032).
+    #[serde(default)]
+    pub content_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UnlinkMidiClipPayload {
+    pub track_id: String,
+    pub clip_id: String,
 }
 
 #[derive(Debug, Deserialize)]

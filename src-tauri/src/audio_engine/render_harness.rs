@@ -734,6 +734,18 @@ fn repeated_midi() -> AppProject {
     )
 }
 
+/// Same clips as `repeated_midi`, all playing one content (ADR-032).
+fn repeated_midi_linked() -> AppProject {
+    let mut project = project_with_midi(
+        vec![audio_track(), repeated_midi_track()],
+        [("repeat".to_string(), reference_midi_content())],
+    );
+    for clip in &mut project.tracks[1].midi_clips {
+        clip.content_id = "repeat".into();
+    }
+    project
+}
+
 fn reference_projects() -> [(&'static str, AppProject); 14] {
     [
         ("static_mix", static_mix()),
@@ -877,6 +889,28 @@ fn every_repeat_of_a_midi_clip_is_heard() {
     assert_ne!(
         render(&repeated_midi(), BLOCK_SIZES[0]),
         render(&without_cut_off, BLOCK_SIZES[0])
+    );
+}
+
+#[test]
+fn linked_repeats_are_block_size_independent() {
+    assert_block_size_independent("repeated_midi_linked", &repeated_midi_linked());
+}
+
+#[test]
+fn linked_repeats_render_like_independent_copies() {
+    let golden = GOLDEN_HASHES
+        .iter()
+        .find(|(name, _)| *name == "repeated_midi")
+        .map(|(_, hash)| *hash)
+        .expect("repeated_midi golden hash");
+    for block_size in BLOCK_SIZES {
+        let linked = render(&repeated_midi_linked(), block_size);
+        assert_eq!(linked, render(&repeated_midi(), block_size), "{block_size}");
+    }
+    assert_eq!(
+        render_hash(&render(&repeated_midi_linked(), BLOCK_SIZES[0])),
+        golden
     );
 }
 

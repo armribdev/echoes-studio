@@ -8,7 +8,10 @@ Step 1 (harness `repeated_midi`), step 2 (backend content pool, no sharing yet:
 every clip has its own content, all 14 golden hashes unchanged) and step 3
 (frontend mirror, 2026-11-03: types, reducer, `midiContentOf`, every reader; no
 sharing, no new UI, reducer and selector unit-tested, not hand-tested in the app)
-are done; step 4 (sharing, backend) is next.** Touches two hard constraints of
+and step 4 (sharing, backend, 2026-11-03: `ADD_MIDI_CLIP` by `content_id`,
+`UNLINK_MIDI_CLIP` / `MIDI_CLIP_UNLINKED`, `repeated_midi_linked` renders
+bit-identical to `repeated_midi`, no UI can send either yet, not hand-tested)
+are done; step 5 (sharing, frontend) is next.** Touches two hard constraints of
 `architecture_rules.md`: invariant 5 (Rust owns the state, the frontend mirrors
 it) and invariant 6 (event-sourcing scope, ADR-002), plus the project file format
 (C-4). Builds on ADR-002, ADR-005, ADR-012 (beat-space MIDI), ADR-018 (clip
@@ -248,7 +251,7 @@ context menu. Nothing else without approval.
 3. **Frontend mirror** of step 2 (done 2026-11-03): types, reducer, `midiContentOf`,
    `Track.svelte`, `PianoRoll`, `clipEditor`, `midiClipSeed`, `MainPanel`, with
    `reducer.test.ts` cases. App still behaves as before.
-4. **Sharing, backend:** `ADD_MIDI_CLIP` by `content_id`, multi-track publish,
+4. **Sharing, backend** (done 2026-11-03): `ADD_MIDI_CLIP` by `content_id`, multi-track publish,
    `UNLINK_MIDI_CLIP` / `MIDI_CLIP_UNLINKED`; `repeated_midi_linked` hash equality;
    tests for edit-through-one-clip, cross-track, delete-the-first, undo/redo.
 5. **Sharing, frontend:** repeat handle sends `content_id`, `linked` marker,
