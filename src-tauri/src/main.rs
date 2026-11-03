@@ -26,7 +26,7 @@ use engine_gateway::api::{
 };
 use project::{AppProject, AppState, ProjectDto, ProjectFile, ProjectUiLayout};
 use tauri::{Emitter, Manager, Theme};
-use tauri_plugin_dialog::{DialogExt, FilePath};
+use tauri_plugin_dialog::{DialogExt, FilePath, MessageDialogKind};
 
 fn main() {
     tauri::Builder::default()
@@ -223,6 +223,17 @@ fn load_project_from_file(path: &std::path::Path) -> Result<AppProject, String> 
     AppProject::from_file(pf)
 }
 
+fn show_open_error(app: &tauri::AppHandle, path: &std::path::Path, error: &str) {
+    eprintln!("[projet] Échec ouverture : {error}");
+    app.dialog()
+        .message(format!("Impossible d'ouvrir « {} ».
+
+{error}", path.display()))
+        .title("Echoes Studio")
+        .kind(MessageDialogKind::Error)
+        .blocking_show();
+}
+
 fn apply_loaded_project(
     app: &tauri::AppHandle,
     state: &tauri::State<'_, AppState>,
@@ -318,7 +329,7 @@ fn handle_menu_event(app: &tauri::AppHandle, menu_id: &str) {
             if let Some(FilePath::Path(file_path)) = picked {
                 match load_project_from_file(&file_path) {
                     Ok(project) => apply_loaded_project(app, &state, project, file_path),
-                    Err(e) => eprintln!("[projet] Échec ouverture : {e}"),
+                    Err(e) => show_open_error(app, &file_path, &e),
                 }
             }
         }

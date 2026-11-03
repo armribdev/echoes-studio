@@ -274,8 +274,8 @@ context menu. Nothing else without approval.
 ## Open questions
 
 Reviewed against current DAWs on 2026-11-03. Questions 1 to 3 were **approved by the
-user and implemented the same day** (not hand-tested); question 4 is still open.
-The sources are the manuals and forum threads found by search, not hands-on
+user and implemented the same day** (not hand-tested); question 4 (open failure dialog) was approved and implemented
+right after. The sources are the manuals and forum threads found by search, not hands-on
 tests, and several are old.
 
 What the DAWs do, as far as the sources show:
@@ -309,11 +309,14 @@ confirmation.
    and Reaper share across tracks, and the backend already publishes to every track
    that plays the content. Bitwig's one-track limit is a limitation, not a model
    to copy.
-4. **Newer file version on load. Recommended: a blocking message that names the
-   version, no partial load.** The DAWs searched show nothing specific here, so this
-   is a judgment: the user asked to open the project, so the refusal should be
-   visible. Today the load command returns a French error; the open point is only
-   how the UI shows it (modal vs status bar).
+4. **Newer file version on load. Decided: a blocking error dialog that names the
+   version, no partial load, the open project stays.** The DAWs searched show
+   nothing specific, so this is a judgment: the user asked to open the project, so
+   the refusal must be visible. `main.rs` used to only `eprintln!` any failed open;
+   `show_open_error` now shows a native error dialog (path + reason, French) for
+   every failed open from the menu. The debug auto-load (`ECHOES_DEBUG_PROJECT`)
+   still prints only, and a failed save still prints only. Done 2026-11-03, not
+   hand-tested.
 5. **Not retained.** Logic's "edit the original or make a real copy?" dialog on
    double-click: Cubase and Reaper edit the shared content directly, and ADR §2 does
    the same, with the other clips following when the event returns.
