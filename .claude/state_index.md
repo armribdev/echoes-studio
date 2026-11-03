@@ -38,7 +38,9 @@ _Last full review: 2026-06-03 (roadmap status pass 2026-09-29). Each row's date 
 
 - Statuses reflect what was true at the verified date — confirm against the code
   before relying on a row (especially `in-migration` rows).
-- 2026-11-03 (ADR-033, **Proposed**, steps 0–1 done): the VST3 COM bindings now live in
+- 2026-11-03 (ADR-033, **Proposed**, steps 0–2 done; step 2: `crates/test_vst3_plugin`, harness project
+  `vst3_plugins` with its own golden hash, and the VST3 loader now calls `InitDll` / `ExitDll`, hand test
+  pending): the VST3 COM bindings now live in
   `crates/vst3_ffi` (with the unmodified Steinberg headers in `sdk_headers/`) and the
   `ParamQueue` in `crates/plugin_param_queue`; `plugin_formats/vst3/ffi.rs` and
   `plugin_system/param_queue.rs` are re-export shims. No behaviour change. The VST3

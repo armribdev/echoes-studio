@@ -16,6 +16,8 @@ sees only `AudioNode`.
   before showing an editor. Dual-component plugins are handled by creating a
   separate `IEditController` (`create_separate_controller`, audit V4 done) — do
   not regress to QI-only.
+- A VST3 module is loaded as the SDK says: `InitDll` after `LoadLibrary`, `ExitDll`
+  before `FreeLibrary` (`Vst3Library`); the host never initialises COM (ADR-033).
 - VST3 COM bindings live in the `vst3_ffi` crate (`vst3/ffi.rs` only re-exports
   them, ADR-033); a new `IID_*` needs its header in `crates/vst3_ffi/sdk_headers/`.
 - Parameter changes delivered via the format's sample-accurate mechanism, never a

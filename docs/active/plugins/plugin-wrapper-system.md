@@ -107,8 +107,27 @@ call only fills pointer values — no `Vec::push`, no `Box`.
   - `load_state_blob` passes the restored blob to a separate controller.
   - The editor borrows the controller (`PluginInstance::vst3_controller`).
   - `PluginInstance::Drop` releases it before the component's `terminate`.
+- **Module load and unload** (ADR-033, 2026-11-03): `Vst3Library::load` follows the
+  SDK's "How the host will load a plug-in" page (`base/doc.h`): `LoadLibrary`, then
+  `InitDll` when the module exports it (a `false` answer unloads the module and is an
+  error), then `GetPluginFactory`. Dropping the library calls `ExitDll` (when
+  exported) and then `FreeLibrary`; every object created from the module must be
+  released before that, which the `Arc<Vst3Library>` kept beside each instance
+  guarantees. Before this date neither export was ever called. TDR Nova and Surge XT
+  export both and still pass the real-plugin tests (not hand-tested in the app).
+  Tests: `plugin_system/vst3_module_tests.rs` on `crates/test_vst3_plugin`.
+- **COM.** The host never initialises COM itself: the plugin finds the apartment of
+  the thread that calls `initialize` (checked with the test plugin: none, a
+  single-threaded apartment — "main" for the first one of a process — or a
+  multi-threaded apartment, whatever the thread did). In the app, `tao` calls
+  `OleInitialize` on the main thread when it creates a window, but nothing in
+  `src-tauri` does it on the thread that instantiates plugins, nor on the editor
+  window thread. The bridge process has no windowing library, so it must do it
+  itself (ADR-033, decision 9).
 - **Interface IIDs** are checked against the SDK's `DECLARE_CLASS_IID` form by
-  `interface_iids_match_the_sdk` (`vst3/ffi.rs`). Four IIDs were wrong before
+  `interface_iids_match_the_sdk` and, against the header files copied in
+  `crates/vst3_ffi/sdk_headers/`, by `interface_iids_match_the_sdk_headers`
+  (`crates/vst3_ffi`, ADR-033). Four IIDs were wrong before
   2026-10-21 (`IEditController`, `IConnectionPoint`, `IHostApplication`,
   `IComponentHandler`; `IPlugFrame` too). With these wrong values, no controller
   was ever reached, so the VST3 editor and dual-component wiring could not work.

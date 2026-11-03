@@ -1,0 +1,1112 @@
+//! A minimal VST3 plugin for the host tests (ADR-033). Not shipped.
+//!
+//! One DLL, two classes built on the same single component (`IComponent`,
+//! `IAudioProcessor` and `IEditController` are one object, as in many real plugins):
+//! - `Echoes Test Gain` (`Fx`): output = input × gain;
+//! - `Echoes Test Synth` (`Instrument|Synth`): no audio input and one event input;
+//!   output = the velocity of the held note × gain, silence once it is released.
+//!
+//! Parameters (normalised value × range = plain value):
+//! - 0 `Gain` (0..2, automatable, saved in the plugin state);
+//! - 1 `Hang` — once set, every block sleeps for seconds (a hung plugin);
+//! - 2 `Crash` — once set, the next block aborts the process;
+//! - 3..6 — read-only diagnostics: `Init apartment` and `Process apartment` (what
+//!   `CoGetApartmentType` said on the thread of `initialize` / of the first `process`:
+//!   0 = COM not initialised on that thread, else 1 + the `APTTYPE`), `Process calls`,
+//!   `Dll init calls` (how many times the host called `InitDll`).
+//!
+//! The component reports 64 samples of latency without delaying its audio, like
+//! `test_clap_plugin`. Parameter points and note events are applied at their sample
+//! offset. The DLL also exports `InitDll` / `ExitDll`, and three functions a test can
+//! read through `GetProcAddress` even after the module was unloaded by the host:
+//! `test_vst3_init_calls`, `test_vst3_exit_calls`, `test_vst3_init_apartment`.
+//!
+//! Not there yet, added by the step that needs it: an editor view, units and programs,
+//! `IMidiMapping`, auxiliary buses.
+
+use std::ffi::c_void;
+use std::mem::{offset_of, zeroed};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicPtr, AtomicU32, AtomicU64, Ordering};
+
+use vst3_ffi::{
+    AudioBusBuffers, Event, FUnknown, HostParamValueQueue, HostParameterChanges, HostStream,
+    IAudioProcessor, IAudioProcessorVtbl, IBStreamVtbl, IComponent, IComponentVtbl,
+    IEditController, IEditControllerVtbl, IPlugView, IPluginFactory, IPluginFactory2Vtbl,
+    PClassInfo, PClassInfo2, ParameterInfo, ProcessData, ProcessSetup, TResult, Tuid, IID_FUNKNOWN,
+    IID_IAUDIO_PROCESSOR, IID_ICOMPONENT, IID_IEDIT_CONTROLLER, IID_IPLUGIN_FACTORY,
+    IID_IPLUGIN_FACTORY2, K_AUDIO, K_EVENT, K_INPUT, K_INVALID_ARGUMENT, K_NOTE_OFF_EVENT,
+    K_NOTE_ON_EVENT, K_NO_INTERFACE, K_OUTPUT, K_RESULT_FALSE, K_RESULT_OK, PARAM_CAN_AUTOMATE,
+    PARAM_IS_READ_ONLY, SPEAKER_STEREO,
+};
+
+pub const EFFECT_CLASS_ID: [u8; 16] = *b"EchoesTestGain_F";
+pub const INSTRUMENT_CLASS_ID: [u8; 16] = *b"EchoesTestGain_I";
+pub const LATENCY: u32 = 64;
+
+pub const GAIN: u32 = 0;
+pub const HANG: u32 = 1;
+pub const CRASH: u32 = 2;
+pub const INIT_APARTMENT: u32 = 3;
+pub const PROCESS_APARTMENT: u32 = 4;
+pub const PROCESS_CALLS: u32 = 5;
+pub const DLL_INIT_CALLS: u32 = 6;
+
+/// Plain value of a read-only diagnostic = its normalised value × this range.
+pub const DIAGNOSTIC_RANGE: f64 = 1_000_000.0;
+const GAIN_RANGE: f64 = 2.0;
+
+/// `kNotImplemented` of `funknown.h` on Windows.
+const K_NOT_IMPLEMENTED: TResult = if cfg!(windows) {
+    0x8000_4001_u32 as TResult
+} else {
+    3
+};
+const MANY_INSTANCES: i32 = 0x7FFF_FFFF;
+const BUS_FLAGS_DEFAULT_ACTIVE: u32 = 1;
+const HANG_SECONDS: u64 = 5;
+
+static INIT_CALLS: AtomicU32 = AtomicU32::new(0);
+static EXIT_CALLS: AtomicU32 = AtomicU32::new(0);
+static INIT_DLL_APARTMENT: AtomicI32 = AtomicI32::new(-1);
+
+struct ParamSpec {
+    id: u32,
+    title: &'static str,
+    range: f64,
+    default_plain: f64,
+    flags: i32,
+}
+
+const PARAMS: [ParamSpec; 7] = [
+    ParamSpec {
+        id: GAIN,
+        title: "Gain",
+        range: GAIN_RANGE,
+        default_plain: 1.0,
+        flags: PARAM_CAN_AUTOMATE,
+    },
+    ParamSpec {
+        id: HANG,
+        title: "Hang",
+        range: 1.0,
+        default_plain: 0.0,
+        flags: PARAM_CAN_AUTOMATE,
+    },
+    ParamSpec {
+        id: CRASH,
+        title: "Crash",
+        range: 1.0,
+        default_plain: 0.0,
+        flags: PARAM_CAN_AUTOMATE,
+    },
+    ParamSpec {
+        id: INIT_APARTMENT,
+        title: "Init apartment",
+        range: DIAGNOSTIC_RANGE,
+        default_plain: 0.0,
+        flags: PARAM_IS_READ_ONLY,
+    },
+    ParamSpec {
+        id: PROCESS_APARTMENT,
+        title: "Process apartment",
+        range: DIAGNOSTIC_RANGE,
+        default_plain: 0.0,
+        flags: PARAM_IS_READ_ONLY,
+    },
+    ParamSpec {
+        id: PROCESS_CALLS,
+        title: "Process calls",
+        range: DIAGNOSTIC_RANGE,
+        default_plain: 0.0,
+        flags: PARAM_IS_READ_ONLY,
+    },
+    ParamSpec {
+        id: DLL_INIT_CALLS,
+        title: "Dll init calls",
+        range: DIAGNOSTIC_RANGE,
+        default_plain: 0.0,
+        flags: PARAM_IS_READ_ONLY,
+    },
+];
+
+fn spec(id: u32) -> Option<&'static ParamSpec> {
+    PARAMS.iter().find(|param| param.id == id)
+}
+
+/// `0` when COM is not initialised on the calling thread, else 1 + the `APTTYPE`.
+#[cfg(windows)]
+fn apartment_code() -> i32 {
+    #[link(name = "ole32")]
+    extern "system" {
+        fn CoGetApartmentType(apartment_type: *mut i32, qualifier: *mut i32) -> i32;
+    }
+    let (mut apartment_type, mut qualifier) = (0, 0);
+    // SAFETY: both out-pointers are valid for the call.
+    let result = unsafe { CoGetApartmentType(&mut apartment_type, &mut qualifier) };
+    if result < 0 {
+        0
+    } else {
+        apartment_type + 1
+    }
+}
+
+#[cfg(not(windows))]
+fn apartment_code() -> i32 {
+    0
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum Kind {
+    Effect,
+    Instrument,
+}
+
+/// The single component. The three vtable pointers come first so a pointer to any of
+/// them is a valid COM interface pointer; `base_of` finds the object again.
+#[repr(C)]
+struct Plugin {
+    component: *const IComponentVtbl,
+    processor: *const IAudioProcessorVtbl,
+    controller: *const IEditControllerVtbl,
+    references: AtomicU32,
+    kind: Kind,
+    gain: AtomicU64,
+    held_velocity: AtomicU32,
+    hang: AtomicBool,
+    crash: AtomicBool,
+    init_apartment: AtomicI32,
+    process_apartment: AtomicI32,
+    process_calls: AtomicU32,
+    handler: AtomicPtr<FUnknown>,
+}
+
+impl Plugin {
+    fn gain(&self) -> f64 {
+        f64::from_bits(self.gain.load(Ordering::Relaxed))
+    }
+
+    fn set_gain(&self, plain: f64) {
+        self.gain.store(plain.to_bits(), Ordering::Relaxed);
+    }
+
+    fn plain_value(&self, id: u32) -> f64 {
+        match id {
+            GAIN => self.gain(),
+            HANG => f64::from(self.hang.load(Ordering::Relaxed)),
+            CRASH => f64::from(self.crash.load(Ordering::Relaxed)),
+            INIT_APARTMENT => f64::from(self.init_apartment.load(Ordering::Relaxed)),
+            PROCESS_APARTMENT => f64::from(self.process_apartment.load(Ordering::Relaxed)),
+            PROCESS_CALLS => f64::from(self.process_calls.load(Ordering::Relaxed)),
+            DLL_INIT_CALLS => f64::from(INIT_CALLS.load(Ordering::Relaxed)),
+            _ => 0.0,
+        }
+    }
+
+    fn set_normalised(&self, id: u32, normalised: f64) {
+        match id {
+            GAIN => self.set_gain(normalised * GAIN_RANGE),
+            HANG => self.hang.store(normalised > 0.5, Ordering::Relaxed),
+            CRASH => self.crash.store(normalised > 0.5, Ordering::Relaxed),
+            _ => {}
+        }
+    }
+}
+
+unsafe fn base_of<T>(this: *mut T, offset: usize) -> *mut Plugin {
+    (this as *mut u8).sub(offset) as *mut Plugin
+}
+
+unsafe fn from_component(this: *mut IComponent) -> *mut Plugin {
+    base_of(this, offset_of!(Plugin, component))
+}
+
+unsafe fn from_processor(this: *mut IAudioProcessor) -> *mut Plugin {
+    base_of(this, offset_of!(Plugin, processor))
+}
+
+unsafe fn from_controller(this: *mut IEditController) -> *mut Plugin {
+    base_of(this, offset_of!(Plugin, controller))
+}
+
+unsafe fn query(plugin: *mut Plugin, iid: *const Tuid, object: *mut *mut c_void) -> TResult {
+    if iid.is_null() || object.is_null() {
+        return K_INVALID_ARGUMENT;
+    }
+    let iid = *iid;
+    let interface: *mut c_void = if iid == IID_FUNKNOWN || iid == IID_ICOMPONENT {
+        &raw mut (*plugin).component as *mut c_void
+    } else if iid == IID_IAUDIO_PROCESSOR {
+        &raw mut (*plugin).processor as *mut c_void
+    } else if iid == IID_IEDIT_CONTROLLER {
+        &raw mut (*plugin).controller as *mut c_void
+    } else {
+        *object = std::ptr::null_mut();
+        return K_NO_INTERFACE;
+    };
+    (*plugin).references.fetch_add(1, Ordering::Relaxed);
+    *object = interface;
+    K_RESULT_OK
+}
+
+unsafe fn add_reference(plugin: *mut Plugin) -> u32 {
+    (*plugin).references.fetch_add(1, Ordering::Relaxed) + 1
+}
+
+unsafe fn release_reference(plugin: *mut Plugin) -> u32 {
+    let remaining = (*plugin).references.fetch_sub(1, Ordering::AcqRel) - 1;
+    if remaining == 0 {
+        let handler = (*plugin)
+            .handler
+            .swap(std::ptr::null_mut(), Ordering::Relaxed);
+        if !handler.is_null() {
+            ((*(*handler).vtbl).release)(handler);
+        }
+        drop(Box::from_raw(plugin));
+    }
+    remaining
+}
+
+// ---- IComponent ------------------------------------------------------------
+
+unsafe extern "C" fn component_query(
+    this: *mut IComponent,
+    iid: *const Tuid,
+    object: *mut *mut c_void,
+) -> TResult {
+    query(from_component(this), iid, object)
+}
+
+unsafe extern "C" fn component_add_ref(this: *mut IComponent) -> u32 {
+    add_reference(from_component(this))
+}
+
+unsafe extern "C" fn component_release(this: *mut IComponent) -> u32 {
+    release_reference(from_component(this))
+}
+
+unsafe extern "C" fn component_initialize(
+    this: *mut IComponent,
+    _context: *mut FUnknown,
+) -> TResult {
+    (*from_component(this))
+        .init_apartment
+        .store(apartment_code(), Ordering::Relaxed);
+    K_RESULT_OK
+}
+
+unsafe extern "C" fn component_terminate(_this: *mut IComponent) -> TResult {
+    K_RESULT_OK
+}
+
+unsafe extern "C" fn component_controller_class_id(
+    _this: *mut IComponent,
+    _id: *mut u8,
+) -> TResult {
+    K_NOT_IMPLEMENTED
+}
+
+unsafe extern "C" fn component_set_io_mode(_this: *mut IComponent, _mode: i32) -> TResult {
+    K_RESULT_OK
+}
+
+fn bus_count(kind: Kind, media: i32, direction: i32) -> i32 {
+    match (media, direction, kind) {
+        (K_AUDIO, K_INPUT, Kind::Effect) => 1,
+        (K_AUDIO, K_OUTPUT, _) => 1,
+        (K_EVENT, K_INPUT, Kind::Instrument) => 1,
+        _ => 0,
+    }
+}
+
+unsafe extern "C" fn component_bus_count(this: *mut IComponent, media: i32, direction: i32) -> i32 {
+    bus_count((*from_component(this)).kind, media, direction)
+}
+
+/// `Vst::BusInfo` (`ivstcomponent.h`).
+#[repr(C)]
+struct BusInfo {
+    media_type: i32,
+    direction: i32,
+    channel_count: i32,
+    name: [u16; 128],
+    bus_type: i32,
+    flags: u32,
+}
+
+const _: () = assert!(
+    std::mem::size_of::<BusInfo>() == 276,
+    "BusInfo layout drift"
+);
+
+fn write_utf16(destination: &mut [u16], text: &str) {
+    for (slot, unit) in destination.iter_mut().zip(text.encode_utf16().chain([0])) {
+        *slot = unit;
+    }
+}
+
+unsafe extern "C" fn component_bus_info(
+    this: *mut IComponent,
+    media: i32,
+    direction: i32,
+    index: i32,
+    info: *mut c_void,
+) -> TResult {
+    if index != 0
+        || info.is_null()
+        || index >= bus_count((*from_component(this)).kind, media, direction)
+    {
+        return K_INVALID_ARGUMENT;
+    }
+    let info = &mut *(info as *mut BusInfo);
+    info.media_type = media;
+    info.direction = direction;
+    info.channel_count = if media == K_AUDIO { 2 } else { 1 };
+    let name = match (media, direction) {
+        (K_AUDIO, K_INPUT) => "Stereo In",
+        (K_AUDIO, _) => "Stereo Out",
+        _ => "Events",
+    };
+    write_utf16(&mut info.name, name);
+    info.bus_type = 0;
+    info.flags = BUS_FLAGS_DEFAULT_ACTIVE;
+    K_RESULT_OK
+}
+
+unsafe extern "C" fn component_routing_info(
+    _this: *mut IComponent,
+    _in: *mut c_void,
+    _out: *mut c_void,
+) -> TResult {
+    K_NOT_IMPLEMENTED
+}
+
+unsafe extern "C" fn component_activate_bus(
+    _this: *mut IComponent,
+    _media: i32,
+    _direction: i32,
+    _index: i32,
+    _state: u8,
+) -> TResult {
+    K_RESULT_OK
+}
+
+unsafe extern "C" fn component_set_active(this: *mut IComponent, _state: u8) -> TResult {
+    (*from_component(this))
+        .held_velocity
+        .store(0, Ordering::Relaxed);
+    K_RESULT_OK
+}
+
+/// The `IBStream` the host hands to `getState` / `setState`.
+#[repr(C)]
+struct Stream {
+    vtbl: *const IBStreamVtbl,
+}
+
+unsafe fn read_gain(stream: *mut c_void) -> Option<f64> {
+    let stream = stream as *mut Stream;
+    let mut bytes = [0u8; 8];
+    let mut read = 0;
+    let result = ((*(*stream).vtbl).read)(
+        stream as *mut HostStream,
+        bytes.as_mut_ptr() as *mut c_void,
+        8,
+        &mut read,
+    );
+    (result == K_RESULT_OK && read == 8).then(|| f64::from_le_bytes(bytes))
+}
+
+unsafe extern "C" fn component_set_state(this: *mut IComponent, stream: *mut c_void) -> TResult {
+    match read_gain(stream) {
+        Some(gain) => {
+            (*from_component(this)).set_gain(gain);
+            K_RESULT_OK
+        }
+        None => K_RESULT_FALSE,
+    }
+}
+
+unsafe extern "C" fn component_get_state(this: *mut IComponent, stream: *mut c_void) -> TResult {
+    let stream = stream as *mut Stream;
+    let mut bytes = (*from_component(this)).gain().to_le_bytes();
+    let mut written = 0;
+    let result = ((*(*stream).vtbl).write)(
+        stream as *mut HostStream,
+        bytes.as_mut_ptr() as *mut c_void,
+        8,
+        &mut written,
+    );
+    if result == K_RESULT_OK && written == 8 {
+        K_RESULT_OK
+    } else {
+        K_RESULT_FALSE
+    }
+}
+
+static COMPONENT_VTBL: IComponentVtbl = IComponentVtbl {
+    query_interface: component_query,
+    add_ref: component_add_ref,
+    release: component_release,
+    initialize: component_initialize,
+    terminate: component_terminate,
+    get_controller_class_id: component_controller_class_id,
+    set_io_mode: component_set_io_mode,
+    get_bus_count: component_bus_count,
+    get_bus_info: component_bus_info,
+    get_routing_info: component_routing_info,
+    activate_bus: component_activate_bus,
+    set_active: component_set_active,
+    set_state: component_set_state,
+    get_state: component_get_state,
+};
+
+// ---- IAudioProcessor -------------------------------------------------------
+
+unsafe extern "C" fn processor_query(
+    this: *mut IAudioProcessor,
+    iid: *const Tuid,
+    object: *mut *mut c_void,
+) -> TResult {
+    query(from_processor(this), iid, object)
+}
+
+unsafe extern "C" fn processor_add_ref(this: *mut IAudioProcessor) -> u32 {
+    add_reference(from_processor(this))
+}
+
+unsafe extern "C" fn processor_release(this: *mut IAudioProcessor) -> u32 {
+    release_reference(from_processor(this))
+}
+
+unsafe extern "C" fn processor_set_bus_arrangements(
+    this: *mut IAudioProcessor,
+    inputs: *mut u64,
+    input_count: i32,
+    outputs: *mut u64,
+    output_count: i32,
+) -> TResult {
+    let wanted_inputs = bus_count((*from_processor(this)).kind, K_AUDIO, K_INPUT);
+    let stereo = |arrangements: *mut u64, count: i32| {
+        (0..count).all(|i| *arrangements.add(i as usize) == SPEAKER_STEREO)
+    };
+    if input_count == wanted_inputs
+        && output_count == 1
+        && stereo(inputs, input_count)
+        && stereo(outputs, output_count)
+    {
+        K_RESULT_OK
+    } else {
+        K_RESULT_FALSE
+    }
+}
+
+unsafe extern "C" fn processor_bus_arrangement(
+    this: *mut IAudioProcessor,
+    direction: i32,
+    index: i32,
+    arrangement: *mut u64,
+) -> TResult {
+    if index != 0 || index >= bus_count((*from_processor(this)).kind, K_AUDIO, direction) {
+        return K_INVALID_ARGUMENT;
+    }
+    *arrangement = SPEAKER_STEREO;
+    K_RESULT_OK
+}
+
+unsafe extern "C" fn processor_can_process_sample_size(
+    _this: *mut IAudioProcessor,
+    symbolic_sample_size: i32,
+) -> TResult {
+    if symbolic_sample_size == 0 {
+        K_RESULT_OK
+    } else {
+        K_RESULT_FALSE
+    }
+}
+
+unsafe extern "C" fn processor_latency(_this: *mut IAudioProcessor) -> u32 {
+    LATENCY
+}
+
+unsafe extern "C" fn processor_setup(
+    _this: *mut IAudioProcessor,
+    _setup: *const ProcessSetup,
+) -> TResult {
+    K_RESULT_OK
+}
+
+unsafe extern "C" fn processor_set_processing(_this: *mut IAudioProcessor, _state: u8) -> TResult {
+    K_RESULT_OK
+}
+
+unsafe extern "C" fn processor_tail(_this: *mut IAudioProcessor) -> u32 {
+    0
+}
+
+/// `IEventList` as the host implements it (`ivstevents.h`).
+#[repr(C)]
+struct EventListVtbl {
+    query_interface: usize,
+    add_ref: usize,
+    release: usize,
+    get_event_count: unsafe extern "C" fn(*mut c_void) -> i32,
+    get_event: unsafe extern "C" fn(*mut c_void, i32, *mut Event) -> TResult,
+    add_event: usize,
+}
+
+#[repr(C)]
+struct EventList {
+    vtbl: *const EventListVtbl,
+}
+
+/// What a block changes, at a sample offset.
+const MAX_CHANGES: usize = 128;
+
+struct Changes<T: Copy> {
+    items: [(i32, T); MAX_CHANGES],
+    count: usize,
+    next: usize,
+}
+
+impl<T: Copy + Default> Changes<T> {
+    fn new() -> Self {
+        Self {
+            items: [(0, T::default()); MAX_CHANGES],
+            count: 0,
+            next: 0,
+        }
+    }
+
+    fn push(&mut self, offset: i32, value: T) {
+        if self.count < MAX_CHANGES {
+            self.items[self.count] = (offset, value);
+            self.count += 1;
+        }
+    }
+
+    fn due(&mut self, frame: usize) -> Option<T> {
+        let (offset, value) = *self.items[..self.count].get(self.next)?;
+        if offset.max(0) as usize <= frame {
+            self.next += 1;
+            Some(value)
+        } else {
+            None
+        }
+    }
+}
+
+unsafe fn read_param_changes(
+    plugin: &Plugin,
+    changes: *mut HostParameterChanges,
+    gain: &mut Changes<f64>,
+) {
+    if changes.is_null() {
+        return;
+    }
+    let table = &*(*changes).vtbl;
+    for index in 0..(table.get_parameter_count)(changes) {
+        let queue: *mut HostParamValueQueue = (table.get_parameter_data)(changes, index);
+        if queue.is_null() {
+            continue;
+        }
+        let queue_table = &*(*queue).vtbl;
+        let id = (queue_table.get_parameter_id)(queue);
+        for point in 0..(queue_table.get_point_count)(queue) {
+            let (mut offset, mut value) = (0, 0.0);
+            if (queue_table.get_point)(queue, point, &mut offset, &mut value) != K_RESULT_OK {
+                continue;
+            }
+            if id == GAIN {
+                gain.push(offset, value * GAIN_RANGE);
+            } else {
+                plugin.set_normalised(id, value);
+            }
+        }
+    }
+}
+
+unsafe fn read_notes(events: *mut c_void, notes: &mut Changes<f32>) {
+    if events.is_null() {
+        return;
+    }
+    let list = events as *mut EventList;
+    let table = &*(*list).vtbl;
+    for index in 0..(table.get_event_count)(events) {
+        let mut event: Event = Event::EMPTY;
+        if (table.get_event)(events, index, &mut event) != K_RESULT_OK {
+            continue;
+        }
+        match event.kind {
+            K_NOTE_ON_EVENT => notes.push(event.sample_offset, event.payload.note_on.velocity),
+            K_NOTE_OFF_EVENT => notes.push(event.sample_offset, 0.0),
+            _ => {}
+        }
+    }
+}
+
+unsafe fn channel(buses: *mut AudioBusBuffers, index: usize) -> Option<*mut f32> {
+    if buses.is_null() || index >= (*buses).num_channels as usize {
+        return None;
+    }
+    Some(*(*buses).channel_buffers32.add(index))
+}
+
+unsafe extern "C" fn processor_process(
+    this: *mut IAudioProcessor,
+    data: *mut ProcessData,
+) -> TResult {
+    let plugin = &*from_processor(this);
+    let data = &*data;
+    if plugin.process_calls.fetch_add(1, Ordering::Relaxed) == 0 {
+        plugin
+            .process_apartment
+            .store(apartment_code(), Ordering::Relaxed);
+    }
+
+    let mut gain_changes = Changes::<f64>::new();
+    let mut note_changes = Changes::<f32>::new();
+    read_param_changes(
+        plugin,
+        data.input_param_changes as *mut HostParameterChanges,
+        &mut gain_changes,
+    );
+    read_notes(data.input_events, &mut note_changes);
+
+    if plugin.crash.load(Ordering::Relaxed) {
+        std::process::abort();
+    }
+    if plugin.hang.load(Ordering::Relaxed) {
+        std::thread::sleep(std::time::Duration::from_secs(HANG_SECONDS));
+    }
+
+    let mut gain = plugin.gain();
+    let mut held = f32::from_bits(plugin.held_velocity.load(Ordering::Relaxed));
+    for frame in 0..data.num_samples.max(0) as usize {
+        while let Some(plain) = gain_changes.due(frame) {
+            gain = plain;
+        }
+        while let Some(velocity) = note_changes.due(frame) {
+            held = velocity;
+        }
+        for index in 0..2 {
+            let Some(output) = channel(data.outputs, index) else {
+                break;
+            };
+            *output.add(frame) = match plugin.kind {
+                Kind::Effect => {
+                    channel(data.inputs, index).map_or(0.0, |input| *input.add(frame) * gain as f32)
+                }
+                Kind::Instrument => held * gain as f32,
+            };
+        }
+    }
+    plugin.set_gain(gain);
+    plugin
+        .held_velocity
+        .store(held.to_bits(), Ordering::Relaxed);
+    K_RESULT_OK
+}
+
+static PROCESSOR_VTBL: IAudioProcessorVtbl = IAudioProcessorVtbl {
+    query_interface: processor_query,
+    add_ref: processor_add_ref,
+    release: processor_release,
+    set_bus_arrangements: processor_set_bus_arrangements,
+    get_bus_arrangement: processor_bus_arrangement,
+    can_process_sample_size: processor_can_process_sample_size,
+    get_latency_samples: processor_latency,
+    setup_processing: processor_setup,
+    set_processing: processor_set_processing,
+    process: processor_process,
+    get_tail_samples: processor_tail,
+};
+
+// ---- IEditController -------------------------------------------------------
+
+unsafe extern "C" fn controller_query(
+    this: *mut IEditController,
+    iid: *const Tuid,
+    object: *mut *mut c_void,
+) -> TResult {
+    query(from_controller(this), iid, object)
+}
+
+unsafe extern "C" fn controller_add_ref(this: *mut IEditController) -> u32 {
+    add_reference(from_controller(this))
+}
+
+unsafe extern "C" fn controller_release(this: *mut IEditController) -> u32 {
+    release_reference(from_controller(this))
+}
+
+unsafe extern "C" fn controller_initialize(
+    _this: *mut IEditController,
+    _context: *mut FUnknown,
+) -> TResult {
+    K_RESULT_OK
+}
+
+unsafe extern "C" fn controller_terminate(_this: *mut IEditController) -> TResult {
+    K_RESULT_OK
+}
+
+unsafe extern "C" fn controller_set_component_state(
+    this: *mut IEditController,
+    stream: *mut c_void,
+) -> TResult {
+    match read_gain(stream) {
+        Some(gain) => {
+            (*from_controller(this)).set_gain(gain);
+            K_RESULT_OK
+        }
+        None => K_RESULT_FALSE,
+    }
+}
+
+unsafe extern "C" fn controller_set_state(
+    _this: *mut IEditController,
+    _stream: *mut c_void,
+) -> TResult {
+    K_RESULT_OK
+}
+
+unsafe extern "C" fn controller_get_state(
+    _this: *mut IEditController,
+    _stream: *mut c_void,
+) -> TResult {
+    K_RESULT_FALSE
+}
+
+unsafe extern "C" fn controller_parameter_count(_this: *mut IEditController) -> i32 {
+    PARAMS.len() as i32
+}
+
+unsafe extern "C" fn controller_parameter_info(
+    _this: *mut IEditController,
+    index: i32,
+    info: *mut ParameterInfo,
+) -> TResult {
+    let Some(param) = PARAMS.get(index as usize) else {
+        return K_INVALID_ARGUMENT;
+    };
+    let info = &mut *info;
+    *info = zeroed();
+    info.id = param.id;
+    write_utf16(&mut info.title, param.title);
+    write_utf16(&mut info.short_title, param.title);
+    info.default_normalized_value = param.default_plain / param.range;
+    info.flags = param.flags;
+    K_RESULT_OK
+}
+
+unsafe extern "C" fn controller_string_by_value(
+    _this: *mut IEditController,
+    id: u32,
+    normalised: f64,
+    text: *mut u16,
+) -> TResult {
+    let Some(param) = spec(id) else {
+        return K_INVALID_ARGUMENT;
+    };
+    let rendered = format!("{:.2}", normalised * param.range);
+    write_utf16(std::slice::from_raw_parts_mut(text, 128), &rendered);
+    K_RESULT_OK
+}
+
+unsafe extern "C" fn controller_value_by_string(
+    _this: *mut IEditController,
+    _id: u32,
+    _text: *mut u16,
+    _value: *mut f64,
+) -> TResult {
+    K_RESULT_FALSE
+}
+
+unsafe extern "C" fn controller_normalised_to_plain(
+    _this: *mut IEditController,
+    id: u32,
+    normalised: f64,
+) -> f64 {
+    spec(id).map_or(0.0, |param| normalised * param.range)
+}
+
+unsafe extern "C" fn controller_plain_to_normalised(
+    _this: *mut IEditController,
+    id: u32,
+    plain: f64,
+) -> f64 {
+    spec(id).map_or(0.0, |param| plain / param.range)
+}
+
+unsafe extern "C" fn controller_get_normalised(this: *mut IEditController, id: u32) -> f64 {
+    spec(id).map_or(0.0, |param| {
+        (*from_controller(this)).plain_value(id) / param.range
+    })
+}
+
+unsafe extern "C" fn controller_set_normalised(
+    this: *mut IEditController,
+    id: u32,
+    normalised: f64,
+) -> TResult {
+    if spec(id).is_none() {
+        return K_INVALID_ARGUMENT;
+    }
+    (*from_controller(this)).set_normalised(id, normalised);
+    K_RESULT_OK
+}
+
+unsafe extern "C" fn controller_set_handler(
+    this: *mut IEditController,
+    handler: *mut FUnknown,
+) -> TResult {
+    if !handler.is_null() {
+        ((*(*handler).vtbl).add_ref)(handler);
+    }
+    let previous = (*from_controller(this))
+        .handler
+        .swap(handler, Ordering::Relaxed);
+    if !previous.is_null() {
+        ((*(*previous).vtbl).release)(previous);
+    }
+    K_RESULT_OK
+}
+
+unsafe extern "C" fn controller_create_view(
+    _this: *mut IEditController,
+    _name: *const u8,
+) -> *mut IPlugView {
+    std::ptr::null_mut()
+}
+
+/// Raw function pointers in a `static` need a wrapper to be `Sync`.
+struct Shared<T>(T);
+// SAFETY: the tables are immutable and hold only function pointers.
+unsafe impl<T> Sync for Shared<T> {}
+
+static CONTROLLER_VTBL: Shared<IEditControllerVtbl> = Shared(IEditControllerVtbl {
+    query_interface: controller_query,
+    add_ref: controller_add_ref,
+    release: controller_release,
+    initialize: controller_initialize,
+    terminate: controller_terminate,
+    set_component_state: controller_set_component_state,
+    set_state: controller_set_state,
+    _pad7: controller_get_state as *const c_void,
+    get_parameter_count: controller_parameter_count,
+    get_parameter_info: controller_parameter_info,
+    get_param_string_by_value: controller_string_by_value,
+    _pad11: controller_value_by_string as *const c_void,
+    normalized_param_to_plain: controller_normalised_to_plain,
+    plain_param_to_normalized: controller_plain_to_normalised,
+    get_param_normalized: controller_get_normalised,
+    set_param_normalized: controller_set_normalised,
+    set_component_handler: controller_set_handler,
+    create_view: controller_create_view,
+});
+
+// ---- Factory ---------------------------------------------------------------
+
+struct ClassSpec {
+    id: [u8; 16],
+    name: &'static str,
+    sub_categories: &'static str,
+    kind: Kind,
+}
+
+const CLASSES: [ClassSpec; 2] = [
+    ClassSpec {
+        id: EFFECT_CLASS_ID,
+        name: "Echoes Test Gain",
+        sub_categories: "Fx",
+        kind: Kind::Effect,
+    },
+    ClassSpec {
+        id: INSTRUMENT_CLASS_ID,
+        name: "Echoes Test Synth",
+        sub_categories: "Instrument|Synth",
+        kind: Kind::Instrument,
+    },
+];
+
+fn copy_text(destination: &mut [u8], text: &str) {
+    destination.fill(0);
+    let length = text.len().min(destination.len() - 1);
+    destination[..length].copy_from_slice(&text.as_bytes()[..length]);
+}
+
+/// `PFactoryInfo` (`ipluginbase.h`).
+#[repr(C)]
+struct FactoryInfo {
+    vendor: [u8; 64],
+    url: [u8; 256],
+    email: [u8; 128],
+    flags: i32,
+}
+
+#[repr(C)]
+struct Factory {
+    vtbl: *const IPluginFactory2Vtbl,
+}
+
+unsafe extern "C" fn factory_query(
+    this: *mut IPluginFactory,
+    iid: *const Tuid,
+    object: *mut *mut c_void,
+) -> TResult {
+    let iid = *iid;
+    if iid == IID_FUNKNOWN || iid == IID_IPLUGIN_FACTORY || iid == IID_IPLUGIN_FACTORY2 {
+        *object = this as *mut c_void;
+        K_RESULT_OK
+    } else {
+        *object = std::ptr::null_mut();
+        K_NO_INTERFACE
+    }
+}
+
+unsafe extern "C" fn factory_add_ref(_this: *mut IPluginFactory) -> u32 {
+    2
+}
+
+unsafe extern "C" fn factory_release(_this: *mut IPluginFactory) -> u32 {
+    1
+}
+
+unsafe extern "C" fn factory_info(_this: *mut IPluginFactory, info: *mut c_void) -> TResult {
+    let info = &mut *(info as *mut FactoryInfo);
+    copy_text(&mut info.vendor, "Echoes Studio");
+    copy_text(&mut info.url, "");
+    copy_text(&mut info.email, "");
+    info.flags = 1 << 4;
+    K_RESULT_OK
+}
+
+unsafe extern "C" fn factory_class_count(_this: *mut IPluginFactory) -> i32 {
+    CLASSES.len() as i32
+}
+
+unsafe extern "C" fn factory_class_info(
+    _this: *mut IPluginFactory,
+    index: i32,
+    info: *mut PClassInfo,
+) -> TResult {
+    let Some(class) = CLASSES.get(index as usize) else {
+        return K_INVALID_ARGUMENT;
+    };
+    let info = &mut *info;
+    info.cid = class.id;
+    info.cardinality = MANY_INSTANCES;
+    copy_text(&mut info.category, "Audio Module Class");
+    copy_text(&mut info.name, class.name);
+    K_RESULT_OK
+}
+
+unsafe extern "C" fn factory_class_info2(
+    _this: *mut IPluginFactory,
+    index: i32,
+    info: *mut PClassInfo2,
+) -> TResult {
+    let Some(class) = CLASSES.get(index as usize) else {
+        return K_INVALID_ARGUMENT;
+    };
+    let info = &mut *info;
+    info.cid = class.id;
+    info.cardinality = MANY_INSTANCES;
+    copy_text(&mut info.category, "Audio Module Class");
+    copy_text(&mut info.name, class.name);
+    info.class_flags = 0;
+    copy_text(&mut info.sub_categories, class.sub_categories);
+    copy_text(&mut info.vendor, "Echoes Studio");
+    copy_text(&mut info.version, "1.0.0");
+    copy_text(&mut info.sdk_version, "VST 3.8");
+    K_RESULT_OK
+}
+
+unsafe extern "C" fn factory_create_instance(
+    _this: *mut IPluginFactory,
+    class_id: *const u8,
+    iid: *const u8,
+    object: *mut *mut c_void,
+) -> TResult {
+    let class_id = *(class_id as *const [u8; 16]);
+    let Some(class) = CLASSES.iter().find(|class| class.id == class_id) else {
+        return K_INVALID_ARGUMENT;
+    };
+    let plugin = Box::into_raw(Box::new(Plugin {
+        component: &COMPONENT_VTBL,
+        processor: &PROCESSOR_VTBL,
+        controller: &CONTROLLER_VTBL.0,
+        references: AtomicU32::new(0),
+        kind: class.kind,
+        gain: AtomicU64::new(1.0_f64.to_bits()),
+        held_velocity: AtomicU32::new(0),
+        hang: AtomicBool::new(false),
+        crash: AtomicBool::new(false),
+        init_apartment: AtomicI32::new(0),
+        process_apartment: AtomicI32::new(0),
+        process_calls: AtomicU32::new(0),
+        handler: AtomicPtr::new(std::ptr::null_mut()),
+    }));
+    let result = query(plugin, iid as *const Tuid, object);
+    if result != K_RESULT_OK {
+        drop(Box::from_raw(plugin));
+    }
+    result
+}
+
+static FACTORY_VTBL: IPluginFactory2Vtbl = IPluginFactory2Vtbl {
+    query_interface: factory_query,
+    add_ref: factory_add_ref,
+    release: factory_release,
+    get_factory_info: factory_info,
+    count_classes: factory_class_count,
+    get_class_info: factory_class_info,
+    create_instance: factory_create_instance,
+    get_class_info2: factory_class_info2,
+};
+
+static FACTORY: Shared<Factory> = Shared(Factory {
+    vtbl: &FACTORY_VTBL,
+});
+
+// ---- Module entry points ---------------------------------------------------
+
+#[no_mangle]
+pub extern "C" fn GetPluginFactory() -> *mut IPluginFactory {
+    &FACTORY.0 as *const Factory as *mut IPluginFactory
+}
+
+#[no_mangle]
+#[allow(non_snake_case)]
+pub extern "C" fn InitDll() -> bool {
+    INIT_DLL_APARTMENT.store(apartment_code(), Ordering::Relaxed);
+    INIT_CALLS.fetch_add(1, Ordering::Relaxed);
+    true
+}
+
+#[no_mangle]
+#[allow(non_snake_case)]
+pub extern "C" fn ExitDll() -> bool {
+    EXIT_CALLS.fetch_add(1, Ordering::Relaxed);
+    true
+}
+
+#[no_mangle]
+pub extern "C" fn test_vst3_init_calls() -> u32 {
+    INIT_CALLS.load(Ordering::Relaxed)
+}
+
+#[no_mangle]
+pub extern "C" fn test_vst3_exit_calls() -> u32 {
+    EXIT_CALLS.load(Ordering::Relaxed)
+}
+
+/// Same code as the `Init apartment` parameter, for the thread that ran `InitDll`;
+/// -1 before `InitDll` ran.
+#[no_mangle]
+pub extern "C" fn test_vst3_init_apartment() -> i32 {
+    INIT_DLL_APARTMENT.load(Ordering::Relaxed)
+}
+
+#[cfg(test)]
+mod tests;

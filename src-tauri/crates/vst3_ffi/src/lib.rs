@@ -77,6 +77,9 @@ pub const IID_IMIDI_MAPPING: Tuid = interface_iid([
 pub const IID_IEVENT_LIST: Tuid = interface_iid([
     0x3A, 0x2C, 0x42, 0x14, 0x34, 0x63, 0x49, 0xFE, 0xB2, 0xC4, 0xF3, 0x97, 0xB9, 0x69, 0x5A, 0x44,
 ]);
+pub const IID_IPLUGIN_FACTORY: Tuid = interface_iid([
+    0x7A, 0x4D, 0x81, 0x1C, 0x52, 0x11, 0x4A, 0x1F, 0xAE, 0xD9, 0xD2, 0xEE, 0x0B, 0x43, 0xBF, 0x9F,
+]);
 pub const IID_IPLUGIN_FACTORY2: Tuid = interface_iid([
     0x00, 0x07, 0xB6, 0x50, 0xF2, 0x4B, 0x4C, 0x0B, 0xA4, 0x64, 0xED, 0xB9, 0xF0, 0x0B, 0x2A, 0xBB,
 ]);
@@ -748,7 +751,9 @@ mod win32 {
     }
 }
 
-/// Owns a loaded .vst3 DLL.  `FreeLibrary` is called on drop.
+/// Owns a loaded .vst3 DLL: `InitDll` (when exported) ran after `LoadLibrary`, and
+/// `ExitDll` then `FreeLibrary` run on drop, the host procedure of `base/doc.h`
+/// ("How the host will load a plug-in").
 #[cfg(windows)]
 pub struct Vst3Library {
     handle: *mut c_void,
@@ -773,13 +778,17 @@ impl Vst3Library {
         if handle.is_null() {
             return Err(format!("LoadLibraryW failed for {}", dll_path.display()));
         }
+        if !unsafe { module_init(handle) } {
+            unsafe { win32::FreeLibrary(handle) };
+            return Err(format!("InitDll failed for {}", dll_path.display()));
+        }
 
         let factory_fn =
             unsafe { win32::GetProcAddress(handle, c"GetPluginFactory".as_ptr().cast()) };
         let factory_fn = match factory_fn {
             Some(f) => f,
             None => {
-                unsafe { win32::FreeLibrary(handle) };
+                unsafe { module_exit_and_free(handle) };
                 return Err(format!(
                     "GetPluginFactory not found in {}",
                     dll_path.display()
@@ -792,7 +801,7 @@ impl Vst3Library {
         let factory = unsafe { get_factory() };
 
         if factory.is_null() {
-            unsafe { win32::FreeLibrary(handle) };
+            unsafe { module_exit_and_free(handle) };
             return Err("GetPluginFactory returned null".into());
         }
 
@@ -831,8 +840,41 @@ impl Vst3Library {
 #[cfg(windows)]
 impl Drop for Vst3Library {
     fn drop(&mut self) {
-        unsafe { win32::FreeLibrary(self.handle) };
+        if !self.handle.is_null() {
+            unsafe { module_exit_and_free(self.handle) };
+        } else {
+            unsafe { win32::FreeLibrary(self.handle) };
+        }
     }
+}
+
+/// The module's `InitDll`, if it exports one; `false` when it refuses to load.
+///
+/// # Safety
+/// `handle` must be a module returned by `LoadLibraryW`.
+#[cfg(windows)]
+unsafe fn module_init(handle: *mut c_void) -> bool {
+    match win32::GetProcAddress(handle, c"InitDll".as_ptr().cast()) {
+        Some(init) => {
+            let init: unsafe extern "C" fn() -> bool = std::mem::transmute(init);
+            init()
+        }
+        None => true,
+    }
+}
+
+/// The module's `ExitDll`, if it exports one, then `FreeLibrary`.
+///
+/// # Safety
+/// `handle` must be a module returned by `LoadLibraryW`, and nothing created from it
+/// may be alive any more.
+#[cfg(windows)]
+unsafe fn module_exit_and_free(handle: *mut c_void) {
+    if let Some(exit) = win32::GetProcAddress(handle, c"ExitDll".as_ptr().cast()) {
+        let exit: unsafe extern "C" fn() -> bool = std::mem::transmute(exit);
+        exit();
+    }
+    win32::FreeLibrary(handle);
 }
 
 // Stub for non-Windows builds so the rest of the crate still compiles.
@@ -1799,6 +1841,7 @@ mod tests {
             ("IAudioProcessor", IID_IAUDIO_PROCESSOR),
             ("IMidiMapping", IID_IMIDI_MAPPING),
             ("IEventList", IID_IEVENT_LIST),
+            ("IPluginFactory", IID_IPLUGIN_FACTORY),
             ("IPluginFactory2", IID_IPLUGIN_FACTORY2),
             ("IMessage", IID_IMESSAGE),
             ("IAttributeList", IID_IATTRIBUTE_LIST),

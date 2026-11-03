@@ -28,6 +28,8 @@ pub mod param_mirror;
 pub mod params;
 pub mod preset_file;
 pub mod preset_locations;
+#[cfg(all(test, windows))]
+pub(crate) mod test_dll;
 pub mod transport;
 pub mod units;
 pub mod wrapper;

@@ -1,0 +1,13 @@
+[package]
+name = "test_vst3_plugin"
+version = "0.1.0"
+edition = "2021"
+description = "Minimal VST3 effect and instrument used by the host and sandbox tests (ADR-033). Not shipped."
+license = "MIT"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+vst3_ffi = { path = "../vst3_ffi" }

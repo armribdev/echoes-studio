@@ -1501,3 +1501,138 @@ mod clap_plugins {
     /// needs the built test plugin.
     const CLAP_PLUGINS_GOLDEN_HASH: u64 = 0x928da7dcd260c4e1;
 }
+
+/// The VST3 counterpart of `clap_plugins`: the built `crates/test_vst3_plugin` as an
+/// effect and as an instrument, in the Echoes process (ADR-033, step 2). Recorded
+/// before the VST3 host code moves into its own crate, so the move must not change it.
+#[cfg(windows)]
+mod vst3_plugins {
+    use super::*;
+    use crate::plugin_formats::vst3::test_dll::{effect_id, instrument_id, test_vst3_dll};
+    use crate::plugin_system::registry::PluginManifest;
+    use crate::plugin_system::wrapper::DeviceFormat;
+    use crate::project::PluginParams;
+
+    fn host_with_test_plugins() -> PluginHost {
+        let mut host = PluginHost::new();
+        for (id, name, is_instrument) in [
+            (effect_id(), "Echoes Test Gain", false),
+            (instrument_id(), "Echoes Test Synth", true),
+        ] {
+            host.registry_mut().add(PluginManifest {
+                id,
+                name: name.into(),
+                vendor: "Echoes Studio".into(),
+                format: DeviceFormat::Vst3,
+                path: Some(test_vst3_dll().clone()),
+                categories: vec![],
+                num_sidechain_inputs: 0,
+                is_instrument,
+            });
+        }
+        host
+    }
+
+    fn render(project: &AppProject, block_size: usize) -> Vec<f32> {
+        let mut host = host_with_test_plugins();
+        let (left, right) = render_project_in_blocks(
+            project,
+            &LiveParams::new(),
+            &mut host,
+            SAMPLE_RATE,
+            block_size,
+        )
+        .expect("reference project must render");
+        assert!(
+            host.unavailable_plugins().is_empty(),
+            "the test plugin must load"
+        );
+        left.into_iter()
+            .zip(right)
+            .flat_map(|(l, r)| [l, r])
+            .collect()
+    }
+
+    /// The audio clip starts at 1.0 s (silent lead-in) and goes through the effect;
+    /// the instrument plays two notes with a gap between.
+    fn project() -> AppProject {
+        let mut audio = audio_track();
+        audio.clips[0].start = 1.0;
+        audio.clips[0].end = 1.0 + DURATION_S;
+        audio.effects = vec![effect(
+            "plugin",
+            EffectParams::Plugin(PluginParams {
+                plugin_id: effect_id(),
+                name: "Echoes Test Gain".into(),
+                format: "vst3".into(),
+                params: vec![],
+                sandboxed: false,
+                sidechain_source: None,
+            }),
+        )];
+
+        let mut midi = midi_track();
+        midi.effects.clear();
+        midi.instrument = Some(instrument_id());
+        let note = |id: &str, pitch: u8, start: f32| MidiNote {
+            id: id.into(),
+            pitch,
+            start,
+            duration: 1.0,
+            velocity: 100,
+        };
+        let content = MidiContent {
+            notes: vec![note("n1", 60, 0.0), note("n2", 64, 3.0)],
+            channel_controls: vec![],
+        };
+
+        project_with_midi(vec![audio, midi], [("midi-clip".to_string(), content)])
+    }
+
+    #[test]
+    fn vst3_plugins_are_audible_with_silent_gaps() {
+        let render = render(&project(), BLOCK_SIZES[0]);
+        assert!(render.iter().any(|s| s.abs() > 1e-3), "silent render");
+        let frame = |seconds: f64| (seconds * SAMPLE_RATE as f64) as usize * 2;
+        assert!(
+            render[frame(0.1)..frame(0.2)]
+                .iter()
+                .any(|s| s.abs() > 1e-3),
+            "first instrument note must sound"
+        );
+        assert!(
+            render[frame(0.6)..frame(0.9)]
+                .iter()
+                .all(|s| s.abs() <= 1e-3),
+            "the gap before the second note and the audio clip must be silent"
+        );
+        assert!(
+            render[frame(1.1)..frame(1.3)]
+                .iter()
+                .any(|s| s.abs() > 1e-3),
+            "the audio clip must come through the effect"
+        );
+    }
+
+    #[test]
+    fn vst3_plugins_are_block_size_independent() {
+        let reference = render(&project(), BLOCK_SIZES[0]);
+        for block_size in &BLOCK_SIZES[1..] {
+            assert_eq!(
+                first_difference(&reference, &render(&project(), *block_size)),
+                None,
+                "block size {block_size}"
+            );
+        }
+    }
+
+    #[test]
+    fn vst3_plugins_match_golden_hash() {
+        let render = render(&project(), BLOCK_SIZES[0]);
+        assert_eq!(render_hash(&render), VST3_PLUGINS_GOLDEN_HASH);
+    }
+
+    /// Recorded on Windows x86_64, separate from `GOLDEN_HASHES` because it needs the
+    /// built test plugin.
+    const VST3_PLUGINS_GOLDEN_HASH: u64 = 0x5c0f0710b6813439;
+}

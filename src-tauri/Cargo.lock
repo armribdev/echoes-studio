@@ -851,6 +851,7 @@ dependencies = [
  "tauri",
  "tauri-build",
  "tauri-plugin-dialog",
+ "test_vst3_plugin",
  "vst3_ffi",
  "windows-sys 0.59.0",
 ]
@@ -3798,6 +3799,13 @@ name = "test_clap_plugin"
 version = "0.1.0"
 dependencies = [
  "clap_ffi",
+]
+
+[[package]]
+name = "test_vst3_plugin"
+version = "0.1.0"
+dependencies = [
+ "vst3_ffi",
 ]
 
 [[package]]
