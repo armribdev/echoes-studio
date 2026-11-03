@@ -24,6 +24,7 @@
 	import { tempo } from '../stores/tempo';
 	import type { MidiControlPoint, MidiNote } from '../types/global';
 	import { engineProject } from '../frontend/store/engineStore';
+	import { midiContentOf } from '../frontend/selectors';
 	import {
 		setClipMidiControls,
 		setClipMidiNotes,
@@ -269,7 +270,7 @@
 		if (!trackId || !clipId) return NO_CONTROLS;
 		const track = $engineProject.tracks.find((t) => t.id === trackId);
 		const clip = track?.midi_clips.find((c) => c.id === clipId);
-		return clip?.channel_controls ?? NO_CONTROLS;
+		return clip ? midiContentOf($engineProject, clip).channel_controls : NO_CONTROLS;
 	})();
 
 	$: if (clipId !== controlLanesClipId) {
@@ -438,7 +439,7 @@
 	});
 	onDestroy(unsubSelection);
 
-	// Sync notes from Rust state (after undo/redo or MIDI_CLIP_NOTES_SET) when not dragging.
+	// Sync notes from Rust state (after undo/redo or MIDI_CONTENT_NOTES_SET) when not dragging.
 	const unsubEngine = engineProject.subscribe(($project) => {
 		if (isDragging || !get(pianoRollStore).open) return;
 		const { trackId, clipId } = get(pianoRollStore);
@@ -446,7 +447,7 @@
 		const track = $project.tracks.find((t) => t.id === trackId);
 		if (!track) return;
 		const clip = track.midi_clips.find((c) => c.id === clipId);
-		if (clip) pianoRollStore.syncNotes(clip.notes ?? []);
+		if (clip) pianoRollStore.syncNotes(midiContentOf($project, clip).notes);
 	});
 	onDestroy(unsubEngine);
 

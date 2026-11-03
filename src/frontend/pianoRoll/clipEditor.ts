@@ -1,5 +1,5 @@
 import { get } from 'svelte/store';
-import type { Track, MidiClip } from '../../types/global';
+import type { Track, MidiClip, MidiContent } from '../../types/global';
 import type { SelectionState } from '../../stores/selection';
 import { pianoRollStore } from '../../stores/pianoRoll';
 import { bottomPanel } from '../../stores/bottomPanel';
@@ -7,6 +7,8 @@ import { keyboardFocus } from '../../stores/keyboardFocus';
 import { tempo } from '../../stores/tempo';
 import { computePreviewPanelHeight } from './previewLayout';
 import { trackColor } from '../trackColor';
+import { midiContentOf } from '../selectors';
+import type { ProjectState } from '../../shared/project/reducer';
 
 export { trackColor };
 
@@ -57,7 +59,12 @@ export function resolveActiveMidiClip(
 	return null;
 }
 
-export function showMidiClipPreview(track: Track, clip: MidiClip, color: string) {
+export function showMidiClipPreview(
+	track: Track,
+	clip: MidiClip,
+	content: MidiContent,
+	color: string
+) {
 	const pr = get(pianoRollStore);
 	const bp = get(bottomPanel);
 	const alreadyPreviewing =
@@ -71,20 +78,24 @@ export function showMidiClipPreview(track: Track, clip: MidiClip, color: string)
 	persistEditLayout();
 	keyboardFocus.setTimeline();
 	const duration = clipDurationBeats(clip);
-	const clipNotes = clip.notes ?? [];
 	pianoRollStore.clearSelection();
-	pianoRollStore.loadClip(track.id, clip.id, track.name, color, clipNotes, duration);
+	pianoRollStore.loadClip(track.id, clip.id, track.name, color, content.notes, duration);
 	bottomPanel.openTab('pianoroll');
-	bottomPanel.setPreviewAutoHeight(computePreviewPanelHeight(clipNotes));
+	bottomPanel.setPreviewAutoHeight(computePreviewPanelHeight(content.notes));
 }
 
 /** Ouvre l'aperçu docké si nécessaire (clic clip, panneau fermé après Échap, etc.). */
-export function ensureClipPreview(track: Track, clip: MidiClip, color: string) {
+export function ensureClipPreview(
+	track: Track,
+	clip: MidiClip,
+	content: MidiContent,
+	color: string
+) {
 	if (get(keyboardFocus) === 'piano-roll') {
-		focusMidiClipForEdit(track, clip, color);
+		focusMidiClipForEdit(track, clip, content, color);
 		return;
 	}
-	showMidiClipPreview(track, clip, color);
+	showMidiClipPreview(track, clip, content, color);
 }
 
 /** Passe du panneau docké (aperçu) au mode édition pour le clip déjà chargé. */
@@ -96,13 +107,18 @@ export function enterEditFromPreview() {
 	pianoRollStore.restoreEditZoom();
 }
 
-export function focusMidiClipForEdit(track: Track, clip: MidiClip, color: string) {
+export function focusMidiClipForEdit(
+	track: Track,
+	clip: MidiClip,
+	content: MidiContent,
+	color: string
+) {
 	pianoRollStore.loadClip(
 		track.id,
 		clip.id,
 		track.name,
 		color,
-		clip.notes ?? [],
+		content.notes,
 		clipDurationBeats(clip)
 	);
 	bottomPanel.openTab('pianoroll');
@@ -168,15 +184,19 @@ export function syncPianoRollToSelection(tracks: Track[], state: SelectionState)
  *   C (édition)                             → B (preview, focus arrangement)
  *   A + rien à éditer                       → no-op
  */
-export function cycleEditorFocus(tracks: Track[], state: SelectionState) {
+export function cycleEditorFocus(
+	project: Pick<ProjectState, 'tracks' | 'midi_contents'>,
+	state: SelectionState
+) {
 	const bp = get(bottomPanel);
 
 	if (!bp.open) {
-		const resolved = resolveActiveMidiClip(tracks, state);
+		const resolved = resolveActiveMidiClip(project.tracks, state);
 		if (!resolved) return;
 		focusMidiClipForEdit(
 			resolved.track,
 			resolved.clip,
+			midiContentOf(project, resolved.clip),
 			trackColor(resolved.track.id, resolved.track.color)
 		);
 		return;
@@ -194,11 +214,12 @@ export function cycleEditorFocus(tracks: Track[], state: SelectionState) {
 	}
 
 	// Preview ouvert sans clip chargé (rare : panel ouvert via UI sans sélection).
-	const resolved = resolveActiveMidiClip(tracks, state);
+	const resolved = resolveActiveMidiClip(project.tracks, state);
 	if (resolved)
 		focusMidiClipForEdit(
 			resolved.track,
 			resolved.clip,
+			midiContentOf(project, resolved.clip),
 			trackColor(resolved.track.id, resolved.track.color)
 		);
 }

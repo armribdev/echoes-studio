@@ -26,6 +26,7 @@ import type {
 	AutomationLane,
 	Clip,
 	MidiClip,
+	MidiContent,
 	MidiControlPoint,
 	MidiNote,
 	PluginOutputSource,
@@ -64,6 +65,7 @@ export interface ProjectState {
 	midi_ppq: number;
 	midi_grid_use_triplets: boolean;
 	tracks: TrackState[];
+	midi_contents: Record<string, MidiContent>;
 	markers: ArrangementMarker[];
 	regions: ArrangementRegion[];
 }
@@ -116,6 +118,7 @@ export function emptyProjectState(): ProjectState {
 		midi_ppq: 960,
 		midi_grid_use_triplets: false,
 		tracks: [],
+		midi_contents: {},
 		markers: [],
 		regions: []
 	};
@@ -163,7 +166,7 @@ export function applyEvent(state: ProjectState, event: EngineEvent): ProjectStat
 
 		case ev.TRACK_DELETED: {
 			const p = event.payload as { id: string };
-			return { ...state, tracks: state.tracks.filter((t) => t.id !== p.id) };
+			return pruneMidiContents({ ...state, tracks: state.tracks.filter((t) => t.id !== p.id) });
 		}
 
 		case ev.TRACK_UPDATED: {
@@ -554,32 +557,30 @@ export function applyEvent(state: ProjectState, event: EngineEvent): ProjectStat
 		}
 
 		case ev.MIDI_CLIP_ADDED: {
-			const p = event.payload as { track_id: string; clip: MidiClip };
+			const p = event.payload as { track_id: string; clip: MidiClip; content?: MidiContent };
+			const track = state.tracks.find((t) => t.id === p.track_id);
+			if (!track || track.midi_clips.some((c) => c.id === p.clip.id)) return state;
 			return {
 				...state,
 				tracks: state.tracks.map((t) =>
-					t.id !== p.track_id
-						? t
-						: {
-								...t,
-								midi_clips: t.midi_clips.some((c) => c.id === p.clip.id)
-									? t.midi_clips
-									: [...t.midi_clips, p.clip]
-							}
-				)
+					t === track ? { ...t, midi_clips: [...t.midi_clips, p.clip] } : t
+				),
+				midi_contents: p.content
+					? { ...state.midi_contents, [p.clip.content_id]: p.content }
+					: state.midi_contents
 			};
 		}
 
 		case ev.MIDI_CLIP_REMOVED: {
 			const p = event.payload as { track_id: string; clip_id: string };
-			return {
+			return pruneMidiContents({
 				...state,
 				tracks: state.tracks.map((t) =>
 					t.id !== p.track_id
 						? t
 						: { ...t, midi_clips: t.midi_clips.filter((c) => c.id !== p.clip_id) }
 				)
-			};
+			});
 		}
 
 		case ev.MIDI_CLIP_MOVED: {
@@ -628,41 +629,26 @@ export function applyEvent(state: ProjectState, event: EngineEvent): ProjectStat
 			};
 		}
 
-		case ev.MIDI_CLIP_NOTES_SET: {
-			const p = event.payload as { track_id: string; clip_id: string; notes: MidiNote[] };
+		case ev.MIDI_CONTENT_NOTES_SET: {
+			const p = event.payload as { content_id: string; notes: MidiNote[] };
+			const content = state.midi_contents[p.content_id];
+			if (!content) return state;
 			return {
 				...state,
-				tracks: state.tracks.map((t) =>
-					t.id !== p.track_id
-						? t
-						: {
-								...t,
-								midi_clips: t.midi_clips.map((c) =>
-									c.id !== p.clip_id ? c : { ...c, notes: p.notes }
-								)
-							}
-				)
+				midi_contents: { ...state.midi_contents, [p.content_id]: { ...content, notes: p.notes } }
 			};
 		}
 
-		case ev.MIDI_CLIP_CONTROLS_SET: {
-			const p = event.payload as {
-				track_id: string;
-				clip_id: string;
-				channel_controls: MidiControlPoint[];
-			};
+		case ev.MIDI_CONTENT_CONTROLS_SET: {
+			const p = event.payload as { content_id: string; channel_controls: MidiControlPoint[] };
+			const content = state.midi_contents[p.content_id];
+			if (!content) return state;
 			return {
 				...state,
-				tracks: state.tracks.map((t) =>
-					t.id !== p.track_id
-						? t
-						: {
-								...t,
-								midi_clips: t.midi_clips.map((c) =>
-									c.id !== p.clip_id ? c : { ...c, channel_controls: p.channel_controls }
-								)
-							}
-				)
+				midi_contents: {
+					...state.midi_contents,
+					[p.content_id]: { ...content, channel_controls: p.channel_controls }
+				}
 			};
 		}
 
@@ -747,6 +733,14 @@ function upsertById<T extends { id: string }>(items: T[], item: T): T[] {
 		: [...items, item];
 }
 
+/** Mirrors `AppProject::prune_unreferenced_midi_contents`. */
+function pruneMidiContents(state: ProjectState): ProjectState {
+	const referenced = new Set(state.tracks.flatMap((t) => t.midi_clips.map((c) => c.content_id)));
+	const kept = Object.entries(state.midi_contents).filter(([id]) => referenced.has(id));
+	if (kept.length === Object.keys(state.midi_contents).length) return state;
+	return { ...state, midi_contents: Object.fromEntries(kept) };
+}
+
 /**
  * Build a ProjectState from a raw backend DTO
  * (`get_project` / `get_snapshot` / `project-loaded`).
@@ -783,6 +777,7 @@ export function projectFromSnapshot(dto: Project): ProjectState {
 			input_source: t.input_source ?? null,
 			automation_lanes: t.automation_lanes ?? []
 		})),
+		midi_contents: dto.midi_contents ?? {},
 		markers: dto.markers ?? [],
 		regions: dto.regions ?? []
 	};

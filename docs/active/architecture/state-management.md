@@ -190,6 +190,8 @@ Plugin edits are not events: they are not undoable (ADR-002 scope).
 
 **MIDI content (ADR-032).** `AppProject.midi_contents` holds the notes and controls (`MidiContent`); an `AppMidiClip` only carries `content_id`. The project file is format 2 (`PROJECT_FILE_VERSION`): contents are written once in `midi_contents`, clips name them, and a format-1 clip (inline notes) is read into a content of its own named after the clip. A newer format is refused on load instead of silently losing fields. The event log is never written to disk, so events are free to change shape.
 
+The frontend mirrors the pool as is (step 3, 2026-11-03): `ProjectState.midi_contents` is seeded from `ProjectDto.midi_contents`, `MidiClip` carries only `content_id`, and readers resolve a clip through `midiContentOf(state, clip)` (`src/frontend/selectors/`; an empty content when the pool has no entry). The reducer applies `MIDI_CLIP_ADDED` (clip + `content`), `MIDI_CONTENT_NOTES_SET` / `MIDI_CONTENT_CONTROLS_SET` (ignored for an unknown content, like `apply_*`) and prunes unreferenced contents on `MIDI_CLIP_REMOVED` and `TRACK_DELETED`; `MIDI_CLIP_MOVED_TO_TRACK` moves the clip only. The commands are unchanged, still addressed by `(track_id, clip_id)`.
+
 ---
 
 ## Further Reading

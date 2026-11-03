@@ -1,7 +1,7 @@
 <!-- Track.svelte -->
 <script lang="ts">
 	import { createEventDispatcher } from 'svelte';
-	import type { Clip as ClipType, MidiClip as MidiClipType } from '../types/global';
+	import type { Clip as ClipType, MidiClip as MidiClipType, MidiContent } from '../types/global';
 	import Clip from './Clip.svelte';
 	import MidiClip from './MidiClip.svelte';
 	import { pendingImports } from '../frontend/audio/pendingImports';
@@ -11,11 +11,13 @@
 	import { transport } from '../stores/transport';
 	import { buildPreviewClip } from '../frontend/midiRecordingPreview';
 	import { getPreviewPitchRange } from '../frontend/pianoRoll/previewLayout';
+	import { midiContentOf } from '../frontend/selectors';
 	import { t } from 'svelte-i18n';
 
 	export let trackId: string;
 	export let clips: ClipType[];
 	export let midiClips: MidiClipType[];
+	export let midiContents: Record<string, MidiContent>;
 	export let scale: number;
 	export let trackIndex: number;
 	export let trackColor: string = '#4d96ff';
@@ -74,8 +76,9 @@
 			: null;
 	$: laneEmpty =
 		displayClips.length === 0 && midiClips.length === 0 && !recordingClip && !audioPreview;
+	$: contentPool = { midi_contents: midiContents };
 	$: lanePitchRange = getPreviewPitchRange([
-		...midiClips.flatMap((c) => c.notes),
+		...midiClips.flatMap((c) => midiContentOf(contentPool, c).notes),
 		...(recordingClip?.notes ?? [])
 	]);
 
@@ -144,7 +147,7 @@
 			offset={clip.offset}
 			{scale}
 			{bpm}
-			notes={clip.notes}
+			notes={midiContentOf(contentPool, clip).notes}
 			color={trackColor}
 			minPitch={lanePitchRange.min}
 			maxPitch={lanePitchRange.max}

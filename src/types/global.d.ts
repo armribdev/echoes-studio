@@ -148,6 +148,12 @@ export interface MidiControlPoint {
 	value: number;
 }
 
+/** What a MIDI clip plays (ADR-032), held in `Project.midi_contents` and referenced by clips. */
+export interface MidiContent {
+	notes: MidiNote[];
+	channel_controls: MidiControlPoint[];
+}
+
 export interface MidiClip {
 	id: string;
 	/** Position on the timeline in seconds. */
@@ -155,8 +161,8 @@ export interface MidiClip {
 	end: number;
 	/** Seconds of content hidden past the left edge (left-trim). Defaults to 0. */
 	offset: number;
-	notes: MidiNote[];
-	channel_controls: MidiControlPoint[];
+	/** Key in `Project.midi_contents`. */
+	content_id: string;
 }
 
 /** An aux output of a multi-out plugin, taken as a track's audio input. */
@@ -293,6 +299,7 @@ export interface Project {
 	midi_ppq: number;
 	midi_grid_use_triplets: boolean;
 	tracks: Track[];
+	midi_contents: Record<string, MidiContent>;
 	/** Locators — named points in beats. Absent/empty on older projects. */
 	markers?: ArrangementMarker[];
 	/** Arrangement sections — named spans in beats. Absent/empty on older projects. */

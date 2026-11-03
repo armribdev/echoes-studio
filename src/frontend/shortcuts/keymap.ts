@@ -149,7 +149,7 @@ function buildActions(): ActionMap {
 		'library.sourceFavorites': () => libraryStore.setSource('favorites'),
 		'library.sourceAudio': () => libraryStore.setSource('audio'),
 		'view.toggleMain': () => viewMode.toggleMain(),
-		'editor.cycleFocus': () => cycleEditorFocus(get(engineProject).tracks, get(selection)),
+		'editor.cycleFocus': () => cycleEditorFocus(get(engineProject), get(selection)),
 		'track.add': menuAction('add-track'),
 		'pianoRoll.modeDraw': () => {},
 		'pianoRoll.modeSelect': () => {},

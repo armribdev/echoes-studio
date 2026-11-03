@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { ev, type EngineEvent } from '../protocol/events';
-import type { Clip, MidiClip, MidiNote, Project, SamplerPad } from '../../types/global';
+import type {
+	Clip,
+	MidiClip,
+	MidiContent,
+	MidiNote,
+	Project,
+	SamplerPad
+} from '../../types/global';
 import { SAMPLER_INSTRUMENT_ID } from './sampler';
 import {
 	applyEvent,
@@ -28,8 +35,16 @@ function audioClip(id: string, start = 0, end = 1): Clip {
 	};
 }
 
-function midiClip(id: string, start = 0, end = 2, notes: MidiNote[] = []): MidiClip {
-	return { id, start, end, offset: 0, notes, channel_controls: [] };
+function midiClip(id: string, start = 0, end = 2, contentId = `content-${id}`): MidiClip {
+	return { id, start, end, offset: 0, content_id: contentId };
+}
+
+function midiContent(notes: MidiNote[] = []): MidiContent {
+	return { notes, channel_controls: [] };
+}
+
+function note(id: string, pitch = 60): MidiNote {
+	return { id, pitch, start: 0, duration: 1, velocity: 100 };
 }
 
 describe('emptyProjectState', () => {
@@ -145,34 +160,35 @@ describe('replayEvents — project integration stream', () => {
 		expect(cleared.tracks.map((t) => t.solo)).toEqual([false, false]);
 	});
 
-	it('manages MIDI clips and notes on a track', () => {
-		const notes: MidiNote[] = [{ id: 'n1', pitch: 60, start: 0, duration: 1, velocity: 100 }];
-		const clip = midiClip('mc1', 0, 4, notes);
+	it('manages MIDI clips and their content on a track', () => {
+		const clip = midiClip('mc1', 0, 4);
 		let state = replayEvents([
 			event(ev.TRACK_CREATED, { id: 't1', name: 'Keys' }),
-			event(ev.MIDI_CLIP_ADDED, { track_id: 't1', clip }),
-			event(ev.MIDI_CLIP_NOTES_SET, {
+			event(ev.MIDI_CLIP_ADDED, {
 				track_id: 't1',
-				clip_id: 'mc1',
+				clip,
+				content: midiContent([note('n1')])
+			}),
+			event(ev.MIDI_CONTENT_NOTES_SET, {
+				content_id: 'content-mc1',
 				notes: [{ id: 'n2', pitch: 64, start: 1, duration: 0.5, velocity: 80 }]
 			})
 		]);
-		expect(state.tracks[0].midi_clips[0].notes).toEqual([
+		expect(state.midi_contents['content-mc1'].notes).toEqual([
 			{ id: 'n2', pitch: 64, start: 1, duration: 0.5, velocity: 80 }
 		]);
 
 		state = applyEvent(
 			state,
-			event(ev.MIDI_CLIP_CONTROLS_SET, {
-				track_id: 't1',
-				clip_id: 'mc1',
+			event(ev.MIDI_CONTENT_CONTROLS_SET, {
+				content_id: 'content-mc1',
 				channel_controls: [{ start: 1, kind: 'control_change', number: 64, value: 127 }]
 			})
 		);
-		expect(state.tracks[0].midi_clips[0].channel_controls).toEqual([
+		expect(state.midi_contents['content-mc1'].channel_controls).toEqual([
 			{ start: 1, kind: 'control_change', number: 64, value: 127 }
 		]);
-		expect(state.tracks[0].midi_clips[0].notes).toHaveLength(1);
+		expect(state.midi_contents['content-mc1'].notes).toHaveLength(1);
 
 		state = applyEvent(
 			state,
@@ -187,6 +203,7 @@ describe('replayEvents — project integration stream', () => {
 
 		state = applyEvent(state, event(ev.MIDI_CLIP_REMOVED, { track_id: 't1', clip_id: 'mc1' }));
 		expect(state.tracks[0].midi_clips).toHaveLength(0);
+		expect(state.midi_contents).toEqual({});
 	});
 
 	it('updates markers and regions then removes them', () => {
@@ -309,6 +326,147 @@ describe('projectFromSnapshot', () => {
 		expect(state.key_root).toBe('C');
 		expect(state.markers).toEqual([]);
 		expect(state.regions).toEqual([]);
+		expect(state.midi_contents).toEqual({});
+	});
+
+	it('seeds the MIDI content pool from the DTO', () => {
+		const content = midiContent([note('n1')]);
+		const state = projectFromSnapshot({
+			name: 'Snap',
+			bpm: 120,
+			numerator: 4,
+			denominator: 4,
+			tracks: [{ id: 't1', name: 'Keys', volume: 80, clips: [], midi_clips: [midiClip('mc1')] }],
+			midi_contents: { 'content-mc1': content }
+		} as unknown as Project);
+		expect(state.midi_contents).toEqual({ 'content-mc1': content });
+		expect(state.tracks[0].midi_clips[0].content_id).toBe('content-mc1');
+	});
+});
+
+describe('MIDI content pool (ADR-032)', () => {
+	function withTracks(...trackIds: string[]): ProjectState {
+		return replayEvents(trackIds.map((id) => event(ev.TRACK_CREATED, { id, name: id })));
+	}
+
+	function addClip(
+		state: ProjectState,
+		trackId: string,
+		clipId: string,
+		notes: MidiNote[] = []
+	): ProjectState {
+		return applyEvent(
+			state,
+			event(ev.MIDI_CLIP_ADDED, {
+				track_id: trackId,
+				clip: midiClip(clipId),
+				content: midiContent(notes)
+			})
+		);
+	}
+
+	it('creates a clip together with its content', () => {
+		const state = addClip(withTracks('t1'), 't1', 'mc1', [note('n1')]);
+		expect(state.tracks[0].midi_clips).toEqual([midiClip('mc1')]);
+		expect(state.midi_contents).toEqual({ 'content-mc1': midiContent([note('n1')]) });
+	});
+
+	it('ignores a replayed MIDI_CLIP_ADDED and keeps later edits', () => {
+		const added = event(ev.MIDI_CLIP_ADDED, {
+			track_id: 't1',
+			clip: midiClip('mc1'),
+			content: midiContent([note('n1')])
+		});
+		const edited = event(ev.MIDI_CONTENT_NOTES_SET, {
+			content_id: 'content-mc1',
+			notes: [note('n2', 72)]
+		});
+		const state = replayEvents([added, edited, added], withTracks('t1'));
+		expect(state.tracks[0].midi_clips).toHaveLength(1);
+		expect(state.midi_contents['content-mc1'].notes).toEqual([note('n2', 72)]);
+	});
+
+	it('does not store a content for a clip added to an unknown track', () => {
+		const before = withTracks('t1');
+		expect(addClip(before, 'missing', 'mc1')).toBe(before);
+	});
+
+	it('edits only the targeted content', () => {
+		let state = addClip(addClip(withTracks('t1'), 't1', 'a', [note('n1')]), 't1', 'b', [
+			note('n2')
+		]);
+		const untouched = state.midi_contents['content-b'];
+		state = applyEvent(
+			state,
+			event(ev.MIDI_CONTENT_NOTES_SET, { content_id: 'content-a', notes: [note('n3', 48)] })
+		);
+		expect(state.midi_contents['content-a'].notes).toEqual([note('n3', 48)]);
+		expect(state.midi_contents['content-b']).toBe(untouched);
+	});
+
+	it('ignores an edit of a content that does not exist', () => {
+		const state = addClip(withTracks('t1'), 't1', 'mc1');
+		const notes = event(ev.MIDI_CONTENT_NOTES_SET, { content_id: 'ghost', notes: [note('n1')] });
+		const controls = event(ev.MIDI_CONTENT_CONTROLS_SET, {
+			content_id: 'ghost',
+			channel_controls: []
+		});
+		expect(applyEvent(state, notes)).toBe(state);
+		expect(applyEvent(state, controls)).toBe(state);
+	});
+
+	it('prunes a content when its last clip is removed', () => {
+		let state = addClip(addClip(withTracks('t1'), 't1', 'a'), 't1', 'b');
+		state = applyEvent(state, event(ev.MIDI_CLIP_REMOVED, { track_id: 't1', clip_id: 'a' }));
+		expect(Object.keys(state.midi_contents)).toEqual(['content-b']);
+	});
+
+	it('keeps a content that another clip still references', () => {
+		let state = addClip(withTracks('t1', 't2'), 't1', 'a', [note('n1')]);
+		state = applyEvent(
+			state,
+			event(ev.MIDI_CLIP_ADDED, {
+				track_id: 't2',
+				clip: midiClip('b', 0, 2, 'content-a')
+			})
+		);
+		state = applyEvent(state, event(ev.MIDI_CLIP_REMOVED, { track_id: 't1', clip_id: 'a' }));
+		expect(state.midi_contents['content-a'].notes).toEqual([note('n1')]);
+		state = applyEvent(state, event(ev.MIDI_CLIP_REMOVED, { track_id: 't2', clip_id: 'b' }));
+		expect(state.midi_contents).toEqual({});
+	});
+
+	it('prunes the contents of a deleted track only', () => {
+		let state = addClip(addClip(withTracks('t1', 't2'), 't1', 'a'), 't2', 'b');
+		state = applyEvent(state, event(ev.TRACK_DELETED, { id: 't1' }));
+		expect(Object.keys(state.midi_contents)).toEqual(['content-b']);
+	});
+
+	it('moves a clip to another track without touching the pool', () => {
+		const state = addClip(withTracks('t1', 't2'), 't1', 'a', [note('n1')]);
+		const moved = applyEvent(
+			state,
+			event(ev.MIDI_CLIP_MOVED_TO_TRACK, {
+				from_track_id: 't1',
+				to_track_id: 't2',
+				clip: { ...midiClip('a'), start: 4, end: 6 }
+			})
+		);
+		expect(moved.tracks[0].midi_clips).toEqual([]);
+		expect(moved.tracks[1].midi_clips).toEqual([{ ...midiClip('a'), start: 4, end: 6 }]);
+		expect(moved.midi_contents).toBe(state.midi_contents);
+	});
+
+	it('does not mutate the previous state', () => {
+		const before = addClip(addClip(withTracks('t1'), 't1', 'a', [note('n1')]), 't1', 'b');
+		const snapshot = structuredClone(before);
+		let after = applyEvent(
+			before,
+			event(ev.MIDI_CONTENT_NOTES_SET, { content_id: 'content-a', notes: [] })
+		);
+		after = applyEvent(after, event(ev.MIDI_CLIP_REMOVED, { track_id: 't1', clip_id: 'b' }));
+		expect(after).not.toBe(before);
+		expect(before).toEqual(snapshot);
 	});
 });
 

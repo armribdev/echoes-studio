@@ -10,7 +10,8 @@
 	import PluginPicker from './PluginPicker.svelte';
 	import LibraryPopup from './LibraryPopup.svelte';
 	import { instrumentIdOf, type PluginInfo } from '../stores/plugins';
-	import type { Track as TrackType, Project } from '../types/global';
+	import type { Track as TrackType, Project, MidiClip, MidiContent } from '../types/global';
+	import { midiContentOf } from '../frontend/selectors';
 	import { midiClipSeed, type MidiClipSeed } from '../frontend/midiClipSeed';
 	import { invoke } from '@tauri-apps/api/core';
 	import { listen } from '@tauri-apps/api/event';
@@ -143,8 +144,10 @@
 	// Local mutations (optimistic UI during drag/import) are reconciled by the
 	// next store event — the reducer is idempotent so there's never a double-apply.
 	let tracks: TrackType[] = [];
+	let midiContents: Record<string, MidiContent> = {};
 	const unsubStore = projectEventStore.subscribe((state) => {
 		tracks = state.tracks;
+		midiContents = state.midi_contents;
 		// Keep the tempo store in sync so MenuBar reflects undo/redo correctly.
 		tempo.set({ bpm: state.bpm, numerator: state.numerator, denominator: state.denominator });
 		const grid = normalizeMidiGridBeats(state.midi_grid_beats);
@@ -157,6 +160,10 @@
 		pendingImports.pruneOrphans(liveIds);
 	});
 	onDestroy(unsubStore);
+
+	function contentOf(clip: MidiClip): MidiContent {
+		return midiContentOf({ midi_contents: midiContents }, clip);
+	}
 
 	const unsubSelection = selection.subscribe((sel) => {
 		syncPianoRollToSelection(tracks, sel);
@@ -1054,7 +1061,7 @@
 			const midiClip = track.midi_clips?.find((c) => c.id === clipId);
 			if (midiClip) {
 				selectTrackIndex(trackIndex);
-				ensureClipPreview(track, midiClip, trackColor(track.id, track.color));
+				ensureClipPreview(track, midiClip, contentOf(midiClip), trackColor(track.id, track.color));
 				return;
 			}
 			if (track.clips.some((c) => c.id === clipId)) {
@@ -1212,7 +1219,7 @@
 						trackId: track.id,
 						durationSec: clip.end - clip.start,
 						relativeStart: clip.start - minStart,
-						...midiClipSeed(clip)
+						...midiClipSeed(clip, contentOf(clip))
 					});
 				}
 			}
@@ -1272,7 +1279,12 @@
 				if (!sel.has(clip.id)) continue;
 				const start = clip.start + span;
 				jobs.push(
-					addMidiClip(track.id, start, start + (clip.end - clip.start), midiClipSeed(clip))
+					addMidiClip(
+						track.id,
+						start,
+						start + (clip.end - clip.start),
+						midiClipSeed(clip, contentOf(clip))
+					)
 				);
 			}
 		}
@@ -1405,7 +1417,12 @@
 
 		let draggedClipId = clipId;
 		if (duplicate) {
-			const result = await addMidiClip(track.id, clip.start, clip.end, midiClipSeed(clip));
+			const result = await addMidiClip(
+				track.id,
+				clip.start,
+				clip.end,
+				midiClipSeed(clip, contentOf(clip))
+			);
 			const newId = clipIdFromResult(result);
 			if (!newId) return;
 			draggedClipId = newId;
@@ -1497,7 +1514,7 @@
 		if (!track) return;
 		const clip = track.midi_clips?.find((c) => c.id === id);
 		if (!clip) return;
-		ensureClipPreview(track, clip, trackColor(track.id, track.color));
+		ensureClipPreview(track, clip, contentOf(clip), trackColor(track.id, track.color));
 	}
 
 	function onMidiClipDblClick(e: CustomEvent<{ id: string; trackIndex: number }>) {
@@ -1506,7 +1523,7 @@
 		if (!track) return;
 		const clip = track.midi_clips?.find((c) => c.id === id);
 		if (!clip) return;
-		focusMidiClipForEdit(track, clip, trackColor(track.id, track.color));
+		focusMidiClipForEdit(track, clip, contentOf(clip), trackColor(track.id, track.color));
 	}
 
 	function onMidiClipContextMenu(
@@ -1750,7 +1767,7 @@
 			startScrollLeft: tracksEl?.scrollLeft ?? 0,
 			count: 0,
 			partialPx: 0,
-			seed: midiClipSeed(clip)
+			seed: midiClipSeed(clip, contentOf(clip))
 		};
 		beginArrangeMaxBarsHold();
 		window.addEventListener('mousemove', onRepeatMove);
@@ -2309,7 +2326,12 @@
 						const firstClip = track.midi_clips?.[0];
 						if (firstClip) {
 							selection.setSingle(firstClip.id);
-							focusMidiClipForEdit(track, firstClip, trackColor(track.id, track.color));
+							focusMidiClipForEdit(
+								track,
+								firstClip,
+								contentOf(firstClip),
+								trackColor(track.id, track.color)
+							);
 						} else {
 							const bpm = $tempo.bpm;
 							const fourBeats = (4 / bpm) * 60;
@@ -2506,6 +2528,7 @@
 							trackId={track.id}
 							clips={track.clips}
 							midiClips={track.midi_clips ?? []}
+							{midiContents}
 							{scale}
 							{trackIndex}
 							bpm={$tempo.bpm}

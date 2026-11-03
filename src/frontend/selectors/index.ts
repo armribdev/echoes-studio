@@ -13,6 +13,7 @@
  */
 
 import type { ProjectState, TrackState, ClipState } from '../../shared/project/reducer';
+import type { MidiClip, MidiContent } from '../../types/global';
 
 // ── Track selectors ────────────────────────────────────────────────────────────
 
@@ -67,6 +68,18 @@ export function getActiveClips(state: ProjectState, positionSec: number): ClipSt
 	return state.tracks
 		.flatMap((t) => t.clips)
 		.filter((c) => positionSec >= c.start && positionSec < c.end);
+}
+
+// ── MIDI content selectors ─────────────────────────────────────────────────────
+
+const NO_MIDI_CONTENT: MidiContent = { notes: [], channel_controls: [] };
+
+/** What a MIDI clip plays. Empty when the pool has no entry for the clip. */
+export function midiContentOf(
+	state: Pick<ProjectState, 'midi_contents'>,
+	clip: Pick<MidiClip, 'content_id'>
+): MidiContent {
+	return state.midi_contents[clip.content_id] ?? NO_MIDI_CONTENT;
 }
 
 // ── Transport selectors ───────────────────────────────────────────────────────

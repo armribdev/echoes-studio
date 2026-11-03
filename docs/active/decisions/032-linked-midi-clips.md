@@ -4,9 +4,11 @@
 
 **Accepted — 2026-10-26 (approved by the user after one revision the same day).
 Implementation in progress, one plan step at a time with approval between steps.
-Step 1 (harness `repeated_midi`) and step 2 (backend content pool, no sharing yet:
-every clip has its own content, all 14 golden hashes unchanged) are done;
-step 3 (frontend mirror) is next, and the frontend is out of sync until it lands.** Touches two hard constraints of
+Step 1 (harness `repeated_midi`), step 2 (backend content pool, no sharing yet:
+every clip has its own content, all 14 golden hashes unchanged) and step 3
+(frontend mirror, 2026-11-03: types, reducer, `midiContentOf`, every reader; no
+sharing, no new UI, reducer and selector unit-tested, not hand-tested in the app)
+are done; step 4 (sharing, backend) is next.** Touches two hard constraints of
 `architecture_rules.md`: invariant 5 (Rust owns the state, the frontend mirrors
 it) and invariant 6 (event-sourcing scope, ADR-002), plus the project file format
 (C-4). Builds on ADR-002, ADR-005, ADR-012 (beat-space MIDI), ADR-018 (clip
@@ -243,9 +245,9 @@ context menu. Nothing else without approval.
    pruning, file format v2 with legacy load migration. Every clip has its own
    content, so behaviour is unchanged. Gate: all hashes identical, replay-equals-
    live, legacy and v2 round-trip tests.
-3. **Frontend mirror** of step 2: types, reducer, `midiContentOf`, `Track.svelte`,
-   `PianoRoll`, `clipEditor`, `midiClipSeed`, with `reducer.test.ts` cases. App
-   still behaves as before.
+3. **Frontend mirror** of step 2 (done 2026-11-03): types, reducer, `midiContentOf`,
+   `Track.svelte`, `PianoRoll`, `clipEditor`, `midiClipSeed`, `MainPanel`, with
+   `reducer.test.ts` cases. App still behaves as before.
 4. **Sharing, backend:** `ADD_MIDI_CLIP` by `content_id`, multi-track publish,
    `UNLINK_MIDI_CLIP` / `MIDI_CLIP_UNLINKED`; `repeated_midi_linked` hash equality;
    tests for edit-through-one-clip, cross-track, delete-the-first, undo/redo.

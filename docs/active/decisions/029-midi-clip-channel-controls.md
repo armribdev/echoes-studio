@@ -65,7 +65,8 @@ with the same latency-compensated `transport_position_at` as notes.
 controls swap together, so an undo restores both in the same block. The bake
 (`compiler::bake_track_midi`, ex-`bake_track_midi_notes`) groups the points per
 clip with the clip's content origin and window (`MidiControlClip`).
-`SET_CLIP_MIDI_CONTROLS` (event `MIDI_CLIP_CONTROLS_SET`) publishes without a
+`SET_CLIP_MIDI_CONTROLS` (event `MIDI_CLIP_CONTROLS_SET`, now `MIDI_CONTENT_CONTROLS_SET`,
+ADR-032) publishes without a
 recompile, exactly like `SET_CLIP_MIDI_NOTES`; both share
 `api::publish_track_midi`. They stay separate commands so a note edit never
 re-sends thousands of control points.
