@@ -1,0 +1,15 @@
+[package]
+name = "vst3_ffi"
+version = "0.1.0"
+edition = "2021"
+description = "VST3 COM bindings, shared by the engine and the plugin bridge host (ADR-033)."
+license = "MIT"
+publish = false
+
+# std-only, and it must never depend on `audio_graph` or the engine crate (ADR-003,
+# ADR-033). Moved verbatim from the engine's `plugin_formats/vst3/ffi.rs`.
+[dependencies]
+
+[features]
+# `Vst3Library::placeholder()` for tests of other crates that fake a plugin.
+test-support = []

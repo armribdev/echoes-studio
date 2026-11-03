@@ -1,0 +1,10 @@
+[package]
+name = "plugin_param_queue"
+version = "0.1.0"
+edition = "2021"
+description = "Lock-free SPSC parameter queue shared by the engine and the plugin bridge host (ADR-007, ADR-033)."
+license = "MIT"
+publish = false
+
+# std-only. Moved verbatim from the engine's `plugin_system/param_queue.rs`.
+[dependencies]

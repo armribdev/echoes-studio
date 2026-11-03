@@ -23,7 +23,7 @@ thread**, never the audio thread.
 ## Key files
 
 `host.rs`, `registry.rs`, `instance.rs`, `lifecycle.rs` (hosting) ·
-`param_queue.rs`, `parameter.rs` (params) ·
+`param_queue.rs` (re-export; the queue is the `plugin_param_queue` crate, ADR-033), `parameter.rs` (params) ·
 `state.rs` (persistence) · `wrapper.rs` (format dispatch) · `gui.rs` (editor) ·
 `bridge.rs`, `bridged_node.rs` (sandbox).
 

@@ -16,6 +16,8 @@ sees only `AudioNode`.
   before showing an editor. Dual-component plugins are handled by creating a
   separate `IEditController` (`create_separate_controller`, audit V4 done) — do
   not regress to QI-only.
+- VST3 COM bindings live in the `vst3_ffi` crate (`vst3/ffi.rs` only re-exports
+  them, ADR-033); a new `IID_*` needs its header in `crates/vst3_ffi/sdk_headers/`.
 - Parameter changes delivered via the format's sample-accurate mechanism, never a
   direct setter from the audio thread.
 
