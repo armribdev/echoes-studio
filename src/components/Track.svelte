@@ -44,6 +44,7 @@
 			trackIndex: number;
 			clipId: string;
 			duplicate: boolean;
+			linked: boolean;
 		};
 		midiclip_resizestart: {
 			edge: 'left' | 'right';

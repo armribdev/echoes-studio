@@ -14,3 +14,11 @@ export function midiClipSeed(clip: Pick<MidiClip, 'offset'>, content: MidiConten
 		channelControls: content.channel_controls.map((point) => ({ ...point }))
 	};
 }
+
+/** What `ADD_MIDI_CLIP` needs to make a clip that plays the same content as `clip` (repeat, Alt+Shift+drag). */
+export function midiClipLink(clip: Pick<MidiClip, 'offset' | 'content_id'>): {
+	offset: number;
+	contentId: string;
+} {
+	return { offset: clip.offset ?? 0, contentId: clip.content_id };
+}

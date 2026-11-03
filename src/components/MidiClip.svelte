@@ -22,7 +22,7 @@
 	export let recording = false;
 
 	const dispatch = createEventDispatcher<{
-		midiclip_dragstart: { offsetPx: number; duplicate: boolean };
+		midiclip_dragstart: { offsetPx: number; duplicate: boolean; linked: boolean };
 		midiclip_resizestart: { edge: 'left' | 'right'; clientX: number };
 		midiclip_repeatstart: { clientX: number };
 		midiclip_contextmenu: { id: string; x: number; y: number };
@@ -128,7 +128,11 @@
 		dispatch('midiclip_activate', { id });
 
 		const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-		dispatch('midiclip_dragstart', { offsetPx: e.clientX - rect.left, duplicate: e.altKey });
+		dispatch('midiclip_dragstart', {
+			offsetPx: e.clientX - rect.left,
+			duplicate: e.altKey,
+			linked: e.altKey && e.shiftKey
+		});
 	}
 
 	function onResizeHandleDown(edge: 'left' | 'right', e: MouseEvent) {

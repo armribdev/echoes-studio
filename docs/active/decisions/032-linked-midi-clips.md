@@ -3,7 +3,8 @@
 ## Status
 
 **Accepted — 2026-10-26 (approved by the user after one revision the same day).
-Implementation in progress, one plan step at a time with approval between steps.
+Implemented in six plan steps, one at a time with approval between steps; the
+whole feature is **not yet hand-tested in the app** (see Consequences).
 Step 1 (harness `repeated_midi`), step 2 (backend content pool, no sharing yet:
 every clip has its own content, all 14 golden hashes unchanged) and step 3
 (frontend mirror, 2026-11-03: types, reducer, `midiContentOf`, every reader; no
@@ -11,10 +12,10 @@ sharing, no new UI, reducer and selector unit-tested, not hand-tested in the app
 and step 4 (sharing, backend, 2026-11-03: `ADD_MIDI_CLIP` by `content_id`,
 `UNLINK_MIDI_CLIP` / `MIDI_CLIP_UNLINKED`, `repeated_midi_linked` renders
 bit-identical to `repeated_midi`, no UI can send either yet, not hand-tested)
-and step 5 (sharing, frontend, 2026-11-03: the repeat handle sends `content_id`, a
+step 5 (sharing, frontend, 2026-11-03: the repeat handle sends `content_id`, a
 link mark on linked clips, "Rendre indépendant" in the clip context menu, reducer
-and `linkedMidiClipIds` unit-tested, not hand-tested in the app) are done; step 6
-(docs sync) is next.** Touches two hard constraints of
+and `linkedMidiClipIds` unit-tested, not hand-tested in the app) and step 6
+(docs sync, 2026-11-03) are done.** Touches two hard constraints of
 `architecture_rules.md`: invariant 5 (Rust owns the state, the frontend mirrors
 it) and invariant 6 (event-sourcing scope, ADR-002), plus the project file format
 (C-4). Builds on ADR-002, ADR-005, ADR-012 (beat-space MIDI), ADR-018 (clip
@@ -118,7 +119,8 @@ AppMidiClip              : { id, start, end, offset, content_id }   // no notes,
 - The repeat handle sends `content_id` of the source clip: no notes cross the IPC
   boundary and there is no "assign an id to the source" special case.
 - Paste, Alt+drag duplicate, library drops and recording stay independent (seed
-  mode).
+  mode). Alt+Shift+drag duplicate is linked (`content_id` mode), added after the
+  UX review in the open questions.
 - `UNLINK_MIDI_CLIP { track_id, clip_id }` → `MIDI_CLIP_UNLINKED { track_id,
   clip_id, content_id (new), content }`: clones the clip's content into a **new
   content** and repoints the clip. The new id and the cloned content are in the
@@ -216,8 +218,8 @@ context menu. Nothing else without approval.
   Legacy files are migrated once, at load.
 - **Edit events addressed by clip with fan-out.** Rejected: with a pool the event
   names what changed (the content).
-- **Making copy/paste and Alt+drag linked too.** Out of scope, not requested;
-  Logic keeps those independent.
+- **Making copy/paste and plain Alt+drag linked too.** Rejected: Logic and Cubase
+  keep a plain copy independent; linking is an explicit gesture (Alt+Shift+drag).
 - **Sharing the baked `MidiNoteSnapshot` between clips** (one `Arc` per content).
   Not now: the snapshot embeds the per-clip window, so it would need a split; the
   bake is cheap and off the audio thread.
@@ -239,7 +241,9 @@ context menu. Nothing else without approval.
   - Repeat drags send N parallel `ADD_MIDI_CLIP`, N undo steps, as today.
   - Pruning relies on undo rebuilding from a snapshot; true for the current
     `EventStore`, to be re-checked if undo ever becomes inverse-based.
-- **Not hand-tested** (nothing is implemented).
+- **Not hand-tested.** Unit and harness tests pass, but repeating a clip, editing a
+  linked clip, "Rendre indépendant", undo/redo and save/reopen have not been tried in
+  the running app.
 
 ## Implementation plan (one step at a time, backend first, approval between steps)
 
@@ -263,20 +267,63 @@ context menu. Nothing else without approval.
    `offset`), `linked` marker (`linkedMidiClipIds`, computed once in `MainPanel`),
    "Rendre indépendant" in the clip context menu for the right-clicked linked clip
    only. Reducer case `MIDI_CLIP_UNLINKED`.
-6. **Docs sync** (`doc_sync_rules.md`): `state-management.md`, `audio-graph.md`,
+6. **Docs sync** (done 2026-11-03; `doc_sync_rules.md`): `state-management.md`, `audio-graph.md`,
    `state_index.md`, this ADR's status, `change_impact_mapping.md`, a note in
    `engine_gateway/CLAUDE.md` ("content is written only through the pool").
 
 ## Open questions
 
-- Should Alt+drag duplicate (or a modifier on it) also create linked clips?
-- May one content be shared by tracks with different instruments? (Proposed: yes,
-  like Logic.)
-- Multi-selection: "Rendre indépendant" on several clips at once?
-- Refusing a newer `version` on load: acceptable message wording and behaviour
-  (modal vs status bar)?
+Reviewed against current DAWs on 2026-11-03. Questions 1 to 3 were **approved by the
+user and implemented the same day** (not hand-tested); question 4 is still open.
+The sources are the manuals and forum threads found by search, not hands-on
+tests, and several are old.
+
+What the DAWs do, as far as the sources show:
+
+| DAW | Create a linked copy | Make independent | Marker | Across tracks |
+| --- | --- | --- | --- | --- |
+| Cubase | Alt+Shift+drag (plain Alt+drag is a real copy) | Edit > Functions > Convert to Real Copy | "=" in the part's corner | yes |
+| Logic Pro | MIDI > Alias > Make, or key command | Functions > Region Alias > Convert to Region Copy; double-click offers "edit original" or "create real copy" | italic name | yes |
+| Reaper | Ctrl+Shift+Alt+drag, or the "pool when pasting or duplicating" preference | un-pool in the take's source properties, or the icon on the item | icon on the item | yes |
+| Bitwig 6 | Duplicate as Alias (Ctrl+Alt+D), Paste as Alias (Ctrl+Alt+V) | Make Unique | alias clip look | no, one track only |
+
+Common ground: linking is always an explicit gesture or command, never the default
+of a plain copy; the way out is a named "make independent" command; linked clips
+carry a small marker; the shared content is edited directly, without a
+confirmation.
+
+1. **Alt+drag and linked copies. Decided: plain Alt+drag stays independent,
+   Alt+Shift+drag makes a linked copy.** It is the Cubase convention and extends
+   what Alt already means here (copy). The repeat handle already links. Paste and
+   library drops stay independent. Done in `MidiClip.svelte` (`linked` flag of
+   `midiclip_dragstart`) and `MainPanel.svelte`, which sends `content_id` through
+   `midiClipLink` instead of a seed, like the repeat handle.
+2. **Several clips at once. Decided: "Rendre indépendant" acts on every selected
+   linked clip.** Cubase and Logic apply the command to the selection. The menu
+   entry shows when at least one selected clip is linked, and the commands are sent
+   one after the other (the last sharer of a content is a no-op, so the order does
+   not change the result: every clip ends up with its own content). A right-click on
+   a clip outside the selection still selects that clip alone; on a selected clip it
+   keeps the selection. One undo step per clip.
+3. **Different instruments on one content. Decided: yes.** Cubase, Logic
+   and Reaper share across tracks, and the backend already publishes to every track
+   that plays the content. Bitwig's one-track limit is a limitation, not a model
+   to copy.
+4. **Newer file version on load. Recommended: a blocking message that names the
+   version, no partial load.** The DAWs searched show nothing specific here, so this
+   is a judgment: the user asked to open the project, so the refusal should be
+   visible. Today the load command returns a French error; the open point is only
+   how the UI shows it (modal vs status bar).
+5. **Not retained.** Logic's "edit the original or make a real copy?" dialog on
+   double-click: Cubase and Reaper edit the shared content directly, and ADR §2 does
+   the same, with the other clips following when the event returns.
 
 ## Documentation divergences found while reading
+
+Both resolved on 2026-11-03: the missing event rows now exist in
+`state-management.md` (`MIDI_CLIP_REMOVED` / `MIDI_CLIP_MOVED` /
+`MIDI_CLIP_MOVED_TO_TRACK`), and `ProjectFile.version` is written as 2 and checked on
+load (`PROJECT_FILE_VERSION`). Original findings kept for history:
 
 - `state-management.md` lists `MIDI_CLIP_ADDED` and `MIDI_CLIP_CONTROLS_SET` but no
   row for `MIDI_CLIP_NOTES_SET`, `MIDI_CLIP_REMOVED`, `MIDI_CLIP_MOVED` or
