@@ -169,19 +169,15 @@ fn load_plugin(options: &Options) -> Result<Loaded, String> {
         }
         PluginFormat::Vst3 => {
             initialise_com()?;
-            let plugin = Arc::new(Vst3Adapter::load(
-                &options.plugin_dll,
-                &options.plugin_id,
-                channels,
-            )?);
+            let plugin = Vst3Adapter::load(&options.plugin_dll, &options.plugin_id, channels)?;
             let processor = Vst3BlockProcessor::new(Arc::clone(&plugin));
             Ok((plugin, Box::new(processor)))
         }
     }
 }
 
-/// VST3 plugins expect the apartment of an application's main thread, and the
-/// editor of step 7 needs OLE for drag and drop.  The thread that loads the
+/// VST3 plugins expect the apartment of an application's main thread, and their
+/// editor needs OLE for drag and drop.  The thread that loads the
 /// plugin is the one the control requests run on.
 #[cfg(windows)]
 fn initialise_com() -> Result<(), String> {

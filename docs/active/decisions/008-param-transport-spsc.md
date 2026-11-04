@@ -251,3 +251,10 @@ and what the processor wrote to `outputParameterChanges`, only while a window wa
 travel the other way, through the SPSC edit queue of `EditState` to the bridge's audio
 thread, and from there to the engine in the block reply. The editor itself is step 7:
 until then the table has no watcher, so nothing is recorded.
+
+## Amendment 2026-11-04 — the bridge's editor watches the table (ADR-033 step 7)
+
+The table keeps its shape; it now has a watcher. `editor::open_vst3` calls `Vst3Adapter::watch_params()` before the
+view exists and holds the guard until the window closes, and the window's 10 ms `WM_TIMER` calls
+`mirror_to_controller()`. The audio thread still only writes the table, and only while a window watches. No change to
+`ParamQueue` or to its capacity.

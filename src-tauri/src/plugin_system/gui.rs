@@ -35,7 +35,7 @@
 
 #![cfg(windows)]
 
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::ffi::{c_char, c_void};
 use std::ptr::null_mut;
@@ -774,127 +774,13 @@ unsafe fn fit_clap_gui_to_dpi(
     }
 }
 
-use crate::plugin_formats::vst3::ffi::{
-    FUnknown, IPlugFrameVtbl, IPlugView, IPlugViewContentScaleSupport, TResult, Tuid, ViewRect,
-    IID_FUNKNOWN, IID_IPLUG_FRAME, IID_IPLUG_VIEW_CONTENT_SCALE_SUPPORT, K_INVALID_ARGUMENT,
-    K_NO_INTERFACE, K_RESULT_FALSE, K_RESULT_OK,
-};
-use crate::plugin_formats::vst3::host_context::{static_add_ref, static_release, tuid_eq};
-
-// Per-editor instance so `resizeView` can route to the right container HWND.
-
-#[repr(C)]
-struct PlugFrame {
-    vtbl: *const IPlugFrameVtbl,
-    container_hwnd: AtomicPtr<c_void>,
-    view: *mut IPlugView,
-    /// `onSize` calls in progress: a plugin may call `resizeView` from `onSize`.
-    resize_depth: Cell<u8>,
-}
-
-/// Nested `onSize` → `resizeView` → `onSize` rounds accepted before a request is refused.
-const MAX_RESIZE_DEPTH: u8 = 3;
-
-unsafe extern "C" fn frame_qi(
-    this: *mut FUnknown,
-    iid: *const Tuid,
-    obj: *mut *mut c_void,
-) -> TResult {
-    if obj.is_null() {
-        return K_INVALID_ARGUMENT;
-    }
-    if tuid_eq(iid, &IID_IPLUG_FRAME) || tuid_eq(iid, &IID_FUNKNOWN) {
-        *obj = this as *mut c_void;
-        return K_RESULT_OK;
-    }
-    *obj = null_mut();
-    K_NO_INTERFACE
-}
-
-/// `IPlugFrame::resizeView`: resizes the window, then tells the view with `onSize`
-/// in the same call stack, as `iplugview.h` requires.
-unsafe extern "C" fn frame_resize_view(
-    this: *mut FUnknown,
-    view: *mut IPlugView,
-    rect: *mut ViewRect,
-) -> TResult {
-    if this.is_null() || rect.is_null() {
-        return K_INVALID_ARGUMENT;
-    }
-    let frame = &*(this as *const PlugFrame);
-    if view.is_null() || view != frame.view {
-        return K_INVALID_ARGUMENT;
-    }
-    let hwnd = frame.container_hwnd.load(Ordering::Acquire);
-    let depth = frame.resize_depth.get();
-    if hwnd.is_null() || depth >= MAX_RESIZE_DEPTH {
-        return K_RESULT_FALSE;
-    }
-
-    let mut requested = *rect;
-    let vtbl = &*(*view).vtbl;
-    let mut reported = requested;
-    if (vtbl.get_size)(view, &mut reported) == K_RESULT_OK && reported == requested {
-        return K_RESULT_OK;
-    }
-
-    resize_to_client(
-        hwnd,
-        (requested.right - requested.left).max(1),
-        (requested.bottom - requested.top).max(1),
-    );
-
-    // A view that already follows the new size on its own needs no `onSize`.
-    let mut after = requested;
-    let follows = (vtbl.get_size)(view, &mut after) == K_RESULT_OK && after == requested;
-    if !follows {
-        frame.resize_depth.set(depth + 1);
-        let _ = (vtbl.on_size)(view, &mut requested);
-        frame.resize_depth.set(depth);
-    }
-    K_RESULT_OK
-}
-
-static PLUG_FRAME_VTBL: IPlugFrameVtbl = IPlugFrameVtbl {
-    query_interface: frame_qi,
-    add_ref: static_add_ref,
-    release: static_release,
-    resize_view: frame_resize_view,
-};
-
-fn make_plug_frame(view: *mut IPlugView) -> Box<PlugFrame> {
-    Box::new(PlugFrame {
-        vtbl: &PLUG_FRAME_VTBL,
-        container_hwnd: AtomicPtr::new(null_mut()),
-        view,
-        resize_depth: Cell::new(0),
-    })
-}
+use crate::plugin_formats::vst3::editor_view::EditorView;
 
 /// Hands the monitor scale to the view (if it supports it), then fits the
 /// window to the size the view reports at that scale.
-unsafe fn fit_vst3_view_to_dpi(view: *mut IPlugView, hwnd: *mut c_void, dpi: u32) {
-    let mut scale_support: *mut c_void = null_mut();
-    let found = ((*(*view).vtbl).query_interface)(
-        view,
-        &IID_IPLUG_VIEW_CONTENT_SCALE_SUPPORT,
-        &mut scale_support,
-    );
-    if found == K_RESULT_OK && !scale_support.is_null() {
-        let scale_support = scale_support as *mut IPlugViewContentScaleSupport;
-        let vtbl = &*(*scale_support).vtbl;
-        let _ = (vtbl.set_content_scale_factor)(scale_support, scale_for_dpi(dpi) as f32);
-        (vtbl.release)(scale_support);
-    }
-
-    let mut rect = ViewRect {
-        left: 0,
-        top: 0,
-        right: 0,
-        bottom: 0,
-    };
-    if ((*(*view).vtbl).get_size)(view, &mut rect) == K_RESULT_OK {
-        resize_to_client(hwnd, rect.right - rect.left, rect.bottom - rect.top);
+unsafe fn fit_vst3_view_to_dpi(view: &EditorView, hwnd: *mut c_void, dpi: u32) {
+    if let Some((width, height)) = view.apply_content_scale(scale_for_dpi(dpi)) {
+        resize_to_client(hwnd, width, height);
     }
 }
 
@@ -925,48 +811,23 @@ pub unsafe fn open_vst3_editor(
     // Before the view exists, so it opens on current values; dropped with the window.
     let mirror_watch = instance.watch_vst3_params();
 
-    let view = ((*(*ctrl).vtbl).create_view)(ctrl, c"editor".as_ptr().cast());
-    if view.is_null() {
-        return Err("VST3 GUI: IEditController::createView returned null".into());
-    }
+    let view = Box::new(EditorView::create(ctrl, resize_to_client)?);
+    let (probe_w, probe_h) = view
+        .size()
+        .map_or((800, 600), |(width, height)| (width.max(1), height.max(1)));
+    // The cleanup closure owns the view; the DPI closure and the attach below only
+    // use it while the window exists, which is before the cleanup runs.
+    let view_ptr: *const EditorView = &*view;
 
-    if ((*(*view).vtbl).is_platform_type_supported)(view, c"HWND".as_ptr().cast()) != K_RESULT_OK {
-        ((*(*view).vtbl).release)(view as *mut _);
-        return Err("VST3 GUI: plugin view does not support HWND".into());
-    }
-
-    let plug_frame = make_plug_frame(view); // before attached(); owned by cleanup
-    let plug_frame_ptr = &*plug_frame as *const PlugFrame;
-    let frame_funknown = plug_frame_ptr as *mut FUnknown;
-    let _ = ((*(*view).vtbl).set_frame)(view, frame_funknown);
-
-    let mut rect = ViewRect {
-        left: 0,
-        top: 0,
-        right: 800,
-        bottom: 600,
-    };
-    let _ = ((*(*view).vtbl).get_size)(view, &mut rect);
-    let probe_w = (rect.right - rect.left).max(1);
-    let probe_h = (rect.bottom - rect.top).max(1);
-
-    // Build cleanup + tick closures.  The shared `Arc<PluginInstance>` is
-    // captured here so the plugin stays live until the editor closes.  The
-    // closure does NOT call `terminate` on IComponent and does NOT release
-    // its primary ref, nor the controller — those are owned by
-    // `PluginInstance::Drop`.  It only tears down the view and the frame.
-    let frame_owned = plug_frame;
+    // The shared `Arc<PluginInstance>` is captured here so the plugin stays live
+    // until the editor closes.  The closure does NOT call `terminate` on IComponent
+    // and does NOT release its primary ref, nor the controller — those are owned by
+    // `PluginInstance::Drop`.  It only tears down the view (frame, `removed`, release).
     let instance_owned = instance.clone();
     let cleanup: Box<dyn FnOnce()> = Box::new(move || {
-        let _frame = frame_owned;
         let _instance = instance_owned; // keep plugin alive through teardown
         let _running = _instance.mark(PluginThread::Ui);
-        unsafe {
-            // Frame first, as the SDK host does: a plugin must not ask for a size while detaching.
-            let _ = ((*(*view).vtbl).set_frame)(view, null_mut());
-            ((*(*view).vtbl).removed)(view);
-            ((*(*view).vtbl).release)(view as *mut _);
-        }
+        drop(view);
         drop(mirror_watch);
         // _instance Arc drops last — if this was the last clone, the host
         // already released its own clone earlier, and PluginInstance::Drop
@@ -978,7 +839,7 @@ pub unsafe fn open_vst3_editor(
     let instance_for_dpi = Arc::clone(&instance);
     let on_dpi_changed: Box<dyn Fn(*mut c_void, u32)> = Box::new(move |hwnd, dpi| {
         let _running = instance_for_dpi.mark(PluginThread::Ui);
-        unsafe { fit_vst3_view_to_dpi(view, hwnd, dpi) }
+        unsafe { fit_vst3_view_to_dpi(&*view_ptr, hwnd, dpi) }
     });
 
     let userdata = Box::new(WindowUserData {
@@ -1005,17 +866,12 @@ pub unsafe fn open_vst3_editor(
         }
     };
 
-    (*plug_frame_ptr)
-        .container_hwnd
-        .store(hwnd, Ordering::Release);
-
-    let attach_r = ((*(*view).vtbl).attached)(view, plugin_area(hwnd), c"HWND".as_ptr().cast());
-    if attach_r != K_RESULT_OK {
+    if let Err(error) = (*view_ptr).attach(hwnd, plugin_area(hwnd)) {
         user32::PostMessageW(hwnd, WM_CLOSE, 0, 0);
-        return Err(format!("VST3 GUI: IPlugView::attached failed: {attach_r}"));
+        return Err(error);
     }
 
-    fit_vst3_view_to_dpi(view, hwnd, window_dpi(hwnd));
+    fit_vst3_view_to_dpi(&*view_ptr, hwnd, window_dpi(hwnd));
     center_on_screen(hwnd);
 
     show_and_start_timer(hwnd);
@@ -1208,73 +1064,14 @@ pub fn post_close(hwnd: usize) {
 }
 
 #[cfg(test)]
-mod plug_frame_tests {
-    use super::*;
-
-    #[test]
-    fn the_frame_answers_the_sdk_codes() {
-        let frame = make_plug_frame(null_mut());
-        let this = &*frame as *const PlugFrame as *mut FUnknown;
-        let table = unsafe { &*frame.vtbl };
-        let mut found: *mut c_void = null_mut();
-        let unknown = [7u8; 16];
-
-        unsafe {
-            assert_eq!(
-                (table.query_interface)(this, &IID_IPLUG_FRAME, &mut found),
-                K_RESULT_OK
-            );
-            assert_eq!(
-                (table.query_interface)(this, &unknown, &mut found),
-                K_NO_INTERFACE
-            );
-            assert!(found.is_null());
-            assert_eq!(
-                (table.query_interface)(this, &IID_IPLUG_FRAME, null_mut()),
-                K_INVALID_ARGUMENT
-            );
-        }
-    }
-
-    #[test]
-    fn a_resize_without_a_window_or_a_size_is_refused_with_the_right_code() {
-        let view = 0x10 as *mut IPlugView;
-        let frame = make_plug_frame(view);
-        let this = &*frame as *const PlugFrame as *mut FUnknown;
-        let table = unsafe { &*frame.vtbl };
-        let mut rect = ViewRect {
-            left: 0,
-            top: 0,
-            right: 100,
-            bottom: 50,
-        };
-
-        unsafe {
-            assert_eq!(
-                (table.resize_view)(this, view, null_mut()),
-                K_INVALID_ARGUMENT
-            );
-            assert_eq!(
-                (table.resize_view)(this, null_mut(), &mut rect),
-                K_INVALID_ARGUMENT,
-                "not the view of this frame"
-            );
-            assert_eq!(
-                (table.resize_view)(this, view, &mut rect),
-                K_RESULT_FALSE,
-                "no window is attached to this frame"
-            );
-        }
-    }
-}
-
-#[cfg(test)]
 mod vst3_resize_tests {
     use super::test_support::pump_thread_messages;
     use super::*;
+    use crate::plugin_formats::vst3::editor_view::MAX_RESIZE_DEPTH;
     use crate::plugin_formats::vst3::fake_plugin::{
         fake_vst3_instance_with_view, FakeListener, FakeView, ViewCall,
     };
+    use crate::plugin_formats::vst3::ffi::{K_RESULT_FALSE, K_RESULT_OK};
     use std::time::Duration;
 
     /// Opens the editor of a fake plugin whose view is `view`, runs `while_open` on

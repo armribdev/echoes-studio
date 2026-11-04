@@ -1203,6 +1203,16 @@ fn instrument_runs_sandboxed(format: DeviceFormat, sandboxed: bool) -> bool {
     sandboxed && format == DeviceFormat::Clap
 }
 
+/// Whether a plugin of this format and kind can run isolated, as the crash dialog
+/// offers it.
+pub fn can_run_sandboxed(format: DeviceFormat, is_instrument: bool) -> bool {
+    if is_instrument {
+        instrument_runs_sandboxed(format, true)
+    } else {
+        runs_sandboxed(format, true)
+    }
+}
+
 /// The instrument adapter for a live CLAP or VST3 instance (CLAP: in-process or
 /// sandboxed).
 fn instrument_device(instance: Arc<PluginInstance>) -> Box<dyn InstrumentDevice> {

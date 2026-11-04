@@ -3,8 +3,8 @@
 //!
 //! One component, its processor and its edit controller, on one stereo main bus
 //! each way.  The auxiliary buses are declared in the handshake but stay closed
-//! until the port table carries more than one active port (step 8).  The editor
-//! and presets come with steps 7 and 9, and answer an explicit error until then.
+//! until the port table carries more than one active port (step 8).  Presets come
+//! with step 9 and answer an explicit error until then.
 //!
 //! ## Parameters
 //!
@@ -30,7 +30,7 @@ use std::cell::UnsafeCell;
 use std::ffi::c_void;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU8, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Weak};
 use std::time::{Duration, Instant};
 
 use audio_buffer::AudioBuffer;
@@ -56,6 +56,7 @@ use vst3_host::buses::{
     Vst3OutputBuses,
 };
 use vst3_host::component_handler::{ComponentHandler, EditState, HostSignals, MAX_GESTURES};
+use vst3_host::editor_view::{EditorView, ResizeWindow};
 use vst3_host::host_context::host_application;
 use vst3_host::params::{
     read_vst3_param_text, read_vst3_param_value, read_vst3_params, write_vst3_param_value,
@@ -153,6 +154,8 @@ pub struct Vst3Adapter {
     /// Parameters the engine modulates by value, at the base the user set: put back
     /// in the plugin just before its state is read.  Main thread.
     bases: Mutex<Vec<(u32, f64)>>,
+    /// The shared handle this adapter lives in, for the editor, which keeps it open.
+    me: Weak<Vst3Adapter>,
     /// Must outlive the plugin objects: dropping it runs the module's `ExitDll`.
     _library: Arc<Vst3Library>,
 }
@@ -165,7 +168,7 @@ unsafe impl Sync for Vst3Adapter {}
 impl Vst3Adapter {
     /// Main thread.  Loads the module and creates the component, its processor and
     /// its edit controller for class id `cid` (32 hexadecimal digits).
-    pub fn load(dll: &Path, cid: &str, channels: usize) -> Result<Self, String> {
+    pub fn load(dll: &Path, cid: &str, channels: usize) -> Result<Arc<Self>, String> {
         let cid = decode_cid(cid).ok_or_else(|| format!("invalid VST3 class id '{cid}'"))?;
         let (library, factory) = Vst3Library::load(dll)?;
         // SAFETY: live factory, called off the audio thread.
@@ -191,7 +194,7 @@ impl Vst3Adapter {
                 None
             }
         };
-        Ok(Vst3Adapter {
+        Ok(Arc::new_cyclic(|me| Vst3Adapter {
             component,
             processor,
             controller,
@@ -202,8 +205,9 @@ impl Vst3Adapter {
             activation: UnsafeCell::new(None),
             configuration: Mutex::new(None),
             bases: Mutex::new(Vec::new()),
+            me: Weak::clone(me),
             _library: library,
-        })
+        }))
     }
 
     fn enter_audio(&self) -> Option<GateGuard<'_>> {
@@ -454,7 +458,6 @@ impl Vst3Adapter {
     /// the processor since the last call, so the knobs of an open editor follow.
     /// No gate: a controller is called from its UI thread while the processor runs,
     /// as its own window does.
-    #[cfg_attr(not(test), allow(dead_code))] // the editor of step 7
     pub fn mirror_to_controller(&self) {
         let Some(controller) = &self.controller else {
             return;
@@ -469,7 +472,6 @@ impl Vst3Adapter {
     /// (see [`Self::mirror_to_controller`]) until the guard drops, and the
     /// controller first takes the processor's state so the window opens on current
     /// values.
-    #[cfg_attr(not(test), allow(dead_code))] // the editor of step 7
     pub fn watch_params(self: &Arc<Self>) -> Result<ParamMirrorWatch, String> {
         self.edit_state().mirror().watch();
         let watch = ParamMirrorWatch(Arc::clone(self));
@@ -481,6 +483,28 @@ impl Vst3Adapter {
             }
         }
         Ok(watch)
+    }
+
+    /// Main thread.  The editor view of the controller, made under the gate like any
+    /// other controller call: the audio thread skips its block meanwhile.
+    pub fn open_view(&self, resize_window: ResizeWindow) -> Result<EditorView, String> {
+        let controller = self.controller_ptr()?;
+        let _gate = self.enter_main()?;
+        // SAFETY: live controller, main thread, gate held.
+        unsafe { EditorView::create(controller, resize_window) }
+    }
+
+    /// Main thread.  Opens the editor window, or brings the open one to the front, and
+    /// returns its handle.
+    #[cfg(windows)]
+    fn open_editor(&self, title: &str) -> Result<Vec<u8>, String> {
+        let adapter = self.me.upgrade().ok_or("the plugin is closing")?;
+        crate::editor::open_vst3(&adapter, title).map(|hwnd| hwnd.to_le_bytes().to_vec())
+    }
+
+    #[cfg(not(windows))]
+    fn open_editor(&self, _title: &str) -> Result<Vec<u8>, String> {
+        Err("plugin editors are only available on Windows".into())
     }
 
     /// The audio ports of the plugin; the main bus of each direction is the
@@ -522,7 +546,6 @@ impl Vst3Adapter {
 }
 
 /// Keeps the processor's values for the controller of an open editor.
-#[cfg_attr(not(test), allow(dead_code))] // the editor of step 7
 pub struct ParamMirrorWatch(Arc<Vst3Adapter>);
 
 impl Drop for ParamMirrorWatch {
@@ -623,9 +646,7 @@ impl HostedPlugin for Vst3Adapter {
             Op::PresetLoad => {
                 Err("presets of a sandboxed VST3 plugin are not available yet".into())
             }
-            Op::OpenEditor => {
-                Err("the editor of a sandboxed VST3 plugin is not available yet".into())
-            }
+            Op::OpenEditor => self.open_editor(&String::from_utf8_lossy(payload)),
         }
     }
 }
@@ -831,9 +852,8 @@ mod tests {
     /// The effect loaded and activated in this process, with its audio processor.
     fn activated() -> (Arc<Vst3Adapter>, Vst3BlockProcessor) {
         initialise_com_for_the_test();
-        let adapter = Arc::new(
-            Vst3Adapter::load(test_plugin_dll(), &effect_class_id(), 2).expect("the effect loads"),
-        );
+        let adapter =
+            Vst3Adapter::load(test_plugin_dll(), &effect_class_id(), 2).expect("the effect loads");
         adapter
             .activate(48_000.0, 64)
             .expect("the effect activates");

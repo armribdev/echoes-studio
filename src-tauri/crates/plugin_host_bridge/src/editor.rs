@@ -1,22 +1,27 @@
 //! The plugin's editor, shown in a top-level window owned by this process
-//! (Windows).  Main thread only: CLAP GUI calls and the window's messages both
-//! run there.  One bridge hosts one plugin, so there is at most one editor.
+//! (Windows).  Main thread only: the plugin's GUI calls and the window's messages
+//! both run there.  One bridge hosts one plugin, so there is at most one editor.
 //!
-//! The plugin's host callbacks reach the window through its `ClapHostContext`
+//! A CLAP plugin's host callbacks reach the window through its `ClapHostContext`
 //! (`request_callback` → drain message, `clap.gui` resize → resize message),
-//! exactly as for an in-process editor.
+//! exactly as for an in-process editor.  A VST3 view is attached to the same plugin
+//! area; its frame resizes the window (`vst3_host::editor_view`), and a timer of the
+//! window lets its controller follow the processor (ADR-033, step 7).
 
 use std::cell::Cell;
 use std::ffi::{c_char, c_void};
 use std::ptr::null_mut;
-use std::sync::Once;
+use std::sync::{Arc, Once};
 
 use clap_ffi::{
     ClapGuiExtension, ClapHostContext, ClapPlugin, ClapWindow, CLAP_EXT_GUI,
     CLAP_GUI_DRAIN_MESSAGE, CLAP_GUI_RESIZE_MESSAGE, CLAP_WINDOW_API_WIN32,
 };
 
+use vst3_host::editor_view::EditorView;
+
 use crate::clap_adapter::ClapAdapter;
+use crate::vst3_adapter::{ParamMirrorWatch, Vst3Adapter};
 
 #[allow(non_snake_case, clippy::upper_case_acronyms)]
 mod user32 {
@@ -122,6 +127,8 @@ mod user32 {
         pub fn InvalidateRect(hwnd: *mut c_void, rect: *const RECT, erase: i32) -> i32;
         pub fn TrackMouseEvent(event: *mut TRACKMOUSEEVENT) -> i32;
         pub fn PostMessageW(hwnd: *mut c_void, msg: u32, wparam: usize, lparam: isize) -> i32;
+        pub fn SetTimer(hwnd: *mut c_void, id: usize, ms: u32, callback: *mut c_void) -> usize;
+        pub fn KillTimer(hwnd: *mut c_void, id: usize) -> i32;
         pub fn SetProcessDpiAwarenessContext(value: isize) -> i32;
         pub fn PeekMessageW(
             msg: *mut MSG,
@@ -231,6 +238,7 @@ const WM_PAINT: u32 = 0x000F;
 const TME_LEAVE: u32 = 0x0000_0002;
 const HOVER_DEFAULT: u32 = 0xFFFF_FFFF;
 const WM_DPICHANGED: u32 = 0x02E0;
+const WM_TIMER: u32 = 0x0113;
 const WS_POPUP: u32 = 0x8000_0000;
 const WS_CHILD: u32 = 0x4000_0000;
 const WS_VISIBLE: u32 = 0x1000_0000;
@@ -272,15 +280,35 @@ const DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2: isize = -4;
 const DEFAULT_DPI: u32 = 96;
 const DWMWA_WINDOW_CORNER_PREFERENCE: u32 = 33;
 const DWMWCP_ROUND: u32 = 2;
+const MIRROR_TIMER_ID: usize = 1;
+/// `USER_TIMER_MINIMUM`: Windows fires the timer on every system tick (~15.6 ms).
+const MIRROR_TIMER_INTERVAL_MS: u32 = 10;
 const CLASS_NAME: &str = "EchoesSandboxedPluginWindow";
 const PLUGIN_AREA_CLASS_NAME: &str = "EchoesSandboxedPluginArea";
 
 #[derive(Clone, Copy)]
 struct Editor {
     hwnd: *mut c_void,
-    plugin: *const ClapPlugin,
-    gui: *const ClapGuiExtension,
-    context: *const ClapHostContext,
+    content: Content,
+}
+
+#[derive(Clone, Copy)]
+enum Content {
+    Clap {
+        plugin: *const ClapPlugin,
+        gui: *const ClapGuiExtension,
+        context: *const ClapHostContext,
+    },
+    Vst3(*mut Vst3Session),
+}
+
+/// What an open VST3 editor holds besides its window.  Fields drop in this order: the
+/// view first (frame taken away, `removed()`, released), then the parameter watch,
+/// then the adapter, whose controller must outlive the view.
+struct Vst3Session {
+    view: EditorView,
+    _watch: ParamMirrorWatch,
+    adapter: Arc<Vst3Adapter>,
 }
 
 thread_local! {
@@ -312,11 +340,17 @@ pub fn pump_messages(timeout_ms: u32) {
     }
 }
 
-/// Open the editor (or bring it to the front) and return its window handle.
+/// Brings the open editor to the front, if there is one.
+fn raise_open_editor() -> Option<u64> {
+    let editor = EDITOR.get()?;
+    unsafe { user32::SetForegroundWindow(editor.hwnd) };
+    Some(editor.hwnd as u64)
+}
+
+/// Open the CLAP editor (or bring it to the front) and return its window handle.
 pub fn open(plugin: &ClapAdapter, title: &str) -> Result<u64, String> {
-    if let Some(editor) = EDITOR.get() {
-        unsafe { user32::SetForegroundWindow(editor.hwnd) };
-        return Ok(editor.hwnd as u64);
+    if let Some(hwnd) = raise_open_editor() {
+        return Ok(hwnd);
     }
     let gui = plugin
         .extension::<ClapGuiExtension>(CLAP_EXT_GUI)
@@ -338,9 +372,11 @@ pub fn open(plugin: &ClapAdapter, title: &str) -> Result<u64, String> {
         }
         let editor = Editor {
             hwnd,
-            plugin: clap,
-            gui,
-            context,
+            content: Content::Clap {
+                plugin: clap,
+                gui,
+                context,
+            },
         };
         EDITOR.set(Some(editor));
         (*context).set_gui_hwnd(hwnd);
@@ -363,15 +399,70 @@ pub fn open(plugin: &ClapAdapter, title: &str) -> Result<u64, String> {
     }
 }
 
+/// Open the VST3 editor (or bring it to the front) and return its window handle.
+///
+/// The controller first takes the processor's state and then follows it while the
+/// window exists; the view is created under the gate of ADR-010 and attached to the
+/// plugin area, its frame sizing the window.
+pub fn open_vst3(adapter: &Arc<Vst3Adapter>, title: &str) -> Result<u64, String> {
+    if let Some(hwnd) = raise_open_editor() {
+        return Ok(hwnd);
+    }
+    let watch = adapter.watch_params()?;
+    let view = adapter.open_view(resize_to_client)?;
+    unsafe {
+        let (width, height) = view
+            .size()
+            .map_or((800, 600), |(width, height)| (width.max(1), height.max(1)));
+        let hwnd = create_window(title);
+        if hwnd.is_null() {
+            return Err("CreateWindowExW failed".into());
+        }
+        let session = Box::into_raw(Box::new(Vst3Session {
+            view,
+            _watch: watch,
+            adapter: Arc::clone(adapter),
+        }));
+        let editor = Editor {
+            hwnd,
+            content: Content::Vst3(session),
+        };
+        EDITOR.set(Some(editor));
+        resize_to_client(hwnd, width, height);
+        if let Err(error) = (*session).view.attach(hwnd, plugin_area(hwnd)) {
+            close();
+            return Err(error);
+        }
+        fit_to_dpi(&editor, window_dpi(hwnd));
+        center_on_screen(hwnd);
+        user32::SetTimer(hwnd, MIRROR_TIMER_ID, MIRROR_TIMER_INTERVAL_MS, null_mut());
+        user32::ShowWindow(hwnd, SW_SHOW);
+        user32::SetForegroundWindow(hwnd);
+        Ok(hwnd as u64)
+    }
+}
+
 /// Destroy the editor if it is open.
 pub fn close() {
     let Some(editor) = EDITOR.take() else {
         return;
     };
     unsafe {
-        (*editor.context).set_gui_hwnd(null_mut());
-        let _ = ((*editor.gui).hide)(editor.plugin);
-        ((*editor.gui).destroy)(editor.plugin);
+        match editor.content {
+            Content::Clap {
+                plugin,
+                gui,
+                context,
+            } => {
+                (*context).set_gui_hwnd(null_mut());
+                let _ = ((*gui).hide)(plugin);
+                ((*gui).destroy)(plugin);
+            }
+            Content::Vst3(session) => {
+                user32::KillTimer(editor.hwnd, MIRROR_TIMER_ID);
+                drop(Box::from_raw(session));
+            }
+        }
         user32::DestroyWindow(editor.hwnd);
     }
 }
@@ -587,10 +678,18 @@ unsafe fn resize_to_client(hwnd: *mut c_void, width: i32, height: i32) {
 
 /// Hands the monitor scale to the plugin, then fits the window to its size.
 unsafe fn fit_to_dpi(editor: &Editor, dpi: u32) {
-    let _ = ((*editor.gui).set_scale)(editor.plugin, dpi as f64 / DEFAULT_DPI as f64);
-    let (mut width, mut height) = (0u32, 0u32);
-    if ((*editor.gui).get_size)(editor.plugin, &mut width, &mut height) {
-        resize_to_client(editor.hwnd, width as i32, height as i32);
+    let scale = dpi as f64 / DEFAULT_DPI as f64;
+    let size = match editor.content {
+        Content::Clap { plugin, gui, .. } => {
+            let _ = ((*gui).set_scale)(plugin, scale);
+            let (mut width, mut height) = (0u32, 0u32);
+            ((*gui).get_size)(plugin, &mut width, &mut height)
+                .then_some((width as i32, height as i32))
+        }
+        Content::Vst3(session) => (*session).view.apply_content_scale(scale),
+    };
+    if let Some((width, height)) = size {
+        resize_to_client(editor.hwnd, width, height);
     }
 }
 
@@ -657,10 +756,28 @@ unsafe extern "system" fn window_proc(
             draw_close_button(hwnd);
             0
         }
-        (CLAP_GUI_DRAIN_MESSAGE, Some(editor)) => {
-            (*editor.context).clear_gui_drain();
-            ((*editor.plugin).on_main_thread)(editor.plugin);
-            (*editor.context).rearm_gui_drain();
+        (
+            CLAP_GUI_DRAIN_MESSAGE,
+            Some(Editor {
+                content: Content::Clap {
+                    plugin, context, ..
+                },
+                ..
+            }),
+        ) => {
+            (*context).clear_gui_drain();
+            ((*plugin).on_main_thread)(plugin);
+            (*context).rearm_gui_drain();
+            0
+        }
+        (
+            WM_TIMER,
+            Some(Editor {
+                content: Content::Vst3(session),
+                ..
+            }),
+        ) => {
+            (*session).adapter.mirror_to_controller();
             0
         }
         (CLAP_GUI_RESIZE_MESSAGE, Some(_)) => {

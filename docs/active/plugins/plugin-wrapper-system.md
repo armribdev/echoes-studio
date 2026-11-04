@@ -1326,8 +1326,9 @@ boundary.
 - **Engine side.** `BridgedNode` is the node for both formats (its parameter events
   since step 6, below). `check_handshake` requires the format's unit (plain for CLAP,
   normalised for VST3).
-- **Not yet** (explicit errors or empty lists, never a fallback): the editor (step 7),
-  instruments, sidechain and auxiliary outputs (step 8), presets (step 9).
+- **Not yet** (explicit errors or empty lists, never a fallback): instruments,
+  sidechain and auxiliary outputs (step 8), presets (step 9). The editor came with
+  step 7, below.
 
 Tests: `plugin_host_bridge/tests/vst3_bridge.rs`, `plugin_system/vst3_sandbox_tests.rs`
 (including a bridge killed or frozen from outside, and TDR Nova), and in
@@ -1354,7 +1355,7 @@ Tests: `plugin_host_bridge/tests/vst3_bridge.rs`, `plugin_system/vst3_sandbox_te
   are ignored (step 6, decision b).
 - **Controller follows processor, inside the bridge.** The audio thread records into the
   `ParamMirror` table, only while a window watches; the window thread applies it
-  (`mirror_to_controller`). No window exists before step 7. What the processor writes to
+  (`mirror_to_controller`, from the editor window's timer since step 7). What the processor writes to
   `outputParameterChanges` goes to the table, not to the engine: it is not an edit.
 - **State.** `LoadState` hands the state to a separate controller
   (`sync_controller_to_state`, as in process). `FlushValues` puts the value-modulated
@@ -1370,6 +1371,36 @@ gestures in the reply, output changes, restart, rescan, apartments), the unit te
 `vst3_adapter.rs` (the table) and `param_delivery.rs`, `vst3_sandbox_tests.rs` (each
 behaviour in process and in the bridge, TDR Nova), and in `render_harness::vst3_plugins`
 the automated, modulated and both-at-once sandbox-against-in-process renders.
+
+### VST3 editor in the sandbox (ADR-033 step 7, 2026-11-04)
+
+A sandboxed VST3 effect's editor lives in the bridge, in the same borderless window as a CLAP
+one (`crates/plugin_host_bridge/src/editor.rs`, see "Editor Windows — layout"); the engine's
+`open_plugin_editor` already sent every sandboxed plugin to `BridgedPlugin::open_editor`, which
+now returns the window handle.
+
+- **One implementation of the view.** `vst3_host::editor_view::EditorView` is what the engine
+  (`plugin_system/gui.rs`) and the bridge both use: `createView("editor")`, the `IPlugFrame`
+  object, `attached`, the content scale, and the close order. Each side gives the frame a function
+  that sizes its own window. See "Editor Windows — VST3 resize".
+- **Open** (bridge main thread, `editor::open_vst3`): `watch_params()` (the controller takes the
+  processor's state), `createView` under the ADR-010 gate, window, `attached` to the plugin area,
+  content scale then `getSize`, centre, a 10 ms `WM_TIMER`, show. A second `OpenEditor` brings the
+  window forward.
+- **While open.** The window's `WM_TIMER` runs `mirror_to_controller()` (no gate), so the knobs
+  follow automation and modulation; edits made in the window travel as in step 6 (unsaved flag,
+  base of a value-modulated parameter, gesture pauses the modulation) and come back with the next
+  block, **also while the transport is stopped** (the engine runs every block, `is_playing` is only
+  a flag). `WM_DPICHANGED` repeats scale → size.
+- **Close** (× button, `WM_CLOSE`, or the bridge ending): timer killed, then `setFrame(null)`,
+  `removed()`, the view released, the parameter watch released, and only then the window destroyed;
+  the controller outlives the view.
+- **Crash or hang.** The view is on the bridge's main thread, so a crash ends the bridge and is
+  reported as any other (`UnavailableReason::Crashed`); there is no in-process fallback.
+
+Tests: `vst3_bridge.rs` (the editor tests, with the test plugin's view), `vst3_sandbox_tests.rs`
+(an edit with the transport stopped, a crash in the editor, TDR Nova's editor), the frame tests
+in `vst3_host/src/editor_view.rs` and `gui.rs` `vst3_resize_tests` for the shared code.
 
 ---
 
@@ -1398,16 +1429,17 @@ Both editor windows — in-process (`plugin_system/gui.rs`) and sandboxed
   owned by Echoes can deadlock `OpenEditor` (UI waits on the bridge while
   `CreateWindowExW` waits on the owner's message queue → control-channel
   timeout → "bridge control channel closed").
-- An **8 px (logical) drag strip** on top, painted `#222229`
-  (`$panel-background-color`). The container answers `WM_NCHITTEST` with
-  `HTCAPTION`; only the strip can reach it, since the plugin covers the rest.
+- An **18 px (logical) drag strip** on top, painted `#222229`
+  (`$panel-background-color`), with a × close button at its right end. The container
+  answers `WM_NCHITTEST` with `HTCAPTION` except over the button; only the strip can
+  reach it, since the plugin covers the rest.
 - The plugin is embedded in a **child "plugin area" window** below the strip
   (`plugin_area()` = the container's only child), not in the container itself:
   CLAP `set_parent` and VST3 `attached` receive that child. Resize messages and
   the `ClapHostContext` HWND still target the container, whose resize handler
   sizes both windows.
-- Closing goes through Echoes' editor toggle (`post_close` / bridge `close`);
-  there is no native close button.
+- Closing goes through Echoes' editor toggle (`post_close` / bridge `close`) or
+  the × button of the strip; there is no native title bar.
 
 A plugin that resizes itself (e.g. Vital's corner handle) sends
 `request_resize` continuously; the host window follows within ~2 ms. Any lag
@@ -1417,7 +1449,8 @@ call `set_size` after `request_resize` (the CLAP spec makes it optional).
 
 ## Editor Windows — VST3 resize (Windows, 2026-10-23)
 
-`IPlugFrame::resizeView` (`frame_resize_view` in `plugin_system/gui.rs`) follows
+`IPlugFrame::resizeView` (`frame_resize_view` in `vst3_host/src/editor_view.rs`, shared by
+the engine's window and the bridge's since ADR-033 step 7) follows
 `iplugview.h` and the SDK's `editorhost.cpp`, in the same call stack:
 
 1. a `view` other than the frame's own, or a null pointer → `kInvalidArgument`;
@@ -1436,7 +1469,8 @@ window resize, `onSize` is still sent (the SDK host answers `kInternalError`
 instead; refusing would break a plugin that works).
 
 Closing detaches the frame first: `setFrame(null)`, then `removed()`, then
-`release` (SDK order; it was the reverse before 2026-10-23).
+`release` (SDK order; it was the reverse before 2026-10-23). That order is the `Drop` of
+`EditorView`.
 
 **Not done on purpose:** `canResize` / `checkSizeConstraint` only serve a user
 dragging the host window's edge, and these windows are borderless (`WS_POPUP`),
@@ -1445,9 +1479,10 @@ Dragging would need a new visible element (frame, handle), which is a UI
 decision. Measured 2026-10-23 (`vst3_real_editor_view_reports_its_size_rules`):
 TDR Nova `canResize = kResultFalse`, 830×598; Surge XT `kResultTrue`, 1141×711,
 with a fixed aspect ratio in `checkSizeConstraint`. Both change the rectangle
-while answering `kResultTrue`. VST3 is not sandboxable, so the bridge editor is
-unaffected. Tests: `gui.rs` (`plug_frame_tests`, `vst3_resize_tests`) with the
-view of `vst3/fake_plugin.rs` (`FakeView`).
+while answering `kResultTrue`. The bridge's editor runs the same frame code. Tests:
+`vst3_host/src/editor_view.rs` (the frame's answers), `gui.rs` (`vst3_resize_tests`)
+with the view of `vst3/fake_plugin.rs` (`FakeView`), and `vst3_bridge.rs` with the
+view of the test plugin.
 
 ---
 

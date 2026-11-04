@@ -32,7 +32,7 @@ const HOLD_EDIT: u32 = 9;
 const LOOKAHEAD: u32 = 10;
 const RENAME: u32 = 11;
 const PROCESSOR_SELF: u32 = 12;
-const PARAMETER_COUNT: usize = 13;
+const PARAMETER_COUNT: usize = 20;
 const LOOKAHEAD_LATENCY: u32 = 128;
 const WRITTEN_VALUE: f64 = 0.9;
 const HELD_VALUE: f64 = 0.25;
@@ -250,16 +250,13 @@ fn activating_again_at_a_new_size_keeps_the_plugin_and_its_state() {
     );
 }
 
-/// Presets are step 9 and the editor step 7 of ADR-033.
+/// Presets are step 9 of ADR-033.
 #[test]
 fn what_a_vst3_plugin_cannot_do_yet_is_refused_and_the_channel_stays_open() {
     let bridge = activated();
-    for op in [Op::PresetLoad, Op::OpenEditor] {
-        assert!(
-            bridge.request(op, &0u32.to_le_bytes(), TIMEOUT).is_err(),
-            "{op:?}"
-        );
-    }
+    assert!(bridge
+        .request(Op::PresetLoad, &0u32.to_le_bytes(), TIMEOUT)
+        .is_err());
     assert!(bridge.request(Op::SaveState, &[], TIMEOUT).is_ok());
 }
 
@@ -513,7 +510,7 @@ fn the_plugin_loads_in_the_main_apartment_and_processes_without_com() {
 }
 
 /// Step 6, decision b: gestures from the engine (`IEditControllerHostEditing`, appendix
-/// B of the ADR) are ignored until an editor produces them (step 7), and so is a
+/// B of the ADR) stay ignored (the step 7 editor did not need them), and so is a
 /// modulation offset: VST3 is modulated by value around a base (ADR-021).
 #[test]
 fn gestures_and_modulation_offsets_from_the_engine_are_ignored() {
@@ -532,4 +529,244 @@ fn gestures_and_modulation_offsets_from_the_engine_are_ignored() {
     assert_eq!(block.output, ramp(), "unity gain: nothing was applied");
     assert!(block.edits.is_empty());
     assert_eq!(param_value(&bridge, GAIN), 0.5);
+}
+
+// ── The editor (ADR-033, step 7) ──────────────────────────────────────────────
+//
+// The test plugin's view records what the host does to it (`View calls`: the last six
+// calls as decimal digits) and reads like any parameter. The window belongs to the
+// bridge process; the test looks at it from outside, as the user would.
+
+const VIEW_CALLS: u32 = 13;
+const VIEW_WIDTH: u32 = 14;
+const VIEW_HEIGHT: u32 = 15;
+const VIEW_SCALE: u32 = 16;
+const VIEW_ASK: u32 = 17;
+const VIEW_CRASH: u32 = 18;
+const VIEW_EDIT: u32 = 19;
+const DIAGNOSTIC_RANGE: f64 = 1_000_000.0;
+const VIEW_INITIAL_SIZE: (i32, i32) = (400, 300);
+
+// setFrame, attached, setContentScaleFactor, setFrame(null), removed, last release.
+const OPEN_AND_CLOSE_CALLS: u32 = 138_259;
+// The same, with a view that asks for a size from inside `attached`: its `onSize`
+// and the answer of `resizeView` come first (the oldest two calls drop off).
+const OPEN_ASKING_AND_CLOSE_CALLS: u32 = 468_259;
+
+#[repr(C)]
+struct Rect {
+    left: i32,
+    top: i32,
+    right: i32,
+    bottom: i32,
+}
+
+#[link(name = "user32")]
+extern "system" {
+    fn IsWindow(hwnd: *mut std::ffi::c_void) -> i32;
+    fn GetWindow(hwnd: *mut std::ffi::c_void, command: u32) -> *mut std::ffi::c_void;
+    fn GetClientRect(hwnd: *mut std::ffi::c_void, rect: *mut Rect) -> i32;
+    fn GetDpiForWindow(hwnd: *mut std::ffi::c_void) -> u32;
+    fn GetWindowThreadProcessId(hwnd: *mut std::ffi::c_void, process: *mut u32) -> u32;
+    fn PostMessageW(hwnd: *mut std::ffi::c_void, message: u32, wparam: usize, lparam: isize)
+        -> i32;
+}
+
+const GW_CHILD: u32 = 5;
+const WM_CLOSE: u32 = 0x0010;
+
+fn diagnostic(bridge: &BridgeProcess, native_id: u32) -> u32 {
+    (param_value(bridge, native_id) * DIAGNOSTIC_RANGE).round() as u32
+}
+
+fn wait_until(what: &str, mut condition: impl FnMut() -> bool) {
+    let deadline = std::time::Instant::now() + TIMEOUT;
+    while !condition() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "timed out waiting for {what}"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+/// Asks the view to request `width` × `height` from inside `attached`.
+fn make_the_view_ask(bridge: &BridgeProcess, width: u32, height: u32) {
+    let ask = f64::from(width * 1000 + height) / DIAGNOSTIC_RANGE;
+    process(bridge, 0, &[value(VIEW_ASK, ask)], TIMEOUT);
+}
+
+fn open_editor(bridge: &BridgeProcess) -> *mut std::ffi::c_void {
+    let reply = bridge
+        .request(Op::OpenEditor, b"Test effect", TIMEOUT)
+        .expect("the editor opens");
+    u64::from_le_bytes(reply.try_into().expect("a window handle is eight bytes")) as usize
+        as *mut std::ffi::c_void
+}
+
+fn plugin_area_size(window: *mut std::ffi::c_void) -> (i32, i32) {
+    let mut rect = Rect {
+        left: 0,
+        top: 0,
+        right: 0,
+        bottom: 0,
+    };
+    // SAFETY: `window` came from the bridge; both calls only read window state.
+    unsafe { GetClientRect(GetWindow(window, GW_CHILD), &mut rect) };
+    (rect.right - rect.left, rect.bottom - rect.top)
+}
+
+/// The user closes the window with its × button: `WM_CLOSE`, handled by the bridge.
+fn close_window(bridge: &BridgeProcess, window: *mut std::ffi::c_void) {
+    // SAFETY: posting a message to a window of another process is allowed.
+    unsafe { PostMessageW(window, WM_CLOSE, 0, 0) };
+    wait_until("the window to close", || unsafe { IsWindow(window) } == 0);
+    wait_until("the view to be released", || {
+        diagnostic(bridge, VIEW_CALLS) % 10 == 9
+    });
+}
+
+#[test]
+fn the_editor_of_a_sandboxed_effect_opens_in_a_bridge_window_and_closes_in_order() {
+    let bridge = activated();
+
+    let window = open_editor(&bridge);
+    let mut owner = 0u32;
+    // SAFETY: reads which process owns the window.
+    unsafe {
+        assert_ne!(IsWindow(window), 0, "the reply is a live window");
+        GetWindowThreadProcessId(window, &mut owner);
+    }
+    assert_eq!(
+        owner,
+        bridge.process_id(),
+        "the window belongs to the bridge"
+    );
+    assert_eq!(plugin_area_size(window), VIEW_INITIAL_SIZE);
+
+    close_window(&bridge, window);
+    assert_eq!(diagnostic(&bridge, VIEW_CALLS), OPEN_AND_CLOSE_CALLS);
+    assert!(
+        bridge.request(Op::SaveState, &[], TIMEOUT).is_ok(),
+        "the bridge is still serving"
+    );
+}
+
+#[test]
+fn a_size_the_view_asks_for_while_attaching_resizes_the_window_and_reaches_on_size() {
+    let bridge = activated();
+    make_the_view_ask(&bridge, 700, 500);
+
+    let window = open_editor(&bridge);
+    assert_eq!(plugin_area_size(window), (700, 500));
+    assert_eq!(
+        (
+            diagnostic(&bridge, VIEW_WIDTH),
+            diagnostic(&bridge, VIEW_HEIGHT)
+        ),
+        (700, 500),
+        "the view was told its new size"
+    );
+
+    close_window(&bridge, window);
+    assert_eq!(
+        diagnostic(&bridge, VIEW_CALLS),
+        OPEN_ASKING_AND_CLOSE_CALLS,
+        "onSize and the accepted answer come inside the one resizeView call"
+    );
+}
+
+#[test]
+fn the_view_is_given_the_scale_of_its_window() {
+    let bridge = activated();
+    let window = open_editor(&bridge);
+
+    // SAFETY: reads a property of a window of another process.
+    let dpi = unsafe { GetDpiForWindow(window) };
+    assert_ne!(dpi, 0);
+    let percent = (f64::from(dpi) / 96.0 * 100.0).round() as u32;
+    assert_eq!(diagnostic(&bridge, VIEW_SCALE), percent);
+
+    close_window(&bridge, window);
+}
+
+#[test]
+fn an_instance_has_one_window_and_opening_again_brings_it_back_and_a_new_one_follows_a_close() {
+    let bridge = activated();
+    let first = open_editor(&bridge);
+    assert_eq!(open_editor(&bridge), first, "the same window");
+    assert_eq!(
+        diagnostic(&bridge, VIEW_CALLS),
+        138,
+        "no second view: setFrame, attached, setContentScaleFactor"
+    );
+
+    close_window(&bridge, first);
+    let second = open_editor(&bridge);
+    // SAFETY: only asks whether the handle is a live window.
+    assert_ne!(unsafe { IsWindow(second) }, 0);
+    close_window(&bridge, second);
+    assert_eq!(
+        diagnostic(&bridge, VIEW_CALLS),
+        OPEN_AND_CLOSE_CALLS,
+        "the second round is the same sequence"
+    );
+}
+
+#[test]
+fn the_controller_follows_the_processor_while_the_window_is_open_and_not_after() {
+    let bridge = activated();
+    process(&bridge, 0, &[value(SELF_VALUE, 0.7)], TIMEOUT);
+    std::thread::sleep(Duration::from_millis(100));
+    assert_eq!(
+        param_value(&bridge, SELF_VALUE),
+        0.0,
+        "no window, no follow"
+    );
+
+    let window = open_editor(&bridge);
+    process(&bridge, 1, &[value(SELF_VALUE, 0.6)], TIMEOUT);
+    wait_until("the knob to follow the automation", || {
+        param_value(&bridge, SELF_VALUE) == 0.6
+    });
+
+    close_window(&bridge, window);
+    process(&bridge, 2, &[value(SELF_VALUE, 0.3)], TIMEOUT);
+    std::thread::sleep(Duration::from_millis(100));
+    assert_eq!(param_value(&bridge, SELF_VALUE), 0.6, "closed again");
+}
+
+#[test]
+fn an_edit_made_in_the_window_marks_the_project_and_reaches_the_engine_with_the_next_block() {
+    let bridge = activated();
+    process(&bridge, 0, &[value(VIEW_EDIT, 1.0)], TIMEOUT);
+
+    let window = open_editor(&bridge);
+    let block = process(&bridge, 1, &[], TIMEOUT);
+    assert_ne!(
+        block.flags & BLOCK_PLUGIN_EDITED,
+        0,
+        "the project reads as modified"
+    );
+    assert!(
+        block.edits.iter().any(|edit| edit.kind == PARAM_VALUE
+            && edit.native_id == SELF_VALUE
+            && edit.value == HELD_VALUE),
+        "{:?}",
+        block.edits
+    );
+    close_window(&bridge, window);
+}
+
+#[test]
+fn a_crash_in_the_editor_only_kills_its_bridge() {
+    let bridge = activated();
+    process(&bridge, 0, &[value(VIEW_CRASH, 1.0)], TIMEOUT);
+
+    assert!(bridge.request(Op::OpenEditor, b"Crash", TIMEOUT).is_err());
+    for sequence in 1..=DEAD_AFTER_CONSECUTIVE_TIMEOUTS as u64 {
+        process(&bridge, sequence, &[], Duration::from_millis(20));
+    }
+    assert!(bridge.audio().is_dead());
+    assert!(bridge.request(Op::SaveState, &[], TIMEOUT).is_err());
 }

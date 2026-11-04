@@ -25,13 +25,24 @@
 //!   restart, applied at the next `setActive`; `Rename` renames `Self value` and
 //!   reports the new titles.
 //!
+//! - 13..19 — the editor view (`createView("editor")`), read-only diagnostics except
+//!   the last two, which the host can set before it opens the view: `View calls` (the
+//!   last six calls on the view as decimal digits, the oldest first: 1 `setFrame`
+//!   with a frame, 2 `setFrame` without, 3 `attached`, 4 `onSize`, 5 `removed`,
+//!   6 `resizeView` accepted, 7 `resizeView` refused, 8 `setContentScaleFactor`,
+//!   9 last release), `View width` / `View height` (the size the view reports),
+//!   `View scale` (the content scale × 100), `View ask` (`width * 1000 + height`: the
+//!   view asks the host for that size from inside `attached`), `View crash` (the
+//!   next `attached` aborts the process) and `View edit` (the next `attached` edits
+//!   `Self value` from the window thread, as a knob dragged in the editor would).
+//!
 //! The component reports 64 samples of latency without delaying its audio, like
 //! `test_clap_plugin`. Parameter points and note events are applied at their sample
 //! offset. The DLL also exports `InitDll` / `ExitDll`, and three functions a test can
 //! read through `GetProcAddress` even after the module was unloaded by the host:
 //! `test_vst3_init_calls`, `test_vst3_exit_calls`, `test_vst3_init_apartment`.
 //!
-//! Not there yet, added by the step that needs it: an editor view, units and programs,
+//! Not there yet, added by the step that needs it: units and programs,
 //! `IMidiMapping`, auxiliary buses.
 
 use std::ffi::c_void;
@@ -41,10 +52,12 @@ use std::sync::atomic::{AtomicBool, AtomicI32, AtomicPtr, AtomicU32, AtomicU64, 
 use vst3_ffi::{
     AudioBusBuffers, Event, FUnknown, HostParamValueQueue, HostParameterChanges, HostStream,
     IAudioProcessor, IAudioProcessorVtbl, IBStreamVtbl, IComponent, IComponentHandlerVtbl,
-    IComponentVtbl, IEditController, IEditControllerVtbl, IPlugView, IPluginFactory,
+    IComponentVtbl, IEditController, IEditControllerVtbl, IPlugFrameVtbl, IPlugView,
+    IPlugViewContentScaleSupport, IPlugViewContentScaleSupportVtbl, IPlugViewVtbl, IPluginFactory,
     IPluginFactory2Vtbl, PClassInfo, PClassInfo2, ParameterInfo, ProcessData, ProcessSetup,
-    TResult, Tuid, IID_FUNKNOWN, IID_IAUDIO_PROCESSOR, IID_ICOMPONENT, IID_IEDIT_CONTROLLER,
-    IID_IPLUGIN_FACTORY, IID_IPLUGIN_FACTORY2, K_AUDIO, K_EVENT, K_INPUT, K_INVALID_ARGUMENT,
+    TResult, Tuid, ViewRect, IID_FUNKNOWN, IID_IAUDIO_PROCESSOR, IID_ICOMPONENT,
+    IID_IEDIT_CONTROLLER, IID_IPLUGIN_FACTORY, IID_IPLUGIN_FACTORY2,
+    IID_IPLUG_VIEW_CONTENT_SCALE_SUPPORT, K_AUDIO, K_EVENT, K_INPUT, K_INVALID_ARGUMENT,
     K_NOTE_OFF_EVENT, K_NOTE_ON_EVENT, K_NO_INTERFACE, K_OUTPUT, K_RESULT_FALSE, K_RESULT_OK,
     PARAM_CAN_AUTOMATE, PARAM_IS_READ_ONLY, SPEAKER_STEREO,
 };
@@ -67,6 +80,27 @@ pub const HOLD_EDIT: u32 = 9;
 pub const LOOKAHEAD: u32 = 10;
 pub const RENAME: u32 = 11;
 pub const PROCESSOR_SELF: u32 = 12;
+pub const VIEW_CALLS: u32 = 13;
+pub const VIEW_WIDTH: u32 = 14;
+pub const VIEW_HEIGHT: u32 = 15;
+pub const VIEW_SCALE: u32 = 16;
+pub const VIEW_ASK: u32 = 17;
+pub const VIEW_CRASH: u32 = 18;
+pub const VIEW_EDIT: u32 = 19;
+
+/// The size of the view before the host tells it another one.
+pub const VIEW_INITIAL_SIZE: (i32, i32) = (400, 300);
+
+pub const VIEW_SET_FRAME: u32 = 1;
+pub const VIEW_CLEAR_FRAME: u32 = 2;
+pub const VIEW_ATTACHED: u32 = 3;
+pub const VIEW_ON_SIZE: u32 = 4;
+pub const VIEW_REMOVED: u32 = 5;
+pub const VIEW_RESIZE_ACCEPTED: u32 = 6;
+pub const VIEW_RESIZE_REFUSED: u32 = 7;
+pub const VIEW_SCALE_SET: u32 = 8;
+pub const VIEW_RELEASED: u32 = 9;
+const VIEW_CALL_DIGITS: u32 = 6;
 
 pub const SELF_VALUE_TITLE: &str = "Self value";
 pub const RENAMED_TITLE: &str = "Renamed value";
@@ -104,7 +138,7 @@ struct ParamSpec {
     flags: i32,
 }
 
-const PARAMS: [ParamSpec; 13] = [
+const PARAMS: [ParamSpec; 20] = [
     ParamSpec {
         id: GAIN,
         title: "Gain",
@@ -196,6 +230,55 @@ const PARAMS: [ParamSpec; 13] = [
         default_plain: 0.0,
         flags: PARAM_IS_READ_ONLY,
     },
+    ParamSpec {
+        id: VIEW_CALLS,
+        title: "View calls",
+        range: DIAGNOSTIC_RANGE,
+        default_plain: 0.0,
+        flags: PARAM_IS_READ_ONLY,
+    },
+    ParamSpec {
+        id: VIEW_WIDTH,
+        title: "View width",
+        range: DIAGNOSTIC_RANGE,
+        default_plain: VIEW_INITIAL_SIZE.0 as f64,
+        flags: PARAM_IS_READ_ONLY,
+    },
+    ParamSpec {
+        id: VIEW_HEIGHT,
+        title: "View height",
+        range: DIAGNOSTIC_RANGE,
+        default_plain: VIEW_INITIAL_SIZE.1 as f64,
+        flags: PARAM_IS_READ_ONLY,
+    },
+    ParamSpec {
+        id: VIEW_SCALE,
+        title: "View scale",
+        range: DIAGNOSTIC_RANGE,
+        default_plain: 0.0,
+        flags: PARAM_IS_READ_ONLY,
+    },
+    ParamSpec {
+        id: VIEW_ASK,
+        title: "View ask",
+        range: DIAGNOSTIC_RANGE,
+        default_plain: 0.0,
+        flags: PARAM_CAN_AUTOMATE,
+    },
+    ParamSpec {
+        id: VIEW_CRASH,
+        title: "View crash",
+        range: 1.0,
+        default_plain: 0.0,
+        flags: PARAM_CAN_AUTOMATE,
+    },
+    ParamSpec {
+        id: VIEW_EDIT,
+        title: "View edit",
+        range: 1.0,
+        default_plain: 0.0,
+        flags: PARAM_CAN_AUTOMATE,
+    },
 ];
 
 fn spec(id: u32) -> Option<&'static ParamSpec> {
@@ -257,6 +340,42 @@ struct Plugin {
     latency: AtomicU32,
     pending_latency: AtomicU32,
     renamed: AtomicBool,
+    view: ViewDiagnostics,
+}
+
+/// What the editor view saw, kept in the plugin so it outlives the view.
+struct ViewDiagnostics {
+    calls: AtomicU32,
+    width: AtomicI32,
+    height: AtomicI32,
+    scale_percent: AtomicU32,
+    ask: AtomicU32,
+    crash: AtomicBool,
+    edit: AtomicBool,
+}
+
+impl ViewDiagnostics {
+    fn new() -> Self {
+        Self {
+            calls: AtomicU32::new(0),
+            width: AtomicI32::new(VIEW_INITIAL_SIZE.0),
+            height: AtomicI32::new(VIEW_INITIAL_SIZE.1),
+            scale_percent: AtomicU32::new(0),
+            ask: AtomicU32::new(0),
+            crash: AtomicBool::new(false),
+            edit: AtomicBool::new(false),
+        }
+    }
+
+    /// Appends `call` to the digits, dropping the oldest once there are six.
+    fn record(&self, call: u32) {
+        let modulus = 10u32.pow(VIEW_CALL_DIGITS);
+        let _ = self
+            .calls
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |calls| {
+                Some((calls * 10 + call) % modulus)
+            });
+    }
 }
 
 impl Plugin {
@@ -282,6 +401,13 @@ impl Plugin {
             HOLD_EDIT => f64::from(self.hold_edit.load(Ordering::Relaxed)),
             LOOKAHEAD => f64::from(self.lookahead.load(Ordering::Relaxed)),
             RENAME => f64::from(self.renamed.load(Ordering::Relaxed)),
+            VIEW_CALLS => f64::from(self.view.calls.load(Ordering::Relaxed)),
+            VIEW_WIDTH => f64::from(self.view.width.load(Ordering::Relaxed)),
+            VIEW_HEIGHT => f64::from(self.view.height.load(Ordering::Relaxed)),
+            VIEW_SCALE => f64::from(self.view.scale_percent.load(Ordering::Relaxed)),
+            VIEW_ASK => f64::from(self.view.ask.load(Ordering::Relaxed)),
+            VIEW_CRASH => f64::from(self.view.crash.load(Ordering::Relaxed)),
+            VIEW_EDIT => f64::from(self.view.edit.load(Ordering::Relaxed)),
             _ => 0.0,
         }
     }
@@ -381,6 +507,12 @@ impl Plugin {
             SELF_VALUE => self
                 .controller_self
                 .store(normalised.to_bits(), Ordering::Relaxed),
+            VIEW_ASK => self.view.ask.store(
+                (normalised * DIAGNOSTIC_RANGE).round() as u32,
+                Ordering::Relaxed,
+            ),
+            VIEW_CRASH => self.view.crash.store(normalised > 0.5, Ordering::Relaxed),
+            VIEW_EDIT => self.view.edit.store(normalised > 0.5, Ordering::Relaxed),
             _ => {}
         }
     }
@@ -1059,11 +1191,262 @@ unsafe extern "C" fn controller_set_handler(
     K_RESULT_OK
 }
 
+// ---- IPlugView -------------------------------------------------------------
+
+/// The editor view: a window-less one that only keeps its size and records what the
+/// host does to it in the plugin's `ViewDiagnostics`. It holds a reference on the
+/// plugin, so a host that releases the controller first does not free it under the
+/// view. `IPlugViewContentScaleSupport` is the second table of the same object.
+#[repr(C)]
+struct View {
+    view: *const IPlugViewVtbl,
+    scale_support: *const IPlugViewContentScaleSupportVtbl,
+    references: AtomicU32,
+    plugin: *mut Plugin,
+    frame: AtomicPtr<FUnknown>,
+}
+
+unsafe fn diagnostics<'a>(view: *mut View) -> &'a ViewDiagnostics {
+    &(*(*view).plugin).view
+}
+
+unsafe fn view_of(this: *mut IPlugView) -> *mut View {
+    this as *mut View
+}
+
+unsafe fn view_of_scale_support(this: *mut IPlugViewContentScaleSupport) -> *mut View {
+    (this as *mut u8).sub(offset_of!(View, scale_support)) as *mut View
+}
+
+unsafe fn view_add_reference(view: *mut View) -> u32 {
+    (*view).references.fetch_add(1, Ordering::Relaxed) + 1
+}
+
+unsafe fn view_release_reference(view: *mut View) -> u32 {
+    let remaining = (*view).references.fetch_sub(1, Ordering::AcqRel) - 1;
+    if remaining == 0 {
+        let plugin = (*view).plugin;
+        diagnostics(view).record(VIEW_RELEASED);
+        drop(Box::from_raw(view));
+        release_reference(plugin);
+    }
+    remaining
+}
+
+unsafe extern "C" fn view_query_interface(
+    this: *mut IPlugView,
+    iid: *const Tuid,
+    object: *mut *mut c_void,
+) -> TResult {
+    if iid.is_null() || object.is_null() {
+        return K_INVALID_ARGUMENT;
+    }
+    let view = view_of(this);
+    let interface: *mut c_void = if *iid == IID_FUNKNOWN {
+        view as *mut c_void
+    } else if *iid == IID_IPLUG_VIEW_CONTENT_SCALE_SUPPORT {
+        &raw mut (*view).scale_support as *mut c_void
+    } else {
+        *object = std::ptr::null_mut();
+        return K_NO_INTERFACE;
+    };
+    view_add_reference(view);
+    *object = interface;
+    K_RESULT_OK
+}
+
+unsafe extern "C" fn view_add_ref(this: *mut IPlugView) -> u32 {
+    view_add_reference(view_of(this))
+}
+
+unsafe extern "C" fn view_release(this: *mut IPlugView) -> u32 {
+    view_release_reference(view_of(this))
+}
+
+unsafe extern "C" fn view_is_platform_type_supported(
+    _: *mut IPlugView,
+    kind: *const u8,
+) -> TResult {
+    if !kind.is_null() && std::ffi::CStr::from_ptr(kind.cast()).to_bytes() == b"HWND" {
+        K_RESULT_OK
+    } else {
+        K_RESULT_FALSE
+    }
+}
+
+unsafe fn ask_host_to_resize(view: *mut View, width: i32, height: i32) {
+    let frame = (*view).frame.load(Ordering::Relaxed);
+    if frame.is_null() {
+        return;
+    }
+    let mut rect = ViewRect {
+        left: 0,
+        top: 0,
+        right: width,
+        bottom: height,
+    };
+    let table = &**(frame as *const *const IPlugFrameVtbl);
+    let answer = (table.resize_view)(frame, view as *mut IPlugView, &mut rect);
+    diagnostics(view).record(if answer == K_RESULT_OK {
+        VIEW_RESIZE_ACCEPTED
+    } else {
+        VIEW_RESIZE_REFUSED
+    });
+}
+
+unsafe extern "C" fn view_attached(
+    this: *mut IPlugView,
+    parent: *mut c_void,
+    _kind: *const u8,
+) -> TResult {
+    if parent.is_null() {
+        return K_INVALID_ARGUMENT;
+    }
+    let view = view_of(this);
+    let state = diagnostics(view);
+    state.record(VIEW_ATTACHED);
+    if state.crash.load(Ordering::Relaxed) {
+        std::process::abort();
+    }
+    match state.ask.load(Ordering::Relaxed) {
+        0 => {}
+        ask => ask_host_to_resize(view, (ask / 1000) as i32, (ask % 1000) as i32),
+    }
+    if state.edit.load(Ordering::Relaxed) {
+        let plugin = &*(*view).plugin;
+        plugin
+            .controller_self
+            .store(HELD_VALUE.to_bits(), Ordering::Relaxed);
+        plugin.with_handler(|handler, table| {
+            // SAFETY: see `with_handler`.
+            unsafe {
+                (table.begin_edit)(handler, SELF_VALUE);
+                (table.perform_edit)(handler, SELF_VALUE, HELD_VALUE);
+                (table.end_edit)(handler, SELF_VALUE);
+            }
+        });
+    }
+    K_RESULT_OK
+}
+
+unsafe extern "C" fn view_removed(this: *mut IPlugView) -> TResult {
+    diagnostics(view_of(this)).record(VIEW_REMOVED);
+    K_RESULT_OK
+}
+
+unsafe extern "C" fn view_get_size(this: *mut IPlugView, rect: *mut ViewRect) -> TResult {
+    let state = diagnostics(view_of(this));
+    *rect = ViewRect {
+        left: 0,
+        top: 0,
+        right: state.width.load(Ordering::Relaxed),
+        bottom: state.height.load(Ordering::Relaxed),
+    };
+    K_RESULT_OK
+}
+
+unsafe extern "C" fn view_on_size(this: *mut IPlugView, rect: *mut ViewRect) -> TResult {
+    let state = diagnostics(view_of(this));
+    state.record(VIEW_ON_SIZE);
+    state
+        .width
+        .store((*rect).right - (*rect).left, Ordering::Relaxed);
+    state
+        .height
+        .store((*rect).bottom - (*rect).top, Ordering::Relaxed);
+    K_RESULT_OK
+}
+
+unsafe extern "C" fn view_set_frame(this: *mut IPlugView, frame: *mut FUnknown) -> TResult {
+    let view = view_of(this);
+    (*view).frame.store(frame, Ordering::Relaxed);
+    diagnostics(view).record(if frame.is_null() {
+        VIEW_CLEAR_FRAME
+    } else {
+        VIEW_SET_FRAME
+    });
+    K_RESULT_OK
+}
+
+unsafe extern "C" fn view_can_resize(_: *mut IPlugView) -> TResult {
+    K_RESULT_OK
+}
+
+unsafe extern "C" fn view_check_size_constraint(_: *mut IPlugView, _: *mut ViewRect) -> TResult {
+    K_RESULT_OK
+}
+
+static VIEW_VTBL: Shared<IPlugViewVtbl> = Shared(IPlugViewVtbl {
+    query_interface: view_query_interface,
+    add_ref: view_add_ref,
+    release: view_release,
+    is_platform_type_supported: view_is_platform_type_supported,
+    attached: view_attached,
+    removed: view_removed,
+    _pad6: std::ptr::null(),
+    _pad7: std::ptr::null(),
+    _pad8: std::ptr::null(),
+    get_size: view_get_size,
+    on_size: view_on_size,
+    _pad11: std::ptr::null(),
+    set_frame: view_set_frame,
+    can_resize: view_can_resize,
+    check_size_constraint: view_check_size_constraint,
+});
+
+unsafe extern "C" fn scale_query_interface(
+    this: *mut IPlugViewContentScaleSupport,
+    iid: *const Tuid,
+    object: *mut *mut c_void,
+) -> TResult {
+    let view = view_of_scale_support(this);
+    view_query_interface(view as *mut IPlugView, iid, object)
+}
+
+unsafe extern "C" fn scale_add_ref(this: *mut IPlugViewContentScaleSupport) -> u32 {
+    view_add_reference(view_of_scale_support(this))
+}
+
+unsafe extern "C" fn scale_release(this: *mut IPlugViewContentScaleSupport) -> u32 {
+    view_release_reference(view_of_scale_support(this))
+}
+
+unsafe extern "C" fn scale_set_factor(
+    this: *mut IPlugViewContentScaleSupport,
+    factor: f32,
+) -> TResult {
+    let state = diagnostics(view_of_scale_support(this));
+    state.record(VIEW_SCALE_SET);
+    state
+        .scale_percent
+        .store((factor * 100.0).round() as u32, Ordering::Relaxed);
+    K_RESULT_OK
+}
+
+static SCALE_SUPPORT_VTBL: Shared<IPlugViewContentScaleSupportVtbl> =
+    Shared(IPlugViewContentScaleSupportVtbl {
+        query_interface: scale_query_interface,
+        add_ref: scale_add_ref,
+        release: scale_release,
+        set_content_scale_factor: scale_set_factor,
+    });
+
 unsafe extern "C" fn controller_create_view(
-    _this: *mut IEditController,
-    _name: *const u8,
+    this: *mut IEditController,
+    name: *const u8,
 ) -> *mut IPlugView {
-    std::ptr::null_mut()
+    if name.is_null() || std::ffi::CStr::from_ptr(name.cast()).to_bytes() != b"editor" {
+        return std::ptr::null_mut();
+    }
+    let plugin = from_controller(this);
+    add_reference(plugin);
+    Box::into_raw(Box::new(View {
+        view: &VIEW_VTBL.0,
+        scale_support: &SCALE_SUPPORT_VTBL.0,
+        references: AtomicU32::new(1),
+        plugin,
+        frame: AtomicPtr::new(std::ptr::null_mut()),
+    })) as *mut IPlugView
 }
 
 /// Raw function pointers in a `static` need a wrapper to be `Sync`.
@@ -1242,6 +1625,7 @@ unsafe extern "C" fn factory_create_instance(
         latency: AtomicU32::new(LATENCY),
         pending_latency: AtomicU32::new(LATENCY),
         renamed: AtomicBool::new(false),
+        view: ViewDiagnostics::new(),
     }));
     let result = query(plugin, iid as *const Tuid, object);
     if result != K_RESULT_OK {

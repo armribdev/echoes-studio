@@ -569,7 +569,9 @@ const HOLD_EDIT: u32 = 9;
 const LOOKAHEAD: u32 = 10;
 const RENAME: u32 = 11;
 const PROCESSOR_SELF: u32 = 12;
-const PARAMETER_COUNT: usize = 13;
+const VIEW_CRASH: u32 = 18;
+const VIEW_EDIT: u32 = 19;
+const PARAMETER_COUNT: usize = 20;
 const HELD_VALUE: f64 = 0.25;
 
 fn plugin_value(host: &PluginHost, native_id: u32) -> f64 {
@@ -829,6 +831,32 @@ fn an_edit_in_the_plugin_window_marks_the_project_modified_and_moves_the_base() 
             "the base follows the edit"
         );
     }
+    an_edit_made_in_the_window_of_the_bridge_reaches_the_engine_while_stopped();
+}
+
+/// The knob is dragged in the editor window of the bridge, on the bridge's window
+/// thread.  The transport is stopped: the engine still runs every block through the
+/// effect, so the edit comes back all the same.
+fn an_edit_made_in_the_window_of_the_bridge_reaches_the_engine_while_stopped() {
+    let mut host = host();
+    let mut node = prepared(&mut host, true, false);
+    let base = Arc::new(AtomicU32::new(0));
+    node.inject_plugin_param_controls(vec![modulated_control(SELF_VALUE, &base)]);
+    assert!(host.push_plugin_param(KEY, VIEW_EDIT, 1.0).unwrap());
+    run_block(&mut node);
+    run_block(&mut node);
+
+    take_plugin_state_edited();
+    let instance = host.instance_by_key(KEY).unwrap();
+    let bridge = instance.bridge().unwrap();
+    bridge
+        .open_editor("Edit in the window")
+        .expect("the editor opens");
+    for _ in 0..4 {
+        run_block(&mut node);
+    }
+    assert!(take_plugin_state_edited(), "the project reads as modified");
+    assert_eq!(f64::from(base_of(&base)), HELD_VALUE);
 }
 
 fn modulation_pauses_while_the_plugin_window_drags(sandboxed: bool) {
@@ -971,5 +999,111 @@ fn a_real_vst3_effect_lists_and_follows_its_parameters_in_the_bridge_like_in_the
     assert!(
         in_process.rendered == sandboxed.rendered,
         "the automated parameter must sound the same in the bridge"
+    );
+}
+
+// ── The editor (ADR-033, step 7) ────────────────────────────────────────────
+
+#[link(name = "user32")]
+extern "system" {
+    fn IsWindow(window: *mut c_void) -> i32;
+    fn PostMessageW(window: *mut c_void, message: u32, wparam: usize, lparam: isize) -> i32;
+    fn GetWindowThreadProcessId(window: *mut c_void, process: *mut u32) -> u32;
+}
+
+const WM_CLOSE: u32 = 0x0010;
+
+fn is_window(handle: u64) -> bool {
+    // SAFETY: only asks whether the handle is a live window.
+    unsafe { IsWindow(handle as usize as *mut c_void) != 0 }
+}
+
+fn window_owner(handle: u64) -> u32 {
+    let mut process = 0;
+    // SAFETY: reads which process owns the window.
+    unsafe { GetWindowThreadProcessId(handle as usize as *mut c_void, &mut process) };
+    process
+}
+
+fn close_window_and_wait(handle: u64) {
+    // SAFETY: posting to a window of another process is allowed; the bridge closes it.
+    unsafe { PostMessageW(handle as usize as *mut c_void, WM_CLOSE, 0, 0) };
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while is_window(handle) {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the window never closed"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+}
+
+/// A crash in the editor takes the bridge down and nothing else: the engine reports the
+/// plugin as crashed, and the effect is never loaded in the Echoes process instead.
+#[test]
+fn a_crash_in_the_sandboxed_editor_is_reported_and_never_falls_back_in_process() {
+    let mut host = host();
+    host.set_pending_state_blobs(HashMap::from([(KEY.to_string(), gain_state(0.5))]));
+    let mut node = prepared(&mut host, true, true);
+    host.clear_pending_state_blobs();
+    assert!(host.push_plugin_param(KEY, VIEW_CRASH, 1.0).unwrap());
+    run_block(&mut node);
+    run_block(&mut node);
+    let crashes_before = crash_marker::crash_count();
+
+    let instance = host.instance_by_key(KEY).unwrap();
+    let bridge = instance.bridge().unwrap();
+    assert!(bridge.open_editor("Crash").is_err());
+    run_until_dead(&host, &mut node);
+
+    assert!(crash_marker::crash_count() > crashes_before);
+    let unavailable = host.unavailable_plugins();
+    assert_eq!(unavailable.len(), 1);
+    assert_eq!(unavailable[0].reason, UnavailableReason::Crashed);
+    assert!(is_sandboxed(&host), "still the bridge's, never in process");
+}
+
+/// ADR-033 step 7 with a real plugin (skipped when none is installed): the editor of
+/// TDR Nova opens in the bridge, the audio keeps running with it open, and it closes
+/// without taking the bridge down.
+#[test]
+fn the_editor_of_a_real_vst3_effect_opens_in_the_bridge_and_closes_cleanly() {
+    let Some(manifest) = installed_vst3_effect() else {
+        eprintln!("[sandbox] SKIP the editor of a real VST3 effect: none installed");
+        return;
+    };
+    let mut host = PluginHost::new();
+    host.set_bridge_exe(artifacts().0.clone());
+    host.registry_mut().add(manifest.clone());
+    let mut node = host
+        .instantiate(KEY, &manifest.id, true)
+        .expect("the effect starts");
+    node.prepare(PrepareContext {
+        sample_rate: 48_000.0,
+        max_block_size: 4096,
+        num_channels: 2,
+        live: false,
+    });
+
+    let instance = host.instance_by_key(KEY).unwrap();
+    let bridge = instance.bridge().unwrap();
+    let window = bridge
+        .open_editor(&manifest.name)
+        .expect("the editor opens");
+    assert!(is_window(window));
+    assert_eq!(window_owner(window), bridge.process_id());
+    for _ in 0..16 {
+        run_block(&mut node);
+    }
+
+    close_window_and_wait(window);
+    for _ in 0..16 {
+        run_block(&mut node);
+    }
+    assert!(!is_dead(&host), "the bridge survived the editor");
+    assert!(host.unavailable_plugins().is_empty());
+    eprintln!(
+        "[sandbox] {}: the editor opened and closed in the bridge",
+        manifest.name
     );
 }

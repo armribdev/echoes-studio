@@ -321,3 +321,153 @@ fn renaming_changes_the_title_the_controller_reports() {
     plugin.process(0.0, 4, Some(&mut changes), None);
     assert_eq!(title(&plugin), RENAMED_TITLE);
 }
+
+/// A host frame that accepts every size and counts the requests.
+#[repr(C)]
+struct TestFrame {
+    vtbl: *const IPlugFrameVtbl,
+    requests: std::cell::RefCell<Vec<(i32, i32)>>,
+}
+
+unsafe extern "C" fn frame_query(_: *mut FUnknown, _: *const Tuid, _: *mut *mut c_void) -> TResult {
+    K_NO_INTERFACE
+}
+
+unsafe extern "C" fn frame_reference(_: *mut FUnknown) -> u32 {
+    1
+}
+
+unsafe extern "C" fn frame_resize(
+    this: *mut FUnknown,
+    _: *mut IPlugView,
+    rect: *mut ViewRect,
+) -> TResult {
+    let frame = &*(this as *const TestFrame);
+    frame
+        .requests
+        .borrow_mut()
+        .push(((*rect).right - (*rect).left, (*rect).bottom - (*rect).top));
+    K_RESULT_OK
+}
+
+static FRAME_VTBL: IPlugFrameVtbl = IPlugFrameVtbl {
+    query_interface: frame_query,
+    add_ref: frame_reference,
+    release: frame_reference,
+    resize_view: frame_resize,
+};
+
+fn test_frame() -> TestFrame {
+    TestFrame {
+        vtbl: &FRAME_VTBL,
+        requests: std::cell::RefCell::new(Vec::new()),
+    }
+}
+
+impl Instance {
+    fn create_view(&self, name: &[u8]) -> *mut IPlugView {
+        unsafe { ((*(*self.controller).vtbl).create_view)(self.controller, name.as_ptr()) }
+    }
+
+    fn view_calls(&self) -> u32 {
+        (self.normalised(VIEW_CALLS) * DIAGNOSTIC_RANGE).round() as u32
+    }
+
+    fn plain(&self, id: u32) -> u32 {
+        (self.normalised(id) * DIAGNOSTIC_RANGE).round() as u32
+    }
+}
+
+#[test]
+fn only_the_editor_view_is_offered() {
+    let plugin = instance(&EFFECT_CLASS_ID);
+    assert!(plugin.create_view(b"remote\0").is_null());
+    let view = plugin.create_view(b"editor\0");
+    assert!(!view.is_null());
+    unsafe { ((*(*view).vtbl).release)(view) };
+}
+
+#[test]
+fn the_view_records_what_the_host_does_in_order() {
+    let plugin = instance(&EFFECT_CLASS_ID);
+    let mut frame = test_frame();
+    let frame_pointer = &mut frame as *mut TestFrame as *mut FUnknown;
+    let view = plugin.create_view(b"editor\0");
+    unsafe {
+        let table = &*(*view).vtbl;
+        assert_eq!(
+            (table.is_platform_type_supported)(view, c"HWND".as_ptr().cast()),
+            K_RESULT_OK
+        );
+        assert_eq!(
+            (table.is_platform_type_supported)(view, c"NSView".as_ptr().cast()),
+            K_RESULT_FALSE
+        );
+        (table.set_frame)(view, frame_pointer);
+        assert_eq!(
+            (table.attached)(view, 0x10 as *mut c_void, c"HWND".as_ptr().cast()),
+            K_RESULT_OK
+        );
+
+        let mut size = ViewRect {
+            left: 0,
+            top: 0,
+            right: 0,
+            bottom: 0,
+        };
+        (table.get_size)(view, &mut size);
+        assert_eq!((size.right, size.bottom), VIEW_INITIAL_SIZE);
+        size = ViewRect {
+            left: 0,
+            top: 0,
+            right: 640,
+            bottom: 480,
+        };
+        (table.on_size)(view, &mut size);
+
+        (table.set_frame)(view, std::ptr::null_mut());
+        (table.removed)(view);
+        (table.release)(view);
+    }
+    // setFrame, attached, onSize, setFrame(null), removed, released.
+    assert_eq!(plugin.view_calls(), 134_259);
+    assert_eq!(
+        (plugin.plain(VIEW_WIDTH), plugin.plain(VIEW_HEIGHT)),
+        (640, 480)
+    );
+}
+
+#[test]
+fn a_view_that_is_asked_to_resize_while_attaching_asks_the_host() {
+    let plugin = instance(&EFFECT_CLASS_ID);
+    plugin.set_normalised(VIEW_ASK, 700_500.0 / DIAGNOSTIC_RANGE);
+    let mut frame = test_frame();
+    let view = plugin.create_view(b"editor\0");
+    unsafe {
+        let table = &*(*view).vtbl;
+        (table.set_frame)(view, &mut frame as *mut TestFrame as *mut FUnknown);
+        (table.attached)(view, 0x10 as *mut c_void, c"HWND".as_ptr().cast());
+        (table.release)(view);
+    }
+    assert_eq!(*frame.requests.borrow(), [(700, 500)]);
+}
+
+#[test]
+fn the_content_scale_is_kept_as_a_percentage() {
+    let plugin = instance(&EFFECT_CLASS_ID);
+    let view = plugin.create_view(b"editor\0");
+    unsafe {
+        let mut support: *mut c_void = std::ptr::null_mut();
+        let found = ((*(*view).vtbl).query_interface)(
+            view,
+            &IID_IPLUG_VIEW_CONTENT_SCALE_SUPPORT,
+            &mut support,
+        );
+        assert_eq!(found, K_RESULT_OK);
+        let support = support as *mut IPlugViewContentScaleSupport;
+        ((*(*support).vtbl).set_content_scale_factor)(support, 1.5);
+        ((*(*support).vtbl).release)(support);
+        ((*(*view).vtbl).release)(view);
+    }
+    assert_eq!(plugin.plain(VIEW_SCALE), 150);
+}

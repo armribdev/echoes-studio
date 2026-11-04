@@ -315,6 +315,15 @@ never read by the audio thread. Every control op that touches the plugin (`Param
 `ParamValue`, `ParamText`, `FlushValues`, `SaveState`, `LoadState`, `Activate`) takes the
 main-thread side of the gate; the audio thread skips its block, it does not wait.
 
+**VST3 editor in the bridge (ADR-033 step 7).** The audio thread of neither process changes: same
+message, rings, wake-up, bounded wait and single non-blocking `SetEvent`, no new system call.
+The whole view (`createView`, `attached`, `onSize`, `removed`, the `IPlugFrame`) runs on the
+bridge's **main** thread; the bridge's audio thread never calls the view nor waits for the
+window. The plugin's `resizeView` callback only resizes the window on that thread, and
+`performEdit` / `restartComponent` only store atomics. The one controller call added
+(`createView`) takes the main-thread side of the gate, so the audio thread skips a block instead
+of waiting; the mirror table is still written by the audio thread only while a window watches.
+
 ### Sleeping CLAP plugins (2026-10-14)
 
 A CLAP plugin that is silent and has no tail left is not called at all

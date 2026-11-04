@@ -2,13 +2,13 @@
 
 ## Status
 
-**Proposed — 2026-11-03; plan approved by the user the same day, steps 0 to 5
-done (steps 4, 5 and 6 delivered 2026-11-04, awaiting the user's review).** Step 0 (this ADR and the header check in Appendix A) changed no code. Step 1
+**Proposed — 2026-11-03; plan approved by the user the same day, steps 0 to 7
+done (steps 4 to 7 delivered 2026-11-04, awaiting the user's review).** Step 0 (this ADR and the header check in Appendix A) changed no code. Step 1
 moved `vst3/ffi.rs` and `param_queue.rs` into the `vst3_ffi` and `plugin_param_queue`
 crates (see "Step 1 — what shipped"). Step 2 added the test plugin, the harness
 baseline and the loader fix ("Step 2 — what shipped"). Step 3 moved the VST3 host objects into
 `vst3_host` ("Step 3 — what shipped"). Step 4 froze protocol v3 and moved CLAP onto it
-("Step 4 — what shipped"). Step 5 put the VST3 effect in the bridge ("Step 5 — what shipped"). Step 6 gave it its parameters ("Step 6 — what shipped"). Decisions 1–9 below were taken by the user
+("Step 4 — what shipped"). Step 5 put the VST3 effect in the bridge ("Step 5 — what shipped"). Step 6 gave it its parameters ("Step 6 — what shipped"). Step 7 gave it its editor ("Step 7 — what shipped"). Decisions 1–9 below were taken by the user
 before this ADR was written (decision 10 only restates ADR-015). The status stays
 _Proposed_ until the user has reviewed step 4, the first step that crossed the
 real-time boundary (and hand-tested a sandboxed CLAP plugin).
@@ -180,7 +180,7 @@ without a sandboxed VST3, and waits for the user's approval before the next one.
 | 4    | **Protocol v3 and CLAP migration** (done 2026-11-04). First commit: the "sandbox against in-process" test on v2 for the CLAP test plugin. Then typed sections, port table, `ClapAdapter` in the bridge, neutral control records, `BRIDGE_PROTOCOL_VERSION` = 3.                                                          | **high**: message format on both audio threads | the new test stays identical; `clap_plugins` unchanged                                              |
 | 5    | **VST3 audio in the bridge** (done 2026-11-04). `Vst3Adapter` (effects): load, `InitDll`, activate, process, latency, tail, state, crash and restart, ADR-010 gate inside the bridge. `runs_sandboxed` accepts VST3, the modes and the "Isoler" button cover it.                                                      | **high**: first VST3 on the ring; cores spinning | sandbox-against-in-process test on the VST3 test DLL (effect)                                       |
 | 6    | **VST3 parameters** (done 2026-11-04). Parameter list and text, automation and modulation with a sample offset, the plugin's edits and gestures back (engine gestures ignored, decision b), rescan, controller follows processor (inside the bridge), modulated bases before a state save.                | medium: bounded queues (128 × 128)   | same test with automated and modulated parameters                                                    |
-| 7    | **VST3 editor in the bridge.** `IPlugView` / `IPlugFrame` / content scale in the bridge's Win32 window (same layout as CLAP), resize in the same call stack, close order.                                                                                                                              | none (bridge UI thread)              | none                                                                                                 |
+| 7    | **VST3 editor in the bridge** (done 2026-11-04). `IPlugView` / `IPlugFrame` / content scale in the bridge's Win32 window (same layout as CLAP), resize in the same call stack, close order.                                                                                                                              | none (bridge UI thread)              | none                                                                                                 |
 | 8    | **VST3 instruments and several ports.** Notes and raw MIDI, `IMidiMapping`, a bridged VST3 instrument; aux outputs and sidechain through the port table (several active ports); `IComponentHandlerBusActivation`.                                                                                   | medium-high: multi-port block layout | same test for instrument, multi-out and sidechain                                                    |
 | 9    | **VST3 presets.** `IUnitInfo` programs and `.vstpreset` files through the ADR-031 commands; parsing stays in the app (untrusted file), loading happens in the bridge; `IUnitHandler`.                                                                                                                | none (control path); gate in the bridge | none                                                                                                 |
 | 10   | **Out-of-process scan and blocklist.** `plugin_host_bridge --scan`, timeout and crash contained, blocklist kept per machine, a way to re-enable. Replaces the in-process throwaway component of the VST3 sidechain probe.                                                                              | none                                 | none                                                                                                 |
@@ -196,7 +196,7 @@ without a sandboxed VST3, and waits for the user's approval before the next one.
 | 4    | Protocol ABI asserts; bridge integration tests ported; `sandbox_tests.rs` unchanged and green; sandbox-against-in-process; round-trip timing.                             | A real CLAP plugin sandboxed: play, automate, open the editor, kill the bridge.                                              |
 | 5    | `sandbox_tests.rs` mirrored for VST3: processing, latency, state, toggle keeps state, reuse across recompiles, crash contained / reported / recovered, hang contained.    | TDR Nova sandboxed; end the bridge from the Task Manager during playback; mode _Tous_ with several instances (CPU).          |
 | 6    | Parameters, automation and modulation across the process with the test DLL; editor-follow table; state save with modulated bases.                                         | Knobs in a sandboxed window follow automation; save and reopen.                                                              |
-| 7    | Bridge tests with the test DLL's view (`FakeView` ported): attach, resize, close order.                                                                                    | Sandboxed editor on TDR Nova: open, resize, HiDPI screen, close; a crash in the editor kills only the bridge.                |
+| 7    | Bridge tests with the test DLL's view (`vst3_bridge.rs`): attach, resize inside `resizeView`, content scale, close order, one window and reopen, the controller follows automation only while open, a window-thread edit, a crash in the editor; the engine's view of an edit at a stop; the frame tests in `vst3_host`; TDR Nova's editor opens, runs with audio and closes.                                                                                    | Sandboxed editor on TDR Nova: open, resize, HiDPI screen, close; a crash in the editor kills only the bridge.                |
 | 8    | Instrument notes and parameters, multi-out, sidechain with the test DLL, sandboxed.                                                                                        | Surge XT sandboxed (its "Scene A" bus); TDR Nova sidechain sandboxed.                                                        |
 | 9    | Program change and `.vstpreset` load through the bridge with the test DLL.                                                                                                 | A program of TDR Nova; a real `.vstpreset` (none is known yet).                                                              |
 | 10   | Scan of a DLL that crashes on load / in `GetPluginFactory`: the app continues, the plugin is blocklisted, the scan of the others finishes.                                | The installed plugin set; re-enabling a blocklisted plugin.                                                                  |
@@ -721,6 +721,118 @@ skipped when no VST3 is installed; `ECHOES_TEST_VST3` selects one).
   here.
 - Gestures from the engine (`IEditControllerHostEditing`, Appendix B) are not implemented (decision b).
 
+## Step 7 — what shipped (2026-11-04)
+
+**The proof came first.** Before any change to the bridge, the engine or `vst3_host`, the test plugin got
+a view (`crates/test_vst3_plugin`, parameters 13 to 19) and
+`the_editor_of_a_sandboxed_effect_opens_in_a_bridge_window_and_closes_in_order` was put in the git index. It
+**failed** with the explicit error step 6 left (`the editor of a sandboxed VST3 plugin is not available yet`)
+and passes now. It runs in the default suite (C-10): it opens the bridge's real window and looks at it from the
+test process (the owner of the window is the bridge, the plugin area has the size the view asked for), then posts
+`WM_CLOSE` like the × button and reads the order of the calls the view recorded. The window is shown, like the one
+the existing CLAP editor test opens; there is no hidden mode. No audio is rendered, so C-2 is not concerned:
+`vst3_plugins` (0x5c0f0710b6813439), `clap_plugins` (0x928da7dcd260c4e1) and every other hash are unchanged, none
+was regenerated. The protocol did not change: no format change of the block message, no new `Op`, no new record
+field, version still 3.
+
+**Questions settled first (user, 2026-11-04, the recommendations):**
+
+- **a) Where the window and the frame live.** The neutral part moved into `vst3_host::editor_view`
+  (`EditorView`, the `IPlugFrame` object, `MAX_RESIZE_DEPTH`); the engine (`plugin_system/gui.rs`) and the bridge
+  (`plugin_host_bridge/src/editor.rs`) keep their own Win32 window and each give the frame a function that sizes
+  it. No duplicate of the frame, and the crate still depends on the bindings only.
+- **b) The thread of the view.** The bridge's main thread, the one that loaded the plugin, called `OleInitialize`
+  and already pumps the Win32 messages. The bridge's audio thread never touches the view or waits for the window.
+- **c) Optional interfaces of appendix B** (`IComponentHandler3` / `IContextMenu`, `IDataExchange`): **not
+  added.** Plugins fall back without them; TDR Nova, the real effect used by the tests, opens and closes without them
+  (the other real VST3 here, Surge XT, is an instrument: step 8). If a real plugin turns out to need one it is
+  added by an amendment.
+- **d) `can_isolate`** in `take_crash_suspect` (`src/main.rs`): fixed. The flag now comes from
+  `plugin_system::host::can_run_sandboxed(format, is_instrument)`, which asks the two rules that already decide
+  (`runs_sandboxed`, `instrument_runs_sandboxed`), so a VST3 **effect** that crashed in process is offered
+  "Isoler" and a VST3 instrument is not (its sandbox is step 8).
+
+**`vst3_host::editor_view`** (new, no dependency on the engine). `EditorView::create` makes the view
+(`createView("editor")`, `isPlatformTypeSupported("HWND")`, `setFrame`), `size` reads `getSize`, `attach` stores the
+window in the frame and calls `attached`, `apply_content_scale` hands the monitor scale to
+`IPlugViewContentScaleSupport` (when the view has it) and returns the size at that scale. `Drop` is the close order:
+**`setFrame(null)`, then `removed()`, then `release`**. The frame is the code that was in `gui.rs` (`resizeView`
+answers in the same call stack: `getSize` before, window resized, `getSize` after, `onSize` only for a view that did
+not follow, nesting capped at 3), parameterised by a `ResizeWindow` function instead of the engine's
+`resize_to_client`. Its two unit tests moved with it.
+
+**Bridge** (`crates/plugin_host_bridge`).
+
+- `editor::open_vst3` (main thread): `watch_params()` first, so the controller takes the processor's state and the
+  window opens on current values; the view is made by `Vst3Adapter::open_view` under the ADR-010 gate (the audio
+  thread skips its block meanwhile, it never waits); the window is the same borderless window as CLAP's (drag
+  strip, rounded corners, plugin area as its only child); `attached`, then the content scale and the size at that
+  scale, centred, a 10 ms `WM_TIMER`, shown. One window per bridge: opening again brings it to the front.
+- The window's `WM_TIMER` calls `Vst3Adapter::mirror_to_controller` (no gate, the controller is called from its own
+  window thread), so the knobs follow automation and modulation. `WM_DPICHANGED` repeats scale → size. Closing
+  (`editor::close`) kills the timer, drops the session (view, then the parameter watch, then the adapter handle) and
+  only then destroys the window. The `allow(dead_code)` marks of step 6 are gone.
+- `Vst3Adapter::load` now returns an `Arc` built with `Arc::new_cyclic`, because the open editor keeps the adapter
+  alive (`Op::OpenEditor` is answered by `Vst3Adapter::open_editor`).
+
+**Engine.** `open_vst3_editor` in `plugin_system/gui.rs` uses `EditorView`; its behaviour is the one step 7 found:
+the three `vst3_resize_tests` (call order with the `FakeView`) pass (only their imports changed). `BridgedPlugin::open_editor` returns
+the window handle (the reply already carried it) so a test can look at the window; `open_plugin_editor` ignores it.
+A sandboxed VST3 plugin already took the `instance.bridge()` branch of `open_plugin_editor`, so nothing else changed.
+
+**Test plugin** (`crates/test_vst3_plugin`; the `vst3_plugins` hash does not move, ids after 12 only). The view is a
+window-less object recording what the host does to it in readable parameters: 13 `View calls` (the last six calls as
+decimal digits: 1 `setFrame` with a frame, 2 without, 3 `attached`, 4 `onSize`, 5 `removed`, 6 / 7 `resizeView`
+accepted / refused, 8 content scale, 9 last release), 14 and 15 `View width` / `View height`, 16 `View scale` (× 100),
+and three the host sets beforehand: 17 `View ask` (`width * 1000 + height`, asked from inside `attached`),
+18 `View crash` (the next `attached` aborts), 19 `View edit` (the next `attached` edits `Self value` from the window
+thread). It holds a reference on the plugin, so a host that released the controller first would not free it under
+the view. The parameter count in the two lists tests went from 13 to 20.
+
+**D — edits made in the window.** They take the step 6 path (`EditState`, the SPSC edit queue, `BridgeSignals`), which
+is lock-free and does not care which thread the plugin calls from, so they mark the project modified and move the
+base of a value-modulated parameter as they do in process (`an_edit_made_in_the_window_of_the_bridge_reaches_the_engine_while_stopped`,
+a window-thread edit with the transport stopped). **The engine sends blocks while the transport is stopped:** the
+CPAL callback calls `Scheduler::process_block` for every callback and `is_playing` is only a field of
+`TransportInfo` (`audio_engine/engine.rs`), and a VST3 effect has no sleep logic (that is CLAP). So the reply flags
+come back at a stop as well; nothing in the message changes. They do not come back when no audio device is open.
+
+**E — a crash or a hang in the editor.** The editor is on the bridge's main thread, so a crash ends the process: the
+engine's ordinary path reports it (late blocks, then `UnavailableReason::Crashed`, `note_crash`) and `open_editor`
+returns an error; the instance stays the bridge's, never loaded in process
+(`a_crash_in_the_sandboxed_editor_is_reported_and_never_falls_back_in_process`, and `a_crash_in_the_editor_only_kills_its_bridge`
+at the protocol level). A **hang** in the editor freezes the bridge's main thread, which the bridge's audio thread does not use (the gate
+is held only for the controller calls, and `createView` is one of them). The control request then times out as for
+any frozen bridge. That case has no test of its own; the frozen-bridge test of step 5 covers the engine's side.
+
+**Real-time checklist** (`rt-validation`). The audio thread of neither process changes: same block message, rings,
+wake-up, bounded wait and single non-blocking `SetEvent`; no new system call on either audio thread. All of the
+view (`createView`, `attached`, `onSize`, `removed`, the frame) runs on the bridge's main thread; the plugin's
+`resizeView` callback only resizes the window on that thread, `performEdit` / `restartComponent` only store atomics.
+The ADR-010 gate is still the rule: the one controller call added (`createView`) holds it, the audio thread skips a
+block instead of waiting; the view calls that follow are not controller calls and, as in process, are not gated. The
+mirror table is written by the audio thread only while a window watches, as in step 6.
+
+**Tests.** The new tests and the unchanged ones are listed in the table above. New: in `vst3_bridge.rs` the staged
+proof, a size asked while attaching (window and `onSize` inside one `resizeView`), the content scale equal to the
+window's DPI, one window and a reopen, the controller following automation only while the window is open (checked to
+fail without the timer), a window-thread edit, a crash in the editor; in `vst3_sandbox_tests.rs` the engine's view of
+a window-thread edit with the transport stopped, a crash in the editor, and TDR Nova's editor opening in the bridge,
+running with audio, and closing (skipped when none is installed; `ECHOES_TEST_VST3` selects another); in `vst3_host`
+the two frame tests; in the test plugin four view tests.
+
+**Not done, on purpose / still open.**
+
+- **Hand tests (yours):** TDR Nova isolated — open, resize, a HiDPI screen, close, reopen; the knobs move with the
+  automation while the window is open; a crash in the editor kills only the bridge. And the lists of steps 2 to 6.
+- `canResize` / `checkSizeConstraint` are still not used (the windows are borderless, as in process).
+- The `WM_DPICHANGED` path in the bridge has no automated test (it needs a second monitor); the scale at open does.
+- A hang inside `attached` is covered by reasoning and by the step 5 frozen-bridge test, not by a test of its own.
+- `Op::TrackInfo` still answers empty for a sandboxed VST3, `Op::NoteNames` and `PresetLoad` are as in step 6.
+- Gestures from the engine stay ignored (decision 9): the editor did not need them.
+- The "Editor Windows — layout" section of the wrapper doc said 8 px and "no native close button"; the code has an
+  18 px strip and a × button. Corrected in this change.
+
 ## Consequences
 
 - **Positive.** A crashing VST3 no longer ends the session; the bridge stops being a
@@ -846,8 +958,8 @@ test like `interface_iids_match_the_sdk` when it is added.
 | `INoteExpressionController` (`vst/ivstnoteexpression.h`)                 | `B7F8F859 41234872 91169581 4F3721A3`                  | instruments: note expression types; events `kNoteExpressionValueEvent` (4), `…TextEvent` (5), `…IntValueEvent` (8), `DataEvent` (2, SysEx), `LegacyMIDICCOutEvent` (65535) | 8 |
 | `IUnitHandler`, `IUnitHandler2` (`vst/ivstunits.h`)                      | `4B5147F8 4654486B 8DAB30BA 163A3C56`, `F89F8CDF 699E4BA5 96AAC9A4 81452B01` | presets: the plugin reports a program-list or unit change; host-implemented       | 9    |
 | `IStreamAttributes` (`vst/ivstattributes.h`)                             | `D6CE2FFC EFAF4B8C 9E74F1BB 12DA44B4`                  | file name / metadata on the preset stream (optional)                                   | 9    |
-| `IComponentHandler3`, `IContextMenu`, `IContextMenuTarget` (`vst/ivstcontextmenu.h`) | `69F11617 D26B400D A4B6B964 7B6EBBAB`, `2E93C863 0C9C4588 97DBECF5 AD17817D`, `3CDF2E75 85D34144 BF86D36B D7C4894D` | context menus of the editor (optional; plugins fall back when absent) | 7 (optional) |
-| `IDataExchangeHandler`, `IDataExchangeReceiver` (`vst/ivstdataexchange.h`) | `36D551BD 6FF54F08 B48E830D 8BD5A03B`, `45A759DC 84FA4907 ABCB6175 2FC786B6` | audio-thread to editor data channel of newer plugins (optional; usage to be checked) | 7 (optional) |
+| `IComponentHandler3`, `IContextMenu`, `IContextMenuTarget` (`vst/ivstcontextmenu.h`) | `69F11617 D26B400D A4B6B964 7B6EBBAB`, `2E93C863 0C9C4588 97DBECF5 AD17817D`, `3CDF2E75 85D34144 BF86D36B D7C4894D` | context menus of the editor (optional; plugins fall back when absent; **not added in step 7**) | 7 (optional) |
+| `IDataExchangeHandler`, `IDataExchangeReceiver` (`vst/ivstdataexchange.h`) | `36D551BD 6FF54F08 B48E830D 8BD5A03B`, `45A759DC 84FA4907 ABCB6175 2FC786B6` | audio-thread to editor data channel of newer plugins (optional; usage to be checked; **not added in step 7**) | 7 (optional) |
 
 Considered and **not planned**: `IMidiMapping2`, `IMidiLearn`, `IMidiLearn2`
 (MIDI 2.0 / learn), `IEditController2`, `IKeyswitchController`,

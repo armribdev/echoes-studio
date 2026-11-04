@@ -176,7 +176,6 @@ fn reload_plugins(app: tauri::AppHandle, state: tauri::State<'_, AppState>) {
 struct CrashSuspect {
     plugin_id: String,
     name: String,
-    /// Only CLAP plugins can run isolated so far.
     can_isolate: bool,
 }
 
@@ -196,7 +195,10 @@ fn take_crash_suspect(
         .map(|manifest| CrashSuspect {
             plugin_id: manifest.id.clone(),
             name: manifest.name.clone(),
-            can_isolate: manifest.format == plugin_system::wrapper::DeviceFormat::Clap,
+            can_isolate: plugin_system::host::can_run_sandboxed(
+                manifest.format,
+                manifest.is_instrument,
+            ),
         });
     Ok(suspect)
 }
@@ -959,7 +961,7 @@ fn open_plugin_editor(
     // A sandboxed plugin's editor lives in its bridge process, which closes it
     // itself and takes it down with the process when the effect goes away.
     if let Some(bridged) = instance.bridge() {
-        return bridged.open_editor(&plugin_name);
+        return bridged.open_editor(&plugin_name).map(|_| ());
     }
 
     let open_editors = std::sync::Arc::clone(&state.open_plugin_editors);

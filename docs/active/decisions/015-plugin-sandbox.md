@@ -871,9 +871,9 @@ bases. Shared memory and `BRIDGE_PROTOCOL_VERSION` are unchanged, as for
 
 The bridge hosts VST3 effects too (`--plugin-format vst3`, `Vst3Adapter`). The block
 message and the bounded wait are unchanged (protocol still 3). `runs_sandboxed`
-accepts VST3 effects; instruments, the editor and presets of a sandboxed VST3 plugin
-come with steps 8, 7 and 9 and answer an explicit error until then (parameters came
-with step 6, see the next amendment). The
+accepts VST3 effects; instruments and presets of a sandboxed VST3 plugin
+come with steps 8 and 9 and answer an explicit error until then (parameters came
+with step 6 and the editor with step 7, see the next amendments). The
 "no silent fallback" rule applies as for CLAP. Details and measures: ADR-033, "Step 5".
 
 ### Amendment 2026-11-04 — VST3 parameters in the sandbox (ADR-033 step 6)
@@ -885,6 +885,14 @@ parameter-list signals come back in the block reply flags and records that step 
 No `Op`, no record field and no block layout changed: the protocol stays 3. A
 `restartComponent` with a latency, I/O or reload flag makes the next `Activate` reactivate
 the plugin and return the new latency. Details: ADR-033, "Step 6".
+
+### Amendment 2026-11-04 — VST3 editor in the sandbox (ADR-033 step 7)
+
+`Op::OpenEditor` answers for a sandboxed VST3 effect: the bridge's main thread makes the `IPlugView`
+(`createView` under the ADR-010 gate), attaches it to the same borderless window as CLAP's and hosts its
+`IPlugFrame` (`vst3_host::editor_view`, shared with the engine). The reply is still the window handle. A crash in
+the editor ends the bridge and is reported as any crash; there is no fallback in process. The block message, the
+rings and the bounded wait are unchanged (protocol still 3). Details: ADR-033, "Step 7".
 
 ### Amendment 2026-11-04 — protocol v3, neutral sections (ADR-033 step 4)
 

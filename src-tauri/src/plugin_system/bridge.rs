@@ -271,12 +271,17 @@ impl BridgedPlugin {
         let _ = self.request(Op::FlushValues, &payload);
     }
 
-    /// Open the plugin's editor in the bridge process, or bring it to the front.
-    pub fn open_editor(&self, title: &str) -> Result<(), String> {
+    /// Open the plugin's editor in the bridge process, or bring it to the front, and
+    /// return the handle of its window.
+    pub fn open_editor(&self, title: &str) -> Result<u64, String> {
         allow_foreground_window(self.process.process_id());
-        self.request(Op::OpenEditor, title.as_bytes())
-            .map(|_| ())
-            .map_err(|e| e.to_string())
+        let reply = self
+            .request(Op::OpenEditor, title.as_bytes())
+            .map_err(|e| e.to_string())?;
+        let handle: [u8; 8] = reply
+            .try_into()
+            .map_err(|_| "the bridge answered with an invalid window handle".to_string())?;
+        Ok(u64::from_le_bytes(handle))
     }
 }
 

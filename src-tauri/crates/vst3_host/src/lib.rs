@@ -9,6 +9,7 @@ pub mod attribute_list;
 pub mod buses;
 pub mod channel_context;
 pub mod component_handler;
+pub mod editor_view;
 pub mod event_list;
 pub mod host_context;
 pub mod message;

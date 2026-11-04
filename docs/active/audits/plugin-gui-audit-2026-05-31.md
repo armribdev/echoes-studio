@@ -104,6 +104,12 @@ Le plugin n'était jamais informé de l'échelle de l'écran (`gui.set_scale` / 
 avant/après, vue vérifiée, réentrance limitée à 3 niveaux) et vrai ordre `setFrame(null)` → `removed()`.
 Voir `plugin-wrapper-system.md` (« Editor Windows — VST3 resize »).
 
+**Complément 2026-11-04 (ADR-033 étape 7)** : le cadre et la séquence `setFrame` → `attached` →
+`setFrame(null)` → `removed()` → `release` ne sont plus dans `gui.rs` mais dans
+`vst3_host::editor_view` (`EditorView`, `make_plug_frame` devient `PlugFrame::boxed`), partagés avec
+l'éditeur du pont ; `frame_resize_view` appelle une fonction de redimensionnement fournie par chaque
+fenêtre (`resize_to_client`).
+
 ### V4 — Modèle « single-component » exclusif ✅ Corrigé (2026-06-04)
 
 Plugins dual-component (Steinberg pro, NI, **TDR Nova**) rejetés à l'ouverture de

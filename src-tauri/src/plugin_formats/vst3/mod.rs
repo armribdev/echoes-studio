@@ -15,7 +15,7 @@ pub mod component_handler;
 pub(crate) mod fake_plugin;
 pub mod ffi;
 // Moved to the `vst3_host` crate (ADR-033, step 3); the old paths still resolve.
-pub use vst3_host::{buses, event_list, host_context, midi_mapping, units};
+pub use vst3_host::{buses, editor_view, event_list, host_context, midi_mapping, units};
 pub mod host;
 pub mod instrument;
 pub mod param_delivery;
