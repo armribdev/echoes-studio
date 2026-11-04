@@ -30,12 +30,14 @@ mod presets;
 mod process_sleep;
 mod timers;
 mod track_info;
+mod transport;
 pub use notes::*;
 pub use preset_discovery::*;
 pub use presets::*;
 pub use process_sleep::*;
 pub use timers::*;
 pub use track_info::*;
+pub use transport::*;
 
 // ── Version ────────────────────────────────────────────────────────────────────
 

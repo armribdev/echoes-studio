@@ -18,19 +18,23 @@ use std::time::Duration;
 use plugin_bridge::control::Op;
 use plugin_bridge::session::{AudioPort, BridgeLayout, BridgeProcess};
 
-use crate::plugin_formats::clap::ffi::{
-    decode_note_names, mark_plugin_restart_requested, read_pod, ClapParamInfo, HostTrackInfo,
-    NoteName, PresetRequest,
+use plugin_bridge::records::{
+    Handshake, NoteNameRecord, ParamRecord, ParamUnit, PortDirection, PresetRecord, PresetSource,
+    TrackRecord, PARAM_AUTOMATABLE, PARAM_HIDDEN, PARAM_MODULATABLE,
 };
-use crate::plugin_formats::clap::params::param_info;
+
+use crate::plugin_formats::clap::ffi::{
+    mark_plugin_restart_requested, HostTrackInfo, NoteName, PresetRequest,
+    CLAP_PRESET_LOCATION_FILE,
+};
 use crate::plugin_system::parameter::PluginParamInfo;
 
 /// Largest block a sandboxed plugin processes (the engine's `MAX_BLOCK_FRAMES`).
 pub const MAX_FRAMES: u32 = 4096;
 pub const CHANNELS: u32 = 2;
-/// Room for a block's events in each direction: a full `ClapEventBuffer`
-/// (1280 events of ≤ 56 bytes) plus the transport.
-pub const EVENT_CAPACITY: u32 = 80 * 1024;
+/// Room for a block's sections in each direction: the transport, 256 notes and
+/// 1024 parameter events fit with room to spare (protocol v3).
+pub const EVENT_CAPACITY: u32 = 64 * 1024;
 
 /// Loading a large plugin (wavetables, samples) can take seconds.
 const START_TIMEOUT: Duration = Duration::from_secs(20);
@@ -79,8 +83,10 @@ impl BridgedPlugin {
             args.extend(["--track-info".into(), info.to_hex().into()]);
         }
         let layout = BridgeLayout::new(MAX_FRAMES, CHANNELS, EVENT_CAPACITY);
+        let process = BridgeProcess::spawn(bridge_exe, layout, &args, START_TIMEOUT)?;
+        check_handshake(&process.request(Op::Handshake, &[], START_TIMEOUT)?)?;
         Ok(BridgedPlugin {
-            process: BridgeProcess::spawn(bridge_exe, layout, &args, START_TIMEOUT)?,
+            process,
             activation: Mutex::new(None),
             restart_requested: AtomicBool::new(false),
             track_info: Mutex::new(track_info.cloned()),
@@ -146,7 +152,17 @@ impl BridgedPlugin {
 
     /// Asks the plugin to load a preset; the error is the plugin's own message.
     pub fn load_preset(&self, request: &PresetRequest) -> Result<(), String> {
-        let payload = request.encode().ok_or("the preset location is too long")?;
+        let source = if request.location_kind == CLAP_PRESET_LOCATION_FILE {
+            PresetSource::File
+        } else {
+            PresetSource::Plugin
+        };
+        let record = PresetRecord {
+            source,
+            location: request.location.clone(),
+            load_key: request.load_key.clone(),
+        };
+        let payload = record.encode().ok_or("the preset location is too long")?;
         self.request(Op::PresetLoad, &payload)
             .map(|_| ())
             .map_err(|error| error.to_string())
@@ -156,13 +172,20 @@ impl BridgedPlugin {
         let Ok(reply) = self.request(Op::Params, &[]) else {
             return Vec::new();
         };
-        let record = std::mem::size_of::<ClapParamInfo>();
-        reply
-            .get(4..)
+        ParamRecord::decode_list(&reply)
             .unwrap_or_default()
-            .chunks_exact(record)
-            .filter_map(read_pod::<ClapParamInfo>)
-            .map(|info| param_info(&info))
+            .into_iter()
+            .map(|record| PluginParamInfo {
+                native_id: record.native_id,
+                name: record.name,
+                module: record.module,
+                min: record.min,
+                max: record.max,
+                default: record.default,
+                automatable: record.flags & PARAM_AUTOMATABLE != 0,
+                modulatable: record.flags & PARAM_MODULATABLE != 0,
+                hidden: record.flags & PARAM_HIDDEN != 0,
+            })
             .collect()
     }
 
@@ -184,7 +207,18 @@ impl BridgedPlugin {
 
     /// The plugin's note names (`clap.note-name`); `None` when the bridge cannot answer.
     pub fn note_names(&self) -> Option<Vec<NoteName>> {
-        decode_note_names(&self.request(Op::NoteNames, &[]).ok()?)
+        let records = NoteNameRecord::decode_list(&self.request(Op::NoteNames, &[]).ok()?).ok()?;
+        Some(
+            records
+                .into_iter()
+                .map(|record| NoteName {
+                    name: record.name,
+                    port: record.port,
+                    key: record.key,
+                    channel: record.channel,
+                })
+                .collect(),
+        )
     }
 
     /// Gives the plugin its track when it differs from the last one sent; the
@@ -195,7 +229,11 @@ impl BridgedPlugin {
         if sent.as_ref() == Some(info) || self.is_dead() {
             return;
         }
-        if self.request(Op::TrackInfo, &info.encode()).is_ok() {
+        let record = TrackRecord {
+            name: info.name.clone(),
+            color: info.color,
+        };
+        if self.request(Op::TrackInfo, &record.encode()).is_ok() {
             *sent = Some(info.clone());
         }
     }
@@ -221,6 +259,26 @@ impl BridgedPlugin {
             .map(|_| ())
             .map_err(|e| e.to_string())
     }
+}
+
+/// Refuses a bridge whose parameter values are not in the unit the engine sends
+/// (plain values, ADR-021) or whose port table has several active ports on one side
+/// (the block carries one).  A refused plugin is reported unavailable, never
+/// loaded in-process instead.
+fn check_handshake(reply: &[u8]) -> io::Result<()> {
+    let handshake = Handshake::decode(reply)?;
+    if handshake.param_unit != ParamUnit::Plain {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "the bridge reports normalised parameter values",
+        ));
+    }
+    for direction in [PortDirection::Input, PortDirection::Output] {
+        handshake
+            .active_port(direction)
+            .map_err(|message| io::Error::new(io::ErrorKind::InvalidData, message))?;
+    }
+    Ok(())
 }
 
 /// Lets the bridge bring its editor window to the front: Windows only grants

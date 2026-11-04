@@ -17,6 +17,7 @@ use crate::plugin_formats::clap::ffi::{
 };
 use crate::plugin_system::instance::PluginInstance;
 use crate::plugin_system::parameter::PluginParamInfo;
+use plugin_bridge::protocol::{WireParam, PARAM_GESTURE_BEGIN, PARAM_GESTURE_END, PARAM_VALUE};
 
 fn c_text(bytes: &[u8]) -> String {
     CStr::from_bytes_until_nul(bytes)
@@ -127,32 +128,40 @@ impl ValueModulation {
                 let event =
                     unsafe { &*(header as *const ClapEventHeader as *const ClapEventParamGesture) };
                 let is_begin = header.r#type == CLAP_EVENT_PARAM_GESTURE_BEGIN;
-                if let Some(param) = self
-                    .params
-                    .iter_mut()
-                    .find(|param| param.native_id == event.param_id)
-                {
-                    param.editing = is_begin;
-                }
-                if !is_begin {
-                    mark_plugin_state_edited();
-                }
+                self.observe_gesture(event.param_id, is_begin);
             }
             CLAP_EVENT_PARAM_VALUE => {
                 // SAFETY: the event type guarantees the layout.
                 let event =
                     unsafe { &*(header as *const ClapEventHeader as *const ClapEventParamValue) };
-                match self.find(event.param_id) {
-                    Some(param) if param.editing => {
-                        param.set_base(param.range.normalise(event.value as f32));
-                        mark_plugin_state_edited();
-                    }
-                    // Outside a drag it may echo the value the host just sent.
-                    Some(_) => {}
-                    None => mark_plugin_state_edited(),
-                }
+                self.observe_value(event.param_id, event.value);
             }
             _ => {}
+        }
+    }
+
+    fn observe_gesture(&mut self, native_id: u32, is_begin: bool) {
+        if let Some(param) = self
+            .params
+            .iter_mut()
+            .find(|param| param.native_id == native_id)
+        {
+            param.editing = is_begin;
+        }
+        if !is_begin {
+            mark_plugin_state_edited();
+        }
+    }
+
+    fn observe_value(&mut self, native_id: u32, value: f64) {
+        match self.find(native_id) {
+            Some(param) if param.editing => {
+                param.set_base(param.range.normalise(value as f32));
+                mark_plugin_state_edited();
+            }
+            // Outside a drag it may echo the value the host just sent.
+            Some(_) => {}
+            None => mark_plugin_state_edited(),
         }
     }
 }
@@ -168,6 +177,25 @@ pub unsafe extern "C" fn observe_output_event(
         (*modulation).observe(&*header);
     }
     true
+}
+
+/// Where [`ClapParamEvents::fill`] puts the parameter events of a block: CLAP's
+/// own event buffer in the Echoes process, a wire section for the bridge.
+pub trait ParamEventSink {
+    /// Set the parameter to `plain` (the plugin's own units).
+    fn push_value(&mut self, offset: u32, native_id: u32, plain: f64);
+    /// Offset the parameter by `amount` without moving its base.
+    fn push_modulation(&mut self, offset: u32, native_id: u32, amount: f64);
+}
+
+impl ParamEventSink for ClapEventBuffer {
+    fn push_value(&mut self, offset: u32, native_id: u32, plain: f64) {
+        self.push_param_value(offset, native_id, plain);
+    }
+
+    fn push_modulation(&mut self, offset: u32, native_id: u32, amount: f64) {
+        self.push_param_mod(offset, native_id, amount);
+    }
 }
 
 /// Parameter state of one CLAP placement and the events it sends each block.
@@ -247,53 +275,94 @@ impl ClapParamEvents {
     /// may add notes, then must call `buffer.sort()`.  No allocation.
     pub fn fill(&mut self, instance: &PluginInstance) {
         self.buffer.clear();
-        let buffer = &mut self.buffer;
-        let ranges = &self.ranges;
+        emit_param_events(
+            &self.ranges,
+            &self.controls,
+            &mut self.released_modulation,
+            &mut self.value_modulation,
+            instance,
+            &mut *self.buffer,
+        );
+    }
 
-        instance.drain_params(|change| {
-            let range = ranges
-                .get(&change.native_id)
-                .copied()
-                .unwrap_or(PluginParamRange::UNKNOWN);
-            buffer.push_param_value(
-                change.sample_offset,
-                change.native_id,
-                range.denormalise(change.normalised) as f64,
-            );
-        });
+    /// Audio thread: the same events, for a plugin in the bridge.  `sink` is the
+    /// caller's to clear.  No allocation.
+    pub fn fill_into(&mut self, instance: &PluginInstance, sink: &mut impl ParamEventSink) {
+        emit_param_events(
+            &self.ranges,
+            &self.controls,
+            &mut self.released_modulation,
+            &mut self.value_modulation,
+            instance,
+            sink,
+        );
+    }
 
-        for native_id in self.released_modulation.drain(..) {
-            buffer.push_param_mod(0, native_id, 0.0);
+    /// Audio thread: what the plugin in the bridge did to one of its parameters.
+    pub fn observe_edit(&mut self, edit: &WireParam) {
+        match edit.kind {
+            PARAM_VALUE => self
+                .value_modulation
+                .observe_value(edit.native_id, edit.value),
+            PARAM_GESTURE_BEGIN => self.value_modulation.observe_gesture(edit.native_id, true),
+            PARAM_GESTURE_END => self.value_modulation.observe_gesture(edit.native_id, false),
+            _ => {}
         }
-        for (native_id, base) in self.value_modulation.released.drain(..) {
-            buffer.push_param_value(0, native_id, base);
-        }
+    }
+}
 
-        for control in self.controls.iter() {
-            if control.range.modulatable {
+/// The events of one block, in the order the plugin must see them.
+fn emit_param_events(
+    ranges: &HashMap<u32, PluginParamRange>,
+    controls: &PluginParamControls,
+    released_modulation: &mut Vec<u32>,
+    value_modulation: &mut ValueModulation,
+    instance: &PluginInstance,
+    sink: &mut impl ParamEventSink,
+) {
+    instance.drain_params(|change| {
+        let range = ranges
+            .get(&change.native_id)
+            .copied()
+            .unwrap_or(PluginParamRange::UNKNOWN);
+        sink.push_value(
+            change.sample_offset,
+            change.native_id,
+            range.denormalise(change.normalised) as f64,
+        );
+    });
+
+    for native_id in released_modulation.drain(..) {
+        sink.push_modulation(0, native_id, 0.0);
+    }
+    for (native_id, base) in value_modulation.released.drain(..) {
+        sink.push_value(0, native_id, base);
+    }
+
+    for control in controls.iter() {
+        if control.range.modulatable {
+            for (offset, value) in control.modulation.iter() {
+                sink.push_modulation(
+                    offset,
+                    control.native_id,
+                    control.range.plain_offset(value) as f64,
+                );
+            }
+        } else if control.automation.is_empty() {
+            let value_modulated = value_modulation.find(control.native_id);
+            if let Some(param) = value_modulated.filter(|param| !param.editing) {
                 for (offset, value) in control.modulation.iter() {
-                    buffer.push_param_mod(
+                    sink.push_value(
                         offset,
                         control.native_id,
-                        control.range.plain_offset(value) as f64,
+                        param.modulated_plain(value) as f64,
                     );
                 }
-            } else if control.automation.is_empty() {
-                let value_modulated = self.value_modulation.find(control.native_id);
-                if let Some(param) = value_modulated.filter(|param| !param.editing) {
-                    for (offset, value) in control.modulation.iter() {
-                        buffer.push_param_value(
-                            offset,
-                            control.native_id,
-                            param.modulated_plain(value) as f64,
-                        );
-                    }
-                }
             }
-            for (offset, value) in control.automation.iter() {
-                let plain = control.range.denormalise(value.clamp(0.0, 1.0));
-                buffer.push_param_value(offset, control.native_id, plain as f64);
-            }
+        }
+        for (offset, value) in control.automation.iter() {
+            let plain = control.range.denormalise(value.clamp(0.0, 1.0));
+            sink.push_value(offset, control.native_id, plain as f64);
         }
     }
 }

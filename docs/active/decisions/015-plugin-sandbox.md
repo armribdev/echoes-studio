@@ -8,6 +8,13 @@ built; type names in them (`BridgeSession`, `serve_with`, …) predate the
 amendment. The amendment describes the current design and closes the two
 risks listed in _Known risk_.
 
+**Superseded in part by [ADR-033](033-format-neutral-sandbox-bridge.md) (step 4,
+2026-11-04):** the bridge protocol is now version 3 — format-neutral typed
+sections instead of opaque CLAP bytes, a 48-byte block header, neutral control
+records, a handshake with an audio port table. See the last amendment of this
+file. The sub-phase sections below describe protocol v2 and the names of that time
+(`LoadedPlugin` is now `ClapAdapter`, `ClapBlockProcessor` is unchanged).
+
 Materialises **ADR-010** of [`docs/active/migration/target_architecture.md`](../migration/target_architecture.md)
 §9 and **Phase 6 — Sandboxing** of [`docs/active/migration/migration_plan.md`](../migration/migration_plan.md)
 §6. Addresses `P0-5` (long-term half) of
@@ -625,7 +632,9 @@ handle**, not a separate node type chosen by the compiler:
 
 - **Audio**: one ring message per block, `[header][events][samples]`
   (protocol v2, `plugin_bridge::protocol`). Events are opaque CLAP bytes
-  (transport + parameter events in, plugin output events back).
+  (transport + parameter events in, plugin output events back). _Since
+  2026-11-04 (protocol v3) the events are typed, format-neutral sections; see the
+  last amendment._
 - **Control**: request/response frames over the child's stdin/stdout
   (`plugin_bridge::control`): activate, state, parameter list/value/flush,
   open editor. Off the audio thread; each request has a timeout, and a timeout
@@ -857,3 +866,34 @@ own context; the engine side keeps the project's unsaved flag and the value
 bases. Shared memory and `BRIDGE_PROTOCOL_VERSION` are unchanged, as for
 `Op::ParamText` / `Op::NoteNames`. Tests: `plugin_host_bridge/tests/bridge.rs`,
 `plugin_system/sandbox_tests.rs`.
+
+### Amendment 2026-11-04 — protocol v3, neutral sections (ADR-033 step 4)
+
+`BRIDGE_PROTOCOL_VERSION` is **3**. The engine no longer writes a CLAP structure
+for a sandboxed plugin; the bridge's `ClapAdapter` does. Details and measures:
+[ADR-033](033-format-neutral-sandbox-bridge.md), "Step 4 — what shipped".
+
+- **Block message**: `[BlockHeader 48 B][WireTransport 64 B, if flagged][WireNote
+  12 B × n][WireParam 24 B × m][samples]` (the header was 40 bytes in v2). The notes
+  list holds note on / off and raw MIDI in the order the plugin must see them; a
+  parameter event has a kind (value, modulation offset, gesture begin / end) and a
+  sample offset. In the reply, the parameter list is what the plugin did to its own
+  parameters (edits, gestures) and the notes list the MIDI it produced (not used by
+  the engine yet).
+- **Control ops** carry neutral records (`plugin_bridge::records`): `Params`
+  (parameter records), `TrackInfo`, `NoteNames`, `PresetLoad`, and the new
+  `Op::Handshake = 12`, asked once after the start: the unit of the parameter
+  values (plain for CLAP) and the audio port table (direction, main / auxiliary,
+  channels, layout, active; one active port per direction). The engine refuses a
+  bridge whose unit is not plain or whose table has two active ports on one side:
+  the plugin is reported unavailable (no silent fallback).
+- **Unchanged**: one process per instance, the rings, the wake event, the bounded
+  wait (3/4 of the block, 10 s offline), the watchdog, state, `ParamValue`,
+  `FlushValues`, `ParamText`, `OpenEditor`, `Activate`, the launch arguments, sleep
+  decided in the bridge, the block flags (the rescan bits are now the protocol's
+  own `PARAMS_*`, mapped to and from CLAP's by the adapter and the engine).
+- **Proof**: `render_harness::clap_plugins::a_sandboxed_plugin_renders_like_an_in_process_one`
+  (and the variant with automated and modulated gain) renders a project twice —
+  plugin in the Echoes process, plugin in the bridge with the offline wait — and
+  requires identical samples at the five block sizes of the harness. It was written
+  and passed on protocol v2 before the protocol changed, and passes unchanged on v3.

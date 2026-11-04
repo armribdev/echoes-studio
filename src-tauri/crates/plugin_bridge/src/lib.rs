@@ -6,8 +6,9 @@
 //!
 //! - [`shmem`]    — SPSC ring living inside a raw byte region.
 //! - [`region`]   — named OS shared memory + the wake event (Windows first).
-//! - [`protocol`] — the per-block message layout.
+//! - [`protocol`] — the per-block message layout (v3: typed, format-neutral sections).
 //! - [`control`]  — off-real-time request/response frames over the child's pipes.
+//! - [`records`]  — the format-neutral records those requests carry.
 //! - [`session`]  — spawn/handshake, the engine's real-time [`session::AudioPort`]
 //!   and the bridge's audio loop.
 //!
@@ -16,6 +17,7 @@
 
 pub mod control;
 pub mod protocol;
+pub mod records;
 pub mod region;
 pub mod session;
 pub mod shmem;

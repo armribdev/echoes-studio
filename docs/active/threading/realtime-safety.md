@@ -270,6 +270,29 @@ only wait allowed in the callback, and it is bounded:
 Offline (`PrepareContext.live == false`) the node waits up to 10 s per block so
 the export does not depend on scheduling (C-2).
 
+**The block message (protocol v3, ADR-033 step 4, 2026-11-04).** The message is
+`[header 48 B][transport 64 B][notes 12 B × n][parameter events 24 B × m][samples]`
+(`plugin_bridge::protocol`), format-neutral; the bridge's CLAP adapter builds the
+CLAP events from it. It changes on **both** audio threads, under the same rules:
+
+- same rings, same wake-up, same bounded wait, same single `SetEvent`; no lock,
+  no new system call;
+- capacities are fixed and allocated before the first block. Engine side: the
+  parameter events are a vector of 1024 records and the notes a vector of 256,
+  both filled only while `len < capacity` (what does not fit is dropped, like the
+  CLAP event pool in-process); the reply buffers (256 edits, 64 MIDI messages) are
+  allocated in `BridgeRoundTrip::new`. Bridge side: the reply lists are allocated
+  once when `serve_audio` starts, each sized to half of `event_capacity`
+  (`ReplyWriter::push_*` returns `false` when full);
+- a block whose sections exceed `event_capacity` is not sent (`Skipped`, the
+  caller passes the input through), as before;
+- records are copied to and from the ring as bytes (`WireRecord`, no padding,
+  unaligned reads); the only `assert!` on the path is in `WireRecord::read`, whose
+  callers check the length first.
+
+Round-trip time of a block on the test plugin, before and after: see "Step 4" in
+ADR-033.
+
 ### Sleeping CLAP plugins (2026-10-14)
 
 A CLAP plugin that is silent and has no tail left is not called at all

@@ -1174,26 +1174,47 @@ mod clap_plugins {
     use std::sync::OnceLock;
 
     use super::*;
+    use crate::plugin_system::host::PluginIsolation;
     use crate::plugin_system::registry::PluginManifest;
     use crate::plugin_system::wrapper::DeviceFormat;
     use crate::project::PluginParams;
 
     pub const PLUGIN_ID: &str = "clap:echoes.test.gain";
 
-    fn test_plugin_dll() -> &'static PathBuf {
-        static DLL: OnceLock<PathBuf> = OnceLock::new();
-        DLL.get_or_init(|| {
+    /// `(test plugin dll, bridge exe)`, built once per test run.
+    fn artifacts() -> &'static (PathBuf, PathBuf) {
+        static ARTIFACTS: OnceLock<(PathBuf, PathBuf)> = OnceLock::new();
+        ARTIFACTS.get_or_init(|| {
             let workspace = Path::new(env!("CARGO_MANIFEST_DIR"));
             let target = workspace.join("target").join("clap-render-harness");
             let status = Command::new(env!("CARGO"))
-                .args(["build", "--quiet", "-p", "test_clap_plugin", "--target-dir"])
+                .args([
+                    "build",
+                    "--quiet",
+                    "-p",
+                    "test_clap_plugin",
+                    "-p",
+                    "plugin_host_bridge",
+                    "--target-dir",
+                ])
                 .arg(&target)
                 .current_dir(workspace)
                 .status()
                 .expect("run cargo");
-            assert!(status.success(), "building test_clap_plugin failed");
-            target.join("debug").join("test_clap_plugin.dll")
+            assert!(
+                status.success(),
+                "building test_clap_plugin and plugin_host_bridge failed"
+            );
+            let debug = target.join("debug");
+            (
+                debug.join("test_clap_plugin.dll"),
+                debug.join("plugin_host_bridge.exe"),
+            )
         })
+    }
+
+    fn test_plugin_dll() -> &'static PathBuf {
+        &artifacts().0
     }
 
     fn host_with_test_plugins(plugin_id: &str) -> PluginHost {
@@ -1500,6 +1521,88 @@ mod clap_plugins {
     /// Recorded on Windows x86_64, separate from `GOLDEN_HASHES` because it
     /// needs the built test plugin.
     const CLAP_PLUGINS_GOLDEN_HASH: u64 = 0x928da7dcd260c4e1;
+
+    const GAIN: u32 = 0;
+
+    /// The `clap_plugins` project with the plugin's gain automated and modulated
+    /// on the effect and on the instrument, so parameter events with sample
+    /// offsets cross the bridge as well as notes.
+    fn automated_and_modulated_project() -> AppProject {
+        let mut project = project(PLUGIN_ID, vec![(GAIN, 0.8)]);
+        for (track, plugin_key) in [(0, "plugin"), (1, "instrument:midi")] {
+            let track = &mut project.tracks[track];
+            let target = ModulationTargetRef::PluginParam {
+                effect_id: plugin_key.into(),
+                native_id: GAIN,
+            };
+            track
+                .modulators
+                .push(lfo("gain-lfo", 3.7, LfoWaveform::Triangle));
+            track.mod_routes.push(ProjectModulationRoute {
+                id: "gain-lfo->gain".into(),
+                modulator_id: "gain-lfo".into(),
+                target: target.clone(),
+                depth: 0.3,
+            });
+            track.automation_lanes.push(automation_lane(
+                "gain-ramp",
+                target,
+                &[(0.0, 0.6), (1.3, 1.4), (2.4, 0.9)],
+            ));
+        }
+        project
+    }
+
+    /// A host that sends every plugin it can to the bridge, whatever the effect asks.
+    fn host_isolating_everything() -> PluginHost {
+        let mut host = host_with_test_plugins(PLUGIN_ID);
+        host.set_bridge_exe(artifacts().1.clone());
+        host.set_isolation(PluginIsolation::All, Default::default());
+        host
+    }
+
+    /// ADR-033, C-2: the plugin in the bridge process renders the same samples as
+    /// in the Echoes process (offline wait, ADR-015), whatever the block size.
+    fn assert_sandbox_matches_in_process(project: &AppProject) {
+        for block_size in BLOCK_SIZES {
+            let in_process =
+                render_with_host(&mut host_with_test_plugins(PLUGIN_ID), project, block_size);
+            let mut sandboxed_host = host_isolating_everything();
+            let sandboxed = render_with_host(&mut sandboxed_host, project, block_size);
+            for key in ["plugin", "instrument:midi"] {
+                assert!(
+                    sandboxed_host.instance_by_key(key).unwrap().is_sandboxed(),
+                    "{key} must really run in the bridge"
+                );
+            }
+            assert_eq!(
+                first_difference(&in_process, &sandboxed),
+                None,
+                "block size {block_size}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_sandboxed_plugin_renders_like_an_in_process_one() {
+        assert_sandbox_matches_in_process(&project(PLUGIN_ID, vec![(GAIN, 0.8)]));
+    }
+
+    #[test]
+    fn a_sandboxed_plugin_renders_like_an_in_process_one_with_automation_and_modulation() {
+        let automated = automated_and_modulated_project();
+        let render = render_with_plugin(&automated, PLUGIN_ID, BLOCK_SIZES[0]);
+        let static_render = render_with_plugin(
+            &project(PLUGIN_ID, vec![(GAIN, 0.8)]),
+            PLUGIN_ID,
+            BLOCK_SIZES[0],
+        );
+        assert!(
+            first_difference(&render, &static_render).is_some(),
+            "the automation and the modulation must change the sound"
+        );
+        assert_sandbox_matches_in_process(&automated);
+    }
 }
 
 /// The VST3 counterpart of `clap_plugins`: the built `crates/test_vst3_plugin` as an

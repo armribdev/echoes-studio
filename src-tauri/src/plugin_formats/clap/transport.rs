@@ -1,54 +1,34 @@
 //! Engine transport → CLAP `clap_event_transport`.
 
-use super::ffi::{
-    ClapEventHeader, ClapEventTransport, CLAP_CORE_EVENT_SPACE, CLAP_EVENT_TRANSPORT,
-    CLAP_TIME_FACTOR, CLAP_TRANSPORT_HAS_BEATS_TIMELINE, CLAP_TRANSPORT_HAS_SECONDS_TIMELINE,
-    CLAP_TRANSPORT_HAS_TEMPO, CLAP_TRANSPORT_HAS_TIME_SIGNATURE, CLAP_TRANSPORT_IS_PLAYING,
-};
+use super::ffi::{transport_event, ClapEventTransport, TransportValues};
 use crate::audio_graph::node::TransportInfo;
 
 /// Built on the stack every block; no allocation.
 pub fn clap_transport_event(transport: &TransportInfo) -> ClapEventTransport {
     let position = transport.musical_position();
-    let mut flags = CLAP_TRANSPORT_HAS_TEMPO
-        | CLAP_TRANSPORT_HAS_BEATS_TIMELINE
-        | CLAP_TRANSPORT_HAS_SECONDS_TIMELINE
-        | CLAP_TRANSPORT_HAS_TIME_SIGNATURE;
-    if transport.is_playing {
-        flags |= CLAP_TRANSPORT_IS_PLAYING;
-    }
-    ClapEventTransport {
-        header: ClapEventHeader {
-            size: std::mem::size_of::<ClapEventTransport>() as u32,
-            time: 0,
-            space_id: CLAP_CORE_EVENT_SPACE,
-            r#type: CLAP_EVENT_TRANSPORT,
-            flags: 0,
-        },
-        flags,
-        song_pos_beats: to_clap_time(position.beats),
-        song_pos_seconds: to_clap_time(transport.position_seconds),
+    transport_event(&TransportValues {
+        playing: transport.is_playing,
+        position_beats: position.beats,
+        position_seconds: transport.position_seconds,
         tempo: transport.bpm as f64,
-        tempo_inc: 0.0,
-        loop_start_beats: 0,
-        loop_end_beats: 0,
-        loop_start_seconds: 0,
-        loop_end_seconds: 0,
-        bar_start: to_clap_time(position.bar_start_beats),
+        bar_start_beats: position.bar_start_beats,
         bar_number: position.bar_number,
-        tsig_num: transport.time_signature.numerator as u16,
-        tsig_denom: transport.time_signature.denominator as u16,
-    }
-}
-
-fn to_clap_time(value: f64) -> i64 {
-    (value * CLAP_TIME_FACTOR).round() as i64
+        time_signature_numerator: transport.time_signature.numerator as u16,
+        time_signature_denominator: transport.time_signature.denominator as u16,
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::audio_graph::node::TimeSignature;
+    use crate::plugin_formats::clap::ffi::{
+        CLAP_EVENT_TRANSPORT, CLAP_TIME_FACTOR, CLAP_TRANSPORT_IS_PLAYING,
+    };
+
+    fn to_clap_time(value: f64) -> i64 {
+        (value * CLAP_TIME_FACTOR).round() as i64
+    }
 
     fn transport_at(
         seconds: f64,

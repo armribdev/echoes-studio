@@ -14,9 +14,10 @@
 //!
 //! ## One audio block
 //!
-//! [`AudioPort::process_block`] (engine audio thread) writes the block into the
-//! audio-in ring, signals the wake event, and spins — bounded by a budget — for
-//! the reply with the same sequence.  The bridge's audio thread
+//! [`AudioPort::process_block`] (engine audio thread) writes the block (header,
+//! typed sections, samples — see [`crate::protocol`]) into the audio-in ring,
+//! signals the wake event, and spins — bounded by a budget — for the reply with
+//! the same sequence.  The bridge's audio thread
 //! ([`BridgePeer::serve_audio`]) sleeps on that event, processes the block, and
 //! pushes the reply.  A block that misses the budget is silence; after
 //! [`DEAD_AFTER_CONSECUTIVE_TIMEOUTS`] such blocks in a row the port is dead and
@@ -34,8 +35,9 @@ use std::time::{Duration, Instant};
 
 use crate::control::{self, Op, STATUS_OK};
 use crate::protocol::{
-    read_samples, write_samples, BlockHeader, BLOCK_HAS_INPUT, BLOCK_HEADER_BYTES, BLOCK_RESET,
-    BRIDGE_PROTOCOL_VERSION,
+    read_samples, write_records, write_samples, BlockHeader, BlockShape, Section, WireNote,
+    WireParam, WireRecord, WireTransport, BLOCK_HAS_INPUT, BLOCK_HAS_TRANSPORT, BLOCK_HEADER_BYTES,
+    BLOCK_RESET, BRIDGE_PROTOCOL_VERSION, NOTE_BYTES, PARAM_BYTES, TRANSPORT_BYTES,
 };
 use crate::region::{SharedEvent, SharedRegion};
 use crate::shmem::{RingLayout, ShmemRing};
@@ -181,19 +183,44 @@ pub struct BlockRequest<'a> {
     pub frames: usize,
     /// Planar input (`channels × frames`), or `None` for a generator.
     pub input: Option<&'a [f32]>,
-    /// Format-native events for this block (opaque here).
-    pub events: &'a [u8],
+    pub transport: Option<&'a WireTransport>,
+    /// Notes and raw MIDI, in the order the plugin must see them.
+    pub notes: &'a [WireNote],
+    pub params: &'a [WireParam],
     pub sequence: u64,
     pub steady_time: i64,
     /// Clear the plugin's DSP state before processing.
     pub reset: bool,
 }
 
+impl BlockRequest<'_> {
+    /// Bytes the sections take in the ring message.
+    fn section_bytes(&self) -> usize {
+        self.transport.map_or(0, |_| TRANSPORT_BYTES)
+            + self.notes.len() * NOTE_BYTES
+            + self.params.len() * PARAM_BYTES
+    }
+}
+
+/// Buffers the caller lends for the answer, so nothing is allocated per block.
+pub struct BlockReply<'a> {
+    /// Planar output (`channels × frames` samples used).
+    pub output: &'a mut [f32],
+    /// What the plugin did to its own parameters (edits, gestures).
+    pub edits: &'a mut [WireParam],
+    /// The MIDI the plugin produced.
+    pub midi: &'a mut [WireNote],
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BlockOutcome {
-    /// The bridge answered: `output` holds the processed block and the first
-    /// `event_bytes` of `out_events` its output events.
-    Processed { flags: u32, event_bytes: usize },
+    /// The bridge answered: `output` holds the processed block, the first
+    /// `edit_count` of `edits` and `midi_count` of `midi` what the plugin sent back.
+    Processed {
+        flags: u32,
+        edit_count: usize,
+        midi_count: usize,
+    },
     /// No answer within the budget: `output` is silence.
     TimedOut,
     /// The watchdog condemned the port: `output` is silence.
@@ -267,26 +294,22 @@ impl AudioPort {
     }
 
     /// Send one block and wait, at most `budget`, for its reply.
-    ///
-    /// `output` is planar (`channels × frames` samples used); `out_events`
-    /// receives the plugin's output events.
     pub fn process_block(
         &self,
         request: &BlockRequest,
-        output: &mut [f32],
-        out_events: &mut [u8],
+        reply: &mut BlockReply,
         budget: Duration,
     ) -> BlockOutcome {
         let samples = request.frames * self.layout.channels as usize;
         let fits = request.frames <= self.layout.max_frames as usize
-            && output.len() >= samples
-            && request.events.len() <= self.layout.event_capacity as usize
+            && reply.output.len() >= samples
+            && request.section_bytes() <= self.layout.event_capacity as usize
             && request.input.is_none_or(|input| input.len() >= samples);
         if !fits {
             return BlockOutcome::Skipped;
         }
         if self.dead.load(Ordering::Relaxed) {
-            output[..samples].fill(0.0);
+            reply.output[..samples].fill(0.0);
             return BlockOutcome::Dead;
         }
         if self.busy.swap(true, Ordering::Acquire) {
@@ -294,7 +317,7 @@ impl AudioPort {
         }
         // SAFETY: `busy` grants exclusive use of the scratch buffers.
         let scratch = unsafe { &mut *self.scratch.get() };
-        let outcome = self.round_trip(request, &mut output[..samples], out_events, budget, scratch);
+        let outcome = self.round_trip(request, reply, samples, budget, scratch);
         self.busy.store(false, Ordering::Release);
         self.note_outcome(outcome);
         outcome
@@ -303,41 +326,48 @@ impl AudioPort {
     fn round_trip(
         &self,
         request: &BlockRequest,
-        output: &mut [f32],
-        out_events: &mut [u8],
+        reply: &mut BlockReply,
+        samples: usize,
         budget: Duration,
         scratch: &mut PortScratch,
     ) -> BlockOutcome {
         // Replies to blocks that already timed out.
         while self.audio_out.pop(&mut scratch.recv).is_some() {}
 
-        let mut flags = if request.input.is_some() {
-            BLOCK_HAS_INPUT
-        } else {
-            0
-        };
+        let mut flags = 0;
+        if request.input.is_some() {
+            flags |= BLOCK_HAS_INPUT;
+        }
         if request.reset {
             flags |= BLOCK_RESET;
         }
-        let header = BlockHeader::new(
-            request.frames as u32,
-            self.layout.channels,
+        if request.transport.is_some() {
+            flags |= BLOCK_HAS_TRANSPORT;
+        }
+        let header = BlockHeader::new(BlockShape {
+            frames: request.frames as u32,
+            channel_count: self.layout.channels,
             flags,
-            request.events.len() as u32,
-            request.sequence,
-            request.steady_time,
-        );
-        let events_end = BLOCK_HEADER_BYTES + request.events.len();
-        scratch.send[..BLOCK_HEADER_BYTES].copy_from_slice(&header.to_bytes());
-        scratch.send[BLOCK_HEADER_BYTES..events_end].copy_from_slice(request.events);
-        let mut len = events_end;
+            note_count: request.notes.len() as u32,
+            param_count: request.params.len() as u32,
+            sequence: request.sequence,
+            steady_time: request.steady_time,
+        });
+        header.write(&mut scratch.send);
+        let mut len = BLOCK_HEADER_BYTES;
+        if let Some(transport) = request.transport {
+            transport.write(&mut scratch.send[len..]);
+            len += TRANSPORT_BYTES;
+        }
+        len = write_records(request.notes, &mut scratch.send, len);
+        len = write_records(request.params, &mut scratch.send, len);
         if let Some(input) = request.input {
-            let end = len + output.len() * 4;
-            write_samples(&input[..output.len()], &mut scratch.send[len..end]);
+            let end = len + samples * 4;
+            write_samples(&input[..samples], &mut scratch.send[len..end]);
             len = end;
         }
         if !self.audio_in.push(&scratch.send[..len]) {
-            output.fill(0.0);
+            reply.output[..samples].fill(0.0);
             return BlockOutcome::TimedOut;
         }
         self.wake.signal();
@@ -347,14 +377,14 @@ impl AudioPort {
             if let Some(received) = self.audio_out.pop(&mut scratch.recv) {
                 let message = &scratch.recv[..received];
                 match BlockHeader::from_bytes(message) {
-                    Some(reply) if reply.sequence == request.sequence => {
-                        return read_reply(&reply, message, output, out_events);
+                    Some(answer) if answer.sequence == request.sequence => {
+                        return read_reply(&answer, message, samples, reply);
                     }
                     _ => continue,
                 }
             }
             if Instant::now() >= deadline {
-                output.fill(0.0);
+                reply.output[..samples].fill(0.0);
                 return BlockOutcome::TimedOut;
             }
             std::hint::spin_loop();
@@ -387,19 +417,30 @@ impl AudioPort {
 }
 
 fn read_reply(
-    reply: &BlockHeader,
+    answer: &BlockHeader,
     message: &[u8],
-    output: &mut [f32],
-    out_events: &mut [u8],
+    samples: usize,
+    reply: &mut BlockReply,
 ) -> BlockOutcome {
-    let events_end = (BLOCK_HEADER_BYTES + reply.event_bytes as usize).min(message.len());
-    let events = &message[BLOCK_HEADER_BYTES..events_end];
-    let event_bytes = events.len().min(out_events.len());
-    out_events[..event_bytes].copy_from_slice(&events[..event_bytes]);
-    read_samples(&message[events_end..], output);
+    let notes_at = (BLOCK_HEADER_BYTES + answer.transport_bytes()).min(message.len());
+    let params_at = (notes_at + answer.note_count as usize * NOTE_BYTES).min(message.len());
+    let samples_at = (params_at + answer.param_count as usize * PARAM_BYTES).min(message.len());
+
+    let midi = Section::<WireNote>::new(&message[notes_at..], answer.note_count as usize);
+    let midi_count = midi.len().min(reply.midi.len());
+    for (slot, note) in reply.midi.iter_mut().zip(midi.iter()) {
+        *slot = note;
+    }
+    let edits = Section::<WireParam>::new(&message[params_at..], answer.param_count as usize);
+    let edit_count = edits.len().min(reply.edits.len());
+    for (slot, edit) in reply.edits.iter_mut().zip(edits.iter()) {
+        *slot = edit;
+    }
+    read_samples(&message[samples_at..], &mut reply.output[..samples]);
     BlockOutcome::Processed {
-        flags: reply.flags,
-        event_bytes,
+        flags: answer.flags,
+        edit_count,
+        midi_count,
     }
 }
 
@@ -607,38 +648,56 @@ pub struct BlockContext<'a> {
     pub reset: bool,
     pub sequence: u64,
     pub steady_time: i64,
-    /// The engine's events for this block.
-    pub events: &'a [u8],
+    pub transport: Option<WireTransport>,
+    /// The engine's notes and raw MIDI for this block, in order.
+    pub notes: Section<'a, WireNote>,
+    pub params: Section<'a, WireParam>,
 }
 
-/// Fixed-capacity sink for a block's output events.
-pub struct EventWriter<'a> {
-    buf: &'a mut [u8],
-    len: usize,
+/// Fixed-capacity sink for what the plugin sends back during a block.
+pub struct ReplyWriter<'a> {
+    edits: &'a mut [WireParam],
+    edit_count: usize,
+    midi: &'a mut [WireNote],
+    midi_count: usize,
 }
 
-impl<'a> EventWriter<'a> {
-    pub fn new(buf: &'a mut [u8]) -> Self {
-        EventWriter { buf, len: 0 }
+impl<'a> ReplyWriter<'a> {
+    pub fn new(edits: &'a mut [WireParam], midi: &'a mut [WireNote]) -> Self {
+        ReplyWriter {
+            edits,
+            edit_count: 0,
+            midi,
+            midi_count: 0,
+        }
     }
 
-    /// Appends one event; `false` (dropped) when it does not fit.
-    pub fn push(&mut self, event: &[u8]) -> bool {
-        let end = self.len + event.len();
-        let Some(slot) = self.buf.get_mut(self.len..end) else {
+    /// Appends a parameter edit or gesture; `false` (dropped) when full.
+    pub fn push_edit(&mut self, edit: WireParam) -> bool {
+        let Some(slot) = self.edits.get_mut(self.edit_count) else {
             return false;
         };
-        slot.copy_from_slice(event);
-        self.len = end;
+        *slot = edit;
+        self.edit_count += 1;
         true
     }
 
-    pub fn len(&self) -> usize {
-        self.len
+    /// Appends a MIDI message the plugin produced; `false` (dropped) when full.
+    pub fn push_midi(&mut self, note: WireNote) -> bool {
+        let Some(slot) = self.midi.get_mut(self.midi_count) else {
+            return false;
+        };
+        *slot = note;
+        self.midi_count += 1;
+        true
     }
 
-    pub fn is_empty(&self) -> bool {
-        self.len == 0
+    pub fn edit_count(&self) -> usize {
+        self.edit_count
+    }
+
+    pub fn midi_count(&self) -> usize {
+        self.midi_count
     }
 }
 
@@ -651,7 +710,7 @@ pub trait BridgeProcessor {
         block: &BlockContext,
         input: &[f32],
         output: &mut [f32],
-        out_events: &mut EventWriter,
+        reply: &mut ReplyWriter,
     ) -> u32;
 
     /// Called on the audio thread when no block arrived for a while.
@@ -747,11 +806,13 @@ impl BridgePeer {
         );
         let layout = self.layout;
         let slot = layout.slot_size();
-        let event_capacity = layout.event_capacity as usize;
+        let half_capacity = layout.event_capacity as usize / 2;
         let mut received = vec![0u8; slot];
         let mut reply = vec![0u8; slot];
         let mut input = vec![0.0f32; layout.max_samples()];
         let mut output = vec![0.0f32; layout.max_samples()];
+        let mut edits = vec![WireParam::new(0, 0, 0, 0.0); half_capacity / PARAM_BYTES];
+        let mut midi = vec![WireNote::new(0, 0, [0; 3]); half_capacity / NOTE_BYTES];
 
         while !self.shutdown_requested() {
             let Some(length) = self.audio_in.pop(&mut received) else {
@@ -766,15 +827,20 @@ impl BridgePeer {
             };
             let frames = (header.frames as usize).min(layout.max_frames as usize);
             let samples = frames * layout.channels as usize;
-            let events_end = (BLOCK_HEADER_BYTES + header.event_bytes as usize).min(length);
+            let transport_at = BLOCK_HEADER_BYTES.min(length);
+            let notes_at = (transport_at + header.transport_bytes()).min(length);
+            let params_at = (notes_at + header.note_count as usize * NOTE_BYTES).min(length);
+            let samples_at = (params_at + header.param_count as usize * PARAM_BYTES).min(length);
             let has_input = header.flags & BLOCK_HAS_INPUT != 0;
             if has_input {
-                read_samples(&message[events_end..], &mut input[..samples]);
+                read_samples(&message[samples_at..], &mut input[..samples]);
             } else {
                 input[..samples].fill(0.0);
             }
             output[..samples].fill(0.0);
 
+            let has_transport = header.flags & BLOCK_HAS_TRANSPORT != 0
+                && notes_at - transport_at >= TRANSPORT_BYTES;
             let block = BlockContext {
                 frames,
                 channels: layout.channels as usize,
@@ -782,31 +848,35 @@ impl BridgePeer {
                 reset: header.flags & BLOCK_RESET != 0,
                 sequence: header.sequence,
                 steady_time: header.steady_time,
-                events: &message[BLOCK_HEADER_BYTES..events_end],
+                transport: has_transport
+                    .then(|| WireTransport::read(&message[transport_at..notes_at])),
+                notes: Section::new(&message[notes_at..], header.note_count as usize),
+                params: Section::new(&message[params_at..], header.param_count as usize),
             };
-            let out_events = &mut reply[BLOCK_HEADER_BYTES..BLOCK_HEADER_BYTES + event_capacity];
-            let mut writer = EventWriter::new(out_events);
+            let mut writer = ReplyWriter::new(&mut edits, &mut midi);
             let flags = processor.process(
                 &block,
                 &input[..samples],
                 &mut output[..samples],
                 &mut writer,
             );
-            let event_bytes = writer.len();
+            let (edit_count, midi_count) = (writer.edit_count(), writer.midi_count());
 
-            let reply_header = BlockHeader::new(
-                frames as u32,
-                layout.channels,
+            let reply_header = BlockHeader::new(BlockShape {
+                frames: frames as u32,
+                channel_count: layout.channels,
                 flags,
-                event_bytes as u32,
-                header.sequence,
-                header.steady_time,
-            );
-            reply[..BLOCK_HEADER_BYTES].copy_from_slice(&reply_header.to_bytes());
-            let samples_start = BLOCK_HEADER_BYTES + event_bytes;
-            let end = samples_start + samples * 4;
-            write_samples(&output[..samples], &mut reply[samples_start..end]);
-            self.audio_out.push(&reply[..end]);
+                note_count: midi_count as u32,
+                param_count: edit_count as u32,
+                sequence: header.sequence,
+                steady_time: header.steady_time,
+            });
+            reply_header.write(&mut reply);
+            let mut end = write_records(&midi[..midi_count], &mut reply, BLOCK_HEADER_BYTES);
+            end = write_records(&edits[..edit_count], &mut reply, end);
+            let samples_end = end + samples * 4;
+            write_samples(&output[..samples], &mut reply[end..samples_end]);
+            self.audio_out.push(&reply[..samples_end]);
         }
     }
 }
@@ -839,12 +909,15 @@ mod tests {
     }
 
     #[test]
-    fn event_writer_refuses_overflow() {
-        let mut buf = [0u8; 6];
-        let mut writer = EventWriter::new(&mut buf);
-        assert!(writer.push(&[1, 2, 3, 4]));
-        assert!(!writer.push(&[5, 6, 7]));
-        assert_eq!(writer.len(), 4);
+    fn the_reply_writer_refuses_overflow() {
+        let mut edits = [WireParam::new(0, 0, 0, 0.0); 1];
+        let mut midi = [WireNote::new(0, 0, [0; 3]); 1];
+        let mut writer = ReplyWriter::new(&mut edits, &mut midi);
+        assert!(writer.push_edit(WireParam::new(0, 1, 2, 3.0)));
+        assert!(!writer.push_edit(WireParam::new(0, 4, 5, 6.0)));
+        assert!(writer.push_midi(WireNote::new(0, 0, [1, 2, 3])));
+        assert!(!writer.push_midi(WireNote::new(0, 0, [4, 5, 6])));
+        assert_eq!((writer.edit_count(), writer.midi_count()), (1, 1));
     }
 
     #[test]
@@ -856,9 +929,11 @@ mod tests {
 #[cfg(all(test, windows))]
 mod loop_tests {
     use super::*;
+    use crate::protocol::{BLOCK_PLUGIN_EDITED, MIDI, NOTE_ON, PARAM_MODULATION, PARAM_VALUE};
     use std::sync::Arc;
 
-    /// ×2 gain; echoes the engine's events back and flags every block.
+    /// ×2 gain; sends the engine's parameter events and notes back, adds one
+    /// edit carrying the tempo of its transport, and flags every block.
     struct Doubler;
 
     impl BridgeProcessor for Doubler {
@@ -867,13 +942,20 @@ mod loop_tests {
             block: &BlockContext,
             input: &[f32],
             output: &mut [f32],
-            out_events: &mut EventWriter,
+            reply: &mut ReplyWriter,
         ) -> u32 {
             for (out, sample) in output.iter_mut().zip(input) {
                 *out = sample * 2.0;
             }
-            out_events.push(block.events);
-            crate::protocol::BLOCK_PLUGIN_EDITED
+            for param in block.params.iter() {
+                reply.push_edit(param);
+            }
+            for note in block.notes.iter() {
+                reply.push_midi(note);
+            }
+            let tempo = block.transport.map_or(0.0, |t| t.tempo);
+            reply.push_edit(WireParam::new(PARAM_VALUE, 0, 99, tempo));
+            BLOCK_PLUGIN_EDITED
         }
     }
 
@@ -886,9 +968,42 @@ mod loop_tests {
         (region, port, peer)
     }
 
+    fn transport(tempo: f64) -> WireTransport {
+        WireTransport {
+            flags: 0,
+            bar_number: 0,
+            sample_rate: 48_000.0,
+            position_samples: 0,
+            position_seconds: 0.0,
+            position_beats: 0.0,
+            bar_start_beats: 0.0,
+            tempo,
+            time_signature_numerator: 4,
+            time_signature_denominator: 4,
+            reserved: 0,
+        }
+    }
+
+    fn request<'a>(
+        frames: usize,
+        input: Option<&'a [f32]>,
+        params: &'a [WireParam],
+    ) -> BlockRequest<'a> {
+        BlockRequest {
+            frames,
+            input,
+            transport: None,
+            notes: &[],
+            params,
+            sequence: 0,
+            steady_time: 0,
+            reset: false,
+        }
+    }
+
     #[test]
-    fn blocks_round_trip_with_events_and_flags() {
-        let layout = BridgeLayout::new(32, 2, 256);
+    fn blocks_round_trip_with_sections_and_flags() {
+        let layout = BridgeLayout::new(32, 2, 1024);
         let (region, port, peer) = connected(layout);
         let server = {
             let peer = Arc::clone(&peer);
@@ -896,32 +1011,40 @@ mod loop_tests {
         };
 
         let mut output = vec![0.0f32; 64];
-        let mut out_events = vec![0u8; 256];
+        let mut edits = vec![WireParam::new(0, 0, 0, 0.0); 8];
+        let mut midi = vec![WireNote::new(0, 0, [0; 3]); 8];
         for sequence in 0..20u64 {
             let frames = 1 + (sequence as usize * 7) % 32;
             let input: Vec<f32> = (0..frames * 2)
                 .map(|i| sequence as f32 + i as f32)
                 .collect();
-            let events = [sequence as u8; 5];
-            let request = BlockRequest {
-                frames,
-                input: Some(&input),
-                events: &events,
+            let notes = [
+                WireNote::new(0, NOTE_ON, [60, sequence as u8, 0]),
+                WireNote::new(3, MIDI, [0xE0, 1, 2]),
+            ];
+            let params = [
+                WireParam::new(PARAM_VALUE, 1, 7, sequence as f64),
+                WireParam::new(PARAM_MODULATION, 2, 8, -0.5),
+            ];
+            let tempo = transport(100.0 + sequence as f64);
+            let sent = BlockRequest {
+                transport: (sequence % 2 == 0).then_some(&tempo),
+                notes: &notes,
                 sequence,
-                steady_time: 0,
-                reset: false,
+                ..request(frames, Some(&input), &params)
             };
-            let outcome = port.process_block(
-                &request,
-                &mut output,
-                &mut out_events,
-                Duration::from_secs(2),
-            );
+            let mut reply = BlockReply {
+                output: &mut output,
+                edits: &mut edits,
+                midi: &mut midi,
+            };
+            let outcome = port.process_block(&sent, &mut reply, Duration::from_secs(2));
             assert_eq!(
                 outcome,
                 BlockOutcome::Processed {
                     flags: crate::protocol::BLOCK_PLUGIN_EDITED,
-                    event_bytes: 5
+                    edit_count: 3,
+                    midi_count: 2
                 }
             );
             let doubled: Vec<f32> = input.iter().map(|s| s * 2.0).collect();
@@ -930,7 +1053,17 @@ mod loop_tests {
                 doubled.as_slice(),
                 "block {sequence}"
             );
-            assert_eq!(&out_events[..5], &events);
+            assert_eq!(&edits[..2], &params);
+            assert_eq!(&midi[..2], &notes);
+            let expected_tempo = if sequence % 2 == 0 {
+                100.0 + sequence as f64
+            } else {
+                0.0
+            };
+            assert_eq!(
+                edits[2].value, expected_tempo,
+                "the transport arrives only when sent"
+            );
         }
 
         peer.status().store(STATUS_SHUTDOWN, Ordering::Release);
@@ -945,25 +1078,28 @@ mod loop_tests {
         let (_region, port, _peer) = connected(layout);
         let input = vec![1.0f32; 32];
         let mut output = vec![1.0f32; 32];
-        let request = BlockRequest {
-            frames: 16,
-            input: Some(&input),
-            events: &[],
-            sequence: 0,
-            steady_time: 0,
-            reset: false,
-        };
+        let sent = request(16, Some(&input), &[]);
 
         for _ in 0..DEAD_AFTER_CONSECUTIVE_TIMEOUTS {
             assert!(!port.is_dead());
-            let outcome = port.process_block(&request, &mut output, &mut [], Duration::ZERO);
+            let mut reply = BlockReply {
+                output: &mut output,
+                edits: &mut [],
+                midi: &mut [],
+            };
+            let outcome = port.process_block(&sent, &mut reply, Duration::ZERO);
             assert_eq!(outcome, BlockOutcome::TimedOut);
             assert!(output.iter().all(|&s| s == 0.0));
         }
         assert!(port.is_dead());
         output.fill(1.0);
+        let mut reply = BlockReply {
+            output: &mut output,
+            edits: &mut [],
+            midi: &mut [],
+        };
         assert_eq!(
-            port.process_block(&request, &mut output, &mut [], Duration::from_secs(1)),
+            port.process_block(&sent, &mut reply, Duration::from_secs(1)),
             BlockOutcome::Dead
         );
         assert!(output.iter().all(|&s| s == 0.0));
@@ -974,18 +1110,34 @@ mod loop_tests {
         let layout = BridgeLayout::new(16, 2, 64);
         let (_region, port, _peer) = connected(layout);
         let mut output = vec![3.0f32; 64];
-        let request = BlockRequest {
-            frames: 32,
-            input: None,
-            events: &[],
-            sequence: 0,
-            steady_time: 0,
-            reset: false,
+        let sent = request(32, None, &[]);
+        let mut reply = BlockReply {
+            output: &mut output,
+            edits: &mut [],
+            midi: &mut [],
         };
         assert_eq!(
-            port.process_block(&request, &mut output, &mut [], Duration::ZERO),
+            port.process_block(&sent, &mut reply, Duration::ZERO),
             BlockOutcome::Skipped
         );
         assert!(output.iter().all(|&s| s == 3.0));
+    }
+
+    #[test]
+    fn sections_larger_than_the_event_capacity_are_skipped() {
+        let layout = BridgeLayout::new(16, 2, 64);
+        let (_region, port, _peer) = connected(layout);
+        let mut output = vec![3.0f32; 32];
+        let params = [WireParam::new(PARAM_VALUE, 0, 1, 0.0); 3];
+        let sent = request(16, None, &params);
+        let mut reply = BlockReply {
+            output: &mut output,
+            edits: &mut [],
+            midi: &mut [],
+        };
+        assert_eq!(
+            port.process_block(&sent, &mut reply, Duration::ZERO),
+            BlockOutcome::Skipped
+        );
     }
 }

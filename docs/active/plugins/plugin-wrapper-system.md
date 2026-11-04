@@ -593,8 +593,9 @@ musical math lives in `TransportInfo::musical_position` (`audio_graph/node.rs`)
 so the VST3 `ProcessContext` can reuse it. `steady_time` is a sample counter
 advanced by the block size on every call (including a skipped block), so a
 plugin can place GUI notes on a continuous clock. Not covered: loop points
-(Echoes has no loop). The out-of-process bridge receives the same transport
-event as the first event of every block (`BridgeRoundTrip::write_events`).
+(Echoes has no loop). The out-of-process bridge receives the same values as the
+transport section of every block (`wire_transport` in `bridged_node.rs`); its CLAP
+adapter builds the event with the same function (`clap_ffi::transport_event`).
 
 **Plugin sleep (2026-10-14).** The host stops calling `process()` on a CLAP
 plugin that has nothing left to play, using the status `process()` returns and
@@ -731,8 +732,8 @@ checked against `clap/ext/track-info.h` (`clap_track_info`: `flags:u64`,
 - _Sandbox._ The bridge hosts the same extension. The track at creation travels
   as a launch argument (`--track-info <hex>`), because the bridge runs `init`
   before it answers any request; later changes use a new control op,
-  `Op::TrackInfo` (the encoded `HostTrackInfo`), which the bridge's main thread
-  applies and follows with `changed()`. The engine remembers what it last sent
+  `Op::TrackInfo` (a `TrackRecord`, since protocol v3), which the bridge's main
+  thread applies and follows with `changed()`. The engine remembers what it last sent
   and skips a dead bridge. A failed request is retried by the next sync. The
   shared-memory layout and `BRIDGE_PROTOCOL_VERSION` are unchanged.
 - _Limits._ VST3 has its own (`IInfoListener`, below). A plugin that calls main-thread
@@ -900,7 +901,7 @@ plugin is destroyed. The decisions below were validated by the user on 2026-10-1
   i.e. every Windows tick, ~15.6 ms) on the Win32 thread, through
   `PluginInstance::run_due_timers`. Sandboxed: the bridge's main loop
   (`serve_requests`, which wakes at least every 5 ms) through
-  `LoadedPlugin::run_due_timers`. No new thread, no new window. `clap.thread-check`
+  `ClapAdapter::run_due_timers`. No new thread, no new window. `clap.thread-check`
   reports both as the main thread; no `audio_thread_scope`.
 - _Editor closed._ **A timer runs only while its plugin's editor window exists**,
   in process and sandboxed alike. A timer registered before `gui.create` or after
@@ -1071,8 +1072,9 @@ plugin answers through the host's `loaded` / `on_error` (see Host
   through, an instrument is silent). A preset that loads samples can hold it for a
   noticeable time. ADR-031 keeps the gate-free call (L2) as the fallback if this is
   not acceptable by ear.
-- _Sandboxed._ `Op::PresetLoad = 11`: payload `PresetRequest::encode` (kind:u32,
-  presence flags:u8, then each text as length:u16 + UTF-8), reply empty or the
+- _Sandboxed._ `Op::PresetLoad = 11`: payload a `PresetRecord` (source:u8 — file or
+  plugin —, presence flags:u8, then each text as length:u16 + UTF-8; it was
+  `PresetRequest::encode` before protocol v3), reply empty or the
   plugin's own message. The bridge's main thread calls `from_location` beside
   `process`, as it does for `LoadState`. Shared memory and
   `BRIDGE_PROTOCOL_VERSION` unchanged.
@@ -1256,6 +1258,51 @@ plugin, gate freed, bases re-read, controller sync, plugin not active), the
 whitelist in `host.rs`, and the real-plugin tests of `ffi_lifecycle_tests.rs`
 (`vst3_real_controller_program_lists`, `vst3_real_program_can_be_chosen`,
 `vst3_real_preset_file_is_listed_and_loaded`).
+
+### Sandbox protocol v3 and the CLAP adapter (ADR-033 step 4, 2026-11-04)
+
+A sandboxed CLAP plugin is driven through the format-neutral protocol of
+`crates/plugin_bridge` (ADR-033). The engine never writes a CLAP structure for it:
+
+- **Engine side** (`plugin_system/bridged_node.rs`). `BridgeRoundTrip` fills the
+  block's sections: `ClapParamEvents::fill_into` runs the **same** logic as the
+  in-process `fill` (queued edits, released modulation, modulation, automation,
+  value modulation) into a `ParamEventSink` — CLAP's event buffer in the Echoes
+  process, a vector of `WireParam` (kinds `PARAM_VALUE`, `PARAM_MODULATION`) for the
+  bridge. Notes and controls become `WireNote`s in the order of the engine's
+  `MidiEventList`. The plugin's edits come back as `WireParam`s and go through
+  `ClapParamEvents::observe_edit`, the neutral twin of `observe_output_event`
+  (a drag pauses a value-modulated parameter, an edit marks the project unsaved).
+  Parameter values stay **plain** (ADR-021): the handshake declares
+  `ParamUnit::Plain` and the bridge converts nothing.
+- **Bridge side** (`crates/plugin_host_bridge/src/clap_adapter.rs`). `ClapAdapter`
+  (the former `LoadedPlugin`: load, activate, state, parameters, track info, note
+  names, preset load, timers, editor) and `ClapBlockProcessor` (the audio loop,
+  sleep and tail). Per block it pushes the parameter events, then the notes, into its
+  `ClapEventBuffer` and sorts once by time — the order the in-process wrappers
+  produce — and builds the transport event with `clap_ffi::transport_event`, the
+  function the in-process path uses too. Plugin output events become edits
+  (value, gesture begin / end) or MIDI; other events are dropped, as the engine
+  dropped them before. A gesture from the engine has no CLAP equivalent and is
+  ignored by this adapter.
+- **Handshake** (`Op::Handshake`). The adapter reads `clap.audio-ports` and
+  declares every port; the first main (else first) port of each direction is the
+  active one — the bus the audio loop binds, as in protocol v2. A plugin without
+  the extension is declared as one stereo main port each way. Sidechain and
+  auxiliary outputs of a sandboxed CLAP plugin are therefore listed but not fed
+  (unchanged from before; the port table is what will carry them).
+- **Not changed**: the CLAP plugin in the Echoes process, the editor (still
+  `editor.rs` over `ClapAdapter`), sleep and tail, timers, presets, the launch
+  arguments `--plugin-dll`, `--plugin-id`, `--track-info`.
+
+Tests: `plugin_bridge` (ABI sizes and offsets, flag values, record round trips,
+hostile counts), `plugin_host_bridge/tests/bridge.rs` (34 tests over the real
+bridge, including the handshake, notes, raw MIDI, gestures and the transport),
+`clap_adapter.rs` (output events, parameter flags, rescan bits),
+`bridged_node.rs` (wire transport equals the in-process event, note order, full
+buffers), and in `render_harness::clap_plugins` the sandbox-against-in-process
+renders (effect and instrument, automated and modulated gain, five block sizes,
+identical samples).
 
 ---
 

@@ -1776,3 +1776,75 @@ fn a_sleeping_in_process_plugin_wakes_for_a_preset() {
 fn a_sleeping_sandboxed_plugin_wakes_for_a_preset() {
     a_sleeping_plugin_wakes_for_a_preset(true);
 }
+
+/// Micro-measure of one block's round trip through the bridge (ADR-033 step 4):
+/// `cargo test --bin echoes-studio measure_the_block_round_trip -- --ignored --nocapture`.
+#[test]
+#[ignore = "timing measure, prints its figures"]
+fn measure_the_block_round_trip() {
+    const WARM_UP: usize = 200;
+    const BLOCKS: usize = 3000;
+
+    fn summary(label: &str, mut micros: Vec<f64>) {
+        micros.sort_by(f64::total_cmp);
+        let at = |share: f64| micros[((micros.len() - 1) as f64 * share) as usize];
+        let mean = micros.iter().sum::<f64>() / micros.len() as f64;
+        println!(
+            "{label:<28} mean {mean:7.1} us   p50 {:7.1}   p99 {:7.1}   max {:8.1}",
+            at(0.5),
+            at(0.99),
+            micros[micros.len() - 1]
+        );
+    }
+
+    let mut host = host();
+    let mut effect = prepared(&mut host, true, false);
+    let mut input = AudioBuffer::new(2, 4096);
+    let mut outputs = vec![AudioBuffer::new(2, 4096)];
+    for frames in [64usize, 512] {
+        input.channel_mut(0)[..frames].fill(0.5);
+        input.channel_mut(1)[..frames].fill(0.5);
+        let transport = TransportInfo {
+            block_size: frames,
+            ..TransportInfo::stopped(48_000.0)
+        };
+        let mut micros = Vec::with_capacity(BLOCKS);
+        for block in 0..WARM_UP + BLOCKS {
+            let start = std::time::Instant::now();
+            effect.process(&[&input], &mut outputs, &transport);
+            if block >= WARM_UP {
+                micros.push(start.elapsed().as_secs_f64() * 1e6);
+            }
+        }
+        summary(&format!("effect, {frames} frames"), micros);
+    }
+    drop(effect);
+
+    host.set_isolation(PluginIsolation::All, HashSet::new());
+    let mut instrument = prepared_instrument(&mut host, false);
+    assert!(is_sandboxed(&host, INSTRUMENT_KEY));
+    let mut events = MidiEventList::new();
+    events.push(MidiEvent {
+        offset: 0,
+        kind: NOTE_ON,
+    });
+    events.push(MidiEvent {
+        offset: 16,
+        kind: NOTE_OFF,
+    });
+    for frames in [64usize, 512] {
+        let transport = TransportInfo {
+            block_size: frames,
+            ..TransportInfo::stopped(48_000.0)
+        };
+        let mut micros = Vec::with_capacity(BLOCKS);
+        for block in 0..WARM_UP + BLOCKS {
+            let start = std::time::Instant::now();
+            instrument.process_midi(&events, &mut outputs, &transport);
+            if block >= WARM_UP {
+                micros.push(start.elapsed().as_secs_f64() * 1e6);
+            }
+        }
+        summary(&format!("instrument + 2 notes, {frames}"), micros);
+    }
+}

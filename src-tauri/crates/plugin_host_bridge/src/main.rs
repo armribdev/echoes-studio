@@ -17,9 +17,9 @@
 //! plugin_host_bridge --print-protocol-version
 //! ```
 
+mod clap_adapter;
 #[cfg(windows)]
 mod editor;
-mod plugin;
 
 use std::collections::HashMap;
 use std::io::{self, BufReader, Write};
@@ -28,10 +28,11 @@ use std::process::ExitCode;
 use std::sync::{mpsc, Arc};
 use std::time::Instant;
 
+use clap_adapter::{ClapAdapter, ClapBlockProcessor};
 use clap_ffi::{HostTrackInfo, TimerSchedule};
-use plugin::{ClapBlockProcessor, LoadedPlugin};
 use plugin_bridge::control::{self, Op, PayloadReader, STATUS_ERROR, STATUS_OK};
 use plugin_bridge::protocol::BRIDGE_PROTOCOL_VERSION;
+use plugin_bridge::records::TrackRecord;
 use plugin_bridge::session::{BridgeLayout, BridgePeer};
 
 const EXIT_START_FAILED: u8 = 3;
@@ -97,7 +98,7 @@ fn run(options: Options) -> Result<(), String> {
     );
     #[cfg(windows)]
     editor::enable_per_monitor_dpi();
-    let plugin = match LoadedPlugin::load(
+    let plugin = match ClapAdapter::load(
         &options.plugin_dll,
         &options.plugin_id,
         options.track_info.as_ref(),
@@ -153,7 +154,7 @@ fn spawn_request_reader() -> mpsc::Receiver<Option<(u8, Vec<u8>)>> {
 /// Main thread: answer requests and run the editor until shutdown.
 fn serve_requests(
     peer: &BridgePeer,
-    plugin: &LoadedPlugin,
+    plugin: &ClapAdapter,
     requests: &mpsc::Receiver<Option<(u8, Vec<u8>)>>,
 ) {
     let mut stdout = io::stdout().lock();
@@ -180,7 +181,7 @@ fn serve_requests(
     }
 }
 
-fn handle(plugin: &LoadedPlugin, op: u8, payload: &[u8]) -> Result<Vec<u8>, String> {
+fn handle(plugin: &ClapAdapter, op: u8, payload: &[u8]) -> Result<Vec<u8>, String> {
     let op = Op::from_u8(op).ok_or_else(|| format!("unknown request {op}"))?;
     let mut reader = PayloadReader::new(payload);
     let invalid = |e: io::Error| e.to_string();
@@ -221,20 +222,24 @@ fn handle(plugin: &LoadedPlugin, op: u8, payload: &[u8]) -> Result<Vec<u8>, Stri
         Op::OpenEditor => open_editor(plugin, &String::from_utf8_lossy(payload)),
         Op::NoteNames => Ok(plugin.note_names()),
         Op::TrackInfo => {
-            let info = HostTrackInfo::decode(payload).ok_or("invalid track info")?;
-            plugin.set_track_info(&info);
+            let track = TrackRecord::decode(payload).map_err(|_| "invalid track info")?;
+            plugin.set_track_info(&HostTrackInfo {
+                name: track.name,
+                color: track.color,
+            });
             Ok(Vec::new())
         }
+        Op::Handshake => Ok(plugin.handshake()),
     }
 }
 
 #[cfg(windows)]
-fn open_editor(plugin: &LoadedPlugin, title: &str) -> Result<Vec<u8>, String> {
+fn open_editor(plugin: &ClapAdapter, title: &str) -> Result<Vec<u8>, String> {
     editor::open(plugin, title).map(|hwnd| hwnd.to_le_bytes().to_vec())
 }
 
 #[cfg(not(windows))]
-fn open_editor(_: &LoadedPlugin, _: &str) -> Result<Vec<u8>, String> {
+fn open_editor(_: &ClapAdapter, _: &str) -> Result<Vec<u8>, String> {
     Err("plugin editors are only available on Windows".into())
 }
 

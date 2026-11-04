@@ -9,18 +9,22 @@ use std::sync::OnceLock;
 use std::time::Duration;
 
 use clap_ffi::{
-    decode_note_names, read_pod, split_events, ClapEventBuffer, ClapEventHeader, ClapParamInfo,
-    HostTrackInfo, NoteName, PresetRequest, CLAP_EVENT_PARAM_GESTURE_END, CLAP_EVENT_PARAM_VALUE,
-    CLAP_NOTE_DIALECT_CLAP, CLAP_NOTE_DIALECT_MIDI, CLAP_NOTE_PORTS_RESCAN_ALL,
+    HostTrackInfo, CLAP_NOTE_DIALECT_CLAP, CLAP_NOTE_DIALECT_MIDI, CLAP_NOTE_PORTS_RESCAN_ALL,
     CLAP_NOTE_PORTS_RESCAN_NAMES,
 };
-use plugin_bridge::control::{Op, PayloadReader};
+use plugin_bridge::control::Op;
 use plugin_bridge::protocol::{
-    BLOCK_NOTE_NAMES_CHANGED, BLOCK_PARAMS_RESCAN_MASK, BLOCK_PARAMS_RESCAN_SHIFT,
-    BLOCK_PLUGIN_EDITED, BLOCK_RESTART_REQUESTED,
+    WireNote, WireParam, WireTransport, BLOCK_NOTE_NAMES_CHANGED, BLOCK_PARAMS_RESCAN_MASK,
+    BLOCK_PARAMS_RESCAN_SHIFT, BLOCK_PLUGIN_EDITED, BLOCK_RESTART_REQUESTED, MIDI, NOTE_OFF,
+    NOTE_ON, PARAM_GESTURE_END, PARAM_MODULATION, PARAM_VALUE, TRANSPORT_PLAYING,
+};
+use plugin_bridge::records::{
+    Handshake, NoteNameRecord, ParamRecord, ParamUnit, PortDirection, PortRole, PresetRecord,
+    PresetSource, SpeakerLayout, TrackRecord, PARAM_AUTOMATABLE, PARAM_MODULATABLE,
 };
 use plugin_bridge::session::{
-    BlockOutcome, BlockRequest, BridgeLayout, BridgeProcess, DEAD_AFTER_CONSECUTIVE_TIMEOUTS,
+    BlockOutcome, BlockReply, BlockRequest, BridgeLayout, BridgeProcess,
+    DEAD_AFTER_CONSECUTIVE_TIMEOUTS,
 };
 
 const GAIN: u32 = 0;
@@ -125,25 +129,36 @@ fn activated_with_track(plugin_id: &str, track_info: Option<&HostTrackInfo>) -> 
     bridge
 }
 
-fn param_events(changes: &[(u16, u32, f64)]) -> Vec<u8> {
-    let mut buffer = ClapEventBuffer::new();
-    for &(kind, native_id, value) in changes {
-        if kind == CLAP_EVENT_PARAM_VALUE {
-            buffer.push_param_value(0, native_id, value);
-        } else {
-            buffer.push_param_mod(0, native_id, value);
-        }
-    }
-    buffer.sort();
-    let mut bytes = vec![0u8; 4096];
-    let end = buffer.write_bytes(&mut bytes, 0).unwrap();
-    bytes.truncate(end);
-    bytes
+fn param_events(changes: &[(u32, u32, f64)]) -> Vec<WireParam> {
+    changes
+        .iter()
+        .map(|&(kind, native_id, value)| WireParam::new(kind, 0, native_id, value))
+        .collect()
 }
+
+fn track_record(info: &HostTrackInfo) -> Vec<u8> {
+    TrackRecord {
+        name: info.name.clone(),
+        color: info.color,
+    }
+    .encode()
+}
+
+struct Sections<'a> {
+    transport: Option<&'a WireTransport>,
+    notes: &'a [WireNote],
+    params: &'a [WireParam],
+}
+
+const NO_SECTIONS: Sections = Sections {
+    transport: None,
+    notes: &[],
+    params: &[],
+};
 
 struct Block {
     output: Vec<f32>,
-    out_events: Vec<u8>,
+    edits: Vec<WireParam>,
     outcome: BlockOutcome,
 }
 
@@ -151,28 +166,53 @@ fn process(
     bridge: &BridgeProcess,
     sequence: u64,
     input: &[f32],
-    events: &[u8],
+    params: &[WireParam],
+    budget: Duration,
+) -> Block {
+    process_sections(
+        bridge,
+        sequence,
+        Some(input),
+        Sections {
+            params,
+            ..NO_SECTIONS
+        },
+        budget,
+    )
+}
+
+fn process_sections(
+    bridge: &BridgeProcess,
+    sequence: u64,
+    input: Option<&[f32]>,
+    sections: Sections,
     budget: Duration,
 ) -> Block {
     let mut output = vec![9.0f32; FRAMES * CHANNELS];
-    let mut out_events = vec![0u8; 4096];
+    let mut edits = vec![WireParam::new(0, 0, 0, 0.0); 64];
+    let mut midi = vec![WireNote::new(0, 0, [0; 3]); 64];
     let request = BlockRequest {
         frames: FRAMES,
-        input: Some(input),
-        events,
+        input,
+        transport: sections.transport,
+        notes: sections.notes,
+        params: sections.params,
         sequence,
         steady_time: sequence as i64 * FRAMES as i64,
         reset: false,
     };
-    let outcome = bridge
-        .audio()
-        .process_block(&request, &mut output, &mut out_events, budget);
-    if let BlockOutcome::Processed { event_bytes, .. } = outcome {
-        out_events.truncate(event_bytes);
+    let mut reply = BlockReply {
+        output: &mut output,
+        edits: &mut edits,
+        midi: &mut midi,
+    };
+    let outcome = bridge.audio().process_block(&request, &mut reply, budget);
+    if let BlockOutcome::Processed { edit_count, .. } = outcome {
+        edits.truncate(edit_count);
     }
     Block {
         output,
-        out_events,
+        edits,
         outcome,
     }
 }
@@ -194,13 +234,13 @@ fn processes_audio_with_parameter_changes_and_modulation() {
     assert!(matches!(block.outcome, BlockOutcome::Processed { .. }));
     assert_eq!(block.output, input, "unity gain by default");
 
-    let events = param_events(&[(CLAP_EVENT_PARAM_VALUE, GAIN, 0.5)]);
+    let events = param_events(&[(PARAM_VALUE, GAIN, 0.5)]);
     assert_eq!(
         process(&bridge, 1, &input, &events, TIMEOUT).output,
         scaled(&input, 0.5)
     );
 
-    let events = param_events(&[(clap_ffi::CLAP_EVENT_PARAM_MOD, GAIN, 0.25)]);
+    let events = param_events(&[(PARAM_MODULATION, GAIN, 0.25)]);
     assert_eq!(
         process(&bridge, 2, &input, &events, TIMEOUT).output,
         scaled(&input, 0.75)
@@ -234,13 +274,16 @@ fn state_and_parameters_travel_over_the_control_channel() {
         .unwrap();
     assert_eq!(f64::from_le_bytes(value.try_into().unwrap()), 1.5);
 
-    let params = bridge.request(Op::Params, &[], TIMEOUT).unwrap();
-    let mut reader = PayloadReader::new(&params);
-    assert_eq!(reader.u32().unwrap(), PARAM_COUNT);
-    let first: ClapParamInfo = read_pod(&params[4..]).unwrap();
+    let params =
+        ParamRecord::decode_list(&bridge.request(Op::Params, &[], TIMEOUT).unwrap()).unwrap();
+    assert_eq!(params.len(), PARAM_COUNT as usize);
     assert_eq!(
-        (first.id, &first.name[..4], first.max_value),
-        (GAIN, &b"Gain"[..], 2.0)
+        (params[0].native_id, params[0].name.as_str(), params[0].max),
+        (GAIN, "Gain", 2.0)
+    );
+    assert_eq!(
+        params[0].flags & (PARAM_AUTOMATABLE | PARAM_MODULATABLE),
+        PARAM_AUTOMATABLE | PARAM_MODULATABLE
     );
 
     let error = bridge.request(Op::LoadState, &[1, 2], TIMEOUT).unwrap_err();
@@ -255,26 +298,21 @@ fn state_and_parameters_travel_over_the_control_channel() {
 #[test]
 fn edits_made_in_the_plugin_come_back_with_the_block() {
     let bridge = activated();
-    let events = param_events(&[(CLAP_EVENT_PARAM_VALUE, TOUCH, 1.0)]);
+    let events = param_events(&[(PARAM_VALUE, TOUCH, 1.0)]);
     let block = process(&bridge, 0, &ramp(), &events, TIMEOUT);
 
     let BlockOutcome::Processed { flags, .. } = block.outcome else {
         panic!("block not processed: {:?}", block.outcome);
     };
     assert_ne!(flags & BLOCK_PLUGIN_EDITED, 0, "mark_dirty is forwarded");
-    let kinds: Vec<u16> = split_events(&block.out_events)
-        .map(|event| read_pod::<ClapEventHeader>(event).unwrap().r#type)
-        .collect();
-    assert_eq!(
-        kinds,
-        [CLAP_EVENT_PARAM_VALUE, CLAP_EVENT_PARAM_GESTURE_END]
-    );
+    let kinds: Vec<u32> = block.edits.iter().map(|edit| edit.kind).collect();
+    assert_eq!(kinds, [PARAM_VALUE, PARAM_GESTURE_END]);
 }
 
 #[test]
 fn a_restart_request_comes_back_with_the_block_and_the_next_activate_applies_it() {
     let bridge = activated();
-    let events = param_events(&[(CLAP_EVENT_PARAM_VALUE, LOOKAHEAD, 1.0)]);
+    let events = param_events(&[(PARAM_VALUE, LOOKAHEAD, 1.0)]);
     let block = process(&bridge, 0, &ramp(), &events, TIMEOUT);
 
     let BlockOutcome::Processed { flags, .. } = block.outcome else {
@@ -327,7 +365,7 @@ fn the_plugin_writes_the_text_of_its_values() {
 #[test]
 fn a_parameter_rescan_comes_back_with_the_block_once() {
     let bridge = activated();
-    let events = param_events(&[(CLAP_EVENT_PARAM_VALUE, RESCAN, 6.0)]);
+    let events = param_events(&[(PARAM_VALUE, RESCAN, 6.0)]);
     let block = process(&bridge, 0, &ramp(), &events, TIMEOUT);
 
     let BlockOutcome::Processed { flags, .. } = block.outcome else {
@@ -373,7 +411,7 @@ fn a_flush_request_from_outside_the_audio_thread_wakes_a_sleeping_plugin() {
 fn a_crashing_plugin_only_kills_its_bridge() {
     let bridge = activated();
     let input = ramp();
-    let events = param_events(&[(CLAP_EVENT_PARAM_VALUE, CRASH, 1.0)]);
+    let events = param_events(&[(PARAM_VALUE, CRASH, 1.0)]);
     let block = process(&bridge, 0, &input, &events, Duration::from_millis(500));
     assert_eq!(block.outcome, BlockOutcome::TimedOut);
     assert!(
@@ -392,7 +430,7 @@ fn a_crashing_plugin_only_kills_its_bridge() {
 fn a_hung_plugin_times_out_then_is_condemned() {
     let bridge = activated();
     let input = ramp();
-    let events = param_events(&[(CLAP_EVENT_PARAM_VALUE, HANG, 1.0)]);
+    let events = param_events(&[(PARAM_VALUE, HANG, 1.0)]);
     for sequence in 0..DEAD_AFTER_CONSECUTIVE_TIMEOUTS as u64 {
         let events = if sequence == 0 {
             events.as_slice()
@@ -491,7 +529,7 @@ fn a_new_track_over_the_control_channel_calls_changed_on_the_main_thread() {
 
     let renamed = HostTrackInfo::new("Pad", Some([0x12, 0x34, 0x56]));
     bridge
-        .request(Op::TrackInfo, &renamed.encode(), TIMEOUT)
+        .request(Op::TrackInfo, &track_record(&renamed), TIMEOUT)
         .unwrap();
     assert_eq!(
         track_info_values(&bridge),
@@ -499,7 +537,7 @@ fn a_new_track_over_the_control_channel_calls_changed_on_the_main_thread() {
     );
 
     bridge
-        .request(Op::TrackInfo, &renamed.encode(), TIMEOUT)
+        .request(Op::TrackInfo, &track_record(&renamed), TIMEOUT)
         .unwrap();
     assert_eq!(
         track_info_values(&bridge)[5],
@@ -509,7 +547,7 @@ fn a_new_track_over_the_control_channel_calls_changed_on_the_main_thread() {
 
     let recolored = HostTrackInfo::new("Pad", None);
     bridge
-        .request(Op::TrackInfo, &recolored.encode(), TIMEOUT)
+        .request(Op::TrackInfo, &track_record(&recolored), TIMEOUT)
         .unwrap();
     assert_eq!(
         track_info_values(&bridge),
@@ -540,7 +578,7 @@ fn track_changes_do_not_stop_the_audio() {
         bridge
             .request(
                 Op::TrackInfo,
-                &HostTrackInfo::new(name, None).encode(),
+                &track_record(&HostTrackInfo::new(name, None)),
                 TIMEOUT,
             )
             .unwrap();
@@ -586,7 +624,7 @@ fn a_sleeping_plugin_is_not_processed_until_a_signal_reaches_it() {
     process(&bridge, 8, &silence(), &[], TIMEOUT);
     assert_eq!(process_calls(&bridge), 3, "asleep again once quiet");
 
-    let events = param_events(&[(CLAP_EVENT_PARAM_VALUE, GAIN, 1.0)]);
+    let events = param_events(&[(PARAM_VALUE, GAIN, 1.0)]);
     process(&bridge, 9, &silence(), &events, TIMEOUT);
     assert_eq!(process_calls(&bridge), 4, "an event wakes it");
     assert_eq!(bridge.audio().timeout_count(), 0);
@@ -596,10 +634,7 @@ fn a_sleeping_plugin_is_not_processed_until_a_signal_reaches_it() {
 fn a_tail_is_not_cut_before_its_length_of_quiet_input() {
     let bridge = activated();
     let tail = 200.0;
-    let events = param_events(&[
-        (CLAP_EVENT_PARAM_VALUE, STATUS, 3.0),
-        (CLAP_EVENT_PARAM_VALUE, TAIL, tail),
-    ]);
+    let events = param_events(&[(PARAM_VALUE, STATUS, 3.0), (PARAM_VALUE, TAIL, tail)]);
     process(&bridge, 0, &silence(), &events, TIMEOUT);
 
     let mut calls = Vec::new();
@@ -618,10 +653,7 @@ fn a_tail_is_not_cut_before_its_length_of_quiet_input() {
 #[test]
 fn a_plugin_that_claims_to_sleep_while_sounding_stays_awake() {
     let bridge = activated();
-    let events = param_events(&[
-        (CLAP_EVENT_PARAM_VALUE, STATUS, 4.0),
-        (CLAP_EVENT_PARAM_VALUE, LIAR, 1.0),
-    ]);
+    let events = param_events(&[(PARAM_VALUE, STATUS, 4.0), (PARAM_VALUE, LIAR, 1.0)]);
     let input = ramp();
     process(&bridge, 0, &input, &events, TIMEOUT);
     for sequence in 1..=5 {
@@ -637,13 +669,13 @@ fn a_plugin_that_claims_to_sleep_while_sounding_stays_awake() {
     );
 }
 
-fn note_names(bridge: &BridgeProcess) -> Vec<NoteName> {
+fn note_names(bridge: &BridgeProcess) -> Vec<NoteNameRecord> {
     let reply = bridge.request(Op::NoteNames, &[], TIMEOUT).unwrap();
-    decode_note_names(&reply).expect("a well-formed list")
+    NoteNameRecord::decode_list(&reply).expect("a well-formed list")
 }
 
-fn note_name(name: &str, port: i16, key: i16, channel: i16) -> NoteName {
-    NoteName {
+fn note_name(name: &str, port: i16, key: i16, channel: i16) -> NoteNameRecord {
+    NoteNameRecord {
         name: name.into(),
         port,
         key,
@@ -651,7 +683,7 @@ fn note_name(name: &str, port: i16, key: i16, channel: i16) -> NoteName {
     }
 }
 
-fn block_flags(bridge: &BridgeProcess, sequence: u64, events: &[u8]) -> u32 {
+fn block_flags(bridge: &BridgeProcess, sequence: u64, events: &[WireParam]) -> u32 {
     let block = process(bridge, sequence, &ramp(), events, TIMEOUT);
     let BlockOutcome::Processed { flags, .. } = block.outcome else {
         panic!("block not processed: {:?}", block.outcome);
@@ -663,14 +695,14 @@ fn block_flags(bridge: &BridgeProcess, sequence: u64, events: &[u8]) -> u32 {
 fn a_preset_loaded_by_the_plugin_comes_back_as_an_edit_and_an_error_does_not() {
     let bridge = activated();
 
-    let failed = param_events(&[(CLAP_EVENT_PARAM_VALUE, PRESET_ERROR, 1.0)]);
+    let failed = param_events(&[(PARAM_VALUE, PRESET_ERROR, 1.0)]);
     assert_eq!(
         block_flags(&bridge, 0, &failed) & BLOCK_PLUGIN_EDITED,
         0,
         "a failed load changed nothing"
     );
 
-    let loaded = param_events(&[(CLAP_EVENT_PARAM_VALUE, PRESET_LOADED, 1.0)]);
+    let loaded = param_events(&[(PARAM_VALUE, PRESET_LOADED, 1.0)]);
     assert_ne!(
         block_flags(&bridge, 1, &loaded) & BLOCK_PLUGIN_EDITED,
         0,
@@ -684,8 +716,8 @@ fn a_preset_loaded_by_the_plugin_comes_back_as_an_edit_and_an_error_does_not() {
 }
 
 fn bundled_preset(key: &str) -> Vec<u8> {
-    PresetRequest {
-        location_kind: 1,
+    PresetRecord {
+        source: PresetSource::Plugin,
         location: None,
         load_key: Some(key.into()),
     }
@@ -746,7 +778,7 @@ fn the_note_names_of_the_plugin_travel_over_the_control_channel() {
         ]
     );
 
-    let events = param_events(&[(CLAP_EVENT_PARAM_VALUE, NOTE_NAMES_SET, 1.0)]);
+    let events = param_events(&[(PARAM_VALUE, NOTE_NAMES_SET, 1.0)]);
     block_flags(&bridge, 0, &events);
     assert_eq!(note_names(&bridge), [note_name("Tom", 0, 41, 9)]);
 }
@@ -760,7 +792,7 @@ fn a_change_of_note_names_comes_back_with_the_block_once() {
         "nothing changed yet"
     );
 
-    let events = param_events(&[(CLAP_EVENT_PARAM_VALUE, NOTE_NAMES_SET, 1.0)]);
+    let events = param_events(&[(PARAM_VALUE, NOTE_NAMES_SET, 1.0)]);
     assert_ne!(
         block_flags(&bridge, 1, &events) & BLOCK_NOTE_NAMES_CHANGED,
         0,
@@ -783,7 +815,7 @@ fn a_rescan_of_all_note_ports_comes_back_as_a_restart_request() {
     let bridge = activated();
 
     let renamed = param_events(&[(
-        CLAP_EVENT_PARAM_VALUE,
+        PARAM_VALUE,
         NOTE_PORTS_RESCAN,
         f64::from(CLAP_NOTE_PORTS_RESCAN_NAMES),
     )]);
@@ -794,7 +826,7 @@ fn a_rescan_of_all_note_ports_comes_back_as_a_restart_request() {
     );
 
     let all = param_events(&[(
-        CLAP_EVENT_PARAM_VALUE,
+        PARAM_VALUE,
         NOTE_PORTS_RESCAN,
         f64::from(CLAP_NOTE_PORTS_RESCAN_ALL),
     )]);
@@ -845,7 +877,7 @@ fn the_plugin_registers_timers_from_any_thread_and_a_zero_period_is_refused() {
     let bridge = activated();
 
     // From the audio thread: a plugin may call the host from the wrong thread.
-    let events = param_events(&[(CLAP_EVENT_PARAM_VALUE, TIMER_REGISTER, 33.0)]);
+    let events = param_events(&[(PARAM_VALUE, TIMER_REGISTER, 33.0)]);
     block_flags(&bridge, 0, &events);
     assert_eq!(param_value(&bridge, TIMER_REGISTER_RESULT), ACCEPTED);
     let from_audio = param_value(&bridge, TIMER_LAST_ID);
@@ -910,4 +942,169 @@ fn an_open_editor_runs_the_timers_until_they_are_unregistered() {
     let calls = param_value(&bridge, TIMER_CALLS);
     std::thread::sleep(Duration::from_millis(150));
     assert_eq!(param_value(&bridge, TIMER_CALLS), calls, "no timer left");
+}
+
+// ── Protocol v3: handshake and sections ───────────────────────────────────────
+
+#[test]
+fn the_handshake_declares_plain_values_and_the_port_table() {
+    let bridge = activated();
+    let reply = bridge.request(Op::Handshake, &[], TIMEOUT).unwrap();
+    let handshake = Handshake::decode(&reply).unwrap();
+
+    assert_eq!(handshake.param_unit, ParamUnit::Plain);
+    assert_eq!(handshake.ports.len(), 4, "two inputs and two outputs");
+    let input = handshake
+        .active_port(PortDirection::Input)
+        .unwrap()
+        .expect("an active input");
+    let output = handshake
+        .active_port(PortDirection::Output)
+        .unwrap()
+        .expect("an active output");
+    for port in [input, output] {
+        assert_eq!(
+            (port.role, port.layout, port.channels),
+            (PortRole::Main, SpeakerLayout::Stereo, 2)
+        );
+    }
+    let aux_output = handshake
+        .ports
+        .iter()
+        .find(|port| port.direction == PortDirection::Output && port.role == PortRole::Auxiliary)
+        .expect("the declared auxiliary output");
+    assert_eq!(
+        (aux_output.channels, aux_output.layout, aux_output.active),
+        (1, SpeakerLayout::Mono, false)
+    );
+}
+
+fn note(offset: u32, kind: u8, data: [u8; 3]) -> WireNote {
+    WireNote::new(offset, kind, data)
+}
+
+#[test]
+fn notes_and_parameters_of_a_block_reach_a_generator() {
+    let bridge = activated();
+    let play = |sequence, notes: &[WireNote], params: &[WireParam]| {
+        process_sections(
+            &bridge,
+            sequence,
+            None,
+            Sections {
+                transport: None,
+                notes,
+                params,
+            },
+            TIMEOUT,
+        )
+        .output[0]
+    };
+
+    assert_eq!(play(0, &[], &[]), 0.0, "silent until a note");
+    assert_eq!(play(1, &[note(0, NOTE_ON, [60, 127, 0])], &[]), 1.0);
+    let half = param_events(&[(PARAM_VALUE, GAIN, 0.5)]);
+    assert_eq!(play(2, &[], &half), 0.5, "the note is still held");
+    assert_eq!(play(3, &[note(0, NOTE_OFF, [60, 0, 0])], &[]), 0.0);
+}
+
+#[test]
+fn a_note_and_a_parameter_of_one_block_are_both_delivered() {
+    let bridge = activated();
+    let notes = [note(10, NOTE_ON, [60, 127, 0])];
+    let params = [WireParam::new(PARAM_VALUE, 20, GAIN, 0.5)];
+    let block = process_sections(
+        &bridge,
+        0,
+        None,
+        Sections {
+            transport: None,
+            notes: &notes,
+            params: &params,
+        },
+        TIMEOUT,
+    );
+    assert!(
+        block.output[..FRAMES].iter().all(|&sample| sample == 0.5),
+        "the test plugin applies a block's events before it renders: note 1.0 x gain 0.5"
+    );
+}
+
+#[test]
+fn raw_midi_and_gestures_from_the_engine_do_not_disturb_the_plugin() {
+    let bridge = activated();
+    let notes = [note(0, MIDI, [0xE0, 0, 64])];
+    let params = [
+        WireParam::new(plugin_bridge::protocol::PARAM_GESTURE_BEGIN, 0, GAIN, 0.0),
+        WireParam::new(PARAM_GESTURE_END, 0, GAIN, 0.0),
+    ];
+    let input = ramp();
+    let block = process_sections(
+        &bridge,
+        0,
+        Some(&input),
+        Sections {
+            transport: None,
+            notes: &notes,
+            params: &params,
+        },
+        TIMEOUT,
+    );
+    assert!(matches!(block.outcome, BlockOutcome::Processed { .. }));
+    assert_eq!(block.output, input);
+}
+
+#[test]
+fn the_plugin_reads_the_transport_of_the_block() {
+    let bridge = activated_plugin("echoes.test.sleepy");
+    let transport = |playing: bool| WireTransport {
+        flags: if playing { TRANSPORT_PLAYING } else { 0 },
+        bar_number: 0,
+        sample_rate: 48_000.0,
+        position_samples: 0,
+        position_seconds: 0.0,
+        position_beats: 0.0,
+        bar_start_beats: 0.0,
+        tempo: 120.0,
+        time_signature_numerator: 4,
+        time_signature_denominator: 4,
+        reserved: 0,
+    };
+    let quiet = |sequence, playing: &WireTransport| {
+        process_sections(
+            &bridge,
+            sequence,
+            Some(&silence()),
+            Sections {
+                transport: Some(playing),
+                ..NO_SECTIONS
+            },
+            TIMEOUT,
+        )
+    };
+
+    let stopped = transport(false);
+    for sequence in 0..4 {
+        quiet(sequence, &stopped);
+    }
+    assert_eq!(
+        process_calls(&bridge),
+        1,
+        "a stopped transport lets it sleep"
+    );
+
+    let playing = transport(true);
+    quiet(4, &playing);
+    assert_eq!(process_calls(&bridge), 2, "starting the transport wakes it");
+}
+
+#[test]
+fn a_handshake_request_after_a_crash_fails_like_any_other() {
+    let bridge = activated();
+    let params = param_events(&[(PARAM_VALUE, CRASH, 1.0)]);
+    process(&bridge, 0, &ramp(), &params, Duration::from_millis(500));
+    for sequence in 1..DEAD_AFTER_CONSECUTIVE_TIMEOUTS as u64 {
+        process(&bridge, sequence, &ramp(), &[], Duration::from_millis(20));
+    }
+    assert!(bridge.request(Op::Handshake, &[], TIMEOUT).is_err());
 }

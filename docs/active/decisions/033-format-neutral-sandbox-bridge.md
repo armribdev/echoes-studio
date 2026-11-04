@@ -2,15 +2,16 @@
 
 ## Status
 
-**Proposed — 2026-11-03; plan approved by the user the same day, steps 0 to 3
-done.** Step 0 (this ADR and the header check in Appendix A) changed no code. Step 1
+**Proposed — 2026-11-03; plan approved by the user the same day, steps 0 to 4
+done (step 4 delivered 2026-11-04, awaiting the user's review).** Step 0 (this ADR and the header check in Appendix A) changed no code. Step 1
 moved `vst3/ffi.rs` and `param_queue.rs` into the `vst3_ffi` and `plugin_param_queue`
 crates (see "Step 1 — what shipped"). Step 2 added the test plugin, the harness
 baseline and the loader fix ("Step 2 — what shipped"). Step 3 moved the VST3 host objects into
-`vst3_host` ("Step 3 — what shipped"). Decisions 1–9 below were taken by the user
+`vst3_host` ("Step 3 — what shipped"). Step 4 froze protocol v3 and moved CLAP onto it
+("Step 4 — what shipped"). Decisions 1–9 below were taken by the user
 before this ADR was written (decision 10 only restates ADR-015). The status stays
-_Proposed_ until the protocol change of step 4, the first step that crosses the
-real-time boundary, is approved.
+_Proposed_ until the user has reviewed step 4, the first step that crossed the
+real-time boundary (and hand-tested a sandboxed CLAP plugin).
 
 Extends **ADR-015** (out-of-process sandbox, opt-in), which listed "VST3 behind the
 same handle" under _Still open_. Builds on ADR-003 (plugin boundary), ADR-010 (state
@@ -84,7 +85,7 @@ The goal is that **a VST3 plugin that crashes does not take Echoes down**. Today
 10. **No silent fallback** (unchanged from ADR-015): a VST3 plugin that cannot start
     sandboxed is reported unavailable, never loaded in-process instead.
 
-### Shape of v3 (to be frozen in step 4, not before)
+### Shape of v3 (frozen in step 4, 2026-11-04 — exact layout in "Step 4 — what shipped")
 
 - A block message stays `[header][typed sections][samples]`, in preallocated rings of
   fixed capacity (`event_capacity`, as today). Sections: transport (one POD per
@@ -172,7 +173,7 @@ without a sandboxed VST3, and waits for the user's approval before the next one.
 | 1    | **`vst3_ffi` and `plugin_param_queue` crates**: `plugin_formats/vst3/ffi.rs` and `plugin_system/param_queue.rs` moved as they are, re-export shims in the engine. The IID test moves with the bindings.                                                                                               | none in logic; `ParamQueue` is audio-thread code, moved verbatim | harness green, all hashes unchanged                                                                  |
 | 2    | **`test_vst3_plugin` DLL and baseline** (done). cdylib built on `vst3_ffi`, written after `fake_plugin.rs` (effect with gain, state, latency, "hang", "crash", COM diagnostics; and an instrument; "touch" comes with step 6). Golden project `vst3_plugins` in the harness. The loader calls `InitDll` / `ExitDll`; the COM question is answered. | none (the loader is off the audio thread) | new golden `vst3_plugins`, recorded in-process before any host code moves; others unchanged        |
 | 3    | **`vst3_host` crate** (done). Host COM objects, buses, event list, component handler, parameter mirror, units, channel context, MIDI mapping, transport context. The engine types they use today (see Context) are replaced by neutral ones owned by the crates; `wrapper.rs` and `instrument.rs` stay in the engine. Sub-steps by file group, each green. | **high**: audio-thread code is moved and decoupled | `vst3_plugins` and every other hash must not move; TDR Nova render identical before / after (manual) |
-| 4    | **Protocol v3 and CLAP migration.** First commit: the "sandbox against in-process" test on v2 for the CLAP test plugin. Then typed sections, port table, `ClapAdapter` in the bridge, neutral control records, `BRIDGE_PROTOCOL_VERSION` = 3.                                                          | **high**: message format on both audio threads | the new test stays identical; `clap_plugins` unchanged                                              |
+| 4    | **Protocol v3 and CLAP migration** (done 2026-11-04). First commit: the "sandbox against in-process" test on v2 for the CLAP test plugin. Then typed sections, port table, `ClapAdapter` in the bridge, neutral control records, `BRIDGE_PROTOCOL_VERSION` = 3.                                                          | **high**: message format on both audio threads | the new test stays identical; `clap_plugins` unchanged                                              |
 | 5    | **VST3 audio in the bridge.** `Vst3Adapter` (effects): load, `InitDll`, activate, process, latency, tail, state, crash and restart, ADR-010 gate inside the bridge. `runs_sandboxed` accepts VST3, the modes and the "Isoler" button cover it.                                                      | **high**: first VST3 on the ring; cores spinning | sandbox-against-in-process test on the VST3 test DLL (effect)                                       |
 | 6    | **VST3 parameters.** Parameter list and text, automation and modulation with a sample offset, gestures both ways, rescan, controller follows processor (inside the bridge), modulated bases before a state save.                                                                                    | medium: bounded queues (128 × 128)   | same test with automated and modulated parameters                                                    |
 | 7    | **VST3 editor in the bridge.** `IPlugView` / `IPlugFrame` / content scale in the bridge's Win32 window (same layout as CLAP), resize in the same call stack, close order.                                                                                                                              | none (bridge UI thread)              | none                                                                                                 |
@@ -229,7 +230,18 @@ without a sandboxed VST3, and waits for the user's approval before the next one.
    them. If the diff grows past what can be reviewed, step 3 is split by file group.
 5. **Units of a parameter value in v3** (plain for CLAP, normalised for VST3) and
    whether a "modulation offset" kind is needed for VST3 (ADR-021 emulates it by
-   value). Frozen in step 4 with the ABI.
+   value). _Step 4 froze the units_: the handshake declares them, the CLAP adapter
+   declares `ParamUnit::Plain`, and the engine refuses a bridge that declares anything
+   else (`Normalised` is defined, no adapter sends it yet). **The offset kind is
+   still the user's call.** Recommendation: keep `PARAM_MODULATION` in the ABI. CLAP
+   needs it today (a modulatable CLAP parameter is modulated by an offset on top of its
+   value, `CLAP_EVENT_PARAM_MOD`; without the kind the CLAP migration could not stay
+   bit-identical). The engine would never send it to a VST3 plugin, which ADR-021
+   modulates by value around a base, and the VST3 adapter of step 6 would ignore it.
+   The alternative — send every modulation as a value — would change what CLAP plugins
+   receive and is not recommended. Implemented as recommended so that CLAP stays
+   identical; it costs one enumerator and can be removed before step 5 if the user
+   decides otherwise.
 6. **Behaviour change of mode _Tous_.** Users who chose _Tous_ will see their VST3
    effects isolated after step 5 (extra processes, possible CPU cost). To be
    announced; the 8-instance measurement in step 5 decides whether it is acceptable.
@@ -241,7 +253,9 @@ without a sandboxed VST3, and waits for the user's approval before the next one.
    `plugins/plugin-wrapper-system.md` (sandbox, Host sections), ADR-015 (a pointer
    here and, in its historical sub-phase text, the block header is now 40 bytes, not
    32), ADR-003 (consequence "in-process isolation" no longer true for VST3),
-   ADR-014 / ADR-031 (amendments), `state_index.md` (Plugin sandbox, Plugin wrappers),
+   ADR-014 / ADR-031 (amendments), `state_index.md` (Plugin sandbox, Plugin wrappers)
+   _(ADR-015 pointer and amendment, wrapper doc, `state_index.md` and
+   `change_impact_mapping.md` done in step 4)_,
    `change_impact_mapping.md` (new rows for `vst3_ffi`, `vst3_host`,
    `plugin_param_queue`, `test_vst3_plugin`, the bridge's adapters), `threading/` docs.
 
@@ -347,6 +361,113 @@ places. The `vst3_plugins` golden hash and every other hash did not move.
 - **Not hand-tested in the app:** the loader sharing, the handler signals (unsaved flag after an
   edit in a plugin window, restart and rescan requests), the MIDI mapping and the transport —
   all covered by tests, none by a hand test.
+
+## Step 4 — what shipped (2026-11-04)
+
+**The proof came first.** Before any change to the protocol, two tests were written
+and passed on protocol v2: `render_harness::clap_plugins::a_sandboxed_plugin_renders_like_an_in_process_one`
+and `…_with_automation_and_modulation`. Each renders the `clap_plugins` project
+(`test_clap_plugin` as an effect **and** as an instrument playing two notes; the second
+test also automates and modulates the gain of both, so parameter events with sample
+offsets cross the process) at the five block sizes of the harness, once with the
+plugins in the Echoes process (isolation _Aucun_) and once with every plugin in the
+bridge (isolation _Tous_, offline wait), and requires **identical samples**
+(`first_difference == None`). They assert that the instances really are sandboxed and
+that the automation changes the sound. They passed on v2 without touching the bridge —
+no bug in the v2 bridge was found — and pass unchanged on v3. They run in the default
+suite (C-10). They are staged in the git index, apart from the rest of the step, so they
+can be committed first as the plan asks (the user asked for no commit).
+
+**Round-trip time, before and after.** `sandbox_tests::measure_the_block_round_trip`
+(ignored by default; `cargo test --bin echoes-studio measure_the_block_round_trip --
+--ignored --nocapture`) times `process` of a sandboxed device on the test plugin, 3000
+blocks after 200 of warm-up, debug build, offline wait. Three runs each.
+
+| Device, block                   | v2 mean (p50 / p99), µs        | v3 mean (p50 / p99), µs        |
+| ------------------------------- | ------------------------------ | ------------------------------ |
+| effect, 64 frames               | 20.5–21.2 (19.6–19.9 / 37–40)  | 20.9 (19.8 / 38)               |
+| effect, 512 frames              | 117–119 (114–115 / 172–177)    | 120.7 (114.7 / 187)            |
+| instrument + 2 notes, 64 frames | 14.0–14.8 (13.0–14.1 / 28–34)  | 14.7 (13.7–14.0 / 25–30)       |
+| instrument + 2 notes, 512       | 70–72 (67–69 / 118–119)        | 70–75 (68 / 109–129)           |
+
+The v3 figures are within the run-to-run spread of the v2 ones: no measurable cost (debug
+build; one v3 run had a 3 ms outlier on the 512-frame effect, the kind of scheduling
+hiccup the p99 already shows on v2). The v2 numbers were taken before the first protocol
+edit.
+
+**Layout of the block message** (`plugin_bridge::protocol`, all `#[repr(C)]`, no
+implicit padding, sizes and offsets asserted by tests):
+
+| Part                              | Size             | Content                                                                                                                                  |
+| --------------------------------- | ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `BlockHeader`                     | 48 B (was 40)    | magic, version 3, frames, channel count, flags, note count, parameter-event count, reserved, sequence, steady time                       |
+| `WireTransport` (if flagged)      | 64 B             | playing, bar number, sample rate, position in samples / seconds / beats, bar start, tempo, time signature                                |
+| `WireNote` × n                    | 12 B each        | offset, kind (note on, note off, raw MIDI), channel, 3 data bytes — one ordered list, so same-offset order is the engine's               |
+| `WireParam` × m                   | 24 B each        | offset, native id, value, kind (value, modulation offset, gesture begin, gesture end)                                                    |
+| samples                           | channels × frames × 4 B | as before                                                                                                                         |
+
+Reply: the same header; the notes list is the MIDI the plugin produced (the engine does
+not use it yet) and the parameter list is what the plugin did to its own parameters
+(edits and gestures). Flags: input present, reset, transport present (engine → bridge);
+state edited, passed through, restart requested, parameter-list bits (`PARAMS_VALUES`,
+`_TEXT`, `_INFO`, `_LIST`), note names changed (bridge → engine). Total section bytes are
+bounded by `event_capacity` (now 64 KiB, was 80 KiB); the engine fills at most 1024
+parameter events and 256 notes, the bridge answers with at most half of the capacity
+each way.
+
+**Control channel.** The CLAP wire forms are gone. `plugin_bridge::records` defines
+`ParamRecord`, `TrackRecord`, `NoteNameRecord`, `PresetRecord` and `Handshake`, with
+`encode` / `decode`; a count read from the wire never sizes an allocation. New
+`Op::Handshake = 12`, asked once after the start: the parameter **unit** and the audio
+**port table** (direction, main / auxiliary, channels, layout, active). The engine
+refuses a bridge whose unit is not plain or with two active ports on one side — the
+plugin is then reported unavailable, never loaded in-process. The CLAP adapter lists the
+plugin's real ports and marks the first main one of each direction active (the bus the
+audio loop binds, as in v2); sidechain and auxiliary outputs are declared but not fed
+yet. The bridge never converts a parameter value.
+
+**CLAP migrated.** Engine: `ClapParamEvents::fill` was split into one body
+(`emit_param_events`) over a `ParamEventSink`, so the in-process path (CLAP event
+buffer) and the bridged path (wire records) run the same logic; `observe_edit` is the
+neutral twin of the output-event observer. `BridgeRoundTrip` writes sections; no CLAP
+type is left in `bridged_node.rs` or `bridge.rs`. Bridge: `plugin.rs` became
+`clap_adapter.rs` — `ClapAdapter` (the former `LoadedPlugin`) and `ClapBlockProcessor`
+keep sleep, tail, rescan, track info, note names, preset load, timers and the editor;
+the audio side builds one CLAP event buffer from the sections (parameter events, then
+notes, one stable sort — the in-process order) and the transport event through
+`clap_ffi::transport_event`, now the single formula for both paths. CLAP in the Echoes
+process is untouched except that its transport function calls that shared one.
+
+**Real-time checklist** (`rt-validation`), engine audio thread and bridge audio thread:
+no allocation (every vector is sized before the first block; the two that are pushed to
+are guarded by `len < capacity`), no lock, no new system call (still one non-blocking
+`SetEvent`), no `drop`, no log, no Tauri call; the bounded wait (3/4 of the block, 10 s
+offline) and the watchdog are untouched. Indexing is bounded by the layout check done
+before the ring write (`Skipped` otherwise). Written in `threading/realtime-safety.md`.
+
+**C-2.** `clap_plugins` (0x928da7dcd260c4e1), `vst3_plugins` (0x5c0f0710b6813439) and
+every other golden hash are unchanged; no hash was regenerated. The new tests are
+identical on v2 and v3.
+
+**Tests.** Whole workspace, `cargo test --workspace --no-fail-fast -- --test-threads=1`: green. Engine 743
+(+2 ignored: the timing measure and the older `automation_cost_report`), `plugin_bridge` 44, `plugin_host_bridge`
+4 + 34 integration, `clap_ffi` 87, `vst3_host` 63, `audio_buffer` 11, `vst3_ffi` 8,
+`test_vst3_plugin` 8, `plugin_param_queue` 4. `sandbox_tests.rs` is unchanged apart from the
+appended measure; `cargo clippy -D warnings` is clean on `plugin_bridge`,
+`plugin_host_bridge` and `clap_ffi` (the workspace-wide clippy failures are the known
+ones, not these files).
+
+**Not done, on purpose / still open.**
+
+- Hand test with a real sandboxed CLAP plugin: play, automate, open the editor, kill the
+  bridge during playback. Not run.
+- Gestures from the engine have no CLAP equivalent; the CLAP adapter ignores them (the
+  kind exists for VST3, step 6). The MIDI a plugin produces crosses the process but the
+  engine drops it, as it always did.
+- A sandboxed CLAP plugin still processes one input and one output bus; the port table
+  describes the rest. The editor is still the CLAP one in `editor.rs`.
+- Open question 5 (the modulation-offset kind) is the user's decision, see above.
+- The context bullets of this ADR describe protocol v2 as it was before this step.
 
 ## Consequences
 

@@ -16,7 +16,7 @@ use clap_ffi::{
     CLAP_GUI_DRAIN_MESSAGE, CLAP_GUI_RESIZE_MESSAGE, CLAP_WINDOW_API_WIN32,
 };
 
-use crate::plugin::LoadedPlugin;
+use crate::clap_adapter::ClapAdapter;
 
 #[allow(non_snake_case, clippy::upper_case_acronyms)]
 mod user32 {
@@ -313,7 +313,7 @@ pub fn pump_messages(timeout_ms: u32) {
 }
 
 /// Open the editor (or bring it to the front) and return its window handle.
-pub fn open(plugin: &LoadedPlugin, title: &str) -> Result<u64, String> {
+pub fn open(plugin: &ClapAdapter, title: &str) -> Result<u64, String> {
     if let Some(editor) = EDITOR.get() {
         unsafe { user32::SetForegroundWindow(editor.hwnd) };
         return Ok(editor.hwnd as u64);

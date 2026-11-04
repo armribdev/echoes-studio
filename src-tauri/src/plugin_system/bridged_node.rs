@@ -2,11 +2,12 @@
 //! effect, [`BridgedInstrument`] for a track instrument.
 //!
 //! Same role as `ClapWrapperNode` / `ClapInstrument`, with the plugin in a
-//! `plugin_host_bridge` process: each block, the device serialises the
-//! transport, the parameter events (queued edits, automation, modulation — the
-//! same `ClapParamEvents` as in-process) and, for an instrument, the notes; hands
-//! them and the audio to the bridge; and replays the plugin's output events into
-//! the same observers.
+//! `plugin_host_bridge` process: each block, the device writes the transport,
+//! the parameter events (queued edits, automation, modulation — the same
+//! `ClapParamEvents` logic as in-process) and, for an instrument, the notes, as
+//! format-neutral sections (protocol v3); hands them and the audio to the bridge,
+//! whose CLAP adapter builds the CLAP events; and replays the plugin's edits into
+//! the same observers.  No CLAP structure crosses the process boundary.
 //!
 //! ## Real-time behaviour
 //!
@@ -20,26 +21,27 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use plugin_bridge::protocol::{
-    BLOCK_NOTE_NAMES_CHANGED, BLOCK_PARAMS_RESCAN_MASK, BLOCK_PARAMS_RESCAN_SHIFT,
-    BLOCK_PLUGIN_EDITED, BLOCK_RESTART_REQUESTED,
+    WireNote, WireParam, WireTransport, BLOCK_NOTE_NAMES_CHANGED, BLOCK_PARAMS_RESCAN_MASK,
+    BLOCK_PARAMS_RESCAN_SHIFT, BLOCK_PLUGIN_EDITED, BLOCK_RESTART_REQUESTED, MIDI, NOTE_OFF,
+    NOTE_ON, PARAMS_INFO, PARAMS_LIST, PARAMS_TEXT, PARAMS_VALUES, PARAM_MODULATION, PARAM_VALUE,
+    TRANSPORT_PLAYING,
 };
-use plugin_bridge::session::{BlockOutcome, BlockRequest};
+use plugin_bridge::session::{BlockOutcome, BlockReply, BlockRequest};
 
 use crate::audio_graph::buffer::AudioBuffer;
-use crate::audio_graph::midi::MidiEventList;
+use crate::audio_graph::midi::{MidiEventKind, MidiEventList};
 use crate::audio_graph::node::{AudioNode, PrepareContext, TransportInfo};
-use crate::audio_graph::nodes::clap_instrument::push_clap_midi_events;
 use crate::audio_graph::nodes::instrument::InstrumentDevice;
 use crate::audio_graph::plugin_params::{
     parse_plugin_param_name, PluginParamControl, PluginParamControls,
 };
 use crate::plugin_formats::clap::ffi::{
-    append_event, mark_plugin_note_names_changed, mark_plugin_params_rescan,
-    mark_plugin_state_edited, split_events, ClapEventHeader, ClapOutputEvents,
+    mark_plugin_note_names_changed, mark_plugin_params_rescan, mark_plugin_state_edited,
+    CLAP_PARAM_RESCAN_ALL, CLAP_PARAM_RESCAN_INFO, CLAP_PARAM_RESCAN_TEXT,
+    CLAP_PARAM_RESCAN_VALUES, MAX_EVENTS, MAX_PARAM_EVENTS,
 };
-use crate::plugin_formats::clap::params::{observe_output_event, ClapParamEvents};
-use crate::plugin_formats::clap::transport::clap_transport_event;
-use crate::plugin_system::bridge::{CHANNELS, EVENT_CAPACITY, MAX_FRAMES};
+use crate::plugin_formats::clap::params::{ClapParamEvents, ParamEventSink};
+use crate::plugin_system::bridge::{CHANNELS, MAX_FRAMES};
 use crate::plugin_system::crash_marker::note_crash;
 use crate::plugin_system::instance::PluginInstance;
 use crate::plugin_system::lifecycle::LifecycleState;
@@ -48,8 +50,95 @@ use crate::plugin_system::lifecycle::LifecycleState;
 const LIVE_WAIT_SHARE: f64 = 0.75;
 /// Per-block wait during an offline export: a plugin slower than this is hung.
 const OFFLINE_WAIT: Duration = Duration::from_secs(10);
-/// Largest plugin output event the device replays (CLAP core events are ≤ 56 B).
-const MAX_OUTPUT_EVENT_BYTES: usize = 256;
+/// Edits and MIDI messages the device keeps from one reply; more are dropped, as
+/// the bridge drops what does not fit its half of the event capacity.
+const MAX_REPLY_EDITS: usize = 256;
+const MAX_REPLY_MIDI: usize = 64;
+
+/// The block's parameter events, as wire records.  Full means dropped, like the
+/// CLAP event pool the same logic fills in the Echoes process.
+struct WireParamSink {
+    events: Vec<WireParam>,
+}
+
+impl WireParamSink {
+    fn new() -> Self {
+        WireParamSink {
+            events: Vec::with_capacity(MAX_PARAM_EVENTS),
+        }
+    }
+
+    fn push(&mut self, kind: u32, offset: u32, native_id: u32, value: f64) {
+        if self.events.len() < MAX_PARAM_EVENTS {
+            self.events
+                .push(WireParam::new(kind, offset, native_id, value));
+        }
+    }
+}
+
+impl ParamEventSink for WireParamSink {
+    fn push_value(&mut self, offset: u32, native_id: u32, plain: f64) {
+        self.push(PARAM_VALUE, offset, native_id, plain);
+    }
+
+    fn push_modulation(&mut self, offset: u32, native_id: u32, amount: f64) {
+        self.push(PARAM_MODULATION, offset, native_id, amount);
+    }
+}
+
+fn wire_transport(transport: &TransportInfo) -> WireTransport {
+    let position = transport.musical_position();
+    WireTransport {
+        flags: if transport.is_playing {
+            TRANSPORT_PLAYING
+        } else {
+            0
+        },
+        bar_number: position.bar_number,
+        sample_rate: transport.sample_rate as f64,
+        position_samples: transport.position_samples as i64,
+        position_seconds: transport.position_seconds,
+        position_beats: position.beats,
+        bar_start_beats: position.bar_start_beats,
+        tempo: transport.bpm as f64,
+        time_signature_numerator: transport.time_signature.numerator as u16,
+        time_signature_denominator: transport.time_signature.denominator as u16,
+        reserved: 0,
+    }
+}
+
+/// The engine's notes and controls as wire notes, in the same order.  The vector
+/// never grows: what does not fit its capacity is dropped.
+fn push_wire_notes(events: &MidiEventList, notes: &mut Vec<WireNote>) {
+    for event in events.as_slice() {
+        if notes.len() == notes.capacity() {
+            break;
+        }
+        let note = match event.kind {
+            MidiEventKind::NoteOn { pitch, velocity } => {
+                WireNote::new(event.offset, NOTE_ON, [pitch, velocity, 0])
+            }
+            MidiEventKind::NoteOff { pitch } => {
+                WireNote::new(event.offset, NOTE_OFF, [pitch, 0, 0])
+            }
+            MidiEventKind::Control { message } => WireNote::new(event.offset, MIDI, message),
+        };
+        notes.push(note);
+    }
+}
+
+/// The `CLAP_PARAM_RESCAN_*` flags the app reads, for the protocol's `PARAMS_*` bits.
+fn rescan_flags(changes: u32) -> u32 {
+    [
+        (PARAMS_VALUES, CLAP_PARAM_RESCAN_VALUES),
+        (PARAMS_TEXT, CLAP_PARAM_RESCAN_TEXT),
+        (PARAMS_INFO, CLAP_PARAM_RESCAN_INFO),
+        (PARAMS_LIST, CLAP_PARAM_RESCAN_ALL),
+    ]
+    .into_iter()
+    .filter(|(neutral, _)| changes & neutral != 0)
+    .fold(0, |flags, (_, clap)| flags | clap)
+}
 
 /// One block's exchange with the bridge, shared by the effect and the instrument.
 struct BridgeRoundTrip {
@@ -64,8 +153,10 @@ struct BridgeRoundTrip {
     pending_reset: bool,
     input: Vec<f32>,
     output: Vec<f32>,
-    events: Vec<u8>,
-    out_events: Vec<u8>,
+    wire_params: WireParamSink,
+    wire_notes: Vec<WireNote>,
+    edits: Vec<WireParam>,
+    midi_out: Vec<WireNote>,
 }
 
 // SAFETY: the raw pointers are the self-referential vtable contexts of the
@@ -90,8 +181,10 @@ impl BridgeRoundTrip {
             pending_reset: false,
             input: Vec::new(),
             output: Vec::new(),
-            events: Vec::new(),
-            out_events: Vec::new(),
+            wire_params: WireParamSink::new(),
+            wire_notes: Vec::with_capacity(MAX_EVENTS),
+            edits: vec![WireParam::new(PARAM_VALUE, 0, 0, 0.0); MAX_REPLY_EDITS],
+            midi_out: vec![WireNote::new(0, MIDI, [0; 3]); MAX_REPLY_MIDI],
         }
     }
 
@@ -102,8 +195,6 @@ impl BridgeRoundTrip {
         let samples = max_frames as usize * CHANNELS as usize;
         self.input = vec![0.0; samples];
         self.output = vec![0.0; samples];
-        self.events = vec![0; EVENT_CAPACITY as usize];
-        self.out_events = vec![0; EVENT_CAPACITY as usize];
 
         let bridge = self
             .instance
@@ -126,36 +217,22 @@ impl BridgeRoundTrip {
         }
     }
 
-    /// Transport first, then the parameter events and notes sorted by time.
-    /// `None` if they do not fit.
-    fn write_events(
-        &mut self,
-        transport: &TransportInfo,
-        notes: Option<&MidiEventList>,
-    ) -> Option<usize> {
-        let transport_event = clap_transport_event(transport);
-        let end = append_event(&mut self.events, 0, &transport_event.header)?;
-        self.param_events.fill(&self.instance);
+    /// Fills the wire sections of the block: parameter events, then notes.  The
+    /// bridge's adapter merges and sorts them by time, as the Echoes process does
+    /// for a plugin it hosts itself.
+    fn write_events(&mut self, notes: Option<&MidiEventList>) {
+        self.wire_params.events.clear();
+        self.param_events
+            .fill_into(&self.instance, &mut self.wire_params);
+        self.wire_notes.clear();
         if let Some(notes) = notes {
-            push_clap_midi_events(notes, &mut self.param_events.buffer);
+            push_wire_notes(notes, &mut self.wire_notes);
         }
-        self.param_events.buffer.sort();
-        self.param_events.buffer.write_bytes(&mut self.events, end)
     }
 
-    fn replay_output_events(&mut self, byte_count: usize) {
-        let output = ClapOutputEvents {
-            ctx: self.param_events.output_context(),
-            try_push: observe_output_event,
-        };
-        let mut aligned = [0u64; MAX_OUTPUT_EVENT_BYTES / 8];
-        for event in split_events(&self.out_events[..byte_count]) {
-            let Some(bytes) = as_bytes_mut(&mut aligned).get_mut(..event.len()) else {
-                continue;
-            };
-            bytes.copy_from_slice(event);
-            // SAFETY: `aligned` holds a complete, 8-byte-aligned event.
-            unsafe { observe_output_event(&output, aligned.as_ptr() as *const ClapEventHeader) };
+    fn replay_edits(&mut self, edit_count: usize) {
+        for edit in &self.edits[..edit_count] {
+            self.param_events.observe_edit(edit);
         }
     }
 
@@ -174,9 +251,8 @@ impl BridgeRoundTrip {
         if !self.active || samples > self.output.len() {
             return false;
         }
-        let Some(event_bytes) = self.write_events(transport, notes) else {
-            return false;
-        };
+        self.write_events(notes);
+        let wire_transport = wire_transport(transport);
         if let Some(input) = input {
             for (channel, planar) in self
                 .input
@@ -195,24 +271,30 @@ impl BridgeRoundTrip {
         let request = BlockRequest {
             frames,
             input: input.is_some().then_some(&self.input[..samples]),
-            events: &self.events[..event_bytes],
+            transport: Some(&wire_transport),
+            notes: &self.wire_notes,
+            params: &self.wire_params.events,
             sequence: self.sequence,
             steady_time: self.steady_time,
             reset: self.pending_reset,
         };
-        let outcome =
-            bridge
-                .audio()
-                .process_block(&request, &mut self.output, &mut self.out_events, budget);
+        let mut reply = BlockReply {
+            output: &mut self.output,
+            edits: &mut self.edits,
+            midi: &mut self.midi_out,
+        };
+        let outcome = bridge.audio().process_block(&request, &mut reply, budget);
         let condemned = outcome == BlockOutcome::TimedOut && bridge.is_dead();
         self.sequence += 1;
         self.steady_time += frames as i64;
 
         match outcome {
             BlockOutcome::Skipped => return false,
-            BlockOutcome::Processed { flags, event_bytes } => {
+            BlockOutcome::Processed {
+                flags, edit_count, ..
+            } => {
                 self.pending_reset = false;
-                self.replay_output_events(event_bytes);
+                self.replay_edits(edit_count);
                 if flags & BLOCK_PLUGIN_EDITED != 0 {
                     mark_plugin_state_edited();
                 }
@@ -225,9 +307,9 @@ impl BridgeRoundTrip {
                     mark_plugin_note_names_changed();
                 }
                 if flags & BLOCK_PARAMS_RESCAN_MASK != 0 {
-                    mark_plugin_params_rescan(
+                    mark_plugin_params_rescan(rescan_flags(
                         (flags & BLOCK_PARAMS_RESCAN_MASK) >> BLOCK_PARAMS_RESCAN_SHIFT,
-                    );
+                    ));
                 }
             }
             BlockOutcome::TimedOut if condemned => {
@@ -254,11 +336,6 @@ impl BridgeRoundTrip {
     fn param_controls(&mut self) -> &mut PluginParamControls {
         self.param_events.controls_mut()
     }
-}
-
-fn as_bytes_mut(words: &mut [u64]) -> &mut [u8] {
-    // SAFETY: any bit pattern is a valid `u8`; the length covers the same bytes.
-    unsafe { std::slice::from_raw_parts_mut(words.as_mut_ptr() as *mut u8, words.len() * 8) }
 }
 
 fn pass_through(inputs: &[&AudioBuffer], outputs: &mut [AudioBuffer]) {
@@ -399,5 +476,140 @@ impl InstrumentDevice for BridgedInstrument {
 
     fn param_controls_mut(&mut self) -> Option<&mut PluginParamControls> {
         Some(self.round_trip.param_controls())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::audio_graph::midi::MidiEvent;
+    use crate::audio_graph::node::TimeSignature;
+    use crate::plugin_formats::clap::ffi::{transport_event, TransportValues};
+    use crate::plugin_formats::clap::transport::clap_transport_event;
+
+    fn transport(seconds: f64, time_signature: TimeSignature, is_playing: bool) -> TransportInfo {
+        TransportInfo {
+            is_playing,
+            position_samples: (seconds * 48_000.0) as u64,
+            position_seconds: seconds,
+            bpm: 117.5,
+            time_signature,
+            sample_rate: 48_000.0,
+            block_size: 256,
+        }
+    }
+
+    /// What the bridge's CLAP adapter does with the wire transport.
+    fn adapter_event(wire: &WireTransport) -> crate::plugin_formats::clap::ffi::ClapEventTransport {
+        transport_event(&TransportValues {
+            playing: wire.flags & TRANSPORT_PLAYING != 0,
+            position_beats: wire.position_beats,
+            position_seconds: wire.position_seconds,
+            tempo: wire.tempo,
+            bar_start_beats: wire.bar_start_beats,
+            bar_number: wire.bar_number,
+            time_signature_numerator: wire.time_signature_numerator,
+            time_signature_denominator: wire.time_signature_denominator,
+        })
+    }
+
+    #[test]
+    fn the_wire_transport_gives_the_clap_adapter_the_in_process_event() {
+        for info in [
+            transport(4.0, TimeSignature::new(3, 4), true),
+            transport(1.5, TimeSignature::new(6, 8), false),
+            transport(0.0, TimeSignature::new(4, 4), false),
+        ] {
+            let wire = wire_transport(&info);
+            let direct = clap_transport_event(&info);
+            let relayed = adapter_event(&wire);
+            assert_eq!(
+                (
+                    relayed.flags,
+                    relayed.song_pos_beats,
+                    relayed.song_pos_seconds
+                ),
+                (direct.flags, direct.song_pos_beats, direct.song_pos_seconds)
+            );
+            assert_eq!(
+                (relayed.tempo, relayed.bar_start, relayed.bar_number),
+                (direct.tempo, direct.bar_start, direct.bar_number)
+            );
+            assert_eq!(
+                (relayed.tsig_num, relayed.tsig_denom),
+                (direct.tsig_num, direct.tsig_denom)
+            );
+        }
+    }
+
+    #[test]
+    fn notes_and_controls_keep_their_order_and_offsets() {
+        let mut list = MidiEventList::new();
+        list.push(MidiEvent {
+            offset: 3,
+            kind: MidiEventKind::NoteOn {
+                pitch: 60,
+                velocity: 100,
+            },
+        });
+        list.push(MidiEvent {
+            offset: 3,
+            kind: MidiEventKind::Control {
+                message: [0xE0, 1, 2],
+            },
+        });
+        list.push(MidiEvent {
+            offset: 9,
+            kind: MidiEventKind::NoteOff { pitch: 60 },
+        });
+        let mut notes = Vec::with_capacity(8);
+        push_wire_notes(&list, &mut notes);
+        assert_eq!(
+            notes,
+            [
+                WireNote::new(3, NOTE_ON, [60, 100, 0]),
+                WireNote::new(3, MIDI, [0xE0, 1, 2]),
+                WireNote::new(9, NOTE_OFF, [60, 0, 0]),
+            ]
+        );
+    }
+
+    #[test]
+    fn the_notes_vector_never_grows() {
+        let mut list = MidiEventList::new();
+        for offset in 0..4 {
+            list.push(MidiEvent {
+                offset,
+                kind: MidiEventKind::NoteOff { pitch: 60 },
+            });
+        }
+        let mut notes = Vec::with_capacity(3);
+        push_wire_notes(&list, &mut notes);
+        assert_eq!((notes.len(), notes.capacity()), (3, 3));
+    }
+
+    #[test]
+    fn the_parameter_sink_drops_what_does_not_fit() {
+        let mut sink = WireParamSink::new();
+        for index in 0..MAX_PARAM_EVENTS as u32 + 10 {
+            sink.push_value(index, 1, 0.5);
+        }
+        sink.push_modulation(0, 2, 0.1);
+        assert_eq!(sink.events.len(), MAX_PARAM_EVENTS);
+        assert_eq!(sink.events[0], WireParam::new(PARAM_VALUE, 0, 1, 0.5));
+        assert_eq!(sink.events.capacity(), MAX_PARAM_EVENTS, "never grows");
+    }
+
+    #[test]
+    fn rescan_bits_map_back_to_the_clap_flags_the_app_reads() {
+        assert_eq!(rescan_flags(0), 0);
+        assert_eq!(
+            rescan_flags(PARAMS_TEXT | PARAMS_INFO),
+            CLAP_PARAM_RESCAN_TEXT | CLAP_PARAM_RESCAN_INFO
+        );
+        assert_eq!(
+            rescan_flags(PARAMS_LIST | PARAMS_VALUES),
+            CLAP_PARAM_RESCAN_ALL | CLAP_PARAM_RESCAN_VALUES
+        );
     }
 }
