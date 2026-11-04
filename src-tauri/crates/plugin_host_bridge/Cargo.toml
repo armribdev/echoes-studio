@@ -11,3 +11,8 @@ plugin_bridge = { path = "../plugin_bridge" }
 # CLAP C-ABI bindings shared with the engine — lets the bridge load and drive a
 # real plugin's `process` (ADR-015 6d-iii-b-2).
 clap_ffi = { path = "../clap_ffi" }
+# The VST3 side (ADR-033): bindings, the COM objects a host gives a plugin, the
+# audio buffer the bus tables bind. Never the engine.
+audio_buffer = { path = "../audio_buffer" }
+vst3_ffi = { path = "../vst3_ffi" }
+vst3_host = { path = "../vst3_host" }

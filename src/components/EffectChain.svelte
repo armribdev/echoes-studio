@@ -141,9 +141,14 @@
 		return id !== null && always.includes(id);
 	}
 
+	function canBeIsolated(effect: TrackEffect): boolean {
+		const format = effectFormat(effect);
+		return format === 'CLAP' || format === 'VST3';
+	}
+
 	/** Whether the engine runs this effect in its own process, given the preferences. */
 	function isSandboxed(effect: TrackEffect, mode = isolation, always = alwaysIsolated): boolean {
-		if (effectFormat(effect) !== 'CLAP' || mode === 'off') return false;
+		if (!canBeIsolated(effect) || mode === 'off') return false;
 		return mode === 'all' || isChosen(effect) || isAlwaysIsolated(effect, always);
 	}
 
@@ -151,7 +156,7 @@
 
 	function openContextMenu(event: MouseEvent, effect: TrackEffect) {
 		const id = pluginId(effect);
-		if (id === null || effectFormat(effect) !== 'CLAP') return;
+		if (id === null || !canBeIsolated(effect)) return;
 		event.preventDefault();
 		contextMenu = {
 			x: event.clientX,
@@ -642,7 +647,7 @@
 										? "Fermer l'éditeur"
 										: "Ouvrir l'éditeur"}
 							</button>
-							{#if effectFormat(effect) === 'CLAP' && isolation === 'chosen'}
+							{#if canBeIsolated(effect) && isolation === 'chosen'}
 								{@const always = isAlwaysIsolated(effect, alwaysIsolated)}
 								<button
 									class="open-editor-btn"

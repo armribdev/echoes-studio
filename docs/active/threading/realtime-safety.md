@@ -293,6 +293,15 @@ CLAP events from it. It changes on **both** audio threads, under the same rules:
 Round-trip time of a block on the test plugin, before and after: see "Step 4" in
 ADR-033.
 
+**VST3 in the bridge (ADR-033 step 5).** The message is the same; the engine side is
+unchanged except that a VST3 effect writes no parameter section yet. Bridge side,
+`Vst3BlockProcessor::process`: no allocation (the activation sizes the buffers, the bus
+tables and the parameter-change list before the first block), no lock, no I/O, no
+`drop`, no new system call. The ADR-010 gate is one atomic compare-exchange that the
+audio thread **never waits on**: when the bridge's main thread holds it (activation,
+`getState`, `setState`) the block is passed through. Measures, 8 sandboxed effects:
+ADR-033, "Step 5".
+
 ### Sleeping CLAP plugins (2026-10-14)
 
 A CLAP plugin that is silent and has no tail left is not called at all

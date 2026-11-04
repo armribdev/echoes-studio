@@ -1182,7 +1182,7 @@ mod clap_plugins {
     pub const PLUGIN_ID: &str = "clap:echoes.test.gain";
 
     /// `(test plugin dll, bridge exe)`, built once per test run.
-    fn artifacts() -> &'static (PathBuf, PathBuf) {
+    pub(super) fn artifacts() -> &'static (PathBuf, PathBuf) {
         static ARTIFACTS: OnceLock<(PathBuf, PathBuf)> = OnceLock::new();
         ARTIFACTS.get_or_init(|| {
             let workspace = Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -1610,8 +1610,11 @@ mod clap_plugins {
 /// before the VST3 host code moves into its own crate, so the move must not change it.
 #[cfg(windows)]
 mod vst3_plugins {
+    use std::collections::HashMap;
+
     use super::*;
     use crate::plugin_formats::vst3::test_dll::{effect_id, instrument_id, test_vst3_dll};
+    use crate::plugin_system::host::PluginIsolation;
     use crate::plugin_system::registry::PluginManifest;
     use crate::plugin_system::wrapper::DeviceFormat;
     use crate::project::PluginParams;
@@ -1733,6 +1736,83 @@ mod vst3_plugins {
     fn vst3_plugins_match_golden_hash() {
         let render = render(&project(), BLOCK_SIZES[0]);
         assert_eq!(render_hash(&render), VST3_PLUGINS_GOLDEN_HASH);
+    }
+
+    /// The test effect's state is its gain; loading it at half scale makes the
+    /// plugin's processing audible in the render (its default gain is 1).
+    fn with_half_gain(mut host: PluginHost) -> PluginHost {
+        host.set_pending_state_blobs(HashMap::from([(
+            "plugin".to_string(),
+            0.5_f64.to_le_bytes().to_vec(),
+        )]));
+        host
+    }
+
+    fn render_with_host(
+        host: &mut PluginHost,
+        project: &AppProject,
+        block_size: usize,
+    ) -> Vec<f32> {
+        let (left, right) =
+            render_project_in_blocks(project, &LiveParams::new(), host, SAMPLE_RATE, block_size)
+                .expect("reference project must render");
+        assert!(
+            host.unavailable_plugins().is_empty(),
+            "the test plugin must load"
+        );
+        left.into_iter()
+            .zip(right)
+            .flat_map(|(l, r)| [l, r])
+            .collect()
+    }
+
+    /// A host that sends every effect it can to the bridge. Instruments stay in the
+    /// Echoes process until step 8 of ADR-033.
+    fn host_isolating_everything() -> PluginHost {
+        let mut host = with_half_gain(host_with_test_plugins());
+        host.set_bridge_exe(super::clap_plugins::artifacts().1.clone());
+        host.set_isolation(PluginIsolation::All, Default::default());
+        host
+    }
+
+    /// ADR-033 step 5, C-2: the effect in the bridge process renders the same samples
+    /// as in the Echoes process (offline wait, ADR-015), whatever the block size.
+    #[test]
+    fn a_sandboxed_effect_renders_like_an_in_process_one() {
+        let project = project();
+        let unprocessed = render(&project, BLOCK_SIZES[0]);
+        for block_size in BLOCK_SIZES {
+            let in_process = render_with_host(
+                &mut with_half_gain(host_with_test_plugins()),
+                &project,
+                block_size,
+            );
+            assert!(
+                first_difference(&unprocessed, &in_process).is_some(),
+                "the loaded state must change the sound"
+            );
+            let mut sandboxed_host = host_isolating_everything();
+            let sandboxed = render_with_host(&mut sandboxed_host, &project, block_size);
+            assert!(
+                sandboxed_host
+                    .instance_by_key("plugin")
+                    .unwrap()
+                    .is_sandboxed(),
+                "the effect must really run in the bridge"
+            );
+            assert!(
+                !sandboxed_host
+                    .instance_by_key("instrument:midi")
+                    .unwrap()
+                    .is_sandboxed(),
+                "a VST3 instrument is not sandboxed before step 8"
+            );
+            assert_eq!(
+                first_difference(&in_process, &sandboxed),
+                None,
+                "block size {block_size}"
+            );
+        }
     }
 
     /// Recorded on Windows x86_64, separate from `GOLDEN_HASHES` because it needs the

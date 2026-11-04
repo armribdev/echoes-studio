@@ -476,13 +476,17 @@ impl PluginInstance {
         })
     }
 
-    /// A CLAP plugin running in a sandbox process (ADR-015).
-    pub fn new_bridged(device_id: impl Into<String>, bridged: BridgedPlugin) -> Arc<Self> {
+    /// A CLAP or VST3 plugin running in a sandbox process (ADR-015, ADR-033).
+    pub fn new_bridged(
+        device_id: impl Into<String>,
+        format: DeviceFormat,
+        bridged: BridgedPlugin,
+    ) -> Arc<Self> {
         Arc::new(Self {
             #[cfg(test)]
             instance_id: next_instance_id(),
             device_id: device_id.into(),
-            format: DeviceFormat::Clap,
+            format,
             handle: NativeHandle::Bridged(Box::new(bridged)),
             lifecycle: AtomicU8::new(encode_lifecycle(LifecycleState::Created)),
             param_queue: ParamQueue::with_capacity(PARAM_QUEUE_CAPACITY),

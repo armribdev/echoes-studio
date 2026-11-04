@@ -28,6 +28,7 @@ use crate::plugin_formats::clap::ffi::{
     CLAP_PRESET_LOCATION_FILE,
 };
 use crate::plugin_system::parameter::PluginParamInfo;
+use crate::plugin_system::wrapper::DeviceFormat;
 
 /// Largest block a sandboxed plugin processes (the engine's `MAX_BLOCK_FRAMES`).
 pub const MAX_FRAMES: u32 = 4096;
@@ -64,27 +65,40 @@ pub struct BridgedPlugin {
 }
 
 impl BridgedPlugin {
-    /// Spawn a bridge hosting CLAP plugin `clap_id` from `dll`.  Returns once
-    /// the plugin is loaded and initialised in the child, which already knows
-    /// `track_info`.
+    /// Spawn a bridge hosting the plugin `native_id` of `dll` (a CLAP id, or the
+    /// hexadecimal VST3 class id).  Returns once the plugin is loaded and
+    /// initialised in the child, which already knows `track_info`.
     pub fn spawn(
         bridge_exe: &Path,
         dll: &Path,
-        clap_id: &str,
+        format: DeviceFormat,
+        native_id: &str,
         track_info: Option<&HostTrackInfo>,
     ) -> io::Result<Self> {
+        let (format_name, unit) = match format {
+            DeviceFormat::Clap => ("clap", ParamUnit::Plain),
+            DeviceFormat::Vst3 => ("vst3", ParamUnit::Normalised),
+            _ => {
+                return Err(io::Error::new(
+                    io::ErrorKind::Unsupported,
+                    format!("{format:?} plugins cannot run in the sandbox"),
+                ))
+            }
+        };
         let mut args: Vec<OsString> = vec![
             "--plugin-dll".into(),
             dll.into(),
+            "--plugin-format".into(),
+            format_name.into(),
             "--plugin-id".into(),
-            clap_id.into(),
+            native_id.into(),
         ];
         if let Some(info) = track_info {
             args.extend(["--track-info".into(), info.to_hex().into()]);
         }
         let layout = BridgeLayout::new(MAX_FRAMES, CHANNELS, EVENT_CAPACITY);
         let process = BridgeProcess::spawn(bridge_exe, layout, &args, START_TIMEOUT)?;
-        check_handshake(&process.request(Op::Handshake, &[], START_TIMEOUT)?)?;
+        check_handshake(&process.request(Op::Handshake, &[], START_TIMEOUT)?, unit)?;
         Ok(BridgedPlugin {
             process,
             activation: Mutex::new(None),
@@ -98,6 +112,11 @@ impl BridgedPlugin {
     pub fn request_restart(&self) {
         self.restart_requested.store(true, Ordering::Release);
         mark_plugin_restart_requested();
+    }
+
+    #[cfg(test)]
+    pub fn process_id(&self) -> u32 {
+        self.process.process_id()
     }
 
     pub fn audio(&self) -> &AudioPort {
@@ -262,15 +281,18 @@ impl BridgedPlugin {
 }
 
 /// Refuses a bridge whose parameter values are not in the unit the engine sends
-/// (plain values, ADR-021) or whose port table has several active ports on one side
-/// (the block carries one).  A refused plugin is reported unavailable, never
-/// loaded in-process instead.
-fn check_handshake(reply: &[u8]) -> io::Result<()> {
+/// for the plugin's format (plain for CLAP, normalised for VST3, ADR-021) or whose
+/// port table has several active ports on one side (the block carries one).  A
+/// refused plugin is reported unavailable, never loaded in-process instead.
+fn check_handshake(reply: &[u8], expected_unit: ParamUnit) -> io::Result<()> {
     let handshake = Handshake::decode(reply)?;
-    if handshake.param_unit != ParamUnit::Plain {
+    if handshake.param_unit != expected_unit {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
-            "the bridge reports normalised parameter values",
+            format!(
+                "the bridge reports {:?} parameter values, the engine sends {expected_unit:?}",
+                handshake.param_unit
+            ),
         ));
     }
     for direction in [PortDirection::Input, PortDirection::Output] {

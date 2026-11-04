@@ -2565,8 +2565,11 @@ dependencies = [
 name = "plugin_host_bridge"
 version = "0.1.0"
 dependencies = [
+ "audio_buffer",
  "clap_ffi",
  "plugin_bridge",
+ "vst3_ffi",
+ "vst3_host",
 ]
 
 [[package]]

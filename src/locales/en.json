@@ -305,7 +305,7 @@
 			"isolationOff": "All plugins run inside Echoes: lightest, but a crashing plugin closes Echoes.",
 			"isolationChosen": "Only effects marked “Isolate” and always-isolated plugins run apart: a crash kills the plugin, not Echoes.",
 			"isolationAll": "Each plugin runs apart: a crash never closes Echoes, at a small CPU cost.",
-			"isolationClapOnly": "CLAP plugins only for now.",
+			"isolationSupportedFormats": "CLAP and VST3 effects, and CLAP instruments, for now.",
 			"alwaysIsolated": "Always isolated",
 			"removeAlwaysIsolate": "Stop always isolating this plugin",
 			"alwaysIsolatedHint": "Add a plugin with a right-click on the effect or instrument → “Always isolate”.",

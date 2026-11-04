@@ -107,7 +107,7 @@ fn hold_real_plugins() {
 /// single-file and bundle plugins are returned as directly-loadable paths.
 /// Sorted so an **effect** (filename hint) comes first → a meaningful process
 /// block.
-fn discover_all(env_var: &str, ext: &str) -> Vec<PathBuf> {
+pub(super) fn discover_all(env_var: &str, ext: &str) -> Vec<PathBuf> {
     hold_real_plugins();
     if let Ok(p) = std::env::var(env_var) {
         let pb = PathBuf::from(p);

@@ -792,7 +792,7 @@
 											'settings.audio.isolationChosen'
 										)}
 									{:else}{$t('settings.audio.isolationAll')}{/if}
-									{$t('settings.audio.isolationClapOnly')}
+									{$t('settings.audio.isolationSupportedFormats')}
 								</span>
 							</div>
 

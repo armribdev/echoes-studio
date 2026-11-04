@@ -60,9 +60,11 @@ The graph compiler calls `PluginHost::instantiate()`, receives
 
 **Negative:**
 
-- **In-process isolation.** A crashing VST3 plugin takes down the engine.
-  Thin wrappers provide no process isolation. This is a known limitation
-  documented in `../plugins/plugin-wrapper-system.md`.
+- **In-process isolation.** A crashing VST3 plugin takes down the engine when it
+  runs in-process. Thin wrappers provide no process isolation by themselves; since
+  ADR-033 step 5 (2026-11-04) a VST3 **effect** can run in the sandbox bridge (opt-in,
+  ADR-015), and instruments follow with step 8. Documented in
+  `../plugins/plugin-wrapper-system.md`.
 - **Translation overhead.** The wrapper must translate buffer formats and
   parameter representations on every block. For VST3 this is pointer filling
   (negligible). For formats with heavier marshalling it could be measurable.

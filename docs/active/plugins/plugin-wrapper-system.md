@@ -1304,6 +1304,36 @@ buffers), and in `render_harness::clap_plugins` the sandbox-against-in-process
 renders (effect and instrument, automated and modulated gain, five block sizes,
 identical samples).
 
+### VST3 effects in the sandbox (ADR-033 step 5, 2026-11-04)
+
+A sandboxed VST3 **effect** runs in `plugin_host_bridge --plugin-format vst3` with the
+same protocol v3 block message as CLAP; nothing format-specific crosses the process
+boundary.
+
+- **Bridge side** (`crates/plugin_host_bridge/src/vst3_adapter.rs`). `Vst3Adapter`:
+  `vst3_ffi::Vst3Library` (so `InitDll` / `ExitDll` once per file), component and
+  processor, the spec activation order, one stereo main bus each way bound by
+  `vst3_host::buses`, latency read after `setActive`, component state through the
+  same `read_component_state` / `write_component_state` as in-process (a state saved in
+  either place loads in the other). `Vst3BlockProcessor`: `ProcessContext` from the wire
+  transport (`vst3_host::transport::process_context`), `PARAM_VALUE` events as
+  `IParameterChanges` points. They are **normalised: the handshake declares
+  `ParamUnit::Normalised` and nothing is converted**. Modulation and gesture kinds are
+  ignored. The ADR-010 gate is inside the bridge: the audio thread skips a block (passes
+  the input through) while the main thread holds it; the main thread waits up to 2 s.
+- **COM.** `OleInitialize` on the bridge's main thread, none on its audio thread, as the
+  app does.
+- **Engine side.** `BridgedNode` is the node for both formats; it writes no parameter
+  event for a VST3 effect yet. `check_handshake` requires the format's unit (plain for
+  CLAP, normalised for VST3).
+- **Not yet** (explicit errors or empty lists, never a fallback): parameter list,
+  automation, modulation and a controller in the bridge (step 6), the editor (step 7),
+  instruments, sidechain and auxiliary outputs (step 8), presets (step 9).
+
+Tests: `plugin_host_bridge/tests/vst3_bridge.rs`, `plugin_system/vst3_sandbox_tests.rs`
+(including a bridge killed or frozen from outside, and TDR Nova), and in
+`render_harness::vst3_plugins` the sandbox-against-in-process render.
+
 ---
 
 ## Editor Windows — DPI (Windows)

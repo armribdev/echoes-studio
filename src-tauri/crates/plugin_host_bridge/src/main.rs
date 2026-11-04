@@ -13,13 +13,14 @@
 //! ```text
 //! plugin_host_bridge --region-name <N> --max-frames <F> --channels <C>
 //!                    --event-capacity <E> --plugin-dll <PATH> --plugin-id <ID>
-//!                    [--track-info <HEX>]
+//!                    [--plugin-format clap|vst3] [--track-info <HEX>]
 //! plugin_host_bridge --print-protocol-version
 //! ```
 
 mod clap_adapter;
 #[cfg(windows)]
 mod editor;
+mod vst3_adapter;
 
 use std::collections::HashMap;
 use std::io::{self, BufReader, Write};
@@ -33,15 +34,32 @@ use clap_ffi::{HostTrackInfo, TimerSchedule};
 use plugin_bridge::control::{self, Op, PayloadReader, STATUS_ERROR, STATUS_OK};
 use plugin_bridge::protocol::BRIDGE_PROTOCOL_VERSION;
 use plugin_bridge::records::TrackRecord;
-use plugin_bridge::session::{BridgeLayout, BridgePeer};
+use plugin_bridge::session::{BridgeLayout, BridgePeer, BridgeProcessor};
+use vst3_adapter::{Vst3Adapter, Vst3BlockProcessor};
 
 const EXIT_START_FAILED: u8 = 3;
 const EXIT_USAGE: u8 = 64;
 /// Main-loop wait between checks for control requests and shutdown.
 const MAIN_LOOP_WAIT_MS: u32 = 5;
 
+#[derive(Clone, Copy)]
+enum PluginFormat {
+    Clap,
+    Vst3,
+}
+
+/// A plugin hosted by this process, as the control channel on the main thread
+/// sees it.  The audio thread has its own processor per format.
+trait HostedPlugin {
+    fn handle(&self, op: Op, payload: &[u8]) -> Result<Vec<u8>, String>;
+
+    /// Runs the timers the plugin registered; only CLAP plugins have any.
+    fn run_due_timers(&self, _schedule: &mut TimerSchedule, _now: Instant) {}
+}
+
 struct Options {
     region_name: String,
+    format: PluginFormat,
     layout: BridgeLayout,
     plugin_dll: PathBuf,
     plugin_id: String,
@@ -58,8 +76,14 @@ fn parse_options(args: &[String]) -> Option<Options> {
         })
         .collect::<Option<_>>()?;
     let number = |flag: &str| values.get(flag)?.parse::<u32>().ok();
+    let format = match values.get("--plugin-format").copied() {
+        None | Some("clap") => PluginFormat::Clap,
+        Some("vst3") => PluginFormat::Vst3,
+        Some(_) => return None,
+    };
     Some(Options {
         region_name: values.get("--region-name")?.to_string(),
+        format,
         layout: BridgeLayout::new(
             number("--max-frames")?,
             number("--channels")?,
@@ -98,12 +122,8 @@ fn run(options: Options) -> Result<(), String> {
     );
     #[cfg(windows)]
     editor::enable_per_monitor_dpi();
-    let plugin = match ClapAdapter::load(
-        &options.plugin_dll,
-        &options.plugin_id,
-        options.track_info.as_ref(),
-    ) {
-        Ok(plugin) => Arc::new(plugin),
+    let (plugin, mut processor) = match load_plugin(&options) {
+        Ok(loaded) => loaded,
         Err(error) => {
             peer.signal_error();
             return Err(format!("cannot load '{}': {error}", options.plugin_id));
@@ -112,26 +132,73 @@ fn run(options: Options) -> Result<(), String> {
 
     let audio_thread = {
         let peer = Arc::clone(&peer);
-        let mut processor =
-            ClapBlockProcessor::new(Arc::clone(&plugin), options.layout.channels as usize);
         std::thread::Builder::new()
             .name("bridge-audio".into())
             .spawn(move || {
                 raise_thread_priority();
-                peer.serve_audio(&mut processor);
+                peer.serve_audio(&mut *processor);
             })
             .map_err(|e| e.to_string())?
     };
     let requests = spawn_request_reader();
     peer.signal_ready();
 
-    serve_requests(&peer, &plugin, &requests);
+    serve_requests(&peer, &*plugin, &requests);
 
     #[cfg(windows)]
     editor::close();
     peer.request_shutdown();
     let _ = audio_thread.join();
     drop(plugin);
+    Ok(())
+}
+
+type Loaded = (Arc<dyn HostedPlugin>, Box<dyn BridgeProcessor + Send>);
+
+fn load_plugin(options: &Options) -> Result<Loaded, String> {
+    let channels = options.layout.channels as usize;
+    match options.format {
+        PluginFormat::Clap => {
+            let plugin = Arc::new(ClapAdapter::load(
+                &options.plugin_dll,
+                &options.plugin_id,
+                options.track_info.as_ref(),
+            )?);
+            let processor = ClapBlockProcessor::new(Arc::clone(&plugin), channels);
+            Ok((plugin, Box::new(processor)))
+        }
+        PluginFormat::Vst3 => {
+            initialise_com()?;
+            let plugin = Arc::new(Vst3Adapter::load(
+                &options.plugin_dll,
+                &options.plugin_id,
+                channels,
+            )?);
+            let processor = Vst3BlockProcessor::new(Arc::clone(&plugin));
+            Ok((plugin, Box::new(processor)))
+        }
+    }
+}
+
+/// VST3 plugins expect the apartment of an application's main thread, and the
+/// editor of step 7 needs OLE for drag and drop.  The thread that loads the
+/// plugin is the one the control requests run on.
+#[cfg(windows)]
+fn initialise_com() -> Result<(), String> {
+    #[link(name = "ole32")]
+    extern "system" {
+        fn OleInitialize(reserved: *mut std::ffi::c_void) -> i32;
+    }
+    // SAFETY: called once, on the main thread, before any plugin is loaded.
+    let result = unsafe { OleInitialize(std::ptr::null_mut()) };
+    if result < 0 {
+        return Err(format!("COM could not be initialised (0x{result:08x})"));
+    }
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn initialise_com() -> Result<(), String> {
     Ok(())
 }
 
@@ -154,7 +221,7 @@ fn spawn_request_reader() -> mpsc::Receiver<Option<(u8, Vec<u8>)>> {
 /// Main thread: answer requests and run the editor until shutdown.
 fn serve_requests(
     peer: &BridgePeer,
-    plugin: &ClapAdapter,
+    plugin: &dyn HostedPlugin,
     requests: &mpsc::Receiver<Option<(u8, Vec<u8>)>>,
 ) {
     let mut stdout = io::stdout().lock();
@@ -181,8 +248,22 @@ fn serve_requests(
     }
 }
 
-fn handle(plugin: &ClapAdapter, op: u8, payload: &[u8]) -> Result<Vec<u8>, String> {
+fn handle(plugin: &dyn HostedPlugin, op: u8, payload: &[u8]) -> Result<Vec<u8>, String> {
     let op = Op::from_u8(op).ok_or_else(|| format!("unknown request {op}"))?;
+    plugin.handle(op, payload)
+}
+
+impl HostedPlugin for ClapAdapter {
+    fn handle(&self, op: Op, payload: &[u8]) -> Result<Vec<u8>, String> {
+        handle_clap(self, op, payload)
+    }
+
+    fn run_due_timers(&self, schedule: &mut TimerSchedule, now: Instant) {
+        ClapAdapter::run_due_timers(self, schedule, now);
+    }
+}
+
+fn handle_clap(plugin: &ClapAdapter, op: Op, payload: &[u8]) -> Result<Vec<u8>, String> {
     let mut reader = PayloadReader::new(payload);
     let invalid = |e: io::Error| e.to_string();
     match op {

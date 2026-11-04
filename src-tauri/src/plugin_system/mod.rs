@@ -46,6 +46,8 @@ mod sandbox_tests;
 #[cfg(all(test, windows))]
 mod vst3_preset_file_tests;
 #[cfg(all(test, windows))]
+mod vst3_sandbox_tests;
+#[cfg(all(test, windows))]
 mod vst3_latency_tests;
 #[cfg(all(test, windows))]
 mod vst3_module_tests;

@@ -329,7 +329,7 @@ impl PluginHost {
         }
         match inst.format {
             DeviceFormat::Internal => Some(Box::new(PassThroughDevice::new())),
-            DeviceFormat::Clap if inst.is_sandboxed() => {
+            DeviceFormat::Clap | DeviceFormat::Vst3 if inst.is_sandboxed() => {
                 Some(Box::new(BridgedNode::new(Arc::clone(inst))))
             }
             DeviceFormat::Clap => Some(Box::new(ClapWrapperNode::new(
@@ -389,12 +389,12 @@ impl PluginHost {
                 (inst, node)
             }
 
-            DeviceFormat::Vst3 => {
-                self.instantiate_vst3(plugin_id, &manifest, self.track_infos.get(instance_key))?
+            DeviceFormat::Clap | DeviceFormat::Vst3 if sandboxed => {
+                self.instantiate_bridged(plugin_id, &manifest, self.track_infos.get(instance_key))?
             }
 
-            DeviceFormat::Clap if sandboxed => {
-                self.instantiate_bridged(plugin_id, &manifest, self.track_infos.get(instance_key))?
+            DeviceFormat::Vst3 => {
+                self.instantiate_vst3(plugin_id, &manifest, self.track_infos.get(instance_key))?
             }
 
             DeviceFormat::Clap => {
@@ -655,15 +655,24 @@ impl PluginHost {
             .bridge_exe
             .as_ref()
             .ok_or_else(|| HostError::InstantiationFailed("plugin_host_bridge not found".into()))?;
-        let clap_id = clap_decode_id(plugin_id)
-            .ok_or_else(|| HostError::InstantiationFailed("invalid CLAP plugin_id".into()))?;
+        let native_id = match manifest.format {
+            DeviceFormat::Vst3 => vst3_decode_id(plugin_id)
+                .and_then(|_| plugin_id.strip_prefix("vst3:"))
+                .ok_or_else(|| HostError::InstantiationFailed("invalid VST3 plugin_id".into()))?,
+            _ => clap_decode_id(plugin_id)
+                .ok_or_else(|| HostError::InstantiationFailed("invalid CLAP plugin_id".into()))?,
+        };
         let dll = manifest
             .path
             .as_ref()
             .ok_or_else(|| HostError::InstantiationFailed("no DLL path in manifest".into()))?;
-        let bridged = BridgedPlugin::spawn(bridge_exe, dll, clap_id, track_info)
+        let bridged = BridgedPlugin::spawn(bridge_exe, dll, manifest.format, native_id, track_info)
             .map_err(|error| HostError::InstantiationFailed(format!("sandbox: {error}")))?;
-        Ok(PluginInstance::new_bridged(plugin_id, bridged))
+        Ok(PluginInstance::new_bridged(
+            plugin_id,
+            manifest.format,
+            bridged,
+        ))
     }
 
     /// Load the DLL, create the CLAP plugin, and build the shared
@@ -730,7 +739,7 @@ impl PluginHost {
     ///
     /// A CLAP instrument runs sandboxed per the isolation preference (ADR-015); a
     /// track instrument has no per-placement choice of its own.  A VST3 one
-    /// always runs in-process.
+    /// always runs in-process until step 8 of ADR-033.
     pub fn instantiate_instrument(
         &mut self,
         instance_key: &str,
@@ -738,7 +747,7 @@ impl PluginHost {
     ) -> Result<Box<dyn InstrumentDevice>, HostError> {
         let format = self.registry.get(plugin_id).map(|manifest| manifest.format);
         let sandboxed = self.isolates(plugin_id, false)
-            && format.map_or(true, |format| runs_sandboxed(format, true));
+            && format.map_or(true, |format| instrument_runs_sandboxed(format, true));
         let _running =
             (!sandboxed).then(|| crash_marker::enter(PluginThread::Control, plugin_tag(plugin_id)));
         let result = self.instantiate_instrument_placement(instance_key, plugin_id, sandboxed);
@@ -766,7 +775,7 @@ impl PluginHost {
                 let inst = &record.instance;
                 if inst.device_id == plugin_id
                     && matches!(inst.format, DeviceFormat::Clap | DeviceFormat::Vst3)
-                    && inst.is_sandboxed() == runs_sandboxed(inst.format, sandboxed)
+                    && inst.is_sandboxed() == instrument_runs_sandboxed(inst.format, sandboxed)
                     && !matches!(
                         inst.lifecycle(),
                         LifecycleState::Destroyed | LifecycleState::Error
@@ -1186,6 +1195,11 @@ pub struct PluginInfo {
 /// Only CLAP plugins can run sandboxed so far (ADR-015); for other formats the
 /// flag is ignored and the plugin stays in-process.
 fn runs_sandboxed(format: DeviceFormat, sandboxed: bool) -> bool {
+    sandboxed && matches!(format, DeviceFormat::Clap | DeviceFormat::Vst3)
+}
+
+/// Instruments: a VST3 one joins the sandbox with step 8 of ADR-033.
+fn instrument_runs_sandboxed(format: DeviceFormat, sandboxed: bool) -> bool {
     sandboxed && format == DeviceFormat::Clap
 }
 

@@ -867,6 +867,14 @@ bases. Shared memory and `BRIDGE_PROTOCOL_VERSION` are unchanged, as for
 `Op::ParamText` / `Op::NoteNames`. Tests: `plugin_host_bridge/tests/bridge.rs`,
 `plugin_system/sandbox_tests.rs`.
 
+### Amendment 2026-11-04 — VST3 effects in the sandbox (ADR-033 step 5)
+
+The bridge hosts VST3 effects too (`--plugin-format vst3`, `Vst3Adapter`). The block
+message and the bounded wait are unchanged (protocol still 3). `runs_sandboxed`
+accepts VST3 effects; instruments, parameters, the editor and presets of a sandboxed
+VST3 plugin come with steps 8, 6, 7 and 9 and answer an explicit error until then. The
+"no silent fallback" rule applies as for CLAP. Details and measures: ADR-033, "Step 5".
+
 ### Amendment 2026-11-04 — protocol v3, neutral sections (ADR-033 step 4)
 
 `BRIDGE_PROTOCOL_VERSION` is **3**. The engine no longer writes a CLAP structure

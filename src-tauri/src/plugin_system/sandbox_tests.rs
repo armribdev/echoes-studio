@@ -74,7 +74,7 @@ const NOTE_ON: MidiEventKind = MidiEventKind::NoteOn {
 const NOTE_OFF: MidiEventKind = MidiEventKind::NoteOff { pitch: 60 };
 
 /// `(bridge exe, test plugin dll)`, built once per test run.
-fn artifacts() -> &'static (PathBuf, PathBuf) {
+pub(super) fn artifacts() -> &'static (PathBuf, PathBuf) {
     static ARTIFACTS: OnceLock<(PathBuf, PathBuf)> = OnceLock::new();
     ARTIFACTS.get_or_init(|| {
         let workspace = Path::new(env!("CARGO_MANIFEST_DIR"));

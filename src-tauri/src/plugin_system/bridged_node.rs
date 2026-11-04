@@ -1,13 +1,17 @@
-//! Graph devices of a sandboxed CLAP plugin (ADR-015): [`BridgedNode`] for an
-//! effect, [`BridgedInstrument`] for a track instrument.
+//! Graph devices of a sandboxed plugin (ADR-015, ADR-033): [`BridgedNode`] for an
+//! effect, [`BridgedInstrument`] for a CLAP track instrument.
 //!
 //! Same role as `ClapWrapperNode` / `ClapInstrument`, with the plugin in a
 //! `plugin_host_bridge` process: each block, the device writes the transport,
 //! the parameter events (queued edits, automation, modulation — the same
 //! `ClapParamEvents` logic as in-process) and, for an instrument, the notes, as
 //! format-neutral sections (protocol v3); hands them and the audio to the bridge,
-//! whose CLAP adapter builds the CLAP events; and replays the plugin's edits into
-//! the same observers.  No CLAP structure crosses the process boundary.
+//! whose adapter builds the CLAP events or the VST3 `ProcessData`; and replays the
+//! plugin's edits into the same observers.  No plugin structure crosses the
+//! process boundary.
+//!
+//! A sandboxed VST3 effect (step 5) sends audio and transport only: its parameters
+//! come with step 6, so no parameter event is written for it.
 //!
 //! ## Real-time behaviour
 //!
@@ -45,6 +49,7 @@ use crate::plugin_system::bridge::{CHANNELS, MAX_FRAMES};
 use crate::plugin_system::crash_marker::note_crash;
 use crate::plugin_system::instance::PluginInstance;
 use crate::plugin_system::lifecycle::LifecycleState;
+use crate::plugin_system::wrapper::DeviceFormat;
 
 /// Share of the block period the audio thread may wait for the bridge.
 const LIVE_WAIT_SHARE: f64 = 0.75;
@@ -203,7 +208,9 @@ impl BridgeRoundTrip {
         let latency = bridge.and_then(|bridge| bridge.activate(ctx.sample_rate, max_frames));
         self.active = latency.is_some();
         self.latency = latency.unwrap_or(0);
-        if let Some(bridge) = bridge.filter(|_| self.active) {
+        if let Some(bridge) =
+            bridge.filter(|_| self.active && self.instance.format == DeviceFormat::Clap)
+        {
             self.param_events.set_ranges(&bridge.params());
         }
         self.instance.set_lifecycle(LifecycleState::Running);
@@ -222,8 +229,10 @@ impl BridgeRoundTrip {
     /// for a plugin it hosts itself.
     fn write_events(&mut self, notes: Option<&MidiEventList>) {
         self.wire_params.events.clear();
-        self.param_events
-            .fill_into(&self.instance, &mut self.wire_params);
+        if self.instance.format == DeviceFormat::Clap {
+            self.param_events
+                .fill_into(&self.instance, &mut self.wire_params);
+        }
         self.wire_notes.clear();
         if let Some(notes) = notes {
             push_wire_notes(notes, &mut self.wire_notes);
