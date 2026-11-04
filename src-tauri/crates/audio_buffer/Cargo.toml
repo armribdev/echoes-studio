@@ -1,0 +1,15 @@
+[package]
+name = "audio_buffer"
+version = "0.1.0"
+edition = "2021"
+description = "Planar f32 audio buffer shared by the engine and the plugin bridge host (ADR-033)."
+license = "MIT"
+publish = false
+
+# std-only. Moved from the engine's `audio_graph/buffer.rs`; the hot accessors keep
+# their `#[inline]` so they still inline across the crate boundary.
+[dependencies]
+
+[features]
+# `mix_from` and `apply_gain`, which only the engine tests call.
+test-support = []

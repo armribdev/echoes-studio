@@ -17,11 +17,11 @@ use std::sync::Mutex;
 #[cfg(test)]
 use super::com_object::LifeProbe;
 use super::com_object::ReferenceCount;
-use super::ffi::{
+use super::host_context::tuid_eq;
+use vst3_ffi::{
     FUnknown, IAttributeListVtbl, TResult, Tuid, IID_FUNKNOWN, IID_IATTRIBUTE_LIST,
     K_INVALID_ARGUMENT, K_NO_INTERFACE, K_OUT_OF_MEMORY, K_RESULT_FALSE, K_RESULT_OK,
 };
-use super::host_context::tuid_eq;
 
 const MAX_ENTRIES: usize = 32;
 const MAX_KEY_BYTES: usize = 64;
@@ -29,7 +29,7 @@ const MAX_TEXT_UNITS: usize = 1024;
 const MAX_BINARY_BYTES: usize = 64 * 1024;
 
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) enum Value {
+pub enum Value {
     Int(i64),
     Float(f64),
     Text(Vec<u16>),
@@ -99,14 +99,20 @@ impl HostAttributeList {
         self.set_value(key.as_bytes(), Value::Text(units))
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub fn value(&self, key: &str) -> Option<Value> {
         self.find(key.as_bytes(), |value| Some(value.clone()))
     }
 }
 
 /// One reference to a [`HostAttributeList`], released on drop.
-pub(crate) struct OwnedAttributeList(NonNull<HostAttributeList>);
+pub struct OwnedAttributeList(NonNull<HostAttributeList>);
+
+impl Default for OwnedAttributeList {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl OwnedAttributeList {
     pub fn new() -> Self {
@@ -358,11 +364,11 @@ static ATTRIBUTE_LIST_VTBL: IAttributeListVtbl = IAttributeListVtbl {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::plugin_formats::vst3::ffi::IID_IMESSAGE;
     use std::ffi::CString;
     use std::mem::size_of_val;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
+    use vst3_ffi::IID_IMESSAGE;
 
     fn key(text: &str) -> CString {
         CString::new(text).unwrap()

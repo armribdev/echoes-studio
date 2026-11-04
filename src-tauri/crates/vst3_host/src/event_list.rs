@@ -5,7 +5,7 @@
 
 use std::ffi::c_void;
 
-use super::ffi::{
+use vst3_ffi::{
     Event, TResult, Tuid, IID_FUNKNOWN, IID_IEVENT_LIST, K_INVALID_ARGUMENT, K_NO_INTERFACE,
     K_RESULT_FALSE, K_RESULT_OK,
 };
@@ -102,12 +102,12 @@ impl HostEventList {
         self.count = 0;
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub fn len(&self) -> usize {
         self.count
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub fn as_slice(&self) -> &[Event] {
         &self.events[..self.count]
     }
@@ -130,7 +130,7 @@ impl HostEventList {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::plugin_formats::vst3::ffi::{K_NOTE_OFF_EVENT, K_NOTE_ON_EVENT};
+    use vst3_ffi::{K_NOTE_OFF_EVENT, K_NOTE_ON_EVENT};
 
     /// Calls the list the way a plugin does: through its vtable.
     fn vtbl(list: &mut HostEventList) -> &'static IEventListVtbl {

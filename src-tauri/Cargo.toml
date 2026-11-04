@@ -16,7 +16,7 @@ rust-version = "1.77.2"
 # stating it explicitly preserves the exact feature resolution → the engine binary
 # stays bit-identical (C-2).
 [workspace]
-members = ["crates/clap_ffi", "crates/plugin_bridge", "crates/plugin_host_bridge", "crates/plugin_param_queue", "crates/test_clap_plugin", "crates/test_vst3_plugin", "crates/vst3_ffi"]
+members = ["crates/audio_buffer", "crates/clap_ffi", "crates/plugin_bridge", "crates/plugin_host_bridge", "crates/plugin_param_queue", "crates/test_clap_plugin", "crates/test_vst3_plugin", "crates/vst3_ffi", "crates/vst3_host"]
 resolver = "2"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -36,6 +36,8 @@ clap_ffi = { path = "crates/clap_ffi" }
 # VST3 COM bindings and the parameter queue, shared with the bridge host
 # (ADR-033, step 1).  The engine re-exports them from the old module paths.
 vst3_ffi = { path = "crates/vst3_ffi" }
+vst3_host = { path = "crates/vst3_host" }
+audio_buffer = { path = "crates/audio_buffer" }
 plugin_param_queue = { path = "crates/plugin_param_queue" }
 serde_json = "1.0"
 serde = { version = "1.0", features = ["derive"] }
@@ -66,4 +68,6 @@ wasm = []
 
 [dev-dependencies]
 vst3_ffi = { path = "crates/vst3_ffi", features = ["test-support"] }
+audio_buffer = { path = "crates/audio_buffer", features = ["test-support"] }
 test_vst3_plugin = { path = "crates/test_vst3_plugin" }
+vst3_host = { path = "crates/vst3_host", features = ["test-support"] }

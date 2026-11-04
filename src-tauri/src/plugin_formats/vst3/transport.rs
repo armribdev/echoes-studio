@@ -1,40 +1,32 @@
 //! Engine transport → VST3 `ProcessContext`.
 
-use super::ffi::{
-    ProcessContext, CONTEXT_BAR_POSITION_VALID, CONTEXT_PLAYING, CONTEXT_PROJECT_TIME_MUSIC_VALID,
-    CONTEXT_TEMPO_VALID, CONTEXT_TIME_SIG_VALID,
-};
 use crate::audio_graph::node::TransportInfo;
+use vst3_ffi::ProcessContext;
+use vst3_host::transport::{process_context, TransportState};
 
-/// Built on the stack every block; no allocation.  Cycle, system time, SMPTE
-/// and clock fields stay unset (their `*_VALID` flags are off).
+/// Built on the stack every block; no allocation.
 pub fn vst3_process_context(transport: &TransportInfo) -> ProcessContext {
     let position = transport.musical_position();
-    let mut state = CONTEXT_PROJECT_TIME_MUSIC_VALID
-        | CONTEXT_BAR_POSITION_VALID
-        | CONTEXT_TEMPO_VALID
-        | CONTEXT_TIME_SIG_VALID;
-    if transport.is_playing {
-        state |= CONTEXT_PLAYING;
-    }
-    ProcessContext {
-        state,
+    process_context(&TransportState {
+        playing: transport.is_playing,
         sample_rate: transport.sample_rate as f64,
-        project_time_samples: transport.position_samples as i64,
-        project_time_music: position.beats,
-        bar_position_music: position.bar_start_beats,
+        position_samples: transport.position_samples as i64,
+        position_beats: position.beats,
+        bar_start_beats: position.bar_start_beats,
         tempo: transport.bpm as f64,
-        time_sig_numerator: transport.time_signature.numerator as i32,
-        time_sig_denominator: transport.time_signature.denominator as i32,
-        ..ProcessContext::default()
-    }
+        time_signature_numerator: transport.time_signature.numerator as i32,
+        time_signature_denominator: transport.time_signature.denominator as i32,
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::audio_graph::node::TimeSignature;
-    use std::mem::offset_of;
+    use vst3_ffi::{
+        CONTEXT_BAR_POSITION_VALID, CONTEXT_PLAYING, CONTEXT_PROJECT_TIME_MUSIC_VALID,
+        CONTEXT_TEMPO_VALID, CONTEXT_TIME_SIG_VALID,
+    };
 
     fn transport_at(
         seconds: f64,
@@ -87,17 +79,5 @@ mod tests {
         ] {
             assert_ne!(context.state & flag, 0);
         }
-    }
-
-    #[test]
-    fn matches_the_c_layout() {
-        assert_eq!(offset_of!(ProcessContext, sample_rate), 8);
-        assert_eq!(offset_of!(ProcessContext, project_time_samples), 16);
-        assert_eq!(offset_of!(ProcessContext, project_time_music), 40);
-        assert_eq!(offset_of!(ProcessContext, tempo), 72);
-        assert_eq!(offset_of!(ProcessContext, time_sig_numerator), 80);
-        assert_eq!(offset_of!(ProcessContext, chord), 88);
-        assert_eq!(offset_of!(ProcessContext, frame_rate), 96);
-        assert_eq!(offset_of!(ProcessContext, samples_to_next_clock), 104);
     }
 }

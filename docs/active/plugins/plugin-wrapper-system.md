@@ -107,13 +107,14 @@ call only fills pointer values — no `Vec::push`, no `Box`.
   - `load_state_blob` passes the restored blob to a separate controller.
   - The editor borrows the controller (`PluginInstance::vst3_controller`).
   - `PluginInstance::Drop` releases it before the component's `terminate`.
-- **Module load and unload** (ADR-033, 2026-11-03): `Vst3Library::load` follows the
-  SDK's "How the host will load a plug-in" page (`base/doc.h`): `LoadLibrary`, then
-  `InitDll` when the module exports it (a `false` answer unloads the module and is an
-  error), then `GetPluginFactory`. Dropping the library calls `ExitDll` (when
-  exported) and then `FreeLibrary`; every object created from the module must be
-  released before that, which the `Arc<Vst3Library>` kept beside each instance
-  guarantees. Before this date neither export was ever called. TDR Nova and Surge XT
+- **Module load and unload** (ADR-033, 2026-11-03, once per file since 2026-11-04):
+  `Vst3Library::load` follows the SDK's "How the host will load a plug-in" page
+  (`base/doc.h`) for the **first** user of a file: `LoadLibrary`, then `InitDll` when the
+  module exports it (a `false` answer unloads the module and is an error), then
+  `GetPluginFactory`. Later users of the same file only count. Dropping the **last**
+  user calls `ExitDll` (when exported) and then `FreeLibrary`; every object created from
+  the module must be released before that, which the `Arc<Vst3Library>` kept beside each
+  instance guarantees. A module shared by two instances is never exited under the other. Before this date neither export was ever called. TDR Nova and Surge XT
   export both and still pass the real-plugin tests (not hand-tested in the app).
   Tests: `plugin_system/vst3_module_tests.rs` on `crates/test_vst3_plugin`.
 - **COM.** The host never initialises COM itself: the plugin finds the apartment of

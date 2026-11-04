@@ -13,11 +13,11 @@ use super::attribute_list::OwnedAttributeList;
 #[cfg(test)]
 use super::com_object::LifeProbe;
 use super::com_object::ReferenceCount;
-use super::ffi::{
+use super::host_context::tuid_eq;
+use vst3_ffi::{
     FUnknown, IMessageVtbl, TResult, Tuid, IID_FUNKNOWN, IID_IMESSAGE, K_INVALID_ARGUMENT,
     K_NO_INTERFACE, K_RESULT_OK,
 };
-use super::host_context::tuid_eq;
 
 /// A longer identifier is cut: `setMessageID` cannot report an error.
 const MAX_ID_BYTES: usize = 256;
@@ -125,7 +125,7 @@ mod tests {
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
 
-    use crate::plugin_formats::vst3::ffi::{IAttributeListVtbl, IID_IATTRIBUTE_LIST};
+    use vst3_ffi::{IAttributeListVtbl, IID_IATTRIBUTE_LIST};
 
     fn vtbl(message: *mut FUnknown) -> &'static IMessageVtbl {
         unsafe { &*(*(message as *mut HostMessage)).vtbl }

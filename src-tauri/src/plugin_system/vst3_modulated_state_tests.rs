@@ -5,7 +5,7 @@ use std::sync::atomic::AtomicU32;
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::audio_graph::plugin_params::{PluginParamRange, ValueModulatedParam};
+use crate::plugin_formats::vst3::component_handler::FollowedParam;
 use crate::plugin_formats::vst3::fake_plugin::{
     fake_vst3_instance_with_units, FakeListener, FakeUnits, ProcessCall,
 };
@@ -23,7 +23,7 @@ fn follow(instance: &PluginInstance, bases: &[(u32, f32)]) {
         .iter()
         .map(|&(native_id, base)| {
             let base = Arc::new(AtomicU32::new(base.to_bits()));
-            ValueModulatedParam::new(native_id, PluginParamRange::UNKNOWN, base)
+            FollowedParam::new(native_id, base)
         })
         .collect();
     instance.vst3_edit_state().unwrap().replace_followed(params);

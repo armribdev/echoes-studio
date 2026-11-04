@@ -9,7 +9,8 @@
 //! thread (prepare/lifecycle) or the audio thread (process).  The two are
 //! never concurrent thanks to the atomic scheduler swap.
 //!
-//! The `Vst3Library` struct wraps the HMODULE and calls `FreeLibrary` on drop.
+//! The `Vst3Library` struct is one user of a module shared by file: the module is
+//! initialised (`InitDll`) by the first user and exited and freed by the last.
 //! It must outlive every `VstWrapperNode` that was created from it — callers
 //! must keep an `Arc<Vst3Library>` alive alongside the node.
 
@@ -751,12 +752,18 @@ mod win32 {
     }
 }
 
-/// Owns a loaded .vst3 DLL: `InitDll` (when exported) ran after `LoadLibrary`, and
-/// `ExitDll` then `FreeLibrary` run on drop, the host procedure of `base/doc.h`
-/// ("How the host will load a plug-in").
+/// A loaded .vst3 module. Every user of the same file shares one mapped module.
+///
+/// The host procedure of `base/doc.h` ("How the host will load a plug-in") runs once
+/// per file, not once per user: `InitDll` (when exported) after the first
+/// `LoadLibrary`, `ExitDll` then `FreeLibrary` when the last user is gone. Two
+/// instances of one plugin share the module's globals, so an `ExitDll` that ran while
+/// the other was alive would take them away from it (seen as heap corruption with
+/// TDR Nova when tests loaded it from several threads).
 #[cfg(windows)]
 pub struct Vst3Library {
     handle: *mut c_void,
+    key: String,
 }
 
 // SAFETY: HMODULE is process-global and safe to send across threads.
@@ -765,48 +772,122 @@ unsafe impl Send for Vst3Library {}
 #[cfg(windows)]
 unsafe impl Sync for Vst3Library {}
 
+/// A module some `Vst3Library` still uses. The handle is kept as an integer so the
+/// table can be shared between threads.
+#[cfg(windows)]
+struct SharedModule {
+    handle: usize,
+    users: usize,
+}
+
+/// The loaded modules by file. `InitDll` and `ExitDll` run while this lock is held,
+/// so a load cannot start between the last release and the unload.
+#[cfg(windows)]
+static MODULES: std::sync::Mutex<std::collections::BTreeMap<String, SharedModule>> =
+    std::sync::Mutex::new(std::collections::BTreeMap::new());
+
+#[cfg(windows)]
+fn module_table() -> std::sync::MutexGuard<'static, std::collections::BTreeMap<String, SharedModule>>
+{
+    MODULES
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+/// What names a file in the table: Windows paths are not case sensitive.
+#[cfg(windows)]
+fn module_key(dll_path: &Path) -> String {
+    std::fs::canonicalize(dll_path)
+        .unwrap_or_else(|_| dll_path.to_path_buf())
+        .to_string_lossy()
+        .to_lowercase()
+}
+
+/// One more user of the module of `dll_path`; the first one loads it and runs `InitDll`.
+#[cfg(windows)]
+fn acquire_module(dll_path: &Path) -> Result<(*mut c_void, String), String> {
+    let key = module_key(dll_path);
+    let mut modules = module_table();
+    if let Some(module) = modules.get_mut(&key) {
+        module.users += 1;
+        return Ok((module.handle as *mut c_void, key));
+    }
+
+    let wide: Vec<u16> = dll_path
+        .to_string_lossy()
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect();
+    let handle = unsafe { win32::LoadLibraryW(wide.as_ptr()) };
+    if handle.is_null() {
+        return Err(format!("LoadLibraryW failed for {}", dll_path.display()));
+    }
+    if !unsafe { module_init(handle) } {
+        unsafe { win32::FreeLibrary(handle) };
+        return Err(format!("InitDll failed for {}", dll_path.display()));
+    }
+    modules.insert(
+        key.clone(),
+        SharedModule {
+            handle: handle as usize,
+            users: 1,
+        },
+    );
+    Ok((handle, key))
+}
+
+/// One user less; the last one runs `ExitDll` and unloads the module.
+#[cfg(windows)]
+fn release_module(key: &str) {
+    let mut modules = module_table();
+    let Some(module) = modules.get_mut(key) else {
+        return;
+    };
+    module.users -= 1;
+    if module.users == 0 {
+        if let Some(module) = modules.remove(key) {
+            unsafe { module_exit_and_free(module.handle as *mut c_void) };
+        }
+    }
+}
+
+#[cfg(windows)]
+enum FactoryError {
+    NotExported,
+    Null,
+}
+
+/// `GetPluginFactory` of a loaded module; the factory carries a ref the caller releases.
+///
+/// # Safety
+/// `handle` must be a module returned by `LoadLibraryW` that is still loaded.
+#[cfg(windows)]
+unsafe fn factory_of(handle: *mut c_void) -> Result<*mut IPluginFactory, FactoryError> {
+    let factory_fn = win32::GetProcAddress(handle, c"GetPluginFactory".as_ptr().cast())
+        .ok_or(FactoryError::NotExported)?;
+    type GetPluginFactoryFn = unsafe extern "C" fn() -> *mut IPluginFactory;
+    let get_factory: GetPluginFactoryFn = std::mem::transmute(factory_fn);
+    let factory = get_factory();
+    if factory.is_null() {
+        Err(FactoryError::Null)
+    } else {
+        Ok(factory)
+    }
+}
+
 #[cfg(windows)]
 impl Vst3Library {
     pub fn load(dll_path: &Path) -> Result<(std::sync::Arc<Self>, *mut IPluginFactory), String> {
-        let wide: Vec<u16> = dll_path
-            .to_string_lossy()
-            .encode_utf16()
-            .chain(std::iter::once(0))
-            .collect();
-
-        let handle = unsafe { win32::LoadLibraryW(wide.as_ptr()) };
-        if handle.is_null() {
-            return Err(format!("LoadLibraryW failed for {}", dll_path.display()));
-        }
-        if !unsafe { module_init(handle) } {
-            unsafe { win32::FreeLibrary(handle) };
-            return Err(format!("InitDll failed for {}", dll_path.display()));
-        }
-
-        let factory_fn =
-            unsafe { win32::GetProcAddress(handle, c"GetPluginFactory".as_ptr().cast()) };
-        let factory_fn = match factory_fn {
-            Some(f) => f,
-            None => {
-                unsafe { module_exit_and_free(handle) };
-                return Err(format!(
-                    "GetPluginFactory not found in {}",
-                    dll_path.display()
-                ));
+        let (handle, key) = acquire_module(dll_path)?;
+        // From here on, dropping the library gives its use of the module back.
+        let library = std::sync::Arc::new(Vst3Library { handle, key });
+        let factory = unsafe { factory_of(handle) }.map_err(|error| match error {
+            FactoryError::NotExported => {
+                format!("GetPluginFactory not found in {}", dll_path.display())
             }
-        };
-
-        type GetPluginFactoryFn = unsafe extern "C" fn() -> *mut IPluginFactory;
-        let get_factory: GetPluginFactoryFn = unsafe { std::mem::transmute(factory_fn) };
-        let factory = unsafe { get_factory() };
-
-        if factory.is_null() {
-            unsafe { module_exit_and_free(handle) };
-            return Err("GetPluginFactory returned null".into());
-        }
-
-        let lib = std::sync::Arc::new(Vst3Library { handle });
-        Ok((lib, factory))
+            FactoryError::Null => "GetPluginFactory returned null".to_string(),
+        })?;
+        Ok((library, factory))
     }
 
     /// Re-obtain the plugin factory from the already-mapped DLL.  The module is
@@ -817,15 +898,7 @@ impl Vst3Library {
     /// Call off the audio thread.  The DLL must still be loaded (guaranteed
     /// while `self` is alive).
     pub unsafe fn factory(&self) -> Option<*mut IPluginFactory> {
-        let factory_fn = win32::GetProcAddress(self.handle, c"GetPluginFactory".as_ptr().cast())?;
-        type GetPluginFactoryFn = unsafe extern "C" fn() -> *mut IPluginFactory;
-        let get_factory: GetPluginFactoryFn = std::mem::transmute(factory_fn);
-        let factory = get_factory();
-        if factory.is_null() {
-            None
-        } else {
-            Some(factory)
-        }
+        factory_of(self.handle).ok()
     }
 
     /// A library that maps nothing, for tests with a hand-made plugin.
@@ -833,6 +906,7 @@ impl Vst3Library {
     pub fn placeholder() -> std::sync::Arc<Self> {
         std::sync::Arc::new(Self {
             handle: std::ptr::null_mut(),
+            key: String::new(),
         })
     }
 }
@@ -841,9 +915,7 @@ impl Vst3Library {
 impl Drop for Vst3Library {
     fn drop(&mut self) {
         if !self.handle.is_null() {
-            unsafe { module_exit_and_free(self.handle) };
-        } else {
-            unsafe { win32::FreeLibrary(self.handle) };
+            release_module(&self.key);
         }
     }
 }

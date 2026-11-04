@@ -76,6 +76,31 @@ fn collect(root: &Path, ext: &str, depth: usize, out: &mut Vec<PathBuf>) {
     }
 }
 
+/// Real plugins are not safe to drive from several test threads at once: run in
+/// parallel, these tests crashed inside TDR Nova about one run in four, before and
+/// after the VST3 host was split into crates; one at a time, never in 90 runs.
+static REAL_PLUGINS: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+thread_local! {
+    static HELD_REAL_PLUGINS: std::cell::RefCell<Option<std::sync::MutexGuard<'static, ()>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// A test that looks for a real plugin holds the lock until its thread ends, which
+/// is when the test ends.
+fn hold_real_plugins() {
+    HELD_REAL_PLUGINS.with(|held| {
+        let mut held = held.borrow_mut();
+        if held.is_none() {
+            *held = Some(
+                REAL_PLUGINS
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner),
+            );
+        }
+    });
+}
+
 /// All real plugin binaries of `ext` on disk: explicit env override first, then
 /// a recursive scan of the platform directories.  For `.vst3` the recursion
 /// descends into bundles and finds the inner module (also `.vst3`), so both
@@ -83,6 +108,7 @@ fn collect(root: &Path, ext: &str, depth: usize, out: &mut Vec<PathBuf>) {
 /// Sorted so an **effect** (filename hint) comes first → a meaningful process
 /// block.
 fn discover_all(env_var: &str, ext: &str) -> Vec<PathBuf> {
+    hold_real_plugins();
     if let Ok(p) = std::env::var(env_var) {
         let pb = PathBuf::from(p);
         if pb.exists() {
@@ -1226,9 +1252,8 @@ fn run_blocks(node: &mut dyn AudioNode, count: usize, modulation: Option<(u32, f
 /// modulation: a parameter modulated by value goes back on its base first.
 #[test]
 fn vst3_real_state_save_puts_a_modulated_parameter_back_on_its_base() {
-    use crate::audio_graph::plugin_params::{
-        PluginParamControl, PluginParamRange, ValueModulatedParam,
-    };
+    use crate::audio_graph::plugin_params::PluginParamControl;
+    use crate::plugin_formats::vst3::component_handler::FollowedParam;
     use std::sync::atomic::AtomicU32;
 
     const BASE: f32 = 0.3;
@@ -1305,11 +1330,7 @@ fn vst3_real_state_save_puts_a_modulated_parameter_back_on_its_base() {
             instance
                 .vst3_edit_state()
                 .unwrap()
-                .replace_followed(vec![ValueModulatedParam::new(
-                    id,
-                    PluginParamRange::UNKNOWN,
-                    Arc::clone(&base),
-                )]);
+                .replace_followed(vec![FollowedParam::new(id, Arc::clone(&base))]);
             run_blocks(&mut *node, 3, Some((id, OFFSET)));
             let restored = saved_value(id);
             eprintln!(

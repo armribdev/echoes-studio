@@ -27,6 +27,12 @@ pub struct ParamMirror {
     watchers: AtomicU32,
 }
 
+impl Default for ParamMirror {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ParamMirror {
     pub fn new() -> Self {
         Self {

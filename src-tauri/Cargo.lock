@@ -105,6 +105,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1505bd5d3d116872e7271a6d4e16d81d0c8570876c8de68093a09ac269d8aac0"
 
 [[package]]
+name = "audio_buffer"
+version = "0.1.0"
+
+[[package]]
 name = "autocfg"
 version = "1.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -837,6 +841,7 @@ checksum = "d0881ea181b1df73ff77ffaaf9c7544ecc11e82fba9b5f27b262a3c73a332555"
 name = "echoes-studio"
 version = "0.1.0"
 dependencies = [
+ "audio_buffer",
  "cc",
  "clap_ffi",
  "cpal",
@@ -853,6 +858,7 @@ dependencies = [
  "tauri-plugin-dialog",
  "test_vst3_plugin",
  "vst3_ffi",
+ "vst3_host",
  "windows-sys 0.59.0",
 ]
 
@@ -4278,6 +4284,15 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 [[package]]
 name = "vst3_ffi"
 version = "0.1.0"
+
+[[package]]
+name = "vst3_host"
+version = "0.1.0"
+dependencies = [
+ "audio_buffer",
+ "plugin_param_queue",
+ "vst3_ffi",
+]
 
 [[package]]
 name = "vswhom"

@@ -14,7 +14,7 @@ use std::sync::Arc;
 
 use super::buses::BusInfo;
 use super::channel_context::{CHANNEL_COLOR_KEY, CHANNEL_NAME_KEY, CHANNEL_NAME_LENGTH_KEY};
-use super::component_handler::ComponentHandler;
+use super::component_handler::engine_component_handler;
 use super::ffi::{
     FUnknown, HostParameterChanges, IAttributeListVtbl, IAudioProcessor, IAudioProcessorVtbl,
     IBStreamVtbl, IComponent, IComponentHandlerVtbl, IComponentVtbl, IEditController,
@@ -1404,7 +1404,7 @@ fn build_instance(
         buses,
     }));
     let controller = NonNull::from(controller);
-    let handler = ComponentHandler::boxed();
+    let handler = engine_component_handler();
     if let Some(units) = unsafe { units.as_ref() } {
         units.handler.set(handler.as_funknown());
     }

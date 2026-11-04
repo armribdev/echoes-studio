@@ -1,0 +1,19 @@
+[package]
+name = "vst3_host"
+version = "0.1.0"
+edition = "2021"
+description = "The host side of VST3: the COM objects a host gives a plugin, shared by the engine and the plugin bridge host (ADR-033)."
+license = "MIT"
+publish = false
+
+# Depends on the bindings only. It must never depend on `audio_graph`, on the
+# engine crate or on `plugin_system` (ADR-003, ADR-033): what the engine knows
+# (tracks, blocks, instances) reaches these objects as plain values.
+[dependencies]
+audio_buffer = { path = "../audio_buffer" }
+plugin_param_queue = { path = "../plugin_param_queue" }
+vst3_ffi = { path = "../vst3_ffi" }
+
+[features]
+# Read accessors the engine tests use on the objects handed to a fake plugin.
+test-support = []

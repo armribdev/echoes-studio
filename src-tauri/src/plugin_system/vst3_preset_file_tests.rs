@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::audio_graph::plugin_params::{PluginParamRange, ValueModulatedParam};
+use crate::plugin_formats::vst3::component_handler::FollowedParam;
 use crate::plugin_formats::vst3::fake_plugin::{
     fake_vst3_instance_with_units, FakeListener, FakeUnits, FAKE_PLUGIN_ID,
 };
@@ -228,11 +228,7 @@ fn the_base_of_a_value_modulated_parameter_follows_the_file() {
     instance
         .vst3_edit_state()
         .unwrap()
-        .replace_followed(vec![ValueModulatedParam::new(
-            7,
-            PluginParamRange::UNKNOWN,
-            Arc::clone(&base),
-        )]);
+        .replace_followed(vec![FollowedParam::new(7, Arc::clone(&base))]);
 
     load(&instance, &path).unwrap();
 

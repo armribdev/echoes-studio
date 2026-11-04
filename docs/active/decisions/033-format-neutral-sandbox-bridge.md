@@ -2,11 +2,12 @@
 
 ## Status
 
-**Proposed — 2026-11-03; plan approved by the user the same day, steps 0, 1 and 2
+**Proposed — 2026-11-03; plan approved by the user the same day, steps 0 to 3
 done.** Step 0 (this ADR and the header check in Appendix A) changed no code. Step 1
 moved `vst3/ffi.rs` and `param_queue.rs` into the `vst3_ffi` and `plugin_param_queue`
 crates (see "Step 1 — what shipped"). Step 2 added the test plugin, the harness
-baseline and the loader fix ("Step 2 — what shipped"). Decisions 1–9 below were taken by the user
+baseline and the loader fix ("Step 2 — what shipped"). Step 3 moved the VST3 host objects into
+`vst3_host` ("Step 3 — what shipped"). Decisions 1–9 below were taken by the user
 before this ADR was written (decision 10 only restates ADR-015). The status stays
 _Proposed_ until the protocol change of step 4, the first step that crosses the
 real-time boundary, is approved.
@@ -170,7 +171,7 @@ without a sandboxed VST3, and waits for the user's approval before the next one.
 | 0    | **Foundations** (done 2026-11-03): official headers fetched outside the repository, bindings checked (Appendix A), new interfaces listed (Appendix B), this ADR.                                                                                                                                         | none                                 | none (no code)                                                                                       |
 | 1    | **`vst3_ffi` and `plugin_param_queue` crates**: `plugin_formats/vst3/ffi.rs` and `plugin_system/param_queue.rs` moved as they are, re-export shims in the engine. The IID test moves with the bindings.                                                                                               | none in logic; `ParamQueue` is audio-thread code, moved verbatim | harness green, all hashes unchanged                                                                  |
 | 2    | **`test_vst3_plugin` DLL and baseline** (done). cdylib built on `vst3_ffi`, written after `fake_plugin.rs` (effect with gain, state, latency, "hang", "crash", COM diagnostics; and an instrument; "touch" comes with step 6). Golden project `vst3_plugins` in the harness. The loader calls `InitDll` / `ExitDll`; the COM question is answered. | none (the loader is off the audio thread) | new golden `vst3_plugins`, recorded in-process before any host code moves; others unchanged        |
-| 3    | **`vst3_host` crate.** Host COM objects, buses, event list, parameter delivery, component handler, parameter mirror, units, presets, channel context. The engine types they use today (see Context) are replaced by neutral ones owned by the crates; `wrapper.rs` and `instrument.rs` stay in the engine. Sub-steps by file group, each green. | **high**: audio-thread code is moved and decoupled | `vst3_plugins` and every other hash must not move; TDR Nova render identical before / after (manual) |
+| 3    | **`vst3_host` crate** (done). Host COM objects, buses, event list, component handler, parameter mirror, units, channel context, MIDI mapping, transport context. The engine types they use today (see Context) are replaced by neutral ones owned by the crates; `wrapper.rs` and `instrument.rs` stay in the engine. Sub-steps by file group, each green. | **high**: audio-thread code is moved and decoupled | `vst3_plugins` and every other hash must not move; TDR Nova render identical before / after (manual) |
 | 4    | **Protocol v3 and CLAP migration.** First commit: the "sandbox against in-process" test on v2 for the CLAP test plugin. Then typed sections, port table, `ClapAdapter` in the bridge, neutral control records, `BRIDGE_PROTOCOL_VERSION` = 3.                                                          | **high**: message format on both audio threads | the new test stays identical; `clap_plugins` unchanged                                              |
 | 5    | **VST3 audio in the bridge.** `Vst3Adapter` (effects): load, `InitDll`, activate, process, latency, tail, state, crash and restart, ADR-010 gate inside the bridge. `runs_sandboxed` accepts VST3, the modes and the "Isoler" button cover it.                                                      | **high**: first VST3 on the ring; cores spinning | sandbox-against-in-process test on the VST3 test DLL (effect)                                       |
 | 6    | **VST3 parameters.** Parameter list and text, automation and modulation with a sample offset, gestures both ways, rescan, controller follows processor (inside the bridge), modulated bases before a state save.                                                                                    | medium: bounded queues (128 × 128)   | same test with automated and modulated parameters                                                    |
@@ -213,8 +214,9 @@ without a sandboxed VST3, and waits for the user's approval before the next one.
    step 5: which call the bridge makes (`OleInitialize`, as `tao` does, or
    `CoInitializeEx` single-threaded) on its main thread, and the apartment of the
    bridge's audio thread — decided with TDR Nova and Surge XT running in the bridge.
-3. ~~**`InitDll` / `ExitDll`.**~~ _Fixed in step 2:_ `Vst3Library` calls `InitDll` after
-   `LoadLibrary` and `ExitDll` before `FreeLibrary`, as `base/doc.h` says. TDR Nova and
+3. ~~**`InitDll` / `ExitDll`.**~~ _Fixed in step 2, corrected in step 3:_ `Vst3Library` calls
+   `InitDll` after the first `LoadLibrary` of a file and `ExitDll` before the `FreeLibrary` of
+   its last user, as `base/doc.h` says (see "Step 3" for why once per file). TDR Nova and
    Surge XT export both and pass the real-plugin tests; **still to hand-test in the
    app** (open, close, reload, save and reopen a project with each). An `InitDll`
    that returns `false` (module refuses to load) is handled but has no test, because
@@ -272,9 +274,9 @@ without a sandboxed VST3, and waits for the user's approval before the next one.
   the module. Eight tests drive it through the real `vst3_ffi` calls.
   `IID_IPLUGIN_FACTORY` was added to `vst3_ffi` for it (value read in the headers,
   in the header test).
-- **Loader fix** in `vst3_ffi::Vst3Library` (see open question 3). The test
-  `the_loader_runs_init_dll_after_loading_and_exit_dll_before_unloading` loads a copy
-  of the DLL (its own counters) and reads them through a second reference.
+- **Loader fix** in `vst3_ffi::Vst3Library` (see open question 3; step 3 made it once
+  per file). The test `the_loader_runs_init_dll_after_loading_and_exit_dll_before_unloading`
+  loads a copy of the DLL (its own counters) and reads them through a second reference.
 - **Harness baseline.** Project `vst3_plugins` in `audio_engine/render_harness.rs`:
   an audio clip through the effect and an instrument playing two notes, in the
   Echoes process. Three tests: audible with silent gaps, identical at the five block
@@ -288,6 +290,63 @@ without a sandboxed VST3, and waits for the user's approval before the next one.
 - **Real plugins:** `ffi_lifecycle_tests` run green with the new loader on TDR Nova
   (effect) and, with `ECHOES_TEST_VST3` pointing at its binary, on Surge XT
   (instrument: a note makes sound, controller mapping, aux outputs, programs).
+
+## Step 3 — what shipped (2026-11-04)
+
+Sub-steps, each left green: 3a pure COM objects, 3b objects that touched engine types,
+3c the handler, MIDI mapping and transport. Test counts: the 805 engine tests of step 2
+are now 736 in the engine, 63 in `vst3_host` and 11 in `audio_buffer` (810), five more: two
+loader tests (shared module), one channel-context test, and the transport tests split in two
+places. The `vst3_plugins` golden hash and every other hash did not move.
+
+- **`crates/vst3_host`** (depends on `vst3_ffi`, `audio_buffer`, `plugin_param_queue`; never
+  on the engine): `attribute_list`, `message`, `host_context`, `com_object`, `event_list`,
+  `param_mirror`, `units`, `params`, `channel_context`, `buses`, `midi_mapping`,
+  `component_handler`, `transport`. The old paths still resolve through one
+  `pub use vst3_host::{…}` line in `plugin_formats/vst3/mod.rs`.
+- **What had to become neutral** (the engine types these files used):
+  - `AudioBuffer` (buses) is now the `audio_buffer` crate, re-exported at
+    `audio_graph::buffer`; its hot accessors were already `#[inline]`, three more got it.
+    Chosen over a trait plus a copy of the buffer: one type, no duplicate.
+  - `HostTrackInfo` (channel context) → the name and color as plain values; the engine keeps a
+    10-line adapter.
+  - `PluginParamInfo` (parameter list) → `vst3_host::params::ParamInfo`, same fields; the
+    engine maps it.
+  - `MidiEventList` (MIDI mapping) → `(offset, [u8; 3])` pairs, built lazily by the engine.
+  - `TransportInfo` (transport) → `TransportState` (playing, rate, samples, beats, bar start,
+    tempo, time signature): the shape step 4 will carry in the protocol.
+  - `ValueModulatedParam` (handler) → `FollowedParam { native_id, base }`.
+  - The process-wide signals the handler raised (`mark_plugin_state_edited`, restart, rescan)
+    → the `HostSignals` trait; the engine's implementation calls the same functions as before.
+    The bridge will give its own.
+- **Stayed in the engine, on purpose:** `wrapper.rs` and `instrument.rs` (`AudioNode`,
+  `InstrumentDevice`), `host.rs` (the scan fills the engine's registry), `fake_plugin.rs`,
+  and `param_delivery.rs`: it is glue between the engine's parameter controls, the instance,
+  the FFI gate and the crash guard. What the bridge needs for parameter delivery —
+  `HostParameterChanges` — already lives in `vst3_ffi`; the neutral delivery is written with
+  step 6, when it has a consumer. `preset_file.rs` and `preset_locations.rs` stay too: the
+  `.vstpreset` parsing belongs to the app (step 9). Decision 4's list ("delivery, presets")
+  is therefore met by the program lists (`units`) and the pieces above.
+- **Tests that need the hand-made plugin** (`fake_plugin.rs` builds an engine `PluginInstance`)
+  moved to engine files next to the code they test: `units_tests.rs`, `buses_tests.rs`, and the
+  notify tests of `channel_context.rs`. Cargo features `test-support` on `vst3_ffi`,
+  `vst3_host` and `audio_buffer` expose the few accessors that were `#[cfg(test)]`.
+- **Loader corrected.** Step 2 ran `InitDll` / `ExitDll` at every load and drop. Two instances of
+  one plugin share the module's globals, so the first drop could take them from the other.
+  `Vst3Library` now keeps one entry per file (path, user count) under a lock: `InitDll` at the
+  first user, `ExitDll` and unload at the last. New tests: two users share one pair of calls,
+  and eight threads loading and dropping one module keep the counts paired.
+- **Real-plugin tests were flaky, before this ADR.** Run in parallel, the tests that drive TDR Nova
+  or Surge XT failed 12 times in 60 on the code of steps 0–1 (7 crashes), 18 in 60 with the
+  loader doing nothing, 19 in 60 with it; run one at a time, 0 in 90. A lock held for the length
+  of any test that looks for a real plugin (`hold_real_plugins` in `ffi_lifecycle_tests.rs`)
+  brings it to 0 in 60 parallel runs of that subset and 0 in 15 of the whole engine suite. The
+  cause is the plugin not being safe to call from several threads, not the host split; whether
+  the app can hit the same thing (the scan on a worker thread while the command thread
+  instantiates the same plugin) is **not established** and is worth a look in step 5.
+- **Not hand-tested in the app:** the loader sharing, the handler signals (unsaved flag after an
+  edit in a plugin window, restart and rescan requests), the MIDI mapping and the transport —
+  all covered by tests, none by a hand test.
 
 ## Consequences
 

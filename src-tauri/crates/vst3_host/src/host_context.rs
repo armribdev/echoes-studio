@@ -9,24 +9,37 @@ use std::ffi::c_void;
 use std::ptr::null_mut;
 
 use super::attribute_list::OwnedAttributeList;
-use super::ffi::{
+use super::message::HostMessage;
+use vst3_ffi::{
     FUnknown, IHostApplicationVtbl, TResult, Tuid, IID_FUNKNOWN, IID_IATTRIBUTE_LIST,
     IID_IHOST_APPLICATION, IID_IMESSAGE, K_INVALID_ARGUMENT, K_NO_INTERFACE, K_RESULT_FALSE,
     K_RESULT_OK,
 };
-use super::message::HostMessage;
 
-pub(crate) fn tuid_eq(a: *const Tuid, b: &Tuid) -> bool {
+/// Whether the interface id a plugin passed is `b`; a null pointer is not.
+///
+/// # Safety
+/// `a` must be null or point to a readable 16-byte interface id.
+pub unsafe fn tuid_eq(a: *const Tuid, b: &Tuid) -> bool {
     if a.is_null() {
         return false;
     }
-    unsafe { (*a) == *b }
+    (*a) == *b
 }
 
-pub(crate) unsafe extern "C" fn static_add_ref(_: *mut FUnknown) -> u32 {
+/// Reference counting of a static object: it is never freed.
+///
+/// # Safety
+/// Any argument is accepted; the function does not read it.
+pub unsafe extern "C" fn static_add_ref(_: *mut FUnknown) -> u32 {
     1
 }
-pub(crate) unsafe extern "C" fn static_release(_: *mut FUnknown) -> u32 {
+
+/// See [`static_add_ref`].
+///
+/// # Safety
+/// Any argument is accepted; the function does not read it.
+pub unsafe extern "C" fn static_release(_: *mut FUnknown) -> u32 {
     1
 }
 
@@ -111,7 +124,7 @@ pub fn host_application() -> *mut FUnknown {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::plugin_formats::vst3::ffi::{IAttributeListVtbl, IMessageVtbl, IID_IBSTREAM};
+    use vst3_ffi::{IAttributeListVtbl, IMessageVtbl, IID_IBSTREAM};
 
     fn create(cid: &Tuid, iid: &Tuid) -> (TResult, *mut c_void) {
         let host = host_application();

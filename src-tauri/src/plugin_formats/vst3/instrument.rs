@@ -272,7 +272,11 @@ impl InstrumentDevice for VstInstrument {
         self.notes.push_pending_releases(event_list);
         push_vst3_events(events, event_list, &mut self.notes);
         fill_param_changes(&self.instance, &self.param_controls, param_changes);
-        push_mapped_controls(events, &self.midi_map, param_changes);
+        let controls = events.as_slice().iter().filter_map(|event| match event.kind {
+            MidiEventKind::Control { message } => Some((event.offset, message)),
+            _ => None,
+        });
+        push_mapped_controls(controls, &self.midi_map, param_changes);
         let param_changes_ptr = if param_changes.count > 0 {
             param_changes.as_mut() as *mut HostParameterChanges as *mut c_void
         } else {

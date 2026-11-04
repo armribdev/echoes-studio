@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::audio_graph::plugin_params::{PluginParamRange, ValueModulatedParam};
+use crate::plugin_formats::vst3::component_handler::FollowedParam;
 use crate::plugin_formats::clap::ffi::{
     CLAP_PRESET_IS_FACTORY_CONTENT, CLAP_PRESET_LOCATION_PLUGIN,
 };
@@ -246,11 +246,7 @@ fn the_controller_is_given_the_processors_state_so_the_knobs_follow() {
     instance
         .vst3_edit_state()
         .unwrap()
-        .replace_followed(vec![ValueModulatedParam::new(
-            7,
-            PluginParamRange::UNKNOWN,
-            Arc::clone(&base),
-        )]);
+        .replace_followed(vec![FollowedParam::new(7, Arc::clone(&base))]);
 
     instance.sync_vst3_controller_with_processor(instance.vst3_controller().unwrap());
 
@@ -304,8 +300,8 @@ fn the_base_of_a_value_modulated_parameter_follows_the_program() {
     let base = Arc::new(AtomicU32::new(0.1f32.to_bits()));
     let untouched = Arc::new(AtomicU32::new(0.3f32.to_bits()));
     instance.vst3_edit_state().unwrap().replace_followed(vec![
-        ValueModulatedParam::new(7, PluginParamRange::UNKNOWN, Arc::clone(&base)),
-        ValueModulatedParam::new(8, PluginParamRange::UNKNOWN, Arc::clone(&untouched)),
+        FollowedParam::new(7, Arc::clone(&base)),
+        FollowedParam::new(8, Arc::clone(&untouched)),
     ]);
 
     instance

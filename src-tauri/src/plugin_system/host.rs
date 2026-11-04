@@ -37,7 +37,7 @@ use crate::plugin_formats::clap::ffi::{
 use crate::plugin_formats::clap::host::decode_plugin_id as clap_decode_id;
 use crate::plugin_formats::clap::params::read_clap_params;
 use crate::plugin_formats::clap::wrapper::ClapWrapperNode;
-use crate::plugin_formats::vst3::component_handler::ComponentHandler;
+use crate::plugin_formats::vst3::component_handler::engine_component_handler;
 use crate::plugin_formats::vst3::ffi::{create_controller, instantiate_processor, Vst3Library};
 use crate::plugin_formats::vst3::host::decode_plugin_id as vst3_decode_id;
 use crate::plugin_formats::vst3::host_context::host_application;
@@ -597,7 +597,7 @@ impl PluginHost {
 
         // Without a controller the plugin still plays; it only lacks parameters
         // and an editor.
-        let handler = ComponentHandler::boxed();
+        let handler = engine_component_handler();
         let controller = match unsafe {
             create_controller(&lib, comp, host_application(), handler.as_funknown())
         } {

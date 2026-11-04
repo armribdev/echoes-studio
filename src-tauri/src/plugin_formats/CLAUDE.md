@@ -18,6 +18,10 @@ sees only `AudioNode`.
   not regress to QI-only.
 - A VST3 module is loaded as the SDK says: `InitDll` after `LoadLibrary`, `ExitDll`
   before `FreeLibrary` (`Vst3Library`); the host never initialises COM (ADR-033).
+- The VST3 host objects (attribute lists, messages, host context, buses, event list,
+  handler, program lists, MIDI mapping, transport context) live in the `vst3_host` crate
+  and must not import the engine (ADR-033); `wrapper.rs`, `instrument.rs`, `host.rs`
+  and `param_delivery.rs` are the engine side.
 - VST3 COM bindings live in the `vst3_ffi` crate (`vst3/ffi.rs` only re-exports
   them, ADR-033); a new `IID_*` needs its header in `crates/vst3_ffi/sdk_headers/`.
 - Parameter changes delivered via the format's sample-accurate mechanism, never a

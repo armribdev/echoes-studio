@@ -14,7 +14,7 @@ use windows_sys::Win32::System::Com::{
 use windows_sys::Win32::System::LibraryLoader::{GetProcAddress, LoadLibraryW};
 
 use crate::plugin_formats::vst3::ffi::{
-    instantiate_processor, IEditController, Vst3Library, IID_IEDIT_CONTROLLER,
+    instantiate_processor, IEditController, IPluginFactory, Vst3Library, IID_IEDIT_CONTROLLER,
 };
 use crate::plugin_formats::vst3::test_dll::copy_of_test_vst3_dll;
 
@@ -75,6 +75,83 @@ fn the_loader_runs_init_dll_after_loading_and_exit_dll_before_unloading() {
         (1, 1),
         "ExitDll runs when the library is dropped"
     );
+}
+
+#[test]
+fn two_users_of_one_module_share_one_init_dll_and_one_exit_dll() {
+    let copy = copy_of_test_vst3_dll("shared");
+    let held = HeldModule::new(&copy);
+    let release = |factory: *mut IPluginFactory| unsafe {
+        ((*(*factory).vtbl).release)(factory as *mut _);
+    };
+
+    let (first, first_factory) = Vst3Library::load(&copy).expect("the test plugin must load");
+    let (second, second_factory) = Vst3Library::load(&copy).expect("the test plugin must load");
+    release(first_factory);
+    release(second_factory);
+    assert_eq!(
+        held.calls(),
+        (1, 0),
+        "the second user does not initialise the module again"
+    );
+
+    drop(first);
+    assert_eq!(
+        held.calls(),
+        (1, 0),
+        "the module stays initialised while a user is left"
+    );
+    drop(second);
+    assert_eq!(held.calls(), (1, 1));
+
+    let (third, third_factory) = Vst3Library::load(&copy).expect("the test plugin must load");
+    release(third_factory);
+    assert_eq!(
+        held.calls(),
+        (2, 1),
+        "a load after the last user starts the module again"
+    );
+    drop(third);
+    assert_eq!(held.calls(), (2, 2));
+}
+
+#[test]
+fn threads_loading_and_dropping_one_module_keep_init_dll_and_exit_dll_paired() {
+    const THREADS: usize = 8;
+    const LOADS_PER_THREAD: usize = 50;
+    let copy = copy_of_test_vst3_dll("threads");
+    let held = HeldModule::new(&copy);
+
+    let workers: Vec<_> = (0..THREADS)
+        .map(|_| {
+            let copy = copy.clone();
+            std::thread::spawn(move || {
+                for _ in 0..LOADS_PER_THREAD {
+                    let (library, factory) = Vst3Library::load(&copy).expect("must load");
+                    let (component, processor) = unsafe {
+                        instantiate_processor(factory, &EFFECT_CLASS_ID, std::ptr::null_mut())
+                    }
+                    .expect("must instantiate");
+                    unsafe {
+                        ((*(*processor).vtbl).release)(processor);
+                        ((*(*component).vtbl).release)(component);
+                        ((*(*factory).vtbl).release)(factory as *mut _);
+                    }
+                    drop(library);
+                }
+            })
+        })
+        .collect();
+    for worker in workers {
+        worker.join().expect("a loading thread panicked");
+    }
+
+    let (init, exit) = held.calls();
+    assert_eq!(
+        init, exit,
+        "every InitDll has its ExitDll once nobody is left"
+    );
+    assert!(init >= 1);
 }
 
 /// `(apartment InitDll found, apartment initialize found)` when the module is loaded

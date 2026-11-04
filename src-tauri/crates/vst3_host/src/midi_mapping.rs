@@ -7,10 +7,9 @@
 
 use std::ffi::c_void;
 
-use super::ffi::{
+use vst3_ffi::{
     HostParameterChanges, IEditController, TResult, Tuid, IID_IMIDI_MAPPING, K_RESULT_OK,
 };
-use crate::audio_graph::midi::{MidiEventKind, MidiEventList};
 
 /// `ControllerNumbers` (`ivstmidicontrollers.h`): 0..127 are the MIDI CCs.
 pub const CTRL_AFTER_TOUCH: i16 = 128;
@@ -105,21 +104,19 @@ pub fn controller_value(message: [u8; 3]) -> Option<(i16, f64)> {
 }
 
 /// Adds the block's mapped controls to the parameter changes, at their sample
-/// offsets.  A control the plugin does not map is dropped.
+/// offsets.  `controls` are the raw MIDI control messages of the block, each with
+/// its offset in frames; a control the plugin does not map is dropped.
 pub fn push_mapped_controls(
-    events: &MidiEventList,
+    controls: impl IntoIterator<Item = (u32, [u8; 3])>,
     map: &MidiControllerMap,
     changes: &mut HostParameterChanges,
 ) {
-    for event in events.as_slice() {
-        let MidiEventKind::Control { message } = event.kind else {
-            continue;
-        };
+    for (offset, message) in controls {
         let Some((controller, value)) = controller_value(message) else {
             continue;
         };
         if let Some(param_id) = map.param_for(controller) {
-            changes.push(param_id, event.offset as i32, value);
+            changes.push(param_id, offset as i32, value);
         }
     }
 }
@@ -127,14 +124,6 @@ pub fn push_mapped_controls(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::audio_graph::midi::MidiEvent;
-
-    fn control(offset: u32, message: [u8; 3]) -> MidiEvent {
-        MidiEvent {
-            offset,
-            kind: MidiEventKind::Control { message },
-        }
-    }
 
     /// `(param id, [(offset, value)])` of every queue.
     fn queues(changes: &HostParameterChanges) -> Vec<(u32, Vec<(i32, f64)>)> {
@@ -206,14 +195,15 @@ mod tests {
             CTRL_PITCH_BEND => Some(501),
             _ => None,
         });
-        let mut events = MidiEventList::new();
-        events.push(control(10, [0xE0, 0x00, 0x60]));
-        events.push(control(20, [0xB0, 1, 127]));
-        events.push(control(30, [0xB0, 74, 10]));
-        events.push(control(40, [0xE0, 0x00, 0x20]));
+        let controls = [
+            (10, [0xE0, 0x00, 0x60]),
+            (20, [0xB0, 1, 127]),
+            (30, [0xB0, 74, 10]),
+            (40, [0xE0, 0x00, 0x20]),
+        ];
 
         let mut changes = HostParameterChanges::boxed();
-        push_mapped_controls(&events, &map, &mut changes);
+        push_mapped_controls(controls, &map, &mut changes);
 
         let found = queues(&changes);
         assert_eq!(found.len(), 2, "the unmapped CC 74 adds nothing");
@@ -226,10 +216,12 @@ mod tests {
 
     #[test]
     fn without_a_mapping_no_control_reaches_the_plugin() {
-        let mut events = MidiEventList::new();
-        events.push(control(0, [0xE0, 0x00, 0x60]));
         let mut changes = HostParameterChanges::boxed();
-        push_mapped_controls(&events, &MidiControllerMap::empty(), &mut changes);
+        push_mapped_controls(
+            [(0, [0xE0, 0x00, 0x60])],
+            &MidiControllerMap::empty(),
+            &mut changes,
+        );
         assert_eq!(changes.count, 0);
     }
 }

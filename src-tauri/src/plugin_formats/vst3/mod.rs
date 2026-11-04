@@ -9,27 +9,24 @@
 //! (`param_delivery`), the reader of `.vstpreset` files (`preset_file`) and the
 //! graph node (`wrapper`).
 
-pub mod attribute_list;
-pub mod buses;
 pub mod channel_context;
-mod com_object;
 pub mod component_handler;
-pub mod event_list;
 #[cfg(all(test, windows))]
 pub(crate) mod fake_plugin;
 pub mod ffi;
+// Moved to the `vst3_host` crate (ADR-033, step 3); the old paths still resolve.
+pub use vst3_host::{buses, event_list, host_context, midi_mapping, units};
 pub mod host;
-pub mod host_context;
 pub mod instrument;
-pub mod message;
-pub mod midi_mapping;
 pub mod param_delivery;
-pub mod param_mirror;
 pub mod params;
 pub mod preset_file;
 pub mod preset_locations;
 #[cfg(all(test, windows))]
 pub(crate) mod test_dll;
+#[cfg(all(test, windows))]
+mod buses_tests;
+#[cfg(all(test, windows))]
+mod units_tests;
 pub mod transport;
-pub mod units;
 pub mod wrapper;

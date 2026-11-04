@@ -4,16 +4,14 @@
 use std::ffi::c_void;
 use std::sync::Arc;
 
-use crate::audio_graph::plugin_params::{
-    PluginParamControl, PluginParamControls, ValueModulatedParam,
-};
+use crate::audio_graph::plugin_params::{PluginParamControl, PluginParamControls};
 use crate::plugin_formats::crash_guard;
 use crate::plugin_system::crash_marker;
 use crate::plugin_system::instance::PluginInstance;
 use crate::plugin_system::lifecycle::LifecycleState;
 use crate::plugin_system::param_queue::ParamChange;
 
-use super::component_handler::EditState;
+use super::component_handler::{EditState, FollowedParam};
 use super::ffi::{HostParameterChanges, ProcessData};
 use super::wrapper::{vst3_process_trampoline, Vst3ProcessCtx};
 
@@ -147,12 +145,10 @@ pub fn track_value_modulation(instance: &PluginInstance, controls: &[PluginParam
     let Some(edit_state) = instance.vst3_edit_state() else {
         return;
     };
-    let params: Vec<ValueModulatedParam> = controls
+    let params: Vec<FollowedParam> = controls
         .iter()
         .filter(|control| control.modulated)
-        .map(|control| {
-            ValueModulatedParam::new(control.native_id, control.range, Arc::clone(&control.base))
-        })
+        .map(|control| FollowedParam::new(control.native_id, Arc::clone(&control.base)))
         .collect();
     let previous = edit_state.replace_followed(params.clone());
     let was_modulated = |native_id: u32| previous.iter().any(|param| param.native_id == native_id);

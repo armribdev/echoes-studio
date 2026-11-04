@@ -38,6 +38,10 @@ _Last full review: 2026-06-03 (roadmap status pass 2026-09-29). Each row's date 
 
 - Statuses reflect what was true at the verified date — confirm against the code
   before relying on a row (especially `in-migration` rows).
+- 2026-11-04 (ADR-033, steps 0–3 done): the VST3 host objects are in `crates/vst3_host` and
+  `AudioBuffer` in `crates/audio_buffer`, behind re-exports at the old paths; the VST3 loader
+  runs `InitDll` / `ExitDll` once per file; the real-plugin tests take a lock (they crashed in
+  parallel about one run in four before). Not hand-tested in the app.
 - 2026-11-03 (ADR-033, **Proposed**, steps 0–2 done; step 2: `crates/test_vst3_plugin`, harness project
   `vst3_plugins` with its own golden hash, and the VST3 loader now calls `InitDll` / `ExitDll`, hand test
   pending): the VST3 COM bindings now live in
