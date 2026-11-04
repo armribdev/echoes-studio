@@ -76,7 +76,7 @@ impl FollowedParam {
 }
 
 const EDIT_QUEUE_CAPACITY: usize = 256;
-const MAX_GESTURES: usize = 8;
+pub const MAX_GESTURES: usize = 8;
 const GESTURE_OCCUPIED: u64 = 1 << 32;
 
 /// What the plugin window did since the audio thread last looked.
@@ -231,6 +231,15 @@ impl EditState {
         self.gestures
             .iter()
             .any(|g| g.load(Ordering::Acquire) == tag)
+    }
+
+    /// Audio thread: the parameters being dragged right now, for a host that
+    /// reports the gestures to another process.  No allocation.
+    pub fn active_gestures(&self) -> [Option<u32>; MAX_GESTURES] {
+        std::array::from_fn(|slot| {
+            let tag = self.gestures[slot].load(Ordering::Acquire);
+            (tag & GESTURE_OCCUPIED != 0).then_some(tag as u32)
+        })
     }
 
     /// Command thread: the parameters modulated by value from now on; returns
@@ -594,6 +603,27 @@ mod tests {
         assert!(!handler.state().is_editing(4));
         call_end(&handler, 3);
         assert!(!handler.state().is_editing(3));
+    }
+
+    #[test]
+    fn the_active_gestures_list_the_parameters_being_dragged() {
+        let handler = ComponentHandler::boxed(Arc::new(NoSignals));
+        let dragged = |handler: &ComponentHandler| {
+            let mut ids: Vec<u32> = handler
+                .state()
+                .active_gestures()
+                .into_iter()
+                .flatten()
+                .collect();
+            ids.sort_unstable();
+            ids
+        };
+        assert!(dragged(&handler).is_empty());
+        call_begin(&handler, 3);
+        call_begin(&handler, 0);
+        assert_eq!(dragged(&handler), [0, 3]);
+        call_end(&handler, 3);
+        assert_eq!(dragged(&handler), [0]);
     }
 
     #[test]

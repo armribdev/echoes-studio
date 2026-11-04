@@ -1318,21 +1318,58 @@ boundary.
   either place loads in the other). `Vst3BlockProcessor`: `ProcessContext` from the wire
   transport (`vst3_host::transport::process_context`), `PARAM_VALUE` events as
   `IParameterChanges` points. They are **normalised: the handshake declares
-  `ParamUnit::Normalised` and nothing is converted**. Modulation and gesture kinds are
-  ignored. The ADR-010 gate is inside the bridge: the audio thread skips a block (passes
+  `ParamUnit::Normalised` and nothing is converted**. Modulation and gesture kinds sent
+  by the engine are ignored (step 6 settled that). The ADR-010 gate is inside the bridge: the audio thread skips a block (passes
   the input through) while the main thread holds it; the main thread waits up to 2 s.
 - **COM.** `OleInitialize` on the bridge's main thread, none on its audio thread, as the
   app does.
-- **Engine side.** `BridgedNode` is the node for both formats; it writes no parameter
-  event for a VST3 effect yet. `check_handshake` requires the format's unit (plain for
-  CLAP, normalised for VST3).
-- **Not yet** (explicit errors or empty lists, never a fallback): parameter list,
-  automation, modulation and a controller in the bridge (step 6), the editor (step 7),
+- **Engine side.** `BridgedNode` is the node for both formats (its parameter events
+  since step 6, below). `check_handshake` requires the format's unit (plain for CLAP,
+  normalised for VST3).
+- **Not yet** (explicit errors or empty lists, never a fallback): the editor (step 7),
   instruments, sidechain and auxiliary outputs (step 8), presets (step 9).
 
 Tests: `plugin_host_bridge/tests/vst3_bridge.rs`, `plugin_system/vst3_sandbox_tests.rs`
 (including a bridge killed or frozen from outside, and TDR Nova), and in
 `render_harness::vst3_plugins` the sandbox-against-in-process render.
+
+### VST3 parameters in the sandbox (ADR-033 step 6, 2026-11-04)
+
+- **Controller in the bridge.** `Vst3Adapter::load` creates the `IEditController` like
+  `create_vst3_instance` (single component or separate, host context, a component
+  handler). The handler is `vst3_host::component_handler`, wired to the bridge's own
+  `HostSignals` (`BridgeSignals`): unsaved, restart and parameter-list signals are
+  atomics the audio thread puts in the reply flags of the next block, once
+  (`BLOCK_PLUGIN_EDITED`, `BLOCK_RESTART_REQUESTED`, `PARAMS_TEXT` / `PARAMS_INFO`).
+  A plugin without a controller still plays and lists no parameter.
+- **Control ops**, all behind the ADR-010 gate: `Params` (the same list as in process:
+  normalised `0..1`, never modulatable, no module), `ParamValue`, `ParamText` (empty
+  when the plugin has no text), `FlushValues`. A `restartComponent` with a latency,
+  I/O or reload flag makes the next `Activate` reactivate once and return the new
+  latency.
+- **Delivery.** The engine's `PARAM_VALUE` points become `IParameterChanges` points in
+  the order received, at their sample offsets, bounded (128 × 128, the rest is dropped).
+  The plugin window's edits go last in the block and are reported in the reply as
+  `PARAM_VALUE`, with `PARAM_GESTURE_BEGIN` / `_END` for a drag. Gestures from the engine
+  are ignored (step 6, decision b).
+- **Controller follows processor, inside the bridge.** The audio thread records into the
+  `ParamMirror` table, only while a window watches; the window thread applies it
+  (`mirror_to_controller`). No window exists before step 7. What the processor writes to
+  `outputParameterChanges` goes to the table, not to the engine: it is not an edit.
+- **State.** `LoadState` hands the state to a separate controller
+  (`sync_controller_to_state`, as in process). `FlushValues` puts the value-modulated
+  parameters on their base and the next `SaveState` does it again inside its own gate
+  hold, then reads the state.
+- **Engine side.** `Vst3ParamEvents` (`plugin_formats/vst3/param_delivery.rs`) shares
+  `emit_control_changes` with the in-process wrapper; `bridged_node.rs` chooses it or
+  `ClapParamEvents` by format. VST3 values and CLAP values never share a record type or
+  an event path. The engine hears of a drag one block after it began.
+
+Tests: `vst3_bridge.rs` (list, value, text, offsets, flush before save, edits and
+gestures in the reply, output changes, restart, rescan, apartments), the unit tests of
+`vst3_adapter.rs` (the table) and `param_delivery.rs`, `vst3_sandbox_tests.rs` (each
+behaviour in process and in the bridge, TDR Nova), and in `render_harness::vst3_plugins`
+the automated, modulated and both-at-once sandbox-against-in-process renders.
 
 ---
 

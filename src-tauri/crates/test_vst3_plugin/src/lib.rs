@@ -13,7 +13,17 @@
 //! - 3..6 — read-only diagnostics: `Init apartment` and `Process apartment` (what
 //!   `CoGetApartmentType` said on the thread of `initialize` / of the first `process`:
 //!   0 = COM not initialised on that thread, else 1 + the `APTTYPE`), `Process calls`,
-//!   `Dll init calls` (how many times the host called `InitDll`).
+//!   `Dll init calls` (how many times the host called `InitDll`);
+//! - 7 `Self value` — a value the controller and the processor each keep their own
+//!   copy of (outside the state), so a host that does not tell the controller what
+//!   the processor got shows it; 12 `Processor self` reads the processor's copy;
+//! - 8..11 — what the plugin does by itself, as a drag or a menu would, set on the
+//!   processor: `Write output` puts a new `Self value` in `outputParameterChanges`;
+//!   `Hold edit` keeps an edit of `Self value` open (`beginEdit`, `performEdit`, and
+//!   `endEdit` when it is released) through the host's component handler;
+//!   `Lookahead` switches the latency between 64 and 128 samples and asks for a
+//!   restart, applied at the next `setActive`; `Rename` renames `Self value` and
+//!   reports the new titles.
 //!
 //! The component reports 64 samples of latency without delaying its audio, like
 //! `test_clap_plugin`. Parameter points and note events are applied at their sample
@@ -30,18 +40,19 @@ use std::sync::atomic::{AtomicBool, AtomicI32, AtomicPtr, AtomicU32, AtomicU64, 
 
 use vst3_ffi::{
     AudioBusBuffers, Event, FUnknown, HostParamValueQueue, HostParameterChanges, HostStream,
-    IAudioProcessor, IAudioProcessorVtbl, IBStreamVtbl, IComponent, IComponentVtbl,
-    IEditController, IEditControllerVtbl, IPlugView, IPluginFactory, IPluginFactory2Vtbl,
-    PClassInfo, PClassInfo2, ParameterInfo, ProcessData, ProcessSetup, TResult, Tuid, IID_FUNKNOWN,
-    IID_IAUDIO_PROCESSOR, IID_ICOMPONENT, IID_IEDIT_CONTROLLER, IID_IPLUGIN_FACTORY,
-    IID_IPLUGIN_FACTORY2, K_AUDIO, K_EVENT, K_INPUT, K_INVALID_ARGUMENT, K_NOTE_OFF_EVENT,
-    K_NOTE_ON_EVENT, K_NO_INTERFACE, K_OUTPUT, K_RESULT_FALSE, K_RESULT_OK, PARAM_CAN_AUTOMATE,
-    PARAM_IS_READ_ONLY, SPEAKER_STEREO,
+    IAudioProcessor, IAudioProcessorVtbl, IBStreamVtbl, IComponent, IComponentHandlerVtbl,
+    IComponentVtbl, IEditController, IEditControllerVtbl, IPlugView, IPluginFactory,
+    IPluginFactory2Vtbl, PClassInfo, PClassInfo2, ParameterInfo, ProcessData, ProcessSetup,
+    TResult, Tuid, IID_FUNKNOWN, IID_IAUDIO_PROCESSOR, IID_ICOMPONENT, IID_IEDIT_CONTROLLER,
+    IID_IPLUGIN_FACTORY, IID_IPLUGIN_FACTORY2, K_AUDIO, K_EVENT, K_INPUT, K_INVALID_ARGUMENT,
+    K_NOTE_OFF_EVENT, K_NOTE_ON_EVENT, K_NO_INTERFACE, K_OUTPUT, K_RESULT_FALSE, K_RESULT_OK,
+    PARAM_CAN_AUTOMATE, PARAM_IS_READ_ONLY, SPEAKER_STEREO,
 };
 
 pub const EFFECT_CLASS_ID: [u8; 16] = *b"EchoesTestGain_F";
 pub const INSTRUMENT_CLASS_ID: [u8; 16] = *b"EchoesTestGain_I";
 pub const LATENCY: u32 = 64;
+pub const LOOKAHEAD_LATENCY: u32 = 128;
 
 pub const GAIN: u32 = 0;
 pub const HANG: u32 = 1;
@@ -50,6 +61,22 @@ pub const INIT_APARTMENT: u32 = 3;
 pub const PROCESS_APARTMENT: u32 = 4;
 pub const PROCESS_CALLS: u32 = 5;
 pub const DLL_INIT_CALLS: u32 = 6;
+pub const SELF_VALUE: u32 = 7;
+pub const WRITE_OUTPUT: u32 = 8;
+pub const HOLD_EDIT: u32 = 9;
+pub const LOOKAHEAD: u32 = 10;
+pub const RENAME: u32 = 11;
+pub const PROCESSOR_SELF: u32 = 12;
+
+pub const SELF_VALUE_TITLE: &str = "Self value";
+pub const RENAMED_TITLE: &str = "Renamed value";
+/// What `Write output` and `Hold edit` set `Self value` to.
+pub const WRITTEN_VALUE: f64 = 0.9;
+pub const HELD_VALUE: f64 = 0.25;
+
+/// `Vst::RestartFlags`.
+const RESTART_LATENCY_CHANGED: i32 = 1 << 3;
+const RESTART_PARAM_TITLES_CHANGED: i32 = 1 << 4;
 
 /// Plain value of a read-only diagnostic = its normalised value × this range.
 pub const DIAGNOSTIC_RANGE: f64 = 1_000_000.0;
@@ -77,7 +104,7 @@ struct ParamSpec {
     flags: i32,
 }
 
-const PARAMS: [ParamSpec; 7] = [
+const PARAMS: [ParamSpec; 13] = [
     ParamSpec {
         id: GAIN,
         title: "Gain",
@@ -124,6 +151,48 @@ const PARAMS: [ParamSpec; 7] = [
         id: DLL_INIT_CALLS,
         title: "Dll init calls",
         range: DIAGNOSTIC_RANGE,
+        default_plain: 0.0,
+        flags: PARAM_IS_READ_ONLY,
+    },
+    ParamSpec {
+        id: SELF_VALUE,
+        title: SELF_VALUE_TITLE,
+        range: 1.0,
+        default_plain: 0.0,
+        flags: PARAM_CAN_AUTOMATE,
+    },
+    ParamSpec {
+        id: WRITE_OUTPUT,
+        title: "Write output",
+        range: 1.0,
+        default_plain: 0.0,
+        flags: PARAM_CAN_AUTOMATE,
+    },
+    ParamSpec {
+        id: HOLD_EDIT,
+        title: "Hold edit",
+        range: 1.0,
+        default_plain: 0.0,
+        flags: PARAM_CAN_AUTOMATE,
+    },
+    ParamSpec {
+        id: LOOKAHEAD,
+        title: "Lookahead",
+        range: 1.0,
+        default_plain: 0.0,
+        flags: PARAM_CAN_AUTOMATE,
+    },
+    ParamSpec {
+        id: RENAME,
+        title: "Rename",
+        range: 1.0,
+        default_plain: 0.0,
+        flags: PARAM_CAN_AUTOMATE,
+    },
+    ParamSpec {
+        id: PROCESSOR_SELF,
+        title: "Processor self",
+        range: 1.0,
         default_plain: 0.0,
         flags: PARAM_IS_READ_ONLY,
     },
@@ -178,6 +247,16 @@ struct Plugin {
     process_apartment: AtomicI32,
     process_calls: AtomicU32,
     handler: AtomicPtr<FUnknown>,
+    /// `Self value` as the controller and as the processor know it, as `f64` bits.
+    controller_self: AtomicU64,
+    processor_self: AtomicU64,
+    write_output: AtomicBool,
+    hold_edit: AtomicBool,
+    edit_open: AtomicBool,
+    lookahead: AtomicBool,
+    latency: AtomicU32,
+    pending_latency: AtomicU32,
+    renamed: AtomicBool,
 }
 
 impl Plugin {
@@ -198,7 +277,99 @@ impl Plugin {
             PROCESS_APARTMENT => f64::from(self.process_apartment.load(Ordering::Relaxed)),
             PROCESS_CALLS => f64::from(self.process_calls.load(Ordering::Relaxed)),
             DLL_INIT_CALLS => f64::from(INIT_CALLS.load(Ordering::Relaxed)),
+            SELF_VALUE => f64::from_bits(self.controller_self.load(Ordering::Relaxed)),
+            PROCESSOR_SELF => f64::from_bits(self.processor_self.load(Ordering::Relaxed)),
+            HOLD_EDIT => f64::from(self.hold_edit.load(Ordering::Relaxed)),
+            LOOKAHEAD => f64::from(self.lookahead.load(Ordering::Relaxed)),
+            RENAME => f64::from(self.renamed.load(Ordering::Relaxed)),
             _ => 0.0,
+        }
+    }
+
+    fn title(&self, spec: &'static ParamSpec) -> &'static str {
+        if spec.id == SELF_VALUE && self.renamed.load(Ordering::Relaxed) {
+            RENAMED_TITLE
+        } else {
+            spec.title
+        }
+    }
+
+    /// What the host's component handler is told, from whichever thread the plugin
+    /// is on; nothing without a handler.
+    fn with_handler(&self, call: impl FnOnce(*mut FUnknown, &IComponentHandlerVtbl)) {
+        let handler = self.handler.load(Ordering::Relaxed);
+        if !handler.is_null() {
+            // SAFETY: the handler object starts with its `IComponentHandler` table
+            // and stays alive while we hold the reference `setComponentHandler` took.
+            call(handler, unsafe {
+                &*((*handler).vtbl as *const IComponentHandlerVtbl)
+            });
+        }
+    }
+
+    /// A value the host sent the processor as a parameter point.
+    fn apply_point(&self, id: u32, value: f64) {
+        let on = value > 0.5;
+        match id {
+            SELF_VALUE => self
+                .processor_self
+                .store(value.to_bits(), Ordering::Relaxed),
+            WRITE_OUTPUT => self.write_output.store(on, Ordering::Relaxed),
+            HOLD_EDIT => self.hold_edit.store(on, Ordering::Relaxed),
+            LOOKAHEAD => {
+                if self.lookahead.swap(on, Ordering::Relaxed) != on {
+                    let latency = if on { LOOKAHEAD_LATENCY } else { LATENCY };
+                    self.pending_latency.store(latency, Ordering::Relaxed);
+                    self.with_handler(|handler, table| {
+                        // SAFETY: see `with_handler`.
+                        unsafe { (table.restart_component)(handler, RESTART_LATENCY_CHANGED) };
+                    });
+                }
+            }
+            RENAME => {
+                if on && !self.renamed.swap(true, Ordering::Relaxed) {
+                    self.with_handler(|handler, table| {
+                        // SAFETY: see `with_handler`.
+                        unsafe { (table.restart_component)(handler, RESTART_PARAM_TITLES_CHANGED) };
+                    });
+                }
+            }
+            _ => self.set_normalised(id, value),
+        }
+    }
+
+    /// Once per block, after the points were read: what the plugin does by itself.
+    /// `output` is the host's `outputParameterChanges`, or null.
+    unsafe fn act_by_itself(&self, output: *mut HostParameterChanges) {
+        if self.write_output.swap(false, Ordering::Relaxed) {
+            self.processor_self
+                .store(WRITTEN_VALUE.to_bits(), Ordering::Relaxed);
+            if !output.is_null() {
+                let id = SELF_VALUE;
+                let queue =
+                    ((*(*output).vtbl).add_parameter_data)(output, &id, std::ptr::null_mut());
+                if !queue.is_null() {
+                    ((*(*queue).vtbl).add_point)(queue, 0, WRITTEN_VALUE, std::ptr::null_mut());
+                }
+            }
+        }
+        let held = self.hold_edit.load(Ordering::Relaxed);
+        if held != self.edit_open.swap(held, Ordering::Relaxed) {
+            if held {
+                self.controller_self
+                    .store(HELD_VALUE.to_bits(), Ordering::Relaxed);
+            }
+            self.with_handler(|handler, table| {
+                // SAFETY: see `with_handler`.
+                unsafe {
+                    if held {
+                        (table.begin_edit)(handler, SELF_VALUE);
+                        (table.perform_edit)(handler, SELF_VALUE, HELD_VALUE);
+                    } else {
+                        (table.end_edit)(handler, SELF_VALUE);
+                    }
+                }
+            });
         }
     }
 
@@ -207,6 +378,9 @@ impl Plugin {
             GAIN => self.set_gain(normalised * GAIN_RANGE),
             HANG => self.hang.store(normalised > 0.5, Ordering::Relaxed),
             CRASH => self.crash.store(normalised > 0.5, Ordering::Relaxed),
+            SELF_VALUE => self
+                .controller_self
+                .store(normalised.to_bits(), Ordering::Relaxed),
             _ => {}
         }
     }
@@ -390,10 +564,15 @@ unsafe extern "C" fn component_activate_bus(
     K_RESULT_OK
 }
 
-unsafe extern "C" fn component_set_active(this: *mut IComponent, _state: u8) -> TResult {
-    (*from_component(this))
-        .held_velocity
-        .store(0, Ordering::Relaxed);
+unsafe extern "C" fn component_set_active(this: *mut IComponent, state: u8) -> TResult {
+    let plugin = &*from_component(this);
+    plugin.held_velocity.store(0, Ordering::Relaxed);
+    if state != 0 {
+        plugin.latency.store(
+            plugin.pending_latency.load(Ordering::Relaxed),
+            Ordering::Relaxed,
+        );
+    }
     K_RESULT_OK
 }
 
@@ -524,8 +703,8 @@ unsafe extern "C" fn processor_can_process_sample_size(
     }
 }
 
-unsafe extern "C" fn processor_latency(_this: *mut IAudioProcessor) -> u32 {
-    LATENCY
+unsafe extern "C" fn processor_latency(this: *mut IAudioProcessor) -> u32 {
+    (*from_processor(this)).latency.load(Ordering::Relaxed)
 }
 
 unsafe extern "C" fn processor_setup(
@@ -619,7 +798,7 @@ unsafe fn read_param_changes(
             if id == GAIN {
                 gain.push(offset, value * GAIN_RANGE);
             } else {
-                plugin.set_normalised(id, value);
+                plugin.apply_point(id, value);
             }
         }
     }
@@ -671,6 +850,7 @@ unsafe extern "C" fn processor_process(
         &mut gain_changes,
     );
     read_notes(data.input_events, &mut note_changes);
+    plugin.act_by_itself(data.output_param_changes as *mut HostParameterChanges);
 
     if plugin.crash.load(Ordering::Relaxed) {
         std::process::abort();
@@ -698,6 +878,12 @@ unsafe extern "C" fn processor_process(
                 }
                 Kind::Instrument => held * gain as f32,
             };
+        }
+    }
+    if data.num_samples <= 0 {
+        // A parameter flush: no audio, the points are the whole message.
+        while let Some(plain) = gain_changes.due(0) {
+            gain = plain;
         }
     }
     plugin.set_gain(gain);
@@ -782,7 +968,7 @@ unsafe extern "C" fn controller_parameter_count(_this: *mut IEditController) -> 
 }
 
 unsafe extern "C" fn controller_parameter_info(
-    _this: *mut IEditController,
+    this: *mut IEditController,
     index: i32,
     info: *mut ParameterInfo,
 ) -> TResult {
@@ -792,8 +978,9 @@ unsafe extern "C" fn controller_parameter_info(
     let info = &mut *info;
     *info = zeroed();
     info.id = param.id;
-    write_utf16(&mut info.title, param.title);
-    write_utf16(&mut info.short_title, param.title);
+    let title = (*from_controller(this)).title(param);
+    write_utf16(&mut info.title, title);
+    write_utf16(&mut info.short_title, title);
     info.default_normalized_value = param.default_plain / param.range;
     info.flags = param.flags;
     K_RESULT_OK
@@ -1046,6 +1233,15 @@ unsafe extern "C" fn factory_create_instance(
         process_apartment: AtomicI32::new(0),
         process_calls: AtomicU32::new(0),
         handler: AtomicPtr::new(std::ptr::null_mut()),
+        controller_self: AtomicU64::new(0.0_f64.to_bits()),
+        processor_self: AtomicU64::new(0.0_f64.to_bits()),
+        write_output: AtomicBool::new(false),
+        hold_edit: AtomicBool::new(false),
+        edit_open: AtomicBool::new(false),
+        lookahead: AtomicBool::new(false),
+        latency: AtomicU32::new(LATENCY),
+        pending_latency: AtomicU32::new(LATENCY),
+        renamed: AtomicBool::new(false),
     }));
     let result = query(plugin, iid as *const Tuid, object);
     if result != K_RESULT_OK {

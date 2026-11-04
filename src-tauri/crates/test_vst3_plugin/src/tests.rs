@@ -50,6 +50,17 @@ impl Instance {
         changes: Option<&mut HostParameterChanges>,
         events: Option<&mut TestEvents>,
     ) -> Vec<f32> {
+        self.process_with_output(value, frames, changes, events, None)
+    }
+
+    fn process_with_output(
+        &self,
+        value: f32,
+        frames: usize,
+        changes: Option<&mut HostParameterChanges>,
+        events: Option<&mut TestEvents>,
+        output_changes: Option<&mut HostParameterChanges>,
+    ) -> Vec<f32> {
         let mut input = [vec![value; frames], vec![value; frames]];
         let mut output = [vec![0.0f32; frames], vec![0.0f32; frames]];
         let mut input_pointers = [input[0].as_mut_ptr(), input[1].as_mut_ptr()];
@@ -74,7 +85,8 @@ impl Instance {
             outputs: &mut outputs,
             input_param_changes: changes
                 .map_or(std::ptr::null_mut(), |c| c as *mut _ as *mut c_void),
-            output_param_changes: std::ptr::null_mut(),
+            output_param_changes: output_changes
+                .map_or(std::ptr::null_mut(), |c| c as *mut _ as *mut c_void),
             input_events: events.map_or(std::ptr::null_mut(), |e| e as *mut _ as *mut c_void),
             output_events: std::ptr::null_mut(),
             process_context: std::ptr::null_mut(),
@@ -233,4 +245,79 @@ fn the_buses_follow_the_class() {
         (0, 1)
     );
     assert_eq!(count(&instrument, K_AUDIO, K_OUTPUT), 1);
+}
+
+#[test]
+fn the_processor_and_the_controller_each_keep_their_own_self_value() {
+    let plugin = instance(&EFFECT_CLASS_ID);
+    let mut changes = HostParameterChanges::boxed();
+    changes.push(SELF_VALUE, 0, 0.7);
+    plugin.process(0.0, 4, Some(&mut changes), None);
+    assert_eq!(plugin.normalised(PROCESSOR_SELF), 0.7);
+    assert_eq!(
+        plugin.normalised(SELF_VALUE),
+        0.0,
+        "the controller is not told what the processor got"
+    );
+    plugin.set_normalised(SELF_VALUE, 0.7);
+    assert_eq!(plugin.normalised(SELF_VALUE), 0.7);
+}
+
+#[test]
+fn write_output_puts_a_new_self_value_in_the_output_list() {
+    let plugin = instance(&EFFECT_CLASS_ID);
+    let mut output = HostParameterChanges::boxed();
+    plugin.process_with_output(0.0, 4, None, None, Some(&mut output));
+    assert_eq!(output.latest_points().count(), 0, "nothing by itself");
+
+    let mut changes = HostParameterChanges::boxed();
+    changes.push(WRITE_OUTPUT, 0, 1.0);
+    plugin.process_with_output(0.0, 4, Some(&mut changes), None, Some(&mut output));
+    assert_eq!(
+        output.latest_points().collect::<Vec<_>>(),
+        [(SELF_VALUE, WRITTEN_VALUE)]
+    );
+    assert_eq!(plugin.normalised(PROCESSOR_SELF), WRITTEN_VALUE);
+
+    output.reset();
+    plugin.process_with_output(0.0, 4, None, None, Some(&mut output));
+    assert_eq!(output.latest_points().count(), 0, "written once");
+}
+
+#[test]
+fn a_new_latency_applies_at_the_next_activation() {
+    let plugin = instance(&EFFECT_CLASS_ID);
+    let latency = |plugin: &Instance| unsafe {
+        ((*(*plugin.processor).vtbl).get_latency_samples)(plugin.processor)
+    };
+    let set_active = |plugin: &Instance, state| unsafe {
+        ((*(*plugin.component).vtbl).set_active)(plugin.component, state)
+    };
+    let mut changes = HostParameterChanges::boxed();
+    changes.push(LOOKAHEAD, 0, 1.0);
+    plugin.process(0.0, 4, Some(&mut changes), None);
+    assert_eq!(
+        latency(&plugin),
+        LATENCY,
+        "an active plugin keeps its latency"
+    );
+    set_active(&plugin, 0);
+    set_active(&plugin, 1);
+    assert_eq!(latency(&plugin), LOOKAHEAD_LATENCY);
+}
+
+#[test]
+fn renaming_changes_the_title_the_controller_reports() {
+    let plugin = instance(&EFFECT_CLASS_ID);
+    let title = |plugin: &Instance| unsafe {
+        let mut info: ParameterInfo = zeroed();
+        let index = PARAMS.iter().position(|p| p.id == SELF_VALUE).unwrap() as i32;
+        ((*(*plugin.controller).vtbl).get_parameter_info)(plugin.controller, index, &mut info);
+        vst3_ffi::string128_to_string(&info.title)
+    };
+    assert_eq!(title(&plugin), SELF_VALUE_TITLE);
+    let mut changes = HostParameterChanges::boxed();
+    changes.push(RENAME, 0, 1.0);
+    plugin.process(0.0, 4, Some(&mut changes), None);
+    assert_eq!(title(&plugin), RENAMED_TITLE);
 }

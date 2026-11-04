@@ -294,13 +294,26 @@ Round-trip time of a block on the test plugin, before and after: see "Step 4" in
 ADR-033.
 
 **VST3 in the bridge (ADR-033 step 5).** The message is the same; the engine side is
-unchanged except that a VST3 effect writes no parameter section yet. Bridge side,
+unchanged (step 6 below added its parameter section). Bridge side,
 `Vst3BlockProcessor::process`: no allocation (the activation sizes the buffers, the bus
 tables and the parameter-change list before the first block), no lock, no I/O, no
 `drop`, no new system call. The ADR-010 gate is one atomic compare-exchange that the
 audio thread **never waits on**: when the bridge's main thread holds it (activation,
 `getState`, `setState`) the block is passed through. Measures, 8 sandboxed effects:
 ADR-033, "Step 5".
+
+**VST3 parameters in the bridge (ADR-033 step 6).** Still the same message, rings, wake-up,
+bounded wait and single non-blocking `SetEvent`. Engine audio thread:
+`Vst3ParamEvents::fill_into` fills the preallocated wire section (full means dropped),
+`observe_edit` reads at most the 256 edits a reply keeps and keeps a gesture list of fixed
+capacity; no allocation, no lock. Bridge audio thread: the parameter-change list, the
+output list, the reply slice and the gesture snapshot (`active_gestures` returns an array)
+are preallocated or on the stack; the plugin's `restartComponent` / `performEdit` /
+`setDirty` callbacks only store atomics (`BridgeSignals`, the SPSC edit queue); the
+processor → controller table (`ParamMirror`) is written only while a window watches and
+never read by the audio thread. Every control op that touches the plugin (`Params`,
+`ParamValue`, `ParamText`, `FlushValues`, `SaveState`, `LoadState`, `Activate`) takes the
+main-thread side of the gate; the audio thread skips its block, it does not wait.
 
 ### Sleeping CLAP plugins (2026-10-14)
 

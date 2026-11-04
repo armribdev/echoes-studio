@@ -260,7 +260,7 @@ evaluates every route on the absolute control grid (ADR-019, Tranches 1–3 done
 
 | Target                                              | Sub-block delivery                                                                                                                                      |
 | --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| VST3 / CLAP plugin params (effects and instruments) | one native event per grid point; modulation offsets the value, automation sets it (ADR-021); CLAP automatable-only params get `base + offset` as values |
+| VST3 / CLAP plugin params (effects and instruments) | one native event per grid point; modulation offsets the value, automation sets it (ADR-021); CLAP automatable-only params get `base + offset` as values; VST3 always gets `base + offset` as normalised values, in the bridge too (the engine computes it, the bridge converts nothing; ADR-021 amendment 2026-11-04) |
 | `GainNode` / `TrackGainNode`                        | per-sample one-pole smoother (12 Hz) whose target switches at each grid point; in `TrackGainNode` it rides on the dB-smoothed fader                     |
 | `Delay` / `Compressor` / `Reverb` / `Eq`            | `process` loop segmented at grid points, params recomputed per segment and clamped to their range                                                       |
 | `PanNode` / `MasterNode`                            | not modulation targets                                                                                                                                  |

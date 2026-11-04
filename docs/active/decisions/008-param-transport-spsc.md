@@ -239,3 +239,15 @@ never calls the controller.
   move the base of a value-modulated parameter.
 - Cost: `MAX_PARAM_QUEUES = 128` still caps the output list of a plugin; it
   receives a null queue beyond it.
+
+## Amendment 2026-11-04 — the same, inside the bridge (ADR-033 step 6)
+
+A sandboxed VST3 plugin has its edit controller in the bridge process, so the
+processor → controller table stays **inside that process**: no cross-process atomic is
+added. `Vst3BlockProcessor` records into the table (`ParamMirror`) what the engine sent
+and what the processor wrote to `outputParameterChanges`, only while a window watches
+(`Vst3Adapter::watch_params`); `Vst3Adapter::mirror_to_controller` applies it with
+`setParamNormalized` on the window thread, without the gate. The window's own edits
+travel the other way, through the SPSC edit queue of `EditState` to the bridge's audio
+thread, and from there to the engine in the block reply. The editor itself is step 7:
+until then the table has no watcher, so nothing is recorded.

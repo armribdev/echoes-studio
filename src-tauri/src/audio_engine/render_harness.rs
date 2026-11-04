@@ -1768,11 +1768,14 @@ mod vst3_plugins {
 
     /// A host that sends every effect it can to the bridge. Instruments stay in the
     /// Echoes process until step 8 of ADR-033.
-    fn host_isolating_everything() -> PluginHost {
-        let mut host = with_half_gain(host_with_test_plugins());
+    fn isolating_everything(mut host: PluginHost) -> PluginHost {
         host.set_bridge_exe(super::clap_plugins::artifacts().1.clone());
         host.set_isolation(PluginIsolation::All, Default::default());
         host
+    }
+
+    fn host_isolating_everything() -> PluginHost {
+        isolating_everything(with_half_gain(host_with_test_plugins()))
     }
 
     /// ADR-033 step 5, C-2: the effect in the bridge process renders the same samples
@@ -1813,6 +1816,80 @@ mod vst3_plugins {
                 "block size {block_size}"
             );
         }
+    }
+
+    /// The effect's gain driven the way the app drives a parameter: by a modulation
+    /// route (an LFO), by an automation lane, or by both on the same track.
+    fn driven_gain_project(modulated: bool, automated: bool) -> AppProject {
+        let mut project = project();
+        let track = &mut project.tracks[0];
+        let target = ModulationTargetRef::PluginParam {
+            effect_id: "plugin".into(),
+            native_id: test_vst3_plugin::GAIN,
+        };
+        if modulated {
+            track
+                .modulators
+                .push(lfo("gain-lfo", 3.7, LfoWaveform::Triangle));
+            track.mod_routes.push(ProjectModulationRoute {
+                id: "gain-lfo->gain".into(),
+                modulator_id: "gain-lfo".into(),
+                target: target.clone(),
+                depth: 0.3,
+            });
+        }
+        if automated {
+            track.automation_lanes.push(automation_lane(
+                "gain-ramp",
+                target,
+                &[(0.0, 0.3), (1.3, 0.7), (2.4, 0.45)],
+            ));
+        }
+        project
+    }
+
+    /// ADR-033 step 6, C-2: parameters cross the process boundary without changing a
+    /// sample.  The driven project must sound unlike the plain one, so that an
+    /// undelivered parameter cannot pass for a delivered one.
+    fn assert_driven_gain_matches_in_process(modulated: bool, automated: bool) {
+        let driven = driven_gain_project(modulated, automated);
+        let plain = render(&project(), BLOCK_SIZES[0]);
+        assert!(
+            first_difference(&plain, &render(&driven, BLOCK_SIZES[0])).is_some(),
+            "the automation and the modulation must change the sound"
+        );
+        for block_size in BLOCK_SIZES {
+            let in_process = render_with_host(&mut host_with_test_plugins(), &driven, block_size);
+            let mut sandboxed_host = isolating_everything(host_with_test_plugins());
+            let sandboxed = render_with_host(&mut sandboxed_host, &driven, block_size);
+            assert!(
+                sandboxed_host
+                    .instance_by_key("plugin")
+                    .unwrap()
+                    .is_sandboxed(),
+                "the effect must really run in the bridge"
+            );
+            assert_eq!(
+                first_difference(&in_process, &sandboxed),
+                None,
+                "block size {block_size}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_sandboxed_effect_renders_like_an_in_process_one_with_automation() {
+        assert_driven_gain_matches_in_process(false, true);
+    }
+
+    #[test]
+    fn a_sandboxed_effect_renders_like_an_in_process_one_with_modulation() {
+        assert_driven_gain_matches_in_process(true, false);
+    }
+
+    #[test]
+    fn a_sandboxed_effect_renders_like_an_in_process_one_with_automation_and_modulation() {
+        assert_driven_gain_matches_in_process(true, true);
     }
 
     /// Recorded on Windows x86_64, separate from `GOLDEN_HASHES` because it needs the

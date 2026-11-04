@@ -10,8 +10,9 @@
 //! plugin's edits into the same observers.  No plugin structure crosses the
 //! process boundary.
 //!
-//! A sandboxed VST3 effect (step 5) sends audio and transport only: its parameters
-//! come with step 6, so no parameter event is written for it.
+//! The parameter events follow the plugin's format: CLAP plain values and
+//! modulation offsets, VST3 normalised values with the modulation added to a base
+//! (ADR-021).  Both travel as the same wire records; the bridge converts nothing.
 //!
 //! ## Real-time behaviour
 //!
@@ -45,6 +46,8 @@ use crate::plugin_formats::clap::ffi::{
     CLAP_PARAM_RESCAN_VALUES, MAX_EVENTS, MAX_PARAM_EVENTS,
 };
 use crate::plugin_formats::clap::params::{ClapParamEvents, ParamEventSink};
+use crate::plugin_formats::vst3::param_delivery::{Vst3ParamEvents, Vst3ParamSink};
+use crate::plugin_system::bridge::BridgedPlugin;
 use crate::plugin_system::bridge::{CHANNELS, MAX_FRAMES};
 use crate::plugin_system::crash_marker::note_crash;
 use crate::plugin_system::instance::PluginInstance;
@@ -88,6 +91,63 @@ impl ParamEventSink for WireParamSink {
 
     fn push_modulation(&mut self, offset: u32, native_id: u32, amount: f64) {
         self.push(PARAM_MODULATION, offset, native_id, amount);
+    }
+}
+
+impl Vst3ParamSink for WireParamSink {
+    fn push_value(&mut self, offset: u32, native_id: u32, normalised: f64) {
+        self.push(PARAM_VALUE, offset, native_id, normalised);
+    }
+}
+
+/// The parameter logic of the plugin's format.
+enum BridgedParams {
+    Clap(ClapParamEvents),
+    Vst3(Vst3ParamEvents),
+}
+
+impl BridgedParams {
+    fn new(format: DeviceFormat) -> Self {
+        match format {
+            DeviceFormat::Vst3 => Self::Vst3(Vst3ParamEvents::new()),
+            _ => Self::Clap(ClapParamEvents::new()),
+        }
+    }
+
+    /// Off the audio thread: a CLAP plugin's plain ranges; VST3 values are
+    /// normalised, so there is nothing to read.
+    fn read_ranges(&mut self, bridge: &BridgedPlugin) {
+        if let Self::Clap(events) = self {
+            events.set_ranges(&bridge.params());
+        }
+    }
+
+    fn set_controls(&mut self, controls: Vec<PluginParamControl>, instance: &PluginInstance) {
+        match self {
+            Self::Clap(events) => events.set_controls(controls, instance),
+            Self::Vst3(events) => events.set_controls(controls, instance),
+        }
+    }
+
+    fn controls_mut(&mut self) -> &mut PluginParamControls {
+        match self {
+            Self::Clap(events) => events.controls_mut(),
+            Self::Vst3(events) => events.controls_mut(),
+        }
+    }
+
+    fn fill_into(&mut self, instance: &PluginInstance, sink: &mut WireParamSink) {
+        match self {
+            Self::Clap(events) => events.fill_into(instance, sink),
+            Self::Vst3(events) => events.fill_into(instance, sink),
+        }
+    }
+
+    fn observe_edit(&mut self, edit: &WireParam) {
+        match self {
+            Self::Clap(events) => events.observe_edit(edit),
+            Self::Vst3(events) => events.observe_edit(edit),
+        }
     }
 }
 
@@ -148,7 +208,7 @@ fn rescan_flags(changes: u32) -> u32 {
 /// One block's exchange with the bridge, shared by the effect and the instrument.
 struct BridgeRoundTrip {
     instance: Arc<PluginInstance>,
-    param_events: ClapParamEvents,
+    param_events: BridgedParams,
     active: bool,
     live: bool,
     sample_rate: f32,
@@ -175,8 +235,8 @@ impl BridgeRoundTrip {
             "a bridged device requires a sandboxed instance"
         );
         BridgeRoundTrip {
+            param_events: BridgedParams::new(instance.format),
             instance,
-            param_events: ClapParamEvents::new(),
             active: false,
             live: true,
             sample_rate: 48_000.0,
@@ -208,10 +268,8 @@ impl BridgeRoundTrip {
         let latency = bridge.and_then(|bridge| bridge.activate(ctx.sample_rate, max_frames));
         self.active = latency.is_some();
         self.latency = latency.unwrap_or(0);
-        if let Some(bridge) =
-            bridge.filter(|_| self.active && self.instance.format == DeviceFormat::Clap)
-        {
-            self.param_events.set_ranges(&bridge.params());
+        if let Some(bridge) = bridge.filter(|_| self.active) {
+            self.param_events.read_ranges(bridge);
         }
         self.instance.set_lifecycle(LifecycleState::Running);
     }
@@ -229,10 +287,8 @@ impl BridgeRoundTrip {
     /// for a plugin it hosts itself.
     fn write_events(&mut self, notes: Option<&MidiEventList>) {
         self.wire_params.events.clear();
-        if self.instance.format == DeviceFormat::Clap {
-            self.param_events
-                .fill_into(&self.instance, &mut self.wire_params);
-        }
+        self.param_events
+            .fill_into(&self.instance, &mut self.wire_params);
         self.wire_notes.clear();
         if let Some(notes) = notes {
             push_wire_notes(notes, &mut self.wire_notes);
@@ -601,12 +657,19 @@ mod tests {
     fn the_parameter_sink_drops_what_does_not_fit() {
         let mut sink = WireParamSink::new();
         for index in 0..MAX_PARAM_EVENTS as u32 + 10 {
-            sink.push_value(index, 1, 0.5);
+            ParamEventSink::push_value(&mut sink, index, 1, 0.5);
         }
         sink.push_modulation(0, 2, 0.1);
         assert_eq!(sink.events.len(), MAX_PARAM_EVENTS);
         assert_eq!(sink.events[0], WireParam::new(PARAM_VALUE, 0, 1, 0.5));
         assert_eq!(sink.events.capacity(), MAX_PARAM_EVENTS, "never grows");
+    }
+
+    #[test]
+    fn a_vst3_value_travels_as_the_same_record_whatever_its_unit() {
+        let mut sink = WireParamSink::new();
+        Vst3ParamSink::push_value(&mut sink, 7, 3, 0.25);
+        assert_eq!(sink.events, [WireParam::new(PARAM_VALUE, 7, 3, 0.25)]);
     }
 
     #[test]

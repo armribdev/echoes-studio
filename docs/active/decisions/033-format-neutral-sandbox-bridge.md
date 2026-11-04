@@ -3,12 +3,12 @@
 ## Status
 
 **Proposed — 2026-11-03; plan approved by the user the same day, steps 0 to 5
-done (steps 4 and 5 delivered 2026-11-04, awaiting the user's review).** Step 0 (this ADR and the header check in Appendix A) changed no code. Step 1
+done (steps 4, 5 and 6 delivered 2026-11-04, awaiting the user's review).** Step 0 (this ADR and the header check in Appendix A) changed no code. Step 1
 moved `vst3/ffi.rs` and `param_queue.rs` into the `vst3_ffi` and `plugin_param_queue`
 crates (see "Step 1 — what shipped"). Step 2 added the test plugin, the harness
 baseline and the loader fix ("Step 2 — what shipped"). Step 3 moved the VST3 host objects into
 `vst3_host` ("Step 3 — what shipped"). Step 4 froze protocol v3 and moved CLAP onto it
-("Step 4 — what shipped"). Step 5 put the VST3 effect in the bridge ("Step 5 — what shipped"). Decisions 1–9 below were taken by the user
+("Step 4 — what shipped"). Step 5 put the VST3 effect in the bridge ("Step 5 — what shipped"). Step 6 gave it its parameters ("Step 6 — what shipped"). Decisions 1–9 below were taken by the user
 before this ADR was written (decision 10 only restates ADR-015). The status stays
 _Proposed_ until the user has reviewed step 4, the first step that crossed the
 real-time boundary (and hand-tested a sandboxed CLAP plugin).
@@ -23,7 +23,11 @@ ADR-021 (parameters), ADR-031 (presets). Changes the cross-process ABI
 
 ## Context
 
-The goal is that **a VST3 plugin that crashes does not take Echoes down**. Today:
+The goal is that **a VST3 plugin that crashes does not take Echoes down**. The bullets
+below describe the state **before step 0** (bridge protocol v2, CLAP only); the steps
+below say what each of them changed.
+
+Today (before step 0):
 
 - The sandbox exists for **CLAP only** (effects, and track instruments through the
   preference). `runs_sandboxed(format, sandboxed)` in `plugin_system/host.rs` returns
@@ -175,7 +179,7 @@ without a sandboxed VST3, and waits for the user's approval before the next one.
 | 3    | **`vst3_host` crate** (done). Host COM objects, buses, event list, component handler, parameter mirror, units, channel context, MIDI mapping, transport context. The engine types they use today (see Context) are replaced by neutral ones owned by the crates; `wrapper.rs` and `instrument.rs` stay in the engine. Sub-steps by file group, each green. | **high**: audio-thread code is moved and decoupled | `vst3_plugins` and every other hash must not move; TDR Nova render identical before / after (manual) |
 | 4    | **Protocol v3 and CLAP migration** (done 2026-11-04). First commit: the "sandbox against in-process" test on v2 for the CLAP test plugin. Then typed sections, port table, `ClapAdapter` in the bridge, neutral control records, `BRIDGE_PROTOCOL_VERSION` = 3.                                                          | **high**: message format on both audio threads | the new test stays identical; `clap_plugins` unchanged                                              |
 | 5    | **VST3 audio in the bridge** (done 2026-11-04). `Vst3Adapter` (effects): load, `InitDll`, activate, process, latency, tail, state, crash and restart, ADR-010 gate inside the bridge. `runs_sandboxed` accepts VST3, the modes and the "Isoler" button cover it.                                                      | **high**: first VST3 on the ring; cores spinning | sandbox-against-in-process test on the VST3 test DLL (effect)                                       |
-| 6    | **VST3 parameters.** Parameter list and text, automation and modulation with a sample offset, gestures both ways, rescan, controller follows processor (inside the bridge), modulated bases before a state save.                                                                                    | medium: bounded queues (128 × 128)   | same test with automated and modulated parameters                                                    |
+| 6    | **VST3 parameters** (done 2026-11-04). Parameter list and text, automation and modulation with a sample offset, the plugin's edits and gestures back (engine gestures ignored, decision b), rescan, controller follows processor (inside the bridge), modulated bases before a state save.                | medium: bounded queues (128 × 128)   | same test with automated and modulated parameters                                                    |
 | 7    | **VST3 editor in the bridge.** `IPlugView` / `IPlugFrame` / content scale in the bridge's Win32 window (same layout as CLAP), resize in the same call stack, close order.                                                                                                                              | none (bridge UI thread)              | none                                                                                                 |
 | 8    | **VST3 instruments and several ports.** Notes and raw MIDI, `IMidiMapping`, a bridged VST3 instrument; aux outputs and sidechain through the port table (several active ports); `IComponentHandlerBusActivation`.                                                                                   | medium-high: multi-port block layout | same test for instrument, multi-out and sidechain                                                    |
 | 9    | **VST3 presets.** `IUnitInfo` programs and `.vstpreset` files through the ADR-031 commands; parsing stays in the app (untrusted file), loading happens in the bridge; `IUnitHandler`.                                                                                                                | none (control path); gate in the bridge | none                                                                                                 |
@@ -214,7 +218,11 @@ without a sandboxed VST3, and waits for the user's approval before the next one.
    `the_plugin_finds_the_com_apartment_of_the_thread_that_loads_it`). _Settled in step 5_: the bridge calls `OleInitialize` on its main
    thread, as `tao` does, and leaves the audio thread without COM, as the engine
    does; checked with TDR Nova running in the bridge (Surge XT is an instrument,
-   step 8). See "Step 5 — what shipped".
+   step 8). See "Step 5 — what shipped". _Closed in step 6:_ the test plugin's
+   diagnostics are readable through `ParamValue` now, and the bridge's audio thread was
+   measured: `InitApartment` = 4 (the main single-threaded apartment `OleInitialize`
+   made), `ProcessApartment` = 0 (no COM on the audio thread), exactly as in the engine
+   (`the_plugin_loads_in_the_main_apartment_and_processes_without_com`).
 3. ~~**`InitDll` / `ExitDll`.**~~ _Fixed in step 2, corrected in step 3:_ `Vst3Library` calls
    `InitDll` after the first `LoadLibrary` of a file and `ExitDll` before the `FreeLibrary` of
    its last user, as `base/doc.h` says (see "Step 3" for why once per file). TDR Nova and
@@ -236,7 +244,8 @@ without a sandboxed VST3, and waits for the user's approval before the next one.
    needs it today (a modulatable CLAP parameter is modulated by an offset on top of its
    value, `CLAP_EVENT_PARAM_MOD`; without the kind the CLAP migration could not stay
    bit-identical). The engine would never send it to a VST3 plugin, which ADR-021
-   modulates by value around a base, and the VST3 adapter of step 6 would ignore it.
+   modulates by value around a base, and the VST3 adapter of step 6 would ignore it
+   (it does: `gestures_and_modulation_offsets_from_the_engine_are_ignored`).
    The alternative — send every modulation as a value — would change what CLAP plugins
    receive and is not recommended. Implemented as recommended so that CLAP stays
    identical; it costs one enumerator. The VST3 adapter of step 5 ignores it.
@@ -512,7 +521,8 @@ VST3 adapter ignores it.
 - **Crash / hang.** No SEH guard is needed: a plugin that faults kills the bridge, which is the point; the
   engine's watchdog (unchanged) condemns it after 8 late blocks.
 
-**Not in this step, on purpose** (each answers an explicit error or an empty list, never a silent fallback):
+**Not in this step, on purpose** (each answers an explicit error or an empty list, never a silent fallback;
+_the parameter part was delivered by step 6_):
 parameter lists, text, automation and modulation of a sandboxed VST3 effect (the node writes **no parameter
 event** for VST3; `Params` is empty, `ParamValue` / `PresetLoad` / `OpenEditor` are refused) — step 6, 7, 9;
 no edit controller in the bridge, so no `kLatencyChanged` / restart request and no controller sync after a
@@ -588,6 +598,128 @@ the input through. `HostParameterChanges::push` is bounded and drops what does n
 
 **Not hand-tested** (yours): TDR Nova sandboxed in the app (play, kill the bridge from the Task Manager
 during playback); mode _Tous_ with several real instances (CPU); the "Isoler" button on a VST3 effect.
+
+## Step 6 — what shipped (2026-11-04)
+
+**The proof came first.** Before any change to the bridge or the engine, three tests were added to
+`render_harness::vst3_plugins` and **failed**: `a_sandboxed_effect_renders_like_an_in_process_one_with_automation`,
+`…_with_modulation` and `…_with_automation_and_modulation`. Each renders a **new** project (the
+`vst3_plugins` project is untouched) where the test effect's gain is driven by a lane, by an LFO route, or by both,
+once in the Echoes process and once in the bridge (isolation _Tous_, offline wait), at the five block sizes, and
+requires identical samples. They also require the driven render to sound unlike the plain one. They failed at the
+first sample the effect processes (frame 96 000, 1.0 s: the audio clip). They are split in three because VST3
+automation takes precedence over modulation on the same parameter, and the test effect has one parameter that sounds.
+They run in the default suite (C-10) and pass. `vst3_plugins` (0x5c0f0710b6813439), `clap_plugins`
+(0x928da7dcd260c4e1) and every other golden hash are unchanged; none was regenerated. The protocol did not change:
+no format change of the block message, no new `Op`, no new record field, version still 3.
+
+**Decisions taken first (user, 2026-11-04, the recommendations):**
+
+- **a) The base of a value-modulated parameter lives in the engine.** The bridge receives the effective normalised
+  value of each point and computes nothing.
+- **b) Gestures from the engine are ignored** by the bridge, with a test that says so
+  (`gestures_and_modulation_offsets_from_the_engine_are_ignored`, together with the modulation offset kind). The engine
+  does not send them either: no editor produces any before step 7.
+- **c) A loaded state is handed to the controller** (`sync_controller_to_state`, the in-process behaviour). That helper
+  only acts on a separate controller; the test DLL is one object, so no test exercises the call. It is the same code as
+  `load_state_blob`, not a new path.
+
+**Bridge** (`crates/plugin_host_bridge/src/vst3_adapter.rs`).
+
+- `Vst3Adapter::load` creates the edit controller as `create_vst3_instance` does (single component or separate, the
+  host context, the component handler); without one the plugin still plays and lists no parameter. The handler is the
+  `vst3_host::component_handler` one, wired to a `BridgeSignals` (`HostSignals`): the unsaved, restart and
+  parameter-list signals are atomics the audio thread turns into reply flags (`BLOCK_PLUGIN_EDITED`,
+  `BLOCK_RESTART_REQUESTED`, `PARAMS_TEXT` / `PARAMS_INFO` in the rescan bits), once.
+- Control ops: `Params` (`vst3_host::params::read_vst3_params`: normalised `0..1`, default, automatable, hidden, never
+  modulatable, no module — as in process), `ParamValue`, `ParamText` (empty when the plugin has no text),
+  `FlushValues`. All of them take the ADR-010 gate (`enter_main`): the audio thread skips its block meanwhile, it never
+  waits. `Activate` reactivates once when the plugin asked for it (`restartComponent` with a latency, I/O or reload flag:
+  `take_reactivation_request`), which reads the latency again; otherwise it stays a no-op at the same size.
+- Audio thread (`Vst3BlockProcessor::process`): the engine's `PARAM_VALUE` points become `IParameterChanges` points,
+  in the order received, with their sample offsets (`HostParameterChanges`, bounded 128 × 128, what does not fit is
+  dropped). The plugin window's edits (`EditState::drain_edits`) are appended **last**, so the user's value wins within
+  the block, forwarded to the processor and reported in the reply as `PARAM_VALUE` records. A new
+  `EditState::active_gestures` (no allocation) gives the gestures; their begin and end are reported as
+  `PARAM_GESTURE_BEGIN` / `_END` records by comparing with the last block.
+- `outputParameterChanges` is read after `process` and kept for the controller (the atomic table of
+  `vst3_host::param_mirror`, **only while an editor watches**), as in process. **Deviation from the brief, to confirm:**
+  they are _not_ reported to the engine as edits. In process they neither mark the project unsaved nor move a
+  modulation base (a meter or a program change would otherwise mark every block), so the bridge does the same.
+- The controller follows the processor inside the bridge: the table is filled by the audio thread, applied by
+  `Vst3Adapter::mirror_to_controller` on the window thread without the gate, and `watch_params` gives the controller
+  the processor's state when a window opens. No window exists before step 7, so this has no visible effect yet; the
+  code and its tests (`the_controller_follows_the_processor_only_while_a_window_watches`,
+  `a_value_the_plugin_writes_to_its_output_reaches_the_controller_of_an_open_window`) are in.
+- **Flush and save are one step in the bridge.** `FlushValues` puts the parameters modulated by value on their base
+  with a zero-sample `process` (the parameter flush `ProcessData` allows) and remembers them; the next `SaveState`
+  applies them again inside its own gate hold, just before `getState`, and forgets them. Without that, a block with
+  modulation could land between the two requests and the state would hold a point of the modulation (CLAP in the
+  bridge has that window; it is not closed here). `LoadState` forgets them too.
+
+**Engine.**
+
+- `plugin_formats/vst3/param_delivery.rs`: the logic of `fill_param_changes` is split behind a `Vst3ParamSink`
+  (`HostParameterChanges` in process, a wire section for the bridge). `emit_control_changes` — modulation around the
+  base, automation first, a drag pauses the modulation — and `settle_followed` — a newly modulated parameter starts from
+  the plugin's value, one no longer modulated goes back to its base — are shared by both paths. The in-process render is
+  bit for bit the same (`vst3_plugins` golden hash).
+- `Vst3ParamEvents` is the bridged twin of `ClapParamEvents` (`set_controls`, `fill_into`, `observe_edit`); an edit moves
+  the base of a followed parameter, a gesture pauses its modulation. `bridged_node.rs` picks CLAP or VST3 logic by
+  format (`BridgedParams`); the `format == Clap` conditions are gone. The two formats never share a unit: CLAP events
+  carry plain values and `PARAM_MODULATION`, VST3 events normalised `PARAM_VALUE` only.
+- The bases of the value-modulated parameters are kept in `PluginInstance::value_modulated_params` with the
+  normalised range `0..1`, so `save_state_blob` (restore the bases, then save) and the preset rebase work for VST3
+  as they do for CLAP; no change to `instance.rs`. The parameter list, the text and the values of the UI come from
+  the bridge (`BridgedPlugin::params`, `param_text`, `param_value`), already format-neutral since step 4.
+- **One block of lag, by design.** The engine learns of a drag one block after it started, so a modulation point can
+  reach the plugin in that block; the user's edit is last in the block and wins, then the modulation pauses. Releasing
+  is symmetric.
+
+**Test plugin** (`crates/test_vst3_plugin`; the `vst3_plugins` hash does not move). New parameters: 7 `Self value`
+(the controller and the processor each keep their own copy, outside the state, so a host that does not tell the
+controller what the processor got shows it), 12 `Processor self` (reads the processor's copy), and four things the
+plugin does by itself when the processor receives a value: 8 `Write output` (puts a new `Self value` in
+`outputParameterChanges`), 9 `Hold edit` (`beginEdit`, `performEdit`, `endEdit` when released, through the host's
+handler), 10 `Lookahead` (latency 64 ↔ 128 and `restartComponent(kLatencyChanged)`, applied at the next
+`setActive`), 11 `Rename` (new title of `Self value`, `restartComponent(kParamTitlesChanged)`). A zero-sample
+`process` now applies its points (a flush). The edits are made from the processor's thread, which the handler allows
+(lock-free); a real editor thread comes with step 7.
+
+**Real-time checklist** (`rt-validation`). The block message, the rings, the wake-up, the bounded wait (3/4 of the
+period, 10 s offline) and the one non-blocking `SetEvent` are untouched. Engine audio thread:
+`Vst3ParamEvents::fill_into` allocates nothing (the wire section is sized before the first block and full means
+dropped; `editing` has a fixed capacity, `retain` and `push` stay within it), no lock, no new system call.
+`observe_edit` runs after the reply, bounded by the 256 edits the reply keeps. Bridge audio thread: no allocation
+(`HostParameterChanges`, the output list and the reply slice are preallocated, `active_gestures` returns an array),
+no lock (atomics only: `BridgeSignals`, the gate, the edit queue is the SPSC `ParamQueue`), no I/O, no log, no `drop`,
+no new system call; the plugin's `restartComponent` / `performEdit` callbacks only store atomics. The gate (ADR-010)
+stays the rule: every control op that touches the plugin (`Params`, `ParamValue`, `ParamText`, `FlushValues`,
+`SaveState`, `LoadState`, `Activate`) holds it, the audio thread skips its block instead of waiting. The mirror
+table is filled only while a window watches, so there is no cost before step 7.
+
+**C-2.** The new tests pass, `vst3_plugins`, `clap_plugins` and every hash are unchanged, none was regenerated. A real
+plugin, TDR Nova, lists the same 76 parameters, renders the same text and the same samples with its parameter 50
+automated, in the bridge and in the Echoes process (`a_real_vst3_effect_lists_and_follows_its_parameters_in_the_bridge_like_in_the_echoes_process`,
+skipped when no VST3 is installed; `ECHOES_TEST_VST3` selects one).
+
+**Tests.** Whole workspace, `cargo test --workspace --no-fail-fast -- --test-threads=1`: green, no failure — engine 779 (+4 ignored: the two VST3 measures and two older ones), `plugin_bridge` 44, `plugin_host_bridge` 7 + 34 + 20 integration, `clap_ffi` 87, `vst3_host` 64, `audio_buffer` 11, `vst3_ffi` 8, `test_vst3_plugin` 12, `plugin_param_queue` 4. New: the three sandbox-against-in-process renders; in `vst3_bridge.rs` the parameter list, value, text, several points, flush before save, the plugin's edit and gesture, output changes, restart and latency, new titles, ignored engine gestures, refused unknown ids, the COM apartments; in `vst3_adapter.rs` the table (3); in `param_delivery.rs` the shared logic (6); in `vst3_sandbox_tests.rs` the list, text, push, automation and modulation, base before save, latency, titles, window edit and drag, each in process and in the bridge, and TDR Nova's list and an automated parameter; in the test plugin 5. `cargo clippy -D warnings` is clean on `plugin_host_bridge`, `test_vst3_plugin` and `plugin_bridge`; `vst3_host` and the engine crate keep their older warnings (none in the files of this step).
+
+**Not done, on purpose / still open.**
+
+- **Hand tests (yours):** TDR Nova isolated — the parameter buttons appear and follow the automation, an automation
+  curve and an LFO on a parameter, save and reopen (the base is the user's, not a point of the modulation), and the
+  step-5 list (kill the bridge during playback, the "Isoler" button, mode _Tous_ with several instances).
+- `Op::TrackInfo` still answers empty for a sandboxed VST3 (the controller's `IInfoListener` is not wired in the
+  bridge); `Op::NoteNames`, `PresetLoad` and `OpenEditor` are as in step 5.
+- `outputParameterChanges` are not edits (see above); no real plugin is known to write any, so this is tested with the
+  test plugin only.
+- The call that hands a loaded state to a **separate** controller is the in-process helper; the test DLL cannot
+  exercise it. TDR Nova's controller was not checked for being separate.
+- `take_crash_suspect` in `main.rs` still offers "Isoler" for CLAP plugins only (`can_isolate`): a VST3 effect that
+  crashed in process is not offered the button, although the sandbox now takes it. A step-5 leftover, not changed
+  here.
+- Gestures from the engine (`IEditControllerHostEditing`, Appendix B) are not implemented (decision b).
 
 ## Consequences
 

@@ -123,7 +123,8 @@ Nothing exposed this, because the UI cannot target a plugin parameter yet.
     plugin's own edits. Needs base tracking through `IComponentHandler`.
   - CLAP ranges are read at `prepare`; if the FFI gate is busy then, a
     parameter is treated as unknown (no modulation) until the next compile.
-  - The out-of-process bridge (`plugin_host_bridge`) is not covered.
+  - The out-of-process bridge (`plugin_host_bridge`) is not covered. _(CLAP
+    since ADR-015; VST3 since the amendment of 2026-11-04 below.)_
   - An automated parameter is not pushed back to the UI, and edits made in the
     plugin window during playback are not reported to Echoes (plugin output
     events are still discarded).
@@ -136,3 +137,34 @@ Nothing exposed this, because the UI cannot target a plugin parameter yet.
 - **Make automation absolute for internal effects as well.** Deferred: it would
   change existing renders and needs its own decision. _2026-09-29: decided in
   [ADR-025](025-absolute-automation-internal-targets.md) (accepted)._
+
+## Amendment 2026-11-04 — VST3 parameters in the sandbox (ADR-033 step 6)
+
+The rules above hold unchanged for a VST3 plugin that runs in the bridge; only where
+the logic lives is new.
+
+- **The engine keeps the bases, the bridge computes nothing.** The engine sends the
+  _effective_ normalised value of each point (queued edit, automation, or the base
+  plus the modulation offset, clamped to `0..1`, automation first) as a `PARAM_VALUE`
+  record with its sample offset. `PARAM_MODULATION` is never sent to a VST3 plugin and
+  the VST3 adapter ignores it. The logic is `emit_control_changes`
+  (`plugin_formats/vst3/param_delivery.rs`), the same function as in process, behind a
+  `Vst3ParamSink`.
+- **Edits come back.** What the user does in the plugin window reaches the bridge's
+  `IComponentHandler`; the bridge forwards it to its processor and reports it in the
+  block reply (`PARAM_VALUE`, `PARAM_GESTURE_BEGIN` / `_END`). The engine moves the base
+  of a modulated parameter on an edit and pauses its modulation while the gesture
+  lasts (`Vst3ParamEvents::observe_edit`). The engine hears of a gesture one block
+  after it started; the edit is last in the bridge's block, so the user's value wins
+  meanwhile.
+- **The base before a state save.** `save_state_blob` sends `FlushValues` with the bases
+  (normalised); the bridge puts them in the plugin with a zero-sample `process` and
+  applies them again inside the `SaveState` it receives next, so no block can land in
+  between. The bases are kept in `PluginInstance::value_modulated_params` with the
+  range `0..1`.
+- Units: VST3 values are normalised end to end, CLAP values are plain. The two never
+  share a record type or an event path; the handshake declares the unit
+  (`ParamUnit::Normalised`) and the engine refuses another one.
+- Debt closed: the VST3 bridge is covered; the window's edits are reported to Echoes
+  through `BLOCK_PLUGIN_EDITED`. What a processor writes to `outputParameterChanges` is
+  not an edit and stays for its controller, as in process.
