@@ -1164,7 +1164,8 @@ bridge at all); a forced rescan lists everything again.
   the blocklist), `blocked_plugins`, `take_newly_blocked` and `reenable_plugin`. `PluginHost::new` no longer scans:
   `main.rs::scan_installed_plugins` points the host at the data directory, then scans, in Tauri's `setup`.
 - **Interface.** Three commands: `list_blocked_plugins`, `take_newly_blocked_plugins` (each file is announced
-  once) and `reenable_blocked_plugin` (recompiles like a rescan). The commands exist; **no screen uses them yet.**
+  once) and `reenable_blocked_plugin` (recompiles like a rescan). The commands exist; since 2026-11-06 the interface announces a blocked file in the status bar and lists the blocked
+  files, with a "Re-enable" button, in the plugin picker (see `plugin-wrapper-system.md`, "Out-of-process scan and blocklist").
 - **Removed.** `probe_aux_input_count` and the in-process CLAP `audio-ports` probe, with their `crash_guard`
   calls: the scan process does both. `PluginManifest` is built by `manifest_of` from the record.
 

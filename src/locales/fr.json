@@ -135,6 +135,16 @@
 		"loadFailed": "Échec du chargement",
 		"crashed": "Planté"
 	},
+	"blockedPlugins": {
+		"announcedCrashed": "« {name} » a été désactivé car il a planté.",
+		"announcedTimedOut": "« {name} » a été désactivé car il ne répondait plus.",
+		"announcedMany": "{n} plugins ont été désactivés : ils ont planté ou ne répondaient plus.",
+		"show": "Désactivés ({n})",
+		"back": "Retour",
+		"crashed": "A planté",
+		"timedOut": "Ne répondait plus",
+		"reenable": "Réactiver"
+	},
 	"crashSuspect": {
 		"title": "Echoes s'est fermé pendant que « {name} » travaillait",
 		"introCanIsolate": "Ce plugin a probablement provoqué la fermeture. Isolé, il tourne dans son propre processus : s'il plante encore, seul son son se coupe et Echoes continue.",

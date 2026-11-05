@@ -135,6 +135,16 @@
 		"loadFailed": "Load failed",
 		"crashed": "Crashed"
 	},
+	"blockedPlugins": {
+		"announcedCrashed": "“{name}” was disabled because it crashed.",
+		"announcedTimedOut": "“{name}” was disabled because it stopped responding.",
+		"announcedMany": "{n} plugins were disabled: they crashed or stopped responding.",
+		"show": "Disabled ({n})",
+		"back": "Back",
+		"crashed": "Crashed",
+		"timedOut": "Stopped responding",
+		"reenable": "Re-enable"
+	},
 	"crashSuspect": {
 		"title": "Echoes closed while “{name}” was working",
 		"introCanIsolate": "This plugin likely caused the close. Isolated, it runs in its own process: if it crashes again, only its sound cuts out and Echoes keeps running.",

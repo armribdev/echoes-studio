@@ -1,7 +1,9 @@
-import { writable, derived, readable } from 'svelte/store';
+import { writable, derived, readable, get } from 'svelte/store';
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
+import { t } from 'svelte-i18n';
 import { isSamplerInstrument, SAMPLER_INSTRUMENT_ID } from '../shared/project/sampler';
+import { notify } from './status';
 
 export interface PluginInfo {
 	id: string;
@@ -105,6 +107,72 @@ export async function rescanPlugins(): Promise<void> {
 		console.error('[plugins] scan_plugins failed:', e);
 	} finally {
 		pluginsLoading.set(false);
+	}
+	await announceNewlyBlockedPlugins();
+	await refreshBlockedPlugins();
+}
+
+/** A plugin file the scan disabled because it crashed or stopped answering. */
+export interface BlockedPlugin {
+	path: string;
+	name: string;
+	reason: 'crashed' | 'timed_out';
+}
+
+/** Display copy of the engine's blocklist, refreshed after every scan or re-enable. */
+export const blockedPlugins = writable<BlockedPlugin[]>([]);
+
+export async function refreshBlockedPlugins(): Promise<void> {
+	try {
+		blockedPlugins.set(await invoke<BlockedPlugin[]>('list_blocked_plugins'));
+	} catch (e) {
+		console.error('[plugins] list_blocked_plugins failed:', e);
+	}
+}
+
+/** The engine scans the file again at once, so a plugin that still crashes is blocked again. */
+export async function reenableBlockedPlugin(path: string): Promise<void> {
+	pluginsLoading.set(true);
+	try {
+		plugins.set(await invoke<PluginInfo[]>('reenable_blocked_plugin', { path }));
+	} catch (e) {
+		console.error('[plugins] reenable_blocked_plugin failed:', e);
+	} finally {
+		pluginsLoading.set(false);
+	}
+	await announceNewlyBlockedPlugins();
+	await refreshBlockedPlugins();
+}
+
+const BLOCKED_ANNOUNCEMENT_MS = 10000;
+
+export function blockedAnnouncement(
+	blocked: BlockedPlugin[]
+): { key: string; values: Record<string, string | number> } | null {
+	if (blocked.length === 0) return null;
+	if (blocked.length > 1)
+		return { key: 'blockedPlugins.announcedMany', values: { n: blocked.length } };
+	const [plugin] = blocked;
+	const key =
+		plugin.reason === 'crashed'
+			? 'blockedPlugins.announcedCrashed'
+			: 'blockedPlugins.announcedTimedOut';
+	return { key, values: { name: plugin.name } };
+}
+
+/** Tells the user, once, about the files blocked since the last call. */
+export async function announceNewlyBlockedPlugins(): Promise<void> {
+	try {
+		const blocked = await invoke<BlockedPlugin[]>('take_newly_blocked_plugins');
+		const announcement = blockedAnnouncement(blocked);
+		if (!announcement) return;
+		notify(
+			get(t)(announcement.key, { values: announcement.values }),
+			'error',
+			BLOCKED_ANNOUNCEMENT_MS
+		);
+	} catch (e) {
+		console.error('[plugins] take_newly_blocked_plugins failed:', e);
 	}
 }
 

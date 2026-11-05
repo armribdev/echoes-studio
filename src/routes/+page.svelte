@@ -45,6 +45,7 @@
 	import { projectSettingsPanelOpen } from '../stores/project';
 	import { exportMixdown } from '../lib/exportMixdown';
 	import { notify } from '../stores/status';
+	import { announceNewlyBlockedPlugins } from '../stores/plugins';
 	import { leftPanel } from '../stores/leftPanel';
 	import { viewMode } from '../stores/viewMode';
 	import { graphSnapshot } from '../stores/graphSnapshot';
@@ -52,6 +53,7 @@
 
 	// Register keyboard shortcuts and transport bridge once for the app lifetime.
 	onMount(() => {
+		void announceNewlyBlockedPlugins();
 		document.documentElement.lang = getAppLocale();
 		const unsubLocale = preferences.subscribe(({ interface: iface }) => {
 			setAppLocale(iface.locale);

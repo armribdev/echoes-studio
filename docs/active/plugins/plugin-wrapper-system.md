@@ -1533,7 +1533,17 @@ and prints one `ScannedPluginRecord` block. A crash or a hang ends only that pro
   cache, not the blocklist.
 
 `PluginHost::new` does not scan; `main.rs::scan_installed_plugins` sets the data directory and scans in `setup`.
-Commands: `list_blocked_plugins`, `take_newly_blocked_plugins`, `reenable_blocked_plugin`; no screen uses them yet.
+Commands: `list_blocked_plugins`, `take_newly_blocked_plugins`, `reenable_blocked_plugin`. The interface (2026-11-06,
+`src/stores/plugins.ts`, `PluginPicker.svelte`) holds no list of its own beyond a display copy:
+
+- **Announcement.** `announceNewlyBlockedPlugins` calls `take_newly_blocked_plugins` at startup (`routes/+page.svelte`)
+  and after every rescan or re-enable, and shows one status-bar message (`notify`, 10 s): the name and the reason for
+  one file, a count for several (`blockedPlugins.announced*`).
+- **Management.** When the blocklist is not empty, the plugin picker shows a "Disabled (n)" button next to "Rescan"; it
+  swaps the list for the blocked files (name, reason, "Re-enable"). `reenableBlockedPlugin` refreshes the plugin list
+  from the command's answer, then the blocklist: the engine scans the file again at once, so a plugin that still
+  crashes comes back as blocked (and is announced again). The scan holds the engine for up to 15 s, so the buttons
+  are disabled meanwhile (`pluginsLoading`).
 Tests: `plugin_system/scan_sandbox_tests.rs` with `crates/test_crashing_plugin` (`crash_on_load`,
 `crash_in_factory`, `hang_in_factory`). Tests that change the search-folder variables take
 `sandbox_tests::environment_lock`.
