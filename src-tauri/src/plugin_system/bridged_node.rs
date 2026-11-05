@@ -1,5 +1,5 @@
 //! Graph devices of a sandboxed plugin (ADR-015, ADR-033): [`BridgedNode`] for an
-//! effect, [`BridgedInstrument`] for a CLAP track instrument.
+//! effect, [`BridgedInstrument`] for a CLAP or VST3 track instrument.
 //!
 //! Same role as `ClapWrapperNode` / `ClapInstrument`, with the plugin in a
 //! `plugin_host_bridge` process: each block, the device writes the transport,
@@ -515,6 +515,16 @@ impl BridgedInstrument {
 }
 
 impl InstrumentDevice for BridgedInstrument {
+    /// A VST3 instrument reports its latency in the Echoes process (ADR-013); a CLAP
+    /// one reports none there, so the bridge keeps the two the same.
+    fn latency_samples(&self) -> u32 {
+        if self.round_trip.instance.format == DeviceFormat::Vst3 {
+            self.round_trip.latency
+        } else {
+            0
+        }
+    }
+
     fn prepare(&mut self, ctx: PrepareContext) {
         self.round_trip.prepare(ctx);
     }

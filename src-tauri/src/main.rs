@@ -195,10 +195,7 @@ fn take_crash_suspect(
         .map(|manifest| CrashSuspect {
             plugin_id: manifest.id.clone(),
             name: manifest.name.clone(),
-            can_isolate: plugin_system::host::can_run_sandboxed(
-                manifest.format,
-                manifest.is_instrument,
-            ),
+            can_isolate: plugin_system::host::can_run_sandboxed(manifest.format),
         });
     Ok(suspect)
 }

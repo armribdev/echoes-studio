@@ -36,19 +36,25 @@
 //!   next `attached` aborts the process) and `View edit` (the next `attached` edits
 //!   `Self value` from the window thread, as a knob dragged in the editor would).
 //!
+//! - 20..22 — the instrument's MIDI: its controller implements `IMidiMapping`, which
+//!   maps the mod wheel (CC 1) to `Mod wheel` and pitch bend to `Bend`; the instrument
+//!   plays `velocity × gain × (1 + mod wheel) × (1 + bend − 0.5)`, which is exactly
+//!   `velocity × gain` at their defaults (0 and 0.5). 22 `Last pitch` is a read-only
+//!   diagnostic: the pitch of the last note on the instrument received.
+//!
 //! The component reports 64 samples of latency without delaying its audio, like
 //! `test_clap_plugin`. Parameter points and note events are applied at their sample
 //! offset. The DLL also exports `InitDll` / `ExitDll`, and three functions a test can
 //! read through `GetProcAddress` even after the module was unloaded by the host:
 //! `test_vst3_init_calls`, `test_vst3_exit_calls`, `test_vst3_init_apartment`.
 //!
-//! Not there yet, added by the step that needs it: units and programs,
-//! `IMidiMapping`, auxiliary buses.
+//! Not there yet, added by the step that needs it: units and programs, auxiliary buses.
 
 use std::ffi::c_void;
 use std::mem::{offset_of, zeroed};
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicPtr, AtomicU32, AtomicU64, Ordering};
 
+use vst3_ffi::IID_IMIDI_MAPPING;
 use vst3_ffi::{
     AudioBusBuffers, Event, FUnknown, HostParamValueQueue, HostParameterChanges, HostStream,
     IAudioProcessor, IAudioProcessorVtbl, IBStreamVtbl, IComponent, IComponentHandlerVtbl,
@@ -87,6 +93,12 @@ pub const VIEW_SCALE: u32 = 16;
 pub const VIEW_ASK: u32 = 17;
 pub const VIEW_CRASH: u32 = 18;
 pub const VIEW_EDIT: u32 = 19;
+pub const MOD_WHEEL: u32 = 20;
+pub const BEND: u32 = 21;
+pub const LAST_PITCH: u32 = 22;
+/// `ControllerNumbers` of `ivstmidicontrollers.h`: the mod wheel and pitch bend.
+const CONTROLLER_MOD_WHEEL: i16 = 1;
+const CONTROLLER_PITCH_BEND: i16 = 129;
 
 /// The size of the view before the host tells it another one.
 pub const VIEW_INITIAL_SIZE: (i32, i32) = (400, 300);
@@ -138,7 +150,7 @@ struct ParamSpec {
     flags: i32,
 }
 
-const PARAMS: [ParamSpec; 20] = [
+const PARAMS: [ParamSpec; 23] = [
     ParamSpec {
         id: GAIN,
         title: "Gain",
@@ -279,6 +291,27 @@ const PARAMS: [ParamSpec; 20] = [
         default_plain: 0.0,
         flags: PARAM_CAN_AUTOMATE,
     },
+    ParamSpec {
+        id: MOD_WHEEL,
+        title: "Mod wheel",
+        range: 1.0,
+        default_plain: 0.0,
+        flags: PARAM_CAN_AUTOMATE,
+    },
+    ParamSpec {
+        id: BEND,
+        title: "Bend",
+        range: 1.0,
+        default_plain: 0.5,
+        flags: PARAM_CAN_AUTOMATE,
+    },
+    ParamSpec {
+        id: LAST_PITCH,
+        title: "Last pitch",
+        range: DIAGNOSTIC_RANGE,
+        default_plain: 0.0,
+        flags: PARAM_IS_READ_ONLY,
+    },
 ];
 
 fn spec(id: u32) -> Option<&'static ParamSpec> {
@@ -320,10 +353,15 @@ struct Plugin {
     component: *const IComponentVtbl,
     processor: *const IAudioProcessorVtbl,
     controller: *const IEditControllerVtbl,
+    midi_mapping: *const IMidiMappingVtbl,
     references: AtomicU32,
     kind: Kind,
     gain: AtomicU64,
     held_velocity: AtomicU32,
+    /// `Mod wheel` and `Bend` as `f64` bits, and the pitch of the last note on.
+    mod_wheel: AtomicU64,
+    bend: AtomicU64,
+    last_pitch: AtomicU32,
     hang: AtomicBool,
     crash: AtomicBool,
     init_apartment: AtomicI32,
@@ -408,6 +446,9 @@ impl Plugin {
             VIEW_ASK => f64::from(self.view.ask.load(Ordering::Relaxed)),
             VIEW_CRASH => f64::from(self.view.crash.load(Ordering::Relaxed)),
             VIEW_EDIT => f64::from(self.view.edit.load(Ordering::Relaxed)),
+            MOD_WHEEL => f64::from_bits(self.mod_wheel.load(Ordering::Relaxed)),
+            BEND => f64::from_bits(self.bend.load(Ordering::Relaxed)),
+            LAST_PITCH => f64::from(self.last_pitch.load(Ordering::Relaxed)),
             _ => 0.0,
         }
     }
@@ -513,6 +554,10 @@ impl Plugin {
             ),
             VIEW_CRASH => self.view.crash.store(normalised > 0.5, Ordering::Relaxed),
             VIEW_EDIT => self.view.edit.store(normalised > 0.5, Ordering::Relaxed),
+            MOD_WHEEL => self
+                .mod_wheel
+                .store(normalised.to_bits(), Ordering::Relaxed),
+            BEND => self.bend.store(normalised.to_bits(), Ordering::Relaxed),
             _ => {}
         }
     }
@@ -534,6 +579,10 @@ unsafe fn from_controller(this: *mut IEditController) -> *mut Plugin {
     base_of(this, offset_of!(Plugin, controller))
 }
 
+unsafe fn from_midi_mapping(this: *mut IMidiMapping) -> *mut Plugin {
+    base_of(this, offset_of!(Plugin, midi_mapping))
+}
+
 unsafe fn query(plugin: *mut Plugin, iid: *const Tuid, object: *mut *mut c_void) -> TResult {
     if iid.is_null() || object.is_null() {
         return K_INVALID_ARGUMENT;
@@ -545,6 +594,8 @@ unsafe fn query(plugin: *mut Plugin, iid: *const Tuid, object: *mut *mut c_void)
         &raw mut (*plugin).processor as *mut c_void
     } else if iid == IID_IEDIT_CONTROLLER {
         &raw mut (*plugin).controller as *mut c_void
+    } else if iid == IID_IMIDI_MAPPING && (*plugin).kind == Kind::Instrument {
+        &raw mut (*plugin).midi_mapping as *mut c_void
     } else {
         *object = std::ptr::null_mut();
         return K_NO_INTERFACE;
@@ -936,7 +987,7 @@ unsafe fn read_param_changes(
     }
 }
 
-unsafe fn read_notes(events: *mut c_void, notes: &mut Changes<f32>) {
+unsafe fn read_notes(plugin: &Plugin, events: *mut c_void, notes: &mut Changes<f32>) {
     if events.is_null() {
         return;
     }
@@ -948,7 +999,12 @@ unsafe fn read_notes(events: *mut c_void, notes: &mut Changes<f32>) {
             continue;
         }
         match event.kind {
-            K_NOTE_ON_EVENT => notes.push(event.sample_offset, event.payload.note_on.velocity),
+            K_NOTE_ON_EVENT => {
+                plugin
+                    .last_pitch
+                    .store(event.payload.note_on.pitch as u32, Ordering::Relaxed);
+                notes.push(event.sample_offset, event.payload.note_on.velocity);
+            }
             K_NOTE_OFF_EVENT => notes.push(event.sample_offset, 0.0),
             _ => {}
         }
@@ -981,7 +1037,7 @@ unsafe extern "C" fn processor_process(
         data.input_param_changes as *mut HostParameterChanges,
         &mut gain_changes,
     );
-    read_notes(data.input_events, &mut note_changes);
+    read_notes(plugin, data.input_events, &mut note_changes);
     plugin.act_by_itself(data.output_param_changes as *mut HostParameterChanges);
 
     if plugin.crash.load(Ordering::Relaxed) {
@@ -993,6 +1049,9 @@ unsafe extern "C" fn processor_process(
 
     let mut gain = plugin.gain();
     let mut held = f32::from_bits(plugin.held_velocity.load(Ordering::Relaxed));
+    let wheel = f64::from_bits(plugin.mod_wheel.load(Ordering::Relaxed));
+    let bend = f64::from_bits(plugin.bend.load(Ordering::Relaxed));
+    let shape = ((1.0 + wheel) * (1.0 + (bend - 0.5))) as f32;
     for frame in 0..data.num_samples.max(0) as usize {
         while let Some(plain) = gain_changes.due(frame) {
             gain = plain;
@@ -1008,7 +1067,7 @@ unsafe extern "C" fn processor_process(
                 Kind::Effect => {
                     channel(data.inputs, index).map_or(0.0, |input| *input.add(frame) * gain as f32)
                 }
-                Kind::Instrument => held * gain as f32,
+                Kind::Instrument => held * gain as f32 * shape,
             };
         }
     }
@@ -1190,6 +1249,65 @@ unsafe extern "C" fn controller_set_handler(
     }
     K_RESULT_OK
 }
+
+// ---- IMidiMapping ----------------------------------------------------------
+
+#[repr(C)]
+struct IMidiMapping {
+    vtbl: *const IMidiMappingVtbl,
+}
+
+#[repr(C)]
+struct IMidiMappingVtbl {
+    query_interface:
+        unsafe extern "C" fn(*mut IMidiMapping, *const Tuid, *mut *mut c_void) -> TResult,
+    add_ref: unsafe extern "C" fn(*mut IMidiMapping) -> u32,
+    release: unsafe extern "C" fn(*mut IMidiMapping) -> u32,
+    get_midi_controller_assignment:
+        unsafe extern "C" fn(*mut IMidiMapping, i32, i16, i16, *mut u32) -> TResult,
+}
+
+unsafe extern "C" fn midi_mapping_query(
+    this: *mut IMidiMapping,
+    iid: *const Tuid,
+    object: *mut *mut c_void,
+) -> TResult {
+    query(from_midi_mapping(this), iid, object)
+}
+
+unsafe extern "C" fn midi_mapping_add_ref(this: *mut IMidiMapping) -> u32 {
+    add_reference(from_midi_mapping(this))
+}
+
+unsafe extern "C" fn midi_mapping_release(this: *mut IMidiMapping) -> u32 {
+    release_reference(from_midi_mapping(this))
+}
+
+/// The main event bus, channel 0 only, as a host asks for it.
+unsafe extern "C" fn midi_mapping_assignment(
+    _this: *mut IMidiMapping,
+    bus: i32,
+    channel: i16,
+    controller: i16,
+    id: *mut u32,
+) -> TResult {
+    if bus != 0 || channel != 0 || id.is_null() {
+        return K_RESULT_FALSE;
+    }
+    match controller {
+        CONTROLLER_MOD_WHEEL => *id = MOD_WHEEL,
+        CONTROLLER_PITCH_BEND => *id = BEND,
+        _ => return K_RESULT_FALSE,
+    }
+    K_RESULT_OK
+}
+
+static MIDI_MAPPING_VTBL: IMidiMappingVtbl = IMidiMappingVtbl {
+    query_interface: midi_mapping_query,
+    add_ref: midi_mapping_add_ref,
+    release: midi_mapping_release,
+    get_midi_controller_assignment: midi_mapping_assignment,
+};
 
 // ---- IPlugView -------------------------------------------------------------
 
@@ -1606,10 +1724,14 @@ unsafe extern "C" fn factory_create_instance(
         component: &COMPONENT_VTBL,
         processor: &PROCESSOR_VTBL,
         controller: &CONTROLLER_VTBL.0,
+        midi_mapping: &MIDI_MAPPING_VTBL,
         references: AtomicU32::new(0),
         kind: class.kind,
         gain: AtomicU64::new(1.0_f64.to_bits()),
         held_velocity: AtomicU32::new(0),
+        mod_wheel: AtomicU64::new(0.0_f64.to_bits()),
+        bend: AtomicU64::new(0.5_f64.to_bits()),
+        last_pitch: AtomicU32::new(0),
         hang: AtomicBool::new(false),
         crash: AtomicBool::new(false),
         init_apartment: AtomicI32::new(0),

@@ -307,7 +307,8 @@ A VST3 instrument is a `VstInstrument` (`vst3/instrument.rs`) behind
 A VST3 plugin (effect or instrument) with several audio output buses feeds the
 same routing as a CLAP multi-out plugin: `AppTrack.input_source`,
 `SET_TRACK_INPUT`, the left-panel "Entrée" picker, `get_plugin_outputs`. No
-project, command or event change. In-process only (the sandbox is CLAP only).
+project, command or event change. In-process only (a sandboxed plugin has one audio port each way
+until ADR-033 step 8b).
 
 - **Reading** (`vst3/buses.rs`). At every activation `vst3_ensure_active` reads
   the output buses (`getBusCount`, then `getBusInfo` after `setBusArrangements`)
@@ -379,7 +380,7 @@ An effect with an auxiliary audio input bus receives the signal of another track
 through the same routing as a CLAP effect: `PluginParams.sidechain_source`,
 `UPDATE_EFFECT`, and `SidechainPicker.svelte` (shown when `num_sidechain_inputs`
 is above 0, whatever the format). No project, command, event or frontend change.
-In-process only (the sandbox is CLAP only).
+In-process only (a sandboxed plugin has one audio port each way until ADR-033 step 8b).
 
 - **Scan** (`vst3/host.rs::probe_aux_input_count`). For each effect class
   (instruments are not probed, as for CLAP) the scan creates a throwaway component
@@ -1326,9 +1327,9 @@ boundary.
 - **Engine side.** `BridgedNode` is the node for both formats (its parameter events
   since step 6, below). `check_handshake` requires the format's unit (plain for CLAP,
   normalised for VST3).
-- **Not yet** (explicit errors or empty lists, never a fallback): instruments,
-  sidechain and auxiliary outputs (step 8), presets (step 9). The editor came with
-  step 7, below.
+- **Not yet** (explicit errors or empty lists, never a fallback): sidechain and
+  auxiliary outputs (step 8b), presets (step 9). The editor came with step 7 and
+  instruments with step 8a, below.
 
 Tests: `plugin_host_bridge/tests/vst3_bridge.rs`, `plugin_system/vst3_sandbox_tests.rs`
 (including a bridge killed or frozen from outside, and TDR Nova), and in
@@ -1401,6 +1402,36 @@ now returns the window handle.
 Tests: `vst3_bridge.rs` (the editor tests, with the test plugin's view), `vst3_sandbox_tests.rs`
 (an edit with the transport stopped, a crash in the editor, TDR Nova's editor), the frame tests
 in `vst3_host/src/editor_view.rs` and `gui.rs` `vst3_resize_tests` for the shared code.
+
+### VST3 instruments in the sandbox (ADR-033 step 8a, 2026-11-05)
+
+A VST3 **instrument** runs in the bridge like an effect: `instrument_runs_sandboxed` is gone, the
+instrument follows `runs_sandboxed` (modes _Aucun_ / _Choisis_ / _Tous_ and "Toujours isoler"; a track
+instrument has no per-placement button, as for CLAP). The crash dialog offers "Isoler" for any VST3 or
+CLAP plugin (`can_run_sandboxed(format)`).
+
+- **Role at launch.** The engine starts the bridge with `--plugin-role instrument` (absent = effect;
+  `BridgedPlugin::spawn(…, PluginRole, …)`). The role is not guessed from the buses: Surge XT has an audio
+  input and is an instrument. It is not part of the block message or of the handshake.
+- **Bridge side** (`Vst3Adapter` / `Vst3BlockProcessor`, instrument role). The block's notes (note on / off
+  and raw MIDI, in order) become `IEventList` events through `vst3_host::notes` — the same code as the
+  engine's `VstInstrument`, so both deliver the same events; pitch bend, control changes and channel
+  aftertouch become parameter points through the controller's `IMidiMapping` (bus 0, channel 0), read at
+  each activation. The plugin gets no audio input (`numInputs = 0`) and a reset releases the sounding
+  notes (it does not restart processing, as `VstInstrument::reset`). A NoteOff of a block the gate made the
+  bridge skip is kept and sent first in the next block.
+- **Engine side.** `instrument_device` picks `BridgedInstrument` for any sandboxed instance;
+  `instantiate_instrument_placement` creates the bridged instance for CLAP and VST3. A VST3 instrument
+  reports its latency through `BridgedInstrument::latency_samples` (a CLAP one reports 0, in process and
+  sandboxed). Still one stereo output: an auxiliary output a track reads is cut by the compiler.
+- **Not yet** (step 8b): auxiliary outputs and sidechain in the bridge, `IComponentHandlerBusActivation`
+  — they need several audio buffers per block, that is protocol v4.
+
+Tests: `vst3_adapter.rs` (notes at their offset, a NoteOff of a skipped block, reset, mod wheel through
+`IMidiMapping`, an effect gets no notes), `vst3_instrument_sandbox_tests.rs` (preference, latency, a killed
+bridge, no in-process fallback, a reset in both places, Surge XT when installed), and in
+`render_harness::vst3_plugins` the sandbox-against-in-process renders of the instrument, with and without
+mod wheel and pitch bend.
 
 ---
 

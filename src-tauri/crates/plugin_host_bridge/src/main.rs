@@ -13,7 +13,8 @@
 //! ```text
 //! plugin_host_bridge --region-name <N> --max-frames <F> --channels <C>
 //!                    --event-capacity <E> --plugin-dll <PATH> --plugin-id <ID>
-//!                    [--plugin-format clap|vst3] [--track-info <HEX>]
+//!                    [--plugin-format clap|vst3] [--plugin-role effect|instrument]
+//!                    [--track-info <HEX>]
 //! plugin_host_bridge --print-protocol-version
 //! ```
 
@@ -48,6 +49,14 @@ enum PluginFormat {
     Vst3,
 }
 
+/// What the engine uses the plugin for.  A VST3 instrument gets the notes of the
+/// block and is reset by releasing them, an effect is restarted.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PluginRole {
+    Effect,
+    Instrument,
+}
+
 /// A plugin hosted by this process, as the control channel on the main thread
 /// sees it.  The audio thread has its own processor per format.
 trait HostedPlugin {
@@ -60,6 +69,7 @@ trait HostedPlugin {
 struct Options {
     region_name: String,
     format: PluginFormat,
+    role: PluginRole,
     layout: BridgeLayout,
     plugin_dll: PathBuf,
     plugin_id: String,
@@ -81,9 +91,15 @@ fn parse_options(args: &[String]) -> Option<Options> {
         Some("vst3") => PluginFormat::Vst3,
         Some(_) => return None,
     };
+    let role = match values.get("--plugin-role").copied() {
+        None | Some("effect") => PluginRole::Effect,
+        Some("instrument") => PluginRole::Instrument,
+        Some(_) => return None,
+    };
     Some(Options {
         region_name: values.get("--region-name")?.to_string(),
         format,
+        role,
         layout: BridgeLayout::new(
             number("--max-frames")?,
             number("--channels")?,
@@ -169,7 +185,12 @@ fn load_plugin(options: &Options) -> Result<Loaded, String> {
         }
         PluginFormat::Vst3 => {
             initialise_com()?;
-            let plugin = Vst3Adapter::load(&options.plugin_dll, &options.plugin_id, channels)?;
+            let plugin = Vst3Adapter::load(
+                &options.plugin_dll,
+                &options.plugin_id,
+                options.role,
+                channels,
+            )?;
             let processor = Vst3BlockProcessor::new(Arc::clone(&plugin));
             Ok((plugin, Box::new(processor)))
         }

@@ -894,6 +894,15 @@ the plugin and return the new latency. Details: ADR-033, "Step 6".
 the editor ends the bridge and is reported as any crash; there is no fallback in process. The block message, the
 rings and the bounded wait are unchanged (protocol still 3). Details: ADR-033, "Step 7".
 
+### Amendment 2026-11-05 — VST3 instruments in the sandbox (ADR-033 step 8a)
+
+A VST3 instrument runs in the bridge (`BridgedInstrument`, shared with CLAP): its notes and raw MIDI travel
+in the note section, the bridge turns them into `IEventList` events and, through `IMidiMapping`, into
+parameter points. The bridge is started with `--plugin-role instrument` for an instrument (a launch
+argument, absent for an effect). Block message, rings, bounded wait and protocol version (3) are unchanged.
+Auxiliary outputs and sidechain (several audio buffers per block) need protocol v4 and are step 8b.
+Details: ADR-033, "Step 8a".
+
 ### Amendment 2026-11-04 — protocol v3, neutral sections (ADR-033 step 4)
 
 `BRIDGE_PROTOCOL_VERSION` is **3**. The engine no longer writes a CLAP structure

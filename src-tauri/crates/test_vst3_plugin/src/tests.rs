@@ -202,6 +202,52 @@ fn the_instrument_plays_the_velocity_of_the_held_note() {
     assert_eq!(output, [0.0, 0.0, 0.5, 0.5, 0.5, 0.5, 0.0, 0.0]);
 }
 
+/// What the instrument's `IMidiMapping` answers for `controller` on bus 0, channel 0.
+fn mapped_parameter(plugin: &Instance, controller: i16) -> Option<u32> {
+    let mut interface: *mut c_void = std::ptr::null_mut();
+    let found = unsafe {
+        ((*(*plugin.controller).vtbl).query_interface)(
+            plugin.controller,
+            &IID_IMIDI_MAPPING,
+            &mut interface,
+        )
+    };
+    if found != K_RESULT_OK {
+        return None;
+    }
+    let mapping = interface as *mut IMidiMapping;
+    let mut id = 0u32;
+    let answer = unsafe {
+        ((*(*mapping).vtbl).get_midi_controller_assignment)(mapping, 0, 0, controller, &mut id)
+    };
+    unsafe { ((*(*mapping).vtbl).release)(mapping) };
+    (answer == K_RESULT_OK).then_some(id)
+}
+
+#[test]
+fn only_the_instrument_maps_the_mod_wheel_and_pitch_bend() {
+    let instrument = instance(&INSTRUMENT_CLASS_ID);
+    assert_eq!(mapped_parameter(&instrument, 1), Some(MOD_WHEEL));
+    assert_eq!(mapped_parameter(&instrument, 129), Some(BEND));
+    assert_eq!(mapped_parameter(&instrument, 7), None);
+    assert_eq!(mapped_parameter(&instance(&EFFECT_CLASS_ID), 1), None);
+}
+
+#[test]
+fn the_mod_wheel_and_the_bend_shape_the_instrument_and_rest_neutral() {
+    let plugin = instance(&INSTRUMENT_CLASS_ID);
+    let play = |plugin: &Instance| {
+        let mut notes = note_events(vec![Event::note_on(0, 62, 0.5, -1)]);
+        plugin.process(0.0, 4, None, Some(&mut notes))[3]
+    };
+    assert_eq!(play(&plugin), 0.5, "the defaults leave the sound alone");
+    plugin.set_normalised(MOD_WHEEL, 1.0);
+    assert_eq!(play(&plugin), 1.0);
+    plugin.set_normalised(BEND, 0.75);
+    assert_eq!(play(&plugin), 1.0 * 1.25);
+    assert_eq!(plugin.normalised(LAST_PITCH) * DIAGNOSTIC_RANGE, 62.0);
+}
+
 #[test]
 fn the_state_carries_the_gain() {
     let plugin = instance(&EFFECT_CLASS_ID);

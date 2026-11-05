@@ -4,7 +4,7 @@
 //! `com_object`), the track info sent to a controller (`channel_context`), the
 //! controller's handler (`component_handler`), parameter
 //! enumeration (`params`), the transport (`transport`), the events sent to an
-//! instrument (`event_list`), the instrument adapter (`instrument`), its MIDI
+//! instrument (`event_list`, built by `notes`), the instrument adapter (`instrument`), its MIDI
 //! controllers (`midi_mapping`), the per-block parameter changes
 //! (`param_delivery`), the reader of `.vstpreset` files (`preset_file`) and the
 //! graph node (`wrapper`).
@@ -15,7 +15,7 @@ pub mod component_handler;
 pub(crate) mod fake_plugin;
 pub mod ffi;
 // Moved to the `vst3_host` crate (ADR-033, step 3); the old paths still resolve.
-pub use vst3_host::{buses, editor_view, event_list, host_context, midi_mapping, units};
+pub use vst3_host::{buses, editor_view, event_list, host_context, midi_mapping, notes, units};
 pub mod host;
 pub mod instrument;
 pub mod param_delivery;

@@ -3,8 +3,18 @@
 //!
 //! One component, its processor and its edit controller, on one stereo main bus
 //! each way.  The auxiliary buses are declared in the handshake but stay closed
-//! until the port table carries more than one active port (step 8).  Presets come
+//! until the port table carries more than one active port (step 8b).  Presets come
 //! with step 9 and answer an explicit error until then.
+//!
+//! ## Instruments (step 8a)
+//!
+//! A component with an event input and no audio input is an instrument.  Its notes
+//! and raw MIDI arrive in the block's note section and are delivered exactly as the
+//! Echoes process delivers them (`vst3_host::notes`): notes as events, pitch bend,
+//! control changes and channel aftertouch as changes of the parameters its
+//! `IMidiMapping` names.  A NoteOff of a block the gate made the bridge skip is kept
+//! for the next one, and a reset releases the sounding notes instead of restarting
+//! the plugin, as `VstInstrument` does.
 //!
 //! ## Parameters
 //!
@@ -37,8 +47,8 @@ use audio_buffer::AudioBuffer;
 use plugin_bridge::control::{Op, PayloadReader};
 use plugin_bridge::protocol::{
     WireParam, BLOCK_PARAMS_RESCAN_MASK, BLOCK_PARAMS_RESCAN_SHIFT, BLOCK_PASSED_THROUGH,
-    BLOCK_PLUGIN_EDITED, BLOCK_RESTART_REQUESTED, PARAMS_INFO, PARAMS_TEXT, PARAM_GESTURE_BEGIN,
-    PARAM_GESTURE_END, PARAM_VALUE, TRANSPORT_PLAYING,
+    BLOCK_PLUGIN_EDITED, BLOCK_RESTART_REQUESTED, MIDI, NOTE_OFF, NOTE_ON, PARAMS_INFO,
+    PARAMS_TEXT, PARAM_GESTURE_BEGIN, PARAM_GESTURE_END, PARAM_VALUE, TRANSPORT_PLAYING,
 };
 use plugin_bridge::records::{
     AudioPortRecord, Handshake, NoteNameRecord, ParamRecord, ParamUnit, PortDirection, PortRole,
@@ -57,13 +67,16 @@ use vst3_host::buses::{
 };
 use vst3_host::component_handler::{ComponentHandler, EditState, HostSignals, MAX_GESTURES};
 use vst3_host::editor_view::{EditorView, ResizeWindow};
+use vst3_host::event_list::HostEventList;
 use vst3_host::host_context::host_application;
+use vst3_host::midi_mapping::{push_mapped_controls, read_midi_mapping, MidiControllerMap};
+use vst3_host::notes::{push_events, NoteKind, NoteMessage, SoundingNotes};
 use vst3_host::params::{
     read_vst3_param_text, read_vst3_param_value, read_vst3_params, write_vst3_param_value,
 };
 use vst3_host::transport::{process_context, TransportState};
 
-use crate::HostedPlugin;
+use crate::{HostedPlugin, PluginRole};
 
 /// How long the main thread waits for the audio thread to finish a block.
 const GATE_BUDGET: Duration = Duration::from_secs(2);
@@ -130,6 +143,9 @@ struct Activation {
     param_changes: Box<HostParameterChanges>,
     /// Where the plugin writes the changes it makes itself, for its controller.
     output_changes: Box<HostParameterChanges>,
+    events: Box<HostEventList>,
+    /// What each MIDI controller drives, read once the plugin is active.
+    midi_map: MidiControllerMap,
 }
 
 /// `(sample rate, max frames, latency)` of the current activation.
@@ -146,6 +162,10 @@ pub struct Vst3Adapter {
     signals: Arc<BridgeSignals>,
     /// Channels of the main bus each way, as the engine's blocks carry them.
     channels: usize,
+    /// An instrument gets the block's notes, no audio input and a reset that only
+    /// releases them.  Chosen by the engine: a VST3 instrument may well have audio
+    /// inputs (Surge XT does).
+    is_instrument: bool,
     gate: AtomicU8,
     /// Read and written only while holding `gate`.
     activation: UnsafeCell<Option<Activation>>,
@@ -168,7 +188,12 @@ unsafe impl Sync for Vst3Adapter {}
 impl Vst3Adapter {
     /// Main thread.  Loads the module and creates the component, its processor and
     /// its edit controller for class id `cid` (32 hexadecimal digits).
-    pub fn load(dll: &Path, cid: &str, channels: usize) -> Result<Arc<Self>, String> {
+    pub fn load(
+        dll: &Path,
+        cid: &str,
+        role: PluginRole,
+        channels: usize,
+    ) -> Result<Arc<Self>, String> {
         let cid = decode_cid(cid).ok_or_else(|| format!("invalid VST3 class id '{cid}'"))?;
         let (library, factory) = Vst3Library::load(dll)?;
         // SAFETY: live factory, called off the audio thread.
@@ -201,6 +226,7 @@ impl Vst3Adapter {
             handler,
             signals,
             channels,
+            is_instrument: role == PluginRole::Instrument,
             gate: AtomicU8::new(GATE_IDLE),
             activation: UnsafeCell::new(None),
             configuration: Mutex::new(None),
@@ -317,6 +343,13 @@ impl Vst3Adapter {
         }
         ((*(*processor).vtbl).set_processing)(processor, 1);
 
+        let midi_map = match &self.controller {
+            Some(controller) if self.is_instrument && has_event_input => {
+                read_midi_mapping(controller.as_ptr())
+            }
+            _ => MidiControllerMap::empty(),
+        };
+
         let channels = self.channels;
         let mut inputs = Vst3InputBuses::new(&[]);
         inputs.prepare(channels, max_frames as usize);
@@ -330,6 +363,8 @@ impl Vst3Adapter {
             output: vec![AudioBuffer::new(channels, max_frames as usize)],
             param_changes: HostParameterChanges::boxed(),
             output_changes: HostParameterChanges::boxed(),
+            events: HostEventList::boxed(),
+            midi_map,
         })
     }
 
@@ -656,6 +691,10 @@ pub struct Vst3BlockProcessor {
     plugin: Arc<Vst3Adapter>,
     /// The gestures the engine was last told about.
     reported_gestures: [Option<u32>; MAX_GESTURES],
+    /// What an instrument was told, so a block the bridge skips loses no NoteOff.
+    /// Kept here, not in the activation, because the gate that guards that one is
+    /// the very thing that makes a block skip.
+    notes: SoundingNotes,
 }
 
 // SAFETY: moved once into the audio thread, which is its only user.
@@ -666,8 +705,51 @@ impl Vst3BlockProcessor {
         Vst3BlockProcessor {
             plugin,
             reported_gestures: [None; MAX_GESTURES],
+            notes: SoundingNotes::new(),
         }
     }
+}
+
+/// The block's notes and raw MIDI as the messages `vst3_host::notes` delivers.
+fn note_messages<'a>(block: &'a BlockContext) -> impl Iterator<Item = NoteMessage> + 'a {
+    block.notes.iter().filter_map(|note| {
+        let kind = match note.kind {
+            NOTE_ON => NoteKind::NoteOn {
+                pitch: note.data[0],
+                velocity: note.data[1],
+            },
+            NOTE_OFF => NoteKind::NoteOff {
+                pitch: note.data[0],
+            },
+            MIDI => NoteKind::Control { message: note.data },
+            _ => return None,
+        };
+        Some(NoteMessage {
+            offset: note.offset,
+            kind,
+        })
+    })
+}
+
+/// The block's raw MIDI messages with their offsets, for `IMidiMapping`.
+fn midi_controls<'a>(block: &'a BlockContext) -> impl Iterator<Item = (u32, [u8; 3])> + 'a {
+    block
+        .notes
+        .iter()
+        .filter(|note| note.kind == MIDI)
+        .map(|note| (note.offset, note.data))
+}
+
+/// A block the plugin does not process: the input goes through, and the NoteOffs it
+/// would have received wait for the next block.
+fn skip_block(
+    notes: &mut SoundingNotes,
+    block: &BlockContext,
+    input: &[f32],
+    output: &mut [f32],
+) -> u32 {
+    notes.keep_releases_of(note_messages(block));
+    pass_through(input, output)
 }
 
 /// Tells the engine which parameters the user started or stopped dragging in the
@@ -719,23 +801,27 @@ impl BridgeProcessor for Vst3BlockProcessor {
     ) -> u32 {
         let plugin = &*self.plugin;
         let Some(_gate) = plugin.enter_audio() else {
-            return pass_through(input, output);
+            return skip_block(&mut self.notes, block, input, output);
         };
         // SAFETY: the audio gate is held, so the main thread leaves the activation alone.
         let Some(activation) = (unsafe { &mut *plugin.activation.get() }) else {
-            return pass_through(input, output);
+            return skip_block(&mut self.notes, block, input, output);
         };
         let frames = block.frames;
         if frames > activation.max_frames as usize || block.channels > activation.input.num_channels
         {
-            return pass_through(input, output);
+            return skip_block(&mut self.notes, block, input, output);
         }
 
         if block.reset {
-            // SAFETY: audio gate held; setProcessing(false) then (true) resets the plugin.
-            unsafe {
-                ((*(*plugin.processor).vtbl).set_processing)(plugin.processor, 0);
-                ((*(*plugin.processor).vtbl).set_processing)(plugin.processor, 1);
+            if plugin.is_instrument {
+                self.notes.release_all();
+            } else {
+                // SAFETY: audio gate held; setProcessing(false) then (true) resets the plugin.
+                unsafe {
+                    ((*(*plugin.processor).vtbl).set_processing)(plugin.processor, 0);
+                    ((*(*plugin.processor).vtbl).set_processing)(plugin.processor, 1);
+                }
             }
         }
 
@@ -753,6 +839,13 @@ impl BridgeProcessor for Vst3BlockProcessor {
                     .param_changes
                     .push(param.native_id, param.offset as i32, param.value);
             }
+        }
+        if plugin.is_instrument {
+            push_mapped_controls(
+                midi_controls(block),
+                &activation.midi_map,
+                &mut activation.param_changes,
+            );
         }
         report_gestures(&mut self.reported_gestures, edit_state, reply);
         // The window's own edits go last, so the user's value wins within the block,
@@ -773,10 +866,27 @@ impl BridgeProcessor for Vst3BlockProcessor {
         let output_changes =
             activation.output_changes.as_mut() as *mut HostParameterChanges as *mut c_void;
 
+        activation.events.reset();
+        let input_events = if plugin.is_instrument {
+            self.notes.push_pending_releases(&mut activation.events);
+            push_events(
+                note_messages(block),
+                &mut activation.events,
+                &mut self.notes,
+            );
+            activation.events.as_ffi_ptr()
+        } else {
+            std::ptr::null_mut()
+        };
+
         let sources: [&AudioBuffer; 1] = [&activation.input];
-        let (input_buses, input_bus_count) = activation
-            .inputs
-            .bind(if block.has_input { &sources } else { &[] }, frames);
+        let (input_buses, input_bus_count) = if plugin.is_instrument {
+            (std::ptr::null_mut(), 0)
+        } else {
+            activation
+                .inputs
+                .bind(if block.has_input { &sources } else { &[] }, frames)
+        };
         let (output_buses, output_bus_count) = activation.outputs.bind(&mut activation.output);
 
         let mut context = transport_state(block).map(|state| process_context(&state));
@@ -790,7 +900,7 @@ impl BridgeProcessor for Vst3BlockProcessor {
             outputs: output_buses,
             input_param_changes: param_changes,
             output_param_changes: output_changes,
-            input_events: std::ptr::null_mut(),
+            input_events,
             output_events: std::ptr::null_mut(),
             process_context: context
                 .as_mut()
@@ -818,7 +928,7 @@ mod tests {
     use std::process::Command;
     use std::sync::OnceLock;
 
-    use plugin_bridge::protocol::{write_records, Section, PARAM_BYTES};
+    use plugin_bridge::protocol::{write_records, Section, WireNote, NOTE_BYTES, PARAM_BYTES};
 
     use super::*;
 
@@ -853,7 +963,8 @@ mod tests {
     fn activated() -> (Arc<Vst3Adapter>, Vst3BlockProcessor) {
         initialise_com_for_the_test();
         let adapter =
-            Vst3Adapter::load(test_plugin_dll(), &effect_class_id(), 2).expect("the effect loads");
+            Vst3Adapter::load(test_plugin_dll(), &effect_class_id(), PluginRole::Effect, 2)
+                .expect("the effect loads");
         adapter
             .activate(48_000.0, 64)
             .expect("the effect activates");
@@ -899,6 +1010,142 @@ mod tests {
         let flags = processor.process(&block, &input, &mut output, &mut reply);
         let count = reply.edit_count();
         (flags, edits[..count].to_vec())
+    }
+
+    fn instrument_class_id() -> String {
+        b"EchoesTestGain_I"
+            .iter()
+            .map(|byte| format!("{byte:02X}"))
+            .collect()
+    }
+
+    /// The test instrument loaded and activated in this process.
+    fn activated_instrument() -> (Arc<Vst3Adapter>, Vst3BlockProcessor) {
+        initialise_com_for_the_test();
+        let adapter = Vst3Adapter::load(
+            test_plugin_dll(),
+            &instrument_class_id(),
+            PluginRole::Instrument,
+            2,
+        )
+        .expect("the instrument loads");
+        adapter
+            .activate(48_000.0, 64)
+            .expect("the instrument activates");
+        let processor = Vst3BlockProcessor::new(Arc::clone(&adapter));
+        (adapter, processor)
+    }
+
+    /// One block with `notes` and no audio input; returns the reply flags and the
+    /// left channel.
+    fn play_block(
+        processor: &mut Vst3BlockProcessor,
+        notes: &[WireNote],
+        reset: bool,
+    ) -> (u32, Vec<f32>) {
+        let mut bytes = vec![0u8; notes.len() * NOTE_BYTES];
+        write_records(notes, &mut bytes, 0);
+        let block = BlockContext {
+            frames: FRAMES,
+            channels: 2,
+            has_input: false,
+            reset,
+            sequence: 0,
+            steady_time: 0,
+            transport: None,
+            notes: Section::new(&bytes, notes.len()),
+            params: Section::new(&[], 0),
+        };
+        let input = vec![0.0f32; FRAMES * 2];
+        let mut output = vec![0.0f32; FRAMES * 2];
+        let mut edits = [WireParam::new(0, 0, 0, 0.0); 16];
+        let mut midi = [];
+        let mut reply = ReplyWriter::new(&mut edits, &mut midi);
+        let flags = processor.process(&block, &input, &mut output, &mut reply);
+        (flags, output[..FRAMES].to_vec())
+    }
+
+    fn note_on(offset: u32) -> WireNote {
+        WireNote::new(offset, NOTE_ON, [60, 127, 0])
+    }
+
+    fn note_off(offset: u32) -> WireNote {
+        WireNote::new(offset, NOTE_OFF, [60, 0, 0])
+    }
+
+    #[test]
+    fn an_instrument_plays_the_notes_of_its_block_at_their_offset() {
+        let (_adapter, mut processor) = activated_instrument();
+        let (flags, left) = play_block(&mut processor, &[note_on(8)], false);
+        assert_eq!(flags & BLOCK_PASSED_THROUGH, 0);
+        assert!(left[..8].iter().all(|&s| s == 0.0));
+        assert!(left[8..].iter().all(|&s| s == 1.0));
+
+        let (_, left) = play_block(&mut processor, &[note_off(4)], false);
+        assert!(left[..4].iter().all(|&s| s == 1.0));
+        assert!(left[4..].iter().all(|&s| s == 0.0));
+    }
+
+    #[test]
+    fn a_note_off_of_a_block_the_gate_skipped_reaches_the_next_one() {
+        let (adapter, mut processor) = activated_instrument();
+        play_block(&mut processor, &[note_on(0)], false);
+
+        let gate = adapter
+            .enter_main()
+            .expect("the main thread takes the gate");
+        let (flags, _) = play_block(&mut processor, &[note_off(4)], false);
+        assert_ne!(flags & BLOCK_PASSED_THROUGH, 0, "the block was skipped");
+        drop(gate);
+
+        let (_, left) = play_block(&mut processor, &[], false);
+        assert!(
+            left.iter().all(|&s| s == 0.0),
+            "the kept NoteOff came first"
+        );
+    }
+
+    #[test]
+    fn a_reset_releases_the_notes_of_an_instrument() {
+        let (_adapter, mut processor) = activated_instrument();
+        play_block(&mut processor, &[note_on(0)], false);
+
+        let (_, left) = play_block(&mut processor, &[], true);
+        assert!(left.iter().all(|&s| s == 0.0));
+    }
+
+    #[test]
+    fn the_mod_wheel_reaches_the_instrument_through_its_midi_mapping() {
+        let (_adapter, mut processor) = activated_instrument();
+        let wheel = WireNote::new(0, MIDI, [0xB0, 1, 127]);
+        let (_, left) = play_block(&mut processor, &[note_on(0), wheel], false);
+        assert!(left.iter().all(|&s| s == 2.0), "velocity × (1 + wheel)");
+    }
+
+    #[test]
+    fn an_effect_is_not_given_notes() {
+        let (_adapter, mut processor) = activated();
+        let notes = [note_on(0)];
+        let mut bytes = vec![0u8; NOTE_BYTES];
+        write_records(&notes, &mut bytes, 0);
+        let block = BlockContext {
+            frames: FRAMES,
+            channels: 2,
+            has_input: true,
+            reset: false,
+            sequence: 0,
+            steady_time: 0,
+            transport: None,
+            notes: Section::new(&bytes, 1),
+            params: Section::new(&[], 0),
+        };
+        let input = vec![0.5f32; FRAMES * 2];
+        let mut output = vec![0.0f32; FRAMES * 2];
+        let mut edits = [WireParam::new(0, 0, 0, 0.0); 16];
+        let mut midi = [];
+        let mut reply = ReplyWriter::new(&mut edits, &mut midi);
+        processor.process(&block, &input, &mut output, &mut reply);
+        assert!(output.iter().all(|&s| s == 0.5), "the gain only");
     }
 
     fn controller_value(adapter: &Vst3Adapter, native_id: u32) -> f64 {

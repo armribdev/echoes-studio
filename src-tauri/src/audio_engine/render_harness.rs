@@ -1766,8 +1766,7 @@ mod vst3_plugins {
             .collect()
     }
 
-    /// A host that sends every effect it can to the bridge. Instruments stay in the
-    /// Echoes process until step 8 of ADR-033.
+    /// A host that sends every plugin it can to the bridge, instruments included.
     fn isolating_everything(mut host: PluginHost) -> PluginHost {
         host.set_bridge_exe(super::clap_plugins::artifacts().1.clone());
         host.set_isolation(PluginIsolation::All, Default::default());
@@ -1803,12 +1802,88 @@ mod vst3_plugins {
                     .is_sandboxed(),
                 "the effect must really run in the bridge"
             );
+            assert_eq!(
+                first_difference(&in_process, &sandboxed),
+                None,
+                "block size {block_size}"
+            );
+        }
+    }
+
+    /// ADR-033 step 8, C-2: the instrument in the bridge process plays the same
+    /// samples as in the Echoes process (notes with their offsets and velocity), whatever
+    /// the block size.
+    #[test]
+    fn a_sandboxed_instrument_renders_like_an_in_process_one() {
+        let project = project();
+        let frame = |seconds: f64| (seconds * SAMPLE_RATE as f64) as usize * 2;
+        for block_size in BLOCK_SIZES {
+            let in_process = render_with_host(&mut host_with_test_plugins(), &project, block_size);
+            let mut sandboxed_host = isolating_everything(host_with_test_plugins());
+            let sandboxed = render_with_host(&mut sandboxed_host, &project, block_size);
             assert!(
-                !sandboxed_host
+                sandboxed_host
                     .instance_by_key("instrument:midi")
                     .unwrap()
                     .is_sandboxed(),
-                "a VST3 instrument is not sandboxed before step 8"
+                "the instrument must really run in the bridge"
+            );
+            assert!(
+                sandboxed[frame(0.1)..frame(0.2)]
+                    .iter()
+                    .any(|s| s.abs() > 1e-3),
+                "the first note must sound from the bridge"
+            );
+            assert_eq!(
+                first_difference(&in_process, &sandboxed),
+                None,
+                "block size {block_size}"
+            );
+        }
+    }
+
+    /// The instrument's first note with the mod wheel up and the pitch bend raised, which
+    /// the test plugin's `IMidiMapping` turns into parameters that scale its output.
+    fn controlled_project() -> AppProject {
+        let mut project = project();
+        let control = |start: f32, kind, number: u8, value: u16| MidiControlPoint {
+            start,
+            kind,
+            number,
+            value,
+        };
+        project
+            .midi_contents
+            .get_mut("midi-clip")
+            .expect("the reference clip")
+            .channel_controls = vec![
+            control(0.25, MidiControlKind::ControlChange, 1, 127),
+            control(0.5, MidiControlKind::PitchBend, 0, 0x3000),
+        ];
+        project
+    }
+
+    /// ADR-033 step 8, C-2: the mod wheel and the pitch bend reach the instrument in the
+    /// bridge through its `IMidiMapping` and change the sound as they do in process.
+    #[test]
+    fn a_sandboxed_instrument_renders_like_an_in_process_one_with_midi_controls() {
+        let controlled = controlled_project();
+        let plain = render(&project(), BLOCK_SIZES[0]);
+        assert!(
+            first_difference(&plain, &render(&controlled, BLOCK_SIZES[0])).is_some(),
+            "the controls must change the sound"
+        );
+        for block_size in BLOCK_SIZES {
+            let in_process =
+                render_with_host(&mut host_with_test_plugins(), &controlled, block_size);
+            let mut sandboxed_host = isolating_everything(host_with_test_plugins());
+            let sandboxed = render_with_host(&mut sandboxed_host, &controlled, block_size);
+            assert!(
+                sandboxed_host
+                    .instance_by_key("instrument:midi")
+                    .unwrap()
+                    .is_sandboxed(),
+                "the instrument must really run in the bridge"
             );
             assert_eq!(
                 first_difference(&in_process, &sandboxed),

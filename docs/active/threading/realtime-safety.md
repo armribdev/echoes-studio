@@ -324,6 +324,17 @@ window. The plugin's `resizeView` callback only resizes the window on that threa
 (`createView`) takes the main-thread side of the gate, so the audio thread skips a block instead
 of waiting; the mirror table is still written by the audio thread only while a window watches.
 
+**VST3 instrument in the bridge (ADR-033 step 8a).** The message, the rings, the wake-up, the bounded
+wait and the single non-blocking `SetEvent` are unchanged (protocol still 3); the instrument adds no
+system call and no wait on either audio thread. On the bridge's audio thread the block's notes go
+through `vst3_host::notes` into a `HostEventList` allocated at activation (fixed capacity, a full list
+drops the event, a dropped NoteOff is kept), and the raw MIDI controls through `push_mapped_controls`
+into the preallocated `IParameterChanges` — the `IMidiMapping` table is read on the main thread, at
+activation, under the gate. When the main thread holds the gate the block is skipped as for an effect;
+the NoteOffs of that block are kept in a `SoundingNotes` that belongs to the audio thread (a 128-entry
+array, no allocation) and sent first in the next block, so no note stays on. The engine's side is the
+existing `BridgedInstrument`.
+
 ### Sleeping CLAP plugins (2026-10-14)
 
 A CLAP plugin that is silent and has no tail left is not called at all

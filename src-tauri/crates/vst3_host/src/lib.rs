@@ -14,6 +14,7 @@ pub mod event_list;
 pub mod host_context;
 pub mod message;
 pub mod midi_mapping;
+pub mod notes;
 pub mod param_mirror;
 pub mod params;
 pub mod transport;

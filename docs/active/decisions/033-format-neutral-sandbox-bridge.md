@@ -3,12 +3,12 @@
 ## Status
 
 **Proposed — 2026-11-03; plan approved by the user the same day, steps 0 to 7
-done (steps 4 to 7 delivered 2026-11-04, awaiting the user's review).** Step 0 (this ADR and the header check in Appendix A) changed no code. Step 1
+and 8a done (steps 4 to 7 delivered 2026-11-04, 8a on 2026-11-05, awaiting the user's review).** Step 0 (this ADR and the header check in Appendix A) changed no code. Step 1
 moved `vst3/ffi.rs` and `param_queue.rs` into the `vst3_ffi` and `plugin_param_queue`
 crates (see "Step 1 — what shipped"). Step 2 added the test plugin, the harness
 baseline and the loader fix ("Step 2 — what shipped"). Step 3 moved the VST3 host objects into
 `vst3_host` ("Step 3 — what shipped"). Step 4 froze protocol v3 and moved CLAP onto it
-("Step 4 — what shipped"). Step 5 put the VST3 effect in the bridge ("Step 5 — what shipped"). Step 6 gave it its parameters ("Step 6 — what shipped"). Step 7 gave it its editor ("Step 7 — what shipped"). Decisions 1–9 below were taken by the user
+("Step 4 — what shipped"). Step 5 put the VST3 effect in the bridge ("Step 5 — what shipped"). Step 6 gave it its parameters ("Step 6 — what shipped"). Step 7 gave it its editor ("Step 7 — what shipped"). Step 8 was split: 8a put the VST3 instrument in the bridge ("Step 8a — what shipped"), 8b (several ports, protocol v4) waits. Decisions 1–9 below were taken by the user
 before this ADR was written (decision 10 only restates ADR-015). The status stays
 _Proposed_ until the user has reviewed step 4, the first step that crossed the
 real-time boundary (and hand-tested a sandboxed CLAP plugin).
@@ -181,7 +181,8 @@ without a sandboxed VST3, and waits for the user's approval before the next one.
 | 5    | **VST3 audio in the bridge** (done 2026-11-04). `Vst3Adapter` (effects): load, `InitDll`, activate, process, latency, tail, state, crash and restart, ADR-010 gate inside the bridge. `runs_sandboxed` accepts VST3, the modes and the "Isoler" button cover it.                                                      | **high**: first VST3 on the ring; cores spinning | sandbox-against-in-process test on the VST3 test DLL (effect)                                       |
 | 6    | **VST3 parameters** (done 2026-11-04). Parameter list and text, automation and modulation with a sample offset, the plugin's edits and gestures back (engine gestures ignored, decision b), rescan, controller follows processor (inside the bridge), modulated bases before a state save.                | medium: bounded queues (128 × 128)   | same test with automated and modulated parameters                                                    |
 | 7    | **VST3 editor in the bridge** (done 2026-11-04). `IPlugView` / `IPlugFrame` / content scale in the bridge's Win32 window (same layout as CLAP), resize in the same call stack, close order.                                                                                                                              | none (bridge UI thread)              | none                                                                                                 |
-| 8    | **VST3 instruments and several ports.** Notes and raw MIDI, `IMidiMapping`, a bridged VST3 instrument; aux outputs and sidechain through the port table (several active ports); `IComponentHandlerBusActivation`.                                                                                   | medium-high: multi-port block layout | same test for instrument, multi-out and sidechain                                                    |
+| 8a   | **VST3 instrument** (done 2026-11-05). Notes and raw MIDI, `IMidiMapping`, a bridged VST3 instrument on the main stereo output; the bridge is told its role at launch.                                                                                                                                  | medium: bounded note list, no new call | sandbox-against-in-process test for the instrument, with and without MIDI controls                    |
+| 8b   | **Several ports.** Aux outputs and sidechain through the port table (several active ports); `IComponentHandlerBusActivation`. **Changes the block layout: protocol v4, needs the user's approval of the design first.**                                                                                  | medium-high: multi-port block layout | same test for multi-out and sidechain                                                                |
 | 9    | **VST3 presets.** `IUnitInfo` programs and `.vstpreset` files through the ADR-031 commands; parsing stays in the app (untrusted file), loading happens in the bridge; `IUnitHandler`.                                                                                                                | none (control path); gate in the bridge | none                                                                                                 |
 | 10   | **Out-of-process scan and blocklist.** `plugin_host_bridge --scan`, timeout and crash contained, blocklist kept per machine, a way to re-enable. Replaces the in-process throwaway component of the VST3 sidechain probe.                                                                              | none                                 | none                                                                                                 |
 
@@ -197,7 +198,8 @@ without a sandboxed VST3, and waits for the user's approval before the next one.
 | 5    | `sandbox_tests.rs` mirrored for VST3: processing, latency, state, toggle keeps state, reuse across recompiles, crash contained / reported / recovered, hang contained.    | TDR Nova sandboxed; end the bridge from the Task Manager during playback; mode _Tous_ with several instances (CPU).          |
 | 6    | Parameters, automation and modulation across the process with the test DLL; editor-follow table; state save with modulated bases.                                         | Knobs in a sandboxed window follow automation; save and reopen.                                                              |
 | 7    | Bridge tests with the test DLL's view (`vst3_bridge.rs`): attach, resize inside `resizeView`, content scale, close order, one window and reopen, the controller follows automation only while open, a window-thread edit, a crash in the editor; the engine's view of an edit at a stop; the frame tests in `vst3_host`; TDR Nova's editor opens, runs with audio and closes.                                                                                    | Sandboxed editor on TDR Nova: open, resize, HiDPI screen, close; a crash in the editor kills only the bridge.                |
-| 8    | Instrument notes and parameters, multi-out, sidechain with the test DLL, sandboxed.                                                                                        | Surge XT sandboxed (its "Scene A" bus); TDR Nova sidechain sandboxed.                                                        |
+| 8a   | Instrument notes, raw MIDI and parameters with the test DLL, sandboxed; Surge XT (when installed) as loud in the bridge as in process.                                     | Surge XT sandboxed: play, automate, editor, keyboard controls, kill the bridge.                                              |
+| 8b   | Multi-out and sidechain with the test DLL, sandboxed.                                                                                                                      | Surge XT's "Scene A" bus sandboxed; TDR Nova sidechain sandboxed.                                                            |
 | 9    | Program change and `.vstpreset` load through the bridge with the test DLL.                                                                                                 | A program of TDR Nova; a real `.vstpreset` (none is known yet).                                                              |
 | 10   | Scan of a DLL that crashes on load / in `GetPluginFactory`: the app continues, the plugin is blocklisted, the scan of the others finishes.                                | The installed plugin set; re-enabling a blocklisted plugin.                                                                  |
 
@@ -253,8 +255,9 @@ without a sandboxed VST3, and waits for the user's approval before the next one.
    effects isolated after step 5 (extra processes, possible CPU cost). To be
    announced; the 8-instance measurement in step 5 decides whether it is acceptable.
    _Step 5 measured it_ (8 test effects: about 23 % of a core against 4 %, no late
-   block; "Step 5 — what shipped"): in effect from step 5 for VST3 **effects**, instruments
-   follow with step 8. The announcement is still to do.
+   block; "Step 5 — what shipped"): in effect from step 5 for VST3 **effects**, and from step 8a (2026-11-05)
+   for VST3 **instruments** (8 test instruments: about 10 % of a core on the audio thread and 8 % in
+   the bridges against 2 %, no late block). The announcement is still to do.
 7. **`.vstpreset` and `module-info.json` are not in the pluginterfaces repository.**
    Their formats live in the VST3 public SDK (a different repository). The existing
    `preset_file.rs` was therefore **not** verified in step 0; it is checked in step 9
@@ -832,6 +835,104 @@ the two frame tests; in the test plugin four view tests.
 - Gestures from the engine stay ignored (decision 9): the editor did not need them.
 - The "Editor Windows — layout" section of the wrapper doc said 8 px and "no native close button"; the code has an
   18 px strip and a × button. Corrected in this change.
+
+## Step 8a — what shipped (2026-11-05)
+
+**Step 8 was split in two (user, 2026-11-05).** Before any code, the block message was read: it carries one
+`channel_count` and one input and one output buffer (`BlockHeader`, `BridgeLayout.channels`), and
+`Handshake::active_port` refuses a second active port on one side. Auxiliary outputs and a sidechain need
+several audio buffers per block, a layout change, hence protocol v4: the work stopped and the user chose to
+split. **8a (this section)** is the VST3 instrument with one stereo output: notes, raw MIDI, `IMidiMapping`, the
+bridged instrument. **8b** (auxiliary outputs, sidechain through the port table, `IComponentHandlerBusActivation`,
+protocol v4, `BRIDGE_PROTOCOL_VERSION` 4) waits for the user's approval of its design. The block message, the
+rings, the wake-up, the bounded wait, the control ops and the records are untouched: version still 3.
+
+**The proof came first.** `render_harness::vst3_plugins::a_sandboxed_instrument_renders_like_an_in_process_one` was
+put in the git index (that file only) **before any other change** and failed with "the instrument must really run in
+the bridge". It renders the `vst3_plugins` project (the test instrument plays two notes) at the five block sizes,
+in the Echoes process and with every plugin in the bridge, and requires identical samples. It runs in the default
+suite (C-10). Second proof, written once the test plugin could show it:
+`…_with_midi_controls` (the mod wheel and a pitch bend on the first note, which change the sound in process, and the
+bridge must match). The former assertion "a VST3 instrument is not sandboxed before step 8" of the effect test was
+removed.
+
+**Questions settled first (user, 2026-11-05, the recommendations):**
+
+- **a) Skipped blocks.** The bridge keeps the NoteOffs of a block it skipped (the main thread held the gate) and
+  sends them first in the next block, as `VstInstrument` does; a reset releases the sounding notes.
+- **b) Where the note code lives.** `vst3_host::notes` (`SoundingNotes`, `NoteMessage`, `push_events`), moved out of
+  `plugin_formats/vst3/instrument.rs`: the engine's `VstInstrument` converts its `MidiEventList` to `NoteMessage`s
+  and the bridge converts its `WireNote`s, so one function builds the events for both. Its unit tests moved with it.
+- **c) Test plugin.** `IMidiMapping` on the instrument's controller (CC 1 → parameter 20 `Mod wheel`, pitch bend →
+  21 `Bend`), the instrument plays `velocity × gain × (1 + wheel) × (1 + bend − 0.5)` (exactly `velocity × gain` at
+  the defaults 0 and 0.5), and 22 `Last pitch` (diagnostic). Ids 0 to 19 untouched; the parameter count of the lists
+  went from 20 to 23. `vst3_plugins` (0x5c0f0710b6813439) did not move.
+- **d) CPU of eight instruments**, measured (below).
+
+**Decided while coding (to confirm).** The bridge needs to know whether it hosts an instrument (events in, no audio
+input, reset only releases the notes). It first inferred it from the buses ("event input and no audio input"); the
+real-plugin test showed that wrong — **Surge XT has an audio input** and stayed silent. The engine now says it at
+launch: `--plugin-role instrument` (absent = effect; `BridgedPlugin::spawn` takes a `PluginRole`). It is a launch
+argument, not part of the block message, the handshake or the version check.
+
+**Engine** (`src-tauri/src`). `runs_sandboxed` covers instruments and effects (`instrument_runs_sandboxed` removed);
+`can_run_sandboxed(format)` no longer asks whether the plugin is an instrument; `instantiate_instrument_placement`
+builds the bridged instance for CLAP and VST3 and ADR-016 reuse compares `is_sandboxed()` with the same rule;
+`instrument_device` gives any sandboxed instance a `BridgedInstrument`. `BridgedInstrument::latency_samples` reports
+the plugin's latency for VST3 (a VST3 instrument does in process, `InstrumentNode` feeds it to the PDC) and 0 for CLAP
+(as `ClapInstrument`); without it the sandboxed render was 64 samples early. The crash dialog's `can_isolate` is
+true for a VST3 instrument.
+
+**Bridge** (`crates/plugin_host_bridge/src/vst3_adapter.rs`). With the instrument role: `HostEventList` and the
+`IMidiMapping` table (`MidiControllerMap`, read at each activation, under the gate) belong to the activation;
+the block's notes become events (`push_events`), its raw MIDI controls become points (`push_mapped_controls`),
+after the engine's parameter points and before the window's own edits; `numInputs` is 0; a reset calls
+`release_all` instead of `setProcessing(false/true)`. `SoundingNotes` belongs to the processor, not to the
+activation, because the gate that guards the activation is what makes a block skip.
+
+**Real-time checklist** (`rt-validation`). No new system call, no wait, no allocation on either audio thread (the
+event list and the table are made at activation; `SoundingNotes` is two 128-entry arrays); the bounded wait, the
+watchdog, the rings and the single non-blocking `SetEvent` are unchanged. Written in `threading/realtime-safety.md`.
+
+**C-2.** `vst3_plugins` (0x5c0f0710b6813439), `clap_plugins` (0x928da7dcd260c4e1) and every other golden hash are
+unchanged; none was regenerated. The sandbox renders of the instrument are identical to the in-process ones at the
+five block sizes, with and without mod wheel and pitch bend.
+
+**CPU of eight instruments** (`measure_eight_vst3_instruments`, debug build, 500 blocks of 512 frames at the live
+pace, three runs; the figures of the eight effects measured in the same sessions are beside them):
+
+| 8 plugins               | audio thread (% of a core) | bridges (% of a core) | late blocks |
+| ----------------------- | -------------------------- | --------------------- | ----------- |
+| instruments, in process | 1.5 – 2.9                  | —                     | 0 of 500    |
+| instruments, sandboxed  | 9.4 – 10.3                 | 7.0 – 8.8             | 0 of 500    |
+| effects, in process     | 3.5 – 4.4                  | —                     | 0 of 500    |
+| effects, sandboxed      | 15.2 – 15.8                | 11.1 – 12.3           | 0 of 500    |
+
+Mode _Tous_ now isolates VST3 instruments too; the cost is below that of the effects and no block was late. The
+announcement of that change is still to do (open question 6).
+
+**Surge XT** (the first real VST3 instrument in the bridge; `ECHOES_TEST_VST3` must name the file inside the bundle,
+`…\Surge XT.vst3\Contents\x86_64-win\Surge XT.vst3`, the search is too shallow for the bundle): it plays in the
+bridge at the same loudness as in the Echoes process (RMS 0.0578 against 0.0576). **It is not deterministic** — two
+runs in the same process differ — so no bit-for-bit claim is made for it; the test instrument carries that proof.
+
+**Tests.** `vst3_host::notes` (the moved tests); `vst3_adapter.rs` (notes at their offset, a NoteOff of a skipped
+block, a reset, the mod wheel through `IMidiMapping`, an effect is given no notes); `test_vst3_plugin` (the mapping,
+the shaping, the last pitch); `vst3_instrument_sandbox_tests.rs` (preference, latency, a killed bridge reported and
+recovered, no in-process fallback, a reset in both places, Surge XT); the two harness renders;
+`measure_eight_vst3_instruments` (ignored). Whole workspace, `cargo test --workspace --no-fail-fast -- --test-threads=1`: green. Engine 780 (+5 ignored: the timing measures), `plugin_bridge` 44, `plugin_host_bridge` 12 + 34 + 27 integration, `clap_ffi` 87, `vst3_host` 74, `audio_buffer` 11, `vst3_ffi` 8, `test_vst3_plugin` 18, `plugin_param_queue` 4. The parameter count of the test plugin (20 → 23) was updated in `vst3_bridge.rs` and `vst3_sandbox_tests.rs`. `cargo clippy` shows nothing new (the warnings left are in `vst3_host` files this step did not touch).
+
+**Not done, on purpose / still open.**
+
+- **Step 8b**: auxiliary outputs and sidechain through the port table, `IComponentHandlerBusActivation`, protocol v4.
+  A track still takes only the main stereo output of a sandboxed instrument.
+- **Hand tests (yours):** Surge XT isolated in the app — play, automate a parameter, open the editor, mod wheel and
+  pitch bend from a keyboard, kill the bridge during playback, mode _Tous_ with several instruments.
+- A block the **engine** cannot send (`Skipped`: too many events, port busy) still drops its notes, a NoteOff
+  included, as the CLAP bridge always did; only the block the bridge skips keeps its NoteOffs.
+- `Op::TrackInfo` still answers empty for a sandboxed VST3 plugin, `Op::NoteNames` too; presets are step 9; the
+  plugin's own MIDI output (`outputEvents`) is not read, in process or in the bridge.
+- An instrument with audio inputs (Surge XT) is given none, in process and in the bridge alike.
 
 ## Consequences
 

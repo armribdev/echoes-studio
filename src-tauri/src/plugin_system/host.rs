@@ -44,7 +44,7 @@ use crate::plugin_formats::vst3::host_context::host_application;
 use crate::plugin_formats::vst3::instrument::VstInstrument;
 use crate::plugin_formats::vst3::params::read_vst3_params;
 use crate::plugin_formats::vst3::wrapper::VstWrapperNode;
-use crate::plugin_system::bridge::{locate_bridge_exe, BridgedPlugin};
+use crate::plugin_system::bridge::{locate_bridge_exe, BridgedPlugin, PluginRole};
 use crate::plugin_system::bridged_node::{BridgedInstrument, BridgedNode};
 use crate::plugin_system::crash_marker::{self, plugin_tag, PluginThread};
 use crate::plugin_system::instance::{PluginInstance, FFI_GATE_HARVEST_BUDGET};
@@ -636,7 +636,8 @@ impl PluginHost {
         manifest: &PluginManifest,
         track_info: Option<&HostTrackInfo>,
     ) -> Result<(Arc<PluginInstance>, Box<dyn AudioNode>), HostError> {
-        let instance = self.create_bridged_instance(plugin_id, manifest, track_info)?;
+        let instance =
+            self.create_bridged_instance(plugin_id, manifest, PluginRole::Effect, track_info)?;
         let node: Box<dyn AudioNode> = Box::new(BridgedNode::new(Arc::clone(&instance)));
         Ok((instance, node))
     }
@@ -649,6 +650,7 @@ impl PluginHost {
         &self,
         plugin_id: &str,
         manifest: &PluginManifest,
+        role: PluginRole,
         track_info: Option<&HostTrackInfo>,
     ) -> Result<Arc<PluginInstance>, HostError> {
         let bridge_exe = self
@@ -666,8 +668,15 @@ impl PluginHost {
             .path
             .as_ref()
             .ok_or_else(|| HostError::InstantiationFailed("no DLL path in manifest".into()))?;
-        let bridged = BridgedPlugin::spawn(bridge_exe, dll, manifest.format, native_id, track_info)
-            .map_err(|error| HostError::InstantiationFailed(format!("sandbox: {error}")))?;
+        let bridged = BridgedPlugin::spawn(
+            bridge_exe,
+            dll,
+            manifest.format,
+            native_id,
+            role,
+            track_info,
+        )
+        .map_err(|error| HostError::InstantiationFailed(format!("sandbox: {error}")))?;
         Ok(PluginInstance::new_bridged(
             plugin_id,
             manifest.format,
@@ -737,9 +746,8 @@ impl PluginHost {
     /// CLAP and VST3 are wired (C-3 variant-by-variant); other formats return
     /// `Err`, which the compiler turns into a silent instrument.
     ///
-    /// A CLAP instrument runs sandboxed per the isolation preference (ADR-015); a
-    /// track instrument has no per-placement choice of its own.  A VST3 one
-    /// always runs in-process until step 8 of ADR-033.
+    /// A CLAP or VST3 instrument runs sandboxed per the isolation preference
+    /// (ADR-015, ADR-033); a track instrument has no per-placement choice of its own.
     pub fn instantiate_instrument(
         &mut self,
         instance_key: &str,
@@ -747,7 +755,7 @@ impl PluginHost {
     ) -> Result<Box<dyn InstrumentDevice>, HostError> {
         let format = self.registry.get(plugin_id).map(|manifest| manifest.format);
         let sandboxed = self.isolates(plugin_id, false)
-            && format.map_or(true, |format| instrument_runs_sandboxed(format, true));
+            && format.map_or(true, |format| runs_sandboxed(format, true));
         let _running =
             (!sandboxed).then(|| crash_marker::enter(PluginThread::Control, plugin_tag(plugin_id)));
         let result = self.instantiate_instrument_placement(instance_key, plugin_id, sandboxed);
@@ -775,7 +783,7 @@ impl PluginHost {
                 let inst = &record.instance;
                 if inst.device_id == plugin_id
                     && matches!(inst.format, DeviceFormat::Clap | DeviceFormat::Vst3)
-                    && inst.is_sandboxed() == instrument_runs_sandboxed(inst.format, sandboxed)
+                    && inst.is_sandboxed() == runs_sandboxed(inst.format, sandboxed)
                     && !matches!(
                         inst.lifecycle(),
                         LifecycleState::Destroyed | LifecycleState::Error
@@ -794,9 +802,12 @@ impl PluginHost {
 
         let track_info = self.track_infos.get(instance_key);
         let instance = match manifest.format {
-            DeviceFormat::Clap if sandboxed => {
-                self.create_bridged_instance(plugin_id, &manifest, track_info)?
-            }
+            DeviceFormat::Clap | DeviceFormat::Vst3 if sandboxed => self.create_bridged_instance(
+                plugin_id,
+                &manifest,
+                PluginRole::Instrument,
+                track_info,
+            )?,
             DeviceFormat::Clap => self.create_clap_instance(plugin_id, &manifest, track_info)?,
             DeviceFormat::Vst3 => self.create_vst3_instance(plugin_id, &manifest, track_info)?,
             other => {
@@ -1192,34 +1203,25 @@ pub struct PluginInfo {
     pub num_sidechain_inputs: usize,
 }
 
-/// Only CLAP plugins can run sandboxed so far (ADR-015); for other formats the
-/// flag is ignored and the plugin stays in-process.
+/// Effects and instruments alike: only CLAP and VST3 plugins can run sandboxed
+/// (ADR-015, ADR-033); for other formats the flag is ignored and the plugin stays
+/// in-process.
 fn runs_sandboxed(format: DeviceFormat, sandboxed: bool) -> bool {
     sandboxed && matches!(format, DeviceFormat::Clap | DeviceFormat::Vst3)
 }
 
-/// Instruments: a VST3 one joins the sandbox with step 8 of ADR-033.
-fn instrument_runs_sandboxed(format: DeviceFormat, sandboxed: bool) -> bool {
-    sandboxed && format == DeviceFormat::Clap
+/// Whether a plugin of this format can run isolated, as the crash dialog offers it.
+pub fn can_run_sandboxed(format: DeviceFormat) -> bool {
+    runs_sandboxed(format, true)
 }
 
-/// Whether a plugin of this format and kind can run isolated, as the crash dialog
-/// offers it.
-pub fn can_run_sandboxed(format: DeviceFormat, is_instrument: bool) -> bool {
-    if is_instrument {
-        instrument_runs_sandboxed(format, true)
-    } else {
-        runs_sandboxed(format, true)
-    }
-}
-
-/// The instrument adapter for a live CLAP or VST3 instance (CLAP: in-process or
-/// sandboxed).
+/// The instrument adapter for a live CLAP or VST3 instance, in the Echoes process or
+/// in the bridge.
 fn instrument_device(instance: Arc<PluginInstance>) -> Box<dyn InstrumentDevice> {
-    if instance.format == DeviceFormat::Vst3 {
-        Box::new(VstInstrument::new(instance))
-    } else if instance.is_sandboxed() {
+    if instance.is_sandboxed() {
         Box::new(BridgedInstrument::new(instance))
+    } else if instance.format == DeviceFormat::Vst3 {
+        Box::new(VstInstrument::new(instance))
     } else {
         Box::new(ClapInstrument::new(instance))
     }

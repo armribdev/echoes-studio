@@ -33,129 +33,26 @@ use crate::plugin_system::lifecycle::LifecycleState;
 
 use super::buses::Vst3OutputBuses;
 use super::event_list::HostEventList;
-use super::ffi::{Event, HostParameterChanges, ProcessContext, ProcessData};
+use super::ffi::{HostParameterChanges, ProcessContext, ProcessData};
 use super::midi_mapping::{push_mapped_controls, read_midi_mapping, MidiControllerMap};
+use super::notes::{push_events, NoteKind, NoteMessage, SoundingNotes};
 use super::param_delivery::{
     begin_output_changes, fill_param_changes, publish_output_changes, track_value_modulation,
 };
 use super::transport::vst3_process_context;
 use super::wrapper::{vst3_process_trampoline, Vst3ProcessCtx};
 
-/// The plugin matches a NoteOff to its NoteOn by pitch, as the CLAP path does.
-const NO_NOTE_ID: i32 = -1;
-const MIDI_POLY_PRESSURE: u8 = 0xA0;
-const PITCH_COUNT: usize = 128;
-
-/// What the plugin has been told about notes, so none is left sounding.
-pub struct SoundingNotes {
-    started: [u8; PITCH_COUNT],
-    release_pending: [bool; PITCH_COUNT],
-}
-
-impl SoundingNotes {
-    pub fn new() -> Self {
-        SoundingNotes {
-            started: [0; PITCH_COUNT],
-            release_pending: [false; PITCH_COUNT],
-        }
-    }
-
-    fn note_started(&mut self, pitch: u8) {
-        if let Some(count) = self.started.get_mut(pitch as usize) {
-            *count = count.saturating_add(1);
-        }
-    }
-
-    fn note_ended(&mut self, pitch: u8) {
-        if let Some(count) = self.started.get_mut(pitch as usize) {
-            *count = count.saturating_sub(1);
-        }
-    }
-
-    fn keep_release(&mut self, pitch: u8) {
-        if let Some(pending) = self.release_pending.get_mut(pitch as usize) {
-            *pending = true;
-        }
-    }
-
-    /// Every note the plugin has not been told to stop is released by the next block.
-    pub fn release_all(&mut self) {
-        for (pending, &count) in self.release_pending.iter_mut().zip(&self.started) {
-            *pending |= count > 0;
-        }
-    }
-
-    /// A block the plugin did not process: the NoteOffs it would have received
-    /// are kept for the next one.
-    pub fn keep_releases_of(&mut self, events: &MidiEventList) {
-        for event in events.as_slice() {
-            if let MidiEventKind::NoteOff { pitch } = event.kind {
-                if self.started.get(pitch as usize).is_some_and(|&n| n > 0) {
-                    self.keep_release(pitch);
-                }
-            }
-        }
-    }
-
-    /// The kept NoteOffs, at offset 0 and before the block's own events.
-    pub fn push_pending_releases(&mut self, list: &mut HostEventList) {
-        for pitch in 0..PITCH_COUNT {
-            if !self.release_pending[pitch] {
-                continue;
-            }
-            if list.push(Event::note_off(0, pitch as u8, NO_NOTE_ID)) {
-                self.release_pending[pitch] = false;
-                self.started[pitch] = 0;
-            }
-        }
-    }
-}
-
-impl Default for SoundingNotes {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-/// Append the engine's per-block `MidiEventList` as VST3 events: notes as note
-/// events (velocity `0..127` → `0..1`), polyphonic aftertouch as poly pressure.
-/// Other controls go through the controller's `IMidiMapping` (`midi_mapping`).
-///
-/// Pure — no FFI, no allocation.  A NoteOff the full list cannot take is kept
-/// in `notes` for the next block.
-pub fn push_vst3_events(
-    events: &MidiEventList,
-    list: &mut HostEventList,
-    notes: &mut SoundingNotes,
-) {
-    for event in events.as_slice() {
-        match event.kind {
-            MidiEventKind::NoteOn { pitch, velocity } => {
-                let note_on =
-                    Event::note_on(event.offset, pitch, velocity as f32 / 127.0, NO_NOTE_ID);
-                if list.push(note_on) {
-                    notes.note_started(pitch);
-                }
-            }
-            MidiEventKind::NoteOff { pitch } => {
-                if list.push(Event::note_off(event.offset, pitch, NO_NOTE_ID)) {
-                    notes.note_ended(pitch);
-                } else {
-                    notes.keep_release(pitch);
-                }
-            }
-            MidiEventKind::Control { message } => {
-                if message[0] & 0xF0 == MIDI_POLY_PRESSURE {
-                    list.push(Event::poly_pressure(
-                        event.offset,
-                        message[1],
-                        message[2] as f32 / 127.0,
-                        NO_NOTE_ID,
-                    ));
-                }
-            }
-        }
-    }
+/// The engine's per-block notes and controls as the messages `vst3_host::notes`
+/// turns into VST3 events, in the same order.
+fn note_messages(events: &MidiEventList) -> impl Iterator<Item = NoteMessage> + '_ {
+    events.as_slice().iter().map(|event| NoteMessage {
+        offset: event.offset,
+        kind: match event.kind {
+            MidiEventKind::NoteOn { pitch, velocity } => NoteKind::NoteOn { pitch, velocity },
+            MidiEventKind::NoteOff { pitch } => NoteKind::NoteOff { pitch },
+            MidiEventKind::Control { message } => NoteKind::Control { message },
+        },
+    })
 }
 
 pub struct VstInstrument {
@@ -259,7 +156,7 @@ impl InstrumentDevice for VstInstrument {
         // While an off-RT caller (state save, parameter read) holds the FFI gate
         // this block stays silent rather than race it.
         let Some(_ffi_gate) = self.instance.rt_try_enter() else {
-            self.notes.keep_releases_of(events);
+            self.notes.keep_releases_of(note_messages(events));
             return;
         };
         let (Some(event_list), Some(param_changes)) =
@@ -270,7 +167,7 @@ impl InstrumentDevice for VstInstrument {
 
         event_list.reset();
         self.notes.push_pending_releases(event_list);
-        push_vst3_events(events, event_list, &mut self.notes);
+        push_events(note_messages(events), event_list, &mut self.notes);
         fill_param_changes(&self.instance, &self.param_controls, param_changes);
         let controls = events.as_slice().iter().filter_map(|event| match event.kind {
             MidiEventKind::Control { message } => Some((event.offset, message)),
@@ -353,215 +250,50 @@ impl InstrumentDevice for VstInstrument {
 mod tests {
     use super::*;
     use crate::audio_graph::midi::MidiEvent;
-    use crate::plugin_formats::vst3::ffi::{
-        K_NOTE_OFF_EVENT, K_NOTE_ON_EVENT, K_POLY_PRESSURE_EVENT,
-    };
-
-    fn midi(offset: u32, kind: MidiEventKind) -> MidiEvent {
-        MidiEvent { offset, kind }
-    }
-
-    fn list_of(events: &[MidiEvent]) -> MidiEventList {
-        let mut list = MidiEventList::new();
-        for &event in events {
-            list.push(event);
-        }
-        list
-    }
-
-    /// `(kind, sample offset, pitch)` of every event in the list.
-    fn summary(list: &HostEventList) -> Vec<(u16, i32, i16)> {
-        list.as_slice()
-            .iter()
-            .map(|event| {
-                let pitch = match event.kind {
-                    K_NOTE_ON_EVENT => unsafe { event.payload.note_on.pitch },
-                    K_NOTE_OFF_EVENT => unsafe { event.payload.note_off.pitch },
-                    _ => unsafe { event.payload.poly_pressure.pitch },
-                };
-                (event.kind, event.sample_offset, pitch)
-            })
-            .collect()
-    }
-
-    fn convert(events: &MidiEventList, notes: &mut SoundingNotes) -> Box<HostEventList> {
-        let mut list = HostEventList::boxed();
-        notes.push_pending_releases(&mut list);
-        push_vst3_events(events, &mut list, notes);
-        list
-    }
 
     #[test]
-    fn notes_keep_their_order_offsets_and_scaled_velocity() {
-        let events = list_of(&[
-            midi(
-                0,
+    fn the_engine_events_become_messages_in_the_same_order() {
+        let mut list = MidiEventList::new();
+        for (offset, kind) in [
+            (
+                3,
                 MidiEventKind::NoteOn {
                     pitch: 60,
-                    velocity: 127,
+                    velocity: 100,
                 },
             ),
-            midi(
-                24,
-                MidiEventKind::NoteOn {
-                    pitch: 64,
-                    velocity: 64,
+            (
+                3,
+                MidiEventKind::Control {
+                    message: [0xE0, 1, 2],
                 },
             ),
-            midi(100, MidiEventKind::NoteOff { pitch: 60 }),
-        ]);
-        let mut notes = SoundingNotes::new();
-        let list = convert(&events, &mut notes);
-
+            (9, MidiEventKind::NoteOff { pitch: 60 }),
+        ] {
+            list.push(MidiEvent { offset, kind });
+        }
+        let messages: Vec<NoteMessage> = note_messages(&list).collect();
         assert_eq!(
-            summary(&list),
-            vec![
-                (K_NOTE_ON_EVENT, 0, 60),
-                (K_NOTE_ON_EVENT, 24, 64),
-                (K_NOTE_OFF_EVENT, 100, 60),
+            messages,
+            [
+                NoteMessage {
+                    offset: 3,
+                    kind: NoteKind::NoteOn {
+                        pitch: 60,
+                        velocity: 100
+                    }
+                },
+                NoteMessage {
+                    offset: 3,
+                    kind: NoteKind::Control {
+                        message: [0xE0, 1, 2]
+                    }
+                },
+                NoteMessage {
+                    offset: 9,
+                    kind: NoteKind::NoteOff { pitch: 60 }
+                },
             ]
         );
-        let first = unsafe { list.as_slice()[0].payload.note_on };
-        let second = unsafe { list.as_slice()[1].payload.note_on };
-        assert_eq!((first.velocity, first.channel, first.note_id), (1.0, 0, -1));
-        assert!((second.velocity - 64.0 / 127.0).abs() < 1e-6);
-    }
-
-    #[test]
-    fn polyphonic_aftertouch_becomes_poly_pressure() {
-        let events = list_of(&[midi(
-            5,
-            MidiEventKind::Control {
-                message: [0xA0, 62, 127],
-            },
-        )]);
-        let list = convert(&events, &mut SoundingNotes::new());
-
-        assert_eq!(summary(&list), vec![(K_POLY_PRESSURE_EVENT, 5, 62)]);
-        let pressure = unsafe { list.as_slice()[0].payload.poly_pressure.pressure };
-        assert_eq!(pressure, 1.0);
-    }
-
-    #[test]
-    fn controls_are_not_sent_as_events() {
-        let events = list_of(&[
-            midi(
-                0,
-                MidiEventKind::Control {
-                    message: [0xE0, 0, 0x60],
-                },
-            ),
-            midi(
-                0,
-                MidiEventKind::Control {
-                    message: [0xB0, 1, 64],
-                },
-            ),
-            midi(
-                0,
-                MidiEventKind::Control {
-                    message: [0xD0, 50, 0],
-                },
-            ),
-        ]);
-        let list = convert(&events, &mut SoundingNotes::new());
-        assert!(list.as_slice().is_empty());
-    }
-
-    #[test]
-    fn a_reset_releases_each_sounding_note_once() {
-        let mut notes = SoundingNotes::new();
-        let on = list_of(&[
-            midi(
-                0,
-                MidiEventKind::NoteOn {
-                    pitch: 60,
-                    velocity: 100,
-                },
-            ),
-            midi(
-                0,
-                MidiEventKind::NoteOn {
-                    pitch: 67,
-                    velocity: 100,
-                },
-            ),
-            midi(10, MidiEventKind::NoteOff { pitch: 67 }),
-        ]);
-        convert(&on, &mut notes);
-
-        notes.release_all();
-        let next_block = convert(&MidiEventList::new(), &mut notes);
-        assert_eq!(summary(&next_block), vec![(K_NOTE_OFF_EVENT, 0, 60)]);
-
-        let after = convert(&MidiEventList::new(), &mut notes);
-        assert!(after.as_slice().is_empty());
-    }
-
-    #[test]
-    fn a_note_off_of_a_skipped_block_is_sent_with_the_next_one() {
-        let mut notes = SoundingNotes::new();
-        convert(
-            &list_of(&[midi(
-                0,
-                MidiEventKind::NoteOn {
-                    pitch: 60,
-                    velocity: 100,
-                },
-            )]),
-            &mut notes,
-        );
-
-        let skipped = list_of(&[midi(30, MidiEventKind::NoteOff { pitch: 60 })]);
-        notes.keep_releases_of(&skipped);
-
-        let next_block = convert(&MidiEventList::new(), &mut notes);
-        assert_eq!(summary(&next_block), vec![(K_NOTE_OFF_EVENT, 0, 60)]);
-    }
-
-    #[test]
-    fn a_skipped_note_off_for_a_note_the_plugin_never_heard_is_ignored() {
-        let mut notes = SoundingNotes::new();
-        notes.keep_releases_of(&list_of(&[midi(0, MidiEventKind::NoteOff { pitch: 60 })]));
-        let list = convert(&MidiEventList::new(), &mut notes);
-        assert!(list.as_slice().is_empty());
-    }
-
-    #[test]
-    fn a_note_off_the_full_list_cannot_take_is_kept() {
-        let mut notes = SoundingNotes::new();
-        convert(
-            &list_of(&[midi(
-                0,
-                MidiEventKind::NoteOn {
-                    pitch: 60,
-                    velocity: 100,
-                },
-            )]),
-            &mut notes,
-        );
-
-        let mut full = HostEventList::boxed();
-        while full.push(Event::note_on(0, 1, 1.0, -1)) {}
-        push_vst3_events(
-            &list_of(&[midi(8, MidiEventKind::NoteOff { pitch: 60 })]),
-            &mut full,
-            &mut notes,
-        );
-
-        let next_block = convert(&MidiEventList::new(), &mut notes);
-        assert_eq!(summary(&next_block), vec![(K_NOTE_OFF_EVENT, 0, 60)]);
-    }
-
-    #[test]
-    fn a_stray_note_off_does_not_underflow_the_count() {
-        let mut notes = SoundingNotes::new();
-        convert(
-            &list_of(&[midi(0, MidiEventKind::NoteOff { pitch: 60 })]),
-            &mut notes,
-        );
-        notes.release_all();
-        let list = convert(&MidiEventList::new(), &mut notes);
-        assert!(list.as_slice().is_empty());
     }
 }

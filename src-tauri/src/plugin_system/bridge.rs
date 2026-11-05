@@ -55,6 +55,13 @@ pub fn locate_bridge_exe() -> Option<PathBuf> {
 /// `(sample_rate bits, max_frames, latency)` of the current activation.
 type Activation = (u32, u32, u32);
 
+/// What the engine uses the hosted plugin for (`--plugin-role`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PluginRole {
+    Effect,
+    Instrument,
+}
+
 pub struct BridgedPlugin {
     process: BridgeProcess,
     activation: Mutex<Option<Activation>>,
@@ -73,6 +80,7 @@ impl BridgedPlugin {
         dll: &Path,
         format: DeviceFormat,
         native_id: &str,
+        role: PluginRole,
         track_info: Option<&HostTrackInfo>,
     ) -> io::Result<Self> {
         let (format_name, unit) = match format {
@@ -93,6 +101,9 @@ impl BridgedPlugin {
             "--plugin-id".into(),
             native_id.into(),
         ];
+        if role == PluginRole::Instrument {
+            args.extend(["--plugin-role".into(), "instrument".into()]);
+        }
         if let Some(info) = track_info {
             args.extend(["--track-info".into(), info.to_hex().into()]);
         }

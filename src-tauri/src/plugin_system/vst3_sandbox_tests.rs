@@ -333,7 +333,7 @@ fn seconds(time: &FileTime) -> f64 {
 }
 
 /// CPU seconds (kernel + user) of the calling thread.
-fn current_thread_cpu() -> f64 {
+pub(super) fn current_thread_cpu() -> f64 {
     let (mut created, mut exited, mut kernel, mut user) = Default::default();
     // SAFETY: the pseudo-handle of the calling thread and valid out-pointers.
     unsafe {
@@ -348,7 +348,7 @@ fn current_thread_cpu() -> f64 {
     seconds(&kernel) + seconds(&user)
 }
 
-fn process_cpu(process_id: u32) -> f64 {
+pub(super) fn process_cpu(process_id: u32) -> f64 {
     let mut total = 0.0;
     with_process(process_id, PROCESS_QUERY_LIMITED_INFORMATION, |handle| {
         let (mut created, mut exited, mut kernel, mut user) = Default::default();
@@ -483,8 +483,9 @@ fn measure_eight_vst3_effects() {
 /// `ECHOES_TEST_VST3` names another) loads in the bridge, whose main thread is an OLE
 /// apartment and whose audio thread has none, and renders the samples it renders in the
 /// Echoes process.
-/// The first installed VST3 effect (`ECHOES_TEST_VST3` points at one), or `None`.
-fn installed_vst3_effect() -> Option<PluginManifest> {
+/// The first installed VST3 plugin `wanted` accepts (`ECHOES_TEST_VST3` points at one),
+/// or `None`.
+pub(super) fn installed_vst3(wanted: impl Fn(&PluginManifest) -> bool) -> Option<PluginManifest> {
     use crate::plugin_formats::vst3::host::Vst3Host;
     use crate::plugin_system::ffi_lifecycle_tests::discover_all;
     use crate::plugin_system::registry::PluginRegistry;
@@ -495,9 +496,13 @@ fn installed_vst3_effect() -> Option<PluginManifest> {
     }
     let manifest = registry
         .all()
-        .find(|m| m.format == DeviceFormat::Vst3 && !m.is_instrument)
+        .find(|m| m.format == DeviceFormat::Vst3 && wanted(m))
         .cloned();
     manifest
+}
+
+fn installed_vst3_effect() -> Option<PluginManifest> {
+    installed_vst3(|manifest| !manifest.is_instrument)
 }
 
 #[test]
@@ -571,7 +576,7 @@ const RENAME: u32 = 11;
 const PROCESSOR_SELF: u32 = 12;
 const VIEW_CRASH: u32 = 18;
 const VIEW_EDIT: u32 = 19;
-const PARAMETER_COUNT: usize = 20;
+const PARAMETER_COUNT: usize = 23;
 const HELD_VALUE: f64 = 0.25;
 
 fn plugin_value(host: &PluginHost, native_id: u32) -> f64 {

@@ -287,8 +287,10 @@ point `ECHOES_TEST_VST3` at its inner `.vst3`.
   at offset 0 of the next block; `reset` marks every sounding note the same way (no
   FFI call), and each pitch is released once. `InstrumentNode` already ends played
   notes on stop, pause, seek and loop (ADR-012, ADR-022, ADR-030).
-- **Sandbox (ADR-015)** stays CLAP only: a VST3 instrument always runs in-process,
-  whatever the isolation preference.
+- **Sandbox (ADR-015)** was CLAP only: a VST3 instrument ran in-process, whatever the
+  isolation preference. _Since ADR-033 step 8a (2026-11-05) a VST3 instrument follows the
+  isolation modes like an effect_ (`BridgedInstrument`, notes and `IMidiMapping` handled in
+  the bridge); its auxiliary outputs stay in-process until step 8b.
 - **Parameters (ADR-021)** reach a VST3 instrument as for the VST3 effect: queued
   edits, plugin-window edits, modulation and automation are delivered by the code
   both share (`vst3/param_delivery.rs`).
