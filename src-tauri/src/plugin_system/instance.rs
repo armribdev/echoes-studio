@@ -74,12 +74,12 @@ use crate::plugin_formats::vst3::params::{
     read_vst3_param_text, read_vst3_param_value, write_vst3_param_value,
 };
 use crate::plugin_formats::vst3::preset_file::{class_id_text, read_preset_chunks};
-use crate::plugin_formats::vst3::units::{read_program_lists, select_program};
+use crate::plugin_formats::vst3::units::{parse_program_key, read_program_lists, select_program};
 use crate::plugin_system::bridge::BridgedPlugin;
 use crate::plugin_system::crash_marker::{self, MarkerGuard, PluginThread};
 use crate::plugin_system::lifecycle::LifecycleState;
 use crate::plugin_system::param_queue::{ParamChange, ParamQueue};
-use crate::plugin_system::presets::{parse_program_key, programs_as_presets, PluginPreset};
+use crate::plugin_system::presets::{programs_as_presets, PluginPreset};
 use crate::plugin_system::wrapper::DeviceFormat;
 
 /// Capacity of the per-instance parameter SPSC ring (ADR-007).  1024 slots ≈
@@ -621,7 +621,7 @@ impl PluginInstance {
         if self.has_crashed() {
             return Err("the plugin has crashed".into());
         }
-        if self.vst3_controller().is_some() {
+        if self.has_vst3_presets() {
             return if request.location_kind == CLAP_PRESET_LOCATION_FILE {
                 self.load_vst3_preset_file(request)
             } else {
@@ -656,16 +656,27 @@ impl PluginInstance {
         Ok(())
     }
 
+    /// A VST3 plugin whose controller this process can reach, or one in the sandbox,
+    /// whose bridge answers for it.
+    pub fn has_vst3_presets(&self) -> bool {
+        self.vst3_controller().is_some()
+            || (self.format == DeviceFormat::Vst3 && self.is_sandboxed())
+    }
+
     /// The programs of a VST3 plugin as presets (ADR-031 amendment), read under the
-    /// FFI gate.  Empty for another format, a plugin without program lists, one
-    /// that cannot be selected, or one busy in a block past the budget.
+    /// FFI gate (in the sandbox, by the bridge under its own).  Empty for another
+    /// format, a plugin without program lists, one that cannot be selected, or one
+    /// busy in a block past the budget.
     pub fn vst3_program_presets(&self) -> Vec<PluginPreset> {
-        let Some(controller) = self.vst3_controller() else {
-            return Vec::new();
-        };
         if self.has_crashed() {
             return Vec::new();
         }
+        if let Some(bridged) = self.bridge().filter(|_| self.format == DeviceFormat::Vst3) {
+            return programs_as_presets(&bridged.program_lists());
+        }
+        let Some(controller) = self.vst3_controller() else {
+            return Vec::new();
+        };
         let Some(_gate) = self.offrt_try_acquire(FFI_GATE_PRESET_BUDGET) else {
             return Vec::new();
         };
@@ -679,6 +690,12 @@ impl PluginInstance {
     /// Like a CLAP preset, the load holds the FFI gate, marks the project unsaved
     /// and re-reads the base of the parameters modulated by value.
     fn load_vst3_program(&self, request: &PresetRequest) -> Result<(), String> {
+        if let Some(bridged) = self.bridge() {
+            bridged.load_preset(request)?;
+            self.rebase_value_modulated_params(|id| bridged.param_value(id));
+            self.mark_state_edited();
+            return Ok(());
+        }
         let (Some(controller), Some(edit_state)) = (self.vst3_controller(), self.vst3_edit_state())
         else {
             return Err("this plugin has no presets".into());
@@ -713,10 +730,6 @@ impl PluginInstance {
     /// if the file has one.  The file is read and checked again first, since the
     /// disk may have changed since the listing, and before the FFI gate is taken.
     fn load_vst3_preset_file(&self, request: &PresetRequest) -> Result<(), String> {
-        let (Some(controller), Some(edit_state)) = (self.vst3_controller(), self.vst3_edit_state())
-        else {
-            return Err("this plugin has no presets".into());
-        };
         let path = request
             .location
             .as_deref()
@@ -725,6 +738,16 @@ impl PluginInstance {
             .map(|id| class_id_text(&id))
             .ok_or("this plugin has no VST3 class id")?;
         let chunks = read_preset_chunks(Path::new(path), &class_id).map_err(|e| e.to_string())?;
+        if let Some(bridged) = self.bridge() {
+            bridged.load_preset_state(chunks)?;
+            self.rebase_value_modulated_params(|id| bridged.param_value(id));
+            self.mark_state_edited();
+            return Ok(());
+        }
+        let (Some(controller), Some(edit_state)) = (self.vst3_controller(), self.vst3_edit_state())
+        else {
+            return Err("this plugin has no presets".into());
+        };
         let _gate = self
             .offrt_try_acquire(FFI_GATE_PRESET_BUDGET)
             .ok_or("the plugin is busy, try again")?;

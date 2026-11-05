@@ -302,3 +302,11 @@ the plugin, a file watcher. No invariant is touched, hence this amendment instea
 of a new ADR. Details and bounds: `../plugins/plugin-wrapper-system.md` ("Host
 VST3 presets"). Unverified: the class-id byte order against a `.vstpreset` written
 by another host (none on the development machine), and the whole feature by hand.
+
+**Amendment 2026-11-05 (ADR-033 step 9): sandboxed VST3 plugins.** A sandboxed VST3
+plugin offers and loads the same presets through the same two commands and
+whitelist. The programs are listed and chosen in the bridge (two control ops,
+`PresetList` and `PresetLoadState`; protocol v4 unchanged), the `.vstpreset` files
+are read and checked by the engine as before and their states sent to the bridge.
+`IUnitHandler` is still not coded. See `033-format-neutral-sandbox-bridge.md`
+("Step 9") and `../plugins/plugin-wrapper-system.md` ("VST3 presets in the sandbox").

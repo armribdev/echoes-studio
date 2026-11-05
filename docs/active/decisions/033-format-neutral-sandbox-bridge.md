@@ -8,7 +8,7 @@ moved `vst3/ffi.rs` and `param_queue.rs` into the `vst3_ffi` and `plugin_param_q
 crates (see "Step 1 — what shipped"). Step 2 added the test plugin, the harness
 baseline and the loader fix ("Step 2 — what shipped"). Step 3 moved the VST3 host objects into
 `vst3_host` ("Step 3 — what shipped"). Step 4 froze protocol v3 and moved CLAP onto it
-("Step 4 — what shipped"). Step 5 put the VST3 effect in the bridge ("Step 5 — what shipped"). Step 6 gave it its parameters ("Step 6 — what shipped"). Step 7 gave it its editor ("Step 7 — what shipped"). Step 8 was split: 8a put the VST3 instrument in the bridge ("Step 8a — what shipped"), 8b (several ports, protocol v4) is done except `IComponentHandlerBusActivation`: auxiliary outputs ("Step 8b, first half — what shipped") and the sidechain ("Step 8b, second half — what shipped"); the bus-activation request is not supported in process either, so it waits for a decision. Decisions 1–9 below were taken by the user
+("Step 4 — what shipped"). Step 5 put the VST3 effect in the bridge ("Step 5 — what shipped"). Step 6 gave it its parameters ("Step 6 — what shipped"). Step 7 gave it its editor ("Step 7 — what shipped"). Step 10 moved the scan out of the process ("Step 10 — what shipped"). Step 8 was split: 8a put the VST3 instrument in the bridge ("Step 8a — what shipped"), 8b (several ports, protocol v4) is done except `IComponentHandlerBusActivation`: auxiliary outputs ("Step 8b, first half — what shipped") and the sidechain ("Step 8b, second half — what shipped"); the bus-activation request is not supported in process either, so it waits for a decision. Decisions 1–9 below were taken by the user
 before this ADR was written (decision 10 only restates ADR-015). The status stays
 _Proposed_ until the user has reviewed step 4, the first step that crossed the
 real-time boundary (and hand-tested a sandboxed CLAP plugin).
@@ -184,7 +184,7 @@ without a sandboxed VST3, and waits for the user's approval before the next one.
 | 8a   | **VST3 instrument** (done 2026-11-05). Notes and raw MIDI, `IMidiMapping`, a bridged VST3 instrument on the main stereo output; the bridge is told its role at launch.                                                                                                                                  | medium: bounded note list, no new call | sandbox-against-in-process test for the instrument, with and without MIDI controls                    |
 | 8b   | **Several ports.** Aux outputs and sidechain through the port table (several active ports); `IComponentHandlerBusActivation`. **Changes the block layout: protocol v4, needs the user's approval of the design first.** Aux outputs and sidechain done 2026-11-05; bus activation left (not supported in process either).                                                                                  | medium-high: multi-port block layout | same test for multi-out and sidechain                                                                |
 | 9    | **VST3 presets.** `IUnitInfo` programs and `.vstpreset` files through the ADR-031 commands; parsing stays in the app (untrusted file), loading happens in the bridge; `IUnitHandler`.                                                                                                                | none (control path); gate in the bridge | none                                                                                                 |
-| 10   | **Out-of-process scan and blocklist.** `plugin_host_bridge --scan`, timeout and crash contained, blocklist kept per machine, a way to re-enable. Replaces the in-process throwaway component of the VST3 sidechain probe.                                                                              | none                                 | none                                                                                                 |
+| 10   | **Out-of-process scan and blocklist.** `plugin_host_bridge --scan`, timeout and crash contained, blocklist kept per machine, a way to re-enable. Replaces the in-process throwaway component of the VST3 sidechain probe. **Done 2026-11-05** (awaiting review; no screen for the blocklist yet).                                                                              | none                                 | none                                                                                                 |
 
 ### Tests and what stays manual
 
@@ -1046,6 +1046,139 @@ effect carries its sidechain, an instrument none); `test_vst3_plugin` (the sidec
   a project saved before this step.
 - A plugin with more than 8 auxiliary inputs carries 8 when sandboxed.
 - No CPU measure of the wider request (the extra ports are zeros or a stereo pair copied through shared memory).
+
+## Step 9 — what shipped (2026-11-05): presets of a sandboxed VST3 plugin
+
+**Found first.** A sandboxed VST3 plugin offered **no preset at all**: `PluginHost::preset_listing` needed
+`PluginInstance::vst3_controller()`, which exists only in the Echoes process, so the listing was empty and
+`instance_for_preset` answered "no presets". The "not available yet" error of `Op::PresetLoad` in the bridge was
+never reached from the interface.
+
+**The proof came first.** `plugin_system::vst3_preset_sandbox_tests::a_sandboxed_plugin_offers_and_loads_its_presets_like_an_in_process_one`
+was put in the git index (that file only) before any change to the engine or the bridge. It runs the same script
+in both places — list the presets (three programs and a `.vstpreset` file), choose the program `Loud` while a
+thread plays blocks, load the file — and requires the same list, the same "in use" mark, the same parameter
+values, the same saved state, the same samples and the same count of "unsaved" marks. The in-process half passed;
+the sandboxed half failed with "a VST3 plugin offers presets (sandboxed: true)". The test plugin had to learn
+programs first (below); that is test material, not engine code.
+
+**Questions settled first (user, 2026-11-05, the recommendations):**
+
+- **a) Where each piece lives.** The programs are listed and chosen **in the bridge** (the controller is there).
+  The `.vstpreset` files are listed, read and checked **by the engine** (`Vst3PresetFiles`, `read_preset_chunks`,
+  unchanged: same bounds, same class-id check, same whitelist of the last listing); the engine sends the two
+  states the file holds and the bridge applies them behind its gate.
+- **b) Records.** No change to the block message, the rings or the handshake: `BRIDGE_PROTOCOL_VERSION` stays 4.
+  Two control ops were added, as ADR-015 added ops before: `Op::PresetList` (→ `ProgramListRecord`s: list id and
+  name, selector parameter, program in use, program names) and `Op::PresetLoadState` (`PresetStateRecord`: the
+  processor's state and, if the file has one, the controller's). `Op::PresetLoad` and `PresetRecord` are reused
+  for a program (source `Plugin`, key `<parameter id>:<index>`). `PayloadWriter::bytes` / `PayloadReader::bytes`
+  carry the states (`length:u32`, the frame limit of 256 MiB is the file limit). The CLAP bridge answers an error
+  to the two new ops.
+- **c) `IUnitHandler`.** Not coded, in process or in the bridge (ADR-031 had decided not to: the list is read again
+  each time the picker is shown). A plugin that changes its program by itself moves the selector parameter
+  through `IComponentHandler`, which the bridge already reports (step 6); only the "in use" mark of an open picker
+  is stale until it is shown again.
+- **d) Test plugin.** `IUnitInfo` on both classes: unit 1 uses the list `Factory` — `Quiet` (gain 0.25), `Unity`
+  (1.0, the default), `Loud` (1.75) — chosen by the parameter 23 `Program` (`kIsProgramChange`, 3 steps, default
+  0.5). Only the **processor** applies a program (it takes the selector as a parameter point); the controller
+  only remembers the selector, so a host that never gives the processor the choice hears nothing. The
+  controller's `setState` (a file's `Cont` chunk) is one `f64`, its `Self value`. Ids 0 to 22 are untouched; the
+  parameter count went from 23 to 24 (updated in `vst3_bridge.rs` and `vst3_sandbox_tests.rs`). `vst3_plugins`
+  (0x5c0f0710b6813439) and `clap_plugins` did not move.
+
+**Bridge** (`vst3_adapter.rs`). `preset_list` reads the program lists under the gate (`vst3_host::units`, the
+engine's own code and bounds). `load_program` does what `PluginInstance::load_vst3_program` does in process:
+`select_program` on the controller, then a **zero-sample `process`** (`flush_bases`, the flush `ProcessData`
+allows) gives the processor the selector's value on the spot, then the controller takes the processor's state
+(`setComponentState`) when the plugin is active. In process the value goes through the parameter queue and the
+host waits up to 200 ms for a block to take it; in the bridge the whole step is one control request on the main
+thread, so there is no wait and no queue. `load_preset_state` loads the processor's state through the ADR-010
+path (`load_state`, which also hands the controller the state), then the controller's own state; a controller
+that refuses it does not fail the load. `program_key` / `parse_program_key` moved to `vst3_host::units` (both ends
+need them).
+
+**Engine.** `PluginInstance::has_vst3_presets` (controller in process, or a sandboxed VST3) replaces the
+controller test in `PluginHost::preset_listing` and `load_preset`; `vst3_program_presets`, `load_vst3_program`
+and `load_vst3_preset_file` have a bridged branch (`BridgedPlugin::program_lists`, `load_preset`,
+`load_preset_state`). The file is read and checked **before** the bridge is touched, a load marks the project
+unsaved and re-reads the bases of the parameters modulated by value, as in process.
+
+**Real-time checklist** (`rt-validation`). Nothing on either audio thread changed: no new system call, no
+allocation, no lock. The new requests run on the bridge's main thread under the ADR-010 gate, which the audio
+thread never waits on: while a preset loads, the bridge skips its block and passes the input through, as for a
+state load. The zero-sample `process` is called on the main thread with the gate held, like the existing flush
+before a state save.
+
+**C-2.** `vst3_plugins` (0x5c0f0710b6813439), `clap_plugins` (0x928da7dcd260c4e1) and every other golden hash
+are unchanged; none was regenerated.
+
+**Tests.** The proof above, plus `a_sandboxed_plugin_loads_only_what_its_last_listing_offered` and
+`a_file_the_engine_cannot_use_is_refused_before_the_bridge_is_touched`; `vst3_bridge.rs` (the lists, a program
+reaches the processor and the controller follows, a program not of the listing is refused, the states of a file,
+a refused state, a controller that refuses its own state); `plugin_bridge` records and ops; `test_vst3_plugin`
+(the list, the selector, only the processor applies a program, the controller state). The old test "what a VST3
+plugin cannot do yet is refused" was replaced by these.
+
+**Not done, on purpose / still open.**
+
+- Open question 7 is **not** closed: `preset_file.rs` was not checked against the SDK's `vstpresetfile.cpp` in
+  this step (it needs that repository, fetched outside the project first). The file reader is unchanged.
+- **Hand tests (yours):** TDR Nova isolated, choose one of its 73 programs; a real `.vstpreset` isolated (none
+  is known on the development machine).
+- `IUnitHandler` (see c), `IProgramListData`, the `Prog` / `Info` chunks, presets bundled in the plugin.
+- A load waits at most the bridge's gate budget for a block in flight and answers "the plugin is busy processing"
+  past it (in process: "the plugin is busy, try again").
+
+## Step 10 — what shipped (2026-11-05): out-of-process scan and blocklist
+
+**Found first.** The scan loaded every plugin file in the Echoes process. `scan_plugins` ran inside the engine's
+constructor, `vst3/host.rs` and `clap/host.rs` guarded each load with `crash_guard` (SEH), and the VST3
+sidechain probe (`probe_aux_input_count`) created a throwaway component per effect. A plugin that crashed in a
+way SEH does not catch, or hung in `GetPluginFactory`, ended or froze the application at startup, and the next
+start met it again.
+
+**The proof came first.** `plugin_system::scan_sandbox_tests` runs the application's own scan over a machine whose
+only VST3 folder holds the good test plugin plus the examples of the new `test_crashing_plugin` crate
+(`crash_on_load`, `crash_in_factory`, `hang_in_factory`; each appends its name to a log the test counts). They
+require: the crash and the hang are blocked and the good plugin is still listed; a blocked file is not loaded
+again at the next start; it is listed again once it changed or the user re-enabled it; a file that is not a plugin
+is skipped, not blocked; a file listed before and unchanged is not listed again (the second start runs with no
+bridge at all); a forced rescan lists everything again.
+
+**Design.**
+
+- **One process per file.** `plugin_host_bridge --scan <vst3|clap> <file>` (`crates/plugin_host_bridge/src/scan.rs`)
+  loads the file, lists its plugins (class id, name, vendor, features, ports) and, for an effect, probes the
+  auxiliary inputs with the same `read_aux_inputs` as before. It prints one `ScannedPluginRecord` text block
+  (`plugin_bridge::records`) and exits. Nothing in it is guarded: the process boundary is the guard.
+- **The engine side** is `plugin_system/scan.rs`: `scan_file` starts the process, polls it, and kills it after
+  `SCAN_TIMEOUT` (15 s). Exit 0 with a readable block = `Plugins`; the exit code `SCAN_EXIT_REFUSED` (wrong
+  architecture, missing dependency) = `Refused`, skipped but **not** blocked; any other exit, a missing or
+  unreadable block = `Blocked(Crashed)`; the time limit = `Blocked(TimedOut)`.
+- **The blocklist and the scan cache** (`ScanStore`, `plugin-blocklist.json` and `plugin-scan-cache.json`) live in
+  the application data directory, next to the crash marker (ADR-015). A file is identified by path, size and
+  modification time (`FileStamp`): it stays blocked until it changes or the user re-enables it; a listed file
+  that has not changed is not listed again. Files that disappeared are dropped from both.
+- **`PluginHost`** gained `scan_plugins` (cache and blocklist aware), `rescan_plugins` (forgets the cache, keeps
+  the blocklist), `blocked_plugins`, `take_newly_blocked` and `reenable_plugin`. `PluginHost::new` no longer scans:
+  `main.rs::scan_installed_plugins` points the host at the data directory, then scans, in Tauri's `setup`.
+- **Interface.** Three commands: `list_blocked_plugins`, `take_newly_blocked_plugins` (each file is announced
+  once) and `reenable_blocked_plugin` (recompiles like a rescan). The commands exist; **no screen uses them yet.**
+- **Removed.** `probe_aux_input_count` and the in-process CLAP `audio-ports` probe, with their `crash_guard`
+  calls: the scan process does both. `PluginManifest` is built by `manifest_of` from the record.
+
+**Real-time checklist** (`rt-validation`). Nothing on an audio thread changed. The scan runs once at startup on
+the setup thread and on a rescan, before the engine runs a project; it holds the engine mutex while it runs, as
+the old in-constructor scan did.
+
+**Proof.** Workspace: 1139 passed, 0 failed. The golden hashes (`vst3_plugins`, `clap_plugins`) did not move.
+The tests that change the search-folder variables share `sandbox_tests::environment_lock` with the tests that
+read them (installed-plugin discovery, VST3 presets); without it they failed when run in parallel.
+
+**Not done.** Not hand-tested with the installed plugin set (TDR Nova, Surge XT, Vital): the first start scans
+every file in a process each, which is expected to be slower than before (not measured); the next starts use the cache. No interface to show or
+lift a block. Whether the user-facing re-enable belongs in the plugin browser is left for a UX decision.
 
 ## Consequences
 

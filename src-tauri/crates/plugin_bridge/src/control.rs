@@ -57,6 +57,12 @@ pub enum Op {
     /// → the [`crate::records::Handshake`]: the unit of the plugin's parameter
     /// values and its audio port table.  Asked once, right after the start.
     Handshake = 12,
+    /// → the program lists the plugin offers ([`crate::records::ProgramListRecord`]s).
+    /// Empty for a plugin without any.
+    PresetList = 13,
+    /// A [`crate::records::PresetStateRecord`] → ().  The plugin takes the state of a
+    /// preset file the engine has read and checked.
+    PresetLoadState = 14,
 }
 
 impl Op {
@@ -74,6 +80,8 @@ impl Op {
             10 => Op::NoteNames,
             11 => Op::PresetLoad,
             12 => Op::Handshake,
+            13 => Op::PresetList,
+            14 => Op::PresetLoadState,
             _ => return None,
         })
     }
@@ -164,6 +172,17 @@ impl<'a> PayloadReader<'a> {
             .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "control text is not UTF-8"))
     }
 
+    /// Bytes written by [`PayloadWriter::bytes`]: `length:u32`, then the bytes.
+    pub fn bytes(&mut self) -> io::Result<Vec<u8>> {
+        let length = self.u32()? as usize;
+        let (head, rest) = self
+            .bytes
+            .split_at_checked(length)
+            .ok_or_else(|| io::Error::new(io::ErrorKind::UnexpectedEof, "short control payload"))?;
+        self.bytes = rest;
+        Ok(head.to_vec())
+    }
+
     pub fn is_empty(&self) -> bool {
         self.bytes.is_empty()
     }
@@ -221,6 +240,20 @@ impl PayloadWriter {
         self
     }
 
+    /// `length:u32` then the bytes; `false` (nothing written) when the length does
+    /// not fit a frame.
+    pub fn bytes(&mut self, bytes: &[u8]) -> bool {
+        let Ok(length) = u32::try_from(bytes.len()) else {
+            return false;
+        };
+        if length > MAX_FRAME_BYTES {
+            return false;
+        }
+        self.u32(length);
+        self.bytes.extend_from_slice(bytes);
+        true
+    }
+
     /// Like [`Self::text`], but `false` (nothing written) when it would be cut.
     pub fn text_exact(&mut self, text: &str) -> bool {
         if text.len() > u16::MAX as usize {
@@ -275,6 +308,8 @@ mod tests {
             Op::NoteNames,
             Op::PresetLoad,
             Op::Handshake,
+            Op::PresetList,
+            Op::PresetLoadState,
         ] {
             assert_eq!(Op::from_u8(op as u8), Some(op));
         }
@@ -316,6 +351,18 @@ mod tests {
         let text = PayloadReader::new(&bytes).text().unwrap();
         assert!(text.len() <= u16::MAX as usize && long.starts_with(&text));
         assert!(!PayloadWriter::new().text_exact(&long));
+    }
+
+    #[test]
+    fn bytes_roundtrip_and_a_short_payload_is_an_error() {
+        let mut writer = PayloadWriter::new();
+        assert!(writer.bytes(&[1, 2, 3]));
+        let bytes = writer.finish();
+        assert_eq!(PayloadReader::new(&bytes).bytes().unwrap(), [1, 2, 3]);
+        assert!(PayloadReader::new(&bytes[..bytes.len() - 1])
+            .bytes()
+            .is_err());
+        assert!(PayloadReader::new(&u32::MAX.to_le_bytes()).bytes().is_err());
     }
 
     #[test]

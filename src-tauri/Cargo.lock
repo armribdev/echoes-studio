@@ -856,6 +856,7 @@ dependencies = [
  "tauri",
  "tauri-build",
  "tauri-plugin-dialog",
+ "test_crashing_plugin",
  "test_vst3_plugin",
  "vst3_ffi",
  "vst3_host",
@@ -3809,6 +3810,10 @@ version = "0.1.0"
 dependencies = [
  "clap_ffi",
 ]
+
+[[package]]
+name = "test_crashing_plugin"
+version = "0.1.0"
 
 [[package]]
 name = "test_vst3_plugin"

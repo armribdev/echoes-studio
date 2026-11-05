@@ -36,6 +36,7 @@ fn main() {
             // Before any plugin code runs, so a crash in it can be attributed.
             let suspects = open_crash_marker(app);
             app.manage(CrashSuspects(std::sync::Mutex::new(suspects)));
+            scan_installed_plugins(app);
 
             // Start the CPAL output stream as early as possible so the engine
             // is ready before any project is loaded.  Failure is logged but
@@ -100,6 +101,9 @@ fn main() {
             load_plugin_preset,
             get_plugin_outputs,
             scan_plugins,
+            list_blocked_plugins,
+            take_newly_blocked_plugins,
+            reenable_blocked_plugin,
             open_plugin_editor,
             close_plugin_editor,
             send_command,
@@ -162,6 +166,53 @@ fn open_crash_marker(app: &tauri::App) -> Vec<u64> {
         return Vec::new();
     }
     plugin_system::crash_marker::open(&dir.join("plugin-crash-marker.bin"))
+}
+
+/// Lists the installed plugins before the first project can need them.  The blocklist
+/// and the results of the last scan live next to the crash marker (ADR-033, step 10).
+fn scan_installed_plugins(app: &tauri::App) {
+    let state = app.state::<AppState>();
+    let Ok(mut engine) = state.audio_engine.lock() else {
+        return;
+    };
+    if let Ok(dir) = app.path().app_data_dir() {
+        engine.plugin_host.set_scan_directory(&dir);
+    }
+    engine.plugin_host.scan_plugins();
+}
+
+/// Plugin files the scan keeps out because they crashed or hung it.
+#[tauri::command]
+fn list_blocked_plugins(
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<plugin_system::scan::BlockedPlugin>, String> {
+    let engine = state.audio_engine.lock().map_err(|e| e.to_string())?;
+    Ok(engine.plugin_host.blocked_plugins())
+}
+
+/// The files blocked since the last call, so the interface announces each once.
+#[tauri::command]
+fn take_newly_blocked_plugins(
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<plugin_system::scan::BlockedPlugin>, String> {
+    let mut engine = state.audio_engine.lock().map_err(|e| e.to_string())?;
+    Ok(engine.plugin_host.take_newly_blocked())
+}
+
+/// Lifts the block on a plugin file and lists it again; recompiles like a rescan.
+#[tauri::command]
+fn reenable_blocked_plugin(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    path: String,
+) -> Result<Vec<plugin_system::host::PluginInfo>, String> {
+    let list = {
+        let mut engine = state.audio_engine.lock().map_err(|e| e.to_string())?;
+        engine.plugin_host.reenable_plugin(std::path::Path::new(&path));
+        engine.plugin_host.list_plugins()
+    };
+    recompile_audio_graph(&app, &state);
+    Ok(list)
 }
 
 /// Restart the plugins that crashed: a recompile rebuilds every instance in
@@ -584,7 +635,7 @@ fn scan_plugins(
 ) -> Result<Vec<plugin_system::host::PluginInfo>, String> {
     let list = {
         let mut engine = state.audio_engine.lock().map_err(|e| e.to_string())?;
-        engine.plugin_host.scan_plugins();
+        engine.plugin_host.rescan_plugins();
         engine.plugin_host.list_plugins()
     };
     recompile_audio_graph(&app, &state);

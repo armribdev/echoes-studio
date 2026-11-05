@@ -357,6 +357,212 @@ impl PresetRecord {
     }
 }
 
+/// A list of programs the plugin offers, chosen by one of its parameters.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProgramListRecord {
+    pub id: i32,
+    pub name: String,
+    /// The parameter that selects a program of this list; without one the host
+    /// cannot choose.
+    pub selector: Option<u32>,
+    /// The program the selector says is in use.
+    pub current: Option<u32>,
+    pub programs: Vec<String>,
+}
+
+impl ProgramListRecord {
+    const HAS_SELECTOR: u8 = 1 << 0;
+    const HAS_CURRENT: u8 = 1 << 1;
+    const MINIMUM_BYTES: usize = 17;
+
+    pub fn encode_list(records: &[ProgramListRecord]) -> Vec<u8> {
+        let mut writer = PayloadWriter::new();
+        writer.u32(records.len() as u32);
+        for record in records {
+            let mut present = 0;
+            if record.selector.is_some() {
+                present |= Self::HAS_SELECTOR;
+            }
+            if record.current.is_some() {
+                present |= Self::HAS_CURRENT;
+            }
+            writer
+                .u8(present)
+                .u32(record.id as u32)
+                .u32(record.selector.unwrap_or_default())
+                .u32(record.current.unwrap_or_default())
+                .text(&record.name)
+                .u32(record.programs.len() as u32);
+            for program in &record.programs {
+                writer.text(program);
+            }
+        }
+        writer.finish()
+    }
+
+    pub fn decode_list(bytes: &[u8]) -> io::Result<Vec<ProgramListRecord>> {
+        let mut reader = PayloadReader::new(bytes);
+        let count = reader.u32()?;
+        let mut records = Vec::with_capacity(bounded_capacity(count, &reader, Self::MINIMUM_BYTES));
+        for _ in 0..count {
+            let present = reader.u8()?;
+            let id = reader.u32()? as i32;
+            let selector = reader.u32()?;
+            let current = reader.u32()?;
+            let name = reader.text()?;
+            let program_count = reader.u32()?;
+            let mut programs = Vec::with_capacity(bounded_capacity(program_count, &reader, 2));
+            for _ in 0..program_count {
+                programs.push(reader.text()?);
+            }
+            records.push(ProgramListRecord {
+                id,
+                name,
+                selector: (present & Self::HAS_SELECTOR != 0).then_some(selector),
+                current: (present & Self::HAS_CURRENT != 0).then_some(current),
+                programs,
+            });
+        }
+        if !reader.is_empty() {
+            return Err(invalid("trailing bytes after the program lists"));
+        }
+        Ok(records)
+    }
+}
+
+/// The state a preset file holds: the processor's, and the controller's own if the
+/// file has one.  The engine has read and checked the file; the bridge applies it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PresetStateRecord {
+    pub component: Vec<u8>,
+    pub controller: Option<Vec<u8>>,
+}
+
+impl PresetStateRecord {
+    /// `None` when a chunk does not fit a control frame.
+    pub fn encode(&self) -> Option<Vec<u8>> {
+        let mut writer = PayloadWriter::new();
+        writer.u8(u8::from(self.controller.is_some()));
+        let fits = writer.bytes(&self.component)
+            && self
+                .controller
+                .as_deref()
+                .map_or(true, |controller| writer.bytes(controller));
+        fits.then(|| writer.finish())
+    }
+
+    pub fn decode(bytes: &[u8]) -> io::Result<Self> {
+        let mut reader = PayloadReader::new(bytes);
+        let has_controller = match reader.u8()? {
+            0 => false,
+            1 => true,
+            _ => return Err(invalid("unknown preset state flag")),
+        };
+        let component = reader.bytes()?;
+        let controller = has_controller.then(|| reader.bytes()).transpose()?;
+        if !reader.is_empty() {
+            return Err(invalid("trailing bytes after a preset state"));
+        }
+        Ok(PresetStateRecord {
+            component,
+            controller,
+        })
+    }
+}
+
+// ── Scan ────────────────────────────────────────────────────────────────────
+
+/// Exit code of a scan process that could not load the file or does not know its format
+/// (not a plugin of this machine's architecture, a missing dependency).  Any other
+/// failure — a crash, a hang — is the file's fault and blocks it.
+pub const SCAN_EXIT_REFUSED: u8 = 5;
+
+/// One plugin found in a file by `plugin_host_bridge --scan`.  The scan process prints
+/// them on one line of its standard output; the engine builds its manifests from them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScannedPluginRecord {
+    /// The CLAP id, or the hexadecimal VST3 class id.
+    pub native_id: String,
+    pub name: String,
+    pub vendor: String,
+    pub is_instrument: bool,
+    /// Auxiliary (sidechain) input buses of an effect; instruments are not probed.
+    pub sidechain_inputs: u32,
+}
+
+impl ScannedPluginRecord {
+    const MINIMUM_BYTES: usize = 11;
+    /// Starts the result line, so whatever a plugin prints to the same stream is ignored.
+    const RESULT_PREFIX: &'static str = "ECHOES-SCAN-RESULT ";
+
+    pub fn encode_list(records: &[ScannedPluginRecord]) -> Vec<u8> {
+        let mut writer = PayloadWriter::new();
+        writer.u32(records.len() as u32);
+        for record in records {
+            writer
+                .text(&record.native_id)
+                .text(&record.name)
+                .text(&record.vendor)
+                .u8(u8::from(record.is_instrument))
+                .u32(record.sidechain_inputs);
+        }
+        writer.finish()
+    }
+
+    pub fn decode_list(bytes: &[u8]) -> io::Result<Vec<ScannedPluginRecord>> {
+        let mut reader = PayloadReader::new(bytes);
+        let count = reader.u32()?;
+        let mut records = Vec::with_capacity(bounded_capacity(count, &reader, Self::MINIMUM_BYTES));
+        for _ in 0..count {
+            let native_id = reader.text()?;
+            let name = reader.text()?;
+            let vendor = reader.text()?;
+            let is_instrument = match reader.u8()? {
+                0 => false,
+                1 => true,
+                _ => return Err(invalid("unknown instrument flag")),
+            };
+            records.push(ScannedPluginRecord {
+                native_id,
+                name,
+                vendor,
+                is_instrument,
+                sidechain_inputs: reader.u32()?,
+            });
+        }
+        if !reader.is_empty() {
+            return Err(invalid("trailing bytes after the scanned plugins"));
+        }
+        Ok(records)
+    }
+
+    /// The line the scan process prints when it has finished.
+    pub fn result_line(records: &[ScannedPluginRecord]) -> String {
+        let mut line = String::from(Self::RESULT_PREFIX);
+        for byte in Self::encode_list(records) {
+            line.push_str(&format!("{byte:02x}"));
+        }
+        line
+    }
+
+    /// The plugins in the output of a scan process; an error when it printed no result line.
+    pub fn from_scan_output(output: &str) -> io::Result<Vec<ScannedPluginRecord>> {
+        let hex = output
+            .lines()
+            .rev()
+            .find_map(|line| line.trim_end().strip_prefix(Self::RESULT_PREFIX))
+            .ok_or_else(|| invalid("the scan printed no result"))?;
+        if hex.len() % 2 != 0 || !hex.is_ascii() {
+            return Err(invalid("the scan result is not hexadecimal"));
+        }
+        let bytes = (0..hex.len() / 2)
+            .map(|index| u8::from_str_radix(&hex[index * 2..index * 2 + 2], 16))
+            .collect::<Result<Vec<u8>, _>>()
+            .map_err(|_| invalid("the scan result is not hexadecimal"))?;
+        Self::decode_list(&bytes)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -488,6 +694,96 @@ mod tests {
             NoteNameRecord::decode_list(&NoteNameRecord::encode_list(&[])).unwrap(),
             vec![]
         );
+    }
+
+    #[test]
+    fn program_lists_roundtrip_and_garbage_is_refused() {
+        let lists = vec![
+            ProgramListRecord {
+                id: 4,
+                name: "Factory".into(),
+                selector: Some(40),
+                current: Some(1),
+                programs: vec!["Default".into(), String::new(), "Wide".into()],
+            },
+            ProgramListRecord {
+                id: -1,
+                name: String::new(),
+                selector: None,
+                current: None,
+                programs: vec![],
+            },
+        ];
+        let bytes = ProgramListRecord::encode_list(&lists);
+        assert_eq!(ProgramListRecord::decode_list(&bytes).unwrap(), lists);
+        assert!(ProgramListRecord::decode_list(&bytes[..bytes.len() - 1]).is_err());
+        let mut trailing = bytes;
+        trailing.push(0);
+        assert!(ProgramListRecord::decode_list(&trailing).is_err());
+        let huge_count = u32::MAX.to_le_bytes();
+        assert!(ProgramListRecord::decode_list(&huge_count).is_err());
+    }
+
+    fn scanned(native_id: &str, is_instrument: bool, sidechain_inputs: u32) -> ScannedPluginRecord {
+        ScannedPluginRecord {
+            native_id: native_id.into(),
+            name: format!("Plugin {native_id}"),
+            vendor: String::new(),
+            is_instrument,
+            sidechain_inputs,
+        }
+    }
+
+    #[test]
+    fn scanned_plugins_roundtrip_through_the_result_line_and_garbage_is_refused() {
+        let plugins = vec![scanned("a.b.c", false, 1), scanned("00FF", true, 0)];
+        let line = ScannedPluginRecord::result_line(&plugins);
+        assert_eq!(
+            ScannedPluginRecord::from_scan_output(&line).unwrap(),
+            plugins
+        );
+        assert_eq!(
+            ScannedPluginRecord::from_scan_output(&ScannedPluginRecord::result_line(&[])).unwrap(),
+            vec![]
+        );
+
+        let noisy = format!("a plugin says hello\r\n{line}\r\nand goodbye\n");
+        assert_eq!(
+            ScannedPluginRecord::from_scan_output(&noisy).unwrap(),
+            plugins
+        );
+
+        assert!(ScannedPluginRecord::from_scan_output("").is_err());
+        assert!(ScannedPluginRecord::from_scan_output("hello").is_err());
+        assert!(ScannedPluginRecord::from_scan_output(&line[..line.len() - 1]).is_err());
+        assert!(ScannedPluginRecord::from_scan_output(&format!("{line}zz")).is_err());
+        assert!(ScannedPluginRecord::from_scan_output("ECHOES-SCAN-RESULT ffffffff").is_err());
+        let bytes = ScannedPluginRecord::encode_list(&plugins);
+        assert!(ScannedPluginRecord::decode_list(&bytes[..bytes.len() - 1]).is_err());
+    }
+
+    #[test]
+    fn a_preset_state_roundtrips_with_or_without_the_controller_chunk() {
+        for controller in [None, Some(vec![9, 8]), Some(vec![])] {
+            let state = PresetStateRecord {
+                component: vec![1, 2, 3],
+                controller,
+            };
+            assert_eq!(
+                PresetStateRecord::decode(&state.encode().unwrap()).unwrap(),
+                state
+            );
+        }
+        assert!(PresetStateRecord::decode(&[2, 0, 0, 0, 0]).is_err());
+        assert!(PresetStateRecord::decode(&[1, 0, 0, 0, 0]).is_err());
+        let mut trailing = PresetStateRecord {
+            component: vec![],
+            controller: None,
+        }
+        .encode()
+        .unwrap();
+        trailing.push(0);
+        assert!(PresetStateRecord::decode(&trailing).is_err());
     }
 
     #[test]

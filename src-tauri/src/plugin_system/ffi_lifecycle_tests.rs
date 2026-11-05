@@ -1751,13 +1751,15 @@ fn vst3_real_plugins_report_their_input_buses() {
 /// An effect with a sidechain, run with its auxiliary bus fed.
 #[test]
 fn vst3_real_sidechain_effect_processes_with_its_aux_bus_fed() {
-    use crate::plugin_formats::vst3::host::Vst3Host;
+    use crate::plugin_system::scan::{scanned_manifests, ScanFormat};
     use crate::plugin_system::registry::PluginRegistry;
 
     let candidates = discover_all("ECHOES_TEST_VST3", "vst3");
     let mut registry = PluginRegistry::new();
     for path in &candidates {
-        Vst3Host::new().register_bundle(path, &mut registry);
+        for manifest in scanned_manifests(ScanFormat::Vst3, path) {
+            registry.add(manifest);
+        }
     }
     let Some(manifest) = registry
         .all()
@@ -1842,7 +1844,7 @@ fn vst3_real_sidechain_effect_processes_with_its_aux_bus_fed() {
 /// The scan reads each effect's sidechain buses in the library it already loaded.
 #[test]
 fn vst3_scan_counts_the_sidechain_inputs_of_real_effects() {
-    use crate::plugin_formats::vst3::host::Vst3Host;
+    use crate::plugin_system::scan::{scanned_manifests, ScanFormat};
     use crate::plugin_system::registry::PluginRegistry;
 
     let candidates = discover_all("ECHOES_TEST_VST3", "vst3");
@@ -1852,10 +1854,11 @@ fn vst3_scan_counts_the_sidechain_inputs_of_real_effects() {
         );
         return;
     }
-    let host = Vst3Host::new();
     for path in &candidates {
         let mut registry = PluginRegistry::new();
-        host.register_bundle(path, &mut registry);
+        for manifest in scanned_manifests(ScanFormat::Vst3, path) {
+            registry.add(manifest);
+        }
         for manifest in registry.all().filter(|m| m.format == DeviceFormat::Vst3) {
             eprintln!(
                 "{LOG} scan {} (instrument: {}): {} sidechain input(s)",

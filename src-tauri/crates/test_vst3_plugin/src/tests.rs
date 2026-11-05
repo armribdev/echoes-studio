@@ -3,7 +3,7 @@
 use super::*;
 use vst3_ffi::{
     enumerate_classes, instantiate_processor, is_instrument_subcategory, read_component_state,
-    write_component_state,
+    set_controller_state, write_component_state,
 };
 
 struct Instance {
@@ -555,4 +555,103 @@ fn the_content_scale_is_kept_as_a_percentage() {
         ((*(*view).vtbl).release)(view);
     }
     assert_eq!(plugin.plain(VIEW_SCALE), 150);
+}
+
+fn unit_info(plugin: &Instance) -> *mut IUnitInfo {
+    let mut found: *mut c_void = std::ptr::null_mut();
+    let result = unsafe {
+        ((*(*plugin.controller).vtbl).query_interface)(
+            plugin.controller,
+            &IID_IUNIT_INFO,
+            &mut found,
+        )
+    };
+    assert_eq!(result, K_RESULT_OK);
+    found as *mut IUnitInfo
+}
+
+#[test]
+fn both_classes_offer_one_program_list_with_three_programs() {
+    for class in [&EFFECT_CLASS_ID, &INSTRUMENT_CLASS_ID] {
+        let plugin = instance(class);
+        let units = unit_info(&plugin);
+        let table = unsafe { &*(*units).vtbl };
+        unsafe {
+            assert_eq!((table.get_program_list_count)(units), 1);
+            let mut list: ProgramListInfo = zeroed();
+            assert_eq!(
+                (table.get_program_list_info)(units, 0, &mut list),
+                K_RESULT_OK
+            );
+            assert_eq!(list.program_count, 3);
+            let names: Vec<String> = (0..3)
+                .map(|program| {
+                    let mut name = [0u16; 128];
+                    assert_eq!(
+                        (table.get_program_name)(units, list.id, program, name.as_mut_ptr()),
+                        K_RESULT_OK
+                    );
+                    String::from_utf16_lossy(&name[..name.iter().position(|&c| c == 0).unwrap()])
+                })
+                .collect();
+            assert_eq!(names, PROGRAM_NAMES);
+            (table.release)(units);
+        }
+    }
+}
+
+#[test]
+fn the_selector_is_flagged_and_belongs_to_the_unit_that_uses_the_list() {
+    let plugin = instance(&EFFECT_CLASS_ID);
+    let units = unit_info(&plugin);
+    let table = unsafe { &*(*units).vtbl };
+    let mut unit: UnitInfo = unsafe { zeroed() };
+    assert_eq!(
+        unsafe { (table.get_unit_info)(units, 1, &mut unit) },
+        K_RESULT_OK
+    );
+    unsafe { (table.release)(units) };
+    let count = unsafe { ((*(*plugin.controller).vtbl).get_parameter_count)(plugin.controller) };
+    let selector = (0..count)
+        .map(|index| {
+            let mut info: ParameterInfo = unsafe { zeroed() };
+            unsafe {
+                ((*(*plugin.controller).vtbl).get_parameter_info)(
+                    plugin.controller,
+                    index,
+                    &mut info,
+                )
+            };
+            info
+        })
+        .find(|info| info.flags & PARAM_IS_PROGRAM_CHANGE != 0)
+        .expect("one parameter selects a program");
+    assert_eq!(selector.id, PROGRAM);
+    assert_eq!(selector.unit_id, unit.id);
+    assert_eq!(selector.step_count, 2);
+    assert_eq!(plugin.normalised(PROGRAM), 0.5, "Unity is the default");
+}
+
+#[test]
+fn only_the_processor_applies_a_program() {
+    let plugin = instance(&EFFECT_CLASS_ID);
+    plugin.set_normalised(PROGRAM, 1.0);
+    assert_eq!(
+        plugin.normalised(GAIN),
+        0.5,
+        "the controller alone changes no sound"
+    );
+    let mut changes = HostParameterChanges::boxed();
+    changes.push(PROGRAM, 0, 1.0);
+    let heard = plugin.process(0.5, 4, Some(&mut changes), None);
+    assert_eq!(heard, vec![0.5 * 1.75; 4]);
+    assert_eq!(plugin.normalised(GAIN), 1.75 / 2.0);
+}
+
+#[test]
+fn the_controller_state_is_the_self_value() {
+    let plugin = instance(&EFFECT_CLASS_ID);
+    assert!(unsafe { set_controller_state(plugin.controller, &0.8f64.to_le_bytes()) });
+    assert_eq!(plugin.normalised(SELF_VALUE), 0.8);
+    assert!(!unsafe { set_controller_state(plugin.controller, &[1, 2]) });
 }

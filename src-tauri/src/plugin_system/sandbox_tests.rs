@@ -6,7 +6,7 @@ use std::collections::{HashMap, HashSet};
 use std::ffi::c_char;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::OnceLock;
+use std::sync::{Mutex, MutexGuard, OnceLock};
 
 use crate::audio_graph::buffer::AudioBuffer;
 use crate::audio_graph::midi::{MidiEvent, MidiEventKind, MidiEventList};
@@ -72,6 +72,12 @@ const NOTE_ON: MidiEventKind = MidiEventKind::NoteOn {
     velocity: 127,
 };
 const NOTE_OFF: MidiEventKind = MidiEventKind::NoteOff { pitch: 60 };
+
+/// Held by every test that changes the search-folder variables or reads what they hide.
+pub(super) fn environment_lock() -> MutexGuard<'static, ()> {
+    static LOCK: Mutex<()> = Mutex::new(());
+    LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
 
 /// `(bridge exe, test plugin dll)`, built once per test run.
 pub(super) fn artifacts() -> &'static (PathBuf, PathBuf) {

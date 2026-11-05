@@ -19,7 +19,7 @@ use crate::plugin_formats::vst3::preset_file::class_id_text;
 use crate::plugin_formats::vst3::preset_locations::{
     list_preset_files, preset_folders, PresetRoots,
 };
-use crate::plugin_formats::vst3::units::ProgramList;
+use crate::plugin_formats::vst3::units::{program_key, ProgramList};
 use crate::plugin_system::instance::PluginInstance;
 
 /// Where to ask for the presets of one hosted plugin.
@@ -217,18 +217,6 @@ pub fn list_presets(source: &PresetSource) -> Vec<PluginPreset> {
     presets
 }
 
-/// Identifies a program in its preset: the parameter that selects it and its
-/// index.  Only the host writes it, and a load accepts only what a listing offered.
-fn program_key(param_id: u32, index: usize) -> String {
-    format!("{param_id}:{index}")
-}
-
-pub fn parse_program_key(key: &str) -> Option<(u32, i32)> {
-    let (param_id, index) = key.split_once(':')?;
-    let index = index.parse::<i32>().ok().filter(|index| *index >= 0)?;
-    Some((param_id.parse().ok()?, index))
-}
-
 /// The programs of the lists a host can select, in the plugin's own order, as
 /// factory presets.  With several lists each name starts with its list's name.
 pub fn programs_as_presets(lists: &[ProgramList]) -> Vec<PluginPreset> {
@@ -358,28 +346,5 @@ mod tests {
         assert!(programs_as_presets(&[unknown])
             .iter()
             .all(|preset| !preset.active));
-    }
-
-    #[test]
-    fn a_program_key_reads_back_and_garbage_does_not() {
-        assert_eq!(
-            parse_program_key(&program_key(1_886_548_852, 72)),
-            Some((1_886_548_852, 72))
-        );
-        for key in [
-            "",
-            "5",
-            ":",
-            "5:",
-            ":5",
-            "x:1",
-            "5:x",
-            "5:-1",
-            "5:1:2",
-            "4294967296:1",
-            "5:2147483648",
-        ] {
-            assert_eq!(parse_program_key(key), None, "{key:?}");
-        }
     }
 }

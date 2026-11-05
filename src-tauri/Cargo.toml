@@ -16,7 +16,7 @@ rust-version = "1.77.2"
 # stating it explicitly preserves the exact feature resolution → the engine binary
 # stays bit-identical (C-2).
 [workspace]
-members = ["crates/audio_buffer", "crates/clap_ffi", "crates/plugin_bridge", "crates/plugin_host_bridge", "crates/plugin_param_queue", "crates/test_clap_plugin", "crates/test_vst3_plugin", "crates/vst3_ffi", "crates/vst3_host"]
+members = ["crates/audio_buffer", "crates/clap_ffi", "crates/plugin_bridge", "crates/plugin_host_bridge", "crates/plugin_param_queue", "crates/test_clap_plugin", "crates/test_crashing_plugin", "crates/test_vst3_plugin", "crates/vst3_ffi", "crates/vst3_host"]
 resolver = "2"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -70,4 +70,5 @@ wasm = []
 vst3_ffi = { path = "crates/vst3_ffi", features = ["test-support"] }
 audio_buffer = { path = "crates/audio_buffer", features = ["test-support"] }
 test_vst3_plugin = { path = "crates/test_vst3_plugin" }
+test_crashing_plugin = { path = "crates/test_crashing_plugin" }
 vst3_host = { path = "crates/vst3_host", features = ["test-support"] }

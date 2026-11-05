@@ -26,7 +26,7 @@ use crate::plugin_system::host::{PluginHost, PluginIsolation, UnavailableReason}
 use crate::plugin_system::registry::PluginManifest;
 use crate::plugin_system::wrapper::DeviceFormat;
 
-use super::sandbox_tests::artifacts;
+use super::sandbox_tests::{artifacts, environment_lock};
 
 const KEY: &str = "fx0";
 const FRAMES: usize = 64;
@@ -486,13 +486,16 @@ fn measure_eight_vst3_effects() {
 /// The first installed VST3 plugin `wanted` accepts (`ECHOES_TEST_VST3` points at one),
 /// or `None`.
 pub(super) fn installed_vst3(wanted: impl Fn(&PluginManifest) -> bool) -> Option<PluginManifest> {
-    use crate::plugin_formats::vst3::host::Vst3Host;
+    use crate::plugin_system::scan::{scanned_manifests, ScanFormat};
     use crate::plugin_system::ffi_lifecycle_tests::discover_all;
     use crate::plugin_system::registry::PluginRegistry;
 
+    let _environment = environment_lock();
     let mut registry = PluginRegistry::new();
     for path in discover_all("ECHOES_TEST_VST3", "vst3") {
-        Vst3Host::new().register_bundle(&path, &mut registry);
+        for manifest in scanned_manifests(ScanFormat::Vst3, &path) {
+            registry.add(manifest);
+        }
     }
     let manifest = registry
         .all()
@@ -576,7 +579,7 @@ const RENAME: u32 = 11;
 const PROCESSOR_SELF: u32 = 12;
 const VIEW_CRASH: u32 = 18;
 const VIEW_EDIT: u32 = 19;
-const PARAMETER_COUNT: usize = 23;
+const PARAMETER_COUNT: usize = 24;
 const HELD_VALUE: f64 = 0.25;
 
 fn plugin_value(host: &PluginHost, native_id: u32) -> f64 {

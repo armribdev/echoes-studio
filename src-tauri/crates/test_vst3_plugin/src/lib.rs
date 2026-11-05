@@ -54,7 +54,14 @@
 //! The effect also has a mono sidechain input (`Sidechain`, an auxiliary bus): when the host feeds
 //! it, a quarter of its level is added to the output. A host that does not leaves it alone.
 //!
-//! Not there yet, added by the step that needs it: units and programs.
+//! - 23 `Program` — the selector (`kIsProgramChange`, three steps) of the one program list
+//!   the controller's `IUnitInfo` offers on both classes: `Quiet`, `Unity` (the default) and
+//!   `Loud`, which set the gain to 0.25, 1.0 and 1.75. Only the processor applies a program
+//!   (it takes the selector as a parameter point), so a host that never forwards the choice
+//!   to the processor hears nothing. The controller's `setState` (a `.vstpreset`'s `Cont`
+//!   chunk) is one `f64`: the controller's `Self value`.
+//!
+//! Not there yet, added by the step that needs it: `IUnitHandler`.
 
 use std::ffi::c_void;
 use std::mem::{offset_of, zeroed};
@@ -69,9 +76,10 @@ use vst3_ffi::{
     IPluginFactory2Vtbl, PClassInfo, PClassInfo2, ParameterInfo, ProcessData, ProcessSetup,
     TResult, Tuid, ViewRect, IID_FUNKNOWN, IID_IAUDIO_PROCESSOR, IID_ICOMPONENT,
     IID_IEDIT_CONTROLLER, IID_IPLUGIN_FACTORY, IID_IPLUGIN_FACTORY2,
-    IID_IPLUG_VIEW_CONTENT_SCALE_SUPPORT, K_AUDIO, K_EVENT, K_INPUT, K_INVALID_ARGUMENT,
-    K_NOTE_OFF_EVENT, K_NOTE_ON_EVENT, K_NO_INTERFACE, K_OUTPUT, K_RESULT_FALSE, K_RESULT_OK,
-    PARAM_CAN_AUTOMATE, PARAM_IS_READ_ONLY, SPEAKER_STEREO,
+    IID_IPLUG_VIEW_CONTENT_SCALE_SUPPORT, IID_IUNIT_INFO, K_AUDIO, K_EVENT, K_INPUT,
+    K_INVALID_ARGUMENT, K_NOTE_OFF_EVENT, K_NOTE_ON_EVENT, K_NO_INTERFACE, K_OUTPUT,
+    K_RESULT_FALSE, K_RESULT_OK, PARAM_CAN_AUTOMATE, PARAM_IS_PROGRAM_CHANGE, PARAM_IS_READ_ONLY,
+    SPEAKER_STEREO,
 };
 
 pub const EFFECT_CLASS_ID: [u8; 16] = *b"EchoesTestGain_F";
@@ -102,6 +110,16 @@ pub const VIEW_EDIT: u32 = 19;
 pub const MOD_WHEEL: u32 = 20;
 pub const BEND: u32 = 21;
 pub const LAST_PITCH: u32 = 22;
+pub const PROGRAM: u32 = 23;
+/// The program list of `IUnitInfo`: its names, and the gain each one sets.
+pub const PROGRAM_NAMES: [&str; 3] = ["Quiet", "Unity", "Loud"];
+pub const PROGRAM_GAINS: [f64; 3] = [0.25, 1.0, 1.75];
+pub const PROGRAM_LIST_NAME: &str = "Factory";
+const PROGRAM_LIST_ID: i32 = 1;
+const PROGRAM_UNIT_ID: i32 = 1;
+const ROOT_UNIT_ID: i32 = 0;
+const NO_PARENT_UNIT: i32 = -1;
+const NO_PROGRAM_LIST: i32 = -1;
 /// `ControllerNumbers` of `ivstmidicontrollers.h`: the mod wheel and pitch bend.
 const CONTROLLER_MOD_WHEEL: i16 = 1;
 const CONTROLLER_PITCH_BEND: i16 = 129;
@@ -167,7 +185,7 @@ struct ParamSpec {
     flags: i32,
 }
 
-const PARAMS: [ParamSpec; 23] = [
+const PARAMS: [ParamSpec; 24] = [
     ParamSpec {
         id: GAIN,
         title: "Gain",
@@ -329,6 +347,13 @@ const PARAMS: [ParamSpec; 23] = [
         default_plain: 0.0,
         flags: PARAM_IS_READ_ONLY,
     },
+    ParamSpec {
+        id: PROGRAM,
+        title: "Program",
+        range: (PROGRAM_NAMES.len() - 1) as f64,
+        default_plain: 1.0,
+        flags: PARAM_IS_PROGRAM_CHANGE,
+    },
 ];
 
 fn spec(id: u32) -> Option<&'static ParamSpec> {
@@ -371,9 +396,12 @@ struct Plugin {
     processor: *const IAudioProcessorVtbl,
     controller: *const IEditControllerVtbl,
     midi_mapping: *const IMidiMappingVtbl,
+    unit_info: *const IUnitInfoVtbl,
     references: AtomicU32,
     kind: Kind,
     gain: AtomicU64,
+    /// The selected program as an `f64` index.
+    program: AtomicU64,
     held_velocity: AtomicU32,
     /// `Mod wheel` and `Bend` as `f64` bits, and the pitch of the last note on.
     mod_wheel: AtomicU64,
@@ -466,8 +494,24 @@ impl Plugin {
             MOD_WHEEL => f64::from_bits(self.mod_wheel.load(Ordering::Relaxed)),
             BEND => f64::from_bits(self.bend.load(Ordering::Relaxed)),
             LAST_PITCH => f64::from(self.last_pitch.load(Ordering::Relaxed)),
+            PROGRAM => f64::from_bits(self.program.load(Ordering::Relaxed)),
             _ => 0.0,
         }
+    }
+
+    /// The processor takes the selector as a parameter point and sets the gain of the
+    /// program it names; the controller only remembers the selector.
+    fn apply_program(&self, normalised: f64) {
+        self.set_selected_program(normalised);
+        let index = self.plain_value(PROGRAM).round() as usize;
+        if let Some(gain) = PROGRAM_GAINS.get(index) {
+            self.set_gain(*gain);
+        }
+    }
+
+    fn set_selected_program(&self, normalised: f64) {
+        let plain = normalised * (PROGRAM_NAMES.len() - 1) as f64;
+        self.program.store(plain.to_bits(), Ordering::Relaxed);
     }
 
     fn title(&self, spec: &'static ParamSpec) -> &'static str {
@@ -498,6 +542,7 @@ impl Plugin {
             SELF_VALUE => self
                 .processor_self
                 .store(value.to_bits(), Ordering::Relaxed),
+            PROGRAM => self.apply_program(value),
             WRITE_OUTPUT => self.write_output.store(on, Ordering::Relaxed),
             HOLD_EDIT => self.hold_edit.store(on, Ordering::Relaxed),
             LOOKAHEAD => {
@@ -575,6 +620,7 @@ impl Plugin {
                 .mod_wheel
                 .store(normalised.to_bits(), Ordering::Relaxed),
             BEND => self.bend.store(normalised.to_bits(), Ordering::Relaxed),
+            PROGRAM => self.set_selected_program(normalised),
             _ => {}
         }
     }
@@ -613,6 +659,8 @@ unsafe fn query(plugin: *mut Plugin, iid: *const Tuid, object: *mut *mut c_void)
         &raw mut (*plugin).controller as *mut c_void
     } else if iid == IID_IMIDI_MAPPING && (*plugin).kind == Kind::Instrument {
         &raw mut (*plugin).midi_mapping as *mut c_void
+    } else if iid == IID_IUNIT_INFO {
+        &raw mut (*plugin).unit_info as *mut c_void
     } else {
         *object = std::ptr::null_mut();
         return K_NO_INTERFACE;
@@ -736,7 +784,11 @@ unsafe extern "C" fn component_bus_info(
     info.direction = direction;
     let is_aux_output = media == K_AUDIO && direction == K_OUTPUT && index == AUX_OUTPUT;
     let is_sidechain = media == K_AUDIO && direction == K_INPUT && index == SIDECHAIN_INPUT;
-    info.channel_count = if is_sidechain || media != K_AUDIO { 1 } else { 2 };
+    info.channel_count = if is_sidechain || media != K_AUDIO {
+        1
+    } else {
+        2
+    };
     let name = match (media, direction) {
         _ if is_aux_output => "Aux Out",
         _ if is_sidechain => "Sidechain",
@@ -876,7 +928,11 @@ unsafe extern "C" fn processor_set_bus_arrangements(
     let wanted_inputs = bus_count(kind, K_AUDIO, K_INPUT);
     let arranged = |arrangements: *mut u64, count: i32, mono_at: i32| {
         (0..count).all(|i| {
-            let expected = if i == mono_at { SPEAKER_MONO } else { SPEAKER_STEREO };
+            let expected = if i == mono_at {
+                SPEAKER_MONO
+            } else {
+                SPEAKER_STEREO
+            };
             *arrangements.add(i as usize) == expected
         })
     };
@@ -1104,8 +1160,8 @@ unsafe extern "C" fn processor_process(
             };
             let sound = match plugin.kind {
                 Kind::Effect => {
-                    let heard =
-                        channel(data.inputs, index).map_or(0.0, |input| *input.add(frame) * gain as f32);
+                    let heard = channel(data.inputs, index)
+                        .map_or(0.0, |input| *input.add(frame) * gain as f32);
                     match sidechain {
                         Some(side) => heard + *side.add(frame) * SIDECHAIN_LEVEL,
                         None => heard,
@@ -1190,11 +1246,18 @@ unsafe extern "C" fn controller_set_component_state(
     }
 }
 
+/// The controller's own state is its `Self value`, one `f64`.
 unsafe extern "C" fn controller_set_state(
-    _this: *mut IEditController,
-    _stream: *mut c_void,
+    this: *mut IEditController,
+    stream: *mut c_void,
 ) -> TResult {
-    K_RESULT_OK
+    match read_gain(stream) {
+        Some(value) => {
+            (*from_controller(this)).set_normalised(SELF_VALUE, value);
+            K_RESULT_OK
+        }
+        None => K_RESULT_FALSE,
+    }
 }
 
 unsafe extern "C" fn controller_get_state(
@@ -1224,6 +1287,10 @@ unsafe extern "C" fn controller_parameter_info(
     write_utf16(&mut info.short_title, title);
     info.default_normalized_value = param.default_plain / param.range;
     info.flags = param.flags;
+    if param.id == PROGRAM {
+        info.step_count = (PROGRAM_NAMES.len() - 1) as i32;
+        info.unit_id = PROGRAM_UNIT_ID;
+    }
     K_RESULT_OK
 }
 
@@ -1357,6 +1424,207 @@ static MIDI_MAPPING_VTBL: IMidiMappingVtbl = IMidiMappingVtbl {
     add_ref: midi_mapping_add_ref,
     release: midi_mapping_release,
     get_midi_controller_assignment: midi_mapping_assignment,
+};
+
+// ---- IUnitInfo -------------------------------------------------------------
+
+#[repr(C)]
+struct IUnitInfo {
+    vtbl: *const IUnitInfoVtbl,
+}
+
+/// `Vst::UnitInfo` and `Vst::ProgramListInfo` (`ivstunits.h`).
+#[repr(C)]
+struct UnitInfo {
+    id: i32,
+    parent_unit_id: i32,
+    name: [u16; 128],
+    program_list_id: i32,
+}
+
+#[repr(C)]
+struct ProgramListInfo {
+    id: i32,
+    name: [u16; 128],
+    program_count: i32,
+}
+
+#[repr(C)]
+struct IUnitInfoVtbl {
+    query_interface: unsafe extern "C" fn(*mut IUnitInfo, *const Tuid, *mut *mut c_void) -> TResult,
+    add_ref: unsafe extern "C" fn(*mut IUnitInfo) -> u32,
+    release: unsafe extern "C" fn(*mut IUnitInfo) -> u32,
+    get_unit_count: unsafe extern "C" fn(*mut IUnitInfo) -> i32,
+    get_unit_info: unsafe extern "C" fn(*mut IUnitInfo, i32, *mut UnitInfo) -> TResult,
+    get_program_list_count: unsafe extern "C" fn(*mut IUnitInfo) -> i32,
+    get_program_list_info:
+        unsafe extern "C" fn(*mut IUnitInfo, i32, *mut ProgramListInfo) -> TResult,
+    get_program_name: unsafe extern "C" fn(*mut IUnitInfo, i32, i32, *mut u16) -> TResult,
+    get_program_info:
+        unsafe extern "C" fn(*mut IUnitInfo, i32, i32, *const u8, *mut u16) -> TResult,
+    has_program_pitch_names: unsafe extern "C" fn(*mut IUnitInfo, i32, i32) -> TResult,
+    get_program_pitch_name:
+        unsafe extern "C" fn(*mut IUnitInfo, i32, i32, i16, *mut u16) -> TResult,
+    get_selected_unit: unsafe extern "C" fn(*mut IUnitInfo) -> i32,
+    select_unit: unsafe extern "C" fn(*mut IUnitInfo, i32) -> TResult,
+    get_unit_by_bus: unsafe extern "C" fn(*mut IUnitInfo, i32, i32, i32, i32, *mut i32) -> TResult,
+    set_unit_program_data: unsafe extern "C" fn(*mut IUnitInfo, i32, i32, *mut c_void) -> TResult,
+}
+
+unsafe fn from_unit_info(this: *mut IUnitInfo) -> *mut Plugin {
+    base_of(this, offset_of!(Plugin, unit_info))
+}
+
+unsafe extern "C" fn unit_info_query(
+    this: *mut IUnitInfo,
+    iid: *const Tuid,
+    object: *mut *mut c_void,
+) -> TResult {
+    query(from_unit_info(this), iid, object)
+}
+
+unsafe extern "C" fn unit_info_add_ref(this: *mut IUnitInfo) -> u32 {
+    add_reference(from_unit_info(this))
+}
+
+unsafe extern "C" fn unit_info_release(this: *mut IUnitInfo) -> u32 {
+    release_reference(from_unit_info(this))
+}
+
+/// The root unit, and the one the `Program` selector belongs to, which uses the list.
+unsafe extern "C" fn unit_info_unit_count(_this: *mut IUnitInfo) -> i32 {
+    2
+}
+
+unsafe extern "C" fn unit_info_unit_info(
+    _this: *mut IUnitInfo,
+    index: i32,
+    info: *mut UnitInfo,
+) -> TResult {
+    let (id, parent_unit_id, name, program_list_id) = match index {
+        0 => (ROOT_UNIT_ID, NO_PARENT_UNIT, "Root", NO_PROGRAM_LIST),
+        1 => (PROGRAM_UNIT_ID, ROOT_UNIT_ID, "Programs", PROGRAM_LIST_ID),
+        _ => return K_INVALID_ARGUMENT,
+    };
+    let info = &mut *info;
+    *info = zeroed();
+    info.id = id;
+    info.parent_unit_id = parent_unit_id;
+    info.program_list_id = program_list_id;
+    write_utf16(&mut info.name, name);
+    K_RESULT_OK
+}
+
+unsafe extern "C" fn unit_info_program_list_count(_this: *mut IUnitInfo) -> i32 {
+    1
+}
+
+unsafe extern "C" fn unit_info_program_list_info(
+    _this: *mut IUnitInfo,
+    index: i32,
+    info: *mut ProgramListInfo,
+) -> TResult {
+    if index != 0 {
+        return K_INVALID_ARGUMENT;
+    }
+    let info = &mut *info;
+    *info = zeroed();
+    info.id = PROGRAM_LIST_ID;
+    info.program_count = PROGRAM_NAMES.len() as i32;
+    write_utf16(&mut info.name, PROGRAM_LIST_NAME);
+    K_RESULT_OK
+}
+
+unsafe extern "C" fn unit_info_program_name(
+    _this: *mut IUnitInfo,
+    list_id: i32,
+    program: i32,
+    name: *mut u16,
+) -> TResult {
+    let program = usize::try_from(program)
+        .ok()
+        .and_then(|i| PROGRAM_NAMES.get(i));
+    match (list_id, program) {
+        (PROGRAM_LIST_ID, Some(program)) => {
+            write_utf16(std::slice::from_raw_parts_mut(name, 128), program);
+            K_RESULT_OK
+        }
+        _ => K_INVALID_ARGUMENT,
+    }
+}
+
+unsafe extern "C" fn unit_info_program_info(
+    _this: *mut IUnitInfo,
+    _list_id: i32,
+    _program: i32,
+    _attribute: *const u8,
+    _value: *mut u16,
+) -> TResult {
+    K_RESULT_FALSE
+}
+
+unsafe extern "C" fn unit_info_has_pitch_names(
+    _this: *mut IUnitInfo,
+    _list_id: i32,
+    _program: i32,
+) -> TResult {
+    K_RESULT_FALSE
+}
+
+unsafe extern "C" fn unit_info_pitch_name(
+    _this: *mut IUnitInfo,
+    _list_id: i32,
+    _program: i32,
+    _pitch: i16,
+    _name: *mut u16,
+) -> TResult {
+    K_RESULT_FALSE
+}
+
+unsafe extern "C" fn unit_info_selected_unit(_this: *mut IUnitInfo) -> i32 {
+    ROOT_UNIT_ID
+}
+
+unsafe extern "C" fn unit_info_select_unit(_this: *mut IUnitInfo, _unit: i32) -> TResult {
+    K_RESULT_FALSE
+}
+
+unsafe extern "C" fn unit_info_unit_by_bus(
+    _this: *mut IUnitInfo,
+    _media: i32,
+    _direction: i32,
+    _bus: i32,
+    _channel: i32,
+    _unit: *mut i32,
+) -> TResult {
+    K_RESULT_FALSE
+}
+
+unsafe extern "C" fn unit_info_set_program_data(
+    _this: *mut IUnitInfo,
+    _list_id: i32,
+    _program: i32,
+    _stream: *mut c_void,
+) -> TResult {
+    K_RESULT_FALSE
+}
+
+static UNIT_INFO_VTBL: IUnitInfoVtbl = IUnitInfoVtbl {
+    query_interface: unit_info_query,
+    add_ref: unit_info_add_ref,
+    release: unit_info_release,
+    get_unit_count: unit_info_unit_count,
+    get_unit_info: unit_info_unit_info,
+    get_program_list_count: unit_info_program_list_count,
+    get_program_list_info: unit_info_program_list_info,
+    get_program_name: unit_info_program_name,
+    get_program_info: unit_info_program_info,
+    has_program_pitch_names: unit_info_has_pitch_names,
+    get_program_pitch_name: unit_info_pitch_name,
+    get_selected_unit: unit_info_selected_unit,
+    select_unit: unit_info_select_unit,
+    get_unit_by_bus: unit_info_unit_by_bus,
+    set_unit_program_data: unit_info_set_program_data,
 };
 
 // ---- IPlugView -------------------------------------------------------------
@@ -1775,9 +2043,11 @@ unsafe extern "C" fn factory_create_instance(
         processor: &PROCESSOR_VTBL,
         controller: &CONTROLLER_VTBL.0,
         midi_mapping: &MIDI_MAPPING_VTBL,
+        unit_info: &UNIT_INFO_VTBL,
         references: AtomicU32::new(0),
         kind: class.kind,
         gain: AtomicU64::new(1.0_f64.to_bits()),
+        program: AtomicU64::new(1.0_f64.to_bits()),
         held_velocity: AtomicU32::new(0),
         mod_wheel: AtomicU64::new(0.0_f64.to_bits()),
         bend: AtomicU64::new(0.5_f64.to_bits()),

@@ -1,0 +1,22 @@
+[package]
+name = "test_crashing_plugin"
+version = "0.1.0"
+edition = "2021"
+description = "Plugin DLLs that crash or hang while the host loads or scans them, for the out-of-process scan tests (ADR-033 step 10). Not shipped."
+license = "MIT"
+publish = false
+
+[lib]
+path = "src/lib.rs"
+
+[[example]]
+name = "crash_on_load"
+crate-type = ["cdylib"]
+
+[[example]]
+name = "crash_in_factory"
+crate-type = ["cdylib"]
+
+[[example]]
+name = "hang_in_factory"
+crate-type = ["cdylib"]

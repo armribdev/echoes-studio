@@ -36,18 +36,6 @@ pub struct PluginManifest {
     pub is_instrument: bool,
 }
 
-/// Heuristic used when scan metadata is incomplete (e.g. VST3 class name).
-pub fn classify_instrument(categories: &[String], name: &str) -> bool {
-    if categories.iter().any(|c| {
-        let l = c.to_lowercase();
-        l.contains("instrument") || l == "synth"
-    }) {
-        return true;
-    }
-    let n = name.to_lowercase();
-    n.contains("instrument") || n.contains("synth")
-}
-
 impl PluginManifest {
     /// Create a manifest for a built-in (no-path) device.
     pub fn internal(

@@ -1,164 +1,44 @@
-//! VST3 host — scans platform plugin directories and populates the registry.
+//! Where VST3 plugins are installed.  The files are listed by `plugin_host_bridge --scan`
+//! in a process of their own (ADR-033, step 10), never loaded here.
 
-use std::ffi::c_void;
 use std::path::{Path, PathBuf};
-
-use crate::plugin_formats::crash_guard;
-use crate::plugin_formats::vst3::buses::read_aux_inputs;
-use crate::plugin_formats::vst3::ffi::{instantiate_processor, IPluginFactory};
-use crate::plugin_formats::vst3::host_context::host_application;
-use crate::plugin_system::registry::{classify_instrument, PluginManifest, PluginRegistry};
-use crate::plugin_system::wrapper::DeviceFormat;
 
 /// Bound on vendor-subfolder recursion during a scan (avoids pathological
 /// symlink loops); real installs are 1-2 levels deep.
 const SCAN_MAX_DEPTH: usize = 4;
 
-pub struct Vst3Host;
-
-impl Vst3Host {
-    pub fn new() -> Self {
-        Vst3Host
-    }
-
-    /// Scan all standard VST3 directories and register found plugins.
-    pub fn scan(&self, registry: &mut PluginRegistry) {
-        for dir in vst3_search_paths() {
-            if dir.exists() {
-                self.scan_dir(&dir, registry, SCAN_MAX_DEPTH);
-            }
+/// The module (DLL) of every `.vst3` found in the standard VST3 directories.
+pub fn find_modules() -> Vec<PathBuf> {
+    let mut modules = Vec::new();
+    for dir in vst3_search_paths() {
+        if dir.exists() {
+            collect_modules(&dir, &mut modules, SCAN_MAX_DEPTH);
         }
     }
-
-    /// Vendors commonly install into a subfolder of the VST3 directory, so
-    /// this recurses a bounded number of levels rather than only scanning
-    /// the top level.
-    fn scan_dir(&self, dir: &Path, registry: &mut PluginRegistry, depth: usize) {
-        if depth == 0 {
-            return;
-        }
-        let entries = match std::fs::read_dir(dir) {
-            Ok(e) => e,
-            Err(_) => return,
-        };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if let Some(ext) = path.extension() {
-                if ext.eq_ignore_ascii_case("vst3") {
-                    self.register_bundle(&path, registry);
-                    continue;
-                }
-            }
-            if path.is_dir() {
-                self.scan_dir(&path, registry, depth - 1);
-            }
-        }
-    }
-
-    pub(crate) fn register_bundle(&self, bundle: &Path, registry: &mut PluginRegistry) {
-        let dll = match resolve_vst3_dll(bundle) {
-            Some(p) => p,
-            None => return,
-        };
-
-        use crate::plugin_formats::vst3::ffi::{is_instrument_subcategory, Vst3Library};
-        let (lib, factory) = match Vst3Library::load(&dll) {
-            Ok(r) => r,
-            Err(e) => {
-                eprintln!("[vst3] scan: {} — {e}", bundle.display());
-                return;
-            }
-        };
-        let _ = lib; // keep DLL alive through enumeration scope
-
-        let classes = unsafe { crate::plugin_formats::vst3::ffi::enumerate_classes(factory) };
-        for class in classes {
-            // Encode CID into the plugin_id so no extra storage is needed.
-            // Format: "vst3:<32-hex-chars>"
-            let plugin_id = format!("vst3:{}", hex_cid(&class.cid));
-            if registry.get(&plugin_id).is_some() {
-                continue;
-            }
-
-            let name = class.name;
-            let is_instrument = match &class.sub_categories {
-                Some(sub_categories) => is_instrument_subcategory(sub_categories),
-                None => classify_instrument(&[], &name),
-            };
-            let categories: Vec<String> = if is_instrument {
-                vec!["Instrument".into(), "VST3".into()]
-            } else {
-                vec!["VST3".into()]
-            };
-
-            let num_sidechain_inputs = if is_instrument {
-                0
-            } else {
-                probe_aux_input_count(factory, &class.cid)
-            };
-
-            registry.add(PluginManifest {
-                id: plugin_id,
-                name: name.clone(),
-                vendor: String::new(),
-                format: DeviceFormat::Vst3,
-                path: Some(dll.clone()),
-                categories,
-                num_sidechain_inputs,
-                is_instrument,
-            });
-        }
-
-        // Release factory ref — library stays loaded until Arc drops.
-        unsafe {
-            ((*(*factory).vtbl).release)(factory);
-        }
-    }
+    modules
 }
 
-impl Default for Vst3Host {
-    fn default() -> Self {
-        Self::new()
+/// Vendors commonly install into a subfolder of the VST3 directory, so
+/// this recurses a bounded number of levels rather than only scanning
+/// the top level.
+fn collect_modules(dir: &Path, modules: &mut Vec<PathBuf>, depth: usize) {
+    if depth == 0 {
+        return;
     }
-}
-
-/// Stack context for [`probe_aux_inputs_trampoline`] — no heap allocation.
-struct AuxProbeContext {
-    factory: *mut IPluginFactory,
-    cid: [u8; 16],
-}
-
-/// Create → read the auxiliary input buses → destroy, all inside one call so the
-/// SEH guard covers the whole cycle.  Returns the bus count, or `CAUGHT` (-1).
-///
-/// # Safety
-/// `raw` must point to a live `AuxProbeContext` whose factory is live.
-unsafe extern "C" fn probe_aux_inputs_trampoline(raw: *mut c_void) -> i32 {
-    let context = &*(raw as *const AuxProbeContext);
-    let Ok((component, processor)) =
-        instantiate_processor(context.factory, &context.cid, host_application())
-    else {
-        return 0;
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
     };
-    let count = read_aux_inputs(component).len() as i32;
-    ((*(*component).vtbl).terminate)(component);
-    ((*(*processor).vtbl).release)(processor as *mut _);
-    ((*(*component).vtbl).release)(component as *mut _);
-    count
-}
-
-/// How many auxiliary input buses (sidechains) the effect `cid` declares.  The
-/// scan creates a throwaway component in the library it already loaded; a plugin
-/// that fails or crashes during the probe counts as having none, as for CLAP.
-fn probe_aux_input_count(factory: *mut IPluginFactory, cid: &[u8; 16]) -> usize {
-    let mut context = AuxProbeContext { factory, cid: *cid };
-    let count = unsafe {
-        crash_guard::guarded(
-            probe_aux_inputs_trampoline,
-            &mut context as *mut AuxProbeContext as *mut c_void,
-        )
-    };
-    usize::try_from(count).unwrap_or(0)
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("vst3"))
+        {
+            modules.extend(resolve_vst3_dll(&path));
+        } else if path.is_dir() {
+            collect_modules(&path, modules, depth - 1);
+        }
+    }
 }
 
 fn vst3_search_paths() -> Vec<PathBuf> {
@@ -191,7 +71,7 @@ fn vst3_search_paths() -> Vec<PathBuf> {
 }
 
 /// Resolve the actual DLL inside a .vst3 bundle (directory or single-file).
-fn resolve_vst3_dll(bundle: &Path) -> Option<PathBuf> {
+pub fn resolve_vst3_dll(bundle: &Path) -> Option<PathBuf> {
     if bundle.is_file() {
         return Some(bundle.to_path_buf());
     }
@@ -215,6 +95,7 @@ fn resolve_vst3_dll(bundle: &Path) -> Option<PathBuf> {
 }
 
 /// Encode 16-byte class ID as a 32-char uppercase hex string.
+#[cfg(test)]
 pub fn hex_cid(cid: &[u8; 16]) -> String {
     cid.iter().map(|b| format!("{b:02X}")).collect()
 }

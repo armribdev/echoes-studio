@@ -35,6 +35,7 @@ pub mod param_queue;
 pub mod parameter;
 pub mod presets;
 pub mod registry;
+pub mod scan;
 pub mod state;
 pub mod track_info;
 pub mod wrapper;
@@ -45,6 +46,10 @@ mod ffi_lifecycle_tests;
 mod sandbox_tests;
 #[cfg(all(test, windows))]
 mod vst3_preset_file_tests;
+#[cfg(all(test, windows))]
+mod vst3_preset_sandbox_tests;
+#[cfg(all(test, windows))]
+mod scan_sandbox_tests;
 #[cfg(all(test, windows))]
 mod vst3_instrument_sandbox_tests;
 #[cfg(all(test, windows))]

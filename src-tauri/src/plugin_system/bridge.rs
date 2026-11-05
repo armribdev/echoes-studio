@@ -20,13 +20,16 @@ use plugin_bridge::session::{AudioPort, BridgeLayout, BridgeProcess};
 
 use plugin_bridge::records::{
     Handshake, NoteNameRecord, ParamRecord, ParamUnit, PortDirection, PresetRecord, PresetSource,
-    TrackRecord, MAX_PORTS, PARAM_AUTOMATABLE, PARAM_HIDDEN, PARAM_MODULATABLE, PORT_CHANNELS,
+    PresetStateRecord, ProgramListRecord, TrackRecord, MAX_PORTS, PARAM_AUTOMATABLE, PARAM_HIDDEN,
+    PARAM_MODULATABLE, PORT_CHANNELS,
 };
 
 use crate::plugin_formats::clap::ffi::{
     mark_plugin_restart_requested, HostTrackInfo, NoteName, PresetRequest,
     CLAP_PRESET_LOCATION_FILE,
 };
+use crate::plugin_formats::vst3::preset_file::PresetChunks;
+use crate::plugin_formats::vst3::units::ProgramList;
 use crate::plugin_system::parameter::PluginParamInfo;
 use crate::plugin_system::wrapper::DeviceFormat;
 
@@ -232,6 +235,36 @@ impl BridgedPlugin {
         };
         let payload = record.encode().ok_or("the preset location is too long")?;
         self.request(Op::PresetLoad, &payload)
+            .map(|_| ())
+            .map_err(|error| error.to_string())
+    }
+
+    /// The program lists a VST3 plugin offers; empty when the bridge cannot answer.
+    pub fn program_lists(&self) -> Vec<ProgramList> {
+        let Ok(reply) = self.request(Op::PresetList, &[]) else {
+            return Vec::new();
+        };
+        ProgramListRecord::decode_list(&reply)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|record| ProgramList {
+                id: record.id,
+                name: record.name,
+                program_change_param: record.selector,
+                programs: record.programs,
+                current_program: record.current.map(|index| index as usize),
+            })
+            .collect()
+    }
+
+    /// Gives a VST3 plugin the states of a preset file the engine has read.
+    pub fn load_preset_state(&self, chunks: PresetChunks) -> Result<(), String> {
+        let record = PresetStateRecord {
+            component: chunks.component,
+            controller: chunks.controller,
+        };
+        let payload = record.encode().ok_or("the preset is too large")?;
+        self.request(Op::PresetLoadState, &payload)
             .map(|_| ())
             .map_err(|error| error.to_string())
     }

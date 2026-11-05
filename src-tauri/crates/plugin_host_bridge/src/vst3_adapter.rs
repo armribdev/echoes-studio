@@ -3,8 +3,15 @@
 //!
 //! One component, its processor and its edit controller, on one stereo main bus
 //! each way.  The auxiliary buses are declared in the handshake but stay closed
-//! until the port table carries more than one active port (step 8b).  Presets come
-//! with step 9 and answer an explicit error until then.
+//! until the port table carries more than one active port (step 8b).
+//!
+//! ## Presets (step 9)
+//!
+//! The controller is here, so the program lists are read here and a program is
+//! chosen here: the controller takes the selector's value, a zero-sample `process`
+//! gives it to the processor, and the controller then takes the processor's state.
+//! A `.vstpreset` file is read and checked by the engine, which sends the two
+//! states it holds.
 //!
 //! ## Instruments (step 8a)
 //!
@@ -52,14 +59,15 @@ use plugin_bridge::protocol::{
 };
 use plugin_bridge::records::{
     AudioPortRecord, Handshake, NoteNameRecord, ParamRecord, ParamUnit, PortDirection, PortRole,
-    SpeakerLayout, MAX_PORTS, PARAM_AUTOMATABLE, PARAM_HIDDEN, PORT_CHANNELS,
+    PresetRecord, PresetSource, PresetStateRecord, ProgramListRecord, SpeakerLayout, MAX_PORTS,
+    PARAM_AUTOMATABLE, PARAM_HIDDEN, PORT_CHANNELS,
 };
 use plugin_bridge::session::{BlockContext, BridgeProcessor, ReplyWriter};
 use vst3_ffi::{
     create_controller, instantiate_processor, read_component_state, release_controller,
-    set_controller_component_state, sync_controller_to_state, write_component_state,
-    HostParameterChanges, IAudioProcessor, IComponent, ProcessData, ProcessSetup, Vst3Controller,
-    Vst3Library, K_AUDIO, K_EVENT, K_INPUT, K_RESULT_OK,
+    set_controller_component_state, set_controller_state, sync_controller_to_state,
+    write_component_state, HostParameterChanges, IAudioProcessor, IComponent, ProcessData,
+    ProcessSetup, Vst3Controller, Vst3Library, K_AUDIO, K_EVENT, K_INPUT, K_RESULT_OK,
 };
 use vst3_host::buses::{
     open_output_buses, propose_arrangements, read_aux_inputs, read_output_buses, Vst3InputBuses,
@@ -75,6 +83,7 @@ use vst3_host::params::{
     read_vst3_param_text, read_vst3_param_value, read_vst3_params, write_vst3_param_value,
 };
 use vst3_host::transport::{process_context, TransportState};
+use vst3_host::units::{parse_program_key, read_program_lists, select_program};
 
 use crate::{HostedPlugin, PluginRole};
 
@@ -192,11 +201,7 @@ unsafe impl Sync for Vst3Adapter {}
 impl Vst3Adapter {
     /// Main thread.  Loads the module and creates the component, its processor and
     /// its edit controller for class id `cid` (32 hexadecimal digits).
-    pub fn load(
-        dll: &Path,
-        cid: &str,
-        role: PluginRole,
-    ) -> Result<Arc<Self>, String> {
+    pub fn load(dll: &Path, cid: &str, role: PluginRole) -> Result<Arc<Self>, String> {
         let cid = decode_cid(cid).ok_or_else(|| format!("invalid VST3 class id '{cid}'"))?;
         let (library, factory) = Vst3Library::load(dll)?;
         // SAFETY: live factory, called off the audio thread.
@@ -438,6 +443,11 @@ impl Vst3Adapter {
     /// holds, as the Echoes process does for a separate controller.
     pub fn load_state(&self, bytes: &[u8]) -> Result<(), String> {
         let _gate = self.enter_main()?;
+        self.load_state_held(bytes)
+    }
+
+    /// [`Self::load_state`] for a caller that holds the gate (main thread).
+    fn load_state_held(&self, bytes: &[u8]) -> Result<(), String> {
         self.bases.lock().unwrap_or_else(|e| e.into_inner()).clear();
         // SAFETY: main thread, gate held.
         let loaded = unsafe { write_component_state(self.component, bytes) };
@@ -489,6 +499,73 @@ impl Vst3Adapter {
             process_context: std::ptr::null_mut(),
         };
         ((*(*self.processor).vtbl).process)(self.processor, &mut data);
+    }
+
+    /// The program lists the controller offers; none without a controller.
+    fn preset_list(&self) -> Result<Vec<u8>, String> {
+        let Ok(controller) = self.controller_ptr() else {
+            return Ok(ProgramListRecord::encode_list(&[]));
+        };
+        let _gate = self.enter_main()?;
+        // SAFETY: live controller, main thread, gate held.
+        let lists = unsafe { read_program_lists(controller) };
+        let records: Vec<_> = lists
+            .into_iter()
+            .map(|list| ProgramListRecord {
+                id: list.id,
+                name: list.name,
+                selector: list.program_change_param,
+                current: list.current_program.map(|index| index as u32),
+                programs: list.programs,
+            })
+            .collect();
+        Ok(ProgramListRecord::encode_list(&records))
+    }
+
+    /// Chooses a program the last listing offered, as the Echoes process does: the
+    /// controller takes the selector's value, the processor gets it from a flush,
+    /// and the controller then takes the processor's state, since a program changes
+    /// many values only the processor knows.
+    fn load_program(&self, payload: &[u8]) -> Result<Vec<u8>, String> {
+        let record = PresetRecord::decode(payload).map_err(|e| e.to_string())?;
+        let (param_id, index) = record
+            .load_key
+            .as_deref()
+            .filter(|_| record.source == PresetSource::Plugin)
+            .and_then(parse_program_key)
+            .ok_or("this preset is not a program of the plugin")?;
+        let controller = self.controller_ptr()?;
+        let _gate = self.enter_main()?;
+        // SAFETY: live controller, main thread, gate held.
+        let normalised = unsafe { select_program(controller, param_id, index) }
+            .ok_or("the plugin could not load this preset")?;
+        // SAFETY: main thread, gate held.
+        unsafe {
+            self.flush_bases(&[(param_id, normalised)]);
+            if (*self.activation.get()).is_some() {
+                if let Some(state) = read_component_state(self.component) {
+                    set_controller_component_state(controller, &state);
+                }
+            }
+        }
+        Ok(Vec::new())
+    }
+
+    /// Loads the states of a preset file the engine read: the processor's, then the
+    /// controller's own if the file had one (a controller that refuses it does not
+    /// fail the load).
+    fn load_preset_state(&self, payload: &[u8]) -> Result<Vec<u8>, String> {
+        let record = PresetStateRecord::decode(payload).map_err(|e| e.to_string())?;
+        let _gate = self.enter_main()?;
+        self.load_state_held(&record.component)
+            .map_err(|_| "the plugin could not load this preset".to_string())?;
+        if let (Some(own_state), Ok(controller)) = (record.controller, self.controller_ptr()) {
+            // SAFETY: live controller, main thread, gate held.
+            if !unsafe { set_controller_state(controller, &own_state) } {
+                eprintln!("[plugin_host_bridge] a preset's controller state was refused");
+            }
+        }
+        Ok(Vec::new())
     }
 
     /// The controller's parameters, as the Echoes process lists them.
@@ -626,10 +703,9 @@ impl Vst3Adapter {
         }
         for index in 0..self.output_ports {
             ports.push(match output_buses.get(index) {
-                Some(bus) if index > 0 => carried(auxiliary_port(
-                    PortDirection::Output,
-                    bus.channel_count,
-                )),
+                Some(bus) if index > 0 => {
+                    carried(auxiliary_port(PortDirection::Output, bus.channel_count))
+                }
                 _ => main_port(PortDirection::Output, channels),
             });
         }
@@ -757,9 +833,9 @@ impl HostedPlugin for Vst3Adapter {
             }
             Op::NoteNames => Ok(NoteNameRecord::encode_list(&[])),
             Op::TrackInfo => Ok(Vec::new()),
-            Op::PresetLoad => {
-                Err("presets of a sandboxed VST3 plugin are not available yet".into())
-            }
+            Op::PresetLoad => self.load_program(payload),
+            Op::PresetList => self.preset_list(),
+            Op::PresetLoadState => self.load_preset_state(payload),
             Op::OpenEditor => self.open_editor(&String::from_utf8_lossy(payload)),
         }
     }
@@ -1067,9 +1143,8 @@ mod tests {
     /// The effect loaded and activated in this process, with its audio processor.
     fn activated() -> (Arc<Vst3Adapter>, Vst3BlockProcessor) {
         initialise_com_for_the_test();
-        let adapter =
-            Vst3Adapter::load(test_plugin_dll(), &effect_class_id(), PluginRole::Effect)
-                .expect("the effect loads");
+        let adapter = Vst3Adapter::load(test_plugin_dll(), &effect_class_id(), PluginRole::Effect)
+            .expect("the effect loads");
         adapter
             .activate(48_000.0, 64, 0)
             .expect("the effect activates");
@@ -1296,7 +1371,10 @@ mod tests {
         let (adapter, _processor) = activated_instrument();
         let handshake = Handshake::decode(&adapter.handshake()).expect("a handshake");
         assert_eq!(handshake.active_port_count(PortDirection::Output), 2);
-        assert_eq!(handshake.block_channels(PortDirection::Output), OUTPUT_CHANNELS);
+        assert_eq!(
+            handshake.block_channels(PortDirection::Output),
+            OUTPUT_CHANNELS
+        );
     }
 
     #[test]

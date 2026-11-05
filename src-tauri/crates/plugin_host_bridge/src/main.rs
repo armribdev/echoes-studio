@@ -16,16 +16,21 @@
 //!                    [--plugin-format clap|vst3] [--plugin-role effect|instrument]
 //!                    [--track-info <HEX>]
 //! plugin_host_bridge --print-protocol-version
+//! plugin_host_bridge --scan <clap|vst3> <FILE>
 //! ```
+//!
+//! `--scan` is not a host: it lists the plugins of one file and prints them (ADR-033,
+//! step 10), so that a file which crashes the loader ends this process and not the engine.
 
 mod clap_adapter;
 #[cfg(windows)]
 mod editor;
+mod scan;
 mod vst3_adapter;
 
 use std::collections::HashMap;
 use std::io::{self, BufReader, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::{mpsc, Arc};
 use std::time::Instant;
@@ -34,7 +39,7 @@ use clap_adapter::{ClapAdapter, ClapBlockProcessor};
 use clap_ffi::{HostTrackInfo, TimerSchedule};
 use plugin_bridge::control::{self, Op, PayloadReader, STATUS_ERROR, STATUS_OK};
 use plugin_bridge::protocol::BRIDGE_PROTOCOL_VERSION;
-use plugin_bridge::records::TrackRecord;
+use plugin_bridge::records::{ScannedPluginRecord, TrackRecord, SCAN_EXIT_REFUSED};
 use plugin_bridge::session::{BridgeLayout, BridgePeer, BridgeProcessor};
 use vst3_adapter::{Vst3Adapter, Vst3BlockProcessor};
 
@@ -119,6 +124,11 @@ fn main() -> ExitCode {
         println!("{BRIDGE_PROTOCOL_VERSION}");
         return ExitCode::SUCCESS;
     }
+    if let [flag, format, file] = args.as_slice() {
+        if flag == "--scan" {
+            return run_scan(format, Path::new(file));
+        }
+    }
     let Some(options) = parse_options(&args) else {
         eprintln!("[plugin_host_bridge] invalid arguments: {args:?}");
         return ExitCode::from(EXIT_USAGE);
@@ -128,6 +138,25 @@ fn main() -> ExitCode {
         Err(error) => {
             eprintln!("[plugin_host_bridge] {error}");
             ExitCode::from(EXIT_START_FAILED)
+        }
+    }
+}
+
+fn run_scan(format: &str, file: &Path) -> ExitCode {
+    scan::silence_crash_dialogs();
+    let scanned = match format {
+        "vst3" => scan::scan_vst3(file),
+        "clap" => scan::scan_clap(file),
+        _ => Err(format!("unknown plugin format {format}")),
+    };
+    match scanned {
+        Ok(plugins) => {
+            println!("{}", ScannedPluginRecord::result_line(&plugins));
+            ExitCode::SUCCESS
+        }
+        Err(error) => {
+            eprintln!("[plugin_host_bridge] scan of {}: {error}", file.display());
+            ExitCode::from(SCAN_EXIT_REFUSED)
         }
     }
 }
@@ -185,8 +214,7 @@ fn load_plugin(options: &Options) -> Result<Loaded, String> {
         }
         PluginFormat::Vst3 => {
             initialise_com()?;
-            let plugin =
-                Vst3Adapter::load(&options.plugin_dll, &options.plugin_id, options.role)?;
+            let plugin = Vst3Adapter::load(&options.plugin_dll, &options.plugin_id, options.role)?;
             let processor = Vst3BlockProcessor::new(Arc::clone(&plugin));
             Ok((plugin, Box::new(processor)))
         }
@@ -324,6 +352,9 @@ fn handle_clap(plugin: &ClapAdapter, op: Op, payload: &[u8]) -> Result<Vec<u8>, 
             Ok(Vec::new())
         }
         Op::Handshake => Ok(plugin.handshake()),
+        Op::PresetList | Op::PresetLoadState => {
+            Err("a CLAP plugin has no program lists or preset states".into())
+        }
     }
 }
 

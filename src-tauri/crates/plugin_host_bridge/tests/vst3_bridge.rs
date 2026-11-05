@@ -15,8 +15,9 @@ use plugin_bridge::protocol::{
     PARAM_MODULATION, PARAM_VALUE,
 };
 use plugin_bridge::records::{
-    Handshake, ParamRecord, ParamUnit, PortDirection, PortRole, SpeakerLayout, MAX_PORTS,
-    PARAM_AUTOMATABLE, PARAM_HIDDEN,
+    Handshake, ParamRecord, ParamUnit, PortDirection, PortRole, PresetRecord, PresetSource,
+    PresetStateRecord, ProgramListRecord, SpeakerLayout, MAX_PORTS, PARAM_AUTOMATABLE,
+    PARAM_HIDDEN,
 };
 use plugin_bridge::session::{
     BlockOutcome, BlockReply, BlockRequest, BridgeLayout, BridgeProcess,
@@ -32,7 +33,7 @@ const HOLD_EDIT: u32 = 9;
 const LOOKAHEAD: u32 = 10;
 const RENAME: u32 = 11;
 const PROCESSOR_SELF: u32 = 12;
-const PARAMETER_COUNT: usize = 23;
+const PARAMETER_COUNT: usize = 24;
 const LOOKAHEAD_LATENCY: u32 = 128;
 const WRITTEN_VALUE: f64 = 0.9;
 const HELD_VALUE: f64 = 0.25;
@@ -299,7 +300,10 @@ fn an_auxiliary_output_plays_only_once_the_engine_wants_it() {
 
     activate_with(0);
     let closed = process(&bridge, 0, &[], TIMEOUT);
-    assert!(closed.aux.iter().all(|&s| s == 0.0), "a closed bus is silent");
+    assert!(
+        closed.aux.iter().all(|&s| s == 0.0),
+        "a closed bus is silent"
+    );
 
     activate_with(0b10);
     let open = process(&bridge, 1, &[], TIMEOUT);
@@ -360,14 +364,127 @@ fn activating_again_at_a_new_size_keeps_the_plugin_and_its_state() {
     );
 }
 
-/// Presets are step 9 of ADR-033.
+const PROGRAM: u32 = 23;
+
+fn program_lists(bridge: &BridgeProcess) -> Vec<ProgramListRecord> {
+    let reply = bridge
+        .request(Op::PresetList, &[], TIMEOUT)
+        .expect("the program lists");
+    ProgramListRecord::decode_list(&reply).expect("program lists")
+}
+
+fn choose_program(bridge: &BridgeProcess, key: &str) -> Result<Vec<u8>, std::io::Error> {
+    let record = PresetRecord {
+        source: PresetSource::Plugin,
+        location: None,
+        load_key: Some(key.into()),
+    };
+    bridge.request(Op::PresetLoad, &record.encode().unwrap(), TIMEOUT)
+}
+
 #[test]
-fn what_a_vst3_plugin_cannot_do_yet_is_refused_and_the_channel_stays_open() {
+fn the_controller_lists_its_programs_and_the_one_in_use() {
     let bridge = activated();
+    let lists = program_lists(&bridge);
+    assert_eq!(lists.len(), 1);
+    assert_eq!(lists[0].name, "Factory");
+    assert_eq!(lists[0].programs, ["Quiet", "Unity", "Loud"]);
+    assert_eq!(lists[0].selector, Some(PROGRAM));
+    assert_eq!(lists[0].current, Some(1), "Unity is the default");
+}
+
+#[test]
+fn a_program_reaches_the_processor_and_the_controller_follows_it() {
+    let bridge = activated();
+    choose_program(&bridge, &format!("{PROGRAM}:2")).expect("the program loads");
+    assert_eq!(param_value(&bridge, PROGRAM), 1.0);
+    assert_eq!(param_value(&bridge, GAIN), 1.75 / 2.0);
+    assert_eq!(program_lists(&bridge)[0].current, Some(2));
+    assert_eq!(
+        process(&bridge, 0, &[], TIMEOUT).output,
+        scaled(&ramp(), 1.75)
+    );
+}
+
+#[test]
+fn a_program_that_is_not_one_of_the_listing_is_refused_and_the_channel_stays_open() {
+    let bridge = activated();
+    for key in ["", "garbage", "23:-1", "99999:0"] {
+        assert!(choose_program(&bridge, key).is_err(), "{key:?}");
+    }
+    let file = PresetRecord {
+        source: PresetSource::File,
+        location: Some("a.vstpreset".into()),
+        load_key: None,
+    };
     assert!(bridge
-        .request(Op::PresetLoad, &0u32.to_le_bytes(), TIMEOUT)
+        .request(Op::PresetLoad, &file.encode().unwrap(), TIMEOUT)
         .is_err());
+    assert!(bridge.request(Op::PresetLoad, &[1], TIMEOUT).is_err());
+    assert_eq!(param_value(&bridge, GAIN), 0.5, "nothing changed");
+}
+
+#[test]
+fn the_states_of_a_preset_file_go_to_the_processor_and_to_the_controller() {
+    let bridge = activated();
+    let state = PresetStateRecord {
+        component: 0.5f64.to_le_bytes().to_vec(),
+        controller: Some(0.8f64.to_le_bytes().to_vec()),
+    };
+    bridge
+        .request(Op::PresetLoadState, &state.encode().unwrap(), TIMEOUT)
+        .expect("the preset loads");
+    assert_eq!(param_value(&bridge, GAIN), 0.25);
+    assert_eq!(param_value(&bridge, SELF_VALUE), 0.8);
+    assert_eq!(
+        process(&bridge, 0, &[], TIMEOUT).output,
+        scaled(&ramp(), 0.5)
+    );
+}
+
+#[test]
+fn a_preset_state_the_plugin_refuses_is_an_error_and_a_file_without_controller_state_leaves_it_alone(
+) {
+    let bridge = activated();
+    let refused = PresetStateRecord {
+        component: vec![1, 2],
+        controller: Some(0.8f64.to_le_bytes().to_vec()),
+    };
+    assert!(bridge
+        .request(Op::PresetLoadState, &refused.encode().unwrap(), TIMEOUT)
+        .is_err());
+    assert_eq!(
+        param_value(&bridge, SELF_VALUE),
+        0.0,
+        "the controller was not reached"
+    );
+    let component_only = PresetStateRecord {
+        component: 1.0f64.to_le_bytes().to_vec(),
+        controller: None,
+    };
+    bridge
+        .request(
+            Op::PresetLoadState,
+            &component_only.encode().unwrap(),
+            TIMEOUT,
+        )
+        .expect("the preset loads");
+    assert_eq!(param_value(&bridge, GAIN), 0.5);
+    assert!(bridge.request(Op::PresetLoadState, &[7], TIMEOUT).is_err());
     assert!(bridge.request(Op::SaveState, &[], TIMEOUT).is_ok());
+}
+
+#[test]
+fn a_controller_that_refuses_its_own_state_does_not_fail_the_load() {
+    let bridge = activated();
+    let state = PresetStateRecord {
+        component: 1.5f64.to_le_bytes().to_vec(),
+        controller: Some(vec![1, 2, 3]),
+    };
+    bridge
+        .request(Op::PresetLoadState, &state.encode().unwrap(), TIMEOUT)
+        .expect("the processor's state is loaded");
+    assert_eq!(param_value(&bridge, GAIN), 0.75);
 }
 
 #[test]

@@ -382,11 +382,12 @@ through the same routing as a CLAP effect: `PluginParams.sidechain_source`,
 is above 0, whatever the format). No project, command, event or frontend change.
 Sandboxed too since ADR-033 step 8b, second half (see "VST3 sidechain in the sandbox").
 
-- **Scan** (`vst3/host.rs::probe_aux_input_count`). For each effect class
-  (instruments are not probed, as for CLAP) the scan creates a throwaway component
-  in the library it already loaded (`instantiate_processor`), reads its auxiliary
-  inputs (`vst3/buses.rs::read_aux_inputs`), then `terminate` and `release`, all in
-  one `crash_guard` call. A plugin that fails or crashes counts as having none. An
+- **Scan** (the scan process of ADR-033 step 10, `plugin_host_bridge/src/scan.rs`; see
+  "Out-of-process scan and blocklist"). For each effect class (instruments are not
+  probed, as for CLAP) the scan process creates a throwaway component in the library
+  it loaded (`instantiate_processor`), reads its auxiliary inputs
+  (`vst3/buses.rs::read_aux_inputs`), then `terminate` and `release`. A plugin that
+  fails counts as having none; one that crashes the process is blocked. An
   auxiliary input is an input bus after the main one, of type `kAux`, not flagged
   control voltage, and consecutive from bus 1 (the SDK puts every `kMain` bus
   first), so input port `p` is input bus `p`. The count fills
@@ -495,8 +496,8 @@ instruments and capability negotiation are covered by
 `../decisions/013-clap-plugin-instruments.md` and
 `../decisions/014-capability-driven-port-sizing.md`.
 
-**Sidechain input ports (ADR-014, 2026-09-25).** `plugin_formats/clap/host.rs`
-probes `clap.audio-ports` at scan time — a throwaway create → init → query →
+**Sidechain input ports (ADR-014, 2026-09-25).** the CLAP scan
+(`plugin_host_bridge/src/scan.rs`, since ADR-033 step 10) probes `clap.audio-ports` — a throwaway create → init → query →
 destroy cycle, SEH-guarded — so `PluginManifest.num_sidechain_inputs` is the
 plugin's real aux input count, not always `0`. `ClapWrapperNode` builds one
 `ClapAudioBuffer` per input port (main at 0, aux at `1..`) and reports the real
@@ -1426,6 +1427,7 @@ CLAP plugin (`can_run_sandboxed(format)`).
   sandboxed). Still one stereo output: an auxiliary output a track reads is cut by the compiler.
 - **Auxiliary outputs** (step 8b, first half): see "VST3 auxiliary outputs in the sandbox" below.
 - **Sidechain** (step 8b, second half): see "VST3 sidechain in the sandbox" below.
+- **Presets** (step 9): see "VST3 presets in the sandbox" below.
   `IComponentHandlerBusActivation` is supported neither in process nor in the bridge (ADR-014).
 
 Tests: `vst3_adapter.rs` (notes at their offset, a NoteOff of a skipped block, reset, mod wheel through
@@ -1482,7 +1484,59 @@ instrument track feeds the effect's sidechain; sandbox against in-process at the
 `vst3_bridge.rs` (a sidechain port is mixed to mono and added; no signal leaves the effect alone; the handshake
 carries four input channels), `vst3_adapter.rs` (an effect carries its sidechain, an instrument none).
 
+### VST3 presets in the sandbox (ADR-033 step 9, 2026-11-05)
+
+A sandboxed VST3 plugin offers and loads its presets through the same two commands, the same last-listing
+whitelist, the same FFI-gate rules and the same `PresetPicker.svelte` as in process ("Host VST3 presets"). Before
+this step it offered none: the listing needed the in-process controller.
+
+- **Programs** (`IUnitInfo`). `Op::PresetList` returns the program lists the bridge read from its controller
+  (`ProgramListRecord`: list id and name, selector parameter, program in use, names); the engine builds the same
+  presets from them (`programs_as_presets`, key `<parameter id>:<index>`). Choosing one is `Op::PresetLoad` with a
+  `Plugin` source: in the bridge, under the ADR-010 gate, the controller takes the selector's value
+  (`select_program`), a zero-sample `process` gives it to the processor, and the controller then takes the
+  processor's state (when the plugin is active). In process the value goes through the parameter queue and
+  the host waits for a block; here it is one request. The engine then re-reads the bases of the parameters
+  modulated by value and marks the project unsaved.
+- **Files** (`.vstpreset`). Listed and read by the engine, which checks the file exactly as in process (size
+  bound, chunk bounds, class id) **before** the bridge is touched. `Op::PresetLoadState` carries the `Comp` chunk
+  and the optional `Cont` chunk (`PresetStateRecord`); the bridge loads the processor's state through the ADR-010
+  path, then the controller's own state (a refusal is logged and does not fail the load).
+- **Protocol.** Two control ops added, `PresetList` (13) and `PresetLoadState` (14); the block message and
+  `BRIDGE_PROTOCOL_VERSION` (4) are unchanged. The CLAP bridge answers an error to both.
+- **Not supported** (in process either): `IUnitHandler` — a plugin that changes its program by itself moves
+  the selector parameter, which the bridge reports like any window edit; the picker's "in use" mark is stale
+  until it is shown again.
+- **Test plugin.** Both classes list `Quiet` / `Unity` / `Loud` (gain 0.25 / 1.0 / 1.75) through parameter 23
+  `Program`; only the processor applies a program; the controller's `setState` is its `Self value`.
+
+Tests: `vst3_preset_sandbox_tests.rs` (sandbox against in-process: same list, same "in use", same values, state,
+samples and unsaved marks for a program and for a file; only the last listing is loadable; an unusable file is
+refused before the bridge), `vst3_bridge.rs` (the ops), `plugin_bridge` (the records).
+
 ---
+
+### Out-of-process scan and blocklist (ADR-033 step 10, 2026-11-05)
+
+Every plugin file is listed by `plugin_host_bridge --scan <vst3|clap> <file>` in a process of its own
+(`plugin_system/scan.rs::scan_file`, 15 s limit). The process loads the file, lists its plugins and, for an
+effect, the auxiliary inputs (`read_aux_inputs` for VST3, `clap.audio-ports` for CLAP: `num_sidechain_inputs`),
+and prints one `ScannedPluginRecord` block. A crash or a hang ends only that process:
+
+- the file goes on the **blocklist** (`plugin-blocklist.json`, app data directory) with the reason, `Crashed` or
+  `TimedOut`; the scan of the other files goes on;
+- a file the machine cannot load (wrong architecture, missing dependency; `SCAN_EXIT_REFUSED`) is skipped and
+  **not** blocked;
+- a blocked file is not loaded again until its size or modification time changes, or `reenable_blocked_plugin`
+  lifts the block and lists it at once;
+- a listed file that has not changed is not listed again (`plugin-scan-cache.json`); `rescan_plugins` forgets the
+  cache, not the blocklist.
+
+`PluginHost::new` does not scan; `main.rs::scan_installed_plugins` sets the data directory and scans in `setup`.
+Commands: `list_blocked_plugins`, `take_newly_blocked_plugins`, `reenable_blocked_plugin`; no screen uses them yet.
+Tests: `plugin_system/scan_sandbox_tests.rs` with `crates/test_crashing_plugin` (`crash_on_load`,
+`crash_in_factory`, `hang_in_factory`). Tests that change the search-folder variables take
+`sandbox_tests::environment_lock`.
 
 ## Editor Windows — DPI (Windows)
 

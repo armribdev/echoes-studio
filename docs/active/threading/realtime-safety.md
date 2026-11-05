@@ -318,6 +318,13 @@ no allocation and no new system call on either audio thread.
   (`wanted_outputs`, off the audio thread, main thread of the bridge); a different
   set reactivates the plugin, as a restart does.
 
+**VST3 presets in the bridge (ADR-033 step 9).** Nothing changes on either audio thread. Listing
+programs, choosing one and loading a preset file's states are control requests on the bridge's
+main thread, under the same ADR-010 gate as a state load: the audio thread never waits on it
+and passes its block through while the gate is held. A program is given to the processor by a
+zero-sample `process` on the main thread with the gate held (the flush the bridge already uses
+before a state save), not through the block message.
+
 **VST3 in the bridge (ADR-033 step 5).** The message is the same; the engine side is
 unchanged (step 6 below added its parameter section). Bridge side,
 `Vst3BlockProcessor::process`: no allocation (the activation sizes the buffers, the bus

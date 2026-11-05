@@ -22,9 +22,10 @@
 //!    and tears the FFI handle down.
 
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::ptr::NonNull;
 use std::sync::Arc;
+use std::time::Duration;
 
 use serde::Serialize;
 
@@ -52,6 +53,9 @@ use crate::plugin_system::lifecycle::{transition, LifecycleError, LifecycleState
 use crate::plugin_system::parameter::PluginParamInfo;
 use crate::plugin_system::presets::{PluginPreset, PresetListing, PresetSource, Vst3PresetFiles};
 use crate::plugin_system::registry::{PluginManifest, PluginRegistry};
+use crate::plugin_system::scan::{
+    manifest_of, scan_file, BlockedPlugin, FileScan, FileStamp, ScanFormat, ScanStore, SCAN_TIMEOUT,
+};
 use crate::plugin_system::state::DeviceState;
 use crate::plugin_system::track_info::placement_track_infos;
 use crate::plugin_system::wrapper::{DeviceFormat, PassThroughDevice};
@@ -157,6 +161,11 @@ pub struct PluginHost {
     /// The auxiliary output buses (bit `n` = bus `n`) the graph reads from each
     /// placement, set by the compiler before it builds the nodes.
     demanded_outputs: HashMap<String, u32>,
+    /// The blocklist and the results of the last scan (ADR-033, step 10).
+    scan_store: ScanStore,
+    scan_timeout: Duration,
+    /// Plugin files blocked since the interface last asked.
+    newly_blocked: Vec<BlockedPlugin>,
 }
 
 impl PluginHost {
@@ -172,6 +181,9 @@ impl PluginHost {
             track_infos: HashMap::new(),
             preset_listings: HashMap::new(),
             demanded_outputs: HashMap::new(),
+            scan_store: ScanStore::default(),
+            scan_timeout: SCAN_TIMEOUT,
+            newly_blocked: Vec::new(),
         }
     }
 
@@ -265,16 +277,104 @@ impl PluginHost {
             .unwrap_or(0)
     }
 
-    /// Idempotent — skips plugins already registered.
-    pub fn scan_plugins(&mut self) {
-        let vst3_host = crate::plugin_formats::vst3::host::Vst3Host::new();
-        vst3_host.scan(&mut self.registry);
+    pub(crate) fn set_scan_directory(&mut self, directory: &Path) {
+        self.scan_store = ScanStore::open(directory);
+    }
 
-        let clap_host = crate::plugin_formats::clap::host::ClapHost::new();
-        clap_host.scan(&mut self.registry);
+    #[cfg(test)]
+    pub(crate) fn set_scan_timeout(&mut self, timeout: Duration) {
+        self.scan_timeout = timeout;
+    }
+
+    /// Idempotent — skips plugins already registered.  Each plugin file is listed by
+    /// `plugin_host_bridge --scan` in a process of its own with a time limit; a file that
+    /// crashes or hangs is blocked, one listed before and unchanged is not listed again
+    /// (ADR-033, step 10).  Without the bridge executable nothing is loaded.
+    pub fn scan_plugins(&mut self) {
+        let Some(bridge_exe) = self.bridge_exe.clone() else {
+            eprintln!("[plugin] scan skipped — plugin_host_bridge not found next to the application");
+            return;
+        };
+        let modules: Vec<(ScanFormat, PathBuf)> = crate::plugin_formats::vst3::host::find_modules()
+            .into_iter()
+            .map(|module| (ScanFormat::Vst3, module))
+            .chain(
+                crate::plugin_formats::clap::host::find_modules()
+                    .into_iter()
+                    .map(|module| (ScanFormat::Clap, module)),
+            )
+            .collect();
+        for (format, module) in &modules {
+            self.scan_module(&bridge_exe, *format, module);
+        }
+        let found: Vec<PathBuf> = modules.into_iter().map(|(_, module)| module).collect();
+        self.scan_store.keep_only(&found);
+        self.scan_store.save();
 
         let total = self.registry.len();
         eprintln!("[plugin] scan complete — {total} plugins registered");
+    }
+
+    /// Like [`Self::scan_plugins`], but lists every file again.
+    pub fn rescan_plugins(&mut self) {
+        self.scan_store.forget_scanned();
+        self.scan_plugins();
+    }
+
+    fn scan_module(&mut self, bridge_exe: &Path, format: ScanFormat, module: &Path) {
+        let Some(stamp) = FileStamp::of(module) else {
+            return;
+        };
+        if self.scan_store.is_blocked(module, stamp) {
+            return;
+        }
+        let plugins = match self.scan_store.cached(module, stamp) {
+            Some(plugins) => plugins,
+            None => match scan_file(bridge_exe, format, module, self.scan_timeout) {
+                FileScan::Plugins(plugins) => {
+                    self.scan_store.remember(module, stamp, &plugins);
+                    plugins
+                }
+                FileScan::Refused => {
+                    eprintln!("[plugin] scan: {} is not a loadable plugin", module.display());
+                    return;
+                }
+                FileScan::Blocked(reason) => {
+                    eprintln!("[plugin] scan: {} blocked ({reason:?})", module.display());
+                    let blocked = self.scan_store.block(module, format, stamp, reason);
+                    self.newly_blocked.push(blocked);
+                    return;
+                }
+            },
+        };
+        for plugin in &plugins {
+            let manifest = manifest_of(format, module, plugin);
+            if self.registry.get(&manifest.id).is_none() {
+                self.registry.add(manifest);
+            }
+        }
+    }
+
+    pub fn blocked_plugins(&self) -> Vec<BlockedPlugin> {
+        self.scan_store.blocked_plugins()
+    }
+
+    /// The files a scan blocked since the last call, for the interface to announce once.
+    pub fn take_newly_blocked(&mut self) -> Vec<BlockedPlugin> {
+        std::mem::take(&mut self.newly_blocked)
+    }
+
+    /// Lifts the block on `module` and lists it again now.
+    pub fn reenable_plugin(&mut self, module: &Path) {
+        let Some(bridge_exe) = self.bridge_exe.clone() else {
+            return;
+        };
+        let Some(format) = self.scan_store.unblock(module) else {
+            return;
+        };
+        self.newly_blocked.retain(|blocked| blocked.path != module);
+        self.scan_module(&bridge_exe, format, module);
+        self.scan_store.save();
     }
 
     pub fn list_plugins(&self) -> Vec<PluginInfo> {
@@ -1087,7 +1187,9 @@ impl PluginHost {
             return Some(PresetListing::Clap(source));
         }
         let instance = self.instance_by_key(instance_key)?;
-        instance.vst3_controller()?;
+        if !instance.has_vst3_presets() {
+            return None;
+        }
         let files = self
             .registry
             .get(&instance.device_id)
