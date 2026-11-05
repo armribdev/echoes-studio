@@ -1428,7 +1428,7 @@ CLAP plugin (`can_run_sandboxed(format)`).
 - **Auxiliary outputs** (step 8b, first half): see "VST3 auxiliary outputs in the sandbox" below.
 - **Sidechain** (step 8b, second half): see "VST3 sidechain in the sandbox" below.
 - **Presets** (step 9): see "VST3 presets in the sandbox" below.
-  `IComponentHandlerBusActivation` is supported neither in process nor in the bridge (ADR-014).
+  `IComponentHandlerBusActivation` is supported neither in process nor in the bridge (ADR-014); decided against on 2026-11-06, because the buses follow what the graph reads and a request would change nothing.
 
 Tests: `vst3_adapter.rs` (notes at their offset, a NoteOff of a skipped block, reset, mod wheel through
 `IMidiMapping`, an effect gets no notes), `vst3_instrument_sandbox_tests.rs` (preference, latency, a killed

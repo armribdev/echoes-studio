@@ -335,7 +335,7 @@ determinism are untouched, and the project file does not change.
 - **UI.** `PluginHost::plugin_outputs` lists the VST3 aux buses; the "Entrée"
   picker (`TrackInputPicker.svelte`) is unchanged.
 - **Not done:** `kDefaultActive` for outputs, a user-chosen activation,
-  `IComponentHandlerBusActivation`. (VST3 aux inputs: see the next amendment.)
+  `IComponentHandlerBusActivation` (decided against on 2026-11-06, ADR-033 step 8b: the buses follow what the graph reads, a plugin's request would change nothing). (VST3 aux inputs: see the next amendment.)
 - **Verification.** Unit tests and the hand-made plugin (buses configurable in
   `vst3/fake_plugin.rs`), including a compiled project whose second track hears the
   first track's aux bus; TDR Nova (one stereo output, two audio inputs) reads its
