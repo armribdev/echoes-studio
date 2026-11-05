@@ -51,7 +51,10 @@
 //! Both classes have a second audio output, `Aux Out` (an auxiliary bus, closed unless the
 //! host opens it): half of what the main output plays. Left alone it changes nothing.
 //!
-//! Not there yet, added by the step that needs it: units and programs, a sidechain input.
+//! The effect also has a mono sidechain input (`Sidechain`, an auxiliary bus): when the host feeds
+//! it, a quarter of its level is added to the output. A host that does not leaves it alone.
+//!
+//! Not there yet, added by the step that needs it: units and programs.
 
 use std::ffi::c_void;
 use std::mem::{offset_of, zeroed};
@@ -107,6 +110,12 @@ const CONTROLLER_PITCH_BEND: i16 = 129;
 /// the share of the main sound it carries.
 const AUX_OUTPUT: i32 = 1;
 const AUX_LEVEL: f32 = 0.5;
+
+/// Index of the effect's second audio input, a mono sidechain, and the share of it
+/// added to the effect's output when the host feeds it.
+const SIDECHAIN_INPUT: i32 = 1;
+const SIDECHAIN_LEVEL: f32 = 0.25;
+const SPEAKER_MONO: u64 = 1 << 19;
 
 /// The size of the view before the host tells it another one.
 pub const VIEW_INITIAL_SIZE: (i32, i32) = (400, 300);
@@ -676,7 +685,7 @@ unsafe extern "C" fn component_set_io_mode(_this: *mut IComponent, _mode: i32) -
 
 fn bus_count(kind: Kind, media: i32, direction: i32) -> i32 {
     match (media, direction, kind) {
-        (K_AUDIO, K_INPUT, Kind::Effect) => 1,
+        (K_AUDIO, K_INPUT, Kind::Effect) => 2,
         (K_AUDIO, K_OUTPUT, _) => 2,
         (K_EVENT, K_INPUT, Kind::Instrument) => 1,
         _ => 0,
@@ -725,17 +734,19 @@ unsafe extern "C" fn component_bus_info(
     let info = &mut *(info as *mut BusInfo);
     info.media_type = media;
     info.direction = direction;
-    info.channel_count = if media == K_AUDIO { 2 } else { 1 };
     let is_aux_output = media == K_AUDIO && direction == K_OUTPUT && index == AUX_OUTPUT;
+    let is_sidechain = media == K_AUDIO && direction == K_INPUT && index == SIDECHAIN_INPUT;
+    info.channel_count = if is_sidechain || media != K_AUDIO { 1 } else { 2 };
     let name = match (media, direction) {
         _ if is_aux_output => "Aux Out",
+        _ if is_sidechain => "Sidechain",
         (K_AUDIO, K_INPUT) => "Stereo In",
         (K_AUDIO, _) => "Stereo Out",
         _ => "Events",
     };
     write_utf16(&mut info.name, name);
-    info.bus_type = i32::from(is_aux_output);
-    info.flags = if is_aux_output {
+    info.bus_type = i32::from(is_aux_output || is_sidechain);
+    info.flags = if is_aux_output || is_sidechain {
         0
     } else {
         BUS_FLAGS_DEFAULT_ACTIVE
@@ -863,13 +874,16 @@ unsafe extern "C" fn processor_set_bus_arrangements(
 ) -> TResult {
     let kind = (*from_processor(this)).kind;
     let wanted_inputs = bus_count(kind, K_AUDIO, K_INPUT);
-    let stereo = |arrangements: *mut u64, count: i32| {
-        (0..count).all(|i| *arrangements.add(i as usize) == SPEAKER_STEREO)
+    let arranged = |arrangements: *mut u64, count: i32, mono_at: i32| {
+        (0..count).all(|i| {
+            let expected = if i == mono_at { SPEAKER_MONO } else { SPEAKER_STEREO };
+            *arrangements.add(i as usize) == expected
+        })
     };
     if input_count == wanted_inputs
         && output_count == bus_count(kind, K_AUDIO, K_OUTPUT)
-        && stereo(inputs, input_count)
-        && stereo(outputs, output_count)
+        && arranged(inputs, input_count, SIDECHAIN_INPUT)
+        && arranged(outputs, output_count, -1)
     {
         K_RESULT_OK
     } else {
@@ -886,7 +900,11 @@ unsafe extern "C" fn processor_bus_arrangement(
     if index < 0 || index >= bus_count((*from_processor(this)).kind, K_AUDIO, direction) {
         return K_INVALID_ARGUMENT;
     }
-    *arrangement = SPEAKER_STEREO;
+    *arrangement = if direction == K_INPUT && index == SIDECHAIN_INPUT {
+        SPEAKER_MONO
+    } else {
+        SPEAKER_STEREO
+    };
     K_RESULT_OK
 }
 
@@ -1067,6 +1085,12 @@ unsafe extern "C" fn processor_process(
     let wheel = f64::from_bits(plugin.mod_wheel.load(Ordering::Relaxed));
     let bend = f64::from_bits(plugin.bend.load(Ordering::Relaxed));
     let shape = ((1.0 + wheel) * (1.0 + (bend - 0.5))) as f32;
+    let sidechain = match plugin.kind {
+        Kind::Effect if data.num_inputs > SIDECHAIN_INPUT => {
+            channel(data.inputs.add(SIDECHAIN_INPUT as usize), 0)
+        }
+        _ => None,
+    };
     for frame in 0..data.num_samples.max(0) as usize {
         while let Some(plain) = gain_changes.due(frame) {
             gain = plain;
@@ -1080,7 +1104,12 @@ unsafe extern "C" fn processor_process(
             };
             let sound = match plugin.kind {
                 Kind::Effect => {
-                    channel(data.inputs, index).map_or(0.0, |input| *input.add(frame) * gain as f32)
+                    let heard =
+                        channel(data.inputs, index).map_or(0.0, |input| *input.add(frame) * gain as f32);
+                    match sidechain {
+                        Some(side) => heard + *side.add(frame) * SIDECHAIN_LEVEL,
+                        None => heard,
+                    }
                 }
                 Kind::Instrument => held * gain as f32 * shape,
             };

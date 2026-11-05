@@ -40,6 +40,8 @@ const FRAMES: usize = 64;
 const CHANNELS: usize = 2;
 /// The test plugin has a main output and an `Aux Out` bus, two channels each.
 const OUTPUT_CHANNELS: usize = 4;
+/// The test effect also has a mono sidechain input, carried as a stereo pair.
+const INPUT_CHANNELS: usize = 4;
 const LATENCY: u32 = 64;
 const TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -209,12 +211,78 @@ fn the_handshake_declares_normalised_values_and_the_ports_a_block_carries() {
         assert_eq!(main.channels, 2);
         assert_eq!(main.layout, SpeakerLayout::Stereo);
     }
-    assert_eq!(handshake.block_channels(PortDirection::Input), CHANNELS);
+    assert_eq!(
+        handshake.block_channels(PortDirection::Input),
+        INPUT_CHANNELS,
+        "the main input and the sidechain"
+    );
     assert_eq!(
         handshake.block_channels(PortDirection::Output),
         OUTPUT_CHANNELS,
         "the main output and the auxiliary one"
     );
+}
+
+#[test]
+fn the_sidechain_port_of_a_block_reaches_the_plugin_mixed_to_mono() {
+    let bridge = activated();
+    let main = ramp();
+    let sidechain = [vec![0.25f32; FRAMES], vec![0.75f32; FRAMES]].concat();
+    let input = [main.clone(), sidechain].concat();
+    let mut output = vec![9.0f32; FRAMES * OUTPUT_CHANNELS];
+    let request = BlockRequest {
+        frames: FRAMES,
+        input: Some(&input),
+        input_channels: INPUT_CHANNELS,
+        output_channels: OUTPUT_CHANNELS,
+        transport: None,
+        notes: &[],
+        params: &[],
+        sequence: 0,
+        steady_time: 0,
+        reset: false,
+    };
+    let mut reply = BlockReply {
+        output: &mut output,
+        edits: &mut [],
+        midi: &mut [],
+    };
+
+    let outcome = bridge.audio().process_block(&request, &mut reply, TIMEOUT);
+
+    assert!(matches!(outcome, BlockOutcome::Processed { .. }));
+    let heard = 0.5f32 * 0.25;
+    let expected: Vec<f32> = main.iter().map(|sample| sample + heard).collect();
+    assert_eq!(&output[..FRAMES * CHANNELS], expected.as_slice());
+}
+
+#[test]
+fn a_block_without_a_sidechain_signal_leaves_the_effect_alone() {
+    let bridge = activated();
+    let main = ramp();
+    let input = [main.clone(), vec![0.0f32; FRAMES * CHANNELS]].concat();
+    let mut output = vec![9.0f32; FRAMES * OUTPUT_CHANNELS];
+    let request = BlockRequest {
+        frames: FRAMES,
+        input: Some(&input),
+        input_channels: INPUT_CHANNELS,
+        output_channels: OUTPUT_CHANNELS,
+        transport: None,
+        notes: &[],
+        params: &[],
+        sequence: 0,
+        steady_time: 0,
+        reset: false,
+    };
+    let mut reply = BlockReply {
+        output: &mut output,
+        edits: &mut [],
+        midi: &mut [],
+    };
+
+    bridge.audio().process_block(&request, &mut reply, TIMEOUT);
+
+    assert_eq!(&output[..FRAMES * CHANNELS], main.as_slice());
 }
 
 #[test]

@@ -308,7 +308,7 @@ A VST3 plugin (effect or instrument) with several audio output buses feeds the
 same routing as a CLAP multi-out plugin: `AppTrack.input_source`,
 `SET_TRACK_INPUT`, the left-panel "Entrée" picker, `get_plugin_outputs`. No
 project, command or event change. Sandboxed too since ADR-033 step 8b (see "VST3 auxiliary outputs
-in the sandbox"); only the sidechain input is still in-process only.
+in the sandbox").
 
 - **Reading** (`vst3/buses.rs`). At every activation `vst3_ensure_active` reads
   the output buses (`getBusCount`, then `getBusInfo` after `setBusArrangements`)
@@ -380,7 +380,7 @@ An effect with an auxiliary audio input bus receives the signal of another track
 through the same routing as a CLAP effect: `PluginParams.sidechain_source`,
 `UPDATE_EFFECT`, and `SidechainPicker.svelte` (shown when `num_sidechain_inputs`
 is above 0, whatever the format). No project, command, event or frontend change.
-In-process only until the second half of ADR-033 step 8b (a sandboxed plugin has one audio input).
+Sandboxed too since ADR-033 step 8b, second half (see "VST3 sidechain in the sandbox").
 
 - **Scan** (`vst3/host.rs::probe_aux_input_count`). For each effect class
   (instruments are not probed, as for CLAP) the scan creates a throwaway component
@@ -1425,7 +1425,8 @@ CLAP plugin (`can_run_sandboxed(format)`).
   reports its latency through `BridgedInstrument::latency_samples` (a CLAP one reports 0, in process and
   sandboxed). Still one stereo output: an auxiliary output a track reads is cut by the compiler.
 - **Auxiliary outputs** (step 8b, first half): see "VST3 auxiliary outputs in the sandbox" below.
-- **Not yet** (step 8b, second half): the sidechain input in the bridge, `IComponentHandlerBusActivation`.
+- **Sidechain** (step 8b, second half): see "VST3 sidechain in the sandbox" below.
+  `IComponentHandlerBusActivation` is supported neither in process nor in the bridge (ADR-014).
 
 Tests: `vst3_adapter.rs` (notes at their offset, a NoteOff of a skipped block, reset, mod wheel through
 `IMidiMapping`, an effect gets no notes), `vst3_instrument_sandbox_tests.rs` (preference, latency, a killed
@@ -1457,6 +1458,29 @@ Tests: `render_harness::vst3_plugins::a_sandboxed_instrument_renders_its_aux_out
 `vst3_adapter.rs` (a closed bus is silent, an open one plays, a new wish reactivates),
 `vst3_bridge.rs::an_auxiliary_output_plays_only_once_the_engine_wants_it`, and in `plugin_bridge` the
 multi-port block tests.
+
+### VST3 sidechain in the sandbox (ADR-033 step 8b, second half, 2026-11-05)
+
+A sandboxed VST3 effect with an auxiliary input bus (`kAux`, not control voltage) is fed by the graph port that
+routes a track into it (`PluginParams.sidechain_source`), as in process.
+
+- **Port table.** For an effect the handshake lists the main input and each auxiliary input up to `MAX_PORTS`
+  as active ports; an **instrument** carries none (it is given no audio input, in process either). The engine
+  reads the table once (`BridgedPlugin::input_channels`); `BridgedNode::num_input_ports()` is the number of
+  active input ports, final once `prepare` has run.
+- **Block.** A request carries two channels per input port in table order: the engine copies each graph input
+  (a port with no source is zeros). The bridge keeps one stereo buffer per port and hands them to
+  `Vst3InputBuses` — the code the engine's `VstWrapperNode` uses — so a bus the plugin declares mono gets the
+  mean of the two channels and its silence flags follow the samples, exactly as in process. A skipped block
+  passes only the main input through.
+- **Opening.** The bridge opens every auxiliary input bus at each activation, as `vst3_ensure_active` does.
+- **Test plugin.** The effect has a mono `Sidechain` input (auxiliary bus); fed, a quarter of its level is
+  added to the output, unfed it changes nothing. The `vst3_plugins` golden hash did not move.
+
+Tests: `render_harness::vst3_plugins::a_sandboxed_effect_hears_its_sidechain_like_an_in_process_one` (the
+instrument track feeds the effect's sidechain; sandbox against in-process at the five block sizes),
+`vst3_bridge.rs` (a sidechain port is mixed to mono and added; no signal leaves the effect alone; the handshake
+carries four input channels), `vst3_adapter.rs` (an effect carries its sidechain, an instrument none).
 
 ---
 

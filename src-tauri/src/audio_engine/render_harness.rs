@@ -1620,6 +1620,12 @@ mod vst3_plugins {
     use crate::project::PluginParams;
 
     fn host_with_test_plugins() -> PluginHost {
+        host_with_sidechain_inputs(0)
+    }
+
+    /// The registry as a scan would fill it: `sidechain_inputs` is what it counted for
+    /// the effect (the test effect has one), and sizes the effect's input ports.
+    fn host_with_sidechain_inputs(sidechain_inputs: usize) -> PluginHost {
         let mut host = PluginHost::new();
         for (id, name, is_instrument) in [
             (effect_id(), "Echoes Test Gain", false),
@@ -1632,7 +1638,7 @@ mod vst3_plugins {
                 format: DeviceFormat::Vst3,
                 path: Some(test_vst3_dll().clone()),
                 categories: vec![],
-                num_sidechain_inputs: 0,
+                num_sidechain_inputs: if is_instrument { 0 } else { sidechain_inputs },
                 is_instrument,
             });
         }
@@ -1877,6 +1883,55 @@ mod vst3_plugins {
                     .unwrap()
                     .is_sandboxed(),
                 "the instrument must really run in the bridge"
+            );
+            assert_eq!(
+                first_difference(&in_process, &sandboxed),
+                None,
+                "block size {block_size}"
+            );
+        }
+    }
+
+    /// The test effect reads the instrument track on its sidechain input, which adds a
+    /// quarter of that signal (mixed to mono) to the effect's output.
+    fn sidechain_project() -> AppProject {
+        let mut project = project();
+        let EffectParams::Plugin(params) = &mut project.tracks[0].effects[0].params else {
+            panic!("the first track carries the plugin effect");
+        };
+        params.sidechain_source = Some("midi".into());
+        project
+    }
+
+    /// ADR-033 step 8b, C-2: the sidechain of a bridged effect carries the same samples
+    /// as in the Echoes process, whatever the block size.
+    #[test]
+    fn a_sandboxed_effect_hears_its_sidechain_like_an_in_process_one() {
+        let with_sidechain = sidechain_project();
+        for block_size in BLOCK_SIZES {
+            let unwired = render_with_host(
+                &mut with_half_gain(host_with_sidechain_inputs(1)),
+                &project(),
+                block_size,
+            );
+            let in_process = render_with_host(
+                &mut with_half_gain(host_with_sidechain_inputs(1)),
+                &with_sidechain,
+                block_size,
+            );
+            assert!(
+                first_difference(&unwired, &in_process).is_some(),
+                "the sidechain must add its sound"
+            );
+            let mut sandboxed_host =
+                isolating_everything(with_half_gain(host_with_sidechain_inputs(1)));
+            let sandboxed = render_with_host(&mut sandboxed_host, &with_sidechain, block_size);
+            assert!(
+                sandboxed_host
+                    .instance_by_key("plugin")
+                    .unwrap()
+                    .is_sandboxed(),
+                "the effect must really run in the bridge"
             );
             assert_eq!(
                 first_difference(&in_process, &sandboxed),

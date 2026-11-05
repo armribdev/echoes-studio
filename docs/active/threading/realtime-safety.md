@@ -310,6 +310,10 @@ no allocation and no new system call on either audio thread.
   silence (the activation's buffers are new and zeroed, the reply buffer is cleared
   before each block). A block the bridge skips passes the main input through and
   leaves the other ports silent.
+- The input side works the same way: a request carries two channels per input port (the main one and the
+  sidechains of an effect). The engine copies each graph input into a vector sized at `prepare`; the bridge
+  copies each port into a buffer made at the activation and binds them with `Vst3InputBuses::bind`, which
+  writes pointers, the mono mix and the silence flags and allocates nothing.
 - The set of auxiliary buses to open travels in the `Activate` request
   (`wanted_outputs`, off the audio thread, main thread of the bridge); a different
   set reactivates the plugin, as a restart does.

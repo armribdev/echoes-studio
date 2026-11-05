@@ -138,7 +138,8 @@ struct Activation {
     max_frames: u32,
     inputs: Vst3InputBuses,
     outputs: Vst3OutputBuses,
-    input: AudioBuffer,
+    /// One per input port, the main one first.
+    input: Vec<AudioBuffer>,
     output: Vec<AudioBuffer>,
     param_changes: Box<HostParameterChanges>,
     /// Where the plugin writes the changes it makes itself, for its controller.
@@ -316,6 +317,16 @@ impl Vst3Adapter {
         Ok(latency)
     }
 
+    /// Auxiliary input buses a block carries: those under the port cap.  An
+    /// instrument is given no audio input, so it carries none.
+    fn carried_aux_inputs(&self, declared: usize) -> usize {
+        if self.is_instrument {
+            0
+        } else {
+            declared.min(MAX_PORTS - 1)
+        }
+    }
+
     /// The auxiliary buses a block can carry: those under the port cap.
     fn openable_outputs(&self) -> u32 {
         let carried = (1u32 << self.output_ports) - 1;
@@ -350,6 +361,10 @@ impl Vst3Adapter {
         if has_audio_input {
             ((*(*component).vtbl).activate_bus)(component, K_AUDIO, K_INPUT, 0, 1);
         }
+        let aux_inputs = read_aux_inputs(component);
+        for index in 1..=aux_inputs.len() {
+            ((*(*component).vtbl).activate_bus)(component, K_AUDIO, K_INPUT, index as i32, 1);
+        }
         let mut output_buses = read_output_buses(component);
         open_output_buses(
             component,
@@ -382,8 +397,12 @@ impl Vst3Adapter {
             _ => MidiControllerMap::empty(),
         };
 
-        let mut inputs = Vst3InputBuses::new(&[]);
+        let carried_inputs = &aux_inputs[..self.carried_aux_inputs(aux_inputs.len())];
+        let mut inputs = Vst3InputBuses::new(carried_inputs);
         inputs.prepare(PORT_CHANNELS, max_frames as usize);
+        let input = (0..inputs.num_ports())
+            .map(|_| AudioBuffer::new(PORT_CHANNELS, max_frames as usize))
+            .collect();
         let mut outputs = Vst3OutputBuses::new(&output_buses);
         outputs.prepare(PORT_CHANNELS, max_frames as usize);
         let output = (0..outputs.num_ports())
@@ -393,7 +412,7 @@ impl Vst3Adapter {
             max_frames,
             inputs,
             outputs,
-            input: AudioBuffer::new(PORT_CHANNELS, max_frames as usize),
+            input,
             output,
             param_changes: HostParameterChanges::boxed(),
             output_changes: HostParameterChanges::boxed(),
@@ -577,8 +596,9 @@ impl Vst3Adapter {
     }
 
     /// The audio ports of the plugin.  The active ones are what a block carries: the
-    /// main input and every output bus under the port cap (a bus the engine does not
-    /// read stays closed and plays silence).
+    /// main input, the sidechain inputs of an effect and every output bus, all under
+    /// the port cap (an output bus the engine does not read stays closed and plays
+    /// silence, a sidechain it does not feed hears silence).
     pub fn handshake(&self) -> Vec<u8> {
         let channels = PORT_CHANNELS as u32;
         let mut ports = Vec::new();
@@ -593,12 +613,16 @@ impl Vst3Adapter {
             )
         };
         if let Some(auxiliary) = input_buses {
+            let carried_count = self.carried_aux_inputs(auxiliary.len());
             ports.push(main_port(PortDirection::Input, channels));
-            ports.extend(
-                auxiliary
-                    .iter()
-                    .map(|bus| auxiliary_port(PortDirection::Input, bus.channel_count)),
-            );
+            ports.extend(auxiliary.iter().enumerate().map(|(index, bus)| {
+                let port = auxiliary_port(PortDirection::Input, bus.channel_count);
+                if index < carried_count {
+                    carried(port)
+                } else {
+                    port
+                }
+            }));
         }
         for index in 0..self.output_ports {
             ports.push(match output_buses.get(index) {
@@ -870,7 +894,7 @@ impl BridgeProcessor for Vst3BlockProcessor {
         };
         let frames = block.frames;
         if frames > activation.max_frames as usize
-            || block.input_channels > activation.input.num_channels
+            || block.input_channels > PORT_CHANNELS * activation.input.len()
         {
             return skip_block(&mut self.notes, block, input, output);
         }
@@ -887,9 +911,16 @@ impl BridgeProcessor for Vst3BlockProcessor {
             }
         }
 
-        for channel in 0..block.input_channels {
-            activation.input.channel_mut(channel)[..frames]
-                .copy_from_slice(&input[channel * frames..(channel + 1) * frames]);
+        for (port, buffer) in activation.input.iter_mut().enumerate() {
+            for channel in 0..PORT_CHANNELS {
+                let index = port * PORT_CHANNELS + channel;
+                let samples = &mut buffer.channel_mut(channel)[..frames];
+                if index < block.input_channels {
+                    samples.copy_from_slice(&input[index * frames..(index + 1) * frames]);
+                } else {
+                    samples.fill(0.0);
+                }
+            }
         }
 
         let edit_state = plugin.edit_state();
@@ -941,13 +972,20 @@ impl BridgeProcessor for Vst3BlockProcessor {
             std::ptr::null_mut()
         };
 
-        let sources: [&AudioBuffer; 1] = [&activation.input];
+        let input_ports = activation.input.len().min(MAX_PORTS);
+        let sources: [&AudioBuffer; MAX_PORTS] =
+            std::array::from_fn(|port| &activation.input[port.min(input_ports - 1)]);
         let (input_buses, input_bus_count) = if plugin.is_instrument {
             (std::ptr::null_mut(), 0)
         } else {
-            activation
-                .inputs
-                .bind(if block.has_input { &sources } else { &[] }, frames)
+            activation.inputs.bind(
+                if block.has_input {
+                    &sources[..input_ports]
+                } else {
+                    &[]
+                },
+                frames,
+            )
         };
         let (output_buses, output_bus_count) = activation.outputs.bind(&mut activation.output);
 
@@ -1239,6 +1277,18 @@ mod tests {
         adapter.activate(48_000.0, 64, 0).expect("closes it again");
         let (_, shut) = play_full_block(&mut processor, &[note_on(0)], false);
         assert!(shut[FRAMES * 2..].iter().all(|&s| s == 0.0));
+    }
+
+    #[test]
+    fn the_handshake_carries_the_sidechain_of_an_effect_but_not_of_an_instrument() {
+        let (effect, _processor) = activated();
+        let handshake = Handshake::decode(&effect.handshake()).expect("a handshake");
+        assert_eq!(handshake.active_port_count(PortDirection::Input), 2);
+        assert_eq!(handshake.block_channels(PortDirection::Input), 4);
+
+        let (instrument, _processor) = activated_instrument();
+        let handshake = Handshake::decode(&instrument.handshake()).expect("a handshake");
+        assert_eq!(handshake.active_port_count(PortDirection::Input), 0);
     }
 
     #[test]

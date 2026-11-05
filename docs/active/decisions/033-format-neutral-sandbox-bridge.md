@@ -8,7 +8,7 @@ moved `vst3/ffi.rs` and `param_queue.rs` into the `vst3_ffi` and `plugin_param_q
 crates (see "Step 1 — what shipped"). Step 2 added the test plugin, the harness
 baseline and the loader fix ("Step 2 — what shipped"). Step 3 moved the VST3 host objects into
 `vst3_host` ("Step 3 — what shipped"). Step 4 froze protocol v3 and moved CLAP onto it
-("Step 4 — what shipped"). Step 5 put the VST3 effect in the bridge ("Step 5 — what shipped"). Step 6 gave it its parameters ("Step 6 — what shipped"). Step 7 gave it its editor ("Step 7 — what shipped"). Step 8 was split: 8a put the VST3 instrument in the bridge ("Step 8a — what shipped"), 8b (several ports, protocol v4) started: auxiliary outputs are done ("Step 8b, first half — what shipped"), the sidechain and `IComponentHandlerBusActivation` wait. Decisions 1–9 below were taken by the user
+("Step 4 — what shipped"). Step 5 put the VST3 effect in the bridge ("Step 5 — what shipped"). Step 6 gave it its parameters ("Step 6 — what shipped"). Step 7 gave it its editor ("Step 7 — what shipped"). Step 8 was split: 8a put the VST3 instrument in the bridge ("Step 8a — what shipped"), 8b (several ports, protocol v4) is done except `IComponentHandlerBusActivation`: auxiliary outputs ("Step 8b, first half — what shipped") and the sidechain ("Step 8b, second half — what shipped"); the bus-activation request is not supported in process either, so it waits for a decision. Decisions 1–9 below were taken by the user
 before this ADR was written (decision 10 only restates ADR-015). The status stays
 _Proposed_ until the user has reviewed step 4, the first step that crossed the
 real-time boundary (and hand-tested a sandboxed CLAP plugin).
@@ -182,7 +182,7 @@ without a sandboxed VST3, and waits for the user's approval before the next one.
 | 6    | **VST3 parameters** (done 2026-11-04). Parameter list and text, automation and modulation with a sample offset, the plugin's edits and gestures back (engine gestures ignored, decision b), rescan, controller follows processor (inside the bridge), modulated bases before a state save.                | medium: bounded queues (128 × 128)   | same test with automated and modulated parameters                                                    |
 | 7    | **VST3 editor in the bridge** (done 2026-11-04). `IPlugView` / `IPlugFrame` / content scale in the bridge's Win32 window (same layout as CLAP), resize in the same call stack, close order.                                                                                                                              | none (bridge UI thread)              | none                                                                                                 |
 | 8a   | **VST3 instrument** (done 2026-11-05). Notes and raw MIDI, `IMidiMapping`, a bridged VST3 instrument on the main stereo output; the bridge is told its role at launch.                                                                                                                                  | medium: bounded note list, no new call | sandbox-against-in-process test for the instrument, with and without MIDI controls                    |
-| 8b   | **Several ports.** Aux outputs and sidechain through the port table (several active ports); `IComponentHandlerBusActivation`. **Changes the block layout: protocol v4, needs the user's approval of the design first.** First half (aux outputs) done 2026-11-05; sidechain and bus activation left.                                                                                  | medium-high: multi-port block layout | same test for multi-out and sidechain                                                                |
+| 8b   | **Several ports.** Aux outputs and sidechain through the port table (several active ports); `IComponentHandlerBusActivation`. **Changes the block layout: protocol v4, needs the user's approval of the design first.** Aux outputs and sidechain done 2026-11-05; bus activation left (not supported in process either).                                                                                  | medium-high: multi-port block layout | same test for multi-out and sidechain                                                                |
 | 9    | **VST3 presets.** `IUnitInfo` programs and `.vstpreset` files through the ADR-031 commands; parsing stays in the app (untrusted file), loading happens in the bridge; `IUnitHandler`.                                                                                                                | none (control path); gate in the bridge | none                                                                                                 |
 | 10   | **Out-of-process scan and blocklist.** `plugin_host_bridge --scan`, timeout and crash contained, blocklist kept per machine, a way to re-enable. Replaces the in-process throwaway component of the VST3 sidechain probe.                                                                              | none                                 | none                                                                                                 |
 
@@ -999,6 +999,53 @@ ignored (the timing measures).
 - **Hand tests (yours):** Surge XT with a track on its _Scene A_ bus, isolated; a project saved before this step.
   Nothing was run against a real plugin for this half; only the test plugin proves it.
 - The CPU cost of the wider block was not measured; the extra ports are zeros copied through shared memory.
+
+## Step 8b, second half — what shipped (2026-11-05): the sidechain
+
+**The proof came first.** `render_harness::vst3_plugins::a_sandboxed_effect_hears_its_sidechain_like_an_in_process_one`
+was put in the git index before any change to the engine or the bridge. The instrument track feeds the test
+effect's sidechain (`PluginParams.sidechain_source`); the test requires the in-process render to differ from the
+render without the sidechain (it is heard) and the sandboxed render to equal the in-process one at the five
+block sizes. It failed at the first sample.
+
+**No format change.** Protocol v4 already carries any number of input ports: a request has two channels per
+input port in table order, `channel_count` says how many. This half only uses it.
+
+**Bridge** (`vst3_adapter.rs`). The handshake marks the auxiliary inputs of an **effect** (up to `MAX_PORTS`) as
+active; an instrument carries none, as it is given no audio input. The activation opens every auxiliary input bus
+(as `vst3_ensure_active` does), keeps one stereo `AudioBuffer` per input port and builds `Vst3InputBuses` from the
+declared buses, so the mono mix of a bus the plugin declares mono and its silence flags are the in-process code.
+A port the block did not carry is zeroed, so a stale block never leaks into a sidechain. A skipped block passes
+only the main input through.
+
+**Engine** (`bridged_node.rs`). `BridgeRoundTrip::process` takes the graph inputs and copies each into its port
+(zeros for a port with no source); `BridgedNode::num_input_ports()` is the number of active input ports, final
+once `prepare` has run; `BridgedInstrument` passes no input.
+
+**Test plugin.** The effect has a mono auxiliary input, `Sidechain`; fed, a quarter of its level is added to the
+output, unfed nothing changes. `vst3_plugins` (0x5c0f0710b6813439), `clap_plugins` and every other golden hash are
+unchanged; none was regenerated.
+
+**Real-time checklist** (`rt-validation`). No allocation, lock or system call added on either audio thread; the
+per-port buffers and the engine's input vector are made at `prepare` / at the activation; the bridge's per-block
+list of input references is a fixed array on the stack. Written in `threading/realtime-safety.md`.
+
+**Tests.** The harness render above; `vst3_bridge.rs` (a sidechain port is mixed to mono and added, a block with
+no sidechain signal leaves the effect alone, the handshake carries four input channels); `vst3_adapter.rs` (an
+effect carries its sidechain, an instrument none); `test_vst3_plugin` (the sidechain bus). Whole workspace,
+`cargo test --workspace --no-fail-fast -- --test-threads=1`: 1113 passed, 0 failed, 5 ignored (the timing measures).
+
+**Not done, on purpose / still open.**
+
+- **`IComponentHandlerBusActivation`** is not coded. It is supported **neither in process nor in the bridge**
+  (ADR-014 lists it as not supported): it would be a new COM interface on the component handler
+  (`vst3_ffi` header and IID, `vst3_host::component_handler`) with its own semantics (what the host does when a
+  plugin asks to open or close a bus, how that meets the buses the graph wants), for both paths. It is a new
+  feature, not parity, so it waits for the user's decision.
+- **Hand tests (yours):** TDR Nova isolated with a track on its sidechain (the detector reacts as in process);
+  a project saved before this step.
+- A plugin with more than 8 auxiliary inputs carries 8 when sandboxed.
+- No CPU measure of the wider request (the extra ports are zeros or a stereo pair copied through shared memory).
 
 ## Consequences
 

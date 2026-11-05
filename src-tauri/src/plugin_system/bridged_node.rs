@@ -322,7 +322,7 @@ impl BridgeRoundTrip {
     /// is then untouched and the caller decides what to play.
     fn process(
         &mut self,
-        input: Option<&AudioBuffer>,
+        inputs: &[&AudioBuffer],
         outputs: &mut [AudioBuffer],
         transport: &TransportInfo,
         notes: Option<&MidiEventList>,
@@ -335,14 +335,16 @@ impl BridgeRoundTrip {
         }
         self.write_events(notes);
         let wire_transport = wire_transport(transport);
-        if let Some(input) = input {
-            for (channel, planar) in self
-                .input
-                .chunks_exact_mut(frames)
-                .take(PORT_CHANNELS)
-                .enumerate()
-            {
-                planar.copy_from_slice(&input.channel(channel)[..frames]);
+        for (index, planar) in self
+            .input
+            .chunks_exact_mut(frames)
+            .take(self.input_channels)
+            .enumerate()
+        {
+            let (port, channel) = (index / PORT_CHANNELS, index % PORT_CHANNELS);
+            match inputs.get(port) {
+                Some(source) => planar.copy_from_slice(&source.channel(channel)[..frames]),
+                None => planar.fill(0.0),
             }
         }
 
@@ -352,7 +354,7 @@ impl BridgeRoundTrip {
         };
         let request = BlockRequest {
             frames,
-            input: input.is_some().then_some(&self.input[..input_samples]),
+            input: (!inputs.is_empty()).then_some(&self.input[..input_samples]),
             input_channels: self.input_channels,
             output_channels: self.output_channels,
             transport: Some(&wire_transport),
@@ -412,6 +414,11 @@ impl BridgeRoundTrip {
         true
     }
 
+    /// Input ports a block carries, the main one first.
+    fn input_ports(&self) -> usize {
+        self.input_channels / PORT_CHANNELS
+    }
+
     /// Output ports a block carries, the main one first.
     fn output_ports(&self) -> usize {
         self.output_channels / PORT_CHANNELS
@@ -451,8 +458,10 @@ impl AudioNode for BridgedNode {
         "BridgedPlugin"
     }
 
+    /// Final once `prepare` has run: the main input and the sidechains the bridge's
+    /// table carries.
     fn num_input_ports(&self) -> usize {
-        1
+        self.round_trip.input_ports().max(1)
     }
 
     /// Final once `prepare` has run: the ports the bridge's table carries.
@@ -475,7 +484,7 @@ impl AudioNode for BridgedNode {
         }
         if !self
             .round_trip
-            .process(inputs.first().copied(), outputs, transport, None)
+            .process(inputs, outputs, transport, None)
         {
             pass_through(inputs, outputs);
         }
@@ -565,7 +574,7 @@ impl InstrumentDevice for BridgedInstrument {
     ) {
         if !outputs.is_empty() {
             self.round_trip
-                .process(None, outputs, transport, Some(events));
+                .process(&[], outputs, transport, Some(events));
         }
     }
 
