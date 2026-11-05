@@ -51,6 +51,16 @@ pub enum SpeakerLayout {
     Other = 2,
 }
 
+/// Channels each active port takes in a block, whatever its own arrangement: the
+/// engine's buffers are stereo, a mono bus is spread over both and a wider bus is cut
+/// to its first two.
+pub const PORT_CHANNELS: usize = 2;
+
+/// Audio ports a sandboxed plugin exposes in a direction: its main one and eight
+/// auxiliary ones.  The shared region is sized for them; a plugin with more buses
+/// keeps the extra ones closed.
+pub const MAX_PORTS: usize = 9;
+
 /// One audio port of the plugin.  Only the `active` ports carry samples in a block.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AudioPortRecord {
@@ -124,22 +134,18 @@ impl Handshake {
         Ok(Handshake { param_unit, ports })
     }
 
-    /// The one active port of `direction`, `None` when that side has none.  A table
-    /// with several active ports on one side is refused: the block layout carries
-    /// one (ADR-033).
-    pub fn active_port(
-        &self,
-        direction: PortDirection,
-    ) -> Result<Option<&AudioPortRecord>, String> {
-        let mut active = self
-            .ports
+    /// Ports of `direction` that carry samples in a block.
+    pub fn active_port_count(&self, direction: PortDirection) -> usize {
+        self.ports
             .iter()
-            .filter(|port| port.direction == direction && port.active);
-        let first = active.next();
-        if active.next().is_some() {
-            return Err(format!("more than one active {direction:?} audio port"));
-        }
-        Ok(first)
+            .filter(|port| port.direction == direction && port.active)
+            .count()
+    }
+
+    /// Channels a block carries in `direction`: every active port takes
+    /// [`PORT_CHANNELS`], whatever its own arrangement.
+    pub fn block_channels(&self, direction: PortDirection) -> usize {
+        self.active_port_count(direction) * PORT_CHANNELS
     }
 }
 
@@ -379,20 +385,19 @@ mod tests {
     }
 
     #[test]
-    fn a_handshake_with_two_active_ports_on_one_side_has_no_active_port() {
+    fn a_block_carries_two_channels_for_each_active_port() {
         let handshake = Handshake {
             param_unit: ParamUnit::Plain,
             ports: vec![
                 port(PortDirection::Output, PortRole::Main, true),
                 port(PortDirection::Output, PortRole::Auxiliary, true),
+                port(PortDirection::Output, PortRole::Auxiliary, false),
                 port(PortDirection::Input, PortRole::Main, true),
             ],
         };
-        assert!(handshake.active_port(PortDirection::Output).is_err());
-        assert!(handshake
-            .active_port(PortDirection::Input)
-            .unwrap()
-            .is_some());
+        assert_eq!(handshake.active_port_count(PortDirection::Output), 2);
+        assert_eq!(handshake.block_channels(PortDirection::Output), 4);
+        assert_eq!(handshake.block_channels(PortDirection::Input), 2);
     }
 
     #[test]

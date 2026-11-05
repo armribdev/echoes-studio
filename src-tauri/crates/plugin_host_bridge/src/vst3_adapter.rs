@@ -52,7 +52,7 @@ use plugin_bridge::protocol::{
 };
 use plugin_bridge::records::{
     AudioPortRecord, Handshake, NoteNameRecord, ParamRecord, ParamUnit, PortDirection, PortRole,
-    SpeakerLayout, PARAM_AUTOMATABLE, PARAM_HIDDEN,
+    SpeakerLayout, MAX_PORTS, PARAM_AUTOMATABLE, PARAM_HIDDEN, PORT_CHANNELS,
 };
 use plugin_bridge::session::{BlockContext, BridgeProcessor, ReplyWriter};
 use vst3_ffi::{
@@ -148,8 +148,9 @@ struct Activation {
     midi_map: MidiControllerMap,
 }
 
-/// `(sample rate, max frames, latency)` of the current activation.
-type Configuration = (f64, u32, u32);
+/// `(sample rate, max frames, latency, auxiliary outputs wanted)` of the current
+/// activation.
+type Configuration = (f64, u32, u32, u32);
 
 pub struct Vst3Adapter {
     component: *mut IComponent,
@@ -160,8 +161,10 @@ pub struct Vst3Adapter {
     /// The controller's `IComponentHandler`; outlives the controller.
     handler: Box<ComponentHandler>,
     signals: Arc<BridgeSignals>,
-    /// Channels of the main bus each way, as the engine's blocks carry them.
-    channels: usize,
+    /// Output ports a block carries: the declared buses, at most [`MAX_PORTS`].
+    output_ports: usize,
+    /// The auxiliary output buses (bit `n` = bus `n`) the plugin has open now.
+    opened_outputs: AtomicU32,
     /// An instrument gets the block's notes, no audio input and a reset that only
     /// releases them.  Chosen by the engine: a VST3 instrument may well have audio
     /// inputs (Surge XT does).
@@ -192,7 +195,6 @@ impl Vst3Adapter {
         dll: &Path,
         cid: &str,
         role: PluginRole,
-        channels: usize,
     ) -> Result<Arc<Self>, String> {
         let cid = decode_cid(cid).ok_or_else(|| format!("invalid VST3 class id '{cid}'"))?;
         let (library, factory) = Vst3Library::load(dll)?;
@@ -219,13 +221,16 @@ impl Vst3Adapter {
                 None
             }
         };
+        // SAFETY: the component was initialised above; main thread.
+        let declared_outputs = unsafe { read_output_buses(component) }.len();
         Ok(Arc::new_cyclic(|me| Vst3Adapter {
             component,
             processor,
             controller,
             handler,
             signals,
-            channels,
+            output_ports: declared_outputs.clamp(1, MAX_PORTS),
+            opened_outputs: AtomicU32::new(0),
             is_instrument: role == PluginRole::Instrument,
             gate: AtomicU8::new(GATE_IDLE),
             activation: UnsafeCell::new(None),
@@ -271,14 +276,22 @@ impl Vst3Adapter {
             .ok_or_else(|| "the plugin has no edit controller".into())
     }
 
-    /// Main thread.  Activates at `(sample_rate, max_frames)` and returns the
-    /// plugin's latency.  A no-op when already active there, unless the plugin
-    /// asked to be reactivated (`restartComponent`), which reads the latency again.
-    pub fn activate(&self, sample_rate: f64, max_frames: u32) -> Result<u32, String> {
+    /// Main thread.  Activates at `(sample_rate, max_frames)` with the auxiliary
+    /// output buses `wanted_outputs` names (bit `n` = bus `n`), and returns the
+    /// plugin's latency.  A no-op when already active so, unless the plugin asked
+    /// to be reactivated (`restartComponent`), which reads the latency again.
+    pub fn activate(
+        &self,
+        sample_rate: f64,
+        max_frames: u32,
+        wanted_outputs: u32,
+    ) -> Result<u32, String> {
+        let wanted_outputs = wanted_outputs & self.openable_outputs();
         let mut configuration = self.configuration.lock().unwrap_or_else(|e| e.into_inner());
         let restart = self.edit_state().take_reactivation_request();
-        if let Some((rate, frames, latency)) = *configuration {
-            if !restart && rate == sample_rate && frames == max_frames {
+        if let Some((rate, frames, latency, outputs)) = *configuration {
+            if !restart && rate == sample_rate && frames == max_frames && outputs == wanted_outputs
+            {
                 return Ok(latency);
             }
         }
@@ -295,12 +308,18 @@ impl Vst3Adapter {
         // SAFETY: the main-thread gate is held, so no block is in flight.
         let latency = unsafe {
             self.stop();
-            let activation = self.start(sample_rate, max_frames)?;
+            let activation = self.start(sample_rate, max_frames, wanted_outputs)?;
             *self.activation.get() = Some(activation);
             ((*(*self.processor).vtbl).get_latency_samples)(self.processor)
         };
-        *configuration = Some((sample_rate, max_frames, latency));
+        *configuration = Some((sample_rate, max_frames, latency, wanted_outputs));
         Ok(latency)
+    }
+
+    /// The auxiliary buses a block can carry: those under the port cap.
+    fn openable_outputs(&self) -> u32 {
+        let carried = (1u32 << self.output_ports) - 1;
+        carried & !1
     }
 
     /// Stops processing and deactivates, when activated.
@@ -319,7 +338,12 @@ impl Vst3Adapter {
     ///
     /// # Safety
     /// Main thread, gate held, plugin not active.
-    unsafe fn start(&self, sample_rate: f64, max_frames: u32) -> Result<Activation, String> {
+    unsafe fn start(
+        &self,
+        sample_rate: f64,
+        max_frames: u32,
+        wanted_outputs: u32,
+    ) -> Result<Activation, String> {
         let (component, processor) = (self.component, self.processor);
         let has_audio_input = propose_arrangements(component, processor);
         let has_event_input = ((*(*component).vtbl).get_bus_count)(component, K_EVENT, K_INPUT) > 0;
@@ -327,7 +351,15 @@ impl Vst3Adapter {
             ((*(*component).vtbl).activate_bus)(component, K_AUDIO, K_INPUT, 0, 1);
         }
         let mut output_buses = read_output_buses(component);
-        open_output_buses(component, &mut output_buses, 0, 0);
+        open_output_buses(
+            component,
+            &mut output_buses,
+            wanted_outputs,
+            self.opened_outputs.load(Ordering::Relaxed),
+        );
+        self.opened_outputs
+            .store(opened_mask(&output_buses), Ordering::Relaxed);
+        output_buses.truncate(self.output_ports);
         if has_event_input {
             ((*(*component).vtbl).activate_bus)(component, K_EVENT, K_INPUT, 0, 1);
         }
@@ -350,17 +382,19 @@ impl Vst3Adapter {
             _ => MidiControllerMap::empty(),
         };
 
-        let channels = self.channels;
         let mut inputs = Vst3InputBuses::new(&[]);
-        inputs.prepare(channels, max_frames as usize);
+        inputs.prepare(PORT_CHANNELS, max_frames as usize);
         let mut outputs = Vst3OutputBuses::new(&output_buses);
-        outputs.prepare(channels, max_frames as usize);
+        outputs.prepare(PORT_CHANNELS, max_frames as usize);
+        let output = (0..outputs.num_ports())
+            .map(|_| AudioBuffer::new(PORT_CHANNELS, max_frames as usize))
+            .collect();
         Ok(Activation {
             max_frames,
             inputs,
             outputs,
-            input: AudioBuffer::new(channels, max_frames as usize),
-            output: vec![AudioBuffer::new(channels, max_frames as usize)],
+            input: AudioBuffer::new(PORT_CHANNELS, max_frames as usize),
+            output,
             param_changes: HostParameterChanges::boxed(),
             output_changes: HostParameterChanges::boxed(),
             events: HostEventList::boxed(),
@@ -542,10 +576,11 @@ impl Vst3Adapter {
         Err("plugin editors are only available on Windows".into())
     }
 
-    /// The audio ports of the plugin; the main bus of each direction is the
-    /// active one, as the block carries one input and one output.
+    /// The audio ports of the plugin.  The active ones are what a block carries: the
+    /// main input and every output bus under the port cap (a bus the engine does not
+    /// read stays closed and plays silence).
     pub fn handshake(&self) -> Vec<u8> {
-        let channels = self.channels as u32;
+        let channels = PORT_CHANNELS as u32;
         let mut ports = Vec::new();
         // SAFETY: main thread, plugin initialised, no process in flight before
         // the first activation.
@@ -565,11 +600,13 @@ impl Vst3Adapter {
                     .map(|bus| auxiliary_port(PortDirection::Input, bus.channel_count)),
             );
         }
-        for (index, bus) in output_buses.iter().enumerate() {
-            ports.push(if index == 0 {
-                main_port(PortDirection::Output, channels)
-            } else {
-                auxiliary_port(PortDirection::Output, bus.channel_count)
+        for index in 0..self.output_ports {
+            ports.push(match output_buses.get(index) {
+                Some(bus) if index > 0 => carried(auxiliary_port(
+                    PortDirection::Output,
+                    bus.channel_count,
+                )),
+                _ => main_port(PortDirection::Output, channels),
             });
         }
         Handshake {
@@ -607,6 +644,23 @@ fn auxiliary_port(direction: PortDirection, channels: u32) -> AudioPortRecord {
         layout: layout_of(channels),
         active: false,
     }
+}
+
+fn carried(port: AudioPortRecord) -> AudioPortRecord {
+    AudioPortRecord {
+        active: true,
+        ..port
+    }
+}
+
+/// The auxiliary buses (bit `n` = bus `n`) of `buses` that are open.
+fn opened_mask(buses: &[vst3_host::buses::Vst3OutputBus]) -> u32 {
+    buses
+        .iter()
+        .enumerate()
+        .skip(1)
+        .filter(|(_, bus)| bus.active)
+        .fold(0, |mask, (index, _)| mask | 1 << index)
 }
 
 fn layout_of(channels: u32) -> SpeakerLayout {
@@ -653,7 +707,8 @@ impl HostedPlugin for Vst3Adapter {
             Op::Activate => {
                 let sample_rate = reader.f64().map_err(invalid)?;
                 let max_frames = reader.u32().map_err(invalid)?;
-                self.activate(sample_rate, max_frames)
+                let wanted_outputs = reader.u32().map_err(invalid)?;
+                self.activate(sample_rate, max_frames, wanted_outputs)
                     .map(|latency| latency.to_le_bytes().to_vec())
             }
             Op::SaveState => self.save_state(),
@@ -749,7 +804,7 @@ fn skip_block(
     output: &mut [f32],
 ) -> u32 {
     notes.keep_releases_of(note_messages(block));
-    pass_through(input, output)
+    pass_through(block.frames, input, output)
 }
 
 /// Tells the engine which parameters the user started or stopped dragging in the
@@ -773,8 +828,10 @@ fn report_gestures(
     *reported = now;
 }
 
-fn pass_through(input: &[f32], output: &mut [f32]) -> u32 {
-    output.copy_from_slice(input);
+/// The main input goes to the main output; the other ports play silence.
+fn pass_through(frames: usize, input: &[f32], output: &mut [f32]) -> u32 {
+    let shared = (frames * PORT_CHANNELS).min(input.len()).min(output.len());
+    output[..shared].copy_from_slice(&input[..shared]);
     BLOCK_PASSED_THROUGH
 }
 
@@ -792,6 +849,10 @@ fn transport_state(block: &BlockContext) -> Option<TransportState> {
 }
 
 impl BridgeProcessor for Vst3BlockProcessor {
+    fn output_channels(&self) -> usize {
+        self.plugin.output_ports * PORT_CHANNELS
+    }
+
     fn process(
         &mut self,
         block: &BlockContext,
@@ -808,7 +869,8 @@ impl BridgeProcessor for Vst3BlockProcessor {
             return skip_block(&mut self.notes, block, input, output);
         };
         let frames = block.frames;
-        if frames > activation.max_frames as usize || block.channels > activation.input.num_channels
+        if frames > activation.max_frames as usize
+            || block.input_channels > activation.input.num_channels
         {
             return skip_block(&mut self.notes, block, input, output);
         }
@@ -825,7 +887,7 @@ impl BridgeProcessor for Vst3BlockProcessor {
             }
         }
 
-        for channel in 0..block.channels {
+        for channel in 0..block.input_channels {
             activation.input.channel_mut(channel)[..frames]
                 .copy_from_slice(&input[channel * frames..(channel + 1) * frames]);
         }
@@ -909,14 +971,17 @@ impl BridgeProcessor for Vst3BlockProcessor {
         // SAFETY: audio gate held; every buffer outlives the call.
         let result = unsafe { ((*(*plugin.processor).vtbl).process)(plugin.processor, &mut data) };
         if result != K_RESULT_OK {
-            return pass_through(input, output);
+            return pass_through(frames, input, output);
         }
         for (native_id, value) in activation.output_changes.latest_points() {
             edit_state.mirror().record(native_id, value);
         }
-        for channel in 0..block.channels {
-            output[channel * frames..(channel + 1) * frames]
-                .copy_from_slice(&activation.output[0].channel(channel)[..frames]);
+        activation.outputs.finish(&mut activation.output);
+        for (port, buffer) in activation.output.iter().enumerate() {
+            for channel in 0..PORT_CHANNELS {
+                let at = (port * PORT_CHANNELS + channel) * frames;
+                output[at..at + frames].copy_from_slice(&buffer.channel(channel)[..frames]);
+            }
         }
         plugin.signals.take_reply_flags()
     }
@@ -935,6 +1000,8 @@ mod tests {
     const SELF_VALUE: u32 = 7;
     const WRITE_OUTPUT: u32 = 8;
     const FRAMES: usize = 32;
+    /// The test plugin has a main output and an `Aux Out` bus, two channels each.
+    const OUTPUT_CHANNELS: usize = 4;
 
     fn test_plugin_dll() -> &'static PathBuf {
         static DLL: OnceLock<PathBuf> = OnceLock::new();
@@ -963,10 +1030,10 @@ mod tests {
     fn activated() -> (Arc<Vst3Adapter>, Vst3BlockProcessor) {
         initialise_com_for_the_test();
         let adapter =
-            Vst3Adapter::load(test_plugin_dll(), &effect_class_id(), PluginRole::Effect, 2)
+            Vst3Adapter::load(test_plugin_dll(), &effect_class_id(), PluginRole::Effect)
                 .expect("the effect loads");
         adapter
-            .activate(48_000.0, 64)
+            .activate(48_000.0, 64, 0)
             .expect("the effect activates");
         let processor = Vst3BlockProcessor::new(Arc::clone(&adapter));
         (adapter, processor)
@@ -993,7 +1060,8 @@ mod tests {
         write_records(params, &mut bytes, 0);
         let block = BlockContext {
             frames: FRAMES,
-            channels: 2,
+            input_channels: 2,
+            output_channels: OUTPUT_CHANNELS,
             has_input: true,
             reset: false,
             sequence: 0,
@@ -1003,7 +1071,7 @@ mod tests {
             params: Section::new(&bytes, params.len()),
         };
         let input = vec![0.0f32; FRAMES * 2];
-        let mut output = vec![0.0f32; FRAMES * 2];
+        let mut output = vec![0.0f32; FRAMES * OUTPUT_CHANNELS];
         let mut edits = [WireParam::new(0, 0, 0, 0.0); 16];
         let mut midi = [];
         let mut reply = ReplyWriter::new(&mut edits, &mut midi);
@@ -1021,16 +1089,20 @@ mod tests {
 
     /// The test instrument loaded and activated in this process.
     fn activated_instrument() -> (Arc<Vst3Adapter>, Vst3BlockProcessor) {
+        activated_instrument_with_outputs(0)
+    }
+
+    /// The same, with the auxiliary output buses `outputs` names open.
+    fn activated_instrument_with_outputs(outputs: u32) -> (Arc<Vst3Adapter>, Vst3BlockProcessor) {
         initialise_com_for_the_test();
         let adapter = Vst3Adapter::load(
             test_plugin_dll(),
             &instrument_class_id(),
             PluginRole::Instrument,
-            2,
         )
         .expect("the instrument loads");
         adapter
-            .activate(48_000.0, 64)
+            .activate(48_000.0, 64, outputs)
             .expect("the instrument activates");
         let processor = Vst3BlockProcessor::new(Arc::clone(&adapter));
         (adapter, processor)
@@ -1043,11 +1115,22 @@ mod tests {
         notes: &[WireNote],
         reset: bool,
     ) -> (u32, Vec<f32>) {
+        let (flags, output) = play_full_block(processor, notes, reset);
+        (flags, output[..FRAMES].to_vec())
+    }
+
+    /// The same, with every output channel of the block.
+    fn play_full_block(
+        processor: &mut Vst3BlockProcessor,
+        notes: &[WireNote],
+        reset: bool,
+    ) -> (u32, Vec<f32>) {
         let mut bytes = vec![0u8; notes.len() * NOTE_BYTES];
         write_records(notes, &mut bytes, 0);
         let block = BlockContext {
             frames: FRAMES,
-            channels: 2,
+            input_channels: 2,
+            output_channels: OUTPUT_CHANNELS,
             has_input: false,
             reset,
             sequence: 0,
@@ -1057,12 +1140,12 @@ mod tests {
             params: Section::new(&[], 0),
         };
         let input = vec![0.0f32; FRAMES * 2];
-        let mut output = vec![0.0f32; FRAMES * 2];
+        let mut output = vec![0.0f32; FRAMES * OUTPUT_CHANNELS];
         let mut edits = [WireParam::new(0, 0, 0, 0.0); 16];
         let mut midi = [];
         let mut reply = ReplyWriter::new(&mut edits, &mut midi);
         let flags = processor.process(&block, &input, &mut output, &mut reply);
-        (flags, output[..FRAMES].to_vec())
+        (flags, output)
     }
 
     fn note_on(offset: u32) -> WireNote {
@@ -1123,6 +1206,50 @@ mod tests {
     }
 
     #[test]
+    fn a_block_carries_a_port_for_every_output_bus_and_a_closed_one_is_silent() {
+        let (_adapter, mut processor) = activated_instrument();
+        let (_, output) = play_full_block(&mut processor, &[note_on(0)], false);
+        assert_eq!(processor.output_channels() * FRAMES, output.len());
+        assert!(output[..FRAMES * 2].iter().all(|&s| s == 1.0));
+        assert!(output[FRAMES * 2..].iter().all(|&s| s == 0.0));
+    }
+
+    #[test]
+    fn an_auxiliary_bus_the_engine_wants_plays_its_own_port() {
+        let (_adapter, mut processor) = activated_instrument_with_outputs(0b10);
+        let (_, output) = play_full_block(&mut processor, &[note_on(0)], false);
+        assert!(output[..FRAMES * 2].iter().all(|&s| s == 1.0), "main");
+        assert!(
+            output[FRAMES * 2..].iter().all(|&s| s == 0.5),
+            "the test plugin's Aux Out plays half of its main sound"
+        );
+    }
+
+    #[test]
+    fn a_new_wish_reactivates_the_plugin_and_a_same_wish_does_not() {
+        let (adapter, mut processor) = activated_instrument();
+        let (_, closed) = play_full_block(&mut processor, &[note_on(0)], false);
+        assert!(closed[FRAMES * 2..].iter().all(|&s| s == 0.0));
+
+        adapter.activate(48_000.0, 64, 0b10).expect("reactivates");
+        let (_, open) = play_full_block(&mut processor, &[note_on(0)], false);
+        assert!(open[FRAMES * 2..].iter().all(|&s| s == 0.5));
+
+        adapter.activate(48_000.0, 64, 0b10).expect("a no-op");
+        adapter.activate(48_000.0, 64, 0).expect("closes it again");
+        let (_, shut) = play_full_block(&mut processor, &[note_on(0)], false);
+        assert!(shut[FRAMES * 2..].iter().all(|&s| s == 0.0));
+    }
+
+    #[test]
+    fn the_handshake_lists_every_output_bus_as_an_active_port() {
+        let (adapter, _processor) = activated_instrument();
+        let handshake = Handshake::decode(&adapter.handshake()).expect("a handshake");
+        assert_eq!(handshake.active_port_count(PortDirection::Output), 2);
+        assert_eq!(handshake.block_channels(PortDirection::Output), OUTPUT_CHANNELS);
+    }
+
+    #[test]
     fn an_effect_is_not_given_notes() {
         let (_adapter, mut processor) = activated();
         let notes = [note_on(0)];
@@ -1130,7 +1257,8 @@ mod tests {
         write_records(&notes, &mut bytes, 0);
         let block = BlockContext {
             frames: FRAMES,
-            channels: 2,
+            input_channels: 2,
+            output_channels: OUTPUT_CHANNELS,
             has_input: true,
             reset: false,
             sequence: 0,
@@ -1140,12 +1268,19 @@ mod tests {
             params: Section::new(&[], 0),
         };
         let input = vec![0.5f32; FRAMES * 2];
-        let mut output = vec![0.0f32; FRAMES * 2];
+        let mut output = vec![0.0f32; FRAMES * OUTPUT_CHANNELS];
         let mut edits = [WireParam::new(0, 0, 0, 0.0); 16];
         let mut midi = [];
         let mut reply = ReplyWriter::new(&mut edits, &mut midi);
         processor.process(&block, &input, &mut output, &mut reply);
-        assert!(output.iter().all(|&s| s == 0.5), "the gain only");
+        assert!(
+            output[..FRAMES * 2].iter().all(|&s| s == 0.5),
+            "the gain only"
+        );
+        assert!(
+            output[FRAMES * 2..].iter().all(|&s| s == 0.0),
+            "the closed auxiliary bus plays silence"
+        );
     }
 
     fn controller_value(adapter: &Vst3Adapter, native_id: u32) -> f64 {

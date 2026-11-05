@@ -290,7 +290,27 @@ fn the_buses_follow_the_class() {
         ),
         (0, 1)
     );
-    assert_eq!(count(&instrument, K_AUDIO, K_OUTPUT), 1);
+    assert_eq!(count(&instrument, K_AUDIO, K_OUTPUT), 2);
+    assert_eq!(count(&effect, K_AUDIO, K_OUTPUT), 2);
+}
+
+#[test]
+fn the_second_output_is_an_auxiliary_bus_the_host_opens_on_demand() {
+    let plugin = instance(&INSTRUMENT_CLASS_ID);
+    let info = |index| unsafe {
+        let mut info: BusInfo = zeroed();
+        let result = ((*(*plugin.component).vtbl).get_bus_info)(
+            plugin.component,
+            K_AUDIO,
+            K_OUTPUT,
+            index,
+            &mut info as *mut BusInfo as *mut c_void,
+        );
+        (result, info.bus_type, info.flags)
+    };
+    assert_eq!(info(0), (K_RESULT_OK, 0, BUS_FLAGS_DEFAULT_ACTIVE));
+    assert_eq!(info(1), (K_RESULT_OK, 1, 0));
+    assert_eq!(info(2).0, K_INVALID_ARGUMENT);
 }
 
 #[test]

@@ -47,8 +47,10 @@ use crate::plugin_formats::clap::ffi::{
 };
 use crate::plugin_formats::clap::params::{ClapParamEvents, ParamEventSink};
 use crate::plugin_formats::vst3::param_delivery::{Vst3ParamEvents, Vst3ParamSink};
+use plugin_bridge::records::PORT_CHANNELS;
+
 use crate::plugin_system::bridge::BridgedPlugin;
-use crate::plugin_system::bridge::{CHANNELS, MAX_FRAMES};
+use crate::plugin_system::bridge::MAX_FRAMES;
 use crate::plugin_system::crash_marker::note_crash;
 use crate::plugin_system::instance::PluginInstance;
 use crate::plugin_system::lifecycle::LifecycleState;
@@ -213,6 +215,10 @@ struct BridgeRoundTrip {
     live: bool,
     sample_rate: f32,
     latency: u32,
+    /// Channels of the input and of the output samples of a block, read from the
+    /// bridge's port table when the device is prepared.
+    input_channels: usize,
+    output_channels: usize,
     sequence: u64,
     steady_time: i64,
     pending_reset: bool,
@@ -241,6 +247,8 @@ impl BridgeRoundTrip {
             live: true,
             sample_rate: 48_000.0,
             latency: 0,
+            input_channels: PORT_CHANNELS,
+            output_channels: PORT_CHANNELS,
             sequence: 0,
             steady_time: 0,
             pending_reset: false,
@@ -257,15 +265,23 @@ impl BridgeRoundTrip {
         self.live = ctx.live;
         self.sample_rate = ctx.sample_rate;
         let max_frames = (ctx.max_block_size as u32).min(MAX_FRAMES);
-        let samples = max_frames as usize * CHANNELS as usize;
-        self.input = vec![0.0; samples];
-        self.output = vec![0.0; samples];
-
         let bridge = self
             .instance
             .bridge()
-            .filter(|_| ctx.num_channels == CHANNELS as usize);
-        let latency = bridge.and_then(|bridge| bridge.activate(ctx.sample_rate, max_frames));
+            .filter(|_| ctx.num_channels == PORT_CHANNELS);
+        self.input_channels = bridge.map_or(PORT_CHANNELS, BridgedPlugin::input_channels);
+        self.output_channels = bridge.map_or(PORT_CHANNELS, |bridge| {
+            bridge.output_ports() * PORT_CHANNELS
+        });
+        self.input = vec![0.0; max_frames as usize * self.input_channels];
+        self.output = vec![0.0; max_frames as usize * self.output_channels];
+        let latency = bridge.and_then(|bridge| {
+            bridge.activate(
+                ctx.sample_rate,
+                max_frames,
+                self.instance.vst3_wanted_outputs(),
+            )
+        });
         self.active = latency.is_some();
         self.latency = latency.unwrap_or(0);
         if let Some(bridge) = bridge.filter(|_| self.active) {
@@ -307,13 +323,14 @@ impl BridgeRoundTrip {
     fn process(
         &mut self,
         input: Option<&AudioBuffer>,
-        output: &mut AudioBuffer,
+        outputs: &mut [AudioBuffer],
         transport: &TransportInfo,
         notes: Option<&MidiEventList>,
     ) -> bool {
         let frames = transport.block_size;
-        let samples = frames * CHANNELS as usize;
-        if !self.active || samples > self.output.len() {
+        let input_samples = frames * self.input_channels;
+        let output_samples = frames * self.output_channels;
+        if !self.active || input_samples > self.input.len() || output_samples > self.output.len() {
             return false;
         }
         self.write_events(notes);
@@ -322,7 +339,7 @@ impl BridgeRoundTrip {
             for (channel, planar) in self
                 .input
                 .chunks_exact_mut(frames)
-                .take(CHANNELS as usize)
+                .take(PORT_CHANNELS)
                 .enumerate()
             {
                 planar.copy_from_slice(&input.channel(channel)[..frames]);
@@ -335,7 +352,9 @@ impl BridgeRoundTrip {
         };
         let request = BlockRequest {
             frames,
-            input: input.is_some().then_some(&self.input[..samples]),
+            input: input.is_some().then_some(&self.input[..input_samples]),
+            input_channels: self.input_channels,
+            output_channels: self.output_channels,
             transport: Some(&wire_transport),
             notes: &self.wire_notes,
             params: &self.wire_params.events,
@@ -383,15 +402,19 @@ impl BridgeRoundTrip {
             }
             BlockOutcome::TimedOut | BlockOutcome::Dead => {}
         }
-        for (channel, planar) in self
-            .output
-            .chunks_exact(frames)
-            .take(CHANNELS as usize)
-            .enumerate()
-        {
-            output.channel_mut(channel)[..frames].copy_from_slice(planar);
+        let carried_ports = self.output_ports();
+        for (port, buffer) in outputs.iter_mut().enumerate().take(carried_ports) {
+            for channel in 0..PORT_CHANNELS {
+                let at = (port * PORT_CHANNELS + channel) * frames;
+                buffer.channel_mut(channel)[..frames].copy_from_slice(&self.output[at..at + frames]);
+            }
         }
         true
+    }
+
+    /// Output ports a block carries, the main one first.
+    fn output_ports(&self) -> usize {
+        self.output_channels / PORT_CHANNELS
     }
 
     fn set_param_controls(&mut self, controls: Vec<PluginParamControl>) {
@@ -432,8 +455,9 @@ impl AudioNode for BridgedNode {
         1
     }
 
+    /// Final once `prepare` has run: the ports the bridge's table carries.
     fn num_output_ports(&self) -> usize {
-        1
+        self.round_trip.output_ports()
     }
 
     fn prepare(&mut self, ctx: PrepareContext) {
@@ -446,12 +470,12 @@ impl AudioNode for BridgedNode {
         outputs: &mut [AudioBuffer],
         transport: &TransportInfo,
     ) {
-        let Some(output) = outputs.first_mut() else {
+        if outputs.is_empty() {
             return;
-        };
+        }
         if !self
             .round_trip
-            .process(inputs.first().copied(), output, transport, None)
+            .process(inputs.first().copied(), outputs, transport, None)
         {
             pass_through(inputs, outputs);
         }
@@ -515,6 +539,10 @@ impl BridgedInstrument {
 }
 
 impl InstrumentDevice for BridgedInstrument {
+    fn num_output_ports(&self) -> usize {
+        self.round_trip.output_ports()
+    }
+
     /// A VST3 instrument reports its latency in the Echoes process (ADR-013); a CLAP
     /// one reports none there, so the bridge keeps the two the same.
     fn latency_samples(&self) -> u32 {
@@ -535,9 +563,9 @@ impl InstrumentDevice for BridgedInstrument {
         outputs: &mut [AudioBuffer],
         transport: &TransportInfo,
     ) {
-        if let Some(output) = outputs.first_mut() {
+        if !outputs.is_empty() {
             self.round_trip
-                .process(None, output, transport, Some(events));
+                .process(None, outputs, transport, Some(events));
         }
     }
 

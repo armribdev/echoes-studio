@@ -1842,6 +1842,50 @@ mod vst3_plugins {
         }
     }
 
+    /// A second track takes the test synth's `Aux Out` bus (port 1), which carries half
+    /// of the main sound.
+    fn aux_output_project() -> AppProject {
+        let mut project = project();
+        let mut aux = empty_track("aux");
+        aux.input_source = Some(crate::project::PluginOutputSource {
+            effect_id: "instrument:midi".into(),
+            port: 1,
+        });
+        project.tracks.push(aux);
+        project
+    }
+
+    /// ADR-033 step 8b, C-2: the auxiliary output of a bridged instrument reaches the
+    /// track that reads it with the same samples as in the Echoes process.
+    #[test]
+    fn a_sandboxed_instrument_renders_its_aux_output_like_an_in_process_one() {
+        let with_aux = aux_output_project();
+        for block_size in BLOCK_SIZES {
+            let main_only =
+                render_with_host(&mut host_with_test_plugins(), &project(), block_size);
+            let in_process =
+                render_with_host(&mut host_with_test_plugins(), &with_aux, block_size);
+            assert!(
+                first_difference(&main_only, &in_process).is_some(),
+                "the track reading the aux bus must add its sound"
+            );
+            let mut sandboxed_host = isolating_everything(host_with_test_plugins());
+            let sandboxed = render_with_host(&mut sandboxed_host, &with_aux, block_size);
+            assert!(
+                sandboxed_host
+                    .instance_by_key("instrument:midi")
+                    .unwrap()
+                    .is_sandboxed(),
+                "the instrument must really run in the bridge"
+            );
+            assert_eq!(
+                first_difference(&in_process, &sandboxed),
+                None,
+                "block size {block_size}"
+            );
+        }
+    }
+
     /// The instrument's first note with the mod wheel up and the pitch bend raised, which
     /// the test plugin's `IMidiMapping` turns into parameters that scale its output.
     fn controlled_project() -> AppProject {

@@ -48,7 +48,10 @@
 //! read through `GetProcAddress` even after the module was unloaded by the host:
 //! `test_vst3_init_calls`, `test_vst3_exit_calls`, `test_vst3_init_apartment`.
 //!
-//! Not there yet, added by the step that needs it: units and programs, auxiliary buses.
+//! Both classes have a second audio output, `Aux Out` (an auxiliary bus, closed unless the
+//! host opens it): half of what the main output plays. Left alone it changes nothing.
+//!
+//! Not there yet, added by the step that needs it: units and programs, a sidechain input.
 
 use std::ffi::c_void;
 use std::mem::{offset_of, zeroed};
@@ -99,6 +102,11 @@ pub const LAST_PITCH: u32 = 22;
 /// `ControllerNumbers` of `ivstmidicontrollers.h`: the mod wheel and pitch bend.
 const CONTROLLER_MOD_WHEEL: i16 = 1;
 const CONTROLLER_PITCH_BEND: i16 = 129;
+
+/// Index of the audio output bus the host opens only when something reads it, and
+/// the share of the main sound it carries.
+const AUX_OUTPUT: i32 = 1;
+const AUX_LEVEL: f32 = 0.5;
 
 /// The size of the view before the host tells it another one.
 pub const VIEW_INITIAL_SIZE: (i32, i32) = (400, 300);
@@ -669,7 +677,7 @@ unsafe extern "C" fn component_set_io_mode(_this: *mut IComponent, _mode: i32) -
 fn bus_count(kind: Kind, media: i32, direction: i32) -> i32 {
     match (media, direction, kind) {
         (K_AUDIO, K_INPUT, Kind::Effect) => 1,
-        (K_AUDIO, K_OUTPUT, _) => 1,
+        (K_AUDIO, K_OUTPUT, _) => 2,
         (K_EVENT, K_INPUT, Kind::Instrument) => 1,
         _ => 0,
     }
@@ -708,7 +716,7 @@ unsafe extern "C" fn component_bus_info(
     index: i32,
     info: *mut c_void,
 ) -> TResult {
-    if index != 0
+    if index < 0
         || info.is_null()
         || index >= bus_count((*from_component(this)).kind, media, direction)
     {
@@ -718,14 +726,20 @@ unsafe extern "C" fn component_bus_info(
     info.media_type = media;
     info.direction = direction;
     info.channel_count = if media == K_AUDIO { 2 } else { 1 };
+    let is_aux_output = media == K_AUDIO && direction == K_OUTPUT && index == AUX_OUTPUT;
     let name = match (media, direction) {
+        _ if is_aux_output => "Aux Out",
         (K_AUDIO, K_INPUT) => "Stereo In",
         (K_AUDIO, _) => "Stereo Out",
         _ => "Events",
     };
     write_utf16(&mut info.name, name);
-    info.bus_type = 0;
-    info.flags = BUS_FLAGS_DEFAULT_ACTIVE;
+    info.bus_type = i32::from(is_aux_output);
+    info.flags = if is_aux_output {
+        0
+    } else {
+        BUS_FLAGS_DEFAULT_ACTIVE
+    };
     K_RESULT_OK
 }
 
@@ -847,12 +861,13 @@ unsafe extern "C" fn processor_set_bus_arrangements(
     outputs: *mut u64,
     output_count: i32,
 ) -> TResult {
-    let wanted_inputs = bus_count((*from_processor(this)).kind, K_AUDIO, K_INPUT);
+    let kind = (*from_processor(this)).kind;
+    let wanted_inputs = bus_count(kind, K_AUDIO, K_INPUT);
     let stereo = |arrangements: *mut u64, count: i32| {
         (0..count).all(|i| *arrangements.add(i as usize) == SPEAKER_STEREO)
     };
     if input_count == wanted_inputs
-        && output_count == 1
+        && output_count == bus_count(kind, K_AUDIO, K_OUTPUT)
         && stereo(inputs, input_count)
         && stereo(outputs, output_count)
     {
@@ -868,7 +883,7 @@ unsafe extern "C" fn processor_bus_arrangement(
     index: i32,
     arrangement: *mut u64,
 ) -> TResult {
-    if index != 0 || index >= bus_count((*from_processor(this)).kind, K_AUDIO, direction) {
+    if index < 0 || index >= bus_count((*from_processor(this)).kind, K_AUDIO, direction) {
         return K_INVALID_ARGUMENT;
     }
     *arrangement = SPEAKER_STEREO;
@@ -1063,12 +1078,18 @@ unsafe extern "C" fn processor_process(
             let Some(output) = channel(data.outputs, index) else {
                 break;
             };
-            *output.add(frame) = match plugin.kind {
+            let sound = match plugin.kind {
                 Kind::Effect => {
                     channel(data.inputs, index).map_or(0.0, |input| *input.add(frame) * gain as f32)
                 }
                 Kind::Instrument => held * gain as f32 * shape,
             };
+            *output.add(frame) = sound;
+            if data.num_outputs > AUX_OUTPUT {
+                if let Some(aux) = channel(data.outputs.add(AUX_OUTPUT as usize), index) {
+                    *aux.add(frame) = sound * AUX_LEVEL;
+                }
+            }
         }
     }
     if data.num_samples <= 0 {

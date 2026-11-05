@@ -307,8 +307,8 @@ A VST3 instrument is a `VstInstrument` (`vst3/instrument.rs`) behind
 A VST3 plugin (effect or instrument) with several audio output buses feeds the
 same routing as a CLAP multi-out plugin: `AppTrack.input_source`,
 `SET_TRACK_INPUT`, the left-panel "Entrée" picker, `get_plugin_outputs`. No
-project, command or event change. In-process only (a sandboxed plugin has one audio port each way
-until ADR-033 step 8b).
+project, command or event change. Sandboxed too since ADR-033 step 8b (see "VST3 auxiliary outputs
+in the sandbox"); only the sidechain input is still in-process only.
 
 - **Reading** (`vst3/buses.rs`). At every activation `vst3_ensure_active` reads
   the output buses (`getBusCount`, then `getBusInfo` after `setBusArrangements`)
@@ -380,7 +380,7 @@ An effect with an auxiliary audio input bus receives the signal of another track
 through the same routing as a CLAP effect: `PluginParams.sidechain_source`,
 `UPDATE_EFFECT`, and `SidechainPicker.svelte` (shown when `num_sidechain_inputs`
 is above 0, whatever the format). No project, command, event or frontend change.
-In-process only (a sandboxed plugin has one audio port each way until ADR-033 step 8b).
+In-process only until the second half of ADR-033 step 8b (a sandboxed plugin has one audio input).
 
 - **Scan** (`vst3/host.rs::probe_aux_input_count`). For each effect class
   (instruments are not probed, as for CLAP) the scan creates a throwaway component
@@ -1424,14 +1424,39 @@ CLAP plugin (`can_run_sandboxed(format)`).
   `instantiate_instrument_placement` creates the bridged instance for CLAP and VST3. A VST3 instrument
   reports its latency through `BridgedInstrument::latency_samples` (a CLAP one reports 0, in process and
   sandboxed). Still one stereo output: an auxiliary output a track reads is cut by the compiler.
-- **Not yet** (step 8b): auxiliary outputs and sidechain in the bridge, `IComponentHandlerBusActivation`
-  — they need several audio buffers per block, that is protocol v4.
+- **Auxiliary outputs** (step 8b, first half): see "VST3 auxiliary outputs in the sandbox" below.
+- **Not yet** (step 8b, second half): the sidechain input in the bridge, `IComponentHandlerBusActivation`.
 
 Tests: `vst3_adapter.rs` (notes at their offset, a NoteOff of a skipped block, reset, mod wheel through
 `IMidiMapping`, an effect gets no notes), `vst3_instrument_sandbox_tests.rs` (preference, latency, a killed
 bridge, no in-process fallback, a reset in both places, Surge XT when installed), and in
 `render_harness::vst3_plugins` the sandbox-against-in-process renders of the instrument, with and without
 mod wheel and pitch bend.
+
+### VST3 auxiliary outputs in the sandbox (ADR-033 step 8b, first half, 2026-11-05)
+
+A sandboxed VST3 effect or instrument with several output buses feeds the same routing as in process
+(`AppTrack.input_source`, `get_plugin_outputs`): output port `p` of the node is output bus `p`.
+
+- **Port table.** The bridge's handshake lists every output bus up to `MAX_PORTS` (9: the main bus and eight
+  auxiliary ones) as an **active** port; the engine reads the table once at spawn
+  (`BridgedPlugin::output_ports`). A bus past the ninth stays closed. A CLAP bridge is unchanged: one stereo
+  pair each way.
+- **Block.** Protocol v4: the samples of a reply are `PORT_CHANNELS` (2) channels per output port in table order;
+  a mono bus is spread over both channels (`Vst3OutputBuses::finish`), a wider one is cut to its first two,
+  exactly as in process. The shared region holds 18 channels for VST3.
+- **Which buses open.** `PluginHost::set_demanded_outputs` (the compiler's demand) already set the instance's
+  wanted buses; `BridgeRoundTrip::prepare` sends them in `Activate` (`wanted_outputs`) and the bridge opens
+  those buses (`open_output_buses`), closing the ones no longer wanted. A different set reactivates the plugin.
+  A bus nothing reads stays closed and its port plays silence.
+- **Test plugin.** Both classes have a second output, `Aux Out`, half of the main sound, closed unless opened.
+  The `vst3_plugins` golden hash did not move.
+
+Tests: `render_harness::vst3_plugins::a_sandboxed_instrument_renders_its_aux_output_like_an_in_process_one`
+(a track reads port 1 of the instrument; sandbox against in-process at the five block sizes),
+`vst3_adapter.rs` (a closed bus is silent, an open one plays, a new wish reactivates),
+`vst3_bridge.rs::an_auxiliary_output_plays_only_once_the_engine_wants_it`, and in `plugin_bridge` the
+multi-port block tests.
 
 ---
 

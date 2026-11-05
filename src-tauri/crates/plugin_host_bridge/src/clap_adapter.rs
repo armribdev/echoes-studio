@@ -38,6 +38,7 @@ use plugin_bridge::protocol::{
 use plugin_bridge::records::{
     AudioPortRecord, Handshake, NoteNameRecord, ParamRecord, ParamUnit, PortDirection, PortRole,
     PresetRecord, PresetSource, SpeakerLayout, PARAM_AUTOMATABLE, PARAM_HIDDEN, PARAM_MODULATABLE,
+    PORT_CHANNELS,
 };
 use plugin_bridge::session::{BlockContext, BridgeProcessor, ReplyWriter};
 
@@ -582,7 +583,7 @@ impl ClapBlockProcessor {
             self.sleep.set_tail(Some(tail));
             self.applied_tail = tail;
         }
-        let samples = block.frames * block.channels;
+        let samples = block.frames * block.input_channels;
         let input_audible = self.sleep.wants_input_scan()
             && block.has_input
             && !is_silent(&input[..samples.min(input.len())]);
@@ -678,6 +679,10 @@ fn params_changes(rescan: u32) -> u32 {
 }
 
 impl BridgeProcessor for ClapBlockProcessor {
+    fn output_channels(&self) -> usize {
+        PORT_CHANNELS
+    }
+
     fn process(
         &mut self,
         block: &BlockContext,
@@ -704,21 +709,23 @@ impl BridgeProcessor for ClapBlockProcessor {
             return signal_flags();
         }
         let frames = block.frames;
-        for channel in 0..block.channels {
+        for channel in 0..block.input_channels {
             self.input_pointers[channel] = input[channel * frames..].as_ptr() as *mut f32;
+        }
+        for channel in 0..block.output_channels {
             self.output_pointers[channel] = output[channel * frames..].as_mut_ptr();
         }
         let input_buffer = ClapAudioBuffer {
             data32: self.input_pointers.as_mut_ptr(),
             data64: std::ptr::null_mut(),
-            channel_count: block.channels as u32,
+            channel_count: block.input_channels as u32,
             latency: 0,
             constant_mask: 0,
         };
         let mut output_buffer = ClapAudioBuffer {
             data32: self.output_pointers.as_mut_ptr(),
             data64: std::ptr::null_mut(),
-            channel_count: block.channels as u32,
+            channel_count: block.output_channels as u32,
             latency: 0,
             constant_mask: 0,
         };

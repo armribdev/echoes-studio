@@ -20,7 +20,7 @@ use plugin_bridge::session::{AudioPort, BridgeLayout, BridgeProcess};
 
 use plugin_bridge::records::{
     Handshake, NoteNameRecord, ParamRecord, ParamUnit, PortDirection, PresetRecord, PresetSource,
-    TrackRecord, PARAM_AUTOMATABLE, PARAM_HIDDEN, PARAM_MODULATABLE,
+    TrackRecord, MAX_PORTS, PARAM_AUTOMATABLE, PARAM_HIDDEN, PARAM_MODULATABLE, PORT_CHANNELS,
 };
 
 use crate::plugin_formats::clap::ffi::{
@@ -32,9 +32,8 @@ use crate::plugin_system::wrapper::DeviceFormat;
 
 /// Largest block a sandboxed plugin processes (the engine's `MAX_BLOCK_FRAMES`).
 pub const MAX_FRAMES: u32 = 4096;
-pub const CHANNELS: u32 = 2;
 /// Room for a block's sections in each direction: the transport, 256 notes and
-/// 1024 parameter events fit with room to spare (protocol v3).
+/// 1024 parameter events fit with room to spare.
 pub const EVENT_CAPACITY: u32 = 64 * 1024;
 
 /// Loading a large plugin (wavetables, samples) can take seconds.
@@ -52,8 +51,9 @@ pub fn locate_bridge_exe() -> Option<PathBuf> {
     exe.exists().then_some(exe)
 }
 
-/// `(sample_rate bits, max_frames, latency)` of the current activation.
-type Activation = (u32, u32, u32);
+/// `(sample_rate bits, max_frames, latency, auxiliary outputs wanted)` of the
+/// current activation.
+type Activation = (u32, u32, u32, u32);
 
 /// What the engine uses the hosted plugin for (`--plugin-role`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -69,6 +69,9 @@ pub struct BridgedPlugin {
     restart_requested: AtomicBool,
     /// The track the bridge was last given, to send only changes.
     track_info: Mutex<Option<HostTrackInfo>>,
+    /// Channels of the input and of the output samples of a block.
+    input_channels: usize,
+    output_channels: usize,
 }
 
 impl BridgedPlugin {
@@ -107,15 +110,44 @@ impl BridgedPlugin {
         if let Some(info) = track_info {
             args.extend(["--track-info".into(), info.to_hex().into()]);
         }
-        let layout = BridgeLayout::new(MAX_FRAMES, CHANNELS, EVENT_CAPACITY);
+        let region_channels = match format {
+            DeviceFormat::Vst3 => PORT_CHANNELS * MAX_PORTS,
+            _ => PORT_CHANNELS,
+        };
+        let layout = BridgeLayout::new(MAX_FRAMES, region_channels as u32, EVENT_CAPACITY);
         let process = BridgeProcess::spawn(bridge_exe, layout, &args, START_TIMEOUT)?;
-        check_handshake(&process.request(Op::Handshake, &[], START_TIMEOUT)?, unit)?;
+        let handshake = read_handshake(
+            &process.request(Op::Handshake, &[], START_TIMEOUT)?,
+            unit,
+            region_channels,
+        )?;
+        // A CLAP bridge always presents one stereo pair each way; a VST3 one the
+        // active ports of its table.
+        let (input_channels, output_channels) = match format {
+            DeviceFormat::Vst3 => (
+                handshake.block_channels(PortDirection::Input),
+                handshake.block_channels(PortDirection::Output),
+            ),
+            _ => (PORT_CHANNELS, PORT_CHANNELS),
+        };
         Ok(BridgedPlugin {
             process,
             activation: Mutex::new(None),
             restart_requested: AtomicBool::new(false),
             track_info: Mutex::new(track_info.cloned()),
+            input_channels,
+            output_channels,
         })
+    }
+
+    /// Channels of the input samples of a block: every active input port.
+    pub fn input_channels(&self) -> usize {
+        self.input_channels
+    }
+
+    /// Output ports a block carries, the main one first.
+    pub fn output_ports(&self) -> usize {
+        self.output_channels / PORT_CHANNELS
     }
 
     /// Lock-free: called from the audio thread.  The next [`Self::activate`]
@@ -152,23 +184,29 @@ impl BridgedPlugin {
         reply
     }
 
-    /// Activate at `(sample_rate, max_frames)` unless already active there and
-    /// no restart is pending.  Returns the plugin's latency, or `None` when
+    /// Activate at `(sample_rate, max_frames)` with the auxiliary output buses
+    /// `wanted_outputs` names (bit `n` = output port `n`), unless already active so
+    /// and no restart is pending.  Returns the plugin's latency, or `None` when
     /// activation failed.
-    pub fn activate(&self, sample_rate: f32, max_frames: u32) -> Option<u32> {
+    pub fn activate(&self, sample_rate: f32, max_frames: u32, wanted_outputs: u32) -> Option<u32> {
         let mut activation = self.activation.lock().unwrap_or_else(|e| e.into_inner());
         let restart = self.restart_requested.swap(false, Ordering::AcqRel);
-        if let Some((rate, frames, latency)) = *activation {
-            if !restart && rate == sample_rate.to_bits() && frames == max_frames {
+        if let Some((rate, frames, latency, outputs)) = *activation {
+            if !restart
+                && rate == sample_rate.to_bits()
+                && frames == max_frames
+                && outputs == wanted_outputs
+            {
                 return Some(latency);
             }
         }
         *activation = None;
         let mut payload = (sample_rate as f64).to_le_bytes().to_vec();
         payload.extend_from_slice(&max_frames.to_le_bytes());
+        payload.extend_from_slice(&wanted_outputs.to_le_bytes());
         let reply = self.request(Op::Activate, &payload).ok()?;
         let latency = u32::from_le_bytes(reply.get(..4)?.try_into().ok()?);
-        *activation = Some((sample_rate.to_bits(), max_frames, latency));
+        *activation = Some((sample_rate.to_bits(), max_frames, latency, wanted_outputs));
         Some(latency)
     }
 
@@ -296,11 +334,16 @@ impl BridgedPlugin {
     }
 }
 
-/// Refuses a bridge whose parameter values are not in the unit the engine sends
-/// for the plugin's format (plain for CLAP, normalised for VST3, ADR-021) or whose
-/// port table has several active ports on one side (the block carries one).  A
-/// refused plugin is reported unavailable, never loaded in-process instead.
-fn check_handshake(reply: &[u8], expected_unit: ParamUnit) -> io::Result<()> {
+/// Reads the bridge's handshake and refuses a bridge whose parameter values are not
+/// in the unit the engine sends for the plugin's format (plain for CLAP, normalised
+/// for VST3, ADR-021) or whose active ports carry more channels than the shared
+/// region holds.  A refused plugin is reported unavailable, never loaded in-process
+/// instead.
+fn read_handshake(
+    reply: &[u8],
+    expected_unit: ParamUnit,
+    region_channels: usize,
+) -> io::Result<Handshake> {
     let handshake = Handshake::decode(reply)?;
     if handshake.param_unit != expected_unit {
         return Err(io::Error::new(
@@ -312,11 +355,14 @@ fn check_handshake(reply: &[u8], expected_unit: ParamUnit) -> io::Result<()> {
         ));
     }
     for direction in [PortDirection::Input, PortDirection::Output] {
-        handshake
-            .active_port(direction)
-            .map_err(|message| io::Error::new(io::ErrorKind::InvalidData, message))?;
+        if handshake.block_channels(direction) > region_channels {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("more {direction:?} audio channels than the shared region holds"),
+            ));
+        }
     }
-    Ok(())
+    Ok(handshake)
 }
 
 /// Lets the bridge bring its editor window to the front: Windows only grants

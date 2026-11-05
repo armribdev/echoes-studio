@@ -15,8 +15,8 @@ use plugin_bridge::protocol::{
     PARAM_MODULATION, PARAM_VALUE,
 };
 use plugin_bridge::records::{
-    Handshake, ParamRecord, ParamUnit, PortDirection, PortRole, SpeakerLayout, PARAM_AUTOMATABLE,
-    PARAM_HIDDEN,
+    Handshake, ParamRecord, ParamUnit, PortDirection, PortRole, SpeakerLayout, MAX_PORTS,
+    PARAM_AUTOMATABLE, PARAM_HIDDEN,
 };
 use plugin_bridge::session::{
     BlockOutcome, BlockReply, BlockRequest, BridgeLayout, BridgeProcess,
@@ -38,6 +38,8 @@ const WRITTEN_VALUE: f64 = 0.9;
 const HELD_VALUE: f64 = 0.25;
 const FRAMES: usize = 64;
 const CHANNELS: usize = 2;
+/// The test plugin has a main output and an `Aux Out` bus, two channels each.
+const OUTPUT_CHANNELS: usize = 4;
 const LATENCY: u32 = 64;
 const TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -76,7 +78,7 @@ fn spawn(class_id: &str) -> std::io::Result<BridgeProcess> {
     ];
     BridgeProcess::spawn(
         Path::new(env!("CARGO_BIN_EXE_plugin_host_bridge")),
-        BridgeLayout::new(4096, CHANNELS as u32, 64 * 1024),
+        BridgeLayout::new(4096, (CHANNELS * MAX_PORTS) as u32, 64 * 1024),
         &args,
         TIMEOUT,
     )
@@ -85,6 +87,7 @@ fn spawn(class_id: &str) -> std::io::Result<BridgeProcess> {
 fn activate(bridge: &BridgeProcess) -> u32 {
     let mut payload = 48_000.0f64.to_le_bytes().to_vec();
     payload.extend_from_slice(&4096u32.to_le_bytes());
+    payload.extend_from_slice(&0u32.to_le_bytes());
     let reply = bridge
         .request(Op::Activate, &payload, TIMEOUT)
         .expect("activate");
@@ -106,7 +109,10 @@ fn scaled(input: &[f32], gain: f32) -> Vec<f32> {
 }
 
 struct Block {
+    /// The main output port.
     output: Vec<f32>,
+    /// The ports after it.
+    aux: Vec<f32>,
     outcome: BlockOutcome,
     flags: u32,
     /// What the plugin did to its own parameters, and its gestures.
@@ -115,12 +121,14 @@ struct Block {
 
 fn process(bridge: &BridgeProcess, sequence: u64, params: &[WireParam], budget: Duration) -> Block {
     let input = ramp();
-    let mut output = vec![9.0f32; FRAMES * CHANNELS];
+    let mut output = vec![9.0f32; FRAMES * OUTPUT_CHANNELS];
     let mut edits = vec![WireParam::new(0, 0, 0, 0.0); 16];
     let mut midi = Vec::new();
     let request = BlockRequest {
         frames: FRAMES,
         input: Some(&input),
+        input_channels: CHANNELS,
+        output_channels: OUTPUT_CHANNELS,
         transport: None,
         notes: &[],
         params,
@@ -140,8 +148,10 @@ fn process(bridge: &BridgeProcess, sequence: u64, params: &[WireParam], budget: 
         } => (flags, edit_count),
         _ => (0, 0),
     };
+    let aux = output.split_off(FRAMES * CHANNELS);
     Block {
         output,
+        aux,
         outcome,
         flags,
         edits: edits[..edit_count].to_vec(),
@@ -182,20 +192,51 @@ fn rescan_bits(flags: u32) -> u32 {
 }
 
 #[test]
-fn the_handshake_declares_normalised_values_and_one_active_port_each_way() {
+fn the_handshake_declares_normalised_values_and_the_ports_a_block_carries() {
     let bridge = spawn(&effect_class_id()).expect("bridge starts");
     let reply = bridge.request(Op::Handshake, &[], TIMEOUT).unwrap();
     let handshake = Handshake::decode(&reply).unwrap();
     assert_eq!(handshake.param_unit, ParamUnit::Normalised);
+    let active = |direction| {
+        handshake
+            .ports
+            .iter()
+            .filter(move |port| port.direction == direction && port.active)
+    };
     for direction in [PortDirection::Input, PortDirection::Output] {
-        let port = handshake
-            .active_port(direction)
-            .unwrap()
-            .expect("an active port");
-        assert_eq!(port.role, PortRole::Main);
-        assert_eq!(port.channels, 2);
-        assert_eq!(port.layout, SpeakerLayout::Stereo);
+        let main = active(direction).next().expect("an active main port");
+        assert_eq!(main.role, PortRole::Main);
+        assert_eq!(main.channels, 2);
+        assert_eq!(main.layout, SpeakerLayout::Stereo);
     }
+    assert_eq!(handshake.block_channels(PortDirection::Input), CHANNELS);
+    assert_eq!(
+        handshake.block_channels(PortDirection::Output),
+        OUTPUT_CHANNELS,
+        "the main output and the auxiliary one"
+    );
+}
+
+#[test]
+fn an_auxiliary_output_plays_only_once_the_engine_wants_it() {
+    let bridge = spawn(&effect_class_id()).expect("bridge starts");
+    let activate_with = |outputs: u32| {
+        let mut payload = 48_000.0f64.to_le_bytes().to_vec();
+        payload.extend_from_slice(&4096u32.to_le_bytes());
+        payload.extend_from_slice(&outputs.to_le_bytes());
+        bridge
+            .request(Op::Activate, &payload, TIMEOUT)
+            .expect("activate");
+    };
+
+    activate_with(0);
+    let closed = process(&bridge, 0, &[], TIMEOUT);
+    assert!(closed.aux.iter().all(|&s| s == 0.0), "a closed bus is silent");
+
+    activate_with(0b10);
+    let open = process(&bridge, 1, &[], TIMEOUT);
+    assert_eq!(open.output, ramp(), "the main output is unchanged");
+    assert_eq!(open.aux, scaled(&ramp(), 0.5), "Aux Out plays half of it");
 }
 
 #[test]
@@ -242,6 +283,7 @@ fn activating_again_at_a_new_size_keeps_the_plugin_and_its_state() {
         .unwrap();
     let mut payload = 44_100.0f64.to_le_bytes().to_vec();
     payload.extend_from_slice(&1024u32.to_le_bytes());
+    payload.extend_from_slice(&0u32.to_le_bytes());
     let latency = bridge.request(Op::Activate, &payload, TIMEOUT).unwrap();
     assert_eq!(latency, LATENCY.to_le_bytes());
     assert_eq!(

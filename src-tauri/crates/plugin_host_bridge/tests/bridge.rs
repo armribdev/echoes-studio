@@ -194,6 +194,8 @@ fn process_sections(
     let request = BlockRequest {
         frames: FRAMES,
         input,
+        input_channels: CHANNELS,
+        output_channels: CHANNELS,
         transport: sections.transport,
         notes: sections.notes,
         params: sections.params,
@@ -954,15 +956,14 @@ fn the_handshake_declares_plain_values_and_the_port_table() {
 
     assert_eq!(handshake.param_unit, ParamUnit::Plain);
     assert_eq!(handshake.ports.len(), 4, "two inputs and two outputs");
-    let input = handshake
-        .active_port(PortDirection::Input)
-        .unwrap()
-        .expect("an active input");
-    let output = handshake
-        .active_port(PortDirection::Output)
-        .unwrap()
-        .expect("an active output");
-    for port in [input, output] {
+    assert_eq!(handshake.active_port_count(PortDirection::Input), 1);
+    assert_eq!(handshake.active_port_count(PortDirection::Output), 1);
+    let main_ports = handshake
+        .ports
+        .iter()
+        .filter(|port| port.active)
+        .collect::<Vec<_>>();
+    for port in main_ports {
         assert_eq!(
             (port.role, port.layout, port.channels),
             (PortRole::Main, SpeakerLayout::Stereo, 2)

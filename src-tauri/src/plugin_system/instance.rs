@@ -1393,6 +1393,12 @@ impl PluginInstance {
         self.vst3_wanted_outputs.store(buses, Ordering::Relaxed);
     }
 
+    /// The auxiliary output buses the graph reads, as [`Self::set_vst3_wanted_outputs`]
+    /// last took them.
+    pub fn vst3_wanted_outputs(&self) -> u32 {
+        self.vst3_wanted_outputs.load(Ordering::Relaxed) & AUX_OUTPUT_BUSES
+    }
+
     /// Convenience: extract the CLAP plugin pointer if this instance is CLAP.
     pub fn clap_plugin(&self) -> Option<*const ClapPlugin> {
         match &self.handle {

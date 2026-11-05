@@ -10,6 +10,12 @@
 //!   [samples: channel_count × frames f32 LE]
 //! ```
 //!
+//! `channel_count` is the channels of the samples **in this message**: in a request
+//! those of every input port, in a reply those of every output port, each port
+//! taking [`crate::records::PORT_CHANNELS`] channels in the order of the port table
+//! ([`crate::records::Handshake`], active ports only).  A bus that is not open
+//! plays silence.
+//!
 //! Engine → bridge, the sections are the block's transport, its notes and raw MIDI
 //! (one ordered list), and its parameter events (value, modulation offset, gesture
 //! begin / end) with their sample offset.  Bridge → engine, `params` holds what the
@@ -29,7 +35,7 @@ use core::marker::PhantomData;
 use core::mem::size_of;
 
 /// Wire-format version, checked at handshake (control block) and per block.
-pub const BRIDGE_PROTOCOL_VERSION: u32 = 3;
+pub const BRIDGE_PROTOCOL_VERSION: u32 = 4;
 
 /// Stamped at the start of every block so a torn / desynced region is detected.
 /// ASCII `"EsBr"` (Echoes Bridge), little-endian.
@@ -390,7 +396,7 @@ mod tests {
 
     #[test]
     fn the_flag_and_kind_values_are_frozen() {
-        assert_eq!(BRIDGE_PROTOCOL_VERSION, 3);
+        assert_eq!(BRIDGE_PROTOCOL_VERSION, 4);
         assert_eq!(
             [
                 BLOCK_HAS_INPUT,

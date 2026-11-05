@@ -293,6 +293,27 @@ CLAP events from it. It changes on **both** audio threads, under the same rules:
 Round-trip time of a block on the test plugin, before and after: see "Step 4" in
 ADR-033.
 
+**Several audio ports per block (protocol v4, ADR-033 step 8b, 2026-11-05).** The
+header's `channel_count` is now the channels of the samples **of that message**: a
+request carries every input port, a reply every output port, two channels each
+(`PORT_CHANNELS`), in the order of the handshake's active ports. Nothing else about
+the message changes: same rings, wake-up, bounded wait, single `SetEvent`; no lock,
+no allocation and no new system call on either audio thread.
+
+- Sizes are fixed before the first block. The shared region holds `PORT_CHANNELS ×
+  MAX_PORTS` (18) channels for a VST3 plugin (2 for CLAP); the engine's input and
+  output vectors and the bridge's per-port buffers are made at `prepare` / at the
+  activation. A block wider than the region is not sent (`Skipped`).
+- The bridge reads `BridgeProcessor::output_channels()` before each block (an atomic
+  free read of a count fixed at load); the audio thread never asks the plugin.
+- A bus the graph does not read stays closed in the plugin and its port plays
+  silence (the activation's buffers are new and zeroed, the reply buffer is cleared
+  before each block). A block the bridge skips passes the main input through and
+  leaves the other ports silent.
+- The set of auxiliary buses to open travels in the `Activate` request
+  (`wanted_outputs`, off the audio thread, main thread of the bridge); a different
+  set reactivates the plugin, as a restart does.
+
 **VST3 in the bridge (ADR-033 step 5).** The message is the same; the engine side is
 unchanged (step 6 below added its parameter section). Bridge side,
 `Vst3BlockProcessor::process`: no allocation (the activation sizes the buffers, the bus
