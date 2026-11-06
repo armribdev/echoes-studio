@@ -8,6 +8,7 @@
 	import type { Project } from '../types/global';
 	import {
 		pluginDisplayName,
+		pluginsLoading,
 		rescanPlugins,
 		type UnavailablePlugin,
 		type UnavailableReason
@@ -99,7 +100,7 @@
 		const unlisten = listen<Project>('project-loaded', async ({ payload }) => {
 			project = payload;
 			try {
-				await refresh();
+				if (!get(pluginsLoading)) await refresh();
 			} catch (e) {
 				console.error('[plugins] get_unavailable_plugins failed:', e);
 			}
@@ -108,6 +109,9 @@
 			unlisten.then((fn) => fn());
 		};
 	});
+
+	// A plugin still being scanned is not missing: look again when the scan ends.
+	$: if (!$pluginsLoading) void refresh().catch((e) => console.error('[plugins] refresh failed:', e));
 
 	$: count = missing.length;
 </script>

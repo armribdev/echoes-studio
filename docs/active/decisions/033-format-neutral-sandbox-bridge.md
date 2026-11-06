@@ -1162,7 +1162,8 @@ bridge at all); a forced rescan lists everything again.
   that has not changed is not listed again. Files that disappeared are dropped from both.
 - **`PluginHost`** gained `scan_plugins` (cache and blocklist aware), `rescan_plugins` (forgets the cache, keeps
   the blocklist), `blocked_plugins`, `take_newly_blocked` and `reenable_plugin`. `PluginHost::new` no longer scans:
-  `main.rs::scan_installed_plugins` points the host at the data directory, then scans, in Tauri's `setup`.
+  `main.rs::scan_installed_plugins` points the host at the data directory, then scans, in Tauri's `setup`. _(Since
+  2026-11-06 the scan belongs to `PluginScanner`, not to `PluginHost`, and starts in a background thread: ADR-034.)_
 - **Interface.** Three commands: `list_blocked_plugins`, `take_newly_blocked_plugins` (each file is announced
   once) and `reenable_blocked_plugin` (recompiles like a rescan). The commands exist; since 2026-11-06 the interface announces a blocked file in the status bar and lists the blocked
   files, with a "Re-enable" button, in the plugin picker (see `plugin-wrapper-system.md`, "Out-of-process scan and blocklist").
@@ -1171,7 +1172,8 @@ bridge at all); a forced rescan lists everything again.
 
 **Real-time checklist** (`rt-validation`). Nothing on an audio thread changed. The scan runs once at startup on
 the setup thread and on a rescan, before the engine runs a project; it holds the engine mutex while it runs, as
-the old in-constructor scan did.
+the old in-constructor scan did. _Amended 2026-11-06 (ADR-034): the scan no longer holds the engine mutex and no
+longer runs on the UI thread or in `setup`; this paragraph describes step 10 as first delivered._
 
 **Proof.** Workspace: 1139 passed, 0 failed. The golden hashes (`vst3_plugins`, `clap_plugins`) did not move.
 The tests that change the search-folder variables share `sandbox_tests::environment_lock` with the tests that

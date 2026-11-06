@@ -74,6 +74,11 @@ listen to Tauri events, update UI-local state (selection, drag, scroll).
 **Cannot do:** Hold `audio_engine` lock while doing expensive I/O — this would
 block the graph swap path indirectly.
 
+**Plugin scan (ADR-034):** runs on its own command-side thread (the thread spawned at start, or the Tauri
+thread pool for `scan_plugins` / `reenable_blocked_plugin`), never on the UI thread, with the `PluginScanner`
+locks (session, then state or engine, never the last two together) and never holding `audio_engine` while a scan
+process runs; it takes the engine mutex for one registry update per file.
+
 ### CPAL Audio Thread
 
 **Owns:** The current `GraphScheduler` and its pre-allocated buffers.

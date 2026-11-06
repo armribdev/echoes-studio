@@ -1385,6 +1385,8 @@ pub struct AppState {
     pub audio_cache: AudioDataCache,
     /// Real-time audio engine — compiles the graph and owns the CPAL stream.
     pub audio_engine: Mutex<crate::audio_engine::engine::AudioEngine>,
+    /// Plugin scan, outside the engine mutex so a slow plugin never stalls the engine (ADR-034).
+    pub plugin_scanner: crate::plugin_system::scan::PluginScanner,
     /// Live parameter registry — atomic cells for volume, mute/solo, modulator
     /// rate, modulation depth.  Written by gateway hot-path handlers, read
     /// lock-free by the audio thread via Arc handles embedded in nodes.
@@ -1419,6 +1421,28 @@ pub struct AppState {
 }
 
 impl AppState {
+    /// Lists the installed plugins; the engine mutex is taken only to register each file's
+    /// plugins.  Recompile afterwards so a project's missing plugins load.
+    pub fn scan_plugins(&self) {
+        self.plugin_scanner
+            .scan(|manifests| self.register_scanned_plugins(manifests));
+    }
+
+    /// Lifts the block on a plugin file and lists it again.
+    pub fn reenable_plugin(&self, module: &std::path::Path) {
+        self.plugin_scanner
+            .reenable(module, |manifests| self.register_scanned_plugins(manifests));
+    }
+
+    fn register_scanned_plugins(
+        &self,
+        manifests: Vec<crate::plugin_system::registry::PluginManifest>,
+    ) {
+        if let Ok(mut engine) = self.audio_engine.lock() {
+            engine.plugin_host.register_scanned(manifests);
+        }
+    }
+
     const DEFAULT_SAMPLE_RATE: f32 = 48_000.0;
     const DEFAULT_BPM: f32 = 120.0;
 
@@ -1456,6 +1480,10 @@ impl AppState {
                 Arc::clone(&live_params),
                 Arc::clone(&audio_input),
             )),
+            plugin_scanner: crate::plugin_system::scan::PluginScanner::new(
+                crate::plugin_system::bridge::locate_bridge_exe(),
+                crate::plugin_system::scan::SCAN_TIMEOUT,
+            ),
             transport,
             live_params,
             audio_settings: Mutex::new(crate::audio_settings::AudioSettings::default()),

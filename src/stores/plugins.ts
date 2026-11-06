@@ -82,34 +82,89 @@ export function instrumentIdOf(plugin: PluginInfo): string | null {
 	return plugin.id === BUILTIN_INSTRUMENT_PLUGIN.id ? null : plugin.id;
 }
 
-// All discovered plugins (populated at app init + on manual rescan).
+// All discovered plugins (filled by the scan that starts with the app and by manual rescans).
 export const plugins = writable<PluginInfo[]>([]);
-export const pluginsLoading = writable(false);
+
+const pendingPluginWork = writable(0);
+/** True while a plugin list is loading or a scan runs; several can overlap. */
+export const pluginsLoading = derived(pendingPluginWork, (pending) => pending > 0);
+
+function startPluginWork() {
+	pendingPluginWork.update((pending) => pending + 1);
+}
+
+function endPluginWork() {
+	pendingPluginWork.update((pending) => pending - 1);
+}
 
 export async function loadPlugins(): Promise<void> {
-	pluginsLoading.set(true);
+	startPluginWork();
 	try {
-		const list = await invoke<PluginInfo[]>('list_plugins');
-		plugins.set(list);
+		plugins.set(await invoke<PluginInfo[]>('list_plugins'));
 	} catch (e) {
 		console.error('[plugins] list_plugins failed:', e);
 	} finally {
-		pluginsLoading.set(false);
+		endPluginWork();
 	}
 }
 
+/** Lists new or changed plugin files; the engine does not list the others again. */
 export async function rescanPlugins(): Promise<void> {
-	pluginsLoading.set(true);
+	startPluginWork();
 	try {
-		const list = await invoke<PluginInfo[]>('scan_plugins');
-		plugins.set(list);
+		plugins.set(await invoke<PluginInfo[]>('scan_plugins'));
 	} catch (e) {
 		console.error('[plugins] scan_plugins failed:', e);
 	} finally {
-		pluginsLoading.set(false);
+		endPluginWork();
 	}
 	await announceNewlyBlockedPlugins();
 	await refreshBlockedPlugins();
+}
+
+/**
+ * The engine scans the plugins while the window is already open. Stays "loading" until its
+ * `plugin-scan-finished` event, then reads the list and announces the blocked files.
+ */
+export function followStartupPluginScan(): () => void {
+	let waiting = false;
+	let stopped = false;
+	let unlisten: UnlistenFn | null = null;
+
+	const onScanned = async () => {
+		if (waiting) {
+			waiting = false;
+			endPluginWork();
+		}
+		await loadPlugins();
+		await announceNewlyBlockedPlugins();
+		await refreshBlockedPlugins();
+	};
+
+	listen('plugin-scan-finished', onScanned).then(async (fn) => {
+		if (stopped) {
+			fn();
+			return;
+		}
+		unlisten = fn;
+		waiting = true;
+		startPluginWork();
+		try {
+			const running = await invoke<boolean>('plugin_scan_running');
+			if (!running && waiting) await onScanned();
+		} catch (e) {
+			console.error('[plugins] plugin_scan_running failed:', e);
+			if (waiting) {
+				waiting = false;
+				endPluginWork();
+			}
+		}
+	});
+
+	return () => {
+		stopped = true;
+		unlisten?.();
+	};
 }
 
 /** A plugin file the scan disabled because it crashed or stopped answering. */
@@ -132,13 +187,13 @@ export async function refreshBlockedPlugins(): Promise<void> {
 
 /** The engine scans the file again at once, so a plugin that still crashes is blocked again. */
 export async function reenableBlockedPlugin(path: string): Promise<void> {
-	pluginsLoading.set(true);
+	startPluginWork();
 	try {
 		plugins.set(await invoke<PluginInfo[]>('reenable_blocked_plugin', { path }));
 	} catch (e) {
 		console.error('[plugins] reenable_blocked_plugin failed:', e);
 	} finally {
-		pluginsLoading.set(false);
+		endPluginWork();
 	}
 	await announceNewlyBlockedPlugins();
 	await refreshBlockedPlugins();

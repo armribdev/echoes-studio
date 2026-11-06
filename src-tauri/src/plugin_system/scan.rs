@@ -6,11 +6,15 @@
 //! not meet it again.  A file is blocked until it changes (size or date) or the user
 //! re-enables it.  The blocklist and the results of the last scan are kept per machine,
 //! next to the crash marker (ADR-015).
+//!
+//! [`PluginScanner`] runs the whole scan outside the engine (ADR-034): it never holds the
+//! engine mutex, and hands each file's plugins over through a callback that takes it for
+//! the time of one registry update.
 
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
-use std::sync::mpsc;
+use std::process::{Child, Command, Stdio};
+use std::sync::{mpsc, Mutex, MutexGuard, PoisonError, TryLockError};
 use std::time::{Duration, Instant, UNIX_EPOCH};
 
 use plugin_bridge::records::{ScannedPluginRecord, SCAN_EXIT_REFUSED};
@@ -77,7 +81,13 @@ pub enum FileScan {
 }
 
 /// Lists the plugins of `file` in a scan process and waits at most `timeout`.
-pub fn scan_file(bridge_exe: &Path, format: ScanFormat, file: &Path, timeout: Duration) -> FileScan {
+pub fn scan_file(
+    bridge_exe: &Path,
+    format: ScanFormat,
+    file: &Path,
+    timeout: Duration,
+    job: &ScanJob,
+) -> FileScan {
     let mut command = Command::new(bridge_exe);
     command
         .arg("--scan")
@@ -90,10 +100,14 @@ pub fn scan_file(bridge_exe: &Path, format: ScanFormat, file: &Path, timeout: Du
     let mut child = match command.spawn() {
         Ok(child) => child,
         Err(error) => {
-            eprintln!("[plugin] scan: cannot start {}: {error}", bridge_exe.display());
+            eprintln!(
+                "[plugin] scan: cannot start {}: {error}",
+                bridge_exe.display()
+            );
             return FileScan::Refused;
         }
     };
+    job.adopt(&child);
 
     let mut stdout = child.stdout.take().expect("the output is piped");
     let (sender, receiver) = mpsc::channel();
@@ -114,7 +128,10 @@ pub fn scan_file(bridge_exe: &Path, format: ScanFormat, file: &Path, timeout: Du
                 return FileScan::Blocked(BlockReason::TimedOut);
             }
             Err(error) => {
-                eprintln!("[plugin] scan: cannot wait for the scan of {}: {error}", file.display());
+                eprintln!(
+                    "[plugin] scan: cannot wait for the scan of {}: {error}",
+                    file.display()
+                );
                 let _ = child.kill();
                 return FileScan::Refused;
             }
@@ -144,8 +161,97 @@ fn hide_console(command: &mut Command) {
 #[cfg(not(windows))]
 fn hide_console(_command: &mut Command) {}
 
+/// The scan processes of one application run.  They die with the application, even if it
+/// is killed, so a hung plugin never outlives the session that met it.
+pub struct ScanJob {
+    #[cfg(windows)]
+    handle: Option<windows_sys::Win32::Foundation::HANDLE>,
+}
+
+#[cfg(windows)]
+impl ScanJob {
+    pub fn new() -> Self {
+        use std::mem::{size_of, zeroed};
+        use windows_sys::Win32::System::JobObjects::{
+            CreateJobObjectW, JobObjectExtendedLimitInformation, SetInformationJobObject,
+            JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+        };
+
+        let handle = unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };
+        if handle.is_null() {
+            eprintln!("[plugin] scan: cannot create the job object");
+            return Self { handle: None };
+        }
+        let mut limits: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = unsafe { zeroed() };
+        limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        let configured = unsafe {
+            SetInformationJobObject(
+                handle,
+                JobObjectExtendedLimitInformation,
+                std::ptr::addr_of!(limits).cast(),
+                size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+            )
+        };
+        if configured == 0 {
+            eprintln!("[plugin] scan: cannot configure the job object");
+            unsafe { windows_sys::Win32::Foundation::CloseHandle(handle) };
+            return Self { handle: None };
+        }
+        Self {
+            handle: Some(handle),
+        }
+    }
+
+    fn adopt(&self, child: &Child) {
+        use std::os::windows::io::AsRawHandle;
+        use windows_sys::Win32::System::JobObjects::AssignProcessToJobObject;
+
+        let Some(handle) = self.handle else {
+            return;
+        };
+        if unsafe { AssignProcessToJobObject(handle, child.as_raw_handle()) } == 0 {
+            eprintln!("[plugin] scan: cannot attach the scan process to the job object");
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn terminate_all(&self) {
+        if let Some(handle) = self.handle {
+            unsafe { windows_sys::Win32::System::JobObjects::TerminateJobObject(handle, 1) };
+        }
+    }
+}
+
+#[cfg(windows)]
+impl Drop for ScanJob {
+    fn drop(&mut self) {
+        if let Some(handle) = self.handle {
+            unsafe { windows_sys::Win32::Foundation::CloseHandle(handle) };
+        }
+    }
+}
+
+// The handle is only passed to thread-safe Win32 calls.
+#[cfg(windows)]
+unsafe impl Send for ScanJob {}
+#[cfg(windows)]
+unsafe impl Sync for ScanJob {}
+
+#[cfg(not(windows))]
+impl ScanJob {
+    pub fn new() -> Self {
+        Self {}
+    }
+
+    fn adopt(&self, _child: &Child) {}
+}
+
 /// The device the registry knows for a plugin a scan found in `module`.
-pub fn manifest_of(format: ScanFormat, module: &Path, plugin: &ScannedPluginRecord) -> PluginManifest {
+pub fn manifest_of(
+    format: ScanFormat,
+    module: &Path,
+    plugin: &ScannedPluginRecord,
+) -> PluginManifest {
     let id_prefix = match format {
         ScanFormat::Vst3 => "vst3",
         ScanFormat::Clap => "clap",
@@ -178,7 +284,7 @@ pub(crate) fn scanned_manifests(format: ScanFormat, module: &Path) -> Vec<Plugin
         },
         ScanFormat::Clap => module.to_path_buf(),
     };
-    match scan_file(bridge_exe, format, &module, SCAN_TIMEOUT) {
+    match scan_file(bridge_exe, format, &module, SCAN_TIMEOUT, &ScanJob::new()) {
         FileScan::Plugins(plugins) => plugins
             .iter()
             .map(|plugin| manifest_of(format, &module, plugin))
@@ -304,10 +410,6 @@ impl ScanStore {
         self.unblock(file);
     }
 
-    pub fn forget_scanned(&mut self) {
-        self.scanned.clear();
-    }
-
     /// Drops what is known of files a scan no longer found.
     pub fn keep_only(&mut self, files: &[PathBuf]) {
         self.scanned.retain(|entry| files.contains(&entry.path));
@@ -322,6 +424,167 @@ impl ScanStore {
         write_json(&directory.join(BLOCKLIST_FILE), &self.blocked);
         write_json(&directory.join(SCAN_CACHE_FILE), &self.scanned);
     }
+}
+
+/// What the scanner shares between its steps; locked only for a moment, never while a scan
+/// process runs.
+#[derive(Default)]
+struct ScannerState {
+    store: ScanStore,
+    newly_blocked: Vec<BlockedPlugin>,
+}
+
+/// Lists the installed plugins without touching the engine (ADR-034).  One scan runs at a
+/// time; the others wait.  Every file's plugins go to `publish` as soon as they are known.
+pub struct PluginScanner {
+    bridge_exe: Option<PathBuf>,
+    timeout: Duration,
+    job: ScanJob,
+    session: Mutex<()>,
+    state: Mutex<ScannerState>,
+}
+
+impl PluginScanner {
+    pub fn new(bridge_exe: Option<PathBuf>, timeout: Duration) -> Self {
+        Self {
+            bridge_exe,
+            timeout,
+            job: ScanJob::new(),
+            session: Mutex::new(()),
+            state: Mutex::new(ScannerState::default()),
+        }
+    }
+
+    /// Points the scanner at the folder of the blocklist and the scan cache.
+    pub fn set_directory(&self, directory: &Path) {
+        self.state().store = ScanStore::open(directory);
+    }
+
+    /// Lists every installed plugin file that is neither blocked nor listed already.
+    pub fn scan(&self, mut publish: impl FnMut(Vec<PluginManifest>)) {
+        let _session = self.session();
+        let Some(bridge_exe) = &self.bridge_exe else {
+            eprintln!(
+                "[plugin] scan skipped — plugin_host_bridge not found next to the application"
+            );
+            return;
+        };
+        let mut modules = installed_modules();
+        modules.sort_by(|left, right| left.1.cmp(&right.1));
+        for (format, module) in &modules {
+            self.scan_module(bridge_exe, *format, module, &mut publish);
+        }
+        let found: Vec<PathBuf> = modules.into_iter().map(|(_, module)| module).collect();
+        let mut state = self.state();
+        state.store.keep_only(&found);
+        state.store.save();
+    }
+
+    /// Lifts the block on `module` and lists it again now.
+    pub fn reenable(&self, module: &Path, mut publish: impl FnMut(Vec<PluginManifest>)) {
+        let _session = self.session();
+        let Some(bridge_exe) = &self.bridge_exe else {
+            return;
+        };
+        let format = {
+            let mut state = self.state();
+            let Some(format) = state.store.unblock(module) else {
+                return;
+            };
+            state.newly_blocked.retain(|blocked| blocked.path != module);
+            format
+        };
+        self.scan_module(bridge_exe, format, module, &mut publish);
+    }
+
+    pub fn blocked_plugins(&self) -> Vec<BlockedPlugin> {
+        self.state().store.blocked_plugins()
+    }
+
+    /// The files blocked since the last call, for the interface to announce once.
+    pub fn take_newly_blocked(&self) -> Vec<BlockedPlugin> {
+        std::mem::take(&mut self.state().newly_blocked)
+    }
+
+    pub fn is_scanning(&self) -> bool {
+        matches!(self.session.try_lock(), Err(TryLockError::WouldBlock))
+    }
+
+    fn scan_module(
+        &self,
+        bridge_exe: &Path,
+        format: ScanFormat,
+        module: &Path,
+        publish: &mut impl FnMut(Vec<PluginManifest>),
+    ) {
+        let Some(stamp) = FileStamp::of(module) else {
+            return;
+        };
+        let cached = {
+            let state = self.state();
+            if state.store.is_blocked(module, stamp) {
+                return;
+            }
+            state.store.cached(module, stamp)
+        };
+        let plugins = match cached {
+            Some(plugins) => plugins,
+            None => match scan_file(bridge_exe, format, module, self.timeout, &self.job) {
+                FileScan::Plugins(plugins) => {
+                    let mut state = self.state();
+                    state.store.remember(module, stamp, &plugins);
+                    state.store.save();
+                    plugins
+                }
+                FileScan::Refused => {
+                    eprintln!(
+                        "[plugin] scan: {} is not a loadable plugin",
+                        module.display()
+                    );
+                    return;
+                }
+                FileScan::Blocked(reason) => {
+                    eprintln!("[plugin] scan: {} blocked ({reason:?})", module.display());
+                    let mut state = self.state();
+                    let blocked = state.store.block(module, format, stamp, reason);
+                    state.newly_blocked.push(blocked);
+                    state.store.save();
+                    return;
+                }
+            },
+        };
+        publish(
+            plugins
+                .iter()
+                .map(|plugin| manifest_of(format, module, plugin))
+                .collect(),
+        );
+    }
+
+    fn state(&self) -> MutexGuard<'_, ScannerState> {
+        self.state.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn session(&self) -> MutexGuard<'_, ()> {
+        self.session.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    #[cfg(all(test, windows))]
+    pub(crate) fn terminate_scan_processes(&self) {
+        self.job.terminate_all();
+    }
+}
+
+fn installed_modules() -> Vec<(ScanFormat, PathBuf)> {
+    crate::plugin_formats::vst3::host::find_modules()
+        .into_iter()
+        .map(|module| (ScanFormat::Vst3, module))
+        .chain(
+            crate::plugin_formats::clap::host::find_modules()
+                .into_iter()
+                .map(|module| (ScanFormat::Clap, module)),
+        )
+        .collect()
 }
 
 fn blocked_plugin(entry: &BlockedEntry) -> BlockedPlugin {
@@ -357,7 +620,8 @@ mod tests {
     use super::*;
 
     fn scratch(name: &str) -> PathBuf {
-        let path = std::env::temp_dir().join(format!("echoes-scan-store-{name}-{}", std::process::id()));
+        let path =
+            std::env::temp_dir().join(format!("echoes-scan-store-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&path);
         std::fs::create_dir_all(&path).unwrap();
         path
@@ -390,7 +654,10 @@ mod tests {
 
         let mut next_run = ScanStore::open(&directory);
         assert!(next_run.is_blocked(file, stamp(10)));
-        assert!(!next_run.is_blocked(file, stamp(11)), "an updated file is tried again");
+        assert!(
+            !next_run.is_blocked(file, stamp(11)),
+            "an updated file is tried again"
+        );
         assert_eq!(
             next_run.blocked_plugins(),
             vec![BlockedPlugin {
@@ -419,12 +686,12 @@ mod tests {
 
         let next_run = ScanStore::open(&directory);
         assert_eq!(next_run.cached(kept, stamp(1)), Some(vec![plugin("A")]));
-        assert_eq!(next_run.cached(kept, stamp(2)), None, "a changed file is listed again");
+        assert_eq!(
+            next_run.cached(kept, stamp(2)),
+            None,
+            "a changed file is listed again"
+        );
         assert_eq!(next_run.cached(gone, stamp(2)), None);
-
-        let mut cleared = next_run;
-        cleared.forget_scanned();
-        assert_eq!(cleared.cached(kept, stamp(1)), None);
         let _ = std::fs::remove_dir_all(directory);
     }
 

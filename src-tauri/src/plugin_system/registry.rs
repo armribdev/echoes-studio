@@ -96,10 +96,6 @@ impl PluginRegistry {
     pub fn all(&self) -> impl Iterator<Item = &PluginManifest> {
         self.manifests.values()
     }
-
-    pub fn len(&self) -> usize {
-        self.manifests.len()
-    }
 }
 
 impl Default for PluginRegistry {

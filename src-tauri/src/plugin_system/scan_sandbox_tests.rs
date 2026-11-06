@@ -5,17 +5,25 @@
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::{MutexGuard, OnceLock};
+use std::sync::{Arc, MutexGuard, OnceLock};
+use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use crate::plugin_formats::vst3::test_dll::{effect_id, instrument_id, test_vst3_dll};
-use crate::plugin_system::host::PluginHost;
-use crate::plugin_system::scan::{scanned_manifests, BlockReason, BlockedPlugin, ScanFormat};
+use crate::plugin_system::scan::{
+    scanned_manifests, BlockReason, BlockedPlugin, PluginScanner, ScanFormat, SCAN_TIMEOUT,
+};
+use crate::project::AppState;
 
 use super::sandbox_tests::{artifacts, environment_lock};
 
 /// Variables the VST3 and CLAP scans read to find their folders.
-const SEARCH_VARIABLES: [&str; 4] = ["PROGRAMFILES", "PROGRAMFILES(X86)", "LOCALAPPDATA", "APPDATA"];
+const SEARCH_VARIABLES: [&str; 4] = [
+    "PROGRAMFILES",
+    "PROGRAMFILES(X86)",
+    "LOCALAPPDATA",
+    "APPDATA",
+];
 
 /// The crashing example DLLs, built once into their own target directory.
 fn crashing_dll(name: &str) -> PathBuf {
@@ -24,7 +32,13 @@ fn crashing_dll(name: &str) -> PathBuf {
         let workspace = Path::new(env!("CARGO_MANIFEST_DIR"));
         let target = workspace.join("target").join("crashing-plugins");
         let status = Command::new(env!("CARGO"))
-            .args(["build", "--quiet", "-p", "test_crashing_plugin", "--examples"])
+            .args([
+                "build",
+                "--quiet",
+                "-p",
+                "test_crashing_plugin",
+                "--examples",
+            ])
             .arg("--target-dir")
             .arg(&target)
             .current_dir(workspace)
@@ -97,6 +111,17 @@ impl ScannedMachine {
         self.install("crash_in_factory", &crashing_dll("crash_in_factory"));
     }
 
+    fn wait_until_loaded(&self, name: &str) {
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while self.loads_of(name) == 0 {
+            assert!(
+                Instant::now() < deadline,
+                "{name} was never loaded by the scan"
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+
     /// How many times a scan loaded the crashing example `name`.
     fn loads_of(&self, name: &str) -> usize {
         std::fs::read_to_string(self.root.join("crash.log"))
@@ -120,20 +145,27 @@ impl Drop for ScannedMachine {
     }
 }
 
-/// A host as the application starts it: the bridge found, its blocklist in `state`.
-fn host(machine: &ScannedMachine) -> PluginHost {
-    let mut host = PluginHost::new();
-    host.set_bridge_exe(artifacts().0.clone());
-    host.set_scan_directory(&machine.state_folder());
-    host
+/// The application as it starts: the bridge found, its blocklist in the state folder.
+fn application(machine: &ScannedMachine, timeout: Duration) -> AppState {
+    let mut state = AppState::new();
+    state.plugin_scanner = PluginScanner::new(Some(artifacts().0.clone()), timeout);
+    state.plugin_scanner.set_directory(&machine.state_folder());
+    state
 }
 
-fn found_ids(host: &PluginHost) -> Vec<String> {
-    host.list_plugins().into_iter().map(|plugin| plugin.id).collect()
+fn found_ids(state: &AppState) -> Vec<String> {
+    let engine = state.audio_engine.lock().unwrap();
+    engine
+        .plugin_host
+        .list_plugins()
+        .into_iter()
+        .map(|plugin| plugin.id)
+        .collect()
 }
 
-fn blocked_names(host: &PluginHost) -> Vec<String> {
-    let mut names: Vec<String> = host
+fn blocked_names(state: &AppState) -> Vec<String> {
+    let mut names: Vec<String> = state
+        .plugin_scanner
         .blocked_plugins()
         .into_iter()
         .map(|blocked| blocked.name)
@@ -146,11 +178,11 @@ fn blocked_names(host: &PluginHost) -> Vec<String> {
 fn a_plugin_that_crashes_while_scanned_is_blocked_and_the_scan_of_the_others_finishes() {
     let machine = ScannedMachine::new();
     machine.install_crashers();
-    let mut host = host(&machine);
+    let state = application(&machine, SCAN_TIMEOUT);
 
-    host.scan_plugins();
+    state.scan_plugins();
 
-    let found = found_ids(&host);
+    let found = found_ids(&state);
     assert!(found.contains(&effect_id()), "the good effect is found");
     assert!(
         found.contains(&instrument_id()),
@@ -163,11 +195,11 @@ fn a_plugin_that_crashes_while_scanned_is_blocked_and_the_scan_of_the_others_fin
         "it was scanned once"
     );
     assert_eq!(
-        blocked_names(&host),
+        blocked_names(&state),
         vec!["crash_in_factory", "crash_on_load"]
     );
 
-    host.scan_plugins();
+    state.scan_plugins();
 
     assert_eq!(
         machine.loads_of("crash_on_load"),
@@ -184,23 +216,33 @@ fn a_plugin_that_crashes_while_scanned_is_blocked_and_the_scan_of_the_others_fin
 #[test]
 fn a_scanned_plugin_is_registered_as_the_in_process_scan_registered_it() {
     let machine = ScannedMachine::new();
-    let mut host = host(&machine);
-    host.scan_plugins();
+    let state = application(&machine, SCAN_TIMEOUT);
+    state.scan_plugins();
 
-    let effect = host.registry().get(&effect_id()).expect("the effect is found");
+    let engine = state.audio_engine.lock().unwrap();
+    let registry = engine.plugin_host.registry();
+    let effect = registry.get(&effect_id()).expect("the effect is found");
     assert_eq!(effect.name, "Echoes Test Gain");
     assert_eq!(effect.vendor, "");
     assert_eq!(effect.categories, vec!["VST3"]);
-    assert_eq!(effect.num_sidechain_inputs, 1, "the sidechain probe still runs");
+    assert_eq!(
+        effect.num_sidechain_inputs, 1,
+        "the sidechain probe still runs"
+    );
     assert!(!effect.is_instrument);
-    assert_eq!(effect.path.as_deref(), Some(machine.module("good").as_path()));
+    assert_eq!(
+        effect.path.as_deref(),
+        Some(machine.module("good").as_path())
+    );
 
-    let instrument = host
-        .registry()
+    let instrument = registry
         .get(&instrument_id())
         .expect("the instrument is found");
     assert_eq!(instrument.categories, vec!["Instrument", "VST3"]);
-    assert_eq!(instrument.num_sidechain_inputs, 0, "instruments are not probed");
+    assert_eq!(
+        instrument.num_sidechain_inputs, 0,
+        "instruments are not probed"
+    );
     assert!(instrument.is_instrument);
 }
 
@@ -208,27 +250,29 @@ fn a_scanned_plugin_is_registered_as_the_in_process_scan_registered_it() {
 fn a_plugin_that_hangs_while_scanned_is_blocked_when_the_time_limit_passes() {
     let machine = ScannedMachine::new();
     machine.install("hang_in_factory", &crashing_dll("hang_in_factory"));
-    let mut host = host(&machine);
-    host.set_scan_timeout(Duration::from_secs(2));
+    let state = application(&machine, Duration::from_secs(2));
 
     let started = Instant::now();
-    host.scan_plugins();
+    state.scan_plugins();
 
     assert!(
         started.elapsed() < Duration::from_secs(10),
         "the scan does not wait for a hung plugin"
     );
-    assert!(found_ids(&host).contains(&effect_id()));
+    assert!(found_ids(&state).contains(&effect_id()));
     assert_eq!(machine.loads_of("hang_in_factory"), 1);
     assert_eq!(
-        host.take_newly_blocked(),
+        state.plugin_scanner.take_newly_blocked(),
         vec![BlockedPlugin {
             path: machine.module("hang_in_factory"),
             name: "hang_in_factory".into(),
             reason: BlockReason::TimedOut,
         }]
     );
-    assert!(host.take_newly_blocked().is_empty(), "announced once");
+    assert!(
+        state.plugin_scanner.take_newly_blocked().is_empty(),
+        "announced once"
+    );
 }
 
 #[test]
@@ -236,11 +280,11 @@ fn a_blocked_plugin_stays_blocked_at_the_next_start_until_it_is_updated_or_re_en
     let machine = ScannedMachine::new();
     machine.install_crashers();
 
-    let mut first_start = host(&machine);
+    let first_start = application(&machine, SCAN_TIMEOUT);
     first_start.scan_plugins();
-    assert_eq!(first_start.take_newly_blocked().len(), 2);
+    assert_eq!(first_start.plugin_scanner.take_newly_blocked().len(), 2);
 
-    let mut second_start = host(&machine);
+    let second_start = application(&machine, SCAN_TIMEOUT);
     second_start.scan_plugins();
     assert_eq!(machine.loads_of("crash_on_load"), 1, "not met again");
     assert_eq!(machine.loads_of("crash_in_factory"), 1, "not met again");
@@ -250,22 +294,26 @@ fn a_blocked_plugin_stays_blocked_at_the_next_start_until_it_is_updated_or_re_en
         "the blocklist was kept"
     );
     assert!(
-        second_start.take_newly_blocked().is_empty(),
+        second_start.plugin_scanner.take_newly_blocked().is_empty(),
         "nothing new to announce"
     );
     assert!(found_ids(&second_start).contains(&effect_id()));
 
     second_start.reenable_plugin(&machine.module("crash_on_load"));
-    assert_eq!(machine.loads_of("crash_on_load"), 2, "listed again on request");
+    assert_eq!(
+        machine.loads_of("crash_on_load"),
+        2,
+        "listed again on request"
+    );
     assert_eq!(
         blocked_names(&second_start),
         vec!["crash_in_factory", "crash_on_load"],
         "and blocked again, as it still crashes"
     );
-    assert_eq!(second_start.take_newly_blocked().len(), 1);
+    assert_eq!(second_start.plugin_scanner.take_newly_blocked().len(), 1);
 
     machine.install("crash_in_factory", test_vst3_dll());
-    let mut third_start = host(&machine);
+    let third_start = application(&machine, SCAN_TIMEOUT);
     third_start.scan_plugins();
     assert_eq!(
         machine.loads_of("crash_in_factory"),
@@ -278,25 +326,18 @@ fn a_blocked_plugin_stays_blocked_at_the_next_start_until_it_is_updated_or_re_en
 #[test]
 fn a_file_listed_before_and_unchanged_is_not_listed_again_at_the_next_start() {
     let machine = ScannedMachine::new();
-    let mut first_start = host(&machine);
-    first_start.scan_plugins();
+    application(&machine, SCAN_TIMEOUT).scan_plugins();
 
-    let mut second_start = PluginHost::new();
-    second_start.set_bridge_exe(machine.root.join("no_such_bridge.exe"));
-    second_start.set_scan_directory(&machine.state_folder());
+    let mut second_start = AppState::new();
+    second_start.plugin_scanner =
+        PluginScanner::new(Some(machine.root.join("no_such_bridge.exe")), SCAN_TIMEOUT);
+    second_start
+        .plugin_scanner
+        .set_directory(&machine.state_folder());
     second_start.scan_plugins();
     assert!(
         found_ids(&second_start).contains(&effect_id()),
         "found without starting any scan process"
-    );
-
-    let mut forced = PluginHost::new();
-    forced.set_bridge_exe(machine.root.join("no_such_bridge.exe"));
-    forced.set_scan_directory(&machine.state_folder());
-    forced.rescan_plugins();
-    assert!(
-        !found_ids(&forced).contains(&effect_id()),
-        "a rescan lists every file again"
     );
 }
 
@@ -304,12 +345,109 @@ fn a_file_listed_before_and_unchanged_is_not_listed_again_at_the_next_start() {
 fn a_file_that_is_not_a_plugin_is_skipped_and_not_blocked() {
     let machine = ScannedMachine::new();
     std::fs::write(machine.module("not_a_plugin"), b"just text").unwrap();
-    let mut host = host(&machine);
+    let state = application(&machine, SCAN_TIMEOUT);
 
-    host.scan_plugins();
+    state.scan_plugins();
 
-    assert!(host.blocked_plugins().is_empty());
-    assert!(found_ids(&host).contains(&effect_id()));
+    assert!(state.plugin_scanner.blocked_plugins().is_empty());
+    assert!(found_ids(&state).contains(&effect_id()));
+}
+
+/// A scan on its own thread, stuck on a plugin that hangs.
+fn scan_stuck_on_a_hanging_plugin(
+    machine: &ScannedMachine,
+    timeout: Duration,
+) -> (Arc<AppState>, JoinHandle<()>) {
+    machine.install("hang_in_factory", &crashing_dll("hang_in_factory"));
+    let state = Arc::new(application(machine, timeout));
+    let scan = {
+        let state = Arc::clone(&state);
+        std::thread::spawn(move || state.scan_plugins())
+    };
+    machine.wait_until_loaded("hang_in_factory");
+    (state, scan)
+}
+
+#[test]
+fn the_engine_stays_free_while_a_plugin_hangs_during_the_scan() {
+    let machine = ScannedMachine::new();
+    let (state, scan) = scan_stuck_on_a_hanging_plugin(&machine, Duration::from_secs(6));
+
+    let started = Instant::now();
+    assert!(state.plugin_scanner.is_scanning());
+    assert!(
+        state.audio_engine.try_lock().is_ok(),
+        "the engine mutex is free while a scan process hangs"
+    );
+    assert!(
+        found_ids(&state).contains(&effect_id()),
+        "a plugin listed before the hung file is usable already"
+    );
+    assert!(state.plugin_scanner.blocked_plugins().is_empty());
+    assert!(state.plugin_scanner.take_newly_blocked().is_empty());
+    assert!(
+        started.elapsed() < Duration::from_secs(1),
+        "none of this waits for the scan"
+    );
+
+    scan.join().unwrap();
+    assert!(!state.plugin_scanner.is_scanning());
+    assert_eq!(blocked_names(&state), vec!["hang_in_factory"]);
+}
+
+#[test]
+fn a_scan_started_during_another_waits_for_it_and_does_not_load_the_hung_plugin_again() {
+    let machine = ScannedMachine::new();
+    let (state, first) = scan_stuck_on_a_hanging_plugin(&machine, Duration::from_secs(4));
+    let second = {
+        let state = Arc::clone(&state);
+        std::thread::spawn(move || state.scan_plugins())
+    };
+
+    first.join().unwrap();
+    second.join().unwrap();
+
+    assert_eq!(
+        machine.loads_of("hang_in_factory"),
+        1,
+        "the second scan came after the block"
+    );
+    assert_eq!(blocked_names(&state), vec!["hang_in_factory"]);
+}
+
+#[test]
+fn re_enabling_a_plugin_during_a_scan_waits_for_the_scan() {
+    let machine = ScannedMachine::new();
+    machine.install("crash_on_load", &crashing_dll("crash_on_load"));
+    application(&machine, SCAN_TIMEOUT).scan_plugins();
+    assert_eq!(machine.loads_of("crash_on_load"), 1);
+
+    let (state, scan) = scan_stuck_on_a_hanging_plugin(&machine, Duration::from_secs(4));
+    let started = Instant::now();
+    state.reenable_plugin(&machine.module("crash_on_load"));
+
+    assert!(
+        started.elapsed() > Duration::from_secs(1),
+        "the re-enable came after the scan, not beside it"
+    );
+    scan.join().unwrap();
+    assert_eq!(machine.loads_of("crash_on_load"), 2, "listed again once");
+}
+
+#[cfg(windows)]
+#[test]
+fn the_scan_processes_end_with_the_job_they_belong_to() {
+    let machine = ScannedMachine::new();
+    let (state, scan) = scan_stuck_on_a_hanging_plugin(&machine, Duration::from_secs(60));
+
+    let started = Instant::now();
+    state.plugin_scanner.terminate_scan_processes();
+    scan.join().unwrap();
+
+    assert!(
+        started.elapsed() < Duration::from_secs(10),
+        "the hung scan process was ended, not waited for"
+    );
 }
 
 #[test]

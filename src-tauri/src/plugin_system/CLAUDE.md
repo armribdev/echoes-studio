@@ -19,6 +19,8 @@ thread**, never the audio thread.
   interpret it.
 - Sandbox (`bridge.rs`, `bridged_node.rs`) is **opt-in per device** (ADR-015,
   migration C-9) — never default-on.
+- The plugin scan (`scan.rs`, `PluginScanner`) never holds `audio_engine` while a scan
+  process runs and never runs on the UI thread (ADR-034).
 
 ## Key files
 

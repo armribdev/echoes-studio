@@ -1532,9 +1532,26 @@ and prints one `ScannedPluginRecord` block. A crash or a hang ends only that pro
 - a listed file that has not changed is not listed again (`plugin-scan-cache.json`); `rescan_plugins` forgets the
   cache, not the blocklist.
 
-`PluginHost::new` does not scan; `main.rs::scan_installed_plugins` sets the data directory and scans in `setup`.
+`PluginHost::new` does not scan. Since 2026-11-06 (ADR-034) the scan belongs to `PluginScanner` (`plugin_system/scan.rs`,
+held by `AppState`), not to the engine:
+
+- **Outside the engine mutex.** `scan(publish)` holds a session lock (one scan or re-enable at a time, the others
+  wait) and a short state lock (blocklist, cache, files to announce) that is never held while a scan process runs.
+  For each file it publishes the plugins to `AppState::scan_plugins`, which takes `audio_engine` for one
+  `PluginHost::register_scanned`. Files go in path order; the blocklist and cache are saved after each file.
+- **Off the UI thread.** `scan_plugins` and `reenable_blocked_plugin` are `#[tauri::command(async)]`.
+- **In the background at start.** `setup` calls `PluginScanner::set_directory`, then a thread scans, recompiles and
+  emits `plugin-scan-finished`; `plugin_scan_running` tells an interface that mounts late whether it is still
+  going. A project opened meanwhile keeps its plugin states as unavailable placements (ADR-010) and gets the
+  plugins back at that recompile.
+- **Rescan = new or changed files.** There is no forced rescan: a new or changed file is never in the cache.
+- **Scan processes die with the application.** `ScanJob` puts each one in a Windows job object with
+  `KILL_ON_JOB_CLOSE`.
+
 Commands: `list_blocked_plugins`, `take_newly_blocked_plugins`, `reenable_blocked_plugin`. The interface (2026-11-06,
-`src/stores/plugins.ts`, `PluginPicker.svelte`) holds no list of its own beyond a display copy:
+`src/stores/plugins.ts`, `PluginPicker.svelte`) holds no list of its own beyond a display copy. `pluginsLoading` is
+true while any list, scan or re-enable job runs, and from the mount of the page until `plugin-scan-finished`
+(`followStartupPluginScan`); `MissingPluginsDialog` waits for it to fall before it judges a plugin missing:
 
 - **Announcement.** `announceNewlyBlockedPlugins` calls `take_newly_blocked_plugins` at startup (`routes/+page.svelte`)
   and after every rescan or re-enable, and shows one status-bar message (`notify`, 10 s): the name and the reason for
@@ -1542,10 +1559,11 @@ Commands: `list_blocked_plugins`, `take_newly_blocked_plugins`, `reenable_blocke
 - **Management.** When the blocklist is not empty, the plugin picker shows a "Disabled (n)" button next to "Rescan"; it
   swaps the list for the blocked files (name, reason, "Re-enable"). `reenableBlockedPlugin` refreshes the plugin list
   from the command's answer, then the blocklist: the engine scans the file again at once, so a plugin that still
-  crashes comes back as blocked (and is announced again). The scan holds the engine for up to 15 s, so the buttons
-  are disabled meanwhile (`pluginsLoading`).
+  crashes comes back as blocked (and is announced again). The buttons are disabled while `pluginsLoading` is true; the
+  engine is not held meanwhile.
 Tests: `plugin_system/scan_sandbox_tests.rs` with `crates/test_crashing_plugin` (`crash_on_load`,
-`crash_in_factory`, `hang_in_factory`). Tests that change the search-folder variables take
+`crash_in_factory`, `hang_in_factory`), among them the engine mutex being free and the blocklist readable while a
+plugin hangs, two scans in a row, a re-enable during a scan, and the job object ending a hung scan process. Tests that change the search-folder variables take
 `sandbox_tests::environment_lock`.
 
 ## Editor Windows — DPI (Windows)

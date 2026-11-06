@@ -36,7 +36,7 @@ fn main() {
             // Before any plugin code runs, so a crash in it can be attributed.
             let suspects = open_crash_marker(app);
             app.manage(CrashSuspects(std::sync::Mutex::new(suspects)));
-            scan_installed_plugins(app);
+            start_plugin_scan(app);
 
             // Start the CPAL output stream as early as possible so the engine
             // is ready before any project is loaded.  Failure is logged but
@@ -101,6 +101,7 @@ fn main() {
             load_plugin_preset,
             get_plugin_outputs,
             scan_plugins,
+            plugin_scan_running,
             list_blocked_plugins,
             take_newly_blocked_plugins,
             reenable_blocked_plugin,
@@ -168,51 +169,61 @@ fn open_crash_marker(app: &tauri::App) -> Vec<u64> {
     plugin_system::crash_marker::open(&dir.join("plugin-crash-marker.bin"))
 }
 
-/// Lists the installed plugins before the first project can need them.  The blocklist
-/// and the results of the last scan live next to the crash marker (ADR-033, step 10).
-fn scan_installed_plugins(app: &tauri::App) {
-    let state = app.state::<AppState>();
-    let Ok(mut engine) = state.audio_engine.lock() else {
-        return;
-    };
+/// Emitted when the scan started with the application ends and the engine has recompiled.
+const PLUGIN_SCAN_FINISHED_EVENT: &str = "plugin-scan-finished";
+
+/// Lists the installed plugins in the background: the window opens at once and the plugins
+/// appear as the scan goes (ADR-034).  The blocklist and the results of the last scan live
+/// next to the crash marker (ADR-033, step 10).
+fn start_plugin_scan(app: &tauri::App) {
     if let Ok(dir) = app.path().app_data_dir() {
-        engine.plugin_host.set_scan_directory(&dir);
+        app.state::<AppState>().plugin_scanner.set_directory(&dir);
     }
-    engine.plugin_host.scan_plugins();
+    let app = app.handle().clone();
+    std::thread::spawn(move || {
+        scan_and_recompile(&app, &app.state::<AppState>());
+        let _ = app.emit(PLUGIN_SCAN_FINISHED_EVENT, ());
+    });
+}
+
+/// Recompiles afterwards so a plugin installed since the project was opened loads right
+/// away instead of staying unavailable.
+fn scan_and_recompile(app: &tauri::AppHandle, state: &tauri::State<'_, AppState>) {
+    state.scan_plugins();
+    recompile_audio_graph(app, state);
+}
+
+#[tauri::command]
+fn plugin_scan_running(state: tauri::State<'_, AppState>) -> bool {
+    state.plugin_scanner.is_scanning()
 }
 
 /// Plugin files the scan keeps out because they crashed or hung it.
 #[tauri::command]
 fn list_blocked_plugins(
     state: tauri::State<'_, AppState>,
-) -> Result<Vec<plugin_system::scan::BlockedPlugin>, String> {
-    let engine = state.audio_engine.lock().map_err(|e| e.to_string())?;
-    Ok(engine.plugin_host.blocked_plugins())
+) -> Vec<plugin_system::scan::BlockedPlugin> {
+    state.plugin_scanner.blocked_plugins()
 }
 
 /// The files blocked since the last call, so the interface announces each once.
 #[tauri::command]
 fn take_newly_blocked_plugins(
     state: tauri::State<'_, AppState>,
-) -> Result<Vec<plugin_system::scan::BlockedPlugin>, String> {
-    let mut engine = state.audio_engine.lock().map_err(|e| e.to_string())?;
-    Ok(engine.plugin_host.take_newly_blocked())
+) -> Vec<plugin_system::scan::BlockedPlugin> {
+    state.plugin_scanner.take_newly_blocked()
 }
 
 /// Lifts the block on a plugin file and lists it again; recompiles like a rescan.
-#[tauri::command]
+#[tauri::command(async)]
 fn reenable_blocked_plugin(
     app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
     path: String,
 ) -> Result<Vec<plugin_system::host::PluginInfo>, String> {
-    let list = {
-        let mut engine = state.audio_engine.lock().map_err(|e| e.to_string())?;
-        engine.plugin_host.reenable_plugin(std::path::Path::new(&path));
-        engine.plugin_host.list_plugins()
-    };
+    state.reenable_plugin(std::path::Path::new(&path));
     recompile_audio_graph(&app, &state);
-    Ok(list)
+    installed_plugins(&state)
 }
 
 /// Restart the plugins that crashed: a recompile rebuilds every instance in
@@ -621,25 +632,25 @@ fn get_audio_clip_duration(
 fn list_plugins(
     state: tauri::State<'_, AppState>,
 ) -> Result<Vec<plugin_system::host::PluginInfo>, String> {
+    installed_plugins(&state)
+}
+
+fn installed_plugins(
+    state: &tauri::State<'_, AppState>,
+) -> Result<Vec<plugin_system::host::PluginInfo>, String> {
     let engine = state.audio_engine.lock().map_err(|e| e.to_string())?;
     Ok(engine.plugin_host.list_plugins())
 }
 
-/// Re-scan plugin directories on demand (e.g. after installing a new plugin).
-/// Recompiles afterwards so a plugin installed since the project was opened
-/// loads right away instead of staying unavailable.
-#[tauri::command]
+/// Lists new or changed plugin files on demand (e.g. after installing a plugin); a file
+/// listed before and unchanged is not listed again.
+#[tauri::command(async)]
 fn scan_plugins(
     app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
 ) -> Result<Vec<plugin_system::host::PluginInfo>, String> {
-    let list = {
-        let mut engine = state.audio_engine.lock().map_err(|e| e.to_string())?;
-        engine.plugin_host.rescan_plugins();
-        engine.plugin_host.list_plugins()
-    };
-    recompile_audio_graph(&app, &state);
-    Ok(list)
+    scan_and_recompile(&app, &state);
+    installed_plugins(&state)
 }
 
 /// Parameters of a loaded plugin placement (`effect.id` or `instrument:{track_id}`).
