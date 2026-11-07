@@ -82,7 +82,11 @@ impl Vst3PresetFiles {
 
 /// Where the presets of one placement come from.
 pub enum PresetListing {
-    Clap(PresetSource),
+    /// `loaded` is the preset the plugin last reported through `clap.preset-load`.
+    Clap {
+        source: PresetSource,
+        loaded: Option<PresetRequest>,
+    },
     Vst3 {
         instance: Arc<PluginInstance>,
         files: Option<Vst3PresetFiles>,
@@ -94,7 +98,13 @@ impl PresetListing {
     /// VST3 plugin's own programs come first within their group, then its files.
     pub fn list(&self) -> Vec<PluginPreset> {
         match self {
-            Self::Clap(source) => list_presets(source),
+            Self::Clap { source, loaded } => {
+                let mut presets = list_presets(source);
+                if let Some(loaded) = loaded {
+                    mark_active(&mut presets, loaded);
+                }
+                presets
+            }
             Self::Vst3 { instance, files } => {
                 let mut presets = instance.vst3_program_presets();
                 presets.extend(files.iter().flat_map(Vst3PresetFiles::list));
@@ -107,7 +117,7 @@ impl PresetListing {
     /// What the host's list of offered presets is kept under.
     pub fn whitelist_key(&self) -> String {
         match self {
-            Self::Clap(source) => source.clap_plugin_id.clone(),
+            Self::Clap { source, .. } => source.clap_plugin_id.clone(),
             Self::Vst3 { instance, .. } => instance.device_id.clone(),
         }
     }
@@ -187,6 +197,71 @@ unsafe extern "C" fn run_cycle(raw: *mut c_void) -> i32 {
     let cycle = &mut *(raw as *mut Cycle);
     cycle.presets = discover_presets(cycle.entry, cycle.clap_plugin_id);
     0
+}
+
+const MAX_STORED_TEXT_CHARS: usize = 4096;
+
+/// The preset a placement was last known to use, as the project file keeps it
+/// (ADR-035).  A hint compared with the plugin's listing, never loaded from.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct StoredPreset {
+    pub device_id: String,
+    pub location_kind: u32,
+    pub location: Option<String>,
+    pub load_key: Option<String>,
+}
+
+impl StoredPreset {
+    pub fn of(device_id: &str, request: &PresetRequest) -> Self {
+        Self {
+            device_id: device_id.to_owned(),
+            location_kind: request.location_kind,
+            location: request.location.clone(),
+            load_key: request.load_key.clone(),
+        }
+    }
+
+    pub fn request(&self) -> PresetRequest {
+        PresetRequest {
+            location_kind: self.location_kind,
+            location: self.location.clone(),
+            load_key: self.load_key.clone(),
+        }
+    }
+
+    /// A project file is user data: texts past the bound are not trusted.
+    pub fn is_within_bounds(&self) -> bool {
+        [&self.location, &self.load_key]
+            .into_iter()
+            .flatten()
+            .all(|text| text.chars().count() <= MAX_STORED_TEXT_CHARS)
+    }
+}
+
+/// Marks the presets the plugin reported as loaded.
+fn mark_active(presets: &mut [PluginPreset], loaded: &PresetRequest) {
+    for preset in presets {
+        preset.active = same_preset(&preset.request(), loaded);
+    }
+}
+
+/// A plugin may spell a file's path differently in its report and in its
+/// listing (separators, and case on Windows); the key must match exactly.
+fn same_preset(a: &PresetRequest, b: &PresetRequest) -> bool {
+    let path = |location: &Option<String>| {
+        location.as_deref().map(|text| {
+            let text = text.replace('\\', "/");
+            let text = text.trim_end_matches('/');
+            if cfg!(windows) {
+                text.to_lowercase()
+            } else {
+                text.to_owned()
+            }
+        })
+    };
+    a.location_kind == b.location_kind
+        && a.load_key == b.load_key
+        && path(&a.location) == path(&b.location)
 }
 
 /// Factory presets first, then the user's, each group by name.  Empty when the
@@ -330,6 +405,41 @@ mod tests {
         assert_eq!(names(&presets), ["Pads / Warm", "Bass"]);
         assert_eq!(presets[0].load_key.as_deref(), Some("5:0"));
         assert_eq!(presets[1].load_key.as_deref(), Some("6:0"));
+    }
+
+    #[test]
+    fn the_preset_the_plugin_reported_is_the_only_active_one() {
+        let origin = PresetOrigin::Factory;
+        let mut presets = vec![
+            PluginPreset::vst3_file("Warm".into(), "/p/warm".into(), origin),
+            PluginPreset::vst3_file("Cold".into(), "/p/cold".into(), origin),
+        ];
+        let loaded = presets[1].request();
+
+        mark_active(&mut presets, &loaded);
+
+        let active: Vec<_> = presets.iter().map(|preset| preset.active).collect();
+        assert_eq!(active, [false, true]);
+    }
+
+    #[test]
+    fn a_path_spelled_differently_is_still_the_same_preset() {
+        let listed = PluginPreset::vst3_file(
+            "Warm".into(),
+            r"C:\Presets\Warm.fxp".into(),
+            PresetOrigin::Factory,
+        );
+        let reported = PresetRequest {
+            location: Some("c:/presets/warm.fxp".into()),
+            ..listed.request()
+        };
+        let other_key = PresetRequest {
+            load_key: Some("b".into()),
+            ..reported.clone()
+        };
+
+        assert_eq!(same_preset(&listed.request(), &reported), cfg!(windows));
+        assert!(!same_preset(&listed.request(), &other_key));
     }
 
     #[test]

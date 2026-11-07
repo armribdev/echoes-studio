@@ -181,6 +181,7 @@ pub struct ClapHostContext {
     track_info: track_info::TrackInfoCell,
     timers: timers::TimerTable,
     preset_error: std::sync::Mutex<Option<String>>,
+    loaded_preset: std::sync::Mutex<Option<PresetRequest>>,
 }
 
 impl ClapHostContext {
@@ -194,7 +195,22 @@ impl ClapHostContext {
             track_info: track_info::TrackInfoCell::new(),
             timers: timers::TimerTable::new(),
             preset_error: std::sync::Mutex::new(None),
+            loaded_preset: std::sync::Mutex::new(None),
         }
+    }
+
+    /// Remembers the preset the plugin last said it loaded.  Never called from
+    /// the audio thread (it allocates and locks).
+    pub fn note_loaded_preset(&self, preset: PresetRequest) {
+        *self.loaded_preset.lock().unwrap_or_else(|e| e.into_inner()) = Some(preset);
+    }
+
+    /// The preset the plugin last said it loaded; `None` when it never did.
+    pub fn loaded_preset(&self) -> Option<PresetRequest> {
+        self.loaded_preset
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
     }
 
     /// Remembers the message of the plugin's last `clap.preset-load.on_error`.

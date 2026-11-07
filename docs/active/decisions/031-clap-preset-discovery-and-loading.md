@@ -248,6 +248,7 @@ See D2/D3, L2/L3 and U2/U3 above. Also rejected:
   below; AU stays out of scope._
 - **Preset name stored in the project**: a second source of truth next to the
   state blob; the host cannot know the current preset after the user edits it.
+  _2026-11-07: reopened as a display hint by ADR-035 (accepted, implemented)._
 - **Letting the UI load any file**: the host loads only what a provider listed.
 
 ## Consequences

@@ -35,12 +35,26 @@ pub(crate) static HOST_PRESET_LOAD: ClapHostPresetLoad = ClapHostPresetLoad {
 };
 
 unsafe extern "C" fn host_preset_load_loaded(
-    _: *const ClapHost,
-    _: u32,
-    _: *const c_char,
-    _: *const c_char,
+    host: *const ClapHost,
+    location_kind: u32,
+    location: *const c_char,
+    load_key: *const c_char,
 ) {
     mark_plugin_state_edited();
+    // Remembering allocates, which the audio callback must never do.
+    if host_is_audio_thread(std::ptr::null()) {
+        return;
+    }
+    let text = |pointer: *const c_char| {
+        (!pointer.is_null()).then(|| CStr::from_ptr(pointer).to_string_lossy().into_owned())
+    };
+    if let Some(context) = host_context(host) {
+        context.note_loaded_preset(PresetRequest {
+            location_kind,
+            location: text(location),
+            load_key: text(load_key),
+        });
+    }
 }
 
 unsafe extern "C" fn host_preset_load_on_error(
@@ -294,5 +308,33 @@ mod tests {
         unsafe { (table.loaded)(&*host, 0, c"/presets/warm".as_ptr(), std::ptr::null()) };
         assert!(take_plugin_state_edited());
         assert!(!take_plugin_state_edited(), "reported once");
+    }
+
+    #[test]
+    fn the_preset_the_plugin_reports_is_kept_until_it_reports_another() {
+        let host = make_host();
+        let table = host_table(&host, CLAP_EXT_PRESET_LOAD);
+        let context = unsafe { host_context(&*host) }.unwrap();
+        assert_eq!(context.loaded_preset(), None);
+
+        unsafe { (table.loaded)(&*host, 0, c"/presets/warm".as_ptr(), c"a".as_ptr()) };
+        assert_eq!(
+            context.loaded_preset(),
+            Some(PresetRequest {
+                location_kind: 0,
+                location: Some("/presets/warm".into()),
+                load_key: Some("a".into()),
+            })
+        );
+
+        unsafe { (table.loaded)(&*host, 1, std::ptr::null(), c"b".as_ptr()) };
+        assert_eq!(
+            context.loaded_preset(),
+            Some(PresetRequest {
+                location_kind: 1,
+                location: None,
+                load_key: Some("b".into()),
+            })
+        );
     }
 }

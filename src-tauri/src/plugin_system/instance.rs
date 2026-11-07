@@ -646,6 +646,7 @@ impl PluginInstance {
                     .take_preset_error()
                     .unwrap_or_else(|| REFUSED.into()));
             }
+            context.note_loaded_preset(request.clone());
             self.rebase_value_modulated_params(|id| {
                 // SAFETY: live CLAP plugin owned by this instance; FFI gate held.
                 unsafe { crate::plugin_formats::clap::params::read_clap_param_value(plugin, id) }
@@ -654,6 +655,18 @@ impl PluginInstance {
         }
         self.mark_state_edited();
         Ok(())
+    }
+
+    /// The preset a CLAP plugin last reported as loaded (`clap.preset-load`), in
+    /// process or sandboxed; `None` when it never did.
+    pub fn clap_loaded_preset(&self) -> Option<PresetRequest> {
+        if self.format != DeviceFormat::Clap {
+            return None;
+        }
+        match self.bridge() {
+            Some(bridged) => bridged.loaded_preset(),
+            None => self.clap_host_context()?.loaded_preset(),
+        }
     }
 
     /// A VST3 plugin whose controller this process can reach, or one in the sandbox,

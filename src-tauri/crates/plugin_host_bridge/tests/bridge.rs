@@ -730,11 +730,23 @@ fn bundled_preset(key: &str) -> Vec<u8> {
 #[test]
 fn a_preset_load_travels_over_the_control_channel_and_a_refusal_keeps_it_open() {
     let bridge = activated();
+    assert!(
+        bridge
+            .request(Op::LoadedPreset, &[], TIMEOUT)
+            .unwrap()
+            .is_empty(),
+        "no preset reported yet"
+    );
 
     bridge
         .request(Op::PresetLoad, &bundled_preset("loud"), TIMEOUT)
         .expect("the plugin loads a bundled preset");
     assert_eq!(param_value(&bridge, GAIN), 2.0);
+    assert_eq!(
+        bridge.request(Op::LoadedPreset, &[], TIMEOUT).unwrap(),
+        bundled_preset("loud"),
+        "the preset the plugin reported comes back"
+    );
     assert_ne!(
         block_flags(&bridge, 0, &[]) & BLOCK_PLUGIN_EDITED,
         0,

@@ -26,7 +26,7 @@ use plugin_bridge::records::{
 
 use crate::plugin_formats::clap::ffi::{
     mark_plugin_restart_requested, HostTrackInfo, NoteName, PresetRequest,
-    CLAP_PRESET_LOCATION_FILE,
+    CLAP_PRESET_LOCATION_FILE, CLAP_PRESET_LOCATION_PLUGIN,
 };
 use crate::plugin_formats::vst3::preset_file::PresetChunks;
 use crate::plugin_formats::vst3::units::ProgramList;
@@ -237,6 +237,21 @@ impl BridgedPlugin {
         self.request(Op::PresetLoad, &payload)
             .map(|_| ())
             .map_err(|error| error.to_string())
+    }
+
+    /// The preset a CLAP plugin last reported as loaded; `None` when it never did
+    /// or the bridge cannot answer.
+    pub fn loaded_preset(&self) -> Option<PresetRequest> {
+        let reply = self.request(Op::LoadedPreset, &[]).ok()?;
+        let record = PresetRecord::decode(&reply).ok()?;
+        Some(PresetRequest {
+            location_kind: match record.source {
+                PresetSource::File => CLAP_PRESET_LOCATION_FILE,
+                PresetSource::Plugin => CLAP_PRESET_LOCATION_PLUGIN,
+            },
+            location: record.location,
+            load_key: record.load_key,
+        })
     }
 
     /// The program lists a VST3 plugin offers; empty when the bridge cannot answer.

@@ -275,9 +275,34 @@ impl ClapAdapter {
                 .unwrap_or_else(|| "the plugin could not load this preset".into()));
         }
         if let Some(context) = context {
+            context.note_loaded_preset(request);
             context.request_process();
         }
         Ok(())
+    }
+
+    /// The preset the plugin last reported as loaded, as a [`PresetRecord`]; empty
+    /// when it never did or named a location kind the wire cannot carry.
+    pub fn loaded_preset(&self) -> Vec<u8> {
+        let Some(loaded) = self
+            .host
+            .context()
+            .and_then(|context| context.loaded_preset())
+        else {
+            return Vec::new();
+        };
+        let source = match loaded.location_kind {
+            CLAP_PRESET_LOCATION_FILE => PresetSource::File,
+            CLAP_PRESET_LOCATION_PLUGIN => PresetSource::Plugin,
+            _ => return Vec::new(),
+        };
+        PresetRecord {
+            source,
+            location: loaded.location,
+            load_key: loaded.load_key,
+        }
+        .encode()
+        .unwrap_or_default()
     }
 
     /// The plugin's parameters as [`ParamRecord`]s, in the plugin's own plain units.

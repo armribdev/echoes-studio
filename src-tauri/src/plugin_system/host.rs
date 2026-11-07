@@ -21,7 +21,7 @@
 //!    last `Arc::drop` (whichever thread holds it) runs `PluginInstance::drop`
 //!    and tears the FFI handle down.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::PathBuf;
 use std::ptr::NonNull;
 use std::sync::Arc;
@@ -50,7 +50,9 @@ use crate::plugin_system::crash_marker::{self, plugin_tag, PluginThread};
 use crate::plugin_system::instance::{PluginInstance, FFI_GATE_HARVEST_BUDGET};
 use crate::plugin_system::lifecycle::{transition, LifecycleError, LifecycleState};
 use crate::plugin_system::parameter::PluginParamInfo;
-use crate::plugin_system::presets::{PluginPreset, PresetListing, PresetSource, Vst3PresetFiles};
+use crate::plugin_system::presets::{
+    PluginPreset, PresetListing, PresetSource, StoredPreset, Vst3PresetFiles,
+};
 use crate::plugin_system::registry::{PluginManifest, PluginRegistry};
 use crate::plugin_system::state::DeviceState;
 use crate::plugin_system::track_info::placement_track_infos;
@@ -142,6 +144,9 @@ pub struct PluginHost {
     records: HashMap<String, DeviceRecord>,
     /// ADR-010: blobs applied at instantiate before snapshot (project-load only).
     pending_state_blobs: HashMap<String, Vec<u8>>,
+    /// ADR-035: the preset each placement was last known to use, from the project
+    /// file or from an instance this host replaced.  A live report wins over it.
+    stored_presets: HashMap<String, StoredPreset>,
     unavailable: HashMap<String, UnavailablePlacement>,
     /// `plugin_host_bridge` executable hosting sandboxed plugins (ADR-015).
     bridge_exe: Option<PathBuf>,
@@ -165,6 +170,7 @@ impl PluginHost {
             registry: PluginRegistry::new(),
             records: HashMap::new(),
             pending_state_blobs: HashMap::new(),
+            stored_presets: HashMap::new(),
             unavailable: HashMap::new(),
             bridge_exe: locate_bridge_exe(),
             isolation: PluginIsolation::default(),
@@ -247,6 +253,60 @@ impl PluginHost {
 
     pub fn clear_pending_state_blobs(&mut self) {
         self.pending_state_blobs.clear();
+    }
+
+    /// The presets a loaded project remembers; replaces the previous project's.
+    /// Entries past the text bounds are dropped (the file is user data).
+    pub fn set_stored_presets(&mut self, presets: BTreeMap<String, StoredPreset>) {
+        self.stored_presets = presets
+            .into_iter()
+            .filter(|(_, preset)| preset.is_within_bounds())
+            .collect();
+    }
+
+    /// What a placement is known to use: the plugin's own report, else what the
+    /// project remembered, if it was kept for this plugin type.
+    fn loaded_preset_of(
+        &self,
+        instance_key: &str,
+        instance: &PluginInstance,
+    ) -> Option<PresetRequest> {
+        instance.clap_loaded_preset().or_else(|| {
+            self.stored_presets
+                .get(instance_key)
+                .filter(|stored| stored.device_id == instance.device_id)
+                .map(StoredPreset::request)
+        })
+    }
+
+    /// The presets to save with the project, per placement (ADR-035): a live
+    /// instance's, and the remembered one of a placement whose plugin is missing.
+    pub fn collect_loaded_presets(&self) -> BTreeMap<String, StoredPreset> {
+        let live = self.records.iter().filter_map(|(key, record)| {
+            let request = self.loaded_preset_of(key, &record.instance)?;
+            let stored = StoredPreset::of(&record.instance.device_id, &request);
+            Some((key.clone(), stored))
+        });
+        let missing = self.unavailable.iter().filter_map(|(key, placement)| {
+            let stored = self.stored_presets.get(key)?;
+            (stored.device_id == placement.plugin_id && !self.records.contains_key(key))
+                .then(|| (key.clone(), stored.clone()))
+        });
+        live.chain(missing).collect()
+    }
+
+    /// Puts a new record in place.  The instance it replaces takes its live
+    /// preset with it, so the label does not fall back to an older one.
+    fn insert_record(&mut self, instance_key: &str, record: DeviceRecord) {
+        if let Some(previous) = self.records.get(instance_key) {
+            if let Some(request) = previous.instance.clap_loaded_preset() {
+                self.stored_presets.insert(
+                    instance_key.to_owned(),
+                    StoredPreset::of(&previous.instance.device_id, &request),
+                );
+            }
+        }
+        self.records.insert(instance_key.to_owned(), record);
     }
 
     pub fn registry(&self) -> &PluginRegistry {
@@ -439,8 +499,8 @@ impl PluginHost {
         let saved_state = self.restore_state_for(instance_key, plugin_id, &instance);
 
         self.apply_demanded_outputs(instance_key, &instance);
-        self.records.insert(
-            instance_key.to_string(),
+        self.insert_record(
+            instance_key,
             DeviceRecord {
                 instance,
                 saved_state,
@@ -824,8 +884,8 @@ impl PluginHost {
         }
         let saved_state = self.restore_state_for(instance_key, plugin_id, &instance);
         self.apply_demanded_outputs(instance_key, &instance);
-        self.records.insert(
-            instance_key.to_string(),
+        self.insert_record(
+            instance_key,
             DeviceRecord {
                 instance: Arc::clone(&instance),
                 saved_state,
@@ -967,6 +1027,8 @@ impl PluginHost {
         });
         self.unavailable
             .retain(|instance_key, _| active.contains(instance_key));
+        self.stored_presets
+            .retain(|instance_key, _| active.contains(instance_key));
     }
 
     /// Serialise a device's live state (Phase 4b / ADR-010).
@@ -1081,7 +1143,10 @@ impl PluginHost {
     /// providers, or the programs of a VST3 plugin; `None` for any other.
     pub fn preset_listing(&self, instance_key: &str) -> Option<PresetListing> {
         if let Some(source) = self.preset_source(instance_key) {
-            return Some(PresetListing::Clap(source));
+            let loaded = self
+                .instance_by_key(instance_key)
+                .and_then(|instance| self.loaded_preset_of(instance_key, &instance));
+            return Some(PresetListing::Clap { source, loaded });
         }
         let instance = self.instance_by_key(instance_key)?;
         if !instance.has_vst3_presets() {

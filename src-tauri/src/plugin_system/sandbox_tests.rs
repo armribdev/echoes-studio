@@ -2,7 +2,7 @@
 //! `plugin_host_bridge` → the real test CLAP plugin (`crates/test_clap_plugin`).
 //! Both are built into their own target directory on first use.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::ffi::c_char;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -24,7 +24,7 @@ use crate::plugin_formats::clap::params::flush_clap_param_values;
 use crate::plugin_system::host::{PluginHost, PluginIsolation, PluginNoteName, UnavailableReason};
 use crate::plugin_system::instance::{take_undelivered_track_info, UNDELIVERED_FLAG_TEST_LOCK};
 use crate::plugin_system::lifecycle::LifecycleState;
-use crate::plugin_system::presets::{list_presets, PluginPreset};
+use crate::plugin_system::presets::{list_presets, PluginPreset, StoredPreset};
 use crate::plugin_system::registry::PluginManifest;
 use crate::plugin_system::track_info::test_track;
 use crate::plugin_system::wrapper::DeviceFormat;
@@ -1524,6 +1524,95 @@ fn a_listed_preset_changes_the_sound_of_an_in_process_plugin() {
 #[test]
 fn a_listed_preset_changes_the_sound_of_a_sandboxed_plugin() {
     a_listed_preset_changes_the_sound_and_is_saved_with_the_state(true);
+}
+
+fn active_names(presets: &[PluginPreset]) -> Vec<&str> {
+    presets
+        .iter()
+        .filter(|preset| preset.active)
+        .map(|preset| preset.name.as_str())
+        .collect()
+}
+
+fn a_loaded_preset_is_the_one_in_use(sandboxed: bool) {
+    let _environment = quiet_preset_environment();
+    let directory = user_presets(&[("warm", "1.0 0.5")]);
+    let mut host = host();
+    let _node = prepared(&mut host, sandboxed, false);
+    let presets = offered_presets(&mut host);
+    assert!(active_names(&presets).is_empty(), "nothing loaded yet");
+
+    load_offered(&host, &request_named(&presets, "Loud")).unwrap();
+    assert_eq!(active_names(&offered_presets(&mut host)), ["Loud"]);
+
+    // The plugin does not report a preset loaded from a file; the host knows it asked.
+    load_offered(&host, &request_named(&presets, "warm")).unwrap();
+    assert_eq!(active_names(&offered_presets(&mut host)), ["warm"]);
+    let _ = std::fs::remove_dir_all(directory);
+}
+
+#[test]
+fn a_loaded_preset_is_the_one_in_use_in_process() {
+    a_loaded_preset_is_the_one_in_use(false);
+}
+
+#[test]
+fn a_loaded_preset_is_the_one_in_use_in_the_sandbox() {
+    a_loaded_preset_is_the_one_in_use(true);
+}
+
+#[test]
+fn a_remembered_preset_is_shown_until_the_plugin_reports_another() {
+    let _environment = quiet_preset_environment();
+    let mut host = host();
+    let _node = prepared(&mut host, false, false);
+    let presets = offered_presets(&mut host);
+    let device_id = host.instance_by_key(KEY).unwrap().device_id.clone();
+    let loud = request_named(&presets, "Loud");
+
+    host.set_stored_presets(BTreeMap::from([(
+        KEY.to_string(),
+        StoredPreset::of(&device_id, &loud),
+    )]));
+    assert_eq!(active_names(&offered_presets(&mut host)), ["Loud"]);
+    assert_eq!(
+        host.collect_loaded_presets().get(KEY),
+        Some(&StoredPreset::of(&device_id, &loud))
+    );
+
+    load_offered(&host, &request_named(&presets, "Quiet")).unwrap();
+    assert_eq!(active_names(&offered_presets(&mut host)), ["Quiet"]);
+    assert_eq!(
+        host.collect_loaded_presets()[KEY].request(),
+        request_named(&presets, "Quiet")
+    );
+}
+
+#[test]
+fn a_remembered_preset_of_another_plugin_or_past_the_bounds_is_ignored() {
+    let _environment = quiet_preset_environment();
+    let mut host = host();
+    let _node = prepared(&mut host, false, false);
+    let presets = offered_presets(&mut host);
+    let loud = request_named(&presets, "Loud");
+    let too_long = PresetRequest {
+        load_key: Some("x".repeat(5_000)),
+        ..loud.clone()
+    };
+
+    host.set_stored_presets(BTreeMap::from([(
+        KEY.to_string(),
+        StoredPreset::of("another.plugin", &loud),
+    )]));
+    assert!(active_names(&offered_presets(&mut host)).is_empty());
+    assert!(host.collect_loaded_presets().is_empty());
+
+    let device_id = host.instance_by_key(KEY).unwrap().device_id.clone();
+    host.set_stored_presets(BTreeMap::from([(
+        KEY.to_string(),
+        StoredPreset::of(&device_id, &too_long),
+    )]));
+    assert!(host.collect_loaded_presets().is_empty());
 }
 
 #[test]

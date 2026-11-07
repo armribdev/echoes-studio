@@ -836,6 +836,7 @@ impl HostedPlugin for Vst3Adapter {
             Op::PresetLoad => self.load_program(payload),
             Op::PresetList => self.preset_list(),
             Op::PresetLoadState => self.load_preset_state(payload),
+            Op::LoadedPreset => Ok(Vec::new()),
             Op::OpenEditor => self.open_editor(&String::from_utf8_lossy(payload)),
         }
     }

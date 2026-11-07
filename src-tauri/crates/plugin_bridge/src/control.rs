@@ -63,6 +63,9 @@ pub enum Op {
     /// A [`crate::records::PresetStateRecord`] → ().  The plugin takes the state of a
     /// preset file the engine has read and checked.
     PresetLoadState = 14,
+    /// → the [`crate::records::PresetRecord`] a CLAP plugin last reported as loaded
+    /// (`clap.preset-load`), empty when it never did.
+    LoadedPreset = 15,
 }
 
 impl Op {
@@ -82,6 +85,7 @@ impl Op {
             12 => Op::Handshake,
             13 => Op::PresetList,
             14 => Op::PresetLoadState,
+            15 => Op::LoadedPreset,
             _ => return None,
         })
     }
@@ -310,6 +314,7 @@ mod tests {
             Op::Handshake,
             Op::PresetList,
             Op::PresetLoadState,
+            Op::LoadedPreset,
         ] {
             assert_eq!(Op::from_u8(op as u8), Some(op));
         }

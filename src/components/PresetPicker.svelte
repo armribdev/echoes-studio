@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { listen } from '@tauri-apps/api/event';
+	import { onMount } from 'svelte';
 	import { unavailablePlugins } from '../stores/plugins';
 	import { notify } from '../stores/status';
 	import {
@@ -19,10 +21,27 @@
 	 */
 	export let instanceKey: string;
 
+	const EDIT_REFRESH_DELAY_MS = 300;
+
 	let presets: PluginPreset[] = [];
 	let loading = false;
 	let select: HTMLSelectElement | undefined;
 	let latestRequest = 0;
+	let refreshTimer: ReturnType<typeof setTimeout> | undefined;
+
+	// A plugin window edits without telling the picker; wait for a gesture to end before listing.
+	onMount(() => {
+		const unlisten = listen('plugin-state-edited', () => {
+			clearTimeout(refreshTimer);
+			refreshTimer = setTimeout(() => {
+				if (!loading) refresh(instanceKey, unavailable);
+			}, EDIT_REFRESH_DELAY_MS);
+		});
+		return () => {
+			clearTimeout(refreshTimer);
+			unlisten.then((stop) => stop());
+		};
+	});
 
 	$: activeKey = activePresetKey(presets);
 	$: unavailable = $unavailablePlugins.has(instanceKey);

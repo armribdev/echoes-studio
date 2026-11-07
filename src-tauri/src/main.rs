@@ -321,6 +321,7 @@ fn install_loaded_project(
     // are re-applied after the graph compiles (the instances must exist first).
     // Keyed per placement by `instance_key` (ADR-017).
     let plugin_states = project.plugin_states.clone();
+    let plugin_presets = project.plugin_presets.clone();
 
     // Seed event store from loaded project (snapshot-at-zero approach)
     if let (Ok(mut store), Ok(mut p)) = (state.event_store.lock(), state.project.lock()) {
@@ -336,8 +337,9 @@ fn install_loaded_project(
     // before any node enters a snapshot — rather than pushing `setState` onto the
     // already-snapshotted instances afterwards, which raced the audio thread on
     // the shared handle (ADR-010 race-free restore).
-    if !plugin_states.is_empty() {
-        if let Ok(mut engine) = state.audio_engine.lock() {
+    if let Ok(mut engine) = state.audio_engine.lock() {
+        engine.plugin_host.set_stored_presets(plugin_presets);
+        if !plugin_states.is_empty() {
             engine.plugin_host.set_pending_state_blobs(plugin_states);
         }
     }
@@ -453,6 +455,7 @@ fn handle_menu_event(app: &tauri::AppHandle, menu_id: &str) {
                         .collect_plugin_states()
                         .into_iter()
                         .collect();
+                    project.plugin_presets = engine.plugin_host.collect_loaded_presets();
                 }
                 serde_json::to_string_pretty(&project.to_file())
             }
@@ -1103,6 +1106,7 @@ fn watch_plugin_edits(app: tauri::AppHandle) {
                     .dirty
                     .store(true, std::sync::atomic::Ordering::Relaxed);
                 menu_state::refresh_menu(&app, &state);
+                let _ = app.emit(engine_gateway::api::PLUGIN_STATE_EDITED_EVENT, ());
             }
             if plugin_formats::clap::ffi::take_plugin_restart_requested() {
                 recompile_audio_graph(&app, &state);

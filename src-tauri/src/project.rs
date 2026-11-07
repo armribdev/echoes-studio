@@ -469,6 +469,7 @@ pub struct AppMidiClip {
     pub content_id: String,
 }
 
+use crate::plugin_system::presets::StoredPreset;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -751,6 +752,10 @@ pub struct AppProject {
     /// the graph is compiled on load.  Not part of the event-sourced model —
     /// it mirrors live plugin internals, so it is excluded from undo snapshots.
     pub plugin_states: HashMap<String, Vec<u8>>,
+    /// The CLAP preset each placement was last known to use, keyed like
+    /// `plugin_states` (ADR-035).  A display hint harvested at save time and
+    /// excluded from undo, like the state blob it sits beside.
+    pub plugin_presets: BTreeMap<String, StoredPreset>,
     /// Panneaux et vue principale — persistés au save, exclus de l'undo.
     pub ui_layout: ProjectUiLayout,
 }
@@ -880,6 +885,7 @@ impl AppProject {
             markers: vec![],
             regions: vec![],
             plugin_states: HashMap::new(),
+            plugin_presets: BTreeMap::new(),
             ui_layout: ProjectUiLayout::default(),
         }
     }
@@ -975,6 +981,7 @@ impl AppProject {
             // Legacy device_id-keyed field is no longer written (read-only for
             // backward compat on load).
             plugin_state_blobs: HashMap::new(),
+            plugin_presets: self.plugin_presets.clone(),
             ui_layout: self.ui_layout.clone(),
         }
     }
@@ -1081,6 +1088,7 @@ impl AppProject {
             markers: pf.markers,
             regions: pf.regions,
             plugin_states,
+            plugin_presets: pf.plugin_presets,
             ui_layout: pf.ui_layout,
         };
         project.prune_unreferenced_midi_contents();
@@ -1542,6 +1550,10 @@ pub struct ProjectFile {
     /// `from_file`); new saves leave it empty.
     #[serde(default)]
     pub plugin_state_blobs: HashMap<String, String>,
+    /// The preset each CLAP placement was last known to use (ADR-035).  Absent
+    /// in older saves → empty.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub plugin_presets: BTreeMap<String, StoredPreset>,
     #[serde(default)]
     pub ui_layout: ProjectUiLayout,
 }
@@ -2218,6 +2230,32 @@ mod tests {
         let restored = AppProject::from_file(project.to_file()).expect("from_file");
         assert_eq!(restored.plugin_states.get("fx-a"), Some(&vec![1, 2, 3]));
         assert_eq!(restored.plugin_states.get("fx-b"), Some(&vec![9, 9]));
+    }
+
+    /// ADR-035: the remembered preset survives a save and a load, as JSON text,
+    /// and a file without the field (an older save) loads with none.
+    #[test]
+    fn plugin_presets_round_trip_and_an_older_file_has_none() {
+        let mut project = AppProject::new();
+        project.plugin_presets.insert(
+            "fx-a".into(),
+            StoredPreset {
+                device_id: "clap:echoes.test.gain".into(),
+                location_kind: 1,
+                location: None,
+                load_key: Some("loud".into()),
+            },
+        );
+
+        let json = serde_json::to_string(&project.to_file()).expect("serialize");
+        let file: ProjectFile = serde_json::from_str(&json).expect("deserialize");
+        let restored = AppProject::from_file(file).expect("from_file");
+        assert_eq!(restored.plugin_presets, project.plugin_presets);
+
+        let without = serde_json::to_string(&AppProject::new().to_file()).expect("serialize");
+        assert!(!without.contains("plugin_presets"), "an empty map is not written");
+        let file: ProjectFile = serde_json::from_str(&without).expect("deserialize");
+        assert!(AppProject::from_file(file).unwrap().plugin_presets.is_empty());
     }
 
     /// ADR-017 / C-4: a legacy project file carrying `device_id`-keyed state loads

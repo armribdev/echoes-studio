@@ -343,6 +343,7 @@ fn handle_clap(plugin: &ClapAdapter, op: Op, payload: &[u8]) -> Result<Vec<u8>, 
         }
         Op::OpenEditor => open_editor(plugin, &String::from_utf8_lossy(payload)),
         Op::NoteNames => Ok(plugin.note_names()),
+        Op::LoadedPreset => Ok(plugin.loaded_preset()),
         Op::TrackInfo => {
             let track = TrackRecord::decode(payload).map_err(|_| "invalid track info")?;
             plugin.set_track_info(&HostTrackInfo {

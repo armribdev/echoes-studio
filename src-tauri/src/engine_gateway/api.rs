@@ -2684,6 +2684,7 @@ fn snapshot_project(project: &AppProject) -> AppProject {
         // separately (project load → compile → setState), not via the event
         // store.  Undo/redo snapshots therefore keep this empty.
         plugin_states: std::collections::HashMap::new(),
+        plugin_presets: std::collections::BTreeMap::new(),
         ui_layout: ProjectUiLayout::default(),
     }
 }
@@ -3594,6 +3595,9 @@ pub const PLUGIN_AVAILABILITY_EVENT: &str = "plugin-availability";
 
 /// A plugin changed its parameter list or the text of its values (`clap.params.rescan`).
 pub const PLUGIN_PARAMS_EVENT: &str = "plugin-params-changed";
+
+/// A plugin reported an edit of its own state (its window, a loaded preset).
+pub const PLUGIN_STATE_EDITED_EVENT: &str = "plugin-state-edited";
 
 /// A plugin changed the names it gives to notes (`clap.note-name.changed`).
 pub const PLUGIN_NOTE_NAMES_EVENT: &str = "plugin-note-names-changed";

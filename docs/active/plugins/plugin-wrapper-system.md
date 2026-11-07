@@ -981,8 +981,19 @@ belongs to preset discovery.
 
 - _`loaded`._ A preset picked in the plugin's own window changes its state without
   the host knowing, so `loaded` raises the same unsaved-changes flag as
-  `clap.state.mark_dirty` (`mark_plugin_state_edited`, one atomic store). The
-  location and key are not kept. The state itself needs nothing more: it is saved
+  `clap.state.mark_dirty` (`mark_plugin_state_edited`, one atomic store). Off the
+  audio thread, the location and key are also kept in the instance's
+  `ClapHostContext` (`loaded_preset`, last report wins; 2026-11-07) so the picker can
+  show the preset in use. In the sandbox the context lives in the bridge process,
+  so the control op `LoadedPreset` (15, → a `PresetRecord`, empty when the plugin
+  never reported; control only, `BRIDGE_PROTOCOL_VERSION` stays) fetches it. It is
+  kept across a project reload since ADR-035 (2026-11-07): the project file's
+  optional `plugin_presets` map (`instance_key` → plugin type, kind, location, key)
+  is written at save by `PluginHost::collect_loaded_presets` and given back to the
+  host at load (`set_stored_presets`); a live report wins over it, and Echoes'
+  own successful loads are recorded too, so a plugin that never calls `loaded`
+  still shows a preset picked from the picker. It is a hint compared with the
+  listing, never loaded from, kept only for the same plugin type. The state itself needs nothing more: it is saved
   with the project like any other (ADR-010). Parameter values are refreshed by
   the plugin's own `clap.params.rescan(VALUES)`, as before.
 - _`on_error`._ Logged on stderr (`[clap.preset-load] <location> (os error N):
@@ -1122,15 +1133,23 @@ parameter `Preset tone` (32): 33 in all.
 plugin that offers presets: in the expanded plugin effect (between the editor
 buttons and the sidechain row) and in the instrument panel (under the instrument
 row, above the arpeggiator, compact or not). It is an action menu: choosing an
-entry calls `load_plugin_preset`. For CLAP the select shows nothing at rest (the
-empty option is hidden) and returns to empty after a load, since the host does not
-know the current preset; for a VST3 program it shows the program the plugin says is
-in use (`PluginPreset.active`) and is empty when the plugin cannot tell.
+entry calls `load_plugin_preset`. The select shows the preset the plugin says is in
+use (`PluginPreset.active`) and is empty when the plugin cannot tell. For a VST3
+program that is the program its selector names; for CLAP (2026-11-07) it is the
+preset the plugin last reported through `clap.preset-load.loaded`, matched against
+the listing on kind and key exactly and on the path leniently (separators, and case
+on Windows; `same_preset` in `presets.rs`), in process or in the sandbox — so only a
+plugin that calls `loaded`, or one loaded from this picker, ever shows one; a CLAP
+plugin that is silent and whose preset is picked in its own window stays empty. It is
+saved with the project (ADR-035).
 Entries are grouped Usine / Utilisateur / Autres by the provider's flags
 (`src/frontend/presets/pluginPresets.ts`, engine order kept inside a group). The
 row is absent when the list is empty, the plugin unavailable or the call fails.
 The list is fetched when the picker appears, when the placement or its
-availability changes, and when the select gets focus; an unchanged list leaves
+availability changes, when the select gets focus, and 300 ms after the last
+`plugin-state-edited` event (2026-11-07: `watch_plugin_edits` emits it whenever a
+plugin reports an edit, so a preset chosen in the plugin's own window shows
+without opening the menu); an unchanged list leaves
 the DOM alone so an open menu stays open. While a load runs the select is
 disabled (`cursor: default`); a refusal is a red notification
 `Erreur preset : <the plugin's message>`; a success shows nothing, and the
@@ -1152,8 +1171,8 @@ commands, the same last-listing whitelist, the same FFI gate and the same
   whitelist is kept under the plugin's `device_id`. Order: the plugin's programs
   (its own order), then factory files, then user files (files by name).
   `PluginPreset.active` (added during this step) is true for the program the
-  plugin's selector currently names (VST3 programs only; always false for CLAP and
-  files) so the picker can show it.
+  plugin's selector currently names (a CLAP preset gets it from `loaded`, see
+  the picker; never true for files) so the picker can show it.
 - _Programs (`IUnitInfo`, `vst3/units.rs`)._ The controller is asked for
   `IUnitInfo` by `queryInterface`; a controller without it, or without a list, offers
   none. Units, program lists and program names are read under the FFI gate, every
