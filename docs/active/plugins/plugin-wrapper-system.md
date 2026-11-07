@@ -1478,6 +1478,9 @@ routes a track into it (`PluginParams.sidechain_source`), as in process.
 - **Opening.** The bridge opens every auxiliary input bus at each activation, as `vst3_ensure_active` does.
 - **Test plugin.** The effect has a mono `Sidechain` input (auxiliary bus); fed, a quarter of its level is
   added to the output, unfed it changes nothing. The `vst3_plugins` golden hash did not move.
+- **Picker.** `EffectChain.svelte` greys the "Sidechain" picker only for a sandboxed **CLAP** effect (the
+  CLAP adapter activates one input port, so no aux input reaches the plugin); a sandboxed VST3 effect keeps it
+  enabled (2026-11-07, it was greyed for every sandboxed plugin until then).
 
 Tests: `render_harness::vst3_plugins::a_sandboxed_effect_hears_its_sidechain_like_an_in_process_one` (the
 instrument track feeds the effect's sidechain; sandbox against in-process at the five block sizes),

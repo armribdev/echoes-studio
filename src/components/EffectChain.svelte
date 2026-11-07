@@ -671,8 +671,9 @@
 								{trackId}
 								effectId={effect.id}
 								params={effect.params.params}
-								disabledReason={isSandboxed(effect, isolation, alwaysIsolated)
-									? 'Le sidechain ne fonctionne pas quand le plugin est isolé'
+								disabledReason={effectFormat(effect) === 'CLAP' &&
+								isSandboxed(effect, isolation, alwaysIsolated)
+									? 'Le sidechain ne fonctionne pas quand le plugin CLAP est isolé'
 									: null}
 							/>
 						{/if}

@@ -473,9 +473,9 @@ fn validate_instrument(state: &tauri::State<'_, AppState>, plugin_id: &str) -> R
             manifest.name
         ));
     }
-    if manifest.format != DeviceFormat::Clap {
+    if !matches!(manifest.format, DeviceFormat::Clap | DeviceFormat::Vst3) {
         return Err(format!(
-            "Les instruments {} ne sont pas encore supportés — utilisez la version CLAP de '{}'",
+            "Les instruments {} ne sont pas encore supportés — utilisez la version CLAP ou VST3 de '{}'",
             format_tag(manifest.format),
             manifest.name
         ));

@@ -291,6 +291,10 @@ point `ECHOES_TEST_VST3` at its inner `.vst3`.
   isolation preference. _Since ADR-033 step 8a (2026-11-05) a VST3 instrument follows the
   isolation modes like an effect_ (`BridgedInstrument`, notes and `IMidiMapping` handled in
   the bridge); its auxiliary outputs stay in-process until step 8b.
+- **Command gate.** `validate_instrument` (`engine_gateway/api.rs`) still refused every
+  non-CLAP instrument, so a VST3 instrument could not be added from the UI. _Since
+  2026-11-07 it accepts CLAP and VST3_ (found by hand test: "les instruments VST3 ne sont
+  pas encore supportés").
 - **Parameters (ADR-021)** reach a VST3 instrument as for the VST3 effect: queued
   edits, plugin-window edits, modulation and automation are delivered by the code
   both share (`vst3/param_delivery.rs`).
