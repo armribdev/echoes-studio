@@ -3,7 +3,7 @@ node_modules
 
 # Build / generated
 /build
-/.svelte-kit
+.svelte-kit
 /package
 src-tauri/target
 src-tauri/gen

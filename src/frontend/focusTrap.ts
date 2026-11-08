@@ -151,7 +151,7 @@ function deactivate(node: HTMLElement, previouslyFocused: HTMLElement | null) {
 }
 
 export const focusTrap: Action<HTMLElement, FocusTrapParams | undefined> = (node, params) => {
-	let previouslyFocused = activate(node, params);
+	const previouslyFocused = activate(node, params);
 
 	return {
 		update(next: FocusTrapParams | undefined) {

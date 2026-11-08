@@ -47,7 +47,13 @@
 	<div class="menu-header">{pluginName}</div>
 	<div class="separator"></div>
 
-	<button class="item" role="menuitem" type="button" disabled={mode !== 'chosen'} on:click={toggleAlwaysIsolated}>
+	<button
+		class="item"
+		role="menuitem"
+		type="button"
+		disabled={mode !== 'chosen'}
+		on:click={toggleAlwaysIsolated}
+	>
 		<span class="check">{alwaysIsolated ? '✓' : ''}</span>
 		<span>Toujours isoler {pluginName}</span>
 	</button>

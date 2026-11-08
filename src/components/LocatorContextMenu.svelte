@@ -51,7 +51,8 @@
 >
 	{#if mode === 'empty'}
 		<button
-			class="item" role="menuitem"
+			class="item"
+			role="menuitem"
 			on:click={() => {
 				dispatch('addMarker');
 				close();
@@ -61,7 +62,8 @@
 			<span class="item-shortcut">{$shortcutLabels('arrangement.addMarker')}</span>
 		</button>
 		<button
-			class="item" role="menuitem"
+			class="item"
+			role="menuitem"
 			on:click={() => {
 				dispatch('addRegion');
 				close();
@@ -72,12 +74,12 @@
 		</button>
 	{:else}
 		<div class="menu-header">
-			{name ||
-				(kind === 'region' ? $t('locatorMenu.region') : $t('locatorMenu.marker'))}
+			{name || (kind === 'region' ? $t('locatorMenu.region') : $t('locatorMenu.marker'))}
 		</div>
 		<div class="separator"></div>
 		<button
-			class="item" role="menuitem"
+			class="item"
+			role="menuitem"
 			on:click={() => {
 				dispatch('goTo');
 				close();
@@ -86,7 +88,8 @@
 			<span>{$t('locatorMenu.goHere')}</span>
 		</button>
 		<button
-			class="item" role="menuitem"
+			class="item"
+			role="menuitem"
 			on:click={() => {
 				dispatch('rename');
 				close();
@@ -96,7 +99,8 @@
 		</button>
 		{#if kind === 'region'}
 			<button
-				class="item" role="menuitem"
+				class="item"
+				role="menuitem"
 				on:click={() => {
 					dispatch('setLoop');
 					close();
@@ -107,7 +111,8 @@
 		{/if}
 		<div class="separator"></div>
 		<button
-			class="item item--danger" role="menuitem"
+			class="item item--danger"
+			role="menuitem"
 			on:click={() => {
 				dispatch('delete');
 				close();

@@ -2,14 +2,14 @@
  * Binding helpers — normalize, match, format, conflict detection, menu sync.
  */
 
-import { aliasesOf, chordsForRow, getShortcutMeta, rootShortcutId, SHORTCUT_CATALOG } from './catalog';
-import type {
-	KeyBinding,
-	Modifier,
-	ShortcutId,
-	ShortcutOverrides,
-	ShortcutScope
-} from './types';
+import {
+	aliasesOf,
+	chordsForRow,
+	getShortcutMeta,
+	rootShortcutId,
+	SHORTCUT_CATALOG
+} from './catalog';
+import type { KeyBinding, Modifier, ShortcutId, ShortcutOverrides, ShortcutScope } from './types';
 
 const MOD_ORDER: Modifier[] = ['ctrl', 'shift', 'alt'];
 
@@ -131,10 +131,7 @@ export function findConflicts(overrides: ShortcutOverrides = {}): ShortcutConfli
 	return conflicts;
 }
 
-export function conflictIdsFor(
-	id: ShortcutId,
-	overrides: ShortcutOverrides = {}
-): ShortcutId[] {
+export function conflictIdsFor(id: ShortcutId, overrides: ShortcutOverrides = {}): ShortcutId[] {
 	return findConflicts(overrides)
 		.filter((c) => c.id === id || c.otherId === id)
 		.map((c) => (c.id === id ? c.otherId : c.id));

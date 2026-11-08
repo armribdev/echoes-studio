@@ -111,7 +111,8 @@
 	});
 
 	// A plugin still being scanned is not missing: look again when the scan ends.
-	$: if (!$pluginsLoading) void refresh().catch((e) => console.error('[plugins] refresh failed:', e));
+	$: if (!$pluginsLoading)
+		void refresh().catch((e) => console.error('[plugins] refresh failed:', e));
 
 	$: count = missing.length;
 </script>
@@ -157,6 +158,7 @@
 		</div>
 	</div>
 {/if}
+
 <style lang="scss">
 	@use '../variables.scss' as *;
 
@@ -287,4 +289,3 @@
 		}
 	}
 </style>
-

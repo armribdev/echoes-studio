@@ -83,7 +83,6 @@
 			use:dismissable={() => (open = false)}
 		>
 			{#each options as opt}
-				<!-- svelte-ignore a11y-click-events-have-key-events -->
 				<li
 					class="cs-option"
 					class:cs-option--selected={opt.value === value}

@@ -1089,7 +1089,6 @@
 	</div>
 {/if}
 
-
 <style lang="scss">
 	@use '../variables.scss' as *;
 

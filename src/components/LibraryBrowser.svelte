@@ -342,8 +342,11 @@
 			</span>
 		{/if}
 		{#if variant === 'popup' && onRequestClose}
-			<button type="button" class="close-btn" title={$t('common.closeEsc')} on:click={onRequestClose}
-				>×</button
+			<button
+				type="button"
+				class="close-btn"
+				title={$t('common.closeEsc')}
+				on:click={onRequestClose}>×</button
 			>
 		{/if}
 	</div>

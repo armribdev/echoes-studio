@@ -78,10 +78,8 @@ function buildActions(): ActionMap {
 		'file.importAudio': menuAction('import-audio'),
 		'file.exportWav': menuAction('export-wav'),
 		'file.exportMp3': menuAction('export-mp3'),
-		'edit.undo': () =>
-			undoCommand().catch((e) => notify(`Annuler : ${e?.message ?? e}`, 'error')),
-		'edit.redo': () =>
-			redoCommand().catch((e) => notify(`Rétablir : ${e?.message ?? e}`, 'error')),
+		'edit.undo': () => undoCommand().catch((e) => notify(`Annuler : ${e?.message ?? e}`, 'error')),
+		'edit.redo': () => redoCommand().catch((e) => notify(`Rétablir : ${e?.message ?? e}`, 'error')),
 		'edit.redoAlt': () =>
 			redoCommand().catch((e) => notify(`Rétablir : ${e?.message ?? e}`, 'error')),
 		'transport.playPause': () => {

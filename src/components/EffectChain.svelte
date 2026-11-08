@@ -339,9 +339,7 @@
 						</span>
 					{/if}
 					{#if isSandboxed(effect, isolation, alwaysIsolated)}
-						<span class="sandbox-badge" title={$t('effects.isolated')}
-							>ISO</span
-						>
+						<span class="sandbox-badge" title={$t('effects.isolated')}>ISO</span>
 					{/if}
 					{#if unavailable}
 						<span class="missing-badge" title={UNAVAILABLE_HELP[unavailable.reason]}>

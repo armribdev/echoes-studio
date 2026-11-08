@@ -58,7 +58,8 @@
 	<div class="separator"></div>
 
 	<button
-		class="item" role="menuitem"
+		class="item"
+		role="menuitem"
 		on:click={() => {
 			dispatch('cut');
 			close();
@@ -85,7 +86,8 @@
 	</button>
 
 	<button
-		class="item" role="menuitem"
+		class="item"
+		role="menuitem"
 		on:click={() => {
 			dispatch('copy');
 			close();
@@ -110,7 +112,8 @@
 	</button>
 
 	<button
-		class="item" role="menuitem"
+		class="item"
+		role="menuitem"
 		class:item--disabled={!canPaste}
 		on:click={() => {
 			if (canPaste) {
@@ -140,7 +143,8 @@
 	<div class="separator"></div>
 
 	<button
-		class="item" role="menuitem"
+		class="item"
+		role="menuitem"
 		on:click={() => {
 			dispatch('duplicate');
 			close();
@@ -180,7 +184,8 @@
 	<div class="separator"></div>
 
 	<button
-		class="item item--danger" role="menuitem"
+		class="item item--danger"
+		role="menuitem"
 		on:click={() => {
 			dispatch('delete');
 			close();
