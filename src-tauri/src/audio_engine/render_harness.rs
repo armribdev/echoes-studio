@@ -1867,10 +1867,8 @@ mod vst3_plugins {
     fn a_sandboxed_instrument_renders_its_aux_output_like_an_in_process_one() {
         let with_aux = aux_output_project();
         for block_size in BLOCK_SIZES {
-            let main_only =
-                render_with_host(&mut host_with_test_plugins(), &project(), block_size);
-            let in_process =
-                render_with_host(&mut host_with_test_plugins(), &with_aux, block_size);
+            let main_only = render_with_host(&mut host_with_test_plugins(), &project(), block_size);
+            let in_process = render_with_host(&mut host_with_test_plugins(), &with_aux, block_size);
             assert!(
                 first_difference(&main_only, &in_process).is_some(),
                 "the track reading the aux bus must add its sound"

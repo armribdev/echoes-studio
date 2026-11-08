@@ -87,6 +87,7 @@ pub fn render_project_offline(
 /// frames per `process_block` call (at most `OFFLINE_BLOCK_SIZE`), the way the
 /// live engine receives device-sized buffers.  Nodes are still prepared for
 /// `OFFLINE_BLOCK_SIZE`, so a determinism check only varies the block size.
+#[cfg(test)]
 pub(crate) fn render_project_in_blocks(
     project: &AppProject,
     live_params: &LiveParams,

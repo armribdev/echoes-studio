@@ -6,10 +6,10 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::plugin_formats::vst3::component_handler::FollowedParam;
 use crate::plugin_formats::clap::ffi::{
     CLAP_PRESET_IS_FACTORY_CONTENT, CLAP_PRESET_LOCATION_PLUGIN,
 };
+use crate::plugin_formats::vst3::component_handler::FollowedParam;
 use crate::plugin_formats::vst3::fake_plugin::{
     fake_vst3_instance, fake_vst3_instance_with_units, FakeListener, FakeUnits,
 };

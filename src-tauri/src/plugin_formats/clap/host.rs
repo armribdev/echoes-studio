@@ -68,4 +68,3 @@ fn clap_search_paths() -> Vec<PathBuf> {
 pub fn decode_plugin_id(plugin_id: &str) -> Option<&str> {
     plugin_id.strip_prefix("clap:")
 }
-

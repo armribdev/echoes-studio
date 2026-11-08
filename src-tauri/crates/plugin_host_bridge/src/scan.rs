@@ -59,8 +59,7 @@ pub fn scan_vst3(file: &Path) -> Result<Vec<ScannedPluginRecord>, String> {
 /// # Safety
 /// `factory` must be a live `IPluginFactory`.
 unsafe fn vst3_aux_input_count(factory: *mut IPluginFactory, cid: &[u8; 16]) -> u32 {
-    let Ok((component, processor)) = instantiate_processor(factory, cid, host_application())
-    else {
+    let Ok((component, processor)) = instantiate_processor(factory, cid, host_application()) else {
         return 0;
     };
     let count = read_aux_inputs(component).len() as u32;
@@ -144,11 +143,7 @@ fn descriptor_features(descriptor: &ClapPluginDescriptor) -> Vec<String> {
 }
 
 /// Create → init → count the auxiliary input ports → destroy.
-fn clap_aux_input_count(
-    factory: *const ClapPluginFactory,
-    host: &ClapHost,
-    clap_id: &str,
-) -> u32 {
+fn clap_aux_input_count(factory: *const ClapPluginFactory, host: &ClapHost, clap_id: &str) -> u32 {
     let id: Vec<u8> = clap_id.bytes().chain(std::iter::once(0)).collect();
     // SAFETY: `factory` and `host` are live and `id` is NUL-terminated.
     unsafe {
@@ -169,7 +164,8 @@ fn clap_aux_input_count(
 /// # Safety
 /// `plugin` must be a live, initialised CLAP plugin.
 unsafe fn aux_input_ports(plugin: *const ClapPlugin) -> u32 {
-    let extension = ((*plugin).get_extension)(plugin, CLAP_EXT_AUDIO_PORTS.as_ptr() as *const c_char);
+    let extension =
+        ((*plugin).get_extension)(plugin, CLAP_EXT_AUDIO_PORTS.as_ptr() as *const c_char);
     if extension.is_null() {
         return 0;
     }
@@ -177,7 +173,8 @@ unsafe fn aux_input_ports(plugin: *const ClapPlugin) -> u32 {
     let mut auxiliary = 0;
     for index in 0..((*ports).count)(plugin, true) {
         let mut info: ClapAudioPortInfo = std::mem::zeroed();
-        if ((*ports).get)(plugin, index, true, &mut info) && info.flags & CLAP_AUDIO_PORT_IS_MAIN == 0
+        if ((*ports).get)(plugin, index, true, &mut info)
+            && info.flags & CLAP_AUDIO_PORT_IS_MAIN == 0
         {
             auxiliary += 1;
         }

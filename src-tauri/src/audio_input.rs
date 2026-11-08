@@ -160,9 +160,7 @@ pub fn open_input_stream(
 
     let stream = build_typed_input_stream(&device, &fixed_cfg, fmt, hub.clone(), levels.clone())
         .or_else(|e| {
-            eprintln!(
-                "[audio] Buffer fixe input ({buffer_size}) non supporté ({e}), mode défaut"
-            );
+            eprintln!("[audio] Buffer fixe input ({buffer_size}) non supporté ({e}), mode défaut");
             let default_cfg = cpal::StreamConfig {
                 buffer_size: cpal::BufferSize::Default,
                 ..base_cfg

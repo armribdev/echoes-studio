@@ -2253,9 +2253,15 @@ mod tests {
         assert_eq!(restored.plugin_presets, project.plugin_presets);
 
         let without = serde_json::to_string(&AppProject::new().to_file()).expect("serialize");
-        assert!(!without.contains("plugin_presets"), "an empty map is not written");
+        assert!(
+            !without.contains("plugin_presets"),
+            "an empty map is not written"
+        );
         let file: ProjectFile = serde_json::from_str(&without).expect("deserialize");
-        assert!(AppProject::from_file(file).unwrap().plugin_presets.is_empty());
+        assert!(AppProject::from_file(file)
+            .unwrap()
+            .plugin_presets
+            .is_empty());
     }
 
     /// ADR-017 / C-4: a legacy project file carrying `device_id`-keyed state loads

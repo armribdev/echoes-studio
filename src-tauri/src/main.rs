@@ -1,3 +1,4 @@
+mod app_menu;
 mod arpeggiator_settings;
 mod audio_clip;
 mod audio_engine;
@@ -5,7 +6,6 @@ mod audio_graph;
 mod audio_input;
 mod audio_recording;
 mod audio_settings;
-mod app_menu;
 mod engine_gateway;
 mod factory_drums;
 mod library;
@@ -20,9 +20,9 @@ mod windows_theme;
 
 use engine_gateway::api::{
     arm_track_for_midi_input, cancel_audio_import, get_audio_recording_peaks, get_graph_snapshot,
-    get_input_monitor_enabled, get_snapshot, prepare_audio_import, preview_midi_note, redo, send_batch, send_command,
-    set_input_monitor_enabled, set_metronome_enabled, set_track_mix, start_audio_recording,
-    start_midi_recording, stop_audio_recording, stop_midi_recording, undo,
+    get_input_monitor_enabled, get_snapshot, prepare_audio_import, preview_midi_note, redo,
+    send_batch, send_command, set_input_monitor_enabled, set_metronome_enabled, set_track_mix,
+    start_audio_recording, start_midi_recording, stop_audio_recording, stop_midi_recording, undo,
 };
 use project::{AppProject, AppState, ProjectDto, ProjectFile, ProjectUiLayout};
 use tauri::{Emitter, Manager, Theme};
@@ -69,8 +69,10 @@ fn main() {
 
             windows_theme::force_dark_popups();
 
-            let (menu, handles) =
-                app_menu::build_app_menu(app.handle(), &app_menu::locale_from_preferences_storage())?;
+            let (menu, handles) = app_menu::build_app_menu(
+                app.handle(),
+                &app_menu::locale_from_preferences_storage(),
+            )?;
             app.manage(handles);
             app.set_menu(menu)?;
 
@@ -287,9 +289,12 @@ fn load_project_from_file(path: &std::path::Path) -> Result<AppProject, String> 
 fn show_open_error(app: &tauri::AppHandle, path: &std::path::Path, error: &str) {
     eprintln!("[projet] Échec ouverture : {error}");
     app.dialog()
-        .message(format!("Impossible d'ouvrir « {} ».
+        .message(format!(
+            "Impossible d'ouvrir « {} ».
 
-{error}", path.display()))
+{error}",
+            path.display()
+        ))
         .title("Echoes Studio")
         .kind(MessageDialogKind::Error)
         .blocking_show();
@@ -719,7 +724,9 @@ async fn list_plugin_presets(
     .map_err(|e| format!("Preset listing failed: {e}"))?;
     let state = app.state::<AppState>();
     let mut engine = state.audio_engine.lock().map_err(|e| e.to_string())?;
-    engine.plugin_host.remember_listing(&listing, listed.clone());
+    engine
+        .plugin_host
+        .remember_listing(&listing, listed.clone());
     Ok(listed)
 }
 

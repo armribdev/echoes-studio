@@ -16,6 +16,8 @@ pub(crate) mod fake_plugin;
 pub mod ffi;
 // Moved to the `vst3_host` crate (ADR-033, step 3); the old paths still resolve.
 pub use vst3_host::{buses, editor_view, event_list, host_context, midi_mapping, notes, units};
+#[cfg(all(test, windows))]
+mod buses_tests;
 pub mod host;
 pub mod instrument;
 pub mod param_delivery;
@@ -24,9 +26,7 @@ pub mod preset_file;
 pub mod preset_locations;
 #[cfg(all(test, windows))]
 pub(crate) mod test_dll;
-#[cfg(all(test, windows))]
-mod buses_tests;
+pub mod transport;
 #[cfg(all(test, windows))]
 mod units_tests;
-pub mod transport;
 pub mod wrapper;

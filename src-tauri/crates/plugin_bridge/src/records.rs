@@ -447,7 +447,7 @@ impl PresetStateRecord {
             && self
                 .controller
                 .as_deref()
-                .map_or(true, |controller| writer.bytes(controller));
+                .is_none_or(|controller| writer.bytes(controller));
         fits.then(|| writer.finish())
     }
 

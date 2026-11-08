@@ -312,7 +312,9 @@ impl AudioPort {
             && request.output_channels <= capacity
             && reply.output.len() >= output_samples
             && request.section_bytes() <= self.layout.event_capacity as usize
-            && request.input.is_none_or(|input| input.len() >= input_samples);
+            && request
+                .input
+                .is_none_or(|input| input.len() >= input_samples);
         if !fits {
             return BlockOutcome::Skipped;
         }

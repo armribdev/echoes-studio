@@ -408,7 +408,8 @@ impl BridgeRoundTrip {
         for (port, buffer) in outputs.iter_mut().enumerate().take(carried_ports) {
             for channel in 0..PORT_CHANNELS {
                 let at = (port * PORT_CHANNELS + channel) * frames;
-                buffer.channel_mut(channel)[..frames].copy_from_slice(&self.output[at..at + frames]);
+                buffer.channel_mut(channel)[..frames]
+                    .copy_from_slice(&self.output[at..at + frames]);
             }
         }
         true
@@ -482,10 +483,7 @@ impl AudioNode for BridgedNode {
         if outputs.is_empty() {
             return;
         }
-        if !self
-            .round_trip
-            .process(inputs, outputs, transport, None)
-        {
+        if !self.round_trip.process(inputs, outputs, transport, None) {
             pass_through(inputs, outputs);
         }
     }

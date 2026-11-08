@@ -486,9 +486,9 @@ fn measure_eight_vst3_effects() {
 /// The first installed VST3 plugin `wanted` accepts (`ECHOES_TEST_VST3` points at one),
 /// or `None`.
 pub(super) fn installed_vst3(wanted: impl Fn(&PluginManifest) -> bool) -> Option<PluginManifest> {
-    use crate::plugin_system::scan::{scanned_manifests, ScanFormat};
     use crate::plugin_system::ffi_lifecycle_tests::discover_all;
     use crate::plugin_system::registry::PluginRegistry;
+    use crate::plugin_system::scan::{scanned_manifests, ScanFormat};
 
     let _environment = environment_lock();
     let mut registry = PluginRegistry::new();

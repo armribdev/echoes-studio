@@ -108,6 +108,11 @@ impl HostEventList {
     }
 
     #[cfg(any(test, feature = "test-support"))]
+    pub fn is_empty(&self) -> bool {
+        self.count == 0
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
     pub fn as_slice(&self) -> &[Event] {
         &self.events[..self.count]
     }

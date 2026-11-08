@@ -1374,7 +1374,11 @@ fn preset_names(presets: &[PluginPreset]) -> Vec<&str> {
 }
 
 fn presets_of(host: &PluginHost) -> Vec<PluginPreset> {
-    list_presets(&host.preset_source(KEY).expect("a CLAP placement has a source"))
+    list_presets(
+        &host
+            .preset_source(KEY)
+            .expect("a CLAP placement has a source"),
+    )
 }
 
 fn scratch_directory(files: &[&str]) -> PathBuf {
@@ -1429,10 +1433,17 @@ fn the_presets_in_a_user_directory_follow_the_bundled_ones() {
 
     let presets = presets_of(&host);
 
-    assert_eq!(preset_names(&presets), ["Loud", "Quiet", "a cold", "b warm"]);
+    assert_eq!(
+        preset_names(&presets),
+        ["Loud", "Quiet", "a cold", "b warm"]
+    );
     let warm = &presets[3];
     assert_eq!(warm.location_kind, CLAP_PRESET_LOCATION_FILE);
-    assert!(warm.location.as_deref().unwrap().ends_with("b warm.testpreset"));
+    assert!(warm
+        .location
+        .as_deref()
+        .unwrap()
+        .ends_with("b warm.testpreset"));
     assert_eq!(warm.load_key, None);
     assert_eq!(warm.flags, CLAP_PRESET_IS_USER_CONTENT);
     let _ = std::fs::remove_dir_all(directory);

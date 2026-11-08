@@ -3,9 +3,9 @@
 //! Labels are updated in place via `MenuItem::set_text` / `Submenu::set_text`
 //! so enable/disable handles stay valid across locale switches.
 
+use std::collections::HashMap;
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::{AppHandle, Manager};
-use std::collections::HashMap;
 
 use crate::menu_state::MenuHandles;
 
@@ -127,12 +127,15 @@ pub fn build_app_menu(
 
     let save_item = MenuItem::with_id(app, "save", labels.save, false, Some("CmdOrCtrl+S"))?;
     let undo_item = MenuItem::with_id(app, "undo", labels.undo, false, Some("CmdOrCtrl+Z"))?;
-    let redo_item =
-        MenuItem::with_id(app, "redo", labels.redo, false, Some("CmdOrCtrl+Shift+Z"))?;
-    let delete_track_item =
-        MenuItem::with_id(app, "delete-track", labels.delete_track, false, None::<&str>)?;
-    let new_project =
-        MenuItem::with_id(app, "new", labels.new_project, true, Some("CmdOrCtrl+N"))?;
+    let redo_item = MenuItem::with_id(app, "redo", labels.redo, false, Some("CmdOrCtrl+Shift+Z"))?;
+    let delete_track_item = MenuItem::with_id(
+        app,
+        "delete-track",
+        labels.delete_track,
+        false,
+        None::<&str>,
+    )?;
+    let new_project = MenuItem::with_id(app, "new", labels.new_project, true, Some("CmdOrCtrl+N"))?;
     let open = MenuItem::with_id(app, "open", labels.open, true, Some("CmdOrCtrl+O"))?;
     let project_settings = MenuItem::with_id(
         app,
@@ -173,8 +176,7 @@ pub fn build_app_menu(
         Some("CmdOrCtrl+Shift+T"),
     )?;
 
-    let export_menu =
-        Submenu::with_items(app, labels.export, true, &[&export_wav, &export_mp3])?;
+    let export_menu = Submenu::with_items(app, labels.export, true, &[&export_wav, &export_mp3])?;
 
     let file_menu = Submenu::with_items(
         app,

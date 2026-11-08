@@ -281,11 +281,8 @@ mod tests {
         hub.available.store(true, Ordering::Relaxed);
         hub.sample_rate_bits
             .store(48_000.0_f32.to_bits(), Ordering::Relaxed);
-        let recorder = AudioRecorder::new(
-            Arc::clone(&transport),
-            Arc::new(LiveInputClock::new()),
-            hub,
-        );
+        let recorder =
+            AudioRecorder::new(Arc::clone(&transport), Arc::new(LiveInputClock::new()), hub);
         recorder.start("track".into()).unwrap();
         assert!(transport.is_recording());
         // finish needs AppHandle for WAV — just clear via lock for this unit test
@@ -310,11 +307,8 @@ mod tests {
     fn start_fails_without_input() {
         let transport = SharedTransport::new(48_000.0, 120.0);
         let hub = AudioInputHub::new();
-        let recorder = AudioRecorder::new(
-            Arc::clone(&transport),
-            Arc::new(LiveInputClock::new()),
-            hub,
-        );
+        let recorder =
+            AudioRecorder::new(Arc::clone(&transport), Arc::new(LiveInputClock::new()), hub);
         assert!(recorder.start("track".into()).is_err());
     }
 

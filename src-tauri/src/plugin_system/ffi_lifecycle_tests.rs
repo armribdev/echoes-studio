@@ -1751,8 +1751,8 @@ fn vst3_real_plugins_report_their_input_buses() {
 /// An effect with a sidechain, run with its auxiliary bus fed.
 #[test]
 fn vst3_real_sidechain_effect_processes_with_its_aux_bus_fed() {
-    use crate::plugin_system::scan::{scanned_manifests, ScanFormat};
     use crate::plugin_system::registry::PluginRegistry;
+    use crate::plugin_system::scan::{scanned_manifests, ScanFormat};
 
     let candidates = discover_all("ECHOES_TEST_VST3", "vst3");
     let mut registry = PluginRegistry::new();
@@ -1844,8 +1844,8 @@ fn vst3_real_sidechain_effect_processes_with_its_aux_bus_fed() {
 /// The scan reads each effect's sidechain buses in the library it already loaded.
 #[test]
 fn vst3_scan_counts_the_sidechain_inputs_of_real_effects() {
-    use crate::plugin_system::scan::{scanned_manifests, ScanFormat};
     use crate::plugin_system::registry::PluginRegistry;
+    use crate::plugin_system::scan::{scanned_manifests, ScanFormat};
 
     let candidates = discover_all("ECHOES_TEST_VST3", "vst3");
     if candidates.is_empty() {
