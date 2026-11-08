@@ -10,6 +10,7 @@
 **Ne jamais utiliser `cursor: not-allowed`.**
 
 Sur un élément désactivé (`:disabled`, `.disabled`, etc.) :
+
 - garder l’opacité / le style visuel pour indiquer l’état ;
 - utiliser explicitement `cursor: default` (curseur normal).
 
@@ -24,6 +25,7 @@ Ressenti cible : **app bureau** — pas d’anneau de focus au clic souris ; ind
 ### Baseline
 
 Dans `src/app.scss` :
+
 - `:focus { outline: none }`
 - `:focus-visible` global (ring `$accent-color`)
 - `input` / `textarea` / `[contenteditable]` exclus du ring global (bordure / caret suffisent)
@@ -31,13 +33,13 @@ Dans `src/app.scss` :
 
 ### Règles
 
-| Cas | Quoi faire |
-|---|---|
-| Contrôle HTML natif (`button`, `a`, `[tabindex]`) | La règle globale suffit en général |
-| Indicateur custom | Styler avec **`:focus-visible`**, jamais `:focus` seul |
-| Widget custom (Knob, Slider, pads…) | `:focus-visible` local ; si l’indicateur n’est pas un outline sur l’élément focusé, `outline: none` sur ce sélecteur + indicateur ailleurs |
-| Parent qui réagit au focus clavier | Préférer `:has(:focus-visible)` à `:focus-within` |
-| Champ texte / spin / rename | `:focus` pour bordure d’édition = OK |
+| Cas                                               | Quoi faire                                                                                                                                 |
+| ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| Contrôle HTML natif (`button`, `a`, `[tabindex]`) | La règle globale suffit en général                                                                                                         |
+| Indicateur custom                                 | Styler avec **`:focus-visible`**, jamais `:focus` seul                                                                                     |
+| Widget custom (Knob, Slider, pads…)               | `:focus-visible` local ; si l’indicateur n’est pas un outline sur l’élément focusé, `outline: none` sur ce sélecteur + indicateur ailleurs |
+| Parent qui réagit au focus clavier                | Préférer `:has(:focus-visible)` à `:focus-within`                                                                                          |
+| Champ texte / spin / rename                       | `:focus` pour bordure d’édition = OK                                                                                                       |
 
 `:focus` seul apparaît aussi au clic et après Échap (retour de focus) — à éviter pour les anneaux / highlights d’UI non-texte.
 
@@ -47,10 +49,10 @@ Dans `src/app.scss` :
 
 Les bulles d’aide **ne sont pas focusables** :
 
-| Élément | Règle |
-|---|---|
+| Élément                  | Règle                                                                                   |
+| ------------------------ | --------------------------------------------------------------------------------------- |
 | Bulle (`role="tooltip"`) | `tabindex="-1"`, hors cycle Tab ; `aria-hidden` si le texte est déjà sur le déclencheur |
-| Icône « i » | `tabindex="-1"` — survol uniquement, pas d’arrêt Tab dans les formulaires |
+| Icône « i »              | `tabindex="-1"` — survol uniquement, pas d’arrêt Tab dans les formulaires               |
 
 Ne pas marquer un tooltip avec `data-es-focus-trap-portal` (réservé aux menus interactifs portailés).
 
@@ -73,6 +75,7 @@ Toute UI `role="dialog"` / `aria-modal="true"` (ou overlay équivalent) **doit**
 ### Menus contextuels
 
 Même piège de focus, sans `inert` global :
+
 - conteneur `role="menu"` + `tabindex="-1"` + `use:focusTrap={{ initial: "first" }}` ;
 - items `role="menuitem"` ;
 - Échap ferme le menu (`use:dismissable`) ;

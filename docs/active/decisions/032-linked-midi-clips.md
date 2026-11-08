@@ -95,7 +95,7 @@ AppMidiClip              : { id, start, end, offset, content_id }   // no notes,
   `SET_CLIP_MIDI_NOTES` / `SET_CLIP_MIDI_CONTROLS` keep `(track_id, clip_id)`. The
   gateway resolves the clip's `content_id`.
 - Events are addressed by **content**: `MIDI_CONTENT_NOTES_SET { content_id,
-  notes }` and `MIDI_CONTENT_CONTROLS_SET { content_id, channel_controls }`
+notes }` and `MIDI_CONTENT_CONTROLS_SET { content_id, channel_controls }`
   **replace** `MIDI_CLIP_NOTES_SET` / `MIDI_CLIP_CONTROLS_SET`. One write, one
   event, one undo step, whatever the number of clips. No fan-out anywhere: the
   Rust apply, the replay and the TypeScript reducer each write one entry.
@@ -122,7 +122,7 @@ AppMidiClip              : { id, start, end, offset, content_id }   // no notes,
   mode). Alt+Shift+drag duplicate is linked (`content_id` mode), added after the
   UX review in the open questions.
 - `UNLINK_MIDI_CLIP { track_id, clip_id }` → `MIDI_CLIP_UNLINKED { track_id,
-  clip_id, content_id (new), content }`: clones the clip's content into a **new
+clip_id, content_id (new), content }`: clones the clip's content into a **new
   content** and repoints the clip. The new id and the cloned content are in the
   event payload (ids are not regenerated on replay). Undoable. Offered in the
   existing clip context menu, shown only on linked clips. If the clip was the only
@@ -280,12 +280,12 @@ tests, and several are old.
 
 What the DAWs do, as far as the sources show:
 
-| DAW | Create a linked copy | Make independent | Marker | Across tracks |
-| --- | --- | --- | --- | --- |
-| Cubase | Alt+Shift+drag (plain Alt+drag is a real copy) | Edit > Functions > Convert to Real Copy | "=" in the part's corner | yes |
-| Logic Pro | MIDI > Alias > Make, or key command | Functions > Region Alias > Convert to Region Copy; double-click offers "edit original" or "create real copy" | italic name | yes |
-| Reaper | Ctrl+Shift+Alt+drag, or the "pool when pasting or duplicating" preference | un-pool in the take's source properties, or the icon on the item | icon on the item | yes |
-| Bitwig 6 | Duplicate as Alias (Ctrl+Alt+D), Paste as Alias (Ctrl+Alt+V) | Make Unique | alias clip look | no, one track only |
+| DAW       | Create a linked copy                                                      | Make independent                                                                                             | Marker                   | Across tracks      |
+| --------- | ------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ | ------------------------ | ------------------ |
+| Cubase    | Alt+Shift+drag (plain Alt+drag is a real copy)                            | Edit > Functions > Convert to Real Copy                                                                      | "=" in the part's corner | yes                |
+| Logic Pro | MIDI > Alias > Make, or key command                                       | Functions > Region Alias > Convert to Region Copy; double-click offers "edit original" or "create real copy" | italic name              | yes                |
+| Reaper    | Ctrl+Shift+Alt+drag, or the "pool when pasting or duplicating" preference | un-pool in the take's source properties, or the icon on the item                                             | icon on the item         | yes                |
+| Bitwig 6  | Duplicate as Alias (Ctrl+Alt+D), Paste as Alias (Ctrl+Alt+V)              | Make Unique                                                                                                  | alias clip look          | no, one track only |
 
 Common ground: linking is always an explicit gesture or command, never the default
 of a plain copy; the way out is a named "make independent" command; linked clips

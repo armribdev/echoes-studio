@@ -32,8 +32,8 @@ ADR-033 step 10 moved the loading of each plugin file into a process of its own 
 1. **`PluginScanner` owns the scan** (`plugin_system/scan.rs`), held by `AppState` next to `audio_engine`, not
    by `PluginHost`. It holds the bridge path, the time limit, the blocklist and cache (`ScanStore`) and the
    files to announce. `PluginHost` keeps only the registry and gains `register_scanned`.
-2. **Two locks, none of them held while a scan process runs.** A *session* lock lets one scan (or one
-   re-enable) run at a time; the others wait. A *state* lock guards the blocklist, cache and announcements for
+2. **Two locks, none of them held while a scan process runs.** A _session_ lock lets one scan (or one
+   re-enable) run at a time; the others wait. A _state_ lock guards the blocklist, cache and announcements for
    the length of a lookup or a write.
 3. **Plugins are published file by file.** `scan(publish)` calls `publish(manifests)` as soon as a file is
    listed (or read from the cache); `AppState::scan_plugins` makes it take the engine mutex for one registry

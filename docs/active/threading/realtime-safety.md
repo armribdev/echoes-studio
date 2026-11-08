@@ -301,7 +301,7 @@ the message changes: same rings, wake-up, bounded wait, single `SetEvent`; no lo
 no allocation and no new system call on either audio thread.
 
 - Sizes are fixed before the first block. The shared region holds `PORT_CHANNELS ×
-  MAX_PORTS` (18) channels for a VST3 plugin (2 for CLAP); the engine's input and
+MAX_PORTS` (18) channels for a VST3 plugin (2 for CLAP); the engine's input and
   output vectors and the bridge's per-port buffers are made at `prepare` / at the
   activation. A block wider than the region is not sent (`Skipped`).
 - The bridge reads `BridgeProcessor::output_channels()` before each block (an atomic

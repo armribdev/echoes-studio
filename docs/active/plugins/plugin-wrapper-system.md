@@ -1167,7 +1167,7 @@ commands, the same last-listing whitelist, the same FFI gate and the same
 `PresetPicker.svelte` as CLAP (no new command, event, project field or UI element).
 
 - _Listing._ `PluginHost::preset_listing` gives `PresetListing::Vst3 { instance,
-  files }`; `list_plugin_presets` runs it on the blocking worker thread. The
+files }`; `list_plugin_presets` runs it on the blocking worker thread. The
   whitelist is kept under the plugin's `device_id`. Order: the plugin's programs
   (its own order), then factory files, then user files (files by name).
   `PluginPreset.active` (added during this step) is true for the program the
@@ -1217,7 +1217,7 @@ commands, the same last-listing whitelist, the same FFI gate and the same
   groups of the plugin's class bytes are swapped back before the comparison
   (`class_id_text`; the CID itself is not permuted anywhere else).
 - _Where the files are (`vst3/preset_locations.rs`)._ `<root>\VST3 Presets\<vendor>\<plugin
-  name>\…` under `Documents` (the shell's folder, so a moved one is found; user
+name>\…` under `Documents` (the shell's folder, so a moved one is found; user
   presets), `%APPDATA%` and `%PROGRAMDATA%` (factory). The scan does not know the
   vendor folder, so each vendor folder is searched for one named like the plugin
   (case-insensitive, characters Windows forbids replaced by `_`). The walk is
@@ -1583,10 +1583,10 @@ true while any list, scan or re-enable job runs, and from the mount of the page 
   from the command's answer, then the blocklist: the engine scans the file again at once, so a plugin that still
   crashes comes back as blocked (and is announced again). The buttons are disabled while `pluginsLoading` is true; the
   engine is not held meanwhile.
-Tests: `plugin_system/scan_sandbox_tests.rs` with `crates/test_crashing_plugin` (`crash_on_load`,
-`crash_in_factory`, `hang_in_factory`), among them the engine mutex being free and the blocklist readable while a
-plugin hangs, two scans in a row, a re-enable during a scan, and the job object ending a hung scan process. Tests that change the search-folder variables take
-`sandbox_tests::environment_lock`.
+  Tests: `plugin_system/scan_sandbox_tests.rs` with `crates/test_crashing_plugin` (`crash_on_load`,
+  `crash_in_factory`, `hang_in_factory`), among them the engine mutex being free and the blocklist readable while a
+  plugin hangs, two scans in a row, a re-enable during a scan, and the job object ending a hung scan process. Tests that change the search-folder variables take
+  `sandbox_tests::environment_lock`.
 
 ## Editor Windows — DPI (Windows)
 
