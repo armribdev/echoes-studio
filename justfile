@@ -5,6 +5,9 @@ check:
     pnpm check
     pnpm test
 
-# Rust side, run from src-tauri/.
+# Rust side, same gates as scripts/test-all.mjs.
+[working-directory('src-tauri')]
 rust:
-    cd src-tauri; cargo fmt --check; cargo clippy --all-targets; cargo test
+    cargo fmt -- --check
+    cargo clippy --workspace -- -D warnings
+    cargo test --workspace
