@@ -11,3 +11,7 @@ rust:
     cargo fmt -- --check
     cargo clippy --workspace -- -D warnings
     cargo test --workspace
+
+# Interactive dev: Tauri window with Vite HMR (scripts/check-env.mjs runs first).
+dev:
+    pnpm tauri:dev
