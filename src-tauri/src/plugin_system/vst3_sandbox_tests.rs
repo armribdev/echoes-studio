@@ -17,7 +17,7 @@ use crate::audio_graph::buffer::AudioBuffer;
 use crate::audio_graph::node::{AudioNode, PrepareContext, TransportInfo};
 use crate::audio_graph::plugin_params::PluginParamControl;
 use crate::plugin_formats::clap::ffi::{
-    take_plugin_params_rescan, take_plugin_state_edited, CLAP_PARAM_RESCAN_INFO,
+    take_plugin_params_rescan, take_plugin_state_edited, HostTrackInfo, CLAP_PARAM_RESCAN_INFO,
     CLAP_PARAM_RESCAN_TEXT,
 };
 use crate::plugin_formats::vst3::test_dll::{effect_id, test_vst3_dll};
@@ -579,7 +579,12 @@ const RENAME: u32 = 11;
 const PROCESSOR_SELF: u32 = 12;
 const VIEW_CRASH: u32 = 18;
 const VIEW_EDIT: u32 = 19;
-const PARAMETER_COUNT: usize = 24;
+const TRACK_CALLS: u32 = 24;
+const TRACK_NAME_UNITS: u32 = 25;
+const TRACK_COLOR: u32 = 26;
+const DIAGNOSTIC_RANGE: f64 = 1_000_000.0;
+const TRACK_COLOR_RANGE: f64 = 16_777_216.0;
+const PARAMETER_COUNT: usize = 27;
 const HELD_VALUE: f64 = 0.25;
 
 fn plugin_value(host: &PluginHost, native_id: u32) -> f64 {
@@ -665,6 +670,63 @@ fn a_value_pushed_to_an_in_process_vst3_plugin_is_delivered() {
 #[test]
 fn a_value_pushed_to_a_sandboxed_vst3_plugin_is_delivered() {
     a_pushed_value_reaches_the_plugin(true);
+}
+
+/// `[calls, name units, rgb]` the plugin's controller heard through `IInfoListener`.
+fn track_heard(host: &PluginHost) -> [u32; 3] {
+    let read = |id: u32, range: f64| (plugin_value(host, id) * range).round() as u32;
+    [
+        read(TRACK_CALLS, DIAGNOSTIC_RANGE),
+        read(TRACK_NAME_UNITS, DIAGNOSTIC_RANGE),
+        read(TRACK_COLOR, TRACK_COLOR_RANGE),
+    ]
+}
+
+fn track_of(info: HostTrackInfo) -> HashMap<String, HostTrackInfo> {
+    HashMap::from([(KEY.to_string(), info)])
+}
+
+fn the_controller_hears_the_track_of_its_placement(sandboxed: bool) {
+    let mut host = host();
+    host.apply_track_infos(track_of(HostTrackInfo::new(
+        "Lead",
+        Some([0x12, 0x34, 0x56]),
+    )));
+    let _node = prepared(&mut host, sandboxed, false);
+    assert_eq!(track_heard(&host), [1, 4, 0x12_34_56], "born knowing it");
+
+    host.apply_track_infos(track_of(HostTrackInfo::new("Pad", None)));
+    assert_eq!(track_heard(&host), [2, 3, 0], "renamed and uncolored");
+
+    host.apply_track_infos(track_of(HostTrackInfo::new("Pad", None)));
+    assert_eq!(track_heard(&host)[0], 2, "the same track is not told again");
+}
+
+#[test]
+fn the_controller_of_an_in_process_vst3_plugin_hears_its_track() {
+    the_controller_hears_the_track_of_its_placement(false);
+}
+
+#[test]
+fn the_controller_of_a_sandboxed_vst3_plugin_hears_its_track() {
+    the_controller_hears_the_track_of_its_placement(true);
+}
+
+fn a_plugin_without_a_track_hears_nothing(sandboxed: bool) {
+    let mut host = host();
+    let _node = prepared(&mut host, sandboxed, false);
+    host.apply_track_infos(track_of(HostTrackInfo::default()));
+    assert_eq!(track_heard(&host), [0, 0, 0]);
+}
+
+#[test]
+fn an_in_process_vst3_plugin_without_a_track_hears_nothing() {
+    a_plugin_without_a_track_hears_nothing(false);
+}
+
+#[test]
+fn a_sandboxed_vst3_plugin_without_a_track_hears_nothing() {
+    a_plugin_without_a_track_hears_nothing(true);
 }
 
 fn automation_and_modulation_move_the_plugin(sandboxed: bool) {

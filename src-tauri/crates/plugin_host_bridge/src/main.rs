@@ -214,7 +214,12 @@ fn load_plugin(options: &Options) -> Result<Loaded, String> {
         }
         PluginFormat::Vst3 => {
             initialise_com()?;
-            let plugin = Vst3Adapter::load(&options.plugin_dll, &options.plugin_id, options.role)?;
+            let plugin = Vst3Adapter::load(
+                &options.plugin_dll,
+                &options.plugin_id,
+                options.role,
+                options.track_info.as_ref(),
+            )?;
             let processor = Vst3BlockProcessor::new(Arc::clone(&plugin));
             Ok((plugin, Box::new(processor)))
         }

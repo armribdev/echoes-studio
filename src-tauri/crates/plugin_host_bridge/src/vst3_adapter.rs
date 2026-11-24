@@ -51,6 +51,7 @@ use std::sync::{Arc, Mutex, Weak};
 use std::time::{Duration, Instant};
 
 use audio_buffer::AudioBuffer;
+use clap_ffi::HostTrackInfo;
 use plugin_bridge::control::{Op, PayloadReader};
 use plugin_bridge::protocol::{
     WireParam, BLOCK_PARAMS_RESCAN_MASK, BLOCK_PARAMS_RESCAN_SHIFT, BLOCK_PASSED_THROUGH,
@@ -59,20 +60,21 @@ use plugin_bridge::protocol::{
 };
 use plugin_bridge::records::{
     AudioPortRecord, Handshake, NoteNameRecord, ParamRecord, ParamUnit, PortDirection, PortRole,
-    PresetRecord, PresetSource, PresetStateRecord, ProgramListRecord, SpeakerLayout, MAX_PORTS,
-    PARAM_AUTOMATABLE, PARAM_HIDDEN, PORT_CHANNELS,
+    PresetRecord, PresetSource, PresetStateRecord, ProgramListRecord, SpeakerLayout, TrackRecord,
+    MAX_PORTS, PARAM_AUTOMATABLE, PARAM_HIDDEN, PORT_CHANNELS,
 };
 use plugin_bridge::session::{BlockContext, BridgeProcessor, ReplyWriter};
 use vst3_ffi::{
     create_controller, instantiate_processor, read_component_state, release_controller,
     set_controller_component_state, set_controller_state, sync_controller_to_state,
-    write_component_state, HostParameterChanges, IAudioProcessor, IComponent, ProcessData,
-    ProcessSetup, Vst3Controller, Vst3Library, K_AUDIO, K_EVENT, K_INPUT, K_RESULT_OK,
+    write_component_state, FUnknown, HostParameterChanges, IAudioProcessor, IComponent,
+    ProcessData, ProcessSetup, Vst3Controller, Vst3Library, K_AUDIO, K_EVENT, K_INPUT, K_RESULT_OK,
 };
 use vst3_host::buses::{
     open_output_buses, propose_arrangements, read_aux_inputs, read_output_buses, Vst3InputBuses,
     Vst3OutputBuses,
 };
+use vst3_host::channel_context::notify_channel_context;
 use vst3_host::component_handler::{ComponentHandler, EditState, HostSignals, MAX_GESTURES};
 use vst3_host::editor_view::{EditorView, ResizeWindow};
 use vst3_host::event_list::HostEventList;
@@ -187,6 +189,9 @@ pub struct Vst3Adapter {
     /// Parameters the engine modulates by value, at the base the user set: put back
     /// in the plugin just before its state is read.  Main thread.
     bases: Mutex<Vec<(u32, f64)>>,
+    /// The track the controller was last told about; empty at the start, so a
+    /// plugin never hears of an empty track.  Main thread.
+    track_info: Mutex<HostTrackInfo>,
     /// The shared handle this adapter lives in, for the editor, which keeps it open.
     me: Weak<Vst3Adapter>,
     /// Must outlive the plugin objects: dropping it runs the module's `ExitDll`.
@@ -200,8 +205,14 @@ unsafe impl Sync for Vst3Adapter {}
 
 impl Vst3Adapter {
     /// Main thread.  Loads the module and creates the component, its processor and
-    /// its edit controller for class id `cid` (32 hexadecimal digits).
-    pub fn load(dll: &Path, cid: &str, role: PluginRole) -> Result<Arc<Self>, String> {
+    /// its edit controller for class id `cid` (32 hexadecimal digits).  The controller
+    /// already knows `track_info` when this returns.
+    pub fn load(
+        dll: &Path,
+        cid: &str,
+        role: PluginRole,
+        track_info: Option<&HostTrackInfo>,
+    ) -> Result<Arc<Self>, String> {
         let cid = decode_cid(cid).ok_or_else(|| format!("invalid VST3 class id '{cid}'"))?;
         let (library, factory) = Vst3Library::load(dll)?;
         // SAFETY: live factory, called off the audio thread.
@@ -229,7 +240,7 @@ impl Vst3Adapter {
         };
         // SAFETY: the component was initialised above; main thread.
         let declared_outputs = unsafe { read_output_buses(component) }.len();
-        Ok(Arc::new_cyclic(|me| Vst3Adapter {
+        let adapter = Arc::new_cyclic(|me| Vst3Adapter {
             component,
             processor,
             controller,
@@ -242,9 +253,40 @@ impl Vst3Adapter {
             activation: UnsafeCell::new(None),
             configuration: Mutex::new(None),
             bases: Mutex::new(Vec::new()),
+            track_info: Mutex::new(HostTrackInfo::default()),
             me: Weak::clone(me),
             _library: library,
-        }))
+        });
+        if let Some(info) = track_info {
+            if let Err(error) = adapter.set_track_info(info) {
+                eprintln!("[plugin_host_bridge] the plugin was not told its track: {error}");
+            }
+        }
+        Ok(adapter)
+    }
+
+    /// Main thread.  Tells the controller (`IInfoListener`) its track when it differs
+    /// from the last one it was told.  A plugin without a controller or without the
+    /// interface is left alone, as in the Echoes process.  A busy plugin is an error,
+    /// so the engine sends the track again.
+    pub fn set_track_info(&self, info: &HostTrackInfo) -> Result<(), String> {
+        let mut told = self.track_info.lock().unwrap_or_else(|e| e.into_inner());
+        if *told == *info {
+            return Ok(());
+        }
+        if let Ok(controller) = self.controller_ptr() {
+            let _gate = self.enter_main()?;
+            // SAFETY: live controller, main thread, gate held.
+            unsafe {
+                notify_channel_context(
+                    controller as *mut FUnknown,
+                    info.name.as_deref(),
+                    info.color,
+                )
+            };
+        }
+        told.clone_from(info);
+        Ok(())
     }
 
     fn enter_audio(&self) -> Option<GateGuard<'_>> {
@@ -832,7 +874,14 @@ impl HostedPlugin for Vst3Adapter {
                 self.flush_values(values).map(|()| Vec::new())
             }
             Op::NoteNames => Ok(NoteNameRecord::encode_list(&[])),
-            Op::TrackInfo => Ok(Vec::new()),
+            Op::TrackInfo => {
+                let track = TrackRecord::decode(payload).map_err(|_| "invalid track info")?;
+                self.set_track_info(&HostTrackInfo {
+                    name: track.name,
+                    color: track.color,
+                })
+                .map(|()| Vec::new())
+            }
             Op::PresetLoad => self.load_program(payload),
             Op::PresetList => self.preset_list(),
             Op::PresetLoadState => self.load_preset_state(payload),
@@ -1144,8 +1193,13 @@ mod tests {
     /// The effect loaded and activated in this process, with its audio processor.
     fn activated() -> (Arc<Vst3Adapter>, Vst3BlockProcessor) {
         initialise_com_for_the_test();
-        let adapter = Vst3Adapter::load(test_plugin_dll(), &effect_class_id(), PluginRole::Effect)
-            .expect("the effect loads");
+        let adapter = Vst3Adapter::load(
+            test_plugin_dll(),
+            &effect_class_id(),
+            PluginRole::Effect,
+            None,
+        )
+        .expect("the effect loads");
         adapter
             .activate(48_000.0, 64, 0)
             .expect("the effect activates");
@@ -1213,6 +1267,7 @@ mod tests {
             test_plugin_dll(),
             &instrument_class_id(),
             PluginRole::Instrument,
+            None,
         )
         .expect("the instrument loads");
         adapter

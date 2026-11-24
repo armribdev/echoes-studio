@@ -809,6 +809,11 @@ new ids (`IMessage`, `IAttributeList`, `IInfoListener`) are in
   host implements no `notify`. What these plugins lacked was `createInstance`
   answering for `IMessage`, which they now get. A relay would matter only for a
   sandboxed VST3, which does not exist.
+- _In the sandbox (2026-11-24, ADR-033 amendment)._ A sandboxed VST3 plugin hears its track the same way: the
+  bridge's `Vst3Adapter` tells the controller at load (launch argument `--track-info`) and on `Op::TrackInfo`,
+  with the same `notify_channel_context`, on the main thread under the ADR-010 gate; an empty track and a repeated
+  one are not announced, a busy plugin makes the request fail and the engine sends it again. The test plugin
+  reports what it heard in parameters 24-26; tests in `vst3_bridge.rs` and `vst3_sandbox_tests.rs`.
 - _Limits._ Tried with Surge XT on 2026-10-23: its controller implements
   `IInfoListener` and takes the host's messages. What a plugin does
   with the name is not observable from the tests. `vst3/` imports `HostTrackInfo`

@@ -61,6 +61,12 @@
 //!   to the processor hears nothing. The controller's `setState` (a `.vstpreset`'s `Cont`
 //!   chunk) is one `f64`: the controller's `Self value`.
 //!
+//! - 24..26 — the track the host announced through `IInfoListener` (on the controller,
+//!   both classes), read-only diagnostics: `Track calls` (how many times
+//!   `setChannelContextInfos` was called), `Track name units` (UTF-16 units of the
+//!   announced `channel name`, 0 without one) and `Track color` (the announced
+//!   `channel color` without its alpha byte, 0 without one).
+//!
 //! Not there yet, added by the step that needs it: `IUnitHandler`.
 
 use std::ffi::c_void;
@@ -70,14 +76,14 @@ use std::sync::atomic::{AtomicBool, AtomicI32, AtomicPtr, AtomicU32, AtomicU64, 
 use vst3_ffi::IID_IMIDI_MAPPING;
 use vst3_ffi::{
     AudioBusBuffers, Event, FUnknown, HostParamValueQueue, HostParameterChanges, HostStream,
-    IAudioProcessor, IAudioProcessorVtbl, IBStreamVtbl, IComponent, IComponentHandlerVtbl,
-    IComponentVtbl, IEditController, IEditControllerVtbl, IPlugFrameVtbl, IPlugView,
-    IPlugViewContentScaleSupport, IPlugViewContentScaleSupportVtbl, IPlugViewVtbl, IPluginFactory,
-    IPluginFactory2Vtbl, PClassInfo, PClassInfo2, ParameterInfo, ProcessData, ProcessSetup,
-    TResult, Tuid, ViewRect, IID_FUNKNOWN, IID_IAUDIO_PROCESSOR, IID_ICOMPONENT,
-    IID_IEDIT_CONTROLLER, IID_IPLUGIN_FACTORY, IID_IPLUGIN_FACTORY2,
-    IID_IPLUG_VIEW_CONTENT_SCALE_SUPPORT, IID_IUNIT_INFO, K_AUDIO, K_EVENT, K_INPUT,
-    K_INVALID_ARGUMENT, K_NOTE_OFF_EVENT, K_NOTE_ON_EVENT, K_NO_INTERFACE, K_OUTPUT,
+    IAttributeListVtbl, IAudioProcessor, IAudioProcessorVtbl, IBStreamVtbl, IComponent,
+    IComponentHandlerVtbl, IComponentVtbl, IEditController, IEditControllerVtbl, IInfoListenerVtbl,
+    IPlugFrameVtbl, IPlugView, IPlugViewContentScaleSupport, IPlugViewContentScaleSupportVtbl,
+    IPlugViewVtbl, IPluginFactory, IPluginFactory2Vtbl, PClassInfo, PClassInfo2, ParameterInfo,
+    ProcessData, ProcessSetup, TResult, Tuid, ViewRect, IID_FUNKNOWN, IID_IAUDIO_PROCESSOR,
+    IID_ICOMPONENT, IID_IEDIT_CONTROLLER, IID_IINFO_LISTENER, IID_IPLUGIN_FACTORY,
+    IID_IPLUGIN_FACTORY2, IID_IPLUG_VIEW_CONTENT_SCALE_SUPPORT, IID_IUNIT_INFO, K_AUDIO, K_EVENT,
+    K_INPUT, K_INVALID_ARGUMENT, K_NOTE_OFF_EVENT, K_NOTE_ON_EVENT, K_NO_INTERFACE, K_OUTPUT,
     K_RESULT_FALSE, K_RESULT_OK, PARAM_CAN_AUTOMATE, PARAM_IS_PROGRAM_CHANGE, PARAM_IS_READ_ONLY,
     SPEAKER_STEREO,
 };
@@ -111,6 +117,11 @@ pub const MOD_WHEEL: u32 = 20;
 pub const BEND: u32 = 21;
 pub const LAST_PITCH: u32 = 22;
 pub const PROGRAM: u32 = 23;
+pub const TRACK_CALLS: u32 = 24;
+pub const TRACK_NAME_UNITS: u32 = 25;
+pub const TRACK_COLOR: u32 = 26;
+/// The RGB of `Track color` fits in 24 bits.
+pub const TRACK_COLOR_RANGE: f64 = 16_777_216.0;
 /// The program list of `IUnitInfo`: its names, and the gain each one sets.
 pub const PROGRAM_NAMES: [&str; 3] = ["Quiet", "Unity", "Loud"];
 pub const PROGRAM_GAINS: [f64; 3] = [0.25, 1.0, 1.75];
@@ -185,7 +196,7 @@ struct ParamSpec {
     flags: i32,
 }
 
-const PARAMS: [ParamSpec; 24] = [
+const PARAMS: [ParamSpec; 27] = [
     ParamSpec {
         id: GAIN,
         title: "Gain",
@@ -354,6 +365,27 @@ const PARAMS: [ParamSpec; 24] = [
         default_plain: 1.0,
         flags: PARAM_IS_PROGRAM_CHANGE,
     },
+    ParamSpec {
+        id: TRACK_CALLS,
+        title: "Track calls",
+        range: DIAGNOSTIC_RANGE,
+        default_plain: 0.0,
+        flags: PARAM_IS_READ_ONLY,
+    },
+    ParamSpec {
+        id: TRACK_NAME_UNITS,
+        title: "Track name units",
+        range: DIAGNOSTIC_RANGE,
+        default_plain: 0.0,
+        flags: PARAM_IS_READ_ONLY,
+    },
+    ParamSpec {
+        id: TRACK_COLOR,
+        title: "Track color",
+        range: TRACK_COLOR_RANGE,
+        default_plain: 0.0,
+        flags: PARAM_IS_READ_ONLY,
+    },
 ];
 
 fn spec(id: u32) -> Option<&'static ParamSpec> {
@@ -397,8 +429,14 @@ struct Plugin {
     controller: *const IEditControllerVtbl,
     midi_mapping: *const IMidiMappingVtbl,
     unit_info: *const IUnitInfoVtbl,
+    info_listener: *const IInfoListenerVtbl,
     references: AtomicU32,
     kind: Kind,
+    /// What `setChannelContextInfos` was last given: the calls, the name's UTF-16
+    /// units and the RGB color (0 for none).
+    track_calls: AtomicU32,
+    track_name_units: AtomicU32,
+    track_color: AtomicU32,
     gain: AtomicU64,
     /// The selected program as an `f64` index.
     program: AtomicU64,
@@ -495,6 +533,9 @@ impl Plugin {
             BEND => f64::from_bits(self.bend.load(Ordering::Relaxed)),
             LAST_PITCH => f64::from(self.last_pitch.load(Ordering::Relaxed)),
             PROGRAM => f64::from_bits(self.program.load(Ordering::Relaxed)),
+            TRACK_CALLS => f64::from(self.track_calls.load(Ordering::Relaxed)),
+            TRACK_NAME_UNITS => f64::from(self.track_name_units.load(Ordering::Relaxed)),
+            TRACK_COLOR => f64::from(self.track_color.load(Ordering::Relaxed)),
             _ => 0.0,
         }
     }
@@ -661,6 +702,8 @@ unsafe fn query(plugin: *mut Plugin, iid: *const Tuid, object: *mut *mut c_void)
         &raw mut (*plugin).midi_mapping as *mut c_void
     } else if iid == IID_IUNIT_INFO {
         &raw mut (*plugin).unit_info as *mut c_void
+    } else if iid == IID_IINFO_LISTENER {
+        &raw mut (*plugin).info_listener as *mut c_void
     } else {
         *object = std::ptr::null_mut();
         return K_NO_INTERFACE;
@@ -1426,6 +1469,75 @@ static MIDI_MAPPING_VTBL: IMidiMappingVtbl = IMidiMappingVtbl {
     get_midi_controller_assignment: midi_mapping_assignment,
 };
 
+// ---- IInfoListener ---------------------------------------------------------
+
+unsafe fn from_info_listener(this: *mut FUnknown) -> *mut Plugin {
+    base_of(this, offset_of!(Plugin, info_listener))
+}
+
+unsafe extern "C" fn info_listener_query(
+    this: *mut FUnknown,
+    iid: *const Tuid,
+    object: *mut *mut c_void,
+) -> TResult {
+    query(from_info_listener(this), iid, object)
+}
+
+unsafe extern "C" fn info_listener_add_ref(this: *mut FUnknown) -> u32 {
+    add_reference(from_info_listener(this))
+}
+
+unsafe extern "C" fn info_listener_release(this: *mut FUnknown) -> u32 {
+    release_reference(from_info_listener(this))
+}
+
+/// Keeps what the host announced: the name's length in UTF-16 units and the color's
+/// RGB, each 0 when the list does not carry it.
+unsafe extern "C" fn info_listener_set_channel_context_infos(
+    this: *mut FUnknown,
+    list: *mut FUnknown,
+) -> TResult {
+    if list.is_null() {
+        return K_INVALID_ARGUMENT;
+    }
+    let plugin = &*from_info_listener(this);
+    let list_vtbl = (*list).vtbl as *const IAttributeListVtbl;
+
+    let mut name = [0u16; 128];
+    let name_bytes = std::mem::size_of_val(&name) as u32;
+    let name_units = if ((*list_vtbl).get_string)(
+        list,
+        c"channel name".as_ptr(),
+        name.as_mut_ptr(),
+        name_bytes,
+    ) == K_RESULT_OK
+    {
+        name.iter().take_while(|&&unit| unit != 0).count() as u32
+    } else {
+        0
+    };
+
+    let mut color = 0i64;
+    let rgb = if ((*list_vtbl).get_int)(list, c"channel color".as_ptr(), &mut color) == K_RESULT_OK
+    {
+        (color as u32) & 0x00FF_FFFF
+    } else {
+        0
+    };
+
+    plugin.track_name_units.store(name_units, Ordering::Relaxed);
+    plugin.track_color.store(rgb, Ordering::Relaxed);
+    plugin.track_calls.fetch_add(1, Ordering::Relaxed);
+    K_RESULT_OK
+}
+
+static INFO_LISTENER_VTBL: IInfoListenerVtbl = IInfoListenerVtbl {
+    query_interface: info_listener_query,
+    add_ref: info_listener_add_ref,
+    release: info_listener_release,
+    set_channel_context_infos: info_listener_set_channel_context_infos,
+};
+
 // ---- IUnitInfo -------------------------------------------------------------
 
 #[repr(C)]
@@ -2044,8 +2156,12 @@ unsafe extern "C" fn factory_create_instance(
         controller: &CONTROLLER_VTBL.0,
         midi_mapping: &MIDI_MAPPING_VTBL,
         unit_info: &UNIT_INFO_VTBL,
+        info_listener: &INFO_LISTENER_VTBL,
         references: AtomicU32::new(0),
         kind: class.kind,
+        track_calls: AtomicU32::new(0),
+        track_name_units: AtomicU32::new(0),
+        track_color: AtomicU32::new(0),
         gain: AtomicU64::new(1.0_f64.to_bits()),
         program: AtomicU64::new(1.0_f64.to_bits()),
         held_velocity: AtomicU32::new(0),

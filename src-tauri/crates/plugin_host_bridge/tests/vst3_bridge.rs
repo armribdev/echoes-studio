@@ -8,6 +8,7 @@ use std::process::Command;
 use std::sync::OnceLock;
 use std::time::Duration;
 
+use clap_ffi::HostTrackInfo;
 use plugin_bridge::control::Op;
 use plugin_bridge::protocol::{
     WireParam, BLOCK_PARAMS_RESCAN_MASK, BLOCK_PARAMS_RESCAN_SHIFT, BLOCK_PLUGIN_EDITED,
@@ -16,7 +17,7 @@ use plugin_bridge::protocol::{
 };
 use plugin_bridge::records::{
     Handshake, ParamRecord, ParamUnit, PortDirection, PortRole, PresetRecord, PresetSource,
-    PresetStateRecord, ProgramListRecord, SpeakerLayout, MAX_PORTS, PARAM_AUTOMATABLE,
+    PresetStateRecord, ProgramListRecord, SpeakerLayout, TrackRecord, MAX_PORTS, PARAM_AUTOMATABLE,
     PARAM_HIDDEN,
 };
 use plugin_bridge::session::{
@@ -33,7 +34,11 @@ const HOLD_EDIT: u32 = 9;
 const LOOKAHEAD: u32 = 10;
 const RENAME: u32 = 11;
 const PROCESSOR_SELF: u32 = 12;
-const PARAMETER_COUNT: usize = 24;
+const TRACK_CALLS: u32 = 24;
+const TRACK_NAME_UNITS: u32 = 25;
+const TRACK_COLOR: u32 = 26;
+const TRACK_COLOR_RANGE: f64 = 16_777_216.0;
+const PARAMETER_COUNT: usize = 27;
 const LOOKAHEAD_LATENCY: u32 = 128;
 const WRITTEN_VALUE: f64 = 0.9;
 const HELD_VALUE: f64 = 0.25;
@@ -71,7 +76,14 @@ fn effect_class_id() -> String {
 }
 
 fn spawn(class_id: &str) -> std::io::Result<BridgeProcess> {
-    let args: Vec<OsString> = vec![
+    spawn_with_track(class_id, None)
+}
+
+fn spawn_with_track(
+    class_id: &str,
+    track_info: Option<&HostTrackInfo>,
+) -> std::io::Result<BridgeProcess> {
+    let mut args: Vec<OsString> = vec![
         "--plugin-dll".into(),
         test_plugin_dll().into(),
         "--plugin-format".into(),
@@ -79,6 +91,9 @@ fn spawn(class_id: &str) -> std::io::Result<BridgeProcess> {
         "--plugin-id".into(),
         class_id.into(),
     ];
+    if let Some(info) = track_info {
+        args.extend(["--track-info".into(), info.to_hex().into()]);
+    }
     BridgeProcess::spawn(
         Path::new(env!("CARGO_BIN_EXE_plugin_host_bridge")),
         BridgeLayout::new(4096, (CHANNELS * MAX_PORTS) as u32, 64 * 1024),
@@ -380,6 +395,77 @@ fn choose_program(bridge: &BridgeProcess, key: &str) -> Result<Vec<u8>, std::io:
         load_key: Some(key.into()),
     };
     bridge.request(Op::PresetLoad, &record.encode().unwrap(), TIMEOUT)
+}
+
+/// `[calls, name units, rgb]` the plugin's controller heard through `IInfoListener`.
+fn track_heard(bridge: &BridgeProcess) -> [u32; 3] {
+    let read = |id: u32, range: f64| (param_value(bridge, id) * range).round() as u32;
+    [
+        read(TRACK_CALLS, DIAGNOSTIC_RANGE),
+        read(TRACK_NAME_UNITS, DIAGNOSTIC_RANGE),
+        read(TRACK_COLOR, TRACK_COLOR_RANGE),
+    ]
+}
+
+fn send_track(bridge: &BridgeProcess, info: &HostTrackInfo) -> Result<Vec<u8>, std::io::Error> {
+    let record = TrackRecord {
+        name: info.name.clone(),
+        color: info.color,
+    };
+    bridge.request(Op::TrackInfo, &record.encode(), TIMEOUT)
+}
+
+#[test]
+fn a_bridge_started_with_a_track_tells_the_controller_before_anything_else() {
+    let info = HostTrackInfo::new("Lead", Some([0x12, 0x34, 0x56]));
+    let bridge = spawn_with_track(&effect_class_id(), Some(&info)).expect("bridge starts");
+    activate(&bridge);
+    assert_eq!(track_heard(&bridge), [1, 4, 0x12_34_56]);
+}
+
+#[test]
+fn a_plugin_never_hears_of_an_empty_track() {
+    let bridge = activated();
+    assert_eq!(track_heard(&bridge), [0, 0, 0], "no track at launch");
+    send_track(&bridge, &HostTrackInfo::default()).expect("an empty track is accepted");
+    assert_eq!(
+        track_heard(&bridge),
+        [0, 0, 0],
+        "the empty track is not announced"
+    );
+}
+
+#[test]
+fn a_new_track_reaches_the_controller_once() {
+    let first = HostTrackInfo::new("Lead", Some([0x12, 0x34, 0x56]));
+    let bridge = spawn_with_track(&effect_class_id(), Some(&first)).expect("bridge starts");
+    activate(&bridge);
+
+    let renamed = HostTrackInfo::new("Pad", None);
+    send_track(&bridge, &renamed).expect("the track is accepted");
+    assert_eq!(track_heard(&bridge), [2, 3, 0], "name changed, color gone");
+
+    send_track(&bridge, &renamed).expect("the same track is accepted");
+    assert_eq!(
+        track_heard(&bridge)[0],
+        2,
+        "the same track is not announced again"
+    );
+
+    send_track(&bridge, &HostTrackInfo::default()).expect("an emptied track is accepted");
+    assert_eq!(
+        track_heard(&bridge),
+        [3, 0, 0],
+        "a track that lost both is announced empty"
+    );
+}
+
+#[test]
+fn a_garbled_track_is_refused_and_the_channel_stays_open() {
+    let bridge = activated();
+    let error = bridge.request(Op::TrackInfo, &[1, 2], TIMEOUT).unwrap_err();
+    assert!(error.to_string().contains("invalid track info"), "{error}");
+    assert_eq!(track_heard(&bridge), [0, 0, 0]);
 }
 
 #[test]

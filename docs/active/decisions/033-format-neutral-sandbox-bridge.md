@@ -714,7 +714,8 @@ skipped when no VST3 is installed; `ECHOES_TEST_VST3` selects one).
   curve and an LFO on a parameter, save and reopen (the base is the user's, not a point of the modulation), and the
   step-5 list (kill the bridge during playback, the "Isoler" button, mode _Tous_ with several instances).
 - `Op::TrackInfo` still answers empty for a sandboxed VST3 (the controller's `IInfoListener` is not wired in the
-  bridge); `Op::NoteNames`, `PresetLoad` and `OpenEditor` are as in step 5.
+  bridge; wired 2026-11-24, see "Amendment 2026-11-24"); `Op::NoteNames`, `PresetLoad` and `OpenEditor` are as in
+  step 5.
 - `outputParameterChanges` are not edits (see above); no real plugin is known to write any, so this is tested with the
   test plugin only.
 - The call that hands a loaded state to a **separate** controller is the in-process helper; the test DLL cannot
@@ -831,7 +832,8 @@ the two frame tests; in the test plugin four view tests.
 - `canResize` / `checkSizeConstraint` are still not used (the windows are borderless, as in process).
 - The `WM_DPICHANGED` path in the bridge has no automated test (it needs a second monitor); the scale at open does.
 - A hang inside `attached` is covered by reasoning and by the step 5 frozen-bridge test, not by a test of its own.
-- `Op::TrackInfo` still answers empty for a sandboxed VST3, `Op::NoteNames` and `PresetLoad` are as in step 6.
+- `Op::TrackInfo` still answers empty for a sandboxed VST3 (wired 2026-11-24, see "Amendment 2026-11-24"),
+  `Op::NoteNames` and `PresetLoad` are as in step 6.
 - Gestures from the engine stay ignored (decision 9): the editor did not need them.
 - The "Editor Windows — layout" section of the wrapper doc said 8 px and "no native close button"; the code has an
   18 px strip and a × button. Corrected in this change.
@@ -930,7 +932,8 @@ recovered, no in-process fallback, a reset in both places, Surge XT); the two ha
   pitch bend from a keyboard, kill the bridge during playback, mode _Tous_ with several instruments.
 - A block the **engine** cannot send (`Skipped`: too many events, port busy) still drops its notes, a NoteOff
   included, as the CLAP bridge always did; only the block the bridge skips keeps its NoteOffs.
-- `Op::TrackInfo` still answers empty for a sandboxed VST3 plugin, `Op::NoteNames` too; presets are step 9; the
+- `Op::TrackInfo` still answers empty for a sandboxed VST3 plugin (wired 2026-11-24, see "Amendment 2026-11-24"),
+  `Op::NoteNames` too; presets are step 9; the
   plugin's own MIDI output (`outputEvents`) is not read, in process or in the bridge.
 - An instrument with audio inputs (Surge XT) is given none, in process and in the bridge alike.
 
@@ -1182,6 +1185,35 @@ read them (installed-plugin discovery, VST3 presets); without it they failed whe
 **Not done.** Not hand-tested with the installed plugin set (TDR Nova, Surge XT, Vital): the first start scans
 every file in a process each, which is expected to be slower than before (not measured); the next starts use the cache. No interface to show or
 lift a block. Whether the user-facing re-enable belongs in the plugin browser is left for a UX decision.
+
+## Amendment 2026-11-24 — the track of a sandboxed VST3 plugin
+
+A VST3 plugin in the Echoes process hears the name and color of its track through the `IInfoListener` of its
+controller (ADR-013 amendment 2026-10-21). In the bridge it did not: `Op::TrackInfo` answered an empty reply for
+VST3 and `--track-info` was read for CLAP only. The sandbox was therefore not equivalent for a plugin that shows the
+track name.
+
+- **Same delivery as in the process.** `Vst3Adapter::load` takes the launch track (`--track-info`, already sent by
+  `BridgedPlugin::spawn` for both formats) and tells the controller right after creating it. `Op::TrackInfo` decodes
+  the `TrackRecord` and calls `Vst3Adapter::set_track_info`: the same `vst3_host::channel_context::notify_channel_context`
+  as the engine, from the bridge's main thread, under the ADR-010 gate (`enter_main`).
+- **An empty track is never announced** and the same track is not told twice (the adapter keeps the last track told,
+  empty at the start), as `PluginInstance::set_vst3_track_info`. A controller without `IInfoListener`, or no
+  controller, is left alone.
+- **A busy plugin is an error, not a loss.** If the gate is not free within its budget the request fails, the adapter
+  keeps the previous track and `BridgedPlugin::set_track_info` (which records a track only after a successful
+  request) sends it again at the next sync.
+- **Nothing else moves.** No new `Op`, no new field, protocol still v4; no audio-thread work (the call is a main-thread
+  control request). The golden hashes of the render harness do not move: the test DLL only gained parameters.
+- **Test plugin.** `test_vst3_plugin` implements `IInfoListener` on both classes and shows what it heard in three
+  read-only parameters (24 `Track calls`, 25 `Track name units`, 26 `Track color`, RGB without alpha, 0 for none);
+  27 parameters now.
+- **Tests.** `plugin_host_bridge/tests/vst3_bridge.rs`: told at launch, never told an empty track, a new track once, a
+  garbled record refused with the channel still open. `plugin_system/vst3_sandbox_tests.rs`: the same scenario in
+  process and sandboxed, born knowing the track then renamed then repeated, and the no-track case, each answering
+  the same.
+- **Still open.** `Op::NoteNames` is still empty for a sandboxed VST3 (VST3 has no host-facing equivalent worked out
+  yet); not hand-tested in the app (a plugin that displays its track name, rename and recolor a track, mode _Tous_).
 
 ## Consequences
 
