@@ -12,6 +12,10 @@ rust:
     cargo clippy --workspace -- -D warnings
     cargo test --workspace
 
-# Interactive dev: Tauri window with Vite HMR (scripts/check-env.mjs runs first).
+# Interactive dev: Tauri window with Vite HMR. Rust is not rebuilt on save: restart to pick up Rust changes.
 dev:
     pnpm tauri:dev
+
+# Same, but cargo rebuilds and relaunches the app on every Rust save.
+dev-watch:
+    pnpm tauri:dev:watch

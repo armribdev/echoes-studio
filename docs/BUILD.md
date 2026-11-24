@@ -147,22 +147,23 @@ sudo dnf install -y \
 
 Every command below is identical on Windows, macOS and Linux.
 
-| Command              | What it does                                                                                                                           |
-| -------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
-| `pnpm install`       | Install all JS dependencies from `pnpm-lock.yaml`                                                                                      |
-| `pnpm check-env`     | Verify every required tool is present and at the right version                                                                         |
-| `pnpm tauri:dev`     | **Start the dev build** — Vite hot-reload for the UI, incremental cargo rebuild for Rust. Runs `check-env` automatically first.        |
-| `pnpm tauri:build`   | Compile a release build and create platform installers. Runs `check-env` first.                                                        |
-| `pnpm dev`           | Vite dev server only (frontend, no Tauri window)                                                                                       |
-| `pnpm build`         | SvelteKit build only (`build/`)                                                                                                        |
-| `pnpm test`          | Run the full validation suite: `pnpm check` + `pnpm lint` + `pnpm test:frontend` + `cargo fmt --check` + `cargo clippy` + `cargo test` |
-| `pnpm test:frontend` | Vitest — frontend unit/integration tests (pure TS modules + project event reducer)                                                     |
-| `pnpm check`         | TypeScript + Svelte validation                                                                                                         |
-| `pnpm check:watch`   | Same, in watch mode                                                                                                                    |
-| `pnpm lint`          | Prettier + ESLint check                                                                                                                |
-| `pnpm format`        | Prettier auto-format                                                                                                                   |
-| `pnpm clean`         | Remove `build/`, `.svelte-kit/`, `src-tauri/target/`                                                                                   |
-| `pnpm clean:deep`    | Same as above + `node_modules/` (re-run `pnpm install` afterwards)                                                                     |
+| Command                | What it does                                                                                                                                                             |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `pnpm install`         | Install all JS dependencies from `pnpm-lock.yaml`                                                                                                                        |
+| `pnpm check-env`       | Verify every required tool is present and at the right version                                                                                                           |
+| `pnpm tauri:dev`       | **Start the dev build** — Vite hot-reload for the UI; Rust is not rebuilt on save (`--no-watch`), restart to pick up Rust changes. Runs `check-env` automatically first. |
+| `pnpm tauri:dev:watch` | Same, but cargo rebuilds and relaunches the app on every Rust save.                                                                                                      |
+| `pnpm tauri:build`     | Compile a release build and create platform installers. Runs `check-env` first.                                                                                          |
+| `pnpm dev`             | Vite dev server only (frontend, no Tauri window)                                                                                                                         |
+| `pnpm build`           | SvelteKit build only (`build/`)                                                                                                                                          |
+| `pnpm test`            | Run the full validation suite: `pnpm check` + `pnpm lint` + `pnpm test:frontend` + `cargo fmt --check` + `cargo clippy` + `cargo test`                                   |
+| `pnpm test:frontend`   | Vitest — frontend unit/integration tests (pure TS modules + project event reducer)                                                                                       |
+| `pnpm check`           | TypeScript + Svelte validation                                                                                                                                           |
+| `pnpm check:watch`     | Same, in watch mode                                                                                                                                                      |
+| `pnpm lint`            | Prettier + ESLint check                                                                                                                                                  |
+| `pnpm format`          | Prettier auto-format                                                                                                                                                     |
+| `pnpm clean`           | Remove `build/`, `.svelte-kit/`, `src-tauri/target/`                                                                                                                     |
+| `pnpm clean:deep`      | Same as above + `node_modules/` (re-run `pnpm install` afterwards)                                                                                                       |
 
 ### Rust-only commands
 
