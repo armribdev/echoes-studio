@@ -44,41 +44,10 @@
 
 <style lang="scss">
 	@use '../variables.scss' as *;
+	@use '../controls.scss' as *;
 
 	.item {
-		width: 100%;
-		min-height: $ctrl-height;
-		display: flex;
-		align-items: center;
-		gap: 8px;
-		padding: 0 8px;
-		border: none;
-		border-radius: $radius-sm;
-		background: none;
-		color: $text-strong;
-		font-size: 12px;
-		font-family: inherit;
-		text-align: left;
-		cursor: pointer;
-		transition:
-			background $duration-fast,
-			color $duration-fast;
-
-		&:hover:not(:disabled),
-		&:focus-visible {
-			background: $accent-soft;
-			color: $text-color;
-			outline: none;
-
-			.item-icon {
-				color: $text-color;
-			}
-		}
-
-		&:disabled {
-			opacity: 0.4;
-			cursor: default;
-		}
+		@include list-item;
 
 		&--danger {
 			color: $color-error;
@@ -97,6 +66,14 @@
 				}
 			}
 		}
+
+		&:hover:not(:disabled) .item-icon {
+			color: $text-color;
+		}
+
+		&:focus-visible .item-icon {
+			color: $accent-text;
+		}
 	}
 
 	.item-icon {
@@ -111,7 +88,7 @@
 		justify-content: center;
 		width: 12px;
 		flex-shrink: 0;
-		color: $accent-color;
+		color: $accent-text;
 	}
 
 	.item-label {

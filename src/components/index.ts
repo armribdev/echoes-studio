@@ -9,7 +9,7 @@ export { default as Knob } from './Knob.svelte';
 export { default as MainPanel } from './MainPanel.svelte';
 export { default as MenuBar } from './MenuBar.svelte';
 export { default as NumberInput } from './NumberInput.svelte';
-export { default as PillGroup } from './PillGroup.svelte';
+export { default as SegmentedControl } from './SegmentedControl.svelte';
 export { default as RangeSlider } from './RangeSlider.svelte';
 export { default as SettingsPanel } from './SettingsPanel.svelte';
 export { default as StatusBar } from './StatusBar.svelte';

@@ -148,6 +148,7 @@
 
 <style lang="scss">
 	@use '../../variables.scss' as *;
+	@use '../../controls.scss' as *;
 
 	.field-hint {
 		line-height: 1.2;
@@ -243,30 +244,8 @@
 	}
 
 	.count-btn {
-		width: 20px;
-		height: 20px;
-		border: 1px solid $border-subtle;
-		background: $surface-2;
-		border-radius: $radius-md;
+		@include button-square($ctrl-height-sm);
 		color: $text-color;
-		font-size: 12px;
-		cursor: pointer;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		transition:
-			background $duration-base,
-			border-color $duration-base;
-
-		&:hover:not(:disabled) {
-			background: $surface-hover;
-			border-color: $border-strong;
-		}
-
-		&:disabled {
-			opacity: 0.3;
-			cursor: default;
-		}
 	}
 
 	.count-value {
@@ -361,7 +340,7 @@
 		padding: 8px 10px;
 		background: $error-soft;
 		border: 1px solid $error-border;
-		border-radius: 6px;
+		border-radius: $radius-control;
 		color: $color-error-text;
 		font-size: 11px;
 	}

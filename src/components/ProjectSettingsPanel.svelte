@@ -25,7 +25,7 @@
 	} from '../lib/projectMusical';
 	import CustomSelect from './CustomSelect.svelte';
 	import NumberInput from './NumberInput.svelte';
-	import PillGroup from './PillGroup.svelte';
+	import SegmentedControl from './SegmentedControl.svelte';
 	import Button from './Button.svelte';
 	import Icon from './Icon.svelte';
 	import Dialog from './Dialog.svelte';
@@ -166,7 +166,7 @@
 					</Field>
 				</FieldGrid>
 				<Field label={$t('projectSettings.midiPpq')} hint={$t('projectSettings.midiPpqHint')}>
-					<PillGroup
+					<SegmentedControl
 						bind:value={draftMusical.midi_ppq}
 						options={MIDI_PPQ_OPTIONS.map((o) => ({ value: o.value, label: o.label }))}
 					/>

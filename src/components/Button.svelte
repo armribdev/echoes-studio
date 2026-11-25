@@ -12,72 +12,32 @@
 
 <style lang="scss">
 	@use '../variables.scss' as *;
+	@use '../controls.scss' as *;
 
 	.btn {
-		display: inline-flex;
-		align-items: center;
-		justify-content: center;
-		gap: 6px;
-		height: $ctrl-height;
-		border-radius: $radius-md;
-		font-size: 12px;
-		font-family: inherit;
-		cursor: pointer;
-		transition:
-			background $duration-base,
-			color $duration-base,
-			opacity $duration-base;
-		white-space: nowrap;
+		@include button;
+		padding: 0 14px;
 
-		&:disabled {
-			opacity: 0.4;
-			cursor: default;
-		}
-
-		// ── Primary ─────────────────────────────────────────────────────────────
 		&--primary {
-			background: $accent-color;
-			border: none;
-			color: $on-solid;
-			font-weight: 600;
+			@include button-primary;
 			padding: 0 16px;
-
-			&:not(:disabled):hover {
-				background: $accent-hover;
-			}
-			&:not(:disabled):active {
-				opacity: 0.85;
-			}
 		}
 
-		// ── Secondary ───────────────────────────────────────────────────────────
-		&--secondary {
-			background: $surface-2;
-			border: 1px solid $border-subtle;
-			color: $text-secondary;
-			padding: 0 14px;
-
-			&:not(:disabled):hover {
-				background: $surface-hover;
-				color: $text-color;
-			}
-		}
-
-		// ── Ghost ───────────────────────────────────────────────────────────────
 		&--ghost {
+			height: auto;
+			padding: 0;
+			border-color: transparent;
 			background: none;
-			border: none;
 			color: $text-subtle;
 			font-size: 11px;
-			padding: 0;
-			height: auto;
 
 			&:not(:disabled):hover {
+				background: none;
+				border-color: transparent;
 				color: $text-secondary;
 			}
 		}
 
-		// ── Compact modifier ────────────────────────────────────────────────────
 		&--compact {
 			padding: 0 10px;
 		}

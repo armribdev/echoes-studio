@@ -74,6 +74,7 @@
 
 <style lang="scss">
 	@use '../variables.scss' as *;
+	@use '../controls.scss' as *;
 
 	.step-slider {
 		display: flex;
@@ -92,72 +93,10 @@
 
 	// ── Range input ───────────────────────────────────────────────────────────
 	.range {
+		@include range-slider;
 		position: absolute;
 		inset: 0;
-		width: 100%;
-		margin: 0;
-		-webkit-appearance: none;
-		appearance: none;
-		background: transparent;
-		outline: none;
-		cursor: pointer;
 		z-index: 2;
-
-		// ── Track ──────────────────────────────────────────────────────────────
-		&::-webkit-slider-runnable-track {
-			height: 3px;
-			border-radius: 2px;
-			// Fill up to thumb in accent, rest in dim white
-			background: linear-gradient(to right, $accent-color var(--fill), $surface-hover var(--fill));
-		}
-
-		&::-moz-range-track {
-			height: 3px;
-			border-radius: 2px;
-			background: $surface-hover;
-		}
-
-		&::-moz-range-progress {
-			height: 3px;
-			border-radius: 2px;
-			background: $accent-color;
-		}
-
-		// ── Thumb ──────────────────────────────────────────────────────────────
-		&::-webkit-slider-thumb {
-			-webkit-appearance: none;
-			width: 14px;
-			height: 14px;
-			margin-top: -5.5px; // center on 3px track
-			border-radius: 50%;
-			background: $accent-color;
-			border: 2px solid $background-color;
-			box-shadow: 0 0 0 0 rgba($accent-color, 0);
-			transition:
-				box-shadow 0.15s,
-				transform $duration-base;
-			position: relative;
-			z-index: 3;
-		}
-
-		&::-moz-range-thumb {
-			width: 14px;
-			height: 14px;
-			border-radius: 50%;
-			background: $accent-color;
-			border: 2px solid $background-color;
-			cursor: pointer;
-		}
-
-		&:hover::-webkit-slider-thumb,
-		&:focus-visible::-webkit-slider-thumb {
-			box-shadow: 0 0 0 5px $accent-strong;
-			transform: scale(1.1);
-		}
-
-		&:active::-webkit-slider-thumb {
-			transform: scale(0.95);
-		}
 	}
 
 	// ── Tick marks ────────────────────────────────────────────────────────────

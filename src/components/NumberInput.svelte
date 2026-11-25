@@ -10,7 +10,7 @@
 	export let width: string = '60px';
 	/** Unité affichée à droite (ex. "BPM", "sec"). */
 	export let unit: string = '';
-	/** Taille visuelle : "sm" = MenuBar (h 26px), "md" = panneau (h 28px). */
+	/** Taille visuelle : "sm" = barre d'outils, "md" = formulaire. */
 	export let size: 'sm' | 'md' = 'md';
 	export let disabled: boolean = false;
 
@@ -53,57 +53,36 @@
 
 <style lang="scss">
 	@use '../variables.scss' as *;
+	@use '../controls.scss' as *;
 
 	.num-wrap {
 		display: flex;
 		align-items: center;
-		gap: 4px;
+		gap: 6px;
 	}
 
 	.num-input {
-		background: $surface-2;
-		border: 1px solid $border-subtle;
-		border-radius: $radius-sm;
-		color: $text-color;
+		@include field($ctrl-height, 13px);
+		padding: 0 6px;
 		font-family: $font-mono;
-		font-size: 13px;
-		padding: 3px 6px;
-		height: 28px;
-		box-sizing: border-box;
 		text-align: center;
-		outline: none;
 		-moz-appearance: textfield;
 		appearance: textfield;
-		line-height: 1;
 
 		&::-webkit-inner-spin-button,
 		&::-webkit-outer-spin-button {
 			-webkit-appearance: none;
 		}
 
-		&:focus {
-			border-color: $accent-color;
-			background: $accent-wash;
-		}
-
-		&:disabled {
-			opacity: 0.4;
-			cursor: default;
-		}
-
-		/* MenuBar variant — slightly smaller */
 		&--sm {
-			font-size: 14px;
-			height: 26px;
-			border-radius: $radius-xs;
-			padding: 2px 4px;
+			height: $ctrl-height-sm;
+			font-size: 12px;
 		}
 	}
 
 	.num-unit {
 		font-size: 10px;
 		color: $text-subtle;
-		font-family: sans-serif;
 		flex-shrink: 0;
 	}
 </style>

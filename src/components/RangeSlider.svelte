@@ -17,13 +17,14 @@
 	export let hints: string[] = [];
 
 	$: displayLabel = label.replace('{value}', value.toFixed(2));
+	$: fill = `${((value - min) / (max - min)) * 100}%`;
 </script>
 
 <div class="range-field">
 	{#if label}
 		<span class="range-label">{displayLabel}</span>
 	{/if}
-	<input class="range-input" type="range" {min} {max} {step} bind:value />
+	<input class="range-input" type="range" {min} {max} {step} bind:value style:--fill={fill} />
 	{#if hints.length}
 		<div class="range-hints">
 			{#each hints as h}
@@ -35,59 +36,22 @@
 
 <style lang="scss">
 	@use '../variables.scss' as *;
+	@use '../controls.scss' as *;
 
 	.range-field {
 		display: flex;
 		flex-direction: column;
-		gap: 5px;
+		gap: 6px;
 	}
 
 	.range-label {
 		font-size: 11px;
 		color: $text-muted;
 		font-weight: 500;
-		letter-spacing: 0.3px;
 	}
 
 	.range-input {
-		width: 100%;
-		-webkit-appearance: none;
-		appearance: none;
-		height: 4px;
-		border-radius: 2px;
-		background: $surface-hover;
-		outline: none;
-		cursor: pointer;
-
-		&::-webkit-slider-thumb {
-			-webkit-appearance: none;
-			width: 14px;
-			height: 14px;
-			border-radius: 50%;
-			background: $accent-color;
-			cursor: pointer;
-			transition:
-				transform $duration-base,
-				box-shadow $duration-base;
-
-			&:hover {
-				transform: scale(1.2);
-				box-shadow: 0 0 0 4px $accent-strong;
-			}
-		}
-
-		&::-moz-range-thumb {
-			width: 14px;
-			height: 14px;
-			border-radius: 50%;
-			background: $accent-color;
-			border: none;
-			cursor: pointer;
-		}
-
-		&:focus-visible::-webkit-slider-thumb {
-			box-shadow: 0 0 0 4px $accent-border;
-		}
+		@include range-slider;
 	}
 
 	.range-hints {

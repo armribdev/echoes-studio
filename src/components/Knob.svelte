@@ -44,6 +44,9 @@
 	const RING_R = 12;
 	const RING_STROKE = 1.25;
 	const AUTOMATION_RING_R = 14.5;
+	const CAP_R = 6.5;
+	const POINTER_INNER_R = 2.5;
+	const POINTER_OUTER_R = 5.5;
 
 	const START_CSS = -Math.PI * 0.83;
 	const ROT_RANGE = 2 * Math.PI * 0.83;
@@ -79,6 +82,8 @@
 	$: valueMath = cssToMath(START_CSS + t * ROT_RANGE);
 	$: trackPath = arcPath(START_MATH, END_MATH, TRACK_R);
 	$: valuePath = t > 0.005 ? arcPath(START_MATH, valueMath, TRACK_R) : '';
+	$: pointerFrom = polar(valueMath, POINTER_INNER_R);
+	$: pointerTo = polar(valueMath, POINTER_OUTER_R);
 
 	// ── Drag interaction ──────────────────────────────────────────────────────
 	// In Tauri: hide cursor + warp back to origin each move → infinite drag, no popup.
@@ -245,6 +250,8 @@
 		{#if valuePath}
 			<path class="value-arc" d={valuePath} stroke-width={STROKE} stroke={color} />
 		{/if}
+		<circle class="cap" cx={CX} cy={CY} r={CAP_R} />
+		<line class="pointer" x1={pointerFrom.x} y1={pointerFrom.y} x2={pointerTo.x} y2={pointerTo.y} />
 	</svg>
 </div>
 
@@ -262,10 +269,7 @@
 		transition: filter $duration-base;
 
 		&:hover {
-			filter: brightness(1.25);
-		}
-		&:active {
-			filter: brightness(1.5);
+			filter: brightness(1.2);
 		}
 
 		&.dragging {
@@ -292,6 +296,22 @@
 		fill: none;
 		stroke: $border-color;
 		stroke-linecap: round;
+	}
+
+	.cap {
+		fill: $surface-3;
+		transition: fill $duration-base;
+	}
+
+	.pointer {
+		stroke: $text-strong;
+		stroke-width: 1.5;
+		stroke-linecap: round;
+	}
+
+	.knob:hover .cap,
+	.knob.dragging .cap {
+		fill: $surface-active;
 	}
 
 	.value-arc {

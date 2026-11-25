@@ -2,7 +2,7 @@
 	import { t } from 'svelte-i18n';
 	import type { AppLocale } from '../../lib/i18n';
 	import Field from '../Field.svelte';
-	import PillGroup from '../PillGroup.svelte';
+	import SegmentedControl from '../SegmentedControl.svelte';
 	import Section from '../Section.svelte';
 	import SubSection from '../SubSection.svelte';
 	import Toggle from '../Toggle.svelte';
@@ -18,7 +18,7 @@
 
 <Section title={$t('settings.interface.title')}>
 	<Field label={$t('locale.label')} hint={$t('locale.description')}>
-		<PillGroup bind:value={interfacePrefs.locale} options={localeOptions} />
+		<SegmentedControl bind:value={interfacePrefs.locale} options={localeOptions} />
 	</Field>
 
 	<SubSection>

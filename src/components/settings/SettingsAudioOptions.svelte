@@ -4,7 +4,7 @@
 	import Field from '../Field.svelte';
 	import FieldGrid from '../FieldGrid.svelte';
 	import Icon from '../Icon.svelte';
-	import PillGroup from '../PillGroup.svelte';
+	import SegmentedControl from '../SegmentedControl.svelte';
 	import StepSlider from '../StepSlider.svelte';
 	import SubSection from '../SubSection.svelte';
 	import Toggle from '../Toggle.svelte';
@@ -106,7 +106,7 @@
 </SubSection>
 <SubSection title={$t('settings.audio.isolationTitle')}>
 	<Field label={$t('settings.audio.isolatedPlugins')}>
-		<PillGroup bind:value={audio.pluginIsolation} options={isolationOptions} />
+		<SegmentedControl bind:value={audio.pluginIsolation} options={isolationOptions} />
 		<span slot="hint">
 			{#if audio.pluginIsolation === 'off'}{$t('settings.audio.isolationOff')}
 			{:else if audio.pluginIsolation === 'chosen'}{$t('settings.audio.isolationChosen')}
@@ -185,6 +185,7 @@
 
 <style lang="scss">
 	@use '../../variables.scss' as *;
+	@use '../../controls.scss' as *;
 
 	.field-hint {
 		line-height: 1.2;
@@ -196,7 +197,7 @@
 	.latency-bar {
 		background: $surface-1;
 		border: 1px solid $border-faint;
-		border-radius: 7px;
+		border-radius: $radius-lg;
 		padding: 12px 14px;
 		display: grid;
 		grid-template-columns: 1fr auto;
@@ -259,7 +260,7 @@
 	.xrun-bar {
 		background: $surface-1;
 		border: 1px solid $border-faint;
-		border-radius: 7px;
+		border-radius: $radius-lg;
 		padding: 12px 14px;
 		display: grid;
 		grid-template-columns: 1fr auto;
@@ -313,7 +314,7 @@
 		padding: 10px 12px;
 		background: $surface-1;
 		border: 1px solid $border-faint;
-		border-radius: 6px;
+		border-radius: $radius-lg;
 	}
 
 	.routing-label {
@@ -347,7 +348,7 @@
 		padding: 0 10px;
 		background: $surface-1;
 		border: 1px solid $border-faint;
-		border-radius: $radius-md;
+		border-radius: $radius-control;
 		font-size: 12px;
 		font-weight: 600;
 		font-family: $font-mono;
@@ -362,25 +363,23 @@
 	}
 
 	.isolated-chip {
+		@include control-on-success;
 		display: inline-flex;
 		align-items: center;
-		gap: 4px;
-		padding: 2px 4px 2px 8px;
-		font-size: 11px;
+		gap: 2px;
+		height: $ctrl-height-sm;
+		padding: 0 2px 0 8px;
 		border: 1px solid $success-border;
-		background: $success-soft;
-		border-radius: $radius-xl;
-		color: $color-success;
+		border-radius: $radius-control;
+		font-size: 11px;
 
 		button {
-			border: none;
-			background: none;
+			@include icon-button($ctrl-height-xs);
 			color: inherit;
-			cursor: pointer;
 			font-size: 13px;
-			line-height: 1;
-			padding: 0 2px;
+
 			&:hover {
+				background: $error-soft;
 				color: $color-error-text;
 			}
 		}

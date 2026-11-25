@@ -4,7 +4,7 @@
 	import Field from '../Field.svelte';
 	import FieldGrid from '../FieldGrid.svelte';
 	import NumberInput from '../NumberInput.svelte';
-	import PillGroup from '../PillGroup.svelte';
+	import SegmentedControl from '../SegmentedControl.svelte';
 	import Section from '../Section.svelte';
 	import SubSection from '../SubSection.svelte';
 	import TextInput from '../TextInput.svelte';
@@ -43,7 +43,7 @@
 	</SubSection>
 	<SubSection title={$t('settings.project.exportTitle')}>
 		<Field label={$t('settings.project.wavBitDepth')}>
-			<PillGroup
+			<SegmentedControl
 				bind:value={project.exportBitDepth}
 				options={[
 					{ value: 16, label: '16 bit' },
@@ -59,7 +59,7 @@
 		</Field>
 
 		<Field label={$t('settings.project.mp3Bitrate')}>
-			<PillGroup
+			<SegmentedControl
 				bind:value={project.exportMp3Bitrate}
 				options={[
 					{ value: 128, label: '128 kbps' },

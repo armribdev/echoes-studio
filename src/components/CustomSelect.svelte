@@ -126,6 +126,7 @@
 
 <style lang="scss">
 	@use '../variables.scss' as *;
+	@use '../controls.scss' as *;
 
 	.cs-wrap {
 		position: relative;
@@ -137,28 +138,19 @@
 	}
 
 	.cs-trigger {
+		@include field;
 		width: 100%;
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
 		gap: 6px;
-		background: $surface-2;
-		border: 1px solid $border-subtle;
-		border-radius: $radius-md;
-		color: $text-color;
-		font-size: 12px;
-		font-family: inherit;
-		padding: 0 8px;
-		height: 30px;
-		cursor: pointer;
+		padding: 0 8px 0 10px;
+		color: $text-strong;
 		text-align: left;
-		transition:
-			border-color $duration-base,
-			background $duration-base;
 		white-space: nowrap;
+		cursor: pointer;
 
-		&:hover {
-			border-color: $border-strong;
+		&:not(:disabled):hover {
 			background: $surface-3;
 		}
 
@@ -177,10 +169,11 @@
 	.cs-chevron {
 		flex-shrink: 0;
 		color: $text-subtle;
-		transition: transform 0.15s;
+		transition: transform $duration-base;
 
 		&--up {
 			transform: rotate(180deg);
+			color: $accent-text;
 		}
 	}
 
@@ -191,7 +184,7 @@
 		min-width: 100%;
 		background: $surface-overlay;
 		border: 1px solid $border-subtle;
-		border-radius: 7px;
+		border-radius: $radius-lg;
 		padding: 4px;
 		margin: 0;
 		list-style: none;
@@ -201,33 +194,17 @@
 	}
 
 	.cs-option {
-		display: flex;
-		align-items: center;
-		gap: 7px;
-		padding: 5px 8px;
-		border-radius: $radius-md;
-		font-size: 12px;
-		color: $text-secondary;
-		cursor: pointer;
-		transition:
-			background $duration-fast,
-			color $duration-fast;
+		@include list-item;
 		white-space: nowrap;
 
-		&:hover {
-			background: $surface-3;
-			color: $text-color;
-		}
-
 		&--selected {
-			color: $text-color;
-			background: $accent-soft;
+			@include list-item-selected;
 		}
 	}
 
 	.cs-check {
 		flex-shrink: 0;
-		color: $accent-color;
+		color: $accent-text;
 	}
 
 	.cs-check-placeholder {

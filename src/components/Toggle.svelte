@@ -44,7 +44,7 @@
 		padding: 10px 12px;
 		background: $surface-1;
 		border: 1px solid $border-faint;
-		border-radius: 6px;
+		border-radius: $radius-lg;
 
 		&.disabled {
 			opacity: 0.45;
@@ -72,25 +72,30 @@
 	}
 
 	.toggle-switch {
-		width: 36px;
+		position: relative;
+		flex-shrink: 0;
+		width: 34px;
 		height: 20px;
-		border-radius: $radius-xl;
+		padding: 0;
+		border-radius: 10px;
 		background: $surface-hover;
 		border: 1px solid $border-subtle;
 		cursor: pointer;
-		position: relative;
-		flex-shrink: 0;
 		transition:
-			background 0.2s,
-			border-color 0.2s;
-		padding: 0;
+			background $duration-base,
+			border-color $duration-base;
+
+		&:hover {
+			border-color: $border-strong;
+		}
 
 		&.on {
 			background: $accent-color;
 			border-color: $accent-color;
 
 			.toggle-thumb {
-				transform: translateX(16px);
+				transform: translateX(14px);
+				background: $on-solid;
 			}
 		}
 
@@ -107,8 +112,11 @@
 		width: 14px;
 		height: 14px;
 		border-radius: 50%;
-		background: $text-color;
-		transition: transform 0.2s;
+		background: $text-secondary;
+		box-shadow: $shadow-sm;
+		transition:
+			transform $duration-base $ease-out,
+			background $duration-base;
 		pointer-events: none;
 	}
 </style>
