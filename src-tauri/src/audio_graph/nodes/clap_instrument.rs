@@ -36,7 +36,8 @@ use crate::plugin_system::instance::{PluginInstance, FFI_GATE_HARVEST_BUDGET};
 
 use crate::plugin_formats::clap::audio_ports::ClapOutputBuses;
 use crate::plugin_formats::clap::ffi::{
-    audio_thread_scope, ClapEventBuffer, ClapOutputEvents, ClapPlugin, ClapProcess,
+    audio_thread_scope, read_plugin_latency, ClapEventBuffer, ClapOutputEvents, ClapPlugin,
+    ClapProcess,
 };
 use crate::plugin_formats::clap::params::{
     observe_output_event, read_clap_params, ClapParamEvents,
@@ -76,6 +77,8 @@ pub struct ClapInstrument {
     out_events: ClapOutputEvents,
 
     active: bool,
+    /// `clap.latency` as read after the last activation, for the PDC (ADR-006).
+    reported_latency: u32,
     /// Sample counter passed as `steady_time`. Must grow by `frames_count`
     /// every block so GUI notes (Vital's keyboard) land on a continuous clock.
     steady_time: i64,
@@ -106,6 +109,7 @@ impl ClapInstrument {
                 try_push: observe_output_event,
             },
             active: false,
+            reported_latency: 0,
             steady_time: 0,
             sleep: PluginSleep::new(),
         }
@@ -124,6 +128,10 @@ impl InstrumentDevice for ClapInstrument {
         self.outputs.num_ports()
     }
 
+    fn latency_samples(&self) -> u32 {
+        self.reported_latency
+    }
+
     fn prepare(&mut self, ctx: PrepareContext) {
         // Activation lifecycle is owned by the shared instance (ADR-016) so it
         // survives a wrapper rebuild when the live instance is reused across a
@@ -138,6 +146,8 @@ impl InstrumentDevice for ClapInstrument {
         // Same fencing as the effect wrapper: skip if a block is in flight.
         if self.active {
             if let Some(_gate) = self.instance.offrt_try_acquire(FFI_GATE_HARVEST_BUDGET) {
+                // SAFETY: activated above, main thread, FFI gate held.
+                self.reported_latency = unsafe { read_plugin_latency(self.plugin_ptr()) };
                 let params = unsafe { read_clap_params(self.plugin_ptr()) };
                 self.param_events.set_ranges(&params);
                 self.sleep.start(&self.instance);

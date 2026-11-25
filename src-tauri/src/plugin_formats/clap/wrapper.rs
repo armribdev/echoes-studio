@@ -43,8 +43,8 @@ use crate::plugin_system::instance::{PluginInstance, FFI_GATE_HARVEST_BUDGET};
 use crate::plugin_system::lifecycle::LifecycleState;
 
 use super::ffi::{
-    audio_thread_scope, ClapAudioBuffer, ClapOutputEvents, ClapPlugin, ClapPluginLatency,
-    ClapProcess, CLAP_EXT_LATENCY, CLAP_PROCESS_ERROR,
+    audio_thread_scope, read_plugin_latency, ClapAudioBuffer, ClapOutputEvents, ClapPlugin,
+    ClapProcess, CLAP_PROCESS_ERROR,
 };
 
 // Stack context passed to the SEH trampoline — no heap allocation.
@@ -195,11 +195,7 @@ impl AudioNode for ClapWrapperNode {
                 let p = self.plugin_ptr();
                 unsafe {
                     // `clap.latency` is valid only after activate (main thread / prepare).
-                    let ext_ptr = ((*p).get_extension)(p, CLAP_EXT_LATENCY.as_ptr() as *const _);
-                    if !ext_ptr.is_null() {
-                        let ext = ext_ptr as *const ClapPluginLatency;
-                        self.reported_latency = ((*ext).get)(p);
-                    }
+                    self.reported_latency = read_plugin_latency(p);
 
                     self.param_events.set_ranges(&read_clap_params(p));
                 }

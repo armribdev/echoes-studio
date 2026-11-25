@@ -1548,6 +1548,19 @@ pub struct ClapPluginLatency {
     pub get: unsafe extern "C" fn(*const ClapPlugin) -> u32,
 }
 
+/// What `clap.latency.get` answers, 0 for a plugin without the extension.
+///
+/// # Safety
+/// `plugin` must be live and already activated; main thread, with the instance's
+/// FFI gate held when the plugin may also be processing.
+pub unsafe fn read_plugin_latency(plugin: *const ClapPlugin) -> u32 {
+    let extension = ((*plugin).get_extension)(plugin, CLAP_EXT_LATENCY.as_ptr() as *const c_char)
+        as *const ClapPluginLatency;
+    extension
+        .as_ref()
+        .map_or(0, |latency| (latency.get)(plugin))
+}
+
 // ── clap.tail extension (how long the plugin keeps sounding after its input) ───
 
 pub const CLAP_EXT_TAIL: &[u8] = b"clap.tail\0";

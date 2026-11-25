@@ -506,6 +506,28 @@ fn the_isolation_preference_overrides_the_effect_choice() {
     );
 }
 
+/// ADR-013 amendment 2026-11-25: a CLAP instrument tells the delay compensation what
+/// `clap.latency` says, in the Echoes process and in the bridge alike.
+fn a_clap_instrument_reports_the_latency_of_its_plugin(sandboxed: bool) {
+    let mut host = host();
+    if sandboxed {
+        host.set_isolation(PluginIsolation::All, HashSet::new());
+    }
+    let instrument = prepared_instrument(&mut host, false);
+    assert_eq!(is_sandboxed(&host, INSTRUMENT_KEY), sandboxed);
+    assert_eq!(instrument.latency_samples(), 64);
+}
+
+#[test]
+fn an_in_process_clap_instrument_reports_the_latency_of_its_plugin() {
+    a_clap_instrument_reports_the_latency_of_its_plugin(false);
+}
+
+#[test]
+fn a_sandboxed_clap_instrument_reports_the_latency_of_its_plugin() {
+    a_clap_instrument_reports_the_latency_of_its_plugin(true);
+}
+
 #[test]
 fn a_sandboxed_instrument_plays_notes_and_parameters() {
     let mut host = host();

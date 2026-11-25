@@ -19,15 +19,14 @@ use clap_ffi::{
     ClapAudioBuffer, ClapAudioPortInfo, ClapEventBuffer, ClapEventHeader, ClapEventMidi,
     ClapEventNote, ClapEventParamGesture, ClapEventParamValue, ClapEventTransport, ClapHost,
     ClapLibrary, ClapOutputEvents, ClapParamInfo, ClapPlugin, ClapPluginAudioPorts,
-    ClapPluginFactory, ClapPluginLatency, ClapPluginParams, ClapProcess, HostTrackInfo,
-    PresetRequest, ProcessSleep, TimerSchedule, TransportValues, CLAP_AUDIO_PORT_IS_MAIN,
-    CLAP_CORE_EVENT_SPACE, CLAP_EVENT_MIDI, CLAP_EVENT_NOTE_OFF, CLAP_EVENT_NOTE_ON,
-    CLAP_EVENT_PARAM_GESTURE_BEGIN, CLAP_EVENT_PARAM_GESTURE_END, CLAP_EVENT_PARAM_VALUE,
-    CLAP_EXT_AUDIO_PORTS, CLAP_EXT_LATENCY, CLAP_EXT_PARAMS, CLAP_PARAM_IS_AUTOMATABLE,
-    CLAP_PARAM_IS_HIDDEN, CLAP_PARAM_IS_MODULATABLE, CLAP_PARAM_IS_READONLY, CLAP_PARAM_RESCAN_ALL,
-    CLAP_PARAM_RESCAN_INFO, CLAP_PARAM_RESCAN_TEXT, CLAP_PARAM_RESCAN_VALUES,
-    CLAP_PLUGIN_FACTORY_ID, CLAP_PRESET_LOCATION_FILE, CLAP_PRESET_LOCATION_PLUGIN,
-    CLAP_PROCESS_ERROR,
+    ClapPluginFactory, ClapPluginParams, ClapProcess, HostTrackInfo, PresetRequest, ProcessSleep,
+    TimerSchedule, TransportValues, CLAP_AUDIO_PORT_IS_MAIN, CLAP_CORE_EVENT_SPACE,
+    CLAP_EVENT_MIDI, CLAP_EVENT_NOTE_OFF, CLAP_EVENT_NOTE_ON, CLAP_EVENT_PARAM_GESTURE_BEGIN,
+    CLAP_EVENT_PARAM_GESTURE_END, CLAP_EVENT_PARAM_VALUE, CLAP_EXT_AUDIO_PORTS, CLAP_EXT_PARAMS,
+    CLAP_PARAM_IS_AUTOMATABLE, CLAP_PARAM_IS_HIDDEN, CLAP_PARAM_IS_MODULATABLE,
+    CLAP_PARAM_IS_READONLY, CLAP_PARAM_RESCAN_ALL, CLAP_PARAM_RESCAN_INFO, CLAP_PARAM_RESCAN_TEXT,
+    CLAP_PARAM_RESCAN_VALUES, CLAP_PLUGIN_FACTORY_ID, CLAP_PRESET_LOCATION_FILE,
+    CLAP_PRESET_LOCATION_PLUGIN, CLAP_PROCESS_ERROR,
 };
 use plugin_bridge::protocol::{
     WireNote, WireParam, BLOCK_NOTE_NAMES_CHANGED, BLOCK_PARAMS_RESCAN_MASK,
@@ -232,9 +231,8 @@ impl ClapAdapter {
     }
 
     fn latency(&self) -> u32 {
-        self.extension::<ClapPluginLatency>(CLAP_EXT_LATENCY)
-            // SAFETY: main thread, after activate.
-            .map_or(0, |latency| unsafe { ((*latency).get)(self.plugin) })
+        // SAFETY: main thread, after activate.
+        unsafe { clap_ffi::read_plugin_latency(self.plugin) }
     }
 
     pub fn save_state(&self) -> Result<Vec<u8>, String> {

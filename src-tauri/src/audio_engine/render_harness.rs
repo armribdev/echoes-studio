@@ -1519,8 +1519,11 @@ mod clap_plugins {
     }
 
     /// Recorded on Windows x86_64, separate from `GOLDEN_HASHES` because it
-    /// needs the built test plugin.
-    const CLAP_PLUGINS_GOLDEN_HASH: u64 = 0x928da7dcd260c4e1;
+    /// needs the built test plugin. Moved on 2026-11-25 from `0x928da7dcd260c4e1`:
+    /// the CLAP instrument now tells the delay compensation its `clap.latency`
+    /// (ADR-013 amendment 2026-11-25), and the test plugin reports 64 samples
+    /// without delaying its audio.
+    const CLAP_PLUGINS_GOLDEN_HASH: u64 = 0x906f691e9328705d;
 
     const GAIN: u32 = 0;
 

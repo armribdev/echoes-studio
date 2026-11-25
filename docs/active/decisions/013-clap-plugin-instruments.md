@@ -340,7 +340,8 @@ FFI gate (`PluginInstance::vst3_latency_samples`, shared with the VST3 effect). 
 `restartComponent(kLatencyChanged)` already reactivates the instance through
 `vst3_ensure_active` (ADR-016), so the next recompile reads the new value. Built-in
 and CLAP instruments keep reporting 0: the CLAP instrument does not read
-`clap.latency` yet, a later step with the same hook.
+`clap.latency` yet, a later step with the same hook (done 2026-11-25, see
+"Amendment 2026-11-25 — CLAP instrument latency").
 
 No invariant changes (no new ADR): no new graph element, thread rule or state; the
 mechanism is the existing PDC, and `audio_graph/` still sees no VST3 type (ADR-003).
@@ -351,3 +352,32 @@ and processing mode). Details and tests: `../plugins/plugin-wrapper-system.md`
 (Latency Handling). Checked on TDR Nova (effect, latency 184) and Surge XT
 (instrument, latency 0, so a non-zero instrument latency is checked only with the
 hand-made plugin); not hand-tested in the app.
+
+## Amendment 2026-11-25 — CLAP instrument latency
+
+`ClapInstrument` reads `clap.latency` in `prepare`, after `clap_ensure_active`, off the
+audio thread and under the instance FFI gate (the same fenced block as its parameter
+ranges), and returns it from `InstrumentDevice::latency_samples()`; `InstrumentNode`
+relays it to the compiler's latency compensation (ADR-006), as for VST3 (amendment
+2026-10-23). The read is one function, `clap_ffi::read_plugin_latency`, now shared by
+`ClapWrapperNode`, `ClapInstrument` and the bridge's `ClapAdapter`. A sandboxed CLAP
+instrument reports what the bridge's activation answered (`BridgedInstrument` no longer
+special-cases the format), so in the Echoes process and in the bridge it is the same
+number. A latency change reaches the instrument as it reaches the effect, through the
+plugin's restart request: the next recompile reactivates the instance (`clap_ensure_active`)
+and `prepare` reads the value again.
+
+**Render change sanctioned here (C-2).** The `clap_plugins` reference project holds a CLAP
+instrument and the test plugin reports 64 samples without delaying its audio, so the
+compensated render moves: `CLAP_PLUGINS_GOLDEN_HASH` goes from `0x928da7dcd260c4e1` to
+`0x906f691e9328705d` (accepted by the user, 2026-11-25). For a real plugin the change is an
+alignment fix: an instrument that really delays its sound by `L` samples is no longer
+`L` samples late against the other tracks, and a project that already holds such an
+instrument will sound aligned the next time it is opened. `GOLDEN_HASHES` and the VST3
+hash do not move; in-process and sandboxed renders of the CLAP project stay identical.
+
+No other invariant is touched (no new graph element, thread rule or state; the mechanism
+is the existing PDC). Tests: `plugin_system/sandbox_tests.rs`
+(`{an_in_process,a_sandboxed}_clap_instrument_reports_the_latency_of_its_plugin`: 64 both
+ways), the `clap_plugins` harness tests. Not hand-tested in the app (a real CLAP synth
+that reports latency, for example a synth with a lookahead or oversampling option).

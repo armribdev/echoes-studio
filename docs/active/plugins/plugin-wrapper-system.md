@@ -297,7 +297,8 @@ A VST3 instrument is a `VstInstrument` (`vst3/instrument.rs`) behind
   `vst3_ensure_active` (`PluginInstance::vst3_latency_samples`, FFI gate, the same
   read as the effect) and `InstrumentDevice::latency_samples()` hands it to the
   compiler through `InstrumentNode`, so the PDC aligns an instrument track like an
-  effect chain (see "Latency Handling"). Built-in and CLAP instruments report 0.
+  effect chain (see "Latency Handling"). Built-in instruments report 0; a CLAP instrument
+  reads `clap.latency` too since 2026-11-25 (ADR-013 amendment).
 - Not done: note expressions, `outputEvents`.
   `outputParameterChanges` are read (see "The controller follows the processor").
   Extra output buses: see "VST3 multi-out".
@@ -1724,7 +1725,9 @@ reactivates the plugin and reads the new value. An instrument
 reaches the compiler through `InstrumentDevice::latency_samples()`, relayed by
 `InstrumentNode::latency_samples()`; `audio_graph/` sees no VST3 type (ADR-003).
 Without it an instrument track with a latency `L` would sound `L` samples late
-against the others. CLAP instruments have the same gap (no `clap.latency` read yet).
+against the others. CLAP instruments read `clap.latency` the same way since 2026-11-25
+(`clap_ffi::read_plugin_latency`, shared with the CLAP effect and the bridge; sandboxed or not,
+the instrument reports the plugin's own number).
 Tests: `plugin_system/vst3_latency_tests.rs` (hand-made plugin, restart, busy gate),
 `compiler.rs` (an instrument of latency 128 delays the track it meets by 128),
 `ffi_lifecycle_tests.rs` (TDR Nova effect: node 184 = plugin 184; Surge XT

@@ -550,14 +550,9 @@ impl InstrumentDevice for BridgedInstrument {
         self.round_trip.output_ports()
     }
 
-    /// A VST3 instrument reports its latency in the Echoes process (ADR-013); a CLAP
-    /// one reports none there, so the bridge keeps the two the same.
+    /// The plugin's own latency, as in the Echoes process (ADR-013).
     fn latency_samples(&self) -> u32 {
-        if self.round_trip.instance.format == DeviceFormat::Vst3 {
-            self.round_trip.latency
-        } else {
-            0
-        }
+        self.round_trip.latency
     }
 
     fn prepare(&mut self, ctx: PrepareContext) {
