@@ -95,6 +95,7 @@
 	import Playhead from './Playhead.svelte';
 	import ZoomScrollbar from './ZoomScrollbar.svelte';
 	import ArrangeGrid from './ArrangeGrid.svelte';
+	import ArrangeEmptyState from './arrange/ArrangeEmptyState.svelte';
 	import { startTransportScrub } from '../frontend/transportScrub';
 	import { t } from 'svelte-i18n';
 	import { MARKER_LANE_HEIGHT, RULER_HEIGHT } from '../frontend/timeRuler/constants';
@@ -2489,46 +2490,17 @@
 						/>
 					{/if}
 					{#if tracks.length === 0}
-						<div class="empty-tracks">
-							<svg
-								class="empty-tracks-icon"
-								width="32"
-								height="32"
-								viewBox="0 0 24 24"
-								fill="none"
-								stroke="currentColor"
-								stroke-width="1.5"
-								stroke-linecap="round"
-								stroke-linejoin="round"
-							>
-								<path d="M9 18V5l12-2v13" />
-								<circle cx="6" cy="18" r="3" />
-								<circle cx="18" cy="16" r="3" />
-							</svg>
-							<p class="empty-tracks-text">{$t('mainPanel.emptyTracks')}</p>
-							<p class="empty-tracks-hint">
-								Créez une piste, glissez un fichier audio, ou insérez depuis la bibliothèque
-							</p>
-							<div class="empty-tracks-actions">
-								<button type="button" class="empty-tracks-cta" on:click={handleCreateTrack}>
-									+ Nouvelle piste
-								</button>
-								<button
-									type="button"
-									class="empty-tracks-cta empty-tracks-cta--secondary"
-									on:click={(e) =>
-										openLibraryInsertPopup({
-											trackId: null,
-											trackIndex: null,
-											anchorX: e.clientX,
-											anchorY: e.clientY,
-											context: 'playhead_insert'
-										})}
-								>
-									{$t('trackMenu.insertSound')}
-								</button>
-							</div>
-						</div>
+						<ArrangeEmptyState
+							on:createTrack={handleCreateTrack}
+							on:insertSound={(e) =>
+								openLibraryInsertPopup({
+									trackId: null,
+									trackIndex: null,
+									anchorX: e.detail.x,
+									anchorY: e.detail.y,
+									context: 'playhead_insert'
+								})}
+						/>
 					{/if}
 					{#if fileDragPreview}
 						<div
@@ -2803,76 +2775,6 @@
 			background-color: rgba(255, 80, 80, 0.1);
 			border-color: rgba(255, 100, 100, 0.55);
 			opacity: 0.55;
-		}
-	}
-
-	// ── Empty state ───────────────────────────────────────────────────────────
-	.empty-tracks {
-		position: absolute;
-		inset: 0;
-		display: flex;
-		flex-direction: column;
-		align-items: center;
-		justify-content: center;
-		gap: 8px;
-		pointer-events: none;
-
-		.empty-tracks-icon {
-			color: $text-faint;
-			margin-bottom: 4px;
-		}
-
-		.empty-tracks-text {
-			font-size: 13px;
-			font-weight: 500;
-			color: $text-muted;
-			margin: 0;
-		}
-
-		.empty-tracks-hint {
-			font-size: 11px;
-			color: $text-faint;
-			margin: 0;
-			text-align: center;
-			max-width: 280px;
-		}
-
-		.empty-tracks-actions {
-			display: flex;
-			gap: 8px;
-			margin-top: 8px;
-			pointer-events: all;
-		}
-
-		.empty-tracks-cta {
-			pointer-events: all;
-			height: $ctrl-height;
-			padding: 0 18px;
-			background: $accent-color;
-			border: none;
-			border-radius: $radius-md;
-			color: #fff;
-			font-size: 12px;
-			font-weight: 600;
-			font-family: inherit;
-			cursor: pointer;
-			transition: background $duration-base;
-
-			&:hover {
-				background: $accent-hover;
-			}
-
-			&--secondary {
-				background: transparent;
-				border: 1px solid $border-color;
-				color: $text-muted;
-
-				&:hover {
-					background: transparent;
-					color: $text-color;
-					border-color: rgba($text-color, 0.35);
-				}
-			}
 		}
 	}
 </style>
