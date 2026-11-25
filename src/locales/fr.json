@@ -233,6 +233,16 @@
 		"selectSound": "Sélectionnez un son",
 		"tagPlaceholder": "Ajouter une étiquette…",
 		"removeTag": "Retirer l'étiquette {tag}",
+		"kindFilterAria": "Filtrer par type",
+		"kinds": {
+			"all": "Tous les types",
+			"audio": "Audio",
+			"midi_pattern": "MIDI",
+			"chord_progression": "Accords"
+		},
+		"collectionNamePlaceholder": "Nom de la collection",
+		"saveCollection": "Enregistrer comme collection",
+		"deleteCollection": "Supprimer la collection",
 		"sources": {
 			"audio": "Audio",
 			"favorites": "Favoris",

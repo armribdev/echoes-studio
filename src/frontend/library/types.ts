@@ -2,7 +2,28 @@
 export type LibraryAssetKind = 'one_shot' | 'loop' | 'midi_pattern' | 'chord_progression';
 
 /** Organisational + content sources (Phase 1 audio + Phase 3 musical). */
-export type LibrarySourceId = 'recents' | 'favorites' | 'audio' | 'chords' | 'midi' | 'drums';
+export type LibraryBuiltInSourceId =
+	| 'recents'
+	| 'favorites'
+	| 'audio'
+	| 'chords'
+	| 'midi'
+	| 'drums';
+
+/** A saved search shown as a source: `collection:<id>`. */
+export type LibraryCollectionSourceId = `collection:${string}`;
+
+export type LibrarySourceId = LibraryBuiltInSourceId | LibraryCollectionSourceId;
+
+/** Coarse asset type filter: loops and one-shots are both « audio ». */
+export type LibraryKindFilter = 'audio' | 'midi_pattern' | 'chord_progression';
+
+export interface LibraryCollection {
+	id: string;
+	name: string;
+	query: string;
+	kind: LibraryKindFilter | null;
+}
 
 /** Open contexts for the insert pop-up (library-browser-ux.md §5). */
 export type LibraryOpenContext =
@@ -74,7 +95,7 @@ export const AUDIO_EXTENSIONS = ['wav', 'mp3', 'flac', 'ogg', 'oga'] as const;
 
 export const LIBRARY_DRAG_MIME = 'application/x-echoes-library-asset';
 
-export const LIBRARY_SOURCE_ORDER: LibrarySourceId[] = [
+export const LIBRARY_SOURCE_ORDER: LibraryBuiltInSourceId[] = [
 	'recents',
 	'favorites',
 	'audio',
@@ -83,7 +104,7 @@ export const LIBRARY_SOURCE_ORDER: LibrarySourceId[] = [
 	'drums'
 ];
 
-export const LIBRARY_SOURCE_LABELS: Record<LibrarySourceId, string> = {
+export const LIBRARY_SOURCE_LABELS: Record<LibraryBuiltInSourceId, string> = {
 	recents: 'Récents',
 	favorites: 'Favoris',
 	audio: 'Audio',
@@ -92,10 +113,20 @@ export const LIBRARY_SOURCE_LABELS: Record<LibrarySourceId, string> = {
 	drums: 'Drums'
 };
 
-export const CONTENT_SOURCES: LibrarySourceId[] = ['audio', 'chords', 'midi', 'drums'];
+export const CONTENT_SOURCES: LibraryBuiltInSourceId[] = ['audio', 'chords', 'midi', 'drums'];
 
-export function isLibrarySourceId(value: string): value is LibrarySourceId {
+export const LIBRARY_KIND_FILTERS: LibraryKindFilter[] = [
+	'audio',
+	'midi_pattern',
+	'chord_progression'
+];
+
+export function isLibraryBuiltInSourceId(value: string): value is LibraryBuiltInSourceId {
 	return (LIBRARY_SOURCE_ORDER as readonly string[]).includes(value);
+}
+
+export function isLibraryKindFilter(value: unknown): value is LibraryKindFilter {
+	return (LIBRARY_KIND_FILTERS as unknown[]).includes(value);
 }
 
 export function isMidiLibraryKind(kind: LibraryAssetKind): boolean {

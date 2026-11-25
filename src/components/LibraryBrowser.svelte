@@ -1,4 +1,5 @@
 <script lang="ts">
+	import CustomSelect from './CustomSelect.svelte';
 	import SearchInput from './SearchInput.svelte';
 	import { onMount } from 'svelte';
 	import { notify } from '../stores/status';
@@ -10,6 +11,10 @@
 		libraryStore,
 		libraryVisibleAssets,
 		libraryHasIndexedContent,
+		canSaveAsCollection,
+		collectionForSource,
+		collectionSourceId,
+		LIBRARY_KIND_FILTERS,
 		libraryFocusSearchTick,
 		insertLibraryAsset,
 		LIBRARY_SOURCE_ORDER,
@@ -21,12 +26,14 @@
 		moveAudioFileDragPointer,
 		requestAudioFileDragDrop,
 		type LibraryAsset,
+		type LibraryKindFilter,
 		type LibrarySourceId
 	} from '../frontend/library';
 	import { tempo } from '../stores/tempo';
 	import { ARRANGE_POINTER_DRAG_THRESHOLD } from '../frontend/arrangeInteraction';
 	import { t } from 'svelte-i18n';
 	import LibraryAssetRow from './library/LibraryAssetRow.svelte';
+	import LibraryCollectionBar from './library/LibraryCollectionBar.svelte';
 	import LibraryDetail from './library/LibraryDetail.svelte';
 	import LibraryEmptyState from './library/LibraryEmptyState.svelte';
 
@@ -261,9 +268,26 @@
 		drums: 'library.noDrumPatterns'
 	};
 
-	$: emptyListKey = $libraryStore.query
-		? 'library.noResults'
-		: (EMPTY_LIST_KEYS[$libraryStore.source] ?? 'library.noAudioIndexed');
+	$: activeCollection = collectionForSource($libraryStore.collections, $libraryStore.source);
+	$: kindOptions = [
+		{ value: 'all', label: $t('library.kinds.all') },
+		...LIBRARY_KIND_FILTERS.map((kind) => ({ value: kind, label: $t(`library.kinds.${kind}`) }))
+	];
+	$: canSaveCollection =
+		!activeCollection && canSaveAsCollection($libraryStore.query, $libraryStore.kindFilter);
+	$: suggestedCollectionName =
+		$libraryStore.query.trim() ||
+		($libraryStore.kindFilter ? $t(`library.kinds.${$libraryStore.kindFilter}`) : '');
+	$: sourceLabel = activeCollection?.name ?? $t(`library.sources.${$libraryStore.source}`);
+
+	function onKindChange(e: CustomEvent<string | number>) {
+		libraryStore.setKindFilter(e.detail === 'all' ? null : (e.detail as LibraryKindFilter));
+	}
+
+	$: emptyListKey =
+		$libraryStore.query || $libraryStore.kindFilter || activeCollection
+			? 'library.noResults'
+			: (EMPTY_LIST_KEYS[$libraryStore.source] ?? 'library.noAudioIndexed');
 
 	function onResultsKeydown(e: KeyboardEvent) {
 		if (e.key === 'ArrowDown') {
@@ -373,6 +397,13 @@
 			on:keydown={onSearchKeydown}
 			on:clear={() => libraryStore.clearQuery()}
 		/>
+		<CustomSelect
+			size="sm"
+			value={$libraryStore.kindFilter ?? 'all'}
+			options={kindOptions}
+			label={$t('library.kindFilterAria')}
+			on:change={onKindChange}
+		/>
 		<button class="add-btn" type="button" on:click={browseFiles} title={$t('library.importFile')}>
 			<svg width="10" height="10" viewBox="0 0 10 10" fill="none">
 				<path d="M5 1V9M1 5H9" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
@@ -391,10 +422,29 @@
 				{$t(`library.sources.${sourceId}`)}
 			</button>
 		{/each}
+		{#each $libraryStore.collections as collection (collection.id)}
+			<button
+				type="button"
+				class="source-btn source-btn--collection"
+				class:active={$libraryStore.source === collectionSourceId(collection.id)}
+				title={collection.name}
+				on:click={() => setSource(collectionSourceId(collection.id))}
+			>
+				{collection.name}
+			</button>
+		{/each}
 		<button type="button" class="source-btn source-btn--action" on:click={browseFolder}>
 			{$t('library.addFolder')}
 		</button>
 	</nav>
+
+	<LibraryCollectionBar
+		collection={activeCollection}
+		canSave={canSaveCollection}
+		suggestedName={suggestedCollectionName}
+		on:save={(e) => libraryStore.saveCollection(e.detail)}
+		on:remove={() => activeCollection && libraryStore.removeCollection(activeCollection.id)}
+	/>
 
 	<div class="body">
 		<div class="results-col">
@@ -410,13 +460,10 @@
 			{:else if visible.length === 0}
 				<LibraryEmptyState title={$t('library.noResults')} tip={$t('library.noResultsTip')} />
 			{:else}
-				{#if $libraryStore.query}
+				{#if $libraryStore.query || $libraryStore.kindFilter}
 					<div class="results-meta">
 						{$t(visible.length === 1 ? 'library.resultOne' : 'library.resultMany', {
-							values: {
-								source: $t(`library.sources.${$libraryStore.source}`),
-								n: visible.length
-							}
+							values: { source: sourceLabel, n: visible.length }
 						})}
 					</div>
 				{/if}
@@ -574,6 +621,13 @@
 	.source-btn {
 		@include segment($ctrl-height-sm, 11px);
 		flex-shrink: 0;
+
+		&--collection {
+			max-width: 140px;
+			overflow: hidden;
+			text-overflow: ellipsis;
+			white-space: nowrap;
+		}
 
 		&--action {
 			margin-left: auto;

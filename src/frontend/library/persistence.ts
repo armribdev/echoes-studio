@@ -1,5 +1,11 @@
+import { collectionIdOfSource, normalizeCollectionName } from './collections';
 import { normalizeTag } from './tags';
-import { isLibrarySourceId, type LibrarySourceId } from './types';
+import {
+	isLibraryBuiltInSourceId,
+	isLibraryKindFilter,
+	type LibraryCollection,
+	type LibrarySourceId
+} from './types';
 
 const STORAGE_KEY = 'echoes.library.v1';
 const MAX_RECENTS = 50;
@@ -11,6 +17,7 @@ export interface LibraryPersistence {
 	lastSource: LibrarySourceId;
 	/** Tags the user gave to an asset, by asset id. */
 	userTags: Record<string, string[]>;
+	collections: LibraryCollection[];
 }
 
 function defaultPersistence(): LibraryPersistence {
@@ -19,7 +26,8 @@ function defaultPersistence(): LibraryPersistence {
 		recentIds: [],
 		indexedFolders: [],
 		lastSource: 'audio',
-		userTags: {}
+		userTags: {},
+		collections: []
 	};
 }
 
@@ -41,21 +49,50 @@ function userTagsFrom(value: unknown): Record<string, string[]> {
 	return userTags;
 }
 
+function collectionsFrom(value: unknown): LibraryCollection[] {
+	if (!Array.isArray(value)) return [];
+	const collections: LibraryCollection[] = [];
+	const seenIds = new Set<string>();
+	for (const raw of value) {
+		if (typeof raw !== 'object' || raw === null) continue;
+		const { id, name, query, kind } = raw as Record<string, unknown>;
+		if (typeof id !== 'string' || !id || seenIds.has(id)) continue;
+		if (typeof name !== 'string' || typeof query !== 'string') continue;
+		const normalizedName = normalizeCollectionName(name);
+		const normalizedKind = isLibraryKindFilter(kind) ? kind : null;
+		if (!normalizedName || (!query.trim() && !normalizedKind)) continue;
+		seenIds.add(id);
+		collections.push({ id, name: normalizedName, query: query.trim(), kind: normalizedKind });
+	}
+	return collections;
+}
+
+function lastSourceFrom(
+	value: unknown,
+	collections: readonly LibraryCollection[]
+): LibrarySourceId {
+	if (typeof value !== 'string') return 'audio';
+	if (isLibraryBuiltInSourceId(value)) return value;
+	const collectionId = collectionIdOfSource(value as LibrarySourceId);
+	return collectionId && collections.some((collection) => collection.id === collectionId)
+		? (value as LibrarySourceId)
+		: 'audio';
+}
+
 export function loadLibraryPersistence(): LibraryPersistence {
 	if (!canUseStorage()) return defaultPersistence();
 	try {
 		const raw = localStorage.getItem(STORAGE_KEY);
 		if (!raw) return defaultPersistence();
 		const parsed = JSON.parse(raw) as Partial<Record<keyof LibraryPersistence, unknown>>;
+		const collections = collectionsFrom(parsed.collections);
 		return {
 			favoriteIds: stringList(parsed.favoriteIds),
 			recentIds: stringList(parsed.recentIds),
 			indexedFolders: stringList(parsed.indexedFolders),
-			lastSource:
-				typeof parsed.lastSource === 'string' && isLibrarySourceId(parsed.lastSource)
-					? parsed.lastSource
-					: 'audio',
-			userTags: userTagsFrom(parsed.userTags)
+			lastSource: lastSourceFrom(parsed.lastSource, collections),
+			userTags: userTagsFrom(parsed.userTags),
+			collections
 		};
 	} catch {
 		return defaultPersistence();

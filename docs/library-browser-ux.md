@@ -73,6 +73,7 @@ Sources are **views into the catalogue**, not a second folder tree.
 | `chords`        | `chord_progression`                                        | Name / key match                    |
 | `midi`          | `midi_pattern`                                             | Name                                |
 | `drums`         | Hybrid: drum-tagged one-shots + drum MIDI _(Phase 3)_      | Name                                |
+| `collection:*`  | Smart collection: a saved search (text + type) _(Phase 4)_ | Name                                |
 | `user_folder:*` | One indexed user folder                                    | Path / name                         |
 | `pack:*`        | One factory or installed pack _(Phase 4)_                  | Pack order                          |
 
@@ -81,6 +82,18 @@ No Samples/Loops split until kinds exist (Phase 2+).
 **Phase 2+ may add:** `samples`, `loops` (split from `audio`), user folders.  
 **Phase 3 adds:** `chords`, `midi`, `drums` (factory content first; drums = 16 generated factory one-shots + factory drum MIDI).  
 **Phase 4 adds:** packs + smart collections.
+
+**Smart collections (Phase 4, 2026-11-26).** Next to the search field, a type
+filter (all / audio / MIDI / chords) narrows any source. As soon as the search
+or the type filter is set, a bar under the sources offers « Save as collection »
+(name optional: it defaults to the search text or the type). A collection stores
+the search text — matched against the name **or** a tag, like any search — and
+the type; it is listed after the built-in sources, searches every content source
+(audio, chords, MIDI, drums) and stays live: a sound tagged later joins it. The
+search and the type filter still narrow a collection further. « Delete
+collection » removes it (the sounds are untouched). Collections are stored with
+the favorites (`echoes.library.v1`, `collections`): local to the machine, not
+part of the project, no engine command.
 
 Sidebar order Phase 1: Recents → Favorites → **Audio**.  
 Later: … → Samples → Loops → Chords → MIDI → Drums → User folders → Packs.

@@ -201,8 +201,10 @@ or offline render.
 search by tag, persisted with the favorites; `frontend/library/tags.ts`, 10 unit
 tests; code-verified, not hand-tested). Slice 2 done: shortcuts
 cleanup — `L` is back on the playback loop (`transport.toggleLoop`), `B` is the
-only library toggle. Left, in order: smart collections (a saved tag + kind filter
-shown as a source), opt-in context memory with « restore defaults », the Devices
+only library toggle. Slice 3 done: smart
+collections (a saved search — text matched on name or tag — plus a type filter,
+shown as a source; type filter next to the search field; `collections.ts`,
+`LibraryCollectionBar.svelte`; code-verified, not hand-tested). Left, in order: opt-in context memory with « restore defaults », the Devices
 go/no-go ADR, pack sources, optional grid results.
 
 Prerequisite landed 2026-10-09: the built-in drum sampler (ADR-028) — a

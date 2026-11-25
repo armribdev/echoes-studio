@@ -7,7 +7,13 @@ import {
 	saveLibraryPersistence,
 	type LibraryPersistence
 } from './persistence';
-import { filterAssetsByQuery } from './search';
+import {
+	canSaveAsCollection,
+	collectionForSource,
+	collectionSourceId,
+	createCollection,
+	filterAssets
+} from './collections';
 import { mergeTags, withoutTag, withTag } from './tags';
 import { libraryPreviewPlayer } from './previewPlayer';
 import { libraryMidiPreviewPlayer } from './midiPreview';
@@ -22,7 +28,9 @@ import {
 	assetFromPath,
 	assetFromScanEntry,
 	type LibraryAsset,
+	type LibraryCollection,
 	type LibraryIndexerState,
+	type LibraryKindFilter,
 	type LibraryScanEntry,
 	type LibrarySourceId
 } from './types';
@@ -41,6 +49,8 @@ export interface LibraryState {
 	recentIds: string[];
 	indexedFolders: string[];
 	userTags: Record<string, string[]>;
+	collections: LibraryCollection[];
+	kindFilter: LibraryKindFilter | null;
 	indexer: LibraryIndexerState;
 	indexerProgress: number | null;
 	indexerError: string | null;
@@ -83,6 +93,8 @@ function initialState(): LibraryState {
 		recentIds: [...persisted.recentIds],
 		indexedFolders: [...persisted.indexedFolders],
 		userTags: persisted.userTags,
+		collections: persisted.collections,
+		kindFilter: null,
 		indexer: 'idle',
 		indexerProgress: null,
 		indexerError: null,
@@ -96,7 +108,8 @@ function persistSlice(state: LibraryState): void {
 		recentIds: state.recentIds,
 		indexedFolders: state.indexedFolders,
 		lastSource: state.source,
-		userTags: state.userTags
+		userTags: state.userTags,
+		collections: state.collections
 	};
 	saveLibraryPersistence(data);
 }
@@ -284,6 +297,44 @@ function createLibraryStore() {
 
 		clearQuery() {
 			update((s) => ({ ...s, query: '' }));
+		},
+
+		setKindFilter(kindFilter: LibraryKindFilter | null) {
+			update((s) => ({ ...s, kindFilter, selectedId: null }));
+		},
+
+		/** Saves the current search and kind filter as a collection, then opens it. */
+		saveCollection(name: string) {
+			update((s) => {
+				if (!canSaveAsCollection(s.query, s.kindFilter)) return s;
+				const collection = createCollection(name, s.query, s.kindFilter);
+				if (!collection.name) return s;
+				const next = {
+					...s,
+					collections: [...s.collections, collection],
+					source: collectionSourceId(collection.id),
+					query: '',
+					kindFilter: null,
+					selectedId: null
+				};
+				persistSlice(next);
+				return next;
+			});
+		},
+
+		removeCollection(id: string) {
+			update((s) => {
+				if (!s.collections.some((collection) => collection.id === id)) return s;
+				const source = collectionSourceId(id);
+				const next = {
+					...s,
+					collections: s.collections.filter((collection) => collection.id !== id),
+					source: s.source === source ? ('audio' as const) : s.source,
+					selectedId: s.source === source ? null : s.selectedId
+				};
+				persistSlice(next);
+				return next;
+			});
 		},
 
 		select(id: string | null) {
@@ -498,7 +549,12 @@ function withUserTags(asset: LibraryAsset, userTags: Record<string, string[]>): 
 	return own?.length ? { ...asset, tags: mergeTags(asset.tags, own) } : asset;
 }
 
+function contentIds(state: LibraryState): string[] {
+	return [...new Set([...state.audioIds, ...state.chordIds, ...state.midiIds, ...state.drumIds])];
+}
+
 function idsForSource(state: LibraryState): string[] {
+	if (collectionForSource(state.collections, state.source)) return contentIds(state);
 	switch (state.source) {
 		case 'recents':
 			return state.recentIds;
@@ -529,7 +585,9 @@ export const libraryVisibleAssets = derived(libraryStore, ($lib) => {
 			assets.push(withUserTags(assetFromPath(id), $lib.userTags));
 		}
 	}
-	return filterAssetsByQuery(assets, $lib.query);
+	const collection = collectionForSource($lib.collections, $lib.source);
+	const inSource = collection ? filterAssets(assets, collection) : assets;
+	return filterAssets(inSource, { query: $lib.query, kind: $lib.kindFilter });
 });
 
 export const libraryHasIndexedContent = derived(libraryStore, ($lib) => {

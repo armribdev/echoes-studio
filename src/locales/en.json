@@ -233,6 +233,16 @@
 		"selectSound": "Select a sound",
 		"tagPlaceholder": "Add a tag…",
 		"removeTag": "Remove tag {tag}",
+		"kindFilterAria": "Filter by type",
+		"kinds": {
+			"all": "All types",
+			"audio": "Audio",
+			"midi_pattern": "MIDI",
+			"chord_progression": "Chords"
+		},
+		"collectionNamePlaceholder": "Collection name",
+		"saveCollection": "Save as collection",
+		"deleteCollection": "Delete collection",
 		"sources": {
 			"audio": "Audio",
 			"favorites": "Favorites",

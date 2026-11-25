@@ -1,5 +1,11 @@
 export * from './types';
-export { filterAssetsByQuery } from './search';
+export { filterAssetsByQuery, filterAssetsByKind } from './search';
+export {
+	canSaveAsCollection,
+	collectionForSource,
+	collectionSourceId,
+	MAX_COLLECTION_NAME_LENGTH
+} from './collections';
 export { MAX_TAG_LENGTH } from './tags';
 export { libraryStore, libraryVisibleAssets, libraryHasIndexedContent } from './libraryStore';
 export { libraryPreviewPlayer } from './previewPlayer';
