@@ -17,7 +17,7 @@ The library is an **insertion tool**, not a destination page.
 
 | Surface                        | Trigger                          | Role                                          |
 | ------------------------------ | -------------------------------- | --------------------------------------------- |
-| **Browser panel (right dock)** | `B` (and current `L`) / toolbar  | Explore, search, organise, import             |
+| **Browser panel (right dock)** | `B` / toolbar                    | Explore, search, organise, import             |
 | **Pop-up browser**             | `+` on a drop target _(Phase 2)_ | Insert in context without leaving the arrange |
 
 Same search engine, same assets, same filters. Only the **open context** changes
@@ -411,7 +411,7 @@ project FX). That is accepted.
 | Context memory       | **None until Phase 4**, then **opt-in only** (“use current selections…”) — never silent auto-learn                                                          |
 | Sampler vs PolySynth | Library does not introduce a sampler; MIDI → PolySynth default                                                                                              |
 | Space conflict       | Focus-scope rule (§8.2) — accepted                                                                                                                          |
-| `B` vs `L`           | **Both toggle** the right library panel; restore Loop to another shortcut in a later shortcuts cleanup                                                      |
+| `B` vs `L`           | `B` toggles the library panel; `L` is back on the playback loop (shortcuts cleanup, 2026-11-26)                                                             |
 | Empty project insert | Phase 1 = hint only; Phase 2 = auto `ADD_TRACK` + clip                                                                                                      |
 | Preview BPM sync     | Phase 1 = native file rate; Phase 2 optional UI-only stretch **if** BPM metadata exists                                                                     |
 

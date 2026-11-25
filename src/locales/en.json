@@ -412,6 +412,7 @@
 			"editUndo": "Undo",
 			"editRedo": "Redo",
 			"transportPlayPause": "Play / Pause",
+			"transportToggleLoop": "Toggle loop",
 			"arrangementAddMarker": "Add marker",
 			"arrangementAddRegion": "Add region",
 			"arrangementPrevLocator": "Previous locator",

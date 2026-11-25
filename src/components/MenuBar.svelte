@@ -87,7 +87,7 @@
 				class="btn btn--loop"
 				class:active={$loopRegion.enabled}
 				on:click={() => loopRegion.toggle()}
-				title={$t('menuBar.loop')}
+				title={`${$t('menuBar.loop')} (${$shortcutLabels('transport.toggleLoop')})`}
 				aria-pressed={$loopRegion.enabled}
 			>
 				<svg

@@ -199,9 +199,11 @@ or offline render.
 
 **Progress (2026-11-26).** Slice 1 done: user tags (detail strip add / remove,
 search by tag, persisted with the favorites; `frontend/library/tags.ts`, 10 unit
-tests; code-verified, not hand-tested). Left, in order: smart collections (a saved
-tag + kind filter shown as a source), opt-in context memory with « restore
-defaults », the Devices go/no-go ADR, pack sources, optional grid results.
+tests; code-verified, not hand-tested). Slice 2 done: shortcuts
+cleanup — `L` is back on the playback loop (`transport.toggleLoop`), `B` is the
+only library toggle. Left, in order: smart collections (a saved tag + kind filter
+shown as a source), opt-in context memory with « restore defaults », the Devices
+go/no-go ADR, pack sources, optional grid results.
 
 Prerequisite landed 2026-10-09: the built-in drum sampler (ADR-028) — a
 `one_shot` dragged from the library onto a pad loads it. The hybrid `drums`

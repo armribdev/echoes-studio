@@ -95,6 +95,7 @@ function buildActions(): ActionMap {
 			const { isPlaying } = get(transport);
 			(isPlaying ? pause() : play()).catch(console.error);
 		},
+		'transport.toggleLoop': () => loopRegion.toggle(),
 		'arrangement.addMarker': () => {
 			const bpm = get(tempo).bpm;
 			const beat = (get(transport).position * bpm) / 60;
@@ -122,7 +123,6 @@ function buildActions(): ActionMap {
 		'arrangement.paste': () => {},
 		'arrangement.duplicate': () => {},
 		'library.toggle': () => rightPanel.toggle(),
-		'library.toggleAlt': () => rightPanel.toggle(),
 		'library.focusSearch': () => {
 			if (get(libraryPopup).open) {
 				requestLibrarySearchFocus();
@@ -207,10 +207,7 @@ export function registerShortcuts(): () => void {
 
 		if (isEditingText(e.target)) {
 			// ADR-023: library toggle still works from the search field.
-			if (
-				matchesShortcut(e, 'library.toggle', overrides) ||
-				matchesShortcut(e, 'library.toggleAlt', overrides)
-			) {
+			if (matchesShortcut(e, 'library.toggle', overrides)) {
 				e.preventDefault();
 				rightPanel.toggle();
 			}

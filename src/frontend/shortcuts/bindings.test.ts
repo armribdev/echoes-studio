@@ -74,9 +74,9 @@ describe('matchesBinding', () => {
 describe('settings rows / aliases', () => {
 	it('folds alias entries out of the settings catalog', () => {
 		const ids = settingsCatalog().map((m) => m.id);
-		expect(ids).toContain('library.toggle');
-		expect(ids).not.toContain('library.toggleAlt');
-		expect(aliasesOf('library.toggle').map((a) => a.id)).toEqual(['library.toggleAlt']);
+		expect(ids).toContain('edit.redo');
+		expect(ids).not.toContain('edit.redoAlt');
+		expect(aliasesOf('edit.redo').map((a) => a.id)).toEqual(['edit.redoAlt']);
 	});
 });
 
@@ -99,10 +99,10 @@ describe('findConflicts', () => {
 
 	it('does not treat primary vs its own alias as a conflict', () => {
 		const overrides = {
-			'library.toggleAlt': { key: 'b', modifiers: [] as ('ctrl' | 'shift' | 'alt')[] }
+			'edit.redoAlt': { key: 'z', modifiers: ['ctrl', 'shift'] as ('ctrl' | 'shift' | 'alt')[] }
 		};
-		expect(conflictIdsFor('library.toggle', overrides)).not.toContain('library.toggleAlt');
-		expect(rowConflictRoots('library.toggle', overrides)).toEqual([]);
+		expect(conflictIdsFor('edit.redo', overrides)).not.toContain('edit.redoAlt');
+		expect(rowConflictRoots('edit.redo', overrides)).toEqual([]);
 	});
 
 	it('allows piano-roll and timeline to share Delete', () => {

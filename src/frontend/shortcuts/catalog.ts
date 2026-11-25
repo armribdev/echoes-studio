@@ -105,6 +105,13 @@ export const SHORTCUT_CATALOG: readonly ShortcutMeta[] = [
 		defaultBinding: chord(' '),
 		scope: 'global'
 	},
+	{
+		id: 'transport.toggleLoop',
+		category: 'transport',
+		labelKey: 'transportToggleLoop',
+		defaultBinding: chord('l'),
+		scope: 'global'
+	},
 
 	// ── Arrangement ───────────────────────────────────────────────────────────
 	{
@@ -194,14 +201,6 @@ export const SHORTCUT_CATALOG: readonly ShortcutMeta[] = [
 		labelKey: 'libraryToggle',
 		defaultBinding: chord('b'),
 		scope: 'global'
-	},
-	{
-		id: 'library.toggleAlt',
-		category: 'library',
-		labelKey: 'libraryToggle',
-		defaultBinding: chord('l'),
-		scope: 'global',
-		aliasOf: 'library.toggle'
 	},
 	{
 		id: 'library.focusSearch',

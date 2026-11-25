@@ -291,7 +291,7 @@ Current implementation (`Knob.svelte`):
 | Zoom in timeline | `Ctrl/Cmd + Scroll` or `+` |
 | Zoom out timeline | `Ctrl/Cmd + Scroll` or `-` |
 | Zoom to fit | `Ctrl/Cmd + 0` |
-| Toggle library panel | `B` (alias `L`) |
+| Toggle library panel | `B` |
 | Focus library search | `/` or `Ctrl/Cmd + F` (panel open) |
 | Preview selected library asset | `Space` (when library results focused) |
 | Insert from library pop-up | Lane `+` (empty/hover) / context menu / empty-project CTA |
