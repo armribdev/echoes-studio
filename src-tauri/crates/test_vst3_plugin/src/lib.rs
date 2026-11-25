@@ -129,6 +129,9 @@ pub const TRACK_COLOR_RANGE: f64 = 16_777_216.0;
 pub const PROGRAM_NAMES: [&str; 3] = ["Quiet", "Unity", "Loud"];
 pub const PROGRAM_GAINS: [f64; 3] = [0.25, 1.0, 1.75];
 pub const PROGRAM_LIST_NAME: &str = "Factory";
+/// The pads every program names through its pitch names: `(pitch, pad)`, shown as
+/// `"{program} {pad}"`.
+pub const PROGRAM_PADS: [(i16, &str); 2] = [(36, "Kick"), (38, "Snare")];
 const PROGRAM_LIST_ID: i32 = 1;
 const PROGRAM_UNIT_ID: i32 = 1;
 const ROOT_UNIT_ID: i32 = 0;
@@ -1695,20 +1698,40 @@ unsafe extern "C" fn unit_info_program_info(
 
 unsafe extern "C" fn unit_info_has_pitch_names(
     _this: *mut IUnitInfo,
-    _list_id: i32,
-    _program: i32,
+    list_id: i32,
+    program: i32,
 ) -> TResult {
-    K_RESULT_FALSE
+    let known_program = usize::try_from(program).is_ok_and(|index| index < PROGRAM_NAMES.len());
+    if list_id == PROGRAM_LIST_ID && known_program {
+        K_RESULT_OK
+    } else {
+        K_RESULT_FALSE
+    }
 }
 
 unsafe extern "C" fn unit_info_pitch_name(
     _this: *mut IUnitInfo,
-    _list_id: i32,
-    _program: i32,
-    _pitch: i16,
-    _name: *mut u16,
+    list_id: i32,
+    program: i32,
+    pitch: i16,
+    name: *mut u16,
 ) -> TResult {
-    K_RESULT_FALSE
+    let program = usize::try_from(program)
+        .ok()
+        .and_then(|index| PROGRAM_NAMES.get(index));
+    let pad = PROGRAM_PADS
+        .iter()
+        .find(|(pad_pitch, _)| *pad_pitch == pitch);
+    match (list_id, program, pad) {
+        (PROGRAM_LIST_ID, Some(program), Some((_, pad))) => {
+            write_utf16(
+                std::slice::from_raw_parts_mut(name, 128),
+                &format!("{program} {pad}"),
+            );
+            K_RESULT_OK
+        }
+        _ => K_INVALID_ARGUMENT,
+    }
 }
 
 unsafe extern "C" fn unit_info_selected_unit(_this: *mut IUnitInfo) -> i32 {

@@ -1117,11 +1117,11 @@ impl PluginHost {
             .map(|r| Arc::clone(&r.instance))
     }
 
-    /// The names a loaded plugin gives to notes (`clap.note-name`), e.g. the
-    /// pads of a drum kit.  `None` when the placement is unknown or busy in a
-    /// block, empty when the plugin names none.
+    /// The names a loaded plugin gives to notes (CLAP `clap.note-name`, VST3 pitch
+    /// names), e.g. the pads of a drum kit.  `None` when the placement is unknown or
+    /// busy in a block, empty when the plugin names none.
     pub fn plugin_note_names(&self, instance_key: &str) -> Option<Vec<PluginNoteName>> {
-        let names = self.records.get(instance_key)?.instance.clap_note_names()?;
+        let names = self.records.get(instance_key)?.instance.note_names()?;
         Some(names.into_iter().map(PluginNoteName::from).collect())
     }
 

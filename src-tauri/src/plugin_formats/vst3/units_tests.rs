@@ -203,3 +203,100 @@ fn the_interface_is_released_after_reading() {
     lists_of(&mut units);
     assert_eq!(units.references(), 0, "every query is released");
 }
+
+fn pitch_names_of(units: &mut FakeUnits) -> Vec<PitchName> {
+    let mut listener = FakeListener::new(false);
+    let instance = fake_vst3_instance_with_units(&mut listener, units);
+    let controller = instance
+        .vst3_controller()
+        .expect("the fake has a controller");
+    unsafe { read_pitch_names(controller.as_ptr()) }
+}
+
+fn pitch_name(pitch: u8, name: &str) -> PitchName {
+    PitchName {
+        pitch,
+        name: name.into(),
+    }
+}
+
+/// Two kits chosen by parameter 99; each names its own pads.
+fn drum_kits() -> Box<FakeUnits> {
+    let mut units = FakeUnits::with_list(7, "Kits", &["Rock", "Jazz"]);
+    units.program_change_params = vec![(0, 99, 1)];
+    units.add_pitch_name(7, 0, 38, "Snare");
+    units.add_pitch_name(7, 0, 36, "Kick");
+    units.add_pitch_name(7, 1, 36, "Brush kick");
+    units
+}
+
+#[test]
+fn the_pitch_names_are_those_of_the_current_program_in_pitch_order() {
+    let mut units = drum_kits();
+    assert_eq!(
+        pitch_names_of(&mut units),
+        vec![pitch_name(36, "Kick"), pitch_name(38, "Snare")]
+    );
+    units.values.borrow_mut().insert(99, 1.0);
+    assert_eq!(
+        pitch_names_of(&mut units),
+        vec![pitch_name(36, "Brush kick")]
+    );
+}
+
+#[test]
+fn a_controller_without_unit_info_names_no_pitch() {
+    assert!(pitch_names_of(&mut FakeUnits::absent()).is_empty());
+}
+
+#[test]
+fn a_program_that_names_no_pitch_gives_no_name() {
+    let mut units = FakeUnits::with_list(7, "Kits", &["Rock", "Jazz"]);
+    units.program_change_params = vec![(0, 99, 1)];
+    units.add_pitch_name(7, 1, 36, "Brush kick");
+    assert!(pitch_names_of(&mut units).is_empty());
+}
+
+#[test]
+fn without_a_selector_the_current_program_is_unknown_and_nothing_is_named() {
+    let mut units = FakeUnits::with_list(7, "Kits", &["Rock"]);
+    units.add_pitch_name(7, 0, 36, "Kick");
+    assert!(pitch_names_of(&mut units).is_empty());
+}
+
+#[test]
+fn a_pitch_whose_name_is_empty_or_fails_to_read_is_skipped() {
+    let mut units = drum_kits();
+    units.add_pitch_name(7, 0, 42, "");
+    units.add_pitch_name(7, 0, 46, "Open hat");
+    units.failing_pitches = vec![46];
+    assert_eq!(
+        pitch_names_of(&mut units),
+        vec![pitch_name(36, "Kick"), pitch_name(38, "Snare")]
+    );
+}
+
+#[test]
+fn only_the_128_midi_pitches_are_asked() {
+    let mut units = drum_kits();
+    units.add_pitch_name(7, 0, 128, "Beyond");
+    units.add_pitch_name(7, 0, -1, "Below");
+    assert_eq!(pitch_names_of(&mut units).len(), 2);
+}
+
+#[test]
+fn with_several_lists_the_first_one_that_names_pitches_wins() {
+    let mut units = FakeUnits::with_list(1, "Sounds", &["a1"]);
+    units.add_list(2, "Kits", &["Rock"]);
+    units.add_unit(5, 0, "Drums", 2);
+    units.program_change_params = vec![(0, 50, 0), (5, 51, 0)];
+    units.add_pitch_name(2, 0, 36, "Kick");
+    assert_eq!(pitch_names_of(&mut units), vec![pitch_name(36, "Kick")]);
+}
+
+#[test]
+fn the_interface_is_released_after_reading_pitch_names() {
+    let mut units = drum_kits();
+    pitch_names_of(&mut units);
+    assert_eq!(units.references(), 0, "every query is released");
+}

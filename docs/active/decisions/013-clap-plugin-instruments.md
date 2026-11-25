@@ -212,6 +212,16 @@ and reports `changed` as the `plugin-note-names-changed` event; no UI uses them
 yet. No invariant changes (no new ADR). Details: `../plugins/plugin-wrapper-system.md`
 (Host `clap.note-ports` and `clap.note-name`); sandbox: ADR-015 amendment 2026-10-14.
 
+## Amendment 2026-11-25 — a VST3 plugin names its notes (pitch names)
+
+The note names a CLAP instrument gives through `clap.note-name` have a VST3
+counterpart: the pitch names of `IUnitInfo`, per program. `PluginInstance::note_names`
+reads them in process and in the sandbox (`Op::NoteNames`, no protocol change) and
+`get_plugin_note_names` answers for both formats; a VST3 name applies to every port and
+channel. Off the audio thread, no render change, no invariant changes (no new ADR). The
+key column of the piano roll shows the names of both formats. Details:
+`../plugins/plugin-wrapper-system.md` (VST3 pitch names, Names in the piano roll).
+
 ## Amendment 2026-10-14 — the host answers `clap.timer-support`
 
 A plugin (effect or instrument) registers periodic timers and the host calls its

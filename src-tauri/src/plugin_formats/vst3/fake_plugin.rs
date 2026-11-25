@@ -160,6 +160,10 @@ pub(crate) struct FakeUnits {
     units: Vec<(i32, i32, String, i32)>,
     /// `(id, name, program names)`
     lists: Vec<(i32, String, Vec<String>)>,
+    /// `(program list id, program index, pitch, name)`
+    pitch_names: Vec<(i32, i32, i16, String)>,
+    /// Pitches whose name fails to read.
+    pub failing_pitches: Vec<i16>,
     /// `(unit id, parameter id, step count)`, flagged `kIsProgramChange`.
     pub program_change_params: Vec<(i32, u32, i32)>,
     /// `(unit id, parameter id)`, without the flag.
@@ -232,11 +236,21 @@ impl FakeUnits {
                     offset_of!(IUnitInfoVtbl, get_program_name),
                     units_get_program_name as *const (),
                 ),
+                (
+                    offset_of!(IUnitInfoVtbl, has_program_pitch_names),
+                    units_has_program_pitch_names as *const (),
+                ),
+                (
+                    offset_of!(IUnitInfoVtbl, get_program_pitch_name),
+                    units_get_program_pitch_name as *const (),
+                ),
             ]),
             references: Cell::new(0),
             offered,
             units: Vec::new(),
             lists: Vec::new(),
+            pitch_names: Vec::new(),
+            failing_pitches: Vec::new(),
             program_change_params: Vec::new(),
             plain_params: Vec::new(),
             reported_unit_count: None,
@@ -290,6 +304,11 @@ impl FakeUnits {
     pub fn add_list(&mut self, id: i32, name: &str, programs: &[&str]) {
         let programs = programs.iter().map(|&program| program.into()).collect();
         self.lists.push((id, name.into(), programs));
+    }
+
+    pub fn add_pitch_name(&mut self, list_id: i32, program: i32, pitch: i16, name: &str) {
+        self.pitch_names
+            .push((list_id, program, pitch, name.into()));
     }
 
     pub fn references(&self) -> u32 {
@@ -400,6 +419,46 @@ unsafe extern "C" fn units_get_program_name(
         .filter(|_| fake.failing_program != Some(index));
     match name {
         Some(name) => {
+            write_string128(out, name);
+            K_RESULT_OK
+        }
+        None => K_INVALID_ARGUMENT,
+    }
+}
+
+unsafe extern "C" fn units_has_program_pitch_names(
+    this: *mut c_void,
+    list_id: i32,
+    program: i32,
+) -> TResult {
+    let has_names = units(this)
+        .pitch_names
+        .iter()
+        .any(|&(list, index, ..)| list == list_id && index == program);
+    if has_names {
+        K_RESULT_OK
+    } else {
+        K_RESULT_FALSE
+    }
+}
+
+unsafe extern "C" fn units_get_program_pitch_name(
+    this: *mut c_void,
+    list_id: i32,
+    program: i32,
+    pitch: i16,
+    out: *mut u16,
+) -> TResult {
+    let fake = units(this);
+    let name = fake
+        .pitch_names
+        .iter()
+        .find(|(list, index, named_pitch, _)| {
+            *list == list_id && *index == program && *named_pitch == pitch
+        })
+        .filter(|_| !fake.failing_pitches.contains(&pitch));
+    match name {
+        Some((.., name)) => {
             write_string128(out, name);
             K_RESULT_OK
         }

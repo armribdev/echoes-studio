@@ -85,7 +85,7 @@ use vst3_host::params::{
     read_vst3_param_text, read_vst3_param_value, read_vst3_params, write_vst3_param_value,
 };
 use vst3_host::transport::{process_context, TransportState};
-use vst3_host::units::{parse_program_key, read_program_lists, select_program};
+use vst3_host::units::{parse_program_key, read_pitch_names, read_program_lists, select_program};
 
 use crate::{HostedPlugin, PluginRole};
 
@@ -543,6 +543,27 @@ impl Vst3Adapter {
         ((*(*self.processor).vtbl).process)(self.processor, &mut data);
     }
 
+    /// The pitch names of the current program, for every port and channel; none
+    /// without a controller.
+    fn note_names(&self) -> Result<Vec<u8>, String> {
+        let Ok(controller) = self.controller_ptr() else {
+            return Ok(NoteNameRecord::encode_list(&[]));
+        };
+        let _gate = self.enter_main()?;
+        // SAFETY: live controller, main thread, gate held.
+        let pitch_names = unsafe { read_pitch_names(controller) };
+        let records: Vec<_> = pitch_names
+            .into_iter()
+            .map(|pitch_name| NoteNameRecord {
+                name: pitch_name.name,
+                port: -1,
+                key: i16::from(pitch_name.pitch),
+                channel: -1,
+            })
+            .collect();
+        Ok(NoteNameRecord::encode_list(&records))
+    }
+
     /// The program lists the controller offers; none without a controller.
     fn preset_list(&self) -> Result<Vec<u8>, String> {
         let Ok(controller) = self.controller_ptr() else {
@@ -873,7 +894,7 @@ impl HostedPlugin for Vst3Adapter {
                 }
                 self.flush_values(values).map(|()| Vec::new())
             }
-            Op::NoteNames => Ok(NoteNameRecord::encode_list(&[])),
+            Op::NoteNames => self.note_names(),
             Op::TrackInfo => {
                 let track = TrackRecord::decode(payload).map_err(|_| "invalid track info")?;
                 self.set_track_info(&HostTrackInfo {

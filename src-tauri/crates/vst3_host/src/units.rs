@@ -58,8 +58,9 @@ pub struct IUnitInfoVtbl {
         unsafe extern "C" fn(*mut c_void, i32, *mut ProgramListInfo) -> TResult,
     pub get_program_name: unsafe extern "C" fn(*mut c_void, i32, i32, *mut u16) -> TResult,
     pub _get_program_info: *const c_void,
-    pub _has_program_pitch_names: *const c_void,
-    pub _get_program_pitch_name: *const c_void,
+    pub has_program_pitch_names: unsafe extern "C" fn(*mut c_void, i32, i32) -> TResult,
+    pub get_program_pitch_name:
+        unsafe extern "C" fn(*mut c_void, i32, i32, i16, *mut u16) -> TResult,
     pub _get_selected_unit: *const c_void,
     pub _select_unit: *const c_void,
     pub _get_unit_by_bus: *const c_void,
@@ -105,7 +106,13 @@ pub unsafe fn read_program_lists(controller: *mut IEditController) -> Vec<Progra
     (vtbl.release)(interface);
     let list_count = lists.len();
     for list in &mut lists {
-        list.program_change_param = program_change_param(list, list_count, &unit_lists, &selectors);
+        list.program_change_param = program_change_param(
+            list.id,
+            list.programs.len(),
+            list_count,
+            &unit_lists,
+            &selectors,
+        );
         list.current_program = list
             .program_change_param
             .and_then(|selector| current_program(controller, selector, list.programs.len()));
@@ -138,20 +145,19 @@ struct ProgramChangeParam {
 /// unlinked from their only list; their only program-change parameter is then
 /// taken if its step count matches the number of programs.
 fn program_change_param(
-    list: &ProgramList,
+    list_id: i32,
+    program_count: usize,
     list_count: usize,
     unit_lists: &[(i32, i32)],
     selectors: &[ProgramChangeParam],
 ) -> Option<u32> {
     let of_a_unit_using_the_list = unit_lists
         .iter()
-        .filter(|&&(_, unit_list)| unit_list == list.id)
+        .filter(|&&(_, unit_list)| unit_list == list_id)
         .find_map(|&(unit_id, _)| selectors.iter().find(|param| param.unit_id == unit_id));
     match (of_a_unit_using_the_list, selectors) {
         (Some(param), _) => Some(param.id),
-        (None, [only])
-            if list_count == 1 && only.step_count as i64 + 1 == list.programs.len() as i64 =>
-        {
+        (None, [only]) if list_count == 1 && only.step_count as i64 + 1 == program_count as i64 => {
             Some(only.id)
         }
         _ => None,
@@ -186,29 +192,109 @@ unsafe fn read_program_change_params(controller: *mut IEditController) -> Vec<Pr
         .collect()
 }
 
-unsafe fn read_lists(interface: *mut c_void, vtbl: &IUnitInfoVtbl) -> Vec<ProgramList> {
+/// The program lists a plugin declares, their program count bounded.
+unsafe fn read_list_headers(interface: *mut c_void, vtbl: &IUnitInfoVtbl) -> Vec<ProgramListInfo> {
     let count = (vtbl.get_program_list_count)(interface).clamp(0, MAX_PROGRAM_LISTS);
+    (0..count)
+        .filter_map(|index| {
+            let mut info: ProgramListInfo = std::mem::zeroed();
+            let read = (vtbl.get_program_list_info)(interface, index, &mut info) == K_RESULT_OK;
+            info.program_count = info.program_count.clamp(0, MAX_PROGRAMS_PER_LIST);
+            read.then_some(info)
+        })
+        .collect()
+}
+
+unsafe fn read_lists(interface: *mut c_void, vtbl: &IUnitInfoVtbl) -> Vec<ProgramList> {
     let mut budget = MAX_PROGRAMS;
-    let mut lists = Vec::new();
-    for index in 0..count {
-        let mut info: ProgramListInfo = std::mem::zeroed();
-        if (vtbl.get_program_list_info)(interface, index, &mut info) != K_RESULT_OK {
-            continue;
-        }
-        let programs = info.program_count.clamp(0, MAX_PROGRAMS_PER_LIST) as usize;
-        let programs = programs.min(budget);
-        budget -= programs;
-        lists.push(ProgramList {
-            id: info.id,
-            name: string128_to_string(&info.name),
-            program_change_param: None,
-            programs: (0..programs as i32)
-                .map(|program| read_program_name(interface, vtbl, info.id, program))
-                .collect(),
-            current_program: None,
-        });
+    read_list_headers(interface, vtbl)
+        .into_iter()
+        .map(|info| {
+            let programs = (info.program_count as usize).min(budget);
+            budget -= programs;
+            ProgramList {
+                id: info.id,
+                name: string128_to_string(&info.name),
+                program_change_param: None,
+                programs: (0..programs as i32)
+                    .map(|program| read_program_name(interface, vtbl, info.id, program))
+                    .collect(),
+                current_program: None,
+            }
+        })
+        .collect()
+}
+
+/// A name a plugin gives to a note, e.g. a pad of a drum kit.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PitchName {
+    pub pitch: u8,
+    pub name: String,
+}
+
+const MIDI_PITCH_COUNT: i16 = 128;
+
+/// The names the plugin gives to the notes of its current program (`IUnitInfo`
+/// pitch names).  A plugin has them per program, so the program a selector is
+/// set to decides; with several lists the first one that names notes wins.
+/// Empty when the plugin has no `IUnitInfo`, no selector, or no names.
+///
+/// # Safety
+/// `controller` must be a live, initialised `IEditController`, called off the
+/// audio thread with the instance's FFI gate held.
+pub unsafe fn read_pitch_names(controller: *mut IEditController) -> Vec<PitchName> {
+    let mut interface: *mut c_void = std::ptr::null_mut();
+    let found =
+        ((*(*controller).vtbl).query_interface)(controller, &IID_IUNIT_INFO, &mut interface);
+    if found != K_RESULT_OK || interface.is_null() {
+        return Vec::new();
     }
-    lists
+    let vtbl = &**(interface as *mut *const IUnitInfoVtbl);
+    let unit_lists = read_unit_lists(interface, vtbl);
+    let selectors = read_program_change_params(controller);
+    let lists = read_list_headers(interface, vtbl);
+    let names = lists
+        .iter()
+        .find_map(|list| {
+            let program_count = list.program_count as usize;
+            let selector =
+                program_change_param(list.id, program_count, lists.len(), &unit_lists, &selectors)?;
+            let program = current_program(controller, selector, program_count)?;
+            read_program_pitch_names(interface, vtbl, list.id, program as i32)
+        })
+        .unwrap_or_default();
+    (vtbl.release)(interface);
+    names
+}
+
+/// The pitch names of one program, `None` when it has none.
+unsafe fn read_program_pitch_names(
+    interface: *mut c_void,
+    vtbl: &IUnitInfoVtbl,
+    list_id: i32,
+    program: i32,
+) -> Option<Vec<PitchName>> {
+    if (vtbl.has_program_pitch_names)(interface, list_id, program) != K_RESULT_OK {
+        return None;
+    }
+    let names: Vec<PitchName> = (0..MIDI_PITCH_COUNT)
+        .filter_map(|pitch| {
+            let mut name: String128 = [0; 128];
+            let read = (vtbl.get_program_pitch_name)(
+                interface,
+                list_id,
+                program,
+                pitch,
+                name.as_mut_ptr(),
+            ) == K_RESULT_OK;
+            let name = string128_to_string(&name);
+            (read && !name.is_empty()).then_some(PitchName {
+                pitch: pitch as u8,
+                name,
+            })
+        })
+        .collect();
+    (!names.is_empty()).then_some(names)
 }
 
 unsafe fn read_program_name(

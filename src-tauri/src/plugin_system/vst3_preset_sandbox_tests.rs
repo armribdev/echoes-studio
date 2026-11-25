@@ -289,6 +289,58 @@ fn a_sandboxed_plugin_offers_and_loads_its_presets_like_an_in_process_one() {
     assert_eq!(observe(true), in_process);
 }
 
+/// `(key, name)` of every pad the plugin names.
+type Pads = Vec<(i16, String)>;
+
+/// The pads before and after the program "Loud".
+fn pads_around_a_program(sandboxed: bool) -> (Pads, Pads) {
+    let mut host = host();
+    let mut node = host
+        .instantiate(KEY, &effect_id(), sandboxed)
+        .expect("plugin starts");
+    node.prepare(PrepareContext {
+        sample_rate: 48_000.0,
+        max_block_size: 4096,
+        num_channels: 2,
+        live: false,
+    });
+    let listing = PresetListing::Vst3 {
+        instance: host.instance_by_key(KEY).unwrap(),
+        files: None,
+    };
+    let listed = listing.list();
+    host.remember_listing(&listing, listed.clone());
+    let pads = |host: &PluginHost| -> Pads {
+        host.plugin_note_names(KEY)
+            .expect("the plugin is idle")
+            .into_iter()
+            .map(|note| (note.key, note.name))
+            .collect()
+    };
+
+    let before = pads(&host);
+    let (_node, chosen) = while_audio_runs(node, || load(&host, named(&listed, "Loud")));
+    chosen.expect("the program loads");
+    (before, pads(&host))
+}
+
+#[test]
+fn a_sandboxed_plugin_names_its_pads_like_an_in_process_one() {
+    let _environment = environment_lock();
+    let in_process = pads_around_a_program(false);
+
+    let names = |pads: [(i16, &str); 2]| pads.map(|(key, name)| (key, name.to_string()));
+    assert_eq!(
+        in_process,
+        (
+            names([(36, "Unity Kick"), (38, "Unity Snare")]).to_vec(),
+            names([(36, "Loud Kick"), (38, "Loud Snare")]).to_vec()
+        ),
+        "the pads follow the program in use"
+    );
+    assert_eq!(pads_around_a_program(true), in_process);
+}
+
 fn sandboxed_host() -> (PluginHost, Box<dyn AudioNode>) {
     let mut host = host();
     let mut node = host

@@ -315,3 +315,42 @@ fn the_base_of_a_value_modulated_parameter_follows_the_program() {
         "every followed parameter is read again, from the controller"
     );
 }
+
+#[test]
+fn the_note_names_follow_the_program_the_plugin_is_set_to() {
+    let mut units = four_programs();
+    units.add_pitch_name(4, 0, 36, "Kick");
+    units.add_pitch_name(4, 2, 36, "Bright kick");
+    let (_listener, instance) = plugin_with(&mut units);
+    let note_names = |instance: &PluginInstance| -> Vec<(i16, String)> {
+        instance
+            .note_names()
+            .expect("the plugin is idle")
+            .into_iter()
+            .map(|note| (note.key, note.name))
+            .collect()
+    };
+    assert_eq!(note_names(&instance), [(36, "Kick".to_string())]);
+
+    instance
+        .load_preset(&program_named(&instance, "Bright").request())
+        .unwrap();
+
+    assert_eq!(note_names(&instance), [(36, "Bright kick".to_string())]);
+    instance
+        .load_preset(&program_named(&instance, "Warm").request())
+        .unwrap();
+    assert!(instance.note_names().unwrap().is_empty());
+}
+
+#[test]
+fn a_note_name_applies_to_every_port_and_channel() {
+    let mut units = four_programs();
+    units.add_pitch_name(4, 0, 38, "Snare");
+    let (_listener, instance) = plugin_with(&mut units);
+
+    let names = instance.note_names().unwrap();
+
+    assert_eq!(names.len(), 1);
+    assert_eq!((names[0].port, names[0].channel), (-1, -1));
+}

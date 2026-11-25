@@ -16,9 +16,9 @@ use plugin_bridge::protocol::{
     PARAM_MODULATION, PARAM_VALUE,
 };
 use plugin_bridge::records::{
-    Handshake, ParamRecord, ParamUnit, PortDirection, PortRole, PresetRecord, PresetSource,
-    PresetStateRecord, ProgramListRecord, SpeakerLayout, TrackRecord, MAX_PORTS, PARAM_AUTOMATABLE,
-    PARAM_HIDDEN,
+    Handshake, NoteNameRecord, ParamRecord, ParamUnit, PortDirection, PortRole, PresetRecord,
+    PresetSource, PresetStateRecord, ProgramListRecord, SpeakerLayout, TrackRecord, MAX_PORTS,
+    PARAM_AUTOMATABLE, PARAM_HIDDEN,
 };
 use plugin_bridge::session::{
     BlockOutcome, BlockReply, BlockRequest, BridgeLayout, BridgeProcess,
@@ -490,6 +490,38 @@ fn a_program_reaches_the_processor_and_the_controller_follows_it() {
         process(&bridge, 0, &[], TIMEOUT).output,
         scaled(&ramp(), 1.75)
     );
+}
+
+/// `(key, name, port, channel)` of every note the plugin names.
+fn note_names(bridge: &BridgeProcess) -> Vec<(i16, String, i16, i16)> {
+    let reply = bridge
+        .request(Op::NoteNames, &[], TIMEOUT)
+        .expect("the note names");
+    NoteNameRecord::decode_list(&reply)
+        .expect("note names")
+        .into_iter()
+        .map(|note| (note.key, note.name, note.port, note.channel))
+        .collect()
+}
+
+#[test]
+fn the_pads_the_controller_names_come_back_for_every_port_and_channel() {
+    let bridge = activated();
+    assert_eq!(
+        note_names(&bridge),
+        [
+            (36, "Unity Kick".to_string(), -1, -1),
+            (38, "Unity Snare".to_string(), -1, -1),
+        ]
+    );
+}
+
+#[test]
+fn choosing_a_program_renames_the_pads() {
+    let bridge = activated();
+    choose_program(&bridge, &format!("{PROGRAM}:2")).expect("the program loads");
+    let names: Vec<_> = note_names(&bridge).into_iter().map(|note| note.1).collect();
+    assert_eq!(names, ["Loud Kick", "Loud Snare"]);
 }
 
 #[test]

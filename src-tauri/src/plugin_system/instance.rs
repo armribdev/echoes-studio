@@ -74,7 +74,9 @@ use crate::plugin_formats::vst3::params::{
     read_vst3_param_text, read_vst3_param_value, write_vst3_param_value,
 };
 use crate::plugin_formats::vst3::preset_file::{class_id_text, read_preset_chunks};
-use crate::plugin_formats::vst3::units::{parse_program_key, read_program_lists, select_program};
+use crate::plugin_formats::vst3::units::{
+    parse_program_key, read_pitch_names, read_program_lists, select_program, PitchName,
+};
 use crate::plugin_system::bridge::BridgedPlugin;
 use crate::plugin_system::crash_marker::{self, MarkerGuard, PluginThread};
 use crate::plugin_system::lifecycle::LifecycleState;
@@ -596,18 +598,35 @@ impl PluginInstance {
         unsafe { crate::plugin_formats::clap::ffi::read_param_text(*plugin, native_id, value) }
     }
 
-    /// The plugin's note names (`clap.note-name`), read under the FFI gate.  `None`
-    /// for other formats, or when a block is in flight past the budget.
-    pub fn clap_note_names(&self) -> Option<Vec<NoteName>> {
+    /// The names the plugin gives to notes, e.g. the pads of a drum kit: its
+    /// `clap.note-name` for CLAP, the pitch names of its current program for VST3,
+    /// in process or sandboxed.  Read under the FFI gate.  `None` for another
+    /// format, or when a block is in flight past the budget.
+    pub fn note_names(&self) -> Option<Vec<NoteName>> {
         if let Some(bridged) = self.bridge() {
             return bridged.note_names();
         }
-        let NativeHandle::Clap { plugin, .. } = &self.handle else {
-            return None;
-        };
+        match &self.handle {
+            NativeHandle::Clap { plugin, .. } => {
+                let _gate = self.offrt_try_acquire(FFI_GATE_HARVEST_BUDGET)?;
+                // SAFETY: live CLAP plugin owned by this instance; FFI gate held.
+                Some(unsafe { read_note_names(*plugin) })
+            }
+            _ => self.vst3_note_names(),
+        }
+    }
+
+    fn vst3_note_names(&self) -> Option<Vec<NoteName>> {
+        let controller = self.vst3_controller()?;
         let _gate = self.offrt_try_acquire(FFI_GATE_HARVEST_BUDGET)?;
-        // SAFETY: live CLAP plugin owned by this instance; FFI gate held.
-        Some(unsafe { read_note_names(*plugin) })
+        // SAFETY: live VST3 controller owned by this instance; FFI gate held.
+        let names = unsafe { read_pitch_names(controller.as_ptr()) };
+        Some(
+            names
+                .into_iter()
+                .map(vst3_pitch_name_as_note_name)
+                .collect(),
+        )
     }
 
     /// Loads a preset into a CLAP plugin (ADR-031), in process or sandboxed; the
@@ -1580,6 +1599,16 @@ impl Drop for PluginInstance {
 fn clap_stop_processing(plugin: *const ClapPlugin) {
     let _audio_thread = audio_thread_scope();
     unsafe { ((*plugin).stop_processing)(plugin) };
+}
+
+/// A VST3 pitch name applies to the note on every port and channel.
+fn vst3_pitch_name_as_note_name(pitch_name: PitchName) -> NoteName {
+    NoteName {
+        name: pitch_name.name,
+        port: -1,
+        key: i16::from(pitch_name.pitch),
+        channel: -1,
+    }
 }
 
 const LC_CREATED: u8 = 0;

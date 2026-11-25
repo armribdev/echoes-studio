@@ -857,21 +857,22 @@ without crashing). The render harness is unchanged: it holds no VST3 plugin.
   (`clap_ffi::take_plugin_note_names_changed`, callable from any thread);
   `main.rs::watch_plugin_edits` turns it into the `plugin-note-names-changed`
   event within 250 ms. Like `plugin-params-changed` it carries no payload: the
-  listener refetches. Nothing in the UI listens yet.
+  listener refetches. The piano roll listens ("Names in the piano roll" below).
 - _Reading the names._ The `get_plugin_note_names(instance_key)` command returns
   the plugin's names (`name`, `port`, `key`, `channel`, `-1` = every one) through
   `PluginHost::plugin_note_names` — `clap_note_name.count/get` on the command
   thread under the instance FFI gate, never on the audio thread. `None` means the
-  placement is unknown, not a CLAP plugin, or busy in a block past the 3 ms
+  placement is unknown, neither CLAP nor VST3, or busy in a block past the 3 ms
   budget (retry); an empty list means the plugin names no note. At most 4096
-  names are read. **No UI uses it yet**: showing drum-pad names in the piano roll
-  is a separate step.
+  names are read. A VST3 plugin answers through the same command ("VST3 pitch
+  names" below).
 - _Sandbox._ The bridge hosts both extensions. `changed` travels in the block
   flags (`BLOCK_NOTE_NAMES_CHANGED`, bit 12, next to the `clap.params` rescan
   bits); the names are read by a new control op, `Op::NoteNames`, in the wire form
   of `clap_ffi::encode_note_names`. The shared-memory layout and
   `BRIDGE_PROTOCOL_VERSION` are unchanged.
-- _Limits._ No VST3 equivalent. Not yet tried with real plugins.
+- _Limits._ Not yet tried with real plugins. The VST3 equivalent is the pitch names
+  of `IUnitInfo` ("VST3 pitch names").
 
 Tests: `crates/clap_ffi` (layouts, dialects, a rescan of all ports vs a rename,
 `changed` reported once, wire round trip), `plugin_system/sandbox_tests.rs` and
@@ -879,6 +880,53 @@ Tests: `crates/clap_ffi` (layouts, dialects, a rescan of all ports vs a rename,
 read and re-read after a change, `changed` reaching the app once, rescan → restart,
 in process and sandboxed). The test plugin gained `Note names set` (19),
 `Note ports rescan` (20) and `Host note dialects` (21): 22 parameters in all.
+
+**VST3 pitch names (ADR-013 amendment, 2026-11-25).** The VST3 way for a plugin to
+name notes, e.g. the pads of a drum kit: `IUnitInfo::hasProgramPitchNames` and
+`getProgramPitchName(listId, programIndex, midiPitch)`, checked against the
+`ivstunits.h` of `crates/vst3_ffi/sdk_headers/` (no new interface, no new IID: the
+two slots of `IUnitInfoVtbl` were reserved). `IKeyswitchController` (articulation
+names) is another interface and is not read.
+
+- _Names belong to a program._ `vst3_host::units::read_pitch_names` takes the program
+  the selector is set to (the same selector and current-program reading as the
+  presets), asks `hasProgramPitchNames` for it, then the 128 MIDI pitches; an empty
+  name or a pitch that fails is skipped. With several lists the first one that names
+  pitches wins. No `IUnitInfo`, no selector (so the current program is unknown) or a
+  program without names gives an empty list. It reads the list headers only, never
+  the program names (up to 20 000 calls for presets).
+- _Same command as CLAP._ `PluginInstance::note_names` is the one entry point for both
+  formats, under the FFI gate with the 3 ms harvest budget; `get_plugin_note_names`
+  and `PluginHost::plugin_note_names` are unchanged. A VST3 name applies to every
+  port and channel (`port` and `channel` are `-1`), `key` is the pitch.
+- _Sandbox._ `Op::NoteNames` of the VST3 adapter does the same read in the bridge
+  (it used to answer an empty list). Protocol, block layout and
+  `BRIDGE_PROTOCOL_VERSION` (4) are unchanged.
+- _When the names change._ There is no event for VST3: the host still does not answer
+  `IUnitHandler::notifyProgramListChange` (decision of ADR-031), so a listener reads
+  again when it needs the names (a new program, an opened editor). A program the
+  plugin selects itself is seen at the next read.
+- _Limits._ Off the audio thread, nothing runs in a block, the golden hashes are
+  unchanged (no render change). **Not tried with a real plugin**: Surge XT and
+  TDR Nova were not checked for pitch names, and the test plugin is the only proof.
+
+_Names in the piano roll._ The key column of `PianoRoll.svelte` shows the name of a
+key in place of its C / E / A letter (same 9 px style, cut with an ellipsis, the
+tooltip says `Kick · C1`); a track whose instrument names nothing keeps the usual
+column. `watchPluginKeyNames` (`src/stores/pluginKeyNames.ts`) follows the placement
+`instrument:{track}` of the open clip, reads again 300 ms after `plugin-note-names-changed`
+or `plugin-state-edited` (a VST3 program change says nothing else), and publishes only
+when the names differ so the 128 rows are not redrawn for nothing. Pure parts and
+tests: `src/frontend/pianoRoll/pluginKeyNames.ts` (a name for every key, `-1`, labels no
+row). **Not hand-tested.**
+
+Tests: `plugin_formats/vst3/units_tests.rs` (current program, per-program names, no
+`IUnitInfo`, no selector, empty or failing pitch, 128 pitches only, first list wins,
+interface released), `plugin_system/vst3_program_tests.rs` (names follow a loaded
+program, every port and channel), `crates/plugin_host_bridge/tests/vst3_bridge.rs`
+(real bridge binary), `plugin_system/vst3_preset_sandbox_tests.rs` (sandboxed and in
+process answer the same). The test plugin names two pads per program
+(`PROGRAM_PADS`, "{program} {pad}").
 
 **Host `clap.timer-support` (2026-10-14).** Checked against
 `clap/ext/timer-support.h` (CLAP main; id `clap.timer-support`, no compat id).
@@ -1258,8 +1306,8 @@ name>\…` under `Documents` (the shell's folder, so a moved one is found; user
 - _Not done._ `IUnitHandler` / `IUnitHandler2` (the host does not answer
   `notifyProgramListChange` or `notifyUnitSelection`; the list is read again each
   time the picker is shown or focused, and nothing in the load waits for them),
-  `IProgramListData` / `IUnitData` (program data without the selector), program
-  pitch names, `selectUnit`, the `Prog` and `Info` chunks, presets bundled inside the
+  `IProgramListData` / `IUnitData` (program data without the selector),
+  `selectUnit`, the `Prog` and `Info` chunks, presets bundled inside the
   plugin's `.vst3`, a file watcher, saving a preset from the host, macOS and Linux
   locations, and multi-block program application.
 - _Checked and not checked._ The program path and the file path are tested on TDR

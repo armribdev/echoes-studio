@@ -41,6 +41,8 @@
 	import { matchesShortcut, matchesShortcutRow } from '../frontend/shortcuts/bindings';
 	import { preferences } from '../stores/preferences';
 	import { noteClipboard, copyMidiNotes } from '../stores/noteClipboard';
+	import { pluginKeyNames, watchPluginKeyNames } from '../stores/pluginKeyNames';
+	import { noteName } from '../frontend/sampler/pads';
 	import { keyboardFocus } from '../stores/keyboardFocus';
 	import { t } from 'svelte-i18n';
 	import { pianoRollStatusInfo } from '../stores/status';
@@ -147,6 +149,9 @@
 	let scrubCleanup: (() => void) | null = null;
 
 	let trackId: string | null = null;
+
+	$: instrument = $engineProject.tracks.find((t) => t.id === trackId)?.instrument ?? null;
+	$: watchPluginKeyNames(trackId && instrument ? `instrument:${trackId}` : null);
 
 	$: clipStartSec = (() => {
 		if (!trackId || !clipId) return 0;
@@ -1735,14 +1740,16 @@
 					>
 						{#each { length: TOTAL_PITCHES } as _, i}
 							{@const pitch = TOTAL_PITCHES - 1 - i}
+							{@const pluginName = $pluginKeyNames.get(pitch)}
 							<div
 								class="key"
 								class:key--black={isBlack(pitch)}
 								class:key--c={pitch % 12 === 0}
 								style="height: {NOTE_H}px"
+								title={pluginName ? `${pluginName} · ${noteName(pitch)}` : undefined}
 								role="listitem"
 							>
-								<span class="key-label">{getPianoKeyLabel(pitch)}</span>
+								<span class="key-label">{pluginName ?? getPianoKeyLabel(pitch)}</span>
 							</div>
 						{/each}
 					</div>
@@ -2150,6 +2157,10 @@
 		letter-spacing: 0.02em;
 		color: #4a4a60;
 		pointer-events: none;
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
 	}
 
 	.keys-vel-label {
