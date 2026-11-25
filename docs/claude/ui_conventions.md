@@ -113,6 +113,40 @@ Pour une page de réglages, composer avec `Section` (titre `h2`), `SubSection` (
 
 ---
 
+## Découper un gros composant
+
+Un composant n'est découpé que s'il est vraiment difficile à lire (ordre de grandeur : plus de
+1000 lignes). En dessous de ~800 lignes, ne pas découper.
+
+Les sous-composants vont dans un dossier à côté du parent, nommé d'après lui :
+
+| Dossier                 | Parent           | Contenu                                                    |
+| ----------------------- | ---------------- | ---------------------------------------------------------- |
+| `components/library/`   | `LibraryBrowser` | ligne d'asset, détail, état vide                           |
+| `components/effects/`   | `EffectChain`    | en-tête d'effet, boutons des effets intégrés, corps plugin |
+| `components/pianoRoll/` | `PianoRoll`      | barre d'outils, colonne des touches, lignes de contrôle    |
+| `components/settings/`  | `SettingsPanel`  | une section de réglages par composant                      |
+| `components/arrange/`   | `MainPanel`      | écran « aucune piste »                                     |
+
+Règles :
+
+- **Le parent garde** l'état partagé, les handlers, le glisser-déposer, les événements de
+  pointeur et tout ce qui est rafraîchi à chaque mouvement de souris. L'enfant ne fait que
+  de l'affichage : props en entrée, `createEventDispatcher` en sortie.
+- **Refactor pur** : même HTML, mêmes valeurs de style, mêmes `stopPropagation`. Le HTML est
+  copié, pas réécrit.
+- **Le CSS ne traverse pas les composants.** Une règle du type `.parent.etat .enfant` devient
+  une classe sur la racine de l'enfant (`unavailable`, `crashed`, `compact`), avec la règle
+  réécrite dans l'enfant.
+- **Sections de formulaire** : l'enfant reçoit sa part du brouillon par `bind:` (par exemple
+  `bind:audio={draft.audio}`) ; le parent garde `draft`, Enregistrer et Annuler.
+- **Dessin sur canvas** : les fonctions de dessin pures vont dans `src/frontend/<zone>/`
+  (`gridRenderer`, `notesRenderer`, `velocityRenderer`), le parent garde la planification.
+- Un style partagé par deux enfants est copié dans chacun, pas mis dans un fichier commun.
+- Mettre à jour les docs qui nomment le composant (voir `change_impact_mapping.md`).
+
+---
+
 ## Checklist nouveau widget / dialog
 
 - [ ] Pas de `cursor: not-allowed`
