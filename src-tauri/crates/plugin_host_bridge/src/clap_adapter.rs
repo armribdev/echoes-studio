@@ -36,6 +36,7 @@ use plugin_bridge::protocol::{
 };
 use plugin_bridge::records::{
     AudioPortRecord, Handshake, NoteNameRecord, ParamRecord, ParamUnit, PortDirection, PortRole,
+    RemotePageRecord,
     PresetRecord, PresetSource, SpeakerLayout, PARAM_AUTOMATABLE, PARAM_HIDDEN, PARAM_MODULATABLE,
     PORT_CHANNELS,
 };
@@ -356,6 +357,21 @@ impl ClapAdapter {
             })
             .collect();
         NoteNameRecord::encode_list(&records)
+    }
+
+    /// The plugin's remote-control pages as [`RemotePageRecord`]s; empty when it has none.
+    pub fn remote_pages(&self) -> Vec<u8> {
+        // SAFETY: main thread.
+        let pages = unsafe { clap_ffi::read_remote_pages(self.plugin) };
+        let records: Vec<RemotePageRecord> = pages
+            .into_iter()
+            .map(|page| RemotePageRecord {
+                section: page.section,
+                name: page.name,
+                param_ids: page.param_ids,
+            })
+            .collect();
+        RemotePageRecord::encode_list(&records)
     }
 
     /// Main thread.  Records the plugin's track and, when it changed, tells the

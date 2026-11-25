@@ -99,6 +99,7 @@ fn main() {
             get_plugin_params,
             get_plugin_param_text,
             get_plugin_note_names,
+            get_plugin_remote_pages,
             list_plugin_presets,
             load_plugin_preset,
             get_plugin_outputs,
@@ -697,6 +698,17 @@ fn get_plugin_note_names(
 ) -> Result<Option<Vec<plugin_system::host::PluginNoteName>>, String> {
     let engine = state.audio_engine.lock().map_err(|e| e.to_string())?;
     Ok(engine.plugin_host.plugin_note_names(&instance_key))
+}
+
+/// The pages of parameters a plugin offers first (`clap.remote-controls`); `None`
+/// when the placement is unknown or the plugin is busy, so the caller retries.
+#[tauri::command]
+fn get_plugin_remote_pages(
+    state: tauri::State<'_, AppState>,
+    instance_key: String,
+) -> Result<Option<Vec<plugin_system::host::PluginRemotePage>>, String> {
+    let engine = state.audio_engine.lock().map_err(|e| e.to_string())?;
+    Ok(engine.plugin_host.plugin_remote_pages(&instance_key))
 }
 
 /// The presets a loaded plugin offers: a CLAP plugin's `clap.preset-discovery-factory`,

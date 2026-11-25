@@ -90,6 +90,10 @@ use std::ffi::{c_char, c_void, CStr};
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, AtomicU64, Ordering};
 
 use clap_ffi::{
+    ClapPluginRemoteControls, ClapRemoteControlsPage, CLAP_EXT_REMOTE_CONTROLS, CLAP_INVALID_ID,
+};
+
+use clap_ffi::{
     ClapAudioPortInfo, ClapEventHeader, ClapEventNote, ClapEventParamGesture, ClapEventParamValue,
     ClapGuiExtension, ClapHost, ClapHostLatency, ClapHostNoteName, ClapHostNotePorts,
     ClapHostParams, ClapHostPresetLoad, ClapHostState, ClapHostTail, ClapHostThreadCheck,
@@ -1054,6 +1058,11 @@ static NOTE_NAME: ClapPluginNoteName = ClapPluginNoteName {
     get: note_name_get,
 };
 
+static REMOTE_CONTROLS: ClapPluginRemoteControls = ClapPluginRemoteControls {
+    count: remote_controls_count,
+    get: remote_controls_get,
+};
+
 static TRACK_INFO: ClapPluginTrackInfo = ClapPluginTrackInfo {
     changed: track_info_changed,
 };
@@ -1168,6 +1177,8 @@ unsafe extern "C" fn plugin_get_extension(
         &AUDIO_PORTS as *const ClapPluginAudioPorts as *const c_void
     } else if id == CLAP_EXT_NOTE_NAME {
         &NOTE_NAME as *const ClapPluginNoteName as *const c_void
+    } else if id == CLAP_EXT_REMOTE_CONTROLS {
+        &REMOTE_CONTROLS as *const ClapPluginRemoteControls as *const c_void
     } else if id == CLAP_EXT_PRESET_LOAD {
         &PRESET_LOAD as *const ClapPluginPresetLoad as *const c_void
     } else if id == CLAP_EXT_TRACK_INFO {
@@ -1240,6 +1251,49 @@ unsafe extern "C" fn note_name_get(
     note_name.port = port;
     note_name.key = key;
     note_name.channel = channel;
+    true
+}
+
+/// `(section, name, parameters)`; an empty slot is `CLAP_INVALID_ID`.  The second
+/// page has no parameter at all: a host must not offer it.
+const REMOTE_PAGES: [(&[u8], &[u8], [u32; 8]); 2] = [
+    (
+        b"Main",
+        b"Level",
+        [
+            GAIN,
+            TAIL,
+            CLAP_INVALID_ID,
+            CLAP_INVALID_ID,
+            CLAP_INVALID_ID,
+            CLAP_INVALID_ID,
+            CLAP_INVALID_ID,
+            CLAP_INVALID_ID,
+        ],
+    ),
+    (b"", b"Empty", [CLAP_INVALID_ID; 8]),
+];
+
+unsafe extern "C" fn remote_controls_count(_: *const ClapPlugin) -> u32 {
+    REMOTE_PAGES.len() as u32
+}
+
+unsafe extern "C" fn remote_controls_get(
+    _: *const ClapPlugin,
+    index: u32,
+    page: *mut ClapRemoteControlsPage,
+) -> bool {
+    let Some(&(section, name, param_ids)) = REMOTE_PAGES.get(index as usize) else {
+        return false;
+    };
+    let page = &mut *page;
+    page.section_name = [0; clap_ffi::CLAP_NAME_SIZE];
+    page.section_name[..section.len()].copy_from_slice(section);
+    page.page_id = index;
+    page.page_name = [0; clap_ffi::CLAP_NAME_SIZE];
+    page.page_name[..name.len()].copy_from_slice(name);
+    page.param_ids = param_ids;
+    page.is_for_preset = false;
     true
 }
 

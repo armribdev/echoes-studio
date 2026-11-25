@@ -32,7 +32,7 @@ use crate::audio_graph::node::AudioNode;
 use crate::audio_graph::nodes::clap_instrument::ClapInstrument;
 use crate::audio_graph::nodes::instrument::InstrumentDevice;
 use crate::plugin_formats::clap::ffi::{
-    ClapLibrary, HostTrackInfo, NoteName, PresetRequest, CLAP_PLUGIN_FACTORY_ID,
+    ClapLibrary, HostTrackInfo, NoteName, PresetRequest, RemotePage, CLAP_PLUGIN_FACTORY_ID,
 };
 use crate::plugin_formats::clap::host::decode_plugin_id as clap_decode_id;
 use crate::plugin_formats::clap::params::read_clap_params;
@@ -1125,6 +1125,14 @@ impl PluginHost {
         Some(names.into_iter().map(PluginNoteName::from).collect())
     }
 
+    /// The pages of parameters a loaded plugin offers first (`clap.remote-controls`).
+    /// `None` when the placement is unknown or busy in a block, empty when the plugin
+    /// has none.
+    pub fn plugin_remote_pages(&self, instance_key: &str) -> Option<Vec<PluginRemotePage>> {
+        let pages = self.records.get(instance_key)?.instance.remote_pages()?;
+        Some(pages.into_iter().map(PluginRemotePage::from).collect())
+    }
+
     /// Where to ask for the presets of a loaded CLAP placement (ADR-031); `None`
     /// for an unknown placement or another format.
     pub fn preset_source(&self, instance_key: &str) -> Option<PresetSource> {
@@ -1238,6 +1246,25 @@ impl From<NoteName> for PluginNoteName {
             port: note.port,
             key: note.key,
             channel: note.channel,
+        }
+    }
+}
+
+/// A page of parameters a plugin offers first, named by `native_id` as
+/// [`PluginParamInfo`] reports them.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct PluginRemotePage {
+    pub section: String,
+    pub name: String,
+    pub native_ids: Vec<u32>,
+}
+
+impl From<RemotePage> for PluginRemotePage {
+    fn from(page: RemotePage) -> Self {
+        Self {
+            section: page.section,
+            name: page.name,
+            native_ids: page.param_ids,
         }
     }
 }

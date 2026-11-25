@@ -60,6 +60,7 @@ use plugin_bridge::protocol::{
 };
 use plugin_bridge::records::{
     AudioPortRecord, Handshake, NoteNameRecord, ParamRecord, ParamUnit, PortDirection, PortRole,
+    RemotePageRecord,
     PresetRecord, PresetSource, PresetStateRecord, ProgramListRecord, SpeakerLayout, TrackRecord,
     MAX_PORTS, PARAM_AUTOMATABLE, PARAM_HIDDEN, PORT_CHANNELS,
 };
@@ -895,6 +896,7 @@ impl HostedPlugin for Vst3Adapter {
                 self.flush_values(values).map(|()| Vec::new())
             }
             Op::NoteNames => self.note_names(),
+            Op::RemoteControls => Ok(RemotePageRecord::encode_list(&[])),
             Op::TrackInfo => {
                 let track = TrackRecord::decode(payload).map_err(|_| "invalid track info")?;
                 self.set_track_info(&HostTrackInfo {

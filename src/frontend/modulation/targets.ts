@@ -1,5 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import type { ModulationTargetKind, ModulationTargetRef, TrackEffect } from '../../types/global';
+import { withRemotePages, type PluginRemotePage } from './remotePages';
 
 export interface PluginParamInfo {
 	native_id: number;
@@ -131,10 +132,19 @@ export function pluginPlacements(
 	return placements;
 }
 
-/** Parameters of a loaded plugin placement; empty when the plugin is not loaded. */
+/**
+ * Parameters of a loaded plugin placement; empty when the plugin is not loaded.
+ * The pages the plugin offers first (`clap.remote-controls`) lead the list.
+ */
 export async function fetchPluginParams(placementKey: string): Promise<PluginParamInfo[]> {
 	try {
-		return await invoke<PluginParamInfo[]>('get_plugin_params', { instanceKey: placementKey });
+		const [params, pages] = await Promise.all([
+			invoke<PluginParamInfo[]>('get_plugin_params', { instanceKey: placementKey }),
+			invoke<PluginRemotePage[] | null>('get_plugin_remote_pages', {
+				instanceKey: placementKey
+			}).catch(() => null)
+		]);
+		return pages ? withRemotePages(params, pages) : params;
 	} catch {
 		return [];
 	}

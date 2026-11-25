@@ -66,6 +66,9 @@ pub enum Op {
     /// → the [`crate::records::PresetRecord`] a CLAP plugin last reported as loaded
     /// (`clap.preset-load`), empty when it never did.
     LoadedPreset = 15,
+    /// → the pages of `clap.remote-controls`
+    /// ([`crate::records::RemotePageRecord`]s); empty for a plugin without any.
+    RemoteControls = 16,
 }
 
 impl Op {
@@ -86,6 +89,7 @@ impl Op {
             13 => Op::PresetList,
             14 => Op::PresetLoadState,
             15 => Op::LoadedPreset,
+            16 => Op::RemoteControls,
             _ => return None,
         })
     }
@@ -315,6 +319,7 @@ mod tests {
             Op::PresetList,
             Op::PresetLoadState,
             Op::LoadedPreset,
+            Op::RemoteControls,
         ] {
             assert_eq!(Op::from_u8(op as u8), Some(op));
         }

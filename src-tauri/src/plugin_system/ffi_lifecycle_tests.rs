@@ -292,6 +292,48 @@ fn clap_real_instance_full_lifecycle() {
     );
 }
 
+/// A plugin that declares `clap.remote-controls` offers pages whose parameters it also
+/// lists in `clap.params`; one that does not offers none.  Which plugins have pages is
+/// only logged: it depends on what is installed.
+#[test]
+fn clap_real_plugins_report_their_remote_control_pages() {
+    for path in discover_all("ECHOES_TEST_CLAP", "clap") {
+        let Some(device_id) = first_clap_id(&path) else {
+            continue;
+        };
+        let mut host = PluginHost::new();
+        host.registry_mut().add(clap_manifest(&device_id, &path));
+        let key = "harness:clap:remote";
+        if host.instantiate(key, &device_id, false).is_err() {
+            eprintln!("{LOG} remote pages: {device_id} does not instantiate, skipped");
+            continue;
+        }
+        let pages = host
+            .plugin_remote_pages(key)
+            .expect("the plugin is idle, so its pages can be read");
+        let known: Vec<u32> = host
+            .plugin_params(key)
+            .expect("parameters")
+            .iter()
+            .map(|param| param.native_id)
+            .collect();
+        for page in &pages {
+            assert!(!page.native_ids.is_empty() && page.native_ids.len() <= 8);
+            for id in &page.native_ids {
+                assert!(known.contains(id), "{device_id}: page {:?} names unknown parameter {id}", page.name);
+            }
+        }
+        eprintln!(
+            "{LOG} remote pages: {device_id} -> {} page(s) {:?}",
+            pages.len(),
+            pages
+                .iter()
+                .map(|page| format!("{}/{} {:?}", page.section, page.name, page.native_ids))
+                .collect::<Vec<_>>()
+        );
+    }
+}
+
 fn clap_manifest(device_id: &str, path: &Path) -> PluginManifest {
     PluginManifest {
         id: device_id.to_string(),

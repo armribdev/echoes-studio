@@ -290,6 +290,54 @@ impl NoteNameRecord {
     }
 }
 
+/// A page of up to eight parameters a plugin offers first (`clap.remote-controls`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RemotePageRecord {
+    pub section: String,
+    pub name: String,
+    pub param_ids: Vec<u32>,
+}
+
+impl RemotePageRecord {
+    const MINIMUM_BYTES: usize = 12;
+
+    pub fn encode_list(records: &[RemotePageRecord]) -> Vec<u8> {
+        let mut writer = PayloadWriter::new();
+        writer.u32(records.len() as u32);
+        for record in records {
+            writer
+                .text(&record.section)
+                .text(&record.name)
+                .u32(record.param_ids.len() as u32);
+            for id in &record.param_ids {
+                writer.u32(*id);
+            }
+        }
+        writer.finish()
+    }
+
+    pub fn decode_list(bytes: &[u8]) -> io::Result<Vec<RemotePageRecord>> {
+        let mut reader = PayloadReader::new(bytes);
+        let count = reader.u32()?;
+        let mut records = Vec::with_capacity(bounded_capacity(count, &reader, Self::MINIMUM_BYTES));
+        for _ in 0..count {
+            let section = reader.text()?;
+            let name = reader.text()?;
+            let id_count = reader.u32()?;
+            let mut param_ids = Vec::with_capacity(bounded_capacity(id_count, &reader, 4));
+            for _ in 0..id_count {
+                param_ids.push(reader.u32()?);
+            }
+            records.push(RemotePageRecord {
+                section,
+                name,
+                param_ids,
+            });
+        }
+        Ok(records)
+    }
+}
+
 // ── Presets ─────────────────────────────────────────────────────────────────
 
 /// Where a preset lives.
@@ -694,6 +742,27 @@ mod tests {
             NoteNameRecord::decode_list(&NoteNameRecord::encode_list(&[])).unwrap(),
             vec![]
         );
+    }
+
+    #[test]
+    fn remote_pages_roundtrip_and_garbage_is_refused() {
+        let pages = vec![
+            RemotePageRecord {
+                section: "Filter".into(),
+                name: "Cutoff".into(),
+                param_ids: vec![7, 3],
+            },
+            RemotePageRecord {
+                section: String::new(),
+                name: "Empty".into(),
+                param_ids: vec![],
+            },
+        ];
+        assert_eq!(
+            RemotePageRecord::decode_list(&RemotePageRecord::encode_list(&pages)).unwrap(),
+            pages
+        );
+        assert!(RemotePageRecord::decode_list(&[1, 0, 0, 0, 9]).is_err());
     }
 
     #[test]

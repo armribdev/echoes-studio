@@ -20,12 +20,13 @@ use plugin_bridge::session::{AudioPort, BridgeLayout, BridgeProcess};
 
 use plugin_bridge::records::{
     Handshake, NoteNameRecord, ParamRecord, ParamUnit, PortDirection, PresetRecord, PresetSource,
+    RemotePageRecord,
     PresetStateRecord, ProgramListRecord, TrackRecord, MAX_PORTS, PARAM_AUTOMATABLE, PARAM_HIDDEN,
     PARAM_MODULATABLE, PORT_CHANNELS,
 };
 
 use crate::plugin_formats::clap::ffi::{
-    mark_plugin_restart_requested, HostTrackInfo, NoteName, PresetRequest,
+    mark_plugin_restart_requested, HostTrackInfo, NoteName, PresetRequest, RemotePage,
     CLAP_PRESET_LOCATION_FILE, CLAP_PRESET_LOCATION_PLUGIN,
 };
 use crate::plugin_formats::vst3::preset_file::PresetChunks;
@@ -332,6 +333,22 @@ impl BridgedPlugin {
                     port: record.port,
                     key: record.key,
                     channel: record.channel,
+                })
+                .collect(),
+        )
+    }
+
+    /// The plugin's remote-control pages; `None` when the bridge cannot answer.
+    pub fn remote_pages(&self) -> Option<Vec<RemotePage>> {
+        let records =
+            RemotePageRecord::decode_list(&self.request(Op::RemoteControls, &[]).ok()?).ok()?;
+        Some(
+            records
+                .into_iter()
+                .map(|record| RemotePage {
+                    section: record.section,
+                    name: record.name,
+                    param_ids: record.param_ids,
                 })
                 .collect(),
         )

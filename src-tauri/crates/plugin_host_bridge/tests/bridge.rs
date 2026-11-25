@@ -20,7 +20,7 @@ use plugin_bridge::protocol::{
 };
 use plugin_bridge::records::{
     Handshake, NoteNameRecord, ParamRecord, ParamUnit, PortDirection, PortRole, PresetRecord,
-    PresetSource, SpeakerLayout, TrackRecord, PARAM_AUTOMATABLE, PARAM_MODULATABLE,
+    PresetSource, RemotePageRecord, SpeakerLayout, TrackRecord, PARAM_AUTOMATABLE, PARAM_MODULATABLE,
 };
 use plugin_bridge::session::{
     BlockOutcome, BlockReply, BlockRequest, BridgeLayout, BridgeProcess,
@@ -676,6 +676,11 @@ fn note_names(bridge: &BridgeProcess) -> Vec<NoteNameRecord> {
     NoteNameRecord::decode_list(&reply).expect("a well-formed list")
 }
 
+fn remote_pages(bridge: &BridgeProcess) -> Vec<RemotePageRecord> {
+    let reply = bridge.request(Op::RemoteControls, &[], TIMEOUT).unwrap();
+    RemotePageRecord::decode_list(&reply).expect("a well-formed list")
+}
+
 fn note_name(name: &str, port: i16, key: i16, channel: i16) -> NoteNameRecord {
     NoteNameRecord {
         name: name.into(),
@@ -778,6 +783,20 @@ fn the_plugin_sees_the_note_dialects_the_host_sends() {
     assert_eq!(
         param_value(&bridge, HOST_NOTE_DIALECTS),
         f64::from(CLAP_NOTE_DIALECT_CLAP | CLAP_NOTE_DIALECT_MIDI)
+    );
+}
+
+#[test]
+fn the_remote_control_pages_of_the_plugin_travel_over_the_control_channel() {
+    let bridge = activated();
+    assert_eq!(
+        remote_pages(&bridge),
+        [RemotePageRecord {
+            section: "Main".into(),
+            name: "Level".into(),
+            param_ids: vec![GAIN, TAIL],
+        }],
+        "the page without a parameter is not offered"
     );
 }
 

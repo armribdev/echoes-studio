@@ -842,6 +842,14 @@ gate and retry), `plugin_system/ffi_lifecycle_tests.rs`
 `IInfoListener` and accepts the list, the host makes messages the plugin ignores
 without crashing). The render harness is unchanged: it holds no VST3 plugin.
 
+**Host `clap.remote-controls` (2026-11-25).** Checked against `clap/ext/remote-controls.h`
+(`clap.remote-controls/2`, compat `clap.remote-controls.draft/2`). The plugin side only:
+`clap_ffi::read_remote_pages` reads the pages (`section_name`, `page_name`, eight `param_ids`,
+`CLAP_INVALID_ID` = empty slot) under the FFI gate, `PluginInstance::remote_pages` is its
+single entry (in process, or `Op::RemoteControls` to the bridge; VST3 answers none). The host
+does not answer `clap_host_remote_controls`. The picker shows the parameters of the pages
+first (ADR-013 amendment 2026-11-25). Off the audio thread; the block message is untouched.
+
 **Host `clap.note-ports` and `clap.note-name` (2026-10-14).** Checked against
 `clap/ext/note-ports.h` and `note-name.h` (no compat id for either).
 

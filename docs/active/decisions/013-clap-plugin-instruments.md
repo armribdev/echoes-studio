@@ -391,3 +391,49 @@ is the existing PDC). Tests: `plugin_system/sandbox_tests.rs`
 (`{an_in_process,a_sandboxed}_clap_instrument_reports_the_latency_of_its_plugin`: 64 both
 ways), the `clap_plugins` harness tests. Not hand-tested in the app (a real CLAP synth
 that reports latency, for example a synth with a lookahead or oversampling option).
+
+## Amendment 2026-11-25 — the host reads `clap.remote-controls`
+
+A CLAP plugin can name pages of up to eight parameters it considers its most important
+(`clap.remote-controls/2`, compat id `clap.remote-controls.draft/2`). The host now reads them
+and the parameter picker of automation and modulation lists those parameters first, under the
+page name, in the plugin's order; the other parameters follow unchanged. A plugin without
+pages, and every VST3 plugin, keeps the flat list.
+
+- **Read on demand, never pushed.** `clap_ffi::read_remote_pages` (`remote_controls.rs`) asks
+  `count` / `get` under the instance FFI gate when the app asks (`PluginHost::plugin_remote_pages`,
+  command `get_plugin_remote_pages`), like the note names. A slot left at `CLAP_INVALID_ID` is
+  dropped, a page without any parameter is not offered. The host offers no
+  `clap_host_remote_controls`: `changed` and `suggest_page` are not answered, so a plugin that
+  changes its pages is read again the next time a picker opens or a parameter rescan refetches
+  the list. A suggested page has nowhere to show.
+- **Sandbox.** One more control op, `Op::RemoteControls = 16`, answered by the bridge with
+  `RemotePageRecord`s (empty for VST3). It is not a block message: the block layout, the flags
+  and `BRIDGE_PROTOCOL_VERSION` do not change.
+- **Frontend.** `fetchPluginParams` (`src/frontend/modulation/targets.ts`) asks for the params
+  and the pages together and hands both to `withRemotePages`
+  (`src/frontend/modulation/remotePages.ts`): the parameters of a page are moved under the page
+  name (`Section / Page`, or the page name alone when it already starts with the section), a
+  parameter on several pages stays on the first. No new widget, no new store.
+- **Not done on purpose.** A row of knobs for the current page (a real panel, needs a mockup),
+  `is_for_preset`, `suggest_page`, remote controls for VST3.
+- **Trade-off.** A parameter moved under a page name is no longer found by searching its
+  original module name; it is found by its own name and by the page name.
+
+No invariant is touched: off the audio thread, nothing runs in a block, no render change
+(`CLAP_PLUGINS_GOLDEN_HASH` and the other hashes are unchanged; the test plugin gained pages
+without moving its audio).
+
+Tests: `clap_ffi/src/remote_controls.rs` (layout of the C struct against the header),
+`plugin_bridge/src/records.rs` (`RemotePageRecord` round trip and garbage),
+`plugin_host_bridge/tests/bridge.rs`
+(`the_remote_control_pages_of_the_plugin_travel_over_the_control_channel`: empty slots and
+an empty page dropped, test plugin `REMOTE_PAGES`), `plugin_system/ffi_lifecycle_tests.rs`
+(`clap_real_plugins_report_their_remote_control_pages`), `remotePages.test.ts`.
+
+**Measured on the machine, 2026-11-25.** Of the installed CLAP plugins only **Surge XT**
+answers pages (5: Global / Macros, Scene A and B, Mixer and Filters, 7-8 parameters each, all
+known to `clap.params`); Vital, Dexed, Odin 2, Six Sines, Cardinal, Zebralette 3 and Surge XT
+Effects answer none (the extension id found in their binaries comes from the CLAP headers, not
+from an implementation). **Hand-tested 2026-11-25**: the automation picker of a Surge XT (CLAP) track
+lists the pages first.

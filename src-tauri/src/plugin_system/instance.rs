@@ -54,8 +54,8 @@ use crate::audio_graph::plugin_params::ValueModulatedParam;
 use crate::plugin_formats::clap::audio_ports::{read_output_ports, ClapOutputPort};
 use crate::plugin_formats::clap::ffi::{
     audio_thread_scope, deliver_due_timers, load_preset, mark_plugin_state_edited,
-    notify_track_info_changed, read_note_names, ClapHost, ClapHostContext, ClapLibrary, ClapPlugin,
-    HostTrackInfo, NoteName, PresetRequest, TimerSchedule, CLAP_PRESET_LOCATION_FILE,
+    notify_track_info_changed, read_note_names, read_remote_pages, ClapHost, ClapHostContext, ClapLibrary, ClapPlugin,
+    HostTrackInfo, NoteName, PresetRequest, RemotePage, TimerSchedule, CLAP_PRESET_LOCATION_FILE,
 };
 use crate::plugin_formats::vst3::buses::{
     open_output_buses, propose_arrangements, read_aux_inputs, read_output_buses, Vst3AuxInput,
@@ -613,6 +613,23 @@ impl PluginInstance {
                 Some(unsafe { read_note_names(*plugin) })
             }
             _ => self.vst3_note_names(),
+        }
+    }
+
+    /// The pages of `clap.remote-controls`, in process or sandboxed.  Read under the
+    /// FFI gate.  `None` when a block is in flight past the budget, empty for a plugin
+    /// without pages and for VST3.
+    pub fn remote_pages(&self) -> Option<Vec<RemotePage>> {
+        if let Some(bridged) = self.bridge() {
+            return bridged.remote_pages();
+        }
+        match &self.handle {
+            NativeHandle::Clap { plugin, .. } => {
+                let _gate = self.offrt_try_acquire(FFI_GATE_HARVEST_BUDGET)?;
+                // SAFETY: live CLAP plugin owned by this instance; FFI gate held.
+                Some(unsafe { read_remote_pages(*plugin) })
+            }
+            _ => Some(Vec::new()),
         }
     }
 
