@@ -127,10 +127,11 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		border-radius: 3px;
+		border-radius: $radius-xs;
 		cursor: grab;
 		touch-action: none;
 		color: var(--mod-color);
+		transition: background $duration-fast;
 		&:hover {
 			background: color-mix(in srgb, var(--mod-color) 18%, transparent);
 		}
@@ -156,12 +157,16 @@
 		flex-shrink: 0;
 		padding: 1px 5px;
 		border: 1px solid $border-subtle;
-		border-radius: 3px;
+		border-radius: $radius-xs;
 		background: transparent;
 		color: $text-subtle;
 		font-size: 9px;
 		line-height: 1.3;
 		cursor: pointer;
+		transition:
+			background $duration-fast,
+			color $duration-fast,
+			border-color $duration-fast;
 		&:hover,
 		&.active {
 			background: color-mix(in srgb, var(--mod-color) 15%, transparent);
@@ -184,8 +189,9 @@
 		align-items: center;
 		justify-content: center;
 		flex-shrink: 0;
+		transition: color $duration-fast;
 		&:hover {
-			color: #ff4136;
+			color: $color-error;
 		}
 	}
 
@@ -194,7 +200,7 @@
 		z-index: 1000;
 		pointer-events: none;
 		padding: 2px 7px;
-		border-radius: 10px;
+		border-radius: $radius-xl;
 		font-size: 9px;
 		font-family: $font-mono;
 		font-weight: 700;
@@ -216,7 +222,7 @@
 	.card :global(.mod-display) {
 		position: relative;
 		height: 36px;
-		border-radius: 4px;
+		border-radius: $radius-sm;
 		background: rgba(0, 0, 0, 0.3);
 		border: 1px solid $border-faint;
 		overflow: hidden;
@@ -270,13 +276,17 @@
 		align-items: center;
 		justify-content: center;
 		border: 1px solid $border-faint;
-		border-radius: 3px;
+		border-radius: $radius-xs;
 		background: transparent;
 		color: $text-faint;
 		font-size: 8px;
 		font-family: $font-mono;
 		font-weight: 700;
 		cursor: pointer;
+		transition:
+			background $duration-fast,
+			color $duration-fast,
+			border-color $duration-fast;
 	}
 
 	.card :global(.mod-toggle:hover) {

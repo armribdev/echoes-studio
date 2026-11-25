@@ -26,7 +26,30 @@ $text-muted: rgba(247, 247, 249, 0.55);
 $text-subtle: rgba(247, 247, 249, 0.35);
 $text-faint: rgba(247, 247, 249, 0.28);
 
+// ── Overlays (menus, popovers) ────────────────────────────────────────────────
+$surface-overlay: #26262e;
+$accent-soft: rgba(21, 113, 255, 0.15);
+$error-soft: rgba(255, 65, 54, 0.1);
+$shadow-overlay:
+	0 8px 32px rgba(0, 0, 0, 0.55),
+	0 2px 8px rgba(0, 0, 0, 0.3);
+$z-overlay: 1000;
+
+// ── Dialogs ───────────────────────────────────────────────────────────────────
+$surface-dialog: #1e1e24;
+$scrim: rgba(0, 0, 0, 0.65);
+$shadow-dialog:
+	0 24px 64px rgba(0, 0, 0, 0.7),
+	0 0 0 0.5px rgba(255, 255, 255, 0.06);
+$z-modal: 2000;
+
+// ── Motion ────────────────────────────────────────────────────────────────────
+$duration-fast: 0.08s;
+$duration-base: 0.12s;
+$ease-out: cubic-bezier(0.2, 0, 0, 1);
+
 // ── Radius ────────────────────────────────────────────────────────────────────
+$radius-xs: 3px;
 $radius-sm: 4px;
 $radius-md: 5px;
 $radius-lg: 8px;

@@ -72,9 +72,19 @@ Toute UI `role="dialog"` / `aria-modal="true"` (ou overlay équivalent) **doit**
 4. Contenu porté hors du dialog (`document.body`, menus Select, etc.) : attribut `data-es-focus-trap-portal` pour rester dans le cycle Tab.
 5. Option `initial: "container" | "first"` (défaut `container` pour dialogs ; `first` pour confirms / menus).
 
+### Widget `Dialog`
+
+Ne pas recâbler ces points à la main : utiliser `Dialog.svelte` (backdrop, `portal`,
+`appInert`, `focusTrap`, `dismissable`, animation), avec `DialogHeader` (titre, icône,
+bouton fermer) et `DialogFooter` (actions à droite, slot `start` à gauche). Props :
+`label`, `width`, `height`, `initialFocus`. Seul `LibraryPopup` (popup ancrée, non
+centrée) reste câblé à la main.
+
 ### Menus contextuels
 
-Même piège de focus, sans `inert` global :
+Utiliser `Menu.svelte` + `MenuItem` / `MenuHeader` / `MenuSeparator` (focus trap, Échap,
+repositionnement dans la fenêtre, tokens `$surface-overlay` / `$shadow-overlay`).
+Sans `x`/`y`, le menu s'ancre sous son parent. Même piège de focus, sans `inert` global :
 
 - conteneur `role="menu"` + `tabindex="-1"` + `use:focusTrap={{ initial: "first" }}` ;
 - items `role="menuitem"` ;
@@ -94,11 +104,20 @@ Même piège de focus, sans `inert` global :
 
 ---
 
+## Formulaires et réglages
+
+Pour une page de réglages, composer avec `Section` (titre `h2`), `SubSection` (filet + titre
+`h3`), `Field` (label, contrôle en slot, `hint` ou slot `hint` / `label`), `FieldGrid`,
+`TextInput` et `TimeSignatureInput`, plutôt que de recopier `.field` / `.field-label` /
+`.divider` dans le composant.
+
+---
+
 ## Checklist nouveau widget / dialog
 
 - [ ] Pas de `cursor: not-allowed`
 - [ ] Focus visuel via `:focus-visible` (ou baseline globale)
 - [ ] Tooltip custom : ni bulle ni « i » dans le cycle Tab (`tabindex="-1"`)
-- [ ] Si dialog / modale : `use:focusTrap` + `use:portal` + `use:appInert`
-- [ ] Si menu contextuel / menu flottant : `role="menu"` + `use:focusTrap={{ initial: "first" }}` + Échap
+- [ ] Si dialog / modale : `Dialog` (qui apporte `focusTrap` + `portal` + `appInert`)
+- [ ] Si menu contextuel / menu flottant : `Menu` (qui apporte `role="menu"` + `focusTrap` initial `first` + Échap)
 - [ ] Si portail hors dialog : `data-es-focus-trap-portal` (menus interactifs uniquement)

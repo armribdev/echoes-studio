@@ -750,7 +750,7 @@
 		width: 18px;
 		height: 18px;
 		border: 1px solid $border-subtle;
-		border-radius: 3px;
+		border-radius: $radius-xs;
 		background: transparent;
 		color: $text-subtle;
 		font-size: 14px;
@@ -804,7 +804,7 @@
 		text-align: left;
 		&:hover {
 			background: $surface-1;
-			border-radius: 3px;
+			border-radius: $radius-xs;
 		}
 	}
 
@@ -855,7 +855,7 @@
 	}
 
 	.slot.crashed {
-		border-left: 2px solid #ff4136;
+		border-left: 2px solid $color-error;
 		background: rgba(255, 65, 54, 0.08);
 		opacity: 1;
 		.slot-name {
@@ -868,7 +868,7 @@
 		flex-shrink: 0;
 		padding: 2px 8px;
 		border: 1px solid rgba(255, 65, 54, 0.6);
-		border-radius: 3px;
+		border-radius: $radius-xs;
 		background: rgba(255, 65, 54, 0.18);
 		color: #ffb3ad;
 		font-size: 9px;
@@ -916,7 +916,7 @@
 	.retry-btn {
 		padding: 3px 10px;
 		border: 1px solid $border-subtle;
-		border-radius: 4px;
+		border-radius: $radius-sm;
 		background: transparent;
 		color: $text-subtle;
 		font-size: 10px;
@@ -957,7 +957,7 @@
 		justify-content: center;
 		flex-shrink: 0;
 		&:hover {
-			color: #ff4136;
+			color: $color-error;
 		}
 	}
 
@@ -988,7 +988,7 @@
 	.open-editor-btn {
 		padding: 5px 14px;
 		border: 1px solid $border-subtle;
-		border-radius: 4px;
+		border-radius: $radius-sm;
 		background: transparent;
 		color: $text-subtle;
 		font-size: 10px;
@@ -997,9 +997,9 @@
 		letter-spacing: 0.04em;
 		cursor: pointer;
 		transition:
-			background 0.1s,
-			color 0.1s,
-			border-color 0.1s;
+			background $duration-base,
+			color $duration-base,
+			border-color $duration-base;
 		&:hover {
 			background: rgba(21, 113, 255, 0.15);
 			color: $text-color;
@@ -1042,7 +1042,7 @@
 		height: 18px;
 		padding: 0 5px;
 		border: 1px solid $border-subtle;
-		border-radius: 3px;
+		border-radius: $radius-xs;
 		background: transparent;
 		color: $text-subtle;
 		font-size: 8px;

@@ -87,7 +87,7 @@
 	.picker {
 		margin: 2px 6px 6px;
 		border: 1px solid $border-subtle;
-		border-radius: 4px;
+		border-radius: $radius-sm;
 		background: #1b1b21;
 		overflow: hidden;
 	}

@@ -83,15 +83,15 @@
 	.view-tab {
 		padding: 3px 8px;
 		border: none;
-		border-radius: 3px;
+		border-radius: $radius-xs;
 		background: transparent;
 		color: rgba(247, 247, 249, 0.32);
 		font-size: 10px;
 		font-family: inherit;
 		cursor: pointer;
 		transition:
-			background 0.12s,
-			color 0.12s;
+			background $duration-base,
+			color $duration-base;
 
 		&.active {
 			background: rgba(21, 113, 255, 0.12);
@@ -116,7 +116,7 @@
 
 	.piano-hover {
 		font-size: 11px;
-		font-family: 'SF Mono', 'Fira Code', ui-monospace, monospace;
+		font-family: $font-mono;
 		font-variant-numeric: tabular-nums;
 		letter-spacing: 0.02em;
 		color: rgba(170, 170, 200, 0.85);
@@ -130,7 +130,7 @@
 
 	.message {
 		font-size: 11px;
-		font-family: 'SF Mono', 'Fira Code', ui-monospace, monospace;
+		font-family: $font-mono;
 		letter-spacing: 0.3px;
 
 		&--info {

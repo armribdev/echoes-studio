@@ -1,9 +1,11 @@
 <script lang="ts">
-	import { createEventDispatcher, onMount } from 'svelte';
+	import { createEventDispatcher } from 'svelte';
 	import { t } from 'svelte-i18n';
-	import { dismissable } from '../frontend/dismiss';
-	import { focusTrap } from '../frontend/focusTrap';
 	import { shortcutLabels } from '../frontend/shortcuts/label';
+	import Menu from './Menu.svelte';
+	import MenuHeader from './MenuHeader.svelte';
+	import MenuItem from './MenuItem.svelte';
+	import MenuSeparator from './MenuSeparator.svelte';
 
 	export let x = 0;
 	export let y = 0;
@@ -22,166 +24,39 @@
 		close: void;
 	}>();
 
-	let menuEl: HTMLDivElement;
-	let adjustedX = x;
-	let adjustedY = y;
+	type Action = 'addMarker' | 'addRegion' | 'goTo' | 'rename' | 'setLoop' | 'delete';
 
-	onMount(() => {
-		if (!menuEl) return;
-		const rect = menuEl.getBoundingClientRect();
-		const vw = window.innerWidth;
-		const vh = window.innerHeight;
-		if (x + rect.width > vw) adjustedX = vw - rect.width - 8;
-		if (y + rect.height > vh) adjustedY = vh - rect.height - 8;
-	});
-
-	function close() {
+	function choose(action: Action) {
+		dispatch(action);
 		dispatch('close');
 	}
 </script>
 
-<div
-	class="context-menu"
-	bind:this={menuEl}
-	role="menu"
-	tabindex="-1"
-	use:focusTrap={{ initial: 'first' }}
-	use:dismissable={close}
-	style="left: {adjustedX}px; top: {adjustedY}px"
->
+<Menu {x} {y} on:close>
 	{#if mode === 'empty'}
-		<button
-			class="item"
-			role="menuitem"
-			on:click={() => {
-				dispatch('addMarker');
-				close();
-			}}
+		<MenuItem
+			shortcut={$shortcutLabels('arrangement.addMarker')}
+			on:click={() => choose('addMarker')}
 		>
-			<span>{$t('locatorMenu.addMarker')}</span>
-			<span class="item-shortcut">{$shortcutLabels('arrangement.addMarker')}</span>
-		</button>
-		<button
-			class="item"
-			role="menuitem"
-			on:click={() => {
-				dispatch('addRegion');
-				close();
-			}}
+			{$t('locatorMenu.addMarker')}
+		</MenuItem>
+		<MenuItem
+			shortcut={$shortcutLabels('arrangement.addRegion')}
+			on:click={() => choose('addRegion')}
 		>
-			<span>{$t('locatorMenu.addRegion')}</span>
-			<span class="item-shortcut">{$shortcutLabels('arrangement.addRegion')}</span>
-		</button>
+			{$t('locatorMenu.addRegion')}
+		</MenuItem>
 	{:else}
-		<div class="menu-header">
+		<MenuHeader>
 			{name || (kind === 'region' ? $t('locatorMenu.region') : $t('locatorMenu.marker'))}
-		</div>
-		<div class="separator"></div>
-		<button
-			class="item"
-			role="menuitem"
-			on:click={() => {
-				dispatch('goTo');
-				close();
-			}}
-		>
-			<span>{$t('locatorMenu.goHere')}</span>
-		</button>
-		<button
-			class="item"
-			role="menuitem"
-			on:click={() => {
-				dispatch('rename');
-				close();
-			}}
-		>
-			<span>{$t('common.rename')}</span>
-		</button>
+		</MenuHeader>
+		<MenuSeparator />
+		<MenuItem on:click={() => choose('goTo')}>{$t('locatorMenu.goHere')}</MenuItem>
+		<MenuItem on:click={() => choose('rename')}>{$t('common.rename')}</MenuItem>
 		{#if kind === 'region'}
-			<button
-				class="item"
-				role="menuitem"
-				on:click={() => {
-					dispatch('setLoop');
-					close();
-				}}
-			>
-				<span>{$t('locatorMenu.loopRegion')}</span>
-			</button>
+			<MenuItem on:click={() => choose('setLoop')}>{$t('locatorMenu.loopRegion')}</MenuItem>
 		{/if}
-		<div class="separator"></div>
-		<button
-			class="item item--danger"
-			role="menuitem"
-			on:click={() => {
-				dispatch('delete');
-				close();
-			}}
-		>
-			<span>{$t('common.delete')}</span>
-		</button>
+		<MenuSeparator />
+		<MenuItem danger on:click={() => choose('delete')}>{$t('common.delete')}</MenuItem>
 	{/if}
-</div>
-
-<style lang="scss">
-	@use '../variables.scss' as *;
-
-	.context-menu {
-		position: fixed;
-		z-index: 1000;
-		min-width: 200px;
-		padding: 4px;
-		background: $panel-background-color;
-		border: 1px solid $border-color;
-		border-radius: $radius-sm;
-		box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
-		user-select: none;
-	}
-
-	.menu-header {
-		padding: 6px 10px 4px;
-		font-size: 11px;
-		color: $text-subtle;
-		white-space: nowrap;
-		overflow: hidden;
-		text-overflow: ellipsis;
-	}
-
-	.separator {
-		height: 1px;
-		margin: 4px 6px;
-		background: $border-color;
-	}
-
-	.item {
-		width: 100%;
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		gap: 16px;
-		padding: 6px 10px;
-		border: none;
-		border-radius: 4px;
-		background: transparent;
-		color: $text-color;
-		font-size: 12px;
-		font-family: inherit;
-		cursor: pointer;
-		text-align: left;
-
-		&:hover {
-			background: rgba(21, 113, 255, 0.15);
-		}
-
-		&--danger:hover {
-			background: rgba(239, 68, 68, 0.18);
-			color: #fca5a5;
-		}
-	}
-
-	.item-shortcut {
-		font-size: 10px;
-		color: $text-subtle;
-		font-family: 'SF Mono', 'Fira Code', ui-monospace, monospace;
-	}
-</style>
+</Menu>

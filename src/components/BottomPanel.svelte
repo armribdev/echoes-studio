@@ -166,12 +166,12 @@
 		color: $text-faint;
 		cursor: pointer;
 		transition:
-			background 0.12s,
-			color 0.12s;
+			background $duration-base,
+			color $duration-base;
 
 		&:hover {
 			background: rgba(255, 65, 54, 0.15);
-			color: #ff4136;
+			color: $color-error;
 		}
 	}
 </style>

@@ -237,10 +237,10 @@
 		cursor: pointer;
 		opacity: 0;
 		transition:
-			opacity 0.12s,
-			color 0.12s,
-			border-color 0.12s,
-			background 0.12s;
+			opacity $duration-base,
+			color $duration-base,
+			border-color $duration-base,
+			background $duration-base;
 
 		&--empty {
 			opacity: 0.55;

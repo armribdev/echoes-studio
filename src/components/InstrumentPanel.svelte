@@ -392,7 +392,7 @@
 		flex-shrink: 0;
 		padding: 1px 5px;
 		border: 1px solid $border-subtle;
-		border-radius: 3px;
+		border-radius: $radius-xs;
 		background: transparent;
 		color: $text-subtle;
 		font-size: 8px;
@@ -422,7 +422,7 @@
 		padding: 0;
 		flex-shrink: 0;
 		&:hover {
-			color: #ff4136;
+			color: $color-error;
 		}
 	}
 
@@ -435,7 +435,7 @@
 		flex-shrink: 0;
 		padding: 1px 5px;
 		border: 1px solid rgba(255, 65, 54, 0.5);
-		border-radius: 3px;
+		border-radius: $radius-xs;
 		background: rgba(255, 65, 54, 0.12);
 		color: #ff6b61;
 		font-size: 8px;
@@ -463,7 +463,7 @@
 	.retry-btn {
 		padding: 3px 10px;
 		border: 1px solid $border-subtle;
-		border-radius: 4px;
+		border-radius: $radius-sm;
 		background: transparent;
 		color: $text-subtle;
 		font-size: 10px;
@@ -498,7 +498,7 @@
 	.open-editor-btn {
 		padding: 5px 14px;
 		border: 1px solid $border-subtle;
-		border-radius: 4px;
+		border-radius: $radius-sm;
 		background: transparent;
 		color: $text-subtle;
 		font-size: 10px;
@@ -507,9 +507,9 @@
 		letter-spacing: 0.04em;
 		cursor: pointer;
 		transition:
-			background 0.1s,
-			color 0.1s,
-			border-color 0.1s;
+			background $duration-base,
+			color $duration-base,
+			border-color $duration-base;
 		&:hover {
 			background: rgba(21, 113, 255, 0.15);
 			color: $text-color;

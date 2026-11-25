@@ -13,9 +13,10 @@
 		type UnavailablePlugin,
 		type UnavailableReason
 	} from '../stores/plugins';
-	import { dismissable } from '../frontend/dismiss';
-	import { focusTrap } from '../frontend/focusTrap';
-	import { appInert, portal } from '../frontend/portal';
+	import Button from './Button.svelte';
+	import Dialog from './Dialog.svelte';
+	import DialogFooter from './DialogFooter.svelte';
+	import DialogHeader from './DialogHeader.svelte';
 
 	interface MissingPlugin {
 		pluginId: string;
@@ -118,21 +119,13 @@
 </script>
 
 {#if count > 0}
-	<div class="backdrop" role="presentation" use:portal use:appInert>
-		<div
-			class="dialog"
-			role="dialog"
-			aria-modal="true"
-			aria-labelledby="missing-plugins-title"
-			tabindex="-1"
-			use:focusTrap={{ initial: 'first' }}
-			use:dismissable={close}
-		>
-			<h2 id="missing-plugins-title">
-				{count === 1
-					? $t('missingPlugins.titleOne')
-					: $t('missingPlugins.titleMany', { values: { n: count } })}
-			</h2>
+	{@const title =
+		count === 1
+			? $t('missingPlugins.titleOne')
+			: $t('missingPlugins.titleMany', { values: { n: count } })}
+	<Dialog label={title} initialFocus="first" on:close={close}>
+		<DialogHeader {title} on:close={close} />
+		<div class="content">
 			<p class="intro">{$t('missingPlugins.intro')}</p>
 
 			<ul class="list">
@@ -148,55 +141,33 @@
 					</li>
 				{/each}
 			</ul>
-
-			<div class="actions">
-				<button class="secondary" type="button" on:click={handleSearchAgain} disabled={searching}>
-					{searching ? $t('missingPlugins.searching') : $t('missingPlugins.searchAgain')}
-				</button>
-				<button class="primary" type="button" on:click={close}>{$t('common.continue')}</button>
-			</div>
 		</div>
-	</div>
+		<DialogFooter>
+			<Button variant="secondary" on:click={handleSearchAgain} disabled={searching}>
+				{searching ? $t('missingPlugins.searching') : $t('missingPlugins.searchAgain')}
+			</Button>
+			<Button variant="primary" on:click={close}>{$t('common.continue')}</Button>
+		</DialogFooter>
+	</Dialog>
 {/if}
 
 <style lang="scss">
 	@use '../variables.scss' as *;
 
-	.backdrop {
-		position: fixed;
-		inset: 0;
-		background: rgba(0, 0, 0, 0.6);
-		z-index: 2000;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-	}
-
-	.dialog {
-		width: 440px;
-		max-height: 80vh;
+	.content {
 		display: flex;
 		flex-direction: column;
 		gap: 10px;
-		padding: 16px;
-		background: #1e1e26;
-		border: 1px solid $border-color;
-		border-radius: $radius-lg;
-		box-shadow: 0 12px 40px rgba(0, 0, 0, 0.6);
-	}
-
-	h2 {
-		margin: 0;
-		font-size: 14px;
-		font-weight: 600;
-		color: $text-color;
+		flex: 1;
+		min-height: 0;
+		padding: 16px 18px;
 	}
 
 	.intro {
 		margin: 0;
-		font-size: 11px;
-		line-height: 1.45;
-		color: $text-subtle;
+		font-size: 12px;
+		line-height: 1.5;
+		color: $text-muted;
 	}
 
 	.list {
@@ -240,7 +211,7 @@
 		flex-shrink: 0;
 		padding: 1px 6px;
 		border: 1px solid rgba(255, 65, 54, 0.5);
-		border-radius: 3px;
+		border-radius: $radius-xs;
 		background: rgba(255, 65, 54, 0.12);
 		color: #ff6b61;
 		font-size: 9px;
@@ -251,41 +222,5 @@
 	.usage {
 		font-size: 10px;
 		color: $text-faint;
-	}
-
-	.actions {
-		display: flex;
-		justify-content: flex-end;
-		gap: 8px;
-	}
-
-	button {
-		padding: 5px 14px;
-		border-radius: 4px;
-		font-size: 11px;
-		cursor: pointer;
-	}
-
-	.secondary {
-		border: 1px solid $border-subtle;
-		background: transparent;
-		color: $text-subtle;
-		&:hover:not(:disabled) {
-			color: $text-color;
-			border-color: rgba(21, 113, 255, 0.4);
-		}
-		&:disabled {
-			cursor: default;
-			opacity: 0.6;
-		}
-	}
-
-	.primary {
-		border: 1px solid rgba(21, 113, 255, 0.6);
-		background: rgba(21, 113, 255, 0.25);
-		color: $text-color;
-		&:hover {
-			background: rgba(21, 113, 255, 0.4);
-		}
 	}
 </style>

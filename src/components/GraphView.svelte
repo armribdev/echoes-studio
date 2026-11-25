@@ -325,7 +325,7 @@
 		button {
 			padding: 4px 12px;
 			border: none;
-			border-radius: 4px;
+			border-radius: $radius-sm;
 			background: transparent;
 			color: $text-muted;
 			font-size: 11px;
@@ -358,7 +358,7 @@
 		margin-left: auto;
 		padding: 4px 10px;
 		border: 1px solid $border-subtle;
-		border-radius: 4px;
+		border-radius: $radius-sm;
 		background: transparent;
 		color: $text-muted;
 		font-size: 10px;

@@ -93,7 +93,7 @@
 		line-height: 1;
 		color: rgba(247, 247, 249, 0.55);
 		white-space: nowrap;
-		font-family: 'SF Mono', 'Fira Code', ui-monospace, monospace;
+		font-family: $font-mono;
 		pointer-events: none;
 
 		&--beat {

@@ -14,9 +14,7 @@
 		rescanPlugins
 	} from '../stores/plugins';
 	import type { PluginInfo } from '../stores/plugins';
-	import { dismissable } from '../frontend/dismiss';
-	import { focusTrap } from '../frontend/focusTrap';
-	import { appInert, portal } from '../frontend/portal';
+	import Dialog from './Dialog.svelte';
 
 	const dispatch = createEventDispatcher<{ pick: PluginInfo; cancel: void }>();
 
@@ -101,117 +99,87 @@
 	};
 </script>
 
-<!-- Backdrop -->
-<div class="backdrop" use:portal use:appInert>
-	<div
-		class="picker"
-		role="dialog"
-		aria-modal="true"
-		aria-label="Plugin browser"
-		tabindex="-1"
-		use:focusTrap={{ initial: 'first' }}
-		use:dismissable={() => dispatch('cancel')}
-	>
-		<div class="header">
-			<span class="title">{pickerTitle}</span>
-			{#if $blockedPlugins.length > 0}
-				<button class="rescan" type="button" on:click={() => (showBlocked = !showBlocked)}>
-					{showBlocked
-						? $t('blockedPlugins.back')
-						: $t('blockedPlugins.show', { values: { n: $blockedPlugins.length } })}
-				</button>
-			{/if}
-			<button class="rescan" type="button" on:click={rescanPlugins} disabled={$pluginsLoading}>
-				{$pluginsLoading ? '…' : '↺'} Rescanner
+<Dialog
+	label="Plugin browser"
+	width={420}
+	height={540}
+	initialFocus="first"
+	on:close={() => dispatch('cancel')}
+>
+	<div class="header">
+		<span class="title">{pickerTitle}</span>
+		{#if $blockedPlugins.length > 0}
+			<button class="rescan" type="button" on:click={() => (showBlocked = !showBlocked)}>
+				{showBlocked
+					? $t('blockedPlugins.back')
+					: $t('blockedPlugins.show', { values: { n: $blockedPlugins.length } })}
 			</button>
-		</div>
-
-		{#if showBlocked}
-			<ul class="list blocked">
-				{#each $blockedPlugins as blocked (blocked.path)}
-					<li class="item" title={blocked.path}>
-						<span class="plug-name">{blocked.name}</span>
-						<span class="plug-vendor">
-							{blocked.reason === 'crashed'
-								? $t('blockedPlugins.crashed')
-								: $t('blockedPlugins.timedOut')}
-						</span>
-						<button
-							class="rescan"
-							type="button"
-							on:click={() => reenableBlockedPlugin(blocked.path)}
-							disabled={$pluginsLoading}
-						>
-							{$t('blockedPlugins.reenable')}
-						</button>
-					</li>
-				{/each}
-			</ul>
-		{:else}
-			<input class="search" type="text" placeholder="Rechercher…" bind:value={query} />
-
-			<div class="list" role="listbox">
-				{#if filtered.length === 0}
-					<p class="empty">
-						{$pluginsLoading
-							? 'Scan en cours…'
-							: query
-								? 'Aucun résultat'
-								: mode === 'instrument'
-									? 'Aucun instrument détecté'
-									: 'Aucun plugin détecté'}
-					</p>
-				{:else}
-					{#each filtered as p, i (p.id)}
-						<button
-							class="item"
-							class:selected={i === selectedIndex}
-							type="button"
-							role="option"
-							aria-selected={i === selectedIndex}
-							bind:this={itemEls[i]}
-							on:click={() => pick(p)}
-							on:pointerenter={() => (selectedIndex = i)}
-						>
-							<span class="plug-name">{p.name}</span>
-							<span class="plug-vendor">{p.vendor || '—'}</span>
-							<span class="badge" style:background={FORMAT_COLOR[p.format] ?? '#555'}
-								>{p.format}</span
-							>
-						</button>
-					{/each}
-				{/if}
-			</div>
 		{/if}
+		<button class="rescan" type="button" on:click={rescanPlugins} disabled={$pluginsLoading}>
+			{$pluginsLoading ? '…' : '↺'} Rescanner
+		</button>
 	</div>
-</div>
+
+	{#if showBlocked}
+		<ul class="list blocked">
+			{#each $blockedPlugins as blocked (blocked.path)}
+				<li class="item" title={blocked.path}>
+					<span class="plug-name">{blocked.name}</span>
+					<span class="plug-vendor">
+						{blocked.reason === 'crashed'
+							? $t('blockedPlugins.crashed')
+							: $t('blockedPlugins.timedOut')}
+					</span>
+					<button
+						class="rescan"
+						type="button"
+						on:click={() => reenableBlockedPlugin(blocked.path)}
+						disabled={$pluginsLoading}
+					>
+						{$t('blockedPlugins.reenable')}
+					</button>
+				</li>
+			{/each}
+		</ul>
+	{:else}
+		<input class="search" type="text" placeholder="Rechercher…" bind:value={query} />
+
+		<div class="list" role="listbox">
+			{#if filtered.length === 0}
+				<p class="empty">
+					{$pluginsLoading
+						? 'Scan en cours…'
+						: query
+							? 'Aucun résultat'
+							: mode === 'instrument'
+								? 'Aucun instrument détecté'
+								: 'Aucun plugin détecté'}
+				</p>
+			{:else}
+				{#each filtered as p, i (p.id)}
+					<button
+						class="item"
+						class:selected={i === selectedIndex}
+						type="button"
+						role="option"
+						aria-selected={i === selectedIndex}
+						bind:this={itemEls[i]}
+						on:click={() => pick(p)}
+						on:pointerenter={() => (selectedIndex = i)}
+					>
+						<span class="plug-name">{p.name}</span>
+						<span class="plug-vendor">{p.vendor || '—'}</span>
+						<span class="badge" style:background={FORMAT_COLOR[p.format] ?? '#555'}>{p.format}</span
+						>
+					</button>
+				{/each}
+			{/if}
+		</div>
+	{/if}
+</Dialog>
 
 <style lang="scss">
 	@use '../variables.scss' as *;
-
-	.backdrop {
-		position: fixed;
-		inset: 0;
-		background: rgba(0, 0, 0, 0.6);
-		z-index: 2000;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-	}
-
-	.picker {
-		position: relative;
-		z-index: 1;
-		width: 420px;
-		max-height: 540px;
-		background: #1e1e26;
-		border: 1px solid $border-color;
-		border-radius: $radius-lg;
-		display: flex;
-		flex-direction: column;
-		overflow: hidden;
-		box-shadow: 0 12px 40px rgba(0, 0, 0, 0.6);
-	}
 
 	.header {
 		display: flex;
@@ -332,7 +300,7 @@
 		font-weight: 700;
 		letter-spacing: 0.04em;
 		padding: 2px 5px;
-		border-radius: 3px;
+		border-radius: $radius-xs;
 		color: #fff;
 		flex-shrink: 0;
 	}

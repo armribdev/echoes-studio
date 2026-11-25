@@ -515,7 +515,7 @@
 		display: block;
 		background-color: #1f3c72;
 		box-shadow: inset 0 0 0 1px rgba(21, 113, 255, 0.45);
-		border-radius: 4px;
+		border-radius: $radius-sm;
 		top: 0;
 		bottom: 0;
 		overflow: hidden;

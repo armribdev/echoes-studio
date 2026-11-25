@@ -74,7 +74,7 @@
 	.toggle-switch {
 		width: 36px;
 		height: 20px;
-		border-radius: 10px;
+		border-radius: $radius-xl;
 		background: rgba(255, 255, 255, 0.1);
 		border: 1px solid rgba(255, 255, 255, 0.12);
 		cursor: pointer;

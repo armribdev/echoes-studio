@@ -600,7 +600,7 @@
 		min-width: 14px;
 		height: 14px;
 		padding: 0 3px;
-		border-radius: 3px;
+		border-radius: $radius-xs;
 		background: $surface-2;
 		border: 1px solid $border-faint;
 		color: $text-subtle;
@@ -621,7 +621,7 @@
 		display: flex;
 		align-items: center;
 		padding: 0 7px;
-		border-radius: 3px;
+		border-radius: $radius-xs;
 		background: color-mix(in srgb, var(--loc-color) 18%, transparent);
 		border: 1px solid color-mix(in srgb, var(--loc-color) 42%, transparent);
 		cursor: pointer;
@@ -629,9 +629,9 @@
 		min-width: 10px;
 		overflow: hidden;
 		transition:
-			background 0.12s ease,
-			border-color 0.12s ease,
-			box-shadow 0.12s ease;
+			background $duration-base ease,
+			border-color $duration-base ease,
+			box-shadow $duration-base ease;
 
 		&:hover {
 			background: color-mix(in srgb, var(--loc-color) 28%, transparent);

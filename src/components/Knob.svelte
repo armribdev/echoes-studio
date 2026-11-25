@@ -259,7 +259,7 @@
 		justify-content: center;
 		cursor: ns-resize;
 		border-radius: 50%;
-		transition: filter 0.1s;
+		transition: filter $duration-base;
 
 		&:hover {
 			filter: brightness(1.25);

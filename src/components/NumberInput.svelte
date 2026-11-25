@@ -63,9 +63,9 @@
 	.num-input {
 		background: rgba(255, 255, 255, 0.05);
 		border: 1px solid rgba(255, 255, 255, 0.1);
-		border-radius: 4px;
+		border-radius: $radius-sm;
 		color: $text-color;
-		font-family: 'SF Mono', 'Fira Code', ui-monospace, monospace;
+		font-family: $font-mono;
 		font-size: 13px;
 		padding: 3px 6px;
 		height: 28px;
@@ -95,7 +95,7 @@
 		&--sm {
 			font-size: 14px;
 			height: 26px;
-			border-radius: 3px;
+			border-radius: $radius-xs;
 			padding: 2px 4px;
 		}
 	}

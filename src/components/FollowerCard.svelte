@@ -172,7 +172,7 @@
 			padding: 0 4px;
 			background: rgba(255, 255, 255, 0.04);
 			border: 1px solid rgba(255, 255, 255, 0.08);
-			border-radius: 4px;
+			border-radius: $radius-sm;
 			color: #c8c8d8;
 			font-size: 10px;
 			cursor: pointer;

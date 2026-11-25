@@ -24,9 +24,9 @@
 		font-family: inherit;
 		cursor: pointer;
 		transition:
-			background 0.1s,
-			color 0.1s,
-			opacity 0.1s;
+			background $duration-base,
+			color $duration-base,
+			opacity $duration-base;
 		white-space: nowrap;
 
 		&:disabled {

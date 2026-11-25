@@ -67,8 +67,8 @@
 			background: $accent-color;
 			cursor: pointer;
 			transition:
-				transform 0.1s,
-				box-shadow 0.1s;
+				transform $duration-base,
+				box-shadow $duration-base;
 
 			&:hover {
 				transform: scale(1.2);

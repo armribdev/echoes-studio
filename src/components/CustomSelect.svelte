@@ -144,7 +144,7 @@
 		gap: 6px;
 		background: rgba(255, 255, 255, 0.05);
 		border: 1px solid rgba(255, 255, 255, 0.1);
-		border-radius: 5px;
+		border-radius: $radius-md;
 		color: $text-color;
 		font-size: 12px;
 		font-family: inherit;
@@ -153,8 +153,8 @@
 		cursor: pointer;
 		text-align: left;
 		transition:
-			border-color 0.12s,
-			background 0.12s;
+			border-color $duration-base,
+			background $duration-base;
 		white-space: nowrap;
 
 		&:hover {
@@ -207,13 +207,13 @@
 		align-items: center;
 		gap: 7px;
 		padding: 5px 8px;
-		border-radius: 5px;
+		border-radius: $radius-md;
 		font-size: 12px;
 		color: rgba(247, 247, 249, 0.75);
 		cursor: pointer;
 		transition:
-			background 0.08s,
-			color 0.08s;
+			background $duration-fast,
+			color $duration-fast;
 		white-space: nowrap;
 
 		&:hover {

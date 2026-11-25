@@ -320,7 +320,7 @@
 		width: 18px;
 		height: 18px;
 		border: 1px solid $border-subtle;
-		border-radius: 3px;
+		border-radius: $radius-xs;
 		background: transparent;
 		color: $text-subtle;
 		font-size: 14px;
@@ -365,7 +365,7 @@
 		justify-content: center;
 		flex-shrink: 0;
 		&:hover {
-			color: #ff4136;
+			color: $color-error;
 		}
 	}
 

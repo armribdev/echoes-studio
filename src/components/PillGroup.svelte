@@ -38,19 +38,19 @@
 
 	.pill {
 		font-size: 11px;
-		font-family: 'SF Mono', 'Fira Code', ui-monospace, monospace;
+		font-family: $font-mono;
 		padding: 4px 9px;
 		border: 1px solid rgba(255, 255, 255, 0.1);
-		border-radius: 4px;
+		border-radius: $radius-sm;
 		background: rgba(255, 255, 255, 0.04);
 		color: rgba(247, 247, 249, 0.6);
 		cursor: pointer;
 		white-space: nowrap;
 		transition:
-			background 0.1s,
-			border-color 0.1s,
-			color 0.1s,
-			opacity 0.1s;
+			background $duration-base,
+			border-color $duration-base,
+			color $duration-base,
+			opacity $duration-base;
 
 		&:hover:not(.disabled) {
 			background: rgba(255, 255, 255, 0.08);

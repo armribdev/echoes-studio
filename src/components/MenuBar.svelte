@@ -301,14 +301,14 @@
 		cursor: pointer;
 		width: 30px;
 		height: 30px;
-		border-radius: 4px;
+		border-radius: $radius-sm;
 		font-size: 13px;
 		display: flex;
 		align-items: center;
 		justify-content: center;
 		transition:
-			background 0.1s,
-			color 0.1s;
+			background $duration-base,
+			color $duration-base;
 
 		&:hover {
 			background: rgba(255, 255, 255, 0.08);
@@ -387,9 +387,9 @@
 		border: 1px solid $border-subtle;
 		background: $surface-2;
 		transition:
-			background 0.12s,
-			color 0.12s,
-			border-color 0.12s;
+			background $duration-base,
+			color $duration-base,
+			border-color $duration-base;
 
 		&:not(.active):hover {
 			background: $surface-3;
@@ -401,11 +401,6 @@
 			background: rgba(21, 113, 255, 0.15);
 			border-color: rgba(21, 113, 255, 0.45);
 			color: $accent-color;
-		}
-
-		&:focus-visible {
-			outline: 2px solid $accent-color;
-			outline-offset: 2px;
 		}
 	}
 
@@ -466,10 +461,10 @@
 		margin: -2px -6px;
 		background: none;
 		border: none;
-		border-radius: 4px;
+		border-radius: $radius-sm;
 		cursor: pointer;
 		text-align: left;
-		transition: background 0.1s;
+		transition: background $duration-base;
 
 		&:hover {
 			background: rgba(255, 255, 255, 0.08);

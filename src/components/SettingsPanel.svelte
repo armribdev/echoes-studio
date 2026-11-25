@@ -14,9 +14,15 @@
 	import Button from './Button.svelte';
 	import Icon from './Icon.svelte';
 	import ShortcutSettings from './ShortcutSettings.svelte';
-	import { dismissable } from '../frontend/dismiss';
-	import { focusTrap } from '../frontend/focusTrap';
-	import { appInert, portal } from '../frontend/portal';
+	import Dialog from './Dialog.svelte';
+	import Field from './Field.svelte';
+	import FieldGrid from './FieldGrid.svelte';
+	import Section from './Section.svelte';
+	import SubSection from './SubSection.svelte';
+	import TextInput from './TextInput.svelte';
+	import TimeSignatureInput from './TimeSignatureInput.svelte';
+	import DialogFooter from './DialogFooter.svelte';
+	import DialogHeader from './DialogHeader.svelte';
 	import { syncMenuAccelerators } from '../frontend/shortcuts/keymap';
 	import {
 		listAudioDevices,
@@ -510,208 +516,184 @@
 </script>
 
 {#if $settingsPanelOpen}
-	<div class="overlay" use:portal use:appInert>
-		<div
-			class="panel"
-			role="dialog"
-			aria-modal="true"
-			aria-label={$t('settings.aria')}
-			tabindex="-1"
-			use:focusTrap
-			use:dismissable={cancelAndClose}
-		>
-			<!-- ── Header ── -->
-			<div class="panel-header">
-				<span class="header-icon"><Icon name="settings" size={14} /></span>
-				<span class="panel-title">{$t('settings.title')}</span>
-				<button class="close-btn" on:click={cancelAndClose} title={$t('common.closeEsc')}>
-					<Icon name="close" size={15} strokeWidth={1.5} />
-				</button>
-			</div>
+	<Dialog label={$t('settings.aria')} width={720} height={620} on:close={cancelAndClose}>
+		<DialogHeader title={$t('settings.title')} on:close={cancelAndClose}>
+			<Icon slot="icon" name="settings" size={14} />
+		</DialogHeader>
 
-			<!-- ── Body ── -->
-			<div class="panel-body">
-				<!-- Sidebar nav -->
-				<nav class="sidebar">
-					{#each SECTIONS as s}
-						<button
-							class="nav-item"
-							class:active={activeSection === s.id}
-							on:click={() => (activeSection = s.id)}
-						>
-							<span class="nav-icon">
-								{#if s.id === 'audio'}
-									<Icon name="volume" size={15} />
-								{:else if s.id === 'midi'}
-									<Icon name="cpu" size={15} />
-								{:else if s.id === 'project'}
-									<Icon name="folder" size={15} />
-								{:else if s.id === 'interface'}
-									<Icon name="monitor" size={15} />
-								{:else if s.id === 'shortcuts'}
-									<Icon name="keyboard" size={15} />
-								{/if}
-							</span>
-							<span class="nav-label">{s.label}</span>
-						</button>
-					{/each}
-				</nav>
+		<!-- ── Body ── -->
+		<div class="panel-body">
+			<!-- Sidebar nav -->
+			<nav class="sidebar">
+				{#each SECTIONS as s}
+					<button
+						class="nav-item"
+						class:active={activeSection === s.id}
+						on:click={() => (activeSection = s.id)}
+					>
+						<span class="nav-icon">
+							{#if s.id === 'audio'}
+								<Icon name="volume" size={15} />
+							{:else if s.id === 'midi'}
+								<Icon name="cpu" size={15} />
+							{:else if s.id === 'project'}
+								<Icon name="folder" size={15} />
+							{:else if s.id === 'interface'}
+								<Icon name="monitor" size={15} />
+							{:else if s.id === 'shortcuts'}
+								<Icon name="keyboard" size={15} />
+							{/if}
+						</span>
+						<span class="nav-label">{s.label}</span>
+					</button>
+				{/each}
+			</nav>
 
-				<!-- Content -->
-				<div class="content">
-					{#if activeSection === 'audio'}
-						<div class="section">
-							<h2 class="section-title">{$t('settings.audio.devicesTitle')}</h2>
-
-							<!-- ── Deux colonnes IN / OUT ─────────────────────────────────── -->
-							<div class="io-grid">
-								<!-- Colonne Entrée -->
-								<div class="io-col">
-									<div class="io-device-row">
-										<span class="io-device-label">
-											{$t('settings.audio.input')}
-											<span class="badge badge--in">IN</span>
-											{#if devicesLoading}<span class="loading-dot">…</span>{/if}
-										</span>
-										<CustomSelect
-											bind:value={draft.audio.inputDevice}
-											options={inputDeviceOptions}
-										/>
-										<span class="field-hint">{$t('settings.audio.inputHint')}</span>
-									</div>
-
-									<div class="channel-card channel-card--in">
-										<div class="channel-card-header">
-											<span class="channel-card-title">{$t('settings.audio.activeChannels')}</span>
-											<div class="channel-count-control">
-												<button
-													class="count-btn"
-													disabled={draft.audio.inputChannels <= 1}
-													on:click={() =>
-														(draft.audio.inputChannels = Math.max(
-															1,
-															draft.audio.inputChannels - 1
-														))}>−</button
-												>
-												<span class="count-value"
-													>{Math.min(draft.audio.inputChannels, realInputChannels)}</span
-												>
-												<button
-													class="count-btn"
-													disabled={draft.audio.inputChannels >= realInputChannels}
-													on:click={() =>
-														(draft.audio.inputChannels = Math.min(
-															realInputChannels,
-															draft.audio.inputChannels + 1
-														))}>+</button
-												>
-											</div>
-										</div>
-										<div class="channel-strips">
-											{#each Array(Math.min(realInputChannels, 16)) as _, i}
-												<div
-													class="channel-strip channel-strip--in"
-													class:channel-strip--inactive={i >=
-														Math.min(draft.audio.inputChannels, realInputChannels)}
-													title={$t('settings.audio.inputChannel', { values: { n: i + 1 } })}
-												>
-													<span class="strip-num">{i + 1}</span>
-													<div class="strip-meter">
-														<div
-															class="strip-level strip-level--in"
-															style="height: {levelToHeight(displayInputLevels[i] ?? 0)}"
-														></div>
-													</div>
-												</div>
-											{/each}
-										</div>
-									</div>
+			<!-- Content -->
+			<div class="content">
+				{#if activeSection === 'audio'}
+					<Section title={$t('settings.audio.devicesTitle')}>
+						<!-- ── Deux colonnes IN / OUT ─────────────────────────────────── -->
+						<div class="io-grid">
+							<!-- Colonne Entrée -->
+							<div class="io-col">
+								<div class="io-device-row">
+									<span class="io-device-label">
+										{$t('settings.audio.input')}
+										<span class="badge badge--in">IN</span>
+										{#if devicesLoading}<span class="loading-dot">…</span>{/if}
+									</span>
+									<CustomSelect bind:value={draft.audio.inputDevice} options={inputDeviceOptions} />
+									<span class="field-hint">{$t('settings.audio.inputHint')}</span>
 								</div>
 
-								<!-- Flèche centrale -->
-								<div class="channel-route-arrow">
-									<Icon name="arrow-right" size={14} />
-								</div>
-
-								<!-- Colonne Sortie -->
-								<div class="io-col">
-									<div class="io-device-row">
-										<span class="io-device-label">
-											{$t('settings.audio.output')}
-											<span class="badge badge--out">OUT</span>
-											{#if devicesLoading}<span class="loading-dot">…</span>{/if}
-										</span>
-										<CustomSelect
-											bind:value={draft.audio.outputDevice}
-											options={outputDeviceOptions}
-										/>
-										<span class="field-hint">{$t('settings.audio.outputHint')}</span>
+								<div class="channel-card channel-card--in">
+									<div class="channel-card-header">
+										<span class="channel-card-title">{$t('settings.audio.activeChannels')}</span>
+										<div class="channel-count-control">
+											<button
+												class="count-btn"
+												disabled={draft.audio.inputChannels <= 1}
+												on:click={() =>
+													(draft.audio.inputChannels = Math.max(1, draft.audio.inputChannels - 1))}
+												>−</button
+											>
+											<span class="count-value"
+												>{Math.min(draft.audio.inputChannels, realInputChannels)}</span
+											>
+											<button
+												class="count-btn"
+												disabled={draft.audio.inputChannels >= realInputChannels}
+												on:click={() =>
+													(draft.audio.inputChannels = Math.min(
+														realInputChannels,
+														draft.audio.inputChannels + 1
+													))}>+</button
+											>
+										</div>
 									</div>
-
-									<div class="channel-card channel-card--out">
-										<div class="channel-card-header">
-											<span class="channel-card-title">{$t('settings.audio.activeChannels')}</span>
-											{#if channelsLoading}<span class="loading-dot">…</span>{/if}
-											<div class="channel-count-control">
-												<button
-													class="count-btn"
-													disabled={draft.audio.outputChannels <= 1}
-													on:click={() =>
-														(draft.audio.outputChannels = Math.max(
-															1,
-															draft.audio.outputChannels - 1
-														))}>−</button
-												>
-												<span class="count-value"
-													>{Math.min(draft.audio.outputChannels, realOutputChannels)}</span
-												>
-												<button
-													class="count-btn"
-													disabled={draft.audio.outputChannels >= realOutputChannels}
-													on:click={() =>
-														(draft.audio.outputChannels = Math.min(
-															realOutputChannels,
-															draft.audio.outputChannels + 1
-														))}>+</button
-												>
-											</div>
-										</div>
-										<div class="channel-strips">
-											{#each Array(Math.min(realOutputChannels, 16)) as _, i}
-												<div
-													class="channel-strip channel-strip--out"
-													class:channel-strip--inactive={i >=
-														Math.min(draft.audio.outputChannels, realOutputChannels)}
-													title={$t('settings.audio.outputChannel', { values: { n: i + 1 } })}
-												>
-													<span class="strip-num">{i + 1}</span>
-													<div class="strip-meter">
-														<div
-															class="strip-level strip-level--out"
-															style="height: {levelToHeight(displayOutputLevels[i] ?? 0)}"
-														></div>
-													</div>
+									<div class="channel-strips">
+										{#each Array(Math.min(realInputChannels, 16)) as _, i}
+											<div
+												class="channel-strip channel-strip--in"
+												class:channel-strip--inactive={i >=
+													Math.min(draft.audio.inputChannels, realInputChannels)}
+												title={$t('settings.audio.inputChannel', { values: { n: i + 1 } })}
+											>
+												<span class="strip-num">{i + 1}</span>
+												<div class="strip-meter">
+													<div
+														class="strip-level strip-level--in"
+														style="height: {levelToHeight(displayInputLevels[i] ?? 0)}"
+													></div>
 												</div>
-											{/each}
-										</div>
+											</div>
+										{/each}
 									</div>
 								</div>
 							</div>
-							<!-- /io-grid -->
 
-							{#if applyError}
-								<div class="apply-error">
-									<Icon name="alert-triangle" size={13} />
-									<span>{applyError}</span>
+							<!-- Flèche centrale -->
+							<div class="channel-route-arrow">
+								<Icon name="arrow-right" size={14} />
+							</div>
+
+							<!-- Colonne Sortie -->
+							<div class="io-col">
+								<div class="io-device-row">
+									<span class="io-device-label">
+										{$t('settings.audio.output')}
+										<span class="badge badge--out">OUT</span>
+										{#if devicesLoading}<span class="loading-dot">…</span>{/if}
+									</span>
+									<CustomSelect
+										bind:value={draft.audio.outputDevice}
+										options={outputDeviceOptions}
+									/>
+									<span class="field-hint">{$t('settings.audio.outputHint')}</span>
 								</div>
-							{/if}
 
-							<div class="divider"></div>
-							<h3 class="subsection-title">{$t('settings.audio.qualityTitle')}</h3>
+								<div class="channel-card channel-card--out">
+									<div class="channel-card-header">
+										<span class="channel-card-title">{$t('settings.audio.activeChannels')}</span>
+										{#if channelsLoading}<span class="loading-dot">…</span>{/if}
+										<div class="channel-count-control">
+											<button
+												class="count-btn"
+												disabled={draft.audio.outputChannels <= 1}
+												on:click={() =>
+													(draft.audio.outputChannels = Math.max(
+														1,
+														draft.audio.outputChannels - 1
+													))}>−</button
+											>
+											<span class="count-value"
+												>{Math.min(draft.audio.outputChannels, realOutputChannels)}</span
+											>
+											<button
+												class="count-btn"
+												disabled={draft.audio.outputChannels >= realOutputChannels}
+												on:click={() =>
+													(draft.audio.outputChannels = Math.min(
+														realOutputChannels,
+														draft.audio.outputChannels + 1
+													))}>+</button
+											>
+										</div>
+									</div>
+									<div class="channel-strips">
+										{#each Array(Math.min(realOutputChannels, 16)) as _, i}
+											<div
+												class="channel-strip channel-strip--out"
+												class:channel-strip--inactive={i >=
+													Math.min(draft.audio.outputChannels, realOutputChannels)}
+												title={$t('settings.audio.outputChannel', { values: { n: i + 1 } })}
+											>
+												<span class="strip-num">{i + 1}</span>
+												<div class="strip-meter">
+													<div
+														class="strip-level strip-level--out"
+														style="height: {levelToHeight(displayOutputLevels[i] ?? 0)}"
+													></div>
+												</div>
+											</div>
+										{/each}
+									</div>
+								</div>
+							</div>
+						</div>
+						<!-- /io-grid -->
 
-							<div class="field-grid">
-								<div class="field">
-									<span class="field-label">{$t('settings.audio.sampleRate')}</span>
+						{#if applyError}
+							<div class="apply-error">
+								<Icon name="alert-triangle" size={13} />
+								<span>{applyError}</span>
+							</div>
+						{/if}
+
+						<SubSection title={$t('settings.audio.qualityTitle')}>
+							<FieldGrid>
+								<Field label={$t('settings.audio.sampleRate')}>
 									{#if sampleRateSliderOptions.length <= 1}
 										<div class="single-value-display">
 											{sampleRateSliderOptions[0]?.label ??
@@ -726,22 +708,22 @@
 											options={sampleRateSliderOptions}
 										/>
 									{/if}
-								</div>
+								</Field>
 
-								<div class="field">
-									<span class="field-label">{$t('settings.audio.bufferSize')}</span>
+								<Field label={$t('settings.audio.bufferSize')}>
 									<StepSlider bind:value={draft.audio.bufferSize} options={bufferSliderOptions} />
-								</div>
+								</Field>
 
-								<div class="field">
-									<span class="field-label">{$t('settings.audio.bitDepth')}</span>
+								<Field
+									label={$t('settings.audio.bitDepth')}
+									hint={$t('settings.audio.bitDepthHint')}
+								>
 									<div class="single-value-display">
 										<Icon name="cpu" size={14} />
 										32-bit float
 									</div>
-									<span class="field-hint">{$t('settings.audio.bitDepthHint')}</span>
-								</div>
-							</div>
+								</Field>
+							</FieldGrid>
 
 							<div class="latency-bar">
 								<span class="latency-label">{$t('settings.audio.estimatedLatency')}</span>
@@ -770,23 +752,16 @@
 									{:else}{$t('settings.audio.xrunsHint')}{/if}
 								</span>
 							</div>
-
-							<div class="divider"></div>
-							<h3 class="subsection-title">{$t('settings.audio.masterOutTitle')}</h3>
-
+						</SubSection><SubSection title={$t('settings.audio.masterOutTitle')}>
 							<Toggle
 								bind:checked={draft.audio.masterSoftClip}
 								label={$t('settings.audio.softClip')}
 								description={$t('settings.audio.softClipDesc')}
 							/>
-
-							<div class="divider"></div>
-							<h3 class="subsection-title">{$t('settings.audio.isolationTitle')}</h3>
-
-							<div class="field">
-								<span class="field-label">{$t('settings.audio.isolatedPlugins')}</span>
+						</SubSection><SubSection title={$t('settings.audio.isolationTitle')}>
+							<Field label={$t('settings.audio.isolatedPlugins')}>
 								<PillGroup bind:value={draft.audio.pluginIsolation} options={isolationOptions} />
-								<span class="field-hint">
+								<span slot="hint">
 									{#if draft.audio.pluginIsolation === 'off'}{$t('settings.audio.isolationOff')}
 									{:else if draft.audio.pluginIsolation === 'chosen'}{$t(
 											'settings.audio.isolationChosen'
@@ -794,11 +769,13 @@
 									{:else}{$t('settings.audio.isolationAll')}{/if}
 									{$t('settings.audio.isolationSupportedFormats')}
 								</span>
-							</div>
+							</Field>
 
 							{#if draft.audio.pluginIsolation === 'chosen' && draft.audio.alwaysIsolated.length > 0}
-								<div class="field">
-									<span class="field-label">{$t('settings.audio.alwaysIsolated')}</span>
+								<Field
+									label={$t('settings.audio.alwaysIsolated')}
+									hint={$t('settings.audio.alwaysIsolatedHint')}
+								>
 									<div class="isolated-list">
 										{#each draft.audio.alwaysIsolated as pluginId (pluginId)}
 											<span class="isolated-chip">
@@ -814,13 +791,9 @@
 											</span>
 										{/each}
 									</div>
-									<span class="field-hint">{$t('settings.audio.alwaysIsolatedHint')}</span>
-								</div>
+								</Field>
 							{/if}
-
-							<div class="divider"></div>
-							<h3 class="subsection-title">{$t('settings.audio.routingTitle')}</h3>
-
+						</SubSection><SubSection title={$t('settings.audio.routingTitle')}>
 							<div class="routing-row">
 								<div class="routing-label">
 									<span class="routing-name">{$t('settings.audio.masterLr')}</span>
@@ -864,14 +837,13 @@
 									/>
 								</div>
 							</div>
-						</div>
-					{:else if activeSection === 'midi'}
-						<div class="section">
-							<h2 class="section-title">{$t('settings.midi.title')}</h2>
-							<span class="field-hint">{$t('settings.midi.intro')}</span>
+						</SubSection></Section
+					>
+				{:else if activeSection === 'midi'}
+					<Section title={$t('settings.midi.title')}>
+						<span class="field-hint">{$t('settings.midi.intro')}</span>
 
-							<div class="divider"></div>
-
+						<SubSection>
 							{#if midiRows.length === 0}
 								<span class="field-hint">{$t('settings.midi.none')}</span>
 							{:else}
@@ -909,36 +881,27 @@
 									</div>
 								{/each}
 							{/if}
-
-							<div class="divider"></div>
-							<h3 class="subsection-title">{$t('settings.midi.keyboardSound')}</h3>
-
+						</SubSection><SubSection title={$t('settings.midi.keyboardSound')}>
 							<Toggle
 								bind:checked={draft.midi.localControlOff}
 								label={$t('settings.midi.localControlOff')}
 								description={$t('settings.midi.localControlOffDesc')}
 							/>
-						</div>
-					{:else if activeSection === 'project'}
-						<div class="section">
-							<h2 class="section-title">{$t('settings.project.title')}</h2>
-
-							<div class="field">
-								<span class="field-label">{$t('settings.project.defaultFolder')}</span>
-								<div class="field-row">
-									<input
-										class="text-input"
-										type="text"
-										bind:value={draft.project.defaultFolder}
-										placeholder="~/Documents/Echoes Studio"
-									/>
-									<Button compact on:click={() => {}}>{$t('common.browse')}</Button>
-								</div>
+						</SubSection></Section
+					>
+				{:else if activeSection === 'project'}
+					<Section title={$t('settings.project.title')}>
+						<Field label={$t('settings.project.defaultFolder')}>
+							<div class="field-row">
+								<TextInput
+									bind:value={draft.project.defaultFolder}
+									placeholder="~/Documents/Echoes Studio"
+								/>
+								<Button compact on:click={() => {}}>{$t('common.browse')}</Button>
 							</div>
+						</Field>
 
-							<div class="divider"></div>
-							<h3 class="subsection-title">{$t('settings.project.autoSaveTitle')}</h3>
-
+						<SubSection title={$t('settings.project.autoSaveTitle')}>
 							<Toggle
 								bind:checked={draft.project.autoSave}
 								label={$t('settings.project.autoSave')}
@@ -946,33 +909,27 @@
 							/>
 
 							{#if draft.project.autoSave}
-								<div class="field-grid" style="margin-top: 0">
-									<div class="field">
-										<span class="field-label">{$t('settings.project.interval')}</span>
+								<FieldGrid>
+									<Field label={$t('settings.project.interval')}>
 										<NumberInput
 											bind:value={draft.project.autoSaveIntervalSec}
 											min={10}
 											max={600}
 											unit="sec"
 										/>
-									</div>
-									<div class="field">
-										<span class="field-label">{$t('settings.project.backupsKept')}</span>
+									</Field>
+									<Field label={$t('settings.project.backupsKept')}>
 										<NumberInput
 											bind:value={draft.project.autoSaveMaxBackups}
 											min={1}
 											max={20}
 											unit="max"
 										/>
-									</div>
-								</div>
+									</Field>
+								</FieldGrid>
 							{/if}
-
-							<div class="divider"></div>
-							<h3 class="subsection-title">{$t('settings.project.exportTitle')}</h3>
-
-							<div class="field">
-								<span class="field-label">{$t('settings.project.wavBitDepth')}</span>
+						</SubSection><SubSection title={$t('settings.project.exportTitle')}>
+							<Field label={$t('settings.project.wavBitDepth')}>
 								<PillGroup
 									bind:value={draft.project.exportBitDepth}
 									options={[
@@ -981,15 +938,14 @@
 										{ value: 32, label: '32-bit float' }
 									]}
 								/>
-								<span class="field-hint">
+								<span slot="hint">
 									{#if draft.project.exportBitDepth === 16}{$t('settings.project.wav16')}
 									{:else if draft.project.exportBitDepth === 24}{$t('settings.project.wav24')}
 									{:else}{$t('settings.project.wav32')}{/if}
 								</span>
-							</div>
+							</Field>
 
-							<div class="field">
-								<span class="field-label">{$t('settings.project.mp3Bitrate')}</span>
+							<Field label={$t('settings.project.mp3Bitrate')}>
 								<PillGroup
 									bind:value={draft.project.exportMp3Bitrate}
 									options={[
@@ -998,62 +954,38 @@
 										{ value: 320, label: '320 kbps' }
 									]}
 								/>
-								<span class="field-hint">
+								<span slot="hint">
 									{#if draft.project.exportMp3Bitrate === 128}{$t('settings.project.mp3_128')}
 									{:else if draft.project.exportMp3Bitrate === 192}{$t('settings.project.mp3_192')}
 									{:else}{$t('settings.project.mp3_320')}{/if}
 								</span>
-							</div>
-
-							<div class="divider"></div>
-							<h3 class="subsection-title">{$t('settings.project.newProjectDefaults')}</h3>
-
-							<div class="field-grid">
-								<div class="field">
-									<span class="field-label">{$t('settings.project.bpm')}</span>
+							</Field>
+						</SubSection><SubSection title={$t('settings.project.newProjectDefaults')}>
+							<FieldGrid>
+								<Field label={$t('settings.project.bpm')}>
 									<NumberInput
 										bind:value={draft.project.defaultBpm}
 										min={20}
 										max={400}
 										unit="BPM"
 									/>
-								</div>
-								<div class="field">
-									<span class="field-label">{$t('settings.project.timeSignature')}</span>
-									<div class="field-row">
-										<NumberInput
-											bind:value={draft.project.defaultNumerator}
-											min={1}
-											max={16}
-											width="42px"
-										/>
-										<span class="field-slash">/</span>
-										<CustomSelect
-											small
-											bind:value={draft.project.defaultDenominator}
-											options={[
-												{ value: 2, label: '2' },
-												{ value: 4, label: '4' },
-												{ value: 8, label: '8' },
-												{ value: 16, label: '16' }
-											]}
-										/>
-									</div>
-								</div>
-							</div>
-						</div>
-					{:else if activeSection === 'interface'}
-						<div class="section">
-							<h2 class="section-title">{$t('settings.interface.title')}</h2>
+								</Field>
+								<Field label={$t('settings.project.timeSignature')}>
+									<TimeSignatureInput
+										bind:numerator={draft.project.defaultNumerator}
+										bind:denominator={draft.project.defaultDenominator}
+									/>
+								</Field>
+							</FieldGrid>
+						</SubSection></Section
+					>
+				{:else if activeSection === 'interface'}
+					<Section title={$t('settings.interface.title')}>
+						<Field label={$t('locale.label')} hint={$t('locale.description')}>
+							<PillGroup bind:value={draft.interface.locale} options={localeOptions} />
+						</Field>
 
-							<div class="field">
-								<span class="field-label">{$t('locale.label')}</span>
-								<PillGroup bind:value={draft.interface.locale} options={localeOptions} />
-								<span class="field-hint">{$t('locale.description')}</span>
-							</div>
-
-							<div class="divider"></div>
-
+						<SubSection>
 							<Toggle
 								bind:checked={draft.interface.showMinimap}
 								label={$t('settings.interface.minimap')}
@@ -1065,108 +997,31 @@
 								label={$t('settings.interface.arrangeGrid')}
 								description={$t('settings.interface.arrangeGridDesc')}
 							/>
-						</div>
-					{:else if activeSection === 'shortcuts'}
-						<div class="section">
-							<h2 class="section-title">{$t('settings.shortcuts.title')}</h2>
-							<ShortcutSettings bind:overrides={draft.shortcuts} />
-						</div>
-					{/if}
-				</div>
-			</div>
-
-			<!-- ── Footer ── -->
-			<div class="panel-footer">
-				<Button variant="ghost" on:click={resetSection} title={$t('settings.resetSection')}
-					>{$t('common.reset')}</Button
-				>
-				<div class="footer-actions">
-					<Button variant="secondary" on:click={cancelAndClose}>{$t('common.cancel')}</Button>
-					<Button variant="primary" on:click={applyAndClose}>{$t('common.save')}</Button>
-				</div>
+						</SubSection></Section
+					>
+				{:else if activeSection === 'shortcuts'}
+					<Section title={$t('settings.shortcuts.title')}>
+						<ShortcutSettings bind:overrides={draft.shortcuts} />
+					</Section>
+				{/if}
 			</div>
 		</div>
-	</div>
+
+		<DialogFooter>
+			<Button
+				slot="start"
+				variant="ghost"
+				on:click={resetSection}
+				title={$t('settings.resetSection')}>{$t('common.reset')}</Button
+			>
+			<Button variant="secondary" on:click={cancelAndClose}>{$t('common.cancel')}</Button>
+			<Button variant="primary" on:click={applyAndClose}>{$t('common.save')}</Button>
+		</DialogFooter>
+	</Dialog>
 {/if}
 
 <style lang="scss">
 	@use '../variables.scss' as *;
-
-	// ── Overlay ────────────────────────────────────────────────────────────────
-	.overlay {
-		position: fixed;
-		inset: 0;
-		background: rgba(0, 0, 0, 0.65);
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		z-index: 1000;
-		backdrop-filter: blur(4px);
-	}
-
-	// ── Panel shell ───────────────────────────────────────────────────────────
-	.panel {
-		width: 720px;
-		max-width: calc(100vw - 48px);
-		height: 620px;
-		max-height: calc(100vh - 80px);
-		background: #1e1e24;
-		border: 1px solid $border-color;
-		border-radius: $radius-xl;
-		display: flex;
-		flex-direction: column;
-		overflow: hidden;
-		box-shadow:
-			0 24px 64px rgba(0, 0, 0, 0.7),
-			0 0 0 0.5px rgba(255, 255, 255, 0.06);
-	}
-
-	// ── Header ────────────────────────────────────────────────────────────────
-	.panel-header {
-		display: flex;
-		align-items: center;
-		padding: 14px 18px;
-		border-bottom: 1px solid $border-color;
-		background: $panel-background-color;
-		flex-shrink: 0;
-		gap: 9px;
-	}
-
-	.header-icon {
-		color: rgba(247, 247, 249, 0.35);
-		flex-shrink: 0;
-		margin-right: 2px;
-	}
-
-	.panel-title {
-		font-size: 13px;
-		font-weight: 600;
-		color: $text-color;
-		letter-spacing: 0.2px;
-		flex: 1;
-	}
-
-	.close-btn {
-		background: none;
-		border: none;
-		color: rgba(247, 247, 249, 0.4);
-		font-size: 14px;
-		width: 26px;
-		height: 26px;
-		border-radius: 4px;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		cursor: pointer;
-		transition:
-			background 0.1s,
-			color 0.1s;
-
-		&:hover {
-			background: rgba(255, 255, 255, 0.1);
-			color: $text-color;
-		}
-	}
 
 	// ── Body (sidebar + content) ───────────────────────────────────────────────
 	.panel-body {
@@ -1200,8 +1055,8 @@
 		font-size: 12px;
 		text-align: left;
 		transition:
-			background 0.12s,
-			color 0.12s;
+			background $duration-base,
+			color $duration-base;
 		width: 100%;
 
 		&:hover {
@@ -1229,7 +1084,7 @@
 		justify-content: center;
 		opacity: 0.6;
 		flex-shrink: 0;
-		transition: opacity 0.12s;
+		transition: opacity $duration-base;
 	}
 
 	.nav-label {
@@ -1248,59 +1103,8 @@
 
 		&::-webkit-scrollbar-thumb {
 			background: rgba(255, 255, 255, 0.12);
-			border-radius: 3px;
+			border-radius: $radius-xs;
 		}
-	}
-
-	.section {
-		display: flex;
-		flex-direction: column;
-		gap: 8px;
-	}
-
-	.section-title {
-		font-size: 14px;
-		font-weight: 600;
-		color: $text-color;
-		margin: 0 0 4px;
-		letter-spacing: 0.1px;
-	}
-
-	.subsection-title {
-		font-size: 11px;
-		font-weight: 600;
-		text-transform: uppercase;
-		letter-spacing: 0.8px;
-		color: rgba(247, 247, 249, 0.35);
-		margin: 0;
-	}
-
-	.divider {
-		height: 1px;
-		background: $border-color;
-		margin: 8px 0;
-	}
-
-	// ── Field ─────────────────────────────────────────────────────────────────
-	.field {
-		display: flex;
-		flex-direction: column;
-		gap: 5px;
-	}
-
-	.field-grid {
-		display: grid;
-		grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
-		gap: 16px;
-		margin-top: 4px;
-	}
-
-	.field-label {
-		line-height: 16px;
-		font-size: 11px;
-		color: rgba(247, 247, 249, 0.55);
-		font-weight: 500;
-		letter-spacing: 0.3px;
 	}
 
 	.field-row {
@@ -1321,11 +1125,11 @@
 		font-weight: 700;
 		letter-spacing: 0.8px;
 		padding: 2px 5px;
-		border-radius: 3px;
+		border-radius: $radius-xs;
 
 		&--in {
 			background: rgba(0, 200, 120, 0.15);
-			color: #00c878;
+			color: $color-success;
 			border: 1px solid rgba(0, 200, 120, 0.3);
 		}
 
@@ -1528,8 +1332,8 @@
 		align-items: center;
 		justify-content: center;
 		transition:
-			background 0.1s,
-			border-color 0.1s;
+			background $duration-base,
+			border-color $duration-base;
 
 		&:hover:not(:disabled) {
 			background: rgba(255, 255, 255, 0.1);
@@ -1689,52 +1493,6 @@
 		font-size: 11px;
 	}
 
-	// ── Inputs ────────────────────────────────────────────────────────────────
-	.text-input {
-		flex: 1;
-		background: $surface-2;
-		border: 1px solid $border-subtle;
-		border-radius: $radius-md;
-		color: $text-color;
-		font-size: 12px;
-		padding: 5px 9px;
-		height: $ctrl-height;
-		box-sizing: border-box;
-		outline: none;
-
-		&::placeholder {
-			color: $text-faint;
-		}
-		&:focus {
-			border-color: $accent-color;
-			background: rgba(21, 113, 255, 0.06);
-		}
-	}
-
-	.field-slash {
-		font-size: 15px;
-		color: rgba(247, 247, 249, 0.3);
-		font-family: monospace;
-		line-height: 1;
-		flex-shrink: 0;
-	}
-
-	// ── Footer ────────────────────────────────────────────────────────────────
-	.panel-footer {
-		display: flex;
-		align-items: center;
-		padding: 12px 18px;
-		border-top: 1px solid $border-color;
-		background: $panel-background-color;
-		flex-shrink: 0;
-	}
-
-	.footer-actions {
-		margin-left: auto;
-		display: flex;
-		gap: 8px;
-	}
-
 	.midi-device--offline {
 		opacity: 0.45;
 	}
@@ -1766,7 +1524,7 @@
 		font-size: 11px;
 		border: 1px solid rgba(34, 197, 94, 0.45);
 		background: rgba(34, 197, 94, 0.1);
-		border-radius: 10px;
+		border-radius: $radius-xl;
 		color: #4ade80;
 
 		button {

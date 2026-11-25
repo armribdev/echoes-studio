@@ -1,9 +1,11 @@
 <script lang="ts">
-	import { createEventDispatcher, onMount } from 'svelte';
+	import { createEventDispatcher } from 'svelte';
 	import { t } from 'svelte-i18n';
-	import { dismissable } from '../frontend/dismiss';
-	import { focusTrap } from '../frontend/focusTrap';
 	import { shortcutLabels } from '../frontend/shortcuts/label';
+	import Menu from './Menu.svelte';
+	import MenuHeader from './MenuHeader.svelte';
+	import MenuItem from './MenuItem.svelte';
+	import MenuSeparator from './MenuSeparator.svelte';
 
 	export let x = 0;
 	export let y = 0;
@@ -19,47 +21,26 @@
 		close: void;
 	}>();
 
-	let menuEl: HTMLDivElement;
-	let adjustedX = x;
-	let adjustedY = y;
+	type Action = 'addtrack' | 'rename' | 'automate' | 'insertsound';
 
-	onMount(() => {
-		if (!menuEl) return;
-		const rect = menuEl.getBoundingClientRect();
-		const vw = window.innerWidth;
-		const vh = window.innerHeight;
-		if (x + rect.width > vw) adjustedX = vw - rect.width - 8;
-		if (y + rect.height > vh) adjustedY = vh - rect.height - 8;
-	});
+	function choose(action: Action) {
+		dispatch(action);
+		dispatch('close');
+	}
 
-	function close() {
+	function deleteTrack() {
+		dispatch('delete', { trackId });
 		dispatch('close');
 	}
 </script>
 
-<div
-	class="context-menu"
-	bind:this={menuEl}
-	role="menu"
-	tabindex="-1"
-	use:focusTrap={{ initial: 'first' }}
-	use:dismissable={close}
-	style="left: {adjustedX}px; top: {adjustedY}px"
->
-	<div class="menu-header">{trackName}</div>
+<Menu {x} {y} on:close>
+	<MenuHeader>{trackName}</MenuHeader>
+	<MenuSeparator />
 
-	<div class="separator"></div>
-
-	<button
-		class="item"
-		role="menuitem"
-		on:click={() => {
-			dispatch('addtrack');
-			close();
-		}}
-	>
+	<MenuItem shortcut={$shortcutLabels('track.add')} on:click={() => choose('addtrack')}>
 		<svg
-			class="item-icon"
+			slot="icon"
 			width="14"
 			height="14"
 			viewBox="0 0 24 24"
@@ -72,20 +53,12 @@
 			<line x1="12" y1="5" x2="12" y2="19" />
 			<line x1="5" y1="12" x2="19" y2="12" />
 		</svg>
-		<span>{$t('trackMenu.newTrack')}</span>
-		<span class="item-shortcut">{$shortcutLabels('track.add')}</span>
-	</button>
+		{$t('trackMenu.newTrack')}
+	</MenuItem>
 
-	<button
-		class="item"
-		role="menuitem"
-		on:click={() => {
-			dispatch('insertsound');
-			close();
-		}}
-	>
+	<MenuItem on:click={() => choose('insertsound')}>
 		<svg
-			class="item-icon"
+			slot="icon"
 			width="14"
 			height="14"
 			viewBox="0 0 24 24"
@@ -99,21 +72,14 @@
 			<line x1="21" y1="21" x2="16.65" y2="16.65" />
 			<path d="M8 11h6M11 8v6" />
 		</svg>
-		<span>{$t('trackMenu.insertSound')}</span>
-	</button>
+		{$t('trackMenu.insertSound')}
+	</MenuItem>
 
-	<div class="separator"></div>
+	<MenuSeparator />
 
-	<button
-		class="item"
-		role="menuitem"
-		on:click={() => {
-			dispatch('rename');
-			close();
-		}}
-	>
+	<MenuItem shortcut="F2" on:click={() => choose('rename')}>
 		<svg
-			class="item-icon"
+			slot="icon"
 			width="14"
 			height="14"
 			viewBox="0 0 24 24"
@@ -126,20 +92,12 @@
 			<path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
 			<path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
 		</svg>
-		<span>{$t('common.rename')}</span>
-		<span class="item-shortcut">F2</span>
-	</button>
+		{$t('common.rename')}
+	</MenuItem>
 
-	<button
-		class="item"
-		role="menuitem"
-		on:click={() => {
-			dispatch('automate');
-			close();
-		}}
-	>
+	<MenuItem on:click={() => choose('automate')}>
 		<svg
-			class="item-icon"
+			slot="icon"
 			width="14"
 			height="14"
 			viewBox="0 0 24 24"
@@ -153,21 +111,14 @@
 			<circle cx="9" cy="11" r="1.5" />
 			<circle cx="13" cy="15" r="1.5" />
 		</svg>
-		<span>{$t('trackMenu.automateParam')}</span>
-	</button>
+		{$t('trackMenu.automateParam')}
+	</MenuItem>
 
-	<div class="separator"></div>
+	<MenuSeparator />
 
-	<button
-		class="item item--danger"
-		role="menuitem"
-		on:click={() => {
-			dispatch('delete', { trackId });
-			close();
-		}}
-	>
+	<MenuItem danger shortcut={$shortcutLabels('arrangement.delete')} on:click={deleteTrack}>
 		<svg
-			class="item-icon"
+			slot="icon"
 			width="14"
 			height="14"
 			viewBox="0 0 24 24"
@@ -182,104 +133,6 @@
 			<path d="M10 11v6M14 11v6" />
 			<path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
 		</svg>
-		<span>{$t('trackMenu.deleteTrack')}</span>
-		<span class="item-shortcut">{$shortcutLabels('arrangement.delete')}</span>
-	</button>
-</div>
-
-<style lang="scss">
-	@use '../variables.scss' as *;
-
-	.context-menu {
-		position: fixed;
-		z-index: 201;
-		min-width: 210px;
-		background: #26262e;
-		border: 1px solid $border-color;
-		border-radius: $radius-lg;
-		padding: 4px;
-		box-shadow:
-			0 8px 32px rgba(0, 0, 0, 0.55),
-			0 2px 8px rgba(0, 0, 0, 0.3);
-		user-select: none;
-	}
-
-	.menu-header {
-		padding: 4px 10px 6px;
-		font-size: 10px;
-		font-weight: 600;
-		letter-spacing: 0.6px;
-		text-transform: uppercase;
-		color: $text-faint;
-		font-family: $font-mono;
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
-	}
-
-	.item {
-		width: 100%;
-		height: 30px;
-		display: flex;
-		align-items: center;
-		gap: 8px;
-		padding: 0 8px;
-		border: none;
-		background: none;
-		color: rgba(247, 247, 249, 0.82);
-		font-size: 12px;
-		font-family: inherit;
-		border-radius: $radius-sm;
-		cursor: pointer;
-		text-align: left;
-		transition:
-			background 0.08s,
-			color 0.08s;
-
-		&:hover {
-			background: $surface-hover;
-			color: $text-color;
-
-			.item-icon {
-				color: $text-color;
-			}
-		}
-
-		&--danger {
-			color: rgba(255, 65, 54, 0.82);
-
-			.item-icon {
-				color: rgba(255, 65, 54, 0.6);
-			}
-
-			&:hover {
-				background: rgba(255, 65, 54, 0.1);
-				color: $color-error;
-
-				.item-icon {
-					color: $color-error;
-				}
-			}
-		}
-	}
-
-	.item-icon {
-		color: $text-subtle;
-		flex-shrink: 0;
-		transition: color 0.08s;
-	}
-
-	.item-shortcut {
-		margin-left: auto;
-		font-size: 10px;
-		color: $text-faint;
-		font-family: $font-mono;
-		white-space: nowrap;
-	}
-
-	.separator {
-		height: 1px;
-		background: $border-color;
-		margin: 3px 0;
-	}
-</style>
+		{$t('trackMenu.deleteTrack')}
+	</MenuItem>
+</Menu>

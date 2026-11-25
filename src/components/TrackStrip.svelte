@@ -238,7 +238,7 @@
 		box-sizing: border-box;
 		border-bottom: 1px solid $border-color;
 		position: relative;
-		transition: background 0.1s;
+		transition: background $duration-base;
 		padding: 0;
 		gap: 0;
 
@@ -265,8 +265,8 @@
 		border-radius: 0 2px 2px 0;
 		cursor: pointer;
 		transition:
-			width 0.12s ease,
-			filter 0.12s ease;
+			width $duration-base ease,
+			filter $duration-base ease;
 
 		&:hover {
 			width: 5px;
@@ -284,10 +284,10 @@
 		grid-template-columns: repeat(6, 20px);
 		gap: 5px;
 		padding: 8px;
-		background: $panel-background-color;
+		background: $surface-overlay;
 		border: 1px solid $border-color;
-		border-radius: $radius-md;
-		box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+		border-radius: $radius-lg;
+		box-shadow: $shadow-overlay;
 	}
 
 	.color-opt {
@@ -295,11 +295,11 @@
 		height: 20px;
 		padding: 0;
 		border: 1px solid rgba(255, 255, 255, 0.08);
-		border-radius: 5px;
+		border-radius: $radius-md;
 		cursor: pointer;
 		transition:
-			transform 0.08s ease,
-			box-shadow 0.08s ease;
+			transform $duration-fast ease,
+			box-shadow $duration-fast ease;
 
 		&.active {
 			box-shadow:
@@ -378,8 +378,8 @@
 		justify-content: center;
 		cursor: pointer;
 		transition:
-			background 0.1s,
-			color 0.1s;
+			background $duration-base,
+			color $duration-base;
 
 		&:last-child {
 			border-right: none;

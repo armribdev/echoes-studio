@@ -2789,7 +2789,7 @@
 		box-sizing: border-box;
 		height: 100px;
 		background-color: rgba(21, 113, 255, 0.15);
-		border-radius: 4px;
+		border-radius: $radius-sm;
 		pointer-events: none;
 		border: 2px dashed rgba(255, 255, 255, 0.6);
 		z-index: 5;
@@ -2856,7 +2856,7 @@
 			font-weight: 600;
 			font-family: inherit;
 			cursor: pointer;
-			transition: background 0.1s;
+			transition: background $duration-base;
 
 			&:hover {
 				background: $accent-hover;

@@ -139,7 +139,7 @@
 			box-shadow: 0 0 0 0 rgba(21, 113, 255, 0);
 			transition:
 				box-shadow 0.15s,
-				transform 0.1s;
+				transform $duration-base;
 			position: relative;
 			z-index: 3;
 		}
@@ -201,11 +201,11 @@
 		position: absolute;
 		top: 0;
 		font-size: 10px;
-		font-family: 'SF Mono', 'Fira Code', ui-monospace, monospace;
+		font-family: $font-mono;
 		color: rgba(247, 247, 249, 0.28);
 		cursor: pointer;
 		line-height: 1;
-		transition: color 0.12s;
+		transition: color $duration-base;
 		white-space: nowrap;
 
 		&:hover {
