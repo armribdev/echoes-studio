@@ -49,6 +49,13 @@ in the existing plugin flow until a later unified “Devices” source is design
 Factory Echoes packs and user folders share the same kinds. Tags and folders are
 metadata, not separate asset types.
 
+**User tags (Phase 4, 2026-11-26).** The detail strip under the results lists the
+tags the user gave to the selected asset (click one to remove it) and a field to
+add one (Enter). A tag is lowercase, at most 24 characters, never mandatory. Search
+matches the name **or** any tag (catalogue tags such as `drums` included). Tags
+are stored by asset id with the favorites (`echoes.library.v1`, `userTags`): local
+to the machine, not part of the project, no engine command.
+
 ---
 
 ## 3. Sources (entry windows)

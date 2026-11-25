@@ -8,6 +8,7 @@ import {
 	type LibraryPersistence
 } from './persistence';
 import { filterAssetsByQuery } from './search';
+import { mergeTags, withoutTag, withTag } from './tags';
 import { libraryPreviewPlayer } from './previewPlayer';
 import { libraryMidiPreviewPlayer } from './midiPreview';
 import { FACTORY_LIBRARY_ASSETS, isFactoryAssetId } from './factoryCatalog';
@@ -39,6 +40,7 @@ export interface LibraryState {
 	favoriteIds: string[];
 	recentIds: string[];
 	indexedFolders: string[];
+	userTags: Record<string, string[]>;
 	indexer: LibraryIndexerState;
 	indexerProgress: number | null;
 	indexerError: string | null;
@@ -80,6 +82,7 @@ function initialState(): LibraryState {
 		favoriteIds: [...persisted.favoriteIds],
 		recentIds: [...persisted.recentIds],
 		indexedFolders: [...persisted.indexedFolders],
+		userTags: persisted.userTags,
 		indexer: 'idle',
 		indexerProgress: null,
 		indexerError: null,
@@ -92,7 +95,8 @@ function persistSlice(state: LibraryState): void {
 		favoriteIds: state.favoriteIds,
 		recentIds: state.recentIds,
 		indexedFolders: state.indexedFolders,
-		lastSource: state.source
+		lastSource: state.source,
+		userTags: state.userTags
 	};
 	saveLibraryPersistence(data);
 }
@@ -311,6 +315,30 @@ function createLibraryStore() {
 			});
 		},
 
+		addTag(id: string, rawTag: string) {
+			update((s) => {
+				const current = s.userTags[id] ?? [];
+				const tags = withTag(current, rawTag);
+				if (tags === current) return s;
+				const next = { ...s, userTags: { ...s.userTags, [id]: [...tags] } };
+				persistSlice(next);
+				return next;
+			});
+		},
+
+		removeTag(id: string, tag: string) {
+			update((s) => {
+				const current = s.userTags[id];
+				if (!current?.includes(tag)) return s;
+				const remaining = withoutTag(current, tag);
+				const userTags = { ...s.userTags, [id]: remaining };
+				if (remaining.length === 0) delete userTags[id];
+				const next = { ...s, userTags };
+				persistSlice(next);
+				return next;
+			});
+		},
+
 		recordRecent(id: string) {
 			update((s) => {
 				const recentIds = pushRecentId(s.recentIds, id);
@@ -465,6 +493,11 @@ function createLibraryStore() {
 
 export const libraryStore = createLibraryStore();
 
+function withUserTags(asset: LibraryAsset, userTags: Record<string, string[]>): LibraryAsset {
+	const own = userTags[asset.id];
+	return own?.length ? { ...asset, tags: mergeTags(asset.tags, own) } : asset;
+}
+
 function idsForSource(state: LibraryState): string[] {
 	switch (state.source) {
 		case 'recents':
@@ -489,11 +522,11 @@ export const libraryVisibleAssets = derived(libraryStore, ($lib) => {
 	for (const id of ids) {
 		const asset = $lib.assetsById[id];
 		if (asset) {
-			assets.push(asset);
+			assets.push(withUserTags(asset, $lib.userTags));
 			continue;
 		}
 		if (($lib.source === 'favorites' || $lib.source === 'recents') && !isFactoryAssetId(id)) {
-			assets.push(assetFromPath(id));
+			assets.push(withUserTags(assetFromPath(id), $lib.userTags));
 		}
 	}
 	return filterAssetsByQuery(assets, $lib.query);

@@ -482,7 +482,12 @@
 					</div>
 				</div>
 
-				<LibraryDetail asset={selected} />
+				<LibraryDetail
+					asset={selected}
+					userTags={selected ? ($libraryStore.userTags[selected.id] ?? []) : []}
+					on:addTag={(e) => selected && libraryStore.addTag(selected.id, e.detail)}
+					on:removeTag={(e) => selected && libraryStore.removeTag(selected.id, e.detail)}
+				/>
 			{/if}
 		</div>
 	</div>

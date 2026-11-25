@@ -42,7 +42,7 @@ Chaque point dit ce qui a été constaté. « Non revérifié » = repris d'un d
    - Écriture en direct (enregistrer un geste sur un bouton de plugin) : aucun code ; la limite est notée dans l'ADR-021 (il faut remonter les événements de sortie du plugin).
    - Validation cross-OS des empreintes (ADR-025, harnais V1) : la CI exécute les tests Rust sur Windows seulement.
    - Fait depuis la dernière mise à jour : le texte de valeur fourni par le plugin (`get_plugin_param_text`, utilisé par `AutomationLane.svelte`).
-5. **Bibliothèque, phase 4** (`todo`, aucun code : ni collections intelligentes, ni mémoire de contexte) : [`../../library-browser-roadmap.md`](../../library-browser-roadmap.md).
+5. **Bibliothèque, phase 4** (`doing` : étiquettes utilisateur livrées le 2026-11-26, pas encore testées à la main ; restent les collections intelligentes, la mémoire de contexte opt-in, l'ADR Devices et les packs) : [`../../library-browser-roadmap.md`](../../library-browser-roadmap.md).
 6. **Note FX autres que l'arpégiateur** (transpose, accord, gamme) : l'arpégiateur est un étage de notes de `InstrumentNode` (ADR-030) ; les suivants déclencheront le vrai nœud MIDI (option B de l'ADR-030), donc un ADR avant de commencer.
 7. **Warp à la dépose d'un loop** : ni code ni ADR (l'ADR-023 le diffère explicitement). Impact sur le rendu offline : ADR obligatoire avant tout.
 8. **Phase 7 (nettoyage legacy)** : après validation en production ; l'optimisation (nœuds mesurés dans `worker_pool.rs`, `ECHOES_AUDIO_WORKERS` vaut 0 par défaut — vérifié —, suréchantillonnage ×2 fixe) est listée dans [`critical_issues.md`](critical_issues.md) sans avoir été revérifiée.

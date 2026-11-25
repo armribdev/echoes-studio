@@ -1,5 +1,6 @@
 export * from './types';
 export { filterAssetsByQuery } from './search';
+export { MAX_TAG_LENGTH } from './tags';
 export { libraryStore, libraryVisibleAssets, libraryHasIndexedContent } from './libraryStore';
 export { libraryPreviewPlayer } from './previewPlayer';
 export { libraryMidiPreviewPlayer } from './midiPreview';

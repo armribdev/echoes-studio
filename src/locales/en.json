@@ -231,6 +231,8 @@
 		"noDrumPatterns": "No drum patterns",
 		"noAudioIndexed": "No audio indexed",
 		"selectSound": "Select a sound",
+		"tagPlaceholder": "Add a tag…",
+		"removeTag": "Remove tag {tag}",
 		"sources": {
 			"audio": "Audio",
 			"favorites": "Favorites",

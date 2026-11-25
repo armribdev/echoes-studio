@@ -1,3 +1,4 @@
+import { normalizeTag } from './tags';
 import { isLibrarySourceId, type LibrarySourceId } from './types';
 
 const STORAGE_KEY = 'echoes.library.v1';
@@ -8,43 +9,56 @@ export interface LibraryPersistence {
 	recentIds: string[];
 	indexedFolders: string[];
 	lastSource: LibrarySourceId;
+	/** Tags the user gave to an asset, by asset id. */
+	userTags: Record<string, string[]>;
 }
 
-const DEFAULTS: LibraryPersistence = {
-	favoriteIds: [],
-	recentIds: [],
-	indexedFolders: [],
-	lastSource: 'audio'
-};
+function defaultPersistence(): LibraryPersistence {
+	return {
+		favoriteIds: [],
+		recentIds: [],
+		indexedFolders: [],
+		lastSource: 'audio',
+		userTags: {}
+	};
+}
 
 function canUseStorage(): boolean {
 	return typeof localStorage !== 'undefined';
 }
 
+function stringList(value: unknown): string[] {
+	return Array.isArray(value) ? value.filter((x) => typeof x === 'string') : [];
+}
+
+function userTagsFrom(value: unknown): Record<string, string[]> {
+	const userTags: Record<string, string[]> = {};
+	if (typeof value !== 'object' || value === null) return userTags;
+	for (const [id, rawTags] of Object.entries(value)) {
+		const tags = [...new Set(stringList(rawTags).map(normalizeTag).filter(Boolean))];
+		if (tags.length > 0) userTags[id] = tags;
+	}
+	return userTags;
+}
+
 export function loadLibraryPersistence(): LibraryPersistence {
-	if (!canUseStorage()) return { ...DEFAULTS, favoriteIds: [], recentIds: [], indexedFolders: [] };
+	if (!canUseStorage()) return defaultPersistence();
 	try {
 		const raw = localStorage.getItem(STORAGE_KEY);
-		if (!raw) return { ...DEFAULTS, favoriteIds: [], recentIds: [], indexedFolders: [] };
-		const parsed = JSON.parse(raw) as Partial<LibraryPersistence>;
-		const lastSource =
-			typeof parsed.lastSource === 'string' && isLibrarySourceId(parsed.lastSource)
-				? parsed.lastSource
-				: 'audio';
+		if (!raw) return defaultPersistence();
+		const parsed = JSON.parse(raw) as Partial<Record<keyof LibraryPersistence, unknown>>;
 		return {
-			favoriteIds: Array.isArray(parsed.favoriteIds)
-				? parsed.favoriteIds.filter((x) => typeof x === 'string')
-				: [],
-			recentIds: Array.isArray(parsed.recentIds)
-				? parsed.recentIds.filter((x) => typeof x === 'string')
-				: [],
-			indexedFolders: Array.isArray(parsed.indexedFolders)
-				? parsed.indexedFolders.filter((x) => typeof x === 'string')
-				: [],
-			lastSource
+			favoriteIds: stringList(parsed.favoriteIds),
+			recentIds: stringList(parsed.recentIds),
+			indexedFolders: stringList(parsed.indexedFolders),
+			lastSource:
+				typeof parsed.lastSource === 'string' && isLibrarySourceId(parsed.lastSource)
+					? parsed.lastSource
+					: 'audio',
+			userTags: userTagsFrom(parsed.userTags)
 		};
 	} catch {
-		return { ...DEFAULTS, favoriteIds: [], recentIds: [], indexedFolders: [] };
+		return defaultPersistence();
 	}
 }
 

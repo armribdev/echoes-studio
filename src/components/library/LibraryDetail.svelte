@@ -1,13 +1,26 @@
 <script lang="ts">
+	import { createEventDispatcher } from 'svelte';
 	import { t } from 'svelte-i18n';
+	import TextInput from '../TextInput.svelte';
 	import {
 		formatBeats,
 		formatDuration,
 		isMidiLibraryKind,
+		MAX_TAG_LENGTH,
 		type LibraryAsset
 	} from '../../frontend/library';
 
 	export let asset: LibraryAsset | null;
+	export let userTags: readonly string[] = [];
+
+	const dispatch = createEventDispatcher<{ addTag: string; removeTag: string }>();
+
+	let draft = '';
+
+	function submitTag() {
+		dispatch('addTag', draft);
+		draft = '';
+	}
 </script>
 
 <div class="detail">
@@ -27,6 +40,23 @@
 		{#if asset.kind === 'loop' || asset.kind === 'one_shot'}
 			<div class="detail-tip">Placé à la longueur d'origine (pas de warp)</div>
 		{/if}
+		<div class="detail-tags">
+			{#each userTags as tag (tag)}
+				<button
+					type="button"
+					class="tag"
+					title={$t('library.removeTag', { values: { tag } })}
+					on:click={() => dispatch('removeTag', tag)}>{tag} ×</button
+				>
+			{/each}
+		</div>
+		<form class="tag-form" on:submit|preventDefault={submitTag}>
+			<TextInput
+				bind:value={draft}
+				placeholder={$t('library.tagPlaceholder')}
+				maxlength={MAX_TAG_LENGTH}
+			/>
+		</form>
 	{:else}
 		<div class="detail-placeholder">{$t('library.selectSound')}</div>
 	{/if}
@@ -34,6 +64,7 @@
 
 <style lang="scss">
 	@use '../../variables.scss' as *;
+	@use '../../controls.scss' as *;
 
 	.detail {
 		flex-shrink: 0;
@@ -64,6 +95,26 @@
 		font-size: 9px;
 		color: $text-faint;
 		opacity: 0.85;
+	}
+
+	.detail-tags {
+		display: flex;
+		flex-wrap: wrap;
+		gap: $space-2;
+		margin-top: $space-3;
+
+		&:empty {
+			display: none;
+		}
+	}
+
+	.tag {
+		@include chip;
+	}
+
+	.tag-form {
+		display: flex;
+		margin-top: $space-3;
 	}
 
 	.detail-placeholder {
