@@ -309,15 +309,7 @@
 		&--record,
 		&--chevron,
 		&--panel-toggle {
-			border-color: $border-subtle;
-			background: $surface-2;
-			color: $text-secondary;
-
-			&:not(:disabled):hover {
-				background: $surface-3;
-				border-color: $border-strong;
-				color: $text-color;
-			}
+			@include icon-button-outlined;
 		}
 
 		&--play {

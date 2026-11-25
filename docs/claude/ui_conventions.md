@@ -171,19 +171,19 @@ Le composant n'ajoute que de la **mise en page** (`flex`, `width`, `margin`, `po
 
 ### Catalogue des mixins (`controls.scss`)
 
-| Mixin                                                   | Rôle                                                     |
-| ------------------------------------------------------- | -------------------------------------------------------- |
-| `button($height, $font-size)`                           | bouton cerclé (repos, survol, désactivé)                 |
-| `button-primary`                                        | bleu plein, action principale uniquement                 |
-| `button-square($size)`                                  | bouton carré cerclé pour un glyphe                       |
-| `chip($height)`                                         | petit bouton mono (GUI, reload, M…)                      |
-| `icon-button($size)` / `icon-button-danger`             | bouton sans bordure pour une icône                       |
-| `power-button($size)`                                   | rond on/off                                              |
-| `segmented` / `segment($height, $font-size)`            | groupe segmenté et son item                              |
-| `field($height, $font-size)`                            | champ texte (base du déclencheur de `CustomSelect`)      |
-| `list-item($height, $font-size)` / `list-item-selected` | ligne de menu, de dropdown, de picker                    |
-| `control-on` / `-danger` / `-warning` / `-success`      | état actif / sélectionné (à poser sur `.active`, `.on`…) |
-| `range-slider`                                          | piste remplie + pouce d'un `<input type="range">`        |
+| Mixin                                                   | Rôle                                                                               |
+| ------------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| `button($height, $font-size)`                           | bouton cerclé (repos, survol, désactivé)                                           |
+| `button-primary`                                        | bleu plein, action principale uniquement                                           |
+| `button-square($size)`                                  | bouton carré cerclé pour un glyphe                                                 |
+| `chip($height)`                                         | petit bouton mono (GUI, reload, M…)                                                |
+| `icon-button($size)` / `-outlined` / `-danger`          | bouton sans bordure pour une icône ; `-outlined` ajoute le repos bordé de `button` |
+| `power-button($size)`                                   | rond on/off                                                                        |
+| `segmented` / `segment($height, $font-size)`            | groupe segmenté et son item                                                        |
+| `field($height, $font-size)`                            | champ texte (base du déclencheur de `CustomSelect`)                                |
+| `list-item($height, $font-size)` / `list-item-selected` | ligne de menu, de dropdown, de picker                                              |
+| `control-on` / `-danger` / `-warning` / `-success`      | état actif / sélectionné (à poser sur `.active`, `.on`…)                           |
+| `range-slider`                                          | piste remplie + pouce d'un `<input type="range">`                                  |
 
 ### Règles de design
 

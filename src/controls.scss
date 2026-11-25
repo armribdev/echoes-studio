@@ -173,6 +173,15 @@
 	}
 }
 
+// Icon button with the outlined rest state of `button`; add it to an `icon-button`
+// for the primary glyph buttons of a bar (play, record, panel toggles).
+@mixin icon-button-outlined {
+	border-color: $border-subtle;
+	background: $surface-2;
+	color: $text-secondary;
+	@include control-hover;
+}
+
 // Hover turns red: remove / close-and-discard buttons.
 @mixin icon-button-danger {
 	&:not(:disabled):hover {
