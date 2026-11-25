@@ -920,7 +920,7 @@ names) is another interface and is not read.
   unchanged (no render change). **Not tried with a real plugin**: Surge XT and
   TDR Nova were not checked for pitch names, and the test plugin is the only proof.
 
-_Names in the piano roll._ The key column of `PianoRoll.svelte` shows the name of a
+_Names in the piano roll._ The key column of `pianoRoll/PianoRollKeys.svelte` shows the name of a
 key in place of its C / E / A letter (same 9 px style, cut with an ellipsis, the
 tooltip says `Kick · C1`); a track whose instrument names nothing keeps the usual
 column. `watchPluginKeyNames` (`src/stores/pluginKeyNames.ts`) follows the placement

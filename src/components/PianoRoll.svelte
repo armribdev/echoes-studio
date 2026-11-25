@@ -10,7 +10,7 @@
 	} from '../stores/pianoRoll';
 	import { drawGridLayer } from '../frontend/pianoRoll/gridRenderer';
 	import { drawNotesLayer } from '../frontend/pianoRoll/notesRenderer';
-	import { hexAlpha, lighten } from '../frontend/pianoRoll/colorUtils';
+	import { drawVelocityLayer, VEL_H } from '../frontend/pianoRoll/velocityRenderer';
 	import {
 		NOTE_H,
 		TOTAL_PITCHES,
@@ -33,7 +33,6 @@
 		seek
 	} from '../frontend/commands/dispatcher';
 	import { snapPosition } from '../lib/snapUtils';
-	import { MIDI_GRID_OPTIONS } from '../lib/midiGrid';
 	import { midiGridBeats } from '../stores/project';
 	import { currentProjectMusical, updateProjectMusical } from '../frontend/commands/dispatcher';
 	import { startTransportScrub } from '../frontend/transportScrub';
@@ -41,8 +40,7 @@
 	import { matchesShortcut, matchesShortcutRow } from '../frontend/shortcuts/bindings';
 	import { preferences } from '../stores/preferences';
 	import { noteClipboard, copyMidiNotes } from '../stores/noteClipboard';
-	import { pluginKeyNames, watchPluginKeyNames } from '../stores/pluginKeyNames';
-	import { noteName } from '../frontend/sampler/pads';
+	import { watchPluginKeyNames } from '../stores/pluginKeyNames';
 	import { keyboardFocus } from '../stores/keyboardFocus';
 	import { t } from 'svelte-i18n';
 	import { pianoRollStatusInfo } from '../stores/status';
@@ -61,25 +59,21 @@
 	import Playhead from './Playhead.svelte';
 	import ZoomScrollbar from './ZoomScrollbar.svelte';
 	import { RULER_HEIGHT } from '../frontend/timeRuler/constants';
-	import PianoRollControlLane from './PianoRollControlLane.svelte';
+	import PianoRollToolbar from './pianoRoll/PianoRollToolbar.svelte';
+	import PianoRollKeys from './pianoRoll/PianoRollKeys.svelte';
+	import PianoRollControlLanes from './pianoRoll/PianoRollControlLanes.svelte';
 	import {
-		ADD_ROW_HEIGHT,
-		LANE_HEIGHT,
 		LANE_PRESETS,
 		MAX_VISIBLE_LANES,
 		laneKey,
-		lanePoints,
 		lanesWithData,
 		replaceLanePoints,
 		sameLane,
 		type ControlLane
 	} from '../frontend/pianoRoll/controlLanes';
-	const VEL_H = 72;
-	const VEL_BAR_MIN = 3;
 	const MIN_DURATION = 0.0625;
 
 	const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
-	const BLACK_KEYS = new Set([1, 3, 6, 8, 10]);
 	const dpr = typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1;
 
 	// ── État local ─────────────────────────────────────────────────────────────
@@ -87,7 +81,7 @@
 	let canvasVel: HTMLCanvasElement;
 	let scrollContainer: HTMLDivElement;
 	let velWrapper: HTMLDivElement;
-	let keysContainer: HTMLDivElement;
+	let keysContainer: HTMLDivElement | undefined;
 
 	let scrollLeft = 0;
 	let scrollTop = 0;
@@ -291,24 +285,6 @@
 	$: showAddRow = controlLanes.length < MAX_VISIBLE_LANES && laneCandidates.length > 0;
 	$: lanesWidthPx = Math.max(hTotalBeats * zoom, 1);
 
-	function laneLabel(lane: ControlLane, translate: typeof $t): string {
-		if (lane.kind === 'pitch_bend') return translate('pianoRoll.controls.pitchBend');
-		if (lane.kind === 'channel_pressure') return translate('pianoRoll.controls.aftertouch');
-		const named: Record<number, string> = {
-			1: 'pianoRoll.controls.modulation',
-			11: 'pianoRoll.controls.expression',
-			64: 'pianoRoll.controls.sustain'
-		};
-		return named[lane.number]
-			? translate(named[lane.number])
-			: translate('pianoRoll.controls.controller', { values: { number: lane.number } });
-	}
-
-	function laneOptionLabel(lane: ControlLane, controls: MidiControlPoint[], translate: typeof $t) {
-		const marker = lanePoints(controls, lane).length > 0 ? '• ' : '';
-		return `${marker}${laneLabel(lane, translate)}`;
-	}
-
 	function commitControls(next: MidiControlPoint[]): Promise<unknown> {
 		const { trackId, clipId } = get(pianoRollStore);
 		if (!trackId || !clipId) return Promise.resolve();
@@ -335,6 +311,14 @@
 
 	function clearLane(lane: ControlLane) {
 		commitControls(replaceLanePoints(clipControls, lane, [])).catch(console.error);
+	}
+
+	function applyQuantize(beats: number) {
+		pianoRollStore.setQuantize(beats);
+		midiGridBeats.set(beats);
+		updateProjectMusical({ ...currentProjectMusical(), midi_grid_beats: beats }).catch(
+			console.error
+		);
 	}
 
 	async function commitNotes() {
@@ -838,66 +822,16 @@
 		if (!canvasVel) return;
 		const ctx = getCtx(canvasVel);
 		if (!ctx) return;
-		const W = canvasVel.width / dpr;
-		const H = VEL_H;
-		ctx.clearRect(0, 0, W, H);
-
-		// Fond
-		ctx.fillStyle = '#18181f';
-		ctx.fillRect(0, 0, W, H);
-
-		// Lignes de repère horizontales
-		ctx.lineWidth = 0.5;
-		[0.25, 0.5, 0.75].forEach((p) => {
-			ctx.strokeStyle = '#252530';
-			const y = H - p * (H - 4);
-			ctx.beginPath();
-			ctx.moveTo(0, y);
-			ctx.lineTo(W, y);
-			ctx.stroke();
+		drawVelocityLayer({
+			ctx,
+			width: canvasVel.width / dpr,
+			notes: displayNotes(),
+			selectedNoteIds: displaySelection(),
+			zoom,
+			quantize,
+			trackColor
 		});
-
-		// Barres de velocity
-		const velNotes = displayNotes();
-		const sel = displaySelection();
-		for (const note of velNotes) {
-			const x = note.start * zoom + 1;
-			const barH = Math.max(VEL_BAR_MIN, (note.velocity / 127) * (H - 6));
-			const barW = Math.max(3, quantize * zoom - 3);
-			const y = H - barH;
-			const selected = sel.has(note.id);
-			const base = selected ? lighten(trackColor, 0.2) : trackColor;
-			const alpha = selected ? 0.9 : 0.62;
-
-			// Gradient du bas vers le haut
-			const gr = ctx.createLinearGradient(0, y, 0, H);
-			gr.addColorStop(0, hexAlpha(base, alpha));
-			gr.addColorStop(1, hexAlpha(base, alpha * 0.55));
-			ctx.fillStyle = gr;
-
-			// Arrondi en haut uniquement
-			const r = Math.min(2, barW / 2);
-			ctx.beginPath();
-			ctx.moveTo(x + r, y);
-			ctx.lineTo(x + barW - r, y);
-			ctx.quadraticCurveTo(x + barW, y, x + barW, y + r);
-			ctx.lineTo(x + barW, H);
-			ctx.lineTo(x, H);
-			ctx.lineTo(x, y + r);
-			ctx.quadraticCurveTo(x, y, x + r, y);
-			ctx.closePath();
-			ctx.fill();
-		}
-
-		// Séparateur haut
-		ctx.strokeStyle = '#32323e';
-		ctx.lineWidth = 1;
-		ctx.beginPath();
-		ctx.moveTo(0, 0.5);
-		ctx.lineTo(W, 0.5);
-		ctx.stroke();
 	}
-
 	// ── Interactions Canvas ───────────────────────────────────────────────────
 
 	function getGridCoords(e: MouseEvent): {
@@ -1551,21 +1485,6 @@
 		});
 	}
 
-	// ── Piano keys ────────────────────────────────────────────────────────────
-
-	function getPianoKeyLabel(pitch: number): string {
-		const deg = pitch % 12;
-		const oct = Math.floor(pitch / 12) - 1;
-		if (deg === 0) return `C${oct}`;
-		if (deg === 4) return `E${oct}`;
-		if (deg === 9) return `A${oct}`;
-		return '';
-	}
-
-	function isBlack(pitch: number): boolean {
-		return BLACK_KEYS.has(pitch % 12);
-	}
-
 	// ── Zoom ──────────────────────────────────────────────────────────────────
 
 	function zoomIn() {
@@ -1605,227 +1524,32 @@
 		role="application"
 		aria-label={$t('pianoRoll.aria')}
 	>
-		{#if editMode}
-			<div class="chrome" style="--track-color: {trackColor}">
-				<div class="chrome-inner">
-					<div class="mode-group" role="group" aria-label={$t('pianoRoll.editMode')}>
-						<button
-							class="mode-btn"
-							class:active={mode === 'draw'}
-							on:click={() => pianoRollStore.setMode('draw')}
-							title={$t('pianoRoll.drawTitle')}
-							aria-label={$t('pianoRoll.draw')}
-						>
-							<svg
-								viewBox="0 0 16 16"
-								width="13"
-								height="13"
-								fill="currentColor"
-								aria-hidden="true"
-							>
-								<path d="M11.5 1.5a2.121 2.121 0 0 1 3 3L5 14H2v-3L11.5 1.5z" />
-							</svg>
-						</button>
-						<button
-							class="mode-btn"
-							class:active={mode === 'select'}
-							on:click={() => pianoRollStore.setMode('select')}
-							title={$t('pianoRoll.selectTitle')}
-							aria-label={$t('pianoRoll.select')}
-						>
-							<svg
-								viewBox="0 0 16 16"
-								width="13"
-								height="13"
-								fill="currentColor"
-								aria-hidden="true"
-							>
-								<path d="M3 2l10 6-5 1.5L6.5 14 3 2z" />
-							</svg>
-						</button>
-						<button
-							class="mode-btn"
-							class:active={mode === 'erase'}
-							on:click={() => pianoRollStore.setMode('erase')}
-							title={$t('pianoRoll.eraseTitle')}
-							aria-label={$t('pianoRoll.erase')}
-						>
-							<svg
-								viewBox="0 0 16 16"
-								width="13"
-								height="13"
-								fill="currentColor"
-								aria-hidden="true"
-							>
-								<path d="M9.5 2.5L14 7l-7 7H3v-3l6.5-8.5zM2 13h5.5l1-1.5H2V13z" />
-							</svg>
-						</button>
-					</div>
-
-					<div class="chrome-divider"></div>
-
-					<select
-						class="q-select"
-						value={quantize}
-						on:change={(e) => {
-							const beats = +e.currentTarget.value;
-							pianoRollStore.setQuantize(beats);
-							midiGridBeats.set(beats);
-							updateProjectMusical({ ...currentProjectMusical(), midi_grid_beats: beats }).catch(
-								console.error
-							);
-						}}
-						title={$t('pianoRoll.quantizeTitle')}
-						aria-label={$t('pianoRoll.quantize')}
-					>
-						{#each MIDI_GRID_OPTIONS as opt}
-							<option value={opt.beats}>{opt.label}</option>
-						{/each}
-					</select>
-
-					<div class="chrome-spacer"></div>
-
-					<button
-						class="chrome-close"
-						on:click={closeEditor}
-						title={$t('common.closeTab')}
-						aria-label={$t('common.close')}
-					>
-						<svg viewBox="0 0 10 10" width="10" height="10" fill="none" aria-hidden="true">
-							<path
-								d="M1.5 1.5L8.5 8.5M8.5 1.5L1.5 8.5"
-								stroke="currentColor"
-								stroke-width="1.5"
-								stroke-linecap="round"
-							/>
-						</svg>
-					</button>
-				</div>
-			</div>
-		{:else}
-			<div class="chrome chrome--preview" style="--track-color: {trackColor}">
-				<div class="chrome-inner">
-					<div class="chrome-spacer"></div>
-					<button class="edit-btn" on:click={enterEditFromPreview}> Éditer </button>
-					<button
-						class="chrome-close"
-						on:click={closeEditor}
-						title={$t('common.closeTab')}
-						aria-label={$t('common.close')}
-					>
-						<svg viewBox="0 0 10 10" width="10" height="10" fill="none" aria-hidden="true">
-							<path
-								d="M1.5 1.5L8.5 8.5M8.5 1.5L1.5 8.5"
-								stroke="currentColor"
-								stroke-width="1.5"
-								stroke-linecap="round"
-							/>
-						</svg>
-					</button>
-				</div>
-			</div>
-		{/if}
+		<PianoRollToolbar
+			{editMode}
+			{mode}
+			{quantize}
+			{trackColor}
+			on:setMode={(e) => pianoRollStore.setMode(e.detail)}
+			on:quantizeChange={(e) => applyQuantize(e.detail)}
+			on:close={closeEditor}
+			on:edit={enterEditFromPreview}
+		/>
 
 		<!-- Corps principal -->
 		<div class="body" class:body--preview={!editMode}>
 			{#if editMode}
 				<!-- Piano keys -->
-				<div class="keys-wrapper">
-					<div class="keys-ruler-spacer" style="height: {RULER_HEIGHT}px"></div>
-					<div
-						class="keys-scroll"
-						bind:this={keysContainer}
-						role="list"
-						aria-label={$t('pianoRoll.keys')}
-					>
-						{#each { length: TOTAL_PITCHES } as _, i}
-							{@const pitch = TOTAL_PITCHES - 1 - i}
-							{@const pluginName = $pluginKeyNames.get(pitch)}
-							<div
-								class="key"
-								class:key--black={isBlack(pitch)}
-								class:key--c={pitch % 12 === 0}
-								style="height: {NOTE_H}px"
-								title={pluginName ? `${pluginName} · ${noteName(pitch)}` : undefined}
-								role="listitem"
-							>
-								<span class="key-label">{pluginName ?? getPianoKeyLabel(pitch)}</span>
-							</div>
-						{/each}
-					</div>
-					<div class="keys-vel-label">VEL</div>
-					{#each controlLanes as lane, index (laneKey(lane))}
-						<div class="keys-lane" style="height: {LANE_HEIGHT}px">
-							<select
-								class="lane-select"
-								value={laneKey(lane)}
-								aria-label={$t('pianoRoll.controls.lane')}
-								on:change={(e) => switchLane(index, e.currentTarget.value)}
-							>
-								{#each [lane, ...laneCandidates] as option (laneKey(option))}
-									<option value={laneKey(option)}>
-										{laneOptionLabel(option, clipControls, $t)}
-									</option>
-								{/each}
-							</select>
-							<div class="lane-actions">
-								<button
-									class="lane-btn"
-									disabled={lanePoints(clipControls, lane).length === 0}
-									title={$t('pianoRoll.controls.clear')}
-									aria-label={$t('pianoRoll.controls.clear')}
-									on:click={() => clearLane(lane)}
-								>
-									<svg viewBox="0 0 10 10" width="10" height="10" fill="none" aria-hidden="true">
-										<path
-											d="M1.5 3h7M4 3V1.8h2V3M2.6 3l.4 5.2h4l.4-5.2"
-											stroke="currentColor"
-											stroke-width="1.1"
-											stroke-linecap="round"
-											stroke-linejoin="round"
-										/>
-									</svg>
-								</button>
-								<button
-									class="lane-btn"
-									title={$t('pianoRoll.controls.hide')}
-									aria-label={$t('pianoRoll.controls.hide')}
-									on:click={() => hideLane(index)}
-								>
-									<svg viewBox="0 0 10 10" width="10" height="10" fill="none" aria-hidden="true">
-										<path
-											d="M2 2L8 8M8 2L2 8"
-											stroke="currentColor"
-											stroke-width="1.2"
-											stroke-linecap="round"
-										/>
-									</svg>
-								</button>
-							</div>
-						</div>
-					{/each}
-					{#if showAddRow}
-						<div class="keys-add" style="height: {ADD_ROW_HEIGHT}px">
-							<select
-								class="lane-select"
-								value=""
-								aria-label={$t('pianoRoll.controls.add')}
-								on:change={(e) => {
-									addLane(e.currentTarget.value);
-									e.currentTarget.value = '';
-								}}
-							>
-								<option value="">{$t('pianoRoll.controls.add')}</option>
-								{#each laneCandidates as option (laneKey(option))}
-									<option value={laneKey(option)}>
-										{laneOptionLabel(option, clipControls, $t)}
-									</option>
-								{/each}
-							</select>
-						</div>
-					{/if}
-					<div class="keys-hscroll-spacer"></div>
-				</div>
+				<PianoRollKeys
+					bind:keysEl={keysContainer}
+					{controlLanes}
+					{laneCandidates}
+					{showAddRow}
+					{clipControls}
+					on:switchLane={(e) => switchLane(e.detail.index, e.detail.key)}
+					on:addLane={(e) => addLane(e.detail)}
+					on:hideLane={(e) => hideLane(e.detail)}
+					on:clearLane={(e) => clearLane(e.detail)}
+				/>
 			{/if}
 
 			<!-- Zone grille + velocity -->
@@ -1890,26 +1614,17 @@
 						></canvas>
 					</div>
 					{#if controlLanes.length > 0 || showAddRow}
-						<div class="lanes-wrapper">
-							<div class="lanes-track" style="transform: translateX({-scrollLeft}px)">
-								{#each controlLanes as lane (laneKey(lane))}
-									<div class="lane-row" style="height: {LANE_HEIGHT}px">
-										<PianoRollControlLane
-											{lane}
-											controls={clipControls}
-											pxPerBeat={zoom}
-											widthPx={lanesWidthPx}
-											color={trackColor}
-											{quantize}
-											commit={commitControls}
-										/>
-									</div>
-								{/each}
-							</div>
-							{#if showAddRow}
-								<div class="lane-add-spacer" style="height: {ADD_ROW_HEIGHT}px"></div>
-							{/if}
-						</div>
+						<PianoRollControlLanes
+							lanes={controlLanes}
+							{showAddRow}
+							{scrollLeft}
+							controls={clipControls}
+							pxPerBeat={zoom}
+							widthPx={lanesWidthPx}
+							color={trackColor}
+							{quantize}
+							commit={commitControls}
+						/>
 					{/if}
 					<!-- Scrollbar horizontale avec poignées de zoom -->
 					<ZoomScrollbar
@@ -1943,313 +1658,12 @@
 		overflow: hidden;
 	}
 
-	// ── Chrome (barre unique) ─────────────────────────────────────────────────
-
-	.chrome {
-		display: flex;
-		flex-shrink: 0;
-		height: 30px;
-		background: #1d1d27;
-		border-bottom: 1px solid #2e2e3c;
-		box-shadow: inset 3px 0 0 var(--track-color, #4d96ff);
-
-		&--preview {
-			background: #1a1a22;
-			border-bottom-color: #282832;
-		}
-	}
-
-	.chrome-inner {
-		flex: 1;
-		min-width: 0;
-		display: flex;
-		align-items: center;
-		gap: 6px;
-		padding: 0 8px 0 11px;
-		overflow-x: auto;
-		overflow-y: hidden;
-		scrollbar-width: none;
-		&::-webkit-scrollbar {
-			display: none;
-		}
-	}
-
-	.chrome-divider {
-		width: 1px;
-		height: 16px;
-		background: rgba(255, 255, 255, 0.07);
-		flex-shrink: 0;
-	}
-
-	.chrome-spacer {
-		flex: 1;
-		min-width: 8px;
-	}
-
-	.chrome-close {
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		width: 22px;
-		height: 22px;
-		padding: 0;
-		background: transparent;
-		border: none;
-		border-radius: 4px;
-		color: #666678;
-		cursor: pointer;
-		flex-shrink: 0;
-		transition:
-			background 0.12s,
-			color 0.12s;
-
-		&:hover {
-			background: rgba(255, 65, 54, 0.14);
-			color: #ff6b60;
-		}
-	}
-
-	.edit-btn {
-		height: 22px;
-		padding: 0 10px;
-		background: rgba(21, 113, 255, 0.12);
-		border: 1px solid rgba(21, 113, 255, 0.28);
-		border-radius: 4px;
-		color: #6aadff;
-		font-size: 11px;
-		font-weight: 500;
-		cursor: pointer;
-		flex-shrink: 0;
-		transition:
-			background 0.12s,
-			border-color 0.12s;
-
-		&:hover {
-			background: rgba(21, 113, 255, 0.2);
-			border-color: rgba(21, 113, 255, 0.45);
-		}
-	}
-
-	.q-select {
-		height: 22px;
-		padding: 0 6px;
-		background: rgba(255, 255, 255, 0.04);
-		border: 1px solid rgba(255, 255, 255, 0.08);
-		border-radius: 4px;
-		color: #c8c8d8;
-		font-size: 11px;
-		cursor: pointer;
-		flex-shrink: 0;
-		transition:
-			border-color 0.12s,
-			background 0.12s;
-
-		&:hover {
-			background: rgba(255, 255, 255, 0.07);
-			border-color: rgba(255, 255, 255, 0.14);
-		}
-		&:focus-visible {
-			outline: none;
-			border-color: #1571ff;
-		}
-	}
-
-	.mode-group {
-		display: flex;
-		gap: 1px;
-		flex-shrink: 0;
-		background: rgba(0, 0, 0, 0.25);
-		border-radius: 6px;
-		padding: 2px;
-	}
-
-	.mode-btn {
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		width: 26px;
-		height: 22px;
-		padding: 0;
-		background: transparent;
-		border: none;
-		border-radius: 4px;
-		color: #666678;
-		cursor: pointer;
-		flex-shrink: 0;
-		transition:
-			background 0.12s,
-			color 0.12s;
-
-		&:hover {
-			background: rgba(255, 255, 255, 0.07);
-			color: #d0d0e0;
-		}
-
-		&.active {
-			background: rgba(21, 113, 255, 0.2);
-			color: #6aadff;
-		}
-	}
-
 	// ── Corps ─────────────────────────────────────────────────────────────────
 
 	.body {
 		display: flex;
 		flex: 1;
 		overflow: hidden;
-	}
-
-	// ── Piano keys ────────────────────────────────────────────────────────────
-
-	.keys-wrapper {
-		display: flex;
-		flex-direction: column;
-		width: 64px;
-		flex-shrink: 0;
-		border-right: 1px solid #2a2a38;
-	}
-
-	.keys-ruler-spacer {
-		background: #1d1d28;
-		border-bottom: 1px solid #2a2a38;
-		flex-shrink: 0;
-	}
-
-	.keys-scroll {
-		flex: 1;
-		overflow: hidden;
-		display: flex;
-		flex-direction: column;
-	}
-
-	.key {
-		display: flex;
-		align-items: center;
-		justify-content: flex-end;
-		padding-right: 5px;
-		box-sizing: border-box;
-		flex-shrink: 0;
-		background: #252535;
-		border-bottom: 1px solid #1c1c28;
-		cursor: pointer;
-		transition: background 0.07s;
-
-		&:hover {
-			background: #303048;
-		}
-
-		&--black {
-			background: #17171e;
-			border-bottom: 1px solid #101015;
-			&:hover {
-				background: #21212e;
-			}
-		}
-
-		&--c {
-			border-bottom: 1px solid #32323e;
-		}
-	}
-
-	.key-label {
-		font-size: 9px;
-		font-weight: 600;
-		letter-spacing: 0.02em;
-		color: #4a4a60;
-		pointer-events: none;
-		min-width: 0;
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
-	}
-
-	.keys-vel-label {
-		height: 72px; // = VEL_H
-		flex-shrink: 0;
-		border-top: 1px solid #2a2a38;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		font-size: 9px;
-		font-weight: 700;
-		letter-spacing: 0.1em;
-		color: #383848;
-		text-transform: uppercase;
-	}
-
-	.keys-lane {
-		flex-shrink: 0;
-		box-sizing: border-box;
-		border-top: 1px solid #2a2a38;
-		padding: 4px 3px 0;
-		display: flex;
-		flex-direction: column;
-		gap: 4px;
-	}
-
-	.keys-add {
-		flex-shrink: 0;
-		box-sizing: border-box;
-		border-top: 1px solid #2a2a38;
-		padding: 2px 3px;
-	}
-
-	.lane-select {
-		width: 100%;
-		min-width: 0;
-		height: 18px;
-		box-sizing: border-box;
-		padding: 0 2px;
-		font-size: 9px;
-		font-weight: 600;
-		color: #8a8aa0;
-		background: #20202c;
-		border: 1px solid #2e2e3c;
-		border-radius: 3px;
-		text-overflow: ellipsis;
-
-		&:focus-visible {
-			outline: 1px solid var(--track-color, #4d96ff);
-		}
-	}
-
-	.lane-actions {
-		display: flex;
-		justify-content: flex-end;
-		gap: 2px;
-	}
-
-	.lane-btn {
-		width: 18px;
-		height: 16px;
-		padding: 0;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		color: #5a5a70;
-		background: transparent;
-		border: none;
-		border-radius: 3px;
-		cursor: pointer;
-
-		&:hover:not(:disabled) {
-			color: #c8c8d8;
-			background: #2a2a38;
-		}
-
-		&:disabled {
-			opacity: 0.35;
-			cursor: default;
-		}
-
-		&:focus-visible {
-			outline: 1px solid var(--track-color, #4d96ff);
-		}
-	}
-
-	.keys-hscroll-spacer {
-		height: 8px;
-		flex-shrink: 0;
 	}
 
 	// ── Grille ────────────────────────────────────────────────────────────────
@@ -2342,22 +1756,5 @@
 		&::-webkit-scrollbar {
 			display: none;
 		}
-	}
-
-	// ── Lignes de contrôle ────────────────────────────────────────────────────
-
-	.lanes-wrapper {
-		flex-shrink: 0;
-		overflow: hidden;
-	}
-
-	.lanes-track {
-		will-change: transform;
-	}
-
-	.lane-row {
-		box-sizing: border-box;
-		border-top: 1px solid #2a2a38;
-		overflow: hidden;
 	}
 </style>
