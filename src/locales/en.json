@@ -243,6 +243,8 @@
 		"collectionNamePlaceholder": "Collection name",
 		"saveCollection": "Save as collection",
 		"deleteCollection": "Delete collection",
+		"viewGrid": "Grid view",
+		"viewList": "List view",
 		"removePack": "Stop indexing this folder",
 		"removePackTitle": "Forget the sounds from this folder. Files on disk are not deleted.",
 		"contextUse": "Use for this context",

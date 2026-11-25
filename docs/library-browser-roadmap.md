@@ -185,7 +185,7 @@ or offline render.
 
 ## Phase 4 — Scale & power-user
 
-**Status:** `todo`  
+**Status:** `done` (2026-11-26) — code-verified, not hand-tested  
 **Depends on:** Phase 3
 
 | In                                                                      | Out                                  |
@@ -211,7 +211,10 @@ persisted slice; code-verified, not hand-tested). Slice 5 done: the Devices go/n
 amendment of ADR-023 (_Devices decision_): slots are not timeline drops and
 `PluginPicker` already serves them. Slice 6 done: pack sources — one per indexed
 folder, with « Stop indexing this folder » (`packs.ts`, `sources.ts`, store
-`removePack`; code-verified, not hand-tested). Left: optional grid results.
+`removePack`; code-verified, not hand-tested). Slice 7 done: optional grid results — list / grid toggle next to the
+type filter, windowed in both views, `←` `→` in the grid (`virtualWindow.ts`,
+tile variant of `LibraryAssetRow`). Phase 4 closed; what remains is hand-testing
+and the cross-cutting checklist below.
 
 Prerequisite landed 2026-10-09: the built-in drum sampler (ADR-028) — a
 `one_shot` dragged from the library onto a pad loads it. The hybrid `drums`
@@ -219,7 +222,7 @@ source landed 2026-10-13 (factory one-shots listed next to drum MIDI).
 
 ### Exit criteria
 
-- [ ] Power user can rebuild a personal “Drums for this genre” source in &lt; 1 min
+- [x] Power user can rebuild a personal “Drums for this genre” source in &lt; 1 min _(tag sounds, search the tag, pick the type, « Save as collection »: four steps, code-verified, not timed by hand)_
 - [x] Context memory is opt-in and restorable to factory defaults _(2026-11-26, code-verified)_
 - [x] Devices-in-library decision recorded (amend ADR-023 or new ADR) _(no-go, ADR-023 amendment 2026-11-26)_
 

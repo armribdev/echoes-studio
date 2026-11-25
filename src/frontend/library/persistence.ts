@@ -4,8 +4,10 @@ import { normalizeTag } from './tags';
 import {
 	isLibraryKindFilter,
 	isLibraryOpenContext,
+	isLibraryResultsView,
 	type LibraryCollection,
 	type LibraryContextSources,
+	type LibraryResultsView,
 	type LibrarySourceId
 } from './types';
 
@@ -22,6 +24,7 @@ export interface LibraryPersistence {
 	collections: LibraryCollection[];
 	/** Sources the user chose to open each context on. */
 	contextSources: LibraryContextSources;
+	resultsView: LibraryResultsView;
 }
 
 function defaultPersistence(): LibraryPersistence {
@@ -32,7 +35,8 @@ function defaultPersistence(): LibraryPersistence {
 		lastSource: 'audio',
 		userTags: {},
 		collections: [],
-		contextSources: {}
+		contextSources: {},
+		resultsView: 'list'
 	};
 }
 
@@ -103,7 +107,8 @@ export function loadLibraryPersistence(): LibraryPersistence {
 			lastSource: lastSourceFrom(parsed.lastSource, { collections, indexedFolders }),
 			userTags: userTagsFrom(parsed.userTags),
 			collections,
-			contextSources: contextSourcesFrom(parsed.contextSources)
+			contextSources: contextSourcesFrom(parsed.contextSources),
+			resultsView: isLibraryResultsView(parsed.resultsView) ? parsed.resultsView : 'list'
 		};
 	} catch {
 		return defaultPersistence();

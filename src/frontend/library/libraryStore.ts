@@ -42,6 +42,7 @@ import {
 	type LibraryIndexerState,
 	type LibraryKindFilter,
 	type LibraryOpenContext,
+	type LibraryResultsView,
 	type LibraryScanEntry,
 	type LibrarySourceId
 } from './types';
@@ -63,6 +64,7 @@ export interface LibraryState {
 	collections: LibraryCollection[];
 	kindFilter: LibraryKindFilter | null;
 	contextSources: LibraryContextSources;
+	resultsView: LibraryResultsView;
 	indexer: LibraryIndexerState;
 	indexerProgress: number | null;
 	indexerError: string | null;
@@ -108,6 +110,7 @@ function initialState(): LibraryState {
 		collections: persisted.collections,
 		kindFilter: null,
 		contextSources: persisted.contextSources,
+		resultsView: persisted.resultsView,
 		indexer: 'idle',
 		indexerProgress: null,
 		indexerError: null,
@@ -123,7 +126,8 @@ function persistSlice(state: LibraryState): void {
 		lastSource: state.source,
 		userTags: state.userTags,
 		collections: state.collections,
-		contextSources: state.contextSources
+		contextSources: state.contextSources,
+		resultsView: state.resultsView
 	};
 	saveLibraryPersistence(data);
 }
@@ -305,6 +309,14 @@ function createLibraryStore() {
 
 		clearQuery() {
 			update((s) => ({ ...s, query: '' }));
+		},
+
+		setResultsView(resultsView: LibraryResultsView) {
+			update((s) => {
+				const next = { ...s, resultsView };
+				persistSlice(next);
+				return next;
+			});
 		},
 
 		setKindFilter(kindFilter: LibraryKindFilter | null) {

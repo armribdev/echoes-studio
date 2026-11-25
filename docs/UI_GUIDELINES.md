@@ -297,6 +297,7 @@ Current implementation (`Knob.svelte`):
 | Insert from library pop-up | Lane `+` (empty/hover) / context menu / empty-project CTA |
 | Toggle library favorite | `F` or `Ctrl/Cmd + D` (library results focused) |
 | Jump library sources 1–3 | `Ctrl/Cmd + 1…3` (library focused) |
+| Move library selection | `↑` `↓`, plus `←` `→` in the grid view |
 
 Configurable in **Preferences → Shortcuts** (overrides persist in local preferences; native menu accelerators stay in sync).
 

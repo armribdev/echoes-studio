@@ -21,6 +21,9 @@ export type LibrarySourceId =
 	| LibraryCollectionSourceId
 	| LibraryPackSourceId;
 
+/** How results are laid out: one row per sound, or a grid of tiles. */
+export type LibraryResultsView = 'list' | 'grid';
+
 /** Coarse asset type filter: loops and one-shots are both « audio ». */
 export type LibraryKindFilter = 'audio' | 'midi_pattern' | 'chord_progression';
 
@@ -47,6 +50,10 @@ export const LIBRARY_OPEN_CONTEXTS: LibraryOpenContext[] = [
 
 /** Source the user chose to open each context on (opt-in; absent = factory default). */
 export type LibraryContextSources = Partial<Record<LibraryOpenContext, LibrarySourceId>>;
+
+export function isLibraryResultsView(value: unknown): value is LibraryResultsView {
+	return value === 'list' || value === 'grid';
+}
 
 export function isLibraryOpenContext(value: string): value is LibraryOpenContext {
 	return (LIBRARY_OPEN_CONTEXTS as readonly string[]).includes(value);

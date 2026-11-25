@@ -243,6 +243,8 @@
 		"collectionNamePlaceholder": "Nom de la collection",
 		"saveCollection": "Enregistrer comme collection",
 		"deleteCollection": "Supprimer la collection",
+		"viewGrid": "Vue en grille",
+		"viewList": "Vue en liste",
 		"removePack": "Ne plus indexer ce dossier",
 		"removePackTitle": "Oublier les sons de ce dossier. Les fichiers ne sont pas supprimés.",
 		"contextUse": "Utiliser pour ce contexte",

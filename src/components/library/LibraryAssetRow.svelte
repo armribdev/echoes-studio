@@ -9,6 +9,8 @@
 	export let importing = false;
 	export let dragging = false;
 	export let favorite = false;
+	/** Grid tile instead of a list row. */
+	export let tile = false;
 
 	const dispatch = createEventDispatcher<{
 		favorite: void;
@@ -24,6 +26,7 @@
 	class:previewing
 	class:importing
 	class:dragging
+	class:tile
 	role="option"
 	tabindex="-1"
 	aria-selected={selected}
@@ -110,6 +113,43 @@
 		user-select: none;
 		touch-action: none;
 		transition: background $duration-base;
+
+		&.tile {
+			display: grid;
+			grid-template-columns: auto 1fr auto auto;
+			grid-template-areas:
+				'ext . . fav'
+				'name name name name'
+				'. . preview insert';
+			align-content: space-between;
+			height: 100%;
+			padding: $space-2 $space-3;
+			background: $surface-2;
+			border-radius: $radius-control;
+
+			.file-ext {
+				grid-area: ext;
+				justify-self: start;
+			}
+
+			.fav-btn {
+				grid-area: fav;
+				justify-self: end;
+			}
+
+			.file-name {
+				grid-area: name;
+			}
+
+			.preview-btn {
+				grid-area: preview;
+			}
+
+			.insert-btn,
+			.cancel-import-btn {
+				grid-area: insert;
+			}
+		}
 
 		&:hover,
 		&.selected {

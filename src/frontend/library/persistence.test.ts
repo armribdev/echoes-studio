@@ -68,6 +68,13 @@ describe('collections persistence', () => {
 		});
 	});
 
+	it('keeps the results view and ignores an unknown one', () => {
+		stubLocalStorage({ resultsView: 'grid' });
+		expect(loadLibraryPersistence().resultsView).toBe('grid');
+		stubLocalStorage({ resultsView: 'carousel' });
+		expect(loadLibraryPersistence().resultsView).toBe('list');
+	});
+
 	it('keeps old saves without collections working', () => {
 		stubLocalStorage({ favoriteIds: ['x'] });
 		const loaded = loadLibraryPersistence();

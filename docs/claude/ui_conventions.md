@@ -254,13 +254,13 @@ Un composant n'est découpé que s'il est vraiment difficile à lire (ordre de g
 
 Les sous-composants vont dans un dossier à côté du parent, nommé d'après lui :
 
-| Dossier                 | Parent           | Contenu                                                    |
-| ----------------------- | ---------------- | ---------------------------------------------------------- |
-| `components/library/`   | `LibraryBrowser` | ligne d'asset, détail, état vide                           |
-| `components/effects/`   | `EffectChain`    | en-tête d'effet, boutons des effets intégrés, corps plugin |
-| `components/pianoRoll/` | `PianoRoll`      | barre d'outils, colonne des touches, lignes de contrôle    |
-| `components/settings/`  | `SettingsPanel`  | une section de réglages par composant                      |
-| `components/arrange/`   | `MainPanel`      | écran « aucune piste »                                     |
+| Dossier                 | Parent           | Contenu                                                     |
+| ----------------------- | ---------------- | ----------------------------------------------------------- |
+| `components/library/`   | `LibraryBrowser` | ligne / tuile d'asset, détail, état vide, barres de sources |
+| `components/effects/`   | `EffectChain`    | en-tête d'effet, boutons des effets intégrés, corps plugin  |
+| `components/pianoRoll/` | `PianoRoll`      | barre d'outils, colonne des touches, lignes de contrôle     |
+| `components/settings/`  | `SettingsPanel`  | une section de réglages par composant                       |
+| `components/arrange/`   | `MainPanel`      | écran « aucune piste »                                      |
 
 Règles :
 

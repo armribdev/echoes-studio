@@ -95,6 +95,15 @@ in (files on disk are untouched; favorites, tags and recents keep pointing at
 their path). A folder that is still being scanned stops being scanned. Contexts
 that remembered the pack fall back to their factory source.
 
+**Grid results (Phase 4, 2026-11-26).** A button next to the type filter
+switches the results between the list (one 24 px row per sound, default) and a
+grid of tiles (about 104 px wide, as many columns as fit). The choice is stored
+with the favorites (`resultsView`). A tile shows the same things as a row —
+format, name, favorite, preview, insert — and keeps every gesture (hover preview,
+drag to arrange, double-click, Enter). In the grid, `←` `→` move by one tile and
+`↑` `↓` by one row. Both views are windowed (`virtualWindow`), so a large folder
+stays cheap in either.
+
 **Smart collections (Phase 4, 2026-11-26).** Next to the search field, a type
 filter (all / audio / MIDI / chords) narrows any source. As soon as the search
 or the type filter is set, a bar under the sources offers « Save as collection »
@@ -388,17 +397,17 @@ incrementally. App startup never waits on a full scan (ADR-023).
 
 ## 9. Shortcuts
 
-| Action                | Shortcut            | Scope                                     |
-| --------------------- | ------------------- | ----------------------------------------- |
-| Toggle library panel  | `B`                 | Global (unless text field, except search) |
-| Focus library search  | `/` or `Ctrl/Cmd+F` | Panel open → focuses search               |
-| Move result selection | `↑` `↓`             | `library_results`                         |
-| Preview selected      | `Space`             | `library_results` only                    |
-| Insert at playhead    | `Enter`             | `library_results` / pop-up                |
-| Clear search          | `Esc`               | Search non-empty                          |
-| Close pop-up          | `Esc`               | Pop-up open (search empty or second Esc)  |
-| Toggle favorite       | `F` or `Ctrl/Cmd+D` | `library_results` _(Phase 2)_             |
-| Jump sources 1–4      | `Ctrl/Cmd+1…4`      | Panel/pop-up _(Phase 2)_                  |
+| Action                | Shortcut                      | Scope                                     |
+| --------------------- | ----------------------------- | ----------------------------------------- |
+| Toggle library panel  | `B`                           | Global (unless text field, except search) |
+| Focus library search  | `/` or `Ctrl/Cmd+F`           | Panel open → focuses search               |
+| Move result selection | `↑` `↓` (`←` `→` in the grid) | `library_results`                         |
+| Preview selected      | `Space`                       | `library_results` only                    |
+| Insert at playhead    | `Enter`                       | `library_results` / pop-up                |
+| Clear search          | `Esc`                         | Search non-empty                          |
+| Close pop-up          | `Esc`                         | Pop-up open (search empty or second Esc)  |
+| Toggle favorite       | `F` or `Ctrl/Cmd+D`           | `library_results` _(Phase 2)_             |
+| Jump sources 1–4      | `Ctrl/Cmd+1…4`                | Panel/pop-up _(Phase 2)_                  |
 
 Transport and edit shortcuts from `UI_GUIDELINES.md` §4.1 remain unchanged
 outside `library_*` scopes.
