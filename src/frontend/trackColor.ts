@@ -1,3 +1,6 @@
+/** Couleur d'une piste sans sélection (piano roll, graphe, instrument…). */
+export const DEFAULT_TRACK_COLOR = '#4d96ff';
+
 /** Palette partagée pour les pistes (arrange, mixer, piano roll, graph). */
 export const TRACK_COLORS = [
 	'#ef4444', // red

@@ -1649,11 +1649,13 @@
 {/if}
 
 <style lang="scss">
+	@use '../variables.scss' as *;
+
 	.piano-roll {
 		display: flex;
 		flex-direction: column;
 		height: 100%;
-		background: #1a1a22;
+		background: $background-color;
 		user-select: none;
 		overflow: hidden;
 	}

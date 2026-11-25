@@ -50,10 +50,12 @@
 </div>
 
 <style lang="scss">
+	@use '../variables.scss' as *;
+
 	.automation-picker {
 		position: fixed;
 		z-index: 201;
-		box-shadow: 0 8px 32px rgba(0, 0, 0, 0.55);
+		box-shadow: $shadow-overlay;
 
 		:global(.picker) {
 			margin: 0;

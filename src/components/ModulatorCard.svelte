@@ -204,8 +204,8 @@
 		font-size: 9px;
 		font-family: $font-mono;
 		font-weight: 700;
-		color: #fff;
-		box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+		color: $on-solid;
+		box-shadow: $shadow-sm;
 		white-space: nowrap;
 	}
 
@@ -223,7 +223,7 @@
 		position: relative;
 		height: 36px;
 		border-radius: $radius-sm;
-		background: rgba(0, 0, 0, 0.3);
+		background: $black-wash;
 		border: 1px solid $border-faint;
 		overflow: hidden;
 	}
@@ -257,7 +257,7 @@
 		font-family: $font-mono;
 		font-weight: 700;
 		color: $text-subtle;
-		text-shadow: 0 0 3px rgba(0, 0, 0, 0.8);
+		text-shadow: $shadow-text;
 		pointer-events: none;
 	}
 

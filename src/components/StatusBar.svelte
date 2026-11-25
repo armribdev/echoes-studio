@@ -85,7 +85,7 @@
 		border: none;
 		border-radius: $radius-xs;
 		background: transparent;
-		color: rgba(247, 247, 249, 0.32);
+		color: $text-subtle;
 		font-size: 10px;
 		font-family: inherit;
 		cursor: pointer;
@@ -94,12 +94,12 @@
 			color $duration-base;
 
 		&.active {
-			background: rgba(21, 113, 255, 0.12);
-			color: rgba(247, 247, 249, 0.62);
+			background: $accent-soft;
+			color: $text-secondary;
 		}
 
 		&:hover:not(.active) {
-			color: rgba(247, 247, 249, 0.48);
+			color: $text-muted;
 		}
 	}
 
@@ -119,13 +119,13 @@
 		font-family: $font-mono;
 		font-variant-numeric: tabular-nums;
 		letter-spacing: 0.02em;
-		color: rgba(170, 170, 200, 0.85);
+		color: $text-secondary;
 	}
 
 	.piano-meta {
 		font-size: 11px;
 		font-variant-numeric: tabular-nums;
-		color: rgba(247, 247, 249, 0.38);
+		color: $text-subtle;
 	}
 
 	.message {
@@ -134,13 +134,13 @@
 		letter-spacing: 0.3px;
 
 		&--info {
-			color: rgba(247, 247, 249, 0.5);
+			color: $text-muted;
 		}
 		&--success {
-			color: #4caf82;
+			color: $color-success;
 		}
 		&--error {
-			color: #ff5f57;
+			color: $color-error-text;
 		}
 	}
 </style>

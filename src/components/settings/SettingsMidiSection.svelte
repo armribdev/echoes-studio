@@ -99,7 +99,7 @@
 	.field-hint {
 		line-height: 1.2;
 		font-size: 10px;
-		color: rgba(247, 247, 249, 0.28);
+		color: $text-faint;
 	}
 
 	.midi-device--offline {

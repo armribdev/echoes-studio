@@ -279,7 +279,7 @@
 			}
 
 			&:focus {
-				border-color: rgba($accent-color, 0.65);
+				border-color: $accent-border-strong;
 			}
 		}
 	}
@@ -344,7 +344,7 @@
 		min-height: 32px;
 
 		&.listening {
-			background: rgba($accent-color, 0.08);
+			background: $accent-wash;
 		}
 	}
 
@@ -369,14 +369,14 @@
 		font-size: 11px;
 		font-family: $font-mono;
 		color: $text-muted;
-		background: rgba(255, 255, 255, 0.04);
+		background: $surface-2;
 		border: 1px solid $border-color;
 		border-radius: $radius-sm;
 		cursor: pointer;
 		text-align: center;
 
 		&:hover {
-			border-color: rgba(255, 255, 255, 0.2);
+			border-color: $border-strong;
 			color: $text-color;
 		}
 
@@ -387,7 +387,7 @@
 
 		&.custom {
 			color: $accent-color;
-			border-color: rgba($accent-color, 0.45);
+			border-color: $accent-border;
 		}
 
 		&.listening {
@@ -397,8 +397,8 @@
 		}
 
 		&.conflict-chip {
-			border-color: #e06c75;
-			color: #e06c75;
+			border-color: $color-error-text;
+			color: $color-error-text;
 		}
 	}
 
@@ -416,7 +416,7 @@
 
 		&:hover {
 			color: $text-color;
-			background: rgba(255, 255, 255, 0.06);
+			background: $surface-2;
 			border-color: $border-subtle;
 		}
 
@@ -429,7 +429,7 @@
 	.conflict-hint {
 		grid-column: 1 / -1;
 		font-size: 11px;
-		color: #e06c75;
+		color: $color-error-text;
 	}
 
 	@keyframes pulse {

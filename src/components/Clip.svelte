@@ -4,6 +4,7 @@
 	import { keyboardFocus } from '../stores/keyboardFocus';
 	import { arrangeClipFrame } from '../frontend/arrangeInteraction';
 	import { importMark } from '../frontend/audio/importDebugMarks';
+	import { themeColor } from '../frontend/theme';
 
 	export let id: string;
 	export let start: number;
@@ -20,8 +21,6 @@
 	export let loadProgress: number = 1;
 	/** Stable pending-import id — used to signal handoff paint without remount flash. */
 	export let pendingImportId: string | null = null;
-
-	const WAVE_FILL = 'rgba(71, 171, 255, 0.85)';
 
 	const dispatch = createEventDispatcher<{
 		clipdragstart: { offsetPx: number };
@@ -189,7 +188,7 @@
 		const H = canvas.height;
 		const mid = H * 0.5;
 		ctx.clearRect(0, 0, W, H);
-		ctx.fillStyle = WAVE_FILL;
+		ctx.fillStyle = themeColor('clip-audio-wave');
 
 		for (let px = 0; px < W; px++) {
 			const g = _grow[px];
@@ -362,7 +361,8 @@
 			width: targetWidth,
 			height: canvas.height,
 			key,
-			offset
+			offset,
+			fill: themeColor('clip-audio-wave')
 		});
 	}
 
@@ -513,8 +513,8 @@
 	.clip {
 		position: absolute;
 		display: block;
-		background-color: #1f3c72;
-		box-shadow: inset 0 0 0 1px rgba(21, 113, 255, 0.45);
+		background-color: $clip-audio-bg;
+		box-shadow: inset 0 0 0 1px $accent-border;
 		border-radius: $radius-sm;
 		top: 0;
 		bottom: 0;
@@ -526,8 +526,8 @@
 		}
 
 		&.selected {
-			background-color: #1a4fa0;
-			box-shadow: inset 0 0 0 1px rgba(120, 180, 255, 0.85);
+			background-color: $clip-audio-bg-selected;
+			box-shadow: inset 0 0 0 1px $clip-audio-border-selected;
 		}
 
 		&.pending {
@@ -540,7 +540,7 @@
 		}
 
 		&.pending.selected {
-			background-color: #1a4fa0;
+			background-color: $clip-audio-bg-selected;
 		}
 
 		canvas {

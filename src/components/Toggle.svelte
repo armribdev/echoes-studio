@@ -42,8 +42,8 @@
 		align-items: center;
 		gap: 14px;
 		padding: 10px 12px;
-		background: rgba(255, 255, 255, 0.03);
-		border: 1px solid rgba(255, 255, 255, 0.07);
+		background: $surface-1;
+		border: 1px solid $border-faint;
 		border-radius: 6px;
 
 		&.disabled {
@@ -68,15 +68,15 @@
 
 	.toggle-desc {
 		font-size: 10px;
-		color: rgba(247, 247, 249, 0.35);
+		color: $text-subtle;
 	}
 
 	.toggle-switch {
 		width: 36px;
 		height: 20px;
 		border-radius: $radius-xl;
-		background: rgba(255, 255, 255, 0.1);
-		border: 1px solid rgba(255, 255, 255, 0.12);
+		background: $surface-hover;
+		border: 1px solid $border-subtle;
 		cursor: pointer;
 		position: relative;
 		flex-shrink: 0;

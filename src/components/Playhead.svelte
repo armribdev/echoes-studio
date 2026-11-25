@@ -7,13 +7,15 @@
 <div class="playhead" style="transform: translateX({x}px)"></div>
 
 <style lang="scss">
+	@use '../variables.scss' as *;
+
 	.playhead {
 		position: absolute;
 		top: 0;
 		left: 0;
 		width: 2px;
 		height: 100%;
-		background-color: #fff;
+		background-color: $on-solid;
 		pointer-events: none;
 		z-index: 10;
 		will-change: transform;
@@ -26,7 +28,7 @@
 			height: 0;
 			border-left: 6px solid transparent;
 			border-right: 6px solid transparent;
-			border-top: 8px solid #fff;
+			border-top: 8px solid $on-solid;
 		}
 	}
 </style>

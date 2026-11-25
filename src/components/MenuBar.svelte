@@ -297,7 +297,7 @@
 	.btn {
 		background: none;
 		border: none;
-		color: rgba(247, 247, 249, 0.65);
+		color: $text-secondary;
 		cursor: pointer;
 		width: 30px;
 		height: 30px;
@@ -311,14 +311,14 @@
 			color $duration-base;
 
 		&:hover {
-			background: rgba(255, 255, 255, 0.08);
+			background: $surface-3;
 			color: $text-color;
 		}
 
 		&--loop.active,
 		&--toggle.active {
 			color: $accent-color;
-			background: rgba(21, 113, 255, 0.15);
+			background: $accent-soft;
 		}
 
 		&--play,
@@ -332,7 +332,7 @@
 
 			&:hover {
 				background: $surface-3;
-				border-color: rgba(255, 255, 255, 0.16);
+				border-color: $border-strong;
 			}
 		}
 
@@ -362,10 +362,10 @@
 
 			&.active {
 				color: $color-error;
-				background: rgba(255, 65, 54, 0.15);
+				background: $error-soft;
 			}
 			&:hover {
-				color: #ff6b5f;
+				color: $color-error-text;
 			}
 		}
 	}
@@ -393,13 +393,13 @@
 
 		&:not(.active):hover {
 			background: $surface-3;
-			border-color: rgba(255, 255, 255, 0.16);
+			border-color: $border-strong;
 			color: $text-color;
 		}
 
 		&.active {
-			background: rgba(21, 113, 255, 0.15);
-			border-color: rgba(21, 113, 255, 0.45);
+			background: $accent-soft;
+			border-color: $accent-border;
 			color: $accent-color;
 		}
 	}
@@ -444,13 +444,13 @@
 
 	.pos-sep {
 		font-size: 19px;
-		color: rgba(247, 247, 249, 0.3);
+		color: $text-subtle;
 		margin: 0 1px;
 	}
 
 	.pos-beat {
 		font-size: 21px;
-		color: rgba(247, 247, 249, 0.65);
+		color: $text-secondary;
 	}
 
 	.tempo {
@@ -467,7 +467,7 @@
 		transition: background $duration-base;
 
 		&:hover {
-			background: rgba(255, 255, 255, 0.08);
+			background: $surface-3;
 		}
 
 		&:focus-visible {
@@ -492,7 +492,7 @@
 
 	.tempo-signature {
 		font-size: 12px;
-		color: rgba(247, 247, 249, 0.65);
+		color: $text-secondary;
 	}
 
 	.loop-range {

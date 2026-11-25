@@ -1,6 +1,7 @@
 import { get } from 'svelte/store';
 import { tempo } from '../../stores/tempo';
 import { NOTE_H, TOTAL_PITCHES } from './coords';
+import { themeColor } from '../theme';
 
 const BLACK_KEYS = new Set([1, 3, 6, 8, 10]);
 
@@ -39,11 +40,11 @@ export function drawGridLayer(p: GridDrawParams): void {
 	for (let pitch = pStart; pitch <= pEnd; pitch++) {
 		const y = pitchToY(p, pitch);
 		const isB = BLACK_KEYS.has(pitch % 12);
-		ctx.fillStyle = isB ? '#1b1b22' : '#252530';
+		ctx.fillStyle = themeColor(isB ? 'background-color' : 'panel-background-color');
 		ctx.fillRect(0, y, W, rowH);
 	}
 
-	ctx.fillStyle = 'rgba(255,255,255,0.025)';
+	ctx.fillStyle = themeColor('surface-1');
 	for (let pitch = pStart; pitch <= pEnd; pitch++) {
 		if (pitch % 12 === 0) ctx.fillRect(0, pitchToY(p, pitch), W, rowH);
 	}
@@ -52,7 +53,7 @@ export function drawGridLayer(p: GridDrawParams): void {
 	for (let pitch = pStart; pitch <= pEnd + 1; pitch++) {
 		const y = p.editMode ? pitchToY(p, pitch) : (p.previewPitchMax - pitch + 1) * p.previewRowH;
 		const pitchForLine = p.editMode ? pitch : Math.min(pitch, p.previewPitchMax);
-		ctx.strokeStyle = pitchForLine % 12 === 0 ? '#38384a' : '#28282e';
+		ctx.strokeStyle = themeColor(pitchForLine % 12 === 0 ? 'border-strong' : 'border-faint');
 		ctx.beginPath();
 		ctx.moveTo(0, y);
 		ctx.lineTo(W, y);
@@ -70,7 +71,9 @@ export function drawGridLayer(p: GridDrawParams): void {
 		const x = b * p.zoom;
 		const isMeasure = Math.abs(b % beatsPerMeasure) < 0.001;
 		const isBeat = Math.abs(b % 1) < 0.001;
-		ctx.strokeStyle = isMeasure ? '#3e3e50' : isBeat ? '#2e2e3c' : '#252530';
+		ctx.strokeStyle = themeColor(
+			isMeasure ? 'border-strong' : isBeat ? 'border-subtle' : 'border-faint'
+		);
 		ctx.lineWidth = isMeasure ? 1 : 0.5;
 		ctx.beginPath();
 		ctx.moveTo(x, 0);

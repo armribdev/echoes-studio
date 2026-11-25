@@ -201,7 +201,7 @@
 
 		&.loaded {
 			color: $text-color;
-			background: #2a2a33;
+			background: $surface-hover;
 		}
 
 		&.missing {
@@ -241,7 +241,7 @@
 		cursor: pointer;
 
 		&:hover {
-			background: rgba(21, 113, 255, 0.15);
+			background: $accent-soft;
 			color: $text-color;
 		}
 	}

@@ -61,8 +61,8 @@
 	}
 
 	.num-input {
-		background: rgba(255, 255, 255, 0.05);
-		border: 1px solid rgba(255, 255, 255, 0.1);
+		background: $surface-2;
+		border: 1px solid $border-subtle;
 		border-radius: $radius-sm;
 		color: $text-color;
 		font-family: $font-mono;
@@ -83,7 +83,7 @@
 
 		&:focus {
 			border-color: $accent-color;
-			background: rgba(21, 113, 255, 0.08);
+			background: $accent-wash;
 		}
 
 		&:disabled {
@@ -102,7 +102,7 @@
 
 	.num-unit {
 		font-size: 10px;
-		color: rgba(247, 247, 249, 0.35);
+		color: $text-subtle;
 		font-family: sans-serif;
 		flex-shrink: 0;
 	}

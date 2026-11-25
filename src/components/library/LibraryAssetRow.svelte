@@ -121,7 +121,7 @@
 		}
 
 		&.selected {
-			background: rgba(21, 113, 255, 0.12);
+			background: $accent-soft;
 		}
 
 		&.previewing .file-name {
@@ -129,7 +129,7 @@
 		}
 
 		&.importing {
-			background: rgba(21, 113, 255, 0.1);
+			background: $accent-soft;
 			cursor: progress;
 
 			.file-name {
@@ -170,7 +170,7 @@
 		font-family: $font-mono;
 		font-weight: 700;
 		color: $accent-color;
-		background: rgba(21, 113, 255, 0.12);
+		background: $accent-soft;
 		border-radius: 2px;
 		padding: 1px 3px;
 		flex-shrink: 0;
@@ -226,7 +226,7 @@
 	.cancel-import-ring {
 		position: absolute;
 		inset: 2px;
-		border: 1.5px solid rgba(21, 113, 255, 0.28);
+		border: 1.5px solid $accent-border;
 		border-top-color: $accent-color;
 		border-radius: 50%;
 		animation: library-spin 0.7s linear infinite;

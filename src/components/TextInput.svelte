@@ -31,7 +31,7 @@
 
 		&:focus {
 			border-color: $accent-color;
-			background: rgba(21, 113, 255, 0.06);
+			background: $accent-wash;
 		}
 	}
 </style>

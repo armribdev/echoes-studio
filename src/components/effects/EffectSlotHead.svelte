@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { pluginFormatColor } from '../../frontend/pluginFormatColor';
 	import { createEventDispatcher } from 'svelte';
 	import { t } from 'svelte-i18n';
 
@@ -12,12 +13,6 @@
 	export let open = false;
 	export let reloading = false;
 	export let compact = false;
-
-	const FORMAT_COLOR: Record<string, string> = {
-		VST3: '#1571ff',
-		CLAP: '#22c55e',
-		AU: '#f59e0b'
-	};
 
 	const dispatch = createEventDispatcher<{
 		toggleBypass: void;
@@ -49,7 +44,7 @@
 	<button class="slot-toggle" type="button" on:click={() => dispatch('toggleExpand')}>
 		<span class="slot-name">{label}</span>
 		{#if format}
-			<span class="fmt-badge" style:background={FORMAT_COLOR[format] ?? '#555'}>
+			<span class="fmt-badge" style:background={pluginFormatColor(format)}>
 				{format}
 			</span>
 		{/if}
@@ -164,7 +159,7 @@
 		letter-spacing: 0.04em;
 		padding: 1px 4px;
 		border-radius: 2px;
-		color: #fff;
+		color: $on-solid;
 		flex-shrink: 0;
 	}
 
@@ -174,24 +169,24 @@
 	}
 
 	.slot-head.crashed .slot-name {
-		color: #ff8a82;
+		color: $color-error-text;
 		text-decoration: none;
 	}
 
 	.reload-btn {
 		flex-shrink: 0;
 		padding: 2px 8px;
-		border: 1px solid rgba(255, 65, 54, 0.6);
+		border: 1px solid $error-border;
 		border-radius: $radius-xs;
-		background: rgba(255, 65, 54, 0.18);
-		color: #ffb3ad;
+		background: $error-soft;
+		color: $color-error-text;
 		font-size: 9px;
 		font-family: $font-mono;
 		font-weight: 700;
 		cursor: pointer;
 		&:hover:not(:disabled) {
-			background: rgba(255, 65, 54, 0.32);
-			color: #fff;
+			background: $error-strong;
+			color: $on-solid;
 		}
 		&:disabled {
 			cursor: default;
@@ -207,9 +202,9 @@
 		border-radius: 2px;
 		flex-shrink: 0;
 		white-space: nowrap;
-		border: 1px solid rgba(255, 65, 54, 0.5);
-		background: rgba(255, 65, 54, 0.12);
-		color: #ff6b61;
+		border: 1px solid $error-border;
+		background: $error-soft;
+		color: $color-error-text;
 	}
 
 	.chevron {
@@ -247,8 +242,8 @@
 		padding: 1px 4px;
 		border-radius: 2px;
 		flex-shrink: 0;
-		border: 1px solid rgba(34, 197, 94, 0.5);
-		background: rgba(34, 197, 94, 0.12);
-		color: #4ade80;
+		border: 1px solid $success-border;
+		background: $success-soft;
+		color: $color-success;
 	}
 </style>

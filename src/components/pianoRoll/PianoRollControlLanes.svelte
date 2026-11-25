@@ -33,6 +33,8 @@
 </div>
 
 <style lang="scss">
+	@use '../../variables.scss' as *;
+
 	.lanes-wrapper {
 		flex-shrink: 0;
 		overflow: hidden;
@@ -44,7 +46,7 @@
 
 	.lane-row {
 		box-sizing: border-box;
-		border-top: 1px solid #2a2a38;
+		border-top: 1px solid $border-subtle;
 		overflow: hidden;
 	}
 </style>

@@ -561,7 +561,7 @@
 		background: none;
 		border-radius: 6px;
 		cursor: pointer;
-		color: rgba(247, 247, 249, 0.5);
+		color: $text-muted;
 		font-size: 12px;
 		text-align: left;
 		transition:
@@ -570,8 +570,8 @@
 		width: 100%;
 
 		&:hover {
-			background: rgba(255, 255, 255, 0.06);
-			color: rgba(247, 247, 249, 0.85);
+			background: $surface-2;
+			color: $text-strong;
 		}
 
 		&:hover .nav-icon {
@@ -579,7 +579,7 @@
 		}
 
 		&.active {
-			background: rgba(21, 113, 255, 0.15);
+			background: $accent-soft;
 			color: $text-color;
 
 			.nav-icon {
@@ -612,7 +612,7 @@
 		}
 
 		&::-webkit-scrollbar-thumb {
-			background: rgba(255, 255, 255, 0.12);
+			background: $surface-hover;
 			border-radius: $radius-xs;
 		}
 	}

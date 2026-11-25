@@ -154,17 +154,19 @@
 </div>
 
 <style lang="scss">
+	@use '../../variables.scss' as *;
+
 	.keys-wrapper {
 		display: flex;
 		flex-direction: column;
 		width: 64px;
 		flex-shrink: 0;
-		border-right: 1px solid #2a2a38;
+		border-right: 1px solid $border-subtle;
 	}
 
 	.keys-ruler-spacer {
-		background: #1d1d28;
-		border-bottom: 1px solid #2a2a38;
+		background: $panel-background-color;
+		border-bottom: 1px solid $border-subtle;
 		flex-shrink: 0;
 	}
 
@@ -182,25 +184,25 @@
 		padding-right: 5px;
 		box-sizing: border-box;
 		flex-shrink: 0;
-		background: #252535;
-		border-bottom: 1px solid #1c1c28;
+		background: $panel-background-color;
+		border-bottom: 1px solid $border-subtle;
 		cursor: pointer;
 		transition: background 0.07s;
 
 		&:hover {
-			background: #303048;
+			background-image: linear-gradient($surface-hover, $surface-hover);
 		}
 
 		&--black {
-			background: #17171e;
-			border-bottom: 1px solid #101015;
+			background: $background-color;
+			border-bottom: 1px solid $border-faint;
 			&:hover {
-				background: #21212e;
+				background-image: linear-gradient($surface-3, $surface-3);
 			}
 		}
 
 		&--c {
-			border-bottom: 1px solid #32323e;
+			border-bottom: 1px solid $border-strong;
 		}
 	}
 
@@ -208,7 +210,7 @@
 		font-size: 9px;
 		font-weight: 600;
 		letter-spacing: 0.02em;
-		color: #4a4a60;
+		color: $text-faint;
 		pointer-events: none;
 		min-width: 0;
 		overflow: hidden;
@@ -219,21 +221,21 @@
 	.keys-vel-label {
 		height: 72px; // = VEL_H
 		flex-shrink: 0;
-		border-top: 1px solid #2a2a38;
+		border-top: 1px solid $border-subtle;
 		display: flex;
 		align-items: center;
 		justify-content: center;
 		font-size: 9px;
 		font-weight: 700;
 		letter-spacing: 0.1em;
-		color: #383848;
+		color: $text-faint;
 		text-transform: uppercase;
 	}
 
 	.keys-lane {
 		flex-shrink: 0;
 		box-sizing: border-box;
-		border-top: 1px solid #2a2a38;
+		border-top: 1px solid $border-subtle;
 		padding: 4px 3px 0;
 		display: flex;
 		flex-direction: column;
@@ -243,7 +245,7 @@
 	.keys-add {
 		flex-shrink: 0;
 		box-sizing: border-box;
-		border-top: 1px solid #2a2a38;
+		border-top: 1px solid $border-subtle;
 		padding: 2px 3px;
 	}
 
@@ -255,14 +257,14 @@
 		padding: 0 2px;
 		font-size: 9px;
 		font-weight: 600;
-		color: #8a8aa0;
-		background: #20202c;
-		border: 1px solid #2e2e3c;
+		color: $text-muted;
+		background: $surface-2;
+		border: 1px solid $border-subtle;
 		border-radius: 3px;
 		text-overflow: ellipsis;
 
 		&:focus-visible {
-			outline: 1px solid var(--track-color, #4d96ff);
+			outline: 1px solid var(--track-color, #{$accent-color});
 		}
 	}
 
@@ -279,15 +281,15 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		color: #5a5a70;
+		color: $text-faint;
 		background: transparent;
 		border: none;
 		border-radius: 3px;
 		cursor: pointer;
 
 		&:hover:not(:disabled) {
-			color: #c8c8d8;
-			background: #2a2a38;
+			color: $text-strong;
+			background: $surface-hover;
 		}
 
 		&:disabled {
@@ -296,7 +298,7 @@
 		}
 
 		&:focus-visible {
-			outline: 1px solid var(--track-color, #4d96ff);
+			outline: 1px solid var(--track-color, #{$accent-color});
 		}
 	}
 

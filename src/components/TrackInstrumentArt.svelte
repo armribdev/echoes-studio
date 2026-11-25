@@ -33,6 +33,8 @@
 </div>
 
 <style lang="scss">
+	@use '../variables.scss' as *;
+
 	.art {
 		width: 40px;
 		height: 40px;
@@ -49,7 +51,6 @@
 		display: block;
 		pointer-events: none;
 		user-select: none;
-		filter: drop-shadow(0 0 0.6px rgba(255, 255, 255, 0.35))
-			drop-shadow(0 1px 2px rgba(0, 0, 0, 0.4));
+		filter: drop-shadow(0 0 0.6px $text-subtle) drop-shadow(0 1px 2px $black-wash);
 	}
 </style>

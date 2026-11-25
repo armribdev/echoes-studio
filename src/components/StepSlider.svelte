@@ -108,17 +108,13 @@
 			height: 3px;
 			border-radius: 2px;
 			// Fill up to thumb in accent, rest in dim white
-			background: linear-gradient(
-				to right,
-				$accent-color var(--fill),
-				rgba(255, 255, 255, 0.12) var(--fill)
-			);
+			background: linear-gradient(to right, $accent-color var(--fill), $surface-hover var(--fill));
 		}
 
 		&::-moz-range-track {
 			height: 3px;
 			border-radius: 2px;
-			background: rgba(255, 255, 255, 0.12);
+			background: $surface-hover;
 		}
 
 		&::-moz-range-progress {
@@ -136,7 +132,7 @@
 			border-radius: 50%;
 			background: $accent-color;
 			border: 2px solid $background-color;
-			box-shadow: 0 0 0 0 rgba(21, 113, 255, 0);
+			box-shadow: 0 0 0 0 rgba($accent-color, 0);
 			transition:
 				box-shadow 0.15s,
 				transform $duration-base;
@@ -155,7 +151,7 @@
 
 		&:hover::-webkit-slider-thumb,
 		&:focus-visible::-webkit-slider-thumb {
-			box-shadow: 0 0 0 5px rgba(21, 113, 255, 0.22);
+			box-shadow: 0 0 0 5px $accent-strong;
 			transform: scale(1.1);
 		}
 
@@ -179,7 +175,7 @@
 	.tick {
 		width: 1px;
 		height: 5px;
-		background: rgba(255, 255, 255, 0.18);
+		background: $surface-active;
 		border-radius: 1px;
 		transition:
 			background 0.15s,
@@ -202,14 +198,14 @@
 		top: 0;
 		font-size: 10px;
 		font-family: $font-mono;
-		color: rgba(247, 247, 249, 0.28);
+		color: $text-faint;
 		cursor: pointer;
 		line-height: 1;
 		transition: color $duration-base;
 		white-space: nowrap;
 
 		&:hover {
-			color: rgba(247, 247, 249, 0.65);
+			color: $text-secondary;
 		}
 
 		&.active {

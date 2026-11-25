@@ -348,7 +348,7 @@
 		border-bottom: 1px solid $border-faint;
 		position: sticky;
 		top: 0;
-		background: #222229;
+		background: $panel-background-color;
 		z-index: 1;
 	}
 
@@ -377,9 +377,9 @@
 		justify-content: center;
 		padding: 0;
 		&:hover {
-			background: rgba(21, 113, 255, 0.15);
+			background: $accent-soft;
 			color: $text-color;
-			border-color: rgba(21, 113, 255, 0.4);
+			border-color: $accent-border;
 		}
 	}
 
@@ -400,12 +400,12 @@
 
 	.slot.crashed {
 		border-left: 2px solid $color-error;
-		background: rgba(255, 65, 54, 0.08);
+		background: $error-soft;
 		opacity: 1;
 	}
 
 	.slot-params {
 		padding: 6px 8px 8px;
-		background: rgba(0, 0, 0, 0.15);
+		background: $black-wash;
 	}
 </style>

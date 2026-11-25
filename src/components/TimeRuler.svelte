@@ -71,17 +71,17 @@
 
 		&--major {
 			height: 14px;
-			background-color: rgba(247, 247, 249, 0.45);
+			background-color: $text-muted;
 		}
 
 		&--minor {
 			height: 7px;
-			background-color: rgba(247, 247, 249, 0.18);
+			background-color: $text-faint;
 		}
 
 		&--beat {
 			height: 7px;
-			background-color: rgba(247, 247, 249, 0.18);
+			background-color: $text-faint;
 		}
 	}
 
@@ -91,14 +91,14 @@
 		left: 4px;
 		font-size: 10px;
 		line-height: 1;
-		color: rgba(247, 247, 249, 0.55);
+		color: $text-muted;
 		white-space: nowrap;
 		font-family: $font-mono;
 		pointer-events: none;
 
 		&--beat {
 			font-size: 9px;
-			color: rgba(247, 247, 249, 0.3);
+			color: $text-subtle;
 		}
 	}
 </style>

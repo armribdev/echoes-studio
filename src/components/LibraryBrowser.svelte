@@ -576,7 +576,7 @@
 		display: flex;
 		align-items: center;
 		gap: 5px;
-		background: rgba(255, 255, 255, 0.05);
+		background: $surface-2;
 		border: 1px solid $border-faint;
 		border-radius: $radius-sm;
 		padding: 0 6px;
@@ -640,9 +640,9 @@
 			border-color $duration-base;
 
 		&:hover {
-			background: rgba(21, 113, 255, 0.12);
+			background: $accent-soft;
 			color: $text-color;
-			border-color: rgba(21, 113, 255, 0.4);
+			border-color: $accent-border;
 		}
 	}
 
@@ -675,7 +675,7 @@
 		}
 
 		&.active {
-			background: rgba(21, 113, 255, 0.14);
+			background: $accent-soft;
 			color: $text-color;
 		}
 
@@ -708,7 +708,7 @@
 		outline: none;
 
 		&:focus-visible {
-			box-shadow: inset 0 0 0 1px rgba(21, 113, 255, 0.35);
+			box-shadow: inset 0 0 0 1px $accent-border;
 		}
 	}
 
@@ -736,14 +736,14 @@
 	.empty-btn {
 		height: 26px;
 		border-radius: $radius-sm;
-		border: 1px solid rgba(21, 113, 255, 0.45);
-		background: rgba(21, 113, 255, 0.14);
+		border: 1px solid $accent-border;
+		background: $accent-soft;
 		color: $text-color;
 		font-size: 11px;
 		cursor: pointer;
 
 		&:hover {
-			background: rgba(21, 113, 255, 0.22);
+			background: $accent-strong;
 		}
 
 		&--ghost {

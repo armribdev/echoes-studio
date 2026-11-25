@@ -1,5 +1,6 @@
 import type { AudioEdgeDto, GraphLayout, LayoutNode, ModEdgeDto } from './types';
 import { KIND_LABELS } from './types';
+import { themeColor } from '../theme';
 
 export interface GraphRenderOptions {
 	trackColor: string;
@@ -10,16 +11,39 @@ export interface GraphRenderOptions {
 }
 
 const COLORS = {
-	bg: '#1a1a1f',
-	grid: 'rgba(255,255,255,0.04)',
-	nodeBg: '#222229',
-	nodeBorder: 'rgba(255,255,255,0.12)',
-	nodeHover: 'rgba(21,113,255,0.35)',
-	text: '#e8e8ec',
-	textMuted: '#888894',
-	mod: '#ff9a3c',
-	masterAccent: '#6bcb77',
-	audioCable: 'rgba(255,255,255,0.35)'
+	get bg() {
+		return themeColor('background-color');
+	},
+	get grid() {
+		return themeColor('surface-2');
+	},
+	get nodeBg() {
+		return themeColor('panel-background-color');
+	},
+	get nodeBorder() {
+		return themeColor('border-subtle');
+	},
+	get nodeHover() {
+		return themeColor('accent-border-strong');
+	},
+	get text() {
+		return themeColor('text-color');
+	},
+	get textStrong() {
+		return themeColor('text-strong');
+	},
+	get textMuted() {
+		return themeColor('text-muted');
+	},
+	get mod() {
+		return themeColor('color-warning');
+	},
+	get masterAccent() {
+		return themeColor('color-success');
+	},
+	get audioCable() {
+		return themeColor('text-subtle');
+	}
 };
 
 function portOut(ln: LayoutNode): { x: number; y: number } {
@@ -105,13 +129,13 @@ function drawNode(ctx: CanvasRenderingContext2D, ln: LayoutNode, opts: GraphRend
 	// Audio ports
 	if (!isMod) {
 		if (ln.dto.kind !== 'track' && ln.dto.kind !== 'instrument') {
-			ctx.fillStyle = '#ccc';
+			ctx.fillStyle = COLORS.textStrong;
 			ctx.beginPath();
 			ctx.arc(ln.x, ln.y + h / 2, 4, 0, Math.PI * 2);
 			ctx.fill();
 		}
 		if (ln.dto.kind !== 'meter' && ln.dto.kind !== 'master') {
-			ctx.fillStyle = '#ccc';
+			ctx.fillStyle = COLORS.textStrong;
 			ctx.beginPath();
 			ctx.arc(ln.x + w, ln.y + h / 2, 4, 0, Math.PI * 2);
 			ctx.fill();

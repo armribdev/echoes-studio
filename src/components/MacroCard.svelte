@@ -85,7 +85,7 @@
 		font-family: $font-mono;
 		font-weight: 700;
 		color: $text-color;
-		text-shadow: 0 0 4px rgba(0, 0, 0, 0.8);
+		text-shadow: $shadow-text;
 	}
 
 	.macro-row :global(.param) {

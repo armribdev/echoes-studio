@@ -257,7 +257,7 @@
 
 	.lane {
 		display: block;
-		background: rgba(255, 255, 255, 0.015);
+		background: $surface-1;
 		cursor: crosshair;
 
 		&--over-point {

@@ -294,7 +294,7 @@
 		width: 20px;
 		height: 20px;
 		padding: 0;
-		border: 1px solid rgba(255, 255, 255, 0.08);
+		border: 1px solid $border-subtle;
 		border-radius: $radius-md;
 		cursor: pointer;
 		transition:
@@ -304,7 +304,7 @@
 		&.active {
 			box-shadow:
 				0 0 0 2px $panel-background-color,
-				0 0 0 3.5px #fff;
+				0 0 0 3.5px $on-solid;
 		}
 
 		&:hover {
@@ -392,7 +392,7 @@
 
 		&.active {
 			background: $accent-color;
-			color: #fff;
+			color: $on-solid;
 		}
 	}
 
@@ -406,8 +406,8 @@
 		}
 
 		&.active {
-			background: #e5484d;
-			color: #fff;
+			background: $color-error;
+			color: $on-solid;
 
 			.arm-dot {
 				opacity: 1;

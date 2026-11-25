@@ -117,7 +117,7 @@
 		align-items: center;
 		gap: 5px;
 		padding: 5px 6px;
-		background: #222229;
+		background: $panel-background-color;
 	}
 
 	.power {
@@ -179,14 +179,14 @@
 		cursor: pointer;
 
 		&:hover {
-			background: rgba(21, 113, 255, 0.15);
+			background: $accent-soft;
 			color: $text-color;
 		}
 
 		&.active {
-			background: rgba(21, 113, 255, 0.2);
+			background: $accent-strong;
 			color: $accent-color;
-			border-color: rgba(21, 113, 255, 0.5);
+			border-color: $accent-border;
 		}
 
 		&:focus-visible {

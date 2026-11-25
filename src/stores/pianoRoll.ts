@@ -1,3 +1,4 @@
+import { DEFAULT_TRACK_COLOR } from '../frontend/trackColor';
 import { writable, derived, get } from 'svelte/store';
 import type { MidiNote } from '../types/global';
 
@@ -33,7 +34,7 @@ const INITIAL: PianoRollState = {
 	trackId: null,
 	clipId: null,
 	trackName: '',
-	trackColor: '#4d96ff',
+	trackColor: DEFAULT_TRACK_COLOR,
 	notes: [],
 	selectedNoteIds: new Set(),
 	mode: 'draw',

@@ -12,16 +12,18 @@ interface RenderMessage {
 	key: string;
 	/** Seconds skipped at the clip's left edge (left-trim). */
 	offset: number;
+	/** CSS color of the wave (the worker cannot read the page stylesheet). */
+	fill: string;
 }
 
 onmessage = function (event: MessageEvent<RenderMessage>) {
-	const { peaks_64, peaks_512, peaks_4096, sample_rate, scale, width, height, key, offset } =
+	const { peaks_64, peaks_512, peaks_4096, sample_rate, scale, width, height, key, offset, fill } =
 		event.data;
 
 	const canvas = new OffscreenCanvas(width, height);
 	const ctx = canvas.getContext('2d')!;
 
-	drawWaveform(ctx, peaks_64, peaks_512, peaks_4096, sample_rate, scale, offset);
+	drawWaveform(ctx, peaks_64, peaks_512, peaks_4096, sample_rate, scale, offset, fill);
 
 	const bitmap = canvas.transferToImageBitmap();
 	postMessage({ bitmap, key }, { transfer: [bitmap] });
@@ -51,13 +53,14 @@ function drawWaveform(
 	peaks_4096: Peaks,
 	sample_rate: number,
 	scale: number,
-	offset: number
+	offset: number,
+	fill: string
 ) {
 	const W = ctx.canvas.width;
 	const H = ctx.canvas.height;
 
 	ctx.clearRect(0, 0, W, H);
-	ctx.fillStyle = 'rgba(71, 171, 255, 0.85)';
+	ctx.fillStyle = fill;
 
 	const { peaks, chunkSize } = selectPeaks(peaks_64, peaks_512, peaks_4096, sample_rate, scale);
 	const secPerChunk = chunkSize / sample_rate;

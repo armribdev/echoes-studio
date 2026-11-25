@@ -1,5 +1,6 @@
 import { hexAlpha, lighten } from './colorUtils';
 import type { MidiNote } from '../../types/global';
+import { themeColor } from '../theme';
 
 export const VEL_H = 72;
 const VEL_BAR_MIN = 3;
@@ -20,13 +21,13 @@ export function drawVelocityLayer(p: VelocityDrawParams): void {
 	ctx.clearRect(0, 0, W, H);
 
 	// Fond
-	ctx.fillStyle = '#18181f';
+	ctx.fillStyle = themeColor('background-color');
 	ctx.fillRect(0, 0, W, H);
 
 	// Lignes de repère horizontales
 	ctx.lineWidth = 0.5;
 	[0.25, 0.5, 0.75].forEach((p) => {
-		ctx.strokeStyle = '#252530';
+		ctx.strokeStyle = themeColor('border-faint');
 		const y = H - p * (H - 4);
 		ctx.beginPath();
 		ctx.moveTo(0, y);
@@ -65,7 +66,7 @@ export function drawVelocityLayer(p: VelocityDrawParams): void {
 	}
 
 	// Séparateur haut
-	ctx.strokeStyle = '#32323e';
+	ctx.strokeStyle = themeColor('border-subtle');
 	ctx.lineWidth = 1;
 	ctx.beginPath();
 	ctx.moveTo(0, 0.5);

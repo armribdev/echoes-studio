@@ -2,6 +2,7 @@ import type { MidiNote } from '../../types/global';
 import type { PianoRollMode } from '../../stores/pianoRoll';
 import { NOTE_H, TOTAL_PITCHES, hitTestNote, snapBeat } from './coords';
 import { hexAlpha, lighten, roundRect } from './colorUtils';
+import { themeColor } from '../theme';
 
 const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
 
@@ -87,16 +88,16 @@ export function drawNotesLayer(p: NotesDrawParams): void {
 
 		if (w > 4) {
 			const gr = ctx.createLinearGradient(0, y + 1, 0, y + rowH - 2);
-			gr.addColorStop(0, 'rgba(255,255,255,0.20)');
-			gr.addColorStop(0.45, 'rgba(255,255,255,0.04)');
-			gr.addColorStop(1, 'rgba(0,0,0,0.06)');
+			gr.addColorStop(0, themeColor('note-sheen-top'));
+			gr.addColorStop(0.45, themeColor('note-sheen-mid'));
+			gr.addColorStop(1, themeColor('note-sheen-bottom'));
 			ctx.fillStyle = gr;
 			roundRect(ctx, x, y + 1, w, rowH - 2, 3);
 			ctx.fill();
 		}
 
 		if (selected) {
-			ctx.strokeStyle = '#1571ff';
+			ctx.strokeStyle = themeColor('accent-color');
 			ctx.lineWidth = 1.5;
 			roundRect(ctx, x + 0.75, y + 1.75, w - 1.5, rowH - 3.5, 2.5);
 			ctx.stroke();
@@ -107,19 +108,23 @@ export function drawNotesLayer(p: NotesDrawParams): void {
 			const oct = Math.floor(note.pitch / 12) - 1;
 			const label = w > (p.editMode ? 34 : 26) ? `${name}${oct}` : name;
 			if (!p.editMode && rowH < 10) ctx.font = '8px Inter, system-ui, sans-serif';
-			ctx.fillStyle = `rgba(255,255,255,${selected ? 0.9 : p.editMode ? 0.5 : 0.62})`;
+			ctx.fillStyle = themeColor('on-solid');
+			ctx.globalAlpha = selected ? 0.9 : p.editMode ? 0.5 : 0.62;
 			ctx.fillText(label, x + 2, y + rowH / 2);
+			ctx.globalAlpha = 1;
 			if (!p.editMode && rowH < 10) ctx.font = '9px Inter, system-ui, sans-serif';
 		}
 
 		if (w > 10 && p.editMode) {
-			ctx.fillStyle = `rgba(255,255,255,${selected ? 0.55 : 0.22})`;
+			ctx.fillStyle = themeColor('on-solid');
+			ctx.globalAlpha = selected ? 0.55 : 0.22;
 			ctx.beginPath();
 			ctx.moveTo(x + w - 1, y + rowH - 5);
 			ctx.lineTo(x + w - 1, y + rowH - 2);
 			ctx.lineTo(x + w - 7, y + rowH - 2);
 			ctx.closePath();
 			ctx.fill();
+			ctx.globalAlpha = 1;
 		}
 	}
 
@@ -129,9 +134,9 @@ export function drawNotesLayer(p: NotesDrawParams): void {
 		const ry = Math.min(y0, y1);
 		const rw = Math.abs(x1 - x0);
 		const rh = Math.abs(y1 - y0);
-		ctx.fillStyle = 'rgba(21, 113, 255, 0.07)';
+		ctx.fillStyle = themeColor('accent-wash');
 		ctx.fillRect(rx, ry, rw, rh);
-		ctx.strokeStyle = 'rgba(21, 113, 255, 0.65)';
+		ctx.strokeStyle = themeColor('accent-border-strong');
 		ctx.lineWidth = 1;
 		ctx.setLineDash([4, 3]);
 		ctx.strokeRect(rx + 0.5, ry + 0.5, rw - 1, rh - 1);

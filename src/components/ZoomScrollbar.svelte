@@ -157,6 +157,8 @@
 </div>
 
 <style lang="scss">
+	@use '../variables.scss' as *;
+
 	.zsb {
 		position: relative;
 		background: transparent;
@@ -175,7 +177,7 @@
 
 	.thumb {
 		position: absolute;
-		background: rgba(255, 255, 255, 0.09);
+		background: $surface-3;
 		border-radius: 4px;
 		transition: background 0.12s;
 
@@ -191,13 +193,13 @@
 		}
 
 		&:hover {
-			background: rgba(255, 255, 255, 0.16);
+			background: $surface-active;
 		}
 	}
 
 	.grip {
 		position: absolute;
-		background: rgba(255, 255, 255, 0.4);
+		background: $surface-active;
 		border-radius: 1px;
 		pointer-events: none;
 

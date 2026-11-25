@@ -1,3 +1,8 @@
+// Single source of truth for UI colors: no component, stylesheet or canvas
+// renderer may write a hex / rgb() / hsl() literal (enforced by
+// scripts/check-colors.mjs). Tokens canvases need at runtime are re-emitted as
+// `--es-*` custom properties in app.scss (read through src/frontend/theme.ts).
+
 // ── Base ──────────────────────────────────────────────────────────────────────
 $background-color: #1a1a1f;
 $panel-background-color: #222229;
@@ -5,34 +10,60 @@ $border-color: #3c3c43;
 $text-color: #f7f7f9;
 $accent-color: #1571ff;
 $accent-hover: #3382ff;
+$accent-text: #6aadff;
+$on-solid: #fff;
 
 // ── Semantic colors ────────────────────────────────────────────────────────────
 $color-success: #00c878;
 $color-warning: #f5a623;
 $color-error: #ff4136;
+$color-error-text: #ff6b61;
 
 // ── Surfaces ──────────────────────────────────────────────────────────────────
 $surface-1: rgba(255, 255, 255, 0.03);
 $surface-2: rgba(255, 255, 255, 0.05);
 $surface-3: rgba(255, 255, 255, 0.08);
 $surface-hover: rgba(255, 255, 255, 0.1);
+$surface-active: rgba(255, 255, 255, 0.16);
+$black-wash: rgba(0, 0, 0, 0.25);
 
 // ── Borders ───────────────────────────────────────────────────────────────────
-$border-subtle: rgba(255, 255, 255, 0.1);
 $border-faint: rgba(255, 255, 255, 0.07);
+$border-subtle: rgba(255, 255, 255, 0.1);
+$border-strong: rgba(255, 255, 255, 0.18);
 
 // ── Text opacity ──────────────────────────────────────────────────────────────
+$text-strong: rgba(247, 247, 249, 0.85);
+$text-secondary: rgba(247, 247, 249, 0.65);
 $text-muted: rgba(247, 247, 249, 0.55);
 $text-subtle: rgba(247, 247, 249, 0.35);
 $text-faint: rgba(247, 247, 249, 0.28);
 
+// ── Tints of the accent / semantic colors ─────────────────────────────────────
+$accent-wash: rgba($accent-color, 0.08);
+$accent-soft: rgba($accent-color, 0.15);
+$accent-strong: rgba($accent-color, 0.22);
+$accent-border: rgba($accent-color, 0.45);
+$accent-border-strong: rgba($accent-color, 0.65);
+
+$error-soft: rgba($color-error, 0.12);
+$error-strong: rgba($color-error, 0.25);
+$error-border: rgba($color-error, 0.5);
+
+$success-soft: rgba($color-success, 0.12);
+$success-border: rgba($color-success, 0.5);
+
+$warning-soft: rgba($color-warning, 0.12);
+$warning-border: rgba($color-warning, 0.4);
+
 // ── Overlays (menus, popovers) ────────────────────────────────────────────────
 $surface-overlay: #26262e;
-$accent-soft: rgba(21, 113, 255, 0.15);
-$error-soft: rgba(255, 65, 54, 0.1);
+$background-veil: rgba($background-color, 0.78);
 $shadow-overlay:
 	0 8px 32px rgba(0, 0, 0, 0.55),
 	0 2px 8px rgba(0, 0, 0, 0.3);
+$shadow-sm: 0 1px 4px rgba(0, 0, 0, 0.5);
+$shadow-text: 0 0 3px rgba(0, 0, 0, 0.8);
 $z-overlay: 1000;
 
 // ── Dialogs ───────────────────────────────────────────────────────────────────
@@ -42,6 +73,22 @@ $shadow-dialog:
 	0 24px 64px rgba(0, 0, 0, 0.7),
 	0 0 0 0.5px rgba(255, 255, 255, 0.06);
 $z-modal: 2000;
+
+// ── Level meters ──────────────────────────────────────────────────────────────
+$meter-low: #6bcb77;
+$meter-mid: #ffd93d;
+$meter-high: #ff4444;
+
+// ── Audio clips ───────────────────────────────────────────────────────────────
+$clip-audio-bg: #1f3c72;
+$clip-audio-bg-selected: #1a4fa0;
+$clip-audio-border-selected: rgba(120, 180, 255, 0.85);
+$clip-audio-wave: rgba(71, 171, 255, 0.85);
+
+// ── Piano roll notes ──────────────────────────────────────────────────────────
+$note-sheen-top: rgba(255, 255, 255, 0.2);
+$note-sheen-mid: rgba(255, 255, 255, 0.04);
+$note-sheen-bottom: rgba(0, 0, 0, 0.06);
 
 // ── Motion ────────────────────────────────────────────────────────────────────
 $duration-fast: 0.08s;

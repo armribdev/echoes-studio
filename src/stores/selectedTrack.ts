@@ -1,3 +1,4 @@
+import { DEFAULT_TRACK_COLOR } from '../frontend/trackColor';
 import { writable } from 'svelte/store';
 import type {
 	ArpeggiatorSettings,
@@ -22,7 +23,7 @@ export interface SelectedTrackInfo {
 export const selectedTrack = writable<SelectedTrackInfo>({
 	trackId: null,
 	trackName: '',
-	trackColor: '#4d96ff',
+	trackColor: DEFAULT_TRACK_COLOR,
 	instrument: null,
 	sampler: null,
 	arpeggiator: null,

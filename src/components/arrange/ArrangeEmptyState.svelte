@@ -89,7 +89,7 @@
 			background: $accent-color;
 			border: none;
 			border-radius: $radius-md;
-			color: #fff;
+			color: $on-solid;
 			font-size: 12px;
 			font-weight: 600;
 			font-family: inherit;
@@ -108,7 +108,7 @@
 				&:hover {
 					background: transparent;
 					color: $text-color;
-					border-color: rgba($text-color, 0.35);
+					border-color: $text-subtle;
 				}
 			}
 		}

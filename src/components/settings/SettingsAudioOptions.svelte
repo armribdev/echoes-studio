@@ -189,13 +189,13 @@
 	.field-hint {
 		line-height: 1.2;
 		font-size: 10px;
-		color: rgba(247, 247, 249, 0.28);
+		color: $text-faint;
 	}
 
 	// ── Latency bar ───────────────────────────────────────────────────────────
 	.latency-bar {
-		background: rgba(255, 255, 255, 0.03);
-		border: 1px solid rgba(255, 255, 255, 0.07);
+		background: $surface-1;
+		border: 1px solid $border-faint;
 		border-radius: 7px;
 		padding: 12px 14px;
 		display: grid;
@@ -207,7 +207,7 @@
 
 	.latency-label {
 		font-size: 11px;
-		color: rgba(247, 247, 249, 0.45);
+		color: $text-muted;
 		grid-column: 1;
 		grid-row: 1;
 	}
@@ -226,7 +226,7 @@
 		grid-column: 1 / -1;
 		grid-row: 2;
 		height: 4px;
-		background: rgba(255, 255, 255, 0.07);
+		background: $surface-3;
 		border-radius: 2px;
 		overflow: hidden;
 	}
@@ -251,14 +251,14 @@
 
 	.latency-hint {
 		font-size: 10px;
-		color: rgba(247, 247, 249, 0.3);
+		color: $text-subtle;
 		grid-column: 1 / -1;
 		grid-row: 3;
 	}
 
 	.xrun-bar {
-		background: rgba(255, 255, 255, 0.03);
-		border: 1px solid rgba(255, 255, 255, 0.07);
+		background: $surface-1;
+		border: 1px solid $border-faint;
 		border-radius: 7px;
 		padding: 12px 14px;
 		display: grid;
@@ -268,14 +268,14 @@
 		align-items: center;
 
 		&.xrun-warning {
-			border-color: rgba(255, 120, 80, 0.35);
-			background: rgba(255, 80, 40, 0.06);
+			border-color: $warning-border;
+			background: $warning-soft;
 		}
 	}
 
 	.xrun-label {
 		font-size: 11px;
-		color: rgba(247, 247, 249, 0.45);
+		color: $text-muted;
 		grid-column: 1;
 		grid-row: 1;
 	}
@@ -296,12 +296,12 @@
 
 	.xrun-hint {
 		font-size: 10px;
-		color: rgba(247, 247, 249, 0.3);
+		color: $text-subtle;
 		grid-column: 1 / -1;
 		grid-row: 2;
 
 		.xrun-warning & {
-			color: rgba(255, 180, 120, 0.75);
+			color: $color-warning;
 		}
 	}
 
@@ -311,8 +311,8 @@
 		align-items: center;
 		gap: 12px;
 		padding: 10px 12px;
-		background: rgba(255, 255, 255, 0.03);
-		border: 1px solid rgba(255, 255, 255, 0.07);
+		background: $surface-1;
+		border: 1px solid $border-faint;
 		border-radius: 6px;
 	}
 
@@ -331,7 +331,7 @@
 
 	.routing-desc {
 		font-size: 10px;
-		color: rgba(247, 247, 249, 0.35);
+		color: $text-subtle;
 	}
 
 	.routing-assign {
@@ -367,10 +367,10 @@
 		gap: 4px;
 		padding: 2px 4px 2px 8px;
 		font-size: 11px;
-		border: 1px solid rgba(34, 197, 94, 0.45);
-		background: rgba(34, 197, 94, 0.1);
+		border: 1px solid $success-border;
+		background: $success-soft;
 		border-radius: $radius-xl;
-		color: #4ade80;
+		color: $color-success;
 
 		button {
 			border: none;
@@ -381,7 +381,7 @@
 			line-height: 1;
 			padding: 0 2px;
 			&:hover {
-				color: #ff6b61;
+				color: $color-error-text;
 			}
 		}
 	}

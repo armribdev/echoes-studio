@@ -223,8 +223,8 @@
 		font-weight: 600;
 		text-transform: uppercase;
 		letter-spacing: 0.04em;
-		color: rgba(247, 247, 249, 0.35);
-		background: rgba(255, 255, 255, 0.06);
+		color: $text-subtle;
+		background: $surface-2;
 		border-radius: $radius-xs;
 		padding: 1px 5px;
 		margin-left: 4px;
@@ -246,7 +246,7 @@
 	.path-display {
 		font-size: 12px;
 		font-family: $font-mono;
-		color: rgba(247, 247, 249, 0.55);
+		color: $text-muted;
 		word-break: break-all;
 	}
 

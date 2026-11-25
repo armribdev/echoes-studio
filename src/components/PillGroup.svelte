@@ -40,10 +40,10 @@
 		font-size: 11px;
 		font-family: $font-mono;
 		padding: 4px 9px;
-		border: 1px solid rgba(255, 255, 255, 0.1);
+		border: 1px solid $border-subtle;
 		border-radius: $radius-sm;
-		background: rgba(255, 255, 255, 0.04);
-		color: rgba(247, 247, 249, 0.6);
+		background: $surface-2;
+		color: $text-secondary;
 		cursor: pointer;
 		white-space: nowrap;
 		transition:
@@ -53,12 +53,12 @@
 			opacity $duration-base;
 
 		&:hover:not(.disabled) {
-			background: rgba(255, 255, 255, 0.08);
+			background: $surface-3;
 			color: $text-color;
 		}
 
 		&.selected {
-			background: rgba(21, 113, 255, 0.2);
+			background: $accent-strong;
 			border-color: $accent-color;
 			color: $text-color;
 		}

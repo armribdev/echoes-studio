@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { DEFAULT_TRACK_COLOR } from '../frontend/trackColor';
+	import { pluginFormatColor } from '../frontend/pluginFormatColor';
 	import PluginPicker from './PluginPicker.svelte';
 	import SamplerPads from './SamplerPads.svelte';
 	import ArpeggiatorPanel from './ArpeggiatorPanel.svelte';
@@ -36,7 +38,7 @@
 	export let arpeggiator: ArpeggiatorSettings | null = null;
 	export let compact = false;
 	export let trackName = '';
-	export let trackColor = '#4d96ff';
+	export let trackColor = DEFAULT_TRACK_COLOR;
 
 	let showPicker = false;
 	let editorOpen = false;
@@ -152,12 +154,6 @@
 			notify(`Erreur éditeur : ${(e as Error)?.message ?? e}`, 'error');
 		}
 	}
-
-	const FORMAT_COLOR: Record<string, string> = {
-		VST3: '#1571ff',
-		CLAP: '#22c55e',
-		AU: '#f59e0b'
-	};
 </script>
 
 {#if showPicker}
@@ -208,7 +204,7 @@
 			</span>
 		{/if}
 		{#if activePlugin}
-			<span class="fmt-badge" style:background={FORMAT_COLOR[activePlugin.format] ?? '#555'}
+			<span class="fmt-badge" style:background={pluginFormatColor(activePlugin.format)}
 				>{activePlugin.format}</span
 			>
 		{/if}
@@ -299,7 +295,7 @@
 		gap: 4px;
 		padding: 5px 6px;
 		border-bottom: 1px solid $border-faint;
-		background: #222229;
+		background: $panel-background-color;
 	}
 
 	.track-bar {
@@ -341,9 +337,9 @@
 		color: $text-subtle;
 		cursor: pointer;
 		&:hover {
-			background: rgba(21, 113, 255, 0.15);
+			background: $accent-soft;
 			color: $text-color;
-			border-color: rgba(21, 113, 255, 0.4);
+			border-color: $accent-border;
 		}
 	}
 
@@ -372,7 +368,7 @@
 		letter-spacing: 0.04em;
 		padding: 1px 4px;
 		border-radius: 2px;
-		color: #fff;
+		color: $on-solid;
 		flex-shrink: 0;
 	}
 
@@ -383,9 +379,9 @@
 		padding: 1px 4px;
 		border-radius: 2px;
 		flex-shrink: 0;
-		border: 1px solid rgba(34, 197, 94, 0.5);
-		background: rgba(34, 197, 94, 0.12);
-		color: #4ade80;
+		border: 1px solid $success-border;
+		background: $success-soft;
+		color: $color-success;
 	}
 
 	.gui-btn {
@@ -400,13 +396,13 @@
 		font-weight: 700;
 		cursor: pointer;
 		&:hover {
-			background: rgba(21, 113, 255, 0.15);
+			background: $accent-soft;
 			color: $text-color;
 		}
 		&.active {
-			background: rgba(21, 113, 255, 0.2);
+			background: $accent-strong;
 			color: $accent-color;
-			border-color: rgba(21, 113, 255, 0.5);
+			border-color: $accent-border;
 		}
 	}
 
@@ -434,10 +430,10 @@
 	.missing-badge {
 		flex-shrink: 0;
 		padding: 1px 5px;
-		border: 1px solid rgba(255, 65, 54, 0.5);
+		border: 1px solid $error-border;
 		border-radius: $radius-xs;
-		background: rgba(255, 65, 54, 0.12);
-		color: #ff6b61;
+		background: $error-soft;
+		color: $color-error-text;
 		font-size: 8px;
 		font-family: $font-mono;
 		font-weight: 700;
@@ -470,9 +466,9 @@
 		font-family: $font-mono;
 		cursor: pointer;
 		&:hover:not(:disabled) {
-			background: rgba(21, 113, 255, 0.15);
+			background: $accent-soft;
 			color: $text-color;
-			border-color: rgba(21, 113, 255, 0.4);
+			border-color: $accent-border;
 		}
 		&:disabled {
 			cursor: default;
@@ -511,14 +507,14 @@
 			color $duration-base,
 			border-color $duration-base;
 		&:hover {
-			background: rgba(21, 113, 255, 0.15);
+			background: $accent-soft;
 			color: $text-color;
-			border-color: rgba(21, 113, 255, 0.4);
+			border-color: $accent-border;
 		}
 		&.active {
-			background: rgba(21, 113, 255, 0.2);
+			background: $accent-strong;
 			color: $accent-color;
-			border-color: rgba(21, 113, 255, 0.5);
+			border-color: $accent-border;
 		}
 	}
 </style>

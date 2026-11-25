@@ -13,7 +13,7 @@
 		"tauri:build": "tauri build",
 		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
 		"check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
-		"lint": "prettier --check . && eslint . --max-warnings 0",
+		"lint": "prettier --check . && eslint . --max-warnings 0 && node scripts/check-colors.mjs",
 		"format": "prettier --write .",
 		"check-env": "node scripts/check-env.mjs",
 		"clean": "node scripts/clean.mjs",

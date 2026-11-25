@@ -55,7 +55,7 @@
 		border: none;
 		border-radius: $radius-sm;
 		background: none;
-		color: rgba(247, 247, 249, 0.82);
+		color: $text-strong;
 		font-size: 12px;
 		font-family: inherit;
 		text-align: left;
@@ -81,10 +81,10 @@
 		}
 
 		&--danger {
-			color: rgba(255, 65, 54, 0.82);
+			color: $color-error;
 
 			.item-icon {
-				color: rgba(255, 65, 54, 0.6);
+				color: $color-error;
 			}
 
 			&:hover:not(:disabled),

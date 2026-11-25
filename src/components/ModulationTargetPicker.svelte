@@ -88,7 +88,7 @@
 		margin: 2px 6px 6px;
 		border: 1px solid $border-subtle;
 		border-radius: $radius-sm;
-		background: #1b1b21;
+		background: $background-color;
 		overflow: hidden;
 	}
 
@@ -116,7 +116,7 @@
 		font-family: $font-mono;
 		letter-spacing: 0.06em;
 		text-transform: uppercase;
-		color: rgba(21, 113, 255, 0.9);
+		color: $accent-text;
 	}
 
 	.module {
@@ -142,7 +142,7 @@
 		text-overflow: ellipsis;
 		white-space: nowrap;
 		&:hover {
-			background: rgba(21, 113, 255, 0.15);
+			background: $accent-soft;
 			color: $text-color;
 		}
 	}

@@ -18,6 +18,12 @@ Détail UI (checklist, exemples) : [`docs/claude/ui_conventions.md`](docs/claude
 **Ne jamais utiliser `cursor: not-allowed`.** Sur un élément désactivé : garder
 l’opacité / le style et utiliser `cursor: default`.
 
+### Couleurs
+
+**Jamais de couleur en dur** (hex, `rgb()`, `hsl()`) : tokens de `src/variables.scss` (SCSS) ou
+`themeColor()` / `themeVar()` (`src/frontend/theme.ts`) pour canvas et scripts. Garde-fou :
+`scripts/check-colors.mjs` (dans `pnpm lint`). Détail : `docs/claude/ui_conventions.md`.
+
 ### Focus clavier (`:focus-visible`)
 
 Ressenti « app bureau » : **pas d’anneau de focus au clic souris** ; indicateur

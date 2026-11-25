@@ -122,9 +122,9 @@
 		font-family: $font-mono;
 		cursor: pointer;
 		&:hover:not(:disabled) {
-			background: rgba(21, 113, 255, 0.15);
+			background: $accent-soft;
 			color: $text-color;
-			border-color: rgba(21, 113, 255, 0.4);
+			border-color: $accent-border;
 		}
 		&:disabled {
 			cursor: default;
@@ -155,14 +155,14 @@
 			color $duration-base,
 			border-color $duration-base;
 		&:hover {
-			background: rgba(21, 113, 255, 0.15);
+			background: $accent-soft;
 			color: $text-color;
-			border-color: rgba(21, 113, 255, 0.4);
+			border-color: $accent-border;
 		}
 		&.active {
-			background: rgba(21, 113, 255, 0.2);
+			background: $accent-strong;
 			color: $accent-color;
-			border-color: rgba(21, 113, 255, 0.5);
+			border-color: $accent-border;
 		}
 	}
 

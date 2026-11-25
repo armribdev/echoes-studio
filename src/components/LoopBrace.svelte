@@ -50,6 +50,8 @@
 </div>
 
 <style lang="scss">
+	@use '../variables.scss' as *;
+
 	.loop {
 		position: absolute;
 		top: 0;
@@ -61,7 +63,7 @@
 	.span {
 		position: absolute;
 		inset: 0;
-		background: rgba(247, 247, 249, 0.08);
+		background: $text-faint;
 		pointer-events: none;
 	}
 
@@ -84,7 +86,7 @@
 			top: 0;
 			bottom: 0;
 			width: 2px;
-			background: #8a8a93;
+			background: $text-muted;
 		}
 
 		&--start {
@@ -93,7 +95,7 @@
 			&::before {
 				top: 0;
 				left: 4px;
-				border-top: 7px solid #8a8a93;
+				border-top: 7px solid $text-muted;
 				border-right: 6px solid transparent;
 			}
 
@@ -108,7 +110,7 @@
 			&::before {
 				top: 0;
 				right: 4px;
-				border-top: 7px solid #8a8a93;
+				border-top: 7px solid $text-muted;
 				border-left: 6px solid transparent;
 			}
 

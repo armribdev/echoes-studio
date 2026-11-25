@@ -44,7 +44,7 @@
 
 	.range-label {
 		font-size: 11px;
-		color: rgba(247, 247, 249, 0.55);
+		color: $text-muted;
 		font-weight: 500;
 		letter-spacing: 0.3px;
 	}
@@ -55,7 +55,7 @@
 		appearance: none;
 		height: 4px;
 		border-radius: 2px;
-		background: rgba(255, 255, 255, 0.1);
+		background: $surface-hover;
 		outline: none;
 		cursor: pointer;
 
@@ -72,7 +72,7 @@
 
 			&:hover {
 				transform: scale(1.2);
-				box-shadow: 0 0 0 4px rgba(21, 113, 255, 0.25);
+				box-shadow: 0 0 0 4px $accent-strong;
 			}
 		}
 
@@ -86,7 +86,7 @@
 		}
 
 		&:focus-visible::-webkit-slider-thumb {
-			box-shadow: 0 0 0 4px rgba(21, 113, 255, 0.35);
+			box-shadow: 0 0 0 4px $accent-border;
 		}
 	}
 
@@ -94,6 +94,6 @@
 		display: flex;
 		justify-content: space-between;
 		font-size: 9px;
-		color: rgba(247, 247, 249, 0.25);
+		color: $text-faint;
 	}
 </style>

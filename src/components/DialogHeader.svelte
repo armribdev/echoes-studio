@@ -60,7 +60,7 @@
 		border: none;
 		border-radius: $radius-sm;
 		background: none;
-		color: rgba(247, 247, 249, 0.4);
+		color: $text-subtle;
 		cursor: pointer;
 		transition:
 			background $duration-fast,

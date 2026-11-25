@@ -300,7 +300,7 @@
 		gap: 4px;
 		padding: 5px 6px;
 		border-bottom: 1px solid $border-faint;
-		background: #222229;
+		background: $panel-background-color;
 		position: sticky;
 		top: 0;
 		z-index: 1;
@@ -332,9 +332,9 @@
 		padding: 0;
 		&:hover,
 		&.active {
-			background: rgba(21, 113, 255, 0.15);
+			background: $accent-soft;
 			color: $text-color;
-			border-color: rgba(21, 113, 255, 0.4);
+			border-color: $accent-border;
 		}
 	}
 
@@ -397,7 +397,7 @@
 		width: 52px;
 		height: 3px;
 		cursor: pointer;
-		accent-color: rgba(21, 113, 255, 0.85);
+		accent-color: $accent-color;
 	}
 
 	.depth-val {

@@ -4,6 +4,7 @@
      sets the gain.  Software decay keeps display smooth between 33 ms ticks.
 -->
 <script lang="ts">
+	import { themeVar } from '../frontend/theme';
 	import { onMount, onDestroy, createEventDispatcher } from 'svelte';
 	import { modulationDrag } from '../stores/modulationDrag';
 	import { automationRequest } from '../stores/automation';
@@ -43,9 +44,9 @@
 	}
 
 	function meterColor(pct: number): string {
-		if (pct >= 95) return 'var(--meter-red,    #ff4444)';
-		if (pct >= 75) return 'var(--meter-yellow, #ffd93d)';
-		return 'var(--meter-green,  #6bcb77)';
+		if (pct >= 95) return themeVar('meter-high');
+		if (pct >= 75) return themeVar('meter-mid');
+		return themeVar('meter-low');
 	}
 
 	// ── Per-channel soft decay (60 fps) ──────────────────────────────────────────
@@ -163,6 +164,8 @@
 </div>
 
 <style lang="scss">
+	@use '../variables.scss' as *;
+
 	.fader-meter {
 		position: relative;
 		width: 100%;
@@ -185,7 +188,7 @@
 		}
 
 		&:focus-visible .channel {
-			outline: 1px solid rgba(21, 113, 255, 0.5);
+			outline: 1px solid $accent-border;
 			outline-offset: 1px;
 		}
 	}
@@ -193,7 +196,7 @@
 	.channel {
 		height: 5px;
 		border-radius: 2px;
-		background: rgba(255, 255, 255, 0.07);
+		background: $surface-3;
 		position: relative;
 		overflow: hidden;
 	}
@@ -231,10 +234,10 @@
 		transform: translate(-50%, -50%);
 		width: 3px;
 		height: 20px;
-		background: rgba(247, 247, 249, 0.9);
+		background: $text-strong;
 		border-radius: 2px;
 		pointer-events: none;
-		box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
+		box-shadow: $shadow-sm;
 		will-change: left;
 	}
 </style>

@@ -5,6 +5,31 @@
 
 ---
 
+## Couleurs
+
+**Aucune couleur en dur** (hex, `rgb()`, `rgba()`, `hsl()`, `white`, `black`) hors `src/variables.scss`.
+`node scripts/check-colors.mjs` (branché sur `pnpm lint`) échoue sinon.
+
+| Où                                 | Comment                                                                                                   |
+| ---------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| Composant Svelte / SCSS            | token `$…` de `variables.scss` (`@use '…/variables.scss' as *;`)                                          |
+| Canvas, worker, style inline       | `themeColor('token')` / `themeVar('token')` de `src/frontend/theme.ts`                                    |
+| Nouveau token lu par un canvas     | l'ajouter à `$runtime-tokens` (`app.scss`) **et** à `THEME_TOKENS` (`theme.ts`) — `theme.test.ts` vérifie |
+| Teinte translucide d'une couleur   | token existant (`$accent-soft`, `$error-border`…) ; sinon `rgba($token, a)` plutôt qu'un nouveau littéral |
+| Worker (pas d'accès au stylesheet) | passer la couleur résolue dans le message (cf. `fill` de `waveform.worker.ts`)                            |
+
+Familles : surfaces (`$surface-1…hover/active`), bordures (`$border-faint/subtle/strong`), texte
+(`$text-strong/secondary/muted/subtle/faint`), accent (`$accent-wash/soft/strong/border/border-strong`),
+sémantiques (`$color-success/warning/error` + `-soft` / `-border`), niveaux (`$meter-*`), clip audio
+(`$clip-audio-*`). Choisir le token par **rôle**, pas par valeur ; ne pas créer de gris dédié à un écran.
+
+Exceptions (hex autorisés, listés dans `check-colors.mjs`) : palettes d'identité dont la valeur est enregistrée
+dans le projet ou sert de table — `frontend/trackColor.ts`, `frontend/modulation/colors.ts`,
+`frontend/pluginFormatColor.ts`. Les couleurs dynamiques (`--track-color`, `--clip-color`, `--loc-color`)
+viennent des données et restent des variables CSS.
+
+---
+
 ## Curseur CSS
 
 **Ne jamais utiliser `cursor: not-allowed`.**

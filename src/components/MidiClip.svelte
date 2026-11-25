@@ -1,5 +1,6 @@
 <!-- MidiClip.svelte — MIDI clip in the arrange view -->
 <script lang="ts">
+	import { DEFAULT_TRACK_COLOR } from '../frontend/trackColor';
 	import { onMount, onDestroy, createEventDispatcher } from 'svelte';
 	import type { MidiNote } from '../types/global';
 	import { selection } from '../stores/selection';
@@ -13,7 +14,7 @@
 	export let notes: MidiNote[];
 	/** Another clip plays the same content (ADR-032). */
 	export let linked = false;
-	export let color: string = '#6c63ff';
+	export let color: string = DEFAULT_TRACK_COLOR;
 	export let bpm: number = 120;
 	/** Shared pitch bounds for all MIDI clips on the same lane. */
 	export let minPitch: number | undefined = undefined;
@@ -232,6 +233,8 @@
 </div>
 
 <style lang="scss">
+	@use '../variables.scss' as *;
+
 	.midi-clip {
 		position: absolute;
 		top: 0;
@@ -239,7 +242,7 @@
 		overflow: hidden;
 		border-radius: 4px;
 		cursor: grab;
-		background-color: color-mix(in srgb, var(--clip-color) 18%, #1a1a2e);
+		background-color: color-mix(in srgb, var(--clip-color) 18%, $background-color);
 		box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--clip-color) 60%, transparent);
 
 		&:active {
@@ -251,7 +254,7 @@
 		}
 
 		&.selected {
-			background-color: color-mix(in srgb, var(--clip-color) 30%, #1a1a2e);
+			background-color: color-mix(in srgb, var(--clip-color) 30%, $background-color);
 			box-shadow: inset 0 0 0 1.5px var(--clip-color);
 		}
 
@@ -259,7 +262,7 @@
 			position: absolute;
 			top: 2px;
 			left: 4px;
-			color: color-mix(in srgb, var(--clip-color) 90%, white);
+			color: color-mix(in srgb, var(--clip-color) 90%, $on-solid);
 			display: flex;
 			align-items: center;
 			gap: 3px;
@@ -314,7 +317,7 @@
 				width: 4px;
 				height: 4px;
 				border-radius: 50%;
-				background: color-mix(in srgb, var(--clip-color) 90%, white);
+				background: color-mix(in srgb, var(--clip-color) 90%, $on-solid);
 				opacity: 0;
 			}
 

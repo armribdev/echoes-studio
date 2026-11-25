@@ -93,13 +93,11 @@
 		position: fixed;
 		z-index: 201;
 		box-sizing: border-box;
-		background: #26262e;
+		background: $surface-overlay;
 		border: 1px solid $border-color;
 		border-radius: $radius-lg;
 		padding: 4px;
-		box-shadow:
-			0 8px 32px rgba(0, 0, 0, 0.55),
-			0 2px 8px rgba(0, 0, 0, 0.3);
+		box-shadow: $shadow-overlay;
 		user-select: none;
 	}
 
@@ -124,7 +122,7 @@
 		padding: 0 10px;
 		border: none;
 		background: none;
-		color: rgba(247, 247, 249, 0.82);
+		color: $text-strong;
 		font-size: 12px;
 		font-family: inherit;
 		border-radius: $radius-sm;
@@ -137,11 +135,11 @@
 		}
 
 		&--danger {
-			color: rgba(255, 65, 54, 0.82);
+			color: $color-error;
 
 			&:hover {
-				background: rgba(255, 65, 54, 0.12);
-				color: rgb(255, 65, 54);
+				background: $error-soft;
+				color: $color-error;
 			}
 		}
 	}

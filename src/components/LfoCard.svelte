@@ -220,6 +220,8 @@
 </ModulatorCard>
 
 <style lang="scss">
+	@use '../variables.scss' as *;
+
 	.cursor {
 		stroke: var(--mod-color);
 		stroke-width: 1;
@@ -233,7 +235,7 @@
 		height: 6px;
 		margin: -3px 0 0 -3px;
 		border-radius: 50%;
-		background: #fff;
+		background: $on-solid;
 		box-shadow:
 			0 0 6px var(--mod-color),
 			0 0 0 1.5px var(--mod-color);

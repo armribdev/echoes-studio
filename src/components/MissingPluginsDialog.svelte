@@ -210,10 +210,10 @@
 	.badge {
 		flex-shrink: 0;
 		padding: 1px 6px;
-		border: 1px solid rgba(255, 65, 54, 0.5);
+		border: 1px solid $error-border;
 		border-radius: $radius-xs;
-		background: rgba(255, 65, 54, 0.12);
-		color: #ff6b61;
+		background: $error-soft;
+		color: $color-error-text;
 		font-size: 9px;
 		font-family: $font-mono;
 		font-weight: 700;

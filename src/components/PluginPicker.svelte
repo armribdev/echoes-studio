@@ -1,5 +1,6 @@
 <!-- PluginPicker.svelte — modal central pour parcourir et insérer un plugin -->
 <script lang="ts">
+	import { pluginFormatColor } from '../frontend/pluginFormatColor';
 	import { createEventDispatcher, onMount } from 'svelte';
 	import { t } from 'svelte-i18n';
 	import {
@@ -90,13 +91,6 @@
 			pick(filtered[selectedIndex]);
 		}
 	}
-
-	const FORMAT_COLOR: Record<string, string> = {
-		Internal: '#8b5cf6',
-		VST3: '#1571ff',
-		CLAP: '#22c55e',
-		AU: '#f59e0b'
-	};
 </script>
 
 <Dialog
@@ -169,8 +163,7 @@
 					>
 						<span class="plug-name">{p.name}</span>
 						<span class="plug-vendor">{p.vendor || '—'}</span>
-						<span class="badge" style:background={FORMAT_COLOR[p.format] ?? '#555'}>{p.format}</span
-						>
+						<span class="badge" style:background={pluginFormatColor(p.format)}>{p.format}</span>
 					</button>
 				{/each}
 			{/if}
@@ -221,14 +214,14 @@
 	.search {
 		margin: 8px 10px;
 		padding: 6px 8px;
-		background: #151519;
+		background: $background-color;
 		border: 1px solid $border-subtle;
 		border-radius: $radius-sm;
 		color: $text-color;
 		font-size: 12px;
 		outline: none;
 		&:focus {
-			border-color: rgba(21, 113, 255, 0.5);
+			border-color: $accent-border;
 		}
 	}
 
@@ -301,7 +294,7 @@
 		letter-spacing: 0.04em;
 		padding: 2px 5px;
 		border-radius: $radius-xs;
-		color: #fff;
+		color: $on-solid;
 		flex-shrink: 0;
 	}
 </style>

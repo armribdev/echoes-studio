@@ -140,7 +140,7 @@
 		text-overflow: ellipsis;
 
 		option {
-			background: #222229;
+			background: $panel-background-color;
 		}
 	}
 </style>

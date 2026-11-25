@@ -67,7 +67,7 @@
 		transition: background 0.15s;
 
 		&:hover {
-			background: rgba($accent-color, 0.4);
+			background: $accent-border;
 		}
 		&:active {
 			background: $accent-color;

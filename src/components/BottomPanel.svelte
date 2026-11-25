@@ -170,7 +170,7 @@
 			color $duration-base;
 
 		&:hover {
-			background: rgba(255, 65, 54, 0.15);
+			background: $error-soft;
 			color: $color-error;
 		}
 	}

@@ -1,5 +1,6 @@
 <!-- VuMeter.svelte — two slim vertical bars (L, R) showing peak amplitude. -->
 <script lang="ts">
+	import { themeVar } from '../frontend/theme';
 	/** Peak amplitude [0, 1] for left channel. */
 	export let peakL: number = 0;
 	/** Peak amplitude [0, 1] for right channel. */
@@ -23,9 +24,9 @@
 
 	/** Color based on level: green → yellow → red. */
 	function barColor(pct: number): string {
-		if (pct >= 95) return 'var(--meter-red,   #ff4444)';
-		if (pct >= 75) return 'var(--meter-yellow, #ffd93d)';
-		return 'var(--meter-green,  #6bcb77)';
+		if (pct >= 95) return themeVar('meter-high');
+		if (pct >= 75) return themeVar('meter-mid');
+		return themeVar('meter-low');
 	}
 
 	$: colorL = barColor(heightL);
@@ -42,6 +43,8 @@
 </div>
 
 <style lang="scss">
+	@use '../variables.scss' as *;
+
 	.vu {
 		display: flex;
 		align-items: flex-end;
@@ -53,7 +56,7 @@
 	.bar-wrap {
 		width: 3px;
 		height: 100%;
-		background: rgba(255, 255, 255, 0.06);
+		background: $surface-2;
 		border-radius: 1px;
 		overflow: hidden;
 		display: flex;

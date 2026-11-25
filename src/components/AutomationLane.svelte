@@ -267,7 +267,7 @@
 	.lane {
 		display: block;
 		position: relative;
-		background: rgba(255, 255, 255, 0.015);
+		background: $surface-1;
 
 		&--over-point {
 			cursor: grab;

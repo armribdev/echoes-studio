@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { DEFAULT_TRACK_COLOR } from '../frontend/trackColor';
 	import Track from './Track.svelte';
 	import TrackStrip from './TrackStrip.svelte';
 	import TrackContextMenu from './TrackContextMenu.svelte';
@@ -290,7 +291,7 @@
 			selectedTrack.set({
 				trackId: null,
 				trackName: '',
-				trackColor: '#4d96ff',
+				trackColor: DEFAULT_TRACK_COLOR,
 				instrument: null,
 				sampler: null,
 				arpeggiator: null,
@@ -2668,8 +2669,8 @@
 			border-color 0.15s;
 
 		&:hover {
-			background: rgba(21, 113, 255, 0.1);
-			border-color: rgba(21, 113, 255, 0.4);
+			background: $accent-soft;
+			border-color: $accent-border;
 			color: $text-color;
 		}
 	}
@@ -2697,7 +2698,7 @@
 		position: absolute;
 		top: 0;
 		bottom: 0;
-		background: rgba(247, 247, 249, 0.06);
+		background: $text-faint;
 		pointer-events: none;
 		z-index: 1;
 	}
@@ -2751,8 +2752,8 @@
 		box-sizing: border-box;
 		pointer-events: none;
 		z-index: 6;
-		background: rgba(21, 113, 255, 0.07);
-		border: 1px dashed rgba(21, 113, 255, 0.65);
+		background: $accent-wash;
+		border: 1px dashed $accent-border-strong;
 		border-radius: 2px;
 	}
 
@@ -2760,20 +2761,20 @@
 		position: absolute;
 		box-sizing: border-box;
 		height: 100px;
-		background-color: rgba(21, 113, 255, 0.15);
+		background-color: $accent-soft;
 		border-radius: $radius-sm;
 		pointer-events: none;
-		border: 2px dashed rgba(255, 255, 255, 0.6);
+		border: 2px dashed $border-strong;
 		z-index: 5;
 
 		&--new-track {
-			background-color: rgba(107, 203, 119, 0.12);
-			border-color: rgba(107, 203, 119, 0.75);
+			background-color: $success-soft;
+			border-color: $success-border;
 		}
 
 		&--rejected {
-			background-color: rgba(255, 80, 80, 0.1);
-			border-color: rgba(255, 100, 100, 0.55);
+			background-color: $error-soft;
+			border-color: $error-border;
 			opacity: 0.55;
 		}
 	}

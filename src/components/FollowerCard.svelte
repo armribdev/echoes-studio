@@ -170,16 +170,16 @@
 			min-width: 0;
 			height: 20px;
 			padding: 0 4px;
-			background: rgba(255, 255, 255, 0.04);
-			border: 1px solid rgba(255, 255, 255, 0.08);
+			background: $surface-2;
+			border: 1px solid $border-subtle;
 			border-radius: $radius-sm;
-			color: #c8c8d8;
+			color: $text-strong;
 			font-size: 10px;
 			cursor: pointer;
 
 			&:hover {
-				background: rgba(255, 255, 255, 0.07);
-				border-color: rgba(255, 255, 255, 0.14);
+				background: $surface-3;
+				border-color: $border-strong;
 			}
 			&:focus-visible {
 				outline: none;
@@ -190,7 +190,7 @@
 
 	.raw {
 		fill: none;
-		stroke: rgba(255, 255, 255, 0.25);
+		stroke: $border-strong;
 		stroke-width: 1;
 		vector-effect: non-scaling-stroke;
 	}

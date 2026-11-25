@@ -349,8 +349,8 @@
 		font-weight: 700;
 		cursor: pointer;
 		&.on {
-			background: rgba(21, 113, 255, 0.2);
-			border-color: rgba(21, 113, 255, 0.5);
+			background: $accent-strong;
+			border-color: $accent-border;
 			color: $accent-color;
 		}
 	}

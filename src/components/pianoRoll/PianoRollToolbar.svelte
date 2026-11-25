@@ -114,17 +114,19 @@
 {/if}
 
 <style lang="scss">
+	@use '../../variables.scss' as *;
+
 	.chrome {
 		display: flex;
 		flex-shrink: 0;
 		height: 30px;
-		background: #1d1d27;
-		border-bottom: 1px solid #2e2e3c;
-		box-shadow: inset 3px 0 0 var(--track-color, #4d96ff);
+		background: $panel-background-color;
+		border-bottom: 1px solid $border-subtle;
+		box-shadow: inset 3px 0 0 var(--track-color, #{$accent-color});
 
 		&--preview {
-			background: #1a1a22;
-			border-bottom-color: #282832;
+			background: $background-color;
+			border-bottom-color: $border-subtle;
 		}
 	}
 
@@ -146,7 +148,7 @@
 	.chrome-divider {
 		width: 1px;
 		height: 16px;
-		background: rgba(255, 255, 255, 0.07);
+		background: $surface-3;
 		flex-shrink: 0;
 	}
 
@@ -165,7 +167,7 @@
 		background: transparent;
 		border: none;
 		border-radius: 4px;
-		color: #666678;
+		color: $text-subtle;
 		cursor: pointer;
 		flex-shrink: 0;
 		transition:
@@ -173,18 +175,18 @@
 			color 0.12s;
 
 		&:hover {
-			background: rgba(255, 65, 54, 0.14);
-			color: #ff6b60;
+			background: $error-soft;
+			color: $color-error-text;
 		}
 	}
 
 	.edit-btn {
 		height: 22px;
 		padding: 0 10px;
-		background: rgba(21, 113, 255, 0.12);
-		border: 1px solid rgba(21, 113, 255, 0.28);
+		background: $accent-soft;
+		border: 1px solid $accent-border;
 		border-radius: 4px;
-		color: #6aadff;
+		color: $accent-text;
 		font-size: 11px;
 		font-weight: 500;
 		cursor: pointer;
@@ -194,18 +196,18 @@
 			border-color 0.12s;
 
 		&:hover {
-			background: rgba(21, 113, 255, 0.2);
-			border-color: rgba(21, 113, 255, 0.45);
+			background: $accent-strong;
+			border-color: $accent-border;
 		}
 	}
 
 	.q-select {
 		height: 22px;
 		padding: 0 6px;
-		background: rgba(255, 255, 255, 0.04);
-		border: 1px solid rgba(255, 255, 255, 0.08);
+		background: $surface-2;
+		border: 1px solid $border-subtle;
 		border-radius: 4px;
-		color: #c8c8d8;
+		color: $text-strong;
 		font-size: 11px;
 		cursor: pointer;
 		flex-shrink: 0;
@@ -214,12 +216,12 @@
 			background 0.12s;
 
 		&:hover {
-			background: rgba(255, 255, 255, 0.07);
-			border-color: rgba(255, 255, 255, 0.14);
+			background: $surface-3;
+			border-color: $border-strong;
 		}
 		&:focus-visible {
 			outline: none;
-			border-color: #1571ff;
+			border-color: $accent-color;
 		}
 	}
 
@@ -227,7 +229,7 @@
 		display: flex;
 		gap: 1px;
 		flex-shrink: 0;
-		background: rgba(0, 0, 0, 0.25);
+		background: $black-wash;
 		border-radius: 6px;
 		padding: 2px;
 	}
@@ -242,7 +244,7 @@
 		background: transparent;
 		border: none;
 		border-radius: 4px;
-		color: #666678;
+		color: $text-subtle;
 		cursor: pointer;
 		flex-shrink: 0;
 		transition:
@@ -250,13 +252,13 @@
 			color 0.12s;
 
 		&:hover {
-			background: rgba(255, 255, 255, 0.07);
-			color: #d0d0e0;
+			background: $surface-3;
+			color: $text-strong;
 		}
 
 		&.active {
-			background: rgba(21, 113, 255, 0.2);
-			color: #6aadff;
+			background: $accent-strong;
+			color: $accent-text;
 		}
 	}
 </style>

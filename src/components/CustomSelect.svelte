@@ -142,8 +142,8 @@
 		align-items: center;
 		justify-content: space-between;
 		gap: 6px;
-		background: rgba(255, 255, 255, 0.05);
-		border: 1px solid rgba(255, 255, 255, 0.1);
+		background: $surface-2;
+		border: 1px solid $border-subtle;
 		border-radius: $radius-md;
 		color: $text-color;
 		font-size: 12px;
@@ -158,13 +158,13 @@
 		white-space: nowrap;
 
 		&:hover {
-			border-color: rgba(255, 255, 255, 0.2);
-			background: rgba(255, 255, 255, 0.08);
+			border-color: $border-strong;
+			background: $surface-3;
 		}
 
 		&--open {
 			border-color: $accent-color;
-			background: rgba(21, 113, 255, 0.08);
+			background: $accent-wash;
 		}
 	}
 
@@ -176,7 +176,7 @@
 
 	.cs-chevron {
 		flex-shrink: 0;
-		color: rgba(247, 247, 249, 0.4);
+		color: $text-subtle;
 		transition: transform 0.15s;
 
 		&--up {
@@ -189,16 +189,14 @@
 		top: calc(100% + 4px);
 		left: 0;
 		min-width: 100%;
-		background: #2a2a32;
-		border: 1px solid rgba(255, 255, 255, 0.12);
+		background: $surface-overlay;
+		border: 1px solid $border-subtle;
 		border-radius: 7px;
 		padding: 4px;
 		margin: 0;
 		list-style: none;
 		z-index: 9999;
-		box-shadow:
-			0 8px 24px rgba(0, 0, 0, 0.6),
-			0 0 0 0.5px rgba(255, 255, 255, 0.04);
+		box-shadow: $shadow-overlay;
 		overflow: hidden;
 	}
 
@@ -209,7 +207,7 @@
 		padding: 5px 8px;
 		border-radius: $radius-md;
 		font-size: 12px;
-		color: rgba(247, 247, 249, 0.75);
+		color: $text-secondary;
 		cursor: pointer;
 		transition:
 			background $duration-fast,
@@ -217,13 +215,13 @@
 		white-space: nowrap;
 
 		&:hover {
-			background: rgba(255, 255, 255, 0.08);
+			background: $surface-3;
 			color: $text-color;
 		}
 
 		&--selected {
 			color: $text-color;
-			background: rgba(21, 113, 255, 0.12);
+			background: $accent-soft;
 		}
 	}
 

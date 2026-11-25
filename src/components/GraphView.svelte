@@ -14,7 +14,7 @@
 	} from '../frontend/graph/layout';
 	import { renderGraph, hitTestNode } from '../frontend/graph/render';
 	import type { GraphLayout, LayoutNode } from '../frontend/graph/types';
-	import { trackColor as colorForTrack } from '../frontend/trackColor';
+	import { trackColor as colorForTrack, DEFAULT_TRACK_COLOR } from '../frontend/trackColor';
 	import { t } from 'svelte-i18n';
 
 	const MIN_ZOOM = 0.25;
@@ -41,7 +41,7 @@
 
 	$: trackColor = trackId
 		? colorForTrack(trackId, tracks.find((t) => t.id === trackId)?.color)
-		: '#4d96ff';
+		: DEFAULT_TRACK_COLOR;
 
 	$: layout = computeLayout(snapshot, scope, trackId);
 	$: audioEdges = snapshot ? visibleAudioEdges(snapshot, layout) : [];
@@ -300,7 +300,7 @@
 		position: relative;
 		display: flex;
 		flex-direction: column;
-		background: #1a1a1f;
+		background: $background-color;
 		overflow: hidden;
 	}
 
@@ -310,7 +310,7 @@
 		gap: 10px;
 		padding: 6px 10px;
 		border-bottom: 1px solid $border-color;
-		background: #222229;
+		background: $panel-background-color;
 		flex-shrink: 0;
 		z-index: 2;
 	}
@@ -318,7 +318,7 @@
 	.scope-tabs {
 		display: flex;
 		gap: 2px;
-		background: rgba(0, 0, 0, 0.25);
+		background: $black-wash;
 		border-radius: $radius-md;
 		padding: 2px;
 
@@ -333,7 +333,7 @@
 			cursor: pointer;
 
 			&.active {
-				background: rgba(21, 113, 255, 0.25);
+				background: $accent-strong;
 				color: $text-color;
 			}
 
@@ -400,7 +400,7 @@
 		left: 50%;
 		transform: translateX(-50%);
 		padding: 6px 12px;
-		background: rgba(0, 0, 0, 0.75);
+		background: $scrim;
 		border: 1px solid $border-subtle;
 		border-radius: $radius-md;
 		font-size: 10px;

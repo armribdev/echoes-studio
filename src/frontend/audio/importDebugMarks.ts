@@ -19,5 +19,5 @@ export function importMark(name: string): void {
 		/* ignore */
 	}
 	// Visible in Console even if Timings stays empty.
-	console.log(`%c⏱ ${label}`, 'color:#6cf');
+	console.log(`⏱ ${label}`);
 }

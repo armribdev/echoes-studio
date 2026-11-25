@@ -70,9 +70,7 @@
 		flex-direction: column;
 		border: 1px solid $border-color;
 		border-radius: $radius-lg;
-		box-shadow:
-			0 12px 40px rgba(0, 0, 0, 0.55),
-			0 2px 8px rgba(0, 0, 0, 0.3);
+		box-shadow: $shadow-overlay;
 		overflow: hidden;
 	}
 </style>

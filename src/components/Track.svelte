@@ -1,5 +1,6 @@
 <!-- Track.svelte -->
 <script lang="ts">
+	import { DEFAULT_TRACK_COLOR } from '../frontend/trackColor';
 	import { createEventDispatcher } from 'svelte';
 	import type { Clip as ClipType, MidiClip as MidiClipType, MidiContent } from '../types/global';
 	import Clip from './Clip.svelte';
@@ -21,7 +22,7 @@
 	export let linkedClipIds: Set<string>;
 	export let scale: number;
 	export let trackIndex: number;
-	export let trackColor: string = '#4d96ff';
+	export let trackColor: string = DEFAULT_TRACK_COLOR;
 	export let bpm: number = 120;
 
 	const dispatch = createEventDispatcher<{
@@ -227,10 +228,10 @@
 		width: 28px;
 		height: 28px;
 		padding: 0;
-		border: 1px dashed rgba(255, 255, 255, 0.22);
+		border: 1px dashed $border-strong;
 		border-radius: $radius-md;
-		background: rgba(26, 26, 31, 0.72);
-		color: rgba(247, 247, 249, 0.55);
+		background: $background-veil;
+		color: $text-muted;
 		font-size: 18px;
 		font-weight: 400;
 		line-height: 1;
@@ -252,9 +253,9 @@
 
 		&:hover {
 			color: $text-color;
-			border-color: rgba($accent-color, 0.65);
+			border-color: $accent-border-strong;
 			border-style: solid;
-			background: rgba($accent-color, 0.16);
+			background: $accent-soft;
 		}
 	}
 </style>

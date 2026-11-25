@@ -152,7 +152,7 @@
 	.field-hint {
 		line-height: 1.2;
 		font-size: 10px;
-		color: rgba(247, 247, 249, 0.28);
+		color: $text-faint;
 	}
 
 	// ── Badge ─────────────────────────────────────────────────────────────────
@@ -164,15 +164,15 @@
 		border-radius: $radius-xs;
 
 		&--in {
-			background: rgba(0, 200, 120, 0.15);
+			background: $success-soft;
 			color: $color-success;
-			border: 1px solid rgba(0, 200, 120, 0.3);
+			border: 1px solid $success-border;
 		}
 
 		&--out {
-			background: rgba(21, 113, 255, 0.15);
-			color: #5599ff;
-			border: 1px solid rgba(21, 113, 255, 0.3);
+			background: $accent-soft;
+			color: $accent-text;
+			border: 1px solid $accent-border;
 		}
 	}
 
@@ -202,7 +202,7 @@
 		align-items: center;
 		gap: 6px;
 		font-size: 11px;
-		color: rgba(247, 247, 249, 0.55);
+		color: $text-muted;
 		font-weight: 500;
 		letter-spacing: 0.3px;
 	}
@@ -218,10 +218,10 @@
 		gap: 10px;
 
 		&--in {
-			border-top: 2px solid rgba(0, 200, 120, 0.35);
+			border-top: 2px solid $success-border;
 		}
 		&--out {
-			border-top: 2px solid rgba(21, 113, 255, 0.35);
+			border-top: 2px solid $accent-border;
 		}
 	}
 
@@ -234,7 +234,7 @@
 	.channel-card-title {
 		font-size: 11px;
 		font-weight: 500;
-		color: rgba(247, 247, 249, 0.45);
+		color: $text-muted;
 	}
 
 	.channel-count-control {
@@ -245,7 +245,7 @@
 	.count-btn {
 		width: 20px;
 		height: 20px;
-		border: 1px solid rgba(255, 255, 255, 0.12);
+		border: 1px solid $border-subtle;
 		background: $surface-2;
 		border-radius: $radius-md;
 		color: $text-color;
@@ -259,8 +259,8 @@
 			border-color $duration-base;
 
 		&:hover:not(:disabled) {
-			background: rgba(255, 255, 255, 0.1);
-			border-color: rgba(255, 255, 255, 0.2);
+			background: $surface-hover;
+			border-color: $border-strong;
 		}
 
 		&:disabled {
@@ -281,7 +281,7 @@
 	.channel-route-arrow {
 		display: flex;
 		align-items: center;
-		color: rgba(247, 247, 249, 0.2);
+		color: $text-faint;
 		flex-shrink: 0;
 		align-self: center;
 	}
@@ -297,8 +297,8 @@
 		width: 16px;
 		border-radius: 3px 3px 0 0;
 		overflow: hidden;
-		background: rgba(255, 255, 255, 0.06);
-		border: 1px solid rgba(255, 255, 255, 0.08);
+		background: $surface-2;
+		border: 1px solid $border-subtle;
 		display: flex;
 		flex-direction: column;
 		align-items: center;
@@ -307,10 +307,10 @@
 		height: 36px;
 
 		&--in {
-			border-bottom: 2px solid rgba(0, 200, 120, 0.5);
+			border-bottom: 2px solid $success-border;
 		}
 		&--out {
-			border-bottom: 2px solid rgba(21, 113, 255, 0.5);
+			border-bottom: 2px solid $accent-border;
 		}
 
 		&--inactive {
@@ -321,7 +321,7 @@
 
 	.strip-num {
 		font-size: 7px;
-		color: rgba(247, 247, 249, 0.3);
+		color: $text-subtle;
 		font-family: ui-monospace, monospace;
 		line-height: 1;
 	}
@@ -329,7 +329,7 @@
 	.strip-meter {
 		flex: 1;
 		width: 6px;
-		background: rgba(255, 255, 255, 0.05);
+		background: $surface-2;
 		border-radius: 1px;
 		display: flex;
 		align-items: flex-end;
@@ -340,17 +340,17 @@
 		border-radius: 1px;
 
 		&--in {
-			background: rgba(0, 200, 120, 0.65);
+			background: $color-success;
 		}
 		&--out {
-			background: rgba(21, 113, 255, 0.65);
+			background: $accent-border-strong;
 		}
 	}
 
 	// ── Device loading / error states ────────────────────────────────────────
 	.loading-dot {
 		font-size: 10px;
-		color: rgba(247, 247, 249, 0.3);
+		color: $text-subtle;
 		margin-left: 2px;
 	}
 
@@ -359,10 +359,10 @@
 		align-items: center;
 		gap: 6px;
 		padding: 8px 10px;
-		background: rgba(255, 60, 60, 0.08);
-		border: 1px solid rgba(255, 60, 60, 0.25);
+		background: $error-soft;
+		border: 1px solid $error-border;
 		border-radius: 6px;
-		color: #ff7070;
+		color: $color-error-text;
 		font-size: 11px;
 	}
 </style>

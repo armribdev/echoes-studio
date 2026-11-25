@@ -1,3 +1,4 @@
+import { themeColor } from '../theme';
 export interface ArrangeGridDrawParams {
 	ctx: CanvasRenderingContext2D;
 	/** Largeur/hauteur du buffer canvas (pixels device). */
@@ -45,11 +46,11 @@ export function drawArrangeGrid(p: ArrangeGridDrawParams): void {
 		const isBeat = Math.abs(b % 1) < 1e-6;
 
 		if (isMeasure) {
-			ctx.strokeStyle = 'rgba(247, 247, 249, 0.14)';
+			ctx.strokeStyle = themeColor('border-strong');
 		} else if (isBeat && showBeats) {
-			ctx.strokeStyle = 'rgba(247, 247, 249, 0.08)';
+			ctx.strokeStyle = themeColor('border-faint');
 		} else if (!isBeat) {
-			ctx.strokeStyle = 'rgba(247, 247, 249, 0.04)';
+			ctx.strokeStyle = themeColor('surface-2');
 		} else {
 			continue;
 		}

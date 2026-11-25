@@ -38,7 +38,7 @@
 		&--primary {
 			background: $accent-color;
 			border: none;
-			color: #fff;
+			color: $on-solid;
 			font-weight: 600;
 			padding: 0 16px;
 
@@ -54,7 +54,7 @@
 		&--secondary {
 			background: $surface-2;
 			border: 1px solid $border-subtle;
-			color: rgba(247, 247, 249, 0.75);
+			color: $text-secondary;
 			padding: 0 14px;
 
 			&:not(:disabled):hover {
@@ -73,7 +73,7 @@
 			height: auto;
 
 			&:not(:disabled):hover {
-				color: rgba(247, 247, 249, 0.7);
+				color: $text-secondary;
 			}
 		}
 

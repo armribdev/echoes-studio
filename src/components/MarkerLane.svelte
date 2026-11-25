@@ -553,7 +553,7 @@
 		display: flex;
 		flex-direction: column;
 		overflow: hidden;
-		background: linear-gradient(180deg, rgba(255, 255, 255, 0.025) 0%, $background-color 100%);
+		background: linear-gradient(180deg, $surface-1 0%, $background-color 100%);
 		border-bottom: 1px solid $border-color;
 		cursor: default;
 		user-select: none;
@@ -655,7 +655,7 @@
 		pointer-events: auto;
 		cursor: inherit;
 		user-select: none;
-		text-shadow: 0 1px 2px rgba(0, 0, 0, 0.45);
+		text-shadow: $shadow-text;
 		border: none;
 		outline: none;
 		box-shadow: none;
@@ -669,12 +669,12 @@
 			-webkit-user-select: text;
 
 			&::selection {
-				background: rgba($accent-color, 0.45);
+				background: $accent-border;
 				color: $text-color;
 			}
 
 			&::-moz-selection {
-				background: rgba($accent-color, 0.45);
+				background: $accent-border;
 				color: $text-color;
 			}
 		}
@@ -687,7 +687,7 @@
 	.marker-label {
 		padding: 0 3px;
 		border-radius: 2px;
-		background: rgba(26, 26, 31, 0.82);
+		background: $background-veil;
 		max-width: 72px;
 	}
 
@@ -713,7 +713,7 @@
 			top: 2px;
 			bottom: 2px;
 			width: 2px;
-			background: color-mix(in srgb, var(--loc-color) 80%, white);
+			background: color-mix(in srgb, var(--loc-color) 80%, $on-solid);
 			border-radius: 1px;
 		}
 
@@ -755,7 +755,7 @@
 		flex-shrink: 0;
 		background: var(--loc-color);
 		clip-path: polygon(0 0, 100% 0, 100% 70%, 50% 100%, 0 70%);
-		box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+		box-shadow: $shadow-sm;
 		cursor: inherit;
 	}
 </style>
