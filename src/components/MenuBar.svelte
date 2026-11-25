@@ -317,8 +317,8 @@
 
 		&--loop.active,
 		&--toggle.active {
-			color: #4d94ff;
-			background: rgba(77, 148, 255, 0.15);
+			color: $accent-color;
+			background: rgba(21, 113, 255, 0.15);
 		}
 
 		&--play,
