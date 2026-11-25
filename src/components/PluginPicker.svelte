@@ -16,6 +16,7 @@
 	} from '../stores/plugins';
 	import type { PluginInfo } from '../stores/plugins';
 	import Dialog from './Dialog.svelte';
+	import SearchInput from './SearchInput.svelte';
 
 	const dispatch = createEventDispatcher<{ pick: PluginInfo; cancel: void }>();
 
@@ -136,7 +137,9 @@
 			{/each}
 		</ul>
 	{:else}
-		<input class="search" type="text" placeholder="Rechercher…" bind:value={query} />
+		<div class="search-row">
+			<SearchInput placeholder="Rechercher…" bind:value={query} />
+		</div>
 
 		<div class="list" role="listbox">
 			{#if filtered.length === 0}
@@ -197,8 +200,8 @@
 		@include chip($ctrl-height-sm);
 	}
 
-	.search {
-		@include field($ctrl-height-sm, 12px);
+	.search-row {
+		display: flex;
 		margin: $space-4 $space-5;
 	}
 

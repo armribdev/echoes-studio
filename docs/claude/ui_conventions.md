@@ -151,23 +151,23 @@ Le composant n'ajoute que de la **mise en page** (`flex`, `width`, `margin`, `po
 
 ### Quel widget pour quel besoin
 
-| Besoin                                     | Utiliser                                                                                                                            |
-| ------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------- |
-| Action (formulaire, dialog)                | `Button` (`primary` / `secondary` / `ghost`, `compact`)                                                                             |
-| Action dans un panneau dense               | `@include button($ctrl-height-sm, 11px)` ou `@include chip` (libellé mono 9px)                                                      |
-| Icône seule (fermer, supprimer…)           | `@include icon-button($size)` (+ `icon-button-danger`)                                                                              |
-| Glyphe `+` / `×` encadré                   | `@include button-square($size)`                                                                                                     |
-| Choix exclusif (onglets, modes, langues)   | `SegmentedControl` (`value` / `options`, `size`, slot pour une icône)                                                               |
-| Idem avec un balisage sur mesure           | `@include segmented` (conteneur) + `@include segment($height, $font)` (item, classe `.active`)                                      |
-| Plusieurs bascules côte à côte (M / S / R) | `segmented` + `segment`, ton via `control-on-warning` / `control-on-danger`                                                         |
-| Bascule d'outil (barre, panneau)           | bouton + `@include control-on` sur `.active`                                                                                        |
-| Point on/off (bypass, power)               | `@include power-button` (classe `.on`)                                                                                              |
-| Liste déroulante                           | `CustomSelect` (`size` xs / sm / md ; options groupables, `disabled`, `on:open` pour charger la liste) ; jamais de `<select>` natif |
-| Ligne de menu / de liste / de picker       | `Menu` + `MenuItem`, sinon `@include list-item` (+ `list-item-selected`)                                                            |
-| Champ texte / nombre / recherche           | `TextInput` / `NumberInput`, ou `@include field($height, $font)`                                                                    |
-| Interrupteur                               | `Toggle`                                                                                                                            |
-| Slider                                     | `RangeSlider` / `StepSlider`, ou `@include range-slider` (variables `--fill`, `--fill-start`, `--range-color`)                      |
-| Rotatif                                    | `Knob` / `ParamKnob`                                                                                                                |
+| Besoin                                     | Utiliser                                                                                                                                      |
+| ------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| Action (formulaire, dialog)                | `Button` (`primary` / `secondary` / `ghost`, `compact`)                                                                                       |
+| Action dans un panneau dense               | `@include button($ctrl-height-sm, 11px)` ou `@include chip` (libellé mono 9px)                                                                |
+| Icône seule (fermer, supprimer…)           | `@include icon-button($size)` (+ `icon-button-danger`)                                                                                        |
+| Glyphe `+` / `×` encadré                   | `@include button-square($size)`                                                                                                               |
+| Choix exclusif (onglets, modes, langues)   | `SegmentedControl` (`value` / `options`, `size`, slot pour une icône)                                                                         |
+| Idem avec un balisage sur mesure           | `@include segmented` (conteneur) + `@include segment($height, $font)` (item, classe `.active`)                                                |
+| Plusieurs bascules côte à côte (M / S / R) | `segmented` + `segment`, ton via `control-on-warning` / `control-on-danger`                                                                   |
+| Bascule d'outil (barre, panneau)           | bouton + `@include control-on` sur `.active`                                                                                                  |
+| Point on/off (bypass, power)               | `@include power-button` (classe `.on`)                                                                                                        |
+| Liste déroulante                           | `CustomSelect` (`size` xs / sm / md ; options groupables, `disabled`, `on:open` pour charger la liste) ; jamais de `<select>` natif           |
+| Ligne de menu / de liste / de picker       | `Menu` + `MenuItem`, sinon `@include list-item` (+ `list-item-selected`)                                                                      |
+| Champ texte / nombre / recherche           | `TextInput` / `NumberInput` / `SearchInput` (loupe + effacer), ou `@include field($height, $font)` ; jamais d'`<input>` natif écrit à la main |
+| Interrupteur                               | `Toggle`                                                                                                                                      |
+| Slider                                     | `RangeSlider` / `StepSlider`, ou `@include range-slider` (variables `--fill`, `--fill-start`, `--range-color`)                                |
+| Rotatif                                    | `Knob` / `ParamKnob`                                                                                                                          |
 
 ### Catalogue des mixins (`controls.scss`)
 

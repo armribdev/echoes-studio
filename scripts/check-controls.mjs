@@ -24,6 +24,16 @@ const SRC = join(ROOT, 'src');
 const CONTROL_MIXIN =
 	/@include (?:button|button-primary|button-square|chip|icon-button|power-button|list-item|segment|field|range-slider)\b/;
 
+/** Components that wrap the native `<input>` / `<select>` for everyone else. */
+const NATIVE_FIELD_OWNERS = new Set([
+	'src/components/TextInput.svelte',
+	'src/components/NumberInput.svelte',
+	'src/components/SearchInput.svelte',
+	'src/components/settings/SettingsMidiSection.svelte' // inline rename of a device alias
+]);
+
+const NATIVE_FIELD = /<select\b|<input\b(?![^>]*\btype="(?:range|checkbox|radio|hidden|file)")/;
+
 /** `file::selector` of rules that are clickable on purpose without being a standard control. */
 const CUSTOM_SURFACES = new Map([
 	[
@@ -89,6 +99,13 @@ const offences = [];
 for (const file of svelteFiles(SRC)) {
 	const path = relative(ROOT, file).replaceAll('\\', '/');
 	const source = readFileSync(file, 'utf8');
+	const markup = source.replace(/<script[\s\S]*?<\/script>|<style[\s\S]*?<\/style>/g, '');
+	if (NATIVE_FIELD.test(markup) && !NATIVE_FIELD_OWNERS.has(path)) {
+		offences.push(
+			`${path}: native <select> / <input> — use CustomSelect, TextInput, NumberInput or SearchInput`
+		);
+	}
+
 	const styleStart = source.indexOf('<style');
 	if (styleStart < 0) continue;
 

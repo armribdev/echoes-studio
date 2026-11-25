@@ -1,4 +1,5 @@
 <script lang="ts">
+	import SearchInput from './SearchInput.svelte';
 	import { onMount } from 'svelte';
 	import { notify } from '../stores/status';
 	import { open as openDialog } from '@tauri-apps/plugin-dialog';
@@ -39,7 +40,7 @@
 	/** Pop-up: Esc with empty query (or close request). */
 	export let onRequestClose: (() => void) | undefined = undefined;
 
-	let searchInputEl: HTMLInputElement | null = null;
+	let searchInputEl: HTMLInputElement | undefined;
 	let resultsEl: HTMLDivElement | null = null;
 
 	$: visible = $libraryVisibleAssets;
@@ -303,6 +304,10 @@
 		}
 	}
 
+	function onSearchInput(e: Event) {
+		libraryStore.setQuery((e.target as HTMLInputElement).value);
+	}
+
 	function onSearchKeydown(e: KeyboardEvent) {
 		if (e.key === 'Escape') {
 			e.preventDefault();
@@ -359,34 +364,15 @@
 	</div>
 
 	<div class="search-row">
-		<div class="search-wrap">
-			<svg class="search-icon" width="11" height="11" viewBox="0 0 11 11" fill="none">
-				<circle cx="4.5" cy="4.5" r="3.5" stroke="currentColor" stroke-width="1.2" />
-				<path d="M7.5 7.5L10 10" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" />
-			</svg>
-			<input
-				class="search-input"
-				type="text"
-				placeholder={$t('common.search')}
-				value={$libraryStore.query}
-				bind:this={searchInputEl}
-				on:input={(e) => libraryStore.setQuery(e.currentTarget.value)}
-				on:focus={() => keyboardFocus.setLibrarySearch()}
-				on:keydown={onSearchKeydown}
-			/>
-			{#if $libraryStore.query}
-				<button class="search-clear" type="button" on:click={() => libraryStore.clearQuery()}>
-					<svg width="8" height="8" viewBox="0 0 8 8" fill="none">
-						<path
-							d="M1 1L7 7M7 1L1 7"
-							stroke="currentColor"
-							stroke-width="1.4"
-							stroke-linecap="round"
-						/>
-					</svg>
-				</button>
-			{/if}
-		</div>
+		<SearchInput
+			placeholder={$t('common.search')}
+			value={$libraryStore.query}
+			bind:element={searchInputEl}
+			on:input={onSearchInput}
+			on:focus={() => keyboardFocus.setLibrarySearch()}
+			on:keydown={onSearchKeydown}
+			on:clear={() => libraryStore.clearQuery()}
+		/>
 		<button class="add-btn" type="button" on:click={browseFiles} title={$t('library.importFile')}>
 			<svg width="10" height="10" viewBox="0 0 10 10" fill="none">
 				<path d="M5 1V9M1 5H9" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
@@ -563,57 +549,6 @@
 		gap: $space-3;
 		padding: $space-4 $panel-inset $space-3;
 		flex-shrink: 0;
-	}
-
-	.search-wrap {
-		flex: 1;
-		display: flex;
-		align-items: center;
-		gap: $space-3;
-		background: $surface-2;
-		border: 1px solid $border-subtle;
-		border-radius: $radius-control;
-		padding: 0 $space-4;
-		height: $ctrl-height-sm;
-		transition:
-			border-color $duration-base,
-			background $duration-base;
-
-		&:hover {
-			border-color: $border-strong;
-		}
-
-		&:has(:focus-visible) {
-			border-color: $accent-color;
-			background: $accent-wash;
-		}
-	}
-
-	.search-icon {
-		flex-shrink: 0;
-		color: $text-faint;
-	}
-
-	.search-input {
-		flex: 1;
-		background: transparent;
-		border: none;
-		outline: none;
-		color: $text-color;
-		font-size: 11px;
-		font-family: inherit;
-		padding: 0;
-		min-width: 0;
-
-		&::placeholder {
-			color: $text-faint;
-		}
-	}
-
-	.search-clear {
-		@include icon-button(16px);
-		border-radius: $radius-sm;
-		color: $text-faint;
 	}
 
 	.add-btn {

@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { createEventDispatcher } from 'svelte';
 	import { matchesSearch, type ModulationTargetOption } from '../frontend/modulation/targets';
+	import SearchInput from './SearchInput.svelte';
 	import { dismissable } from '../frontend/dismiss';
 	import { focusTrap } from '../frontend/focusTrap';
 
@@ -54,13 +55,13 @@
 	use:focusTrap={{ initial: 'first' }}
 	use:dismissable={() => dispatch('close')}
 >
-	<input
-		class="search"
-		type="text"
-		placeholder="Rechercher un réglage…"
-		bind:value={query}
-		on:keydown={handleKeydown}
-	/>
+	<div class="search-row">
+		<SearchInput
+			placeholder="Rechercher un réglage…"
+			bind:value={query}
+			on:keydown={handleKeydown}
+		/>
+	</div>
 	<div class="list">
 		{#each sections as section (section.group)}
 			<div class="group">{section.group}</div>
@@ -93,21 +94,10 @@
 		overflow: hidden;
 	}
 
-	.search {
-		width: 100%;
-		box-sizing: border-box;
-		height: $ctrl-height-sm;
-		padding: 0 $space-4;
-		border: none;
+	.search-row {
+		display: flex;
+		padding: $space-3;
 		border-bottom: 1px solid $border-faint;
-		background: transparent;
-		color: $text-color;
-		font-size: 11px;
-		outline: none;
-
-		&::placeholder {
-			color: $text-faint;
-		}
 	}
 
 	.list {

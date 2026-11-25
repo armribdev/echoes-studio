@@ -2,6 +2,7 @@
 	import { onDestroy } from 'svelte';
 	import { t } from 'svelte-i18n';
 	import Button from './Button.svelte';
+	import SearchInput from './SearchInput.svelte';
 	import {
 		chordsForRow,
 		settingsCatalog,
@@ -163,16 +164,13 @@
 		>
 	</div>
 
-	<label class="search">
-		<span class="sr-only">{$t('shortcuts.search')}</span>
-		<input
-			type="search"
+	<div class="search-row">
+		<SearchInput
 			bind:value={query}
+			label={$t('shortcuts.search')}
 			placeholder={$t('shortcuts.searchPlaceholder')}
-			autocomplete="off"
-			spellcheck="false"
 		/>
-	</label>
+	</div>
 
 	{#if captureHint}
 		<p class="capture-hint">{captureHint}</p>
@@ -261,25 +259,8 @@
 		line-height: 1.4;
 	}
 
-	.search {
-		display: block;
-
-		input {
-			@include field($ctrl-height-sm, 12px);
-			width: 100%;
-		}
-	}
-
-	.sr-only {
-		position: absolute;
-		width: 1px;
-		height: 1px;
-		padding: 0;
-		margin: -1px;
-		overflow: hidden;
-		clip: rect(0, 0, 0, 0);
-		white-space: nowrap;
-		border: 0;
+	.search-row {
+		display: flex;
 	}
 
 	.capture-hint {
