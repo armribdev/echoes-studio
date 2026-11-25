@@ -97,6 +97,7 @@
 
 <style lang="scss">
 	@use '../../variables.scss' as *;
+	@use '../../controls.scss' as *;
 
 	.file-item {
 		display: flex;
@@ -148,16 +149,8 @@
 	}
 
 	.fav-btn {
-		width: 16px;
-		height: 16px;
-		padding: 0;
-		border: none;
-		background: transparent;
-		color: $text-faint;
-		cursor: pointer;
+		@include icon-button($ctrl-height-xs);
 		font-size: 10px;
-		line-height: 1;
-		flex-shrink: 0;
 
 		&.on,
 		&:hover {
@@ -191,26 +184,13 @@
 	.preview-btn,
 	.cancel-import-btn,
 	.insert-btn {
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		width: 18px;
-		height: 18px;
-		background: transparent;
-		border: none;
-		padding: 0;
-		color: $text-faint;
-		cursor: pointer;
-		opacity: 0;
-		flex-shrink: 0;
-		transition:
-			color $duration-base,
-			opacity $duration-base;
-		font-size: 9px;
+		@include icon-button($ctrl-height-xs);
 		position: relative;
+		font-size: 9px;
+		opacity: 0;
 
 		&:hover {
-			color: $accent-color;
+			color: $accent-text;
 		}
 	}
 

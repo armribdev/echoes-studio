@@ -298,6 +298,7 @@
 
 <style lang="scss">
 	@use '../../variables.scss' as *;
+	@use '../../controls.scss' as *;
 
 	.grid.compact {
 		grid-template-columns: 28px 26px 1fr;
@@ -338,20 +339,11 @@
 	}
 
 	.toggle {
-		height: 18px;
+		@include chip;
 		padding: 0 5px;
-		border: 1px solid $border-subtle;
-		border-radius: $radius-xs;
-		background: transparent;
-		color: $text-subtle;
-		font-size: 8px;
-		font-family: $font-mono;
-		font-weight: 700;
-		cursor: pointer;
+
 		&.on {
-			background: $accent-strong;
-			border-color: $accent-border;
-			color: $accent-color;
+			@include control-on;
 		}
 	}
 </style>

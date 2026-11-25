@@ -254,6 +254,7 @@
 
 <style lang="scss">
 	@use '../variables.scss' as *;
+	@use '../controls.scss' as *;
 
 	.menu-bar {
 		background-color: $panel-background-color;
@@ -295,54 +296,38 @@
 	}
 
 	.btn {
-		background: none;
-		border: none;
-		color: $text-secondary;
-		cursor: pointer;
-		width: 30px;
-		height: 30px;
-		border-radius: $radius-sm;
+		@include icon-button($ctrl-height);
 		font-size: 13px;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		transition:
-			background $duration-base,
-			color $duration-base;
-
-		&:hover {
-			background: $surface-3;
-			color: $text-color;
-		}
 
 		&--loop.active,
-		&--toggle.active {
-			color: $accent-color;
-			background: $accent-soft;
+		&--toggle.active,
+		&--panel-toggle.active {
+			@include control-on;
 		}
 
 		&--play,
 		&--record,
-		&--chevron {
-			width: 38px;
-			height: 32px;
-			border-radius: $radius-sm;
-			border: 1px solid $border-subtle;
+		&--chevron,
+		&--panel-toggle {
+			border-color: $border-subtle;
 			background: $surface-2;
+			color: $text-secondary;
 
-			&:hover {
+			&:not(:disabled):hover {
 				background: $surface-3;
 				border-color: $border-strong;
+				color: $text-color;
 			}
 		}
 
 		&--play {
+			width: 38px;
 			color: $text-color;
 		}
 
 		&--option {
-			width: 24px;
-			height: 24px;
+			width: $ctrl-height-sm;
+			height: $ctrl-height-sm;
 
 			svg {
 				width: 11px;
@@ -351,20 +336,20 @@
 		}
 
 		&--chevron {
-			width: 16px;
-			border-radius: 0 $radius-sm $radius-sm 0;
+			width: 18px;
+			border-radius: 0 $radius-control $radius-control 0;
 		}
 
 		&--record {
 			width: 34px;
 			border-right: none;
-			border-radius: $radius-sm 0 0 $radius-sm;
+			border-radius: $radius-control 0 0 $radius-control;
 
 			&.active {
-				color: $color-error;
-				background: $error-soft;
+				@include control-on-danger;
+				border-right: none;
 			}
-			&:hover {
+			&:not(:disabled):hover {
 				color: $color-error-text;
 			}
 		}
@@ -381,27 +366,7 @@
 	}
 
 	.btn--panel-toggle {
-		width: 30px;
-		height: 30px;
-		border-radius: $radius-sm;
-		border: 1px solid $border-subtle;
-		background: $surface-2;
-		transition:
-			background $duration-base,
-			color $duration-base,
-			border-color $duration-base;
-
-		&:not(.active):hover {
-			background: $surface-3;
-			border-color: $border-strong;
-			color: $text-color;
-		}
-
-		&.active {
-			background: $accent-soft;
-			border-color: $accent-border;
-			color: $accent-color;
-		}
+		width: $ctrl-height;
 	}
 
 	// ── Separator ─────────────────────────────────────────────────────────────
@@ -461,7 +426,7 @@
 		margin: -2px -6px;
 		background: none;
 		border: none;
-		border-radius: $radius-sm;
+		border-radius: $radius-control;
 		cursor: pointer;
 		text-align: left;
 		transition: background $duration-base;

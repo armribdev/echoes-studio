@@ -131,16 +131,8 @@
 	.input-select {
 		flex: 1;
 		min-width: 0;
+		height: $ctrl-height-xs;
+		padding-left: 7px;
 		font-size: 10px;
-		padding: 2px 4px;
-		border: 1px solid $border-subtle;
-		border-radius: $radius-sm;
-		background: transparent;
-		color: $text-color;
-		text-overflow: ellipsis;
-
-		option {
-			background: $panel-background-color;
-		}
 	}
 </style>

@@ -96,6 +96,7 @@
 
 <style lang="scss">
 	@use '../../variables.scss' as *;
+	@use '../../controls.scss' as *;
 
 	.missing-row {
 		display: flex;
@@ -113,23 +114,7 @@
 	}
 
 	.retry-btn {
-		padding: 3px 10px;
-		border: 1px solid $border-subtle;
-		border-radius: $radius-sm;
-		background: transparent;
-		color: $text-subtle;
-		font-size: 10px;
-		font-family: $font-mono;
-		cursor: pointer;
-		&:hover:not(:disabled) {
-			background: $accent-soft;
-			color: $text-color;
-			border-color: $accent-border;
-		}
-		&:disabled {
-			cursor: default;
-			opacity: 0.6;
-		}
+		@include chip($ctrl-height-sm);
 	}
 
 	.plugin-editor-row {
@@ -140,34 +125,17 @@
 	}
 
 	.open-editor-btn {
-		padding: 5px 14px;
-		border: 1px solid $border-subtle;
-		border-radius: $radius-sm;
-		background: transparent;
-		color: $text-subtle;
-		font-size: 10px;
-		font-family: $font-mono;
+		@include chip($ctrl-height-sm);
+		padding: 0 14px;
 		font-weight: 600;
-		letter-spacing: 0.04em;
-		cursor: pointer;
-		transition:
-			background $duration-base,
-			color $duration-base,
-			border-color $duration-base;
-		&:hover {
-			background: $accent-soft;
-			color: $text-color;
-			border-color: $accent-border;
-		}
+
 		&.active {
-			background: $accent-strong;
-			color: $accent-color;
-			border-color: $accent-border;
+			@include control-on;
 		}
 	}
 
 	.open-editor-btn.compact {
-		padding: 3px 8px;
-		font-size: 9px;
+		height: $ctrl-height-xs;
+		padding: 0 8px;
 	}
 </style>

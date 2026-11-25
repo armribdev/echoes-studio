@@ -153,6 +153,18 @@
 			notify(`Erreur profondeur : ${(err as Error)?.message ?? err}`, 'error');
 		}
 	}
+
+	// Bipolar track: the fill runs from the middle to the thumb.
+	function paintBipolar(input: HTMLInputElement, value: number) {
+		const position = ((value + 1) / 2) * 100;
+		input.style.setProperty('--fill-start', `${Math.min(50, position)}%`);
+		input.style.setProperty('--fill', `${Math.max(50, position)}%`);
+	}
+
+	function bipolarFill(input: HTMLInputElement, value: number) {
+		paintBipolar(input, value);
+		return { update: (next: number) => paintBipolar(input, next) };
+	}
 </script>
 
 <div class="mod-panel" class:compact>
@@ -243,8 +255,10 @@
 						max="1"
 						step="0.01"
 						value={sliderDepth(route, options)}
+						on:input={(e) => paintBipolar(e.currentTarget, e.currentTarget.valueAsNumber)}
 						on:change={(e) => handleDepthChange(route, e)}
-						style:accent-color={card.color}
+						style:--range-color={card.color}
+						use:bipolarFill={sliderDepth(route, options)}
 					/>
 					<span class="depth-val">{formatDepth(sliderDepth(route, options))}</span>
 					<button
@@ -267,6 +281,7 @@
 
 <style lang="scss">
 	@use '../variables.scss' as *;
+	@use '../controls.scss' as *;
 
 	.mod-panel {
 		width: 100%;
@@ -317,24 +332,10 @@
 	}
 
 	.add-btn {
-		width: 18px;
-		height: 18px;
-		border: 1px solid $border-subtle;
-		border-radius: $radius-xs;
-		background: transparent;
-		color: $text-subtle;
-		font-size: 14px;
-		line-height: 1;
-		cursor: pointer;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		padding: 0;
-		&:hover,
+		@include button-square;
+
 		&.active {
-			background: $accent-soft;
-			color: $text-color;
-			border-color: $accent-border;
+			@include control-on;
 		}
 	}
 
@@ -351,22 +352,9 @@
 	}
 
 	.rm-btn {
-		width: 16px;
-		height: 16px;
-		border: none;
-		background: transparent;
-		color: $text-faint;
+		@include icon-button($ctrl-height-xs);
+		@include icon-button-danger;
 		font-size: 14px;
-		line-height: 1;
-		cursor: pointer;
-		padding: 0;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		flex-shrink: 0;
-		&:hover {
-			color: $color-error;
-		}
 	}
 
 	// Routes
@@ -393,11 +381,9 @@
 	}
 
 	.depth-slider {
+		@include range-slider;
 		flex-shrink: 0;
 		width: 52px;
-		height: 3px;
-		cursor: pointer;
-		accent-color: $accent-color;
 	}
 
 	.depth-val {

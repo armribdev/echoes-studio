@@ -168,21 +168,12 @@
 		select {
 			flex: 1;
 			min-width: 0;
-			height: 20px;
-			padding: 0 4px;
-			background: $surface-2;
-			border: 1px solid $border-subtle;
-			border-radius: $radius-sm;
-			color: $text-strong;
+			height: $ctrl-height-xs;
+			padding-left: 7px;
 			font-size: 10px;
-			cursor: pointer;
 
-			&:hover {
-				background: $surface-3;
-				border-color: $border-strong;
-			}
+			&:focus,
 			&:focus-visible {
-				outline: none;
 				border-color: var(--mod-color);
 			}
 		}

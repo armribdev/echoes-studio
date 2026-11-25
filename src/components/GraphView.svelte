@@ -292,6 +292,7 @@
 
 <style lang="scss">
 	@use '../variables.scss' as *;
+	@use '../controls.scss' as *;
 
 	.graph-view {
 		flex: 1;
@@ -316,35 +317,11 @@
 	}
 
 	.scope-tabs {
-		display: flex;
-		gap: 2px;
-		background: $black-wash;
-		border-radius: $radius-md;
-		padding: 2px;
+		@include segmented;
 
 		button {
-			padding: 4px 12px;
-			border: none;
-			border-radius: $radius-sm;
-			background: transparent;
-			color: $text-muted;
-			font-size: 11px;
-			font-family: inherit;
-			cursor: pointer;
-
-			&.active {
-				background: $accent-strong;
-				color: $text-color;
-			}
-
-			&:disabled {
-				opacity: 0.4;
-				cursor: default;
-			}
-
-			&:not(:disabled):hover {
-				color: $text-color;
-			}
+			@include segment($ctrl-height-xs, 11px);
+			padding: 0 12px;
 		}
 	}
 
@@ -355,19 +332,8 @@
 	}
 
 	.fit-btn {
+		@include button($ctrl-height-sm, 11px);
 		margin-left: auto;
-		padding: 4px 10px;
-		border: 1px solid $border-subtle;
-		border-radius: $radius-sm;
-		background: transparent;
-		color: $text-muted;
-		font-size: 10px;
-		cursor: pointer;
-
-		&:hover {
-			background: $surface-hover;
-			color: $text-color;
-		}
 	}
 
 	.graph-canvas {

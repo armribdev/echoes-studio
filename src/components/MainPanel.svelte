@@ -2610,6 +2610,7 @@
 
 <style lang="scss">
 	@use '../variables.scss' as *;
+	@use '../controls.scss' as *;
 
 	.container {
 		display: flex;
@@ -2650,28 +2651,16 @@
 	}
 
 	.add-track-btn {
+		@include button($ctrl-height-sm, 11px);
 		width: 100%;
-		height: $ctrl-height-sm;
+		border-style: dashed;
 		background: $surface-1;
-		border: 1px dashed $border-subtle;
-		border-radius: $radius-sm;
 		color: $text-subtle;
-		font-size: 11px;
-		font-family: inherit;
-		cursor: pointer;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		gap: 4px;
-		transition:
-			background 0.15s,
-			color 0.15s,
-			border-color 0.15s;
 
-		&:hover {
+		&:not(:disabled):hover {
 			background: $accent-soft;
 			border-color: $accent-border;
-			color: $text-color;
+			color: $accent-text;
 		}
 	}
 

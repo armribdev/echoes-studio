@@ -170,6 +170,7 @@
 
 <style lang="scss">
 	@use '../variables.scss' as *;
+	@use '../controls.scss' as *;
 
 	.pads {
 		display: flex;
@@ -231,19 +232,7 @@
 
 	.file-btn,
 	.rm-btn {
-		font-size: 10px;
-		font-family: $font-mono;
-		padding: 3px 7px;
-		border: 1px solid $border-subtle;
-		border-radius: $radius-sm;
-		background: transparent;
-		color: $text-subtle;
-		cursor: pointer;
-
-		&:hover {
-			background: $accent-soft;
-			color: $text-color;
-		}
+		@include chip($ctrl-height-sm);
 	}
 
 	.file-btn {

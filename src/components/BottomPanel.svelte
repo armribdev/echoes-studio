@@ -98,6 +98,7 @@
 
 <style lang="scss">
 	@use '../variables.scss' as *;
+	@use '../controls.scss' as *;
 
 	.bottom-panel {
 		flex-shrink: 0;
@@ -151,27 +152,10 @@
 	}
 
 	.empty-close {
+		@include icon-button;
+		@include icon-button-danger;
 		position: absolute;
 		top: 6px;
 		right: 8px;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		width: 22px;
-		height: 22px;
-		padding: 0;
-		background: transparent;
-		border: none;
-		border-radius: $radius-sm;
-		color: $text-faint;
-		cursor: pointer;
-		transition:
-			background $duration-base,
-			color $duration-base;
-
-		&:hover {
-			background: $error-soft;
-			color: $color-error;
-		}
 	}
 </style>

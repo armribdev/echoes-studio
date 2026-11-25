@@ -173,6 +173,7 @@
 
 <style lang="scss">
 	@use '../variables.scss' as *;
+	@use '../controls.scss' as *;
 
 	.header {
 		display: flex;
@@ -193,36 +194,12 @@
 	}
 
 	.rescan {
-		font-size: 10px;
-		font-family: $font-mono;
-		padding: 3px 7px;
-		border: 1px solid $border-subtle;
-		border-radius: $radius-sm;
-		background: transparent;
-		color: $text-subtle;
-		cursor: pointer;
-		&:hover:not(:disabled) {
-			background: $surface-hover;
-			color: $text-color;
-		}
-		&:disabled {
-			opacity: 0.4;
-			cursor: default;
-		}
+		@include chip($ctrl-height-sm);
 	}
 
 	.search {
+		@include field($ctrl-height-sm, 12px);
 		margin: 8px 10px;
-		padding: 6px 8px;
-		background: $background-color;
-		border: 1px solid $border-subtle;
-		border-radius: $radius-sm;
-		color: $text-color;
-		font-size: 12px;
-		outline: none;
-		&:focus {
-			border-color: $accent-border;
-		}
 	}
 
 	.list {
@@ -249,24 +226,11 @@
 	}
 
 	.item {
-		display: flex;
-		align-items: center;
+		@include list-item($menu-item-height, 11px);
 		gap: 6px;
-		width: 100%;
-		padding: 6px 8px;
-		border: none;
-		border-radius: $radius-sm;
-		background: transparent;
-		color: $text-color;
-		font-size: 11px;
-		font-family: inherit;
-		text-align: left;
-		cursor: pointer;
-		&:hover {
-			background: $surface-hover;
-		}
+
 		&.selected {
-			background: $surface-hover;
+			@include list-item-selected;
 		}
 	}
 

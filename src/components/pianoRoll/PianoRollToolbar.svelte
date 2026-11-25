@@ -115,6 +115,7 @@
 
 <style lang="scss">
 	@use '../../variables.scss' as *;
+	@use '../../controls.scss' as *;
 
 	.chrome {
 		display: flex;
@@ -148,7 +149,7 @@
 	.chrome-divider {
 		width: 1px;
 		height: 16px;
-		background: $surface-3;
+		background: $border-subtle;
 		flex-shrink: 0;
 	}
 
@@ -158,107 +159,27 @@
 	}
 
 	.chrome-close {
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		width: 22px;
-		height: 22px;
-		padding: 0;
-		background: transparent;
-		border: none;
-		border-radius: 4px;
-		color: $text-subtle;
-		cursor: pointer;
-		flex-shrink: 0;
-		transition:
-			background 0.12s,
-			color 0.12s;
-
-		&:hover {
-			background: $error-soft;
-			color: $color-error-text;
-		}
+		@include icon-button;
+		@include icon-button-danger;
 	}
 
 	.edit-btn {
-		height: 22px;
-		padding: 0 10px;
-		background: $accent-soft;
-		border: 1px solid $accent-border;
-		border-radius: 4px;
-		color: $accent-text;
-		font-size: 11px;
-		font-weight: 500;
-		cursor: pointer;
+		@include button($ctrl-height-sm, 11px);
+		@include control-on;
 		flex-shrink: 0;
-		transition:
-			background 0.12s,
-			border-color 0.12s;
-
-		&:hover {
-			background: $accent-strong;
-			border-color: $accent-border;
-		}
 	}
 
 	.q-select {
-		height: 22px;
-		padding: 0 6px;
-		background: $surface-2;
-		border: 1px solid $border-subtle;
-		border-radius: 4px;
-		color: $text-strong;
-		font-size: 11px;
-		cursor: pointer;
 		flex-shrink: 0;
-		transition:
-			border-color 0.12s,
-			background 0.12s;
-
-		&:hover {
-			background: $surface-3;
-			border-color: $border-strong;
-		}
-		&:focus-visible {
-			outline: none;
-			border-color: $accent-color;
-		}
 	}
 
 	.mode-group {
-		display: flex;
-		gap: 1px;
-		flex-shrink: 0;
-		background: $black-wash;
-		border-radius: 6px;
-		padding: 2px;
+		@include segmented;
 	}
 
 	.mode-btn {
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		width: 26px;
-		height: 22px;
+		@include segment($ctrl-height-xs, 11px);
+		width: 28px;
 		padding: 0;
-		background: transparent;
-		border: none;
-		border-radius: 4px;
-		color: $text-subtle;
-		cursor: pointer;
-		flex-shrink: 0;
-		transition:
-			background 0.12s,
-			color 0.12s;
-
-		&:hover {
-			background: $surface-3;
-			color: $text-strong;
-		}
-
-		&.active {
-			background: $accent-strong;
-			color: $accent-text;
-		}
 	}
 </style>

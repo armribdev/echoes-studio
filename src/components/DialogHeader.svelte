@@ -25,6 +25,7 @@
 
 <style lang="scss">
 	@use '../variables.scss' as *;
+	@use '../controls.scss' as *;
 
 	.header {
 		display: flex;
@@ -52,23 +53,6 @@
 	}
 
 	.close {
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		width: $ctrl-height-sm;
-		height: $ctrl-height-sm;
-		border: none;
-		border-radius: $radius-sm;
-		background: none;
-		color: $text-subtle;
-		cursor: pointer;
-		transition:
-			background $duration-fast,
-			color $duration-fast;
-
-		&:hover {
-			background: $surface-hover;
-			color: $text-color;
-		}
+		@include icon-button;
 	}
 </style>

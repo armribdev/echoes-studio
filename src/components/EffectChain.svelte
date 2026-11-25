@@ -324,6 +324,7 @@
 
 <style lang="scss">
 	@use '../variables.scss' as *;
+	@use '../controls.scss' as *;
 
 	.fx-panel {
 		width: 100%;
@@ -363,24 +364,7 @@
 	}
 
 	.add-btn {
-		width: 18px;
-		height: 18px;
-		border: 1px solid $border-subtle;
-		border-radius: $radius-xs;
-		background: transparent;
-		color: $text-subtle;
-		font-size: 14px;
-		line-height: 1;
-		cursor: pointer;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		padding: 0;
-		&:hover {
-			background: $accent-soft;
-			color: $text-color;
-			border-color: $accent-border;
-		}
+		@include button-square;
 	}
 
 	.empty {

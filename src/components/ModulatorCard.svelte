@@ -105,6 +105,7 @@
 
 <style lang="scss">
 	@use '../variables.scss' as *;
+	@use '../controls.scss' as *;
 
 	.card {
 		padding: 5px 6px 6px 4px;
@@ -154,19 +155,13 @@
 	}
 
 	.assign-btn {
+		@include chip;
 		flex-shrink: 0;
-		padding: 1px 5px;
-		border: 1px solid $border-subtle;
-		border-radius: $radius-xs;
-		background: transparent;
-		color: $text-subtle;
+		font-family: inherit;
 		font-size: 9px;
-		line-height: 1.3;
-		cursor: pointer;
-		transition:
-			background $duration-fast,
-			color $duration-fast,
-			border-color $duration-fast;
+		font-weight: 500;
+		letter-spacing: 0;
+
 		&:hover,
 		&.active {
 			background: color-mix(in srgb, var(--mod-color) 15%, transparent);
@@ -176,23 +171,9 @@
 	}
 
 	.rm-btn {
-		width: 16px;
-		height: 16px;
-		border: none;
-		background: transparent;
-		color: $text-faint;
+		@include icon-button($ctrl-height-xs);
+		@include icon-button-danger;
 		font-size: 14px;
-		line-height: 1;
-		cursor: pointer;
-		padding: 0;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		flex-shrink: 0;
-		transition: color $duration-fast;
-		&:hover {
-			color: $color-error;
-		}
 	}
 
 	.drag-ghost {
@@ -269,32 +250,18 @@
 	}
 
 	.card :global(.mod-toggle) {
+		@include chip;
+		padding: 0 5px;
 		flex-shrink: 0;
-		height: 18px;
-		padding: 0 4px;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		border: 1px solid $border-faint;
-		border-radius: $radius-xs;
-		background: transparent;
-		color: $text-faint;
-		font-size: 8px;
-		font-family: $font-mono;
-		font-weight: 700;
-		cursor: pointer;
-		transition:
-			background $duration-fast,
-			color $duration-fast,
-			border-color $duration-fast;
 	}
 
 	.card :global(.mod-toggle:hover) {
 		color: $text-color;
-		border-color: $border-subtle;
+		border-color: $border-strong;
 	}
 
-	.card :global(.mod-toggle.active) {
+	.card :global(.mod-toggle.active),
+	.card :global(.mod-toggle.active:hover) {
 		color: var(--mod-color);
 		border-color: color-mix(in srgb, var(--mod-color) 55%, transparent);
 		background: color-mix(in srgb, var(--mod-color) 14%, transparent);

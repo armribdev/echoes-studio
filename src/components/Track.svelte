@@ -229,7 +229,7 @@
 		height: 28px;
 		padding: 0;
 		border: 1px dashed $border-strong;
-		border-radius: $radius-md;
+		border-radius: $radius-control;
 		background: $background-veil;
 		color: $text-muted;
 		font-size: 18px;

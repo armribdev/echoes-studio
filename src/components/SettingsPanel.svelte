@@ -532,6 +532,7 @@
 
 <style lang="scss">
 	@use '../variables.scss' as *;
+	@use '../controls.scss' as *;
 
 	// ── Body (sidebar + content) ───────────────────────────────────────────────
 	.panel-body {
@@ -553,34 +554,18 @@
 	}
 
 	.nav-item {
-		display: flex;
-		align-items: center;
+		@include list-item($ctrl-height, 12px);
 		gap: 9px;
-		padding: 8px 10px;
-		border: none;
-		background: none;
-		border-radius: 6px;
-		cursor: pointer;
+		padding: 0 10px;
+		border-radius: $radius-control;
 		color: $text-muted;
-		font-size: 12px;
-		text-align: left;
-		transition:
-			background $duration-base,
-			color $duration-base;
-		width: 100%;
-
-		&:hover {
-			background: $surface-2;
-			color: $text-strong;
-		}
 
 		&:hover .nav-icon {
 			opacity: 0.85;
 		}
 
 		&.active {
-			background: $accent-soft;
-			color: $text-color;
+			@include list-item-selected;
 
 			.nav-icon {
 				opacity: 1;

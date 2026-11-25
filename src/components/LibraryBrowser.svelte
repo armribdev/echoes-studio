@@ -504,6 +504,7 @@
 
 <style lang="scss">
 	@use '../variables.scss' as *;
+	@use '../controls.scss' as *;
 
 	.browser {
 		flex: 1;
@@ -552,20 +553,8 @@
 	}
 
 	.close-btn {
-		width: 22px;
-		height: 22px;
-		border: none;
-		border-radius: $radius-sm;
-		background: transparent;
-		color: $text-subtle;
+		@include icon-button;
 		font-size: 16px;
-		line-height: 1;
-		cursor: pointer;
-
-		&:hover {
-			color: $text-color;
-			background: $surface-hover;
-		}
 	}
 
 	.search-row {
@@ -582,10 +571,22 @@
 		align-items: center;
 		gap: 5px;
 		background: $surface-2;
-		border: 1px solid $border-faint;
-		border-radius: $radius-sm;
-		padding: 0 6px;
-		height: 24px;
+		border: 1px solid $border-subtle;
+		border-radius: $radius-control;
+		padding: 0 8px;
+		height: $ctrl-height-sm;
+		transition:
+			border-color $duration-base,
+			background $duration-base;
+
+		&:hover {
+			border-color: $border-strong;
+		}
+
+		&:has(:focus-visible) {
+			border-color: $accent-color;
+			background: $accent-wash;
+		}
 	}
 
 	.search-icon {
@@ -610,45 +611,13 @@
 	}
 
 	.search-clear {
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		width: 14px;
-		height: 14px;
-		background: transparent;
-		border: none;
-		padding: 0;
+		@include icon-button(16px);
+		border-radius: $radius-sm;
 		color: $text-faint;
-		cursor: pointer;
-		flex-shrink: 0;
-
-		&:hover {
-			color: $text-color;
-		}
 	}
 
 	.add-btn {
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		width: 24px;
-		height: 24px;
-		background: transparent;
-		border: 1px solid $border-subtle;
-		border-radius: $radius-sm;
-		color: $text-subtle;
-		cursor: pointer;
-		flex-shrink: 0;
-		transition:
-			background $duration-base,
-			color $duration-base,
-			border-color $duration-base;
-
-		&:hover {
-			background: $accent-soft;
-			color: $text-color;
-			border-color: $accent-border;
-		}
+		@include button-square($ctrl-height-sm);
 	}
 
 	.sources {
@@ -663,30 +632,12 @@
 	}
 
 	.source-btn {
+		@include segment($ctrl-height-sm, 11px);
 		flex-shrink: 0;
-		text-align: center;
-		background: transparent;
-		border: none;
-		border-radius: $radius-sm;
-		color: $text-subtle;
-		font-size: 10px;
-		padding: 5px 8px;
-		cursor: pointer;
-		white-space: nowrap;
-
-		&:hover {
-			background: $surface-hover;
-			color: $text-color;
-		}
-
-		&.active {
-			background: $accent-soft;
-			color: $text-color;
-		}
 
 		&--action {
 			margin-left: auto;
-			color: $accent-color;
+			color: $accent-text;
 		}
 	}
 
@@ -739,26 +690,18 @@
 	}
 
 	.empty-btn {
-		height: 26px;
-		border-radius: $radius-sm;
-		border: 1px solid $accent-border;
-		background: $accent-soft;
-		color: $text-color;
-		font-size: 11px;
-		cursor: pointer;
-
-		&:hover {
-			background: $accent-strong;
-		}
+		@include button($ctrl-height-sm, 11px);
+		@include control-on;
 
 		&--ghost {
-			background: transparent;
+			background: $surface-2;
 			border-color: $border-subtle;
-			color: $text-subtle;
+			color: $text-secondary;
 
-			&:hover {
+			&:not(:disabled):hover {
+				background: $surface-3;
+				border-color: $border-strong;
 				color: $text-color;
-				border-color: $border-color;
 			}
 		}
 	}

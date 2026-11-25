@@ -46,9 +46,10 @@
 
 <style lang="scss">
 	@use '../variables.scss' as *;
+	@use '../controls.scss' as *;
 
 	.status-bar {
-		min-height: 24px;
+		min-height: 28px;
 		background-color: $panel-background-color;
 		border-top: 1px solid $border-color;
 		display: grid;
@@ -68,39 +69,18 @@
 	}
 
 	.view-tabs {
+		@include segmented;
 		grid-column: 2;
-		display: flex;
-		gap: 1px;
-		padding: 1px;
-		opacity: 0.55;
-		transition: opacity 0.15s;
+		opacity: 0.7;
+		transition: opacity $duration-base;
 
 		&:hover {
-			opacity: 0.85;
+			opacity: 1;
 		}
 	}
 
 	.view-tab {
-		padding: 3px 8px;
-		border: none;
-		border-radius: $radius-xs;
-		background: transparent;
-		color: $text-subtle;
-		font-size: 10px;
-		font-family: inherit;
-		cursor: pointer;
-		transition:
-			background $duration-base,
-			color $duration-base;
-
-		&.active {
-			background: $accent-soft;
-			color: $text-secondary;
-		}
-
-		&:hover:not(.active) {
-			color: $text-muted;
-		}
+		@include segment($ctrl-height-xs, 10px);
 	}
 
 	.status-right {

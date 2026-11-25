@@ -267,6 +267,7 @@
 
 <style lang="scss">
 	@use '../variables.scss' as *;
+	@use '../controls.scss' as *;
 
 	.instr-panel {
 		width: 100%;
@@ -328,19 +329,7 @@
 	}
 
 	.change-btn {
-		font-size: 10px;
-		font-family: $font-mono;
-		padding: 3px 7px;
-		border: 1px solid $border-subtle;
-		border-radius: $radius-sm;
-		background: transparent;
-		color: $text-subtle;
-		cursor: pointer;
-		&:hover {
-			background: $accent-soft;
-			color: $text-color;
-			border-color: $accent-border;
-		}
+		@include chip($ctrl-height-sm);
 	}
 
 	.instr-slot {
@@ -385,41 +374,19 @@
 	}
 
 	.gui-btn {
+		@include chip;
 		flex-shrink: 0;
-		padding: 1px 5px;
-		border: 1px solid $border-subtle;
-		border-radius: $radius-xs;
-		background: transparent;
-		color: $text-subtle;
-		font-size: 8px;
-		font-family: $font-mono;
-		font-weight: 700;
-		cursor: pointer;
-		&:hover {
-			background: $accent-soft;
-			color: $text-color;
-		}
+		padding: 0 5px;
+
 		&.active {
-			background: $accent-strong;
-			color: $accent-color;
-			border-color: $accent-border;
+			@include control-on;
 		}
 	}
 
 	.rm-btn {
-		width: 16px;
-		height: 16px;
-		border: none;
-		background: transparent;
-		color: $text-faint;
+		@include icon-button($ctrl-height-xs);
+		@include icon-button-danger;
 		font-size: 14px;
-		line-height: 1;
-		cursor: pointer;
-		padding: 0;
-		flex-shrink: 0;
-		&:hover {
-			color: $color-error;
-		}
 	}
 
 	.instr-slot.unavailable .instr-name {
@@ -457,23 +424,7 @@
 	}
 
 	.retry-btn {
-		padding: 3px 10px;
-		border: 1px solid $border-subtle;
-		border-radius: $radius-sm;
-		background: transparent;
-		color: $text-subtle;
-		font-size: 10px;
-		font-family: $font-mono;
-		cursor: pointer;
-		&:hover:not(:disabled) {
-			background: $accent-soft;
-			color: $text-color;
-			border-color: $accent-border;
-		}
-		&:disabled {
-			cursor: default;
-			opacity: 0.6;
-		}
+		@include chip($ctrl-height-sm);
 	}
 
 	.hint {
@@ -492,29 +443,12 @@
 	}
 
 	.open-editor-btn {
-		padding: 5px 14px;
-		border: 1px solid $border-subtle;
-		border-radius: $radius-sm;
-		background: transparent;
-		color: $text-subtle;
-		font-size: 10px;
-		font-family: $font-mono;
+		@include chip($ctrl-height-sm);
+		padding: 0 14px;
 		font-weight: 600;
-		letter-spacing: 0.04em;
-		cursor: pointer;
-		transition:
-			background $duration-base,
-			color $duration-base,
-			border-color $duration-base;
-		&:hover {
-			background: $accent-soft;
-			color: $text-color;
-			border-color: $accent-border;
-		}
+
 		&.active {
-			background: $accent-strong;
-			color: $accent-color;
-			border-color: $accent-border;
+			@include control-on;
 		}
 	}
 </style>

@@ -170,7 +170,7 @@
 			<div class="ms-group" role="group" aria-label={$t('trackStrip.muteSoloArm')}>
 				<button
 					type="button"
-					class="ms-btn"
+					class="ms-btn ms-btn--mute"
 					class:active={track.muted}
 					title={$t('trackStrip.mute')}
 					aria-pressed={track.muted}
@@ -230,6 +230,7 @@
 
 <style lang="scss">
 	@use '../variables.scss' as *;
+	@use '../controls.scss' as *;
 
 	.instrument {
 		height: 100px;
@@ -351,71 +352,33 @@
 	}
 
 	.ms-group {
-		display: inline-flex;
-		flex-shrink: 0;
-		align-items: stretch;
-		height: 20px;
-		border: 1px solid $border-subtle;
-		border-radius: $radius-sm;
-		overflow: hidden;
+		@include segmented;
 	}
 
 	.ms-btn {
-		width: 20px;
-		height: 100%;
+		@include segment($ctrl-height-xs, 10px);
+		width: $ctrl-height-xs;
 		padding: 0;
-		border: none;
-		border-right: 1px solid $border-subtle;
-		border-radius: 0;
-		background: transparent;
-		color: $text-subtle;
-		font-size: 10px;
 		font-weight: 700;
-		font-family: inherit;
-		line-height: 1;
-		display: inline-flex;
-		align-items: center;
-		justify-content: center;
-		cursor: pointer;
-		transition:
-			background $duration-base,
-			color $duration-base;
 
-		&:last-child {
-			border-right: none;
+		&--mute.active {
+			@include control-on-warning;
 		}
 
-		&:hover {
-			color: $text-color;
-			background: $surface-hover;
-		}
-
-		&.active {
-			background: $accent-color;
-			color: $on-solid;
-		}
-	}
-
-	.ms-btn--arm {
-		.arm-dot {
+		&--arm .arm-dot {
 			width: 6px;
 			height: 6px;
 			border-radius: 50%;
 			background: currentColor;
-			opacity: 0.55;
+			opacity: 0.7;
 		}
 
-		&.active {
-			background: $color-error;
-			color: $on-solid;
+		&--arm.active {
+			@include control-on-danger;
 
 			.arm-dot {
 				opacity: 1;
 			}
-		}
-
-		&:hover .arm-dot {
-			opacity: 1;
 		}
 	}
 

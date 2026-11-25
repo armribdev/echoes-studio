@@ -239,6 +239,7 @@
 
 <style lang="scss">
 	@use '../variables.scss' as *;
+	@use '../controls.scss' as *;
 
 	.shortcuts {
 		display: flex;
@@ -264,23 +265,8 @@
 		display: block;
 
 		input {
+			@include field($ctrl-height-sm, 12px);
 			width: 100%;
-			height: $ctrl-height-sm;
-			padding: 0 10px;
-			font-size: 12px;
-			font-family: inherit;
-			color: $text-color;
-			background: $surface-2;
-			border: 1px solid $border-color;
-			border-radius: $radius-sm;
-
-			&::placeholder {
-				color: $text-subtle;
-			}
-
-			&:focus {
-				border-color: $accent-border-strong;
-			}
 		}
 	}
 
@@ -364,66 +350,32 @@
 	}
 
 	.chord {
+		@include button($ctrl-height-sm, 11px);
 		min-width: 72px;
-		padding: 4px 8px;
-		font-size: 11px;
 		font-family: $font-mono;
-		color: $text-muted;
-		background: $surface-2;
-		border: 1px solid $border-color;
-		border-radius: $radius-sm;
-		cursor: pointer;
-		text-align: center;
-
-		&:hover {
-			border-color: $border-strong;
-			color: $text-color;
-		}
-
-		&:focus-visible {
-			outline: 2px solid $accent-color;
-			outline-offset: 1px;
-		}
+		font-weight: 400;
 
 		&.custom {
-			color: $accent-color;
-			border-color: $accent-border;
+			@include control-on;
 		}
 
 		&.listening {
-			color: $accent-color;
+			@include control-on;
 			border-color: $accent-color;
 			animation: pulse 1.2s ease-in-out infinite;
 		}
 
 		&.conflict-chip {
-			border-color: $color-error-text;
-			color: $color-error-text;
+			@include control-on-danger;
 		}
 	}
 
 	.reset-one {
-		height: 24px;
-		padding: 0 6px;
+		@include icon-button($ctrl-height-sm);
+		width: auto;
+		padding: 0 8px;
 		font-size: 11px;
-		line-height: 1;
-		color: $text-muted;
-		background: transparent;
-		border: 1px solid transparent;
-		border-radius: $radius-sm;
-		cursor: pointer;
 		white-space: nowrap;
-
-		&:hover {
-			color: $text-color;
-			background: $surface-2;
-			border-color: $border-subtle;
-		}
-
-		&:focus-visible {
-			outline: 2px solid $accent-color;
-			outline-offset: 1px;
-		}
 	}
 
 	.conflict-hint {

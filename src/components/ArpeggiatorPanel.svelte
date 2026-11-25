@@ -101,6 +101,7 @@
 
 <style lang="scss">
 	@use '../variables.scss' as *;
+	@use '../controls.scss' as *;
 
 	.arp {
 		border-bottom: 1px solid $border-faint;
@@ -121,28 +122,7 @@
 	}
 
 	.power {
-		width: 13px;
-		height: 13px;
-		border-radius: 50%;
-		border: 1px solid $border-subtle;
-		background: transparent;
-		cursor: pointer;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		padding: 0;
-		flex-shrink: 0;
-		color: $text-faint;
-
-		&.on {
-			color: $accent-color;
-			border-color: $accent-color;
-		}
-
-		&:focus-visible {
-			outline: 1px solid $accent-hover;
-			outline-offset: 1px;
-		}
+		@include power-button;
 	}
 
 	.arp-title {
@@ -167,31 +147,15 @@
 	}
 
 	.triplet {
+		@include button($ctrl-height-sm, 10px);
 		flex-shrink: 0;
-		width: 22px;
-		border: 1px solid $border-subtle;
-		border-radius: $radius-sm;
-		background: transparent;
-		color: $text-subtle;
-		font-size: 10px;
+		width: 24px;
+		padding: 0;
 		font-family: $font-mono;
 		font-weight: 700;
-		cursor: pointer;
-
-		&:hover {
-			background: $accent-soft;
-			color: $text-color;
-		}
 
 		&.active {
-			background: $accent-strong;
-			color: $accent-color;
-			border-color: $accent-border;
-		}
-
-		&:focus-visible {
-			outline: 1px solid $accent-hover;
-			outline-offset: 1px;
+			@include control-on;
 		}
 	}
 

@@ -83,6 +83,7 @@
 
 <style lang="scss">
 	@use '../variables.scss' as *;
+	@use '../controls.scss' as *;
 
 	.picker {
 		margin: 2px 6px 6px;
@@ -95,13 +96,18 @@
 	.search {
 		width: 100%;
 		box-sizing: border-box;
-		padding: 5px 7px;
+		height: $ctrl-height-sm;
+		padding: 0 8px;
 		border: none;
 		border-bottom: 1px solid $border-faint;
 		background: transparent;
 		color: $text-color;
-		font-size: 10px;
+		font-size: 11px;
 		outline: none;
+
+		&::placeholder {
+			color: $text-faint;
+		}
 	}
 
 	.list {
@@ -129,22 +135,15 @@
 	}
 
 	.option {
+		@include list-item($ctrl-height-xs, 10px);
 		display: block;
-		width: 100%;
-		padding: 3px 7px 3px 16px;
-		border: none;
-		background: transparent;
+		padding: 0 7px 0 16px;
+		border-radius: 0;
 		color: $text-subtle;
-		font-size: 10px;
-		text-align: left;
-		cursor: pointer;
+		line-height: $ctrl-height-xs;
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
-		&:hover {
-			background: $accent-soft;
-			color: $text-color;
-		}
 	}
 
 	.hint {

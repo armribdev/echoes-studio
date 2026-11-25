@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { createEventDispatcher } from 'svelte';
 	import { t } from 'svelte-i18n';
+	import Button from '../Button.svelte';
 
 	const dispatch = createEventDispatcher<{
 		createTrack: void;
@@ -29,16 +30,10 @@
 		Créez une piste, glissez un fichier audio, ou insérez depuis la bibliothèque
 	</p>
 	<div class="empty-tracks-actions">
-		<button type="button" class="empty-tracks-cta" on:click={() => dispatch('createTrack')}>
-			+ Nouvelle piste
-		</button>
-		<button
-			type="button"
-			class="empty-tracks-cta empty-tracks-cta--secondary"
-			on:click={(e) => dispatch('insertSound', { x: e.clientX, y: e.clientY })}
-		>
+		<Button variant="primary" on:click={() => dispatch('createTrack')}>+ Nouvelle piste</Button>
+		<Button on:click={(e) => dispatch('insertSound', { x: e.clientX, y: e.clientY })}>
 			{$t('trackMenu.insertSound')}
-		</button>
+		</Button>
 	</div>
 </div>
 
@@ -80,37 +75,6 @@
 			gap: 8px;
 			margin-top: 8px;
 			pointer-events: all;
-		}
-
-		.empty-tracks-cta {
-			pointer-events: all;
-			height: $ctrl-height;
-			padding: 0 18px;
-			background: $accent-color;
-			border: none;
-			border-radius: $radius-md;
-			color: $on-solid;
-			font-size: 12px;
-			font-weight: 600;
-			font-family: inherit;
-			cursor: pointer;
-			transition: background $duration-base;
-
-			&:hover {
-				background: $accent-hover;
-			}
-
-			&--secondary {
-				background: transparent;
-				border: 1px solid $border-color;
-				color: $text-muted;
-
-				&:hover {
-					background: transparent;
-					color: $text-color;
-					border-color: $text-subtle;
-				}
-			}
 		}
 	}
 </style>

@@ -87,6 +87,7 @@
 
 <style lang="scss">
 	@use '../../variables.scss' as *;
+	@use '../../controls.scss' as *;
 
 	.slot-head {
 		display: flex;
@@ -119,22 +120,7 @@
 	}
 
 	.bypass {
-		width: 13px;
-		height: 13px;
-		border-radius: 50%;
-		border: 1px solid $border-subtle;
-		background: transparent;
-		cursor: pointer;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		padding: 0;
-		flex-shrink: 0;
-		color: $text-faint;
-		&.on {
-			color: $accent-color;
-			border-color: $accent-color;
-		}
+		@include power-button;
 	}
 
 	.slot-name {
@@ -174,24 +160,9 @@
 	}
 
 	.reload-btn {
+		@include chip;
+		@include control-on-danger;
 		flex-shrink: 0;
-		padding: 2px 8px;
-		border: 1px solid $error-border;
-		border-radius: $radius-xs;
-		background: $error-soft;
-		color: $color-error-text;
-		font-size: 9px;
-		font-family: $font-mono;
-		font-weight: 700;
-		cursor: pointer;
-		&:hover:not(:disabled) {
-			background: $error-strong;
-			color: $on-solid;
-		}
-		&:disabled {
-			cursor: default;
-			opacity: 0.6;
-		}
 	}
 
 	.missing-badge {
@@ -217,22 +188,9 @@
 	}
 
 	.rm-btn {
-		width: 16px;
-		height: 16px;
-		border: none;
-		background: transparent;
-		color: $text-faint;
+		@include icon-button($ctrl-height-xs);
+		@include icon-button-danger;
 		font-size: 14px;
-		line-height: 1;
-		cursor: pointer;
-		padding: 0;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		flex-shrink: 0;
-		&:hover {
-			color: $color-error;
-		}
 	}
 
 	.sandbox-badge {

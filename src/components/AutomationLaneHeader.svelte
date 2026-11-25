@@ -37,6 +37,7 @@
 
 <style lang="scss">
 	@use '../variables.scss' as *;
+	@use '../controls.scss' as *;
 
 	.lane-head {
 		display: flex;
@@ -89,20 +90,7 @@
 	}
 
 	.remove {
-		flex-shrink: 0;
-		width: 18px;
-		height: 18px;
-		border: none;
-		border-radius: $radius-sm;
-		background: transparent;
-		color: $text-faint;
+		@include icon-button($ctrl-height-xs);
 		font-size: 13px;
-		line-height: 1;
-		cursor: pointer;
-
-		&:hover {
-			background: $surface-hover;
-			color: $text-color;
-		}
 	}
 </style>

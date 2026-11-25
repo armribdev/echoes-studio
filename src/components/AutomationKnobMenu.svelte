@@ -88,6 +88,7 @@
 
 <style lang="scss">
 	@use '../variables.scss' as *;
+	@use '../controls.scss' as *;
 
 	.context-menu {
 		position: fixed;
@@ -115,24 +116,7 @@
 	}
 
 	.item {
-		width: 100%;
-		height: 30px;
-		display: flex;
-		align-items: center;
-		padding: 0 10px;
-		border: none;
-		background: none;
-		color: $text-strong;
-		font-size: 12px;
-		font-family: inherit;
-		border-radius: $radius-sm;
-		cursor: pointer;
-		text-align: left;
-
-		&:hover {
-			background: $surface-hover;
-			color: $text-color;
-		}
+		@include list-item;
 
 		&--danger {
 			color: $color-error;

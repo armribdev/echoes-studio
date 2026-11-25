@@ -155,6 +155,7 @@
 
 <style lang="scss">
 	@use '../../variables.scss' as *;
+	@use '../../controls.scss' as *;
 
 	.keys-wrapper {
 		display: flex;
@@ -253,19 +254,10 @@
 		width: 100%;
 		min-width: 0;
 		height: 18px;
-		box-sizing: border-box;
-		padding: 0 2px;
+		padding: 0 16px 0 5px;
 		font-size: 9px;
 		font-weight: 600;
 		color: $text-muted;
-		background: $surface-2;
-		border: 1px solid $border-subtle;
-		border-radius: 3px;
-		text-overflow: ellipsis;
-
-		&:focus-visible {
-			outline: 1px solid var(--track-color, #{$accent-color});
-		}
 	}
 
 	.lane-actions {
@@ -275,31 +267,9 @@
 	}
 
 	.lane-btn {
-		width: 18px;
-		height: 16px;
-		padding: 0;
-		display: flex;
-		align-items: center;
-		justify-content: center;
+		@include icon-button(16px);
 		color: $text-faint;
-		background: transparent;
-		border: none;
-		border-radius: 3px;
-		cursor: pointer;
-
-		&:hover:not(:disabled) {
-			color: $text-strong;
-			background: $surface-hover;
-		}
-
-		&:disabled {
-			opacity: 0.35;
-			cursor: default;
-		}
-
-		&:focus-visible {
-			outline: 1px solid var(--track-color, #{$accent-color});
-		}
+		border-radius: $radius-sm;
 	}
 
 	.keys-hscroll-spacer {
