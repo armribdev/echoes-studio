@@ -1,0 +1,440 @@
+// Shared look of every interactive widget (buttons, fields, selects, segmented
+// groups, chips, sliders). Components `@include` these mixins instead of
+// restating borders, radii and hover/selected colors, so all controls share one
+// vocabulary:
+//
+//   rest      surface-2 + border-subtle, text-secondary
+//   hover     surface-3 + border-strong, text-color
+//   on        accent-soft + accent-border, accent-text (selected / toggled)
+//   focus     global :focus-visible ring (app.scss); text fields use the accent border
+//   disabled  opacity .4, default cursor
+//
+// Sizes: xs 20 (dense panels), sm 24 (toolbars), md 30 (forms, transport).
+
+@use 'variables.scss' as *;
+
+@mixin control-transition {
+	transition:
+		background $duration-base,
+		border-color $duration-base,
+		color $duration-base,
+		opacity $duration-base,
+		box-shadow $duration-base;
+}
+
+@mixin disabled-look {
+	&:disabled {
+		opacity: 0.4;
+		cursor: default;
+	}
+}
+
+// ── States ────────────────────────────────────────────────────────────────────
+
+@mixin control-hover {
+	&:not(:disabled):hover {
+		background: $surface-3;
+		border-color: $border-strong;
+		color: $text-color;
+	}
+}
+
+@mixin control-on {
+	background: $accent-soft;
+	border-color: $accent-border;
+	color: $accent-text;
+
+	&:not(:disabled):hover {
+		background: $accent-strong;
+		border-color: $accent-border-strong;
+		color: $accent-text;
+	}
+}
+
+@mixin control-on-danger {
+	background: $error-soft;
+	border-color: $error-border;
+	color: $color-error-text;
+
+	&:not(:disabled):hover {
+		background: $error-strong;
+		border-color: $error-border;
+		color: $color-error-text;
+	}
+}
+
+@mixin control-on-warning {
+	background: $warning-soft;
+	border-color: $warning-border;
+	color: $color-warning;
+
+	&:not(:disabled):hover {
+		background: $warning-soft;
+		border-color: $warning-border;
+		color: $color-warning;
+	}
+}
+
+@mixin control-on-success {
+	background: $success-soft;
+	border-color: $success-border;
+	color: $color-success;
+
+	&:not(:disabled):hover {
+		background: $success-soft;
+		border-color: $success-border;
+		color: $color-success;
+	}
+}
+
+// ── Buttons ───────────────────────────────────────────────────────────────────
+
+// Outlined button: the default for any action.
+@mixin button($height: $ctrl-height, $font-size: 12px) {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	gap: 6px;
+	box-sizing: border-box;
+	height: $height;
+	padding: 0 ($height * 0.4);
+	border: 1px solid $border-subtle;
+	border-radius: $radius-control;
+	background: $surface-2;
+	color: $text-secondary;
+	font-family: inherit;
+	font-size: $font-size;
+	font-weight: 500;
+	line-height: 1;
+	white-space: nowrap;
+	cursor: pointer;
+	@include control-transition;
+	@include control-hover;
+	@include disabled-look;
+}
+
+// Solid call to action.
+@mixin button-primary {
+	background: $accent-color;
+	border-color: $accent-color;
+	color: $on-solid;
+	font-weight: 600;
+
+	&:not(:disabled):hover {
+		background: $accent-hover;
+		border-color: $accent-hover;
+		color: $on-solid;
+	}
+	&:not(:disabled):active {
+		opacity: 0.85;
+	}
+}
+
+// Outlined square button holding a glyph (+, ×).
+@mixin button-square($size: $ctrl-height-xs) {
+	@include button($size, 14px);
+	width: $size;
+	padding: 0;
+}
+
+// Tiny monospaced label button in dense panels (GUI, reload, M…).
+@mixin chip($height: $ctrl-height-xs) {
+	@include button($height, 9px);
+	padding: 0 7px;
+	gap: 4px;
+	font-family: $font-mono;
+	font-weight: 700;
+	letter-spacing: 0.04em;
+}
+
+// Borderless square button for an icon (close, remove, transport…).
+@mixin icon-button($size: $ctrl-height-sm) {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	flex-shrink: 0;
+	box-sizing: border-box;
+	width: $size;
+	height: $size;
+	padding: 0;
+	border: 1px solid transparent;
+	border-radius: $radius-control;
+	background: transparent;
+	color: $text-subtle;
+	font-family: inherit;
+	line-height: 1;
+	cursor: pointer;
+	@include control-transition;
+	@include disabled-look;
+
+	&:not(:disabled):hover {
+		background: $surface-3;
+		color: $text-color;
+	}
+}
+
+// Hover turns red: remove / close-and-discard buttons.
+@mixin icon-button-danger {
+	&:not(:disabled):hover {
+		background: $error-soft;
+		color: $color-error-text;
+	}
+}
+
+// Round on/off dot (bypass, arpeggiator power); `.on` lights it up.
+@mixin power-button($size: 14px) {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	flex-shrink: 0;
+	box-sizing: border-box;
+	width: $size;
+	height: $size;
+	padding: 0;
+	border: 1px solid $border-strong;
+	border-radius: 50%;
+	background: transparent;
+	color: $text-faint;
+	cursor: pointer;
+	@include control-transition;
+
+	&:hover {
+		color: $text-secondary;
+	}
+
+	&.on {
+		color: $accent-text;
+		border-color: $accent-color;
+	}
+}
+
+// ── Lists and menus ───────────────────────────────────────────────────────────
+
+// Row of a menu, dropdown or picker list: neutral hover, accent for keyboard focus.
+@mixin list-item($height: $menu-item-height, $font-size: 12px) {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	box-sizing: border-box;
+	width: 100%;
+	min-height: $height;
+	padding: 0 8px;
+	border: none;
+	border-radius: $radius-sm;
+	background: transparent;
+	color: $text-strong;
+	font-family: inherit;
+	font-size: $font-size;
+	text-align: left;
+	cursor: pointer;
+	@include control-transition;
+	@include disabled-look;
+
+	&:not(:disabled):hover {
+		background: $surface-3;
+		color: $text-color;
+	}
+
+	&:focus-visible {
+		background: $accent-soft;
+		color: $text-color;
+		outline: none;
+	}
+}
+
+// The chosen row of a list (current value, keyboard cursor).
+@mixin list-item-selected {
+	background: $accent-soft;
+	color: $accent-text;
+
+	&:not(:disabled):hover {
+		background: $accent-strong;
+		color: $accent-text;
+	}
+}
+
+// ── Fields ────────────────────────────────────────────────────────────────────
+
+@mixin field($height: $ctrl-height, $font-size: 12px) {
+	box-sizing: border-box;
+	height: $height;
+	padding: 0 ($height * 0.3);
+	border: 1px solid $border-subtle;
+	border-radius: $radius-control;
+	background: $surface-2;
+	color: $text-color;
+	font-family: inherit;
+	font-size: $font-size;
+	outline: none;
+	@include control-transition;
+
+	&::placeholder {
+		color: $text-faint;
+	}
+
+	&:not(:disabled):hover {
+		border-color: $border-strong;
+	}
+
+	&:focus,
+	&:focus-visible {
+		outline: none;
+		border-color: $accent-color;
+		background: $accent-wash;
+	}
+
+	@include disabled-look;
+}
+
+// Native <select> drawn like the custom dropdown trigger (chevron from two gradients).
+@mixin select-field($height: $ctrl-height, $font-size: 12px) {
+	@include field($height, $font-size);
+	appearance: none;
+	-webkit-appearance: none;
+	padding-right: 22px;
+	background-image:
+		linear-gradient(45deg, transparent 50%, currentColor 50%),
+		linear-gradient(135deg, currentColor 50%, transparent 50%);
+	background-position:
+		calc(100% - 11px) 50%,
+		calc(100% - 7px) 50%;
+	background-size:
+		4px 4px,
+		4px 4px;
+	background-repeat: no-repeat;
+	color: $text-strong;
+	text-overflow: ellipsis;
+	cursor: pointer;
+
+	&:not(:disabled):hover {
+		background-color: $surface-3;
+	}
+
+	&:focus,
+	&:focus-visible {
+		background-color: $accent-wash;
+	}
+
+	option,
+	optgroup {
+		background: $surface-overlay;
+		color: $text-color;
+	}
+}
+
+// ── Segmented groups ──────────────────────────────────────────────────────────
+
+@mixin segmented {
+	display: inline-flex;
+	align-items: center;
+	flex-shrink: 0;
+	gap: 2px;
+	padding: 2px;
+	border-radius: $radius-control + 2px;
+	background: $black-wash;
+}
+
+// One option of a segmented group; `.active` marks the selection.
+@mixin segment($height: $ctrl-height-sm, $font-size: 11px) {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	gap: 5px;
+	box-sizing: border-box;
+	height: $height;
+	padding: 0 ($height * 0.4);
+	border: 1px solid transparent;
+	border-radius: $radius-control;
+	background: transparent;
+	color: $text-muted;
+	font-family: inherit;
+	font-size: $font-size;
+	font-weight: 500;
+	line-height: 1;
+	white-space: nowrap;
+	cursor: pointer;
+	@include control-transition;
+	@include disabled-look;
+
+	&:not(:disabled):not(.active):hover {
+		background: $surface-2;
+		color: $text-color;
+	}
+
+	&.active {
+		background: $accent-soft;
+		border-color: $accent-border;
+		color: $accent-text;
+	}
+}
+
+// ── Sliders ───────────────────────────────────────────────────────────────────
+
+// Paints the track from `--fill-start` (default 0%) to `--fill` (the thumb); a bipolar slider
+// sets `--fill-start` to 50%. `--range-color` recolors the fill (default: accent).
+@mixin range-slider {
+	-webkit-appearance: none;
+	appearance: none;
+	width: 100%;
+	margin: 0;
+	background: transparent;
+	outline: none;
+	cursor: pointer;
+
+	&::-webkit-slider-runnable-track {
+		height: 4px;
+		border-radius: 2px;
+		background: linear-gradient(
+			to right,
+			$surface-hover var(--fill-start, 0%),
+			var(--range-color, #{$accent-color}) var(--fill-start, 0%),
+			var(--range-color, #{$accent-color}) var(--fill),
+			$surface-hover var(--fill)
+		);
+	}
+
+	&::-moz-range-track {
+		height: 4px;
+		border-radius: 2px;
+		background: $surface-hover;
+	}
+
+	&::-moz-range-progress {
+		height: 4px;
+		border-radius: 2px;
+		background: var(--range-color, #{$accent-color});
+	}
+
+	&::-webkit-slider-thumb {
+		-webkit-appearance: none;
+		width: 14px;
+		height: 14px;
+		margin-top: -5px;
+		border-radius: 50%;
+		background: $text-color;
+		border: 3px solid var(--range-color, #{$accent-color});
+		box-sizing: border-box;
+		box-shadow: 0 0 0 0 $accent-strong;
+		transition:
+			box-shadow $duration-base,
+			transform $duration-base;
+	}
+
+	&::-moz-range-thumb {
+		width: 14px;
+		height: 14px;
+		border-radius: 50%;
+		background: $text-color;
+		border: 3px solid var(--range-color, #{$accent-color});
+		box-sizing: border-box;
+	}
+
+	&:hover::-webkit-slider-thumb,
+	&:focus-visible::-webkit-slider-thumb {
+		box-shadow: 0 0 0 4px $accent-strong;
+	}
+
+	&:active::-webkit-slider-thumb {
+		transform: scale(0.92);
+	}
+}

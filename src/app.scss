@@ -1,4 +1,5 @@
 @use 'variables.scss' as *;
+@use 'controls.scss' as *;
 
 // Tokens read at runtime by canvases (see src/frontend/theme.ts).
 $runtime-tokens: (
@@ -36,6 +37,7 @@ $runtime-tokens: (
 
 	color: $text-color;
 	background-color: $background-color;
+	color-scheme: dark;
 
 	font-synthesis: none;
 	text-rendering: optimizeLegibility;
@@ -67,6 +69,11 @@ input:focus-visible,
 textarea:focus-visible,
 [contenteditable='true']:focus-visible {
 	outline: none;
+}
+
+/* Native selects share the look of CustomSelect; dense panels override the height. */
+select {
+	@include select-field($ctrl-height-sm, 11px);
 }
 
 /* Focus-trap sinks (tabindex=-1): no ring on the chrome at open. */

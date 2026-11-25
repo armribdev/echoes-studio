@@ -105,6 +105,9 @@ $radius-xl: 10px;
 // ── Typography ────────────────────────────────────────────────────────────────
 $font-mono: 'SF Mono', 'Fira Code', ui-monospace, monospace;
 
-// ── Control sizes ─────────────────────────────────────────────────────────────
+// ── Controls (look: see controls.scss) ──────────────────────────────────────
+$ctrl-height-xs: 20px;
+$ctrl-height-sm: 24px;
 $ctrl-height: 30px;
-$ctrl-height-sm: 26px;
+$menu-item-height: 28px;
+$radius-control: 6px;
