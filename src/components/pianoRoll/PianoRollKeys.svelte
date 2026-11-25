@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { createEventDispatcher } from 'svelte';
+	import CustomSelect from '../CustomSelect.svelte';
 	import { t } from 'svelte-i18n';
 	import { NOTE_H, TOTAL_PITCHES } from '../../frontend/pianoRoll/coords';
 	import {
@@ -47,6 +48,15 @@
 		return `${marker}${laneLabel(lane, translate)}`;
 	}
 
+	function laneOptions(lanes: ControlLane[], controls: MidiControlPoint[], translate: typeof $t) {
+		return lanes.map((lane) => ({
+			value: laneKey(lane),
+			label: laneOptionLabel(lane, controls, translate)
+		}));
+	}
+
+	let addLaneValue = '';
+
 	function getPianoKeyLabel(pitch: number): string {
 		const deg = pitch % 12;
 		const oct = Math.floor(pitch / 12) - 1;
@@ -82,18 +92,13 @@
 	<div class="keys-vel-label">VEL</div>
 	{#each controlLanes as lane, index (laneKey(lane))}
 		<div class="keys-lane" style="height: {LANE_HEIGHT}px">
-			<select
-				class="lane-select"
+			<CustomSelect
+				size="xs"
+				label={$t('pianoRoll.controls.lane')}
 				value={laneKey(lane)}
-				aria-label={$t('pianoRoll.controls.lane')}
-				on:change={(e) => dispatch('switchLane', { index, key: e.currentTarget.value })}
-			>
-				{#each [lane, ...laneCandidates] as option (laneKey(option))}
-					<option value={laneKey(option)}>
-						{laneOptionLabel(option, clipControls, $t)}
-					</option>
-				{/each}
-			</select>
+				options={laneOptions([lane, ...laneCandidates], clipControls, $t)}
+				on:change={(e) => dispatch('switchLane', { index, key: String(e.detail) })}
+			/>
 			<div class="lane-actions">
 				<button
 					class="lane-btn"
@@ -132,22 +137,17 @@
 	{/each}
 	{#if showAddRow}
 		<div class="keys-add" style="height: {ADD_ROW_HEIGHT}px">
-			<select
-				class="lane-select"
-				value=""
-				aria-label={$t('pianoRoll.controls.add')}
+			<CustomSelect
+				size="xs"
+				label={$t('pianoRoll.controls.add')}
+				placeholder={$t('pianoRoll.controls.add')}
+				bind:value={addLaneValue}
+				options={laneOptions(laneCandidates, clipControls, $t)}
 				on:change={(e) => {
-					dispatch('addLane', e.currentTarget.value);
-					e.currentTarget.value = '';
+					dispatch('addLane', String(e.detail));
+					addLaneValue = '';
 				}}
-			>
-				<option value="">{$t('pianoRoll.controls.add')}</option>
-				{#each laneCandidates as option (laneKey(option))}
-					<option value={laneKey(option)}>
-						{laneOptionLabel(option, clipControls, $t)}
-					</option>
-				{/each}
-			</select>
+			/>
 		</div>
 	{/if}
 	<div class="keys-hscroll-spacer"></div>
@@ -248,16 +248,6 @@
 		box-sizing: border-box;
 		border-top: 1px solid $border-subtle;
 		padding: 2px 3px;
-	}
-
-	.lane-select {
-		width: 100%;
-		min-width: 0;
-		height: 18px;
-		padding: 0 16px 0 5px;
-		font-size: 9px;
-		font-weight: 600;
-		color: $text-muted;
 	}
 
 	.lane-actions {

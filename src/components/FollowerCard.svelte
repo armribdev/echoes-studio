@@ -1,6 +1,7 @@
 <!-- FollowerCard.svelte — audio follower body: level history display, source, RMS/peak mode, window/attack/release -->
 <script lang="ts">
 	import { onDestroy } from 'svelte';
+	import CustomSelect from './CustomSelect.svelte';
 	import ModulatorCard from './ModulatorCard.svelte';
 	import ParamKnob from './ParamKnob.svelte';
 	import { trackLevels } from '../stores/trackLevels';
@@ -25,6 +26,10 @@
 	// Defaults mirror `AudioFollowerParams::default()` in the engine.
 	$: mode = mod.mode ?? 'rms';
 	$: effectNames = effectGroupNames(effects);
+	$: sourceOptions = [
+		{ value: POST_FX, label: 'Sortie de piste' },
+		...effects.map((effect) => ({ value: effect.id, label: `Après ${effectNames.get(effect.id)}` }))
+	];
 	// A tap on a removed effect falls back to the post-FX output in the engine.
 	$: source =
 		mod.source_effect_id && effectNames.has(mod.source_effect_id) ? mod.source_effect_id : POST_FX;
@@ -89,19 +94,17 @@
 		<span class="mod-readout">Niveau de la piste</span>
 	</div>
 
-	<label class="source">
+	<div class="source">
 		<span>Écoute</span>
-		<select
+		<CustomSelect
+			size="sm"
+			label="Écoute"
 			value={source}
+			options={sourceOptions}
 			title="Point de la chaîne d'effets dont le suiveur mesure le volume"
-			on:change={(e) => update({ source_effect_id: e.currentTarget.value || null })}
-		>
-			<option value={POST_FX}>Sortie de piste</option>
-			{#each effects as effect (effect.id)}
-				<option value={effect.id}>Après {effectNames.get(effect.id)}</option>
-			{/each}
-		</select>
-	</label>
+			on:change={(e) => update({ source_effect_id: String(e.detail) || null })}
+		/>
+	</div>
 
 	<div class="mod-controls">
 		<div class="modes" role="radiogroup" aria-label="Mode de détection">
@@ -164,19 +167,6 @@
 		gap: $space-3;
 		font-size: 9px;
 		color: $text-subtle;
-
-		select {
-			flex: 1;
-			min-width: 0;
-			height: $ctrl-height-xs;
-			padding-left: $space-4;
-			font-size: 10px;
-
-			&:focus,
-			&:focus-visible {
-				border-color: var(--mod-color);
-			}
-		}
 	}
 
 	.raw {

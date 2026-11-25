@@ -1,6 +1,6 @@
 # UI Controls Rules (one look for every widget)
 
-Every button, field, select, segmented group, slider and knob shares one look. New UI
+Every button, field, dropdown, segmented group, slider and knob shares one look. New UI
 **reuses it — never restyles it.** Catalogue, sizes, states and recipes:
 `docs/claude/ui_conventions.md` § « Contrôles ». Code: `src/controls.scss` (mixins),
 `src/variables.scss` (tokens), shared components in `src/components/`.
@@ -12,7 +12,7 @@ Every button, field, select, segmented group, slider and knob shares one look. N
    `MenuItem`, `Dialog`. Use it.
 2. Otherwise `@use '../controls.scss' as *;` and `@include` the mixin that matches
    (`button`, `chip`, `icon-button`, `button-square`, `segmented` + `segment`, `field`,
-   `select-field`, `list-item`, `power-button`, `range-slider`, `control-on*`).
+   `list-item`, `power-button`, `range-slider`, `control-on*`).
 3. A new look is a change to `controls.scss` (then document it), never a local copy.
 
 **Forbidden in a component style block:**
@@ -24,7 +24,7 @@ Every button, field, select, segmented group, slider and knob shares one look. N
   (`$accent-soft` + `$accent-border` + `$accent-text`); solid `$accent-color` is only for
   `Button primary` and switches.
 - `cursor: not-allowed`, `accent-color`, hand-styled `::-webkit-slider-thumb`.
-- A native `<select>` restyled locally beyond `height` / `padding-left` / `font-size`.
+- A native `<select>` (use `CustomSelect`).
 
 **Enforced:** `pnpm lint` runs `scripts/check-controls.mjs`. A rule with `cursor: pointer`
 that includes no `controls.scss` mixin fails the build. A surface that is truly not a

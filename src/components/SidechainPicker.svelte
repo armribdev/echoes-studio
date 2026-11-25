@@ -1,4 +1,5 @@
 <script lang="ts">
+	import CustomSelect from './CustomSelect.svelte';
 	import { engineProject } from '../frontend/store/engineStore';
 	import { updateEffect } from '../frontend/commands/dispatcher';
 	import { sidechainSourceCandidates } from '../frontend/routing/sidechain';
@@ -16,9 +17,13 @@
 	$: candidates = sidechainSourceCandidates($engineProject.tracks, trackId);
 	$: selected = params.sidechain_source ?? NONE;
 	$: missing = selected !== NONE && !candidates.some((t) => t.id === selected);
+	$: options = [
+		{ value: NONE, label: 'Aucun' },
+		...(missing ? [{ value: selected, label: 'Piste supprimée' }] : []),
+		...candidates.map((candidate) => ({ value: candidate.id, label: candidate.name }))
+	];
 
-	async function handleChange(event: Event) {
-		const value = (event.currentTarget as HTMLSelectElement).value;
+	async function handleChange(value: string) {
 		try {
 			await updateEffect(trackId, effectId, { sidechain_source: value === NONE ? null : value });
 		} catch (e) {
@@ -28,24 +33,17 @@
 </script>
 
 <div class="sidechain-row" class:disabled={disabledReason !== null}>
-	<label class="sidechain-label" for="sidechain-{effectId}">Sidechain</label>
-	<select
-		id="sidechain-{effectId}"
-		class="sidechain-select"
+	<span class="sidechain-label">Sidechain</span>
+	<CustomSelect
+		size="sm"
+		label="Sidechain"
 		value={selected}
+		{options}
 		disabled={disabledReason !== null}
 		title={disabledReason ??
 			'Piste dont le son pilote ce plugin (ex. le kick pour compresser la basse)'}
-		on:change={handleChange}
-	>
-		<option value={NONE}>Aucun</option>
-		{#if missing}
-			<option value={selected}>Piste supprimée</option>
-		{/if}
-		{#each candidates as candidate (candidate.id)}
-			<option value={candidate.id}>{candidate.name}</option>
-		{/each}
-	</select>
+		on:change={(e) => handleChange(String(e.detail))}
+	/>
 </div>
 
 <style lang="scss">
@@ -69,13 +67,5 @@
 		letter-spacing: 0.06em;
 		text-transform: uppercase;
 		color: $text-muted;
-	}
-
-	.sidechain-select {
-		flex: 1;
-		min-width: 0;
-		height: $ctrl-height-xs;
-		padding-left: $space-4;
-		font-size: 10px;
 	}
 </style>

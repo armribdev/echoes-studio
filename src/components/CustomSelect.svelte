@@ -1,56 +1,108 @@
 <script lang="ts">
-	import { onMount, onDestroy, createEventDispatcher } from 'svelte';
+	import { createEventDispatcher, tick } from 'svelte';
 	import { dismissable } from '../frontend/dismiss';
 	import { focusTrap } from '../frontend/focusTrap';
 
-	const dispatch = createEventDispatcher<{ change: string | number }>();
+	interface SelectOption {
+		value: string | number;
+		label: string;
+		/** Consecutive options sharing a group are listed under its heading. */
+		group?: string;
+	}
+
+	const MENU_GAP = 4;
+	const VIEWPORT_MARGIN = 8;
+	const MAX_MENU_HEIGHT = 320;
+	const MIN_ROOM_BELOW = 160;
+
+	const dispatch = createEventDispatcher<{ change: string | number; open: void }>();
 
 	export let value: string | number;
-	export let options: { value: string | number; label: string }[];
+	export let options: SelectOption[];
 	export let small = false;
+	export let size: 'xs' | 'sm' | 'md' = 'md';
+	export let disabled = false;
+	export let title: string | undefined = undefined;
+	export let label: string | undefined = undefined;
+	/** Shown while `value` matches no option. */
+	export let placeholder = '';
 
 	let open = false;
+	let trigger: HTMLButtonElement;
+	let menu: HTMLUListElement | undefined;
+	let menuStyle = '';
 
-	$: selectedLabel = options.find((o) => o.value === value)?.label ?? String(value);
+	$: selectedLabel =
+		options.find((o) => o.value === value)?.label ?? (placeholder || String(value));
+	$: rows = options.map((option, index) => ({
+		option,
+		heading: option.group && option.group !== options[index - 1]?.group ? option.group : undefined
+	}));
+
+	function place() {
+		const rect = trigger.getBoundingClientRect();
+		const below = window.innerHeight - rect.bottom - VIEWPORT_MARGIN;
+		const above = rect.top - VIEWPORT_MARGIN;
+		const upward = below < MIN_ROOM_BELOW && above > below;
+		const room = Math.min(MAX_MENU_HEIGHT, upward ? above : below) - MENU_GAP;
+		const anchor = upward
+			? `bottom: ${window.innerHeight - rect.top + MENU_GAP}px;`
+			: `top: ${rect.bottom + MENU_GAP}px;`;
+		menuStyle = `left: ${rect.left}px; min-width: ${rect.width}px; max-height: ${room}px; ${anchor}`;
+	}
+
+	async function openMenu() {
+		place();
+		open = true;
+		dispatch('open');
+		await tick();
+		const target = menu?.querySelector<HTMLElement>('[aria-selected="true"]');
+		target?.focus();
+	}
 
 	function toggle() {
-		open = !open;
+		if (open) open = false;
+		else void openMenu();
 	}
 
 	function select(v: string | number) {
 		value = v;
 		open = false;
+		trigger.focus();
 		dispatch('change', v);
 	}
 
-	function handleKeydown(e: KeyboardEvent) {
-		if (!open) return;
-		const idx = options.findIndex((o) => o.value === value);
-		if (e.key === 'ArrowDown') {
-			e.preventDefault();
-			value = options[Math.min(idx + 1, options.length - 1)].value;
-		} else if (e.key === 'ArrowUp') {
-			e.preventDefault();
-			value = options[Math.max(idx - 1, 0)].value;
-		} else if (e.key === 'Enter') {
-			open = false;
-		}
+	function closeOnOutsideScroll(e: Event) {
+		if (open && !menu?.contains(e.target as Node)) open = false;
 	}
 
-	onMount(() => {
-		document.addEventListener('keydown', handleKeydown);
-	});
-	onDestroy(() => {
-		document.removeEventListener('keydown', handleKeydown);
-	});
+	function handleOptionKeydown(e: KeyboardEvent, v: string | number) {
+		if (e.key === 'Enter' || e.key === ' ') {
+			e.preventDefault();
+			select(v);
+			return;
+		}
+		const step = e.key === 'ArrowDown' ? 1 : e.key === 'ArrowUp' ? -1 : 0;
+		if (step === 0 || !menu) return;
+		e.preventDefault();
+		const items = [...menu.querySelectorAll<HTMLElement>('[role="option"]')];
+		const next = items.indexOf(e.currentTarget as HTMLElement) + step;
+		items[Math.max(0, Math.min(items.length - 1, next))].focus();
+	}
 </script>
+
+<svelte:window on:resize={() => (open = false)} on:scroll|capture={closeOnOutsideScroll} />
 
 <div class="cs-wrap" class:cs-wrap--sm={small}>
 	<button
-		class="cs-trigger"
+		bind:this={trigger}
+		class="cs-trigger cs-trigger--{size}"
 		class:cs-trigger--open={open}
 		on:click={toggle}
 		type="button"
+		{disabled}
+		{title}
+		aria-label={label}
 		aria-haspopup="listbox"
 		aria-expanded={open}
 	>
@@ -76,28 +128,29 @@
 
 	{#if open}
 		<ul
+			bind:this={menu}
 			class="cs-menu"
 			role="listbox"
 			tabindex="-1"
+			aria-label={label}
+			style={menuStyle}
 			use:focusTrap={{ initial: 'first' }}
 			use:dismissable={() => (open = false)}
 		>
-			{#each options as opt}
+			{#each rows as { option, heading } (option.value)}
+				{#if heading}
+					<li class="cs-group" role="presentation">{heading}</li>
+				{/if}
 				<li
 					class="cs-option"
-					class:cs-option--selected={opt.value === value}
+					class:cs-option--selected={option.value === value}
 					role="option"
 					tabindex="0"
-					aria-selected={opt.value === value}
-					on:click={() => select(opt.value)}
-					on:keydown={(e) => {
-						if (e.key === 'Enter' || e.key === ' ') {
-							e.preventDefault();
-							select(opt.value);
-						}
-					}}
+					aria-selected={option.value === value}
+					on:click={() => select(option.value)}
+					on:keydown={(e) => handleOptionKeydown(e, option.value)}
 				>
-					{#if opt.value === value}
+					{#if option.value === value}
 						<svg
 							class="cs-check"
 							width="12"
@@ -117,7 +170,7 @@
 					{:else}
 						<span class="cs-check-placeholder"></span>
 					{/if}
-					{opt.label}
+					{option.label}
 				</li>
 			{/each}
 		</ul>
@@ -129,8 +182,8 @@
 	@use '../controls.scss' as *;
 
 	.cs-wrap {
-		position: relative;
 		flex: 1;
+		min-width: 0;
 
 		&--sm {
 			flex: none;
@@ -149,6 +202,18 @@
 		text-align: left;
 		white-space: nowrap;
 		cursor: pointer;
+
+		&--sm {
+			height: $ctrl-height-sm;
+			padding-left: 8px;
+			font-size: 11px;
+		}
+
+		&--xs {
+			height: $ctrl-height-xs;
+			padding: 0 6px 0 8px;
+			font-size: 10px;
+		}
 
 		&:not(:disabled):hover {
 			background: $surface-3;
@@ -178,19 +243,27 @@
 	}
 
 	.cs-menu {
-		position: absolute;
-		top: calc(100% + 4px);
-		left: 0;
-		min-width: 100%;
+		position: fixed;
+		box-sizing: border-box;
+		overflow-y: auto;
 		background: $surface-overlay;
 		border: 1px solid $border-subtle;
 		border-radius: $radius-lg;
 		padding: 4px;
 		margin: 0;
 		list-style: none;
-		z-index: 9999;
+		z-index: $z-overlay;
 		box-shadow: $shadow-overlay;
-		overflow: hidden;
+	}
+
+	.cs-group {
+		padding: 6px 8px 2px;
+		font-family: $font-mono;
+		font-size: 9px;
+		font-weight: 700;
+		letter-spacing: 0.06em;
+		text-transform: uppercase;
+		color: $text-subtle;
 	}
 
 	.cs-option {

@@ -155,12 +155,14 @@
 	<div class="pad-selects">
 		<CustomSelect
 			small
+			size="sm"
 			value={pad.mode}
 			options={MODE_OPTIONS}
 			on:change={(e) => setMode(e.detail)}
 		/>
 		<CustomSelect
 			small
+			size="sm"
 			value={pad.choke_group}
 			options={CHOKE_OPTIONS}
 			on:change={(e) => update({ choke_group: Number(e.detail) })}

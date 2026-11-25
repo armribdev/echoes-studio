@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { createEventDispatcher } from 'svelte';
 	import { t } from 'svelte-i18n';
+	import CustomSelect from '../CustomSelect.svelte';
 	import { MIDI_GRID_OPTIONS } from '../../lib/midiGrid';
 	import type { PianoRollMode } from '../../stores/pianoRoll';
 
@@ -8,6 +9,8 @@
 	export let mode: PianoRollMode;
 	export let quantize: number;
 	export let trackColor: string;
+
+	const quantizeOptions = MIDI_GRID_OPTIONS.map((opt) => ({ value: opt.beats, label: opt.label }));
 
 	const dispatch = createEventDispatcher<{
 		setMode: PianoRollMode;
@@ -58,17 +61,15 @@
 
 			<div class="chrome-divider"></div>
 
-			<select
-				class="q-select"
+			<CustomSelect
+				small
+				size="sm"
 				value={quantize}
-				on:change={(e) => dispatch('quantizeChange', +e.currentTarget.value)}
+				options={quantizeOptions}
 				title={$t('pianoRoll.quantizeTitle')}
-				aria-label={$t('pianoRoll.quantize')}
-			>
-				{#each MIDI_GRID_OPTIONS as opt}
-					<option value={opt.beats}>{opt.label}</option>
-				{/each}
-			</select>
+				label={$t('pianoRoll.quantize')}
+				on:change={(e) => dispatch('quantizeChange', Number(e.detail))}
+			/>
 
 			<div class="chrome-spacer"></div>
 
@@ -166,10 +167,6 @@
 	.edit-btn {
 		@include button($ctrl-height-sm, 11px);
 		@include control-on;
-		flex-shrink: 0;
-	}
-
-	.q-select {
 		flex-shrink: 0;
 	}
 

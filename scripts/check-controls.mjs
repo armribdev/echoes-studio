@@ -2,7 +2,7 @@
 /**
  * check-controls.mjs — fail when a clickable widget is styled by hand.
  *
- * Every button, chip, field, select, segmented group and slider takes its look from the
+ * Every button, chip, field, dropdown, segmented group and slider takes its look from the
  * mixins of `src/controls.scss` (or from a shared component), so they all look alike. A
  * `.svelte` style rule that declares `cursor: pointer` must therefore `@include` one of
  * those mixins. Surfaces that are not a standard control (a clip, a pad, a ruler…) are
@@ -22,7 +22,7 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const SRC = join(ROOT, 'src');
 
 const CONTROL_MIXIN =
-	/@include (?:button|button-primary|button-square|chip|icon-button|power-button|list-item|segment|field|select-field|range-slider)\b/;
+	/@include (?:button|button-primary|button-square|chip|icon-button|power-button|list-item|segment|field|range-slider)\b/;
 
 /** `file::selector` of rules that are clickable on purpose without being a standard control. */
 const CUSTOM_SURFACES = new Map([

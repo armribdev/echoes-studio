@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { invoke } from '@tauri-apps/api/core';
+	import CustomSelect from './CustomSelect.svelte';
 	import { engineProject } from '../frontend/store/engineStore';
 	import { setTrackInput } from '../frontend/commands/dispatcher';
 	import { pluginPlacements } from '../frontend/modulation/targets';
@@ -72,10 +73,14 @@
 
 	$: selected = current ? valueOf(current) : NONE;
 	$: missing = current && !choices.some((c) => c.value === selected);
+	$: options = [
+		{ value: NONE, label: 'Aucune' },
+		...(missing && current ? [{ value: selected, label: 'Sortie indisponible' }] : []),
+		...choices.map((choice) => ({ value: choice.value, label: choice.label }))
+	];
 	$: visible = choices.length > 0 || current !== null;
 
-	async function handleChange(event: Event) {
-		const value = (event.currentTarget as HTMLSelectElement).value;
+	async function handleChange(value: string) {
 		const source = choices.find((c) => c.value === value)?.source ?? null;
 		try {
 			await setTrackInput(trackId, source);
@@ -87,23 +92,16 @@
 
 {#if visible}
 	<div class="input-row">
-		<label class="input-label" for="track-input-{trackId}">Entrée</label>
-		<select
-			id="track-input-{trackId}"
-			class="input-select"
+		<span class="input-label">Entrée</span>
+		<CustomSelect
+			size="sm"
+			label="Entrée"
 			value={selected}
-			on:focus={loadChoices}
-			on:change={handleChange}
+			{options}
 			title="Recevoir une sortie séparée d'un plugin multi-sorties (ex. la caisse claire d'une boîte à rythmes)"
-		>
-			<option value={NONE}>Aucune</option>
-			{#if missing && current}
-				<option value={selected}>Sortie indisponible</option>
-			{/if}
-			{#each choices as choice (choice.value)}
-				<option value={choice.value}>{choice.label}</option>
-			{/each}
-		</select>
+			on:open={loadChoices}
+			on:change={(e) => handleChange(String(e.detail))}
+		/>
 	</div>
 {/if}
 
@@ -125,13 +123,5 @@
 		letter-spacing: 0.06em;
 		text-transform: uppercase;
 		color: $text-muted;
-	}
-
-	.input-select {
-		flex: 1;
-		min-width: 0;
-		height: $ctrl-height-xs;
-		padding-left: $space-4;
-		font-size: 10px;
 	}
 </style>

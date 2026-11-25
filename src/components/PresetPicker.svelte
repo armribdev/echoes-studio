@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { listen } from '@tauri-apps/api/event';
 	import { onMount } from 'svelte';
+	import CustomSelect from './CustomSelect.svelte';
 	import { unavailablePlugins } from '../stores/plugins';
 	import { notify } from '../stores/status';
 	import {
@@ -25,7 +26,7 @@
 
 	let presets: PluginPreset[] = [];
 	let loading = false;
-	let select: HTMLSelectElement | undefined;
+	let shownKey = '';
 	let latestRequest = 0;
 	let refreshTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -44,6 +45,14 @@
 	});
 
 	$: activeKey = activePresetKey(presets);
+	$: shownKey = activeKey;
+	$: options = groupPresets(presets).flatMap(({ group, presets: grouped }) =>
+		grouped.map((preset) => ({
+			value: presetKey(preset),
+			label: preset.name,
+			group: PRESET_GROUP_LABELS[group]
+		}))
+	);
 	$: unavailable = $unavailablePlugins.has(instanceKey);
 	$: refresh(instanceKey, unavailable);
 
@@ -55,8 +64,8 @@
 		presets = next;
 	}
 
-	async function handleChange() {
-		const chosen = presets.find((preset) => presetKey(preset) === select?.value);
+	async function handleChange(key: string) {
+		const chosen = presets.find((preset) => presetKey(preset) === key);
 		if (!chosen) return;
 		loading = true;
 		try {
@@ -65,7 +74,7 @@
 			notify(`Erreur preset : ${presetErrorMessage(e)}`, 'error');
 		} finally {
 			await refresh(instanceKey, unavailable);
-			if (select) select.value = activePresetKey(presets);
+			shownKey = activePresetKey(presets);
 			loading = false;
 		}
 	}
@@ -73,26 +82,16 @@
 
 {#if presets.length > 0}
 	<div class="preset-row" class:disabled={loading}>
-		<label class="preset-label" for="preset-{instanceKey}">Preset</label>
-		<select
-			id="preset-{instanceKey}"
-			class="preset-select"
-			bind:this={select}
+		<span class="preset-label">Preset</span>
+		<CustomSelect
+			size="sm"
+			label="Preset"
+			value={shownKey}
+			{options}
 			disabled={loading}
-			on:focus={() => refresh(instanceKey, unavailable)}
-			on:change={handleChange}
-		>
-			<option value="" hidden selected={activeKey === ''}></option>
-			{#each groupPresets(presets) as { group, presets: grouped } (group)}
-				<optgroup label={PRESET_GROUP_LABELS[group]}>
-					{#each grouped as preset (presetKey(preset))}
-						<option value={presetKey(preset)} selected={presetKey(preset) === activeKey}
-							>{preset.name}</option
-						>
-					{/each}
-				</optgroup>
-			{/each}
-		</select>
+			on:open={() => refresh(instanceKey, unavailable)}
+			on:change={(e) => handleChange(String(e.detail))}
+		/>
 	</div>
 {/if}
 
@@ -117,13 +116,5 @@
 		letter-spacing: 0.06em;
 		text-transform: uppercase;
 		color: $text-muted;
-	}
-
-	.preset-select {
-		flex: 1;
-		min-width: 0;
-		height: $ctrl-height-xs;
-		padding-left: $space-4;
-		font-size: 10px;
 	}
 </style>

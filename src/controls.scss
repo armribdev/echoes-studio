@@ -286,42 +286,6 @@
 	@include disabled-look;
 }
 
-// Native <select> drawn like the custom dropdown trigger (chevron from two gradients).
-@mixin select-field($height: $ctrl-height, $font-size: 12px) {
-	@include field($height, $font-size);
-	appearance: none;
-	-webkit-appearance: none;
-	padding-right: 22px;
-	background-image:
-		linear-gradient(45deg, transparent 50%, currentColor 50%),
-		linear-gradient(135deg, currentColor 50%, transparent 50%);
-	background-position:
-		calc(100% - 11px) 50%,
-		calc(100% - 7px) 50%;
-	background-size:
-		4px 4px,
-		4px 4px;
-	background-repeat: no-repeat;
-	color: $text-strong;
-	text-overflow: ellipsis;
-	cursor: pointer;
-
-	&:not(:disabled):hover {
-		background-color: $surface-3;
-	}
-
-	&:focus,
-	&:focus-visible {
-		background-color: $accent-wash;
-	}
-
-	option,
-	optgroup {
-		background: $surface-overlay;
-		color: $text-color;
-	}
-}
-
 // ── Segmented groups ──────────────────────────────────────────────────────────
 
 @mixin segmented {

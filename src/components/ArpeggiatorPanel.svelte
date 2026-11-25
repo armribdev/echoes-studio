@@ -57,12 +57,14 @@
 	<div class="arp-selects">
 		<CustomSelect
 			small
+			size="sm"
 			value={settings.mode}
 			options={ARP_MODE_OPTIONS}
 			on:change={(e) => setMode(e.detail)}
 		/>
 		<CustomSelect
 			small
+			size="sm"
 			value={settings.rate}
 			options={ARP_RATE_OPTIONS}
 			on:change={(e) => setRate(e.detail)}
