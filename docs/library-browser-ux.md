@@ -30,9 +30,10 @@ left track inspector (resize, open/close, width persisted). Evolve
 Aligns with UI principles: zero entry friction, controlled density, progressive
 disclosure, absolute consistency (`UI_GUIDELINES.md` §1.2).
 
-**Out of scope for Phases 1–2:** plugin / VST-CLAP device browsing. Devices stay
-in the existing plugin flow until a later unified “Devices” source is designed
-(ADR-023).
+**Out of scope:** plugin / VST-CLAP device browsing. Devices stay in the
+existing plugin picker (instrument and effect slots); a unified “Devices” source
+was evaluated for Phase 4 and rejected on 2026-11-26 (ADR-023, _Devices
+decision_).
 
 ---
 
@@ -415,7 +416,7 @@ project FX). That is accepted.
 - Full-screen Library as primary UX
 - Mandatory tagging before use
 - Blocking scan on startup
-- Devices inside library before Phase 4
+- Devices inside the library (decided no-go, 2026-11-26)
 - Required Bitwig-style context configuration before defaults work
 
 ---
@@ -430,6 +431,7 @@ project FX). That is accepted.
 | Warp on loop drop    | **Raw file length** until a dedicated warp ADR (target Phase 3); no UI re-encode hack                                                                       |
 | Chord expansion      | **Factory MIDI files first**; canonical rule-based voicing next; no drop-time editor until demanded                                                         |
 | Pop-up (Phase 2)     | **Same browser as the dock** (Bitwig-style): full search + sources + scrollable results + preview — opened from a lane `+` slot. Not a truncated mini-list. |
+| Devices source       | **No-go** (2026-11-26): slots are not timeline drops, `PluginPicker` already serves them; revisit only for a `preset` asset kind (new ADR)                  |
 | Context memory       | **None until Phase 4**, then **opt-in only** (“use current selections…”) — never silent auto-learn                                                          |
 | Sampler vs PolySynth | Library does not introduce a sampler; MIDI → PolySynth default                                                                                              |
 | Space conflict       | Focus-scope rule (§8.2) — accepted                                                                                                                          |

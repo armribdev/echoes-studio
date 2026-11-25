@@ -207,8 +207,10 @@ shown as a source; type filter next to the search field; `collections.ts`,
 `LibraryCollectionBar.svelte`; code-verified, not hand-tested). Slice 4 done: opt-in context memory —
 « Use for this context » / « Restore default » in the pop-up header, per context,
 source only (`sourceForContext` in `laneFocus.ts`, `contextSources` in the
-persisted slice; code-verified, not hand-tested). Left, in order: the Devices
-go/no-go ADR, pack sources, optional grid results.
+persisted slice; code-verified, not hand-tested). Slice 5 done: the Devices go/no-go — **no-go**, recorded as an
+amendment of ADR-023 (_Devices decision_): slots are not timeline drops and
+`PluginPicker` already serves them. Left, in order: pack sources, optional grid
+results.
 
 Prerequisite landed 2026-10-09: the built-in drum sampler (ADR-028) — a
 `one_shot` dragged from the library onto a pad loads it. The hybrid `drums`
@@ -217,8 +219,8 @@ source landed 2026-10-13 (factory one-shots listed next to drum MIDI).
 ### Exit criteria
 
 - [ ] Power user can rebuild a personal “Drums for this genre” source in &lt; 1 min
-- [ ] Context memory is opt-in and restorable to factory defaults
-- [ ] Devices-in-library decision recorded (amend ADR-023 or new ADR)
+- [x] Context memory is opt-in and restorable to factory defaults _(2026-11-26, code-verified)_
+- [x] Devices-in-library decision recorded (amend ADR-023 or new ADR) _(no-go, ADR-023 amendment 2026-11-26)_
 
 ---
 

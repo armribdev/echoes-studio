@@ -36,8 +36,9 @@ does not silently become a second plugin browser or a full-screen destination.
 
 2. **Library = musical content first**  
    Phases 1–2 ship audio assets only (samples/loops). Chords/MIDI in Phase 3.
-   **Plugin / device browsing stays out of the library** until an explicit later
-   phase. Instrument/FX pickers keep their current flows.
+   **Plugin / device browsing stays out of the library** (no-go confirmed
+   2026-11-26, see _Devices decision_ below). Instrument/FX pickers keep their
+   current flows.
 
 3. **Lane focus, not track types**  
    Drop targets are `audio` | `midi` | `neutral` lane focus derived from pointer
@@ -56,14 +57,14 @@ does not silently become a second plugin browser or a full-screen destination.
 
 6. **Defaults over configuration**  
    Every open context has factory source + filters that work without setup.
-   Optional “remember for this context” is Phase 4 only.
+   Optional “remember for this context” is opt-in (shipped in Phase 4,
+   2026-11-26).
 
 7. **Shortcuts: focus-scoped Space**  
    `B` toggles the library panel. When keyboard focus is in library results,
    `Space` previews; otherwise `Space` remains transport play/pause.
-   (Today `L` already toggles the right panel — consolidate so `B` and `L`
-   both toggle the same library panel until a dedicated Loop shortcut is
-   restored in guidelines.)
+   (`L` also toggled the panel as an alias; amended 2026-11-26: `B` is the
+   only library toggle and `L` is the playback loop again.)
 
 8. **Non-blocking index**  
    Folder indexing is async and incremental. Startup must not wait on a full
@@ -110,8 +111,39 @@ does not silently become a second plugin browser or a full-screen destination.
 | Phase 1 preview = UI-side                             | Not on audio callback       |
 | Library dock = right panel                            | Left stays inspector        |
 | Phase 1 = single `audio` source (+ recents/favorites) | No fake Samples/Loops split |
-| Devices ∉ library until Phase 4 decision              | Scope freeze                |
+| Devices ∉ library (no-go, 2026-11-26)                 | See _Devices decision_      |
 | No blocking startup scan                              | UX + performance            |
+
+---
+
+## Devices decision (Phase 4 go/no-go, 2026-11-26)
+
+**No-go: plugins and built-in devices do not become a library source.**
+Verified against the code, not assumed:
+
+- **Different target.** A library drop places content at a timeline position
+  (`ADD_CLIP` / `ADD_MIDI_CLIP`, snap, lane focus, reject matrix). A device
+  goes into a track **slot** (instrument, or a place in the effect chain). The
+  `instrument_slot` / `fx_slot` contexts have stayed `deferred` in the UX
+  contract since Phase 0 because none of the library's drop rules apply to them.
+- **A browser already exists where it is needed.** `PluginPicker` is opened from
+  the instrument panel, the effect chain and the arrange (new instrument track).
+  It already filters by mode (instrument / effect), lists the built-in devices,
+  searches, rescans, and manages the blocklist (ADR-033, ADR-034). Presets have
+  their own picker bound to the plugin instance (ADR-031).
+- **Different lifecycle.** The plugin registry is owned by `stores/plugins`
+  (scan, blocklist, sandbox crash markers, format support per role). The library
+  index is local, path-keyed and format-agnostic. Merging them would couple the
+  library to plugin scanning and break « the library never blocks on a scan »
+  in both directions.
+- **No user value without a drop target.** Search and tags already work inside
+  the pickers; a second entry point to the same list adds a surface to maintain
+  (the Phase 2 cost: two UI shells over one data layer) and no new capability.
+
+**Revisit only if** a `preset` asset kind is built (set the instrument **and**
+load its state in one drop, UX §2 `preset`, « Phase 3+ »). That would be a new
+ADR scoped to presets, not to the plugin list, and it would reuse the ADR-031
+loading path.
 
 ---
 
@@ -133,9 +165,10 @@ does not silently become a second plugin browser or a full-screen destination.
 
 ## Amendments
 
-| Date       | Change                                                                                                                                                                                                                             |
-| ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 2026-09-28 | Initial acceptance                                                                                                                                                                                                                 |
-| 2026-09-28 | Lock Phase 1: right-dock panel, UI WebAudio preview, single Audio source                                                                                                                                                           |
-| 2026-09-28 | Lock deferred product calls: raw warp-until-ADR, factory MIDI then rules for chords, compact pop-up, no context memory until P4 opt-in, `B`+`L` alias, empty-project auto-track in P2, preview BPM native then optional UI stretch |
-| 2026-09-30 | **Pop-up = Bitwig dual surface**: same browser UI as the right dock (full list/search/sources/preview), opened from arrange **lane** `+` slot — not a truncated compact list; `+` not beside mute/solo                             |
+| Date       | Change                                                                                                                                                                                                                                                                                 |
+| ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 2026-09-28 | Initial acceptance                                                                                                                                                                                                                                                                     |
+| 2026-09-28 | Lock Phase 1: right-dock panel, UI WebAudio preview, single Audio source                                                                                                                                                                                                               |
+| 2026-09-28 | Lock deferred product calls: raw warp-until-ADR, factory MIDI then rules for chords, compact pop-up, no context memory until P4 opt-in, `B`+`L` alias, empty-project auto-track in P2, preview BPM native then optional UI stretch                                                     |
+| 2026-11-26 | **Phase 4 closed the open calls**: devices are **not** a library source (no-go, _Devices decision_); `B` is the only library toggle and `L` is the loop again; context memory shipped as opt-in only (source per pop-up context, restorable); packs and smart collections follow UX §3 |
+| 2026-09-30 | **Pop-up = Bitwig dual surface**: same browser UI as the right dock (full list/search/sources/preview), opened from arrange **lane** `+` slot — not a truncated compact list; `+` not beside mute/solo                                                                                 |
