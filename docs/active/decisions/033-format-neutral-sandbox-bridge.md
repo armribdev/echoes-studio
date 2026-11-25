@@ -1212,8 +1212,8 @@ track name.
   garbled record refused with the channel still open. `plugin_system/vst3_sandbox_tests.rs`: the same scenario in
   process and sandboxed, born knowing the track then renamed then repeated, and the no-track case, each answering
   the same.
-- **Still open.** `Op::NoteNames` is still empty for a sandboxed VST3 (VST3 has no host-facing equivalent worked out
-  yet); not hand-tested in the app (a plugin that displays its track name, rename and recolor a track, mode _Tous_).
+- **Still open.** `Op::NoteNames` answered empty for a sandboxed VST3 when this was written; since 2026-11-25 it
+  answers the pitch names of `IUnitInfo` (ADR-013 amendment, commit 3166a5e); not hand-tested in the app (a plugin that displays its track name, rename and recolor a track, mode _Tous_).
 
 ## Consequences
 
