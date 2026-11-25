@@ -161,7 +161,7 @@
 		font-size: 9px;
 		font-weight: 700;
 		letter-spacing: 0.8px;
-		padding: 2px 5px;
+		padding: $space-1 $space-3;
 		border-radius: $radius-xs;
 
 		&--in {
@@ -181,27 +181,27 @@
 	.io-grid {
 		display: grid;
 		grid-template-columns: 1fr auto 1fr;
-		gap: 10px;
+		gap: $space-5;
 		align-items: start;
 	}
 
 	.io-col {
 		display: flex;
 		flex-direction: column;
-		gap: 8px;
+		gap: $space-4;
 		min-width: 0;
 	}
 
 	.io-device-row {
 		display: flex;
 		flex-direction: column;
-		gap: 5px;
+		gap: $space-3;
 	}
 
 	.io-device-label {
 		display: flex;
 		align-items: center;
-		gap: 6px;
+		gap: $space-3;
 		font-size: 11px;
 		color: $text-muted;
 		font-weight: 500;
@@ -213,10 +213,10 @@
 		background: $surface-1;
 		border: 1px solid $border-faint;
 		border-radius: $radius-lg;
-		padding: 12px;
+		padding: $space-5;
 		display: flex;
 		flex-direction: column;
-		gap: 10px;
+		gap: $space-5;
 
 		&--in {
 			border-top: 2px solid $success-border;
@@ -229,7 +229,7 @@
 	.channel-card-header {
 		display: flex;
 		align-items: center;
-		gap: 12px;
+		gap: $space-5;
 	}
 
 	.channel-card-title {
@@ -240,7 +240,7 @@
 
 	.channel-count-control {
 		display: flex;
-		gap: 8px;
+		gap: $space-4;
 	}
 
 	.count-btn {
@@ -267,7 +267,7 @@
 
 	.channel-strips {
 		display: flex;
-		gap: 3px;
+		gap: $space-2;
 		align-items: flex-end;
 		flex-wrap: wrap;
 	}
@@ -281,8 +281,8 @@
 		display: flex;
 		flex-direction: column;
 		align-items: center;
-		padding: 2px 0 2px;
-		gap: 2px;
+		padding: $space-1 0 $space-1;
+		gap: $space-1;
 		height: 36px;
 
 		&--in {
@@ -299,7 +299,7 @@
 	}
 
 	.strip-num {
-		font-size: 7px;
+		font-size: 8px;
 		color: $text-subtle;
 		font-family: ui-monospace, monospace;
 		line-height: 1;
@@ -330,14 +330,14 @@
 	.loading-dot {
 		font-size: 10px;
 		color: $text-subtle;
-		margin-left: 2px;
+		margin-left: $space-1;
 	}
 
 	.apply-error {
 		display: flex;
 		align-items: center;
-		gap: 6px;
-		padding: 8px 10px;
+		gap: $space-3;
+		padding: $space-4 $space-5;
 		background: $error-soft;
 		border: 1px solid $error-border;
 		border-radius: $radius-control;

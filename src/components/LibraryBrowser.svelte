@@ -524,8 +524,8 @@
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
-		gap: 8px;
-		padding: 8px 10px 0;
+		gap: $space-4;
+		padding: $space-4 $panel-inset 0;
 		flex-shrink: 0;
 	}
 
@@ -543,7 +543,7 @@
 		color: $text-faint;
 		display: inline-flex;
 		align-items: center;
-		gap: 5px;
+		gap: $space-3;
 		min-width: 0;
 		margin-right: auto;
 
@@ -560,8 +560,8 @@
 	.search-row {
 		display: flex;
 		align-items: center;
-		gap: 6px;
-		padding: 8px 8px 6px 10px;
+		gap: $space-3;
+		padding: $space-4 $panel-inset $space-3;
 		flex-shrink: 0;
 	}
 
@@ -569,11 +569,11 @@
 		flex: 1;
 		display: flex;
 		align-items: center;
-		gap: 5px;
+		gap: $space-3;
 		background: $surface-2;
 		border: 1px solid $border-subtle;
 		border-radius: $radius-control;
-		padding: 0 8px;
+		padding: 0 $space-4;
 		height: $ctrl-height-sm;
 		transition:
 			border-color $duration-base,
@@ -625,8 +625,8 @@
 		display: flex;
 		flex-direction: row;
 		align-items: center;
-		gap: 2px;
-		padding: 0 8px 6px 10px;
+		gap: $space-1;
+		padding: 0 $panel-inset $space-3;
 		overflow-x: auto;
 		border-bottom: 1px solid $border-color;
 	}
@@ -672,7 +672,7 @@
 		font-size: 9px;
 		font-family: $font-mono;
 		color: $text-faint;
-		padding: 4px 10px 6px;
+		padding: $space-2 $panel-inset $space-3;
 	}
 
 	:global(body.library-file-dragging) {

@@ -136,8 +136,8 @@
 		min-width: 0;
 		display: flex;
 		align-items: center;
-		gap: 6px;
-		padding: 0 8px 0 11px;
+		gap: $space-3;
+		padding: 0 $space-4 0 $space-5;
 		overflow-x: auto;
 		overflow-y: hidden;
 		scrollbar-width: none;

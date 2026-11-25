@@ -57,7 +57,7 @@
 	.macro-row {
 		display: flex;
 		align-items: center;
-		gap: 6px;
+		gap: $space-3;
 	}
 
 	.meter {

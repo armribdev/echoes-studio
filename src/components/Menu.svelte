@@ -52,7 +52,7 @@
 		left: 0;
 		z-index: $z-overlay;
 		min-width: 200px;
-		padding: 4px;
+		padding: $space-2;
 		background: $surface-overlay;
 		border: 1px solid $border-color;
 		border-radius: $radius-lg;

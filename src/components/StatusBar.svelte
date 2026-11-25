@@ -55,7 +55,7 @@
 		display: grid;
 		grid-template-columns: 1fr auto 1fr;
 		align-items: center;
-		padding: 0 12px;
+		padding: 0 $space-5;
 		flex-shrink: 0;
 		position: relative;
 	}
@@ -88,7 +88,7 @@
 		justify-self: end;
 		display: flex;
 		align-items: center;
-		gap: 8px;
+		gap: $space-4;
 		min-width: 0;
 		overflow: hidden;
 		white-space: nowrap;

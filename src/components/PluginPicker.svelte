@@ -178,9 +178,9 @@
 	.header {
 		display: flex;
 		align-items: center;
-		padding: 10px 12px 8px;
+		padding: $space-5 $space-5 $space-4;
 		border-bottom: 1px solid $border-faint;
-		gap: 8px;
+		gap: $space-4;
 	}
 
 	.title {
@@ -199,13 +199,13 @@
 
 	.search {
 		@include field($ctrl-height-sm, 12px);
-		margin: 8px 10px;
+		margin: $space-4 $space-5;
 	}
 
 	.list {
 		flex: 1;
 		overflow-y: auto;
-		padding: 0 6px 6px;
+		padding: 0 $space-3 $space-3;
 	}
 
 	.blocked {
@@ -221,13 +221,13 @@
 		font-size: 11px;
 		color: $text-faint;
 		text-align: center;
-		padding: 24px;
+		padding: $space-7;
 		margin: 0;
 	}
 
 	.item {
 		@include list-item($menu-item-height, 11px);
-		gap: 6px;
+		gap: $space-3;
 
 		&.selected {
 			@include list-item-selected;
@@ -252,11 +252,11 @@
 	}
 
 	.badge {
-		font-size: 8px;
+		font-size: 9px;
 		font-family: $font-mono;
 		font-weight: 700;
 		letter-spacing: 0.04em;
-		padding: 2px 5px;
+		padding: $space-1 $space-3;
 		border-radius: $radius-xs;
 		color: $on-solid;
 		flex-shrink: 0;

@@ -20,7 +20,7 @@
 	.time-signature {
 		display: flex;
 		align-items: center;
-		gap: 7px;
+		gap: $space-4;
 	}
 
 	.slash {

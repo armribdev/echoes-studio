@@ -23,14 +23,14 @@
 		flex-direction: column;
 		align-items: center;
 		justify-content: center;
-		gap: 12px;
-		padding: 28px 14px;
+		gap: $space-5;
+		padding: $space-7 $space-6;
 		color: $text-faint;
 		text-align: center;
 
 		&--compact {
-			padding: 24px 12px;
-			gap: 6px;
+			padding: $space-7 $space-5;
+			gap: $space-3;
 		}
 	}
 
@@ -43,7 +43,7 @@
 	.empty-actions {
 		display: flex;
 		flex-direction: column;
-		gap: 6px;
+		gap: $space-3;
 		width: 100%;
 		max-width: 160px;
 	}

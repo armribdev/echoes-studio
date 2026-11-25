@@ -86,7 +86,7 @@
 
 	.intro {
 		margin: 0;
-		padding: 16px 18px;
+		padding: $space-6;
 		font-size: 12px;
 		line-height: 1.5;
 		color: $text-muted;

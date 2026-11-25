@@ -38,7 +38,7 @@
 	.detail {
 		flex-shrink: 0;
 		border-top: 1px solid $border-color;
-		padding: 8px 10px;
+		padding: $space-4 $space-5;
 		min-height: 44px;
 	}
 
@@ -52,15 +52,15 @@
 
 	.detail-meta {
 		display: flex;
-		gap: 10px;
-		margin-top: 3px;
+		gap: $space-5;
+		margin-top: $space-2;
 		font-size: 9px;
 		font-family: $font-mono;
 		color: $text-faint;
 	}
 
 	.detail-tip {
-		margin-top: 4px;
+		margin-top: $space-2;
 		font-size: 9px;
 		color: $text-faint;
 		opacity: 0.85;

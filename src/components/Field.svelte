@@ -19,7 +19,7 @@
 	.field {
 		display: flex;
 		flex-direction: column;
-		gap: 5px;
+		gap: $space-3;
 	}
 
 	.label {

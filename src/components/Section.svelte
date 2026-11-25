@@ -13,11 +13,11 @@
 	.section {
 		display: flex;
 		flex-direction: column;
-		gap: 8px;
+		gap: $space-4;
 	}
 
 	.title {
-		margin: 0 0 4px;
+		margin: 0 0 $space-2;
 		font-size: 14px;
 		font-weight: 600;
 		letter-spacing: 0.1px;

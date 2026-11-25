@@ -30,9 +30,9 @@
 	.header {
 		display: flex;
 		align-items: center;
-		gap: 9px;
+		gap: $space-4;
 		flex-shrink: 0;
-		padding: 14px 18px;
+		padding: $space-6;
 		background: $panel-background-color;
 		border-bottom: 1px solid $border-color;
 	}

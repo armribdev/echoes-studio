@@ -86,7 +86,7 @@
 	@use '../controls.scss' as *;
 
 	.picker {
-		margin: 2px 6px 6px;
+		margin: $space-1 $space-3 $space-3;
 		border: 1px solid $border-subtle;
 		border-radius: $radius-sm;
 		background: $background-color;
@@ -97,7 +97,7 @@
 		width: 100%;
 		box-sizing: border-box;
 		height: $ctrl-height-sm;
-		padding: 0 8px;
+		padding: 0 $space-4;
 		border: none;
 		border-bottom: 1px solid $border-faint;
 		background: transparent;
@@ -116,7 +116,7 @@
 	}
 
 	.group {
-		padding: 5px 7px 2px;
+		padding: $space-3 $space-4 $space-1;
 		font-size: 9px;
 		font-weight: 700;
 		font-family: $font-mono;
@@ -126,8 +126,8 @@
 	}
 
 	.module {
-		padding: 3px 7px 1px 12px;
-		font-size: 8px;
+		padding: $space-2 $space-4 1px $space-5;
+		font-size: 9px;
 		font-family: $font-mono;
 		color: $text-faint;
 		text-transform: uppercase;
@@ -137,7 +137,7 @@
 	.option {
 		@include list-item($ctrl-height-xs, 10px);
 		display: block;
-		padding: 0 7px 0 16px;
+		padding: 0 $space-4 0 $space-6;
 		border-radius: 0;
 		color: $text-subtle;
 		line-height: $ctrl-height-xs;
@@ -148,7 +148,7 @@
 
 	.hint {
 		margin: 0;
-		padding: 8px 7px;
+		padding: $space-4;
 		font-size: 9px;
 		color: $text-faint;
 		text-align: center;

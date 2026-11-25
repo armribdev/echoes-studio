@@ -157,10 +157,10 @@
 	.content {
 		display: flex;
 		flex-direction: column;
-		gap: 10px;
+		gap: $space-5;
 		flex: 1;
 		min-height: 0;
-		padding: 16px 18px;
+		padding: $space-6;
 	}
 
 	.intro {
@@ -181,8 +181,8 @@
 		li {
 			display: flex;
 			flex-direction: column;
-			gap: 3px;
-			padding: 8px 10px;
+			gap: $space-2;
+			padding: $space-4 $space-5;
 			border-bottom: 1px solid $border-faint;
 			&:last-child {
 				border-bottom: none;
@@ -193,7 +193,7 @@
 	.row-head {
 		display: flex;
 		align-items: center;
-		gap: 8px;
+		gap: $space-4;
 	}
 
 	.name {
@@ -209,7 +209,7 @@
 
 	.badge {
 		flex-shrink: 0;
-		padding: 1px 6px;
+		padding: 1px $space-3;
 		border: 1px solid $error-border;
 		border-radius: $radius-xs;
 		background: $error-soft;

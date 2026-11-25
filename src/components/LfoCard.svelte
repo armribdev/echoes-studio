@@ -249,7 +249,7 @@
 	.shapes {
 		flex: 1;
 		display: flex;
-		gap: 2px;
+		gap: $space-1;
 		min-width: 0;
 	}
 

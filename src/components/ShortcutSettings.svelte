@@ -244,14 +244,14 @@
 	.shortcuts {
 		display: flex;
 		flex-direction: column;
-		gap: 14px;
+		gap: $space-6;
 	}
 
 	.shortcuts-header {
 		display: flex;
 		align-items: flex-start;
 		justify-content: space-between;
-		gap: 12px;
+		gap: $space-5;
 	}
 
 	.hint {
@@ -289,7 +289,7 @@
 	}
 
 	.empty {
-		margin: 8px 0 0;
+		margin: $space-4 0 0;
 		font-size: 12px;
 		color: $text-muted;
 	}
@@ -297,7 +297,7 @@
 	.category {
 		display: flex;
 		flex-direction: column;
-		gap: 6px;
+		gap: $space-3;
 	}
 
 	.category-title {
@@ -315,7 +315,7 @@
 		padding: 0;
 		display: flex;
 		flex-direction: column;
-		gap: 2px;
+		gap: $space-1;
 	}
 
 	.row {
@@ -323,9 +323,9 @@
 		grid-template-columns: minmax(0, 1fr) auto;
 		grid-template-rows: auto auto;
 		align-items: center;
-		column-gap: 12px;
-		row-gap: 2px;
-		padding: 4px 6px;
+		column-gap: $space-5;
+		row-gap: $space-1;
+		padding: $space-2 $space-3;
 		border-radius: $radius-sm;
 		min-height: 32px;
 
@@ -345,7 +345,7 @@
 		align-items: center;
 		justify-content: flex-end;
 		flex-wrap: wrap;
-		gap: 4px;
+		gap: $space-2;
 		max-width: 280px;
 	}
 
@@ -373,7 +373,7 @@
 	.reset-one {
 		@include icon-button($ctrl-height-sm);
 		width: auto;
-		padding: 0 8px;
+		padding: 0 $space-4;
 		font-size: 11px;
 		white-space: nowrap;
 	}

@@ -262,7 +262,7 @@
 		display: grid;
 		grid-template-columns: 1fr auto 1fr;
 		align-items: center;
-		padding: 0 12px;
+		padding: 0 $space-5;
 		border-bottom: 1px solid $border-color;
 		flex-shrink: 0;
 	}
@@ -274,17 +274,17 @@
 
 		&--left {
 			justify-content: flex-start;
-			gap: 4px;
+			gap: $space-2;
 		}
 
 		&--center {
 			justify-content: center;
-			gap: 12px;
+			gap: $space-5;
 		}
 
 		&--right {
 			justify-content: flex-end;
-			gap: 4px;
+			gap: $space-2;
 		}
 	}
 
@@ -292,7 +292,7 @@
 	.transport {
 		display: flex;
 		align-items: center;
-		gap: 4px;
+		gap: $space-2;
 	}
 
 	.btn {
@@ -361,7 +361,7 @@
 		align-items: center;
 
 		+ .btn--option {
-			margin-left: 6px;
+			margin-left: $space-3;
 		}
 	}
 
@@ -378,7 +378,7 @@
 	}
 
 	.ctrl-label {
-		font-size: 8px;
+		font-size: 9px;
 		font-family: $font-mono;
 		color: $text-faint;
 		letter-spacing: 0.05em;
@@ -390,7 +390,7 @@
 	.position {
 		display: flex;
 		flex-direction: column;
-		gap: 2px;
+		gap: $space-1;
 	}
 
 	.position-display {
@@ -421,8 +421,8 @@
 	.tempo {
 		display: flex;
 		flex-direction: column;
-		gap: 2px;
-		padding: 2px 6px;
+		gap: $space-1;
+		padding: $space-1 $space-3;
 		margin: -2px -6px;
 		background: none;
 		border: none;
@@ -444,7 +444,7 @@
 	.tempo-display {
 		display: flex;
 		align-items: baseline;
-		gap: 6px;
+		gap: $space-3;
 		font-family: $font-mono;
 		line-height: 1;
 	}
@@ -463,7 +463,7 @@
 	.loop-range {
 		display: flex;
 		align-items: center;
-		gap: 12px;
+		gap: $space-5;
 
 		&--hidden {
 			visibility: hidden;

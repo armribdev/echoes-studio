@@ -161,7 +161,7 @@
 	.source {
 		display: flex;
 		align-items: center;
-		gap: 6px;
+		gap: $space-3;
 		font-size: 9px;
 		color: $text-subtle;
 
@@ -169,7 +169,7 @@
 			flex: 1;
 			min-width: 0;
 			height: $ctrl-height-xs;
-			padding-left: 7px;
+			padding-left: $space-4;
 			font-size: 10px;
 
 			&:focus,
@@ -189,7 +189,7 @@
 	.modes {
 		display: flex;
 		flex-direction: column;
-		gap: 2px;
+		gap: $space-1;
 		align-self: center;
 	}
 </style>

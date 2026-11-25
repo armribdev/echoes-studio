@@ -17,12 +17,12 @@
 	.subsection {
 		display: flex;
 		flex-direction: column;
-		gap: 8px;
+		gap: $space-4;
 	}
 
 	.divider {
 		height: 1px;
-		margin: 8px 0;
+		margin: $space-4 0;
 		background: $border-color;
 	}
 

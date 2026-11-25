@@ -2643,7 +2643,7 @@
 
 	.left-panel-footer {
 		flex-shrink: 0;
-		padding: 8px;
+		padding: $space-4;
 
 		&.has-scroll-separator {
 			border-top: 1px solid $border-color;

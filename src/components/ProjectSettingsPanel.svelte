@@ -226,13 +226,13 @@
 		color: $text-subtle;
 		background: $surface-2;
 		border-radius: $radius-xs;
-		padding: 1px 5px;
-		margin-left: 4px;
+		padding: 1px $space-3;
+		margin-left: $space-2;
 		vertical-align: middle;
 	}
 
 	.panel-body {
-		padding: 20px 22px;
+		padding: $space-7;
 		overflow-y: auto;
 		max-height: min(78vh, 560px);
 	}
@@ -240,7 +240,7 @@
 	.field-row {
 		display: flex;
 		align-items: center;
-		gap: 6px;
+		gap: $space-3;
 	}
 
 	.path-display {
@@ -253,6 +253,6 @@
 	.error-msg {
 		font-size: 12px;
 		color: $color-error;
-		margin: 8px 0 0;
+		margin: $space-4 0 0;
 	}
 </style>

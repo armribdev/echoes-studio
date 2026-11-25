@@ -5,7 +5,7 @@
 
 	.separator {
 		height: 1px;
-		margin: 4px 6px;
+		margin: $space-2 $space-3;
 		background: $border-subtle;
 	}
 </style>

@@ -102,10 +102,10 @@
 	.file-item {
 		display: flex;
 		align-items: center;
-		gap: 4px;
+		gap: $space-2;
 		box-sizing: border-box;
 		height: 24px;
-		padding: 0 6px 0 4px;
+		padding: 0 $space-3 0 $space-2;
 		cursor: grab;
 		user-select: none;
 		touch-action: none;
@@ -159,13 +159,13 @@
 	}
 
 	.file-ext {
-		font-size: 7px;
+		font-size: 8px;
 		font-family: $font-mono;
 		font-weight: 700;
 		color: $accent-color;
 		background: $accent-soft;
 		border-radius: 2px;
-		padding: 1px 3px;
+		padding: 1px $space-2;
 		flex-shrink: 0;
 		line-height: 1.4;
 		letter-spacing: 0.05em;

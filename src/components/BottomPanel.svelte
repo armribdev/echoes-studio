@@ -134,7 +134,7 @@
 		flex-direction: column;
 		align-items: center;
 		justify-content: center;
-		gap: 10px;
+		gap: $space-5;
 		height: 100%;
 		color: $text-faint;
 		position: relative;

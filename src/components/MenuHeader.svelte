@@ -4,7 +4,7 @@
 	@use '../variables.scss' as *;
 
 	.menu-header {
-		padding: 4px 10px 6px;
+		padding: $space-2 $space-5 $space-3;
 		font-size: 10px;
 		font-weight: 600;
 		letter-spacing: 0.6px;

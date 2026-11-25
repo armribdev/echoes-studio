@@ -302,7 +302,7 @@
 
 	.grid.compact {
 		grid-template-columns: 28px 26px 1fr;
-		row-gap: 2px;
+		row-gap: $space-1;
 
 		.lbl {
 			font-size: 7px;
@@ -315,8 +315,8 @@
 	.grid {
 		display: grid;
 		grid-template-columns: 36px 28px 1fr;
-		row-gap: 4px;
-		column-gap: 4px;
+		row-gap: $space-2;
+		column-gap: $space-2;
 		align-items: center;
 	}
 
@@ -335,12 +335,12 @@
 		font-size: 9px;
 		font-family: $font-mono;
 		color: $text-subtle;
-		padding-left: 2px;
+		padding-left: $space-1;
 	}
 
 	.toggle {
 		@include chip;
-		padding: 0 5px;
+		padding: 0 $space-3;
 
 		&.on {
 			@include control-on;

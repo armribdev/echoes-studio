@@ -547,16 +547,16 @@
 		flex-shrink: 0;
 		background: $background-color;
 		border-right: 1px solid $border-color;
-		padding: 10px 6px;
+		padding: $space-5 $space-3;
 		display: flex;
 		flex-direction: column;
-		gap: 2px;
+		gap: $space-1;
 	}
 
 	.nav-item {
 		@include list-item($ctrl-height, 12px);
-		gap: 9px;
-		padding: 0 10px;
+		gap: $space-4;
+		padding: 0 $space-5;
 		border-radius: $radius-control;
 		color: $text-muted;
 
@@ -590,7 +590,7 @@
 	.content {
 		flex: 1;
 		overflow-y: auto;
-		padding: 20px 22px;
+		padding: $space-7;
 
 		&::-webkit-scrollbar {
 			width: 5px;

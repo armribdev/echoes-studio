@@ -47,12 +47,12 @@
 		flex-direction: column;
 		align-items: center;
 		justify-content: center;
-		gap: 8px;
+		gap: $space-4;
 		pointer-events: none;
 
 		.empty-tracks-icon {
 			color: $text-faint;
-			margin-bottom: 4px;
+			margin-bottom: $space-2;
 		}
 
 		.empty-tracks-text {
@@ -72,8 +72,8 @@
 
 		.empty-tracks-actions {
 			display: flex;
-			gap: 8px;
-			margin-top: 8px;
+			gap: $space-4;
+			margin-top: $space-4;
 			pointer-events: all;
 		}
 	}

@@ -50,7 +50,7 @@
 	}
 
 	.description {
-		font-size: 8px;
+		font-size: 9px;
 		color: $text-faint;
 		white-space: normal;
 		line-height: 1.3;

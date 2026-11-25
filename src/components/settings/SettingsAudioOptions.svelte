@@ -198,11 +198,11 @@
 		background: $surface-1;
 		border: 1px solid $border-faint;
 		border-radius: $radius-lg;
-		padding: 12px 14px;
+		padding: $space-5 $space-6;
 		display: grid;
 		grid-template-columns: 1fr auto;
 		grid-template-rows: auto auto auto;
-		gap: 6px 8px;
+		gap: $space-3 $space-4;
 		align-items: center;
 	}
 
@@ -261,11 +261,11 @@
 		background: $surface-1;
 		border: 1px solid $border-faint;
 		border-radius: $radius-lg;
-		padding: 12px 14px;
+		padding: $space-5 $space-6;
 		display: grid;
 		grid-template-columns: 1fr auto;
 		grid-template-rows: auto auto;
-		gap: 6px 8px;
+		gap: $space-3 $space-4;
 		align-items: center;
 
 		&.xrun-warning {
@@ -310,8 +310,8 @@
 	.routing-row {
 		display: flex;
 		align-items: center;
-		gap: 12px;
-		padding: 10px 12px;
+		gap: $space-5;
+		padding: $space-5;
 		background: $surface-1;
 		border: 1px solid $border-faint;
 		border-radius: $radius-lg;
@@ -321,7 +321,7 @@
 		flex: 1;
 		display: flex;
 		flex-direction: column;
-		gap: 2px;
+		gap: $space-1;
 	}
 
 	.routing-name {
@@ -343,9 +343,9 @@
 	.single-value-display {
 		display: flex;
 		align-items: center;
-		gap: 6px;
+		gap: $space-3;
 		height: $ctrl-height;
-		padding: 0 10px;
+		padding: 0 $space-5;
 		background: $surface-1;
 		border: 1px solid $border-faint;
 		border-radius: $radius-control;
@@ -359,16 +359,16 @@
 	.isolated-list {
 		display: flex;
 		flex-wrap: wrap;
-		gap: 5px;
+		gap: $space-3;
 	}
 
 	.isolated-chip {
 		@include control-on-success;
 		display: inline-flex;
 		align-items: center;
-		gap: 2px;
+		gap: $space-1;
 		height: $ctrl-height-sm;
-		padding: 0 2px 0 8px;
+		padding: 0 $space-1 0 $space-4;
 		border: 1px solid $success-border;
 		border-radius: $radius-control;
 		font-size: 11px;
