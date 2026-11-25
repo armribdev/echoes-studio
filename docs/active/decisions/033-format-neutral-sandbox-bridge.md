@@ -1207,7 +1207,7 @@ track name.
   control request). The golden hashes of the render harness do not move: the test DLL only gained parameters.
 - **Test plugin.** `test_vst3_plugin` implements `IInfoListener` on both classes and shows what it heard in three
   read-only parameters (24 `Track calls`, 25 `Track name units`, 26 `Track color`, RGB without alpha, 0 for none);
-  27 parameters now.
+  27 `Processing stops` (how many `setProcessing(false)`, added for ADR-036); 28 parameters now.
 - **Tests.** `plugin_host_bridge/tests/vst3_bridge.rs`: told at launch, never told an empty track, a new track once, a
   garbled record refused with the channel still open. `plugin_system/vst3_sandbox_tests.rs`: the same scenario in
   process and sandboxed, born knowing the track then renamed then repeated, and the no-track case, each answering

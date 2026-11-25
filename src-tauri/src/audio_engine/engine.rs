@@ -41,6 +41,7 @@ use tauri::Emitter;
 
 use crate::audio_engine::graph::AudioGraphCompiler;
 use crate::audio_engine::metronome::{ClickTiming, Metronome};
+use crate::audio_engine::stream_gate::{ExportHold, LiveStreamGate, EXPORT_HOLD_BUDGET};
 use crate::audio_engine::transport::{plan_slice, playback_chunk, SharedTransport};
 use crate::audio_graph::denormal::enable_flush_to_zero;
 use crate::audio_graph::midi::LiveInputClock;
@@ -268,6 +269,9 @@ pub struct AudioEngine {
     /// Cumulative underrun count for the current stream session.
     pub xrun_stats: Arc<XrunStats>,
 
+    /// Lets an export take the plugins away from the live stream (ADR-036).
+    stream_gate: Arc<LiveStreamGate>,
+
     /// Plugin host — owns the registry, instantiates `Box<dyn AudioNode>` for
     /// every `NodeKind::Plugin` step at compile time, and tracks per-device
     /// lifecycle state.  Lives on the command thread only; consulted by the
@@ -295,8 +299,17 @@ impl AudioEngine {
             active_output_channels: Arc::new(AtomicUsize::new(0)),
             live_params,
             xrun_stats: XrunStats::new(),
+            stream_gate: LiveStreamGate::new(),
             plugin_host: PluginHost::new(),
         }
+    }
+
+    /// Silences the live stream until the returned hold drops, so an export is the
+    /// only caller of the plugins (ADR-036).  Command thread.
+    pub fn hold_stream_for_export(&self) -> Result<ExportHold, String> {
+        self.stream_gate
+            .hold_for_export(EXPORT_HOLD_BUDGET)
+            .ok_or_else(|| "Le flux audio ne répond pas : export impossible".to_string())
     }
 
     /// Update the active output channel count without restarting the stream.
@@ -424,6 +437,7 @@ impl AudioEngine {
             xrun_stats: Arc::clone(&self.xrun_stats),
             live_clock: Arc::clone(&self.live_params.live_input_clock),
             input_hub: Arc::clone(&self.input_hub),
+            stream_gate: Arc::clone(&self.stream_gate),
         };
 
         let fixed_cfg = cpal::StreamConfig {
@@ -626,6 +640,7 @@ struct StreamShared {
     xrun_stats: Arc<XrunStats>,
     live_clock: Arc<LiveInputClock>,
     input_hub: Arc<AudioInputHub>,
+    stream_gate: Arc<LiveStreamGate>,
 }
 
 fn build_typed_stream(
@@ -670,6 +685,7 @@ where
         xrun_stats,
         live_clock,
         input_hub,
+        stream_gate,
     } = shared;
     let mut mix_buf = vec![0.0_f32; MAX_BLOCK_FRAMES * 2];
     let mut click_buf = vec![0.0_f32; MAX_BLOCK_FRAMES];
@@ -747,6 +763,15 @@ where
                     }
                     return;
                 }
+
+                // An export owns the plugins while it renders (ADR-036): stay silent
+                // and leave the transport where it is.  Held to the end of the block.
+                let Some(_live_block) = stream_gate.enter_live() else {
+                    for s in data.iter_mut() {
+                        *s = T::from_sample_(0.0_f32);
+                    }
+                    return;
+                };
 
                 snapshot.try_swap(&mut scheduler);
 

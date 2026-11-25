@@ -842,6 +842,7 @@ fn render_project_to_stereo(
 ) -> Result<(Vec<f32>, Vec<f32>), String> {
     let project = state.project.lock().map_err(|e| e.to_string())?;
     let mut engine = state.audio_engine.lock().map_err(|e| e.to_string())?;
+    let _live_stream_silenced = engine.hold_stream_for_export()?;
     audio_engine::offline::render_project_offline(
         &project,
         &state.live_params,

@@ -245,6 +245,10 @@ for sample in self.delay_line.iter_mut() { ... }
 //   handed to the SPSC drop ring, never dropped on this thread)
 snapshot.try_swap(&mut current_scheduler);
 
+// ✓ one compare-and-swap on the export gate per block (ADR-036): never waits;
+//   when an export holds the plugins the callback writes silence and returns
+let Some(_live_block) = stream_gate.enter_live() else { /* silence */ return; };
+
 // ✓ monotonic clock read (std::time::Instant — QueryPerformanceCounter /
 //   vDSO clock_gettime / mach_absolute_time: no lock, no allocation).
 //   Used once per callback to time live MIDI input (ADR-022); never feeds

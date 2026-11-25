@@ -60,18 +60,19 @@ lives there.
 | [034](034-plugin-scan-off-ui-thread.md)                  | The plugin scan runs off the UI thread and outside the engine mutex: `PluginScanner` in `AppState` (session lock + short state lock), plugins published file by file, background scan at start with a `plugin-scan-finished` event, a rescan lists new or changed files only, scan processes in a Windows job object; amends ADR-033 step 10 (accepted 2026-11-06, implemented, not yet seen on screen)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | Plugins / threading                   |
 
 | [035](035-clap-loaded-preset-in-project.md) | The CLAP preset in use remembered with the project: optional `plugin_presets` map beside `plugin_states` (a display hint compared with the listing, never used to load; reopens an alternative ADR-031 rejected) (accepted and implemented 2026-11-07, not yet hand-tested) | State / persistence / Plugins |
+| [036](036-export-owns-the-plugins.md) | The export owns the plugins while it renders: a one-byte `LiveStreamGate` the audio callback claims once per block (silence when an export holds it) and a `GraphScheduler::reset()` before the render (accepted and implemented 2026-11-25, not yet hand-tested) | Threading / Plugins / Determinism |
 
 ---
 
 ## By theme
 
 - **Graph / DSP core:** 001, 011, 012, 018, 020, 022, 028, 029
-- **Threading / RT safety:** 004, 007, 008, 016, 022, 024, 026, 027, 033, 034
+- **Threading / RT safety:** 004, 007, 008, 016, 022, 024, 026, 027, 033, 034, 036
 - **State / persistence:** 002, 010, 017, 018, 020, 024, 028, 029, 032, 035
 - **Architecture boundary:** 005, 017, 023
-- **Plugins:** 003, 006, 007, 008, 010, 013, 014, 015, 016, 017, 020, 021, 031, 033, 034, 035
+- **Plugins:** 003, 006, 007, 008, 010, 013, 014, 015, 016, 017, 020, 021, 031, 033, 034, 035, 036
 - **Modulation / parameters:** 009, 019, 021, 025
-- **Scheduling / determinism:** 019, 025, 028
+- **Scheduling / determinism:** 019, 025, 028, 036
 - **UX / product boundary:** 023
 - **Transport / recording:** 022, 026, 027, 029
 

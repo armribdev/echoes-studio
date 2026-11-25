@@ -1611,10 +1611,18 @@ mod clap_plugins {
 #[cfg(windows)]
 mod vst3_plugins {
     use std::collections::HashMap;
+    use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+
+    use test_vst3_plugin::{DIAGNOSTIC_RANGE, PROCESSING_STOPS};
 
     use super::*;
+    use crate::audio_engine::graph::AudioGraphCompiler;
+    use crate::audio_engine::stream_gate::{LiveStreamGate, EXPORT_HOLD_BUDGET};
+    use crate::audio_graph::node::TransportInfo;
+    use crate::audio_graph::CompileConfig;
     use crate::plugin_formats::vst3::test_dll::{effect_id, instrument_id, test_vst3_dll};
     use crate::plugin_system::host::PluginIsolation;
+    use crate::plugin_system::instance::PluginInstance;
     use crate::plugin_system::registry::PluginManifest;
     use crate::plugin_system::wrapper::DeviceFormat;
     use crate::project::PluginParams;
@@ -1781,6 +1789,144 @@ mod vst3_plugins {
 
     fn host_isolating_everything() -> PluginHost {
         isolating_everything(with_half_gain(host_with_test_plugins()))
+    }
+
+    /// The staged state blobs make every compile build a new instance (project load,
+    /// ADR-010); once the first compile has consumed them, the next one reuses the
+    /// instance, as an export does after the project was opened.
+    fn shared_with_the_next_compile(host: &mut PluginHost) -> Arc<PluginInstance> {
+        host.set_pending_state_blobs(HashMap::new());
+        host.instance_by_key("plugin").expect("the effect is live")
+    }
+
+    /// Enough exports for an ungated one to meet the live stream inside the plugin.
+    const EXPORTS_BESIDE_THE_LIVE_STREAM: usize = 20;
+
+    fn live_config() -> CompileConfig {
+        CompileConfig {
+            sample_rate: SAMPLE_RATE as f32,
+            max_block_size: 4096,
+            num_channels: 2,
+            live: true,
+        }
+    }
+
+    /// ADR-036: while the live stream keeps calling a plugin the export shares with it,
+    /// the export holds the plugins, so no block of the file is left dry and the file is
+    /// the one an export alone gives.
+    #[test]
+    fn an_export_is_the_same_file_while_the_live_stream_runs_beside_it() {
+        let project = project();
+        let alone = render_project_offline(
+            &project,
+            &LiveParams::new(),
+            &mut with_half_gain(host_with_test_plugins()),
+            SAMPLE_RATE,
+        )
+        .expect("the project exports");
+
+        let mut host = with_half_gain(host_with_test_plugins());
+        let live_params = LiveParams::new();
+        let (mut live_scheduler, _cells, _duration) =
+            AudioGraphCompiler::compile_scheduler(&project, live_config(), &live_params, &mut host);
+        let live_instance = shared_with_the_next_compile(&mut host);
+        let gate = LiveStreamGate::new();
+        let stop = Arc::new(AtomicBool::new(false));
+        let live_blocks = Arc::new(AtomicU32::new(0));
+        let live_stream = {
+            let (gate, stop, live_blocks) = (
+                Arc::clone(&gate),
+                Arc::clone(&stop),
+                Arc::clone(&live_blocks),
+            );
+            std::thread::spawn(move || {
+                // Plays the stretch of the timeline where the audio clip sounds, so
+                // every live block really calls the effect.
+                let first = SAMPLE_RATE as u64;
+                let mut position = first;
+                let mut output = vec![0.0_f32; 128 * 2];
+                while !stop.load(Ordering::Relaxed) {
+                    let Some(_block) = gate.enter_live() else {
+                        std::thread::yield_now();
+                        continue;
+                    };
+                    let info = TransportInfo {
+                        is_playing: true,
+                        position_samples: position,
+                        position_seconds: position as f64 / SAMPLE_RATE as f64,
+                        block_size: 128,
+                        ..TransportInfo::stopped(SAMPLE_RATE as f32)
+                    };
+                    live_scheduler.process_block(&info, &mut output);
+                    live_blocks.fetch_add(1, Ordering::Relaxed);
+                    position = first + (position - first + 128) % (2 * SAMPLE_RATE as u64);
+                }
+            })
+        };
+        while live_blocks.load(Ordering::Relaxed) < 50 {
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+
+        let mut exports = Vec::new();
+        for _ in 0..EXPORTS_BESIDE_THE_LIVE_STREAM {
+            let _hold = gate
+                .hold_for_export(EXPORT_HOLD_BUDGET)
+                .expect("the live stream lets go");
+            exports.push(
+                render_project_offline(&project, &live_params, &mut host, SAMPLE_RATE)
+                    .expect("the project exports"),
+            );
+        }
+        stop.store(true, Ordering::Relaxed);
+        live_stream.join().expect("the live stream thread ends");
+        assert!(
+            Arc::ptr_eq(&live_instance, &host.instance_by_key("plugin").unwrap()),
+            "the export must share the plugin with the live stream"
+        );
+
+        for (index, exported) in exports.iter().enumerate() {
+            assert_eq!(exported.0.len(), alone.0.len(), "export {index}");
+            assert_eq!(
+                first_difference(&alone.0, &exported.0),
+                None,
+                "left of export {index}"
+            );
+            assert_eq!(
+                first_difference(&alone.1, &exported.1),
+                None,
+                "right of export {index}"
+            );
+        }
+    }
+
+    /// ADR-036: the plugin forgets what the live stream played before the export starts.
+    #[test]
+    fn an_export_resets_the_plugins_it_shares_with_the_live_stream() {
+        let project = project();
+        let mut host = with_half_gain(host_with_test_plugins());
+        let live_params = LiveParams::new();
+        let (_live_scheduler, _cells, _duration) =
+            AudioGraphCompiler::compile_scheduler(&project, live_config(), &live_params, &mut host);
+        let live_instance = shared_with_the_next_compile(&mut host);
+        let stops = |instance: &PluginInstance| {
+            let normalised = instance
+                .param_value(PROCESSING_STOPS)
+                .expect("the plugin reports its stops");
+            (normalised * DIAGNOSTIC_RANGE).round() as u32
+        };
+        let before = stops(&live_instance);
+
+        render_project_offline(&project, &live_params, &mut host, SAMPLE_RATE)
+            .expect("the project exports");
+
+        assert!(
+            Arc::ptr_eq(&live_instance, &host.instance_by_key("plugin").unwrap()),
+            "the export must share the plugin with the live stream"
+        );
+        assert!(
+            stops(&live_instance) > before,
+            "the export must reset the plugin"
+        );
     }
 
     /// ADR-033 step 5, C-2: the effect in the bridge process renders the same samples

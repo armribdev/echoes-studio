@@ -584,7 +584,7 @@ const TRACK_NAME_UNITS: u32 = 25;
 const TRACK_COLOR: u32 = 26;
 const DIAGNOSTIC_RANGE: f64 = 1_000_000.0;
 const TRACK_COLOR_RANGE: f64 = 16_777_216.0;
-const PARAMETER_COUNT: usize = 27;
+const PARAMETER_COUNT: usize = 28;
 const HELD_VALUE: f64 = 0.25;
 
 fn plugin_value(host: &PluginHost, native_id: u32) -> f64 {

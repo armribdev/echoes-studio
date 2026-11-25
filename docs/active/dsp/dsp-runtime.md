@@ -153,7 +153,14 @@ priority (MMCSS "Pro Audio" / `SCHED_FIFO`) is a later, dedicated change.
 ## Offline Export (`audio_engine/offline.rs`)
 
 The export drives the same `GraphScheduler` from the command thread, with two
-rules the live callback does not have (2026-10-26):
+rules the live callback does not have (2026-10-26) and two guards on the plugins
+it shares with the live stream (2026-11-25, ADR-036):
+
+- **Plugins held.** The caller holds the `LiveStreamGate` first
+  (`AudioEngine::hold_stream_for_export`), so the live callback is silent and no
+  other caller reaches the shared plugin instances while the export renders.
+- **Clean start.** `render_project_offline` calls `GraphScheduler::reset()` on the
+  freshly compiled scheduler, so a plugin forgets what the live stream played.
 
 - **Latency.** The master output lags the timeline by
   `GraphScheduler::latency_samples()` (the plan's cumulative latency at the master
@@ -165,8 +172,8 @@ rules the live callback does not have (2026-10-26):
   last audible sample. The 2.5 s hold is longer than the internal delay's maximum
   time (2 s); a plugin echo spaced further apart would be cut.
 
-`render_project_in_blocks` (the C-2 harness path) applies neither rule: it renders
-exactly the timeline length so the golden hashes do not move. Both share
+`render_project_in_blocks` (the C-2 harness path) applies none of these: it renders
+exactly the timeline length, without reset or gate, so the golden hashes do not move. Both share
 `compile_for_render` and `BlockRenderer`. The live transport still stops at
 `timeline_end_secs` (`duration_samples`); only the export extends.
 

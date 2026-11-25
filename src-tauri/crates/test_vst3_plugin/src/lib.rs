@@ -66,6 +66,8 @@
 //!   `setChannelContextInfos` was called), `Track name units` (UTF-16 units of the
 //!   announced `channel name`, 0 without one) and `Track color` (the announced
 //!   `channel color` without its alpha byte, 0 without one).
+//! - 27 `Processing stops` — read-only: how many times the host called
+//!   `setProcessing(false)`, which is how it resets the plugin.
 //!
 //! Not there yet, added by the step that needs it: `IUnitHandler`.
 
@@ -120,6 +122,7 @@ pub const PROGRAM: u32 = 23;
 pub const TRACK_CALLS: u32 = 24;
 pub const TRACK_NAME_UNITS: u32 = 25;
 pub const TRACK_COLOR: u32 = 26;
+pub const PROCESSING_STOPS: u32 = 27;
 /// The RGB of `Track color` fits in 24 bits.
 pub const TRACK_COLOR_RANGE: f64 = 16_777_216.0;
 /// The program list of `IUnitInfo`: its names, and the gain each one sets.
@@ -196,7 +199,7 @@ struct ParamSpec {
     flags: i32,
 }
 
-const PARAMS: [ParamSpec; 27] = [
+const PARAMS: [ParamSpec; 28] = [
     ParamSpec {
         id: GAIN,
         title: "Gain",
@@ -386,6 +389,13 @@ const PARAMS: [ParamSpec; 27] = [
         default_plain: 0.0,
         flags: PARAM_IS_READ_ONLY,
     },
+    ParamSpec {
+        id: PROCESSING_STOPS,
+        title: "Processing stops",
+        range: DIAGNOSTIC_RANGE,
+        default_plain: 0.0,
+        flags: PARAM_IS_READ_ONLY,
+    },
 ];
 
 fn spec(id: u32) -> Option<&'static ParamSpec> {
@@ -437,6 +447,8 @@ struct Plugin {
     track_calls: AtomicU32,
     track_name_units: AtomicU32,
     track_color: AtomicU32,
+    /// How many times the host called `setProcessing(false)`: a reset.
+    processing_stops: AtomicU32,
     gain: AtomicU64,
     /// The selected program as an `f64` index.
     program: AtomicU64,
@@ -536,6 +548,7 @@ impl Plugin {
             TRACK_CALLS => f64::from(self.track_calls.load(Ordering::Relaxed)),
             TRACK_NAME_UNITS => f64::from(self.track_name_units.load(Ordering::Relaxed)),
             TRACK_COLOR => f64::from(self.track_color.load(Ordering::Relaxed)),
+            PROCESSING_STOPS => f64::from(self.processing_stops.load(Ordering::Relaxed)),
             _ => 0.0,
         }
     }
@@ -1029,7 +1042,12 @@ unsafe extern "C" fn processor_setup(
     K_RESULT_OK
 }
 
-unsafe extern "C" fn processor_set_processing(_this: *mut IAudioProcessor, _state: u8) -> TResult {
+unsafe extern "C" fn processor_set_processing(this: *mut IAudioProcessor, state: u8) -> TResult {
+    if state == 0 {
+        (*from_processor(this))
+            .processing_stops
+            .fetch_add(1, Ordering::Relaxed);
+    }
     K_RESULT_OK
 }
 
@@ -2162,6 +2180,7 @@ unsafe extern "C" fn factory_create_instance(
         track_calls: AtomicU32::new(0),
         track_name_units: AtomicU32::new(0),
         track_color: AtomicU32::new(0),
+        processing_stops: AtomicU32::new(0),
         gain: AtomicU64::new(1.0_f64.to_bits()),
         program: AtomicU64::new(1.0_f64.to_bits()),
         held_velocity: AtomicU32::new(0),

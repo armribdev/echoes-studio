@@ -397,8 +397,8 @@ impl GraphScheduler {
         }
     }
 
-    /// Not wired to seek yet: ADR-019 "Seek reset".
-    #[allow(dead_code)]
+    /// Clean start for every node, off the audio thread.  The export uses it
+    /// (ADR-036); not wired to seek yet: ADR-019 "Seek reset".
     pub fn reset(&mut self) {
         for processor in &mut self.processors {
             processor.reset();

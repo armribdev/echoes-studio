@@ -20,6 +20,12 @@
 //! cap.  [`render_project_in_blocks`] (the C-2 harness path) renders exactly the
 //! timeline length, uncompensated, so the golden hashes stay untouched.
 //!
+//! ## Plugins are the live stream's too
+//!
+//! A plugin instance is one object shared with the live stream (ADR-007), so the
+//! caller must first take the plugins away from it (`AudioEngine::hold_stream_for_export`,
+//! ADR-036), and the render starts with a reset so the plugin forgets what it played.
+//!
 //! ## Threading
 //!
 //! Runs entirely on the command thread.  The freshly compiled scheduler is
@@ -68,8 +74,11 @@ pub fn render_project_offline(
     plugin_host: &mut PluginHost,
     sample_rate: u32,
 ) -> Result<(Vec<f32>, Vec<f32>), String> {
-    let (scheduler, clip_end_frames) =
+    let (mut scheduler, clip_end_frames) =
         compile_for_render(project, live_params, plugin_host, sample_rate)?;
+    // A plugin instance is shared with the live stream (ADR-007) and keeps what it
+    // played before; the export starts from a clean plugin (ADR-036).
+    scheduler.reset();
     let latency_frames = scheduler.latency_samples() as usize;
     let mut renderer = BlockRenderer::new(scheduler, project, sample_rate, OFFLINE_BLOCK_SIZE);
 

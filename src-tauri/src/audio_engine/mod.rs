@@ -31,4 +31,5 @@ pub mod metronome;
 pub mod offline;
 #[cfg(test)]
 mod render_harness;
+pub mod stream_gate;
 pub mod transport;

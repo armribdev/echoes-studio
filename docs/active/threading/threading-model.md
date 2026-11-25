@@ -219,6 +219,16 @@ from the command thread (● / PAUSE / STOP) — never from a CPAL callback.
 Software monitoring is a session atomic (`input_monitor_enabled`) mixed in the
 output callback outside the project graph.
 
+### Export (command thread) → live stream (ADR-036)
+
+A plugin instance is shared by the live scheduler and the export's scheduler
+(ADR-007, ADR-016), so the export takes the plugins away from the live stream for its
+whole render. The engine and the CPAL callback share one `LiveStreamGate` (one atomic
+byte, `audio_engine/stream_gate.rs`): the callback claims it once per block, without
+waiting, and writes silence when an export holds it; the export announces itself,
+which keeps new live blocks out, then waits off the audio thread (2 s at most) for the
+block in flight. The export also resets every node before it renders.
+
 ### Project state → Audio thread
 
 **Never directly.** Project state always goes through the compilation pipeline:
