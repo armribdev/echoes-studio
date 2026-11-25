@@ -446,49 +446,54 @@
 					on:focus={() => keyboardFocus.setLibraryResults()}
 					on:keydown={onResultsKeydown}
 					on:mousedown={() => keyboardFocus.setLibraryResults()}
-					style="padding-top: {LIST_PADDING +
-						firstRow * ROW_HEIGHT}px; padding-bottom: {LIST_PADDING +
-						(visible.length - lastRow) * ROW_HEIGHT}px"
 				>
-					{#each renderedRows as asset (asset.id)}
-						{@const isImporting =
-							$audioImportProgress.activeCount > 0 &&
-							$audioImportProgress.filePath != null &&
-							$audioImportProgress.filePath.replace(/\\/g, '/').toLowerCase() ===
-								asset.path.replace(/\\/g, '/').toLowerCase()}
-						<LibraryAssetRow
-							{asset}
-							selected={$libraryStore.selectedId === asset.id}
-							previewing={$libraryStore.previewingId === asset.id}
-							importing={isImporting}
-							dragging={rowPointerDrag?.active === true && rowPointerDrag.asset.id === asset.id}
-							favorite={$libraryStore.favoriteIds.includes(asset.id)}
-							on:click={() => onRowClick(asset)}
-							on:keydown={(e) => {
-								if (e.key === 'Enter' || e.key === ' ') {
-									e.preventDefault();
-									onRowClick(asset);
-								}
-							}}
-							on:dblclick={() => {
-								if (!isImporting) onRowDblClick(asset);
-							}}
-							on:pointerenter={() => onRowPointerEnter(asset)}
-							on:pointerleave={onRowPointerLeave}
-							on:pointerdown={(e) => {
-								if (!isImporting) onRowPointerDown(e, asset);
-							}}
-							on:pointermove={onRowPointerMove}
-							on:pointerup={onRowPointerUp}
-							on:pointercancel={onRowPointerCancel}
-							on:favorite={() => libraryStore.toggleFavorite(asset.id)}
-							on:preview={() => previewAsset(asset)}
-							on:insert={() => insertAsset(asset)}
-							on:cancelImport={() => cancelAudioImport(asset.path)}
-						/>
-					{:else}
-						<LibraryEmptyState compact title={$t(emptyListKey)} />
-					{/each}
+					<div
+						class="file-list-rows"
+						role="presentation"
+						style="padding-top: {LIST_PADDING +
+							firstRow * ROW_HEIGHT}px; padding-bottom: {LIST_PADDING +
+							(visible.length - lastRow) * ROW_HEIGHT}px"
+					>
+						{#each renderedRows as asset (asset.id)}
+							{@const isImporting =
+								$audioImportProgress.activeCount > 0 &&
+								$audioImportProgress.filePath != null &&
+								$audioImportProgress.filePath.replace(/\\/g, '/').toLowerCase() ===
+									asset.path.replace(/\\/g, '/').toLowerCase()}
+							<LibraryAssetRow
+								{asset}
+								selected={$libraryStore.selectedId === asset.id}
+								previewing={$libraryStore.previewingId === asset.id}
+								importing={isImporting}
+								dragging={rowPointerDrag?.active === true && rowPointerDrag.asset.id === asset.id}
+								favorite={$libraryStore.favoriteIds.includes(asset.id)}
+								on:click={() => onRowClick(asset)}
+								on:keydown={(e) => {
+									if (e.key === 'Enter' || e.key === ' ') {
+										e.preventDefault();
+										onRowClick(asset);
+									}
+								}}
+								on:dblclick={() => {
+									if (!isImporting) onRowDblClick(asset);
+								}}
+								on:pointerenter={() => onRowPointerEnter(asset)}
+								on:pointerleave={onRowPointerLeave}
+								on:pointerdown={(e) => {
+									if (!isImporting) onRowPointerDown(e, asset);
+								}}
+								on:pointermove={onRowPointerMove}
+								on:pointerup={onRowPointerUp}
+								on:pointercancel={onRowPointerCancel}
+								on:favorite={() => libraryStore.toggleFavorite(asset.id)}
+								on:preview={() => previewAsset(asset)}
+								on:insert={() => insertAsset(asset)}
+								on:cancelImport={() => cancelAudioImport(asset.path)}
+							/>
+						{:else}
+							<LibraryEmptyState compact title={$t(emptyListKey)} />
+						{/each}
+					</div>
 				</div>
 
 				<LibraryDetail asset={selected} />
@@ -704,7 +709,7 @@
 		flex: 1;
 		overflow-y: auto;
 		overflow-x: hidden;
-		padding: 4px 0;
+		overflow-anchor: none;
 		outline: none;
 
 		&:focus-visible {
