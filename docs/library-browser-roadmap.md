@@ -204,7 +204,10 @@ cleanup — `L` is back on the playback loop (`transport.toggleLoop`), `B` is th
 only library toggle. Slice 3 done: smart
 collections (a saved search — text matched on name or tag — plus a type filter,
 shown as a source; type filter next to the search field; `collections.ts`,
-`LibraryCollectionBar.svelte`; code-verified, not hand-tested). Left, in order: opt-in context memory with « restore defaults », the Devices
+`LibraryCollectionBar.svelte`; code-verified, not hand-tested). Slice 4 done: opt-in context memory —
+« Use for this context » / « Restore default » in the pop-up header, per context,
+source only (`sourceForContext` in `laneFocus.ts`, `contextSources` in the
+persisted slice; code-verified, not hand-tested). Left, in order: the Devices
 go/no-go ADR, pack sources, optional grid results.
 
 Prerequisite landed 2026-10-09: the built-in drum sampler (ADR-028) — a

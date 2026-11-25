@@ -243,6 +243,10 @@
 		"collectionNamePlaceholder": "Collection name",
 		"saveCollection": "Save as collection",
 		"deleteCollection": "Delete collection",
+		"contextUse": "Use for this context",
+		"contextUseTitle": "Next time, open the library on this source from here",
+		"contextRestore": "Restore default",
+		"contextRestoreTitle": "Open this context on its factory source again",
 		"sources": {
 			"audio": "Audio",
 			"favorites": "Favorites",

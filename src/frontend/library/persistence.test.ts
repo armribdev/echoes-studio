@@ -46,6 +46,21 @@ describe('collections persistence', () => {
 		expect(loadLibraryPersistence().collections.map((c) => c.id)).toEqual(['a']);
 	});
 
+	it('keeps only valid context sources', () => {
+		stubLocalStorage({
+			contextSources: {
+				track_audio_lane: 'drums',
+				track_midi_lane: 'collection:c1',
+				track_empty: 'nonsense',
+				not_a_context: 'audio'
+			}
+		});
+		expect(loadLibraryPersistence().contextSources).toEqual({
+			track_audio_lane: 'drums',
+			track_midi_lane: 'collection:c1'
+		});
+	});
+
 	it('keeps old saves without collections working', () => {
 		stubLocalStorage({ favoriteIds: ['x'] });
 		const loaded = loadLibraryPersistence();

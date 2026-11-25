@@ -14,6 +14,7 @@ import {
 	createCollection,
 	filterAssets
 } from './collections';
+import { sourceForContext } from './laneFocus';
 import { mergeTags, withoutTag, withTag } from './tags';
 import { libraryPreviewPlayer } from './previewPlayer';
 import { libraryMidiPreviewPlayer } from './midiPreview';
@@ -29,8 +30,10 @@ import {
 	assetFromScanEntry,
 	type LibraryAsset,
 	type LibraryCollection,
+	type LibraryContextSources,
 	type LibraryIndexerState,
 	type LibraryKindFilter,
+	type LibraryOpenContext,
 	type LibraryScanEntry,
 	type LibrarySourceId
 } from './types';
@@ -51,6 +54,7 @@ export interface LibraryState {
 	userTags: Record<string, string[]>;
 	collections: LibraryCollection[];
 	kindFilter: LibraryKindFilter | null;
+	contextSources: LibraryContextSources;
 	indexer: LibraryIndexerState;
 	indexerProgress: number | null;
 	indexerError: string | null;
@@ -95,6 +99,7 @@ function initialState(): LibraryState {
 		userTags: persisted.userTags,
 		collections: persisted.collections,
 		kindFilter: null,
+		contextSources: persisted.contextSources,
 		indexer: 'idle',
 		indexerProgress: null,
 		indexerError: null,
@@ -109,7 +114,8 @@ function persistSlice(state: LibraryState): void {
 		indexedFolders: state.indexedFolders,
 		lastSource: state.source,
 		userTags: state.userTags,
-		collections: state.collections
+		collections: state.collections,
+		contextSources: state.contextSources
 	};
 	saveLibraryPersistence(data);
 }
@@ -326,8 +332,12 @@ function createLibraryStore() {
 			update((s) => {
 				if (!s.collections.some((collection) => collection.id === id)) return s;
 				const source = collectionSourceId(id);
+				const contextSources = Object.fromEntries(
+					Object.entries(s.contextSources).filter(([, remembered]) => remembered !== source)
+				);
 				const next = {
 					...s,
+					contextSources,
 					collections: s.collections.filter((collection) => collection.id !== id),
 					source: s.source === source ? ('audio' as const) : s.source,
 					selectedId: s.source === source ? null : s.selectedId
@@ -385,6 +395,31 @@ function createLibraryStore() {
 				const userTags = { ...s.userTags, [id]: remaining };
 				if (remaining.length === 0) delete userTags[id];
 				const next = { ...s, userTags };
+				persistSlice(next);
+				return next;
+			});
+		},
+
+		sourceForContext(context: LibraryOpenContext): LibrarySourceId {
+			const s = get({ subscribe });
+			return sourceForContext(context, s.contextSources, s.collections);
+		},
+
+		/** Opt-in: this context opens on the source currently shown. */
+		rememberContextSource(context: LibraryOpenContext) {
+			update((s) => {
+				const next = { ...s, contextSources: { ...s.contextSources, [context]: s.source } };
+				persistSlice(next);
+				return next;
+			});
+		},
+
+		restoreContextSource(context: LibraryOpenContext) {
+			update((s) => {
+				if (!(context in s.contextSources)) return s;
+				const contextSources = { ...s.contextSources };
+				delete contextSources[context];
+				const next = { ...s, contextSources };
 				persistSlice(next);
 				return next;
 			});

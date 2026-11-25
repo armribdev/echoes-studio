@@ -32,6 +32,20 @@ export type LibraryOpenContext =
 	| 'track_midi_lane'
 	| 'playhead_insert';
 
+export const LIBRARY_OPEN_CONTEXTS: LibraryOpenContext[] = [
+	'track_empty',
+	'track_audio_lane',
+	'track_midi_lane',
+	'playhead_insert'
+];
+
+/** Source the user chose to open each context on (opt-in; absent = factory default). */
+export type LibraryContextSources = Partial<Record<LibraryOpenContext, LibrarySourceId>>;
+
+export function isLibraryOpenContext(value: string): value is LibraryOpenContext {
+	return (LIBRARY_OPEN_CONTEXTS as readonly string[]).includes(value);
+}
+
 /** Drop-target lane focus — not a stored track kind (UX §4). */
 export type LaneFocus = 'audio' | 'midi' | 'neutral';
 

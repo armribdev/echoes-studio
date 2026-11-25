@@ -17,6 +17,7 @@ export {
 	laneFocusForTrack,
 	openContextFromLaneFocus,
 	defaultSourceForContext,
+	sourceForContext,
 	canDropAssetOnLane
 } from './laneFocus';
 export { resolveLibraryMidiNotes, beatsToSeconds, libraryAssetLengthSec } from './resolveMidi';

@@ -136,8 +136,17 @@ The UI still needs a drop target notion. Define **lane focus**:
 | `fx_slot`          | Effect `+`                | _(deferred)_                    | —                                        | Load effect       |
 | `drum_pad`         | Drum pad `+` _(Phase 3)_  | `drums`                         | drums tag                                | Assign hit        |
 
-**Memory (Phase 4):** optional “Use current selections for this context”. Factory
-defaults above always remain restorable. Never require configuration before use.
+**Memory (Phase 4, 2026-11-26).** Opt-in, per context, on the pop-up only (the
+dock has no context). When the source shown differs from the one the context
+opens on, the pop-up header offers « Use for this context »: next time that
+context opens on this source (a built-in source or a collection). « Restore
+default » appears once a context has a remembered source and puts the factory
+source back. Nothing is learned silently: only that click stores a choice, and
+only the source is remembered (the search text is kept across opens as before).
+Deleting a collection forgets the contexts that pointed to it; a missing
+collection falls back to the factory source. Stored with the favorites
+(`echoes.library.v1`, `contextSources`). Factory defaults above always remain
+restorable. Never require configuration before use.
 
 ---
 

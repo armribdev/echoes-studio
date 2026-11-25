@@ -4,7 +4,7 @@
 	import { focusTrap } from '../frontend/focusTrap';
 	import { appInert, portal } from '../frontend/portal';
 	import LibraryBrowser from './LibraryBrowser.svelte';
-	import { libraryStore, libraryPopup, defaultSourceForContext } from '../frontend/library';
+	import { libraryStore, libraryPopup } from '../frontend/library';
 	import { t } from 'svelte-i18n';
 
 	let rootEl: HTMLDivElement | null = null;
@@ -17,8 +17,8 @@
 	const POPUP_H = 560;
 
 	onMount(() => {
-		// Context default source (Bitwig); keep the user's query.
-		libraryStore.setSource(defaultSourceForContext(popup.context));
+		// Source chosen for this context (factory default until the user opts in); keep the query.
+		libraryStore.setSource(libraryStore.sourceForContext(popup.context));
 		void tick().then(() => {
 			if (!rootEl) return;
 			const rect = rootEl.getBoundingClientRect();
@@ -53,6 +53,7 @@
 >
 	<LibraryBrowser
 		variant="popup"
+		context={popup.context}
 		autofocus
 		insertTrackId={popup.trackId}
 		onInserted={close}

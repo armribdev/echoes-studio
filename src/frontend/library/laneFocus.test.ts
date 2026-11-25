@@ -3,8 +3,10 @@ import {
 	canDropAssetOnLane,
 	defaultSourceForContext,
 	laneFocusForTrack,
-	openContextFromLaneFocus
+	openContextFromLaneFocus,
+	sourceForContext
 } from './laneFocus';
+import { createCollection } from './collections';
 
 describe('laneFocusForTrack', () => {
 	it('classifies empty, audio-only, midi-only, and mixed tracks', () => {
@@ -26,6 +28,27 @@ describe('openContextFromLaneFocus / defaultSourceForContext', () => {
 		expect(defaultSourceForContext('track_midi_lane')).toBe('chords');
 		expect(defaultSourceForContext('track_audio_lane')).toBe('audio');
 		expect(defaultSourceForContext('track_empty')).toBe('audio');
+	});
+});
+
+describe('sourceForContext', () => {
+	const collection = createCollection('Techno', 'techno', null);
+	const collectionSource = `collection:${collection.id}` as const;
+
+	it('uses the factory default until the user chooses', () => {
+		expect(sourceForContext('track_midi_lane', {}, [])).toBe('chords');
+	});
+
+	it('uses the source remembered for that context only', () => {
+		const remembered = { track_audio_lane: 'drums' } as const;
+		expect(sourceForContext('track_audio_lane', remembered, [])).toBe('drums');
+		expect(sourceForContext('track_empty', remembered, [])).toBe('audio');
+	});
+
+	it('follows a remembered collection while it exists', () => {
+		const remembered = { track_empty: collectionSource } as const;
+		expect(sourceForContext('track_empty', remembered, [collection])).toBe(collectionSource);
+		expect(sourceForContext('track_empty', remembered, [])).toBe('audio');
 	});
 });
 

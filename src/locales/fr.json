@@ -243,6 +243,10 @@
 		"collectionNamePlaceholder": "Nom de la collection",
 		"saveCollection": "Enregistrer comme collection",
 		"deleteCollection": "Supprimer la collection",
+		"contextUse": "Utiliser pour ce contexte",
+		"contextUseTitle": "La prochaine fois, ouvrir la bibliothèque sur cette source depuis ici",
+		"contextRestore": "Rétablir par défaut",
+		"contextRestoreTitle": "Rouvrir ce contexte sur sa source d'origine",
 		"sources": {
 			"audio": "Audio",
 			"favorites": "Favoris",

@@ -3,7 +3,9 @@ import { normalizeTag } from './tags';
 import {
 	isLibraryBuiltInSourceId,
 	isLibraryKindFilter,
+	isLibraryOpenContext,
 	type LibraryCollection,
+	type LibraryContextSources,
 	type LibrarySourceId
 } from './types';
 
@@ -18,6 +20,8 @@ export interface LibraryPersistence {
 	/** Tags the user gave to an asset, by asset id. */
 	userTags: Record<string, string[]>;
 	collections: LibraryCollection[];
+	/** Sources the user chose to open each context on. */
+	contextSources: LibraryContextSources;
 }
 
 function defaultPersistence(): LibraryPersistence {
@@ -27,7 +31,8 @@ function defaultPersistence(): LibraryPersistence {
 		indexedFolders: [],
 		lastSource: 'audio',
 		userTags: {},
-		collections: []
+		collections: [],
+		contextSources: {}
 	};
 }
 
@@ -79,6 +84,18 @@ function lastSourceFrom(
 		: 'audio';
 }
 
+function contextSourcesFrom(value: unknown): LibraryContextSources {
+	const contextSources: LibraryContextSources = {};
+	if (typeof value !== 'object' || value === null) return contextSources;
+	for (const [context, source] of Object.entries(value)) {
+		if (!isLibraryOpenContext(context) || typeof source !== 'string') continue;
+		if (isLibraryBuiltInSourceId(source) || collectionIdOfSource(source as LibrarySourceId)) {
+			contextSources[context] = source as LibrarySourceId;
+		}
+	}
+	return contextSources;
+}
+
 export function loadLibraryPersistence(): LibraryPersistence {
 	if (!canUseStorage()) return defaultPersistence();
 	try {
@@ -92,7 +109,8 @@ export function loadLibraryPersistence(): LibraryPersistence {
 			indexedFolders: stringList(parsed.indexedFolders),
 			lastSource: lastSourceFrom(parsed.lastSource, collections),
 			userTags: userTagsFrom(parsed.userTags),
-			collections
+			collections,
+			contextSources: contextSourcesFrom(parsed.contextSources)
 		};
 	} catch {
 		return defaultPersistence();

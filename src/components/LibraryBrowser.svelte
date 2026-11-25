@@ -1,4 +1,5 @@
 <script lang="ts">
+	import Button from './Button.svelte';
 	import CustomSelect from './CustomSelect.svelte';
 	import SearchInput from './SearchInput.svelte';
 	import { onMount } from 'svelte';
@@ -11,6 +12,7 @@
 		libraryStore,
 		libraryVisibleAssets,
 		libraryHasIndexedContent,
+		sourceForContext,
 		canSaveAsCollection,
 		collectionForSource,
 		collectionSourceId,
@@ -27,6 +29,7 @@
 		requestAudioFileDragDrop,
 		type LibraryAsset,
 		type LibraryKindFilter,
+		type LibraryOpenContext,
 		type LibrarySourceId
 	} from '../frontend/library';
 	import { tempo } from '../stores/tempo';
@@ -46,6 +49,8 @@
 	export let onInserted: (() => void) | undefined = undefined;
 	/** Pop-up: Esc with empty query (or close request). */
 	export let onRequestClose: (() => void) | undefined = undefined;
+	/** Pop-up only: the context it was opened from, for the opt-in default source. */
+	export let context: LibraryOpenContext | null = null;
 
 	let searchInputEl: HTMLInputElement | undefined;
 	let resultsEl: HTMLDivElement | null = null;
@@ -268,6 +273,11 @@
 		drums: 'library.noDrumPatterns'
 	};
 
+	$: contextRemembered = context != null && $libraryStore.contextSources[context] !== undefined;
+	$: canRememberContext =
+		context != null &&
+		$libraryStore.source !==
+			sourceForContext(context, $libraryStore.contextSources, $libraryStore.collections);
 	$: activeCollection = collectionForSource($libraryStore.collections, $libraryStore.source);
 	$: kindOptions = [
 		{ value: 'all', label: $t('library.kinds.all') },
@@ -376,6 +386,28 @@
 			<span class="chrome-status chrome-status--error" title={$libraryStore.indexerError ?? ''}>
 				{$t('library.indexError')}
 			</span>
+		{/if}
+		{#if context}
+			<div class="chrome-actions">
+				{#if canRememberContext}
+					<Button
+						variant="ghost"
+						title={$t('library.contextUseTitle')}
+						on:click={() => context && libraryStore.rememberContextSource(context)}
+					>
+						{$t('library.contextUse')}
+					</Button>
+				{/if}
+				{#if contextRemembered}
+					<Button
+						variant="ghost"
+						title={$t('library.contextRestoreTitle')}
+						on:click={() => context && libraryStore.restoreContextSource(context)}
+					>
+						{$t('library.contextRestore')}
+					</Button>
+				{/if}
+			</div>
 		{/if}
 		{#if variant === 'popup' && onRequestClose}
 			<button
@@ -588,6 +620,13 @@
 		&--error {
 			color: $color-error;
 		}
+	}
+
+	.chrome-actions {
+		display: flex;
+		align-items: center;
+		gap: $space-4;
+		margin-left: auto;
 	}
 
 	.close-btn {
