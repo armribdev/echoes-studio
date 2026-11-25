@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { withRemotePages } from './remotePages';
+import { normalisedValue, pageParams, withRemotePages } from './remotePages';
 import type { PluginParamInfo } from './targets';
 
 function param(native_id: number, module = 'Other'): PluginParamInfo {
@@ -59,5 +59,30 @@ describe('withRemotePages', () => {
 		expect(withRemotePages(params, [{ section: '', name: 'Ghost', native_ids: [99] }])).toBe(
 			params
 		);
+	});
+});
+
+describe('pageParams', () => {
+	const params = [param(1), param(2), param(3)];
+
+	it('lists the parameters of a page in the plugin order and skips unknown ones', () => {
+		const page = { section: '', name: 'P', native_ids: [3, 99, 1] };
+		expect(pageParams(page, params).map((p) => p.native_id)).toEqual([3, 1]);
+	});
+});
+
+describe('normalisedValue', () => {
+	const cutoff = { ...param(1), min: 20, max: 20020 };
+
+	it('places a plain value in the range of the parameter', () => {
+		expect(normalisedValue(cutoff, 20)).toBe(0);
+		expect(normalisedValue(cutoff, 10020)).toBe(0.5);
+		expect(normalisedValue(cutoff, 20020)).toBe(1);
+	});
+
+	it('stays inside 0..1 and survives an empty range', () => {
+		expect(normalisedValue(cutoff, -5)).toBe(0);
+		expect(normalisedValue(cutoff, 99999)).toBe(1);
+		expect(normalisedValue({ ...cutoff, max: 20 }, 20)).toBe(0);
 	});
 });

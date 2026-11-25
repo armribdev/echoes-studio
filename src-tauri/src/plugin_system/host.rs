@@ -963,6 +963,13 @@ impl PluginHost {
         })
     }
 
+    /// Current value of one parameter of a loaded placement, in the units
+    /// [`plugin_params`](Self::plugin_params) reports.  `None` when the placement is
+    /// unknown, the format has no parameters, or the plugin is busy in a block.
+    pub fn plugin_param_value(&self, instance_key: &str, native_id: u32) -> Option<f64> {
+        self.records.get(instance_key)?.instance.param_value(native_id)
+    }
+
     /// The plugin's own text for a value of one parameter (`-6.0 dB`), in the
     /// units [`plugin_params`](Self::plugin_params) reports; `None` when the
     /// plugin has no text for it or is busy in a block.

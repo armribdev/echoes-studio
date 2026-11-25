@@ -132,6 +132,19 @@ export function pluginPlacements(
 	return placements;
 }
 
+/** The pages a plugin offers first; `null` when it cannot be asked right now (retry). */
+export async function fetchPluginRemotePages(
+	placementKey: string
+): Promise<PluginRemotePage[] | null> {
+	try {
+		return await invoke<PluginRemotePage[] | null>('get_plugin_remote_pages', {
+			instanceKey: placementKey
+		});
+	} catch {
+		return null;
+	}
+}
+
 /**
  * Parameters of a loaded plugin placement; empty when the plugin is not loaded.
  * The pages the plugin offers first (`clap.remote-controls`) lead the list.
@@ -140,9 +153,7 @@ export async function fetchPluginParams(placementKey: string): Promise<PluginPar
 	try {
 		const [params, pages] = await Promise.all([
 			invoke<PluginParamInfo[]>('get_plugin_params', { instanceKey: placementKey }),
-			invoke<PluginRemotePage[] | null>('get_plugin_remote_pages', {
-				instanceKey: placementKey
-			}).catch(() => null)
+			fetchPluginRemotePages(placementKey)
 		]);
 		return pages ? withRemotePages(params, pages) : params;
 	} catch {

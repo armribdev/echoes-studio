@@ -225,6 +225,28 @@ fn sandboxed_effect_processes_parameters_and_reports_latency() {
     assert!(run_block(&mut node).iter().all(|&s| s == 0.25));
 }
 
+/// A value the app sets reaches the plugin and reads back in the plugin's own units.
+fn a_value_set_by_the_app_reads_back_in_plain_units(sandboxed: bool) {
+    let mut host = host();
+    let mut node = prepared(&mut host, sandboxed, false);
+    assert_eq!(host.plugin_param_value(KEY, GAIN), Some(1.0));
+
+    assert!(host.push_plugin_param(KEY, GAIN, 0.25).unwrap());
+    run_block(&mut node);
+    assert_eq!(host.plugin_param_value(KEY, GAIN), Some(0.5));
+    assert_eq!(host.plugin_param_value("unknown", GAIN), None);
+}
+
+#[test]
+fn a_value_set_by_the_app_reads_back_in_process() {
+    a_value_set_by_the_app_reads_back_in_plain_units(false);
+}
+
+#[test]
+fn a_value_set_by_the_app_reads_back_sandboxed() {
+    a_value_set_by_the_app_reads_back_in_plain_units(true);
+}
+
 /// The plugin switches its latency and requests a restart from `process`; the
 /// recompile that follows reactivates the same instance and reads the new value.
 fn a_latency_change_is_applied_by_the_next_recompile(sandboxed: bool) {

@@ -15,7 +15,7 @@
 	/** Output only: follows the knob while it is being dragged. */
 	export let live: number = value;
 
-	const dispatch = createEventDispatcher<{ release: number }>();
+	const dispatch = createEventDispatcher<{ change: number; release: number }>();
 
 	function toPosition(v: number): number {
 		if (scale === 'log') return Math.log(v / min) / Math.log(max / min);
@@ -40,6 +40,7 @@
 		defaultValue={toPosition(defaultValue)}
 		bind:value={position}
 		{color}
+		on:change={(e) => dispatch('change', fromPosition(e.detail))}
 		on:release={(e) => dispatch('release', fromPosition(e.detail))}
 	/>
 	<span class="value">{format(live)}</span>
@@ -55,6 +56,14 @@
 		flex-direction: column;
 		align-items: center;
 		gap: 1px;
+	}
+
+	.label,
+	.value {
+		max-width: 100%;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
 	}
 
 	.label {

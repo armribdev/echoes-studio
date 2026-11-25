@@ -62,6 +62,34 @@ export async function pluginParamText(
 	return text;
 }
 
+/** Current values in the units the parameter list reports; `null` for one that cannot be read now. */
+export async function fetchPluginParamValues(
+	placementKey: string,
+	nativeIds: number[]
+): Promise<(number | null)[]> {
+	try {
+		return await invoke<(number | null)[]>('get_plugin_param_values', {
+			instanceKey: placementKey,
+			nativeIds
+		});
+	} catch {
+		return nativeIds.map(() => null);
+	}
+}
+
+/** Sets a parameter like the plugin's own window; `normalised` is `0..1`. */
+export async function setPluginParam(
+	placementKey: string,
+	nativeId: number,
+	normalised: number
+): Promise<void> {
+	try {
+		await invoke('set_plugin_param', { instanceKey: placementKey, nativeId, normalised });
+	} catch (error) {
+		console.error(error);
+	}
+}
+
 /** A plugin changed its parameter list or the text of its values: ask again. */
 function watchRescans(): void {
 	if (watchingRescans) return;

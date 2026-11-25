@@ -3,6 +3,7 @@
 	import Knob from './Knob.svelte';
 	import PluginPicker from './PluginPicker.svelte';
 	import PresetPicker from './PresetPicker.svelte';
+	import RemotePageKnobs from './RemotePageKnobs.svelte';
 	import SidechainPicker from './SidechainPicker.svelte';
 	import EffectContextMenu from './EffectContextMenu.svelte';
 	import { modulatorColor } from '../frontend/modulation/colors';
@@ -663,6 +664,9 @@
 						</div>
 						{#if effectFormat(effect) === 'CLAP' || effectFormat(effect) === 'VST3'}
 							<PresetPicker instanceKey={effect.id} />
+						{/if}
+						{#if effectFormat(effect) === 'CLAP'}
+							<RemotePageKnobs instanceKey={effect.id} />
 						{/if}
 						{#if hasSidechainInput(effect, $plugins)}
 							<SidechainPicker

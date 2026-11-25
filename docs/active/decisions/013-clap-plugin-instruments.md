@@ -437,3 +437,40 @@ known to `clap.params`); Vital, Dexed, Odin 2, Six Sines, Cardinal, Zebralette 3
 Effects answer none (the extension id found in their binaries comes from the CLAP headers, not
 from an implementation). **Hand-tested 2026-11-25**: the automation picker of a Surge XT (CLAP) track
 lists the pages first.
+
+## Amendment 2026-11-25 — knobs for the pages of `clap.remote-controls`
+
+The pages read above also show as a row of knobs, under the PRESET picker of a CLAP effect
+and of a CLAP instrument (`RemotePageKnobs.svelte`; the left panel, the only place these two
+cards are shown, is always compact): the page name between `‹` `›` when there are several
+pages, then up to eight `ParamKnob` on two rows of four, because the panel is 140 to 280 px wide. A plugin
+without pages shows nothing; VST3 has none.
+
+**First way for the app to set a plugin parameter.** Until now a plugin parameter moved only
+from the plugin's own window, automation or modulation. Two commands are new:
+`get_plugin_param_values` (current values in the units of `get_plugin_params`, one read per
+parameter under the FFI gate) and `set_plugin_param`. The user chose that a knob behaves like
+the plugin's own window (2026-11-25), so:
+
+- the value goes through the existing path of `push_plugin_param` (SPSC queue, ADR-008) and
+  the modulation baseline shadow (`set_plugin_param_shadow`, as `HotEffectUpdate::Plugin`
+  does), normalised `0..1` computed from the parameter's plain range (`normalisedValue`);
+- the project is marked modified, but no `plugin-state-edited` event is sent, so the knob and
+  the preset picker are not asked to read back their own change;
+- **no project event, no undo.** The value lives in the plugin state saved with the project
+  (ADR-010), as for an edit made in the plugin's window; Ctrl+Z does not undo it. The frontend
+  keeps no copy of its own: it reads the values again when a page opens, and 300 ms after a
+  `plugin-state-edited` (plugin window, preset load) unless the user touched a knob in the last
+  second.
+- while a knob is dragged, values are sent every 30 ms (the latest one), and once on release;
+  a double click sends the plugin's default.
+
+**Limits.** A parameter driven by automation or modulation shows the value read at the last
+refresh, not a moving one. The readout is the plugin's own text (`value_to_text`) of the last
+value sent. Stepped or enumerated parameters are plain knobs. No change to the audio thread,
+the block message or the render hashes.
+
+Tests: `plugin_system/sandbox_tests.rs` (`a_value_set_by_the_app_reads_back_*`, in process and
+sandboxed), `remotePages.test.ts` (`pageParams`, `normalisedValue`). **Hand-tested 2026-11-25**
+with Surge XT (CLAP): the knobs show under PRESET and work. No automated test covers the
+component itself.

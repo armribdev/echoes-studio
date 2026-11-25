@@ -848,7 +848,9 @@ without crashing). The render harness is unchanged: it holds no VST3 plugin.
 `CLAP_INVALID_ID` = empty slot) under the FFI gate, `PluginInstance::remote_pages` is its
 single entry (in process, or `Op::RemoteControls` to the bridge; VST3 answers none). The host
 does not answer `clap_host_remote_controls`. The picker shows the parameters of the pages
-first (ADR-013 amendment 2026-11-25). Off the audio thread; the block message is untouched.
+first, and as knobs under the preset picker (ADR-013 amendments 2026-11-25; the app sets a
+parameter with `set_plugin_param`, like the plugin's own window). Off the audio thread; the
+block message is untouched.
 
 **Host `clap.note-ports` and `clap.note-name` (2026-10-14).** Checked against
 `clap/ext/note-ports.h` and `note-name.h` (no compat id for either).

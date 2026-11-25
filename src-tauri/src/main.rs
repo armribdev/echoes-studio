@@ -98,6 +98,8 @@ fn main() {
             get_unavailable_plugins,
             get_plugin_params,
             get_plugin_param_text,
+            get_plugin_param_values,
+            set_plugin_param,
             get_plugin_note_names,
             get_plugin_remote_pages,
             list_plugin_presets,
@@ -687,6 +689,52 @@ fn get_plugin_param_text(
     Ok(engine
         .plugin_host
         .plugin_param_text(&instance_key, native_id, value))
+}
+
+/// Current values of some parameters, in the units `get_plugin_params` reports; a
+/// `None` entry is a parameter that could not be read right now (retry).
+#[tauri::command]
+fn get_plugin_param_values(
+    state: tauri::State<'_, AppState>,
+    instance_key: String,
+    native_ids: Vec<u32>,
+) -> Result<Vec<Option<f64>>, String> {
+    let engine = state.audio_engine.lock().map_err(|e| e.to_string())?;
+    Ok(native_ids
+        .into_iter()
+        .map(|native_id| engine.plugin_host.plugin_param_value(&instance_key, native_id))
+        .collect())
+}
+
+/// Sets one parameter as the plugin's own window would: the value goes to the
+/// plugin through the parameter queue and the project is marked as modified, its
+/// value being saved with the plugin state (ADR-010).  `normalised` is `0..1`.
+/// `false` when the queue was full: the caller sends the value again.
+#[tauri::command]
+fn set_plugin_param(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    instance_key: String,
+    native_id: u32,
+    normalised: f32,
+) -> Result<bool, String> {
+    let pushed = {
+        let engine = state.audio_engine.lock().map_err(|e| e.to_string())?;
+        let pushed = engine
+            .plugin_host
+            .push_plugin_param(&instance_key, native_id, normalised)
+            .map_err(|e| e.to_string())?;
+        if pushed {
+            state
+                .live_params
+                .set_plugin_param_shadow(&instance_key, native_id, normalised);
+        }
+        pushed
+    };
+    if pushed && !state.dirty.swap(true, std::sync::atomic::Ordering::Relaxed) {
+        menu_state::refresh_menu(&app, &state);
+    }
+    Ok(pushed)
 }
 
 /// The names a plugin gives to notes (`clap.note-name`), e.g. drum pads; `None`

@@ -3,6 +3,7 @@
 	import SamplerPads from './SamplerPads.svelte';
 	import ArpeggiatorPanel from './ArpeggiatorPanel.svelte';
 	import PresetPicker from './PresetPicker.svelte';
+	import RemotePageKnobs from './RemotePageKnobs.svelte';
 	import EffectContextMenu from './EffectContextMenu.svelte';
 	import { preferences } from '../stores/preferences';
 	import type { PluginInfo } from '../stores/plugins';
@@ -260,6 +261,9 @@
 
 	{#if hasPresets && canOpenEditor}
 		<PresetPicker instanceKey={editorKey} />
+	{/if}
+	{#if isClap && canOpenEditor}
+		<RemotePageKnobs instanceKey={editorKey} />
 	{/if}
 
 	<ArpeggiatorPanel {trackId} {arpeggiator} />
