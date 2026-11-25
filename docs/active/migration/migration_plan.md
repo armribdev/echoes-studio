@@ -497,7 +497,7 @@ ne bloque rien.
   `arm_track_for_midi_input` (hors `CommandEnvelope`, comme
   `preview_midi_note`).
 - Frontend : `src/lib/midiBackend.ts`, `src/stores/armedTrack.ts`,
-  section MIDI de `SettingsPanel.svelte`, bouton « Arm » dans
+  section MIDI de `SettingsPanel.svelte` (`settings/SettingsMidiSection.svelte`), bouton « Arm » dans
   `TrackStrip.svelte`.
 
 ### Risques RT
