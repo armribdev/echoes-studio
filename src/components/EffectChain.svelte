@@ -328,24 +328,13 @@
 
 	.fx-panel {
 		width: 100%;
-
-		&.compact .fx-header {
-			padding: 3px 5px;
-		}
-		&.compact .slot-params {
-			padding: 4px 5px 5px;
-		}
-		&.compact .empty {
-			padding: 6px 5px;
-			font-size: 9px;
-		}
 	}
 
 	.fx-header {
 		display: flex;
 		align-items: center;
-		gap: 4px;
-		padding: 5px 6px;
+		gap: $space-2;
+		padding: $space-2 $panel-inset;
 		border-bottom: 1px solid $border-faint;
 		position: sticky;
 		top: 0;
@@ -355,11 +344,11 @@
 
 	.fx-title {
 		flex: 1;
-		font-size: 10px;
+		font-size: 11px;
 		font-weight: 700;
 		font-family: $font-mono;
 		letter-spacing: 0.08em;
-		color: $text-muted;
+		color: $text-secondary;
 		text-transform: uppercase;
 	}
 
@@ -371,7 +360,7 @@
 		font-size: 10px;
 		color: $text-faint;
 		text-align: center;
-		padding: 12px 8px;
+		padding: $space-3 $panel-inset;
 		margin: 0;
 	}
 
@@ -389,7 +378,10 @@
 	}
 
 	.slot-params {
-		padding: 6px 8px 8px;
+		display: flex;
+		flex-direction: column;
+		gap: $space-3;
+		padding: $space-3 $panel-inset;
 		background: $black-wash;
 	}
 </style>

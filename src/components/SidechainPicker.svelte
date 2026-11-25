@@ -54,8 +54,7 @@
 	.sidechain-row {
 		display: flex;
 		align-items: center;
-		gap: 6px;
-		padding: 0 4px 8px;
+		gap: $space-3;
 
 		&.disabled {
 			opacity: 0.5;
@@ -76,7 +75,7 @@
 		flex: 1;
 		min-width: 0;
 		height: $ctrl-height-xs;
-		padding-left: 7px;
+		padding-left: $space-4;
 		font-size: 10px;
 	}
 </style>

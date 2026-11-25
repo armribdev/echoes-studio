@@ -111,3 +111,15 @@ $ctrl-height-sm: 24px;
 $ctrl-height: 30px;
 $menu-item-height: 28px;
 $radius-control: 6px;
+
+// ── Spacing ───────────────────────────────────────────────────────────────────
+// One scale for padding / margin / gap. `$panel-inset` is the horizontal gutter shared by
+// every row of a side panel, so all rows line up on the same left and right edge.
+$space-1: 2px;
+$space-2: 4px;
+$space-3: 6px;
+$space-4: 8px;
+$space-5: 12px;
+$space-6: 16px;
+$space-7: 24px;
+$panel-inset: $space-4;

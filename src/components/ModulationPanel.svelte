@@ -286,34 +286,19 @@
 	.mod-panel {
 		width: 100%;
 
-		&.compact .section-header {
-			padding: 3px 5px;
-		}
-		&.compact .route-row {
-			padding: 2px 5px 2px 9px;
-			gap: 3px;
-		}
-		&.compact .empty {
-			padding: 6px 5px;
-			font-size: 9px;
-		}
 		&.compact .depth-slider {
 			width: 40px;
 		}
 		&.compact .depth-val {
 			min-width: 24px;
-			font-size: 8px;
-		}
-		&.compact .route-tgt {
-			font-size: 8px;
 		}
 	}
 
 	.section-header {
 		display: flex;
 		align-items: center;
-		gap: 4px;
-		padding: 5px 6px;
+		gap: $space-2;
+		padding: $space-2 $panel-inset;
 		border-bottom: 1px solid $border-faint;
 		background: $panel-background-color;
 		position: sticky;
@@ -323,11 +308,11 @@
 
 	.section-title {
 		flex: 1;
-		font-size: 10px;
+		font-size: 11px;
 		font-weight: 700;
 		font-family: $font-mono;
 		letter-spacing: 0.08em;
-		color: $text-muted;
+		color: $text-secondary;
 		text-transform: uppercase;
 	}
 
@@ -343,7 +328,7 @@
 		font-size: 10px;
 		color: $text-faint;
 		text-align: center;
-		padding: 12px 8px;
+		padding: $space-3 $panel-inset;
 		margin: 0;
 	}
 
@@ -361,8 +346,8 @@
 	.route-row {
 		display: flex;
 		align-items: center;
-		gap: 5px;
-		padding: 5px 6px 5px 12px;
+		gap: $space-2;
+		padding: $space-1 $panel-inset $space-1 ($panel-inset + $space-2 - 2px);
 		border-left: 2px solid transparent;
 		&:hover {
 			background: $surface-1;
@@ -371,7 +356,7 @@
 
 	.route-tgt {
 		flex: 1;
-		font-size: 9px;
+		font-size: 10px;
 		font-family: $font-mono;
 		color: $text-subtle;
 		overflow: hidden;

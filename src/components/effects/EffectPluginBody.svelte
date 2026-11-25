@@ -102,8 +102,7 @@
 		display: flex;
 		flex-direction: column;
 		align-items: flex-start;
-		gap: 6px;
-		padding: 4px 2px;
+		gap: $space-3;
 	}
 
 	.missing-help {
@@ -120,13 +119,12 @@
 	.plugin-editor-row {
 		display: flex;
 		justify-content: center;
-		gap: 6px;
-		padding: 8px 4px;
+		gap: $space-3;
 	}
 
 	.open-editor-btn {
 		@include chip($ctrl-height-sm);
-		padding: 0 14px;
+		padding: 0 $space-6;
 		font-weight: 600;
 
 		&.active {
@@ -136,6 +134,6 @@
 
 	.open-editor-btn.compact {
 		height: $ctrl-height-xs;
-		padding: 0 8px;
+		padding: 0 $space-4;
 	}
 </style>

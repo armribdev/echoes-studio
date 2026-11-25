@@ -255,11 +255,15 @@
 		<p class="hint">Synthé intégré par défaut — choisissez un instrument CLAP (ex. Vital).</p>
 	{/if}
 
-	{#if hasPresets && canOpenEditor}
-		<PresetPicker instanceKey={editorKey} />
-	{/if}
-	{#if isClap && canOpenEditor}
-		<RemotePageKnobs instanceKey={editorKey} />
+	{#if canOpenEditor && (hasPresets || isClap)}
+		<div class="instr-extras">
+			{#if hasPresets}
+				<PresetPicker instanceKey={editorKey} />
+			{/if}
+			{#if isClap}
+				<RemotePageKnobs instanceKey={editorKey} />
+			{/if}
+		</div>
 	{/if}
 
 	<ArpeggiatorPanel {trackId} {arpeggiator} />
@@ -272,30 +276,17 @@
 	.instr-panel {
 		width: 100%;
 
-		&.compact .instr-header {
-			padding: 4px 5px 4px 0;
-		}
-
-		&.compact .instr-slot {
-			padding: 4px 5px;
-		}
-
-		&.compact .instr-name {
-			font-size: 10px;
-		}
-
 		&.compact .change-btn {
 			min-width: 18px;
-			padding: 2px 5px;
+			padding: $space-1 $space-3;
 		}
 	}
 
 	.instr-header {
 		display: flex;
 		align-items: center;
-		gap: 4px;
-		padding: 5px 6px;
-		border-bottom: 1px solid $border-faint;
+		gap: $space-2;
+		padding: $space-2 $panel-inset $space-2 0;
 		background: $panel-background-color;
 	}
 
@@ -305,12 +296,13 @@
 		background: var(--track-color, $accent-color);
 		border-radius: 0 2px 2px 0;
 		flex-shrink: 0;
+		margin-right: $panel-inset - 3px - $space-2;
 	}
 
 	.track-name {
 		flex: 1;
 		min-width: 0;
-		font-size: 10px;
+		font-size: 12px;
 		font-weight: 600;
 		color: $text-color;
 		white-space: nowrap;
@@ -320,24 +312,23 @@
 
 	.instr-title {
 		flex: 1;
-		font-size: 10px;
+		font-size: 11px;
 		font-weight: 700;
 		font-family: $font-mono;
 		letter-spacing: 0.08em;
-		color: $text-muted;
+		color: $text-secondary;
 		text-transform: uppercase;
 	}
 
 	.change-btn {
-		@include chip($ctrl-height-sm);
+		@include chip($ctrl-height-xs);
 	}
 
 	.instr-slot {
 		display: flex;
 		align-items: center;
-		gap: 5px;
-		padding: 8px 6px;
-		border-bottom: 1px solid $border-faint;
+		gap: $space-2;
+		padding: $space-3 $panel-inset;
 	}
 
 	.instr-name {
@@ -351,21 +342,21 @@
 	}
 
 	.fmt-badge {
-		font-size: 7px;
+		font-size: 8px;
 		font-family: $font-mono;
 		font-weight: 700;
 		letter-spacing: 0.04em;
-		padding: 1px 4px;
+		padding: $space-1 $space-2;
 		border-radius: 2px;
 		color: $on-solid;
 		flex-shrink: 0;
 	}
 
 	.sandbox-badge {
-		font-size: 7px;
+		font-size: 8px;
 		font-family: $font-mono;
 		font-weight: 700;
-		padding: 1px 4px;
+		padding: $space-1 $space-2;
 		border-radius: 2px;
 		flex-shrink: 0;
 		border: 1px solid $success-border;
@@ -376,7 +367,7 @@
 	.gui-btn {
 		@include chip;
 		flex-shrink: 0;
-		padding: 0 5px;
+		padding: 0 $space-3;
 
 		&.active {
 			@include control-on;
@@ -396,12 +387,12 @@
 
 	.missing-badge {
 		flex-shrink: 0;
-		padding: 1px 5px;
+		padding: $space-1 $space-2;
 		border: 1px solid $error-border;
 		border-radius: $radius-xs;
 		background: $error-soft;
 		color: $color-error-text;
-		font-size: 8px;
+		font-size: 9px;
 		font-family: $font-mono;
 		font-weight: 700;
 		white-space: nowrap;
@@ -411,9 +402,8 @@
 		display: flex;
 		flex-direction: column;
 		align-items: flex-start;
-		gap: 6px;
-		padding: 6px 8px 8px;
-		border-bottom: 1px solid $border-faint;
+		gap: $space-3;
+		padding: $space-3 $panel-inset;
 	}
 
 	.missing-help {
@@ -427,24 +417,30 @@
 		@include chip($ctrl-height-sm);
 	}
 
+	.instr-extras {
+		display: flex;
+		flex-direction: column;
+		gap: $space-3;
+		padding: $space-3 $panel-inset;
+	}
+
 	.hint {
 		font-size: 9px;
 		color: $text-faint;
 		margin: 0;
-		padding: 6px 8px 8px;
+		padding: $space-3 $panel-inset;
 		line-height: 1.35;
 	}
 
 	.editor-row {
 		display: flex;
 		justify-content: center;
-		padding: 8px 6px;
-		border-bottom: 1px solid $border-faint;
+		padding: $space-3 $panel-inset;
 	}
 
 	.open-editor-btn {
 		@include chip($ctrl-height-sm);
-		padding: 0 14px;
+		padding: 0 $space-6;
 		font-weight: 600;
 
 		&.active {

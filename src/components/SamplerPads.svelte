@@ -175,20 +175,20 @@
 	.pads {
 		display: flex;
 		flex-direction: column;
-		gap: 3px;
-		padding: 6px;
+		gap: $space-2;
+		padding: $space-3 $panel-inset;
 	}
 
 	.pad-row {
 		display: grid;
 		grid-template-columns: repeat(4, 1fr);
-		gap: 3px;
+		gap: $space-2;
 	}
 
 	.pad {
 		height: 30px;
 		min-width: 0;
-		padding: 0 3px;
+		padding: 0 $space-2;
 		border: 1px solid $border-subtle;
 		border-radius: $radius-sm;
 		background: $panel-background-color;
@@ -226,8 +226,8 @@
 
 	.pad-file {
 		display: flex;
-		gap: 4px;
-		padding: 0 6px 4px;
+		gap: $space-2;
+		padding: 0 $panel-inset $space-2;
 	}
 
 	.file-btn,
@@ -242,14 +242,14 @@
 	.pad-knobs {
 		display: flex;
 		align-items: flex-end;
-		gap: 4px;
-		padding: 2px 6px 4px;
+		gap: $space-2;
+		padding: 0 $panel-inset $space-2;
 	}
 
 	.pad-selects {
 		display: flex;
-		gap: 4px;
-		padding: 0 6px 6px;
+		gap: $space-2;
+		padding: 0 $panel-inset $space-3;
 
 		:global(> *) {
 			flex: 1;

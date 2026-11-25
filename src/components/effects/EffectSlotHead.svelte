@@ -92,15 +92,15 @@
 	.slot-head {
 		display: flex;
 		align-items: center;
-		gap: 5px;
-		padding: 4px 6px;
+		gap: $space-2;
+		padding: $space-2 $panel-inset;
 	}
 
 	.slot-toggle {
 		flex: 1;
 		display: flex;
 		align-items: center;
-		gap: 5px;
+		gap: $space-2;
 		min-width: 0;
 		padding: 0;
 		border: none;
@@ -115,17 +115,13 @@
 		}
 	}
 
-	.slot-head.compact {
-		padding: 2px 5px;
-	}
-
 	.bypass {
 		@include power-button;
 	}
 
 	.slot-name {
 		flex: 1;
-		font-size: 10px;
+		font-size: 11px;
 		font-weight: 500;
 		color: $text-color;
 		user-select: none;
@@ -134,16 +130,12 @@
 		text-overflow: ellipsis;
 	}
 
-	.slot-head.compact .slot-name {
-		font-size: 9px;
-	}
-
 	.fmt-badge {
-		font-size: 7px;
+		font-size: 8px;
 		font-family: $font-mono;
 		font-weight: 700;
 		letter-spacing: 0.04em;
-		padding: 1px 4px;
+		padding: $space-1 $space-2;
 		border-radius: 2px;
 		color: $on-solid;
 		flex-shrink: 0;
@@ -166,10 +158,10 @@
 	}
 
 	.missing-badge {
-		font-size: 7px;
+		font-size: 9px;
 		font-family: $font-mono;
 		font-weight: 700;
-		padding: 1px 4px;
+		padding: $space-1 $space-2;
 		border-radius: 2px;
 		flex-shrink: 0;
 		white-space: nowrap;
@@ -194,10 +186,10 @@
 	}
 
 	.sandbox-badge {
-		font-size: 7px;
+		font-size: 8px;
 		font-family: $font-mono;
 		font-weight: 700;
-		padding: 1px 4px;
+		padding: $space-1 $space-2;
 		border-radius: 2px;
 		flex-shrink: 0;
 		border: 1px solid $success-border;

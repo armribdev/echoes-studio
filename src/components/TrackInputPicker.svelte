@@ -113,9 +113,8 @@
 	.input-row {
 		display: flex;
 		align-items: center;
-		gap: 6px;
-		padding: 4px 5px;
-		border-bottom: 1px solid $border-faint;
+		gap: $space-3;
+		padding: $space-2 $panel-inset;
 	}
 
 	.input-label {
@@ -132,7 +131,7 @@
 		flex: 1;
 		min-width: 0;
 		height: $ctrl-height-xs;
-		padding-left: 7px;
+		padding-left: $space-4;
 		font-size: 10px;
 	}
 </style>

@@ -104,6 +104,7 @@
 	@use '../controls.scss' as *;
 
 	.arp {
+		border-top: 1px solid $border-faint;
 		border-bottom: 1px solid $border-faint;
 
 		&.off .arp-knobs,
@@ -116,8 +117,8 @@
 	.arp-head {
 		display: flex;
 		align-items: center;
-		gap: 5px;
-		padding: 5px 6px;
+		gap: $space-2;
+		padding: $space-2 $panel-inset;
 		background: $panel-background-color;
 	}
 
@@ -137,8 +138,8 @@
 
 	.arp-selects {
 		display: flex;
-		gap: 4px;
-		padding: 6px 6px 2px;
+		gap: $space-2;
+		padding: $space-3 $panel-inset 0;
 
 		:global(> *:not(.triplet)) {
 			flex: 1;
@@ -162,7 +163,7 @@
 	.arp-knobs {
 		display: flex;
 		align-items: flex-end;
-		gap: 4px;
-		padding: 2px 6px 6px;
+		gap: $space-2;
+		padding: $space-3 $panel-inset;
 	}
 </style>

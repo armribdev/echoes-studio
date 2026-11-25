@@ -214,6 +214,30 @@ Le composant n'ajoute que de la **mise en page** (`flex`, `width`, `margin`, `po
 
 ---
 
+## Espacements
+
+Échelle unique dans `src/variables.scss` : `$space-1…7` (2 / 4 / 6 / 8 / 12 / 16 / 24 px). `padding`,
+`margin` et `gap` des composants en sont tirés, pas de `5px`, `7px`, `10px`, `14px`… en dur (1 px reste
+permis pour le padding vertical d'un badge). Un nouveau composant prend la valeur de l'échelle la plus
+proche.
+
+Pas de garde-fou lint pour les espacements (un `px` isolé est parfois voulu) : à la relecture. À garder en `px` : les widgets partagés (`Button`, `CustomSelect`, `Toggle`,
+`NumberInput`, `Knob`…, dont l'intérieur suit les hauteurs de contrôle) et les surfaces calées sur une
+grille ou sur des constantes JS (timeline, `TrackStrip`, `MarkerLane`, piano roll, `GraphView`).
+`EffectContextMenu` garde sa marge de 28 px, alignée sous le libellé d'un item de menu.
+
+- **`$panel-inset`** (8 px) : marge latérale de **toute** ligne d'un panneau latéral, pour que les
+  en-têtes, corps et listes partagent les mêmes bords gauche et droit.
+- Ligne simple (en-tête, slot, sélecteur) : `padding: $space-2 $panel-inset`, `gap: $space-2`
+  (`$space-3` entre un label et son champ). Corps (`slot-params`, extras) : `$space-3 $panel-inset`.
+- Un composant réutilisé dans plusieurs contextes (`PresetPicker`, `SidechainPicker`,
+  `RemotePageKnobs`) **n'a pas de marge latérale propre** : c'est le parent qui l'inset (`.instr-extras`,
+  `.slot-params`) et qui espace les enfants avec `gap`.
+- Le mode `compact` ne change plus les paddings (il n'est utilisé que dans `LeftPanel`) : seulement
+  tailles de police et largeurs.
+
+---
+
 ## Formulaires et réglages
 
 Pour une page de réglages, composer avec `Section` (titre `h2`), `SubSection` (filet + titre

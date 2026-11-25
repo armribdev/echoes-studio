@@ -169,17 +169,16 @@
 	@use '../variables.scss' as *;
 
 	.remote-pages {
-		margin: 2px 6px 6px;
 		display: flex;
 		flex-direction: column;
-		gap: 4px;
+		gap: $space-2;
 	}
 
 	.page-bar {
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		gap: 6px;
+		gap: $space-3;
 		min-width: 0;
 	}
 
@@ -198,7 +197,7 @@
 	}
 
 	.step {
-		padding: 0 5px;
+		padding: 0 $space-3;
 		border: none;
 		background: transparent;
 		color: $text-subtle;
@@ -214,6 +213,6 @@
 	.knobs {
 		display: grid;
 		grid-template-columns: repeat(4, minmax(0, 1fr));
-		gap: 6px 2px;
+		gap: $space-3 $space-1;
 	}
 </style>

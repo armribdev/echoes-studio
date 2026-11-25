@@ -108,17 +108,17 @@
 	@use '../controls.scss' as *;
 
 	.card {
-		padding: 5px 6px 6px 4px;
+		padding: $space-3 $panel-inset $space-3 ($panel-inset - 2px);
 		border-left: 2px solid var(--mod-color);
 		display: flex;
 		flex-direction: column;
-		gap: 4px;
+		gap: $space-2;
 	}
 
 	.head {
 		display: flex;
 		align-items: center;
-		gap: 5px;
+		gap: $space-2;
 	}
 
 	.handle {
@@ -180,7 +180,7 @@
 		position: fixed;
 		z-index: 1000;
 		pointer-events: none;
-		padding: 2px 7px;
+		padding: $space-1 $space-4;
 		border-radius: $radius-xl;
 		font-size: 9px;
 		font-family: $font-mono;
@@ -246,12 +246,12 @@
 		display: flex;
 		align-items: flex-end;
 		justify-content: space-between;
-		gap: 4px;
+		gap: $space-2;
 	}
 
 	.card :global(.mod-toggle) {
 		@include chip;
-		padding: 0 5px;
+		padding: 0 $space-3;
 		flex-shrink: 0;
 	}
 
