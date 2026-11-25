@@ -104,7 +104,7 @@
 		align-items: center;
 		gap: $space-2;
 		box-sizing: border-box;
-		height: 24px;
+		height: $ctrl-height-sm;
 		padding: 0 $space-3 0 $space-2;
 		cursor: grab;
 		user-select: none;
