@@ -24,6 +24,17 @@ l’opacité / le style et utiliser `cursor: default`.
 `themeColor()` / `themeVar()` (`src/frontend/theme.ts`) pour canvas et scripts. Garde-fou :
 `scripts/check-colors.mjs` (dans `pnpm lint`). Détail : `docs/claude/ui_conventions.md`.
 
+### Contrôles (boutons, champs, onglets, sliders, knobs)
+
+**Un seul look pour tous les widgets.** Réutiliser les composants partagés (`Button`,
+`SegmentedControl`, `CustomSelect`, `TextInput`, `NumberInput`, `Toggle`, `RangeSlider`,
+`Knob`, `Menu`, `Dialog`…) ou les mixins de `src/controls.scss` (`button`, `chip`,
+`icon-button`, `segmented` + `segment`, `field`, `list-item`, `range-slider`, `control-on`…).
+**Ne jamais** réécrire bordure, rayon, hauteur ou couleurs de survol / sélection à la main :
+tokens `$radius-control`, `$ctrl-height-xs|sm`, `$ctrl-height`. Garde-fou :
+`scripts/check-controls.mjs` (dans `pnpm lint`). Règle : [`ui_controls_rules.md`](.claude/rules/ui_controls_rules.md),
+skill `ui-controls`, détail : `docs/claude/ui_conventions.md` § « Contrôles ».
+
 ### Focus clavier (`:focus-visible`)
 
 Ressenti « app bureau » : **pas d’anneau de focus au clic souris** ; indicateur
@@ -73,6 +84,7 @@ Short strict rules live in [`.claude/rules/`](.claude/rules/) and point into
 - [`architecture_rules.md`](.claude/rules/architecture_rules.md) — hard invariants + when an ADR is required
 - [`migration_rules.md`](.claude/rules/migration_rules.md) — C-1…C-10 (no rewrite, C-2 gate)
 - [`documentation_rules.md`](.claude/rules/documentation_rules.md) · [`doc_sync_rules.md`](.claude/rules/doc_sync_rules.md) · [`change_impact_mapping.md`](.claude/rules/change_impact_mapping.md)
+- [`ui_controls_rules.md`](.claude/rules/ui_controls_rules.md) — widgets UI : un seul look (`controls.scss`)
 - [`rust_self_rules.md`](.claude/rules/rust_self_rules.md) — `Self` vs explicit struct names (safe Rust refactors)
 
 **Workflow:** before/after any architectural or engine change, follow

@@ -8,7 +8,8 @@
 ## Couleurs
 
 **Aucune couleur en dur** (hex, `rgb()`, `rgba()`, `hsl()`, `white`, `black`) hors `src/variables.scss`.
-`node scripts/check-colors.mjs` (branché sur `pnpm lint`) échoue sinon.
+`node scripts/check-colors.mjs` (branché sur `pnpm lint`) échoue sinon. Les contrôles ont leur propre
+garde-fou, `scripts/check-controls.mjs` (voir « Contrôles »).
 
 | Où                                 | Comment                                                                                                   |
 | ---------------------------------- | --------------------------------------------------------------------------------------------------------- |
@@ -129,6 +130,90 @@ Sans `x`/`y`, le menu s'ancre sous son parent. Même piège de focus, sans `iner
 
 ---
 
+## Contrôles (boutons, champs, onglets, sliders, knobs)
+
+**Un seul look pour tous les widgets.** Il est défini en un seul endroit : les mixins de
+`src/controls.scss` et les tokens de `src/variables.scss`. Un composant **inclut** un mixin au lieu
+de réécrire bordure, rayon, hauteur et couleurs d'état :
+
+```scss
+@use '../variables.scss' as *;
+@use '../controls.scss' as *;
+
+.close {
+	@include icon-button; // 24px, transparent, survol neutre
+	@include icon-button-danger; // le survol vire au rouge
+}
+```
+
+Le composant n'ajoute que de la **mise en page** (`flex`, `width`, `margin`, `position`).
+`pnpm lint` exécute `scripts/check-controls.mjs` : une règle `cursor: pointer` sans mixin échoue.
+
+### Quel widget pour quel besoin
+
+| Besoin                                     | Utiliser                                                                                                       |
+| ------------------------------------------ | -------------------------------------------------------------------------------------------------------------- |
+| Action (formulaire, dialog)                | `Button` (`primary` / `secondary` / `ghost`, `compact`)                                                        |
+| Action dans un panneau dense               | `@include button($ctrl-height-sm, 11px)` ou `@include chip` (libellé mono 9px)                                 |
+| Icône seule (fermer, supprimer…)           | `@include icon-button($size)` (+ `icon-button-danger`)                                                         |
+| Glyphe `+` / `×` encadré                   | `@include button-square($size)`                                                                                |
+| Choix exclusif (onglets, modes, langues)   | `SegmentedControl` (`value` / `options`, `size`, slot pour une icône)                                          |
+| Idem avec un balisage sur mesure           | `@include segmented` (conteneur) + `@include segment($height, $font)` (item, classe `.active`)                 |
+| Plusieurs bascules côte à côte (M / S / R) | `segmented` + `segment`, ton via `control-on-warning` / `control-on-danger`                                    |
+| Bascule d'outil (barre, panneau)           | bouton + `@include control-on` sur `.active`                                                                   |
+| Point on/off (bypass, power)               | `@include power-button` (classe `.on`)                                                                         |
+| Liste déroulante                           | `CustomSelect` ; `<select>` natif seulement si `optgroup` ou chargement au focus                               |
+| Ligne de menu / de liste / de picker       | `Menu` + `MenuItem`, sinon `@include list-item` (+ `list-item-selected`)                                       |
+| Champ texte / nombre / recherche           | `TextInput` / `NumberInput`, ou `@include field($height, $font)`                                               |
+| Interrupteur                               | `Toggle`                                                                                                       |
+| Slider                                     | `RangeSlider` / `StepSlider`, ou `@include range-slider` (variables `--fill`, `--fill-start`, `--range-color`) |
+| Rotatif                                    | `Knob` / `ParamKnob`                                                                                           |
+
+### Catalogue des mixins (`controls.scss`)
+
+| Mixin                                                   | Rôle                                                     |
+| ------------------------------------------------------- | -------------------------------------------------------- |
+| `button($height, $font-size)`                           | bouton cerclé (repos, survol, désactivé)                 |
+| `button-primary`                                        | bleu plein, action principale uniquement                 |
+| `button-square($size)`                                  | bouton carré cerclé pour un glyphe                       |
+| `chip($height)`                                         | petit bouton mono (GUI, reload, M…)                      |
+| `icon-button($size)` / `icon-button-danger`             | bouton sans bordure pour une icône                       |
+| `power-button($size)`                                   | rond on/off                                              |
+| `segmented` / `segment($height, $font-size)`            | groupe segmenté et son item                              |
+| `field($height, $font-size)` / `select-field(…)`        | champ texte ; `<select>` natif (chevron en dégradés)     |
+| `list-item($height, $font-size)` / `list-item-selected` | ligne de menu, de dropdown, de picker                    |
+| `control-on` / `-danger` / `-warning` / `-success`      | état actif / sélectionné (à poser sur `.active`, `.on`…) |
+| `range-slider`                                          | piste remplie + pouce d'un `<input type="range">`        |
+
+### Règles de design
+
+- **États communs.** Repos : `$surface-2` + `$border-subtle`. Survol : `$surface-3` + `$border-strong`.
+  **Actif / sélectionné** : `$accent-soft` + `$accent-border` + `$accent-text` (`control-on`) : un seul
+  langage, jamais un bleu plein ni un `$accent-strong` improvisé. Désactivé : opacité 0.4, `cursor: default`.
+- **Bleu plein** (`$accent-color`) réservé à l'action principale (`Button primary`) et aux interrupteurs.
+  Rouge = armer / supprimer / enregistrer, orange = mute, vert = état sain (isolation).
+- **Hauteurs** : `$ctrl-height-xs` 20 (panneaux denses, chips), `$ctrl-height-sm` 24 (barres d'outils),
+  `$ctrl-height` 30 (formulaires, transport), `$menu-item-height` 28 (lignes de menu). Pas de 18 / 22 / 26.
+- **Rayons** : `$radius-control` (6px) pour tout contrôle ; groupe segmenté `$radius-control + 2px` ;
+  cartes / lignes de réglage `$radius-lg`. Pas de `4px` / `7px` écrits à la main.
+- **Menus et listes** : survol neutre (`$surface-3`), sélection ou curseur clavier en accent.
+- Les `<select>` natifs sont stylés globalement (`app.scss`, `color-scheme: dark` pour la liste) : ne
+  régler en local que `height`, `padding-left` et `font-size`.
+- Un contrôle qui porte une couleur de donnée (modulateur, piste) la passe par une variable CSS
+  (`--mod-color`, `--range-color`), jamais par un littéral.
+
+### Ajouter ou changer un look
+
+1. Le mixin existant ne suffit pas : **étendre `controls.scss`** (un mixin ou un argument), pas un style
+   local. L'appliquer partout où il convient, puis mettre à jour ce tableau.
+2. Une surface cliquable qui n'est pas un contrôle standard (clip, pad, règle, pastille de couleur, ligne
+   déplaçable…) : l'ajouter à `CUSTOM_SURFACES` de `scripts/check-controls.mjs` **avec la raison**.
+   C'est une décision de design : la signaler dans le résumé.
+3. Nouveau composant partagé : l'exporter depuis `components/index.ts` si les autres le sont, le
+   documenter dans le tableau ci-dessus.
+
+---
+
 ## Formulaires et réglages
 
 Pour une page de réglages, composer avec `Section` (titre `h2`), `SubSection` (filet + titre
@@ -174,6 +259,7 @@ Règles :
 
 ## Checklist nouveau widget / dialog
 
+- [ ] Contrôles : widget partagé ou mixin de `controls.scss` (jamais bordure / rayon / hauteur / survol écrits à la main) ; `pnpm lint` vert
 - [ ] Pas de `cursor: not-allowed`
 - [ ] Focus visuel via `:focus-visible` (ou baseline globale)
 - [ ] Tooltip custom : ni bulle ni « i » dans le cycle Tab (`tabindex="-1"`)
