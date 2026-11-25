@@ -13,8 +13,6 @@
 		insertLibraryAsset,
 		LIBRARY_SOURCE_ORDER,
 		AUDIO_EXTENSIONS,
-		formatDuration,
-		formatBeats,
 		isMidiLibraryKind,
 		libraryAssetLengthSec,
 		beginLibraryDrag,
@@ -27,6 +25,9 @@
 	import { tempo } from '../stores/tempo';
 	import { ARRANGE_POINTER_DRAG_THRESHOLD } from '../frontend/arrangeInteraction';
 	import { t } from 'svelte-i18n';
+	import LibraryAssetRow from './library/LibraryAssetRow.svelte';
+	import LibraryDetail from './library/LibraryDetail.svelte';
+	import LibraryEmptyState from './library/LibraryEmptyState.svelte';
 
 	/** Docked panel vs Bitwig-style pop-up (same browser, different shell). */
 	export let variant: 'dock' | 'popup' = 'dock';
@@ -241,8 +242,7 @@
 		finishRowPointerDrag(e, false);
 	}
 
-	async function onPreviewClick(e: MouseEvent, asset: LibraryAsset) {
-		e.stopPropagation();
+	async function previewAsset(asset: LibraryAsset) {
 		libraryStore.select(asset.id);
 		keyboardFocus.setLibraryResults();
 		try {
@@ -252,10 +252,17 @@
 		}
 	}
 
-	function onFavoriteClick(e: MouseEvent, asset: LibraryAsset) {
-		e.stopPropagation();
-		libraryStore.toggleFavorite(asset.id);
-	}
+	const EMPTY_LIST_KEYS: Partial<Record<LibrarySourceId, string>> = {
+		recents: 'library.noRecent',
+		favorites: 'library.starToPin',
+		chords: 'library.noFactoryChords',
+		midi: 'library.noMidiPatterns',
+		drums: 'library.noDrumPatterns'
+	};
+
+	$: emptyListKey = $libraryStore.query
+		? 'library.noResults'
+		: (EMPTY_LIST_KEYS[$libraryStore.source] ?? 'library.noAudioIndexed');
 
 	function onResultsKeydown(e: KeyboardEvent) {
 		if (e.key === 'ArrowDown') {
@@ -406,23 +413,16 @@
 	<div class="body">
 		<div class="results-col">
 			{#if visible.length === 0 && $libraryStore.source === 'audio' && !$libraryHasIndexedContent}
-				<div class="empty-state">
-					<p class="empty-title">{$t('library.noSounds')}</p>
-					<div class="empty-actions">
-						<button type="button" class="empty-btn" on:click={browseFolder}
-							>{$t('library.addFolder')}</button
-						>
-						<button type="button" class="empty-btn empty-btn--ghost" on:click={browseFiles}>
-							{$t('library.importFile')}
-						</button>
-					</div>
-					<p class="empty-tip">{$t('library.emptyTip')}</p>
-				</div>
+				<LibraryEmptyState title={$t('library.noSounds')} tip={$t('library.emptyTip')}>
+					<button type="button" class="empty-btn" on:click={browseFolder}
+						>{$t('library.addFolder')}</button
+					>
+					<button type="button" class="empty-btn empty-btn--ghost" on:click={browseFiles}
+						>{$t('library.importFile')}</button
+					>
+				</LibraryEmptyState>
 			{:else if visible.length === 0}
-				<div class="empty-state">
-					<p class="empty-title">{$t('library.noResults')}</p>
-					<p class="empty-tip">{$t('library.noResultsTip')}</p>
-				</div>
+				<LibraryEmptyState title={$t('library.noResults')} tip={$t('library.noResultsTip')} />
 			{:else}
 				{#if $libraryStore.query}
 					<div class="results-meta">
@@ -456,17 +456,13 @@
 							$audioImportProgress.filePath != null &&
 							$audioImportProgress.filePath.replace(/\\/g, '/').toLowerCase() ===
 								asset.path.replace(/\\/g, '/').toLowerCase()}
-						<div
-							class="file-item"
-							class:selected={$libraryStore.selectedId === asset.id}
-							class:previewing={$libraryStore.previewingId === asset.id}
-							class:importing={isImporting}
-							class:dragging={rowPointerDrag?.active && rowPointerDrag.asset.id === asset.id}
-							role="option"
-							tabindex="-1"
-							aria-selected={$libraryStore.selectedId === asset.id}
-							aria-busy={isImporting}
-							title={asset.path}
+						<LibraryAssetRow
+							{asset}
+							selected={$libraryStore.selectedId === asset.id}
+							previewing={$libraryStore.previewingId === asset.id}
+							importing={isImporting}
+							dragging={rowPointerDrag?.active === true && rowPointerDrag.asset.id === asset.id}
+							favorite={$libraryStore.favoriteIds.includes(asset.id)}
 							on:click={() => onRowClick(asset)}
 							on:keydown={(e) => {
 								if (e.key === 'Enter' || e.key === ' ') {
@@ -485,107 +481,17 @@
 							on:pointermove={onRowPointerMove}
 							on:pointerup={onRowPointerUp}
 							on:pointercancel={onRowPointerCancel}
-						>
-							<button
-								class="fav-btn"
-								type="button"
-								class:on={$libraryStore.favoriteIds.includes(asset.id)}
-								title={$t('library.favorite')}
-								on:click={(e) => onFavoriteClick(e, asset)}
-								on:pointerdown={(e) => e.stopPropagation()}
-							>
-								{$libraryStore.favoriteIds.includes(asset.id) ? '★' : '☆'}
-							</button>
-							<span class="file-ext">{asset.extension.toUpperCase()}</span>
-							<span class="file-name">{asset.name}</span>
-							{#if isImporting}
-								<button
-									class="cancel-import-btn"
-									type="button"
-									title={$t('library.cancelImport')}
-									aria-label={$t('library.cancelImport')}
-									on:pointerdown={(e) => e.stopPropagation()}
-									on:click={(e) => {
-										e.stopPropagation();
-										void cancelAudioImport(asset.path);
-									}}
-								>
-									<span class="cancel-import-ring" aria-hidden="true"></span>
-									<span class="cancel-import-square" aria-hidden="true"></span>
-								</button>
-							{:else}
-								{#if $libraryStore.previewingId !== asset.id}
-									<button
-										class="preview-btn"
-										type="button"
-										title={$t('library.preview')}
-										on:pointerdown={(e) => e.stopPropagation()}
-										on:click={(e) => onPreviewClick(e, asset)}
-									>
-										▶
-									</button>
-								{/if}
-								<button
-									class="insert-btn"
-									type="button"
-									title={$t('library.insertAtPlayhead')}
-									on:pointerdown={(e) => e.stopPropagation()}
-									on:click={() => insertAsset(asset)}
-								>
-									<svg width="8" height="8" viewBox="0 0 8 8" fill="none">
-										<path
-											d="M4 1V6M1.5 5.5L4 7.5L6.5 5.5"
-											stroke="currentColor"
-											stroke-width="1.3"
-											stroke-linecap="round"
-											stroke-linejoin="round"
-										/>
-									</svg>
-								</button>
-							{/if}
-						</div>
+							on:favorite={() => libraryStore.toggleFavorite(asset.id)}
+							on:preview={() => previewAsset(asset)}
+							on:insert={() => insertAsset(asset)}
+							on:cancelImport={() => cancelAudioImport(asset.path)}
+						/>
 					{:else}
-						<div class="empty-state empty-state--compact">
-							{#if $libraryStore.query}
-								<p>{$t('library.noResults')}</p>
-							{:else if $libraryStore.source === 'recents'}
-								<p>{$t('library.noRecent')}</p>
-							{:else if $libraryStore.source === 'favorites'}
-								<p>{$t('library.starToPin')}</p>
-							{:else if $libraryStore.source === 'chords'}
-								<p>{$t('library.noFactoryChords')}</p>
-							{:else if $libraryStore.source === 'midi'}
-								<p>{$t('library.noMidiPatterns')}</p>
-							{:else if $libraryStore.source === 'drums'}
-								<p>{$t('library.noDrumPatterns')}</p>
-							{:else}
-								<p>{$t('library.noAudioIndexed')}</p>
-							{/if}
-						</div>
+						<LibraryEmptyState compact title={$t(emptyListKey)} />
 					{/each}
 				</div>
 
-				<div class="detail">
-					{#if selected}
-						<div class="detail-name" title={selected.path}>{selected.name}</div>
-						<div class="detail-meta">
-							<span>{selected.extension.toUpperCase()}</span>
-							{#if isMidiLibraryKind(selected.kind)}
-								<span>{formatBeats(selected.lengthBeats)}</span>
-								{#if selected.keyRoot}
-									<span>{selected.keyRoot}</span>
-								{/if}
-							{:else}
-								<span>{formatDuration(selected.durationSec)}</span>
-							{/if}
-						</div>
-						{#if selected.kind === 'loop' || selected.kind === 'one_shot'}
-							<div class="detail-tip">Placé à la longueur d'origine (pas de warp)</div>
-						{/if}
-					{:else}
-						<div class="detail-placeholder">{$t('library.selectSound')}</div>
-					{/if}
-				</div>
+				<LibraryDetail asset={selected} />
 			{/if}
 		</div>
 	</div>
@@ -604,7 +510,7 @@
 		overflow: hidden;
 
 		&--popup {
-			background: #26262e;
+			background: $surface-overlay;
 		}
 	}
 
@@ -729,9 +635,9 @@
 		cursor: pointer;
 		flex-shrink: 0;
 		transition:
-			background 0.12s,
-			color 0.12s,
-			border-color 0.12s;
+			background $duration-base,
+			color $duration-base,
+			border-color $duration-base;
 
 		&:hover {
 			background: rgba(21, 113, 255, 0.12);
@@ -813,55 +719,6 @@
 		padding: 4px 10px 6px;
 	}
 
-	.file-item {
-		display: flex;
-		align-items: center;
-		gap: 4px;
-		box-sizing: border-box;
-		height: 24px;
-		padding: 0 6px 0 4px;
-		cursor: grab;
-		user-select: none;
-		touch-action: none;
-		transition: background 0.1s;
-
-		&:hover,
-		&.selected {
-			background: $surface-hover;
-
-			.insert-btn,
-			.preview-btn {
-				opacity: 1;
-			}
-		}
-
-		&.selected {
-			background: rgba(21, 113, 255, 0.12);
-		}
-
-		&.previewing .file-name {
-			color: $text-color;
-		}
-
-		&.importing {
-			background: rgba(21, 113, 255, 0.1);
-			cursor: progress;
-
-			.file-name {
-				color: $text-color;
-			}
-			.cancel-import-btn {
-				opacity: 1;
-			}
-		}
-
-		&.dragging,
-		&:active {
-			cursor: grabbing;
-			opacity: 0.85;
-		}
-	}
-
 	:global(body.library-file-dragging) {
 		cursor: grabbing !important;
 		user-select: none !important;
@@ -874,172 +731,6 @@
 	:global(body.library-file-dragging.library-file-dragging--rejected),
 	:global(body.library-file-dragging.library-file-dragging--rejected *) {
 		cursor: default !important;
-	}
-
-	.fav-btn {
-		width: 16px;
-		height: 16px;
-		padding: 0;
-		border: none;
-		background: transparent;
-		color: $text-faint;
-		cursor: pointer;
-		font-size: 10px;
-		line-height: 1;
-		flex-shrink: 0;
-
-		&.on,
-		&:hover {
-			color: $color-warning;
-		}
-	}
-
-	.file-ext {
-		font-size: 7px;
-		font-family: $font-mono;
-		font-weight: 700;
-		color: $accent-color;
-		background: rgba(21, 113, 255, 0.12);
-		border-radius: 2px;
-		padding: 1px 3px;
-		flex-shrink: 0;
-		line-height: 1.4;
-		letter-spacing: 0.05em;
-	}
-
-	.file-name {
-		flex: 1;
-		font-size: 11px;
-		color: $text-subtle;
-		white-space: nowrap;
-		overflow: hidden;
-		text-overflow: ellipsis;
-		min-width: 0;
-	}
-
-	.preview-btn,
-	.cancel-import-btn,
-	.insert-btn {
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		width: 18px;
-		height: 18px;
-		background: transparent;
-		border: none;
-		padding: 0;
-		color: $text-faint;
-		cursor: pointer;
-		opacity: 0;
-		flex-shrink: 0;
-		transition:
-			color 0.1s,
-			opacity 0.1s;
-		font-size: 9px;
-		position: relative;
-
-		&:hover {
-			color: $accent-color;
-		}
-	}
-
-	.cancel-import-btn {
-		opacity: 1;
-		color: $accent-color;
-
-		&:hover .cancel-import-square {
-			background: $text-color;
-		}
-	}
-
-	.cancel-import-ring {
-		position: absolute;
-		inset: 2px;
-		border: 1.5px solid rgba(21, 113, 255, 0.28);
-		border-top-color: $accent-color;
-		border-radius: 50%;
-		animation: library-spin 0.7s linear infinite;
-	}
-
-	.cancel-import-square {
-		position: relative;
-		width: 5px;
-		height: 5px;
-		border-radius: 0.5px;
-		background: $accent-color;
-		z-index: 1;
-	}
-
-	@keyframes library-spin {
-		to {
-			transform: rotate(360deg);
-		}
-	}
-
-	.detail {
-		flex-shrink: 0;
-		border-top: 1px solid $border-color;
-		padding: 8px 10px;
-		min-height: 44px;
-	}
-
-	.detail-name {
-		font-size: 11px;
-		color: $text-color;
-		white-space: nowrap;
-		overflow: hidden;
-		text-overflow: ellipsis;
-	}
-
-	.detail-meta {
-		display: flex;
-		gap: 10px;
-		margin-top: 3px;
-		font-size: 9px;
-		font-family: $font-mono;
-		color: $text-faint;
-	}
-
-	.detail-tip {
-		margin-top: 4px;
-		font-size: 9px;
-		color: $text-faint;
-		opacity: 0.85;
-	}
-
-	.detail-placeholder {
-		font-size: 10px;
-		color: $text-faint;
-	}
-
-	.empty-state {
-		display: flex;
-		flex-direction: column;
-		align-items: center;
-		justify-content: center;
-		gap: 12px;
-		padding: 28px 14px;
-		color: $text-faint;
-		text-align: center;
-
-		&--compact {
-			padding: 24px 12px;
-			gap: 6px;
-		}
-	}
-
-	.empty-title {
-		font-size: 12px;
-		color: $text-subtle;
-		margin: 0;
-	}
-
-	.empty-actions {
-		display: flex;
-		flex-direction: column;
-		gap: 6px;
-		width: 100%;
-		max-width: 160px;
 	}
 
 	.empty-btn {
@@ -1065,12 +756,5 @@
 				border-color: $border-color;
 			}
 		}
-	}
-
-	.empty-tip {
-		font-size: 10px;
-		line-height: 1.45;
-		margin: 0;
-		color: $text-faint;
 	}
 </style>
