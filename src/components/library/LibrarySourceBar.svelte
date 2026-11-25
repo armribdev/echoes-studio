@@ -5,8 +5,9 @@
 	import TextInput from '../TextInput.svelte';
 	import { MAX_COLLECTION_NAME_LENGTH } from '../../frontend/library';
 
-	/** The collection currently open, if any. */
-	export let collection: { name: string } | null = null;
+	/** Label of the action that removes the open source (collection, pack), if it can be removed. */
+	export let removeLabel: string | null = null;
+	export let removeTitle = '';
 	/** The search and kind filter can be saved as a new collection. */
 	export let canSave = false;
 	/** Name used when the field is left empty. */
@@ -22,10 +23,10 @@
 	}
 </script>
 
-{#if collection}
+{#if removeLabel}
 	<div class="bar">
-		<Button variant="ghost" on:click={() => dispatch('remove')}>
-			{$t('library.deleteCollection')}
+		<Button variant="ghost" title={removeTitle} on:click={() => dispatch('remove')}>
+			{removeLabel}
 		</Button>
 	</div>
 {:else if canSave}

@@ -1,13 +1,12 @@
-import { collectionForSource } from './collections';
+import { isKnownSource, type KnownSources } from './sources';
 import type {
 	LaneFocus,
 	LibraryAssetKind,
-	LibraryCollection,
 	LibraryContextSources,
 	LibraryOpenContext,
 	LibrarySourceId
 } from './types';
-import { isAudioLibraryKind, isLibraryBuiltInSourceId, isMidiLibraryKind } from './types';
+import { isAudioLibraryKind, isMidiLibraryKind } from './types';
 
 export function laneFocusForTrack(
 	track:
@@ -56,13 +55,10 @@ export function defaultSourceForContext(context: LibraryOpenContext): LibrarySou
 export function sourceForContext(
 	context: LibraryOpenContext,
 	remembered: LibraryContextSources,
-	collections: readonly LibraryCollection[]
+	known: KnownSources
 ): LibrarySourceId {
 	const source = remembered[context];
-	if (source && (isLibraryBuiltInSourceId(source) || collectionForSource(collections, source))) {
-		return source;
-	}
-	return defaultSourceForContext(context);
+	return source && isKnownSource(source, known) ? source : defaultSourceForContext(context);
 }
 
 export function canDropAssetOnLane(kind: LibraryAssetKind, lane: LaneFocus): boolean {

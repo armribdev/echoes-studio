@@ -33,6 +33,13 @@ describe('collections persistence', () => {
 		expect(loadLibraryPersistence().lastSource).toBe('audio');
 	});
 
+	it('reopens on a pack only while its folder is still indexed', () => {
+		stubLocalStorage({ lastSource: 'pack:C:\\Kits', indexedFolders: ['C:\\Kits'] });
+		expect(loadLibraryPersistence().lastSource).toBe('pack:C:\\Kits');
+		stubLocalStorage({ lastSource: 'pack:C:\\Kits', indexedFolders: [] });
+		expect(loadLibraryPersistence().lastSource).toBe('audio');
+	});
+
 	it('drops collections without a name, without a criterion or with a duplicate id', () => {
 		stubLocalStorage({
 			collections: [

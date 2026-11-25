@@ -7,6 +7,7 @@ export {
 	MAX_COLLECTION_NAME_LENGTH
 } from './collections';
 export { MAX_TAG_LENGTH } from './tags';
+export { packFolderOfSource, packLabel, packSourceId } from './packs';
 export { libraryStore, libraryVisibleAssets, libraryHasIndexedContent } from './libraryStore';
 export { libraryPreviewPlayer } from './previewPlayer';
 export { libraryMidiPreviewPlayer } from './midiPreview';

@@ -16,6 +16,9 @@
 		canSaveAsCollection,
 		collectionForSource,
 		collectionSourceId,
+		packFolderOfSource,
+		packLabel,
+		packSourceId,
 		LIBRARY_KIND_FILTERS,
 		libraryFocusSearchTick,
 		insertLibraryAsset,
@@ -36,7 +39,7 @@
 	import { ARRANGE_POINTER_DRAG_THRESHOLD } from '../frontend/arrangeInteraction';
 	import { t } from 'svelte-i18n';
 	import LibraryAssetRow from './library/LibraryAssetRow.svelte';
-	import LibraryCollectionBar from './library/LibraryCollectionBar.svelte';
+	import LibrarySourceBar from './library/LibrarySourceBar.svelte';
 	import LibraryDetail from './library/LibraryDetail.svelte';
 	import LibraryEmptyState from './library/LibraryEmptyState.svelte';
 
@@ -276,9 +279,9 @@
 	$: contextRemembered = context != null && $libraryStore.contextSources[context] !== undefined;
 	$: canRememberContext =
 		context != null &&
-		$libraryStore.source !==
-			sourceForContext(context, $libraryStore.contextSources, $libraryStore.collections);
+		$libraryStore.source !== sourceForContext(context, $libraryStore.contextSources, $libraryStore);
 	$: activeCollection = collectionForSource($libraryStore.collections, $libraryStore.source);
+	$: activePackFolder = packFolderOfSource($libraryStore.source);
 	$: kindOptions = [
 		{ value: 'all', label: $t('library.kinds.all') },
 		...LIBRARY_KIND_FILTERS.map((kind) => ({ value: kind, label: $t(`library.kinds.${kind}`) }))
@@ -288,14 +291,28 @@
 	$: suggestedCollectionName =
 		$libraryStore.query.trim() ||
 		($libraryStore.kindFilter ? $t(`library.kinds.${$libraryStore.kindFilter}`) : '');
-	$: sourceLabel = activeCollection?.name ?? $t(`library.sources.${$libraryStore.source}`);
+	$: sourceLabel =
+		activeCollection?.name ??
+		(activePackFolder
+			? packLabel(activePackFolder)
+			: $t(`library.sources.${$libraryStore.source}`));
+	$: removeLabel = activeCollection
+		? $t('library.deleteCollection')
+		: activePackFolder
+			? $t('library.removePack')
+			: null;
+
+	function removeActiveSource() {
+		if (activeCollection) libraryStore.removeCollection(activeCollection.id);
+		else if (activePackFolder) libraryStore.removePack(activePackFolder);
+	}
 
 	function onKindChange(e: CustomEvent<string | number>) {
 		libraryStore.setKindFilter(e.detail === 'all' ? null : (e.detail as LibraryKindFilter));
 	}
 
 	$: emptyListKey =
-		$libraryStore.query || $libraryStore.kindFilter || activeCollection
+		$libraryStore.query || $libraryStore.kindFilter || activeCollection || activePackFolder
 			? 'library.noResults'
 			: (EMPTY_LIST_KEYS[$libraryStore.source] ?? 'library.noAudioIndexed');
 
@@ -465,17 +482,29 @@
 				{collection.name}
 			</button>
 		{/each}
+		{#each $libraryStore.indexedFolders as folder (folder)}
+			<button
+				type="button"
+				class="source-btn source-btn--collection"
+				class:active={$libraryStore.source === packSourceId(folder)}
+				title={folder}
+				on:click={() => setSource(packSourceId(folder))}
+			>
+				{packLabel(folder)}
+			</button>
+		{/each}
 		<button type="button" class="source-btn source-btn--action" on:click={browseFolder}>
 			{$t('library.addFolder')}
 		</button>
 	</nav>
 
-	<LibraryCollectionBar
-		collection={activeCollection}
+	<LibrarySourceBar
+		{removeLabel}
+		removeTitle={activePackFolder ? $t('library.removePackTitle') : ''}
 		canSave={canSaveCollection}
 		suggestedName={suggestedCollectionName}
 		on:save={(e) => libraryStore.saveCollection(e.detail)}
-		on:remove={() => activeCollection && libraryStore.removeCollection(activeCollection.id)}
+		on:remove={removeActiveSource}
 	/>
 
 	<div class="body">

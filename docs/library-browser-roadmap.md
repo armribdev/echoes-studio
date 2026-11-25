@@ -209,8 +209,9 @@ shown as a source; type filter next to the search field; `collections.ts`,
 source only (`sourceForContext` in `laneFocus.ts`, `contextSources` in the
 persisted slice; code-verified, not hand-tested). Slice 5 done: the Devices go/no-go — **no-go**, recorded as an
 amendment of ADR-023 (_Devices decision_): slots are not timeline drops and
-`PluginPicker` already serves them. Left, in order: pack sources, optional grid
-results.
+`PluginPicker` already serves them. Slice 6 done: pack sources — one per indexed
+folder, with « Stop indexing this folder » (`packs.ts`, `sources.ts`, store
+`removePack`; code-verified, not hand-tested). Left: optional grid results.
 
 Prerequisite landed 2026-10-09: the built-in drum sampler (ADR-028) — a
 `one_shot` dragged from the library onto a pad loads it. The hybrid `drums`

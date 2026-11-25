@@ -34,21 +34,30 @@ describe('openContextFromLaneFocus / defaultSourceForContext', () => {
 describe('sourceForContext', () => {
 	const collection = createCollection('Techno', 'techno', null);
 	const collectionSource = `collection:${collection.id}` as const;
+	const none = { collections: [], indexedFolders: [] };
 
 	it('uses the factory default until the user chooses', () => {
-		expect(sourceForContext('track_midi_lane', {}, [])).toBe('chords');
+		expect(sourceForContext('track_midi_lane', {}, none)).toBe('chords');
 	});
 
 	it('uses the source remembered for that context only', () => {
 		const remembered = { track_audio_lane: 'drums' } as const;
-		expect(sourceForContext('track_audio_lane', remembered, [])).toBe('drums');
-		expect(sourceForContext('track_empty', remembered, [])).toBe('audio');
+		expect(sourceForContext('track_audio_lane', remembered, none)).toBe('drums');
+		expect(sourceForContext('track_empty', remembered, none)).toBe('audio');
 	});
 
 	it('follows a remembered collection while it exists', () => {
 		const remembered = { track_empty: collectionSource } as const;
-		expect(sourceForContext('track_empty', remembered, [collection])).toBe(collectionSource);
-		expect(sourceForContext('track_empty', remembered, [])).toBe('audio');
+		const known = { collections: [collection], indexedFolders: [] };
+		expect(sourceForContext('track_empty', remembered, known)).toBe(collectionSource);
+		expect(sourceForContext('track_empty', remembered, none)).toBe('audio');
+	});
+
+	it('follows a remembered pack while its folder is indexed', () => {
+		const remembered = { track_empty: 'pack:C:\\Kits' } as const;
+		const known = { collections: [], indexedFolders: ['C:\\Kits'] };
+		expect(sourceForContext('track_empty', remembered, known)).toBe('pack:C:\\Kits');
+		expect(sourceForContext('track_empty', remembered, none)).toBe('audio');
 	});
 });
 

@@ -15,6 +15,14 @@ import {
 	filterAssets
 } from './collections';
 import { sourceForContext } from './laneFocus';
+import {
+	idsOnlyInFolder,
+	isInsideFolder,
+	packAssetIds,
+	packFolderOfSource,
+	packSourceId
+} from './packs';
+import { withoutSource } from './sources';
 import { mergeTags, withoutTag, withTag } from './tags';
 import { libraryPreviewPlayer } from './previewPlayer';
 import { libraryMidiPreviewPlayer } from './midiPreview';
@@ -140,12 +148,6 @@ function mergeAsset(
 	asset: LibraryAsset
 ): Record<string, LibraryAsset> {
 	return { ...map, [asset.id]: mergedAsset(map[asset.id], asset) };
-}
-
-function isInsideFolder(path: string, folderPath: string): boolean {
-	const normalize = (p: string) => p.replace(/\\/g, '/').toLowerCase();
-	const base = normalize(folderPath).replace(/\/+$/, '');
-	return normalize(path).startsWith(`${base}/`);
 }
 
 function createLibraryStore() {
@@ -332,12 +334,9 @@ function createLibraryStore() {
 			update((s) => {
 				if (!s.collections.some((collection) => collection.id === id)) return s;
 				const source = collectionSourceId(id);
-				const contextSources = Object.fromEntries(
-					Object.entries(s.contextSources).filter(([, remembered]) => remembered !== source)
-				);
-				const next = {
+				const next: LibraryState = {
 					...s,
-					contextSources,
+					contextSources: withoutSource(s.contextSources, source),
 					collections: s.collections.filter((collection) => collection.id !== id),
 					source: s.source === source ? ('audio' as const) : s.source,
 					selectedId: s.source === source ? null : s.selectedId
@@ -402,7 +401,7 @@ function createLibraryStore() {
 
 		sourceForContext(context: LibraryOpenContext): LibrarySourceId {
 			const s = get({ subscribe });
-			return sourceForContext(context, s.contextSources, s.collections);
+			return sourceForContext(context, s.contextSources, s);
 		},
 
 		/** Opt-in: this context opens on the source currently shown. */
@@ -467,6 +466,33 @@ function createLibraryStore() {
 				return next;
 			});
 			await startScan(folderPath);
+		},
+
+		/** Stops indexing a folder and forgets the sounds only it brought in (files stay on disk). */
+		removePack(folderPath: string) {
+			for (const [token, scan] of activeScans) {
+				if (scan.folderPath === folderPath) activeScans.delete(token);
+			}
+			update((s) => {
+				if (!s.indexedFolders.includes(folderPath)) return s;
+				const indexedFolders = s.indexedFolders.filter((folder) => folder !== folderPath);
+				const dropped = new Set(idsOnlyInFolder(s.audioIds, folderPath, indexedFolders));
+				const assetsById = { ...s.assetsById };
+				for (const id of dropped) delete assetsById[id];
+				const source = packSourceId(folderPath);
+				const next: LibraryState = {
+					...s,
+					indexedFolders,
+					assetsById,
+					audioIds: s.audioIds.filter((id) => !dropped.has(id)),
+					contextSources: withoutSource(s.contextSources, source),
+					source: s.source === source ? 'audio' : s.source,
+					selectedId: s.source === source ? null : s.selectedId,
+					indexer: s.indexer === 'scanning' && activeScans.size === 0 ? 'ready' : s.indexer
+				};
+				persistSlice(next);
+				return next;
+			});
 		},
 
 		async rescanIndexedFolders() {
@@ -590,6 +616,8 @@ function contentIds(state: LibraryState): string[] {
 
 function idsForSource(state: LibraryState): string[] {
 	if (collectionForSource(state.collections, state.source)) return contentIds(state);
+	const packFolder = packFolderOfSource(state.source);
+	if (packFolder) return packAssetIds(state.audioIds, packFolder);
 	switch (state.source) {
 		case 'recents':
 			return state.recentIds;

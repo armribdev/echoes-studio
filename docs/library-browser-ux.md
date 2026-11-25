@@ -76,13 +76,24 @@ Sources are **views into the catalogue**, not a second folder tree.
 | `drums`         | Hybrid: drum-tagged one-shots + drum MIDI _(Phase 3)_      | Name                                |
 | `collection:*`  | Smart collection: a saved search (text + type) _(Phase 4)_ | Name                                |
 | `user_folder:*` | One indexed user folder                                    | Path / name                         |
-| `pack:*`        | One factory or installed pack _(Phase 4)_                  | Pack order                          |
+| `pack:<folder>` | One indexed folder, browsed on its own _(Phase 4)_         | Name                                |
 
 **Phase 1 ships:** `audio` (single file source), plus `recents` and `favorites`.  
 No Samples/Loops split until kinds exist (Phase 2+).  
 **Phase 2+ may add:** `samples`, `loops` (split from `audio`), user folders.  
 **Phase 3 adds:** `chords`, `midi`, `drums` (factory content first; drums = 16 generated factory one-shots + factory drum MIDI).  
 **Phase 4 adds:** packs + smart collections.
+
+**Packs (Phase 4, 2026-11-26).** A pack is an indexed folder: each one gets its
+own source after the collections, labelled with the folder name (full path in the
+tooltip), in the order the folders were added. Sample packs ship as folders, so
+this is the « installed pack » without a separate install mechanism. There is
+deliberately **no factory pack**: the factory content is already split by type
+(Chords / MIDI / Drums) and a pack would only repeat it. When a pack is open,
+« Stop indexing this folder » forgets the folder and the sounds only it brought
+in (files on disk are untouched; favorites, tags and recents keep pointing at
+their path). A folder that is still being scanned stops being scanned. Contexts
+that remembered the pack fall back to their factory source.
 
 **Smart collections (Phase 4, 2026-11-26).** Next to the search field, a type
 filter (all / audio / MIDI / chords) narrows any source. As soon as the search

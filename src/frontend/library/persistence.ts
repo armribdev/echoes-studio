@@ -1,7 +1,7 @@
-import { collectionIdOfSource, normalizeCollectionName } from './collections';
+import { normalizeCollectionName } from './collections';
+import { hasSourceShape, isKnownSource, type KnownSources } from './sources';
 import { normalizeTag } from './tags';
 import {
-	isLibraryBuiltInSourceId,
 	isLibraryKindFilter,
 	isLibraryOpenContext,
 	type LibraryCollection,
@@ -72,15 +72,9 @@ function collectionsFrom(value: unknown): LibraryCollection[] {
 	return collections;
 }
 
-function lastSourceFrom(
-	value: unknown,
-	collections: readonly LibraryCollection[]
-): LibrarySourceId {
-	if (typeof value !== 'string') return 'audio';
-	if (isLibraryBuiltInSourceId(value)) return value;
-	const collectionId = collectionIdOfSource(value as LibrarySourceId);
-	return collectionId && collections.some((collection) => collection.id === collectionId)
-		? (value as LibrarySourceId)
+function lastSourceFrom(value: unknown, known: KnownSources): LibrarySourceId {
+	return typeof value === 'string' && hasSourceShape(value) && isKnownSource(value, known)
+		? value
 		: 'audio';
 }
 
@@ -89,9 +83,7 @@ function contextSourcesFrom(value: unknown): LibraryContextSources {
 	if (typeof value !== 'object' || value === null) return contextSources;
 	for (const [context, source] of Object.entries(value)) {
 		if (!isLibraryOpenContext(context) || typeof source !== 'string') continue;
-		if (isLibraryBuiltInSourceId(source) || collectionIdOfSource(source as LibrarySourceId)) {
-			contextSources[context] = source as LibrarySourceId;
-		}
+		if (hasSourceShape(source)) contextSources[context] = source;
 	}
 	return contextSources;
 }
@@ -103,11 +95,12 @@ export function loadLibraryPersistence(): LibraryPersistence {
 		if (!raw) return defaultPersistence();
 		const parsed = JSON.parse(raw) as Partial<Record<keyof LibraryPersistence, unknown>>;
 		const collections = collectionsFrom(parsed.collections);
+		const indexedFolders = stringList(parsed.indexedFolders);
 		return {
 			favoriteIds: stringList(parsed.favoriteIds),
 			recentIds: stringList(parsed.recentIds),
-			indexedFolders: stringList(parsed.indexedFolders),
-			lastSource: lastSourceFrom(parsed.lastSource, collections),
+			indexedFolders,
+			lastSource: lastSourceFrom(parsed.lastSource, { collections, indexedFolders }),
 			userTags: userTagsFrom(parsed.userTags),
 			collections,
 			contextSources: contextSourcesFrom(parsed.contextSources)

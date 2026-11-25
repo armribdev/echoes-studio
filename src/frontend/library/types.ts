@@ -13,7 +13,13 @@ export type LibraryBuiltInSourceId =
 /** A saved search shown as a source: `collection:<id>`. */
 export type LibraryCollectionSourceId = `collection:${string}`;
 
-export type LibrarySourceId = LibraryBuiltInSourceId | LibraryCollectionSourceId;
+/** An indexed folder browsed on its own: `pack:<folder path>`. */
+export type LibraryPackSourceId = `pack:${string}`;
+
+export type LibrarySourceId =
+	| LibraryBuiltInSourceId
+	| LibraryCollectionSourceId
+	| LibraryPackSourceId;
 
 /** Coarse asset type filter: loops and one-shots are both « audio ». */
 export type LibraryKindFilter = 'audio' | 'midi_pattern' | 'chord_progression';
