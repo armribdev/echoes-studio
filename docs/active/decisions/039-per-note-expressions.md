@@ -112,7 +112,17 @@ Edits replace the notes of the content with the existing `SET_CLIP_MIDI_NOTES`
 (event `MIDI_CONTENT_NOTES_SET`): one undo step per gesture, no new command or
 event. The price is that a curve edit re-sends the notes of the content; a content
 is a clip's worth of notes, and a dedicated command can come if that is measured
-to matter. The piano-roll UI is step C of this plan.
+to matter.
+
+The piano roll draws the curves as three more **lanes** of the control-lane stack
+(`note_pressure`, `note_timbre`, `note_pitch`, picked like any controller, same
+height, same gestures: click, drag, Ctrl + drag free-hand, Shift + drag ramp). A
+lane edits the curve of the **one selected note** (nothing selected or several: the
+lane is empty and inert); it draws in clip beats, dims what lies outside the note and
+keeps every point inside it. Values are lane integers (0..127 for pressure and timbre,
+tenths of a semitone for micro-pitch, 240 = no bend) converted at the edge
+(`frontend/pianoRoll/noteExpressionLanes.ts`). A lane holding a curve on some note
+is shown when the clip opens. Copying and pasting notes carries their curves.
 
 ## Real-time impact
 
@@ -158,7 +168,7 @@ Validated against `rt_audio_rules.md`: no allocation, lock, `drop`, I/O or
 - A CLAP synth that supports note expressions plays per-note pressure, timbre and
   micro-pitch from the clip, and seeks, loops and edits never leave a stale value.
 - Not hand-tested: nothing was heard on a real synth (Vital, Surge XT).
-- Unproven in the sandbox until step B, and invisible until step C (no editor yet).
+- Unproven in the sandbox until step B. Step C is in the app but was not tried by hand.
 
 ## Future (not decided here)
 
@@ -169,5 +179,7 @@ A note id if overlapping same-pitch notes ever matter. VST3 note expression.
 ## Implementation status
 
 2026-11-26 — step A done (model, engine, note stage, CLAP output, harness project
-`note_expressions`, a real CLAP plugin test). Step B (sandbox) and step C (piano
-roll) pending.
+`note_expressions`, a real CLAP plugin test). Step B (sandbox) pending.
+
+2026-11-26 — step C done (piano-roll lanes, see §7; `noteExpressionLanes.test.ts`,
+`controlLanes.test.ts`; not tried in the app).
