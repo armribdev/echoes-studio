@@ -122,7 +122,11 @@ recorded. It is now parsed as `Control { message: [0xD0, value, 0] }`.
 Up to three stacked lanes under the velocity lane, each with a control picker,
 a clear button and a hide button; lanes holding data open automatically when a
 clip opens; `+ Contrôle` adds one (presets: pitch bend, modulation, sustain,
-expression, aftertouch, plus any CC present). Same gestures as arrange
+expression, aftertouch, plus any CC present; amended 2026-11-26: every other
+controller 0-119 too, by number — 120-127 are channel-mode messages and are
+only listed when the clip already holds them; the lane height, 52-160 px, is
+shared by all lanes and dragged from the top edge of the lane area — UI state,
+not saved). Same gestures as arrange
 automation lanes: click to add, drag a point, double-click to delete,
 Ctrl + drag to draw free-hand (one value per 1/32 beat), and Shift + drag for a
 straight ramp (held steps every 1/16 beat). Values are held steps, drawn as a

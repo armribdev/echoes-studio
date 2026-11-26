@@ -3,9 +3,12 @@ import type { MidiControlPoint } from '../../types/global';
 import {
 	AFTERTOUCH,
 	LANE_HEIGHT,
+	MAX_LANE_HEIGHT,
+	clampLaneHeight,
 	formatLaneValue,
 	PITCH_BEND,
 	SUSTAIN,
+	candidateLanes,
 	lanePoints,
 	lanesWithData,
 	laneNeutral,
@@ -47,6 +50,41 @@ describe('lanesWithData', () => {
 
 	it('is empty for a clip without controls', () => {
 		expect(lanesWithData([])).toEqual([]);
+	});
+});
+
+describe('clampLaneHeight', () => {
+	it('keeps the height between the default and the maximum', () => {
+		expect(clampLaneHeight(10)).toBe(LANE_HEIGHT);
+		expect(clampLaneHeight(90.4)).toBe(90);
+		expect(clampLaneHeight(1000)).toBe(MAX_LANE_HEIGHT);
+	});
+});
+
+describe('candidateLanes', () => {
+	const keys = (lanes: { kind: string; number: number }[]) =>
+		lanes.map((lane) => `${lane.kind}:${lane.number}`);
+
+	it('offers presets, then every drawable controller once, without the lanes already shown', () => {
+		const candidates = candidateLanes([point(0, 'control_change', 74, 10)], [PITCH_BEND]);
+		const listed = keys(candidates);
+		expect(listed.slice(0, 4)).toEqual([
+			'control_change:1',
+			'control_change:64',
+			'control_change:11',
+			'channel_pressure:0'
+		]);
+		expect(listed).not.toContain('pitch_bend:0');
+		expect(listed).toContain('control_change:74');
+		expect(listed).toContain('control_change:119');
+		expect(listed).not.toContain('control_change:120');
+		expect(new Set(listed).size).toBe(listed.length);
+	});
+
+	it('keeps a controller above the drawable range when the clip holds data for it', () => {
+		expect(keys(candidateLanes([point(0, 'control_change', 123, 1)], []))).toContain(
+			'control_change:123'
+		);
 	});
 });
 

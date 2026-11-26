@@ -11,7 +11,9 @@ export interface LanePoint {
 	value: number;
 }
 
+/** Default and minimum height: the picker and buttons of the keys column need it. */
 export const LANE_HEIGHT = 52;
+export const MAX_LANE_HEIGHT = 160;
 export const ADD_ROW_HEIGHT = 22;
 export const MAX_VISIBLE_LANES = 3;
 
@@ -33,6 +35,13 @@ export const LANE_PRESETS: ControlLane[] = [
 	EXPRESSION,
 	AFTERTOUCH
 ];
+
+/** Controllers 120-127 are channel-mode messages (all notes off…), not something to draw. */
+const DRAWABLE_CONTROLLERS = 120;
+
+export function clampLaneHeight(heightPx: number): number {
+	return Math.min(MAX_LANE_HEIGHT, Math.max(LANE_HEIGHT, Math.round(heightPx)));
+}
 
 export function laneKey(lane: ControlLane): string {
 	return `${lane.kind}:${lane.number}`;
@@ -71,6 +80,19 @@ export function lanesWithData(controls: MidiControlPoint[]): ControlLane[] {
 		.filter((lane) => !LANE_PRESETS.some((preset) => sameLane(preset, lane)))
 		.sort((a, b) => a.number - b.number);
 	return [...presets, ...others];
+}
+
+/** What the lane pickers offer: presets, lanes holding data, then every other controller by number. */
+export function candidateLanes(controls: MidiControlPoint[], shown: ControlLane[]): ControlLane[] {
+	const everyController = Array.from({ length: DRAWABLE_CONTROLLERS }, (_, number) => ({
+		kind: 'control_change' as const,
+		number
+	}));
+	return [...LANE_PRESETS, ...lanesWithData(controls), ...everyController].filter(
+		(lane, index, all) =>
+			all.findIndex((other) => sameLane(other, lane)) === index &&
+			!shown.some((shownLane) => sameLane(shownLane, lane))
+	);
 }
 
 export function lanePoints(controls: MidiControlPoint[], lane: ControlLane): MidiControlPoint[] {

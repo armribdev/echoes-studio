@@ -5,7 +5,6 @@
 	import { NOTE_H, TOTAL_PITCHES } from '../../frontend/pianoRoll/coords';
 	import {
 		ADD_ROW_HEIGHT,
-		LANE_HEIGHT,
 		laneKey,
 		lanePoints,
 		type ControlLane
@@ -17,6 +16,7 @@
 
 	export let keysEl: HTMLDivElement | undefined = undefined;
 	export let controlLanes: ControlLane[];
+	export let laneHeight: number;
 	export let laneCandidates: ControlLane[];
 	export let showAddRow: boolean;
 	export let clipControls: MidiControlPoint[];
@@ -91,7 +91,7 @@
 	</div>
 	<div class="keys-vel-label">VEL</div>
 	{#each controlLanes as lane, index (laneKey(lane))}
-		<div class="keys-lane" style="height: {LANE_HEIGHT}px">
+		<div class="keys-lane" style="height: {laneHeight}px">
 			<CustomSelect
 				size="xs"
 				label={$t('pianoRoll.controls.lane')}

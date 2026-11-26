@@ -4,7 +4,6 @@
 	import type { MidiControlPoint } from '../types/global';
 	import { snapBeat } from '../frontend/pianoRoll/coords';
 	import {
-		LANE_HEIGHT,
 		formatLaneValue,
 		laneNeutral,
 		lanePoints,
@@ -23,6 +22,7 @@
 	import { notify } from '../stores/status';
 
 	export let lane: ControlLane;
+	export let height: number;
 	export let controls: MidiControlPoint[];
 	export let pxPerBeat: number;
 	export let widthPx: number;
@@ -33,7 +33,6 @@
 	const HIT_RADIUS_PX = 7;
 	const STROKE_STEP_BEATS = 1 / 32;
 	const RAMP_STEP_BEATS = 1 / 16;
-	const height = LANE_HEIGHT;
 
 	let svg: SVGSVGElement;
 	/** Points shown while editing and until the engine echoes the edit back. */

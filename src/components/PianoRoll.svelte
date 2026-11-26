@@ -63,12 +63,12 @@
 	import PianoRollKeys from './pianoRoll/PianoRollKeys.svelte';
 	import PianoRollControlLanes from './pianoRoll/PianoRollControlLanes.svelte';
 	import {
-		LANE_PRESETS,
+		LANE_HEIGHT,
 		MAX_VISIBLE_LANES,
+		candidateLanes,
 		laneKey,
 		lanesWithData,
 		replaceLanePoints,
-		sameLane,
 		type ControlLane
 	} from '../frontend/pianoRoll/controlLanes';
 	const MIN_DURATION = 0.0625;
@@ -264,6 +264,7 @@
 	const NO_CONTROLS: MidiControlPoint[] = [];
 	let controlLanes: ControlLane[] = [];
 	let controlLanesClipId: string | null = null;
+	let laneHeight = LANE_HEIGHT;
 
 	$: clipControls = (() => {
 		if (!trackId || !clipId) return NO_CONTROLS;
@@ -277,12 +278,8 @@
 		controlLanes = lanesWithData(clipControls).slice(0, MAX_VISIBLE_LANES);
 	}
 
-	$: laneCandidates = [...LANE_PRESETS, ...lanesWithData(clipControls)].filter(
-		(lane, index, all) =>
-			all.findIndex((other) => sameLane(other, lane)) === index &&
-			!controlLanes.some((shown) => sameLane(shown, lane))
-	);
-	$: showAddRow = controlLanes.length < MAX_VISIBLE_LANES && laneCandidates.length > 0;
+	$: laneCandidates = candidateLanes(clipControls, controlLanes);
+	$: showAddRow = controlLanes.length < MAX_VISIBLE_LANES;
 	$: lanesWidthPx = Math.max(hTotalBeats * zoom, 1);
 
 	function commitControls(next: MidiControlPoint[]): Promise<unknown> {
@@ -1542,6 +1539,7 @@
 				<PianoRollKeys
 					bind:keysEl={keysContainer}
 					{controlLanes}
+					{laneHeight}
 					{laneCandidates}
 					{showAddRow}
 					{clipControls}
@@ -1616,6 +1614,7 @@
 					{#if controlLanes.length > 0 || showAddRow}
 						<PianoRollControlLanes
 							lanes={controlLanes}
+							bind:laneHeight
 							{showAddRow}
 							{scrollLeft}
 							controls={clipControls}
