@@ -3,8 +3,7 @@
 ## Status
 
 **Accepted — 2026-11-26** (the user approved the design, "lecture seulement,
-remplace la plage"). Implemented step by step; the table at the end says which
-step is done. Builds on ADR-021 (plugin parameter automation, output events),
+remplace la plage"). Implemented in four steps, all done 2026-11-26; the table at the end gives each one. Builds on ADR-021 (plugin parameter automation, output events),
 ADR-025 (lanes), ADR-022 / ADR-029 (the recording pattern: time-stamped capture,
 the clip is added by a normal command), ADR-008 (the SPSC pattern) and ADR-033
 (sandbox bridge).
@@ -84,4 +83,4 @@ The only audio → command-thread mechanism today is one global atomic flag
 | 1    | CLAP plugin in the Echoes process (effects and instruments), ring, watcher, event, arm button, frontend write                         | implemented 2026-11-26, not hand-tested |
 | 2    | CLAP plugin in the bridge (`observe_edit`, the block reply carries the edits with their offsets)                                      | implemented 2026-11-26, not hand-tested |
 | 3    | VST3 in the process (`IComponentHandler` → `EditState`, read at the block start: block-level time resolution, a click is one gesture) | implemented 2026-11-26, not hand-tested |
-| 4    | VST3 in the bridge                                                                                                                    | open                                    |
+| 4    | VST3 in the bridge (`Vst3ParamEvents::observe_edit`, same one-block lag as step 2)                                                    | implemented 2026-11-26, not hand-tested |

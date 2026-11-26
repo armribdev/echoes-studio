@@ -4,6 +4,7 @@
 use std::ffi::c_void;
 use std::sync::Arc;
 
+use crate::audio_graph::node::TransportInfo;
 use crate::audio_graph::plugin_params::{
     PluginParamControl, PluginParamControls, PluginParamRange, ValueModulatedParam,
 };
@@ -140,6 +141,8 @@ pub struct Vst3ParamEvents {
     followed: Vec<FollowedParam>,
     /// Parameters being dragged in the plugin window right now.
     editing: Vec<u32>,
+    /// What the user drags, for automation writing (ADR-037).
+    capture: EditCapture,
 }
 
 impl Default for Vst3ParamEvents {
@@ -154,6 +157,7 @@ impl Vst3ParamEvents {
             controls: PluginParamControls::default(),
             followed: Vec::new(),
             editing: Vec::with_capacity(vst3_host::component_handler::MAX_GESTURES),
+            capture: EditCapture::default(),
         }
     }
 
@@ -163,7 +167,12 @@ impl Vst3ParamEvents {
 
     /// Off the audio thread, at compile time (ADR-021): the parameters modulated by
     /// value from now on, whose bases a state save restores.
-    pub fn set_controls(&mut self, controls: Vec<PluginParamControl>, instance: &PluginInstance) {
+    pub fn set_controls(
+        &mut self,
+        controls: Vec<PluginParamControl>,
+        instance: &Arc<PluginInstance>,
+    ) {
+        self.capture = EditCapture::for_instance(instance);
         let followed = followed_params(&controls);
         let previous = instance.replace_value_modulated_params(
             followed
@@ -204,10 +213,28 @@ impl Vst3ParamEvents {
         );
     }
 
+    /// Audio thread: where this block sits on the timeline, for the edits its
+    /// reply carries (ADR-037).
+    pub fn begin_block(&mut self, transport: &TransportInfo) {
+        self.capture.begin_block(transport);
+    }
+
     /// Audio thread: what the plugin window did to one of its parameters.  An edit
     /// moves the base of a parameter modulated by value, as `EditState::perform`
     /// does in the Echoes process.
     pub fn observe_edit(&mut self, edit: &WireParam) {
+        match edit.kind {
+            PARAM_VALUE => self
+                .capture
+                .observe_value(edit.offset, edit.native_id, edit.value),
+            PARAM_GESTURE_BEGIN => self
+                .capture
+                .observe_gesture(edit.offset, edit.native_id, true),
+            PARAM_GESTURE_END => self
+                .capture
+                .observe_gesture(edit.offset, edit.native_id, false),
+            _ => {}
+        }
         match edit.kind {
             PARAM_VALUE => {
                 if let Some(param) = self
@@ -348,6 +375,7 @@ mod tests {
     use std::sync::atomic::{AtomicU32, Ordering};
 
     use super::*;
+    use crate::plugin_system::param_edits::{set_write_armed, WRITE_ARMED_TEST_LOCK};
 
     #[derive(Default)]
     struct RecordedSink(Vec<(u32, u32, f64)>);
@@ -396,6 +424,9 @@ mod tests {
 
     #[test]
     fn a_drag_pauses_the_modulation_but_not_the_automation() {
+        let _lock = WRITE_ARMED_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let mut controls = PluginParamControls::new(vec![control(3, 0.5), control(4, 0.5)]);
         controls.modulate_at(3, 0, 0.25);
         controls.automate_at(4, 0, 0.25);
@@ -408,6 +439,46 @@ mod tests {
             emitted(&mut controls, |id| id == 4),
             [(0, 3, 0.75), (0, 4, 0.25)]
         );
+    }
+
+    #[test]
+    fn while_writing_is_armed_a_drag_pauses_the_automation_too() {
+        let _lock = WRITE_ARMED_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let mut controls = PluginParamControls::new(vec![control(4, 0.5)]);
+        controls.automate_at(4, 0, 0.25);
+        set_write_armed(true);
+        let while_dragged = emitted(&mut controls, |id| id == 4);
+        set_write_armed(false);
+        assert!(while_dragged.is_empty());
+    }
+
+    #[test]
+    fn a_drag_reported_by_the_bridge_is_logged_with_its_project_time() {
+        let _lock = WRITE_ARMED_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let instance = PluginInstance::new_internal("test");
+        let mut events = Vst3ParamEvents::new();
+        events.set_controls(Vec::new(), &instance);
+        events.begin_block(&TransportInfo {
+            is_playing: true,
+            position_seconds: 2.0,
+            ..TransportInfo::stopped(48_000.0)
+        });
+
+        set_write_armed(true);
+        events.observe_edit(&WireParam::new(PARAM_GESTURE_BEGIN, 0, 3, 0.0));
+        events.observe_edit(&WireParam::new(PARAM_VALUE, 480, 3, 0.7));
+        events.observe_edit(&WireParam::new(PARAM_GESTURE_END, 480, 3, 0.0));
+        set_write_armed(false);
+
+        let mut edits = Vec::new();
+        instance.drain_param_edits(|edit| edits.push(edit));
+        assert_eq!(edits.len(), 3);
+        assert!((edits[1].normalised - 0.7).abs() < 1e-6);
+        assert!((edits[1].time_s - 2.01).abs() < 1e-9);
     }
 
     #[test]

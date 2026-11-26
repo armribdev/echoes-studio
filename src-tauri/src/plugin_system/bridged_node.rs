@@ -147,8 +147,9 @@ impl BridgedParams {
 
     /// Where the block sits on the timeline, for the edits its reply carries (ADR-037).
     fn begin_block(&mut self, transport: &TransportInfo) {
-        if let Self::Clap(events) = self {
-            events.begin_block(transport);
+        match self {
+            Self::Clap(events) => events.begin_block(transport),
+            Self::Vst3(events) => events.begin_block(transport),
         }
     }
 

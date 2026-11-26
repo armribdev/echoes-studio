@@ -251,8 +251,8 @@ parameter is dragged its automation is not sent. Covered: CLAP plugins in the Ec
 process and in the bridge (the block reply carries the edits, so the touch pause of the
 lane lags one block there), and VST3 plugins in the Echoes process (the window reports
 to `EditState` and the audio thread reads it at the start of each block, so the time
-resolution is one block and a click is one gesture). VST3 in the bridge is the last step
-(ADR-037, table of steps). Not hand-tested.
+resolution is one block and a click is one gesture). VST3 in the bridge reports like CLAP in the bridge
+(one block late). All four steps of ADR-037 are done. Not hand-tested.
 
 **Automating from a knob (2026-09-29).** Right-clicking a `Knob` or the volume
 `FaderMeter` that carries a `modTargetKey` posts an `automationRequest`
