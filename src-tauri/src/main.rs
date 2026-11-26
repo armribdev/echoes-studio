@@ -46,6 +46,7 @@ fn main() {
             midi_input::spawn_hotplug_watcher(app.handle().clone());
             watch_plugin_edits(app.handle().clone());
 
+            #[cfg_attr(not(debug_assertions), allow(unused_mut))]
             let mut initial_title = "Sans titre".to_string();
 
             #[cfg(debug_assertions)]
