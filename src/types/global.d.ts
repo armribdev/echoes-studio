@@ -218,6 +218,56 @@ export interface ArpeggiatorSettings {
 	octaves: number;
 }
 
+export type ScaleKind =
+	| 'major'
+	| 'natural_minor'
+	| 'harmonic_minor'
+	| 'dorian'
+	| 'phrygian'
+	| 'lydian'
+	| 'mixolydian'
+	| 'pentatonic_major'
+	| 'pentatonic_minor'
+	| 'blues';
+
+export type ChordShape =
+	| 'octave'
+	| 'fifth'
+	| 'major'
+	| 'minor'
+	| 'sus2'
+	| 'sus4'
+	| 'diminished'
+	| 'augmented'
+	| 'major7'
+	| 'minor7'
+	| 'dominant7';
+
+export interface TransposeSettings {
+	enabled: boolean;
+	/** -24 to 24. */
+	semitones: number;
+}
+
+export interface ScaleSettings {
+	enabled: boolean;
+	/** 0 = C … 11 = B. */
+	root: number;
+	scale: ScaleKind;
+}
+
+export interface ChordSettings {
+	enabled: boolean;
+	shape: ChordShape;
+}
+
+/** Transpose, scale and chord ahead of the arpeggiator (ADR-038) — mirrors Rust `NoteEffectSettings`. */
+export interface NoteEffectSettings {
+	transpose: TransposeSettings;
+	scale: ScaleSettings;
+	chord: ChordSettings;
+}
+
 export interface Track {
 	/** Stable ID used by the event-sourcing system. Added in architecture v2. */
 	id: string;
@@ -234,6 +284,8 @@ export interface Track {
 	sampler?: SamplerKit | null;
 	/** Arpeggiator settings; null/absent until first configured. */
 	arpeggiator?: ArpeggiatorSettings | null;
+	/** Note effects settings; null/absent until first configured. */
+	note_effects?: NoteEffectSettings | null;
 	/** Plugin output mixed into the track's input, or null/absent for none. */
 	input_source?: PluginOutputSource | null;
 	clips: Clip[];

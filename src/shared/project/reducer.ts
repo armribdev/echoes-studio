@@ -14,12 +14,14 @@ import {
 	ev,
 	type ArpeggiatorSetPayload,
 	type EngineEvent,
+	type NoteEffectsSetPayload,
 	type SamplerPadSetPayload,
 	type TrackCreatedPayload,
 	type TrackInstrumentSetPayload
 } from '../protocol/events';
 import type {
 	ArpeggiatorSettings,
+	NoteEffectSettings,
 	ArrangementMarker,
 	ArrangementRegion,
 	AutomationClip,
@@ -101,6 +103,7 @@ export interface TrackState {
 	instrument: string | null;
 	sampler: SamplerKit | null;
 	arpeggiator: ArpeggiatorSettings | null;
+	note_effects: NoteEffectSettings | null;
 	input_source: PluginOutputSource | null;
 	automation_lanes: AutomationLane[];
 }
@@ -151,6 +154,7 @@ export function applyEvent(state: ProjectState, event: EngineEvent): ProjectStat
 						instrument: p.instrument ?? null,
 						sampler: p.sampler ?? null,
 						arpeggiator: null,
+						note_effects: null,
 						input_source: null,
 						clips: [],
 						effects: [],
@@ -252,6 +256,16 @@ export function applyEvent(state: ProjectState, event: EngineEvent): ProjectStat
 				...state,
 				tracks: state.tracks.map((t) =>
 					t.id !== p.track_id ? t : { ...t, arpeggiator: p.settings }
+				)
+			};
+		}
+
+		case ev.NOTE_EFFECTS_SET: {
+			const p = event.payload as NoteEffectsSetPayload;
+			return {
+				...state,
+				tracks: state.tracks.map((t) =>
+					t.id !== p.track_id ? t : { ...t, note_effects: p.settings }
 				)
 			};
 		}
@@ -820,6 +834,7 @@ export function projectFromSnapshot(dto: Project): ProjectState {
 			instrument: t.instrument ?? null,
 			sampler: t.sampler ?? null,
 			arpeggiator: t.arpeggiator ?? null,
+			note_effects: t.note_effects ?? null,
 			input_source: t.input_source ?? null,
 			automation_lanes: t.automation_lanes ?? []
 		})),

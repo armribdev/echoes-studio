@@ -4,6 +4,7 @@
 	import PluginPicker from './PluginPicker.svelte';
 	import SamplerPads from './SamplerPads.svelte';
 	import ArpeggiatorPanel from './ArpeggiatorPanel.svelte';
+	import NoteEffectsPanel from './NoteEffectsPanel.svelte';
 	import PresetPicker from './PresetPicker.svelte';
 	import RemotePageKnobs from './RemotePageKnobs.svelte';
 	import EffectContextMenu from './EffectContextMenu.svelte';
@@ -22,7 +23,7 @@
 	import { setTrackInstrument } from '../frontend/commands/dispatcher';
 	import { notify } from '../stores/status';
 	import { t } from 'svelte-i18n';
-	import type { ArpeggiatorSettings, SamplerKit } from '../types/global';
+	import type { ArpeggiatorSettings, NoteEffectSettings, SamplerKit } from '../types/global';
 	import { isSamplerInstrument } from '../shared/project/sampler';
 
 	const REASON_KEYS: Record<UnavailableReason, string> = {
@@ -36,6 +37,7 @@
 	export let instrument: string | null;
 	export let sampler: SamplerKit | null = null;
 	export let arpeggiator: ArpeggiatorSettings | null = null;
+	export let noteEffects: NoteEffectSettings | null = null;
 	export let compact = false;
 	export let trackName = '';
 	export let trackColor = DEFAULT_TRACK_COLOR;
@@ -266,6 +268,7 @@
 		</div>
 	{/if}
 
+	<NoteEffectsPanel {trackId} {noteEffects} />
 	<ArpeggiatorPanel {trackId} {arpeggiator} />
 </div>
 

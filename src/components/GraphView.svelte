@@ -185,6 +185,7 @@
 			instrument: t.instrument ?? null,
 			sampler: t.sampler ?? null,
 			arpeggiator: t.arpeggiator ?? null,
+			note_effects: t.note_effects ?? null,
 			effects: t.effects ?? [],
 			modulators: t.modulators ?? [],
 			mod_routes: t.mod_routes ?? []

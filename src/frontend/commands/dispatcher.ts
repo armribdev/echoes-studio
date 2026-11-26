@@ -44,6 +44,8 @@ import {
 	type UpdateAutomationLanePayload,
 	type AddModulatorPayload,
 	type ArpeggiatorPatch,
+	type NoteEffectsPatch,
+	type SetNoteEffectsPayload,
 	type SamplerPadPatch,
 	type SetArpeggiatorPayload,
 	type SetSamplerPadPayload,
@@ -220,6 +222,10 @@ export function setSamplerPad(
 
 export function setArpeggiator(trackId: string, patch: ArpeggiatorPatch): Promise<CommandResult> {
 	return dispatch<SetArpeggiatorPayload>(cmd.SET_ARPEGGIATOR, { track_id: trackId, patch });
+}
+
+export function setNoteEffects(trackId: string, patch: NoteEffectsPatch): Promise<CommandResult> {
+	return dispatch<SetNoteEffectsPayload>(cmd.SET_NOTE_EFFECTS, { track_id: trackId, patch });
 }
 
 export function setTrackInput(

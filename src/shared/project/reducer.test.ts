@@ -633,6 +633,57 @@ describe('sampler (ADR-028)', () => {
 	});
 });
 
+describe('note effects (ADR-038)', () => {
+	const settings = {
+		transpose: { enabled: true, semitones: -5 },
+		scale: { enabled: true, root: 2, scale: 'dorian' as const },
+		chord: { enabled: false, shape: 'minor7' as const }
+	};
+	const withTrack = () =>
+		replayEvents([event(ev.TRACK_CREATED, { id: 'a', name: 'Lead', instrument: null })]);
+
+	it('starts without settings', () => {
+		expect(withTrack().tracks[0].note_effects).toBeNull();
+	});
+
+	it('takes the whole settings the engine sends', () => {
+		const state = applyEvent(withTrack(), event(ev.NOTE_EFFECTS_SET, { track_id: 'a', settings }));
+		expect(state.tracks[0].note_effects).toEqual(settings);
+	});
+
+	it('ignores a track that no longer exists', () => {
+		const before = withTrack();
+		const state = applyEvent(before, event(ev.NOTE_EFFECTS_SET, { track_id: 'gone', settings }));
+		expect(state.tracks).toEqual(before.tracks);
+	});
+
+	it('reads the settings from a snapshot, and tolerates their absence', () => {
+		const track = {
+			name: 'Lead',
+			volume: 80,
+			pan: 0,
+			muted: false,
+			solo: false,
+			clips: [],
+			effects: [],
+			modulators: [],
+			mod_routes: [],
+			midi_notes: [],
+			midi_clips: [],
+			automation_lanes: []
+		};
+		const state = projectFromSnapshot({
+			...emptyProjectState(),
+			tracks: [
+				{ ...track, id: 'a', note_effects: settings },
+				{ ...track, id: 'b' }
+			]
+		});
+		expect(state.tracks[0].note_effects).toEqual(settings);
+		expect(state.tracks[1].note_effects).toBeNull();
+	});
+});
+
 describe('arpeggiator (ADR-030)', () => {
 	const settings = {
 		enabled: true,

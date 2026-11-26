@@ -13,6 +13,9 @@
 
 import type {
 	ArpeggiatorSettings,
+	ChordSettings,
+	ScaleSettings,
+	TransposeSettings,
 	AutomationClip,
 	InterpolationMode,
 	MidiControlPoint,
@@ -40,6 +43,7 @@ export const cmd = {
 	SET_TRACK_INPUT: 'SET_TRACK_INPUT',
 	SET_SAMPLER_PAD: 'SET_SAMPLER_PAD',
 	SET_ARPEGGIATOR: 'SET_ARPEGGIATOR',
+	SET_NOTE_EFFECTS: 'SET_NOTE_EFFECTS',
 	ADD_CLIP: 'ADD_CLIP',
 	MOVE_CLIP: 'MOVE_CLIP',
 	REMOVE_CLIP: 'REMOVE_CLIP',
@@ -157,6 +161,18 @@ export type ArpeggiatorPatch = Partial<ArpeggiatorSettings>;
 export interface SetArpeggiatorPayload {
 	track_id: string;
 	patch: ArpeggiatorPatch;
+}
+
+/** Note effect settings to change; absent fields stay unchanged. */
+export interface NoteEffectsPatch {
+	transpose?: Partial<TransposeSettings>;
+	scale?: Partial<ScaleSettings>;
+	chord?: Partial<ChordSettings>;
+}
+
+export interface SetNoteEffectsPayload {
+	track_id: string;
+	patch: NoteEffectsPatch;
 }
 
 export interface SetTrackInputPayload {

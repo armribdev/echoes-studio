@@ -16,7 +16,13 @@
  * All events arrive via Tauri's event channel named `"engine-event"`.
  */
 
-import type { ArpeggiatorSettings, Clip, SamplerKit, SamplerPad } from '../../../types/global';
+import type {
+	ArpeggiatorSettings,
+	Clip,
+	NoteEffectSettings,
+	SamplerKit,
+	SamplerPad
+} from '../../../types/global';
 
 // ── Event type constants ──────────────────────────────────────────────────────
 
@@ -31,6 +37,7 @@ export const ev = {
 	TRACK_INPUT_SET: 'TRACK_INPUT_SET',
 	SAMPLER_PAD_SET: 'SAMPLER_PAD_SET',
 	ARPEGGIATOR_SET: 'ARPEGGIATOR_SET',
+	NOTE_EFFECTS_SET: 'NOTE_EFFECTS_SET',
 	CLIP_ADDED: 'CLIP_ADDED',
 	CLIP_MOVED: 'CLIP_MOVED',
 	CLIP_MOVED_TO_TRACK: 'CLIP_MOVED_TO_TRACK',
@@ -125,6 +132,12 @@ export interface ArpeggiatorSetPayload {
 	track_id: string;
 	/** The track's whole settings after the change. */
 	settings: ArpeggiatorSettings;
+}
+
+export interface NoteEffectsSetPayload {
+	track_id: string;
+	/** The track's whole settings after the change. */
+	settings: NoteEffectSettings;
 }
 
 export interface TrackDeletedPayload {

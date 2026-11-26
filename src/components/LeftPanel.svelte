@@ -39,6 +39,7 @@
 					instrument={$selectedTrack.instrument}
 					sampler={$selectedTrack.sampler}
 					arpeggiator={$selectedTrack.arpeggiator}
+					noteEffects={$selectedTrack.note_effects}
 					trackName={$selectedTrack.trackName}
 					trackColor={$selectedTrack.trackColor}
 				/>

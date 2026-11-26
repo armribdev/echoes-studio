@@ -2,6 +2,7 @@ import { DEFAULT_TRACK_COLOR } from '../frontend/trackColor';
 import { writable } from 'svelte/store';
 import type {
 	ArpeggiatorSettings,
+	NoteEffectSettings,
 	TrackEffect,
 	ProjectModulator,
 	ProjectModulationRoute,
@@ -15,6 +16,7 @@ export interface SelectedTrackInfo {
 	instrument: string | null;
 	sampler: SamplerKit | null;
 	arpeggiator: ArpeggiatorSettings | null;
+	note_effects: NoteEffectSettings | null;
 	effects: TrackEffect[];
 	modulators: ProjectModulator[];
 	mod_routes: ProjectModulationRoute[];
@@ -27,6 +29,7 @@ export const selectedTrack = writable<SelectedTrackInfo>({
 	instrument: null,
 	sampler: null,
 	arpeggiator: null,
+	note_effects: null,
 	effects: [],
 	modulators: [],
 	mod_routes: []
