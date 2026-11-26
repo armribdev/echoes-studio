@@ -153,7 +153,7 @@ Every command below is identical on Windows, macOS and Linux.
 | `pnpm check-env`       | Verify every required tool is present and at the right version                                                                                                           |
 | `pnpm tauri:dev`       | **Start the dev build** — Vite hot-reload for the UI; Rust is not rebuilt on save (`--no-watch`), restart to pick up Rust changes. Runs `check-env` automatically first. |
 | `pnpm tauri:dev:watch` | Same, but cargo rebuilds and relaunches the app on every Rust save.                                                                                                      |
-| `pnpm tauri:build`     | Compile a release build and create platform installers. Runs `check-env` first.                                                                                          |
+| `pnpm tauri:build`     | Compile a release build and create platform installers (bundles `plugin_host_bridge` as a sidecar via `src-tauri/tauri.bundle.conf.json`; without it an installed app lists no plugin). Runs `check-env` first.                                                                                          |
 | `pnpm dev`             | Vite dev server only (frontend, no Tauri window)                                                                                                                         |
 | `pnpm build`           | SvelteKit build only (`build/`)                                                                                                                                          |
 | `pnpm test`            | Run the full validation suite: `pnpm check` + `pnpm lint` + `pnpm test:frontend` + `cargo fmt --check` + `cargo clippy` + `cargo test`                                   |
@@ -282,7 +282,9 @@ pnpm tauri:build
 │
 ├── prebuild:tauri hook runs `node scripts/check-env.mjs --quiet`
 │
-├── runs beforeBuildCommand: "pnpm run build"  →  SvelteKit → build/
+├── runs beforeBuildCommand: "node scripts/prepare-bridge.mjs && pnpm run build"
+│     ├── plugin_host_bridge (release) → src-tauri/binaries/plugin_host_bridge-<triple>  (sidecar)
+│     └── SvelteKit → build/
 │
 └── cargo build --release
     └── bundles installer for the current OS:

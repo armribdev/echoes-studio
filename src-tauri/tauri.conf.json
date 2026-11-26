@@ -4,7 +4,7 @@
 	"version": "0.1.0",
 	"identifier": "com.echoes-studio.app",
 	"build": {
-		"beforeBuildCommand": "cargo build --release --manifest-path src-tauri/Cargo.toml -p plugin_host_bridge && pnpm run build",
+		"beforeBuildCommand": "node scripts/prepare-bridge.mjs && pnpm run build",
 		"beforeDevCommand": "cargo build --manifest-path src-tauri/Cargo.toml -p plugin_host_bridge && pnpm run dev",
 		"devUrl": "http://localhost:5173",
 		"frontendDist": "../build"

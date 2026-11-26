@@ -10,7 +10,7 @@
 		"tauri:dev": "tauri dev --no-watch",
 		"tauri:dev:watch": "tauri dev",
 		"prebuild:tauri": "node scripts/check-env.mjs --quiet",
-		"tauri:build": "tauri build",
+		"tauri:build": "tauri build --config src-tauri/tauri.bundle.conf.json",
 		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
 		"check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
 		"lint": "prettier --check . && eslint . --max-warnings 0 && node scripts/check-colors.mjs && node scripts/check-controls.mjs",
