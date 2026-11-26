@@ -39,7 +39,7 @@ Chaque point dit ce qui a été constaté. « Non revérifié » = repris d'un d
 4. **UI d'automation, ce qui reste** :
    - Choix linéaire / escalier par lane : fait le 2026-11-26 (`UPDATE_AUTOMATION_LANE` → `AUTOMATION_LANE_UPDATED`, bouton dans `AutomationLaneHeader.svelte`). Pas encore essayé dans l'app.
    - Formes rapides : fait le 2026-11-26 (menu de l'en-tête de lane : rampe montante / descendante / sinus sur la boucle active, `withShape`). Pas encore essayé dans l'app.
-   - Écriture en direct (enregistrer un geste sur un bouton de plugin) : ADR-037 accepté le 2026-11-26. Étapes 1 et 2 faites (plugin CLAP dans le process d'Echoes et dans le bridge : anneau SPSC par instance, watcher, bouton ● dans l'en-tête de lane, remplacement de la plage du geste ; pas encore essayé dans l'app). Restent : VST3 en process (3), VST3 dans le bridge (4).
+   - Écriture en direct (enregistrer un geste sur un bouton de plugin) : ADR-037 accepté le 2026-11-26. Étapes 1 à 3 faites (plugin CLAP dans le process d'Echoes et dans le bridge, VST3 dans le process : anneau SPSC par instance, watcher, bouton ● dans l'en-tête de lane, remplacement de la plage du geste ; pas encore essayé dans l'app). Reste : VST3 dans le bridge (4).
    - Validation cross-OS des empreintes (ADR-025, harnais V1) : la CI exécute les tests Rust sur Windows seulement.
    - Fait depuis la dernière mise à jour : le texte de valeur fourni par le plugin (`get_plugin_param_text`, utilisé par `AutomationLane.svelte`).
 5. **Bibliothèque, phase 4 : fait le 2026-11-26** (étiquettes, collections intelligentes, mémoire de contexte opt-in, Devices = no-go dans l'ADR-023, packs, vue grille ; vérifié dans le code, pas testé à la main) : [`../../library-browser-roadmap.md`](../../library-browser-roadmap.md).

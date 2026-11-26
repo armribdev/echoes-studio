@@ -19,6 +19,7 @@ use crate::plugin_formats::vst3::instrument::VstInstrument;
 use crate::plugin_formats::vst3::param_delivery::fill_param_changes;
 use crate::plugin_formats::vst3::wrapper::VstWrapperNode;
 use crate::plugin_system::instance::PluginInstance;
+use crate::plugin_system::param_edits::{set_write_armed, EditCapture, ParamEdit, ParamEditKind};
 
 fn plugin_with(units: &mut FakeUnits) -> (Box<FakeListener>, Arc<PluginInstance>) {
     let mut listener = FakeListener::new(false);
@@ -33,7 +34,12 @@ fn control(native_id: u32, base: f32) -> PluginParamControl {
 /// One audio block, then the tick of the editor window.
 fn block_then_tick(instance: &PluginInstance, controls: &PluginParamControls) {
     let mut changes = HostParameterChanges::boxed();
-    fill_param_changes(instance, controls, &mut changes);
+    fill_param_changes(
+        instance,
+        controls,
+        &mut EditCapture::default(),
+        &mut changes,
+    );
     instance.mirror_to_controller();
 }
 
@@ -173,7 +179,12 @@ fn a_crashed_plugin_is_not_called() {
     let _watch = instance.watch_vst3_params();
     instance.push_param(5, 0.6);
     let mut changes = HostParameterChanges::boxed();
-    fill_param_changes(&instance, &PluginParamControls::default(), &mut changes);
+    fill_param_changes(
+        &instance,
+        &PluginParamControls::default(),
+        &mut EditCapture::default(),
+        &mut changes,
+    );
     instance.set_lifecycle(crate::plugin_system::lifecycle::LifecycleState::Error);
 
     instance.mirror_to_controller();
@@ -310,4 +321,111 @@ fn an_instrument_hands_the_values_it_writes_to_the_controller_too() {
     instance.mirror_to_controller();
 
     assert_given(&units, &[(5, 0.75)]);
+}
+
+/// One block of `fill_param_changes` at 3 s with writing armed, then what the
+/// instance logged for the automation lanes.
+fn captured_block(
+    instance: &Arc<PluginInstance>,
+    controls: &PluginParamControls,
+) -> Vec<ParamEdit> {
+    let mut capture = EditCapture::for_instance(instance);
+    capture.begin_block(&TransportInfo {
+        is_playing: true,
+        position_seconds: 3.0,
+        ..TransportInfo::stopped(48_000.0)
+    });
+    let mut changes = HostParameterChanges::boxed();
+    fill_param_changes(instance, controls, &mut capture, &mut changes);
+    let mut edits = Vec::new();
+    instance.drain_param_edits(|edit| edits.push(edit));
+    edits
+}
+
+#[test]
+fn a_click_in_the_window_is_one_gesture_at_the_block_start() {
+    let _lock = crate::plugin_system::param_edits::WRITE_ARMED_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let mut units = FakeUnits::root_only();
+    let (_listener, instance) = plugin_with(&mut units);
+    instance.vst3_edit_state().unwrap().perform(7, 0.4);
+
+    set_write_armed(true);
+    let edits = captured_block(&instance, &PluginParamControls::default());
+    set_write_armed(false);
+
+    let kinds: Vec<ParamEditKind> = edits.iter().map(|edit| edit.kind).collect();
+    assert_eq!(
+        kinds,
+        vec![
+            ParamEditKind::GestureBegin,
+            ParamEditKind::Value,
+            ParamEditKind::GestureEnd
+        ]
+    );
+    assert!((edits[1].normalised - 0.4).abs() < 1e-6);
+    assert_eq!(edits[1].time_s, 3.0);
+}
+
+#[test]
+fn a_drag_in_progress_stays_open_across_blocks() {
+    let _lock = crate::plugin_system::param_edits::WRITE_ARMED_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let mut units = FakeUnits::root_only();
+    let (_listener, instance) = plugin_with(&mut units);
+    let edit_state = instance.vst3_edit_state().unwrap();
+    edit_state.begin(5);
+    edit_state.perform(5, 0.2);
+
+    set_write_armed(true);
+    let edits = captured_block(&instance, &PluginParamControls::default());
+    set_write_armed(false);
+
+    let kinds: Vec<ParamEditKind> = edits.iter().map(|edit| edit.kind).collect();
+    assert_eq!(
+        kinds,
+        vec![ParamEditKind::GestureBegin, ParamEditKind::Value]
+    );
+}
+
+#[test]
+fn nothing_is_logged_when_writing_is_not_armed() {
+    let _lock = crate::plugin_system::param_edits::WRITE_ARMED_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let mut units = FakeUnits::root_only();
+    let (_listener, instance) = plugin_with(&mut units);
+    instance.vst3_edit_state().unwrap().perform(7, 0.4);
+
+    set_write_armed(false);
+    assert!(captured_block(&instance, &PluginParamControls::default()).is_empty());
+}
+
+#[test]
+fn automation_leaves_a_dragged_parameter_alone_only_while_writing_is_armed() {
+    let _lock = crate::plugin_system::param_edits::WRITE_ARMED_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let mut units = FakeUnits::root_only();
+    let (_listener, instance) = plugin_with(&mut units);
+    instance.vst3_edit_state().unwrap().begin(5);
+    let mut controls = PluginParamControls::new(vec![control(5, 0.0)]);
+    controls.automate(5, 0.8);
+
+    let sent = |armed: bool| {
+        set_write_armed(armed);
+        let mut changes = HostParameterChanges::boxed();
+        fill_param_changes(
+            &instance,
+            &controls,
+            &mut EditCapture::default(),
+            &mut changes,
+        );
+        set_write_armed(false);
+        changes.count
+    };
+    assert_eq!(sent(true), 0);
+    assert_eq!(sent(false), 1);
 }

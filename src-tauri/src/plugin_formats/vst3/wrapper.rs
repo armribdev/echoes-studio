@@ -41,6 +41,7 @@ use crate::audio_graph::plugin_params::{
 use crate::plugin_formats::crash_guard;
 use crate::plugin_system::instance::PluginInstance;
 use crate::plugin_system::lifecycle::LifecycleState;
+use crate::plugin_system::param_edits::EditCapture;
 
 use super::buses::{Vst3InputBuses, Vst3OutputBuses};
 use super::ffi::{
@@ -102,6 +103,9 @@ pub struct VstWrapperNode {
     /// Parameters targeted by modulation or automation (ADR-021), injected at
     /// compile time; pre-allocated, iterated in `process()` without allocation.
     param_controls: PluginParamControls,
+
+    /// What the user drags in the plugin window, for automation writing (ADR-037).
+    edit_capture: EditCapture,
 }
 
 // SAFETY: see module-level doc.  Raw pointers are reached via Arc-shared
@@ -118,6 +122,7 @@ impl VstWrapperNode {
             "VstWrapperNode requires a VST3 PluginInstance"
         );
         Self {
+            edit_capture: EditCapture::for_instance(&instance),
             instance,
             inputs: Vst3InputBuses::new(&[]),
             outputs: Vst3OutputBuses::new(&[]),
@@ -222,7 +227,13 @@ impl AudioNode for VstWrapperNode {
 
         // ADR-007: refill the pre-allocated parameter-change list for this block.
         let param_changes_ptr: *mut c_void = if let Some(pc) = self.param_changes.as_mut() {
-            fill_param_changes(&self.instance, &self.param_controls, pc);
+            self.edit_capture.begin_block(transport);
+            fill_param_changes(
+                &self.instance,
+                &self.param_controls,
+                &mut self.edit_capture,
+                pc,
+            );
             if pc.count > 0 {
                 pc.as_mut() as *mut HostParameterChanges as *mut c_void
             } else {

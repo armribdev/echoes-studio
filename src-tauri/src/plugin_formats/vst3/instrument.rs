@@ -30,6 +30,7 @@ use crate::audio_graph::plugin_params::{PluginParamControl, PluginParamControls}
 use crate::plugin_formats::crash_guard;
 use crate::plugin_system::instance::{PluginInstance, FFI_GATE_HARVEST_BUDGET};
 use crate::plugin_system::lifecycle::LifecycleState;
+use crate::plugin_system::param_edits::EditCapture;
 
 use super::buses::Vst3OutputBuses;
 use super::event_list::HostEventList;
@@ -77,6 +78,9 @@ pub struct VstInstrument {
     /// graph is next recompiled.
     crashed: bool,
     param_controls: PluginParamControls,
+
+    /// What the user drags in the plugin window, for automation writing (ADR-037).
+    edit_capture: EditCapture,
 }
 
 // SAFETY: identical discipline to `VstWrapperNode` — the COM pointers are
@@ -93,6 +97,7 @@ impl VstInstrument {
             "VstInstrument requires a VST3 PluginInstance"
         );
         VstInstrument {
+            edit_capture: EditCapture::for_instance(&instance),
             instance,
             outputs: Vst3OutputBuses::new(&[]),
             param_changes: None,
@@ -168,7 +173,13 @@ impl InstrumentDevice for VstInstrument {
         event_list.reset();
         self.notes.push_pending_releases(event_list);
         push_events(note_messages(events), event_list, &mut self.notes);
-        fill_param_changes(&self.instance, &self.param_controls, param_changes);
+        self.edit_capture.begin_block(transport);
+        fill_param_changes(
+            &self.instance,
+            &self.param_controls,
+            &mut self.edit_capture,
+            param_changes,
+        );
         let controls = events
             .as_slice()
             .iter()

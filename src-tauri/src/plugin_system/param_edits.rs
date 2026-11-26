@@ -5,9 +5,15 @@
 //! is armed and the transport plays; [`GestureRecorder`] turns them back into one
 //! thinned [`RecordedGesture`] per drag, off the audio thread.
 
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 use serde::Serialize;
+
+use crate::audio_graph::node::TransportInfo;
+use crate::audio_graph::plugin_params::PluginParamRange;
+use crate::plugin_system::instance::PluginInstance;
 
 pub const PARAM_EDIT_CAPACITY: usize = 256;
 
@@ -25,6 +31,10 @@ pub fn write_armed() -> bool {
 pub fn set_write_armed(armed: bool) {
     WRITE_ARMED.store(armed, Ordering::Relaxed);
 }
+
+/// The flag is process-wide: the tests that raise it take this lock.
+#[cfg(test)]
+pub(crate) static WRITE_ARMED_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum ParamEditKind {
@@ -54,6 +64,127 @@ pub struct GesturePoint {
 pub struct RecordedGesture {
     pub native_id: u32,
     pub points: Vec<GesturePoint>,
+}
+
+const MAX_OPEN_GESTURES: usize = 8;
+
+/// The drags the user makes in the plugin window while an automation lane waits
+/// for them: each one is stamped with the project time and handed to the
+/// instance's edit ring.  Audio thread only; nothing here allocates.
+#[derive(Default)]
+pub struct EditCapture {
+    instance: Option<Arc<PluginInstance>>,
+    ranges: HashMap<u32, PluginParamRange>,
+    block_start_s: f64,
+    sample_rate: f64,
+    playing: bool,
+    open: [u32; MAX_OPEN_GESTURES],
+    open_count: usize,
+}
+
+impl EditCapture {
+    /// A plugin whose values are already normalised (VST3).
+    pub fn for_instance(instance: &Arc<PluginInstance>) -> Self {
+        let mut capture = Self::default();
+        capture.attach(instance, &HashMap::new());
+        capture
+    }
+
+    /// Off the audio thread, at compile time.  `ranges` turn the plain values of a
+    /// CLAP plugin into normalised ones.
+    pub fn attach(
+        &mut self,
+        instance: &Arc<PluginInstance>,
+        ranges: &HashMap<u32, PluginParamRange>,
+    ) {
+        self.instance = Some(Arc::clone(instance));
+        self.ranges = ranges.clone();
+    }
+
+    pub fn begin_block(&mut self, transport: &TransportInfo) {
+        self.block_start_s = transport.position_seconds;
+        self.sample_rate = f64::from(transport.sample_rate);
+        self.playing = transport.is_playing;
+    }
+
+    /// The host leaves this parameter's automation alone while it is dragged, so
+    /// the lane does not fight the hand.
+    pub fn is_open(&self, native_id: u32) -> bool {
+        self.open[..self.open_count].contains(&native_id)
+    }
+
+    fn push(&self, kind: ParamEditKind, time: u32, native_id: u32, plain: f64) {
+        let Some(instance) = &self.instance else {
+            return;
+        };
+        let range = self
+            .ranges
+            .get(&native_id)
+            .copied()
+            .unwrap_or(PluginParamRange::UNKNOWN);
+        instance.push_param_edit(ParamEdit {
+            kind,
+            native_id,
+            normalised: range.normalise(plain as f32),
+            time_s: self.block_start_s + f64::from(time) / self.sample_rate,
+        });
+    }
+
+    /// `time` is the sample offset in the block.
+    pub fn observe_gesture(&mut self, time: u32, native_id: u32, is_begin: bool) {
+        if !write_armed() {
+            self.open_count = 0;
+            return;
+        }
+        if is_begin {
+            if self.playing && !self.is_open(native_id) && self.open_count < MAX_OPEN_GESTURES {
+                self.open[self.open_count] = native_id;
+                self.open_count += 1;
+                self.push(ParamEditKind::GestureBegin, time, native_id, 0.0);
+            }
+        } else if let Some(index) = self.open[..self.open_count]
+            .iter()
+            .position(|&id| id == native_id)
+        {
+            self.open_count -= 1;
+            self.open[index] = self.open[self.open_count];
+            self.push(ParamEditKind::GestureEnd, time, native_id, 0.0);
+        }
+    }
+
+    pub fn observe_value(&mut self, time: u32, native_id: u32, plain: f64) {
+        if self.playing && write_armed() && self.is_open(native_id) {
+            self.push(ParamEditKind::Value, time, native_id, plain);
+        }
+    }
+
+    /// A plugin whose window reports to the host between blocks (VST3 in the Echoes
+    /// process) is read in three steps per block, all at the block start: the
+    /// gestures it holds open, the values it set, then the gestures that ended.
+    pub fn open_dragged(&mut self, dragged: &[Option<u32>]) {
+        for &native_id in dragged.iter().flatten() {
+            self.observe_gesture(0, native_id, true);
+        }
+    }
+
+    /// A value set without a gesture in progress (a click) opens its own gesture,
+    /// which `close_released` ends in the same block.
+    pub fn window_value(&mut self, native_id: u32, normalised: f64) {
+        self.observe_gesture(0, native_id, true);
+        self.observe_value(0, native_id, normalised);
+    }
+
+    pub fn close_released(&mut self, dragged: &[Option<u32>]) {
+        let mut index = 0;
+        while index < self.open_count {
+            let native_id = self.open[index];
+            if dragged.contains(&Some(native_id)) {
+                index += 1;
+            } else {
+                self.observe_gesture(0, native_id, false);
+            }
+        }
+    }
 }
 
 /// Payload of `plugin-param-gesture`: a finished drag and the placement it was on.

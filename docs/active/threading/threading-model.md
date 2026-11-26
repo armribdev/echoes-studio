@@ -179,7 +179,8 @@ never calls the controller. Nothing is published while no window is open.
 ### Audio thread → watcher thread (automation writing, ADR-037)
 
 While writing is armed (one process-wide `AtomicBool`) and the transport plays, the
-output-event callback of a CLAP plugin pushes each gesture edit (begin, value, end)
+output-event callback of a CLAP plugin (or, for VST3 in the Echoes process, the drain
+of `EditState` at the start of the block) pushes each gesture edit (begin, value, end)
 into a per-instance `SpscRing<ParamEdit>`, stamped with the block's project time plus
 the event's sample offset. One producer (the node processing the instance), one
 consumer: `watch_param_edits` (`main.rs`), which wakes every 25 ms only while armed,

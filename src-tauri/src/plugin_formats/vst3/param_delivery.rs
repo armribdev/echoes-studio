@@ -11,6 +11,7 @@ use crate::plugin_formats::crash_guard;
 use crate::plugin_system::crash_marker;
 use crate::plugin_system::instance::PluginInstance;
 use crate::plugin_system::lifecycle::LifecycleState;
+use crate::plugin_system::param_edits::{write_armed, EditCapture};
 use plugin_bridge::protocol::{WireParam, PARAM_GESTURE_BEGIN, PARAM_GESTURE_END, PARAM_VALUE};
 
 use super::component_handler::{EditState, FollowedParam};
@@ -33,7 +34,7 @@ impl Vst3ParamSink for HostParameterChanges {
 /// targets.  VST3 has no host modulation: modulation is added to the tracked base
 /// value.  Automation sets the value outright and, on the same parameter, takes
 /// precedence.  `is_editing` tells that the user drags a control in the plugin
-/// window, which pauses its modulation; `record_latest` receives the last value
+/// window, which pauses its modulation (and its automation while writing is armed); `record_latest` receives the last value
 /// sent for each parameter.
 fn emit_control_changes(
     controls: &PluginParamControls,
@@ -52,7 +53,8 @@ fn emit_control_changes(
                 sink.push_value(offset, control.native_id, effective as f64);
                 latest = Some(effective);
             }
-        } else {
+        } else if !(write_armed() && is_editing(control.native_id)) {
+            // Writing armed: the lane leaves a dragged parameter alone (ADR-037).
             for (offset, value) in control.automation.iter() {
                 let value = value.clamp(0.0, 1.0);
                 sink.push_value(offset, control.native_id, value as f64);
@@ -73,6 +75,7 @@ fn emit_control_changes(
 pub fn fill_param_changes(
     instance: &PluginInstance,
     controls: &PluginParamControls,
+    capture: &mut EditCapture,
     changes: &mut HostParameterChanges,
 ) {
     changes.reset();
@@ -90,13 +93,17 @@ pub fn fill_param_changes(
     });
     if let Some(edit_state) = edit_state {
         // The window's own edits are not mirrored back: its controller has them.
+        let dragged = edit_state.active_gestures();
+        capture.open_dragged(&dragged);
         edit_state.drain_edits(|change| {
             changes.push_value(
                 change.sample_offset,
                 change.native_id,
                 change.normalised as f64,
             );
+            capture.window_value(change.native_id, f64::from(change.normalised));
         });
+        capture.close_released(&dragged);
     }
     emit_control_changes(
         controls,
