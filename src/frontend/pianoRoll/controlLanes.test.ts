@@ -13,6 +13,7 @@ import {
 	lanesWithData,
 	laneNeutral,
 	rampPoints,
+	smoothRampPoints,
 	replaceLanePoints,
 	replaceSpan,
 	stepPath,
@@ -31,7 +32,7 @@ function point(
 }
 
 describe('lanesWithData', () => {
-	it('lists presets first, then other controllers by number, and skips polyphonic pressure', () => {
+	it('lists presets first, then other controllers by number, then polyphonic pressures by key', () => {
 		const lanes = lanesWithData([
 			point(0, 'control_change', 74, 10),
 			point(0, 'poly_pressure', 60, 40),
@@ -44,7 +45,8 @@ describe('lanesWithData', () => {
 			'pitch_bend:0',
 			'control_change:64',
 			'control_change:20',
-			'control_change:74'
+			'control_change:74',
+			'poly_pressure:60'
 		]);
 	});
 
@@ -66,7 +68,7 @@ describe('candidateLanes', () => {
 		lanes.map((lane) => `${lane.kind}:${lane.number}`);
 
 	it('offers presets, then every drawable controller once, without the lanes already shown', () => {
-		const candidates = candidateLanes([point(0, 'control_change', 74, 10)], [PITCH_BEND]);
+		const candidates = candidateLanes([point(0, 'control_change', 74, 10)], [PITCH_BEND], []);
 		const listed = keys(candidates);
 		expect(listed.slice(0, 4)).toEqual([
 			'control_change:1',
@@ -81,8 +83,21 @@ describe('candidateLanes', () => {
 		expect(new Set(listed).size).toBe(listed.length);
 	});
 
+	it('offers the polyphonic pressure of each played key once, after the controllers', () => {
+		const listed = keys(candidateLanes([], [], [64, 60, 64]));
+		expect(listed.slice(-2)).toEqual(['poly_pressure:60', 'poly_pressure:64']);
+		expect(listed.filter((lane) => lane.startsWith('poly_pressure'))).toHaveLength(2);
+	});
+
+	it('hides a polyphonic lane that is already shown', () => {
+		const shown = [{ kind: 'poly_pressure' as const, number: 60 }];
+		expect(keys(candidateLanes([], shown, [60, 62]))).toEqual(
+			expect.not.arrayContaining(['poly_pressure:60'])
+		);
+	});
+
 	it('keeps a controller above the drawable range when the clip holds data for it', () => {
-		expect(keys(candidateLanes([point(0, 'control_change', 123, 1)], []))).toContain(
+		expect(keys(candidateLanes([point(0, 'control_change', 123, 1)], [], []))).toContain(
 			'control_change:123'
 		);
 	});
@@ -105,6 +120,15 @@ describe('replaceLanePoints', () => {
 	it('orders the result by position', () => {
 		const next = replaceLanePoints(controls, SUSTAIN, [point(5, 'control_change', 64, 0)]);
 		expect(next.map((p) => p.start)).toEqual([1, 2, 5]);
+	});
+
+	it('swaps the pressure of one key only', () => {
+		const key60 = { kind: 'poly_pressure' as const, number: 60 };
+		const next = replaceLanePoints([...controls, point(3, 'poly_pressure', 62, 10)], key60, [
+			point(4, 'poly_pressure', 60, 90)
+		]);
+		expect(lanePoints(next, key60)).toEqual([point(4, 'poly_pressure', 60, 90)]);
+		expect(next).toContainEqual(point(3, 'poly_pressure', 62, 10));
 	});
 
 	it('clears a lane', () => {
@@ -137,6 +161,10 @@ describe('neutral values', () => {
 		expect(laneNeutral({ kind: 'control_change', number: 11 })).toBe(127);
 		expect(laneNeutral({ kind: 'control_change', number: 74 })).toBeNull();
 	});
+
+	it('gives a polyphonic pressure none, even on the key numbered like a neutral controller', () => {
+		expect(laneNeutral({ kind: 'poly_pressure', number: 64 })).toBeNull();
+	});
 });
 
 describe('stepPath', () => {
@@ -168,6 +196,16 @@ describe('ramp and stroke', () => {
 		expect(ramp[ramp.length - 1]).toEqual({ beat: 2, value: 0 });
 		expect(ramp).toHaveLength(5);
 		expect(ramp.map((p) => p.value)).toEqual([100, 75, 50, 25, 0]);
+	});
+
+	it('eases a smooth ramp at both ends while keeping them exact', () => {
+		const ramp = smoothRampPoints({ beat: 0, value: 0 }, { beat: 4, value: 100 }, 0.5);
+		expect(ramp[0]).toEqual({ beat: 0, value: 0 });
+		expect(ramp[ramp.length - 1]).toEqual({ beat: 4, value: 100 });
+		const straight = rampPoints({ beat: 0, value: 0 }, { beat: 4, value: 100 }, 0.5);
+		expect(ramp[1].value).toBeLessThan(straight[1].value);
+		expect(ramp[ramp.length - 2].value).toBeGreaterThan(straight[straight.length - 2].value);
+		expect(ramp.map((p) => p.value)).toEqual([...ramp.map((p) => p.value)].sort((a, b) => a - b));
 	});
 
 	it('keeps a single point for an instant ramp', () => {

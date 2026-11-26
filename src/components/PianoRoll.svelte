@@ -278,7 +278,11 @@
 		controlLanes = lanesWithData(clipControls).slice(0, MAX_VISIBLE_LANES);
 	}
 
-	$: laneCandidates = candidateLanes(clipControls, controlLanes);
+	$: laneCandidates = candidateLanes(
+		clipControls,
+		controlLanes,
+		notes.map((note) => note.pitch)
+	);
 	$: showAddRow = controlLanes.length < MAX_VISIBLE_LANES;
 	$: lanesWidthPx = Math.max(hTotalBeats * zoom, 1);
 

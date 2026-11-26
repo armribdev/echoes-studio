@@ -40,7 +40,7 @@
 - [x] **Enregistrement MIDI** dans un clip depuis le clavier (ADR-022 amendé ; pas encore hand-testé à l'oreille)
   - [x] Pitch bend, CC (pédale, molette…) et aftertouch enregistrés dans le clip et rejoués vers les instruments CLAP, lignes de contrôle dans la piano roll (ADR-029, 2026-10-13 ; pas encore testé avec un vrai clavier)
   - [ ] **Expressions par note** (style Bitwig / MPE) : courbes de pression, timbre et micro-pitch dessinées sur chaque note, contrôleurs MPE (Seaboard, Linnstrument…). Nouveau modèle de données porté par la note, événements CLAP note-expression, capture qui garde le canal MIDI — ADR dédié requis ; s'ajoute aux contrôles de canal d'ADR-029 sans les remplacer
-  - [ ] Suites des lignes de contrôle : courbes douces entre deux points (forme par point → amendement ADR-029), affichage des contrôles dans le clip de l'arrangement, édition de l'aftertouch polyphonique
+  - [x] Suites des lignes de contrôle (2026-11-26, pas encore essayé dans l'app) : aftertouch polyphonique éditable (une ligne par touche jouée), courbes douces par Ctrl + Maj + glisser (cuites en paliers, sans changer le format), contrôles dessinés dans le clip de l'arrangement. Une forme de courbe par point, interpolée par le moteur, reste écartée (touche au budget d'événements RT et au harnais C-2)
 - [x] **Enregistrement audio** : armement + capture via l'entrée CPAL, monitoring (ADR-027 ; pas encore hand-testé)
 - [x] **CI**
   - [x] CI minimale (`.github/workflows/ci.yml` : fmt, clippy, tests Rust + harnais C-2, lint Prettier/ESLint, svelte-check, build frontend)

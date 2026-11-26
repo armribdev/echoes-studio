@@ -151,6 +151,7 @@
 			{scale}
 			{bpm}
 			notes={midiContentOf(contentPool, clip).notes}
+			controls={midiContentOf(contentPool, clip).channel_controls}
 			linked={linkedClipIds.has(clip.id)}
 			color={trackColor}
 			minPitch={lanePitchRange.min}

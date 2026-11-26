@@ -2,7 +2,13 @@
 <script lang="ts">
 	import { DEFAULT_TRACK_COLOR } from '../frontend/trackColor';
 	import { onMount, onDestroy, createEventDispatcher } from 'svelte';
-	import type { MidiNote } from '../types/global';
+	import type { MidiControlPoint, MidiNote } from '../types/global';
+	import {
+		lanePoints,
+		lanesWithData,
+		stepPath,
+		toLanePoints
+	} from '../frontend/pianoRoll/controlLanes';
 	import { selection } from '../stores/selection';
 	import { arrangeClipFrame } from '../frontend/arrangeInteraction';
 
@@ -12,6 +18,8 @@
 	export let offset: number = 0;
 	export let scale: number;
 	export let notes: MidiNote[];
+	/** Channel controls drawn as thin curves behind the notes (pitch bend, CC, aftertouch). */
+	export let controls: MidiControlPoint[] = [];
 	/** Another clip plays the same content (ADR-032). */
 	export let linked = false;
 	export let color: string = DEFAULT_TRACK_COLOR;
@@ -44,7 +52,17 @@
 
 	// Re-render whenever notes, frame, pitch range, bpm, color, or trim offset change.
 	$: if (canvas)
-		scheduleRender(notes, frame.widthPx, bpm, color, selected, offset, minPitch, maxPitch);
+		scheduleRender(
+			notes,
+			controls,
+			frame.widthPx,
+			bpm,
+			color,
+			selected,
+			offset,
+			minPitch,
+			maxPitch
+		);
 
 	function scheduleRender(..._deps: unknown[]) {
 		cancelAnimationFrame(rafId);
@@ -68,6 +86,26 @@
 		canvas.style.height = `${cssH}px`;
 	}
 
+	/** One thin held-value curve per control, under the notes; a pressure that follows a note has none. */
+	function drawControls(
+		ctx: CanvasRenderingContext2D,
+		view: { cssH: number; timeW: number; beatRange: number; offsetBeats: number },
+		stroke: string
+	) {
+		const pxPerBeat = view.timeW / view.beatRange;
+		ctx.save();
+		ctx.translate(-CANVAS_INSET.left - view.offsetBeats * pxPerBeat, 0);
+		ctx.strokeStyle = stroke;
+		ctx.lineWidth = 1;
+		for (const lane of lanesWithData(controls)) {
+			if (lane.kind === 'poly_pressure') continue;
+			const points = toLanePoints(lanePoints(controls, lane));
+			const widthPx = view.timeW + view.offsetBeats * pxPerBeat;
+			ctx.stroke(new Path2D(stepPath(points, lane, pxPerBeat, widthPx, view.cssH)));
+		}
+		ctx.restore();
+	}
+
 	function renderPreview() {
 		if (!canvas || !clipEl) return;
 		const { cssW, cssH, timeW } = drawSize();
@@ -78,13 +116,6 @@
 		ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 		ctx.clearRect(0, 0, cssW, cssH);
 
-		if (notes.length === 0) return;
-
-		const pitches = notes.map((n) => n.pitch);
-		const minP = minPitch ?? Math.max(0, Math.min(...pitches) - 3);
-		const maxP = maxPitch ?? Math.min(127, Math.max(...pitches) + 3);
-		const pitchRange = maxP - minP || 1;
-
 		const clipDurationBeats = ((end - start) * bpm) / 60;
 		const beatRange = clipDurationBeats || 1;
 		const offsetBeats = (offset * bpm) / 60;
@@ -92,6 +123,15 @@
 		const r = parseInt(color.slice(1, 3), 16);
 		const g = parseInt(color.slice(3, 5), 16);
 		const b = parseInt(color.slice(5, 7), 16);
+
+		drawControls(ctx, { cssH, timeW, beatRange, offsetBeats }, `rgba(${r},${g},${b},0.55)`);
+
+		if (notes.length === 0) return;
+
+		const pitches = notes.map((n) => n.pitch);
+		const minP = minPitch ?? Math.max(0, Math.min(...pitches) - 3);
+		const maxP = maxPitch ?? Math.min(127, Math.max(...pitches) + 3);
+		const pitchRange = maxP - minP || 1;
 
 		for (const note of notes) {
 			// Map against full clip width (not inset) so positions stay stable while resizing.

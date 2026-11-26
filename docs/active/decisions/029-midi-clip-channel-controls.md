@@ -126,10 +126,18 @@ expression, aftertouch, plus any CC present; amended 2026-11-26: every other
 controller 0-119 too, by number — 120-127 are channel-mode messages and are
 only listed when the clip already holds them; the lane height, 52-160 px, is
 shared by all lanes and dragged from the top edge of the lane area — UI state,
-not saved). Same gestures as arrange
+not saved; amended 2026-11-26: the picker also lists the polyphonic pressure of
+each key the clip plays, one lane per key, drawn like any other control, and a
+clip that already holds such points opens their lanes). Same gestures as arrange
 automation lanes: click to add, drag a point, double-click to delete,
 Ctrl + drag to draw free-hand (one value per 1/32 beat), and Shift + drag for a
-straight ramp (held steps every 1/16 beat). Values are held steps, drawn as a
+straight ramp (held steps every 1/16 beat); amended 2026-11-26: Ctrl + Shift +
+drag draws the same ramp eased at both ends (smoothstep). A smooth curve is
+baked into held steps at edit time, like the other gestures: the file format and
+the engine are unchanged (a per-point curve shape would need engine
+interpolation and was left out). The arrange clip also draws every
+non-polyphonic control of its content as a thin held-value curve behind the
+notes (`MidiClip.svelte`, no gesture, same neutral lead-in as the lanes). Values are held steps, drawn as a
 staircase; the bend lane shows its centre line. Every gesture commits one
 `SET_CLIP_MIDI_CONTROLS` on mouse-up (one undo step). Which lanes are shown is
 UI state, not project data. Clip copies (copy/paste, Alt-drag duplicate,
@@ -183,7 +191,7 @@ in `process`.
 
 - A take now plays back with its pedal, bends and wheel moves on CLAP
   instruments, and stops/seeks/clip ends never leave a pedal down.
-- Polyphonic pressure is stored and played but has no lane in the editor yet.
+- Polyphonic pressure is stored, played and (since 2026-11-26) editable in a lane per key.
 - Not hand-tested: recording, playback on a real CLAP synth, and the lanes.
 
 ## Future (not decided here)

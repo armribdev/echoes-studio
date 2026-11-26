@@ -8,6 +8,7 @@
 		laneNeutral,
 		lanePoints,
 		rampPoints,
+		smoothRampPoints,
 		replaceLanePoints,
 		replaceSpan,
 		stepPath,
@@ -17,7 +18,8 @@
 		valueToY,
 		yToValue,
 		type ControlLane,
-		type LanePoint
+		type LanePoint,
+		type RampFunction
 	} from '../frontend/pianoRoll/controlLanes';
 	import { notify } from '../stores/status';
 
@@ -44,6 +46,7 @@
 	let strokeBase: LanePoint[] = [];
 	let strokeSamples: LanePoint[] | null = null;
 	let rampAnchor: LanePoint | null = null;
+	let rampShape: RampFunction = rampPoints;
 	let stopListening: (() => void) | null = null;
 
 	$: if (controls !== echoedControls) {
@@ -107,12 +110,12 @@
 			if (hit !== null) save(points.filter((_, i) => i !== hit));
 			return;
 		}
-		if (e.ctrlKey || e.metaKey) {
-			startStroke(x, y);
+		if (e.shiftKey) {
+			startRamp(x, y, e.altKey, e.ctrlKey || e.metaKey ? smoothRampPoints : rampPoints);
 			return;
 		}
-		if (e.shiftKey) {
-			startRamp(x, y, e.altKey);
+		if (e.ctrlKey || e.metaKey) {
+			startStroke(x, y);
 			return;
 		}
 
@@ -178,8 +181,9 @@
 		if (edited) save(edited);
 	}
 
-	/** Shift + drag: a straight ramp from the press point to the pointer. */
-	function startRamp(x: number, y: number, altKey: boolean) {
+	/** Shift + drag: a straight ramp from the press point to the pointer; with Ctrl, an eased one. */
+	function startRamp(x: number, y: number, altKey: boolean, shape: RampFunction) {
+		rampShape = shape;
 		strokeBase = points;
 		rampAnchor = { beat: beatAt(x, altKey), value: yToValue(y, lane, height) };
 		draft = replaceSpan(strokeBase, [rampAnchor]);
@@ -190,7 +194,7 @@
 		if (!rampAnchor) return;
 		const { x, y } = localPosition(e);
 		const target = { beat: beatAt(x, e.altKey), value: yToValue(y, lane, height) };
-		draft = replaceSpan(strokeBase, rampPoints(rampAnchor, target, RAMP_STEP_BEATS));
+		draft = replaceSpan(strokeBase, rampShape(rampAnchor, target, RAMP_STEP_BEATS));
 	}
 
 	function onRampEnd() {

@@ -177,6 +177,7 @@
 			"expression": "Expression",
 			"sustain": "Sustain",
 			"aftertouch": "Aftertouch",
+			"polyAftertouch": "Aftertouch polyphonique {note}",
 			"controller": "CC {number}"
 		}
 	},

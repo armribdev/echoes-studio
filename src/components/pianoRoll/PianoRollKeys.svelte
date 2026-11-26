@@ -33,6 +33,11 @@
 	function laneLabel(lane: ControlLane, translate: typeof $t): string {
 		if (lane.kind === 'pitch_bend') return translate('pianoRoll.controls.pitchBend');
 		if (lane.kind === 'channel_pressure') return translate('pianoRoll.controls.aftertouch');
+		if (lane.kind === 'poly_pressure') {
+			return translate('pianoRoll.controls.polyAftertouch', {
+				values: { note: noteName(lane.number) }
+			});
+		}
 		const named: Record<number, string> = {
 			1: 'pianoRoll.controls.modulation',
 			11: 'pianoRoll.controls.expression',

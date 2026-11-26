@@ -1,8 +1,8 @@
 import type { MidiControlPoint } from '../../types/global';
 
-/** A control the piano roll can draw as a lane. Polyphonic pressure has none: it follows its notes. */
+/** A control the piano roll can draw as a lane; `number` is the controller, or the key of a polyphonic pressure. */
 export interface ControlLane {
-	kind: 'pitch_bend' | 'control_change' | 'channel_pressure';
+	kind: MidiControlPoint['kind'];
 	number: number;
 }
 
@@ -51,9 +51,9 @@ export function sameLane(a: ControlLane, b: ControlLane): boolean {
 	return a.kind === b.kind && a.number === b.number;
 }
 
-export function laneOf(point: MidiControlPoint): ControlLane | null {
-	if (point.kind === 'poly_pressure') return null;
-	return { kind: point.kind, number: point.kind === 'control_change' ? point.number : 0 };
+export function laneOf(point: MidiControlPoint): ControlLane {
+	const numbered = point.kind === 'control_change' || point.kind === 'poly_pressure';
+	return { kind: point.kind, number: numbered ? point.number : 0 };
 }
 
 export function laneMax(lane: ControlLane): number {
@@ -64,31 +64,46 @@ export function laneMax(lane: ControlLane): number {
 export function laneNeutral(lane: ControlLane): number | null {
 	if (lane.kind === 'pitch_bend') return BEND_CENTER;
 	if (lane.kind === 'channel_pressure') return 0;
+	if (lane.kind === 'poly_pressure') return null;
 	const neutralControllers: Record<number, number> = { 1: 0, 11: 127, 64: 0, 65: 0, 66: 0, 67: 0 };
 	return neutralControllers[lane.number] ?? null;
 }
 
-/** Presets first, then the other controllers by number. */
+/** Presets first, then the other controllers by number, then polyphonic pressures by key. */
 export function lanesWithData(controls: MidiControlPoint[]): ControlLane[] {
 	const found = new Map<string, ControlLane>();
 	for (const point of controls) {
 		const lane = laneOf(point);
-		if (lane) found.set(laneKey(lane), lane);
+		found.set(laneKey(lane), lane);
 	}
 	const presets = LANE_PRESETS.filter((lane) => found.has(laneKey(lane)));
 	const others = [...found.values()]
 		.filter((lane) => !LANE_PRESETS.some((preset) => sameLane(preset, lane)))
-		.sort((a, b) => a.number - b.number);
+		.sort((a, b) => laneOrder(a) - laneOrder(b) || a.number - b.number);
 	return [...presets, ...others];
 }
 
-/** What the lane pickers offer: presets, lanes holding data, then every other controller by number. */
-export function candidateLanes(controls: MidiControlPoint[], shown: ControlLane[]): ControlLane[] {
+function laneOrder(lane: ControlLane): number {
+	return lane.kind === 'poly_pressure' ? 1 : 0;
+}
+
+/**
+ * What the lane pickers offer: presets, lanes holding data, every other controller by number, then the
+ * polyphonic pressure of each key the clip plays.
+ */
+export function candidateLanes(
+	controls: MidiControlPoint[],
+	shown: ControlLane[],
+	notePitches: number[]
+): ControlLane[] {
 	const everyController = Array.from({ length: DRAWABLE_CONTROLLERS }, (_, number) => ({
 		kind: 'control_change' as const,
 		number
 	}));
-	return [...LANE_PRESETS, ...lanesWithData(controls), ...everyController].filter(
+	const playedKeys = [...new Set(notePitches)]
+		.sort((a, b) => a - b)
+		.map((number) => ({ kind: 'poly_pressure' as const, number }));
+	return [...LANE_PRESETS, ...lanesWithData(controls), ...everyController, ...playedKeys].filter(
 		(lane, index, all) =>
 			all.findIndex((other) => sameLane(other, lane)) === index &&
 			!shown.some((shownLane) => sameLane(shownLane, lane))
@@ -96,10 +111,7 @@ export function candidateLanes(controls: MidiControlPoint[], shown: ControlLane[
 }
 
 export function lanePoints(controls: MidiControlPoint[], lane: ControlLane): MidiControlPoint[] {
-	return controls.filter((point) => {
-		const pointLane = laneOf(point);
-		return pointLane !== null && sameLane(pointLane, lane);
-	});
+	return controls.filter((point) => sameLane(laneOf(point), lane));
 }
 
 /** Swaps one lane's points; the other controls are kept as they are. */
@@ -108,10 +120,7 @@ export function replaceLanePoints(
 	lane: ControlLane,
 	points: MidiControlPoint[]
 ): MidiControlPoint[] {
-	const others = controls.filter((point) => {
-		const pointLane = laneOf(point);
-		return pointLane === null || !sameLane(pointLane, lane);
-	});
+	const others = controls.filter((point) => !sameLane(laneOf(point), lane));
 	return [...others, ...points].sort((a, b) => a.start - b.start);
 }
 
@@ -169,18 +178,34 @@ export function stepPath(
 	return `${path} H ${Math.max(widthPx, lastX)}`;
 }
 
+export type RampFunction = (from: LanePoint, to: LanePoint, stepBeats: number) => LanePoint[];
+
 /** Values of a straight line between two points, one per `stepBeats`, as a held-value staircase. */
 export function rampPoints(from: LanePoint, to: LanePoint, stepBeats: number): LanePoint[] {
+	return shapedRamp(from, to, stepBeats, (progress) => progress);
+}
+
+/** Like `rampPoints`, but eased at both ends (smoothstep): the value leaves and reaches its target gently. */
+export function smoothRampPoints(from: LanePoint, to: LanePoint, stepBeats: number): LanePoint[] {
+	return shapedRamp(from, to, stepBeats, (progress) => progress * progress * (3 - 2 * progress));
+}
+
+function shapedRamp(
+	from: LanePoint,
+	to: LanePoint,
+	stepBeats: number,
+	easing: (progress: number) => number
+): LanePoint[] {
 	const [start, end] = from.beat <= to.beat ? [from, to] : [to, from];
 	const span = end.beat - start.beat;
 	if (span <= 0 || stepBeats <= 0) return [{ beat: end.beat, value: end.value }];
 	const steps = Math.max(1, Math.round(span / stepBeats));
 	const ramp: LanePoint[] = [];
 	for (let step = 0; step <= steps; step++) {
-		const t = step / steps;
+		const progress = step / steps;
 		ramp.push({
-			beat: start.beat + t * span,
-			value: Math.round(start.value + t * (end.value - start.value))
+			beat: start.beat + progress * span,
+			value: Math.round(start.value + easing(progress) * (end.value - start.value))
 		});
 	}
 	return dropRepeatedValues(ramp);
