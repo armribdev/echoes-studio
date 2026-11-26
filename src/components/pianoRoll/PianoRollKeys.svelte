@@ -3,23 +3,17 @@
 	import CustomSelect from '../CustomSelect.svelte';
 	import { t } from 'svelte-i18n';
 	import { NOTE_H, TOTAL_PITCHES } from '../../frontend/pianoRoll/coords';
-	import {
-		ADD_ROW_HEIGHT,
-		laneKey,
-		lanePoints,
-		type ControlLane
-	} from '../../frontend/pianoRoll/controlLanes';
+	import { ADD_ROW_HEIGHT, laneKey, type ControlLane } from '../../frontend/pianoRoll/controlLanes';
 	import { noteName } from '../../frontend/sampler/pads';
 	import { RULER_HEIGHT } from '../../frontend/timeRuler/constants';
 	import { pluginKeyNames } from '../../stores/pluginKeyNames';
-	import type { MidiControlPoint } from '../../types/global';
 
 	export let keysEl: HTMLDivElement | undefined = undefined;
 	export let controlLanes: ControlLane[];
 	export let laneHeight: number;
 	export let laneCandidates: ControlLane[];
 	export let showAddRow: boolean;
-	export let clipControls: MidiControlPoint[];
+	export let hasLaneData: (lane: ControlLane) => boolean;
 
 	const BLACK_KEYS = new Set([1, 3, 6, 8, 10]);
 
@@ -31,6 +25,13 @@
 	}>();
 
 	function laneLabel(lane: ControlLane, translate: typeof $t): string {
+		const noteCurves: Partial<Record<ControlLane['kind'], string>> = {
+			note_pressure: 'pianoRoll.controls.notePressure',
+			note_timbre: 'pianoRoll.controls.noteTimbre',
+			note_pitch: 'pianoRoll.controls.notePitch'
+		};
+		const noteCurve = noteCurves[lane.kind];
+		if (noteCurve) return translate(noteCurve);
 		if (lane.kind === 'pitch_bend') return translate('pianoRoll.controls.pitchBend');
 		if (lane.kind === 'channel_pressure') return translate('pianoRoll.controls.aftertouch');
 		if (lane.kind === 'poly_pressure') {
@@ -48,15 +49,14 @@
 			: translate('pianoRoll.controls.controller', { values: { number: lane.number } });
 	}
 
-	function laneOptionLabel(lane: ControlLane, controls: MidiControlPoint[], translate: typeof $t) {
-		const marker = lanePoints(controls, lane).length > 0 ? '• ' : '';
-		return `${marker}${laneLabel(lane, translate)}`;
-	}
-
-	function laneOptions(lanes: ControlLane[], controls: MidiControlPoint[], translate: typeof $t) {
+	function laneOptions(
+		lanes: ControlLane[],
+		withData: (lane: ControlLane) => boolean,
+		translate: typeof $t
+	) {
 		return lanes.map((lane) => ({
 			value: laneKey(lane),
-			label: laneOptionLabel(lane, controls, translate)
+			label: `${withData(lane) ? '• ' : ''}${laneLabel(lane, translate)}`
 		}));
 	}
 
@@ -101,13 +101,13 @@
 				size="xs"
 				label={$t('pianoRoll.controls.lane')}
 				value={laneKey(lane)}
-				options={laneOptions([lane, ...laneCandidates], clipControls, $t)}
+				options={laneOptions([lane, ...laneCandidates], hasLaneData, $t)}
 				on:change={(e) => dispatch('switchLane', { index, key: String(e.detail) })}
 			/>
 			<div class="lane-actions">
 				<button
 					class="lane-btn"
-					disabled={lanePoints(clipControls, lane).length === 0}
+					disabled={!hasLaneData(lane)}
 					title={$t('pianoRoll.controls.clear')}
 					aria-label={$t('pianoRoll.controls.clear')}
 					on:click={() => dispatch('clearLane', lane)}
@@ -147,7 +147,7 @@
 				label={$t('pianoRoll.controls.add')}
 				placeholder={$t('pianoRoll.controls.add')}
 				bind:value={addLaneValue}
-				options={laneOptions(laneCandidates, clipControls, $t)}
+				options={laneOptions(laneCandidates, hasLaneData, $t)}
 				on:change={(e) => {
 					dispatch('addLane', String(e.detail));
 					addLaneValue = '';

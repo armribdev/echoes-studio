@@ -178,7 +178,10 @@
 			"sustain": "Sustain",
 			"aftertouch": "Aftertouch",
 			"polyAftertouch": "Poly aftertouch {note}",
-			"controller": "CC {number}"
+			"controller": "CC {number}",
+			"notePressure": "Note pressure",
+			"noteTimbre": "Note timbre",
+			"notePitch": "Note pitch"
 		}
 	},
 	"trackStrip": {

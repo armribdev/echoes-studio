@@ -19,6 +19,7 @@ import type {
 	AutomationClip,
 	InterpolationMode,
 	MidiControlPoint,
+	MidiNote,
 	PluginOutputSource,
 	SamplerPad
 } from '../../../types/global';
@@ -336,7 +337,7 @@ export interface UpdateAutomationClipPayload {
 
 export interface SetMidiNotesPayload {
 	track_id: string;
-	notes: { id: string; pitch: number; start: number; duration: number; velocity: number }[];
+	notes: MidiNote[];
 }
 
 export interface AddMidiClipPayload {
@@ -346,7 +347,7 @@ export interface AddMidiClipPayload {
 	/** Left-trim offset in seconds. Omit for an untrimmed clip. */
 	offset?: number;
 	/** Notes seeded with the clip (paste). Omit for an empty clip. */
-	notes?: { id: string; pitch: number; start: number; duration: number; velocity: number }[];
+	notes?: MidiNote[];
 	/** Controls seeded with the clip (paste, recording). Omit for none. */
 	channel_controls?: MidiControlPoint[];
 	/** Existing content the clip plays (repeat); excludes `notes` and `channel_controls`. */
@@ -377,7 +378,7 @@ export interface MoveMidiClipPayload {
 export interface SetClipMidiNotesPayload {
 	track_id: string;
 	clip_id: string;
-	notes: { id: string; pitch: number; start: number; duration: number; velocity: number }[];
+	notes: MidiNote[];
 }
 
 export interface SetClipMidiControlsPayload {

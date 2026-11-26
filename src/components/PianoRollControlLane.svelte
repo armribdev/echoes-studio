@@ -1,36 +1,36 @@
-<!-- PianoRollControlLane.svelte — une ligne de contrôle MIDI (pitch bend, CC, aftertouch) sous les notes -->
+<!-- PianoRollControlLane.svelte — une ligne de courbe sous les notes : contrôle MIDI (pitch bend, CC, aftertouch) ou expression de la note choisie -->
 <script lang="ts">
 	import { onDestroy } from 'svelte';
-	import type { MidiControlPoint } from '../types/global';
 	import { snapBeat } from '../frontend/pianoRoll/coords';
 	import {
 		formatLaneValue,
-		laneNeutral,
-		lanePoints,
+		laneCentre,
 		rampPoints,
 		smoothRampPoints,
-		replaceLanePoints,
 		replaceSpan,
 		stepPath,
 		strokePoints,
-		toControlPoints,
-		toLanePoints,
 		valueToY,
 		yToValue,
 		type ControlLane,
 		type LanePoint,
 		type RampFunction
 	} from '../frontend/pianoRoll/controlLanes';
+	import type { LaneRange } from '../frontend/pianoRoll/noteExpressionLanes';
 	import { notify } from '../stores/status';
 
 	export let lane: ControlLane;
 	export let height: number;
-	export let controls: MidiControlPoint[];
+	/** The curve as the engine holds it; a new array means the engine echoed an edit back. */
+	export let source: LanePoint[];
+	/** Beats the points must stay in (the note of an expression lane); `null` for the whole clip. */
+	export let range: LaneRange | null = null;
+	export let editable = true;
 	export let pxPerBeat: number;
 	export let widthPx: number;
 	export let color: string;
 	export let quantize: number;
-	export let commit: (next: MidiControlPoint[]) => Promise<unknown>;
+	export let commit: (next: LanePoint[]) => Promise<unknown>;
 
 	const HIT_RADIUS_PX = 7;
 	const STROKE_STEP_BEATS = 1 / 32;
@@ -39,7 +39,7 @@
 	let svg: SVGSVGElement;
 	/** Points shown while editing and until the engine echoes the edit back. */
 	let draft: LanePoint[] | null = null;
-	let echoedControls = controls;
+	let echoedSource = source;
 	let dragIndex: number | null = null;
 	let dragChanged = false;
 	let hoverIndex: number | null = null;
@@ -49,13 +49,13 @@
 	let rampShape: RampFunction = rampPoints;
 	let stopListening: (() => void) | null = null;
 
-	$: if (controls !== echoedControls) {
-		echoedControls = controls;
+	$: if (source !== echoedSource) {
+		echoedSource = source;
 		if (dragIndex === null && strokeSamples === null && rampAnchor === null) draft = null;
 	}
-	$: points = draft ?? toLanePoints(lanePoints(controls, lane));
-	$: path = stepPath(points, lane, pxPerBeat, widthPx, height);
-	$: neutral = lane.kind === 'pitch_bend' ? laneNeutral(lane) : null;
+	$: points = draft ?? source;
+	$: path = stepPath(points, lane, pxPerBeat, range ? range.end * pxPerBeat : widthPx, height);
+	$: centre = laneCentre(lane);
 	$: labelIndex = strokeSamples || rampAnchor ? null : (dragIndex ?? hoverIndex);
 	$: labelPoint = labelIndex !== null ? points[labelIndex] : undefined;
 
@@ -64,9 +64,17 @@
 		return { x: Math.max(0, e.clientX - rect.left), y: e.clientY - rect.top };
 	}
 
+	function clampToRange(beat: number): number {
+		return range ? Math.min(range.end, Math.max(range.start, beat)) : beat;
+	}
+
+	function rawBeatAt(x: number): number {
+		return clampToRange(x / pxPerBeat);
+	}
+
 	function beatAt(x: number, altKey: boolean): number {
 		const beat = x / pxPerBeat;
-		return altKey || quantize <= 0 ? beat : snapBeat(beat, quantize);
+		return clampToRange(altKey || quantize <= 0 ? beat : snapBeat(beat, quantize));
 	}
 
 	function pointAt(x: number, y: number): number | null {
@@ -79,7 +87,7 @@
 
 	function save(next: LanePoint[]) {
 		draft = next;
-		commit(replaceLanePoints(controls, lane, toControlPoints(lane, next))).catch((e) => {
+		commit(next).catch((e) => {
 			draft = null;
 			notify(`Erreur contrôles MIDI : ${(e as Error)?.message ?? e}`, 'error');
 		});
@@ -101,7 +109,7 @@
 	}
 
 	function onMouseDown(e: MouseEvent) {
-		if (e.button !== 0) return;
+		if (e.button !== 0 || !editable) return;
 		e.stopPropagation();
 		const { x, y } = localPosition(e);
 		const hit = pointAt(x, y);
@@ -154,7 +162,7 @@
 	/** Ctrl + drag: free-hand, one value per step, over the points it crosses. */
 	function startStroke(x: number, y: number) {
 		strokeBase = points;
-		strokeSamples = [{ beat: x / pxPerBeat, value: yToValue(y, lane, height) }];
+		strokeSamples = [{ beat: rawBeatAt(x), value: yToValue(y, lane, height) }];
 		draft = replaceSpan(strokeBase, strokePoints(strokeSamples, STROKE_STEP_BEATS));
 		listen(onStrokeMove, onStrokeEnd);
 	}
@@ -163,7 +171,7 @@
 		if (!strokeSamples) return;
 		const { x, y } = localPosition(e);
 		const last = strokeSamples[strokeSamples.length - 1];
-		const target = { beat: x / pxPerBeat, value: yToValue(y, lane, height) };
+		const target = { beat: rawBeatAt(x), value: yToValue(y, lane, height) };
 		const steps = Math.max(1, Math.ceil(Math.abs(target.beat - last.beat) / STROKE_STEP_BEATS));
 		for (let step = 1; step <= steps; step++) {
 			const t = step / steps;
@@ -216,6 +224,7 @@
 <svg
 	class="lane"
 	class:lane--over-point={hoverIndex !== null}
+	class:lane--inert={!editable}
 	bind:this={svg}
 	width={widthPx}
 	{height}
@@ -225,13 +234,23 @@
 	on:mouseleave={() => (hoverIndex = null)}
 >
 	<line class="separator" x1="0" y1="0.5" x2={widthPx} y2="0.5" />
-	{#if neutral !== null}
+	{#if range}
+		<rect class="outside" x="0" y="0" width={range.start * pxPerBeat} {height} />
+		<rect
+			class="outside"
+			x={range.end * pxPerBeat}
+			y="0"
+			width={Math.max(0, widthPx - range.end * pxPerBeat)}
+			{height}
+		/>
+	{/if}
+	{#if centre !== null}
 		<line
 			class="centre"
 			x1="0"
 			x2={widthPx}
-			y1={valueToY(neutral, lane, height)}
-			y2={valueToY(neutral, lane, height)}
+			y1={valueToY(centre, lane, height)}
+			y2={valueToY(centre, lane, height)}
 		/>
 	{/if}
 	{#if path}
@@ -266,6 +285,16 @@
 		&--over-point {
 			cursor: grab;
 		}
+
+		&--inert {
+			cursor: default;
+		}
+	}
+
+	.outside {
+		fill: $background-color;
+		opacity: 0.6;
+		pointer-events: none;
 	}
 
 	.separator {

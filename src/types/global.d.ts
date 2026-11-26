@@ -129,6 +129,18 @@ export interface MidiNote {
 	start: number;
 	duration: number;
 	velocity: number;
+	/** Courbes de la note (ADR-039). Absent pour une note sans courbe. */
+	expressions?: NoteExpressionPoint[];
+}
+
+export type NoteExpressionKind = 'pressure' | 'timbre' | 'pitch';
+
+/** Valeur tenue jusqu'au point suivant du même type ; pression et timbre 0..1, pitch en demi-tons (±24). */
+export interface NoteExpressionPoint {
+	/** Beats, relatif au début de la note. */
+	start: number;
+	kind: NoteExpressionKind;
+	value: number;
 }
 
 export type MidiControlKind =

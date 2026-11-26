@@ -112,7 +112,14 @@ function createPianoRollStore() {
 		/** Sync notes from a Rust event (undo/redo/PROJECT_RESET). */
 		syncNotes(notes: MidiNote[]) {
 			update((s) => {
-				if (s.notes.length === notes.length && s.notes.every((n, i) => n.id === notes[i]?.id)) {
+				if (
+					s.notes.length === notes.length &&
+					s.notes.every(
+						(n, i) =>
+							n.id === notes[i]?.id &&
+							JSON.stringify(n.expressions) === JSON.stringify(notes[i].expressions)
+					)
+				) {
 					return s;
 				}
 				return { ...s, notes: [...notes] };

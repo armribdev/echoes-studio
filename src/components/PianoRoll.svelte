@@ -66,11 +66,18 @@
 		LANE_HEIGHT,
 		MAX_VISIBLE_LANES,
 		candidateLanes,
+		isExpressionLane,
 		laneKey,
+		lanePoints,
 		lanesWithData,
 		replaceLanePoints,
 		type ControlLane
 	} from '../frontend/pianoRoll/controlLanes';
+	import {
+		expressionLaneHasData,
+		expressionLanesWithData,
+		withExpressionPoints
+	} from '../frontend/pianoRoll/noteExpressionLanes';
 	const MIN_DURATION = 0.0625;
 
 	const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
@@ -244,7 +251,8 @@
 			pitch: note.pitch,
 			start: origin + note.relativeStart,
 			duration: note.duration,
-			velocity: note.velocity
+			velocity: note.velocity,
+			...(note.expressions ? { expressions: note.expressions } : {})
 		}));
 		pianoRollStore.setNotes([...pianoRollStore.getNotes(), ...pasted]);
 		pianoRollStore.selectNotes(pasted.map((n) => n.id));
@@ -275,8 +283,20 @@
 
 	$: if (clipId !== controlLanesClipId) {
 		controlLanesClipId = clipId;
-		controlLanes = lanesWithData(clipControls).slice(0, MAX_VISIBLE_LANES);
+		controlLanes = [...lanesWithData(clipControls), ...expressionLanesWithData(notes)].slice(
+			0,
+			MAX_VISIBLE_LANES
+		);
 	}
+
+	$: expressionNote =
+		$pianoRollSelection.size === 1
+			? (notes.find((note) => $pianoRollSelection.has(note.id)) ?? null)
+			: null;
+	$: hasLaneData = (lane: ControlLane) =>
+		isExpressionLane(lane)
+			? expressionLaneHasData(expressionNote, lane)
+			: lanePoints(clipControls, lane).length > 0;
 
 	$: laneCandidates = candidateLanes(
 		clipControls,
@@ -310,7 +330,20 @@
 		controlLanes = controlLanes.filter((_, i) => i !== index);
 	}
 
+	function commitNote(next: MidiNote): Promise<unknown> {
+		const { trackId, clipId } = get(pianoRollStore);
+		if (!trackId || !clipId) return Promise.resolve();
+		const updated = pianoRollStore.getNotes().map((note) => (note.id === next.id ? next : note));
+		pianoRollStore.setNotes(updated);
+		return setClipMidiNotes(trackId, clipId, updated);
+	}
+
 	function clearLane(lane: ControlLane) {
+		if (isExpressionLane(lane)) {
+			if (expressionNote)
+				commitNote(withExpressionPoints(expressionNote, lane, [])).catch(console.error);
+			return;
+		}
 		commitControls(replaceLanePoints(clipControls, lane, [])).catch(console.error);
 	}
 
@@ -1546,7 +1579,7 @@
 					{laneHeight}
 					{laneCandidates}
 					{showAddRow}
-					{clipControls}
+					{hasLaneData}
 					on:switchLane={(e) => switchLane(e.detail.index, e.detail.key)}
 					on:addLane={(e) => addLane(e.detail)}
 					on:hideLane={(e) => hideLane(e.detail)}
@@ -1622,11 +1655,13 @@
 							{showAddRow}
 							{scrollLeft}
 							controls={clipControls}
+							{expressionNote}
 							pxPerBeat={zoom}
 							widthPx={lanesWidthPx}
 							color={trackColor}
 							{quantize}
 							commit={commitControls}
+							{commitNote}
 						/>
 					{/if}
 					<!-- Scrollbar horizontale avec poignées de zoom -->
