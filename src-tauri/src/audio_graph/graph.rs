@@ -737,6 +737,7 @@ mod routing_tests {
             instrument: None,
             sampler: None,
             arpeggiator: None,
+            note_effects: None,
             input_source: None,
             automation_lanes: vec![],
             color: None,

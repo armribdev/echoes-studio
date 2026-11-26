@@ -13,6 +13,9 @@ use std::sync::Arc;
 use super::offline::{render_project_in_blocks, render_project_offline};
 use crate::arpeggiator_settings::{ArpMode, ArpRate, ArpeggiatorSettings};
 use crate::audio_graph::LiveParams;
+use crate::note_effect_settings::{
+    ChordSettings, ChordShape, NoteEffectSettings, ScaleKind, ScaleSettings, TransposeSettings,
+};
 use crate::plugin_system::PluginHost;
 use crate::project::{
     AppClip, AppMidiClip, AppProject, AppTrack, AutomationClip, AutomationLane, AutomationPoint,
@@ -93,6 +96,7 @@ fn empty_track(id: &str) -> AppTrack {
         instrument: None,
         sampler: None,
         arpeggiator: None,
+        note_effects: None,
         input_source: None,
         automation_lanes: vec![],
         color: None,
@@ -657,13 +661,8 @@ fn midi_controls() -> AppProject {
     )
 }
 
-/// Chords of one, three and four notes through the arpeggiator (ADR-030): two
-/// modes, two rates (one a triplet), octaves, gate, and a chord change.
-fn arpeggiator_track(
-    id: &str,
-    chords: &[(&[u8], f32, f32)],
-    settings: ArpeggiatorSettings,
-) -> (AppTrack, MidiContent) {
+/// A track whose clip plays the given chords: `(pitches, start, duration)`.
+fn chord_track(id: &str, chords: &[(&[u8], f32, f32)]) -> (AppTrack, MidiContent) {
     let notes = chords
         .iter()
         .enumerate()
@@ -685,11 +684,22 @@ fn arpeggiator_track(
         offset: 0.0,
         content_id: format!("{id}-clip"),
     });
-    track.arpeggiator = Some(settings);
     let content = MidiContent {
         notes,
         channel_controls: vec![],
     };
+    (track, content)
+}
+
+/// Chords of one, three and four notes through the arpeggiator (ADR-030): two
+/// modes, two rates (one a triplet), octaves, gate, and a chord change.
+fn arpeggiator_track(
+    id: &str,
+    chords: &[(&[u8], f32, f32)],
+    settings: ArpeggiatorSettings,
+) -> (AppTrack, MidiContent) {
+    let (mut track, content) = chord_track(id, chords);
+    track.arpeggiator = Some(settings);
     (track, content)
 }
 
@@ -727,6 +737,79 @@ fn arpeggiator() -> AppProject {
     )
 }
 
+/// Transpose, scale and chord (ADR-038), alone and ahead of the arpeggiator:
+/// - a chord whose voices overlap (C and E major share their fifth with G),
+/// - out-of-scale melody notes pulled into D dorian after a transposition,
+/// - a chord shape played one note at a time by the arpeggiator.
+fn note_effects() -> AppProject {
+    let (mut stacked, stacked_content) = chord_track(
+        "fx-chord",
+        &[(&[60, 64, 67], 0.0, 2.0), (&[62, 65], 2.0, 3.0)],
+    );
+    stacked.note_effects = Some(NoteEffectSettings {
+        transpose: TransposeSettings {
+            enabled: true,
+            semitones: 5,
+        },
+        chord: ChordSettings {
+            enabled: true,
+            shape: ChordShape::Minor7,
+        },
+        ..NoteEffectSettings::default()
+    });
+    let (mut melody, melody_content) = chord_track(
+        "fx-scale",
+        &[
+            (&[61], 0.0, 0.5),
+            (&[63], 0.5, 0.5),
+            (&[66], 1.0, 0.5),
+            (&[68], 1.5, 0.5),
+            (&[70], 2.0, 0.5),
+            (&[72], 2.5, 0.5),
+        ],
+    );
+    melody.note_effects = Some(NoteEffectSettings {
+        transpose: TransposeSettings {
+            enabled: true,
+            semitones: -3,
+        },
+        scale: ScaleSettings {
+            enabled: true,
+            root: 2,
+            scale: ScaleKind::Dorian,
+        },
+        chord: ChordSettings {
+            enabled: true,
+            shape: ChordShape::Fifth,
+        },
+    });
+    let (mut arpeggiated, arpeggiated_content) = arpeggiator_track(
+        "fx-arp",
+        &[(&[55, 62], 0.5, 2.0), (&[57], 3.0, 2.0)],
+        ArpeggiatorSettings {
+            enabled: true,
+            mode: ArpMode::Up,
+            rate: ArpRate::Eighth,
+            ..ArpeggiatorSettings::default()
+        },
+    );
+    arpeggiated.note_effects = Some(NoteEffectSettings {
+        chord: ChordSettings {
+            enabled: true,
+            shape: ChordShape::Dominant7,
+        },
+        ..NoteEffectSettings::default()
+    });
+    project_with_midi(
+        vec![stacked, melody, arpeggiated],
+        [
+            ("fx-chord-clip".to_string(), stacked_content),
+            ("fx-scale-clip".to_string(), melody_content),
+            ("fx-arp-clip".to_string(), arpeggiated_content),
+        ],
+    )
+}
+
 fn repeated_midi() -> AppProject {
     project_with_midi(
         vec![audio_track(), repeated_midi_track()],
@@ -746,7 +829,7 @@ fn repeated_midi_linked() -> AppProject {
     project
 }
 
-fn reference_projects() -> [(&'static str, AppProject); 14] {
+fn reference_projects() -> [(&'static str, AppProject); 15] {
     [
         ("static_mix", static_mix()),
         ("modulated_effects", modulated_effects()),
@@ -761,13 +844,14 @@ fn reference_projects() -> [(&'static str, AppProject); 14] {
         ("sampler_kit", sampler_kit()),
         ("midi_controls", midi_controls()),
         ("arpeggiator", arpeggiator()),
+        ("note_effects", note_effects()),
         ("repeated_midi", repeated_midi()),
     ]
 }
 
 /// Recorded on Windows x86_64.  Only update a value when an ADR sanctions the
 /// render change, and say so in the commit.
-const GOLDEN_HASHES: [(&str, u64); 14] = [
+const GOLDEN_HASHES: [(&str, u64); 15] = [
     ("static_mix", 0x7dec_d259_cfd9_6694),
     ("modulated_effects", 0x29ea_1120_1ae0_2d53),
     ("modulated_gain", 0x23ef_388b_80d0_9a52),
@@ -781,6 +865,7 @@ const GOLDEN_HASHES: [(&str, u64); 14] = [
     ("sampler_kit", 0x8151_d7f3_7a3c_1e57),
     ("midi_controls", 0x7dec_d259_cfd9_6694),
     ("arpeggiator", 0x94de_c710_d2b7_1fe1),
+    ("note_effects", 0xf98b_cd02_1dc9_c040),
     ("repeated_midi", 0x50b2_08b5_fb7b_9696),
 ];
 
@@ -871,6 +956,11 @@ fn arpeggiator_is_block_size_independent() {
 }
 
 #[test]
+fn note_effects_are_block_size_independent() {
+    assert_block_size_independent("note_effects", &note_effects());
+}
+
+#[test]
 fn repeated_midi_is_block_size_independent() {
     assert_block_size_independent("repeated_midi", &repeated_midi());
 }
@@ -911,6 +1001,36 @@ fn linked_repeats_render_like_independent_copies() {
     assert_eq!(
         render_hash(&render(&repeated_midi_linked(), BLOCK_SIZES[0])),
         golden
+    );
+}
+
+fn without_note_effects(mut project: AppProject) -> AppProject {
+    for track in &mut project.tracks {
+        track.note_effects = None;
+    }
+    project
+}
+
+fn with_note_effects_disabled(mut project: AppProject) -> AppProject {
+    for track in &mut project.tracks {
+        track.note_effects = track.note_effects.map(|_| NoteEffectSettings::default());
+    }
+    project
+}
+
+#[test]
+fn enabled_note_effects_change_the_render() {
+    assert_ne!(
+        render(&note_effects(), BLOCK_SIZES[0]),
+        render(&without_note_effects(note_effects()), BLOCK_SIZES[0])
+    );
+}
+
+#[test]
+fn disabled_note_effects_render_exactly_like_none() {
+    assert_eq!(
+        render(&with_note_effects_disabled(note_effects()), BLOCK_SIZES[0]),
+        render(&without_note_effects(note_effects()), BLOCK_SIZES[0])
     );
 }
 

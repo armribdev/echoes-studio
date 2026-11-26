@@ -7,6 +7,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::arpeggiator_settings::{ArpMode, ArpRate, ArpeggiatorSettings};
+use crate::note_effect_settings::{ChordShape, NoteEffectSettings, ScaleKind};
 use crate::sampler_kit::{PadPlayMode, SamplerPad};
 
 /// The outer wrapper for every command sent from the UI.
@@ -53,6 +54,7 @@ pub mod cmd {
     pub const SET_TRACK_INPUT: &str = "SET_TRACK_INPUT";
     pub const SET_SAMPLER_PAD: &str = "SET_SAMPLER_PAD";
     pub const SET_ARPEGGIATOR: &str = "SET_ARPEGGIATOR";
+    pub const SET_NOTE_EFFECTS: &str = "SET_NOTE_EFFECTS";
     pub const ADD_CLIP: &str = "ADD_CLIP";
     pub const MOVE_CLIP: &str = "MOVE_CLIP";
     pub const REMOVE_CLIP: &str = "REMOVE_CLIP";
@@ -205,6 +207,59 @@ impl ArpeggiatorPatch {
             octaves: self.octaves.unwrap_or(settings.octaves),
         }
         .clamped()
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SetNoteEffectsPayload {
+    pub track_id: String,
+    pub patch: NoteEffectsPatch,
+}
+
+/// Note effect settings to change (ADR-038); absent fields stay unchanged.
+#[derive(Debug, Default, Deserialize)]
+pub struct NoteEffectsPatch {
+    pub transpose: Option<TransposePatch>,
+    pub scale: Option<ScalePatch>,
+    pub chord: Option<ChordPatch>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+pub struct TransposePatch {
+    pub enabled: Option<bool>,
+    pub semitones: Option<i8>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+pub struct ScalePatch {
+    pub enabled: Option<bool>,
+    pub root: Option<u8>,
+    pub scale: Option<ScaleKind>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+pub struct ChordPatch {
+    pub enabled: Option<bool>,
+    pub shape: Option<ChordShape>,
+}
+
+impl NoteEffectsPatch {
+    pub fn apply_to(&self, settings: &NoteEffectSettings) -> NoteEffectSettings {
+        let mut next = *settings;
+        if let Some(patch) = &self.transpose {
+            next.transpose.enabled = patch.enabled.unwrap_or(next.transpose.enabled);
+            next.transpose.semitones = patch.semitones.unwrap_or(next.transpose.semitones);
+        }
+        if let Some(patch) = &self.scale {
+            next.scale.enabled = patch.enabled.unwrap_or(next.scale.enabled);
+            next.scale.root = patch.root.unwrap_or(next.scale.root);
+            next.scale.scale = patch.scale.unwrap_or(next.scale.scale);
+        }
+        if let Some(patch) = &self.chord {
+            next.chord.enabled = patch.enabled.unwrap_or(next.chord.enabled);
+            next.chord.shape = patch.shape.unwrap_or(next.chord.shape);
+        }
+        next.clamped()
     }
 }
 

@@ -16,7 +16,7 @@ use std::sync::Arc;
 
 use crate::audio_graph::arpeggiator::{Arpeggiator, Routing};
 use crate::audio_graph::buffer::AudioBuffer;
-use crate::audio_graph::live_params::{ArpeggiatorCells, EnvelopeCells};
+use crate::audio_graph::live_params::{ArpeggiatorCells, EnvelopeCells, NoteEffectCells};
 use crate::audio_graph::midi::{
     MidiEvent, MidiEventKind, MidiEventList, MidiLiveInputQueue, MidiPreviewQueue,
     MidiTrackPublisher,
@@ -27,6 +27,7 @@ use crate::audio_graph::midi_controls::ControlState;
 #[cfg(test)]
 use crate::audio_graph::midi_controls::{MidiControlClip, MidiControlSnapshot};
 use crate::audio_graph::node::{AudioNode, PrepareContext, TransportInfo};
+use crate::audio_graph::note_stage::NoteStage;
 use crate::audio_graph::plugin_params::{
     parse_plugin_param_name, PluginParamControl, PluginParamControls,
 };
@@ -124,8 +125,12 @@ pub struct InstrumentNode {
     /// the node writes the gate state after processing each block so that
     /// `EnvelopeNode::process` sees the correct gate on the next block.
     envelope_cells: Vec<Arc<EnvelopeCells>>,
-    /// Note stage between the sources and the device (ADR-030). Dormant while
+    /// Note stages between the sources and the device: transpose / scale /
+    /// chord (ADR-038), then the arpeggiator (ADR-030). Each is dormant while
     /// its settings are disabled.
+    note_stage: NoteStage,
+    note_effect_cells: Option<Arc<NoteEffectCells>>,
+    note_effect_events: MidiEventList,
     arpeggiator: Arpeggiator,
     arpeggiator_cells: Option<Arc<ArpeggiatorCells>>,
     arpeggiated_events: MidiEventList,
@@ -226,6 +231,9 @@ impl InstrumentNode {
             was_playing: false,
             active_pitch_count: [0u8; 128],
             envelope_cells: Vec::new(),
+            note_stage: NoteStage::new(),
+            note_effect_cells: None,
+            note_effect_events: MidiEventList::new(),
             arpeggiator: Arpeggiator::new(),
             arpeggiator_cells: None,
             arpeggiated_events: MidiEventList::new(),
@@ -236,20 +244,51 @@ impl InstrumentNode {
         self.arpeggiator_cells = Some(cells);
     }
 
-    fn apply_arpeggiator(&mut self, transport: &TransportInfo) -> Routing {
+    pub fn set_note_effect_cells(&mut self, cells: Arc<NoteEffectCells>) {
+        self.note_effect_cells = Some(cells);
+    }
+
+    /// Runs the note stages on `event_buf` and says which list the device
+    /// receives: `event_buf` itself while both stages are dormant.
+    fn apply_note_stages(&mut self, transport: &TransportInfo) -> DeviceFeed {
+        let effects = self
+            .note_effect_cells
+            .as_ref()
+            .map(|cells| cells.load())
+            .unwrap_or_default();
+        self.note_effect_events.clear();
+        let (after_effects, effects_feed) = match self.note_stage.process(
+            &effects,
+            self.event_buf.as_slice(),
+            &mut self.note_effect_events,
+        ) {
+            Routing::Passthrough => (&self.event_buf, DeviceFeed::Played),
+            Routing::Replaced => (&self.note_effect_events, DeviceFeed::NoteEffects),
+        };
+
         let settings = self
             .arpeggiator_cells
             .as_ref()
             .map(|cells| cells.load())
             .unwrap_or_default();
         self.arpeggiated_events.clear();
-        self.arpeggiator.process(
+        match self.arpeggiator.process(
             &settings,
             transport,
-            self.event_buf.as_slice(),
+            after_effects.as_slice(),
             &mut self.arpeggiated_events,
-        )
+        ) {
+            Routing::Passthrough => effects_feed,
+            Routing::Replaced => DeviceFeed::Arpeggiated,
+        }
     }
+}
+
+/// The event list the device plays after the note stages.
+enum DeviceFeed {
+    Played,
+    NoteEffects,
+    Arpeggiated,
 }
 
 impl InstrumentNode {
@@ -450,9 +489,10 @@ impl AudioNode for InstrumentNode {
             }
         }
 
-        let events = match self.apply_arpeggiator(transport) {
-            Routing::Passthrough => &self.event_buf,
-            Routing::Replaced => &self.arpeggiated_events,
+        let events = match self.apply_note_stages(transport) {
+            DeviceFeed::Played => &self.event_buf,
+            DeviceFeed::NoteEffects => &self.note_effect_events,
+            DeviceFeed::Arpeggiated => &self.arpeggiated_events,
         };
         self.device.process_midi(events, outputs, transport);
     }
@@ -465,6 +505,7 @@ impl AudioNode for InstrumentNode {
         self.preview_count = [0u8; 128];
         self.live_input_count = [0u8; 128];
         self.controls.reset();
+        self.note_stage.reset();
         self.arpeggiator.reset();
         // Release envelopes on graph reset so they don't hang in Sustain.
         for cells in &self.envelope_cells {
@@ -1163,5 +1204,131 @@ mod tests {
         run_block(&mut node, &transport_at(true, 5_000, 1_000));
 
         assert!(envelope.gate.load(Ordering::Relaxed));
+    }
+
+    fn effects_node(
+        captured: Arc<Mutex<Vec<MidiEvent>>>,
+        effects: crate::note_effect_settings::NoteEffectSettings,
+        arpeggiator: crate::arpeggiator_settings::ArpeggiatorSettings,
+    ) -> (InstrumentNode, Arc<NoteEffectCells>) {
+        let (mut node, _) = chord_node(captured, arpeggiator);
+        let cells = crate::audio_graph::live_params::LiveParams::new()
+            .install_note_effects("track", &effects);
+        node.set_note_effect_cells(Arc::clone(&cells));
+        (node, cells)
+    }
+
+    fn transposing(semitones: i8) -> crate::note_effect_settings::NoteEffectSettings {
+        crate::note_effect_settings::NoteEffectSettings {
+            transpose: crate::note_effect_settings::TransposeSettings {
+                enabled: true,
+                semitones,
+            },
+            ..Default::default()
+        }
+    }
+
+    fn note_on_100(pitch: u8) -> MidiEventKind {
+        MidiEventKind::NoteOn {
+            pitch,
+            velocity: 100,
+        }
+    }
+
+    fn note_off_of(pitch: u8) -> MidiEventKind {
+        MidiEventKind::NoteOff { pitch }
+    }
+
+    #[test]
+    fn note_effects_change_what_the_clip_chord_plays() {
+        let captured = Arc::new(Mutex::new(Vec::new()));
+        let (mut node, _) = effects_node(captured.clone(), transposing(7), Default::default());
+
+        run_block(&mut node, &transport_at(true, 0, 512));
+
+        assert_eq!(
+            captured_kinds(&captured),
+            vec![
+                (0, note_on_100(67)),
+                (0, note_on_100(71)),
+                (0, note_on_100(74)),
+            ]
+        );
+    }
+
+    #[test]
+    fn stopping_releases_the_transposed_notes() {
+        let captured = Arc::new(Mutex::new(Vec::new()));
+        let (mut node, _) = effects_node(captured.clone(), transposing(7), Default::default());
+
+        run_block(&mut node, &transport_at(true, 0, 512));
+        captured.lock().unwrap().clear();
+        run_block(&mut node, &transport_at(false, 0, 512));
+
+        assert_eq!(
+            captured_kinds(&captured),
+            vec![
+                (0, note_off_of(67)),
+                (0, note_off_of(71)),
+                (0, note_off_of(74)),
+            ]
+        );
+    }
+
+    #[test]
+    fn switching_the_effects_off_while_notes_sound_still_releases_what_started() {
+        let captured = Arc::new(Mutex::new(Vec::new()));
+        let (mut node, cells) = effects_node(captured.clone(), transposing(7), Default::default());
+
+        run_block(&mut node, &transport_at(true, 0, 512));
+        cells.store(&Default::default());
+        run_block(&mut node, &transport_at(true, 512, 512));
+        captured.lock().unwrap().clear();
+        run_block(&mut node, &transport_at(false, 0, 512));
+
+        assert_eq!(
+            captured_kinds(&captured),
+            vec![
+                (0, note_off_of(67)),
+                (0, note_off_of(71)),
+                (0, note_off_of(74)),
+            ]
+        );
+    }
+
+    #[test]
+    fn the_arpeggiator_plays_the_notes_the_effects_made() {
+        let captured = Arc::new(Mutex::new(Vec::new()));
+        let (mut node, _) = effects_node(captured.clone(), transposing(1), arpeggiating());
+
+        run_block(&mut node, &transport_at(true, 0, 6_001));
+
+        assert_eq!(
+            captured_kinds(&captured),
+            vec![
+                (0, note_on_100(61)),
+                (4_800, note_off_of(61)),
+                (6_000, note_on_100(65)),
+            ]
+        );
+    }
+
+    #[test]
+    fn disabled_note_effects_send_the_same_events_as_none() {
+        let plain = Arc::new(Mutex::new(Vec::new()));
+        let with_cells = Arc::new(Mutex::new(Vec::new()));
+        let (mut node_with, _) =
+            effects_node(with_cells.clone(), Default::default(), Default::default());
+        let (mut node_without, _) = chord_node(plain.clone(), Default::default());
+
+        for (playing, start) in [(true, 0), (true, 30_000), (false, 0), (true, 60_000)] {
+            run_block(&mut node_with, &transport_at(playing, start, 30_000));
+            run_block(&mut node_without, &transport_at(playing, start, 30_000));
+            assert_eq!(
+                captured_kinds(&with_cells),
+                captured_kinds(&plain),
+                "block at {start}"
+            );
+        }
     }
 }

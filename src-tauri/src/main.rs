@@ -12,6 +12,7 @@ mod library;
 mod menu_state;
 mod midi_input;
 mod midi_recording;
+mod note_effect_settings;
 mod plugin_formats;
 mod plugin_system;
 mod project;

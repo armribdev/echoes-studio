@@ -20,11 +20,14 @@
 //!   `AtomicU32` / `AtomicBool` fields directly — lock-free, allocation-free.
 
 use std::collections::{HashMap, HashSet};
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI8, AtomicU32, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use crate::arpeggiator_settings::{ArpMode, ArpRate, ArpeggiatorSettings};
 use crate::audio_graph::parameter_block::ParameterBlock;
+use crate::note_effect_settings::{
+    ChordSettings, ChordShape, NoteEffectSettings, ScaleKind, ScaleSettings, TransposeSettings,
+};
 use crate::project::{AppProject, EnvelopeParams};
 
 fn write_parameter_cells(block: &ParameterBlock, values: &[f32]) {
@@ -236,9 +239,75 @@ impl ArpeggiatorCells {
     }
 }
 
+/// One atomic per setting, written by the command thread and read once per
+/// block by the instrument node (ADR-038).
+pub struct NoteEffectCells {
+    transpose_enabled: AtomicBool,
+    transpose_semitones: AtomicI8,
+    scale_enabled: AtomicBool,
+    scale_root: AtomicU8,
+    scale_kind: AtomicU8,
+    chord_enabled: AtomicBool,
+    chord_shape: AtomicU8,
+}
+
+impl NoteEffectCells {
+    fn new(settings: &NoteEffectSettings) -> Arc<Self> {
+        let cells = Arc::new(Self {
+            transpose_enabled: AtomicBool::new(false),
+            transpose_semitones: AtomicI8::new(0),
+            scale_enabled: AtomicBool::new(false),
+            scale_root: AtomicU8::new(0),
+            scale_kind: AtomicU8::new(0),
+            chord_enabled: AtomicBool::new(false),
+            chord_shape: AtomicU8::new(0),
+        });
+        cells.store(settings);
+        cells
+    }
+
+    pub fn store(&self, settings: &NoteEffectSettings) {
+        self.transpose_enabled
+            .store(settings.transpose.enabled, Ordering::Relaxed);
+        self.transpose_semitones
+            .store(settings.transpose.semitones, Ordering::Relaxed);
+        self.scale_enabled
+            .store(settings.scale.enabled, Ordering::Relaxed);
+        self.scale_root
+            .store(settings.scale.root, Ordering::Relaxed);
+        self.scale_kind
+            .store(settings.scale.scale.index(), Ordering::Relaxed);
+        self.chord_enabled
+            .store(settings.chord.enabled, Ordering::Relaxed);
+        self.chord_shape
+            .store(settings.chord.shape.index(), Ordering::Relaxed);
+    }
+
+    #[inline]
+    pub fn load(&self) -> NoteEffectSettings {
+        NoteEffectSettings {
+            transpose: TransposeSettings {
+                enabled: self.transpose_enabled.load(Ordering::Relaxed),
+                semitones: self.transpose_semitones.load(Ordering::Relaxed),
+            },
+            scale: ScaleSettings {
+                enabled: self.scale_enabled.load(Ordering::Relaxed),
+                root: self.scale_root.load(Ordering::Relaxed),
+                scale: ScaleKind::from_index(self.scale_kind.load(Ordering::Relaxed)),
+            },
+            chord: ChordSettings {
+                enabled: self.chord_enabled.load(Ordering::Relaxed),
+                shape: ChordShape::from_index(self.chord_shape.load(Ordering::Relaxed)),
+            },
+        }
+        .clamped()
+    }
+}
+
 #[derive(Default)]
 struct LiveParamsInner {
     arpeggiators: HashMap<String, Arc<ArpeggiatorCells>>,
+    note_effects: HashMap<String, Arc<NoteEffectCells>>,
     tracks: HashMap<String, Arc<TrackParams>>,
     modulators: HashMap<String, Arc<ModulatorCells>>,
     macros: HashMap<String, Arc<MacroCells>>,
@@ -485,6 +554,34 @@ impl LiveParams {
         true
     }
 
+    /// Same contract as `install_arpeggiator`.
+    pub fn install_note_effects(
+        &self,
+        track_id: &str,
+        settings: &NoteEffectSettings,
+    ) -> Arc<NoteEffectCells> {
+        let mut inner = self.lock_inner();
+        if let Some(existing) = inner.note_effects.get(track_id) {
+            existing.store(settings);
+            return Arc::clone(existing);
+        }
+        let cells = NoteEffectCells::new(settings);
+        inner
+            .note_effects
+            .insert(track_id.to_string(), Arc::clone(&cells));
+        cells
+    }
+
+    /// Same contract as `set_arpeggiator`.
+    pub fn set_note_effects(&self, track_id: &str, settings: &NoteEffectSettings) -> bool {
+        let inner = self.lock_inner();
+        let Some(cells) = inner.note_effects.get(track_id) else {
+            return false;
+        };
+        cells.store(settings);
+        true
+    }
+
     pub fn set_master_soft_clip(&self, enabled: bool) {
         self.master_soft_clip.store(enabled, Ordering::Relaxed);
     }
@@ -634,6 +731,9 @@ impl LiveParams {
 
         inner
             .arpeggiators
+            .retain(|id, _| live_track_ids.contains(id.as_str()));
+        inner
+            .note_effects
             .retain(|id, _| live_track_ids.contains(id.as_str()));
         inner
             .midi_notes

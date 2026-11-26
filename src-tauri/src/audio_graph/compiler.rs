@@ -817,6 +817,12 @@ impl GraphCompiler {
                     .and_then(|track| track.arpeggiator)
                     .unwrap_or_default();
                 node.set_arpeggiator_cells(live_params.install_arpeggiator(track_id, &arpeggiator));
+                let note_effects = track
+                    .and_then(|track| track.note_effects)
+                    .unwrap_or_default();
+                node.set_note_effect_cells(
+                    live_params.install_note_effects(track_id, &note_effects),
+                );
                 if live {
                     node.set_preview(live_params.preview_queue(track_id));
                     node.set_live_input(live_params.live_input_queue(track_id));
@@ -1157,6 +1163,7 @@ mod tests {
             instrument: None,
             sampler: None,
             arpeggiator: None,
+            note_effects: None,
             input_source: None,
             automation_lanes: vec![],
             color: None,
@@ -1245,6 +1252,7 @@ mod tests {
             instrument: Some("clap:synth".into()),
             sampler: None,
             arpeggiator: None,
+            note_effects: None,
             input_source: None,
             automation_lanes: vec![AutomationLane {
                 id: "lane".into(),

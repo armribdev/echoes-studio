@@ -25,7 +25,7 @@ use super::commands::{
     RemoveEffectPayload, RemoveMarkerPayload, RemoveMidiClipPayload, RemoveModulationRoutePayload,
     RemoveModulatorPayload, RemoveRegionPayload, SeekPayload, SetArpeggiatorPayload,
     SetClipMidiControlsPayload, SetClipMidiNotesPayload, SetLoopPayload, SetMidiNotesPayload,
-    SetModulationDepthPayload, SetSamplerPadPayload, SetTrackInputPayload,
+    SetModulationDepthPayload, SetNoteEffectsPayload, SetSamplerPadPayload, SetTrackInputPayload,
     SetTrackInstrumentPayload, SoloTrackPayload, UnlinkMidiClipPayload,
     UpdateAutomationClipPayload, UpdateAutomationLanePayload, UpdateEffectPayload,
     UpdateMarkerPayload, UpdateModulatorPayload, UpdateProjectNamePayload, UpdateRegionPayload,
@@ -38,6 +38,7 @@ use crate::audio_engine::transport::SharedTransport;
 use crate::audio_graph::nodes::track_gain::VOLUME_RANGE;
 use crate::audio_graph::GraphSnapshotDto;
 use crate::factory_drums;
+use crate::note_effect_settings::NoteEffectSettings;
 use crate::plugin_system::wrapper::DeviceFormat;
 use crate::project::{
     default_marker_name, default_region_name, generate_id, normalize_region_span,
@@ -468,6 +469,7 @@ fn empty_app_track(id: String, name: String) -> AppTrack {
         instrument: None,
         sampler: None,
         arpeggiator: None,
+        note_effects: None,
         input_source: None,
         automation_lanes: vec![],
         color: None,
@@ -1599,6 +1601,27 @@ fn process_command(
             )
         }
 
+        cmd::SET_NOTE_EFFECTS => {
+            let p: SetNoteEffectsPayload = serde_json::from_value(command.payload)
+                .map_err(|e| format!("SET_NOTE_EFFECTS payload invalid: {e}"))?;
+
+            let (settings, node_appears) = with_project_mut(state, |project| {
+                let track = require_track_mut(project, &p.track_id)?;
+                let had_node = track.has_instrument_node();
+                let settings = p.patch.apply_to(&track.note_effects.unwrap_or_default());
+                track.note_effects = Some(settings);
+                Ok((settings, !had_node))
+            })?;
+
+            let applied_live = state.live_params.set_note_effects(&p.track_id, &settings);
+            commit_same_payload(
+                &ctx,
+                ev::NOTE_EFFECTS_SET,
+                json!({ "track_id": p.track_id, "settings": settings }),
+                node_appears || !applied_live,
+            )
+        }
+
         cmd::SET_TRACK_INPUT => {
             let p: SetTrackInputPayload = serde_json::from_value(command.payload)
                 .map_err(|e| format!("SET_TRACK_INPUT payload invalid: {e}"))?;
@@ -2695,6 +2718,7 @@ fn snapshot_track(t: &AppTrack) -> AppTrack {
         instrument: t.instrument.clone(),
         sampler: t.sampler.clone(),
         arpeggiator: t.arpeggiator,
+        note_effects: t.note_effects,
         input_source: t.input_source.clone(),
         automation_lanes: t.automation_lanes.clone(),
         clips: t.clips.iter().map(snapshot_clip).collect(),
@@ -2936,6 +2960,16 @@ fn apply_arpeggiator_set(project: &mut AppProject, payload: &Value) {
     };
     if let Some(track) = find_track_mut(project, &payload_str(payload, "track_id")) {
         track.arpeggiator = Some(settings.clamped());
+    }
+}
+
+fn apply_note_effects_set(project: &mut AppProject, payload: &Value) {
+    let Ok(settings) = serde_json::from_value::<NoteEffectSettings>(payload["settings"].clone())
+    else {
+        return;
+    };
+    if let Some(track) = find_track_mut(project, &payload_str(payload, "track_id")) {
+        track.note_effects = Some(settings.clamped());
     }
 }
 
@@ -3558,6 +3592,7 @@ fn apply_events(
             }
             ev::TRACK_INPUT_SET => apply_track_input_set(&mut project, &event.payload),
             ev::ARPEGGIATOR_SET => apply_arpeggiator_set(&mut project, &event.payload),
+            ev::NOTE_EFFECTS_SET => apply_note_effects_set(&mut project, &event.payload),
             ev::SAMPLER_PAD_SET => apply_sampler_pad_set(&mut project, &event.payload, |path| {
                 resolve_pad_sample(state, path)
             }),
@@ -3691,6 +3726,7 @@ mod tests {
             instrument: None,
             sampler: None,
             arpeggiator: None,
+            note_effects: None,
             input_source: None,
             automation_lanes: vec![],
             color: None,
@@ -4080,6 +4116,67 @@ mod tests {
             after.gate_percent,
             crate::arpeggiator_settings::MIN_GATE_PERCENT
         );
+    }
+
+    #[test]
+    fn replayed_note_effects_set_restores_the_settings_within_range() {
+        let mut project = AppProject::new();
+        project.tracks.push(empty_app_track("t".into(), "t".into()));
+
+        apply_note_effects_set(
+            &mut project,
+            &json!({
+                "track_id": "t",
+                "settings": {
+                    "transpose": { "enabled": true, "semitones": 90 },
+                    "scale": { "enabled": true, "root": 30, "scale": "blues" },
+                    "chord": { "enabled": true, "shape": "sus4" }
+                }
+            }),
+        );
+
+        let settings = project.tracks[0].note_effects.expect("settings set");
+        assert_eq!(
+            settings.transpose.semitones,
+            crate::note_effect_settings::MAX_TRANSPOSE_SEMITONES
+        );
+        assert_eq!(settings.scale.root, 11);
+        assert_eq!(
+            settings.scale.scale,
+            crate::note_effect_settings::ScaleKind::Blues
+        );
+        assert_eq!(
+            settings.chord.shape,
+            crate::note_effect_settings::ChordShape::Sus4
+        );
+    }
+
+    #[test]
+    fn a_note_effects_patch_changes_only_the_fields_it_names() {
+        let before = NoteEffectSettings {
+            transpose: crate::note_effect_settings::TransposeSettings {
+                enabled: true,
+                semitones: 4,
+            },
+            ..NoteEffectSettings::default()
+        };
+        let patch: super::super::commands::NoteEffectsPatch = serde_json::from_value(
+            json!({ "chord": { "enabled": true, "shape": "minor" }, "transpose": { "semitones": -99 } }),
+        )
+        .unwrap();
+        let after = patch.apply_to(&before);
+
+        assert!(after.transpose.enabled);
+        assert_eq!(
+            after.transpose.semitones,
+            crate::note_effect_settings::MIN_TRANSPOSE_SEMITONES
+        );
+        assert!(after.chord.enabled);
+        assert_eq!(
+            after.chord.shape,
+            crate::note_effect_settings::ChordShape::Minor
+        );
+        assert!(!after.scale.enabled);
     }
 
     fn shared_midi_clip_added_payload(clip_id: &str, content_id: &str) -> Value {

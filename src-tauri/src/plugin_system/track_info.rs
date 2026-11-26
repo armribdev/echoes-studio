@@ -73,6 +73,7 @@ pub(crate) fn test_track(
         instrument: None,
         sampler: None,
         arpeggiator: None,
+        note_effects: None,
         input_source: None,
         automation_lanes: vec![],
         color: color.map(str::to_owned),
