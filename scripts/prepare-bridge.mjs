@@ -27,7 +27,14 @@ const targetTriple = hostLine.slice('host: '.length).trim();
 
 execFileSync(
 	'cargo',
-	['build', '--release', '--manifest-path', join(TAURI_DIR, 'Cargo.toml'), '-p', 'plugin_host_bridge'],
+	[
+		'build',
+		'--release',
+		'--manifest-path',
+		join(TAURI_DIR, 'Cargo.toml'),
+		'-p',
+		'plugin_host_bridge'
+	],
 	{ stdio: 'inherit' }
 );
 
