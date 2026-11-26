@@ -32,7 +32,7 @@ use crate::audio_graph::execution_plan::{
 };
 use crate::audio_graph::graph::{instrument_instance_key, AudioGraph, NodeKind};
 use crate::audio_graph::live_params::LiveParams;
-use crate::audio_graph::midi::{MidiNoteSnapshot, MidiTrackContent};
+use crate::audio_graph::midi::{MidiNoteSnapshot, MidiTrackContent, NoteExpressionSnapshot};
 use crate::audio_graph::midi_controls::{MidiControlClip, MidiControlSnapshot};
 use crate::audio_graph::node::{AudioNode, NodeId, PortId, PortKind, PrepareContext};
 use crate::audio_graph::nodes::instrument::{InstrumentDevice, SilentInstrument};
@@ -40,7 +40,9 @@ use crate::audio_graph::nodes::poly_synth::PolySynth;
 use crate::audio_graph::nodes::sampler::Sampler;
 use crate::audio_graph::plugin_params::{parse_plugin_param_name, PluginParamControl};
 use crate::plugin_system::PluginHost;
-use crate::project::{sanitize_control_points, AppProject, AppTrack, MidiContent};
+use crate::project::{
+    sanitize_control_points, sanitize_note_expressions, AppProject, AppTrack, MidiContent,
+};
 
 /// Shared peak cells for one track meter: (peak_L, peak_R).
 pub type MeterCell = (Arc<AtomicU32>, Arc<AtomicU32>);
@@ -151,6 +153,14 @@ pub fn bake_track_midi(
                 end_beats: note.start + note.duration,
                 window_start_sample,
                 window_end_sample,
+                expressions: sanitize_note_expressions(&note.expressions, note.duration)
+                    .into_iter()
+                    .map(|point| NoteExpressionSnapshot {
+                        start_beats: note.start + point.start,
+                        kind: point.kind,
+                        value: point.value,
+                    })
+                    .collect(),
             });
         }
         if !content.channel_controls.is_empty() {

@@ -4,6 +4,7 @@
 //! `Vec`s published off the audio thread and swapped in with an atomic pointer.
 
 use crate::audio_graph::midi_controls::MidiControlClip;
+use crate::project::NoteExpressionKind;
 use std::ptr;
 use std::sync::atomic::{fence, AtomicPtr, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -30,6 +31,14 @@ pub enum MidiEventKind {
     /// ignore it. A channel pressure uses two bytes; the third is `0`.
     Control {
         message: [u8; 3],
+    },
+    /// One value of an expression of the notes sounding on `pitch` (ADR-039).
+    /// Plugin instruments only; built-in ones ignore it. Pressure and timbre in
+    /// `0..1`, pitch in semitones.
+    NoteExpression {
+        pitch: u8,
+        kind: NoteExpressionKind,
+        value: f32,
     },
 }
 
@@ -94,6 +103,7 @@ impl MidiEventList {
     /// precedes NoteOn so that a re-triggered note (NoteOff + NoteOn at the
     /// same offset, e.g. after a seek) releases cleanly before retriggering,
     /// and a control lands before the NoteOn it should shape (bend, mod wheel).
+    /// A note expression comes last: it needs the note it shapes to sound.
     ///
     /// In-place — no allocation.
     #[inline]
@@ -104,6 +114,7 @@ impl MidiEventList {
                     MidiEventKind::NoteOff { .. } => 0,
                     MidiEventKind::Control { .. } => 1,
                     MidiEventKind::NoteOn { .. } => 2,
+                    MidiEventKind::NoteExpression { .. } => 3,
                 };
                 priority(a).cmp(&priority(b))
             })
@@ -133,6 +144,18 @@ pub struct MidiNoteSnapshot {
     /// Playable window end (clip `end`) in engine samples — tempo-independent.
     /// Notes are silenced past this edge (right-trim).
     pub window_end_sample: u64,
+    /// Curves of the note, sorted by position (ADR-039).
+    pub expressions: Vec<NoteExpressionSnapshot>,
+}
+
+/// One value of a note expression, positioned like the note it belongs to.
+#[derive(Debug, Clone, Copy)]
+pub struct NoteExpressionSnapshot {
+    /// In beats, relative to `MidiNoteSnapshot::clip_start_sec` (the note's
+    /// own start plus the point's offset in it).
+    pub start_beats: f32,
+    pub kind: NoteExpressionKind,
+    pub value: f32,
 }
 
 impl MidiNoteSnapshot {
@@ -603,6 +626,7 @@ mod tests {
             end_beats: 2.0,
             window_start_sample: 0,
             window_end_sample: u64::MAX,
+            expressions: Vec::new(),
         };
         assert_eq!(note.start_sample(120.0, 48_000.0), 24_000);
         assert_eq!(note.end_sample(120.0, 48_000.0), 48_000);

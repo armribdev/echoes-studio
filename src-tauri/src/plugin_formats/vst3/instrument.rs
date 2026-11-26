@@ -46,13 +46,17 @@ use super::wrapper::{vst3_process_trampoline, Vst3ProcessCtx};
 /// The engine's per-block notes and controls as the messages `vst3_host::notes`
 /// turns into VST3 events, in the same order.
 fn note_messages(events: &MidiEventList) -> impl Iterator<Item = NoteMessage> + '_ {
-    events.as_slice().iter().map(|event| NoteMessage {
-        offset: event.offset,
-        kind: match event.kind {
+    events.as_slice().iter().filter_map(|event| {
+        let kind = match event.kind {
             MidiEventKind::NoteOn { pitch, velocity } => NoteKind::NoteOn { pitch, velocity },
             MidiEventKind::NoteOff { pitch } => NoteKind::NoteOff { pitch },
             MidiEventKind::Control { message } => NoteKind::Control { message },
-        },
+            MidiEventKind::NoteExpression { .. } => return None,
+        };
+        Some(NoteMessage {
+            offset: event.offset,
+            kind,
+        })
     })
 }
 

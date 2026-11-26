@@ -253,7 +253,7 @@ impl InstrumentDevice for PolySynth {
                     match events[ev_idx].kind {
                         MidiEventKind::NoteOn { pitch, velocity } => self.note_on(pitch, velocity),
                         MidiEventKind::NoteOff { pitch } => self.note_off(pitch),
-                        MidiEventKind::Control { .. } => {}
+                        MidiEventKind::Control { .. } | MidiEventKind::NoteExpression { .. } => {}
                     }
                     ev_idx += 1;
                 }
@@ -274,7 +274,7 @@ impl InstrumentDevice for PolySynth {
                     match events[ev_idx].kind {
                         MidiEventKind::NoteOn { pitch, velocity } => self.note_on(pitch, velocity),
                         MidiEventKind::NoteOff { pitch } => self.note_off(pitch),
-                        MidiEventKind::Control { .. } => {}
+                        MidiEventKind::Control { .. } | MidiEventKind::NoteExpression { .. } => {}
                     }
                     ev_idx += 1;
                 }

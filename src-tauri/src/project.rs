@@ -391,6 +391,69 @@ pub struct MidiNote {
     pub duration: f32,
     /// Velocity 0-127.
     pub velocity: u8,
+    /// Curves drawn on this note (ADR-039). Empty for a plain note.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub expressions: Vec<NoteExpressionPoint>,
+}
+
+/// What a note expression changes while the note sounds (ADR-039).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NoteExpressionKind {
+    Pressure,
+    Timbre,
+    Pitch,
+}
+
+impl NoteExpressionKind {
+    pub const ALL: [Self; 3] = [Self::Pressure, Self::Timbre, Self::Pitch];
+
+    /// `(min, max)`: `0..1` for pressure and timbre, semitones for pitch.
+    pub fn range(self) -> (f32, f32) {
+        match self {
+            Self::Pressure | Self::Timbre => (0.0, 1.0),
+            Self::Pitch => (-PITCH_EXPRESSION_SEMITONES, PITCH_EXPRESSION_SEMITONES),
+        }
+    }
+}
+
+/// Reach of the pitch expression, either way, in semitones.
+pub const PITCH_EXPRESSION_SEMITONES: f32 = 24.0;
+
+/// One value of a note expression. Holds until the next point of the same
+/// kind, like a channel control (ADR-029).
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct NoteExpressionPoint {
+    /// Position in beats, relative to the start of its note.
+    pub start: f32,
+    pub kind: NoteExpressionKind,
+    pub value: f32,
+}
+
+/// Drops the points that cannot play (outside the note, not finite), clamps the
+/// values to their range and orders by position.
+pub fn sanitize_note_expressions(
+    points: &[NoteExpressionPoint],
+    duration: f32,
+) -> Vec<NoteExpressionPoint> {
+    let mut sanitized: Vec<NoteExpressionPoint> = points
+        .iter()
+        .filter(|point| {
+            point.start.is_finite()
+                && point.start >= 0.0
+                && point.start < duration
+                && point.value.is_finite()
+        })
+        .map(|point| {
+            let (min, max) = point.kind.range();
+            NoteExpressionPoint {
+                value: point.value.clamp(min, max),
+                ..*point
+            }
+        })
+        .collect();
+    sanitized.sort_by(|a, b| a.start.total_cmp(&b.start));
+    sanitized
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -1856,6 +1919,7 @@ mod tests {
             start: 0.0,
             duration: 1.0,
             velocity: 100,
+            expressions: Vec::new(),
         }
     }
 
@@ -2380,6 +2444,86 @@ mod tests {
             project.tracks_playing_midi_content("content-a"),
             vec!["track-a".to_string(), "track-b".to_string()]
         );
+    }
+
+    fn pressure(start: f32, value: f32) -> NoteExpressionPoint {
+        NoteExpressionPoint {
+            start,
+            kind: NoteExpressionKind::Pressure,
+            value,
+        }
+    }
+
+    #[test]
+    fn a_note_without_curves_is_written_as_before_and_an_old_note_loads() {
+        let plain = serde_json::to_value(note("n1", 60)).expect("serialize");
+        assert!(plain.get("expressions").is_none());
+
+        let old: MidiNote = serde_json::from_value(plain).expect("an old note");
+        assert!(old.expressions.is_empty());
+    }
+
+    #[test]
+    fn the_curves_of_a_note_survive_a_save() {
+        let mut project = project_with_shared_content();
+        project
+            .midi_contents
+            .get_mut("content-a")
+            .expect("content")
+            .notes[0]
+            .expressions = vec![pressure(0.25, 0.5)];
+
+        let restored = reload(&project);
+        assert_eq!(
+            restored.midi_contents["content-a"].notes[0].expressions,
+            vec![pressure(0.25, 0.5)]
+        );
+    }
+
+    #[test]
+    fn sanitizing_drops_what_cannot_play_and_clamps_the_rest() {
+        let tuning = |start, value| NoteExpressionPoint {
+            start,
+            kind: NoteExpressionKind::Pitch,
+            value,
+        };
+        let sanitized = sanitize_note_expressions(
+            &[
+                pressure(0.5, 3.0),
+                pressure(-1.0, 0.5),
+                pressure(f32::NAN, 0.5),
+                pressure(2.0, 0.5),
+                pressure(0.1, f32::INFINITY),
+                tuning(0.25, -90.0),
+            ],
+            1.0,
+        );
+        assert_eq!(sanitized, vec![tuning(0.25, -24.0), pressure(0.5, 1.0)]);
+    }
+
+    #[test]
+    fn every_track_playing_a_shared_content_bakes_the_same_curves() {
+        let mut project = project_with_shared_content();
+        project
+            .midi_contents
+            .get_mut("content-a")
+            .expect("content")
+            .notes[0]
+            .expressions = vec![pressure(0.25, 0.5)];
+
+        for track in &project.tracks {
+            let baked = crate::audio_graph::compiler::bake_track_midi(
+                track,
+                &project.midi_contents,
+                48_000.0,
+            );
+            let curve: Vec<(f32, f32)> = baked.notes[0]
+                .expressions
+                .iter()
+                .map(|point| (point.start_beats, point.value))
+                .collect();
+            assert_eq!(curve, vec![(0.25, 0.5)], "{}", track.id);
+        }
     }
 
     #[test]

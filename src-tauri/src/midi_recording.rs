@@ -137,6 +137,7 @@ impl MidiRecorder {
         let (note_on, pitch, velocity) = match message.kind {
             MidiEventKind::NoteOn { pitch, velocity } => (true, pitch, velocity),
             MidiEventKind::NoteOff { pitch } => (false, pitch, 0),
+            MidiEventKind::NoteExpression { .. } => return None,
             MidiEventKind::Control { message: raw } => {
                 let (kind, number, value) = decode_control(raw)?;
                 if counting_in {
@@ -277,6 +278,7 @@ fn build_clip(
             start: ((span.on_samples - clip_start) as f64 * beats_per_sample) as f32,
             duration: ((span.off_samples - span.on_samples) as f64 * beats_per_sample) as f32,
             velocity: span.velocity,
+            expressions: Vec::new(),
         })
         .collect();
 

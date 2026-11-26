@@ -210,7 +210,7 @@ impl Arpeggiator {
                     let count = &mut self.through[pitch as usize];
                     *count = count.saturating_sub(1);
                 }
-                MidiEventKind::Control { .. } => {}
+                MidiEventKind::Control { .. } | MidiEventKind::NoteExpression { .. } => {}
             }
         }
     }
@@ -336,6 +336,8 @@ impl Arpeggiator {
                 }
             }
             MidiEventKind::Control { .. } => output.push_control(event),
+            // The notes it plays are its own, not the held ones the curve was drawn for.
+            MidiEventKind::NoteExpression { .. } => {}
         }
     }
 
@@ -509,6 +511,7 @@ mod tests {
         On(u8),
         Off(u8),
         Control(u8),
+        Expression,
     }
 
     type Timeline = Vec<(u64, Played)>;
@@ -605,6 +608,7 @@ mod tests {
                     MidiEventKind::NoteOn { pitch, .. } => Played::On(pitch),
                     MidiEventKind::NoteOff { pitch } => Played::Off(pitch),
                     MidiEventKind::Control { message } => Played::Control(message[1]),
+                    MidiEventKind::NoteExpression { .. } => Played::Expression,
                 };
                 self.played.push((start + event.offset as u64, played));
             }

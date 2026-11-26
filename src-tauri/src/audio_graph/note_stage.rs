@@ -11,6 +11,7 @@
 use crate::audio_graph::arpeggiator::Routing;
 use crate::audio_graph::midi::{MidiEvent, MidiEventKind, MidiEventList};
 use crate::note_effect_settings::{NoteEffectSettings, MAX_CHORD_VOICES};
+use crate::project::NoteExpressionKind;
 
 const PITCH_COUNT: usize = 128;
 const PITCH_CLASSES: i16 = 12;
@@ -88,6 +89,10 @@ impl NoteStage {
                 }
                 MidiEventKind::Control { .. } if replacing => output.push(*event),
                 MidiEventKind::Control { .. } => {}
+                MidiEventKind::NoteExpression { pitch, kind, value } if replacing => {
+                    self.note_expression(event.offset, pitch, kind, value, output);
+                }
+                MidiEventKind::NoteExpression { .. } => {}
             }
         }
         if replacing {
@@ -138,6 +143,32 @@ impl NoteStage {
                     },
                 });
             }
+        }
+    }
+
+    /// An expression of a played note goes to every voice that note sounds.
+    fn note_expression(
+        &mut self,
+        offset: u32,
+        pitch: u8,
+        kind: NoteExpressionKind,
+        value: f32,
+        output: &mut MidiEventList,
+    ) {
+        let played = pitch as usize;
+        if played >= PITCH_COUNT || self.held[played] == 0 {
+            return;
+        }
+        let count = self.voice_count[played] as usize;
+        for &voice in &self.voices[played][..count] {
+            output.push_control(MidiEvent {
+                offset,
+                kind: MidiEventKind::NoteExpression {
+                    pitch: voice,
+                    kind,
+                    value,
+                },
+            });
         }
     }
 
@@ -396,6 +427,65 @@ mod tests {
                 note_off(50, 70),
             ]
         );
+    }
+
+    fn expression(offset: u32, pitch: u8, value: f32) -> MidiEvent {
+        MidiEvent {
+            offset,
+            kind: MidiEventKind::NoteExpression {
+                pitch,
+                kind: NoteExpressionKind::Pressure,
+                value,
+            },
+        }
+    }
+
+    fn pressure_of(offset: u32, pitch: u8, value: f32) -> (u32, MidiEventKind) {
+        (offset, expression(offset, pitch, value).kind)
+    }
+
+    #[test]
+    fn an_expression_reaches_every_voice_of_a_chord() {
+        let mut stage = NoteStage::new();
+        let settings = chorded(ChordShape::Minor7);
+        let (_, played) = run(
+            &mut stage,
+            &settings,
+            &[on(0, 60), expression(10, 60, 0.5), off(50, 60)],
+        );
+        assert_eq!(
+            &played[4..8],
+            [
+                pressure_of(10, 60, 0.5),
+                pressure_of(10, 63, 0.5),
+                pressure_of(10, 67, 0.5),
+                pressure_of(10, 70, 0.5),
+            ]
+        );
+    }
+
+    #[test]
+    fn an_expression_follows_the_transposed_pitch() {
+        let mut stage = NoteStage::new();
+        let (_, played) = run(
+            &mut stage,
+            &transposing(12),
+            &[on(0, 60), expression(5, 60, 0.25)],
+        );
+        assert_eq!(played[1], pressure_of(5, 72, 0.25));
+    }
+
+    #[test]
+    fn an_expression_of_a_note_that_is_not_held_is_dropped() {
+        let mut stage = NoteStage::new();
+        let (_, played) = run(
+            &mut stage,
+            &transposing(12),
+            &[on(0, 60), off(4, 60), expression(5, 60, 0.25)],
+        );
+        assert!(played
+            .iter()
+            .all(|(_, kind)| !matches!(kind, MidiEventKind::NoteExpression { .. })));
     }
 
     #[test]

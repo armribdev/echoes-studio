@@ -894,7 +894,29 @@ pub const CLAP_EVENT_PARAM_GESTURE_BEGIN: u16 = 7;
 pub const CLAP_EVENT_PARAM_GESTURE_END: u16 = 8;
 /// `CLAP_EVENT_MIDI` — a raw 3-byte MIDI 1.0 message (`clap_event_midi`).
 pub const CLAP_EVENT_MIDI: u16 = 10;
+/// `CLAP_EVENT_NOTE_EXPRESSION` — host → plugin: one expression of a sounding
+/// note (`clap_event_note_expression`).
+pub const CLAP_EVENT_NOTE_EXPRESSION: u16 = 14;
 pub const CLAP_CORE_EVENT_SPACE: u16 = 0;
+
+/// `clap_note_expression`: the expressions the host sends. `TUNING` is in
+/// semitones, the others in `0..1`.
+pub const CLAP_NOTE_EXPRESSION_TUNING: i32 = 2;
+pub const CLAP_NOTE_EXPRESSION_BRIGHTNESS: i32 = 5;
+pub const CLAP_NOTE_EXPRESSION_PRESSURE: i32 = 6;
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct ClapEventNoteExpression {
+    pub header: ClapEventHeader,
+    pub expression_id: i32,
+    /// `-1` means every note, like `port_index`, `channel` and `key`.
+    pub note_id: i32,
+    pub port_index: i16,
+    pub channel: i16,
+    pub key: i16,
+    pub value: f64,
+}
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -1142,6 +1164,7 @@ union ClapEventSlot {
     note: ClapEventNote,
     param: ClapEventParamValue,
     midi: ClapEventMidi,
+    expression: ClapEventNoteExpression,
 }
 
 /// Fixed-capacity `clap_input_events` list mixing notes, parameter values and
@@ -1222,6 +1245,27 @@ impl ClapEventBuffer {
         });
     }
 
+    /// An expression of the notes sounding on `key`, on any channel.
+    pub fn push_note_expression(&mut self, time: u32, key: i16, expression_id: i32, value: f64) {
+        self.push(ClapEventSlot {
+            expression: ClapEventNoteExpression {
+                header: ClapEventHeader {
+                    size: std::mem::size_of::<ClapEventNoteExpression>() as u32,
+                    time,
+                    space_id: CLAP_CORE_EVENT_SPACE,
+                    r#type: CLAP_EVENT_NOTE_EXPRESSION,
+                    flags: 0,
+                },
+                expression_id,
+                note_id: -1,
+                port_index: 0,
+                channel: -1,
+                key,
+                value,
+            },
+        });
+    }
+
     /// Sets the parameter to `value` (plain units).
     pub fn push_param_value(&mut self, time: u32, param_id: u32, value: f64) {
         self.push(ClapEventSlot {
@@ -1279,6 +1323,11 @@ impl ClapEventBuffer {
             CLAP_EVENT_MIDI => {
                 if let Some(midi) = read_sized::<ClapEventMidi>(bytes, &header) {
                     self.push(ClapEventSlot { midi });
+                }
+            }
+            CLAP_EVENT_NOTE_EXPRESSION => {
+                if let Some(expression) = read_sized::<ClapEventNoteExpression>(bytes, &header) {
+                    self.push(ClapEventSlot { expression });
                 }
             }
             CLAP_EVENT_PARAM_VALUE | CLAP_EVENT_PARAM_MOD => {
@@ -2113,6 +2162,33 @@ mod event_buffer_tests {
         let event = unsafe { &*(header as *const ClapEventHeader as *const ClapEventMidi) };
         assert_eq!((header.r#type, header.time), (CLAP_EVENT_MIDI, 7));
         assert_eq!(event.data, [0xB0, 64, 127]);
+    }
+
+    #[test]
+    fn note_expression_matches_the_c_layout_and_survives_the_byte_round_trip() {
+        assert_eq!(std::mem::size_of::<ClapEventNoteExpression>(), 40);
+        let mut buffer = ClapEventBuffer::new();
+        buffer.push_note_expression(5, 64, CLAP_NOTE_EXPRESSION_PRESSURE, 0.75);
+        buffer.sort();
+        let mut bytes = vec![0u8; 256];
+        let end = buffer.write_bytes(&mut bytes, 0).unwrap();
+        let mut copy = ClapEventBuffer::new();
+        for event in split_events(&bytes[..end]) {
+            copy.push_bytes(event);
+        }
+        copy.sort();
+        let header = copy.header(0).unwrap();
+        let event =
+            unsafe { &*(header as *const ClapEventHeader as *const ClapEventNoteExpression) };
+        assert_eq!(
+            (header.r#type, header.time),
+            (CLAP_EVENT_NOTE_EXPRESSION, 5)
+        );
+        assert_eq!(
+            (event.expression_id, event.note_id, event.channel, event.key),
+            (CLAP_NOTE_EXPRESSION_PRESSURE, -1, -1, 64)
+        );
+        assert_eq!(event.value, 0.75);
     }
 
     #[test]

@@ -27,6 +27,7 @@ use crate::audio_graph::midi_controls::ControlState;
 #[cfg(test)]
 use crate::audio_graph::midi_controls::{MidiControlClip, MidiControlSnapshot};
 use crate::audio_graph::node::{AudioNode, PrepareContext, TransportInfo};
+use crate::audio_graph::note_expressions::{push_block_expressions, BlockSpan, NoteSpan};
 use crate::audio_graph::note_stage::NoteStage;
 use crate::audio_graph::plugin_params::{
     parse_plugin_param_name, PluginParamControl, PluginParamControls,
@@ -208,7 +209,9 @@ impl InstrumentNode {
                             self.event_buf.push(event);
                         }
                     }
-                    MidiEventKind::Control { .. } => self.event_buf.push(event),
+                    MidiEventKind::Control { .. } | MidiEventKind::NoteExpression { .. } => {
+                        self.event_buf.push(event)
+                    }
                 }
             },
         );
@@ -418,6 +421,13 @@ impl AudioNode for InstrumentNode {
                     .sync(control_clips, &mut self.event_buf, transport);
             }
 
+            let block = BlockSpan {
+                start: block_start,
+                end: block_end,
+                bpm,
+                sample_rate,
+                resync: resync_controls,
+            };
             for note in &self.track_content.content().notes {
                 // Clamp the note to the clip's playable window (trim).
                 let start_sample = note
@@ -448,6 +458,11 @@ impl AudioNode for InstrumentNode {
                     self.active_pitch_count[note.pitch as usize] =
                         self.active_pitch_count[note.pitch as usize].saturating_sub(1);
                 }
+                let span = NoteSpan {
+                    start: start_sample,
+                    end: end_sample,
+                };
+                push_block_expressions(note, &span, &block, &mut self.event_buf);
             }
 
             self.controls.play_block(
@@ -627,6 +642,7 @@ mod tests {
             end_beats: 2.0,
             window_start_sample: 0,
             window_end_sample: u64::MAX,
+            expressions: Vec::new(),
         }
     }
 
@@ -952,6 +968,116 @@ mod tests {
     }
 
     const SAMPLES_PER_BEAT: u64 = 24_000;
+
+    fn note_with_curves() -> MidiNoteSnapshot {
+        let point = |start_beats, kind, value| crate::audio_graph::midi::NoteExpressionSnapshot {
+            start_beats,
+            kind,
+            value,
+        };
+        MidiNoteSnapshot {
+            expressions: vec![
+                point(1.0, crate::project::NoteExpressionKind::Pressure, 0.25),
+                point(1.5, crate::project::NoteExpressionKind::Pressure, 0.75),
+            ],
+            ..one_beat_note()
+        }
+    }
+
+    fn node_playing(
+        note: MidiNoteSnapshot,
+        captured: Arc<Mutex<Vec<MidiEvent>>>,
+    ) -> InstrumentNode {
+        let mut node =
+            InstrumentNode::new(Arc::new(vec![note]), Box::new(CaptureDevice { captured }));
+        node.prepare(PrepareContext {
+            sample_rate: 48_000.0,
+            max_block_size: 64_000,
+            num_channels: 2,
+            live: true,
+        });
+        node
+    }
+
+    fn expression_values(captured: &Arc<Mutex<Vec<MidiEvent>>>) -> Vec<(u32, f32)> {
+        captured
+            .lock()
+            .unwrap()
+            .iter()
+            .filter_map(|event| match event.kind {
+                MidiEventKind::NoteExpression { value, .. } => Some((event.offset, value)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_curve_plays_after_the_note_on_of_its_note() {
+        let captured = Arc::new(Mutex::new(Vec::new()));
+        let mut node = node_playing(note_with_curves(), captured.clone());
+
+        run_block(&mut node, &transport_at(true, SAMPLES_PER_BEAT, 24_000));
+
+        let events = captured.lock().unwrap();
+        assert!(matches!(events[0].kind, MidiEventKind::NoteOn { .. }));
+        assert!(matches!(
+            events[1].kind,
+            MidiEventKind::NoteExpression { value, .. } if value == 0.25
+        ));
+        assert_eq!(events[1].offset, events[0].offset);
+        drop(events);
+
+        captured.lock().unwrap().clear();
+        run_block(&mut node, &transport_at(true, 2 * SAMPLES_PER_BEAT, 24_000));
+        assert!(expression_values(&captured).is_empty());
+    }
+
+    #[test]
+    fn a_point_inside_the_note_plays_at_its_offset() {
+        let captured = Arc::new(Mutex::new(Vec::new()));
+        let mut node = node_playing(note_with_curves(), captured.clone());
+
+        run_block(&mut node, &transport_at(true, SAMPLES_PER_BEAT, 24_000));
+
+        assert_eq!(
+            expression_values(&captured),
+            vec![(0, 0.25), (12_000, 0.75)]
+        );
+    }
+
+    #[test]
+    fn a_seek_into_the_note_restores_the_value_its_curve_holds() {
+        let captured = Arc::new(Mutex::new(Vec::new()));
+        let mut node = node_playing(note_with_curves(), captured.clone());
+
+        run_block(
+            &mut node,
+            &transport_at(true, SAMPLES_PER_BEAT * 7 / 4, 512),
+        );
+
+        assert_eq!(expression_values(&captured), vec![(0, 0.75)]);
+    }
+
+    #[test]
+    fn the_same_curve_plays_whatever_the_block_size() {
+        let play = |block_size: usize| {
+            let captured = Arc::new(Mutex::new(Vec::new()));
+            let mut node = node_playing(note_with_curves(), captured.clone());
+            let mut position = 0;
+            let mut values = Vec::new();
+            while position < 3 * SAMPLES_PER_BEAT {
+                run_block(&mut node, &transport_at(true, position, block_size));
+                values.extend(expression_values(&captured).into_iter().map(|(_, v)| v));
+                position += block_size as u64;
+            }
+            values
+        };
+        let reference = play(4096);
+        assert_eq!(reference, vec![0.25, 0.75]);
+        for size in [512, 441, 64, 37] {
+            assert_eq!(play(size), reference, "block size {size}");
+        }
+    }
 
     fn sustain_clip() -> MidiControlClip {
         let sustain = |start_beats: f32, value: u16| MidiControlSnapshot {

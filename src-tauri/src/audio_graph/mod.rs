@@ -41,6 +41,7 @@ pub mod midi_controls;
 pub mod modulation;
 pub mod node;
 pub mod nodes;
+pub mod note_expressions;
 pub mod note_stage;
 pub mod oversampling;
 pub mod parameter_block;

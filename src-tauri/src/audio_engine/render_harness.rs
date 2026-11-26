@@ -21,8 +21,8 @@ use crate::project::{
     AppClip, AppMidiClip, AppProject, AppTrack, AutomationClip, AutomationLane, AutomationPoint,
     CompressorParams, DelayParams, EffectParams, EqParams, InterpolationMode, LfoParams,
     LfoWaveform, MacroParams, MidiContent, MidiControlKind, MidiControlPoint, MidiNote,
-    ModulationTargetRef, ModulatorParams, ProjectModulationRoute, ProjectModulator, ReverbParams,
-    TrackEffect,
+    ModulationTargetRef, ModulatorParams, NoteExpressionKind, NoteExpressionPoint,
+    ProjectModulationRoute, ProjectModulator, ReverbParams, TrackEffect,
 };
 use crate::sampler_kit::{PadPlayMode, PadSample, SamplerKit, SamplerPad, SAMPLER_INSTRUMENT_ID};
 
@@ -160,6 +160,7 @@ fn reference_midi_notes() -> Vec<MidiNote> {
         start,
         duration,
         velocity: 100,
+        expressions: Vec::new(),
     };
     vec![
         note("n1", 60, 0.0, 1.0),
@@ -587,6 +588,7 @@ fn sampler_track() -> (AppTrack, MidiContent) {
         start,
         duration,
         velocity,
+        expressions: Vec::new(),
     };
     let mut notes = vec![
         note(0, 36, 0.0, 0.2, 110),
@@ -661,6 +663,29 @@ fn midi_controls() -> AppProject {
     )
 }
 
+/// The built-in synth ignores note expressions (ADR-039): curves drawn on every
+/// note of the reference clip cannot disturb the render.
+fn note_expressions() -> AppProject {
+    let mut content = reference_midi_content();
+    for note in &mut content.notes {
+        let curve = |fraction: f32, kind, value| NoteExpressionPoint {
+            start: note.duration * fraction,
+            kind,
+            value,
+        };
+        note.expressions = vec![
+            curve(0.0, NoteExpressionKind::Pressure, 0.2),
+            curve(0.25, NoteExpressionKind::Timbre, 0.8),
+            curve(0.5, NoteExpressionKind::Pitch, -1.0),
+            curve(0.75, NoteExpressionKind::Pressure, 0.9),
+        ];
+    }
+    project_with_midi(
+        vec![audio_track(), midi_track()],
+        [("midi-clip".to_string(), content)],
+    )
+}
+
 /// A track whose clip plays the given chords: `(pitches, start, duration)`.
 fn chord_track(id: &str, chords: &[(&[u8], f32, f32)]) -> (AppTrack, MidiContent) {
     let notes = chords
@@ -673,6 +698,7 @@ fn chord_track(id: &str, chords: &[(&[u8], f32, f32)]) -> (AppTrack, MidiContent
                 start,
                 duration,
                 velocity: 90 + pitch % 7,
+                expressions: Vec::new(),
             })
         })
         .collect();
@@ -829,7 +855,7 @@ fn repeated_midi_linked() -> AppProject {
     project
 }
 
-fn reference_projects() -> [(&'static str, AppProject); 15] {
+fn reference_projects() -> [(&'static str, AppProject); 16] {
     [
         ("static_mix", static_mix()),
         ("modulated_effects", modulated_effects()),
@@ -843,6 +869,7 @@ fn reference_projects() -> [(&'static str, AppProject); 15] {
         ("automated_delay", automated_delay()),
         ("sampler_kit", sampler_kit()),
         ("midi_controls", midi_controls()),
+        ("note_expressions", note_expressions()),
         ("arpeggiator", arpeggiator()),
         ("note_effects", note_effects()),
         ("repeated_midi", repeated_midi()),
@@ -851,7 +878,7 @@ fn reference_projects() -> [(&'static str, AppProject); 15] {
 
 /// Recorded on Windows x86_64.  Only update a value when an ADR sanctions the
 /// render change, and say so in the commit.
-const GOLDEN_HASHES: [(&str, u64); 15] = [
+const GOLDEN_HASHES: [(&str, u64); 16] = [
     ("static_mix", 0x7dec_d259_cfd9_6694),
     ("modulated_effects", 0x29ea_1120_1ae0_2d53),
     ("modulated_gain", 0x23ef_388b_80d0_9a52),
@@ -864,6 +891,7 @@ const GOLDEN_HASHES: [(&str, u64); 15] = [
     ("automated_delay", 0xed2b_9373_7df4_ac29),
     ("sampler_kit", 0x8151_d7f3_7a3c_1e57),
     ("midi_controls", 0x7dec_d259_cfd9_6694),
+    ("note_expressions", 0x7dec_d259_cfd9_6694),
     ("arpeggiator", 0x94de_c710_d2b7_1fe1),
     ("note_effects", 0xf98b_cd02_1dc9_c040),
     ("repeated_midi", 0x50b2_08b5_fb7b_9696),
@@ -1072,6 +1100,19 @@ fn controls_do_not_change_what_the_built_in_synth_plays() {
         render(&midi_controls(), BLOCK_SIZES[0]),
         render(&static_mix(), BLOCK_SIZES[0])
     );
+}
+
+#[test]
+fn note_expressions_do_not_change_what_the_built_in_synth_plays() {
+    assert_eq!(
+        render(&note_expressions(), BLOCK_SIZES[0]),
+        render(&static_mix(), BLOCK_SIZES[0])
+    );
+}
+
+#[test]
+fn note_expressions_are_block_size_independent() {
+    assert_block_size_independent("note_expressions", &note_expressions());
 }
 
 #[test]
@@ -1410,6 +1451,7 @@ mod clap_plugins {
             start,
             duration: 1.0,
             velocity: 100,
+            expressions: Vec::new(),
         };
         let content = MidiContent {
             notes: vec![note("n1", 60, 0.0), note("n2", 64, 3.0)],
@@ -1823,6 +1865,7 @@ mod vst3_plugins {
             start,
             duration: 1.0,
             velocity: 100,
+            expressions: Vec::new(),
         };
         let content = MidiContent {
             notes: vec![note("n1", 60, 0.0), note("n2", 64, 3.0)],

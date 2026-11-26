@@ -616,4 +616,43 @@ mod aux_feed_tests {
         assert_all(&outputs[0], frames, 1.0, "main output");
         assert_all(&outputs[1], frames, 0.5, "aux output");
     }
+
+    /// ADR-039: the pressure of a note reaches the plugin as a CLAP note
+    /// expression and changes what the note sounds like.
+    #[test]
+    fn a_pressure_expression_reaches_a_real_clap_instrument() {
+        use crate::audio_graph::midi::{MidiEvent, MidiEventKind, MidiEventList};
+        use crate::project::NoteExpressionKind;
+
+        let dll = test_plugin_dll();
+        let mut host = PluginHost::new();
+        host.registry_mut().add(manifest(dll, 0));
+        let mut device = host
+            .instantiate_instrument("instrument:t1", PLUGIN_ID)
+            .expect("real CLAP instrument instantiation must succeed");
+        device.prepare(prepare_context());
+
+        let frames = 32;
+        let mut events = MidiEventList::new();
+        events.push(MidiEvent {
+            offset: 0,
+            kind: MidiEventKind::NoteOn {
+                pitch: 60,
+                velocity: 127,
+            },
+        });
+        events.push(MidiEvent {
+            offset: 0,
+            kind: MidiEventKind::NoteExpression {
+                pitch: 60,
+                kind: NoteExpressionKind::Pressure,
+                value: 0.5,
+            },
+        });
+        let mut outputs = vec![AudioBuffer::new(2, frames), AudioBuffer::new(2, frames)];
+
+        device.process_midi(&events, &mut outputs, &transport(frames));
+
+        assert_all(&outputs[0], frames, 0.5, "main output at half pressure");
+    }
 }

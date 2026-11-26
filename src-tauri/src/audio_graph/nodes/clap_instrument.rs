@@ -33,11 +33,13 @@ use crate::audio_graph::node::{PrepareContext, TransportInfo};
 use crate::audio_graph::nodes::instrument::InstrumentDevice;
 use crate::audio_graph::plugin_params::{PluginParamControl, PluginParamControls};
 use crate::plugin_system::instance::{PluginInstance, FFI_GATE_HARVEST_BUDGET};
+use crate::project::NoteExpressionKind;
 
 use crate::plugin_formats::clap::audio_ports::ClapOutputBuses;
 use crate::plugin_formats::clap::ffi::{
     audio_thread_scope, read_plugin_latency, ClapEventBuffer, ClapOutputEvents, ClapPlugin,
-    ClapProcess,
+    ClapProcess, CLAP_NOTE_EXPRESSION_BRIGHTNESS, CLAP_NOTE_EXPRESSION_PRESSURE,
+    CLAP_NOTE_EXPRESSION_TUNING,
 };
 use crate::plugin_formats::clap::params::{
     observe_output_event, read_clap_params, ClapParamEvents,
@@ -46,7 +48,8 @@ use crate::plugin_formats::clap::sleep::{clear_outputs, PluginSleep};
 use crate::plugin_formats::clap::transport::clap_transport_event;
 
 /// Append the engine's per-block `MidiEventList` as CLAP events: notes as CLAP
-/// note events, controls (bend, CC, aftertouch) as raw `CLAP_EVENT_MIDI`.
+/// note events, controls (bend, CC, aftertouch) as raw `CLAP_EVENT_MIDI`, note
+/// expressions as `CLAP_EVENT_NOTE_EXPRESSION` aimed at the key.
 ///
 /// Pure — no FFI, no allocation (the list is pre-allocated and bounded).  Kept
 /// separate from `process_midi` so it can be unit-tested without a live plugin.
@@ -61,7 +64,23 @@ pub fn push_clap_midi_events(events: &MidiEventList, list: &mut ClapEventBuffer)
                 list.push_note_off(ev.offset, 0, pitch as i16);
             }
             MidiEventKind::Control { message } => list.push_midi(ev.offset, message),
+            MidiEventKind::NoteExpression { pitch, kind, value } => {
+                list.push_note_expression(
+                    ev.offset,
+                    pitch as i16,
+                    clap_expression_id(kind),
+                    value as f64,
+                );
+            }
         }
+    }
+}
+
+fn clap_expression_id(kind: NoteExpressionKind) -> i32 {
+    match kind {
+        NoteExpressionKind::Pressure => CLAP_NOTE_EXPRESSION_PRESSURE,
+        NoteExpressionKind::Timbre => CLAP_NOTE_EXPRESSION_BRIGHTNESS,
+        NoteExpressionKind::Pitch => CLAP_NOTE_EXPRESSION_TUNING,
     }
 }
 
@@ -285,6 +304,50 @@ mod tests {
             vec![
                 (CLAP_EVENT_NOTE_ON, 24_000, 60, 1.0),
                 (CLAP_EVENT_NOTE_OFF, 48_000, 60, 0.0),
+            ]
+        );
+    }
+
+    #[test]
+    fn push_clap_midi_events_aims_an_expression_at_the_key() {
+        use crate::plugin_formats::clap::ffi::{
+            ClapEventNoteExpression, CLAP_EVENT_NOTE_EXPRESSION,
+        };
+        let mut events = MidiEventList::new();
+        for (offset, kind, value) in [
+            (4, NoteExpressionKind::Pressure, 0.5),
+            (5, NoteExpressionKind::Timbre, 0.25),
+            (6, NoteExpressionKind::Pitch, -1.5),
+        ] {
+            events.push(MidiEvent {
+                offset,
+                kind: MidiEventKind::NoteExpression {
+                    pitch: 64,
+                    kind,
+                    value,
+                },
+            });
+        }
+
+        let mut list = ClapEventBuffer::new();
+        push_clap_midi_events(&events, &mut list);
+        list.sort();
+
+        let delivered: Vec<(u16, i32, i16, f64)> = (0..3)
+            .map(|index| {
+                let header = list.header(index).unwrap();
+                let event = unsafe {
+                    &*(header as *const ClapEventHeader as *const ClapEventNoteExpression)
+                };
+                (header.r#type, event.expression_id, event.key, event.value)
+            })
+            .collect();
+        assert_eq!(
+            delivered,
+            vec![
+                (CLAP_EVENT_NOTE_EXPRESSION, 6, 64, 0.5),
+                (CLAP_EVENT_NOTE_EXPRESSION, 5, 64, 0.25),
+                (CLAP_EVENT_NOTE_EXPRESSION, 2, 64, -1.5),
             ]
         );
     }

@@ -197,6 +197,7 @@ fn push_wire_notes(events: &MidiEventList, notes: &mut Vec<WireNote>) {
                 WireNote::new(event.offset, NOTE_OFF, [pitch, 0, 0])
             }
             MidiEventKind::Control { message } => WireNote::new(event.offset, MIDI, message),
+            MidiEventKind::NoteExpression { .. } => continue,
         };
         notes.push(note);
     }

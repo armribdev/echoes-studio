@@ -94,21 +94,22 @@ use clap_ffi::{
 };
 
 use clap_ffi::{
-    ClapAudioPortInfo, ClapEventHeader, ClapEventNote, ClapEventParamGesture, ClapEventParamValue,
-    ClapGuiExtension, ClapHost, ClapHostLatency, ClapHostNoteName, ClapHostNotePorts,
-    ClapHostParams, ClapHostPresetLoad, ClapHostState, ClapHostTail, ClapHostThreadCheck,
-    ClapHostTimerSupport, ClapHostTrackInfo, ClapIStream, ClapInputEvents, ClapNoteName,
-    ClapOStream, ClapOutputEvents, ClapParamInfo, ClapPlugin, ClapPluginAudioPorts,
-    ClapPluginDescriptor, ClapPluginEntry, ClapPluginFactory, ClapPluginLatency,
-    ClapPluginNoteName, ClapPluginParams, ClapPluginPresetLoad, ClapPluginState, ClapPluginTail,
-    ClapPluginTimerSupport, ClapPluginTrackInfo, ClapPresetDiscoveryFactory, ClapPresetFiletype,
-    ClapPresetIndexer, ClapPresetLocation, ClapPresetMetadataReceiver, ClapPresetProvider,
-    ClapPresetProviderDescriptor, ClapProcess, ClapProcessStatus, ClapTrackInfo,
-    ClapUniversalPluginId, ClapWindow, CLAP_AUDIO_PORT_IS_MAIN, CLAP_CORE_EVENT_SPACE,
-    CLAP_EVENT_NOTE_OFF, CLAP_EVENT_NOTE_ON, CLAP_EVENT_PARAM_GESTURE_END, CLAP_EVENT_PARAM_MOD,
-    CLAP_EVENT_PARAM_VALUE, CLAP_EXT_AUDIO_PORTS, CLAP_EXT_GUI, CLAP_EXT_LATENCY,
-    CLAP_EXT_NOTE_NAME, CLAP_EXT_NOTE_PORTS, CLAP_EXT_PARAMS, CLAP_EXT_PRESET_LOAD, CLAP_EXT_STATE,
-    CLAP_EXT_TAIL, CLAP_EXT_THREAD_CHECK, CLAP_EXT_TIMER_SUPPORT, CLAP_EXT_TRACK_INFO,
+    ClapAudioPortInfo, ClapEventHeader, ClapEventNote, ClapEventNoteExpression,
+    ClapEventParamGesture, ClapEventParamValue, ClapGuiExtension, ClapHost, ClapHostLatency,
+    ClapHostNoteName, ClapHostNotePorts, ClapHostParams, ClapHostPresetLoad, ClapHostState,
+    ClapHostTail, ClapHostThreadCheck, ClapHostTimerSupport, ClapHostTrackInfo, ClapIStream,
+    ClapInputEvents, ClapNoteName, ClapOStream, ClapOutputEvents, ClapParamInfo, ClapPlugin,
+    ClapPluginAudioPorts, ClapPluginDescriptor, ClapPluginEntry, ClapPluginFactory,
+    ClapPluginLatency, ClapPluginNoteName, ClapPluginParams, ClapPluginPresetLoad, ClapPluginState,
+    ClapPluginTail, ClapPluginTimerSupport, ClapPluginTrackInfo, ClapPresetDiscoveryFactory,
+    ClapPresetFiletype, ClapPresetIndexer, ClapPresetLocation, ClapPresetMetadataReceiver,
+    ClapPresetProvider, ClapPresetProviderDescriptor, ClapProcess, ClapProcessStatus,
+    ClapTrackInfo, ClapUniversalPluginId, ClapWindow, CLAP_AUDIO_PORT_IS_MAIN,
+    CLAP_CORE_EVENT_SPACE, CLAP_EVENT_NOTE_EXPRESSION, CLAP_EVENT_NOTE_OFF, CLAP_EVENT_NOTE_ON,
+    CLAP_EVENT_PARAM_GESTURE_END, CLAP_EVENT_PARAM_MOD, CLAP_EVENT_PARAM_VALUE,
+    CLAP_EXT_AUDIO_PORTS, CLAP_EXT_GUI, CLAP_EXT_LATENCY, CLAP_EXT_NOTE_NAME, CLAP_EXT_NOTE_PORTS,
+    CLAP_EXT_PARAMS, CLAP_EXT_PRESET_LOAD, CLAP_EXT_STATE, CLAP_EXT_TAIL, CLAP_EXT_THREAD_CHECK,
+    CLAP_EXT_TIMER_SUPPORT, CLAP_EXT_TRACK_INFO, CLAP_NOTE_EXPRESSION_PRESSURE,
     CLAP_PARAM_IS_AUTOMATABLE, CLAP_PARAM_IS_MODULATABLE, CLAP_PLUGIN_FACTORY_ID,
     CLAP_PRESET_DISCOVERY_FACTORY_ID, CLAP_PRESET_IS_FACTORY_CONTENT, CLAP_PRESET_IS_USER_CONTENT,
     CLAP_PRESET_LOCATION_FILE, CLAP_PRESET_LOCATION_PLUGIN, CLAP_PROCESS_CONTINUE,
@@ -401,6 +402,8 @@ struct State {
     gain: AtomicU64,
     gain_modulation: f64,
     note_velocity: f64,
+    /// Scales the note's level; the pressure expression sets it, a note on resets it.
+    note_pressure: f64,
     hang: AtomicBool,
     crash: bool,
     touch: bool,
@@ -449,6 +452,7 @@ unsafe extern "C" fn factory_create(
         gain: AtomicU64::new(1.0f64.to_bits()),
         gain_modulation: 0.0,
         note_velocity: 0.0,
+        note_pressure: 1.0,
         hang: AtomicBool::new(false),
         crash: false,
         touch: false,
@@ -836,6 +840,7 @@ fn apply_event(state: &mut State, header: &ClapEventHeader) {
     }
     match header.r#type {
         CLAP_EVENT_NOTE_ON | CLAP_EVENT_NOTE_OFF => apply_note(state, header),
+        CLAP_EVENT_NOTE_EXPRESSION => apply_note_expression(state, header),
         CLAP_EVENT_PARAM_VALUE | CLAP_EVENT_PARAM_MOD => apply_param(state, header),
         _ => {}
     }
@@ -849,6 +854,17 @@ fn apply_note(state: &mut State, header: &ClapEventHeader) {
     } else {
         0.0
     };
+    if header.r#type == CLAP_EVENT_NOTE_ON {
+        state.note_pressure = 1.0;
+    }
+}
+
+fn apply_note_expression(state: &mut State, header: &ClapEventHeader) {
+    // SAFETY: the type says the event is a `clap_event_note_expression`.
+    let event = unsafe { &*(header as *const ClapEventHeader as *const ClapEventNoteExpression) };
+    if event.expression_id == CLAP_NOTE_EXPRESSION_PRESSURE {
+        state.note_pressure = event.value;
+    }
 }
 
 fn apply_param(state: &mut State, header: &ClapEventHeader) {
@@ -981,7 +997,7 @@ unsafe extern "C" fn plugin_process(
     for channel in 0..output.channel_count as usize {
         let out = std::slice::from_raw_parts_mut(*output.data32.add(channel), frames);
         if process.audio_inputs_count == 0 {
-            out.fill(state.note_velocity as f32 * gain);
+            out.fill((state.note_velocity * state.note_pressure) as f32 * gain);
             continue;
         }
         let input = &*process.audio_inputs;
