@@ -320,7 +320,11 @@ fn clap_real_plugins_report_their_remote_control_pages() {
         for page in &pages {
             assert!(!page.native_ids.is_empty() && page.native_ids.len() <= 8);
             for id in &page.native_ids {
-                assert!(known.contains(id), "{device_id}: page {:?} names unknown parameter {id}", page.name);
+                assert!(
+                    known.contains(id),
+                    "{device_id}: page {:?} names unknown parameter {id}",
+                    page.name
+                );
             }
         }
         eprintln!(

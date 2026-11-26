@@ -20,7 +20,8 @@ use plugin_bridge::protocol::{
 };
 use plugin_bridge::records::{
     Handshake, NoteNameRecord, ParamRecord, ParamUnit, PortDirection, PortRole, PresetRecord,
-    PresetSource, RemotePageRecord, SpeakerLayout, TrackRecord, PARAM_AUTOMATABLE, PARAM_MODULATABLE,
+    PresetSource, RemotePageRecord, SpeakerLayout, TrackRecord, PARAM_AUTOMATABLE,
+    PARAM_MODULATABLE,
 };
 use plugin_bridge::session::{
     BlockOutcome, BlockReply, BlockRequest, BridgeLayout, BridgeProcess,

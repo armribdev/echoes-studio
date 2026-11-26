@@ -967,7 +967,10 @@ impl PluginHost {
     /// [`plugin_params`](Self::plugin_params) reports.  `None` when the placement is
     /// unknown, the format has no parameters, or the plugin is busy in a block.
     pub fn plugin_param_value(&self, instance_key: &str, native_id: u32) -> Option<f64> {
-        self.records.get(instance_key)?.instance.param_value(native_id)
+        self.records
+            .get(instance_key)?
+            .instance
+            .param_value(native_id)
     }
 
     /// The plugin's own text for a value of one parameter (`-6.0 dB`), in the

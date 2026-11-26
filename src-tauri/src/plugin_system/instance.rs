@@ -54,8 +54,9 @@ use crate::audio_graph::plugin_params::ValueModulatedParam;
 use crate::plugin_formats::clap::audio_ports::{read_output_ports, ClapOutputPort};
 use crate::plugin_formats::clap::ffi::{
     audio_thread_scope, deliver_due_timers, load_preset, mark_plugin_state_edited,
-    notify_track_info_changed, read_note_names, read_remote_pages, ClapHost, ClapHostContext, ClapLibrary, ClapPlugin,
-    HostTrackInfo, NoteName, PresetRequest, RemotePage, TimerSchedule, CLAP_PRESET_LOCATION_FILE,
+    notify_track_info_changed, read_note_names, read_remote_pages, ClapHost, ClapHostContext,
+    ClapLibrary, ClapPlugin, HostTrackInfo, NoteName, PresetRequest, RemotePage, TimerSchedule,
+    CLAP_PRESET_LOCATION_FILE,
 };
 use crate::plugin_formats::vst3::buses::{
     open_output_buses, propose_arrangements, read_aux_inputs, read_output_buses, Vst3AuxInput,

@@ -36,9 +36,8 @@ use plugin_bridge::protocol::{
 };
 use plugin_bridge::records::{
     AudioPortRecord, Handshake, NoteNameRecord, ParamRecord, ParamUnit, PortDirection, PortRole,
-    RemotePageRecord,
-    PresetRecord, PresetSource, SpeakerLayout, PARAM_AUTOMATABLE, PARAM_HIDDEN, PARAM_MODULATABLE,
-    PORT_CHANNELS,
+    PresetRecord, PresetSource, RemotePageRecord, SpeakerLayout, PARAM_AUTOMATABLE, PARAM_HIDDEN,
+    PARAM_MODULATABLE, PORT_CHANNELS,
 };
 use plugin_bridge::session::{BlockContext, BridgeProcessor, ReplyWriter};
 

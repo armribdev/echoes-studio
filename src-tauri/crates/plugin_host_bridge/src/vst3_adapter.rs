@@ -60,9 +60,8 @@ use plugin_bridge::protocol::{
 };
 use plugin_bridge::records::{
     AudioPortRecord, Handshake, NoteNameRecord, ParamRecord, ParamUnit, PortDirection, PortRole,
-    RemotePageRecord,
-    PresetRecord, PresetSource, PresetStateRecord, ProgramListRecord, SpeakerLayout, TrackRecord,
-    MAX_PORTS, PARAM_AUTOMATABLE, PARAM_HIDDEN, PORT_CHANNELS,
+    PresetRecord, PresetSource, PresetStateRecord, ProgramListRecord, RemotePageRecord,
+    SpeakerLayout, TrackRecord, MAX_PORTS, PARAM_AUTOMATABLE, PARAM_HIDDEN, PORT_CHANNELS,
 };
 use plugin_bridge::session::{BlockContext, BridgeProcessor, ReplyWriter};
 use vst3_ffi::{

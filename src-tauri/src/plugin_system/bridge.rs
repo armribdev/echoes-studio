@@ -20,9 +20,8 @@ use plugin_bridge::session::{AudioPort, BridgeLayout, BridgeProcess};
 
 use plugin_bridge::records::{
     Handshake, NoteNameRecord, ParamRecord, ParamUnit, PortDirection, PresetRecord, PresetSource,
-    RemotePageRecord,
-    PresetStateRecord, ProgramListRecord, TrackRecord, MAX_PORTS, PARAM_AUTOMATABLE, PARAM_HIDDEN,
-    PARAM_MODULATABLE, PORT_CHANNELS,
+    PresetStateRecord, ProgramListRecord, RemotePageRecord, TrackRecord, MAX_PORTS,
+    PARAM_AUTOMATABLE, PARAM_HIDDEN, PARAM_MODULATABLE, PORT_CHANNELS,
 };
 
 use crate::plugin_formats::clap::ffi::{

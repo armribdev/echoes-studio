@@ -702,7 +702,11 @@ fn get_plugin_param_values(
     let engine = state.audio_engine.lock().map_err(|e| e.to_string())?;
     Ok(native_ids
         .into_iter()
-        .map(|native_id| engine.plugin_host.plugin_param_value(&instance_key, native_id))
+        .map(|native_id| {
+            engine
+                .plugin_host
+                .plugin_param_value(&instance_key, native_id)
+        })
         .collect())
 }
 
