@@ -27,8 +27,9 @@ use super::commands::{
     SetClipMidiControlsPayload, SetClipMidiNotesPayload, SetLoopPayload, SetMidiNotesPayload,
     SetModulationDepthPayload, SetSamplerPadPayload, SetTrackInputPayload,
     SetTrackInstrumentPayload, SoloTrackPayload, UnlinkMidiClipPayload,
-    UpdateAutomationClipPayload, UpdateEffectPayload, UpdateMarkerPayload, UpdateModulatorPayload,
-    UpdateProjectNamePayload, UpdateRegionPayload, UpdateTempoPayload, UpdateTrackPayload,
+    UpdateAutomationClipPayload, UpdateAutomationLanePayload, UpdateEffectPayload,
+    UpdateMarkerPayload, UpdateModulatorPayload, UpdateProjectNamePayload, UpdateRegionPayload,
+    UpdateTempoPayload, UpdateTrackPayload,
 };
 use super::events::{ev, EngineEvent, ProjectEvent};
 use crate::arpeggiator_settings::ArpeggiatorSettings;
@@ -386,6 +387,18 @@ fn require_track_mut<'a>(
     track_id: &str,
 ) -> Result<&'a mut AppTrack, String> {
     find_track_mut(project, track_id).ok_or_else(|| format!("Track {} not found", track_id))
+}
+
+fn find_automation_lane_mut<'a>(
+    project: &'a mut AppProject,
+    track_id: &str,
+    lane_id: &str,
+) -> Result<&'a mut crate::project::AutomationLane, String> {
+    require_track_mut(project, track_id)?
+        .automation_lanes
+        .iter_mut()
+        .find(|l| l.id == lane_id)
+        .ok_or_else(|| format!("Automation lane {lane_id} not found"))
 }
 
 fn require_audio_clip_mut<'a>(
@@ -2574,6 +2587,25 @@ fn process_command(
             )
         }
 
+        cmd::UPDATE_AUTOMATION_LANE => {
+            let p: UpdateAutomationLanePayload = serde_json::from_value(command.payload)
+                .map_err(|e| format!("UPDATE_AUTOMATION_LANE payload invalid: {e}"))?;
+            with_project_mut(state, |project| {
+                find_automation_lane_mut(project, &p.track_id, &p.lane_id)?.interpolation =
+                    p.interpolation.clone();
+                Ok(())
+            })?;
+            commit_recompile_before_emit(
+                &ctx,
+                ev::AUTOMATION_LANE_UPDATED,
+                json!({
+                    "track_id": p.track_id,
+                    "lane_id": p.lane_id,
+                    "interpolation": p.interpolation,
+                }),
+            )
+        }
+
         cmd::UPDATE_AUTOMATION_CLIP => {
             let p: UpdateAutomationClipPayload = serde_json::from_value(command.payload)
                 .map_err(|e| format!("UPDATE_AUTOMATION_CLIP payload invalid: {e}"))?;
@@ -3458,6 +3490,22 @@ fn apply_automation_lane_removed(project: &mut AppProject, payload: &Value) {
     track.automation_lanes.retain(|l| l.id != lane_id);
 }
 
+fn apply_automation_lane_updated(project: &mut AppProject, payload: &Value) {
+    let track_id = payload_str(payload, "track_id");
+    let lane_id = payload_str(payload, "lane_id");
+    let Some(raw) = payload.get("interpolation") else {
+        return;
+    };
+    let Ok(interpolation) =
+        serde_json::from_value::<crate::project::InterpolationMode>(raw.clone())
+    else {
+        return;
+    };
+    if let Ok(lane) = find_automation_lane_mut(project, &track_id, &lane_id) {
+        lane.interpolation = interpolation;
+    }
+}
+
 fn apply_automation_clip_updated(project: &mut AppProject, payload: &Value) {
     let track_id = payload_str(payload, "track_id");
     let lane_id = payload_str(payload, "lane_id");
@@ -3538,6 +3586,9 @@ fn apply_events(
             ev::AUTOMATION_LANE_ADDED => apply_automation_lane_added(&mut project, &event.payload),
             ev::AUTOMATION_LANE_REMOVED => {
                 apply_automation_lane_removed(&mut project, &event.payload)
+            }
+            ev::AUTOMATION_LANE_UPDATED => {
+                apply_automation_lane_updated(&mut project, &event.payload)
             }
             ev::AUTOMATION_CLIP_UPDATED => {
                 apply_automation_clip_updated(&mut project, &event.payload)
@@ -3950,6 +4001,37 @@ mod tests {
         );
         assert_eq!(lfo_params(&project).waveform, LfoWaveform::Square);
         assert_eq!(lfo_params(&project).rate_hz, 3.0);
+    }
+
+    #[test]
+    fn replayed_lane_update_changes_only_the_interpolation_of_that_lane() {
+        use crate::project::{AutomationLane, InterpolationMode, ModulationTargetRef};
+
+        let lane = |id: &str| AutomationLane {
+            id: id.into(),
+            target: ModulationTargetRef::TrackGain {
+                track_id: "t".into(),
+            },
+            clips: vec![],
+            interpolation: InterpolationMode::Linear,
+        };
+        let mut project = AppProject::new();
+        let mut track = empty_app_track("t".into(), "t".into());
+        track.automation_lanes = vec![lane("a"), lane("b")];
+        project.tracks.push(track);
+
+        apply_automation_lane_updated(
+            &mut project,
+            &json!({ "track_id": "t", "lane_id": "b", "interpolation": "step" }),
+        );
+        apply_automation_lane_updated(
+            &mut project,
+            &json!({ "track_id": "t", "lane_id": "missing", "interpolation": "step" }),
+        );
+
+        let lanes = &project.tracks[0].automation_lanes;
+        assert_eq!(lanes[0].interpolation, InterpolationMode::Linear);
+        assert_eq!(lanes[1].interpolation, InterpolationMode::Step);
     }
 
     #[test]

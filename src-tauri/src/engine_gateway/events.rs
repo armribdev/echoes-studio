@@ -59,6 +59,7 @@ pub mod ev {
     // Automation — persisted
     pub const AUTOMATION_LANE_ADDED: &str = "AUTOMATION_LANE_ADDED";
     pub const AUTOMATION_LANE_REMOVED: &str = "AUTOMATION_LANE_REMOVED";
+    pub const AUTOMATION_LANE_UPDATED: &str = "AUTOMATION_LANE_UPDATED";
     pub const AUTOMATION_CLIP_UPDATED: &str = "AUTOMATION_CLIP_UPDATED";
 
     // MIDI — persisted

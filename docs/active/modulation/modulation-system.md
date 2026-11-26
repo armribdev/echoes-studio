@@ -228,7 +228,9 @@ a single per-frame float array regardless of source.
 parameters and automatable plugin parameters (`buildAutomationOptions`). It
 edits a lane as a single clip from 0 s to its last point (`laneClipFor`), since
 the engine drops points outside their clip window; each gesture sends one
-`UPDATE_AUTOMATION_CLIP` (one undo step). Times are in seconds, so points do not
+`UPDATE_AUTOMATION_CLIP` (one undo step). The lane header toggles linear / step
+with `UPDATE_AUTOMATION_LANE` (`AUTOMATION_LANE_UPDATED`, one undo step; the
+recompile picks up the new `InterpolationMode`). Times are in seconds, so points do not
 follow a tempo change. The pencil (`Ctrl/Cmd` + drag) samples one value per
 pixel column and simplifies the stroke with Ramer–Douglas–Peucker (1.5 px
 tolerance) before sending it. Displayed values are the plain value in the

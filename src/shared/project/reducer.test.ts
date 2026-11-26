@@ -275,6 +275,12 @@ describe('replayEvents — project integration stream', () => {
 			{ time_s: 0, value: 0.5 }
 		]);
 
+		state = applyEvent(
+			state,
+			event(ev.AUTOMATION_LANE_UPDATED, { track_id: 't1', lane_id: 'l1', interpolation: 'step' })
+		);
+		expect(state.tracks[0].automation_lanes[0].interpolation).toBe('step');
+
 		state = applyEvent(state, event(ev.AUTOMATION_LANE_REMOVED, { track_id: 't1', lane_id: 'l1' }));
 		expect(state.tracks[0].automation_lanes).toHaveLength(0);
 	});

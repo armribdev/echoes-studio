@@ -41,6 +41,7 @@ import {
 	type AddAutomationLanePayload,
 	type RemoveAutomationLanePayload,
 	type UpdateAutomationClipPayload,
+	type UpdateAutomationLanePayload,
 	type AddModulatorPayload,
 	type ArpeggiatorPatch,
 	type SamplerPadPatch,
@@ -467,6 +468,18 @@ export function removeAutomationLane(trackId: string, laneId: string): Promise<C
 	return dispatch<RemoveAutomationLanePayload>(cmd.REMOVE_AUTOMATION_LANE, {
 		track_id: trackId,
 		lane_id: laneId
+	});
+}
+
+export function setAutomationLaneInterpolation(
+	trackId: string,
+	laneId: string,
+	interpolation: UpdateAutomationLanePayload['interpolation']
+): Promise<CommandResult> {
+	return dispatch<UpdateAutomationLanePayload>(cmd.UPDATE_AUTOMATION_LANE, {
+		track_id: trackId,
+		lane_id: laneId,
+		interpolation
 	});
 }
 

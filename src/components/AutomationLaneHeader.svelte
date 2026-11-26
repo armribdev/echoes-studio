@@ -10,7 +10,7 @@
 	export let track: Track;
 	export let color: string;
 
-	const dispatch = createEventDispatcher<{ remove: void }>();
+	const dispatch = createEventDispatcher<{ remove: void; toggleStep: void }>();
 
 	$: placementKey = lane.target.kind === 'plugin_param' ? lane.target.effect_id : null;
 	$: if (placementKey) ensurePluginParams(placementKey);
@@ -27,6 +27,31 @@
 		<span class="group">{label.group}</span>
 		<span class="name">{label.name}</span>
 	</div>
+	<button
+		class="interpolation"
+		class:on={lane.interpolation === 'step'}
+		type="button"
+		title={lane.interpolation === 'step'
+			? 'Escalier (cliquer pour linéaire)'
+			: 'Linéaire (cliquer pour escalier)'}
+		aria-pressed={lane.interpolation === 'step'}
+		on:click={() => dispatch('toggleStep')}
+	>
+		<svg
+			width="12"
+			height="12"
+			viewBox="0 0 12 12"
+			fill="none"
+			stroke="currentColor"
+			stroke-width="1.5"
+		>
+			{#if lane.interpolation === 'step'}
+				<path d="M1 10 H4 V6 H8 V2 H11" />
+			{:else}
+				<path d="M1 10 L11 2" />
+			{/if}
+		</svg>
+	</button>
 	<button
 		class="remove"
 		type="button"
@@ -87,6 +112,14 @@
 	.name {
 		font-size: 11px;
 		color: $text-subtle;
+	}
+
+	.interpolation {
+		@include icon-button($ctrl-height-xs);
+
+		&.on {
+			@include control-on;
+		}
 	}
 
 	.remove {

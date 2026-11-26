@@ -72,6 +72,7 @@ pub mod cmd {
 
     pub const ADD_AUTOMATION_LANE: &str = "ADD_AUTOMATION_LANE";
     pub const REMOVE_AUTOMATION_LANE: &str = "REMOVE_AUTOMATION_LANE";
+    pub const UPDATE_AUTOMATION_LANE: &str = "UPDATE_AUTOMATION_LANE";
     pub const UPDATE_AUTOMATION_CLIP: &str = "UPDATE_AUTOMATION_CLIP";
 
     pub const ADD_MODULATOR: &str = "ADD_MODULATOR";
@@ -486,6 +487,13 @@ pub struct AddAutomationLanePayload {
 pub struct RemoveAutomationLanePayload {
     pub track_id: String,
     pub lane_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateAutomationLanePayload {
+    pub track_id: String,
+    pub lane_id: String,
+    pub interpolation: crate::project::InterpolationMode,
 }
 
 /// Replace or create one clip within an automation lane.

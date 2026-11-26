@@ -718,6 +718,27 @@ export function applyEvent(state: ProjectState, event: EngineEvent): ProjectStat
 			};
 		}
 
+		case ev.AUTOMATION_LANE_UPDATED: {
+			const p = event.payload as {
+				track_id: string;
+				lane_id: string;
+				interpolation: AutomationLane['interpolation'];
+			};
+			return {
+				...state,
+				tracks: state.tracks.map((t) =>
+					t.id !== p.track_id
+						? t
+						: {
+								...t,
+								automation_lanes: t.automation_lanes.map((l) =>
+									l.id !== p.lane_id ? l : { ...l, interpolation: p.interpolation }
+								)
+							}
+				)
+			};
+		}
+
 		case ev.AUTOMATION_CLIP_UPDATED: {
 			const p = event.payload as { track_id: string; lane_id: string; clip: AutomationClip };
 			return {

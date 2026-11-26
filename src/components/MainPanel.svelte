@@ -43,6 +43,7 @@
 		removeMidiClip,
 		addAutomationLane,
 		removeAutomationLane,
+		setAutomationLaneInterpolation,
 		setSamplerPad
 	} from '../frontend/commands/dispatcher';
 	import { padDropTargetAt, type PadDropTarget } from '../frontend/sampler/pads';
@@ -231,6 +232,14 @@
 
 	function handleRemoveLane(trackId: string, laneId: string) {
 		removeAutomationLane(trackId, laneId).catch(console.error);
+	}
+
+	function handleToggleLaneStep(trackId: string, lane: Track['automation_lanes'][number]) {
+		setAutomationLaneInterpolation(
+			trackId,
+			lane.id,
+			lane.interpolation === 'step' ? 'linear' : 'step'
+		).catch(console.error);
 	}
 
 	function selectTrackFromArrangeY(y: number) {
@@ -2396,6 +2405,7 @@
 						{lane}
 						{track}
 						color={trackColor(track.id, track.color)}
+						on:toggleStep={() => handleToggleLaneStep(track.id, lane)}
 						on:remove={() => handleRemoveLane(track.id, lane.id)}
 					/>
 				{/each}

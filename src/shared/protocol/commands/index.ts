@@ -69,6 +69,7 @@ export const cmd = {
 	// Automation
 	ADD_AUTOMATION_LANE: 'ADD_AUTOMATION_LANE',
 	REMOVE_AUTOMATION_LANE: 'REMOVE_AUTOMATION_LANE',
+	UPDATE_AUTOMATION_LANE: 'UPDATE_AUTOMATION_LANE',
 	UPDATE_AUTOMATION_CLIP: 'UPDATE_AUTOMATION_CLIP',
 
 	// MIDI
@@ -302,6 +303,12 @@ export interface AddAutomationLanePayload {
 export interface RemoveAutomationLanePayload {
 	track_id: string;
 	lane_id: string;
+}
+
+export interface UpdateAutomationLanePayload {
+	track_id: string;
+	lane_id: string;
+	interpolation: InterpolationMode;
 }
 
 /** Replaces the clip with the same id in the lane, or adds it. */
