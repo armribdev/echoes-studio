@@ -230,7 +230,9 @@ edits a lane as a single clip from 0 s to its last point (`laneClipFor`), since
 the engine drops points outside their clip window; each gesture sends one
 `UPDATE_AUTOMATION_CLIP` (one undo step). The lane header toggles linear / step
 with `UPDATE_AUTOMATION_LANE` (`AUTOMATION_LANE_UPDATED`, one undo step; the
-recompile picks up the new `InterpolationMode`). Times are in seconds, so points do not
+recompile picks up the new `InterpolationMode`). A header menu fills the active loop region with a
+ramp or one sine cycle (`withShape` in `automation/lanes.ts`, one `UPDATE_AUTOMATION_CLIP`): it replaces the
+points under the span, on the full 0..1 range; ramps on a step lane are sampled in 16 steps. Times are in seconds, so points do not
 follow a tempo change. The pencil (`Ctrl/Cmd` + drag) samples one value per
 pixel column and simplifies the stroke with Ramer–Douglas–Peucker (1.5 px
 tolerance) before sending it. Displayed values are the plain value in the

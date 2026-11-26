@@ -2,15 +2,40 @@
 	import { createEventDispatcher } from 'svelte';
 	import type { AutomationLane, Track } from '../types/global';
 	import { ARRANGE_LANE_HEIGHT } from '../frontend/arrangeInteraction';
-	import { laneLabel } from '../frontend/automation/lanes';
+	import { laneLabel, type AutomationShape } from '../frontend/automation/lanes';
 	import { ensurePluginParams, pluginParamsByPlacement } from '../stores/pluginParams';
 	import { instrumentDisplayName, plugins } from '../stores/plugins';
+	import { loopRegion } from '../stores/loopRegion';
+	import Menu from './Menu.svelte';
+	import MenuItem from './MenuItem.svelte';
 
 	export let lane: AutomationLane;
 	export let track: Track;
 	export let color: string;
 
-	const dispatch = createEventDispatcher<{ remove: void; toggleStep: void }>();
+	const dispatch = createEventDispatcher<{
+		remove: void;
+		toggleStep: void;
+		shape: AutomationShape;
+	}>();
+
+	const SHAPES: { shape: AutomationShape; label: string }[] = [
+		{ shape: 'ramp_up', label: 'Rampe montante' },
+		{ shape: 'ramp_down', label: 'Rampe descendante' },
+		{ shape: 'sine', label: 'Sinus' }
+	];
+
+	let shapeMenu: { x: number; y: number } | null = null;
+
+	function openShapeMenu(e: MouseEvent) {
+		const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+		shapeMenu = { x: rect.left, y: rect.bottom + 4 };
+	}
+
+	function pickShape(shape: AutomationShape) {
+		shapeMenu = null;
+		dispatch('shape', shape);
+	}
 
 	$: placementKey = lane.target.kind === 'plugin_param' ? lane.target.effect_id : null;
 	$: if (placementKey) ensurePluginParams(placementKey);
@@ -53,12 +78,43 @@
 		</svg>
 	</button>
 	<button
+		class="shapes"
+		class:on={shapeMenu !== null}
+		type="button"
+		title={$loopRegion.enabled
+			? 'Remplir la boucle avec une forme'
+			: 'Active la boucle pour choisir la plage à remplir'}
+		aria-haspopup="menu"
+		aria-expanded={shapeMenu !== null}
+		disabled={!$loopRegion.enabled}
+		on:click={openShapeMenu}
+	>
+		<svg
+			width="12"
+			height="12"
+			viewBox="0 0 12 12"
+			fill="none"
+			stroke="currentColor"
+			stroke-width="1.5"
+		>
+			<path d="M1 6 C3 0, 5 0, 6 6 S9 12, 11 6" />
+		</svg>
+	</button>
+	<button
 		class="remove"
 		type="button"
 		title="Supprimer l'automation"
 		on:click={() => dispatch('remove')}>×</button
 	>
 </div>
+
+{#if shapeMenu}
+	<Menu x={shapeMenu.x} y={shapeMenu.y} on:close={() => (shapeMenu = null)}>
+		{#each SHAPES as { shape, label }}
+			<MenuItem on:click={() => pickShape(shape)}>{label}</MenuItem>
+		{/each}
+	</Menu>
+{/if}
 
 <style lang="scss">
 	@use '../variables.scss' as *;
@@ -115,6 +171,14 @@
 	}
 
 	.interpolation {
+		@include icon-button($ctrl-height-xs);
+
+		&.on {
+			@include control-on;
+		}
+	}
+
+	.shapes {
 		@include icon-button($ctrl-height-xs);
 
 		&.on {

@@ -44,8 +44,15 @@
 		addAutomationLane,
 		removeAutomationLane,
 		setAutomationLaneInterpolation,
-		setSamplerPad
+		setSamplerPad,
+		updateAutomationClip
 	} from '../frontend/commands/dispatcher';
+	import {
+		laneClipFor,
+		lanePoints,
+		withShape,
+		type AutomationShape
+	} from '../frontend/automation/lanes';
 	import { padDropTargetAt, type PadDropTarget } from '../frontend/sampler/pads';
 	import { clipboard } from '../stores/clipboard';
 	import type { ClipboardEntry } from '../stores/clipboard';
@@ -240,6 +247,25 @@
 			lane.id,
 			lane.interpolation === 'step' ? 'linear' : 'step'
 		).catch(console.error);
+	}
+
+	function handleLaneShape(
+		trackId: string,
+		lane: Track['automation_lanes'][number],
+		shape: AutomationShape
+	) {
+		const { startBeat, endBeat } = get(loopRegion);
+		const secondsPerBeat = 60 / get(tempo).bpm;
+		const points = withShape(
+			lanePoints(lane),
+			shape,
+			startBeat * secondsPerBeat,
+			endBeat * secondsPerBeat,
+			lane.interpolation
+		);
+		updateAutomationClip(trackId, lane.id, laneClipFor(lane, points)).catch((e) =>
+			notify(`Erreur automation : ${(e as Error)?.message ?? e}`, 'error')
+		);
 	}
 
 	function selectTrackFromArrangeY(y: number) {
@@ -2406,6 +2432,7 @@
 						{track}
 						color={trackColor(track.id, track.color)}
 						on:toggleStep={() => handleToggleLaneStep(track.id, lane)}
+						on:shape={(e) => handleLaneShape(track.id, lane, e.detail)}
 						on:remove={() => handleRemoveLane(track.id, lane.id)}
 					/>
 				{/each}

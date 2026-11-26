@@ -1,6 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import type { AutomationLane, AutomationPoint } from '../../types/global';
-import { curvePath, laneClipFor, lanePoints, targetKey, valueToY, yToValue } from './lanes';
+import {
+	curvePath,
+	laneClipFor,
+	lanePoints,
+	shapePoints,
+	targetKey,
+	valueToY,
+	withShape,
+	yToValue
+} from './lanes';
 
 const points: AutomationPoint[] = [
 	{ time_s: 1, value: 0.25 },
@@ -79,5 +88,44 @@ describe('curvePath / targetKey', () => {
 			targetKey({ kind: 'effect_param', track_id: 't1', effect_id: 'e1', param: 'freq' })
 		).toBe('e1/freq');
 		expect(targetKey({ kind: 'plugin_param', effect_id: 'e1', native_id: 3 })).toBe('e1/3');
+	});
+});
+
+describe('shapePoints / withShape', () => {
+	it('draws a linear ramp with its two ends', () => {
+		expect(shapePoints('ramp_up', 2, 6, 'linear')).toEqual([
+			{ time_s: 2, value: 0 },
+			{ time_s: 6, value: 1 }
+		]);
+		expect(shapePoints('ramp_down', 2, 6, 'linear').map((p) => p.value)).toEqual([1, 0]);
+	});
+
+	it('samples a ramp on a step lane so it climbs by steps', () => {
+		const steps = shapePoints('ramp_up', 0, 4, 'step');
+		expect(steps).toHaveLength(17);
+		expect(steps[8].value).toBeCloseTo(0.5);
+	});
+
+	it('makes one sine cycle from the minimum, peaking at mid-span', () => {
+		const sine = shapePoints('sine', 0, 8, 'linear');
+		expect(sine[0].value).toBeCloseTo(0);
+		expect(sine[8].value).toBeCloseTo(1);
+		expect(sine[16].value).toBeCloseTo(0);
+		expect(sine[16].time_s).toBe(8);
+	});
+
+	it('replaces the points under the span and keeps the others', () => {
+		const lane = [
+			{ time_s: 0, value: 0.3 },
+			{ time_s: 3, value: 0.9 },
+			{ time_s: 9, value: 0.1 }
+		];
+		const next = withShape(lane, 'ramp_up', 2, 6, 'linear');
+		expect(next).toEqual([
+			{ time_s: 0, value: 0.3 },
+			{ time_s: 2, value: 0 },
+			{ time_s: 6, value: 1 },
+			{ time_s: 9, value: 0.1 }
+		]);
 	});
 });

@@ -29,6 +29,50 @@ export function laneClipFor(lane: AutomationLane, points: AutomationPoint[]): Au
 	};
 }
 
+export type AutomationShape = 'ramp_up' | 'ramp_down' | 'sine';
+
+/** Sampled shapes (sine, and ramps on a step lane) use this many segments. */
+const SHAPE_SEGMENTS = 16;
+
+function shapeValue(shape: AutomationShape, t: number): number {
+	switch (shape) {
+		case 'ramp_up':
+			return t;
+		case 'ramp_down':
+			return 1 - t;
+		case 'sine':
+			return 0.5 - 0.5 * Math.cos(2 * Math.PI * t);
+	}
+}
+
+/** Points of `shape` over [`fromS`, `toS`], on the full 0..1 range. */
+export function shapePoints(
+	shape: AutomationShape,
+	fromS: number,
+	toS: number,
+	interpolation: InterpolationMode
+): AutomationPoint[] {
+	const segments = shape === 'sine' || interpolation === 'step' ? SHAPE_SEGMENTS : 1;
+	return Array.from({ length: segments + 1 }, (_, i) => {
+		const t = i / segments;
+		return { time_s: fromS + t * (toS - fromS), value: shapeValue(shape, t) };
+	});
+}
+
+/** The shape replaces the points under its span; the rest of the lane is kept. */
+export function withShape(
+	points: AutomationPoint[],
+	shape: AutomationShape,
+	fromS: number,
+	toS: number,
+	interpolation: InterpolationMode
+): AutomationPoint[] {
+	const kept = points.filter((p) => p.time_s < fromS || p.time_s > toS);
+	return [...kept, ...shapePoints(shape, fromS, toS, interpolation)].sort(
+		(a, b) => a.time_s - b.time_s
+	);
+}
+
 /** Same key as the matching `ModulationTargetOption` (`targets.ts`). */
 export function targetKey(target: ModulationTargetRef): string {
 	switch (target.kind) {
