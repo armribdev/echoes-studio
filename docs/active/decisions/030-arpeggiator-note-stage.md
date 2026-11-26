@@ -245,6 +245,16 @@ arpeggiator is disabled the stage also tracks the notes it passed through
 and disabling it hands the held chord back; `Arpeggiator` is only called with
 sorted input.
 
+## Amendment 2026-11-26 — the second note effect
+
+The trigger recorded above ("the second note effect ⇒ revisit option B") is
+deliberately not followed: transpose, scale and chord are stateless per-note
+mappings that need no MIDI routing, so ADR-038 adds them as a stage ahead of the
+arpeggiator inside `InstrumentNode`. Option B is revisited when MIDI must cross
+nodes (track-to-track routing) or the user needs an orderable / repeatable chain.
+The arpeggiator now receives the note stage's output instead of the raw events;
+nothing else in this ADR changes.
+
 ## Future (not decided here) — recommended for V2
 
 1. **Latch** (high value: lets a hardware keyboard player take their hands off).

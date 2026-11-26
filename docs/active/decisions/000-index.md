@@ -62,18 +62,19 @@ lives there.
 | [035](035-clap-loaded-preset-in-project.md) | The CLAP preset in use remembered with the project: optional `plugin_presets` map beside `plugin_states` (a display hint compared with the listing, never used to load; reopens an alternative ADR-031 rejected) (accepted and implemented 2026-11-07, not yet hand-tested) | State / persistence / Plugins |
 | [036](036-export-owns-the-plugins.md) | The export owns the plugins while it renders: a one-byte `LiveStreamGate` the audio callback claims once per block (silence when an export holds it) and a `GraphScheduler::reset()` before the render (accepted and implemented 2026-11-25, not yet hand-tested) | Threading / Plugins / Determinism |
 | [037](037-live-automation-writing.md) | Writing automation live from a plugin window: a per-instance SPSC ring of gesture edits stamped with the project time on the audio thread (armed globally, playback only), a 25 ms watcher pairing them into gestures, and one `UPDATE_AUTOMATION_CLIP` per gesture that replaces the points under it (accepted 2026-11-26; step 1, CLAP in the Echoes process, implemented, not hand-tested) | Threading / Plugins / Modulation |
+| [038](038-note-effects-before-the-arpeggiator.md) | Transpose, scale and chord as stateless note stages ahead of the arpeggiator in `InstrumentNode` (fixed order, per-note mapping recorded so a `NoteOff` releases what its `NoteOn` started); the real MIDI node (ADR-030 option B) deferred to the first need to route MIDI across nodes (accepted and implemented 2026-11-26, not yet hand-tested) | Graph / DSP core / Scheduling / determinism |
 
 ---
 
 ## By theme
 
-- **Graph / DSP core:** 001, 011, 012, 018, 020, 022, 028, 029
+- **Graph / DSP core:** 001, 011, 012, 018, 020, 022, 028, 029, 038
 - **Threading / RT safety:** 004, 007, 008, 016, 022, 024, 026, 027, 033, 034, 036, 037
 - **State / persistence:** 002, 010, 017, 018, 020, 024, 028, 029, 032, 035
 - **Architecture boundary:** 005, 017, 023
 - **Plugins:** 003, 006, 007, 008, 010, 013, 014, 015, 016, 017, 020, 021, 031, 033, 034, 035, 036, 037
 - **Modulation / parameters:** 009, 019, 021, 025, 037
-- **Scheduling / determinism:** 019, 025, 028, 036
+- **Scheduling / determinism:** 019, 025, 028, 036, 038
 - **UX / product boundary:** 023
 - **Transport / recording:** 022, 026, 027, 029, 037
 

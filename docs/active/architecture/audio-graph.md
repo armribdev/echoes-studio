@@ -174,9 +174,22 @@ of beat _k_ × step, with the same beats→samples function as clip notes; while
 is stopped, the grid starts on the chord and counts samples the stage owns.
 Settings come from one atomic per setting (`ArpeggiatorCells`, installed per
 instrument track at compile). The node's per-pitch counters, the envelope gate and the
-recorder keep working on the played notes. This is the node's single note-effect
-slot; a second note effect is the trigger for real `PortKind::Midi` edges
-(ADR-030 option B).
+recorder keep working on the played notes.
+
+Transpose, scale and chord (ADR-038) are a second stage of the same kind, ahead
+of the arpeggiator: `NoteStage::process` (`audio_graph/note_stage.rs`, pure,
+fixed arrays) maps each played pitch once, at its first `NoteOn`, in the fixed
+order transpose → scale (nearest scale pitch, down on a tie) → chord (at most
+four voices, pitches outside 0–127 dropped), and remembers the output pitches
+against the played one, so the matching `NoteOff` releases exactly those
+whatever the settings are by then. `out_count` per output pitch keeps a pitch
+shared by two chords sounding until its last holder is released. The stage
+returns `Routing::Passthrough` while every effect is disabled and no reshaped
+note is held, so tracks without note effects are bit-identical. The arpeggiator
+receives the stage's output (`DeviceFeed` in `InstrumentNode`). Settings: one
+atomic per setting (`NoteEffectCells`), `AppTrack.note_effects`. The real
+`PortKind::Midi` edges (ADR-030 option B) are now deferred until MIDI has to
+cross nodes or the user needs an orderable chain (ADR-038).
 
 The metronome click (ADR-026) is the other thing outside the graph: it is added
 to the device output after the mix and the meters, so it is never in a track, a

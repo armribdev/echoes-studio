@@ -43,7 +43,7 @@ Chaque point dit ce qui a été constaté. « Non revérifié » = repris d'un d
    - Validation cross-OS des empreintes (ADR-025, harnais V1) : la CI exécute les tests Rust sur Windows seulement.
    - Fait depuis la dernière mise à jour : le texte de valeur fourni par le plugin (`get_plugin_param_text`, utilisé par `AutomationLane.svelte`).
 5. **Bibliothèque, phase 4 : fait le 2026-11-26** (étiquettes, collections intelligentes, mémoire de contexte opt-in, Devices = no-go dans l'ADR-023, packs, vue grille ; vérifié dans le code, pas testé à la main) : [`../../library-browser-roadmap.md`](../../library-browser-roadmap.md).
-6. **Note FX autres que l'arpégiateur** (transpose, accord, gamme) : l'arpégiateur est un étage de notes de `InstrumentNode` (ADR-030) ; les suivants déclencheront le vrai nœud MIDI (option B de l'ADR-030), donc un ADR avant de commencer.
+6. **Note FX autres que l'arpégiateur : fait le 2026-11-26** (transposition, gamme, accord : ADR-038, étages sans état devant l'arpégiateur dans `InstrumentNode`, `NoteStage`, `AppTrack.note_effects`, bloc « Effets de notes » du panneau gauche ; pas encore essayé dans l'app ni à l'oreille). Le vrai nœud MIDI (option B de l'ADR-030) attend un besoin de routage MIDI entre nœuds ou d'une chaîne réordonnable.
 7. **Warp à la dépose d'un loop** : ni code ni ADR (l'ADR-023 le diffère explicitement). Impact sur le rendu offline : ADR obligatoire avant tout.
 8. **Phase 7 (nettoyage legacy)** : après validation en production ; l'optimisation (nœuds mesurés dans `worker_pool.rs`, `ECHOES_AUDIO_WORKERS` vaut 0 par défaut — vérifié —, suréchantillonnage ×2 fixe) est listée dans [`critical_issues.md`](critical_issues.md) sans avoir été revérifiée.
 

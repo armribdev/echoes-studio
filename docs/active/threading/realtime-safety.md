@@ -93,6 +93,14 @@ but never a due `NoteOff` (one note sounds at a time, so one release is ever
 pending). Held notes, the step state and the random generator are fixed arrays;
 settings are read as relaxed atomics, once per block.
 
+The note effects (ADR-038) add a third pre-allocated `MidiEventList` and ~0.7 KB
+of fixed tables to `InstrumentNode`. A chord multiplies events by up to four, so
+the stage emits a `NoteOn` only when the list has room for its voices **and
+their releases** (`2 × voices`); otherwise the note is skipped whole and not
+recorded, so its `NoteOff` is ignored. A `NoteOff` group that does not fit stays
+owed and is written first, at offset 0, in the next block: late by one block,
+never stuck. The limit stays 256 (ADR-029 §5).
+
 A VST3 instrument (ADR-013 amendment 2026-10-21) hands its notes to the plugin in
 a fixed `HostEventList` (512 `Event`s, ~24 KB, boxed in `prepare`), reset and
 refilled each block; a full list drops the event, except that a NoteOff it cannot
