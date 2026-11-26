@@ -56,6 +56,17 @@ Meter values are written atomically from the audio thread. The UI reads them
 periodically (e.g. 30 fps) via a Tauri command that acquires no locks on the
 audio path.
 
+### Audio thread → watcher thread (ADR-037)
+
+```
+output events of a CLAP plugin  →  SpscRing<ParamEdit> (per instance)  →  watcher (25 ms)
+```
+
+Cost on the audio thread: one relaxed `AtomicBool` load per output event when writing
+is not armed; when armed and playing, one ring push (fixed slots, no allocation) per
+edit and a lookup in a `HashMap` cloned at compile time. While a drag is open on a
+parameter, its automation is not sent (touch).
+
 ### MIDI capture threads → Audio thread (ADR-022)
 
 ```

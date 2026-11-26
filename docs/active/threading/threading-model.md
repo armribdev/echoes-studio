@@ -176,6 +176,16 @@ window, reads it and calls `setParamNormalized` on the controller. It takes no
 FFI gate (a held gate bypasses the audio blocks it overlaps) and the audio thread
 never calls the controller. Nothing is published while no window is open.
 
+### Audio thread → watcher thread (automation writing, ADR-037)
+
+While writing is armed (one process-wide `AtomicBool`) and the transport plays, the
+output-event callback of a CLAP plugin pushes each gesture edit (begin, value, end)
+into a per-instance `SpscRing<ParamEdit>`, stamped with the block's project time plus
+the event's sample offset. One producer (the node processing the instance), one
+consumer: `watch_param_edits` (`main.rs`), which wakes every 25 ms only while armed,
+pairs the edits into gestures (`GestureRecorder`) and emits `plugin-param-gesture`.
+A full ring drops the newest edit; the audio thread never waits, allocates or emits.
+
 ### MIDI capture thread → Audio thread (ADR-022)
 
 ```rust

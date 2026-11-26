@@ -240,6 +240,7 @@ impl AudioNode for ClapWrapperNode {
         let nc = self.num_channels;
         let nf = transport.block_size; // real block, not MAX_BLOCK_FRAMES capacity
 
+        self.param_events.begin_block(transport);
         self.param_events.fill(&self.instance);
         self.param_events.buffer.sort();
         self.out_events.ctx = self.param_events.output_context();

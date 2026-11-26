@@ -31,6 +31,7 @@ pub mod gui;
 pub mod host;
 pub mod instance;
 pub mod lifecycle;
+pub mod param_edits;
 pub mod param_queue;
 pub mod parameter;
 pub mod presets;

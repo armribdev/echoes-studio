@@ -7,6 +7,7 @@ import {
 	shapePoints,
 	targetKey,
 	valueToY,
+	withRecordedGesture,
 	withShape,
 	yToValue
 } from './lanes';
@@ -127,5 +128,37 @@ describe('shapePoints / withShape', () => {
 			{ time_s: 6, value: 1 },
 			{ time_s: 9, value: 0.1 }
 		]);
+	});
+});
+
+describe('withRecordedGesture', () => {
+	const lane: AutomationPoint[] = [
+		{ time_s: 0, value: 0.3 },
+		{ time_s: 3, value: 0.9 },
+		{ time_s: 4, value: 0.8 },
+		{ time_s: 9, value: 0.1 }
+	];
+
+	it('replaces the points under the gesture and keeps the rest', () => {
+		const gesture = [
+			{ time_s: 2.5, value: 0.5 },
+			{ time_s: 3.5, value: 0.6 }
+		];
+		expect(withRecordedGesture(lane, gesture)).toEqual([
+			{ time_s: 0, value: 0.3 },
+			{ time_s: 2.5, value: 0.5 },
+			{ time_s: 3.5, value: 0.6 },
+			{ time_s: 4, value: 0.8 },
+			{ time_s: 9, value: 0.1 }
+		]);
+	});
+
+	it('writes into an empty lane', () => {
+		const gesture = [{ time_s: 1, value: 0.5 }];
+		expect(withRecordedGesture([], gesture)).toEqual(gesture);
+	});
+
+	it('leaves the lane alone when the gesture has no point', () => {
+		expect(withRecordedGesture(lane, [])).toEqual(lane);
 	});
 });

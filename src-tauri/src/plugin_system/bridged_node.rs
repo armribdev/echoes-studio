@@ -124,7 +124,7 @@ impl BridgedParams {
         }
     }
 
-    fn set_controls(&mut self, controls: Vec<PluginParamControl>, instance: &PluginInstance) {
+    fn set_controls(&mut self, controls: Vec<PluginParamControl>, instance: &Arc<PluginInstance>) {
         match self {
             Self::Clap(events) => events.set_controls(controls, instance),
             Self::Vst3(events) => events.set_controls(controls, instance),

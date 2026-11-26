@@ -21,8 +21,9 @@ mod windows_theme;
 use engine_gateway::api::{
     arm_track_for_midi_input, cancel_audio_import, get_audio_recording_peaks, get_graph_snapshot,
     get_input_monitor_enabled, get_snapshot, prepare_audio_import, preview_midi_note, redo,
-    send_batch, send_command, set_input_monitor_enabled, set_metronome_enabled, set_track_mix,
-    start_audio_recording, start_midi_recording, stop_audio_recording, stop_midi_recording, undo,
+    send_batch, send_command, set_automation_write_armed, set_input_monitor_enabled,
+    set_metronome_enabled, set_track_mix, start_audio_recording, start_midi_recording,
+    stop_audio_recording, stop_midi_recording, undo,
 };
 use project::{AppProject, AppState, ProjectDto, ProjectFile, ProjectUiLayout};
 use tauri::{Emitter, Manager, Theme};
@@ -45,6 +46,7 @@ fn main() {
             start_native_audio(app);
             midi_input::spawn_hotplug_watcher(app.handle().clone());
             watch_plugin_edits(app.handle().clone());
+            watch_param_edits(app.handle().clone());
 
             #[cfg_attr(not(debug_assertions), allow(unused_mut))]
             let mut initial_title = "Sans titre".to_string();
@@ -128,6 +130,7 @@ fn main() {
             get_audio_recording_peaks,
             set_metronome_enabled,
             set_input_monitor_enabled,
+            set_automation_write_armed,
             get_input_monitor_enabled,
             get_snapshot,
             get_graph_snapshot,
@@ -1200,6 +1203,50 @@ fn watch_plugin_edits(app: tauri::AppHandle) {
                     let unavailable = engine.plugin_host.unavailable_plugins();
                     let _ = app.emit(engine_gateway::api::PLUGIN_AVAILABILITY_EVENT, unavailable);
                 }
+            }
+        }
+    });
+}
+
+/// Pairs the drags the plugin windows report into gestures and hands each one to
+/// the frontend, which writes it into its lane (ADR-037).  Idle unless a lane is armed.
+fn watch_param_edits(app: tauri::AppHandle) {
+    use plugin_system::param_edits::{write_armed, GestureEvent, GestureRecorder};
+    const POLL: std::time::Duration = std::time::Duration::from_millis(25);
+
+    std::thread::spawn(move || {
+        let mut recorders: std::collections::HashMap<String, GestureRecorder> =
+            std::collections::HashMap::new();
+        let mut was_armed = false;
+        loop {
+            std::thread::sleep(POLL);
+            let armed = write_armed();
+            if !armed && !was_armed {
+                continue;
+            }
+            let state = app.state::<AppState>();
+            let mut finished = Vec::new();
+            if let Ok(engine) = state.audio_engine.lock() {
+                engine.plugin_host.drain_param_edits(|key, edit| {
+                    if !armed {
+                        return;
+                    }
+                    let recorder = recorders.entry(key.to_owned()).or_default();
+                    if let Some(gesture) = recorder.accept(edit) {
+                        finished.push((key.to_owned(), gesture));
+                    }
+                });
+            }
+            if !armed {
+                recorders.clear();
+            }
+            was_armed = armed;
+            for (effect_id, gesture) in finished {
+                let event = GestureEvent {
+                    effect_id: &effect_id,
+                    gesture,
+                };
+                let _ = app.emit(engine_gateway::api::PLUGIN_PARAM_GESTURE_EVENT, event);
             }
         }
     });

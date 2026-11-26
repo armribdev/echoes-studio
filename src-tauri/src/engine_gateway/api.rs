@@ -217,6 +217,13 @@ pub fn set_input_monitor_enabled(state: tauri::State<'_, AppState>, enabled: boo
     state.audio_input.set_monitor_enabled(enabled);
 }
 
+/// Whether some automation lane waits for a drag in a plugin window (ADR-037).
+/// Session state, no project event.
+#[tauri::command]
+pub fn set_automation_write_armed(armed: bool) {
+    crate::plugin_system::param_edits::set_write_armed(armed);
+}
+
 #[tauri::command]
 pub fn get_input_monitor_enabled(state: tauri::State<'_, AppState>) -> bool {
     state.audio_input.monitor_enabled()
@@ -3652,6 +3659,9 @@ pub const PLUGIN_STATE_EDITED_EVENT: &str = "plugin-state-edited";
 
 /// A plugin changed the names it gives to notes (`clap.note-name.changed`).
 pub const PLUGIN_NOTE_NAMES_EVENT: &str = "plugin-note-names-changed";
+
+/// The user finished a drag in a plugin window while writing was armed (ADR-037).
+pub const PLUGIN_PARAM_GESTURE_EVENT: &str = "plugin-param-gesture";
 
 #[cfg(test)]
 mod tests {

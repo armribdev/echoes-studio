@@ -73,6 +73,19 @@ export function withShape(
 	);
 }
 
+/** A drag recorded in the plugin window replaces the points between its first and last one (ADR-037). */
+export function withRecordedGesture(
+	points: AutomationPoint[],
+	gesture: AutomationPoint[]
+): AutomationPoint[] {
+	if (gesture.length === 0) return points;
+	const sortedGesture = [...gesture].sort((a, b) => a.time_s - b.time_s);
+	const fromS = sortedGesture[0].time_s;
+	const toS = sortedGesture[sortedGesture.length - 1].time_s;
+	const kept = points.filter((p) => p.time_s < fromS || p.time_s > toS);
+	return [...kept, ...sortedGesture].sort((a, b) => a.time_s - b.time_s);
+}
+
 /** Same key as the matching `ModulationTargetOption` (`targets.ts`). */
 export function targetKey(target: ModulationTargetRef): string {
 	switch (target.kind) {

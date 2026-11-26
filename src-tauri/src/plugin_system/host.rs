@@ -49,6 +49,7 @@ use crate::plugin_system::bridged_node::{BridgedInstrument, BridgedNode};
 use crate::plugin_system::crash_marker::{self, plugin_tag, PluginThread};
 use crate::plugin_system::instance::{PluginInstance, FFI_GATE_HARVEST_BUDGET};
 use crate::plugin_system::lifecycle::{transition, LifecycleError, LifecycleState};
+use crate::plugin_system::param_edits::ParamEdit;
 use crate::plugin_system::parameter::PluginParamInfo;
 use crate::plugin_system::presets::{
     PluginPreset, PresetListing, PresetSource, StoredPreset, Vst3PresetFiles,
@@ -1118,6 +1119,14 @@ impl PluginHost {
     pub fn instance(&self, device_id: &str) -> Option<Arc<PluginInstance>> {
         self.record_by_device_id(device_id)
             .map(|r| Arc::clone(&r.instance))
+    }
+
+    /// Every parameter edit the plugin windows reported since the last call, with
+    /// the placement key of the instance (ADR-037).
+    pub fn drain_param_edits(&self, mut f: impl FnMut(&str, ParamEdit)) {
+        for (key, record) in &self.records {
+            record.instance.drain_param_edits(|edit| f(key, edit));
+        }
     }
 
     /// Borrow by graph placement key (`effect.id` or `instrument:{track_id}`).

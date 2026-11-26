@@ -173,6 +173,7 @@ impl InstrumentDevice for ClapInstrument {
         };
         self.instance.clap_start_processing();
 
+        self.param_events.begin_block(transport);
         self.param_events.fill(&self.instance);
         push_clap_midi_events(events, &mut self.param_events.buffer);
         self.param_events.buffer.sort();

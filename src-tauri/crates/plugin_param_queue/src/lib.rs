@@ -36,7 +36,7 @@ use std::cell::UnsafeCell;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// One pending parameter change destined for a plugin instance.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default)]
 pub struct ParamChange {
     /// Format-native parameter identifier (VST3 `ParamID`, CLAP `clap_id`).
     /// The frontend already addresses plugin parameters by this id, so no
@@ -51,9 +51,10 @@ pub struct ParamChange {
     pub sample_offset: u32,
 }
 
-/// Fixed-capacity lock-free SPSC ring of [`ParamChange`].
-pub struct ParamQueue {
-    buf: Box<[UnsafeCell<ParamChange>]>,
+/// Fixed-capacity lock-free SPSC ring.  `T` is plain data: slots are overwritten,
+/// never dropped, so neither side ever deallocates.
+pub struct SpscRing<T: Copy + Default> {
+    buf: Box<[UnsafeCell<T>]>,
     /// Capacity (power of two).
     capacity: usize,
     mask: usize,
@@ -70,21 +71,20 @@ pub struct ParamQueue {
 // advanced `tail` — so producer writes and consumer reads of the same slot are
 // never concurrent.  The caller must uphold the one-producer/one-consumer
 // invariant documented at the module level.
-unsafe impl Send for ParamQueue {}
-unsafe impl Sync for ParamQueue {}
+unsafe impl<T: Copy + Default + Send> Send for SpscRing<T> {}
+unsafe impl<T: Copy + Default + Send> Sync for SpscRing<T> {}
 
-impl ParamQueue {
+/// Command thread → audio thread (ADR-007).
+pub type ParamQueue = SpscRing<ParamChange>;
+
+impl<T: Copy + Default> SpscRing<T> {
     /// Create a queue with the given capacity, rounded up to a power of two
     /// (minimum 2).  Pre-allocates every slot.
     pub fn with_capacity(requested: usize) -> Self {
         let capacity = requested.next_power_of_two().max(2);
         let mut v = Vec::with_capacity(capacity);
         for _ in 0..capacity {
-            v.push(UnsafeCell::new(ParamChange {
-                native_id: 0,
-                normalised: 0.0,
-                sample_offset: 0,
-            }));
+            v.push(UnsafeCell::new(T::default()));
         }
         Self {
             buf: v.into_boxed_slice(),
@@ -95,9 +95,9 @@ impl ParamQueue {
         }
     }
 
-    /// Producer side (command thread).  Returns `false` if the ring is full
+    /// Producer side.  Returns `false` if the ring is full
     /// (newest dropped).
-    pub fn push(&self, change: ParamChange) -> bool {
+    pub fn push(&self, change: T) -> bool {
         let tail = self.tail.load(Ordering::Relaxed);
         let head = self.head.load(Ordering::Acquire);
         if tail.wrapping_sub(head) >= self.capacity {
@@ -117,9 +117,9 @@ impl ParamQueue {
         self.head.load(Ordering::Acquire) == self.tail.load(Ordering::Acquire)
     }
 
-    /// Consumer side (audio thread).  Drains every pending change, calling `f`
+    /// Consumer side.  Drains every pending change, calling `f`
     /// for each in FIFO order.
-    pub fn drain(&self, mut f: impl FnMut(ParamChange)) {
+    pub fn drain(&self, mut f: impl FnMut(T)) {
         loop {
             let head = self.head.load(Ordering::Relaxed);
             let tail = self.tail.load(Ordering::Acquire);

@@ -127,7 +127,9 @@ Nothing exposed this, because the UI cannot target a plugin parameter yet.
     since ADR-015; VST3 since the amendment of 2026-11-04 below.)_
   - An automated parameter is not pushed back to the UI, and edits made in the
     plugin window during playback are not reported to Echoes (plugin output
-    events are still discarded).
+    events are still discarded). _2026-11-26: a drag in a CLAP plugin window can now be
+    written into a lane, [ADR-037](037-live-automation-writing.md); an automated
+    parameter is still not pushed back to the UI._
 
 ## Alternatives considered
 

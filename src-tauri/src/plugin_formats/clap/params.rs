@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use std::ffi::{c_void, CStr};
 use std::sync::Arc;
 
+use crate::audio_graph::node::TransportInfo;
 use crate::audio_graph::plugin_params::{
     PluginParamControl, PluginParamControls, PluginParamRange, ValueModulatedParam,
 };
@@ -16,6 +17,7 @@ use crate::plugin_formats::clap::ffi::{
     CLAP_PARAM_IS_MODULATABLE, CLAP_PARAM_IS_READONLY,
 };
 use crate::plugin_system::instance::PluginInstance;
+use crate::plugin_system::param_edits::{write_armed, ParamEdit, ParamEditKind};
 use crate::plugin_system::parameter::PluginParamInfo;
 use plugin_bridge::protocol::{WireParam, PARAM_GESTURE_BEGIN, PARAM_GESTURE_END, PARAM_VALUE};
 
@@ -101,6 +103,86 @@ pub unsafe fn flush_clap_param_values(plugin: *const ClapPlugin, values: &[(u32,
     ((*params).flush)(plugin, &events.input_events_vtable, &output);
 }
 
+const MAX_OPEN_GESTURES: usize = 8;
+
+/// The drags the user makes in the plugin window while an automation lane waits
+/// for them (ADR-037): each one is stamped with the project time and handed to the
+/// instance's edit ring.  Nothing here allocates.
+#[derive(Default)]
+struct EditCapture {
+    instance: Option<Arc<PluginInstance>>,
+    ranges: HashMap<u32, PluginParamRange>,
+    block_start_s: f64,
+    sample_rate: f64,
+    playing: bool,
+    open: [u32; MAX_OPEN_GESTURES],
+    open_count: usize,
+}
+
+impl EditCapture {
+    /// Off the audio thread, at compile time.
+    fn attach(&mut self, instance: &Arc<PluginInstance>, ranges: &HashMap<u32, PluginParamRange>) {
+        self.instance = Some(Arc::clone(instance));
+        self.ranges = ranges.clone();
+    }
+
+    fn begin_block(&mut self, transport: &TransportInfo) {
+        self.block_start_s = transport.position_seconds;
+        self.sample_rate = f64::from(transport.sample_rate);
+        self.playing = transport.is_playing;
+    }
+
+    /// The host leaves this parameter's automation alone while it is dragged, so
+    /// the lane does not fight the hand.
+    fn is_open(&self, native_id: u32) -> bool {
+        self.open[..self.open_count].contains(&native_id)
+    }
+
+    fn push(&self, kind: ParamEditKind, time: u32, native_id: u32, plain: f64) {
+        let Some(instance) = &self.instance else {
+            return;
+        };
+        let range = self
+            .ranges
+            .get(&native_id)
+            .copied()
+            .unwrap_or(PluginParamRange::UNKNOWN);
+        instance.push_param_edit(ParamEdit {
+            kind,
+            native_id,
+            normalised: range.normalise(plain as f32),
+            time_s: self.block_start_s + f64::from(time) / self.sample_rate,
+        });
+    }
+
+    fn observe_gesture(&mut self, time: u32, native_id: u32, is_begin: bool) {
+        if !write_armed() {
+            self.open_count = 0;
+            return;
+        }
+        if is_begin {
+            if self.playing && !self.is_open(native_id) && self.open_count < MAX_OPEN_GESTURES {
+                self.open[self.open_count] = native_id;
+                self.open_count += 1;
+                self.push(ParamEditKind::GestureBegin, time, native_id, 0.0);
+            }
+        } else if let Some(index) = self.open[..self.open_count]
+            .iter()
+            .position(|&id| id == native_id)
+        {
+            self.open_count -= 1;
+            self.open[index] = self.open[self.open_count];
+            self.push(ParamEditKind::GestureEnd, time, native_id, 0.0);
+        }
+    }
+
+    fn observe_value(&mut self, time: u32, native_id: u32, plain: f64) {
+        if self.playing && write_armed() && self.is_open(native_id) {
+            self.push(ParamEditKind::Value, time, native_id, plain);
+        }
+    }
+}
+
 /// Value-modulated parameters of one placement (ADR-021 amendment).  Boxed so
 /// the plugin's output-event callback can reach it while `process` runs.
 #[derive(Default)]
@@ -108,6 +190,7 @@ struct ValueModulation {
     params: Vec<ValueModulatedParam>,
     /// Parameters to put back on their base once (route removed), plain units.
     released: Vec<(u32, f64)>,
+    capture: EditCapture,
 }
 
 impl ValueModulation {
@@ -128,12 +211,16 @@ impl ValueModulation {
                 let event =
                     unsafe { &*(header as *const ClapEventHeader as *const ClapEventParamGesture) };
                 let is_begin = header.r#type == CLAP_EVENT_PARAM_GESTURE_BEGIN;
+                self.capture
+                    .observe_gesture(header.time, event.param_id, is_begin);
                 self.observe_gesture(event.param_id, is_begin);
             }
             CLAP_EVENT_PARAM_VALUE => {
                 // SAFETY: the event type guarantees the layout.
                 let event =
                     unsafe { &*(header as *const ClapEventHeader as *const ClapEventParamValue) };
+                self.capture
+                    .observe_value(header.time, event.param_id, event.value);
                 self.observe_value(event.param_id, event.value);
             }
             _ => {}
@@ -246,7 +333,7 @@ impl ClapParamEvents {
     pub fn set_controls(
         &mut self,
         mut controls: Vec<PluginParamControl>,
-        instance: &PluginInstance,
+        instance: &Arc<PluginInstance>,
     ) {
         for control in &mut controls {
             control.range = self.range(control.native_id);
@@ -258,6 +345,7 @@ impl ClapParamEvents {
             .collect();
         self.released_modulation = instance.replace_modulated_params(&modulated);
         *self.value_modulation = value_modulation(&controls, instance);
+        self.value_modulation.capture.attach(instance, &self.ranges);
         self.controls = PluginParamControls::new(controls);
     }
 
@@ -268,6 +356,11 @@ impl ClapParamEvents {
 
     pub fn controls_mut(&mut self) -> &mut PluginParamControls {
         &mut self.controls
+    }
+
+    /// Audio thread, before `fill`: where this block sits on the timeline (ADR-037).
+    pub fn begin_block(&mut self, transport: &TransportInfo) {
+        self.value_modulation.capture.begin_block(transport);
     }
 
     /// Audio thread: refills `buffer` with this block's parameter events —
@@ -360,6 +453,9 @@ fn emit_param_events(
                 }
             }
         }
+        if value_modulation.capture.is_open(control.native_id) {
+            continue;
+        }
         for (offset, value) in control.automation.iter() {
             let plain = control.range.denormalise(value.clamp(0.0, 1.0));
             sink.push_value(offset, control.native_id, plain as f64);
@@ -396,7 +492,11 @@ fn value_modulation(controls: &[PluginParamControl], instance: &PluginInstance) 
         .filter(|old| !params.iter().any(|param| param.native_id == old.native_id))
         .map(|old| (old.native_id, old.base_plain() as f64))
         .collect();
-    ValueModulation { params, released }
+    ValueModulation {
+        params,
+        released,
+        capture: EditCapture::default(),
+    }
 }
 
 #[cfg(test)]
@@ -593,6 +693,109 @@ mod tests {
         assert_eq!(
             events(&mut params),
             vec![(0, CLAP_EVENT_PARAM_VALUE, 1, 100.0)]
+        );
+    }
+
+    /// `write_armed` is process-wide: the tests that raise it run one at a time.
+    static WRITE_ARMED_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn playing_at(position_seconds: f64) -> TransportInfo {
+        TransportInfo {
+            is_playing: true,
+            position_seconds,
+            ..TransportInfo::stopped(48_000.0)
+        }
+    }
+
+    /// Runs `drag` (a begin, a value at sample 480 of plain 200, an end) on a
+    /// parameter whose plain range is 100..300 and returns what the instance logged.
+    fn drag_and_collect(armed: bool, transport: TransportInfo) -> Vec<ParamEdit> {
+        let _lock = WRITE_ARMED_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        crate::plugin_system::param_edits::set_write_armed(armed);
+        let instance = PluginInstance::new_internal("test");
+        let mut params = ClapParamEvents::new();
+        params.set_ranges(&[info(1, false)]);
+        params.set_controls(vec![control(1, false)], &instance);
+
+        params.begin_block(&transport);
+        push_output(
+            &mut params,
+            &gesture(CLAP_EVENT_PARAM_GESTURE_BEGIN, 1).header,
+        );
+        let mut value = value_event(1, 200.0);
+        value.header.time = 480;
+        push_output(&mut params, &value.header);
+        push_output(
+            &mut params,
+            &gesture(CLAP_EVENT_PARAM_GESTURE_END, 1).header,
+        );
+        crate::plugin_system::param_edits::set_write_armed(false);
+
+        let mut edits = Vec::new();
+        instance.drain_param_edits(|edit| edits.push(edit));
+        edits
+    }
+
+    #[test]
+    fn a_drag_is_logged_with_its_project_time_while_writing_is_armed_and_playing() {
+        let edits = drag_and_collect(true, playing_at(2.0));
+        let kinds: Vec<ParamEditKind> = edits.iter().map(|edit| edit.kind).collect();
+        assert_eq!(
+            kinds,
+            vec![
+                ParamEditKind::GestureBegin,
+                ParamEditKind::Value,
+                ParamEditKind::GestureEnd
+            ]
+        );
+        assert_eq!(edits[1].native_id, 1);
+        assert_eq!(edits[1].normalised, 0.5);
+        assert!((edits[1].time_s - 2.01).abs() < 1e-9);
+    }
+
+    #[test]
+    fn nothing_is_logged_when_writing_is_not_armed() {
+        assert!(drag_and_collect(false, playing_at(2.0)).is_empty());
+    }
+
+    #[test]
+    fn nothing_is_logged_while_the_transport_is_stopped() {
+        let stopped = TransportInfo::stopped(48_000.0);
+        assert!(drag_and_collect(true, stopped).is_empty());
+    }
+
+    #[test]
+    fn automation_leaves_a_dragged_parameter_alone_until_the_drag_ends() {
+        let _lock = WRITE_ARMED_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        crate::plugin_system::param_edits::set_write_armed(true);
+        let instance = PluginInstance::new_internal("test");
+        let mut params = ClapParamEvents::new();
+        params.set_ranges(&[info(1, false)]);
+        params.set_controls(vec![control(1, false)], &instance);
+        params.begin_block(&playing_at(0.0));
+
+        push_output(
+            &mut params,
+            &gesture(CLAP_EVENT_PARAM_GESTURE_BEGIN, 1).header,
+        );
+        params.controls_mut().automate(1, 0.5);
+        params.fill(&instance);
+        assert!(
+            events(&mut params).is_empty(),
+            "the lane must not fight the hand"
+        );
+
+        push_output(
+            &mut params,
+            &gesture(CLAP_EVENT_PARAM_GESTURE_END, 1).header,
+        );
+        params.controls_mut().clear_block();
+        params.controls_mut().automate(1, 0.5);
+        params.fill(&instance);
+        crate::plugin_system::param_edits::set_write_armed(false);
+        assert_eq!(
+            events(&mut params),
+            vec![(0, CLAP_EVENT_PARAM_VALUE, 1, 200.0)]
         );
     }
 

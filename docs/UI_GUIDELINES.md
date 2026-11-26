@@ -283,6 +283,7 @@ Current implementation (`Knob.svelte`):
 | Move without snapping | Hold `Alt` while dragging |
 | Delete a point | Double-click it |
 | Draw freehand (pencil) | `Ctrl/Cmd` + drag in the lane — replaces the points under the stroke, simplified on the fly |
+| Write by hand in the plugin | ● in the header of a plugin lane, then drag the parameter in the plugin window during playback — replaces the points between the start and end of the drag (one undo step) |
 | See a point's value | Hover or drag it (plugin units, or % for a 0…1 range) |
 
 **Navigation**

@@ -241,6 +241,15 @@ range and scale as the engine — keep `INTERNAL_PARAMS` in `targets.ts` in sync
 with the Rust `*_RANGES` and `*_SCALES`); for plugins the plugin's own text
 formatting is not queried.
 
+**Writing live (ADR-037, 2026-11-26).** A plugin lane has a record button in its
+header (`stores/automationWrite.ts`). Armed, and during playback only, a drag of the
+parameter in the plugin window becomes points: the engine stamps each edit with the
+project time, `watch_param_edits` pairs them into a gesture (points thinned to one per
+5 ms) and the frontend replaces the lane's points between the first and last point of
+the gesture (`withRecordedGesture`) with one `UPDATE_AUTOMATION_CLIP`. While the
+parameter is dragged its automation is not sent. Step 1 covers CLAP plugins in the
+Echoes process; the bridge and VST3 follow (ADR-037, table of steps). Not hand-tested.
+
 **Automating from a knob (2026-09-29).** Right-clicking a `Knob` or the volume
 `FaderMeter` that carries a `modTargetKey` posts an `automationRequest`
 (`stores/automation.ts`); `AutomationKnobMenu.svelte` (mounted in `MainPanel`)

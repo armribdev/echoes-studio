@@ -81,7 +81,8 @@ use crate::plugin_formats::vst3::units::{
 use crate::plugin_system::bridge::BridgedPlugin;
 use crate::plugin_system::crash_marker::{self, MarkerGuard, PluginThread};
 use crate::plugin_system::lifecycle::LifecycleState;
-use crate::plugin_system::param_queue::{ParamChange, ParamQueue};
+use crate::plugin_system::param_edits::{ParamEdit, PARAM_EDIT_CAPACITY};
+use crate::plugin_system::param_queue::{ParamChange, ParamQueue, SpscRing};
 use crate::plugin_system::presets::{programs_as_presets, PluginPreset};
 use crate::plugin_system::wrapper::DeviceFormat;
 
@@ -293,6 +294,11 @@ pub struct PluginInstance {
     /// wrapper drains it at the top of `process` — the sole consumer.
     param_queue: ParamQueue,
 
+    /// What the user did to a parameter in the plugin window, for automation
+    /// writing (ADR-037).  The audio-graph wrapper is the sole producer; the
+    /// watcher thread is the sole consumer.
+    param_edits: SpscRing<ParamEdit>,
+
     /// Plugin activation lifecycle (ADR-016).  Owned here so it survives wrapper
     /// rebuilds on recompile.  One per format that supports reuse; the unused one
     /// for a given handle stays inert.
@@ -380,6 +386,7 @@ impl PluginInstance {
             handle: NativeHandle::Internal,
             lifecycle: AtomicU8::new(encode_lifecycle(LifecycleState::Running)),
             param_queue: ParamQueue::with_capacity(PARAM_QUEUE_CAPACITY),
+            param_edits: SpscRing::with_capacity(PARAM_EDIT_CAPACITY),
             clap_activation: ActivationState::new(),
             vst3_activation: ActivationState::new(),
             ffi_gate: AtomicU8::new(GATE_IDLE),
@@ -425,6 +432,7 @@ impl PluginInstance {
             },
             lifecycle: AtomicU8::new(encode_lifecycle(LifecycleState::Created)),
             param_queue: ParamQueue::with_capacity(PARAM_QUEUE_CAPACITY),
+            param_edits: SpscRing::with_capacity(PARAM_EDIT_CAPACITY),
             clap_activation: ActivationState::new(),
             vst3_activation: ActivationState::new(),
             ffi_gate: AtomicU8::new(GATE_IDLE),
@@ -462,6 +470,7 @@ impl PluginInstance {
             },
             lifecycle: AtomicU8::new(encode_lifecycle(LifecycleState::Created)),
             param_queue: ParamQueue::with_capacity(PARAM_QUEUE_CAPACITY),
+            param_edits: SpscRing::with_capacity(PARAM_EDIT_CAPACITY),
             clap_activation: ActivationState::new(),
             vst3_activation: ActivationState::new(),
             ffi_gate: AtomicU8::new(GATE_IDLE),
@@ -493,6 +502,7 @@ impl PluginInstance {
             handle: NativeHandle::Bridged(Box::new(bridged)),
             lifecycle: AtomicU8::new(encode_lifecycle(LifecycleState::Created)),
             param_queue: ParamQueue::with_capacity(PARAM_QUEUE_CAPACITY),
+            param_edits: SpscRing::with_capacity(PARAM_EDIT_CAPACITY),
             clap_activation: ActivationState::new(),
             vst3_activation: ActivationState::new(),
             ffi_gate: AtomicU8::new(GATE_IDLE),
@@ -1055,6 +1065,17 @@ impl PluginInstance {
     /// Drain all pending parameter changes (audio thread, sole consumer).
     pub fn drain_params(&self, f: impl FnMut(ParamChange)) {
         self.param_queue.drain(f);
+    }
+
+    /// Audio thread, sole producer: a drag in the plugin window (ADR-037).  A full
+    /// ring drops the newest edit.
+    pub fn push_param_edit(&self, edit: ParamEdit) -> bool {
+        self.param_edits.push(edit)
+    }
+
+    /// The watcher thread, sole consumer.
+    pub fn drain_param_edits(&self, f: impl FnMut(ParamEdit)) {
+        self.param_edits.drain(f);
     }
 
     // VST3 (`IComponent::get/setState`) and CLAP (`clap.state.save/load`) both

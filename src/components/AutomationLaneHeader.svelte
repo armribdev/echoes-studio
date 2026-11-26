@@ -6,6 +6,7 @@
 	import { ensurePluginParams, pluginParamsByPlacement } from '../stores/pluginParams';
 	import { instrumentDisplayName, plugins } from '../stores/plugins';
 	import { loopRegion } from '../stores/loopRegion';
+	import { toggleLaneWrite, writeArmedLanes } from '../stores/automationWrite';
 	import Menu from './Menu.svelte';
 	import MenuItem from './MenuItem.svelte';
 
@@ -100,6 +101,20 @@
 			<path d="M1 6 C3 0, 5 0, 6 6 S9 12, 11 6" />
 		</svg>
 	</button>
+	{#if lane.target.kind === 'plugin_param'}
+		<button
+			class="write"
+			class:on={$writeArmedLanes.has(lane.id)}
+			type="button"
+			title="Écrire en lecture : un geste dans la fenêtre du plugin remplace les points"
+			aria-pressed={$writeArmedLanes.has(lane.id)}
+			on:click={() => toggleLaneWrite(lane.id)}
+		>
+			<svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor">
+				<circle cx="6" cy="6" r="3.5" />
+			</svg>
+		</button>
+	{/if}
 	<button
 		class="remove"
 		type="button"
@@ -178,6 +193,7 @@
 		}
 	}
 
+	.write,
 	.shapes {
 		@include icon-button($ctrl-height-xs);
 
