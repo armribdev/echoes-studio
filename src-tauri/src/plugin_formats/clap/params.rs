@@ -393,6 +393,13 @@ impl ClapParamEvents {
 
     /// Audio thread: what the plugin in the bridge did to one of its parameters.
     pub fn observe_edit(&mut self, edit: &WireParam) {
+        let capture = &mut self.value_modulation.capture;
+        match edit.kind {
+            PARAM_VALUE => capture.observe_value(edit.offset, edit.native_id, edit.value),
+            PARAM_GESTURE_BEGIN => capture.observe_gesture(edit.offset, edit.native_id, true),
+            PARAM_GESTURE_END => capture.observe_gesture(edit.offset, edit.native_id, false),
+            _ => {}
+        }
         match edit.kind {
             PARAM_VALUE => self
                 .value_modulation
@@ -749,6 +756,32 @@ mod tests {
             ]
         );
         assert_eq!(edits[1].native_id, 1);
+        assert_eq!(edits[1].normalised, 0.5);
+        assert!((edits[1].time_s - 2.01).abs() < 1e-9);
+    }
+
+    #[test]
+    fn a_drag_reported_by_the_bridge_is_logged_like_an_in_process_one() {
+        let _lock = WRITE_ARMED_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        crate::plugin_system::param_edits::set_write_armed(true);
+        let instance = PluginInstance::new_internal("test");
+        let mut params = ClapParamEvents::new();
+        params.set_ranges(&[info(1, false)]);
+        params.set_controls(vec![control(1, false)], &instance);
+
+        params.begin_block(&playing_at(2.0));
+        for edit in [
+            WireParam::new(PARAM_GESTURE_BEGIN, 0, 1, 0.0),
+            WireParam::new(PARAM_VALUE, 480, 1, 200.0),
+            WireParam::new(PARAM_GESTURE_END, 480, 1, 0.0),
+        ] {
+            params.observe_edit(&edit);
+        }
+        crate::plugin_system::param_edits::set_write_armed(false);
+
+        let mut edits = Vec::new();
+        instance.drain_param_edits(|edit| edits.push(edit));
+        assert_eq!(edits.len(), 3);
         assert_eq!(edits[1].normalised, 0.5);
         assert!((edits[1].time_s - 2.01).abs() < 1e-9);
     }

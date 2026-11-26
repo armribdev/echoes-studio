@@ -82,6 +82,6 @@ The only audio → command-thread mechanism today is one global atomic flag
 | Step | Scope                                                                                                         | State                                   |
 | ---- | ------------------------------------------------------------------------------------------------------------- | --------------------------------------- |
 | 1    | CLAP plugin in the Echoes process (effects and instruments), ring, watcher, event, arm button, frontend write | implemented 2026-11-26, not hand-tested |
-| 2    | CLAP plugin in the bridge (`observe_edit`)                                                                    | open                                    |
+| 2    | CLAP plugin in the bridge (`observe_edit`, the block reply carries the edits with their offsets)              | implemented 2026-11-26, not hand-tested |
 | 3    | VST3 in the process (`IComponentHandler`)                                                                     | open                                    |
 | 4    | VST3 in the bridge                                                                                            | open                                    |

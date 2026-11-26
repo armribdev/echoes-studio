@@ -247,8 +247,9 @@ parameter in the plugin window becomes points: the engine stamps each edit with 
 project time, `watch_param_edits` pairs them into a gesture (points thinned to one per
 5 ms) and the frontend replaces the lane's points between the first and last point of
 the gesture (`withRecordedGesture`) with one `UPDATE_AUTOMATION_CLIP`. While the
-parameter is dragged its automation is not sent. Step 1 covers CLAP plugins in the
-Echoes process; the bridge and VST3 follow (ADR-037, table of steps). Not hand-tested.
+parameter is dragged its automation is not sent. Steps 1 and 2 cover CLAP plugins, in the
+Echoes process and in the bridge (the block reply carries the edits, so the touch
+pause of the lane lags one block there); VST3 follows (ADR-037, table of steps). Not hand-tested.
 
 **Automating from a knob (2026-09-29).** Right-clicking a `Knob` or the volume
 `FaderMeter` that carries a `modTargetKey` posts an `automationRequest`

@@ -145,6 +145,13 @@ impl BridgedParams {
         }
     }
 
+    /// Where the block sits on the timeline, for the edits its reply carries (ADR-037).
+    fn begin_block(&mut self, transport: &TransportInfo) {
+        if let Self::Clap(events) = self {
+            events.begin_block(transport);
+        }
+    }
+
     fn observe_edit(&mut self, edit: &WireParam) {
         match self {
             Self::Clap(events) => events.observe_edit(edit),
@@ -333,6 +340,7 @@ impl BridgeRoundTrip {
         if !self.active || input_samples > self.input.len() || output_samples > self.output.len() {
             return false;
         }
+        self.param_events.begin_block(transport);
         self.write_events(notes);
         let wire_transport = wire_transport(transport);
         for (index, planar) in self
