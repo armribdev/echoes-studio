@@ -163,6 +163,18 @@ leaving a clip, pausing or stopping returns what the timeline moved to neutral
 `MidiEventList::push_control`, which keeps the last 32 places of the 256-event
 block for notes and live input.
 
+Per-note expressions (ADR-039) are stored on the note
+(`MidiNote.expressions`: pressure, timbre, pitch; beats relative to the note;
+held values) and baked into `MidiNoteSnapshot.expressions`. For each note
+overlapping the block, `note_expressions::push_block_expressions` pushes
+`MidiEventKind::NoteExpression { pitch, kind, value }` after the note's
+`NoteOn` (same offset sorts last), and on a seek, a loop wrap or a content swap
+a note already sounding first gets the value each curve holds at the block start.
+A CLAP instrument receives them as `CLAP_EVENT_NOTE_EXPRESSION` aimed at the key
+(`note_id` and channel are wildcards); the built-in instruments and VST3 ignore
+them. `NoteStage` repeats an expression on every voice of the played pitch; the
+arpeggiator ignores them while it is engaged.
+
 The arpeggiator (ADR-030) is a note stage inside `InstrumentNode`, not a graph
 node: after the clip notes, audition and live input are merged and sorted,
 `Arpeggiator::process` (`audio_graph/arpeggiator.rs`, a pure events-in /

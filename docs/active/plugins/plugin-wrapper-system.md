@@ -863,6 +863,15 @@ block message is untouched.
   host **does not read the plugin's note ports** and does not filter what it
   sends by dialect — decided, so what reaches a plugin and the offline render are
   unchanged (ADR-022: a plugin without the MIDI dialect ignores the raw MIDI).
+- _Note expressions (ADR-039, 2026-11-26)._ A pressure, timbre or pitch curve on a
+  clip note is sent as `CLAP_EVENT_NOTE_EXPRESSION` (`PRESSURE`, `BRIGHTNESS`,
+  `TUNING`) with `key` = the pitch and `note_id` / `channel` = -1 (every note on
+  that key; CLAP's wildcard). The host still announces only the CLAP and MIDI
+  dialects: a plugin that wants expressions reads them from CLAP events, as the
+  header allows. Not sent to VST3, nor yet into the sandbox (ADR-039 step B).
+  `ClapEventBuffer::push_bytes` already accepts the type, so the raw event bytes the
+  bridge carries need only a wire kind. Test: `a_pressure_expression_reaches_a_real_clap_instrument`
+  (the test plugin scales its level by the pressure).
 - _`clap.note-name` (host)._ `changed` sets a process-wide lock-free flag
   (`clap_ffi::take_plugin_note_names_changed`, callable from any thread);
   `main.rs::watch_plugin_edits` turns it into the `plugin-note-names-changed`

@@ -101,6 +101,13 @@ recorded, so its `NoteOff` is ignored. A `NoteOff` group that does not fit stays
 owed and is written first, at offset 0, in the next block: late by one block,
 never stuck. The limit stays 256 (ADR-029 §5).
 
+Per-note expressions (ADR-039) add no state to the audio thread: the baked points
+are read from the published `MidiTrackContent` like the notes, scanned only for
+notes overlapping the block (points are sorted, the scan stops at the block end),
+and pushed with `push_control`, so the 32 places kept for notes hold here too. A
+`NoteStage` repeat is one loop over at most four voices. `ClapEventBuffer` takes
+the event in a slot of its fixed array and drops it when full.
+
 A VST3 instrument (ADR-013 amendment 2026-10-21) hands its notes to the plugin in
 a fixed `HostEventList` (512 `Event`s, ~24 KB, boxed in `prepare`), reset and
 refilled each block; a full list drops the event, except that a NoteOff it cannot
