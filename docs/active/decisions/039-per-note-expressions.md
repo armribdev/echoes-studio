@@ -24,7 +24,8 @@ that note's voice only. ADR-029 left it out on purpose and listed it as
 MIDI channel.
 
 This ADR is the first cycle: **the model, the playback and the editing**. MPE
-capture (cycle 2) needs a controller to be validated and is not decided here.
+capture (cycle 2) needs a controller to be validated and was left out; it is
+decided in §8 (amendment 2026-11-27).
 
 ## Decision
 
@@ -131,6 +132,40 @@ tenths of a semitone for micro-pitch, 240 = no bend) converted at the edge
 (`frontend/pianoRoll/noteExpressionLanes.ts`). A lane holding a curve on some note
 is shown when the clip opens. Copying and pasting notes carries their curves.
 
+### 8. MPE input and capture (cycle 2, amendment 2026-11-27)
+
+A MPE controller plays each note on its own MIDI channel; ADR-022 dropped the channel.
+`midi_mpe.rs` keeps it for the devices the user marks **MPE controller** in the
+settings (per device, off by default, so an ordinary keyboard behaves exactly as
+before; `set_midi_input_mpe`, `MidiInputDeviceInfo.mpe`, `KnownMidiDevice.mpe`).
+
+- **Lower zone only:** channel 1 is the master channel and keeps the channel
+  controls of ADR-029; channels 2 to 16 each hold one note. The upper zone and the
+  MPE configuration messages (MCM, RPN 6) are not read.
+- **Translation**, on a member channel, aimed at the key held on that channel
+  (the key target of §2): pitch bend → `pitch` (the MPE default of ±48 semitones,
+  then clamped to the model's ±24, `PITCH_EXPRESSION_SEMITONES`), channel pressure →
+  `pressure` (`/127`), CC 74 → `timbre` (`/127`). Other member messages are ignored.
+- **Values sent before the note:** MPE controllers set bend, pressure and timbre
+  before the Note On. The translator keeps the last of each per channel and emits
+  them right after the NoteOn (same instant, so they sort after it); a Note Off
+  clears them.
+- **Live:** the events go through the existing live queue; `InstrumentNode`
+  already forwards a `NoteExpression` to the device without touching the voice
+  count (test `live_note_expression_reaches_the_device_after_its_note`). The
+  arpeggiator still ignores them (§4).
+- **Recording:** `MidiRecorder::capture` keeps each expression (not during the
+  count-in); `build_clip` gives a note the ones of its key that fall inside it, as
+  beats from the note start, the last value of each kind per 1/32 beat, repeats
+  dropped, then `sanitize_note_expressions`. The file format does not change.
+- **Threading:** one translator per open device, owned by the capture callback; the
+  flag is an atomic. No new lock, nothing on the audio thread (see
+  `threading-model.md`).
+
+Known limits: the bend range is fixed (a controller configured for another range
+sounds scaled); two overlapping notes of the same pitch share their expression (§2);
+VST3 and built-in instruments ignore it; no smoothing of the recorded curve.
+
 ## Real-time impact
 
 | Change                                    | RT cost                                                     | RT risk                                          |
@@ -176,12 +211,13 @@ Validated against `rt_audio_rules.md`: no allocation, lock, `drop`, I/O or
   micro-pitch from the clip, and seeks, loops and edits never leave a stale value.
 - Not hand-tested: nothing was heard on a real synth (Vital, Surge XT).
 - Step B and step C are tested (the test plugin, in process and sandboxed) but neither was tried by hand.
+- Cycle 2 is tested on simulated MIDI messages only: no MPE controller (Seaboard, Linnstrument) has been plugged in, so the feel, the bend range and the recorded curves are not validated.
 
 ## Future (not decided here)
 
-Cycle 2: MPE live input (the MIDI channel kept, per-channel bend / pressure / CC 74
-mapped to these points, the `MIDI_MPE` dialect) and its capture in the recorder.
-A note id if overlapping same-pitch notes ever matter. VST3 note expression.
+The MPE upper zone and the configuration messages (a bend range read from the
+controller). A note id if overlapping same-pitch notes ever matter. VST3 note
+expression.
 
 ## Implementation status
 
@@ -195,3 +231,9 @@ A note id if overlapping same-pitch notes ever matter. VST3 note expression.
 `NOTE_EXPRESSION`; tests `a_note_pressure_scales_a_held_{in_process,sandboxed}_note`
 (`plugin_system/sandbox_tests.rs`), `a_note_expression_travels_…`
 (`bridged_node.rs`), the ABI tests of `protocol.rs`. Left: cycle 2 (MPE).
+
+2026-11-27 — cycle 2 done (§8): `midi_mpe.rs` (`MpeTranslator`), the per-device MPE flag
+(`midi_input.rs`, `set_midi_input_mpe`, settings toggle), recorder capture
+(`midi_recording.rs`). Tests: `midi_mpe::tests`, `midi_recording::tests` (curves,
+bucket, repeats, count-in), `live_note_expression_reaches_the_device_after_its_note`,
+`midiBackend.test.ts`. Not tried with a real controller.

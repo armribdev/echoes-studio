@@ -219,6 +219,14 @@ command thread (record button, `PAUSE`, `STOP`) — never from the audio thread.
 Each recorded note is also announced (`midi-recording-note`) from the capture
 thread so the UI can draw the growing clip; the capture thread is not real-time.
 
+MPE (ADR-039 cycle 2): a device marked MPE in the settings has its messages run
+through an `MpeTranslator` (`midi_mpe.rs`) owned by the callback closure — per-channel
+state, no lock — which turns member-channel bend, pressure and CC 74 into
+`NoteExpression` events pushed into the same live queue as notes. The on/off flag is an
+`AtomicBool` per device, read with `Relaxed` by the callback and written by the
+command thread, so switching it never reopens the connection. The recorder gets the same
+events and bakes them into `MidiNote.expressions`. Nothing new reaches the audio thread.
+
 Metronome / count-in (ADR-026): the command thread arms the count-in
 (`start_count_in`) and toggles the click (`set_metronome_enabled`) through
 `SharedTransport` atomics; the CPAL callback consumes them. Nothing is sent back.

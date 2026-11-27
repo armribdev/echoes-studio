@@ -163,7 +163,7 @@ leaving a clip, pausing or stopping returns what the timeline moved to neutral
 `MidiEventList::push_control`, which keeps the last 32 places of the 256-event
 block for notes and live input.
 
-Per-note expressions (ADR-039; in the sandbox as a `NOTE_EXPRESSION` wire note, protocol v5) are stored on the note
+Per-note expressions (ADR-039; in the sandbox as a `NOTE_EXPRESSION` wire note, protocol v5; live from an MPE controller and recorded onto the note, cycle 2) are stored on the note
 (`MidiNote.expressions`: pressure, timbre, pitch; beats relative to the note;
 held values) and baked into `MidiNoteSnapshot.expressions`. For each note
 overlapping the block, `note_expressions::push_block_expressions` pushes
