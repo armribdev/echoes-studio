@@ -301,7 +301,8 @@ Offline (`PrepareContext.live == false`) the node waits up to 10 s per block so
 the export does not depend on scheduling (C-2).
 
 **The block message (protocol v3, ADR-033 step 4, 2026-11-04).** The message is
-`[header 48 B][transport 64 B][notes 12 B × n][parameter events 24 B × m][samples]`
+`[header 48 B][transport 64 B][notes 16 B × n][parameter events 24 B × m][samples]`
+(notes were 12 B until protocol v5, ADR-039 step B: a note expression carries an `f32`)
 (`plugin_bridge::protocol`), format-neutral; the bridge's CLAP adapter builds the
 CLAP events from it. It changes on **both** audio threads, under the same rules:
 

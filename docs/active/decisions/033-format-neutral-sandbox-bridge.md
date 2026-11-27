@@ -419,6 +419,9 @@ implicit padding, sizes and offsets asserted by tests):
 | `WireParam` × m              | 24 B each               | offset, native id, value, kind (value, modulation offset, gesture begin, gesture end)                                      |
 | samples                      | channels × frames × 4 B | as before                                                                                                                  |
 
+_Amendment 2026-11-27 (ADR-039 step B):_ `WireNote` is now 16 B (an `f32` `value`) and has a fourth
+kind, `NOTE_EXPRESSION`; `BRIDGE_PROTOCOL_VERSION` is **5**. The table shows the v3 layout.
+
 Reply: the same header; the notes list is the MIDI the plugin produced (the engine does
 not use it yet) and the parameter list is what the plugin did to its own parameters
 (edits and gestures). Flags: input present, reset, transport present (engine → bridge);

@@ -101,10 +101,17 @@ of ADR-038 §4 already protects the `NoteOff`s.
 
 ### 6. Who receives it
 
-CLAP instruments in the Echoes process, and (step B of this plan) in the sandbox
-through the raw CLAP event bytes the bridge already carries. **Ignored**: the
-built-in synth and sampler, VST3 instruments (VST3 note expression is a different
-interface, not decided here), and the recorder (cycle 2).
+CLAP instruments, in the Echoes process and in the sandbox. The bridge cannot carry
+the raw CLAP event bytes (a `WireNote` holds three data bytes), so step B added a
+wire kind: `NOTE_EXPRESSION` with `data = [pitch, EXPRESSION_*, 0]` and the value as
+an exact `f32`, which grew `WireNote` from 12 to 16 bytes and moved
+`BRIDGE_PROTOCOL_VERSION` to **5**. The engine fills it in `push_wire_notes`, the
+bridge's `ClapAdapter` turns it into the same `CLAP_EVENT_NOTE_EXPRESSION` as the
+in-process path (same key target, same ids); a quantised value would have broken the
+"sandbox renders like in process" proof. **Ignored**: the
+built-in synth and sampler, VST3 instruments in the sandbox as in process (VST3 note
+expression is a different interface, not decided here; the VST3 adapter skips the new
+kind), and the recorder (cycle 2).
 
 ### 7. Editing
 
@@ -168,7 +175,7 @@ Validated against `rt_audio_rules.md`: no allocation, lock, `drop`, I/O or
 - A CLAP synth that supports note expressions plays per-note pressure, timbre and
   micro-pitch from the clip, and seeks, loops and edits never leave a stale value.
 - Not hand-tested: nothing was heard on a real synth (Vital, Surge XT).
-- Unproven in the sandbox until step B. Step C is in the app but was not tried by hand.
+- Step B and step C are tested (the test plugin, in process and sandboxed) but neither was tried by hand.
 
 ## Future (not decided here)
 
@@ -183,3 +190,8 @@ A note id if overlapping same-pitch notes ever matter. VST3 note expression.
 
 2026-11-26 — step C done (piano-roll lanes, see §7; `noteExpressionLanes.test.ts`,
 `controlLanes.test.ts`; not tried in the app).
+
+2026-11-27 — step B done (sandbox, §6): protocol v5, `WireNote` 16 B,
+`NOTE_EXPRESSION`; tests `a_note_pressure_scales_a_held_{in_process,sandboxed}_note`
+(`plugin_system/sandbox_tests.rs`), `a_note_expression_travels_…`
+(`bridged_node.rs`), the ABI tests of `protocol.rs`. Left: cycle 2 (MPE).

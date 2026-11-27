@@ -868,10 +868,13 @@ block message is untouched.
   `TUNING`) with `key` = the pitch and `note_id` / `channel` = -1 (every note on
   that key; CLAP's wildcard). The host still announces only the CLAP and MIDI
   dialects: a plugin that wants expressions reads them from CLAP events, as the
-  header allows. Not sent to VST3, nor yet into the sandbox (ADR-039 step B).
-  `ClapEventBuffer::push_bytes` already accepts the type, so the raw event bytes the
-  bridge carries need only a wire kind. Test: `a_pressure_expression_reaches_a_real_clap_instrument`
-  (the test plugin scales its level by the pressure).
+  header allows. Not sent to VST3. In the sandbox it travels as a `WireNote` of
+  kind `NOTE_EXPRESSION` (`data = [pitch, EXPRESSION_*, 0]`, the value an exact
+  `f32`; protocol v5, `WireNote` 16 B) and the bridge's `ClapAdapter::read_events`
+  rebuilds the same CLAP event (ADR-039 step B; the VST3 adapter skips the kind).
+  Tests: `a_pressure_expression_reaches_a_real_clap_instrument` and
+  `a_note_pressure_scales_a_held_{in_process,sandboxed}_note` (the test plugin
+  scales its level by the pressure).
 - _`clap.note-name` (host)._ `changed` sets a process-wide lock-free flag
   (`clap_ffi::take_plugin_note_names_changed`, callable from any thread);
   `main.rs::watch_plugin_edits` turns it into the `plugin-note-names-changed`
@@ -1363,8 +1366,9 @@ A sandboxed CLAP plugin is driven through the format-neutral protocol of
   in-process `fill` (queued edits, released modulation, modulation, automation,
   value modulation) into a `ParamEventSink` — CLAP's event buffer in the Echoes
   process, a vector of `WireParam` (kinds `PARAM_VALUE`, `PARAM_MODULATION`) for the
-  bridge. Notes and controls become `WireNote`s in the order of the engine's
-  `MidiEventList`. The plugin's edits come back as `WireParam`s and go through
+  bridge. Notes, controls and note expressions become `WireNote`s in the order of
+  the engine's `MidiEventList` (protocol v5, 2026-11-27: the record grew to 16 B to
+  carry an `f32` expression value). The plugin's edits come back as `WireParam`s and go through
   `ClapParamEvents::observe_edit`, the neutral twin of `observe_output_event`
   (a drag pauses a value-modulated parameter, an edit marks the project unsaved).
   Parameter values stay **plain** (ADR-021): the handshake declares

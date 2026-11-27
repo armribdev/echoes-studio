@@ -910,7 +910,8 @@ for a sandboxed plugin; the bridge's `ClapAdapter` does. Details and measures:
 [ADR-033](033-format-neutral-sandbox-bridge.md), "Step 4 — what shipped".
 
 - **Block message**: `[BlockHeader 48 B][WireTransport 64 B, if flagged][WireNote
-12 B × n][WireParam 24 B × m][samples]` (the header was 40 bytes in v2). The notes
+12 B × n][WireParam 24 B × m][samples]` (the header was 40 bytes in v2; a `WireNote`
+is 16 B since protocol v5, ADR-039). The notes
   list holds note on / off and raw MIDI in the order the plugin must see them; a
   parameter event has a kind (value, modulation offset, gesture begin / end) and a
   sample offset. In the reply, the parameter list is what the plugin did to its own
