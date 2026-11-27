@@ -1328,6 +1328,90 @@ fn automation_cost_report() {
     );
 }
 
+fn chain_project(track_count: usize) -> AppProject {
+    let tracks = (0..track_count)
+        .map(|index| {
+            let mut track = audio_track();
+            track.id = format!("audio{index}");
+            track
+        })
+        .collect();
+    project_with(tracks)
+}
+
+/// Critical issues 4.1 / 4.3: does the worker pool pay off? Sets `ECHOES_AUDIO_WORKERS`, so run it alone:
+/// `cargo test --release --bin echoes-studio worker_pool_cost -- --ignored --nocapture --exact audio_engine::render_harness::worker_pool_cost_report`
+#[test]
+#[ignore = "timing report, run in release"]
+fn worker_pool_cost_report() {
+    println!(
+        "cores: {}",
+        std::thread::available_parallelism().map_or(0, |count| count.get())
+    );
+    for track_count in [4, 16, 64] {
+        let project = chain_project(track_count);
+        let mut sequential_hash = None;
+        for workers in [0, 1, 3, 7] {
+            std::env::set_var("ECHOES_AUDIO_WORKERS", workers.to_string());
+            let hash = render_hash(&render(&project, 512));
+            assert_eq!(
+                *sequential_hash.get_or_insert(hash),
+                hash,
+                "{workers} workers must render like the sequential scheduler"
+            );
+            let elapsed = best_render_time(&project);
+            println!(
+                "{track_count:>2} tracks (eq, comp, delay, reverb), {workers} workers: {elapsed:?} ({:.0}x real time)",
+                DURATION_S / elapsed.as_secs_f64()
+            );
+        }
+    }
+    std::env::remove_var("ECHOES_AUDIO_WORKERS");
+}
+
+/// Critical issue 4.4: what share of a block does the fixed 2x oversampling cost?
+#[test]
+#[ignore = "timing report, run in release"]
+fn oversampling_cost_report() {
+    use crate::audio_graph::oversampling::Oversample2x;
+
+    const BLOCK: usize = 512;
+    const BLOCKS: usize = 20_000;
+    let mut oversampler = Oversample2x::default();
+    oversampler.prepare(BLOCK, SAMPLE_RATE as f32);
+    let input: Vec<f32> = (0..BLOCK)
+        .map(|frame| (frame as f32 * 0.05).sin())
+        .collect();
+    let mut output = vec![0.0; BLOCK];
+
+    let started = std::time::Instant::now();
+    for _ in 0..BLOCKS {
+        for channel in 0..2 {
+            oversampler.process_channel(
+                channel,
+                std::hint::black_box(&input),
+                &mut output,
+                BLOCK,
+                |sample| sample,
+            );
+        }
+        std::hint::black_box(&output);
+    }
+    let per_block = started.elapsed() / BLOCKS as u32;
+    let budget = std::time::Duration::from_secs_f64(BLOCK as f64 / SAMPLE_RATE as f64);
+    println!(
+        "oversampling only (identity), stereo, {BLOCK} frames: {per_block:?} per block ({:.2}% of the {budget:?} budget)",
+        per_block.as_secs_f64() / budget.as_secs_f64() * 100.0
+    );
+
+    let single = best_render_time(&chain_project(1));
+    let blocks_per_render = DURATION_S * SAMPLE_RATE as f64 / BLOCK as f64;
+    println!(
+        "one full track (eq, comp, delay, reverb): {:?} per block, compile included",
+        single / blocks_per_render as u32
+    );
+}
+
 #[cfg(windows)]
 mod clap_plugins {
     use std::path::{Path, PathBuf};
