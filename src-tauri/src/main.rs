@@ -34,6 +34,7 @@ use tauri_plugin_dialog::{DialogExt, FilePath, MessageDialogKind};
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(AppState::new())
         .setup(|app| {
             // Before any plugin code runs, so a crash in it can be attributed.
@@ -99,6 +100,7 @@ fn main() {
             prepare_audio_import,
             cancel_audio_import,
             get_project,
+            has_unsaved_changes,
             list_plugins,
             get_unavailable_plugins,
             get_plugin_params,
@@ -1167,6 +1169,12 @@ fn mark_saved(state: &tauri::State<'_, AppState>) {
     state
         .dirty
         .store(false, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// An update installer closes the app without asking, so the UI refuses to run it while this is true.
+#[tauri::command]
+fn has_unsaved_changes(state: tauri::State<'_, AppState>) -> bool {
+    state.dirty.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 /// Edits made inside a plugin window never go through `send_command`, so the

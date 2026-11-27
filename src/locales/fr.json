@@ -138,6 +138,15 @@
 		"loadFailed": "Échec du chargement",
 		"crashed": "Planté"
 	},
+	"update": {
+		"title": "Echoes Studio {version} est disponible",
+		"intro": "L'installation ferme Echoes Studio puis le relance sur la nouvelle version.",
+		"later": "Plus tard",
+		"install": "Installer et redémarrer",
+		"installing": "Installation…",
+		"unsavedChanges": "Enregistrez d'abord votre projet : l'installation ferme l'application et les modifications non enregistrées seraient perdues.",
+		"failed": "La mise à jour n'a pas pu être installée. Réessayez plus tard."
+	},
 	"blockedPlugins": {
 		"announcedCrashed": "« {name} » a été désactivé car il a planté.",
 		"announcedTimedOut": "« {name} » a été désactivé car il ne répondait plus.",

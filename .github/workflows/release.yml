@@ -1,0 +1,80 @@
+name: Release
+
+# Push a tag `vX.Y.Z` (same version as `src-tauri/tauri.conf.json`) to build the Windows installer,
+# sign it for the updater and attach it to a DRAFT release. Publish the draft once checked:
+# installed apps read `latest.json` from the latest published release. See docs/RELEASE.md.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+jobs:
+  windows:
+    name: Windows installer
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    env:
+      WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+      WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Tauri arguments
+        shell: pwsh
+        run: |
+          "TAURI_ARGS=--config src-tauri/tauri.bundle.conf.json --config src-tauri/tauri.release.conf.json" >> $env:GITHUB_ENV
+
+      # Authenticode is optional: without the secrets the installer ships unsigned
+      # (Windows SmartScreen warns) but the updater signature still protects updates.
+      - name: Import Authenticode certificate
+        if: ${{ env.WINDOWS_CERTIFICATE != '' }}
+        shell: pwsh
+        run: |
+          $pfx = Join-Path $env:RUNNER_TEMP 'authenticode.pfx'
+          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE))
+          $password = ConvertTo-SecureString $env:WINDOWS_CERTIFICATE_PASSWORD -AsPlainText -Force
+          $certificate = Import-PfxCertificate -FilePath $pfx -CertStoreLocation Cert:\CurrentUser\My -Password $password
+          Remove-Item $pfx
+          $signing = @{
+            bundle = @{
+              windows = @{
+                certificateThumbprint = $certificate.Thumbprint
+                digestAlgorithm       = 'sha256'
+                timestampUrl          = 'http://timestamp.digicert.com'
+              }
+            }
+          }
+          $signing | ConvertTo-Json -Depth 4 | Set-Content (Join-Path $env:RUNNER_TEMP 'tauri.signing.conf.json')
+          "TAURI_ARGS=$env:TAURI_ARGS --config $env:RUNNER_TEMP/tauri.signing.conf.json" >> $env:GITHUB_ENV
+
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tauriScript: pnpm tauri
+          args: ${{ env.TAURI_ARGS }}
+          tagName: ${{ github.ref_name }}
+          releaseName: Echoes Studio ${{ github.ref_name }}
+          releaseDraft: true
+          includeUpdaterJson: true

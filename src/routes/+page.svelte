@@ -24,6 +24,7 @@
 	import SettingsPanel from '../components/SettingsPanel.svelte';
 	import ProjectSettingsPanel from '../components/ProjectSettingsPanel.svelte';
 	import MissingPluginsDialog from '../components/MissingPluginsDialog.svelte';
+	import UpdateDialog from '../components/UpdateDialog.svelte';
 	import CrashSuspectDialog from '../components/CrashSuspectDialog.svelte';
 	import GraphView from '../components/GraphView.svelte';
 	import { settingsPanelOpen, preferences } from '../stores/preferences';
@@ -209,6 +210,7 @@
 {/if}
 <MissingPluginsDialog />
 <CrashSuspectDialog />
+<UpdateDialog />
 
 <style>
 	.app {

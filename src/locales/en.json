@@ -138,6 +138,15 @@
 		"loadFailed": "Load failed",
 		"crashed": "Crashed"
 	},
+	"update": {
+		"title": "Echoes Studio {version} is available",
+		"intro": "Installing closes Echoes Studio and restarts it on the new version.",
+		"later": "Later",
+		"install": "Install and restart",
+		"installing": "Installing…",
+		"unsavedChanges": "Save your project first: installing closes the app and unsaved changes would be lost.",
+		"failed": "The update could not be installed. Try again later."
+	},
 	"blockedPlugins": {
 		"announcedCrashed": "“{name}” was disabled because it crashed.",
 		"announcedTimedOut": "“{name}” was disabled because it stopped responding.",
