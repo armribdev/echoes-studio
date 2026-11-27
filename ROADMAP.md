@@ -64,7 +64,7 @@
 - [ ] Mise à jour automatique (Tauri updater) et signature des binaires (Authenticode, notarisation)
 - [x] Internationalisation (EN + FR) — `svelte-i18n` ; menus contextuels, préférences projet, library, piano roll, dialogs, menus natifs OS
 - [ ] Format de projet v2 — décision ouverte (voir « ADR-004 — Project file format » dans [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), à ne pas confondre avec l'ADR-004 de `docs/active/decisions/` sur les snapshots du moteur)
-- [ ] Nettoyage du code hérité (phase 7 du plan de migration)
+- [ ] Nettoyage du code hérité (phase 7 du plan de migration). Audit du 2026-11-27 : le fallback recompile et le double matcher d'instrument sont déjà retirés, `DeviceState` et `ModulationMap` sont vivants, les `dead_code` restants sont des variantes réservées du contrat du graphe ; rien de prouvé mort à supprimer. Reste : attendre ≥ 2 cycles de release en production (`migration_plan.md` § 7.4)
 
 ---
 

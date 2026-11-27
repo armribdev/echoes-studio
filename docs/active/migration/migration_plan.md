@@ -644,6 +644,14 @@ Supprimer la dette accumulée une fois les phases 1–6 validées en production 
 ### 7.4 Changements exacts
 
 - À déterminer par audit en début de Phase 7 (mesure de couverture sur projets utilisateurs).
+- **Audit du 2026-11-27 (lecture du code, rien supprimé)** :
+  - Fallback recompile de `update_effect_param` : déjà retiré, la fonction n'existe plus ; un paramètre d'effet est livré à chaud et seule une édition structurelle (activation, sandbox, sidechain) recompile.
+  - `DeviceState` : **vivant**, c'est le format des blobs d'état de plugin de `plugin_system/host.rs` (sauvegarde / chargement) ; à ne pas supprimer.
+  - `Vec<ModulationRoute>` : `ModulationMap` reste le chemin réel (rempli par le compilateur depuis `mod_routes`) ; il coexiste avec `PortKind::Modulation` (ADR-012), retrait non prouvé.
+  - Double matcher `InstrumentNode.inner` : déjà fait, `InstrumentNode` délègue à un `Box<dyn InstrumentDevice>`.
+  - `match NodeKind` : exhaustivité complète non auditée.
+  - Reste 7 `#[allow(dead_code)]` : les variantes réservées `NodeKind::{Send, Return, Gain, Pan}`, `Polarity` et `PortKind` font partie du contrat du graphe (compilées, sérialisées dans le snapshot DTO) ; les retirer demande un ADR et ton accord (`architecture_rules.md`).
+  - Conclusion : aucun code prouvé mort ; la phase reste conditionnée à la validation en production (≥ 2 cycles de release, 7.1).
 - Pas de feature flag retiré tant que sample-accurate / sandbox global ne sont pas matures (cf. 8.4 target différé).
 
 ### 7.5 Risques RT
