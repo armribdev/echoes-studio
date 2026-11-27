@@ -58,7 +58,6 @@
 
 - [ ] Onboarding au premier lancement
 - [x] Raccourcis clavier configurables
-- [ ] Thèmes UI (clair / sombre / personnalisé)
 - [ ] Profilage et optimisation (worker pool, suréchantillonnage, télémétrie XRun dans l'interface)
 - [x] Tests : ~270 tests Rust ; suite Vitest frontend (reducer événementiel ADR-005, arrangement, library, piano roll, automation, sélection) — `pnpm test:frontend` / CI
 - [ ] Documentation utilisateur
