@@ -10,6 +10,7 @@ import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { get } from 'svelte/store';
 import { transport } from '../../stores/transport';
 import { trackLevels } from '../../stores/trackLevels';
+import { xrunCount } from '../../stores/xruns';
 import {
 	ev,
 	type EngineEvent,
@@ -36,6 +37,7 @@ export function connectTransportBridge(): () => void {
 				if (p.tracks) {
 					trackLevels.set(p.tracks);
 				}
+				if (typeof p.xruns === 'number') xrunCount.set(p.xruns);
 				break;
 			}
 			case ev.LEVELS_UPDATED: {
@@ -43,6 +45,7 @@ export function connectTransportBridge(): () => void {
 				if (p.tracks) {
 					trackLevels.set(p.tracks);
 				}
+				if (typeof p.xruns === 'number') xrunCount.set(p.xruns);
 				break;
 			}
 		}

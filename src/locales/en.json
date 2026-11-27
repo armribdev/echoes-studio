@@ -53,7 +53,9 @@
 		"arrange": "Arrange",
 		"arrangeTitle": "Arrangement",
 		"graph": "Graph",
-		"graphTitle": "Audio graph (G)"
+		"graphTitle": "Audio graph (G)",
+		"xruns": "{count} underruns",
+		"xrunsTitle": "The audio callback ran late this session — raise the buffer size in the audio preferences"
 	},
 	"nativeMenu": {
 		"file": "File",

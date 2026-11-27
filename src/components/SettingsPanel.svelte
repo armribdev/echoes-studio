@@ -29,6 +29,7 @@
 	import type { AudioDeviceInfo } from '../lib/audioBackend';
 	import type { MidiInputDeviceInfo } from '../lib/midiBackend';
 	import { midiDeviceList } from '../stores/midiDevices';
+	import { xrunCount } from '../stores/xruns';
 	import { listen } from '@tauri-apps/api/event';
 	import type { UnlistenFn } from '@tauri-apps/api/event';
 
@@ -371,7 +372,6 @@
 
 	let rawOutputLevels: number[] = Array(16).fill(0);
 	let rawInputLevels: number[] = Array(16).fill(0);
-	let xrunCount = 0;
 	let displayOutputLevels: number[] = Array(16).fill(0);
 	let displayInputLevels: number[] = Array(16).fill(0);
 
@@ -424,7 +424,6 @@
 		// Reset display so meters open fresh next time.
 		displayOutputLevels = Array(16).fill(0);
 		displayInputLevels = Array(16).fill(0);
-		xrunCount = 0;
 	}
 
 	onMount(async () => {
@@ -432,7 +431,7 @@
 
 		unlistenLevels = await listen<{
 			type: string;
-			payload: { output: number[]; input: number[]; position?: number; xruns?: number };
+			payload: { output: number[]; input: number[]; position?: number };
 		}>('engine-event', (event) => {
 			const ev = event.payload;
 			// Levels are piggybacked on POSITION_UPDATED while playing,
@@ -440,7 +439,6 @@
 			if (ev?.type === 'LEVELS_UPDATED' || ev?.type === 'POSITION_UPDATED') {
 				if (ev.payload.output) rawOutputLevels = ev.payload.output;
 				if (ev.payload.input) rawInputLevels = ev.payload.input;
-				if (typeof ev.payload.xruns === 'number') xrunCount = ev.payload.xruns;
 			}
 		});
 	});
@@ -504,7 +502,7 @@
 						<SettingsAudioOptions
 							bind:audio={draft.audio}
 							{sampleRateSliderOptions}
-							{xrunCount}
+							xrunCount={$xrunCount}
 							{realOutputChannels}
 						/>
 					</Section>

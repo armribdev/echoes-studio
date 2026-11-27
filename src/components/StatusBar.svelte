@@ -2,6 +2,7 @@
 	import { t } from 'svelte-i18n';
 	import { statusMessage, pianoRollStatusInfo } from '../stores/status';
 	import { viewMode } from '../stores/viewMode';
+	import { xrunCount } from '../stores/xruns';
 </script>
 
 <div class="status-bar">
@@ -33,6 +34,11 @@
 	</div>
 
 	<div class="status-right">
+		{#if $xrunCount > 0}
+			<span class="xruns" title={$t('statusBar.xrunsTitle')}>
+				{$t('statusBar.xruns', { values: { count: $xrunCount } })}
+			</span>
+		{/if}
 		{#if $pianoRollStatusInfo}
 			{#if $pianoRollStatusInfo.hoverLabel}
 				<span class="piano-hover">{$pianoRollStatusInfo.hoverLabel}</span>
@@ -92,6 +98,12 @@
 		min-width: 0;
 		overflow: hidden;
 		white-space: nowrap;
+	}
+
+	.xruns {
+		font-size: 11px;
+		font-variant-numeric: tabular-nums;
+		color: $color-warning;
 	}
 
 	.piano-hover {
