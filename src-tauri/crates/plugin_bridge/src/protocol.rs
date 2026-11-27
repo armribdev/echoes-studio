@@ -5,7 +5,7 @@
 //! ```text
 //!   [BlockHeader 48 B]
 //!   [WireTransport 64 B]                    only with BLOCK_HAS_TRANSPORT
-//!   [notes:  header.note_count  × WireNote  12 B]
+//!   [notes:  header.note_count  × WireNote  16 B]
 //!   [params: header.param_count × WireParam 24 B]
 //!   [samples: channel_count × frames f32 LE]
 //! ```
@@ -16,8 +16,8 @@
 //! ([`crate::records::Handshake`], active ports only).  A bus that is not open
 //! plays silence.
 //!
-//! Engine → bridge, the sections are the block's transport, its notes and raw MIDI
-//! (one ordered list), and its parameter events (value, modulation offset, gesture
+//! Engine → bridge, the sections are the block's transport, its notes, raw MIDI and
+//! note expressions (one ordered list), and its parameter events (value, modulation offset, gesture
 //! begin / end) with their sample offset.  Bridge → engine, `params` holds what the
 //! plugin did to its own parameters (edits and gestures) and `notes` the MIDI it
 //! produced.  Nothing here depends on a plugin format: an adapter in the bridge
@@ -35,7 +35,7 @@ use core::marker::PhantomData;
 use core::mem::size_of;
 
 /// Wire-format version, checked at handshake (control block) and per block.
-pub const BRIDGE_PROTOCOL_VERSION: u32 = 4;
+pub const BRIDGE_PROTOCOL_VERSION: u32 = 5;
 
 /// Stamped at the start of every block so a torn / desynced region is detected.
 /// ASCII `"EsBr"` (Echoes Bridge), little-endian.
@@ -211,12 +211,23 @@ pub const NOTE_ON: u8 = 0;
 pub const NOTE_OFF: u8 = 1;
 /// Raw MIDI: `data` is the status byte and its two data bytes.
 pub const MIDI: u8 = 2;
+/// An expression of the notes sounding on one key (ADR-039): `data` is
+/// `[pitch, EXPRESSION_*, 0]` and `value` the expression in its own unit.
+pub const NOTE_EXPRESSION: u8 = 3;
+
+/// `data[1]` of a [`NOTE_EXPRESSION`]: how hard the key is pressed, `value` in 0..1.
+pub const EXPRESSION_PRESSURE: u8 = 0;
+/// `value` in 0..1.
+pub const EXPRESSION_TIMBRE: u8 = 1;
+/// `value` in semitones around the pitch of the key.
+pub const EXPRESSION_PITCH: u8 = 2;
 
 /// A note or a raw MIDI message, ordered with the others of its block.
 /// `data` is `[pitch, velocity, 0]` for a note on (velocity 0..127),
-/// `[pitch, 0, 0]` for a note off.
+/// `[pitch, 0, 0]` for a note off.  `value` is only read for a [`NOTE_EXPRESSION`]
+/// and is `0.0` for the others.
 #[repr(C)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct WireNote {
     /// Sample offset within the block.
     pub offset: u32,
@@ -224,9 +235,10 @@ pub struct WireNote {
     pub channel: u8,
     pub data: [u8; 3],
     pub reserved: [u8; 3],
+    pub value: f32,
 }
 
-pub const NOTE_BYTES: usize = 12;
+pub const NOTE_BYTES: usize = 16;
 unsafe impl WireRecord for WireNote {}
 const _: () = assert!(size_of::<WireNote>() == NOTE_BYTES);
 
@@ -238,6 +250,14 @@ impl WireNote {
             channel: 0,
             data,
             reserved: [0; 3],
+            value: 0.0,
+        }
+    }
+
+    pub fn expression(offset: u32, pitch: u8, expression: u8, value: f32) -> Self {
+        WireNote {
+            value,
+            ..WireNote::new(offset, NOTE_EXPRESSION, [pitch, expression, 0])
         }
     }
 }
@@ -379,12 +399,13 @@ mod tests {
         assert_eq!(offset_of!(WireTransport, time_signature_numerator), 56);
         assert_eq!(offset_of!(WireTransport, time_signature_denominator), 58);
 
-        assert_eq!(size_of::<WireNote>(), 12);
+        assert_eq!(size_of::<WireNote>(), 16);
         assert_eq!(align_of::<WireNote>(), 4);
         assert_eq!(offset_of!(WireNote, offset), 0);
         assert_eq!(offset_of!(WireNote, kind), 4);
         assert_eq!(offset_of!(WireNote, channel), 5);
         assert_eq!(offset_of!(WireNote, data), 6);
+        assert_eq!(offset_of!(WireNote, value), 12);
 
         assert_eq!(size_of::<WireParam>(), 24);
         assert_eq!(align_of::<WireParam>(), 8);
@@ -396,7 +417,7 @@ mod tests {
 
     #[test]
     fn the_flag_and_kind_values_are_frozen() {
-        assert_eq!(BRIDGE_PROTOCOL_VERSION, 4);
+        assert_eq!(BRIDGE_PROTOCOL_VERSION, 5);
         assert_eq!(
             [
                 BLOCK_HAS_INPUT,
@@ -419,7 +440,11 @@ mod tests {
             [PARAMS_VALUES, PARAMS_TEXT, PARAMS_INFO, PARAMS_LIST],
             [1, 2, 4, 8]
         );
-        assert_eq!([NOTE_ON, NOTE_OFF, MIDI], [0, 1, 2]);
+        assert_eq!([NOTE_ON, NOTE_OFF, MIDI, NOTE_EXPRESSION], [0, 1, 2, 3]);
+        assert_eq!(
+            [EXPRESSION_PRESSURE, EXPRESSION_TIMBRE, EXPRESSION_PITCH],
+            [0, 1, 2]
+        );
         assert_eq!(
             [
                 PARAM_VALUE,
@@ -463,8 +488,8 @@ mod tests {
             flags: BLOCK_HAS_TRANSPORT,
             ..shape()
         });
-        assert_eq!(header.section_bytes(), 64 + 3 * 12 + 5 * 24);
-        assert_eq!(BlockHeader::new(shape()).section_bytes(), 3 * 12 + 5 * 24);
+        assert_eq!(header.section_bytes(), 64 + 3 * 16 + 5 * 24);
+        assert_eq!(BlockHeader::new(shape()).section_bytes(), 3 * 16 + 5 * 24);
     }
 
     #[test]

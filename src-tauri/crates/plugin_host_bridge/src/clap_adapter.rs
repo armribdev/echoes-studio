@@ -23,6 +23,7 @@ use clap_ffi::{
     TimerSchedule, TransportValues, CLAP_AUDIO_PORT_IS_MAIN, CLAP_CORE_EVENT_SPACE,
     CLAP_EVENT_MIDI, CLAP_EVENT_NOTE_OFF, CLAP_EVENT_NOTE_ON, CLAP_EVENT_PARAM_GESTURE_BEGIN,
     CLAP_EVENT_PARAM_GESTURE_END, CLAP_EVENT_PARAM_VALUE, CLAP_EXT_AUDIO_PORTS, CLAP_EXT_PARAMS,
+    CLAP_NOTE_EXPRESSION_BRIGHTNESS, CLAP_NOTE_EXPRESSION_PRESSURE, CLAP_NOTE_EXPRESSION_TUNING,
     CLAP_PARAM_IS_AUTOMATABLE, CLAP_PARAM_IS_HIDDEN, CLAP_PARAM_IS_MODULATABLE,
     CLAP_PARAM_IS_READONLY, CLAP_PARAM_RESCAN_ALL, CLAP_PARAM_RESCAN_INFO, CLAP_PARAM_RESCAN_TEXT,
     CLAP_PARAM_RESCAN_VALUES, CLAP_PLUGIN_FACTORY_ID, CLAP_PRESET_LOCATION_FILE,
@@ -31,8 +32,9 @@ use clap_ffi::{
 use plugin_bridge::protocol::{
     WireNote, WireParam, BLOCK_NOTE_NAMES_CHANGED, BLOCK_PARAMS_RESCAN_MASK,
     BLOCK_PARAMS_RESCAN_SHIFT, BLOCK_PASSED_THROUGH, BLOCK_PLUGIN_EDITED, BLOCK_RESTART_REQUESTED,
-    MIDI, NOTE_OFF, NOTE_ON, PARAMS_INFO, PARAMS_LIST, PARAMS_TEXT, PARAMS_VALUES,
-    PARAM_GESTURE_BEGIN, PARAM_GESTURE_END, PARAM_MODULATION, PARAM_VALUE, TRANSPORT_PLAYING,
+    EXPRESSION_PITCH, EXPRESSION_PRESSURE, EXPRESSION_TIMBRE, MIDI, NOTE_EXPRESSION, NOTE_OFF,
+    NOTE_ON, PARAMS_INFO, PARAMS_LIST, PARAMS_TEXT, PARAMS_VALUES, PARAM_GESTURE_BEGIN,
+    PARAM_GESTURE_END, PARAM_MODULATION, PARAM_VALUE, TRANSPORT_PLAYING,
 };
 use plugin_bridge::records::{
     AudioPortRecord, Handshake, NoteNameRecord, ParamRecord, ParamUnit, PortDirection, PortRole,
@@ -667,6 +669,16 @@ impl ClapBlockProcessor {
                     .events
                     .push_note_off(note.offset, channel, first as i16),
                 MIDI => self.events.push_midi(note.offset, note.data),
+                NOTE_EXPRESSION => {
+                    if let Some(expression_id) = clap_expression_id(second) {
+                        self.events.push_note_expression(
+                            note.offset,
+                            first as i16,
+                            expression_id,
+                            note.value as f64,
+                        );
+                    }
+                }
                 _ => {}
             }
         }
@@ -683,6 +695,16 @@ impl ClapBlockProcessor {
                 time_signature_denominator: transport.time_signature_denominator,
             })
         })
+    }
+}
+
+/// The CLAP note expression of a wire `EXPRESSION_*`; `None` for one this host does not know.
+fn clap_expression_id(expression: u8) -> Option<i32> {
+    match expression {
+        EXPRESSION_PRESSURE => Some(CLAP_NOTE_EXPRESSION_PRESSURE),
+        EXPRESSION_TIMBRE => Some(CLAP_NOTE_EXPRESSION_BRIGHTNESS),
+        EXPRESSION_PITCH => Some(CLAP_NOTE_EXPRESSION_TUNING),
+        _ => None,
     }
 }
 

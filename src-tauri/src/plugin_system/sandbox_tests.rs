@@ -28,7 +28,7 @@ use crate::plugin_system::presets::{list_presets, PluginPreset, StoredPreset};
 use crate::plugin_system::registry::PluginManifest;
 use crate::plugin_system::track_info::test_track;
 use crate::plugin_system::wrapper::DeviceFormat;
-use crate::project::AppProject;
+use crate::project::{AppProject, NoteExpressionKind};
 
 const PLUGIN_ID: &str = "clap:echoes.test.gain";
 const SLEEPY_PLUGIN_ID: &str = "clap:echoes.test.sleepy";
@@ -573,6 +573,53 @@ fn a_sandboxed_instrument_plays_notes_and_parameters() {
     assert!(play_block(&mut instrument, &[NOTE_OFF])
         .iter()
         .all(|&s| s == 0.0));
+}
+
+/// ADR-039: the pressure of a held note reaches the plugin through the bridge as it does
+/// in process; the test plugin scales the note by it and a new note resets it.
+fn a_note_pressure_scales_a_held_note(sandboxed: bool) {
+    let mut host = host();
+    if sandboxed {
+        host.set_isolation(PluginIsolation::All, HashSet::new());
+    }
+    let mut instrument = prepared_instrument(&mut host, false);
+    assert_eq!(is_sandboxed(&host, INSTRUMENT_KEY), sandboxed);
+
+    assert!(play_block(&mut instrument, &[NOTE_ON])
+        .iter()
+        .all(|&s| s == 1.0));
+    let pressed = MidiEventKind::NoteExpression {
+        pitch: 60,
+        kind: NoteExpressionKind::Pressure,
+        value: 0.5,
+    };
+    assert!(
+        play_block(&mut instrument, &[pressed])
+            .iter()
+            .all(|&s| s == 0.5),
+        "half pressure"
+    );
+    let timbre = MidiEventKind::NoteExpression {
+        pitch: 60,
+        kind: NoteExpressionKind::Timbre,
+        value: 0.9,
+    };
+    assert!(
+        play_block(&mut instrument, &[timbre])
+            .iter()
+            .all(|&s| s == 0.5),
+        "the test plugin ignores the other expressions"
+    );
+}
+
+#[test]
+fn a_note_pressure_scales_a_held_in_process_note() {
+    a_note_pressure_scales_a_held_note(false);
+}
+
+#[test]
+fn a_note_pressure_scales_a_held_sandboxed_note() {
+    a_note_pressure_scales_a_held_note(true);
 }
 
 #[test]

@@ -27,9 +27,9 @@ use std::time::Duration;
 
 use plugin_bridge::protocol::{
     WireNote, WireParam, WireTransport, BLOCK_NOTE_NAMES_CHANGED, BLOCK_PARAMS_RESCAN_MASK,
-    BLOCK_PARAMS_RESCAN_SHIFT, BLOCK_PLUGIN_EDITED, BLOCK_RESTART_REQUESTED, MIDI, NOTE_OFF,
-    NOTE_ON, PARAMS_INFO, PARAMS_LIST, PARAMS_TEXT, PARAMS_VALUES, PARAM_MODULATION, PARAM_VALUE,
-    TRANSPORT_PLAYING,
+    BLOCK_PARAMS_RESCAN_SHIFT, BLOCK_PLUGIN_EDITED, BLOCK_RESTART_REQUESTED, EXPRESSION_PITCH,
+    EXPRESSION_PRESSURE, EXPRESSION_TIMBRE, MIDI, NOTE_OFF, NOTE_ON, PARAMS_INFO, PARAMS_LIST,
+    PARAMS_TEXT, PARAMS_VALUES, PARAM_MODULATION, PARAM_VALUE, TRANSPORT_PLAYING,
 };
 use plugin_bridge::session::{BlockOutcome, BlockReply, BlockRequest};
 
@@ -47,6 +47,7 @@ use crate::plugin_formats::clap::ffi::{
 };
 use crate::plugin_formats::clap::params::{ClapParamEvents, ParamEventSink};
 use crate::plugin_formats::vst3::param_delivery::{Vst3ParamEvents, Vst3ParamSink};
+use crate::project::NoteExpressionKind;
 use plugin_bridge::records::PORT_CHANNELS;
 
 use crate::plugin_system::bridge::BridgedPlugin;
@@ -197,9 +198,19 @@ fn push_wire_notes(events: &MidiEventList, notes: &mut Vec<WireNote>) {
                 WireNote::new(event.offset, NOTE_OFF, [pitch, 0, 0])
             }
             MidiEventKind::Control { message } => WireNote::new(event.offset, MIDI, message),
-            MidiEventKind::NoteExpression { .. } => continue,
+            MidiEventKind::NoteExpression { pitch, kind, value } => {
+                WireNote::expression(event.offset, pitch, wire_expression(kind), value)
+            }
         };
         notes.push(note);
+    }
+}
+
+fn wire_expression(kind: NoteExpressionKind) -> u8 {
+    match kind {
+        NoteExpressionKind::Pressure => EXPRESSION_PRESSURE,
+        NoteExpressionKind::Timbre => EXPRESSION_TIMBRE,
+        NoteExpressionKind::Pitch => EXPRESSION_PITCH,
     }
 }
 
@@ -685,6 +696,35 @@ mod tests {
                 WireNote::new(3, NOTE_ON, [60, 100, 0]),
                 WireNote::new(3, MIDI, [0xE0, 1, 2]),
                 WireNote::new(9, NOTE_OFF, [60, 0, 0]),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_note_expression_travels_with_its_key_kind_and_exact_value() {
+        let mut list = MidiEventList::new();
+        for (offset, kind, value) in [
+            (0, NoteExpressionKind::Pressure, 0.75),
+            (2, NoteExpressionKind::Timbre, 0.1),
+            (4, NoteExpressionKind::Pitch, -3.5),
+        ] {
+            list.push(MidiEvent {
+                offset,
+                kind: MidiEventKind::NoteExpression {
+                    pitch: 64,
+                    kind,
+                    value,
+                },
+            });
+        }
+        let mut notes = Vec::with_capacity(8);
+        push_wire_notes(&list, &mut notes);
+        assert_eq!(
+            notes,
+            [
+                WireNote::expression(0, 64, EXPRESSION_PRESSURE, 0.75),
+                WireNote::expression(2, 64, EXPRESSION_TIMBRE, 0.1),
+                WireNote::expression(4, 64, EXPRESSION_PITCH, -3.5),
             ]
         );
     }
