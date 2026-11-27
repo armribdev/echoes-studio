@@ -23,7 +23,8 @@ use crate::audio_engine::transport::SharedTransport;
 use crate::audio_graph::midi::{LiveInputClock, MidiEventKind, MidiLiveInputMessage};
 use crate::audio_graph::midi_controls::control_neutral_value;
 use crate::project::{
-    generate_id, sanitize_control_points, MidiControlKind, MidiControlPoint, MidiNote,
+    generate_id, sanitize_control_points, sanitize_note_expressions, MidiControlKind,
+    MidiControlPoint, MidiNote, NoteExpressionKind, NoteExpressionPoint,
 };
 
 /// Emitted when a recording ends. Payload: `Option<RecordedMidiClip>`, `null`
@@ -35,6 +36,10 @@ pub const MIDI_RECORDING_FINISHED_EVENT: &str = "midi-recording-finished";
 pub const MIDI_RECORDING_NOTE_EVENT: &str = "midi-recording-note";
 
 const MIN_NOTE_BEATS: f64 = 0.0625;
+
+/// A note's expression curves keep one value per kind in this many beats, like
+/// the control lanes of the editor (ADR-039 §5).
+const EXPRESSION_BUCKET_BEATS: f64 = 1.0 / 32.0;
 
 /// A fast bend or mod-wheel sweep sends hundreds of values per second; one per
 /// bucket keeps the gesture and the clip small.
@@ -82,11 +87,20 @@ impl RecordedControl {
     }
 }
 
+#[derive(Clone, Copy)]
+struct RecordedExpression {
+    pitch: u8,
+    kind: NoteExpressionKind,
+    value: f32,
+    position_samples: u64,
+}
+
 struct Recording {
     track_id: String,
     start_position_samples: u64,
     events: Vec<RecordedEvent>,
     controls: Vec<RecordedControl>,
+    expressions: Vec<RecordedExpression>,
     /// Last value of each held control seen during the count-in, so a pedal
     /// pressed before the first beat is down at the start of the clip.
     count_in_controls: HashMap<(MidiControlKind, u8), u16>,
@@ -120,6 +134,7 @@ impl MidiRecorder {
             start_position_samples,
             events: Vec::new(),
             controls: Vec::new(),
+            expressions: Vec::new(),
             count_in_controls: HashMap::new(),
         });
         Ok(start_position_samples as f64 / self.transport.sample_rate() as f64)
@@ -137,7 +152,17 @@ impl MidiRecorder {
         let (note_on, pitch, velocity) = match message.kind {
             MidiEventKind::NoteOn { pitch, velocity } => (true, pitch, velocity),
             MidiEventKind::NoteOff { pitch } => (false, pitch, 0),
-            MidiEventKind::NoteExpression { .. } => return None,
+            MidiEventKind::NoteExpression { pitch, kind, value } => {
+                if !counting_in {
+                    recording.expressions.push(RecordedExpression {
+                        pitch,
+                        kind,
+                        value,
+                        position_samples: self.position_of(message)?,
+                    });
+                }
+                return None;
+            }
             MidiEventKind::Control { message: raw } => {
                 let (kind, number, value) = decode_control(raw)?;
                 if counting_in {
@@ -270,15 +295,25 @@ fn build_clip(
         beats_per_sample,
         (CONTROL_BUCKET_SECONDS * sample_rate) as u64,
     );
+    let expression_bucket_samples = (EXPRESSION_BUCKET_BEATS / beats_per_sample) as u64;
     let notes = spans
         .iter()
-        .map(|span| MidiNote {
-            id: generate_id(),
-            pitch: span.pitch,
-            start: ((span.on_samples - clip_start) as f64 * beats_per_sample) as f32,
-            duration: ((span.off_samples - span.on_samples) as f64 * beats_per_sample) as f32,
-            velocity: span.velocity,
-            expressions: Vec::new(),
+        .map(|span| {
+            let duration = ((span.off_samples - span.on_samples) as f64 * beats_per_sample) as f32;
+            let curves = note_expressions(
+                span,
+                &recording.expressions,
+                beats_per_sample,
+                expression_bucket_samples,
+            );
+            MidiNote {
+                id: generate_id(),
+                pitch: span.pitch,
+                start: ((span.on_samples - clip_start) as f64 * beats_per_sample) as f32,
+                duration,
+                velocity: span.velocity,
+                expressions: sanitize_note_expressions(&curves, duration),
+            }
         })
         .collect();
 
@@ -289,6 +324,49 @@ fn build_clip(
         notes,
         channel_controls,
     })
+}
+
+/// The curves played on `span`'s key while it sounded: the last value of each
+/// kind per bucket, without the values that repeat the previous one. Positions
+/// are in beats from the start of the note.
+fn note_expressions(
+    span: &NoteSpan,
+    expressions: &[RecordedExpression],
+    beats_per_sample: f64,
+    bucket_samples: u64,
+) -> Vec<NoteExpressionPoint> {
+    let bucket_samples = bucket_samples.max(1);
+    let during_note = |expression: &&RecordedExpression| {
+        expression.pitch == span.pitch
+            && (span.on_samples..span.off_samples).contains(&expression.position_samples)
+    };
+    let mut points = Vec::new();
+    for kind in NoteExpressionKind::ALL {
+        let mut kept: Vec<(u64, NoteExpressionPoint)> = Vec::new();
+        for expression in expressions
+            .iter()
+            .filter(during_note)
+            .filter(|expression| expression.kind == kind)
+        {
+            let elapsed = expression.position_samples - span.on_samples;
+            let point = NoteExpressionPoint {
+                start: (elapsed as f64 * beats_per_sample) as f32,
+                kind,
+                value: expression.value,
+            };
+            match kept.last_mut() {
+                Some((bucket, last)) if *bucket == elapsed / bucket_samples => *last = point,
+                _ => kept.push((elapsed / bucket_samples, point)),
+            }
+        }
+        let mut previous_value = None;
+        for (_, point) in kept {
+            if previous_value.replace(point.value) != Some(point.value) {
+                points.push(point);
+            }
+        }
+    }
+    points
 }
 
 fn decode_control(raw: [u8; 3]) -> Option<(MidiControlKind, u8, u16)> {
@@ -383,6 +461,7 @@ mod tests {
             start_position_samples,
             events,
             controls: vec![],
+            expressions: vec![],
             count_in_controls: HashMap::new(),
         }
     }
@@ -476,6 +555,91 @@ mod tests {
         assert_eq!(clip.channel_controls[1].kind, MidiControlKind::PitchBend);
         assert_eq!(clip.channel_controls[1].value, 0x3000);
         assert!((clip.channel_controls[1].start - 2.02).abs() < 1e-4);
+    }
+
+    fn expression_message(
+        pitch: u8,
+        kind: NoteExpressionKind,
+        value: f32,
+        received_at: u64,
+    ) -> MidiLiveInputMessage {
+        MidiLiveInputMessage {
+            kind: MidiEventKind::NoteExpression { pitch, kind, value },
+            received_at,
+        }
+    }
+
+    fn released_note(received_at: u64) -> MidiLiveInputMessage {
+        MidiLiveInputMessage {
+            kind: MidiEventKind::NoteOff { pitch: 60 },
+            received_at,
+        }
+    }
+
+    #[test]
+    fn a_note_keeps_the_curves_played_while_it_sounded() {
+        let (recorder, _) = recorder_with_clock();
+        let pressure = |value, at| expression_message(60, NoteExpressionKind::Pressure, value, at);
+        recorder.capture("track", &played_note(20_000_000));
+        recorder.capture("track", &pressure(0.5, 20_000_000));
+        recorder.capture("track", &pressure(0.6, 520_000_000));
+        recorder.capture("track", &pressure(0.9, 525_000_000));
+        recorder.capture(
+            "track",
+            &expression_message(60, NoteExpressionKind::Pitch, -2.0, 1_020_000_000),
+        );
+        recorder.capture(
+            "track",
+            &expression_message(64, NoteExpressionKind::Pressure, 1.0, 1_020_000_000),
+        );
+        recorder.capture("track", &released_note(2_020_000_000));
+        recorder.capture("track", &pressure(0.1, 2_520_000_000));
+
+        let clip = recorder.finish().unwrap().unwrap();
+        let curves: Vec<_> = clip.notes[0]
+            .expressions
+            .iter()
+            .map(|point| (point.kind, point.start, point.value))
+            .collect();
+        assert_eq!(curves.len(), 3);
+        assert_eq!(curves[0], (NoteExpressionKind::Pressure, 0.0, 0.5));
+        assert_eq!(curves[1].0, NoteExpressionKind::Pressure);
+        assert!(
+            (curves[1].1 - 1.01).abs() < 1e-4,
+            "the last point of the bucket"
+        );
+        assert_eq!(curves[1].2, 0.9, "the last value of a bucket wins");
+        assert_eq!(curves[2].0, NoteExpressionKind::Pitch);
+        assert!((curves[2].1 - 2.0).abs() < 1e-4);
+        assert_eq!(curves[2].2, -2.0);
+    }
+
+    #[test]
+    fn a_value_that_repeats_the_previous_one_is_dropped() {
+        let (recorder, _) = recorder_with_clock();
+        let timbre = |at| expression_message(60, NoteExpressionKind::Timbre, 0.4, at);
+        recorder.capture("track", &played_note(20_000_000));
+        recorder.capture("track", &timbre(20_000_000));
+        recorder.capture("track", &timbre(520_000_000));
+        recorder.capture("track", &released_note(1_020_000_000));
+
+        let clip = recorder.finish().unwrap().unwrap();
+        assert_eq!(clip.notes[0].expressions.len(), 1);
+    }
+
+    #[test]
+    fn expressions_played_during_the_count_in_are_not_recorded() {
+        let (recorder, transport) = recorder_with_clock();
+        transport.start_count_in(1_000);
+        recorder.capture(
+            "track",
+            &expression_message(60, NoteExpressionKind::Timbre, 0.4, 20_000_000),
+        );
+        transport.cancel_count_in();
+        recorder.capture("track", &played_note(30_000_000));
+
+        let clip = recorder.finish().unwrap().unwrap();
+        assert!(clip.notes[0].expressions.is_empty());
     }
 
     #[test]

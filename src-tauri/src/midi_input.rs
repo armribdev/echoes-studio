@@ -16,6 +16,7 @@
 //! app exit (ADR-022 amendment 2026-09-26).
 
 use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use midir::{Ignore, MidiInput, MidiInputConnection, MidiOutput};
@@ -24,6 +25,7 @@ use tauri::{AppHandle, Emitter, Manager};
 
 use crate::audio_graph::live_params::LiveParams;
 use crate::audio_graph::midi::{MidiEventKind, MidiLiveInputMessage};
+use crate::midi_mpe::MpeTranslator;
 use crate::midi_recording::{MidiRecorder, MIDI_RECORDING_NOTE_EVENT};
 use crate::project::AppState;
 
@@ -42,6 +44,9 @@ pub struct MidiInputDeviceInfo {
     pub id: String,
     pub name: String,
     pub enabled: bool,
+    /// The device plays MPE: one note per channel, shaped by its own bend,
+    /// pressure and CC 74 (ADR-039, cycle 2).
+    pub mpe: bool,
 }
 
 /// `midir::MidiInputConnection` is not `Send` on every backend (its internal
@@ -61,6 +66,9 @@ pub struct MidiInputRegistry {
     /// Devices switched to Local Control Off by us, so exactly those are
     /// switched back on — never a device the user silenced themselves.
     silenced: HashSet<String>,
+    /// One flag per device, shared with its capture callback so switching MPE
+    /// never reopens the connection.
+    mpe: HashMap<String, Arc<AtomicBool>>,
 }
 
 impl MidiInputRegistry {
@@ -69,7 +77,16 @@ impl MidiInputRegistry {
             connections: HashMap::new(),
             local_control_off: false,
             silenced: HashSet::new(),
+            mpe: HashMap::new(),
         }
+    }
+
+    fn mpe_flag(&mut self, device_name: &str) -> Arc<AtomicBool> {
+        Arc::clone(self.mpe.entry(device_name.to_string()).or_default())
+    }
+
+    pub fn set_mpe(&mut self, device_name: &str, mpe: bool) {
+        self.mpe_flag(device_name).store(mpe, Ordering::Relaxed);
     }
 
     /// Apply the "silence the keyboard's own sound" preference to every open
@@ -138,6 +155,10 @@ impl MidiInputRegistry {
             .filter_map(|port| probe.port_name(port).ok())
             .map(|name| MidiInputDeviceInfo {
                 enabled: self.connections.contains_key(&name),
+                mpe: self
+                    .mpe
+                    .get(&name)
+                    .is_some_and(|flag| flag.load(Ordering::Relaxed)),
                 id: name.clone(),
                 name,
             })
@@ -182,6 +203,8 @@ impl MidiInputRegistry {
             })
             .ok_or_else(|| format!("Périphérique MIDI introuvable : {device_name}"))?;
 
+        let mpe = self.mpe_flag(device_name);
+        let mut translator = MpeTranslator::new();
         let connection = midi_in
             .connect(
                 &port,
@@ -189,15 +212,20 @@ impl MidiInputRegistry {
                 move |_timestamp, message, _| {
                     // First, before any lock: the stamp must be the arrival time.
                     let received_at = live_params.live_input_clock.now_nanos();
-                    let Some(parsed) = parse_live_message(message, received_at) else {
-                        return;
-                    };
                     let track_id = armed_track_id.lock().ok().and_then(|guard| guard.clone());
-                    if let Some(track_id) = track_id {
-                        if let Some(note) = recorder.capture(&track_id, &parsed) {
+                    let mut deliver = |parsed: MidiLiveInputMessage| {
+                        let Some(track_id) = &track_id else {
+                            return;
+                        };
+                        if let Some(note) = recorder.capture(track_id, &parsed) {
                             let _ = app.emit(MIDI_RECORDING_NOTE_EVENT, note);
                         }
-                        live_params.push_live_input(&track_id, parsed);
+                        live_params.push_live_input(track_id, parsed);
+                    };
+                    if mpe.load(Ordering::Relaxed) {
+                        translator.translate(message, received_at, &mut deliver);
+                    } else if let Some(parsed) = parse_live_message(message, received_at) {
+                        deliver(parsed);
                     }
                 },
                 (),
@@ -287,7 +315,7 @@ fn local_control_messages(on: bool) -> impl Iterator<Item = [u8; 3]> {
 /// change and aftertouch for plugin instruments. The channel is dropped (notes
 /// play on one channel); program change and system messages are ignored. A
 /// Note On with velocity 0 is a Note Off per the MIDI spec.
-fn parse_live_message(message: &[u8], received_at: u64) -> Option<MidiLiveInputMessage> {
+pub(crate) fn parse_live_message(message: &[u8], received_at: u64) -> Option<MidiLiveInputMessage> {
     let kind = match *message {
         [status, data1, data2] => parse_three_byte_message(status, data1, data2)?,
         [status, pressure] if status & 0xF0 == 0xD0 => MidiEventKind::Control {

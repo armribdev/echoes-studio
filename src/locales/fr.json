@@ -360,6 +360,8 @@
 			"intro": "Activez un clavier ou contrôleur MIDI, puis armez une piste (bouton rouge dans la liste des pistes) pour jouer en direct dessus. Un clavier débranché reste dans la liste avec son nom et son réglage.",
 			"none": "Aucun périphérique MIDI détecté.",
 			"renameHint": "Double-clic pour renommer",
+			"mpe": "Contrôleur MPE",
+			"mpeDesc": "Pour un Seaboard, un Linnstrument ou équivalent : chaque note a son propre pitch bend, sa pression et son glissé, joués par l'instrument et enregistrés sur la note. Zone basse seulement.",
 			"renameAria": "Renommer {name}",
 			"keyboardSound": "Son du clavier",
 			"localControlOff": "Couper le son interne du clavier",

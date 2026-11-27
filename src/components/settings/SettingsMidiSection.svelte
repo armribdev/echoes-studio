@@ -80,6 +80,13 @@
 							description={midiDeviceHint(row)}
 						/>
 					{/if}
+					{#if row.enabled}
+						<Toggle
+							bind:checked={row.mpe}
+							label={$t('settings.midi.mpe')}
+							description={$t('settings.midi.mpeDesc')}
+						/>
+					{/if}
 				</div>
 			{/each}
 		{/if}

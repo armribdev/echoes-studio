@@ -967,6 +967,46 @@ mod tests {
         assert!(node.live_input_count.iter().all(|&count| count == 0));
     }
 
+    /// A note expression played on a live controller (MPE) reaches the device
+    /// after its note, without touching the per-pitch voice bookkeeping.
+    #[test]
+    fn live_note_expression_reaches_the_device_after_its_note() {
+        let captured = Arc::new(Mutex::new(Vec::new()));
+        let mut node = make_node(captured.clone());
+        let queue = Arc::new(crate::audio_graph::midi::MidiLiveInputQueue::new(Arc::new(
+            crate::audio_graph::midi::LiveInputClock::new(),
+        )));
+        node.set_live_input(Arc::clone(&queue));
+        let pressure = MidiEventKind::NoteExpression {
+            pitch: 60,
+            kind: crate::project::NoteExpressionKind::Pressure,
+            value: 0.5,
+        };
+        for kind in [
+            MidiEventKind::NoteOn {
+                pitch: 60,
+                velocity: 90,
+            },
+            pressure,
+        ] {
+            queue.push(crate::audio_graph::midi::MidiLiveInputMessage {
+                kind,
+                received_at: 0,
+            });
+        }
+
+        run_block(&mut node, &transport_at(true, 0, 512));
+
+        let events = captured.lock().unwrap();
+        let position = |wanted: MidiEventKind| events.iter().position(|e| e.kind == wanted);
+        let note_on = MidiEventKind::NoteOn {
+            pitch: 60,
+            velocity: 90,
+        };
+        assert!(position(note_on).unwrap() < position(pressure).unwrap());
+        assert_eq!(node.live_input_count[60], 1);
+    }
+
     const SAMPLES_PER_BEAT: u64 = 24_000;
 
     fn note_with_curves() -> MidiNoteSnapshot {

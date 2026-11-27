@@ -29,6 +29,8 @@ export interface KnownMidiDevice {
 	/** Display name chosen by the user; empty = show `name`. */
 	alias: string;
 	enabled: boolean;
+	/** The device is an MPE controller (one note per channel, ADR-039). */
+	mpe: boolean;
 }
 
 export interface MidiPreferences {
@@ -115,9 +117,10 @@ function loadMidiPreferences(
 	defaults: MidiPreferences,
 	parsed?: Partial<MidiPreferences> & { enabledDeviceNames?: string[] }
 ): MidiPreferences {
-	const devices =
+	const devices = (
 		parsed?.devices ??
-		(parsed?.enabledDeviceNames ?? []).map((name) => ({ name, alias: '', enabled: true }));
+		(parsed?.enabledDeviceNames ?? []).map((name) => ({ name, alias: '', enabled: true }))
+	).map((device) => ({ ...device, mpe: (device as Partial<KnownMidiDevice>).mpe ?? false }));
 	return { localControlOff: parsed?.localControlOff ?? defaults.localControlOff, devices };
 }
 

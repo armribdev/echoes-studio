@@ -130,7 +130,7 @@
 		const updated = rows.map((r) => ({ ...r, connected: visibleNames.has(r.name) }));
 		const discovered = visible
 			.filter((d) => !knownNames.has(d.id))
-			.map((d) => ({ name: d.id, alias: '', enabled: false, connected: true }));
+			.map((d) => ({ name: d.id, alias: '', enabled: false, mpe: false, connected: true }));
 		return [...updated, ...discovered];
 	}
 
@@ -260,7 +260,12 @@
 		applyError = null;
 		draft.midi = {
 			...draft.midi,
-			devices: midiRows.map(({ name, alias, enabled }) => ({ name, alias: alias.trim(), enabled }))
+			devices: midiRows.map(({ name, alias, enabled, mpe }) => ({
+				name,
+				alias: alias.trim(),
+				enabled,
+				mpe
+			}))
 		};
 
 		// Push audio settings to CPAL engine (restarts stream if needed)
@@ -333,7 +338,7 @@
 			draft.midi = { devices: [], localControlOff: true };
 			midiRows = midiRows
 				.filter((row) => row.connected)
-				.map((row) => ({ ...row, alias: '', enabled: false }));
+				.map((row) => ({ ...row, alias: '', enabled: false, mpe: false }));
 		} else if (activeSection === 'project')
 			draft.project = {
 				defaultFolder: '',

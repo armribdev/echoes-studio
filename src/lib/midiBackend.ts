@@ -8,7 +8,7 @@
 
 import { invoke } from '@tauri-apps/api/core';
 import type { MidiPreferences } from '../stores/preferences';
-import type { MidiControlPoint } from '../types/global';
+import type { MidiControlPoint, MidiNote } from '../types/global';
 
 // ── Types (mirror of src-tauri/src/midi_input.rs) ────────────────────────────
 
@@ -19,6 +19,8 @@ export interface MidiInputDeviceInfo {
 	name: string;
 	/** Whether this device currently has an open connection. */
 	enabled: boolean;
+	/** Whether the device is treated as an MPE controller (ADR-039). */
+	mpe: boolean;
 }
 
 /**
@@ -53,6 +55,11 @@ export async function setMidiInputEnabled(deviceId: string, enabled: boolean): P
 	await invoke<void>('set_midi_input_enabled', { deviceId, enabled });
 }
 
+/** Treat a device as an MPE controller, or not. Takes effect at once. */
+export async function setMidiInputMpe(deviceId: string, mpe: boolean): Promise<void> {
+	await invoke<void>('set_midi_input_mpe', { deviceId, mpe });
+}
+
 /** Silence (or give back) the enabled keyboards' own sound (MIDI Local Control). */
 export async function setMidiLocalControlOff(off: boolean): Promise<void> {
 	await invoke<void>('set_midi_local_control_off', { off });
@@ -70,8 +77,10 @@ export async function applyMidiPreferences(midi: MidiPreferences): Promise<strin
 	for (const device of await listMidiInputDevices()) {
 		const known = midi.devices.find((d) => d.name === device.id);
 		const wanted = known?.enabled ?? false;
-		if (wanted === device.enabled) continue;
+		const wantedMpe = known?.mpe ?? false;
 		try {
+			if (wantedMpe !== device.mpe) await setMidiInputMpe(device.id, wantedMpe);
+			if (wanted === device.enabled) continue;
 			await setMidiInputEnabled(device.id, wanted);
 		} catch (err) {
 			console.error('[midiBackend] set_midi_input_enabled failed:', device.id, err);
@@ -90,7 +99,7 @@ export interface RecordedMidiClip {
 	/** Seconds, same coordinate space as a MIDI clip. */
 	start: number;
 	end: number;
-	notes: { id: string; pitch: number; start: number; duration: number; velocity: number }[];
+	notes: MidiNote[];
 	channelControls: MidiControlPoint[];
 }
 

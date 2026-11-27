@@ -11,6 +11,7 @@ mod factory_drums;
 mod library;
 mod menu_state;
 mod midi_input;
+mod midi_mpe;
 mod midi_recording;
 mod note_effect_settings;
 mod plugin_formats;
@@ -122,6 +123,7 @@ fn main() {
             preview_midi_note,
             list_midi_input_devices,
             set_midi_input_enabled,
+            set_midi_input_mpe,
             set_midi_local_control_off,
             arm_track_for_midi_input,
             start_midi_recording,
@@ -1322,6 +1324,22 @@ fn set_midi_input_enabled(
         std::sync::Arc::clone(&state.midi_recorder),
         app,
     )
+}
+
+/// Mark a device as an MPE controller, or not (ADR-039, cycle 2). Takes effect
+/// at once, whether or not the device is open.
+#[tauri::command]
+fn set_midi_input_mpe(
+    device_id: String,
+    mpe: bool,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    let mut registry = state
+        .midi_input
+        .lock()
+        .map_err(|_| "MIDI registry lock poisoned")?;
+    registry.set_mpe(&device_id, mpe);
+    Ok(())
 }
 
 /// Silence (or give back) the enabled keyboards' own sound via MIDI Local

@@ -361,6 +361,8 @@
 			"none": "No MIDI device detected.",
 			"renameHint": "Double-click to rename",
 			"renameAria": "Rename {name}",
+			"mpe": "MPE controller",
+			"mpeDesc": "For a Seaboard, Linnstrument or similar: each note gets its own bend, pressure and slide, played by the instrument and recorded on the note. Lower zone only.",
 			"keyboardSound": "Keyboard sound",
 			"localControlOff": "Mute the keyboard’s internal sound",
 			"localControlOffDesc": "For a digital piano: it no longer plays through its own speakers while Echoes uses it. Sound returns when you disable the keyboard or quit Echoes."
