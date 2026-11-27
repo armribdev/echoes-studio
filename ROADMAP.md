@@ -58,7 +58,7 @@
 
 - [ ] Onboarding au premier lancement
 - [x] Raccourcis clavier configurables
-- [ ] Profilage et optimisation (worker pool, suréchantillonnage). Fait : télémétrie XRun dans l'interface (2026-11-27, compteur dans la barre d'état dès le premier XRun, même store que les Préférences audio ; pas encore essayé dans l'app). Reste : mesurer puis optimiser le worker pool et le suréchantillonnage
+- [ ] Profilage et optimisation (worker pool, suréchantillonnage). Fait : télémétrie XRun dans l'interface (2026-11-27, compteur dans la barre d'état dès le premier XRun, même store que les Préférences audio ; pas encore essayé dans l'app). Mesuré le 2026-11-27 (rapports `#[ignore]` du harnais) : les workers donnent 2 à 4× en rendu offline, sortie bit-identique ; le suréchantillonnage coûte 0,05 % du budget, rien à optimiser. Reste : décider d'activer les workers par défaut, après un essai live avec le compteur XRun (reste à valider par toi)
 - [x] Tests : ~270 tests Rust ; suite Vitest frontend (reducer événementiel ADR-005, arrangement, library, piano roll, automation, sélection) — `pnpm test:frontend` / CI
 - [ ] Documentation utilisateur
 - [ ] Mise à jour automatique (Tauri updater) et signature des binaires (Authenticode, notarisation)

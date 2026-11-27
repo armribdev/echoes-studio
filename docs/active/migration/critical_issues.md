@@ -361,6 +361,7 @@ Statut : seuls les problèmes **encore présents dans le code** sont listés. Le
 - **Impact réel** : pour un graphe inhomogène (1 Diva + 30 GainNode), Diva monopolise un worker, les autres terminent en µs. Faible utilisation des cores.
 - **Sévérité** : medium (impact direct sur CPU headroom)
 - **Cause probable** : EWMA par step non implémenté.
+- **Mesure (2026-11-27)** : `worker_pool_cost_report` (harnais, release, 24 cœurs) ne porte que sur des pistes identiques ; le cas inhomogène décrit ici n'est pas mesuré, donc aucun besoin d'EWMA n'est établi.
 
 ### 4.2 Worker pool : par-scheduler (respawn à chaque recompile structurelle)
 
@@ -377,6 +378,7 @@ Statut : seuls les problèmes **encore présents dans le code** sont listés. Le
 - **Impact réel** : la parallélisation est disponible mais inactive pour l'utilisateur lambda.
 - **Sévérité** : low (choix conservateur, lié à 1.7 absence de priorité RT)
 - **Cause probable** : décision pragmatique (bit-identique vs ancien scheduler), pas de benchmark de référence pour activer.
+- **Mesure (2026-11-27)** : rendu offline de pistes EQ + compresseur + delay + réverbération, 0 / 1 / 3 / 7 workers : 4 pistes 47 → 21 ms (3 workers), 16 pistes 186 → 66-72 ms, 64 pistes 790-830 → 220-500 ms (7 workers le plus rapide, très bruité d'un passage à l'autre). Sortie bit-identique au séquentiel dans tous les cas (hash, projets du harnais). Gain réel, mais mesuré hors temps réel : l'attente active du barrage dans le callback et la gigue en live ne sont pas mesurées ; activer par défaut reste à décider après un essai avec le compteur XRun.
 
 ### 4.4 Oversampling à facteur fixe 2× sur EQ, Compressor, Master
 
@@ -385,6 +387,7 @@ Statut : seuls les problèmes **encore présents dans le code** sont listés. Le
 - **Impact réel** : aliasing résiduel sur transitoires extrêmes (broadcast / mastering). Suffisant pour usage standard.
 - **Sévérité** : low
 - **Cause probable** : compromis qualité / coût ; détection de crête du compresseur reste block-rate, ce qui limite le bénéfice d'un facteur plus élevé.
+- **Mesure (2026-11-27)** : `oversampling_cost_report` : un passage stéréo de 512 images (identité) coûte ~5 µs, soit 0,05 % du budget de 10,7 ms ; EQ, compresseur et master l'utilisent. Le coût n'est pas un problème : rien à optimiser ici.
 
 ### 4.5 Reporter de position lisse mais throttlé à 30 Hz dur
 
