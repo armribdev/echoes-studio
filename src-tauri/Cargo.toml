@@ -1,6 +1,6 @@
 [package]
 name = "echoes-studio"
-version = "0.1.1"
+version = "0.1.2"
 description = "A radically simple open-source DAW"
 authors = ["Armand Ribault"]
 license = "MIT"
