@@ -37,5 +37,12 @@ apps update themselves from the published release.
 3. When the workflow ends, check the draft release (installer, `.sig`, `latest.json`), write the notes
    (they are shown in the update dialog), then publish it.
 
+`tauri build` refuses a different minor version between the Rust crate and the npm package: keep
+`@tauri-apps/plugin-updater` (`~2.12.0` in `package.json`) on the minor of `tauri-plugin-updater` in
+`Cargo.lock`.
+
+The app is built for the Windows GUI subsystem in release (`windows_subsystem` in `main.rs`): no console
+window, so the `[audio]` / `[plugin]` logs are only visible in `tauri dev` or a debug build.
+
 To try the chain without users, publish a release of a higher version than the one installed and open the
 installed app.
